@@ -55,6 +55,7 @@ Base.@kwdef mutable struct Constants
     gamma::Float64 = 7
     α::Float64     = 0.01
     CFL::Float64   = 0.3
+    mass::Float64  = rho0*dx^2
 end
 
 Base.@kwdef mutable struct Simulation
@@ -120,14 +121,15 @@ function density_eqn_of_state(particle, mwl, initial_density, gamma, c0)
     return density
 end
 
+#function Ψ(rhob)
+
 # Define the continuity equation for SPH:
 function continuity_eqn(particle, Sim, h, dx)
     # Initialize the time derivative of the density to zero:
     time_deriv_density = 0
-    particle.WG =        SVector(0.0,0.0,0.0)
+    particle.WG        =        SVector(0.0,0.0,0.0)
 
     # Loop over all fluid particles:
-    #for p in Sim.Fluid.particles
     for p in [Sim.Fluid.particles;Sim.Boundary.particles]
 
         # Calculate the normalized distance between the two particles:
@@ -143,7 +145,7 @@ function continuity_eqn(particle, Sim, h, dx)
         vab  = particle.velocity - p.velocity
 
         # Calculate the mass of the other particle:
-        mb   = p.density * dx^2
+        mb   = Sim.Constants.mass
 
         # Calculate the gradient of the kernel for the two particles:
         gradW = calcGradientW(h, q, r)
@@ -196,7 +198,7 @@ function inviscid_momentum_eqn(particle, Sim, h,dx)
         gradW = calcGradientW(h, q, r)
 
         rhob           = p.density;
-        mb             = rhob*dx^2;
+        mb             = Sim.Constants.mass;
         Pb             = pressure_eqn_of_state(rhob,Sim.Constants.rho0,Sim.Constants.gamma,Sim.Constants.c0)
         rhoa           = particle.density
 
