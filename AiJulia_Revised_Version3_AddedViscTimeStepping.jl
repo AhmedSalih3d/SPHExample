@@ -304,13 +304,12 @@ function time_step(Sim)
 
     # Extract Info relevant for time stepping
     # Inspired by JSphCpu.cpp from DualSPHysics
-    CFL     = 0.3
     max_acc = maximum(norm.(getfield.(Sim.Fluid.particles,:acceleration)));
     dt1     =  sqrt(Sim.Constants.h/max_acc)
 
     dt2     = Sim.Constants.h / (Sim.Constants.c0 + maximum(getfield.(Sim.Fluid.particles,:Visc)))
 
-    dt      = CFL*min(dt1,dt2)
+    dt      = Sim.Constants.CFL*min(dt1,dt2)
 
     Sim.dt  = dt;
 
