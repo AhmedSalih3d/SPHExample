@@ -3,7 +3,6 @@ using WriteVTK
 using LinearAlgebra
 using CSV, DataFrames
 
-
 DF_FLUID = CSV.read("FluidPoints_Dp0.04.csv", DataFrame)
 DF_BOUND = CSV.read("BoundaryPoints_Dp0.04.csv", DataFrame)
 
@@ -92,24 +91,15 @@ function calcDistanceQ(particle1, particle2, h)
 end
 
 # Define a function to calculate the gradient of the Wendland kernel for a particle:
-function calcGradientW(particle, h, q,r)
-    gradWx = 0
-    gradWy = 0
-    gradWz = 0
-
+function calcGradientW(h, q, rel)
     # Skip distances outside the support of the kernel:
     if q < 0 || q > 2
         return SVector(0.0,0.0,0.0)
     end
-    # Remember
-    #           q = r/h = sqrt(x^2+y^2+z^2)
-    #           r = q*h.
-    # We add a small number to avoid dividing by zero.
-    #println("q*h: $(q*h) | r = $(norm(r))")
 
-    gradWx += 7 / (4 * pi * h^2) * 1/h * (5*(q-2)^3*q)/8 * (r[1] / (q*h+1e-6))
-    gradWy += 7 / (4 * pi * h^2) * 1/h * (5*(q-2)^3*q)/8 * (r[2] / (q*h+1e-6))
-    gradWz += 7 / (4 * pi * h^2) * 1/h * (5*(q-2)^3*q)/8 * (r[3] / (q*h+1e-6)) 
+    gradWx = 7 / (4 * pi * h^2) * 1/h * (5*(q-2)^3*q)/8 * (rel[1] / (q*h+1e-6))
+    gradWy = 7 / (4 * pi * h^2) * 1/h * (5*(q-2)^3*q)/8 * (rel[2] / (q*h+1e-6))
+    gradWz = 7 / (4 * pi * h^2) * 1/h * (5*(q-2)^3*q)/8 * (rel[3] / (q*h+1e-6)) 
 
     return SVector(gradWx,gradWy,gradWz)
 end
@@ -156,7 +146,7 @@ function continuity_eqn(particle, Sim, h, dx)
         mb   = p.density * dx^2
 
         # Calculate the gradient of the kernel for the two particles:
-        gradW = calcGradientW(particle, h, q, r)
+        gradW = calcGradientW(h, q, r)
 
         # Calculate the contribution of the other particle to the time derivative of the density:
         time_deriv_density += rhoa * dot((mb/p.density)*vab, gradW)
@@ -203,7 +193,7 @@ function inviscid_momentum_eqn(particle, Sim, h,dx)
         vab  = particle.velocity - p.velocity
 
         # Calculate the gradient of the kernel for the particle and the other particle:
-        gradW = calcGradientW(particle, h, q, r)
+        gradW = calcGradientW(h, q, r)
 
         rhob           = p.density;
         mb             = rhob*dx^2;
@@ -441,4 +431,6 @@ function RunSimulation(Sim)
     end
 end
 
-    
+# Run
+foreach(rm, filter(endswith(".vtp"), readdir("./particles",join=true)))
+RunSimulation(Sim)
