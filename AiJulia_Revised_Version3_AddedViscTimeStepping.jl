@@ -17,9 +17,6 @@ mutable struct Particle
     # For debugging
     W::Float64
     WG::SVector{3,Float64}
-    
-
-
 
     function Particle()
         position = SVector(NaN, NaN, NaN)
@@ -54,8 +51,8 @@ Base.@kwdef mutable struct Simulation
     rho0::Float64 = 1000
     gamma::Float64 = 7
     α::Float64     = 0.01
-    Boundary::Collection = Collection()
-    Fluid::Collection    = Collection()
+    Boundary::Collection
+    Fluid::Collection
 end
 
 # Define the Wendland kernel function:
@@ -261,21 +258,6 @@ function time_step(Sim)
     end    
 
     for particle in Sim.Boundary.particles
-        # # Calculate the acceleration of the particle using the inviscid momentum equation:
-        # particle.acceleration = inviscid_momentum_eqn(particle, Sim, h, dx) - SVector(0,-9.81,0)
-
-        # # Update the velocity of the particle using the acceleration:
-        # #particle.velocity += particle.acceleration * dt
-
-        # # Calculate the time derivative of the density of the particle using the continuity equation:
-        # time_deriv_density = continuity_eqn(particle, Sim, h, dx)
-
-        # # Update the density of the particle using the time derivative of the density:
-        # particle.density += time_deriv_density * dt
-
-        # # Recalculate the acceleration of the particle using the updated density:
-        # particle.acceleration =  inviscid_momentum_eqn(particle, Sim, h, dx) - SVector(0,-9.81,0)
-
         # Start particle velocity and density and position
         pn = particle.position
         vn = particle.velocity
