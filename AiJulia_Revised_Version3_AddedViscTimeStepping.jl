@@ -38,22 +38,34 @@ end
 mutable struct Collection
     particles::Vector{Particle}
 
+    function Collection()
+        new()
+    end
+
     function Collection(particles)
         new(particles)
     end
 end
 
-Base.@kwdef mutable struct Simulation
+Base.@kwdef mutable struct Constants
     dx::Float64 = 0.1
-    dt::Float64 = 0.0001
+    dt_ini::Float64 = 0.0001
     h::Float64  = 1.5*sqrt(2*0.1^2)
     c0::Float64 = 0
     rho0::Float64 = 1000
     gamma::Float64 = 7
     α::Float64     = 0.01
-    Boundary::Collection
-    Fluid::Collection
+    CFL::Float64   = 0.3
 end
+
+Base.@kwdef mutable struct Simulation
+    Boundary::Collection = Collection()
+    Fluid::Collection    = Collection()
+    Constants::Constants = Constants()
+    dt::Float64          = 0;
+end
+
+
 
 # Define the Wendland kernel function:
 function WendlandKernel(q,h)
@@ -195,15 +207,15 @@ function inviscid_momentum_eqn(particle, Sim, h,dx)
 
         rhob           = p.density;
         mb             = rhob*dx^2;
-        Pb             = pressure_eqn_of_state(rhob,Sim.rho0,Sim.gamma,Sim.c0)
+        Pb             = pressure_eqn_of_state(rhob,Sim.Constants.rho0,Sim.Constants.gamma,Sim.Constants.c0)
         rhoa           = particle.density
 
         rhoab          = (rhoa+rhob)/2
 
-        visc           = Π(Sim.α,Sim.c0,Sim.h,vab,r,rhoab)
+        visc           = Π(Sim.Constants.α,Sim.Constants.c0,Sim.Constants.h,vab,r,rhoab)
         particle.Visc  = visc;
 
-        Pa             = pressure_eqn_of_state(rhoa,Sim.rho0,Sim.gamma,Sim.c0)
+        Pa             = pressure_eqn_of_state(rhoa,Sim.Constants.rho0,Sim.Constants.gamma,Sim.Constants.c0)
         acceleration  += -mb*((Pb+Pa)/(rhob*rhoa) + visc) * gradW
     end
 
@@ -214,9 +226,9 @@ end
 
 # Define the time step function:
 function time_step(Sim)
-    h  = Sim.h
+    h  = Sim.Constants.h
     dt = Sim.dt
-    dx = Sim.dx
+    dx = Sim.Constants.dx
 
     # Loop over all fluid particles:
     for particle in Sim.Fluid.particles
@@ -304,9 +316,9 @@ function time_step(Sim)
     # Inspired by JSphCpu.cpp from DualSPHysics
     CFL     = 0.3
     max_acc = maximum(norm.(getfield.(Sim.Fluid.particles,:acceleration)));
-    dt1     =  sqrt(Sim.h/max_acc)
+    dt1     =  sqrt(Sim.Constants.h/max_acc)
 
-    dt2     = Sim.h / (Sim.c0 + maximum(getfield.(Sim.Fluid.particles,:Visc)))
+    dt2     = Sim.Constants.h / (Sim.Constants.c0 + maximum(getfield.(Sim.Fluid.particles,:Visc)))
 
     dt      = CFL*min(dt1,dt2)
 
@@ -321,7 +333,9 @@ function time_step(Sim)
 end
 
 #Sim = Simulation(dt=1e-4,h=0.141421,c0=81.675,dx=0.1,rho0=1000)
-Sim = Simulation(dt=1e-4,h=0.056569,c0=85.89,dx=0.04,rho0=1000)
+Consts = Constants(dt_ini=1e-4,h=0.056569,c0=85.89,dx=0.04,rho0=1000)
+Sim = Simulation(Constants=Consts)
+
 #Sim = Simulation(dt=1e-4,h=0.028284,c0=87.25,dx=0.02,rho0=1000)
 
 # Create a Collection object for the fluid particles:
@@ -348,7 +362,7 @@ for i = 1:size(DF_BOUND)[1]
     acc = SVector(0.0, 0.0, 0.0)
     vel = SVector(0.0, 0.0, 0.0)
     # Create a new Particle object with the calculated position:
-    particle = Particle(pos,acc,vel, Sim.rho0, idp,0,0,SVector(0,0,0))
+    particle = Particle(pos,acc,vel, Sim.Constants.rho0, idp,0,0,SVector(0,0,0))
 
     # Add the particle to the wall_particles collection:
     push!(wall_particles.particles, particle)
@@ -400,7 +414,7 @@ function create_vtp_file(collection::Collection, filename::String)
         vtk_point_data(vtk, kernelW, "kernel")
         vtk_point_data(vtk, kernelWG, "kernel_gradient")
         vtk_point_data(vtk, viscocities, "Viscosity")
-        vtk_point_data(vtk,pressure_eqn_of_state.(densities,Sim.rho0,Sim.gamma,Sim.c0),"pressure")
+        vtk_point_data(vtk,pressure_eqn_of_state.(densities,Sim.Constants.rho0,Sim.Constants.gamma,Sim.Constants.c0),"pressure")
     end
 end
 
