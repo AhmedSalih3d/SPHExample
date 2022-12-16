@@ -41,11 +41,6 @@ end
 mutable struct Collection
     particles::Vector{Particle}
 
-
-    function Collection()
-        new()
-    end
-
     function Collection(particles)
         new(particles)
     end
