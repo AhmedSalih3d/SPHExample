@@ -1,12 +1,11 @@
 using StaticArrays
-using Plots
 using WriteVTK
 using LinearAlgebra
 using CSV, DataFrames
 
 
-DF_FLUID = CSV.read("./Documents/DamBreakParticles/FluidPoints_Dp0.04.csv", DataFrame)
-DF_BOUND = CSV.read("./Documents/DamBreakParticles/BoundaryPoints_Dp0.04.csv", DataFrame)
+DF_FLUID = CSV.read("FluidPoints_Dp0.04.csv", DataFrame)
+DF_BOUND = CSV.read("BoundaryPoints_Dp0.04.csv", DataFrame)
 
 mutable struct Particle
     position::SVector{3, Float64}
@@ -14,10 +13,11 @@ mutable struct Particle
     velocity::SVector{3, Float64}
     density::Float64
     id::Int
+    Visc::Float64
     # For debugging
     W::Float64
     WG::SVector{3,Float64}
-    Visc::Float64
+    
 
 
 
@@ -27,13 +27,14 @@ mutable struct Particle
         velocity = SVector(NaN, NaN, NaN)
         density = NaN
         id = -1
+        Visc = NaN
         W = NaN
         WG = SVector(NaN, NaN, NaN)
-        new(position, acceleration, velocity, density, id,W,WG)
+        new(position, acceleration, velocity, density, id,Visc,W,WG)
     end
 
-    function Particle(position, acceleration, velocity, density, id,W,WG)
-        new(position, acceleration, velocity, density, id,W,WG)
+    function Particle(position, acceleration, velocity, density, id, Visc,W,WG)
+        new(position, acceleration, velocity, density, id,Visc,W,WG)
     end
 end
 
@@ -336,7 +337,7 @@ function time_step(Sim)
 
     if isnan(dt)
         println("Simulation experienced nan time step")
-        break
+        return 1
     end
 
     println("Iteration: | dt = $dt")
@@ -355,7 +356,7 @@ for i = 1:size(DF_FLUID)[1]
     acc = SVector(0.0, 0.0, 0.0)
     vel = SVector(0.0, 0.0, 0.0)
     # Create a new Particle object with the calculated position:
-    particle = Particle(pos,acc,vel, DF_FLUID[i,:]["Rhop"], idp,0,SVector(0,0,0))
+    particle = Particle(pos,acc,vel, DF_FLUID[i,:]["Rhop"], idp,0,0,SVector(0,0,0))
 
     # Add the particle to the wall_particles collection:
     push!(fluid_particles.particles, particle)
@@ -370,7 +371,7 @@ for i = 1:size(DF_BOUND)[1]
     acc = SVector(0.0, 0.0, 0.0)
     vel = SVector(0.0, 0.0, 0.0)
     # Create a new Particle object with the calculated position:
-    particle = Particle(pos,acc,vel, Sim.rho0, idp,0,SVector(0,0,0))
+    particle = Particle(pos,acc,vel, Sim.rho0, idp,0,0,SVector(0,0,0))
 
     # Add the particle to the wall_particles collection:
     push!(wall_particles.particles, particle)
@@ -425,25 +426,27 @@ function create_vtp_file(collection::Collection, filename::String)
         vtk_point_data(vtk,pressure_eqn_of_state.(densities,Sim.rho0,Sim.gamma,Sim.c0),"pressure")
     end
 end
-        
-# Define the maximum number of iterations:
-max_iter = 40000
 
-# Define the counter for the number of iterations:
-counter = 0
-create_vtp_file(Sim.Fluid, "./particles/fluid_particles"*lpad(counter,4,"0")*".vtp")
-create_vtp_file(Sim.Boundary, "./particles/wall_particles"*lpad(counter,4,"0")*".vtp")
+function RunSimulation(Sim)
+    # Define the maximum number of iterations:
+    max_iter = 40000
 
-# Loop over all iterations:
-while counter < max_iter
-    # Increment the counter:
-    counter += 1
-    time_step(Sim)
-    # Perform an action every 100 iterations:
-    if counter % 50 == 0
-        # Create .vtp files for the fluid particles and the wall particles:
-        create_vtp_file(Sim.Fluid, "./particles/fluid_particles"*lpad(counter,4,"0")*".vtp")
-        create_vtp_file(Sim.Boundary, "./particles/wall_particles"*lpad(counter,4,"0")*".vtp")
+    # Define the counter for the number of iterations:
+    counter = 0
+    create_vtp_file(Sim.Fluid, "./particles/fluid_particles"*lpad(counter,4,"0")*".vtp")
+    create_vtp_file(Sim.Boundary, "./particles/wall_particles"*lpad(counter,4,"0")*".vtp")
+
+    # Loop over all iterations:
+    while counter < max_iter
+        # Increment the counter:
+        counter += 1
+        time_step(Sim)
+        # Perform an action every 100 iterations:
+        if counter % 50 == 0
+            # Create .vtp files for the fluid particles and the wall particles:
+            create_vtp_file(Sim.Fluid, "./particles/fluid_particles"*lpad(counter,4,"0")*".vtp")
+            create_vtp_file(Sim.Boundary, "./particles/wall_particles"*lpad(counter,4,"0")*".vtp")
+        end
     end
 end
 
