@@ -12,10 +12,8 @@ mutable struct Particle
     acceleration::SVector{3, Float64}
     velocity::SVector{3, Float64}
     density::Float64
-    density_ini::Float64
     id::Int
     Visc::Float64
-    Pressure::Float64
     # For debugging
     W::Float64
     WG::SVector{3,Float64}
@@ -25,19 +23,17 @@ mutable struct Particle
         position = SVector(NaN, NaN, NaN)
         acceleration = SVector(NaN, NaN, NaN)
         velocity = SVector(NaN, NaN, NaN)
-        density     = NaN
-        density_ini = NaN
+        density = NaN
         id = -1
         Visc = NaN
         W = NaN
         WG = SVector(NaN, NaN, NaN)
         ddt = 0
-        Pressure = NaN
-        new(position, acceleration, velocity, density,density_ini, id,Visc,Pressure,W,WG,ddt)
+        new(position, acceleration, velocity, density, id,Visc,W,WG,ddt)
     end
 
-    function Particle(position, acceleration, velocity, density, density_ini, id, Visc,Pressure,W,WG,ddt)
-        new(position, acceleration, velocity, density,density_ini, id,Visc,Pressure,W,WG,ddt)
+    function Particle(position, acceleration, velocity, density, id, Visc,W,WG,ddt)
+        new(position, acceleration, velocity, density, id,Visc,W,WG,ddt)
     end
 end
 
@@ -116,9 +112,9 @@ function calcGradientW(h, q, rel)
 end
 
 # Define the pressure equation of state:
-function pressure_eqn_of_state(density, initial_density,Cb, gamma)
+function pressure_eqn_of_state(density, initial_density, gamma, c0)
     # Calculate the pressure using the given equation:
-    pressure = Cb * ((density / initial_density)^gamma - 1)
+    pressure = (c0^2 * initial_density / gamma) * ((density / initial_density)^gamma - 1)
     return pressure
 end
 
@@ -170,7 +166,7 @@ function continuity_eqn(particle, Sim, h, dx)
         ddt_term = 0.1*h*Sim.Constants.c0*dot(psiab,gradW)*(mb/p.density)
 
         # Calculate the contribution of the other particle to the time derivative of the density:
-        time_deriv_density += rhoa * dot((mb/p.density)*vab, gradW) + ddt_term
+        time_deriv_density += rhoa * dot((mb/p.density)*vab, gradW)# + ddt_term
 
         particle.WG  += gradW;
         particle.ddt += ddt_term
@@ -220,14 +216,14 @@ function inviscid_momentum_eqn(particle, Sim, h,dx)
 
         rhob           = p.density;
         mb             = Sim.Constants.mass;
-        Pb             = pressure_eqn_of_state(p.density,p.density_ini,Sim.Constants.Cb,Sim.Constants.gamma)
+        Pb             = pressure_eqn_of_state(rhob,Sim.Constants.rho0,Sim.Constants.gamma,Sim.Constants.c0)
         rhoa           = particle.density
 
         rhoab          = (rhoa+rhob)/2
 
         visc           += Π(Sim.Constants.α,Sim.Constants.c0,Sim.Constants.h,vab,r,rhoab)
 
-        Pa             = pressure_eqn_of_state(particle.density,particle.density_ini,Sim.Constants.Cb,Sim.Constants.gamma)
+        Pa             = pressure_eqn_of_state(rhoa,Sim.Constants.rho0,Sim.Constants.gamma,Sim.Constants.c0)
         acceleration   += -mb*((Pb+Pa)/(rhob*rhoa) + visc) * gradW
     end
 
@@ -378,7 +374,6 @@ function create_vtp_file(collection::Collection, filename::String)
 
     # Create a vector of the particle densities:
     densities  = [particle.density for particle in collection.particles]
-    pressures  = [particle.Pressure for particle in collection.particles]
     ddt        = [particle.ddt for particle in collection.particles]
     accelerations = [particle.acceleration for particle in collection.particles]
     velocities = [particle.velocity for particle in collection.particles]
@@ -406,7 +401,7 @@ function create_vtp_file(collection::Collection, filename::String)
         vtk_point_data(vtk, kernelW, "kernel")
         vtk_point_data(vtk, kernelWG, "kernel_gradient")
         vtk_point_data(vtk, viscocities, "Viscosity")
-        vtk_point_data(vtk, pressures,"pressure")
+        vtk_point_data(vtk,pressure_eqn_of_state.(densities,Sim.Constants.rho0,Sim.Constants.gamma,Sim.Constants.c0),"pressure")
     end
 end
 
@@ -430,7 +425,7 @@ function RunSimulation(Sim)
     end
 end
 
-### Run
+# Run
 
 #Sim = Simulation(dt=1e-4,h=0.141421,c0=81.675,dx=0.1,rho0=1000)
 Consts = Constants(dt_ini=1e-4,h=0.056569,c0=85.89,dx=0.04,rho0=1000)
@@ -447,7 +442,7 @@ for i = 1:size(DF_FLUID)[1]
     acc = SVector(0.0, 0.0, 0.0)
     vel = SVector(0.0, 0.0, 0.0)
     # Create a new Particle object with the calculated position:
-    particle = Particle(pos,acc,vel,DF_FLUID[i,:]["Rhop"], DF_FLUID[i,:]["Rhop"], idp,0,0,0,SVector(0,0,0),0)
+    particle = Particle(pos,acc,vel, DF_FLUID[i,:]["Rhop"], idp,0,0,SVector(0,0,0),0)
 
     # Add the particle to the wall_particles collection:
     push!(fluid_particles.particles, particle)
@@ -462,10 +457,16 @@ for i = 1:size(DF_BOUND)[1]
     acc = SVector(0.0, 0.0, 0.0)
     vel = SVector(0.0, 0.0, 0.0)
     # Create a new Particle object with the calculated position:
-    particle = Particle(pos,acc,vel, Sim.Constants.rho0, Sim.Constants.rho0, idp,0,0,0,SVector(0,0,0),0)
+    particle = Particle(pos,acc,vel, Sim.Constants.rho0, idp,0,0,SVector(0,0,0),0)
 
     # Add the particle to the wall_particles collection:
     push!(wall_particles.particles, particle)
+
+    # Create a new Particle object with the calculated position:
+    #particle = Particle(pos-SVector(Sim.dx/2,Sim.dx/2,0.0),acc,vel, Sim.rho0, idp,0,SVector(0,0,0))
+
+    # Add the particle to the wall_particles collection:
+    #push!(wall_particles.particles, particle)
 end
 
 Sim.Boundary = wall_particles
