@@ -55,7 +55,9 @@ Base.@kwdef mutable struct Constants
     gamma::Float64 = 7
     α::Float64     = 0.01
     CFL::Float64   = 0.3
+    g::Float64     = -9.81
     mass::Float64  = rho0*dx^2
+    Cb::Float64    = (c0^2*rho0)/gamma
 end
 
 Base.@kwdef mutable struct Simulation
@@ -63,6 +65,7 @@ Base.@kwdef mutable struct Simulation
     Fluid::Collection    = Collection()
     Constants::Constants = Constants()
     dt::Float64          = 0;
+    iter::Int64          = 0;
 end
 
 
@@ -121,7 +124,23 @@ function density_eqn_of_state(particle, mwl, initial_density, gamma, c0)
     return density
 end
 
-#function Ψ(rhob)
+function Ψ(Sim,pa,pb)
+    zab    = pa.position[2] - pb.position[2]
+    Pabh = Sim.Constants.rho0*Sim.Constants.g*zab
+
+    rhoabh = Sim.Constants.rho0*(((Pabh)/(Sim.Constants.Cb)+1)^(1/Sim.Constants.gamma) - 1)
+
+    #https://www.symbolab.com/solver/step-by-step/solve%20for%20r%2C%20B%5Ccdot%5Cleft(%5Cleft(%5Cfrac%7Br%7D%7Bt%7D%5Cright)%5E%7B7%7D-1%5Cright)%3DP?or=input
+    #rhoabh = density_eqn_of_state(pa,pb.position[2],Sim.Constants.rho0,Sim.Constants.gamma,Sim.Constants.c0)
+
+    rhoba   = pa.density - pb.density #eqn 16 Local_uniform_stencil_LUST_boundary_condition_for_.pdf
+
+    q,rel = calcDistanceQ(pa,pb,Sim.Constants.h)
+
+    psiab  = 2*(rhoba - rhoabh) * (rel/((q*Sim.Constants.h)+1e-6))
+
+    return psiab
+end
 
 # Define the continuity equation for SPH:
 function continuity_eqn(particle, Sim, h, dx)
@@ -150,8 +169,12 @@ function continuity_eqn(particle, Sim, h, dx)
         # Calculate the gradient of the kernel for the two particles:
         gradW = calcGradientW(h, q, r)
 
+        psiab = Ψ(Sim,particle,p)
+
+        ddt_term = 0.1*h*Sim.Constants.c0*dot(psiab,gradW)*(mb/p.density)
+
         # Calculate the contribution of the other particle to the time derivative of the density:
-        time_deriv_density += rhoa * dot((mb/p.density)*vab, gradW)
+        time_deriv_density += rhoa * dot((mb/p.density)*vab, gradW) #+ ddt_term
 
         particle.WG += gradW;
     end
@@ -177,7 +200,7 @@ end
 # Define the inviscid momentum equation for SPH:
 function inviscid_momentum_eqn(particle, Sim, h,dx)
     # Initialize the acceleration to zero:
-    g = -9.81
+    g = Sim.Constants.g
     acceleration = SVector(0, g, 0)
 
     # Loop over all fluid particles:
@@ -320,7 +343,7 @@ function time_step(Sim)
         return 1
     end
 
-    println("Iteration: | dt = $dt")
+    println("Iteration: $(Sim.iter) | dt = $dt")
 end
 
 #Sim = Simulation(dt=1e-4,h=0.141421,c0=81.675,dx=0.1,rho0=1000)
@@ -334,7 +357,7 @@ fluid_particles = Collection(Vector{Particle}())
 
 for i = 1:size(DF_FLUID)[1]
     idp = DF_FLUID[i,:]["Idp"]
-    pos = SVector(DF_FLUID[i,:]["Points:0"],DF_FLUID[i,:]["Points:2"],DF_FLUID[i,:]["Points:1"])
+    pos = SVector(0.01,0,0)+SVector(DF_FLUID[i,:]["Points:0"],DF_FLUID[i,:]["Points:2"],DF_FLUID[i,:]["Points:1"])
     acc = SVector(0.0, 0.0, 0.0)
     vel = SVector(0.0, 0.0, 0.0)
     # Create a new Particle object with the calculated position:
@@ -423,6 +446,7 @@ function RunSimulation(Sim)
         # Increment the counter:
         counter += 1
         time_step(Sim)
+        Sim.iter += counter;
         # Perform an action every 100 iterations:
         if counter % 50 == 0
             # Create .vtp files for the fluid particles and the wall particles:
