@@ -2,6 +2,7 @@ using StaticArrays
 using WriteVTK
 using LinearAlgebra
 using CSV, DataFrames
+using Printf
 
 DF_FLUID = CSV.read("FluidPoints_Dp0.04.csv", DataFrame)
 DF_BOUND = CSV.read("BoundaryPoints_Dp0.04.csv", DataFrame)
@@ -343,7 +344,8 @@ function time_step(Sim)
         return 1
     end
 
-    println("Iteration: $(Sim.iter) | dt = $dt")
+    it = lpad(Sim.iter,4,"0")
+    @printf "Iteration: %s | dt = %.5e" it dt
 end
 
 #Sim = Simulation(dt=1e-4,h=0.141421,c0=81.675,dx=0.1,rho0=1000)
@@ -436,23 +438,19 @@ function RunSimulation(Sim)
     # Define the maximum number of iterations:
     max_iter = 40000
 
-    # Define the counter for the number of iterations:
-    counter = 0
-    create_vtp_file(Sim.Fluid, "./particles/fluid_particles"*lpad(counter,4,"0")*".vtp")
-    create_vtp_file(Sim.Boundary, "./particles/wall_particles"*lpad(counter,4,"0")*".vtp")
-
     # Loop over all iterations:
-    while counter < max_iter
-        # Increment the counter:
-        counter += 1
-        time_step(Sim)
-        Sim.iter += counter;
+    while Sim.iter < max_iter
         # Perform an action every 100 iterations:
-        if counter % 50 == 0
+        if Sim.iter % 50 == 0
             # Create .vtp files for the fluid particles and the wall particles:
-            create_vtp_file(Sim.Fluid, "./particles/fluid_particles"*lpad(counter,4,"0")*".vtp")
-            create_vtp_file(Sim.Boundary, "./particles/wall_particles"*lpad(counter,4,"0")*".vtp")
+            create_vtp_file(Sim.Fluid, "./particles/fluid_particles"*lpad(Sim.iter,4,"0")*".vtp")
+            create_vtp_file(Sim.Boundary, "./particles/wall_particles"*lpad(Sim.iter,4,"0")*".vtp")
         end
+        
+        # Increment the counter:
+        Sim.iter += 1;
+        stats = @timed time_step(Sim)
+        @printf " | Execution Time: %.5e [s] \n" stats.time
     end
 end
 
