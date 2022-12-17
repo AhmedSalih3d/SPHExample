@@ -147,7 +147,7 @@ end
 function continuity_eqn(particle, Sim, h, dx)
     # Initialize the time derivative of the density to zero:
     time_deriv_density = 0
-    particle.WG        =        SVector(0.0,0.0,0.0)
+    particle.WG        = SVector(0.0,0.0,0.0)
 
     # Loop over all fluid particles:
     for p in [Sim.Fluid.particles;Sim.Boundary.particles]
@@ -203,6 +203,7 @@ function inviscid_momentum_eqn(particle, Sim, h,dx)
     # Initialize the acceleration to zero:
     g = Sim.Constants.g
     acceleration = SVector(0, g, 0)
+    visc         = 0
 
     # Loop over all fluid particles:
     for p in [Sim.Fluid.particles;Sim.Boundary.particles]
@@ -228,32 +229,39 @@ function inviscid_momentum_eqn(particle, Sim, h,dx)
 
         rhoab          = (rhoa+rhob)/2
 
-        visc           = Π(Sim.Constants.α,Sim.Constants.c0,Sim.Constants.h,vab,r,rhoab)
-        particle.Visc  = visc;
+        visc           += Π(Sim.Constants.α,Sim.Constants.c0,Sim.Constants.h,vab,r,rhoab)
 
         Pa             = pressure_eqn_of_state(rhoa,Sim.Constants.rho0,Sim.Constants.gamma,Sim.Constants.c0)
-        acceleration  += -mb*((Pb+Pa)/(rhob*rhoa) + visc) * gradW
+        acceleration   += -mb*((Pb+Pa)/(rhob*rhoa) + visc) * gradW
     end
 
-    return acceleration
+    return acceleration,visc
 end
 
 
 
 # Define the time step function:
 function time_step(Sim)
+    Sim_ = deepcopy(Sim);
+    
     h  = Sim.Constants.h
     dt = Sim.dt
     dx = Sim.Constants.dx
 
+    T = typeof(Sim_.Fluid.particles[1])
+    f = fieldnames(T)
+
     # Loop over all fluid particles:
-    for particle in Sim.Fluid.particles
+    for (particle,particle_update) in zip(Sim_.Fluid.particles,Sim.Fluid.particles)
+        #
+        pold = deepcopy(particle)
+
         # Start particle velocity and density
         vn = particle.velocity
         rn = particle.density
 
         # Calculate the acceleration of the particle using the inviscid momentum equation:
-        particle.acceleration = inviscid_momentum_eqn(particle, Sim, h, dx)
+        particle.acceleration,particle.Visc = inviscid_momentum_eqn(particle, Sim_, h, dx)
 
         # Perform the first half of the position update:
         position_half_step = particle.velocity * dt / 2
@@ -264,14 +272,14 @@ function time_step(Sim)
         particle.velocity  += velocity_half_step
 
         # Calculate the time derivative of the density of the particle using the continuity equation:
-        time_deriv_density = continuity_eqn(particle, Sim, h, dx)
+        time_deriv_density = continuity_eqn(particle, Sim_, h, dx)
         
         # Update the density of the particle using the time derivative of the density:
         density_half_step = time_deriv_density * dt/2
         particle.density += density_half_step
 
         # Calculate the acceleration of the particle using the inviscid momentum equation:
-        particle.acceleration = inviscid_momentum_eqn(particle, Sim, h, dx)
+        particle.acceleration,particle.Visc = inviscid_momentum_eqn(particle, Sim_, h, dx)
 
         # Update the velocity of the particle using the acceleration:
         particle.velocity += particle.acceleration * dt - velocity_half_step
@@ -283,16 +291,27 @@ function time_step(Sim)
         epsi = -(time_deriv_density/particle.density) * dt
 
         particle.density = rn * ((2-epsi)/(2+epsi))
+
+        # Update
+        for f_ in f
+            setfield!(particle_update,f_,getfield(particle,f_))
+        end
+
+        particle        = pold
     end    
 
-    for particle in Sim.Boundary.particles
+    for (particle,particle_update) in zip(Sim_.Boundary.particles,Sim.Boundary.particles)
+        #
+        pold = deepcopy(particle)
+
         # Start particle velocity and density and position
         pn = particle.position
         vn = particle.velocity
         rn = particle.density
 
         # Calculate the acceleration of the particle using the inviscid momentum equation:
-        particle.acceleration = inviscid_momentum_eqn(particle, Sim, h, dx) - SVector(0,Sim.Constants.g,0)
+        particle.acceleration,particle.Visc = inviscid_momentum_eqn(particle, Sim_, h, dx) 
+        particle.acceleration -= SVector(0,Sim_.Constants.g,0)
 
         # Perform the first half of the position update:
         position_half_step = particle.velocity * dt / 2
@@ -303,14 +322,15 @@ function time_step(Sim)
         particle.velocity  += velocity_half_step
 
         # Calculate the time derivative of the density of the particle using the continuity equation:
-        time_deriv_density = continuity_eqn(particle, Sim, h, dx)
+        time_deriv_density = continuity_eqn(particle, Sim_, h, dx)
         
         # Update the density of the particle using the time derivative of the density:
         density_half_step = time_deriv_density * dt/2
         particle.density += density_half_step
 
         # Calculate the acceleration of the particle using the inviscid momentum equation:
-        particle.acceleration = inviscid_momentum_eqn(particle, Sim, h, dx) - SVector(0,Sim.Constants.g,0)
+        particle.acceleration,particle.Visc = inviscid_momentum_eqn(particle, Sim_, h, dx)
+        particle.acceleration -= SVector(0,Sim_.Constants.g,0)
 
         # Update the velocity of the particle using the acceleration:
         particle.velocity += particle.acceleration * dt - velocity_half_step
@@ -326,6 +346,12 @@ function time_step(Sim)
         # Since boundary partilces no actual velocity is allowed to be set
         particle.velocity = vn
         particle.position = pn
+
+        # Update
+        for f_ in f
+            setfield!(particle_update,f_,getfield(particle,f_))
+        end
+        particle        = pold
     end
 
     # Extract Info relevant for time stepping
@@ -340,7 +366,7 @@ function time_step(Sim)
     Sim.dt  = dt;
 
     if isnan(dt)
-        println("Simulation experienced nan time step")
+        print("Simulation experienced nan time step")
         return 1
     end
 
@@ -349,7 +375,7 @@ function time_step(Sim)
 end
 
 #Sim = Simulation(dt=1e-4,h=0.141421,c0=81.675,dx=0.1,rho0=1000)
-Consts = Constants(dt_ini=1e-4,h=0.056569,c0=85.89,dx=0.04,rho0=1000,g=0)
+Consts = Constants(dt_ini=1e-4,h=0.056569,c0=85.89,dx=0.04,rho0=1000)
 Sim = Simulation(Constants=Consts)
 
 #Sim = Simulation(dt=1e-4,h=0.028284,c0=87.25,dx=0.02,rho0=1000)
@@ -359,7 +385,7 @@ fluid_particles = Collection(Vector{Particle}())
 
 for i = 1:size(DF_FLUID)[1]
     idp = DF_FLUID[i,:]["Idp"]
-    pos = SVector(0.01,0,0)+SVector(DF_FLUID[i,:]["Points:0"],DF_FLUID[i,:]["Points:2"],DF_FLUID[i,:]["Points:1"])
+    pos = SVector(0.5,0.2,0)+SVector(DF_FLUID[i,:]["Points:0"],DF_FLUID[i,:]["Points:2"],DF_FLUID[i,:]["Points:1"])
     acc = SVector(0.0, 0.0, 0.0)
     vel = SVector(0.0, 0.0, 0.0)
     # Create a new Particle object with the calculated position:
