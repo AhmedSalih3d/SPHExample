@@ -119,7 +119,7 @@ end
 # https://www.symbolab.com/solver/step-by-step/solve%20for%20d%2C%20%20%20p%20%3D%20%5Cleft(c%5E%7B2%7D%20%5Ccdot%20k%20%2F%207%5Cright)%20%5Ccdot%5Cleft(%5Cleft(d%20%2F%20k%5Cright)%5E%7B7%7D%20-%201%5Cright)?or=input
 function density_eqn_of_state(particle, mwl, initial_density, gamma, c0)
     height = mwl - particle.position[2]
-    pressure = height*initial_density*9.81;
+    pressure = height*initial_density*abs(Sim.Constants.g);
     # Calculate the pressure using the given equation:
     density = initial_density * ((gamma*pressure+initial_density*c0^2)/(initial_density*c0^2))^(1/gamma)
     return density
@@ -292,7 +292,7 @@ function time_step(Sim)
         rn = particle.density
 
         # Calculate the acceleration of the particle using the inviscid momentum equation:
-        particle.acceleration = inviscid_momentum_eqn(particle, Sim, h, dx) - SVector(0,-9.81,0)
+        particle.acceleration = inviscid_momentum_eqn(particle, Sim, h, dx) - SVector(0,Sim.Constants.g,0)
 
         # Perform the first half of the position update:
         position_half_step = particle.velocity * dt / 2
@@ -310,7 +310,7 @@ function time_step(Sim)
         particle.density += density_half_step
 
         # Calculate the acceleration of the particle using the inviscid momentum equation:
-        particle.acceleration = inviscid_momentum_eqn(particle, Sim, h, dx) - SVector(0,-9.81,0)
+        particle.acceleration = inviscid_momentum_eqn(particle, Sim, h, dx) - SVector(0,Sim.Constants.g,0)
 
         # Update the velocity of the particle using the acceleration:
         particle.velocity += particle.acceleration * dt - velocity_half_step
@@ -349,7 +349,7 @@ function time_step(Sim)
 end
 
 #Sim = Simulation(dt=1e-4,h=0.141421,c0=81.675,dx=0.1,rho0=1000)
-Consts = Constants(dt_ini=1e-4,h=0.056569,c0=85.89,dx=0.04,rho0=1000)
+Consts = Constants(dt_ini=1e-4,h=0.056569,c0=85.89,dx=0.04,rho0=1000,g=0)
 Sim = Simulation(Constants=Consts)
 
 #Sim = Simulation(dt=1e-4,h=0.028284,c0=87.25,dx=0.02,rho0=1000)
