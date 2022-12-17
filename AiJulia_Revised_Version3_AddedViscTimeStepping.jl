@@ -12,26 +12,32 @@ mutable struct Particle
     acceleration::SVector{3, Float64}
     velocity::SVector{3, Float64}
     density::Float64
+    density_ini::Float64
     id::Int
     Visc::Float64
+    Pressure::Float64
     # For debugging
     W::Float64
     WG::SVector{3,Float64}
+    ddt::Float64 #Density Diffusion Term
 
     function Particle()
         position = SVector(NaN, NaN, NaN)
         acceleration = SVector(NaN, NaN, NaN)
         velocity = SVector(NaN, NaN, NaN)
-        density = NaN
+        density     = NaN
+        density_ini = NaN
         id = -1
         Visc = NaN
         W = NaN
         WG = SVector(NaN, NaN, NaN)
-        new(position, acceleration, velocity, density, id,Visc,W,WG)
+        ddt = 0
+        Pressure = NaN
+        new(position, acceleration, velocity, density,density_ini, id,Visc,Pressure,W,WG,ddt)
     end
 
-    function Particle(position, acceleration, velocity, density, id, Visc,W,WG)
-        new(position, acceleration, velocity, density, id,Visc,W,WG)
+    function Particle(position, acceleration, velocity, density, density_ini, id, Visc,Pressure,W,WG,ddt)
+        new(position, acceleration, velocity, density,density_ini, id,Visc,Pressure,W,WG,ddt)
     end
 end
 
@@ -110,36 +116,25 @@ function calcGradientW(h, q, rel)
 end
 
 # Define the pressure equation of state:
-function pressure_eqn_of_state(density, initial_density, gamma, c0)
+function pressure_eqn_of_state(density, initial_density,Cb, gamma)
     # Calculate the pressure using the given equation:
-    pressure = (c0^2 * initial_density / gamma) * ((density / initial_density)^gamma - 1)
+    pressure = Cb * ((density / initial_density)^gamma - 1)
     return pressure
 end
 
-# https://www.symbolab.com/solver/step-by-step/solve%20for%20d%2C%20%20%20p%20%3D%20%5Cleft(c%5E%7B2%7D%20%5Ccdot%20k%20%2F%207%5Cright)%20%5Ccdot%5Cleft(%5Cleft(d%20%2F%20k%5Cright)%5E%7B7%7D%20-%201%5Cright)?or=input
-function density_eqn_of_state(particle, mwl, initial_density, gamma, c0)
-    height = mwl - particle.position[2]
-    pressure = height*initial_density*abs(Sim.Constants.g);
-    # Calculate the pressure using the given equation:
-    density = initial_density * ((gamma*pressure+initial_density*c0^2)/(initial_density*c0^2))^(1/gamma)
-    return density
-end
+#https://forums.dual.sphysics.org/discussion/2173/ddt-fourtakas-hydrostatic-component
+function Ψ(Sim,pa,pb,rel,rnorm)
+    r0    = Sim.Constants.rho0
+    drz   = pa.position[2] - pb.position[2]
+    DDTgz = r0*abs(Sim.Constants.g)/Sim.Constants.Cb
+    rh    = 1 + DDTgz*drz
+    drhop = r0 * ^(rh,1/Sim.Constants.gamma) - r0
 
-function Ψ(Sim,pa,pb)
-    zab    = pa.position[2] - pb.position[2]
-    Pabh = Sim.Constants.rho0*Sim.Constants.g*zab
+    rhoa  = pa.density
+    rhob  = pb.density
 
-    rhoabh = Sim.Constants.rho0*(((Pabh)/(Sim.Constants.Cb)+1)^(1/Sim.Constants.gamma) - 1)
-
-    #https://www.symbolab.com/solver/step-by-step/solve%20for%20r%2C%20B%5Ccdot%5Cleft(%5Cleft(%5Cfrac%7Br%7D%7Bt%7D%5Cright)%5E%7B7%7D-1%5Cright)%3DP?or=input
-    #rhoabh = density_eqn_of_state(pa,pb.position[2],Sim.Constants.rho0,Sim.Constants.gamma,Sim.Constants.c0)
-
-    rhoba   = pa.density - pb.density #eqn 16 Local_uniform_stencil_LUST_boundary_condition_for_.pdf
-
-    q,rel = calcDistanceQ(pa,pb,Sim.Constants.h)
-
-    psiab  = 2*(rhoba - rhoabh) * (rel/((q*Sim.Constants.h)+1e-6))
-
+    psiab = 2*(rhob-rhoa-drhop)*rel/(rnorm+1e-6)
+    
     return psiab
 end
 
@@ -170,14 +165,15 @@ function continuity_eqn(particle, Sim, h, dx)
         # Calculate the gradient of the kernel for the two particles:
         gradW = calcGradientW(h, q, r)
 
-        psiab = Ψ(Sim,particle,p)
+        psiab = Ψ(Sim,particle,p,r,q*h)
 
         ddt_term = 0.1*h*Sim.Constants.c0*dot(psiab,gradW)*(mb/p.density)
 
         # Calculate the contribution of the other particle to the time derivative of the density:
-        time_deriv_density += rhoa * dot((mb/p.density)*vab, gradW) #+ ddt_term
+        time_deriv_density += rhoa * dot((mb/p.density)*vab, gradW) + ddt_term
 
-        particle.WG += gradW;
+        particle.WG  += gradW;
+        particle.ddt += ddt_term
     end
     
     return time_deriv_density
@@ -224,21 +220,19 @@ function inviscid_momentum_eqn(particle, Sim, h,dx)
 
         rhob           = p.density;
         mb             = Sim.Constants.mass;
-        Pb             = pressure_eqn_of_state(rhob,Sim.Constants.rho0,Sim.Constants.gamma,Sim.Constants.c0)
+        Pb             = pressure_eqn_of_state(p.density,p.density_ini,Sim.Constants.Cb,Sim.Constants.gamma)
         rhoa           = particle.density
 
         rhoab          = (rhoa+rhob)/2
 
         visc           += Π(Sim.Constants.α,Sim.Constants.c0,Sim.Constants.h,vab,r,rhoab)
 
-        Pa             = pressure_eqn_of_state(rhoa,Sim.Constants.rho0,Sim.Constants.gamma,Sim.Constants.c0)
+        Pa             = pressure_eqn_of_state(particle.density,particle.density_ini,Sim.Constants.Cb,Sim.Constants.gamma)
         acceleration   += -mb*((Pb+Pa)/(rhob*rhoa) + visc) * gradW
     end
 
     return acceleration,visc
 end
-
-
 
 # Define the time step function:
 function time_step(Sim)
@@ -374,53 +368,6 @@ function time_step(Sim)
     @printf "Iteration: %s | dt = %.5e" it dt
 end
 
-#Sim = Simulation(dt=1e-4,h=0.141421,c0=81.675,dx=0.1,rho0=1000)
-Consts = Constants(dt_ini=1e-4,h=0.056569,c0=85.89,dx=0.04,rho0=1000)
-Sim = Simulation(Constants=Consts)
-
-#Sim = Simulation(dt=1e-4,h=0.028284,c0=87.25,dx=0.02,rho0=1000)
-
-# Create a Collection object for the fluid particles:
-fluid_particles = Collection(Vector{Particle}())
-
-for i = 1:size(DF_FLUID)[1]
-    idp = DF_FLUID[i,:]["Idp"]
-    pos = SVector(0.5,0.2,0)+SVector(DF_FLUID[i,:]["Points:0"],DF_FLUID[i,:]["Points:2"],DF_FLUID[i,:]["Points:1"])
-    acc = SVector(0.0, 0.0, 0.0)
-    vel = SVector(0.0, 0.0, 0.0)
-    # Create a new Particle object with the calculated position:
-    particle = Particle(pos,acc,vel, DF_FLUID[i,:]["Rhop"], idp,0,0,SVector(0,0,0))
-
-    # Add the particle to the wall_particles collection:
-    push!(fluid_particles.particles, particle)
-end
-
-# Initialize the positions of the wall particles using a regular grid:
-wall_particles = Collection(Vector{Particle}())
-
-for i = 1:size(DF_BOUND)[1]
-    idp = DF_BOUND[i,:]["Idp"]
-    pos = SVector(DF_BOUND[i,:]["Points:0"],DF_BOUND[i,:]["Points:2"],DF_BOUND[i,:]["Points:1"])
-    acc = SVector(0.0, 0.0, 0.0)
-    vel = SVector(0.0, 0.0, 0.0)
-    # Create a new Particle object with the calculated position:
-    particle = Particle(pos,acc,vel, Sim.Constants.rho0, idp,0,0,SVector(0,0,0))
-
-    # Add the particle to the wall_particles collection:
-    push!(wall_particles.particles, particle)
-
-    # Create a new Particle object with the calculated position:
-    #particle = Particle(pos-SVector(Sim.dx/2,Sim.dx/2,0.0),acc,vel, Sim.rho0, idp,0,SVector(0,0,0))
-
-    # Add the particle to the wall_particles collection:
-    #push!(wall_particles.particles, particle)
-end
-
-Sim.Boundary = wall_particles
-Sim.Fluid    = fluid_particles
-
-
-
 # Define the create_vtp_file subfunction:
 function create_vtp_file(collection::Collection, filename::String)
     # Create a vector of the x, y, and z positions of the particles:
@@ -431,6 +378,8 @@ function create_vtp_file(collection::Collection, filename::String)
 
     # Create a vector of the particle densities:
     densities  = [particle.density for particle in collection.particles]
+    pressures  = [particle.Pressure for particle in collection.particles]
+    ddt        = [particle.ddt for particle in collection.particles]
     accelerations = [particle.acceleration for particle in collection.particles]
     velocities = [particle.velocity for particle in collection.particles]
     kernelW   = [particle.W for particle in collection.particles]
@@ -451,12 +400,13 @@ function create_vtp_file(collection::Collection, filename::String)
 
         # Add the particle densities as a point data array:
         vtk_point_data(vtk, densities, "density")
+        vtk_point_data(vtk, ddt, "density diffusion")
         vtk_point_data(vtk, accelerations, "acceleration")
         vtk_point_data(vtk, velocities, "velocity")
         vtk_point_data(vtk, kernelW, "kernel")
         vtk_point_data(vtk, kernelWG, "kernel_gradient")
         vtk_point_data(vtk, viscocities, "Viscosity")
-        vtk_point_data(vtk,pressure_eqn_of_state.(densities,Sim.Constants.rho0,Sim.Constants.gamma,Sim.Constants.c0),"pressure")
+        vtk_point_data(vtk, pressures,"pressure")
     end
 end
 
@@ -480,6 +430,46 @@ function RunSimulation(Sim)
     end
 end
 
-# Run
+### Run
+
+#Sim = Simulation(dt=1e-4,h=0.141421,c0=81.675,dx=0.1,rho0=1000)
+Consts = Constants(dt_ini=1e-4,h=0.056569,c0=85.89,dx=0.04,rho0=1000)
+Sim = Simulation(Constants=Consts)
+
+#Sim = Simulation(dt=1e-4,h=0.028284,c0=87.25,dx=0.02,rho0=1000)
+
+# Create a Collection object for the fluid particles:
+fluid_particles = Collection(Vector{Particle}())
+
+for i = 1:size(DF_FLUID)[1]
+    idp = DF_FLUID[i,:]["Idp"]
+    pos = SVector(0.5,0.2,0)+SVector(DF_FLUID[i,:]["Points:0"],DF_FLUID[i,:]["Points:2"],DF_FLUID[i,:]["Points:1"])
+    acc = SVector(0.0, 0.0, 0.0)
+    vel = SVector(0.0, 0.0, 0.0)
+    # Create a new Particle object with the calculated position:
+    particle = Particle(pos,acc,vel,DF_FLUID[i,:]["Rhop"], DF_FLUID[i,:]["Rhop"], idp,0,0,0,SVector(0,0,0),0)
+
+    # Add the particle to the wall_particles collection:
+    push!(fluid_particles.particles, particle)
+end
+
+# Initialize the positions of the wall particles using a regular grid:
+wall_particles = Collection(Vector{Particle}())
+
+for i = 1:size(DF_BOUND)[1]
+    idp = DF_BOUND[i,:]["Idp"]
+    pos = SVector(DF_BOUND[i,:]["Points:0"],DF_BOUND[i,:]["Points:2"],DF_BOUND[i,:]["Points:1"])
+    acc = SVector(0.0, 0.0, 0.0)
+    vel = SVector(0.0, 0.0, 0.0)
+    # Create a new Particle object with the calculated position:
+    particle = Particle(pos,acc,vel, Sim.Constants.rho0, Sim.Constants.rho0, idp,0,0,0,SVector(0,0,0),0)
+
+    # Add the particle to the wall_particles collection:
+    push!(wall_particles.particles, particle)
+end
+
+Sim.Boundary = wall_particles
+Sim.Fluid    = fluid_particles
+
 foreach(rm, filter(endswith(".vtp"), readdir("./particles",join=true)))
 RunSimulation(Sim)
