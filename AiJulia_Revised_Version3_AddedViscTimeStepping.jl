@@ -3,6 +3,8 @@ using WriteVTK
 using LinearAlgebra
 using CSV, DataFrames
 using Printf
+using CellListMap
+using FastPow
 
 DF_FLUID = CSV.read("FluidPoints_Dp0.04.csv", DataFrame)
 DF_BOUND = CSV.read("BoundaryPoints_Dp0.04.csv", DataFrame)
@@ -61,6 +63,7 @@ Base.@kwdef mutable struct Constants
     g::Float64     = -9.81
     mass::Float64  = rho0*dx^2
     Cb::Float64    = (c0^2*rho0)/gamma
+    aD::Float64    =  7 / (4 * pi * h^2)
 end
 
 Base.@kwdef mutable struct Simulation
@@ -74,10 +77,7 @@ end
 
 
 # Define the Wendland kernel function:
-function WendlandKernel(q,h)
-    # Define aD:
-    aD = 7 / (4 * pi * h^2)
-
+function WendlandKernel(q,aD)
     if q < 0 || q > 2
         return 0.0
     end
@@ -118,26 +118,38 @@ function pressure_eqn_of_state(density, initial_density, gamma, c0)
     return pressure
 end
 
+#https://github.com/DualSPHysics/DualSPHysics/blob/2016fa3b63f40b6675b904048af13fe47f0e8af3/src_mphase/DSPH_v5.0_NNewtonian/source/JSphCpu.cpp
 #https://forums.dual.sphysics.org/discussion/2173/ddt-fourtakas-hydrostatic-component
-function Ψ(Sim,pa,pb,rel,rnorm)
-    r0    = Sim.Constants.rho0
+function Ψ(Sim,pa,pb,rel,gradW)
     drz   = pa.position[2] - pb.position[2]
+    eta2  = (0.1*Sim.Constants.h)*(0.1*Sim.Constants.h)
+    rr2   = dot(rel,rel)
+    r0    = Sim.Constants.rho0
     DDTgz = r0*abs(Sim.Constants.g)/Sim.Constants.Cb
     rh    = 1 + DDTgz*drz
     drhop = r0 * ^(rh,1/Sim.Constants.gamma) - r0
 
+    cbar  = Sim.Constants.c0
+
+    DDTkh = 2*Sim.Constants.h*0.1
+
     rhoa  = pa.density
     rhob  = pb.density
 
-    psiab = 2*(rhob-rhoa-drhop)*rel/(rnorm+1e-6)
-    
-    return psiab
+    visc_densi = DDTkh*cbar*((rhob-rhoa)-drhop)/(rr2+eta2)
+
+    dot3       = dot(rel,gradW)
+
+    delta      = visc_densi*dot3*Sim.Constants.mass/rhob
+
+    return delta
 end
 
 # Define the continuity equation for SPH:
 function continuity_eqn(particle, Sim, h, dx)
     # Initialize the time derivative of the density to zero:
     time_deriv_density = 0
+    particle.ddt       = 0
     particle.WG        = SVector(0.0,0.0,0.0)
 
     # Loop over all fluid particles:
@@ -161,12 +173,10 @@ function continuity_eqn(particle, Sim, h, dx)
         # Calculate the gradient of the kernel for the two particles:
         gradW = calcGradientW(h, q, r)
 
-        psiab = Ψ(Sim,particle,p,r,q*h)
-
-        ddt_term = 0.1*h*Sim.Constants.c0*dot(psiab,gradW)*(mb/p.density)
+        ddt_term = Ψ(Sim,particle,p,r,gradW)
 
         # Calculate the contribution of the other particle to the time derivative of the density:
-        time_deriv_density += rhoa * dot((mb/p.density)*vab, gradW)# + ddt_term
+        time_deriv_density += rhoa * dot((mb/p.density)*vab, gradW) #+ ddt_term
 
         particle.WG  += gradW;
         particle.ddt += ddt_term
@@ -474,3 +484,32 @@ Sim.Fluid    = fluid_particles
 
 foreach(rm, filter(endswith(".vtp"), readdir("./particles",join=true)))
 RunSimulation(Sim)
+
+cutoff = 2*Sim.Constants.h
+box    = Box(limits(x),cutoff)
+cl     = CellList(x,box)
+
+# Function that keeps the minimum distance
+f(i, j, d2, mind) = d2 < mind[3] ? (i, j, d2) : mind
+  
+# We have to define our own reduce function here (for the parallel version)
+function reduce_mind(output, output_threaded)
+    mind = output_threaded[1]
+    for i in firstindex(output_threaded)+1:lastindex(output_threaded)
+        if output_threaded[i][3] < mind[3]
+            mind = output_threaded[i]
+        end
+    end
+    return mind
+end 
+
+# Initialize 
+mind = (0, 0, +Inf)
+
+# Run pairwise computation
+mind = map_pairwise(
+    (x, y, i, j, d2, mind) -> f(i, j, d2, mind),
+    mind,box,cl;reduce=reduce_mind,parallel=false
+)
+
+(mind[1], mind[2], sqrt(mind[3]))
