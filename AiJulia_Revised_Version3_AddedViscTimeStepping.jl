@@ -141,12 +141,7 @@ function Ψ(Sim,pa,pb,rel,gradW)
     rhoa  = pa.density
     rhob  = pb.density
 
-    #visc_densi = DDTkh*cbar*((rhob-rhoa)-drhop)/(rr2+eta2)
-    if rr2 < 0.001
-        visc_densi = 0
-    else
-        visc_densi = DDTkh*cbar*((rhob-rhoa)-drhop)/rr2
-    end
+    visc_densi = DDTkh*cbar*((rhob-rhoa)-drhop)/(rr2+eta2)
 
     dot3       = dot(rel,gradW)
 
@@ -164,12 +159,17 @@ function time_step(Sim,system,idxs_arr)
     H  = Sim.Constants.h
     dt = Sim.dt
 
-    list = neighborlist!(system);
-    t = @timed @inbounds for i  in eachindex(idxs_arr)
-        l           = filter(x -> x[1] == i || x[2] == i,list)
-        idxs_arr[i] = unique([getfield.(l,1);getfield.(l,2)])
-    end
-    println("Time to run: $(t.time)")
+    list     = neighborlist!(system);
+    function convert(x, list)
+        out = [ Int[] for _ in x ]
+        for (i,j,d) in list
+            push!(out[i], j)
+            push!(out[j], i)
+        end
+        return out
+     end
+
+     idxs_arr .= convert(parts,list)
 
     # Loop over all fluid particles:
     Threads.@threads for i  in eachindex(idxs_arr)
@@ -189,7 +189,7 @@ function time_step(Sim,system,idxs_arr)
         v_j  = getfield.(parts,:velocity)[idxs]
 
         v_ij = (v_i,) .- v_j
-
+    
         dρ_i_dt_n = ρ_i * sum(dot((Sim.Constants.mass ./ ρ_j) .* v_ij, Wg_ij))
         dv_i_dt_n = particle.acceleration + particle.GravityFactor*SVector(0,Sim.Constants.g,0)
 
@@ -522,7 +522,7 @@ end
 
 function RunSimulation(Sim,max_iter)
 
-    system = InPlaceNeighborList(x=getfield.([Sim.Fluid.particles;Sim.Boundary.particles],:position), cutoff=2*Sim.Constants.h, parallel=false)
+    system = InPlaceNeighborList(x=getfield.([Sim.Fluid.particles;Sim.Boundary.particles],:position), cutoff=2*Sim.Constants.h, parallel=true)
 
     idxs_arr = Vector{Vector{Int64}}(undef,length([Sim.Fluid.particles;Sim.Boundary.particles]))
 
