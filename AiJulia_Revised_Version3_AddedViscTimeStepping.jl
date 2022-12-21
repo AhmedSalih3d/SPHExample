@@ -251,29 +251,34 @@ function inviscid_momentum_eqn(particle, Sim, h,dx)
 end
 
 # Define the time step function:
-function time_step(Sim,list,bool)
+function time_step(Sim,system,idxs_arr)
 
     parts =  [Sim.Fluid.particles;Sim.Boundary.particles]
 
-    # for p_u in parts
-    #    p_u.acceleration = p_u.GravityFactor *  SVector(0,Sim.Constants.g,0)
-    # end
-
     Sim_ = deepcopy(Sim);
-    parts_ = [Sim_.Fluid.particles;Sim_.Boundary.particles]
     
     H  = Sim_.Constants.h
     dt = Sim_.dt
-    dx = Sim_.Constants.dx
 
-    T = typeof(Sim_.Fluid.particles[1])
-    f = fieldnames(T)
+    # balltree = BallTree(getfield.(parts,:position),Euclidean(),reorder=false)
+    # for (i,p) in enumerate(parts)
+    #     idxs_arr[i] = inrange(balltree,p.position,2*H,false)
+    # end
+    list = neighborlist!(system);
+    #sort!(list, by = first);
+    t = @timed @inbounds for i  in eachindex(idxs_arr)
+        l           = filter(x -> x[1] == i || x[2] == i,list)
+        idxs_arr[i] = unique([getfield.(l,1);getfield.(l,2)])
+    end
+    #println("Time to sort.. $(t.time)")
 
-    balltree = BallTree(getfield.(parts,:position),Euclidean(),reorder=false)
     # Loop over all fluid particles:
-    for (particle,particle_update) in zip(Sim_.Fluid.particles,Sim.Fluid.particles)
-        idxs     = inrange(balltree,particle.position,2*H,false)
-        rel      = (particle.position,) .- balltree.data[idxs]
+    Threads.@threads for i  in eachindex(idxs_arr)
+        idxs = idxs_arr[i]
+        particle_update = parts[i]
+        particle = deepcopy(particle_update)
+
+        rel      = (particle.position,) .- getfield.([Sim.Fluid.particles;Sim.Boundary.particles],:position)[idxs]
         r        = norm.(rel)
         q        = r ./ H
 
@@ -287,7 +292,7 @@ function time_step(Sim,list,bool)
         v_ij = (v_i,) .- v_j
 
         dρ_i_dt_n = ρ_i * sum(dot((Sim_.Constants.mass ./ ρ_j) .* v_ij, Wg_ij))
-        dv_i_dt_n = particle.acceleration + SVector(0,Sim.Constants.g,0)
+        dv_i_dt_n = particle.acceleration + particle.GravityFactor*SVector(0,Sim.Constants.g,0)
 
         ρ_i_n_half = particle.density  + dρ_i_dt_n*(dt/2)
         v_i_n_half = particle.velocity + dv_i_dt_n*(dt/2)
@@ -306,55 +311,54 @@ function time_step(Sim,list,bool)
         mu_ab   = (H*cond) ./ (dot.(rel,rel) .+ eta2)
         visc_i  = visc_bool .* (-α*Sim_.Constants.c0*mu_ab) ./ ((ρ_i,) .+ ρ_j)
 
-        dv_i_dt_n_half = sum(-(((Sim_.Constants.mass)*((Pi_n_half .+ Pj_n_half) ./ ((ρ_i,) .*ρ_j))) .+ visc_i ).* Wg_ij) + SVector(0,Sim_.Constants.g,0)
+        dv_i_dt_n_half = sum(-(((Sim_.Constants.mass)*((Pi_n_half .+ Pj_n_half) ./ ((ρ_i,) .*ρ_j))) .+ visc_i ).* Wg_ij) + particle.GravityFactor*SVector(0,Sim_.Constants.g,0)
         dρ_i_dt_n_half = ρ_i_n_half * sum(dot((Sim_.Constants.mass ./ ρ_j) .* v_ij_n_half, Wg_ij))
 
         epsi = -(dρ_i_dt_n_half/ρ_i_n_half) * dt
 
         particle_update.density  = ρ_i *((2-epsi)/(2+epsi))
-        particle_update.velocity = v_i + dv_i_dt_n_half*dt
-        particle_update.position = particle_update.position + ((particle_update.velocity + v_i)/2) * dt
+        particle_update.velocity = v_i + particle.MotionLimiter*dv_i_dt_n_half*dt
+        particle_update.position = particle_update.position + particle.MotionLimiter*((particle_update.velocity + v_i)/2) * dt
         particle_update.acceleration = dv_i_dt_n_half
         particle_update.WG           = sum(Wg_ij)
         particle_update.Visc         = sum(visc_i)
     end
 
-    for (particle,particle_update) in zip(Sim_.Boundary.particles,Sim.Boundary.particles)
-        idxs     = inrange(balltree,particle.position,2*H,false)
-        rel      = (particle.position,) .- balltree.data[idxs]
-        r        = norm.(rel)
-        q        = r ./ H
+    # for (particle,particle_update,idxs) in zip(Sim_.Boundary.particles,Sim.Boundary.particles,idxs_arr)
+    #     rel      = (particle.position,) .- balltree.data[idxs]
+    #     r        = norm.(rel)
+    #     q        = r ./ H
 
-        Wg_ij     = calcGradientW.(H, q, rel)
+    #     Wg_ij     = calcGradientW.(H, q, rel)
 
-        ρ_i  = particle.density
-        ρ_j  = getfield.(parts,:density)[idxs]
-        v_i  = particle.velocity
-        v_j  = getfield.(parts,:velocity)[idxs]
+    #     ρ_i  = particle.density
+    #     ρ_j  = getfield.(parts,:density)[idxs]
+    #     v_i  = particle.velocity
+    #     v_j  = getfield.(parts,:velocity)[idxs]
 
-        v_ij = (v_i,) .- v_j
+    #     v_ij = (v_i,) .- v_j
 
-        dρ_i_dt_n = ρ_i * sum(dot((Sim_.Constants.mass ./ ρ_j) .* v_ij, Wg_ij))
-        dv_i_dt_n = particle.acceleration - SVector(0,Sim.Constants.g,0)
+    #     dρ_i_dt_n = ρ_i * sum(dot((Sim_.Constants.mass ./ ρ_j) .* v_ij, Wg_ij))
+    #     dv_i_dt_n = particle.acceleration - SVector(0,Sim.Constants.g,0)
 
-        ρ_i_n_half = particle.density  + dρ_i_dt_n*(dt/2)
-        v_i_n_half = particle.velocity + dv_i_dt_n*(dt/2)
-        v_ij_n_half = (v_i_n_half,) .- v_j
+    #     ρ_i_n_half = particle.density  + dρ_i_dt_n*(dt/2)
+    #     v_i_n_half = particle.velocity + dv_i_dt_n*(dt/2)
+    #     v_ij_n_half = (v_i_n_half,) .- v_j
 
-        Pi_n_half  = pressure_eqn_of_state(ρ_i_n_half,Sim_.Constants.rho0,Sim_.Constants.gamma,Sim_.Constants.c0)
-        Pj_n_half  = pressure_eqn_of_state.(ρ_j,Sim_.Constants.rho0,Sim_.Constants.gamma,Sim_.Constants.c0)
+    #     Pi_n_half  = pressure_eqn_of_state(ρ_i_n_half,Sim_.Constants.rho0,Sim_.Constants.gamma,Sim_.Constants.c0)
+    #     Pj_n_half  = pressure_eqn_of_state.(ρ_j,Sim_.Constants.rho0,Sim_.Constants.gamma,Sim_.Constants.c0)
 
-        dv_i_dt_n_half = sum(-(Sim_.Constants.mass)*((Pi_n_half .+ Pj_n_half) ./ ((ρ_i,) .*ρ_j)) .* Wg_ij) - SVector(0,Sim_.Constants.g,0)
-        dρ_i_dt_n_half = ρ_i_n_half * sum(dot((Sim_.Constants.mass ./ ρ_j) .* v_ij_n_half, Wg_ij))
+    #     dv_i_dt_n_half = sum(-(Sim_.Constants.mass)*((Pi_n_half .+ Pj_n_half) ./ ((ρ_i,) .*ρ_j)) .* Wg_ij) - SVector(0,Sim_.Constants.g,0)
+    #     dρ_i_dt_n_half = ρ_i_n_half * sum(dot((Sim_.Constants.mass ./ ρ_j) .* v_ij_n_half, Wg_ij))
 
-        epsi = -(dρ_i_dt_n_half/ρ_i_n_half) * dt
+    #     epsi = -(dρ_i_dt_n_half/ρ_i_n_half) * dt
 
-        particle_update.density  = ρ_i *((2-epsi)/(2+epsi))
-        particle_update.velocity = v_i
-        particle_update.position = particle_update.position
-        particle_update.acceleration = dv_i_dt_n_half
-        particle_update.WG           = sum(Wg_ij)
-    end
+    #     particle_update.density  = ρ_i *((2-epsi)/(2+epsi))
+    #     particle_update.velocity = v_i
+    #     particle_update.position = particle_update.position
+    #     particle_update.acceleration = dv_i_dt_n_half
+    #     particle_update.WG           = sum(Wg_ij)
+    # end
 
 
 #    if bool
@@ -559,9 +563,9 @@ function time_step(Sim,list,bool)
     # Extract Info relevant for time stepping
     # Inspired by JSphCpu.cpp from DualSPHysics
     max_acc = maximum(norm.(getfield.(Sim.Fluid.particles,:acceleration)));
-    dt1     =  sqrt(Sim.Constants.h/max_acc)
+    dt1     =  sqrt(H/max_acc)
 
-    dt2     = Sim.Constants.h / (Sim.Constants.c0 + maximum(getfield.(Sim.Fluid.particles,:Visc)))
+    dt2     = H / (Sim.Constants.c0 + maximum(getfield.(Sim.Fluid.particles,:Visc)))
 
     dt      = Sim.Constants.CFL*min(dt1,dt2)
 
@@ -617,8 +621,12 @@ function create_vtp_file(collection::Collection, filename::String)
     end
 end
 
-function RunSimulation(Sim,max_iter,bool)
-    acc_arr = []
+function RunSimulation(Sim,max_iter)
+
+    system = InPlaceNeighborList(x=getfield.([Sim.Fluid.particles;Sim.Boundary.particles],:position), cutoff=2*Sim.Constants.h, parallel=false)
+
+    idxs_arr = Vector{Vector{Int64}}(undef,length([Sim.Fluid.particles;Sim.Boundary.particles]))
+
     # Loop over all iterations:
     while Sim.iter < max_iter
         # Perform an action every 100 iterations:
@@ -628,25 +636,13 @@ function RunSimulation(Sim,max_iter,bool)
             create_vtp_file(Sim.Boundary, "./particles/wall_particles"*lpad(Sim.iter,4,"0")*".vtp")
         end
 
-        x  = getfield.([Sim.Fluid.particles;Sim.Boundary.particles],:position)
-        system = InPlaceNeighborList(x=x, cutoff=2*Sim.Constants.h, parallel=false)
-        update!(system,x)
-
-        parts = [Sim.Fluid.particles;Sim.Boundary.particles]
-        for ii in eachindex(parts)
-            parts[ii].W  = 0
-            parts[ii].WG = SVector(0,0,0)
-        end
+        update!(system,getfield.([Sim.Fluid.particles;Sim.Boundary.particles],:position))
         
         # Increment the counter:
         Sim.iter += 1;
-        stats = @timed time_step(Sim,neighborlist!(system),bool)
+        stats = @timed time_step(Sim,system,idxs_arr)
         @printf " | Execution Time: %.5e [s] \n" stats.time
-
-        acc_arr = stats.value
     end
-
-    return acc_arr
 end
 
 # Run
@@ -698,5 +694,5 @@ Sim.Boundary = wall_particles
 Sim.Fluid    = fluid_particles
 
 foreach(rm, filter(endswith(".vtp"), readdir("./particles",join=true)))
-RunSimulation(Sim,10001,true)
+RunSimulation(Sim,10001)
 #println(Sim.Fluid.particles[1])
