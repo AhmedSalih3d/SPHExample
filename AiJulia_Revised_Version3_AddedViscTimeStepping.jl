@@ -16,6 +16,8 @@ mutable struct Particle
     density::Float64
     id::Int
     Visc::Float64
+    GravityFactor::Float64
+    MotionLimiter::Float64
     # For debugging
     W::Float64
     WG::SVector{3,Float64}
@@ -28,14 +30,16 @@ mutable struct Particle
         density = NaN
         id = -1
         Visc = NaN
+        GravityFactor = 0
+        MotionLimiter = 0
         W = NaN
         WG = SVector(NaN, NaN, NaN)
         ddt = 0
-        new(position, acceleration, velocity, density, id,Visc,W,WG,ddt)
+        new(position, acceleration, velocity, density, id,Visc,GravityFactor,MotionLimiter,W,WG,ddt)
     end
 
-    function Particle(position, acceleration, velocity, density, id, Visc,W,WG,ddt)
-        new(position, acceleration, velocity, density, id,Visc,W,WG,ddt)
+    function Particle(position, acceleration, velocity, density, id, Visc,GravityFactor,MotionLimiter,W,WG,ddt)
+        new(position, acceleration, velocity, density, id,Visc,GravityFactor,MotionLimiter,W,WG,ddt)
     end
 end
 
@@ -136,7 +140,12 @@ function Ψ(Sim,pa,pb,rel,gradW)
     rhoa  = pa.density
     rhob  = pb.density
 
-    visc_densi = DDTkh*cbar*((rhob-rhoa)-drhop)/(rr2+eta2)
+    #visc_densi = DDTkh*cbar*((rhob-rhoa)-drhop)/(rr2+eta2)
+    if rr2 < 0.001
+        visc_densi = 0
+    else
+        visc_densi = DDTkh*cbar*((rhob-rhoa)-drhop)/rr2
+    end
 
     dot3       = dot(rel,gradW)
 
@@ -173,13 +182,13 @@ function continuity_eqn(particle, Sim, h)
         # Calculate the gradient of the kernel for the two particles:
         gradW = calcGradientW(h, q, r)
 
-        ddt_term = Ψ(Sim,particle,p,r,gradW)
+        #ddt_term = Ψ(Sim,particle,p,r,gradW)
 
         # Calculate the contribution of the other particle to the time derivative of the density:
         time_deriv_density += rhoa * dot((mb/p.density)*vab, gradW) #+ ddt_term
 
         particle.WG  += gradW;
-        particle.ddt += ddt_term
+        #particle.ddt += ddt_term
     end
     
     return time_deriv_density
@@ -241,9 +250,13 @@ function inviscid_momentum_eqn(particle, Sim, h,dx)
 end
 
 # Define the time step function:
-function time_step(Sim,list)
+function time_step(Sim,list,bool)
 
     parts =  [Sim.Fluid.particles;Sim.Boundary.particles]
+
+    # for p_u in parts
+    #    p_u.acceleration = p_u.GravityFactor *  SVector(0,Sim.Constants.g,0)
+    # end
 
     Sim_ = deepcopy(Sim);
     parts_ = [Sim_.Fluid.particles;Sim_.Boundary.particles]
@@ -252,180 +265,284 @@ function time_step(Sim,list)
     dt = Sim_.dt
     dx = Sim_.Constants.dx
 
-    # # Loop over all fluid particles:
-    # for L in list
-    #     i = L[1]; j = L[2]; d = L[3];
-    #     p_i = parts_[i]
-    #     p_j = parts_[j]
-
-    #     p_i_u = parts[i]
-    #     p_j_u = parts[j]
-
-    #     # Calculate q
-    #     q = d/H
-
-    #     # Calculate relative distance between them
-    #     rel = p_i.position - p_j.position
-
-    #     # Calculate Wendland Kernel Values
-    #     Wi = WendlandKernel(q,Sim_.Constants.aD)
-
-    #     # Calculate Gradient Values
-    #     Wg_ij     = calcGradientW(H, q, rel)
-    #     Wg_ji     = calcGradientW(H, q, -rel)
-
-    #     # Calculate Continuity Equation
-    #     v_ij   = p_i.velocity - p_j.velocity
-    #     v_ji   = -v_ij
-    #     m_j    = Sim_.Constants.mass
-    #     ρ_i    = p_i.density
-    #     ρ_j    = p_j.density
-
-    #     # Caclulate Momentum Equation
-    #     Pi            = pressure_eqn_of_state(ρ_i,Sim_.Constants.rho0,Sim_.Constants.gamma,Sim_.Constants.c0)
-    #     Pj            = pressure_eqn_of_state(ρ_j,Sim_.Constants.rho0,Sim_.Constants.gamma,Sim_.Constants.c0)
-    #     ρ_ij           = (ρ_i+ρ_j)/2
-    #     visc_ij       = Π(Sim_.Constants.α,Sim_.Constants.c0,Sim_.Constants.h,v_ij,rel,ρ_ij)*0
-    #     visc_ji       = Π(Sim_.Constants.α,Sim_.Constants.c0,Sim_.Constants.h,v_ji,-rel,ρ_ij)*0 #############################
-    #     acci          = -(m_j)*((Pi+Pj)/(ρ_i*ρ_j) + visc_ij) * Wg_ij
-    #     accj          = -(m_j)*((Pi+Pj)/(ρ_i*ρ_j) + visc_ji) * Wg_ji
-
-    #     # Add Kernel Data #REMEMBER WE MISS W(0) HERE
-    #     p_i_u.W += Wi
-    #     p_j_u.W += Wi
-    #     # Add Kernel Gradient Data
-    #     p_i_u.WG += Wg_ij
-    #     p_j_u.WG += Wg_ji
-    #     # Add Viscosity Data
-    #     p_i_u.Visc += visc_ij
-    #     p_j_u.Visc += visc_ji
-
-    #     #Now do some time stepping and updating data
-    #         # # Perform the first half of the position update:
-    #         dt = Sim.dt
-    #         position_half_step = p_i.velocity * dt / 2
-    #         p_i_u.position  += position_half_step
-    #         # Update the velocity of the particle using the acceleration:
-    #         p_i_u.acceleration += acci
-    #         p_i_u.velocity  += dt*p_i_u.acceleration
-    #         # Update the position
-    #         p_i_u.position += (dt/2)*p_i_u.velocity 
-
-    #         position_half_step = p_j.velocity * dt / 2
-    #         p_j_u.position  += position_half_step
-    #         # Update the velocity of the particle using the acceleration:
-    #         p_j_u.acceleration += accj
-    #         p_j_u.velocity  += dt*p_j_u.acceleration+accj
-    #         # Update the position
-    #         p_j_u.position += (dt/2)*p_j_u.velocity
-
-    # end
-
     T = typeof(Sim_.Fluid.particles[1])
     f = fieldnames(T)
 
-     # Loop over all fluid particles:
-     for (particle,particle_update) in zip(Sim_.Fluid.particles,Sim.Fluid.particles)
-        #
-        pold = deepcopy(particle)
+    balltree = BallTree(getfield.(parts,:position),Euclidean(),reorder=false)
+    # Loop over all fluid particles:
+    for (particle,particle_update) in zip(Sim_.Fluid.particles,Sim.Fluid.particles)
+        idxs     = inrange(balltree,particle.position,2*H,false)
+        rel      = (particle.position,) .- balltree.data[idxs]
+        r        = norm.(rel)
+        q        = r ./ H
 
-        # Start particle velocity and density
-        vn = particle.velocity
-        rn = particle.density
+        Wg_ij     = calcGradientW.(H, q, rel)
 
-        # Calculate the acceleration of the particle using the inviscid momentum equation:
-        particle.acceleration,particle.Visc = inviscid_momentum_eqn(particle, Sim_, H, dx)
+        ρ_i  = particle.density
+        ρ_j  = getfield.(parts,:density)[idxs]
+        v_i  = particle.velocity
+        v_j  = getfield.(parts,:velocity)[idxs]
 
-        # Perform the first half of the position update:
-        position_half_step = particle.velocity * dt / 2
-        particle.position += position_half_step
+        v_ij = (v_i,) .- v_j
 
-        # Update the velocity of the particle using the acceleration:
-        velocity_half_step = particle.acceleration * dt /2
-        particle.velocity  += velocity_half_step
+        dρ_i_dt_n = ρ_i * sum(dot((Sim_.Constants.mass ./ ρ_j) .* v_ij, Wg_ij))
+        dv_i_dt_n = particle.acceleration + SVector(0,Sim.Constants.g,0)
 
-        # Calculate the time derivative of the density of the particle using the continuity equation:
-        time_deriv_density = continuity_eqn(particle, Sim_, H)
-        
-        # Update the density of the particle using the time derivative of the density:
-        density_half_step = time_deriv_density * dt/2
-        particle.density += density_half_step
+        ρ_i_n_half = particle.density  + dρ_i_dt_n*(dt/2)
+        v_i_n_half = particle.velocity + dv_i_dt_n*(dt/2)
+        v_ij_n_half = (v_i_n_half,) .- v_j
 
-        # Calculate the acceleration of the particle using the inviscid momentum equation:
-        particle.acceleration,particle.Visc = inviscid_momentum_eqn(particle, Sim_, H, dx)
+        Pi_n_half  = pressure_eqn_of_state(ρ_i_n_half,Sim_.Constants.rho0,Sim_.Constants.gamma,Sim_.Constants.c0)
+        Pj_n_half  = pressure_eqn_of_state.(ρ_j,Sim_.Constants.rho0,Sim_.Constants.gamma,Sim_.Constants.c0)
 
-        # Update the velocity of the particle using the acceleration:
-        particle.velocity += particle.acceleration * dt - velocity_half_step
+        dv_i_dt_n_half = sum(-(Sim_.Constants.mass)*((Pi_n_half .+ Pj_n_half) ./ ((ρ_i,) .*ρ_j)) .* Wg_ij) + SVector(0,Sim_.Constants.g,0)
+        dρ_i_dt_n_half = ρ_i_n_half * sum(dot((Sim_.Constants.mass ./ ρ_j) .* v_ij_n_half, Wg_ij))
 
-        # Perform the second half of the position update:
-        particle.position += dt * ((particle.velocity+vn)/2)  - position_half_step
+        epsi = -(dρ_i_dt_n_half/ρ_i_n_half) * dt
 
-        # Final update of density
-        epsi = -(time_deriv_density/particle.density) * dt
-
-        particle.density = rn * ((2-epsi)/(2+epsi))
-
-        # Update
-        for f_ in f
-            setfield!(particle_update,f_,getfield(particle,f_))
-        end
-
-        particle        = pold
+        particle_update.density  = ρ_i *((2-epsi)/(2+epsi))
+        particle_update.velocity = v_i + dv_i_dt_n_half*dt
+        particle_update.position = particle_update.position + ((particle_update.velocity + v_i)/2) * dt
+        particle_update.acceleration = dv_i_dt_n_half
+        particle_update.WG           = WG_ij
     end
 
     for (particle,particle_update) in zip(Sim_.Boundary.particles,Sim.Boundary.particles)
-        #
-        pold = deepcopy(particle)
+        idxs     = inrange(balltree,particle.position,2*H,false)
+        rel      = (particle.position,) .- balltree.data[idxs]
+        r        = norm.(rel)
+        q        = r ./ H
 
-        # Start particle velocity and density and position
-        pn = particle.position
-        vn = particle.velocity
-        rn = particle.density
+        Wg_ij     = calcGradientW.(H, q, rel)
 
-        # Calculate the acceleration of the particle using the inviscid momentum equation:
-        particle.acceleration,particle.Visc = inviscid_momentum_eqn(particle, Sim_, H, dx) 
-        particle.acceleration -= SVector(0,Sim_.Constants.g,0)
+        ρ_i  = particle.density
+        ρ_j  = getfield.(parts,:density)[idxs]
+        v_i  = particle.velocity
+        v_j  = getfield.(parts,:velocity)[idxs]
 
-        # Perform the first half of the position update:
-        position_half_step = particle.velocity * dt / 2
-        particle.position += position_half_step
+        v_ij = (v_i,) .- v_j
 
-        # Update the velocity of the particle using the acceleration:
-        velocity_half_step = particle.acceleration * dt /2
-        particle.velocity  += velocity_half_step
+        dρ_i_dt_n = ρ_i * sum(dot((Sim_.Constants.mass ./ ρ_j) .* v_ij, Wg_ij))
+        dv_i_dt_n = particle.acceleration - SVector(0,Sim.Constants.g,0)
 
-        # Calculate the time derivative of the density of the particle using the continuity equation:
-        time_deriv_density = continuity_eqn(particle, Sim_, H)
-        
-        # Update the density of the particle using the time derivative of the density:
-        density_half_step = time_deriv_density * dt/2
-        particle.density += density_half_step
+        ρ_i_n_half = particle.density  + dρ_i_dt_n*(dt/2)
+        v_i_n_half = particle.velocity + dv_i_dt_n*(dt/2)
+        v_ij_n_half = (v_i_n_half,) .- v_j
 
-        # Calculate the acceleration of the particle using the inviscid momentum equation:
-        particle.acceleration,particle.Visc = inviscid_momentum_eqn(particle, Sim_, H, dx)
-        particle.acceleration -= SVector(0,Sim_.Constants.g,0)
+        Pi_n_half  = pressure_eqn_of_state(ρ_i_n_half,Sim_.Constants.rho0,Sim_.Constants.gamma,Sim_.Constants.c0)
+        Pj_n_half  = pressure_eqn_of_state.(ρ_j,Sim_.Constants.rho0,Sim_.Constants.gamma,Sim_.Constants.c0)
 
-        # Update the velocity of the particle using the acceleration:
-        particle.velocity += particle.acceleration * dt - velocity_half_step
+        dv_i_dt_n_half = sum(-(Sim_.Constants.mass)*((Pi_n_half .+ Pj_n_half) ./ ((ρ_i,) .*ρ_j)) .* Wg_ij) - SVector(0,Sim_.Constants.g,0)
+        dρ_i_dt_n_half = ρ_i_n_half * sum(dot((Sim_.Constants.mass ./ ρ_j) .* v_ij_n_half, Wg_ij))
 
-        # Perform the second half of the position update:
-        particle.position += dt * ((particle.velocity+vn)/2)  - position_half_step
+        epsi = -(dρ_i_dt_n_half/ρ_i_n_half) * dt
 
-        # Final update of density
-        epsi = -(time_deriv_density/particle.density) * dt
-
-        particle.density = rn * ((2-epsi)/(2+epsi))
-
-        # Since boundary partilces no actual velocity is allowed to be set
-        particle.velocity = vn
-        particle.position = pn
-
-        # Update
-        for f_ in f
-            setfield!(particle_update,f_,getfield(particle,f_))
-        end
-        particle        = pold
+        particle_update.density  = ρ_i *((2-epsi)/(2+epsi))
+        particle_update.velocity = v_i
+        particle_update.position = particle_update.position
+        particle_update.acceleration = dv_i_dt_n_half
+        particle_update.WG           = WG_ij
     end
+
+
+#    if bool
+#     density_dt_arr_n_half = zeros(length(parts))
+#     density_arr_n_half    = getfield.([Sim.Fluid.particles;Sim.Boundary.particles],:density)
+
+#     # Loop over all fluid particles:
+#     for L in list
+#         i = L[1]; j = L[2]; d = L[3];
+#         p_i_u = parts[i]
+#         p_j_u = parts[j]
+
+#         p_i = deepcopy(p_i_u)
+#         p_j = deepcopy(p_j_u)
+
+#         # Calculate q
+#         q = d/H
+
+#         # Calculate relative distance between them
+#         rel = p_i.position - p_j.position
+
+#         # Calculate Wendland Kernel Values
+#         Wi = WendlandKernel(q,Sim_.Constants.aD)
+
+#         # Calculate Gradient Values
+#         Wg_ij     = calcGradientW(H, q, rel)
+#         Wg_ji     = calcGradientW(H, q, -rel)
+
+#         # Calculate Continuity Equation
+#         v_ij   = p_i.velocity - p_j.velocity
+#         v_ji   = -v_ij
+#         ρ_i    = p_i.density
+#         ρ_j    = p_j.density
+
+#         dρ_i_dt_n = ρ_i * dot((Sim_.Constants.mass/ρ_j)*v_ij, Wg_ij)
+#         dρ_j_dt_n = ρ_j * dot((Sim_.Constants.mass/ρ_i)*v_ji, Wg_ji)
+
+#         # Caclulate Momentum Equation
+#         Pi            = pressure_eqn_of_state(ρ_i,Sim_.Constants.rho0,Sim_.Constants.gamma,Sim_.Constants.c0)
+#         Pj            = pressure_eqn_of_state(ρ_j,Sim_.Constants.rho0,Sim_.Constants.gamma,Sim_.Constants.c0)
+#         ρ_ij          = (ρ_i+ρ_j)/2
+#         visc_ij       = Π(Sim_.Constants.α,Sim_.Constants.c0,Sim_.Constants.h,v_ij,rel,ρ_ij)*0
+#         visc_ji       = Π(Sim_.Constants.α,Sim_.Constants.c0,Sim_.Constants.h,v_ji,-rel,ρ_ij)*0 #############################
+#         dv_i_dt_n     = -(Sim_.Constants.mass)*((Pi+Pj)/(ρ_i*ρ_j) + visc_ij) * Wg_ij
+#         dv_j_dt_n     = (Sim_.Constants.mass)*((Pi+Pj)/(ρ_i*ρ_j) + visc_ji)  * Wg_ij
+
+#         # Calculate Half-Step properties for density and momentum derivative to
+#         # updated density and acceleration values
+#         ρ_i_n_half     = p_i.density  + dρ_i_dt_n*(dt/2)
+#         ρ_j_n_half     = p_j.density  + dρ_j_dt_n*(dt/2)
+
+#         v_i_n_half     = p_i.velocity + dv_i_dt_n*(dt/2)
+#         v_j_n_half     = p_j.velocity + dv_j_dt_n*(dt/2)
+#         v_ij_n_half    = v_i_n_half - v_j_n_half
+
+#         # Based on these new values at n+½ calculate momentum and density derivative again
+#         Pi_n_half     = pressure_eqn_of_state(ρ_i_n_half,Sim_.Constants.rho0,Sim_.Constants.gamma,Sim_.Constants.c0)
+#         Pj_n_half     = pressure_eqn_of_state(ρ_j_n_half,Sim_.Constants.rho0,Sim_.Constants.gamma,Sim_.Constants.c0)
+
+#         dv_i_dt_n_half     = -(Sim_.Constants.mass)*((Pi_n_half+Pj_n_half)/(ρ_i_n_half*ρ_j_n_half) + visc_ij) * Wg_ij 
+#         dv_j_dt_n_half     = -(Sim_.Constants.mass)*((Pi_n_half+Pj_n_half)/(ρ_i_n_half*ρ_j_n_half) + visc_ji) * -Wg_ij
+
+#         dρ_i_dt_n_half     = ρ_i_n_half * dot((Sim_.Constants.mass/ρ_j_n_half)*v_ij_n_half, Wg_ij)
+#         dρ_j_dt_n_half     = ρ_j_n_half * dot((Sim_.Constants.mass/ρ_i_n_half)*(-v_ij_n_half), -Wg_ij)
+
+#         # Now calculate final values at n+1
+#         #epsi_i = -(dρ_i_dt_n_half/ρ_i_n_half) * dt
+#         #epsi_j = -(dρ_j_dt_n_half/ρ_j_n_half) * dt
+
+#         # Density update --> has to be done outside loop this leads to sky-rocket numbers..
+#         # p_i_u.density  += p_i.density*((2-epsi_i)/(2+epsi_i))
+#         # p_j_u.density  += p_j.density*((2-epsi_j)/(2+epsi_j))
+#         #density_fac_arr[i] += 1-((2-epsi_i)/(2+epsi_i))
+#         #density_fac_arr[j] += 1-((2-epsi_j)/(2+epsi_j))
+
+#         density_dt_arr_n_half[i] += dρ_i_dt_n_half
+#         density_dt_arr_n_half[j] += dρ_j_dt_n_half
+#         density_arr_n_half[i]    += dρ_i_dt_n*(dt/2)
+#         density_arr_n_half[j]    += dρ_j_dt_n*(dt/2)
+
+#         # Velocity update
+#         p_i_u.velocity  += p_i.MotionLimiter*dv_i_dt_n_half*dt
+#         p_j_u.velocity  += p_j.MotionLimiter*dv_j_dt_n_half*dt
+
+#         # Position update
+#         p_i_u.position  += p_i.MotionLimiter*((p_i_u.velocity+p_i.velocity)/2)*dt
+#         p_j_u.position  += p_j.MotionLimiter*((p_j_u.velocity+p_j.velocity)/2)*dt
+
+#         # For acceleration we just use the half step value as output
+#         p_i_u.acceleration += dv_i_dt_n_half
+#         p_j_u.acceleration += dv_j_dt_n_half
+
+#         # Add Kernel Data #REMEMBER WE MISS W(0) HERE
+#         #p_i_u.W += Wi
+#         #p_j_u.W += Wi
+#         # Add Kernel Gradient Data
+#         p_i_u.WG += Wg_ij
+#         p_j_u.WG += -Wg_ij
+#         # Add Viscosity Data
+#         p_i_u.Visc += visc_ij
+#         p_j_u.Visc += visc_ji
+#     end
+
+#     #println(density_fac_arr)
+#     epsi = -(density_dt_arr_n_half ./ density_arr_n_half) * dt
+#     for (p_u,e) in zip(parts,epsi)
+#         p_u.density       = p_u.density*((2-e)/(2+e))
+#     end
+
+# else
+#     T = typeof(Sim_.Fluid.particles[1])
+#     f = fieldnames(T)
+
+#      # Loop over all fluid particles:
+#      for (particle,particle_update) in zip(Sim_.Fluid.particles,Sim.Fluid.particles)
+#         #
+#         pold = deepcopy(particle)
+
+#         # Initial values
+#         rho_n = particle.density
+#         vel_n = particle.velocity
+#         pos_n = particle.position
+
+#         #  n --> n+½
+#         drhodt_n = continuity_eqn(particle, Sim_, H)
+#         dvadt_n  = particle.acceleration
+
+#         rho_n_half = drhodt_n * dt/2
+#         v_n_half   = dvadt_n  * dt/2
+
+#         particle.density  += rho_n_half
+#         particle.velocity += v_n_half
+
+#         # n+½ --> re-evaluate terms
+#         particle.acceleration,_ = inviscid_momentum_eqn(particle, Sim_, H, dx)
+#         drhodt_n_half = continuity_eqn(particle, Sim_, H)
+
+#         # n+½ --> n+1
+#         epsi = -(drhodt_n_half/particle.density) * dt
+
+#         particle.density  = rho_n *((2-epsi)/(2+epsi))
+
+#         particle.velocity = vel_n + particle.acceleration*dt
+
+#         particle.position = pos_n + ((particle.velocity+vel_n)/2) * dt
+
+#         # Update
+#         for f_ in f
+#             setfield!(particle_update,f_,getfield(particle,f_))
+#         end
+
+#         particle        = pold
+#     end
+
+#     for (particle,particle_update) in zip(Sim_.Boundary.particles,Sim.Boundary.particles)
+#         #
+#         pold = deepcopy(particle)
+#         # Initial values
+#         rho_n = particle.density
+#         vel_n = particle.velocity
+#         pos_n = particle.position
+
+#         #  n --> n+½
+#         drhodt_n = continuity_eqn(particle, Sim_, H)
+#         dvadt_n  = particle.acceleration - SVector(0,Sim.Constants.g,0)
+    
+#         rho_n_half = drhodt_n * dt/2
+#         v_n_half   = dvadt_n  * dt/2
+
+#         particle.density  += rho_n_half
+#         particle.velocity += v_n_half
+
+#         # n+½ --> re-evaluate terms
+#         particle.acceleration,_ = inviscid_momentum_eqn(particle, Sim_, H, dx)
+#         particle.acceleration -= SVector(0,Sim.Constants.g,0)
+
+#         drhodt_n_half = continuity_eqn(particle, Sim_, H)
+
+#         # n+½ --> n+1
+#         epsi = -(drhodt_n_half/particle.density) * dt
+
+#         particle.density  = rho_n *((2-epsi)/(2+epsi))
+
+#         particle.velocity = vel_n + particle.acceleration*dt
+
+#         particle.position = pos_n + ((particle.velocity+vel_n)/2) * dt
+
+#         # Boundary particles, are fixed
+#         particle.position = pos_n
+#         particle.velocity = vel_n
+
+#         # Update
+#         for f_ in f
+#             setfield!(particle_update,f_,getfield(particle,f_))
+#         end
+#         particle        = pold
+#     end
+
+    acc_arr = 0
+#end
 
     # Extract Info relevant for time stepping
     # Inspired by JSphCpu.cpp from DualSPHysics
@@ -488,10 +605,8 @@ function create_vtp_file(collection::Collection, filename::String)
     end
 end
 
-function RunSimulation(Sim)
-    # Define the maximum number of iterations:
-    max_iter = 20000
-
+function RunSimulation(Sim,max_iter,bool)
+    acc_arr = []
     # Loop over all iterations:
     while Sim.iter < max_iter
         # Perform an action every 100 iterations:
@@ -513,9 +628,13 @@ function RunSimulation(Sim)
         
         # Increment the counter:
         Sim.iter += 1;
-        stats = @timed time_step(Sim,neighborlist!(system))
+        stats = @timed time_step(Sim,neighborlist!(system),bool)
         @printf " | Execution Time: %.5e [s] \n" stats.time
+
+        acc_arr = stats.value
     end
+
+    return acc_arr
 end
 
 # Run
@@ -536,7 +655,7 @@ for i = 1:size(DF_FLUID)[1]
     acc = SVector(0,0,0)
     vel = SVector(0.0, 0.0, 0.0)
     # Create a new Particle object with the calculated position:
-    particle = Particle(pos,acc,vel, DF_FLUID[i,:]["Rhop"], idp,0,0,SVector(0,0,0),0)
+    particle = Particle(pos,acc,vel, DF_FLUID[i,:]["Rhop"], idp,0,1,1,0,SVector(0,0,0),0)
 
     # Add the particle to the wall_particles collection:
     push!(fluid_particles.particles, particle)
@@ -551,7 +670,7 @@ for i = 1:size(DF_BOUND)[1]
     acc = SVector(0,0,0)
     vel = SVector(0.0, 0.0, 0.0)
     # Create a new Particle object with the calculated position:
-    particle = Particle(pos,acc,vel, Sim.Constants.rho0, idp,0,0,SVector(0,0,0),0)
+    particle = Particle(pos,acc,vel, Sim.Constants.rho0, idp,0,-1,0,0,SVector(0,0,0),0)
 
     # Add the particle to the wall_particles collection:
     push!(wall_particles.particles, particle)
@@ -567,138 +686,5 @@ Sim.Boundary = wall_particles
 Sim.Fluid    = fluid_particles
 
 foreach(rm, filter(endswith(".vtp"), readdir("./particles",join=true)))
-RunSimulation(Sim)
-
-
-###
-
-# function calc_loop!(x,y,i,j,d2,H,particles,particles_out,Sim,q_arr)
-#     # Select particle i and j
-#     pi = particles[i]
-#     pj = particles[j]
-
-#     # Calculate q
-#     d = sqrt(d2)
-#     q = d/H
-
-#     # Calculate relative distance between them
-#     rel = x-y
-
-#     # Calculate Wendland Kernel Values
-#     Wi = WendlandKernel(q,Sim.Constants.aD)
-
-#     # Calculate Gradient Values
-#     Wg_ij     = calcGradientW(H, q, x-y)
-#     Wg_ji     = calcGradientW(H, q, y-x)
-
-#     # Calculate Continuity Equation
-#     vij   = pi.velocity - pj.velocity
-#     vji   = -vij
-#     mj    = Sim.Constants.mass
-#     ρi    = pi.density
-#     ρj    = pj.density
-
-#     # Caclulate Momentum Equation
-#     Pi            = pressure_eqn_of_state(ρi,Sim.Constants.rho0,Sim.Constants.gamma,Sim.Constants.c0)
-#     Pj            = pressure_eqn_of_state(ρj,Sim.Constants.rho0,Sim.Constants.gamma,Sim.Constants.c0)
-#     ρij           = (ρi+ρj)/2
-#     visc_ij       = Π(Sim.Constants.α,Sim.Constants.c0,Sim.Constants.h,vij,rel,ρij)*0
-#     visc_ji       = Π(Sim.Constants.α,Sim.Constants.c0,Sim.Constants.h,vji,-rel,ρij)*0 #############################
-#     acci          = -(mj)*((Pi+Pj)/(ρi*ρj) + visc_ij) * Wg_ij
-#     accj          = -(mj)*((Pi+Pj)/(ρi*ρj) + visc_ji) * Wg_ji
-
-#     # Output particles
-#     pi_out = particles_out[i]
-#     pj_out = particles_out[j]
-
-#     # Add Kernel Data #REMEMBER WE MISS W(0) HERE
-#     pi_out.W += Wi
-#     pj_out.W += Wi
-#     # Add Kernel Gradient Data
-#     pi_out.WG += Wg_ij
-#     pj_out.WG += Wg_ji
-#     # Add Viscosity Data
-#     pi_out.Visc += visc_ij
-#     pj_out.Visc += visc_ji
-
-#     # Now do some time stepping and updating data
-#         # # Perform the first half of the position update:
-#         # dt = Sim.dt*0
-#         # position_half_step = pi.velocity * dt / 2
-#         # pi_out.position  += position_half_step
-#         # # Update the velocity of the particle using the acceleration:
-#         # pi_out.velocity  += dt*acci
-#         # # Update the position
-#         # pi_out.position += (dt/2)*pi_out.velocity 
-
-#         # position_half_step = pj.velocity * dt / 2
-#         # pj_out.position  += position_half_step
-#         # # Update the velocity of the particle using the acceleration:
-#         # pj_out.velocity  += dt*acci
-#         # # Update the position
-#         # pj_out.position += (dt/2)*pj_out.velocity
-#     return q_arr
-# end
-
-# function run_map(Sim,box,cl,parts,cutoff)
-#     N           = length(parts)
-#     q_arr       = zeros(N)
-
-#     for ii in eachindex(parts)
-#         parts[ii].W  = 0
-#         parts[ii].WG = SVector(0,0,0)
-#     end
-
-#     parts_out = deepcopy(parts)
-
-#     # Run pairwise computation
-#     map_pairwise!(
-#         (x,y,i,j,d2,q_arr) -> calc_loop!(x,y,i,j,d2,cutoff/2,parts,parts_out,Sim,q_arr),
-#         q_arr,box,cl
-#     )
-
-#     return parts_out
-# end
-
-
-# function time_step_clm(Sim)
-#     if Sim.it == 0
-#     parts  = Sim.Fluid.particles;
-#     x      = getfield.(parts,:position)
-#     cutoff = 2*Sim.Constants.h
-#     box    = Box(limits(x),cutoff)
-#     cl     = CellList(x,box)
-
-#     parts_out = run_map(Sim,box,cl,parts,cutoff)
-
-#     it = lpad(Sim.iter,4,"0")
-#     @printf "Iteration: %s | dt = %.5e" it Sim.dt
-
-#     return parts_out
-# end
-
-# function RunSimulation_clm(Sim)
-#     # Define the maximum number of iterations:
-#     max_iter = 100
-
-#     # Loop over all iterations:
-#     while Sim.iter < max_iter
-#         # Perform an action every 100 iterations:
-#         if Sim.iter % 1 == 0
-#             # Create .vtp files for the fluid particles and the wall particles:
-#             create_vtp_file(Sim.Fluid, "./particles/fluid_particles"*lpad(Sim.iter,4,"0")*".vtp")
-#             create_vtp_file(Sim.Boundary, "./particles/wall_particles"*lpad(Sim.iter,4,"0")*".vtp")
-#         end
-        
-#         # Increment the counter:
-#         Sim.iter += 1;
-#         stats = @timed  time_step_clm(Sim)
-#         Sim.Fluid.particles = stats.value
-#         @printf " | Execution Time: %.5e [s] \n" stats.time
-#     end
-
-#     return Sim
-# end
-
-# foreach(rm, filter(endswith(".vtp"), readdir("./particles",join=true)))
-# RunSimulation_clm(Sim)
+RunSimulation(Sim,10001,true)
+#println(Sim.Fluid.particles[1])
