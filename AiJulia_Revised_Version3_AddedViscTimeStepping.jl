@@ -295,7 +295,17 @@ function time_step(Sim,list,bool)
         Pi_n_half  = pressure_eqn_of_state(ρ_i_n_half,Sim_.Constants.rho0,Sim_.Constants.gamma,Sim_.Constants.c0)
         Pj_n_half  = pressure_eqn_of_state.(ρ_j,Sim_.Constants.rho0,Sim_.Constants.gamma,Sim_.Constants.c0)
 
-        dv_i_dt_n_half = sum(-(Sim_.Constants.mass)*((Pi_n_half .+ Pj_n_half) ./ ((ρ_i,) .*ρ_j)) .* Wg_ij) + SVector(0,Sim_.Constants.g,0)
+        cond = dot.(v_ij_n_half,rel)
+
+        visc_bool = cond .< 0
+
+        α = 0.01
+
+        eta2    = (0.01*H)*(0.01*H)
+        mu_ab   = (H*cond) ./ (dot.(rel,rel) .+ eta2)
+        visc_i  = visc_bool .* (-α*Sim_.Constants.c0*mu_ab) ./ ((ρ_i,) .+ ρ_j)
+
+        dv_i_dt_n_half = sum(-(((Sim_.Constants.mass)*((Pi_n_half .+ Pj_n_half) ./ ((ρ_i,) .*ρ_j))) .+ visc_i ).* Wg_ij) + SVector(0,Sim_.Constants.g,0)
         dρ_i_dt_n_half = ρ_i_n_half * sum(dot((Sim_.Constants.mass ./ ρ_j) .* v_ij_n_half, Wg_ij))
 
         epsi = -(dρ_i_dt_n_half/ρ_i_n_half) * dt
@@ -304,7 +314,8 @@ function time_step(Sim,list,bool)
         particle_update.velocity = v_i + dv_i_dt_n_half*dt
         particle_update.position = particle_update.position + ((particle_update.velocity + v_i)/2) * dt
         particle_update.acceleration = dv_i_dt_n_half
-        particle_update.WG           = WG_ij
+        particle_update.WG           = sum(Wg_ij)
+        particle_update.Visc         = sum(visc_i)
     end
 
     for (particle,particle_update) in zip(Sim_.Boundary.particles,Sim.Boundary.particles)
@@ -341,7 +352,8 @@ function time_step(Sim,list,bool)
         particle_update.velocity = v_i
         particle_update.position = particle_update.position
         particle_update.acceleration = dv_i_dt_n_half
-        particle_update.WG           = WG_ij
+        particle_update.WG           = sum(Wg_ij)
+        particle_update.Visc         = sum(visc_i)
     end
 
 
