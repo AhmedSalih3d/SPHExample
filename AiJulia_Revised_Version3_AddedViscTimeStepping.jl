@@ -5,6 +5,7 @@ using CSV, DataFrames
 using Printf
 using CellListMap
 using FastPow
+using NearestNeighbors
 
 DF_FLUID = CSV.read("FluidPoints_Dp0.04.csv", DataFrame)
 DF_BOUND = CSV.read("BoundaryPoints_Dp0.04.csv", DataFrame)
@@ -353,7 +354,6 @@ function time_step(Sim,list,bool)
         particle_update.position = particle_update.position
         particle_update.acceleration = dv_i_dt_n_half
         particle_update.WG           = sum(Wg_ij)
-        particle_update.Visc         = sum(visc_i)
     end
 
 
