@@ -345,7 +345,7 @@ function time_step(Sim,system,idxs_arr,bool)
     end
 
     it = lpad(Sim.iter,4,"0")
-    #@printf "Iteration: %s | dt = %.5e" it dt
+    @printf "Iteration: %s | dt = %.5e" it dt
 end
 
 # Define the create_vtp_file subfunction:
@@ -398,7 +398,7 @@ function RunSimulation(Sim,max_iter,bool,ext)
     # Loop over all iterations:
     while Sim.iter < max_iter
         # Perform an action every 100 iterations:
-        if Sim.iter % 1 == 0
+        if Sim.iter % 10 == 0
             # Create .vtp files for the fluid particles and the wall particles:
             create_vtp_file(Sim.Fluid, "./particles/fluid_particles_"*ext*lpad(Sim.iter,4,"0")*".vtp")
             #create_vtp_file(Sim.Boundary, "./particles/wall_particles"*lpad(Sim.iter,4,"0")*".vtp")
@@ -409,14 +409,14 @@ function RunSimulation(Sim,max_iter,bool,ext)
         # Increment the counter:
         Sim.iter += 1;
         stats = @timed time_step(Sim,system,idxs_arr,bool)
-        #@printf " | Execution Time: %.5e [s] \n" stats.time
+        @printf " | Execution Time: %.5e [s] \n" stats.time
     end
 end
 
 ### Run
 
 #Sim = Simulation(dt=1e-4,h=0.141421,c0=81.675,dx=0.1,rho0=1000)
-Consts = Constants(dt_ini=1e-4,h=0.056569,c0=85.89,dx=0.04,rho0=1000,g=0)
+Consts = Constants(dt_ini=1e-4,h=0.056569,c0=85.89,dx=0.04,rho0=1000)
 #Consts  = Constants(dt_ini=1e-4,h=0.028284,c0=87.25,dx=0.02,rho0=1000)
 Sim = Simulation(Constants=Consts)
 Sim.dt = Sim.Constants.dt_ini
@@ -426,7 +426,7 @@ Sim.dt = Sim.Constants.dt_ini
 # Create a Collection object for the fluid particles:
 fluid_particles = Collection(Vector{Particle}())
 
-for i = 1:20#size(DF_FLUID)[1]
+for i = 1:size(DF_FLUID)[1]
     idp = DF_FLUID[i,:]["Idp"]
     pos = SVector(0.5,0.2,0)+SVector(DF_FLUID[i,:]["Points:0"],DF_FLUID[i,:]["Points:2"],DF_FLUID[i,:]["Points:1"])
     acc = SVector(0,0,0)
@@ -441,17 +441,17 @@ end
 # Initialize the positions of the wall particles using a regular grid:
 wall_particles = Collection(Vector{Particle}())
 
-# for i = 1:size(DF_BOUND)[1]
-#     idp = DF_BOUND[i,:]["Idp"]
-#     pos = SVector(DF_BOUND[i,:]["Points:0"],DF_BOUND[i,:]["Points:2"],DF_BOUND[i,:]["Points:1"])
-#     acc = SVector(0,0,0)
-#     vel = SVector(0.0, 0.0, 0.0)
-#     # Create a new Particle object with the calculated position:
-#     particle = Particle(pos,acc,vel, Sim.Constants.rho0, idp,0,-1,0,0,SVector(0,0,0),0)
+for i = 1:size(DF_BOUND)[1]
+    idp = DF_BOUND[i,:]["Idp"]
+    pos = SVector(DF_BOUND[i,:]["Points:0"],DF_BOUND[i,:]["Points:2"],DF_BOUND[i,:]["Points:1"])
+    acc = SVector(0,0,0)
+    vel = SVector(0.0, 0.0, 0.0)
+    # Create a new Particle object with the calculated position:
+    particle = Particle(pos,acc,vel, Sim.Constants.rho0, idp,0,-1,0,0,SVector(0,0,0),0)
 
-#     # Add the particle to the wall_particles collection:
-#     push!(wall_particles.particles, particle)
-# end
+    # Add the particle to the wall_particles collection:
+    push!(wall_particles.particles, particle)
+end
 
 Sim.Boundary = wall_particles
 Sim.Fluid    = fluid_particles
@@ -459,10 +459,10 @@ Sim.Fluid    = fluid_particles
 foreach(rm, filter(endswith(".vtp"), readdir("./particles",join=true)))
 iters = 1001
 
-Sim_ = deepcopy(Sim)
-RunSimulation(Sim_,iters,false,"CPU")
-println("CPU")
-println(Sim_.Fluid.particles[1])
+# Sim_ = deepcopy(Sim)
+# RunSimulation(Sim_,iters,false,"CPU")
+# println("CPU")
+# println(Sim_.Fluid.particles[1])
 
 Sim_ = deepcopy(Sim)
 RunSimulation(Sim_,iters,true,"GPU")
