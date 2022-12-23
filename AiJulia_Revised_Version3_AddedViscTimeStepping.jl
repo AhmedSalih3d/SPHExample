@@ -7,7 +7,8 @@ using CellListMap
 using FastPow
 using NearestNeighbors
 using CUDA
-CUDA.allowscalar(true)
+using BenchmarkTools
+CUDA.allowscalar(false)
 
 DF_FLUID = CSV.read("FluidPoints_Dp0.04.csv", DataFrame)
 DF_BOUND = CSV.read("BoundaryPoints_Dp0.04.csv", DataFrame)
@@ -111,7 +112,7 @@ function pressure_eqn_of_state(density, initial_density, gamma, c0)
     return pressure
 end
 
-function GPU_SIM(Sim,parts,idxs_arr)
+function GPU_SIM(Sim,parts,idxs_arr_gpu)
 
     dt = Sim.dt
 
@@ -123,19 +124,20 @@ function GPU_SIM(Sim,parts,idxs_arr)
 
 
     MotionLimiter = CuArray(getfield.(parts,:MotionLimiter))
-    GravityVector = CuArray(getfield.(parts,:GravityFactor) .* fill(SVector(0,Sim.Constants.g,0),length(idxs_arr),))
-    g = CuArray.(idxs_arr)
+    GravityVector = CuArray(getfield.(parts,:GravityFactor) .* fill(SVector(0,Sim.Constants.g,0),length(idxs_arr_gpu),))
+
     r_    = CuArray(r_cpu)
     v_    = CuArray(v_cpu)
     ρ_    = CuArray(ρ_cpu)
     α_    = CuArray(α_cpu)
 
-    r    = map(ind->r_[ind],g)
-    v    = map(ind->v_[ind],g)
-    ρ    = map(ind->ρ_[ind],g)
+    r    = map(ind->r_[ind],idxs_arr_gpu)
+    v    = map(ind->v_[ind],idxs_arr_gpu)
+    ρ    = map(ind->ρ_[ind],idxs_arr_gpu)
 
     #- infront of x, to be allowed to use view inside of map, really important for performance it seems. To get p_i - p_j = -(p_j-p_i)
     # Cannot put minus inside since it becomes -q, which break calcGradientW
+    # Quite fast hard to speed up
     rel_r  = map(x->-broadcast(-,x,@view x[1]),r)
     rel_v  = map(x->-broadcast(-,x,@view x[1]),v)
     r_norm = map(x->norm.(x),rel_r);
@@ -144,65 +146,62 @@ function GPU_SIM(Sim,parts,idxs_arr)
 
     dρdt_n =   map((x,y,z) -> dot.(broadcast(dot,(Sim.Constants.mass ./ x) .* y,z),@view x[1]),ρ,rel_v,Wg)
 
-    #ρij     = map(x->broadcast(*,x[2:end],@view x[1]),ρ);
-    #Pij     = map(x->broadcast(+,x[2:end],@view x[1]),P);
     dvdt_n  = α_ + GravityVector                      #@views sum.(dvdt_n_); #SLOWEST LINE..
 
     
-    ρ_i_n_half =  ρ_ .+ CuArray(sum.(dρdt_n))*(dt/2)
-    v_i_n_half =  v_ .+ CuArray(dvdt_n) * (dt/2)
+    #ρ_i_n_half =  ρ_ .+ CuArray(sum.(dρdt_n))*(dt/2)
+    #v_i_n_half =  v_ .+ CuArray(dvdt_n) * (dt/2)
 
 
-    ρ_n_half      = map(ind->ρ_i_n_half[ind],g)
-    v_n_half      = map(ind->v_i_n_half[ind],g)
+    # ρ_n_half      = map(ind->ρ_i_n_half[ind],idxs_arr_gpu)
+    # v_n_half      = map(ind->v_i_n_half[ind],idxs_arr_gpu)
     
-    rel_v_n_half  = map(x->-broadcast(-,x,@view x[1]),v_n_half) #Different from CPU implementation
-    #rel_v_n_half  = map((x,y) -> -broadcast(-,x,@view y[1]),v_n_half,v) #Similar to CPU implementation
+    # rel_v_n_half  = map(x->-broadcast(-,x,@view x[1]),v_n_half) #Different from CPU implementation
    
-    ρij_n_half    = map(x->broadcast(*,x[2:end],@view x[1]),ρ_n_half);
+    # ρij_n_half    = map(x->broadcast(*,x[2:end],@view x[1]),ρ_n_half);
 
-    P_n_half      = map(x->pressure_eqn_of_state.(x,Sim.Constants.rho0,Sim.Constants.gamma,Sim.Constants.c0),ρ_n_half)
-    Pij_n_half    = map(x->broadcast(+,x[2:end],@view x[1]),P_n_half);
+    # P_n_half      = map(x->pressure_eqn_of_state.(x,Sim.Constants.rho0,Sim.Constants.gamma,Sim.Constants.c0),ρ_n_half)
+    # Pij_n_half    = map(x->broadcast(+,x[2:end],@view x[1]),P_n_half);
 
 
-    # DON'T FORGET MINIS IN MOMENTUM EQUATION
-    # IT IS NOT DOT IN MOMENTUM EQUATION
-    dvdt_n_half_ = map((x,y,z)-> -Sim.Constants.mass * (x./y) .* z[2:end],Pij_n_half,ρij_n_half,Wg)
-    dvdt_n_half  = CuArray(sum.(dvdt_n_half_)) + GravityVector
+    # # DON'T FORGET MINIS IN MOMENTUM EQUATION
+    # # IT IS NOT DOT IN MOMENTUM EQUATION
+    # dvdt_n_half_ = map((x,y,z)-> -Sim.Constants.mass * (x./y) .* z[2:end],Pij_n_half,ρij_n_half,Wg)
+    # dvdt_n_half  = CuArray(sum.(dvdt_n_half_)) + GravityVector
     
-    dρdt_n_half   = map((x,y,z) -> dot.(broadcast(dot,(Sim.Constants.mass ./ x) .* y,z),@view x[1]),ρ_n_half,rel_v_n_half,Wg) #NOTE WE LACK TO MULTPLY WITH RHO_I WE DO THAT LATER
+    # dρdt_n_half   = map((x,y,z) -> dot.(broadcast(dot,(Sim.Constants.mass ./ x) .* y,z),@view x[1]),ρ_n_half,rel_v_n_half,Wg) #NOTE WE LACK TO MULTPLY WITH RHO_I WE DO THAT LATER
 
-    epsi = - dt*map((x,y)->sum(x./y),dρdt_n_half,ρ_n_half) 
+    # epsi = - dt*map((x,y)->sum(x./y),dρdt_n_half,ρ_n_half) 
 
-    # # TEMP
-    # ρ_n_final    = ρ_i_n_half
-    # v_n_final    = v_i_n_half
-    # α_n_final    = dvdt_n_half
+    # # # TEMP
+    # # ρ_n_final    = ρ_i_n_half
+    # # v_n_final    = v_i_n_half
+    # # α_n_final    = dvdt_n_half
 
-    ρ_n_final  = ρ_ .* CuArray((2 .- epsi)./(2 .+ epsi))
-    v_n_final  = v_ .+  MotionLimiter.*dvdt_n_half*dt
-    r_n_final  = r_ .+  MotionLimiter.*(v_n_final .+ v_)*0.5*dt
-    α_n_final  = dvdt_n_half
-    WG_n_final = sum.(Wg)
+    # ρ_n_final  = ρ_ .* CuArray((2 .- epsi)./(2 .+ epsi))
+    # v_n_final  = v_ .+  MotionLimiter.*dvdt_n_half*dt
+    # r_n_final  = r_ .+  MotionLimiter.*(v_n_final .+ v_)*0.5*dt
+    # α_n_final  = dvdt_n_half
+    # WG_n_final = sum.(Wg)
 
-    r_cpu  .= Array(r_n_final)
-    v_cpu  .= Array(v_n_final)
-    ρ_cpu  .= Array(ρ_n_final)
-    α_cpu  .= Array(α_n_final)
-    WG_cpu .= Array(WG_n_final)
+    # r_cpu  .= Array(r_n_final)
+    # v_cpu  .= Array(v_n_final)
+    # ρ_cpu  .= Array(ρ_n_final)
+    # α_cpu  .= Array(α_n_final)
+    # WG_cpu .= Array(WG_n_final)
 
-    for i in eachindex(parts)
-        p_update = parts[i]
-        p_update.position      = r_cpu[i]
-        p_update.velocity      = v_cpu[i]
-        p_update.density       = ρ_cpu[i]
-        p_update.acceleration  = α_cpu[i]
-        p_update.WG            = WG_cpu[i]
-    end
+    # for i in eachindex(parts)
+    #     p_update = parts[i]
+    #     p_update.position      = r_cpu[i]
+    #     p_update.velocity      = v_cpu[i]
+    #     p_update.density       = ρ_cpu[i]
+    #     p_update.acceleration  = α_cpu[i]
+    #     p_update.WG            = WG_cpu[i]
+    # end
 end
 
 # Define the time step function:
-function time_step(Sim,system,idxs_arr,bool)
+function time_step(Sim,system,idxs_arr_gpu,idxs_arr_cpu,bool)
 
     parts =  [Sim.Fluid.particles;Sim.Boundary.particles]
     x     =  getfield.(parts,:position)
@@ -212,7 +211,7 @@ function time_step(Sim,system,idxs_arr,bool)
     
 
     list     = neighborlist!(system);
-    function convert(x, list)
+    function convert_idx(x, list)
         out = [ Int[] for _ in x ]
 
         # HERE YOU ADD THE ORIGINAL INDEX
@@ -226,12 +225,12 @@ function time_step(Sim,system,idxs_arr,bool)
         end
         return out
      end
-     idxs_arr .= convert(parts,list)
+     idxs_arr_cpu .= convert_idx(parts,list)
 
      if bool == false
         # Loop over all fluid particles:
-        Threads.@threads for i  in eachindex(idxs_arr)
-            idxs = idxs_arr[i]
+        Threads.@threads for i  in eachindex(idxs_arr_cpu)
+            idxs = idxs_arr_cpu[i]
             particle_update = parts[i]
             particle = deepcopy(particle_update)
 
@@ -325,7 +324,22 @@ function time_step(Sim,system,idxs_arr,bool)
         println(parts[1].density)
         #map(x->println(x.density),parts)
     else
-        GPU_SIM(Sim,parts,idxs_arr)
+        
+        # THIS IS FASTER THAN CuArray.(idxs_arr)
+        function IDX_TO_GPU!(idxs_arr_gpu,idxs_arr_cpu)
+            g_               = CuArray(reduce(vcat,idxs_arr_cpu))
+            end_indices      = accumulate(+,length.(idxs_arr_cpu))
+            start_indices    = deepcopy(end_indices)
+            pushfirst!(start_indices,0)
+            deleteat!(start_indices,length(start_indices))
+            start_indices.+= 1
+            ind   = map((x,y)-> x:y,start_indices,end_indices)
+            idxs_arr_gpu .= map(x->g_[x],ind)
+        end
+
+        # CODE IS FASTER USING INDEXING ARRAYS FROM GPU
+        IDX_TO_GPU!(idxs_arr_gpu,idxs_arr_cpu)
+        GPU_SIM(Sim,parts,idxs_arr_gpu)
     end
 
     # Extract Info relevant for time stepping
@@ -391,9 +405,11 @@ end
 
 function RunSimulation(Sim,max_iter,bool,ext)
 
-    system = InPlaceNeighborList(x=getfield.([Sim.Fluid.particles;Sim.Boundary.particles],:position), cutoff=2*Sim.Constants.h, parallel=true)
+    parts  = [Sim.Fluid.particles;Sim.Boundary.particles]
+    system = InPlaceNeighborList(x=getfield.(parts,:position), cutoff=2*Sim.Constants.h, parallel=true)
 
-    idxs_arr = Vector{Vector{Int64}}(undef,length([Sim.Fluid.particles;Sim.Boundary.particles]))
+    idxs_arr_cpu = Vector{Vector{Int64}}(undef,length(parts))
+    idxs_arr_gpu = Vector{CuArray{Int64, 1, CUDA.Mem.DeviceBuffer}}(undef,length(parts))
 
     # Loop over all iterations:
     while Sim.iter < max_iter
@@ -401,15 +417,16 @@ function RunSimulation(Sim,max_iter,bool,ext)
         if Sim.iter % 10 == 0
             # Create .vtp files for the fluid particles and the wall particles:
             create_vtp_file(Sim.Fluid, "./particles/fluid_particles_"*ext*lpad(Sim.iter,4,"0")*".vtp")
-            #create_vtp_file(Sim.Boundary, "./particles/wall_particles"*lpad(Sim.iter,4,"0")*".vtp")
+            create_vtp_file(Sim.Boundary, "./particles/wall_particles"*lpad(Sim.iter,4,"0")*".vtp")
         end
 
-        update!(system,getfield.([Sim.Fluid.particles;Sim.Boundary.particles],:position))
+        update!(system,getfield.(parts,:position))
         
         # Increment the counter:
         Sim.iter += 1;
-        stats = @timed time_step(Sim,system,idxs_arr,bool)
-        @printf " | Execution Time: %.5e [s] \n" stats.time
+        #stats = @timed time_step(Sim,system,idxs_arr,bool)
+        @time time_step(Sim,system,idxs_arr_gpu,idxs_arr_cpu,bool)
+        #@printf " | Execution Time: %.5e [s] \n" stats.time
     end
 end
 
@@ -457,7 +474,7 @@ Sim.Boundary = wall_particles
 Sim.Fluid    = fluid_particles
 
 foreach(rm, filter(endswith(".vtp"), readdir("./particles",join=true)))
-iters = 1001
+iters = 3
 
 # Sim_ = deepcopy(Sim)
 # RunSimulation(Sim_,iters,false,"CPU")
@@ -466,7 +483,125 @@ iters = 1001
 
 Sim_ = deepcopy(Sim)
 RunSimulation(Sim_,iters,true,"GPU")
-println("GPU")
-println(Sim_.Fluid.particles[1])
+#println("GPU")
+#println(Sim_.Fluid.particles[1])
+#display(res)
 
 
+# ### GPU LEARN
+THREADS_PER_BLOCK = CUDA.attribute(device(), CUDA.DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK)
+
+function add!(c, a, b)
+    # compute the thread_id
+    x = (blockIdx().x - 1) * blockDim().x + threadIdx().x 
+
+    # i'th thread should get the i'th elements of a and b 
+    # sum them, and then store them in i'th element of c
+    @inbounds c[x] = a[x] + b[x]
+    return nothing
+end
+
+# function add(a::CuVector, b::CuVector)
+#     # check a and b have the same length
+#     if length(a) != length(b)
+#         throw(DimensionMismatch("A and B must have same number of elements; A has $(length(a)) elements, B has $(length(b)) elements"))
+#     end
+
+#     # number of elements for vector c
+#     n = length(a)
+
+#     # get the types of elements of vector a and b and
+#     # use that to compute the element type for vector c
+#     type_a = eltype(a)
+#     type_b = eltype(b)
+#     type_c = promote_type(type_a, type_b)
+
+#     # create a vector of zeros (directly on the GPU)
+#     # of length n and type typec 
+#     c = CUDA.zeros(type_c, n)
+
+#     # compute the number of threads and blocks
+#     threads = THREADS_PER_BLOCK # 256
+#     blocks = ceil(Int64, n/threads) 
+    
+#     # launch the kernel
+#     @cuda threads=threads blocks=blocks add!(c, a, b)
+
+#     return c
+# end
+
+# function subtract!(c, a)
+#     # # compute the thread_id
+#     # x = (blockIdx().x - 1) * blockDim().x + threadIdx().x 
+
+#     # # i'th thread should get the i'th elements of a and b 
+#     # # sum them, and then store them in i'th element of c
+#     # @inbounds c[x] = a[x] - a[1]
+#     # return
+
+#     # compute the thread_id
+#     x = (blockIdx().x - 1) * blockDim().x + threadIdx().x 
+
+#     # i'th thread should get the i'th elements of a and b 
+#     # sum them, and then store them in i'th element of c
+#     @inbounds c[x] = a[x] - a[1]
+#     return
+# end
+
+# function subtract(a)
+
+#     n_a    = length(a)
+#     type_a = eltype(a)
+
+#     # create a vector of zeros (directly on the GPU)
+#     # of length n and type typec 
+#     c = CUDA.zeros(type_a, n_a)
+
+#     # compute the number of threads and blocks
+#     threads = THREADS_PER_BLOCK # 256
+#     blocks = ceil(Int64, n_a/threads) 
+    
+#     # launch the kernel
+#     @cuda threads=threads blocks=blocks subtract!(c, a)
+
+#     return c
+# end
+
+# rel_r = map(x->broadcast(-,x,@view x[1]),r)
+# rel_rc = rel_r .* 0
+
+# N  = 10^6
+# as = CuArray(fill(SVector(rand(),rand(),rand()),N))
+# bs = CuArray(fill(SVector(rand(),rand(),rand()),N))
+# cs = fill(SVector(0.0,0.0,0.0),N)
+
+dρdt_n =   map((x,y,z) -> dot.(broadcast(dot,(Sim.Constants.mass ./ x) .* y,z),@view x[1]),ρ,rel_v,Wg)
+
+function calc_densi!(c, ρ)
+    # compute the thread_id
+    x = (blockIdx().x - 1) * blockDim().x + threadIdx().x 
+
+    # i'th thread should get the i'th elements of a and b 
+    # sum them, and then store them in i'th element of c
+    @inbounds c[x] = ρ[x]# ρ[1] #* sum( (1 ./ ρ[x]) .* rel_v[x] .* Wg[x] ) 
+    return
+end
+
+function calc_densi(ρ)
+
+    n    = length(ρ)
+    type = eltype(ρ)
+
+    # create a vector of zeros (directly on the GPU)
+    # of length n and type typec 
+    c = CUDA.zeros(type,n)
+
+    # compute the number of threads and blocks
+    threads = THREADS_PER_BLOCK # 256
+    blocks = ceil(Int64, n/threads) 
+    
+    # launch the kernel
+    @cuda threads=threads blocks=blocks calc_densi!(c,ρ)
+
+    return c
+end
