@@ -7,8 +7,7 @@ using CellListMap
 using FastPow
 using NearestNeighbors
 using CUDA
-using BenchmarkTools
-CUDA.allowscalar(false)
+CUDA.allowscalar(true)
 
 DF_FLUID = CSV.read("FluidPoints_Dp0.04.csv", DataFrame)
 DF_BOUND = CSV.read("BoundaryPoints_Dp0.04.csv", DataFrame)
@@ -80,7 +79,6 @@ Base.@kwdef mutable struct Simulation
     Constants::Constants = Constants()
     dt::Float64          = 0;
     iter::Int64          = 0;
-    N::Int64             = 0;
 end
 
 # Define the Wendland kernel function:
@@ -113,124 +111,11 @@ function pressure_eqn_of_state(density, initial_density, gamma, c0)
     return pressure
 end
 
-function CPU_SIM(Sim,idxs_arr_cpu)
-    parts =  [Sim.Fluid.particles;Sim.Boundary.particles]
-    r        =  getfield.(parts,:position)
-    ρ        =  getfield.(parts,:density)
-    v        =  getfield.(parts,:velocity)
-    α        =  getfield.(parts,:acceleration)
-
-    r_update = deepcopy(r)
-    ρ_update = deepcopy(ρ)
-    v_update = deepcopy(v)
-    α_update = deepcopy(α)
-    
-    dt = Sim.dt
-    H  = Sim.Constants.h
-
-    # Loop over all fluid particles:
-    Threads.@threads for i  in eachindex(parts)
-        idxs = idxs_arr_cpu[i]
-        particle = parts[i]
-
-        rel      = (particle.position,) .- r[idxs]
-        r_mag    = norm.(rel)
-        q        = r_mag ./ H
-
-        Wg_ij     = calcGradientW.(H, q, rel)
-
-        ρ_i  = particle.density
-        ρ_j  = ρ[idxs]
-        v_i  = particle.velocity
-        v_j  = v[idxs]
-
-        v_ij = (v_i,) .- v_j 
-
-        # Think there is some bug here, does not look very stable to me :)
-        function Ψ(Sim,rel,ρ_i,ρ_j,Wg)
-            ρ0    = Sim.Constants.rho0
-            g     = Sim.Constants.g
-            Cb    = Sim.Constants.Cb
-            gamma = Sim.Constants.g
-            cbar  = Sim.Constants.c0
-            DDTkh = 2*Sim.Constants.h*0.1
-            mass  = Sim.Constants.mass
-
-            DDTgz = ρ0*abs(g)/Cb
-
-            drz = rel[2] #y is our z
-            rh  = 1 + DDTgz * drz
-            dρ  = ρ0 * ^(rh,1/gamma) - ρ0
-
-            rr2   = dot(rel,rel)
-            eta2  = (0.1*Sim.Constants.h)*(0.1*Sim.Constants.h)
-
-            visc_densi = DDTkh*cbar*(ρ_j-ρ_i-dρ)/(rr2+eta2)
-
-            dot3  = dot(rel,Wg)
-
-            delta = visc_densi*dot3*(mass/ρ_j)
-
-            return delta
-        end
-
-        #ZERO DDT FOR NOW
-        ddt_term_n = 0* sum(map((x,y,z) -> Ψ(Sim,z,ρ_i,x,y),ρ_j,Wg_ij,rel))
-        
-        dρ_i_dt_n = ρ_i * sum(dot((Sim.Constants.mass ./ ρ_j) .* v_ij, Wg_ij)) + ddt_term_n
-        dv_i_dt_n = particle.acceleration + particle.GravityFactor*SVector(0,Sim.Constants.g,0)
-
-        ρ_i_n_half = particle.density  + dρ_i_dt_n*(dt/2)
-        v_i_n_half = particle.velocity + dv_i_dt_n*(dt/2)
-        v_ij_n_half = (v_i_n_half,) .- v_j #This is actually wrong, since we do not know v_j_n_half yet
-
-        Pi_n_half  = pressure_eqn_of_state(ρ_i_n_half,Sim.Constants.rho0,Sim.Constants.gamma,Sim.Constants.c0)
-        Pj_n_half  = pressure_eqn_of_state.(ρ_j,Sim.Constants.rho0,Sim.Constants.gamma,Sim.Constants.c0)
-
-        cond = dot.(v_ij_n_half,rel)
-
-        visc_bool = cond .< 0
-
-        # ZERO VISC FOR NOW
-        α = 0.00
-
-        eta2    = (0.01*H)*(0.01*H)
-        mu_ab   = (H*cond) ./ (dot.(rel,rel) .+ eta2)
-        visc_i  = visc_bool .* (-α*Sim.Constants.c0*mu_ab) ./ ((ρ_i,) .+ ρ_j)
-
-        # ZERO DDT FOR NOW
-        ddt_term_n_half = 0*sum(map((x,y,z) -> Ψ(Sim,z,ρ_i_n_half,x,y),ρ_j,Wg_ij,rel))
-        dv_i_dt_n_half = sum(-(((Sim.Constants.mass)*((Pi_n_half .+ Pj_n_half) ./ ((ρ_i,) .*ρ_j))) .+ visc_i ).* Wg_ij) + particle.GravityFactor*SVector(0,Sim.Constants.g,0)
-
-        dρ_i_dt_n_half = ρ_i_n_half * sum(dot((Sim.Constants.mass ./ ρ_j) .* v_ij_n_half, Wg_ij))
-
-        epsi = -(dρ_i_dt_n_half/ρ_i_n_half) * dt
-
-        # particle.density      = ρ_i *((2-epsi)/(2+epsi))
-        # particle.velocity     = v_i + particle.MotionLimiter*dv_i_dt_n_half*dt
-        # particle.position     = particle.position + particle.MotionLimiter*((particle.velocity + v_i)/2) * dt
-        # particle.acceleration = dv_i_dt_n_half
-        # particle.Visc         = sum(visc_i)
-        # particle.ddt          = ddt_term_n_half
-        # particle.WG           = sum(Wg_ij)
-
-        v_n         = v_i + particle.MotionLimiter*dv_i_dt_n_half*dt
-
-        α_update[i] = dv_i_dt_n_half
-        ρ_update[i] = ρ_i *((2-epsi)/(2+epsi))
-        v_update[i] = v_n
-        r_update[i] = particle.position + particle.MotionLimiter*((v_n + v_i)/2) * dt
-    end
-
-    Threads.@threads for i in eachindex(parts)
-        parts[i].acceleration = α_update[i]
-        parts[i].density      = ρ_update[i]
-        parts[i].velocity     = v_update[i]
-        parts[i].position     = r_update[i]
-    end
+function P(density,Sim)
+    return pressure_eqn_of_state(density,Sim.Constants.rho0,Sim.Constants.gamma,Sim.Constants.c0)
 end
 
-function GPU_SIM(Sim,parts,idxs_arr_gpu)
+function GPU_SIM(Sim,parts,idxs_arr)
 
     dt = Sim.dt
 
@@ -242,20 +127,19 @@ function GPU_SIM(Sim,parts,idxs_arr_gpu)
 
 
     MotionLimiter = CuArray(getfield.(parts,:MotionLimiter))
-    GravityVector = CuArray(getfield.(parts,:GravityFactor) .* fill(SVector(0,Sim.Constants.g,0),length(idxs_arr_gpu),))
-
+    GravityVector = CuArray(getfield.(parts,:GravityFactor) .* fill(SVector(0,Sim.Constants.g,0),length(idxs_arr),))
+    g = CuArray.(idxs_arr)
     r_    = CuArray(r_cpu)
     v_    = CuArray(v_cpu)
     ρ_    = CuArray(ρ_cpu)
     α_    = CuArray(α_cpu)
 
-    r    = map(ind->r_[ind],idxs_arr_gpu)
-    v    = map(ind->v_[ind],idxs_arr_gpu)
-    ρ    = map(ind->ρ_[ind],idxs_arr_gpu)
+    r    = map(ind->r_[ind],g)
+    v    = map(ind->v_[ind],g)
+    ρ    = map(ind->ρ_[ind],g)
 
     #- infront of x, to be allowed to use view inside of map, really important for performance it seems. To get p_i - p_j = -(p_j-p_i)
     # Cannot put minus inside since it becomes -q, which break calcGradientW
-    # Quite fast hard to speed up
     rel_r  = map(x->-broadcast(-,x,@view x[1]),r)
     rel_v  = map(x->-broadcast(-,x,@view x[1]),v)
     r_norm = map(x->norm.(x),rel_r);
@@ -264,6 +148,8 @@ function GPU_SIM(Sim,parts,idxs_arr_gpu)
 
     dρdt_n =   map((x,y,z) -> dot.(broadcast(dot,(Sim.Constants.mass ./ x) .* y,z),@view x[1]),ρ,rel_v,Wg)
 
+    #ρij     = map(x->broadcast(*,x[2:end],@view x[1]),ρ);
+    #Pij     = map(x->broadcast(+,x[2:end],@view x[1]),P);
     dvdt_n  = α_ + GravityVector                      #@views sum.(dvdt_n_); #SLOWEST LINE..
 
     
@@ -271,10 +157,11 @@ function GPU_SIM(Sim,parts,idxs_arr_gpu)
     v_i_n_half =  v_ .+ CuArray(dvdt_n) * (dt/2)
 
 
-    ρ_n_half      = map(ind->ρ_i_n_half[ind],idxs_arr_gpu)
-    v_n_half      = map(ind->v_i_n_half[ind],idxs_arr_gpu)
+    ρ_n_half      = map(ind->ρ_i_n_half[ind],g)
+    v_n_half      = map(ind->v_i_n_half[ind],g)
     
     rel_v_n_half  = map(x->-broadcast(-,x,@view x[1]),v_n_half) #Different from CPU implementation
+    #rel_v_n_half  = map((x,y) -> -broadcast(-,x,@view y[1]),v_n_half,v) #Similar to CPU implementation
    
     ρij_n_half    = map(x->broadcast(*,x[2:end],@view x[1]),ρ_n_half);
 
@@ -319,63 +206,288 @@ function GPU_SIM(Sim,parts,idxs_arr_gpu)
 end
 
 # Define the time step function:
-function time_step(Sim,system,idxs_arr_gpu,idxs_arr_cpu,bool)
 
-    list   = neighborlist!(system);
+function time_step2(Sim,list)
+    parts   = [Sim.Fluid.particles;Sim.Boundary.particles]
+    dt      = Sim.dt
+    H       = Sim.Constants.h
+    mi = mj = Sim.Constants.mass
 
-    function convert_idx(x, list)
-        out = [ Int[] for _ in x ]
+    ρ_ini   = deepcopy(getfield.(parts,:density))
+    v_ini   = deepcopy(getfield.(parts,:velocity))
+    x_ini   = deepcopy(getfield.(parts,:position))
 
-        # HERE YOU ADD THE ORIGINAL INDEX
-        for i in eachindex(out)
-            push!(out[i],i)
+    N      = length(parts)
+
+    # Loop 1
+    dρdt_n = zeros(N)
+    dvdt_n = getfield.(parts,:acceleration) + getfield.(parts,:GravityFactor) .* fill(SVector(0,Sim.Constants.g,0),N)
+    
+    Threads.@threads for L in list
+        i = L[1]; j = L[2]; d = L[3];
+
+        ρi = parts[i].density
+        ρj = parts[j].density
+        Pi = P(ρi,Sim)
+        Pj = P(ρj,Sim)
+        vi = parts[i].velocity
+        vj = parts[j].velocity
+        xi = parts[i].position
+        xj = parts[j].position
+
+        dxij  = xi - xj
+        vij   = vi - vj
+        
+        q  = d/H
+
+        wg = calcGradientW(H,q,dxij)
+
+        dρidt_n = ρi * dot((mj/ρj) * vij,wg)
+        dρjdt_n = ρj * dot((mi/ρi) * -vij,-wg)
+
+        dρdt_n[i] += dρidt_n; dρdt_n[j] += dρjdt_n;
+
+        dvidt_n = - mj * (Pi+Pj)/(ρi*ρj) * wg 
+
+        dvdt_n[i] += dvidt_n; dvdt_n[j] += -dvidt_n;
+    end
+
+    # Update half time steps
+    dρ_n_half = zeros(N)
+    dv_n_half = fill(SVector(0.0,0.0,0.0),N)
+    dx_n_half = fill(SVector(0.0,0.0,0.0),N)
+    for i in eachindex(parts)
+        dρ_n_half[i] = dρdt_n[i]*(dt/2)
+
+        if i == 1
+        print("NEW")
+        println(parts[i].density + dρ_n_half[i])
         end
 
-        for (i,j,d) in list
-            push!(out[i], j)
-            push!(out[j], i)
-        end
-        return out
-     end
-     idxs_arr_cpu .= convert_idx(1:Sim.N,list)
+        dv_n_half[i] = dvdt_n[i]*(dt/2)
+        dx_n_half[i] = parts[i].velocity*(dt/2) ####
+    end
 
-        if bool == false
-            CPU_SIM(Sim,idxs_arr_cpu)
-        else
-            
-            # THIS IS FASTER THAN CuArray.(idxs_arr)
-            function IDX_TO_GPU!(idxs_arr_gpu,idxs_arr_cpu)
-                g_               = CuArray(reduce(vcat,idxs_arr_cpu))
-                end_indices      = accumulate(+,length.(idxs_arr_cpu))
-                start_indices    = deepcopy(end_indices)
-                pushfirst!(start_indices,0)
-                deleteat!(start_indices,length(start_indices))
-                start_indices.+= 1
-                ind   = map((x,y)-> x:y,start_indices,end_indices)
-                idxs_arr_gpu .= map(x->g_[x],ind)
-            end
+    # Loop 2
+    WG_n_half     = fill(SVector(0.0,0.0,0.0),N)
+    dρdt_n_half   = zeros(N)
+    dvdt_n_half   = fill(SVector(0.0,0.0,0.0),N)
+    
+    for L in list
+        i = L[1]; j = L[2]; d = L[3];
 
-            # CODE IS FASTER USING INDEXING ARRAYS FROM GPU
-            IDX_TO_GPU!(idxs_arr_gpu,idxs_arr_cpu)
-            GPU_SIM(Sim,parts,idxs_arr_gpu)
-        end
+        ρi = parts[i].density + dρ_n_half[i]
+        ρj = parts[j].density + dρ_n_half[j]
+
+
+
+        Pi = P(ρi,Sim)
+        Pj = P(ρj,Sim)
+        vi = parts[i].velocity + dv_n_half[i]
+        vj = parts[i].velocity + dv_n_half[j]
+        xi = parts[i].position + dx_n_half[i]
+        xj = parts[j].position + dx_n_half[j]
+
+        dxij  = xi - xj
+
+        vij   = vi - vj
+        
+        q  = d/H
+
+        wg   = calcGradientW(H,q,dxij)
+
+        WG_n_half[i] += wg; WG_n_half[j] += -wg;
+
+        dρidt_n_half = ρi * dot((mj/ρj) * vij,wg)
+        dρjdt_n_half = ρj * dot((mi/ρi) * -vij,-wg)
+
+        dρdt_n_half[i] += dρidt_n_half; dρdt_n_half[j] += dρjdt_n_half;
+
+        dvidt_n_half = - mj * (Pi+Pj)/(ρi*ρj) * wg
+
+        dvdt_n_half[i] += dvidt_n_half; dvdt_n_half[j] += -dvidt_n_half;
+    end
+
+     # Update to final time steps
+     # Remember we have to remove contribution from previous time steps
+     # before the final calculation.. lets improve this later!
+     for i in eachindex(parts)
+        GFi = parts[i].GravityFactor
+        MLi = parts[i].MotionLimiter
+
+        epsi_i = -(dρdt_n_half[i]/(parts[i].density + dρdt_n[i]))*dt
+
+        parts[i].acceleration  = dvdt_n_half[i] + GFi*SVector(0,Sim.Constants.g,0)
+        parts[i].WG            = WG_n_half[i]
+        parts[i].density       = ρ_ini[i]*((2-epsi_i)/(2+epsi_i))
+        parts[i].velocity      = v_ini[i] + MLi*dvdt_n_half[i]*dt
+        parts[i].position      = x_ini[i] + MLi*(parts[i].velocity + v_ini[i])*0.5*dt
+    end
 
     # Extract Info relevant for time stepping
     # Inspired by JSphCpu.cpp from DualSPHysics
     max_acc = maximum(norm.(getfield.(Sim.Fluid.particles,:acceleration)));
-    dt1     =  sqrt(Sim.Constants.h/max_acc)
+    dt1     =  sqrt(H/max_acc)
 
-    dt2     = Sim.Constants.h / (Sim.Constants.c0 + maximum(getfield.(Sim.Fluid.particles,:Visc)))
+    dt2     = H / (Sim.Constants.c0 + maximum(getfield.(Sim.Fluid.particles,:Visc)))
 
-    Sim.dt      = Sim.Constants.CFL*min(dt1,dt2)
+    dt      = Sim.Constants.CFL*min(dt1,dt2)
 
-    if isnan(Sim.dt)
+    Sim.dt  = dt;
+
+    if isnan(dt)
         print("Simulation experienced nan time step")
         return 1
     end
 
     it = lpad(Sim.iter,4,"0")
-    @printf "Iteration: %s | dt = %.5e" it Sim.dt
+    @printf "Iteration: %s | dt = %.5e" it dt
+end
+
+function time_step(Sim,system,idxs_arr,bool)
+
+    parts =  [Sim.Fluid.particles;Sim.Boundary.particles]
+
+    H  = Sim.Constants.h
+    dt = Sim.dt
+    
+
+    list     = neighborlist!(system);
+    function convert_idx(x, list)
+        out  = [ Int[] for _ in x ]
+        rout = [ Float64[] for _ in x ]
+
+    # HERE YOU ADD THE ORIGINAL INDEX
+    for i in eachindex(out,rout)
+            push!(out[i],i)
+            push!(rout[i],0)
+        end
+
+        for (i,j,d) in list
+            push!(out[i], j)
+            push!(out[j], i)
+            push!(rout[i],d)
+        end
+        return out,rout
+     end
+     idxs_arr,rout = convert_idx(parts,list)
+
+     if bool == false
+        # Loop over all fluid particles:
+        for i  in eachindex(idxs_arr)
+            idxs = idxs_arr[i]
+            particle_update = parts[i]
+            particle = deepcopy(particle_update)
+
+            rel      = (particle.position,) .- @view(getfield.(parts,:position)[idxs])
+            r        = norm.(rel)
+            q        = r ./ H
+
+            Wg_ij     = calcGradientW.(H, q, rel)
+
+            ρ_i  = particle.density
+            ρ_j  = @view(getfield.(parts,:density)[idxs])
+            v_i  = particle.velocity
+            v_j  = @view(getfield.(parts,:velocity)[idxs])
+
+            v_ij = (v_i,) .- v_j 
+        
+            # Think there is some bug here, does not look very stable to me :)
+            function Ψ(Sim,rel,ρ_i,ρ_j,Wg)
+                ρ0    = Sim.Constants.rho0
+                g     = Sim.Constants.g
+                Cb    = Sim.Constants.Cb
+                gamma = Sim.Constants.g
+                cbar  = Sim.Constants.c0
+                DDTkh = 2*Sim.Constants.h*0.1
+                mass  = Sim.Constants.mass
+
+                DDTgz = ρ0*abs(g)/Cb
+
+                drz = rel[2] #y is our z
+                rh  = 1 + DDTgz * drz
+                dρ  = ρ0 * ^(rh,1/gamma) - ρ0
+
+                rr2   = dot(rel,rel)
+                eta2  = (0.1*Sim.Constants.h)*(0.1*Sim.Constants.h)
+
+                visc_densi = DDTkh*cbar*(ρ_j-ρ_i-dρ)/(rr2+eta2)
+
+                dot3  = dot(rel,Wg)
+
+                delta = visc_densi*dot3*(mass/ρ_j)
+
+                return delta
+            end
+
+            #ZERO DDT FOR NOW
+            ddt_term_n = 0* sum(map((x,y,z) -> Ψ(Sim,z,ρ_i,x,y),ρ_j,Wg_ij,rel))
+            
+            dρ_i_dt_n = ρ_i * sum(dot((Sim.Constants.mass ./ ρ_j) .* v_ij, Wg_ij)) + ddt_term_n
+            dv_i_dt_n = particle.acceleration + particle.GravityFactor*SVector(0,Sim.Constants.g,0)
+
+            ρ_i_n_half = particle.density  + dρ_i_dt_n*(dt/2)
+
+            if i == 1
+            print("OLD")
+            println(ρ_i_n_half)
+            end
+
+            v_i_n_half = particle.velocity + dv_i_dt_n*(dt/2)
+            v_ij_n_half = (v_i_n_half,) .- v_j #This is actually wrong, since we do not know v_j_n_half yet
+
+            Pi_n_half  = pressure_eqn_of_state(ρ_i_n_half,Sim.Constants.rho0,Sim.Constants.gamma,Sim.Constants.c0)
+            Pj_n_half  = pressure_eqn_of_state.(ρ_j,Sim.Constants.rho0,Sim.Constants.gamma,Sim.Constants.c0)
+
+            cond = dot.(v_ij_n_half,rel)
+
+            visc_bool = cond .< 0
+
+            # ZERO VISC FOR NOW
+            α = 0.00
+
+            eta2    = (0.01*H)*(0.01*H)
+            mu_ab   = (H*cond) ./ (dot.(rel,rel) .+ eta2)
+            visc_i  = visc_bool .* (-α*Sim.Constants.c0*mu_ab) ./ ((ρ_i,) .+ ρ_j)
+
+            # ZERO DDT FOR NOW
+            ddt_term_n_half = 0*sum(map((x,y,z) -> Ψ(Sim,z,ρ_i_n_half,x,y),ρ_j,Wg_ij,rel))
+            dv_i_dt_n_half = sum(-(((Sim.Constants.mass)*((Pi_n_half .+ Pj_n_half) ./ ((ρ_i,) .*ρ_j))) .+ visc_i ).* Wg_ij) + particle.GravityFactor*SVector(0,Sim.Constants.g,0)
+
+            dρ_i_dt_n_half = ρ_i_n_half * sum(dot((Sim.Constants.mass ./ ρ_j) .* v_ij_n_half, Wg_ij))
+
+            epsi = -(dρ_i_dt_n_half/ρ_i_n_half) * dt
+
+            particle_update.density  = ρ_i *((2-epsi)/(2+epsi))
+            particle_update.velocity = v_i + particle.MotionLimiter*dv_i_dt_n_half*dt
+            particle_update.position = particle_update.position + particle.MotionLimiter*((particle_update.velocity + v_i)/2) * dt
+            particle_update.acceleration = dv_i_dt_n_half
+            # particle_update.Visc         = sum(visc_i)
+            # particle_update.ddt          = ddt_term_n_half
+            particle_update.WG           = sum(Wg_ij)
+        end
+    else
+        GPU_SIM(Sim,parts,idxs_arr)
+    end
+
+    # Extract Info relevant for time stepping
+    # Inspired by JSphCpu.cpp from DualSPHysics
+    max_acc = maximum(norm.(getfield.(Sim.Fluid.particles,:acceleration)));
+    dt1     =  sqrt(H/max_acc)
+
+    dt2     = H / (Sim.Constants.c0 + maximum(getfield.(Sim.Fluid.particles,:Visc)))
+
+    dt      = Sim.Constants.CFL*min(dt1,dt2)
+
+    Sim.dt  = dt;
+
+    if isnan(dt)
+        print("Simulation experienced nan time step")
+        return 1
+    end
+
+    it = lpad(Sim.iter,4,"0")
+    @printf "Iteration: %s | dt = %.5e" it dt
 end
 
 # Define the create_vtp_file subfunction:
@@ -421,28 +533,53 @@ end
 
 function RunSimulation(Sim,max_iter,bool,ext)
 
-    parts  = [Sim.Fluid.particles;Sim.Boundary.particles]
-    system = InPlaceNeighborList(x=getfield.(parts,:position), cutoff=2*Sim.Constants.h, parallel=true)
+    system = InPlaceNeighborList(x=getfield.([Sim.Fluid.particles;Sim.Boundary.particles],:position), cutoff=2*Sim.Constants.h, parallel=true)
 
-    idxs_arr_cpu = Vector{Vector{Int64}}(undef,length(parts))
-    idxs_arr_gpu = Vector{CuArray{Int64, 1, CUDA.Mem.DeviceBuffer}}(undef,length(parts))
+    idxs_arr = Vector{Vector{Int64}}(undef,length([Sim.Fluid.particles;Sim.Boundary.particles]))
 
     # Loop over all iterations:
     while Sim.iter < max_iter
         # Perform an action every 100 iterations:
-        if Sim.iter % 10 == 0
+        if Sim.iter % 1 == 0
             # Create .vtp files for the fluid particles and the wall particles:
             create_vtp_file(Sim.Fluid, "./particles/fluid_particles_"*ext*lpad(Sim.iter,4,"0")*".vtp")
-            create_vtp_file(Sim.Boundary, "./particles/wall_particles"*lpad(Sim.iter,4,"0")*".vtp")
+            #create_vtp_file(Sim.Boundary, "./particles/wall_particles"*lpad(Sim.iter,4,"0")*".vtp")
         end
 
-        update!(system,getfield.(parts,:position))
-        
+        x_new = getfield.([Sim.Fluid.particles;Sim.Boundary.particles],:position)
+        update!(system,x_new)
+        list = neighborlist!(system);
         # Increment the counter:
         Sim.iter += 1;
         #stats = @timed time_step(Sim,system,idxs_arr,bool)
-        @time time_step(Sim,system,idxs_arr_gpu,idxs_arr_cpu,bool)
-        #@printf " | Execution Time: %.5e [s] \n" stats.time
+        stats = @timed time_step2(Sim,list)
+        @printf " | Execution Time: %.5e [s] \n" stats.time
+    end
+end
+
+function RunSimulationOLD(Sim,max_iter,bool,ext)
+
+    system = InPlaceNeighborList(x=getfield.([Sim.Fluid.particles;Sim.Boundary.particles],:position), cutoff=2*Sim.Constants.h, parallel=true)
+
+    idxs_arr = Vector{Vector{Int64}}(undef,length([Sim.Fluid.particles;Sim.Boundary.particles]))
+
+    # Loop over all iterations:
+    while Sim.iter < max_iter
+        # Perform an action every 100 iterations:
+        if Sim.iter % 1 == 0
+            # Create .vtp files for the fluid particles and the wall particles:
+            create_vtp_file(Sim.Fluid, "./particles/fluid_particles_"*ext*lpad(Sim.iter,4,"0")*".vtp")
+            #create_vtp_file(Sim.Boundary, "./particles/wall_particles"*lpad(Sim.iter,4,"0")*".vtp")
+        end
+
+        x_new = getfield.([Sim.Fluid.particles;Sim.Boundary.particles],:position)
+        update!(system,x_new)
+        list = neighborlist!(system);
+        # Increment the counter:
+        Sim.iter += 1;
+        #stats = @timed time_step(Sim,system,idxs_arr,bool)
+        stats = @timed time_step(Sim,system,idxs_arr,bool)
+        @printf " | Execution Time: %.5e [s] \n" stats.time
     end
 end
 
@@ -459,7 +596,7 @@ Sim.dt = Sim.Constants.dt_ini
 # Create a Collection object for the fluid particles:
 fluid_particles = Collection(Vector{Particle}())
 
-for i = 1:size(DF_FLUID)[1]
+for i = 1:20#size(DF_FLUID)[1]
     idp = DF_FLUID[i,:]["Idp"]
     pos = SVector(0.5,0.2,0)+SVector(DF_FLUID[i,:]["Points:0"],DF_FLUID[i,:]["Points:2"],DF_FLUID[i,:]["Points:1"])
     acc = SVector(0,0,0)
@@ -472,27 +609,34 @@ for i = 1:size(DF_FLUID)[1]
 end
 
 # Initialize the positions of the wall particles using a regular grid:
-wall_particles = Collection(Vector{Particle}())
+# wall_particles = Collection(Vector{Particle}())
 
-for i = 1:size(DF_BOUND)[1]
-    idp = DF_BOUND[i,:]["Idp"]
-    pos = SVector(DF_BOUND[i,:]["Points:0"],DF_BOUND[i,:]["Points:2"],DF_BOUND[i,:]["Points:1"])
-    acc = SVector(0,0,0)
-    vel = SVector(0.0, 0.0, 0.0)
-    # Create a new Particle object with the calculated position:
-    particle = Particle(pos,acc,vel, Sim.Constants.rho0, idp,0,-1,0,0,SVector(0,0,0),0)
+# for i = 1:size(DF_BOUND)[1]
+#     idp = DF_BOUND[i,:]["Idp"]
+#     pos = SVector(DF_BOUND[i,:]["Points:0"],DF_BOUND[i,:]["Points:2"],DF_BOUND[i,:]["Points:1"])
+#     acc = SVector(0,0,0)
+#     vel = SVector(0.0, 0.0, 0.0)
+#     # Create a new Particle object with the calculated position:
+#     particle = Particle(pos,acc,vel, Sim.Constants.rho0, idp,0,-1,0,0,SVector(0,0,0),0)
 
-    # Add the particle to the wall_particles collection:
-    push!(wall_particles.particles, particle)
-end
+#     # Add the particle to the wall_particles collection:
+#     push!(wall_particles.particles, particle)
+# end
 
 Sim.Boundary = wall_particles
 Sim.Fluid    = fluid_particles
-Sim.N        = length([Sim.Fluid.particles;Sim.Boundary.particles])
 
+Sim_         = deepcopy(Sim)
 
 foreach(rm, filter(endswith(".vtp"), readdir("./particles",join=true)))
-iters = 201
+iters = 2
 
-RunSimulation(Sim,iters,false,"CPU")
+Sim = deepcopy(Sim_)
+RunSimulationOLD(Sim,iters,false,"CPU_OLD")
+println("OLD CPU")
+println(Sim.Fluid.particles[1])
+
+Sim = deepcopy(Sim_)
+RunSimulation(Sim,iters,false,"CPU_NEW")
+println("NEW CPU")
 println(Sim.Fluid.particles[1])
