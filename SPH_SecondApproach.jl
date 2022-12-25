@@ -178,30 +178,16 @@ end
 
 ### Play with code
 DF_FLUID = CSV.read("FluidPoints_Dp0.04.csv", DataFrame)
-DF_BOUND = CSV.read("BoundaryPoints_Dp0.04.csv", DataFrame)
 
-P1F = DF_FLUID[!,"Points:0"]
-P2F = DF_FLUID[!,"Points:1"]
-P3F = DF_FLUID[!,"Points:2"]
-P1B = DF_BOUND[!,"Points:0"]
-P2B = DF_BOUND[!,"Points:1"]
-P3B = DF_BOUND[!,"Points:2"]
+P1 = DF_FLUID[!,"Points:0"]
+P2 = DF_FLUID[!,"Points:1"]
+P3 = DF_FLUID[!,"Points:2"]
 
 points = SVector[]
 
-for i = 1:length(P1F)
-    push!(points,SVector(P1F[i],P3F[i],P2F[i]))
+for i = 1:length(P1)
+    push!(points,SVector(P1[i],P3[i],P2[i]))
 end
-
-for i = 1:length(P1B)
-    push!(points,SVector(P1B[i],P3B[i],P2B[i]))
-end
-
-GravityFactor = Int64[]
-
-# g is positive in this code
-GravityFactor = [Int64(-1) .+ 0*collect(1:size(DF_FLUID,1));Int64(1) .+ 0*collect(1:size(DF_BOUND,1))];
-MotionLimiter = [Int64(1) .+ 0*collect(1:size(DF_FLUID,1));Int64(0) .+ 0*collect(1:size(DF_BOUND,1))];
 
 ρ₀ = 1000
 dx = 0.04
@@ -214,14 +200,14 @@ c₀ = 85.89
 g  = 9.81
 dt = 1e-4
 
-density  = Array([DF_FLUID.Rhop;DF_BOUND.Rhop])
+density  = Array(DF_FLUID.Rhop)
 velocity = zeros(SVector{3,Float64},length(points))
 acceleration = zeros(SVector{3,Float64},length(points))
 
 system  = InPlaceNeighborList(x=points, cutoff=2*H, parallel=true)
 
 foreach(rm, filter(endswith(".vtp"), readdir("./second_approach/",join=true)))
-for big_iter = 1:20001
+for big_iter = 1:10001
 update!(system,points)
 neighborlist!(system)
 
@@ -232,23 +218,23 @@ dρdtI,dρdtL = ∂ρᵢ∂t(system,points,m₀,density,velocity,WgL)
 
 dvdtI,dvdtL = ∂vᵢ∂t(system,points,m₀,density,WgL,c₀,γ,ρ₀)
 # We add gravity as a final step for the i particles, not the L ones, since we do not split the contribution, that is unphysical!
-dvdtI .= map((x,y)->x+y*SVector(0,-g,0),dvdtI,GravityFactor)
+dvdtI .= map(x->x+SVector(0,-g,0),dvdtI)
 
 
-density_n_half  = density  .+ dρdtI * (dt/2) .* MotionLimiter
-velocity_n_half = velocity .+ dvdtI * (dt/2) .* MotionLimiter
+density_n_half  = density  .+ dρdtI * (dt/2)
+velocity_n_half = velocity .+ dvdtI * (dt/2)
 
 dρdtI_n_half,dρdtL_n_half = ∂ρᵢ∂t(system,points,m₀,density_n_half,velocity_n_half,WgL)
 
 dvdtI_n_half,dvdtL_n_half = ∂vᵢ∂t(system,points,m₀,density_n_half,WgL,c₀,γ,ρ₀)
-dvdtI .= map((x,y)->x+y*SVector(0,-g,0),dvdtI,GravityFactor)
+dvdtI_n_half .= map(x->x+SVector(0,-g,0),dvdtI_n_half)
 
 
 epsi = -( dρdtI_n_half ./ density_n_half)*dt
 
 density_new   = density .* (2 .- epsi)./(2 .+ epsi)
-velocity_new  = velocity .+ dvdtI_n_half * dt .* MotionLimiter
-points_new    = points .+ ((velocity_new .+ velocity)/2) * dt .* MotionLimiter
+velocity_new  = velocity .+ dvdtI_n_half * dt
+points_new    = points .+ ((velocity_new .+ velocity)/2) * dt
 
 density  = density_new
 velocity = velocity_new
