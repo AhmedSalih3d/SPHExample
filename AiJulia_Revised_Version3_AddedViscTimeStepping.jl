@@ -221,7 +221,7 @@ function time_step2(Sim,list)
 
     # Loop 1
     dρdt_n = zeros(N)
-    dvdt_n = getfield.(parts,:acceleration) + getfield.(parts,:GravityFactor) .* fill(SVector(0,Sim.Constants.g,0),N)
+    dvdt_n = getfield.(parts,:GravityFactor) .* fill(SVector(0,Sim.Constants.g,0),N)
     
     Threads.@threads for L in list
         i = L[1]; j = L[2]; d = L[3];
@@ -242,8 +242,8 @@ function time_step2(Sim,list)
 
         wg = calcGradientW(H,q,dxij)
 
-        dρidt_n = ρi * dot((mj/ρj) * vij,wg)
-        dρjdt_n = ρj * dot((mi/ρi) * -vij,-wg)
+        dρidt_n = dot((mj/ρj) * vij,wg)
+        dρjdt_n = dot((mi/ρi) * -vij,-wg)
 
         dρdt_n[i] += dρidt_n; dρdt_n[j] += dρjdt_n;
 
@@ -255,15 +255,9 @@ function time_step2(Sim,list)
     # Update half time steps
     dρ_n_half = zeros(N)
     dv_n_half = fill(SVector(0.0,0.0,0.0),N)
-    dx_n_half = fill(SVector(0.0,0.0,0.0),N)
+    dx_n_half = fill(SVector(0.0,0.0,0.0),N) + getfield.(parts,:GravityFactor) .* fill(SVector(0,Sim.Constants.g,0),N)
     for i in eachindex(parts)
         dρ_n_half[i] = dρdt_n[i]*(dt/2)
-
-        if i == 1
-        print("NEW")
-        println(parts[i].density + dρ_n_half[i])
-        end
-
         dv_n_half[i] = dvdt_n[i]*(dt/2)
         dx_n_half[i] = parts[i].velocity*(dt/2) ####
     end
@@ -276,8 +270,8 @@ function time_step2(Sim,list)
     for L in list
         i = L[1]; j = L[2]; d = L[3];
 
-        ρi = parts[i].density + dρ_n_half[i]
-        ρj = parts[j].density + dρ_n_half[j]
+        ρi = parts[i].density + parts[i].density*dρ_n_half[i]
+        ρj = parts[j].density + parts[j].density*dρ_n_half[j]
 
 
 
@@ -298,12 +292,12 @@ function time_step2(Sim,list)
 
         WG_n_half[i] += wg; WG_n_half[j] += -wg;
 
-        dρidt_n_half = ρi * dot((mj/ρj) * vij,wg)
-        dρjdt_n_half = ρj * dot((mi/ρi) * -vij,-wg)
+        dρidt_n_half = dot((mj/ρj) * vij,wg)
+        dρjdt_n_half = dot((mi/ρi) * -vij,-wg)
 
         dρdt_n_half[i] += dρidt_n_half; dρdt_n_half[j] += dρjdt_n_half;
 
-        dvidt_n_half = - mj * (Pi+Pj)/(ρi*ρj) * wg
+        dvidt_n_half = -mj * (Pi+Pj)/(ρi*ρj) * wg
 
         dvdt_n_half[i] += dvidt_n_half; dvdt_n_half[j] += -dvidt_n_half;
     end
@@ -319,7 +313,7 @@ function time_step2(Sim,list)
 
         parts[i].acceleration  = dvdt_n_half[i] + GFi*SVector(0,Sim.Constants.g,0)
         parts[i].WG            = WG_n_half[i]
-        parts[i].density       = ρ_ini[i]*((2-epsi_i)/(2+epsi_i))
+        parts[i].density       = ρ_ini[i]*((2+epsi_i)/(2-epsi_i))
         parts[i].velocity      = v_ini[i] + MLi*dvdt_n_half[i]*dt
         parts[i].position      = x_ini[i] + MLi*(parts[i].velocity + v_ini[i])*0.5*dt
     end
@@ -596,7 +590,7 @@ Sim.dt = Sim.Constants.dt_ini
 # Create a Collection object for the fluid particles:
 fluid_particles = Collection(Vector{Particle}())
 
-for i = 1:20#size(DF_FLUID)[1]
+for i = 1:2#size(DF_FLUID)[1]
     idp = DF_FLUID[i,:]["Idp"]
     pos = SVector(0.5,0.2,0)+SVector(DF_FLUID[i,:]["Points:0"],DF_FLUID[i,:]["Points:2"],DF_FLUID[i,:]["Points:1"])
     acc = SVector(0,0,0)
@@ -609,7 +603,7 @@ for i = 1:20#size(DF_FLUID)[1]
 end
 
 # Initialize the positions of the wall particles using a regular grid:
-# wall_particles = Collection(Vector{Particle}())
+wall_particles = Collection(Vector{Particle}())
 
 # for i = 1:size(DF_BOUND)[1]
 #     idp = DF_BOUND[i,:]["Idp"]
@@ -629,7 +623,7 @@ Sim.Fluid    = fluid_particles
 Sim_         = deepcopy(Sim)
 
 foreach(rm, filter(endswith(".vtp"), readdir("./particles",join=true)))
-iters = 2
+iters = 51
 
 Sim = deepcopy(Sim_)
 RunSimulationOLD(Sim,iters,false,"CPU_OLD")
