@@ -122,52 +122,32 @@ function ∂Ψᵢⱼ∂t(list,points,h,m₀,δᵩ,c₀,γ,g,ρ₀,ρ,WgL)
     dpsiI = zeros(N)
     dpsiL = zeros(length(list))
     for (iter,L) in collect(enumerate(list))
-        i = L[1]; j = L[2];
+        i = L[1]; j = L[2]; d = L[3] #norm(xᵢⱼ)
 
         xᵢⱼ   = points[i] - points[j]
         ρᵢ    = ρ[i]
         ρⱼ    = ρ[j]
         
         Cb    = (c₀^2*ρ₀)/γ
-        DDTgz = ρ₀*abs(g)/Cb
+  
+        # For particle i
+        dz    = xᵢⱼ[2]
+        Pᵢⱼᴴ  = ρ₀*g*dz
+        ρᵢⱼᴴ  = ρ₀*(((Pᵢⱼᴴ/Cb) + 1)^(1/γ) - 1)
+        ρⱼᵢᵀ  = ρⱼ-ρᵢ
+        Ψᵢⱼ   = 2*(ρⱼᵢᵀ-ρᵢⱼᴴ) * (xᵢⱼ/d) #Should be + ?
 
-        # The code is a bit bad, just to be sure everything is correct
-        # mathematically
-        drz   = xᵢⱼ[2] #2D SIMULATION
+        delta_i = δᵩ*h*c₀*dot(Ψᵢⱼ,WgL[i])*(m₀/ρⱼ)
 
-        rh  = 1 + DDTgz * drz
+        # For particle j
+        Pⱼᵢᴴ  = ρ₀*g*(-dz) #!
+        ρⱼᵢᴴ  = ρ₀*(((Pⱼᵢᴴ/Cb)+1)^(1/γ) - 1)
+        ρᵢⱼᵀ  = -ρⱼᵢᵀ
+        Ψⱼᵢ   = 2*(ρᵢⱼᵀ-ρⱼᵢᴴ) * (-xᵢⱼ/d) #Should be + ?
 
-        dρ  = ρ₀ * ^(rh,1/γ) - ρ₀
-
-        r²  = dot(xᵢⱼ,xᵢⱼ)
-
-        DDTkh = 2*h*δᵩ
-
-        visc_densi = DDTkh*c₀*(ρⱼ-ρᵢ-dρ)/(r²+η²)
-
-        dot3       = dot(xᵢⱼ,WgL[i])
-
-        delta_i    = visc_densi*dot3*(m₀/ρⱼ)
+        delta_j = δᵩ*h*c₀*dot(Ψⱼᵢ,-WgL[i])*(m₀/ρᵢ)
 
         dpsiI[i]  += delta_i
-
-        # For j particle
-        drz   = -xᵢⱼ[2] #2D SIMULATION
-
-        rh  = 1 + DDTgz * drz
-
-        dρ  = ρ₀ * ^(rh,1/γ) - ρ₀
-
-        r²  = dot(xᵢⱼ,xᵢⱼ)
-
-        DDTkh = 2*h*δᵩ
-
-        visc_densi = DDTkh*c₀*(ρᵢ-ρⱼ-dρ)/(r²+η²)
-
-        dot3       = dot(-xᵢⱼ,-WgL[i])
-
-        delta_j    = visc_densi*dot3*(m₀/ρᵢ)
-
         dpsiI[j]  += delta_j
 
         dpsiL[iter] = delta_i
@@ -337,9 +317,9 @@ function RunSimulation(points,GravityFactor,MotionLimiter)
         WiI,_   = ∑ⱼWᵢⱼ(list,points,αD,H)
         WgI,WgL = ∑ⱼ∇ᵢWᵢⱼ(list,points,αD,H)
 
-        dΨdtI,_ = ∂Ψᵢⱼ∂t(list,points,H,m₀,δᵩ,c₀,γ,g,ρ₀,density,WgL)
+        #dΨdtI,_ = ∂Ψᵢⱼ∂t(list,points,H,m₀,δᵩ,c₀,γ,g,ρ₀,density,WgL) 
         dρdtI,_ = ∂ρᵢ∂t(system,points,m₀,density,velocity,WgL)
-        dρdtI  += dΨdtI
+        #dρdtI  += dΨdtI .* MotionLimiter
 
         viscI,_ = ∂Πᵢⱼ∂t(list,points,H,density,α,velocity,c₀,m₀,WgL)
         dvdtI,_ = ∂vᵢ∂t(system,points,m₀,density,WgL,c₀,γ,ρ₀)
@@ -351,9 +331,9 @@ function RunSimulation(points,GravityFactor,MotionLimiter)
         velocity_n_half = velocity .+ dvdtI * (dt/2) .* MotionLimiter
         points_n_half   = points   .+ velocity_n_half * (dt/2) .* MotionLimiter
 
-        dΨdtI_n_half,_ = ∂Ψᵢⱼ∂t(list,points_n_half,H,m₀,δᵩ,c₀,γ,g,ρ₀,density_n_half,WgL)
+        #dΨdtI_n_half,_ = ∂Ψᵢⱼ∂t(list,points_n_half,H,m₀,δᵩ,c₀,γ,g,ρ₀,density_n_half,WgL) 
         dρdtI_n_half,_ = ∂ρᵢ∂t(system,points_n_half,m₀,density_n_half,velocity_n_half,WgL)
-        dρdtI_n_half  += dΨdtI_n_half
+        #dρdtI_n_half  += dΨdtI_n_half .* MotionLimiter
 
         viscI_n_half,_ = ∂Πᵢⱼ∂t(list,points_n_half,H,density_n_half,α,velocity_n_half,c₀,m₀,WgL)
         dvdtI_n_half,_ = ∂vᵢ∂t(system,points_n_half,m₀,density_n_half,WgL,c₀,γ,ρ₀)
