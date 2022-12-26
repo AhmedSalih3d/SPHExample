@@ -9,21 +9,22 @@ function Wᵢⱼ(αD,q)
     return αD*(1-q/2)^4*(2*q + 1)
 end
 
-function ∑ⱼWᵢⱼ(system,points,αD,h)
-    list = system.nb.list
+function ∑ⱼWᵢⱼ(list,points,αD,h)
     N    = length(points)
 
     sumWI = zeros(N)
     sumWL = zeros(length(list))
-    Threads.@threads for (iter,L) in collect(enumerate(list))
+    for (iter,L) in collect(enumerate(list))
         i = L[1]; j = L[2]; d = L[3]
 
         q = d/h
 
-        sumWI[i] += Wᵢⱼ(αD,q)
-        sumWI[j] += Wᵢⱼ(αD,q)
+        W = Wᵢⱼ(αD,q)
 
-        sumWL[iter] = Wᵢⱼ(αD,q)
+        sumWI[i] += W
+        sumWI[j] += W
+
+        sumWL[iter] = W
     end
 
     return sumWI,sumWL
@@ -31,7 +32,7 @@ end
 
 function ∇ᵢWᵢⱼ(αD,q,xᵢⱼ,h)
     # Skip distances outside the support of the kernel:
-    if q < 0 || q > 2
+    if q < 0.0 || q > 2.0
         return SVector(0.0,0.0,0.0)
     end
 
@@ -42,23 +43,24 @@ function ∇ᵢWᵢⱼ(αD,q,xᵢⱼ,h)
     return SVector(gradWx,gradWy,gradWz)
 end
 
-function ∑ⱼ∇ᵢWᵢⱼ(system,points,αD,h)
-    list = system.nb.list
+function ∑ⱼ∇ᵢWᵢⱼ(list,points,αD,h)
     N    = length(points)
 
-    sumWgI = fill(SVector(0.0,0.0,0.0),N)
-    sumWgL = fill(SVector(0.0,0.0,0.0),length(list))
-    Threads.@threads for (iter,L) in collect(enumerate(list))
+    sumWgI = zeros(SVector{3,Float64},N)
+    sumWgL = zeros(SVector{3,Float64},length(list))
+    for (iter,L) in collect(enumerate(list))
         i = L[1]; j = L[2]; d = L[3]
 
         xᵢⱼ = points[i] - points[j]
 
         q = d/h
 
-        sumWgI[i] += ∇ᵢWᵢⱼ(αD,q,xᵢⱼ,h)
-        sumWgI[j] -= ∇ᵢWᵢⱼ(αD,q,xᵢⱼ,h)
+        Wg = ∇ᵢWᵢⱼ(αD,q,xᵢⱼ,h)
 
-        sumWgL[iter] = ∇ᵢWᵢⱼ(αD,q,xᵢⱼ,h)
+        sumWgI[i] +=  Wg
+        sumWgI[j] += -Wg
+
+        sumWgL[iter] = Wg
     end
 
     return sumWgI,sumWgL
@@ -75,7 +77,7 @@ function ∂ρᵢ∂t(system,points,m,ρ,v,WgL)
 
     dρdtI = zeros(N)
     dρdtL = zeros(length(list))
-    Threads.@threads for (iter,L) in collect(enumerate(list))
+    for (iter,L) in collect(enumerate(list))
         i = L[1]; j = L[2]
 
         ρᵢ    = ρ[i]
@@ -99,7 +101,7 @@ function ∂vᵢ∂t(system,points,m,ρ,WgL,c₀,γ,ρ₀)
 
     dvdtI = fill(SVector(0.0,0.0,0.0),N)
     dvdtL = fill(SVector(0.0,0.0,0.0),length(list))
-    Threads.@threads for (iter,L) in collect(enumerate(list))
+    for (iter,L) in collect(enumerate(list))
         i = L[1]; j = L[2]
 
         ρᵢ    = ρ[i]
@@ -177,72 +179,87 @@ end
 # points   = map(x->x[1],points)
 
 ### Play with code
-DF_FLUID = CSV.read("FluidPoints_Dp0.04.csv", DataFrame)
+DF_FLUID = CSV.read("FluidPoints_Dp0.02.csv", DataFrame)
+DF_BOUND = CSV.read("BoundaryPoints_Dp0.02.csv", DataFrame)
 
-P1 = DF_FLUID[!,"Points:0"]
-P2 = DF_FLUID[!,"Points:1"]
-P3 = DF_FLUID[!,"Points:2"]
+P1F = DF_FLUID[!,"Points:0"]
+P2F = DF_FLUID[!,"Points:1"]
+P3F = DF_FLUID[!,"Points:2"]
+P1B = DF_BOUND[!,"Points:0"]
+P2B = DF_BOUND[!,"Points:1"]
+P3B = DF_BOUND[!,"Points:2"]
 
 points = SVector[]
 
-for i = 1:length(P1)
-    push!(points,SVector(P1[i],P3[i],P2[i]))
+for i = 1:length(P1F)
+    push!(points,SVector(P1F[i],P3F[i],P2F[i]))
 end
 
+for i = 1:length(P1B)
+    push!(points,SVector(P1B[i],P3B[i],P2B[i]))
+end
+
+GravityFactor = [Int64(-1) .+ 0*collect(1:size(DF_FLUID,1));Int64(1) .+ 0*collect(1:size(DF_BOUND,1))]
+MotionLimiter = [Int64(1)  .+ 0*collect(1:size(DF_FLUID,1));Int64(0) .+ 0*collect(1:size(DF_BOUND,1))]
+
 ρ₀ = 1000
-dx = 0.04
+dx = 0.02
 H  = sqrt(2)*dx
 m₀ = ρ₀*dx'dx
 mᵢ = mⱼ = m₀
 αD = (7/(4*π*H^2))
-c₀ = 85.89
+c₀ = 81#85.89
 γ  = 7
 g  = 9.81
-dt = 1e-4
+dt = 1e-5
 
-density  = Array(DF_FLUID.Rhop)
+density  = Array([DF_FLUID.Rhop;DF_BOUND.Rhop])
 velocity = zeros(SVector{3,Float64},length(points))
 acceleration = zeros(SVector{3,Float64},length(points))
 
-system  = InPlaceNeighborList(x=points, cutoff=2*H, parallel=true)
+
 
 foreach(rm, filter(endswith(".vtp"), readdir("./second_approach/",join=true)))
-for big_iter = 1:10001
-update!(system,points)
 neighborlist!(system)
+for big_iter = 1:100001
+    system  = InPlaceNeighborList(x=points, cutoff=2*H, parallel=false)
+    update!(system,points)
+    list = neighborlist!(system)
 
-WiI,WiL = ∑ⱼWᵢⱼ(system,points,αD,H)
-WgI,WgL = ∑ⱼ∇ᵢWᵢⱼ(system,points,αD,H)
+    WiI,WiL = ∑ⱼWᵢⱼ(list,points,αD,H)
+    WgI,WgL = ∑ⱼ∇ᵢWᵢⱼ(list,points,αD,H)
 
-dρdtI,dρdtL = ∂ρᵢ∂t(system,points,m₀,density,velocity,WgL)
+    dρdtI,dρdtL = ∂ρᵢ∂t(system,points,m₀,density,velocity,WgL)
 
-dvdtI,dvdtL = ∂vᵢ∂t(system,points,m₀,density,WgL,c₀,γ,ρ₀)
-# We add gravity as a final step for the i particles, not the L ones, since we do not split the contribution, that is unphysical!
-dvdtI .= map(x->x+SVector(0,-g,0),dvdtI)
-
-
-density_n_half  = density  .+ dρdtI * (dt/2)
-velocity_n_half = velocity .+ dvdtI * (dt/2)
-
-dρdtI_n_half,dρdtL_n_half = ∂ρᵢ∂t(system,points,m₀,density_n_half,velocity_n_half,WgL)
-
-dvdtI_n_half,dvdtL_n_half = ∂vᵢ∂t(system,points,m₀,density_n_half,WgL,c₀,γ,ρ₀)
-dvdtI_n_half .= map(x->x+SVector(0,-g,0),dvdtI_n_half)
+    dvdtI,dvdtL = ∂vᵢ∂t(system,points,m₀,density,WgL,c₀,γ,ρ₀)
+    # We add gravity as a final step for the i particles, not the L ones, since we do not split the contribution, that is unphysical!
+    dvdtI .= map((x,y)->x+y*SVector(0,g,0),dvdtI,GravityFactor)
 
 
-epsi = -( dρdtI_n_half ./ density_n_half)*dt
+    density_n_half  = density  .+ dρdtI * (dt/2)
+    velocity_n_half = velocity .+ dvdtI * (dt/2) .* MotionLimiter
+    points_n_half   = points   .+ velocity_n_half * (dt/2) .* MotionLimiter
 
-density_new   = density .* (2 .- epsi)./(2 .+ epsi)
-velocity_new  = velocity .+ dvdtI_n_half * dt
-points_new    = points .+ ((velocity_new .+ velocity)/2) * dt
+    dρdtI_n_half,dρdtL_n_half = ∂ρᵢ∂t(system,points_n_half,m₀,density_n_half,velocity_n_half,WgL)
 
-density  = density_new
-velocity = velocity_new
-points   = points_new
-acceleration = dvdtI_n_half
+    dvdtI_n_half,dvdtL_n_half = ∂vᵢ∂t(system,points_n_half,m₀,density_n_half,WgL,c₀,γ,ρ₀)
+    dvdtI_n_half .= map((x,y)->x+y*SVector(0,g,0),dvdtI_n_half,GravityFactor) 
 
-if big_iter % 50 == 0
-create_vtp_file("./second_approach/PlayAround_"*lpad(big_iter,4,"0"),points,WiI,WgI,density,acceleration,velocity)
+
+    epsi = -( dρdtI_n_half ./ density_n_half)*dt
+
+    density_new   = density .* (2 .- epsi)./(2 .+ epsi)
+    velocity_new  = velocity .+ dvdtI_n_half * dt .* MotionLimiter
+    points_new    = points .+ ((velocity_new .+ velocity)/2) * dt .* MotionLimiter
+
+    density  = density_new
+    velocity = velocity_new
+    points   = points_new
+    acceleration = dvdtI_n_half
+
+    if big_iter % 50 == 0
+        create_vtp_file("./second_approach/PlayAround_"*lpad(big_iter,4,"0"),points,WiI,WgI,density,acceleration,velocity)
+    end
 end
-end
+
 

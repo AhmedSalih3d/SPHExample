@@ -2,4 +2,4 @@
 particles/
 # Ignores .vtp files
 *.vtp
-second_approach/*.vtp
+second_approach/
