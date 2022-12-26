@@ -67,7 +67,7 @@ function ∑ⱼ∇ᵢWᵢⱼ(list,points,αD,h)
 
         q = d/h
 
-        Wg =  Optim∇ᵢWᵢⱼ(αD,q,xᵢⱼ,h)
+        Wg = Optim∇ᵢWᵢⱼ(αD,q,xᵢⱼ,h)
 
         sumWgI[i] +=  Wg
         sumWgI[j] += -Wg
@@ -80,6 +80,99 @@ end
 
 function Pressure(ρ,c₀,γ,ρ₀)
     return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
+end
+
+function ∂Πᵢⱼ∂t(list,points,h,ρ,α,v,c₀,m₀,WgL)
+    N    = length(points)
+
+    η²    = (0.1*h)*(0.1*h)
+
+    viscI = zeros(SVector{3,Float64},N)
+    viscL = zeros(SVector{3,Float64},length(list))
+    for (iter,L) in collect(enumerate(list))
+        i = L[1]; j = L[2];
+        
+        ρᵢ    = ρ[i]
+        ρⱼ    = ρ[j]
+        vᵢⱼ   = v[i] - v[j]
+        xᵢⱼ   = points[i] - points[j]
+        ρᵢⱼ   = (ρᵢ+ρⱼ)*0.5
+
+        cond      = dot(vᵢⱼ,xᵢⱼ)
+
+        cond_bool = cond < 0
+
+        μᵢⱼ = h*cond/(dot(xᵢⱼ,xᵢⱼ)+η²)
+        Πᵢⱼ = cond_bool*(-α*c₀*μᵢⱼ)/ρᵢⱼ
+        
+        viscI[i] += -Πᵢⱼ*m₀*WgL[iter]
+        viscI[j] +=  Πᵢⱼ*m₀*WgL[iter]
+
+        viscL[iter] = -Πᵢⱼ*m₀*WgL[iter]
+    end
+
+    return viscI,viscL
+end
+
+function ∂Ψᵢⱼ∂t(list,points,h,m₀,δᵩ,c₀,γ,g,ρ₀,ρ,WgL)
+    N    = length(points)
+
+    η²    = (0.1*h)*(0.1*h)
+
+    dpsiI = zeros(N)
+    dpsiL = zeros(length(list))
+    for (iter,L) in collect(enumerate(list))
+        i = L[1]; j = L[2];
+
+        xᵢⱼ   = points[i] - points[j]
+        ρᵢ    = ρ[i]
+        ρⱼ    = ρ[j]
+        
+        Cb    = (c₀^2*ρ₀)/γ
+        DDTgz = ρ₀*abs(g)/Cb
+
+        # The code is a bit bad, just to be sure everything is correct
+        # mathematically
+        drz   = xᵢⱼ[2] #2D SIMULATION
+
+        rh  = 1 + DDTgz * drz
+
+        dρ  = ρ₀ * ^(rh,1/γ) - ρ₀
+
+        r²  = dot(xᵢⱼ,xᵢⱼ)
+
+        DDTkh = 2*h*δᵩ
+
+        visc_densi = DDTkh*c₀*(ρⱼ-ρᵢ-dρ)/(r²+η²)
+
+        dot3       = dot(xᵢⱼ,WgL[i])
+
+        delta_i    = visc_densi*dot3*(m₀/ρⱼ)
+
+        dpsiI[i]  += delta_i
+
+        # For j particle
+        drz   = -xᵢⱼ[2] #2D SIMULATION
+
+        rh  = 1 + DDTgz * drz
+
+        dρ  = ρ₀ * ^(rh,1/γ) - ρ₀
+
+        r²  = dot(xᵢⱼ,xᵢⱼ)
+
+        DDTkh = 2*h*δᵩ
+
+        visc_densi = DDTkh*c₀*(ρᵢ-ρⱼ-dρ)/(r²+η²)
+
+        dot3       = dot(-xᵢⱼ,-WgL[i])
+
+        delta_j    = visc_densi*dot3*(m₀/ρᵢ)
+
+        dpsiI[j]  += delta_j
+
+        dpsiL[iter] = delta_i
+    end
+    return dpsiI,dpsiL
 end
 
 # Equation 2.5
@@ -221,11 +314,14 @@ function RunSimulation(points,GravityFactor,MotionLimiter)
     m₀  = ρ₀*dx*dx
     mᵢ  = mⱼ = m₀
     αD  = (7/(4*π*H^2))
+    α   = 0.01
     c₀  = 81#85.89
     γ   = 7
     g   = 9.81
     dt  = 1e-5
-    CFL = 0.3
+    δᵩ  = 0.1
+    CFL = 0.1
+    
 
     density  = Array([DF_FLUID.Rhop;DF_BOUND.Rhop])
     velocity = zeros(SVector{3,Float64},length(points))
@@ -233,28 +329,35 @@ function RunSimulation(points,GravityFactor,MotionLimiter)
 
     system  = InPlaceNeighborList(x=points, cutoff=2*H, parallel=false)
     neighborlist!(system)
-    for big_iter = 1:100001
+
+    for big_iter = 1:200001
         update!(system,points)
         list = neighborlist!(system)
 
         WiI,_   = ∑ⱼWᵢⱼ(list,points,αD,H)
         WgI,WgL = ∑ⱼ∇ᵢWᵢⱼ(list,points,αD,H)
 
+        dΨdtI,_ = ∂Ψᵢⱼ∂t(list,points,H,m₀,δᵩ,c₀,γ,g,ρ₀,density,WgL)
         dρdtI,_ = ∂ρᵢ∂t(system,points,m₀,density,velocity,WgL)
+        dρdtI  += dΨdtI
 
+        viscI,_ = ∂Πᵢⱼ∂t(list,points,H,density,α,velocity,c₀,m₀,WgL)
         dvdtI,_ = ∂vᵢ∂t(system,points,m₀,density,WgL,c₀,γ,ρ₀)
         # We add gravity as a final step for the i particles, not the L ones, since we do not split the contribution, that is unphysical!
-        dvdtI .= map((x,y)->x+y*SVector(0,g,0),dvdtI,GravityFactor)
+        dvdtI .= map((x,y)->x+y*SVector(0,g,0),dvdtI+viscI,GravityFactor)
 
 
         density_n_half  = density  .+ dρdtI * (dt/2)
         velocity_n_half = velocity .+ dvdtI * (dt/2) .* MotionLimiter
         points_n_half   = points   .+ velocity_n_half * (dt/2) .* MotionLimiter
 
+        dΨdtI_n_half,_ = ∂Ψᵢⱼ∂t(list,points_n_half,H,m₀,δᵩ,c₀,γ,g,ρ₀,density_n_half,WgL)
         dρdtI_n_half,_ = ∂ρᵢ∂t(system,points_n_half,m₀,density_n_half,velocity_n_half,WgL)
+        dρdtI_n_half  += dΨdtI_n_half
 
+        viscI_n_half,_ = ∂Πᵢⱼ∂t(list,points_n_half,H,density_n_half,α,velocity_n_half,c₀,m₀,WgL)
         dvdtI_n_half,_ = ∂vᵢ∂t(system,points_n_half,m₀,density_n_half,WgL,c₀,γ,ρ₀)
-        dvdtI_n_half .= map((x,y)->x+y*SVector(0,g,0),dvdtI_n_half,GravityFactor) 
+        dvdtI_n_half  .= map((x,y)->x+y*SVector(0,g,0),dvdtI_n_half+viscI_n_half,GravityFactor) 
 
 
         epsi = -( dρdtI_n_half ./ density_n_half)*dt
@@ -269,7 +372,7 @@ function RunSimulation(points,GravityFactor,MotionLimiter)
         acceleration = dvdtI_n_half
 
         # Automatic time stepping probably does not work in non-vicous sim
-        # dt = Δt(acceleration,points,velocity,c₀,H,CFL)
+        dt = Δt(acceleration,points,velocity,c₀,H,CFL)
 
         @printf "Iteration %i | dt = %.5e \n" big_iter dt
         if big_iter % 50 == 0
