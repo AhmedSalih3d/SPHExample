@@ -114,46 +114,47 @@ function ∂Πᵢⱼ∂t(list,points,h,ρ,α,v,c₀,m₀,WgL)
     return viscI,viscL
 end
 
-function ∂Ψᵢⱼ∂t(list,points,h,m₀,δᵩ,c₀,γ,g,ρ₀,ρ,WgL)
-    N    = length(points)
+# function ∂Ψᵢⱼ∂t(list,points,h,m₀,δᵩ,c₀,γ,g,ρ₀,ρ,WgL)
+#     N    = length(points)
 
-    η²    = (0.1*h)*(0.1*h)
+#     η²    = (0.1*h)*(0.1*h)
 
-    dpsiI = zeros(N)
-    dpsiL = zeros(length(list))
-    for (iter,L) in collect(enumerate(list))
-        i = L[1]; j = L[2]; d = L[3] #norm(xᵢⱼ)
+#     dpsiI = zeros(N)
+#     dpsiL = zeros(length(list))
+#     for (iter,L) in collect(enumerate(list))
+#         i = L[1]; j = L[2]; d = L[3] #norm(xᵢⱼ)
 
-        xᵢⱼ   = points[i] - points[j]
-        ρᵢ    = ρ[i]
-        ρⱼ    = ρ[j]
+#         xᵢⱼ   = points[i] - points[j]
+#         ρᵢ    = ρ[i]
+#         ρⱼ    = ρ[j]
         
-        Cb    = (c₀^2*ρ₀)/γ
-  
-        # For particle i
-        dz    = xᵢⱼ[2]
-        Pᵢⱼᴴ  = ρ₀*g*dz
-        ρᵢⱼᴴ  = ρ₀*(((Pᵢⱼᴴ/Cb) + 1)^(1/γ) - 1)
-        ρⱼᵢᵀ  = ρⱼ-ρᵢ
-        Ψᵢⱼ   = 2*(ρⱼᵢᵀ-ρᵢⱼᴴ) * (xᵢⱼ/d) #Should be + ?
+#         Cb    = (c₀^2*ρ₀)/γ
 
-        delta_i = δᵩ*h*c₀*dot(Ψᵢⱼ,WgL[i])*(m₀/ρⱼ)
+#         r²    = dot(xᵢⱼ,xᵢⱼ)
+#         # For particle i
+#         dz    = xᵢⱼ[2]
+#         Pᵢⱼᴴ  = ρ₀*g*dz
+#         ρᵢⱼᴴ  = ρ₀*(((Pᵢⱼᴴ/Cb) + 1)^(1/γ) - 1)
+#         ρⱼᵢᵀ  = ρⱼ-ρᵢ
+#         Ψᵢⱼ   = 2*(ρⱼᵢᵀ+ρᵢⱼᴴ) * (xᵢⱼ/(r²+η²)) #Should be + ?
 
-        # For particle j
-        Pⱼᵢᴴ  = ρ₀*g*(-dz) #!
-        ρⱼᵢᴴ  = ρ₀*(((Pⱼᵢᴴ/Cb)+1)^(1/γ) - 1)
-        ρᵢⱼᵀ  = -ρⱼᵢᵀ
-        Ψⱼᵢ   = 2*(ρᵢⱼᵀ-ρⱼᵢᴴ) * (-xᵢⱼ/d) #Should be + ?
+#         delta_i = δᵩ*h*c₀*dot(Ψᵢⱼ,WgL[i])*(m₀/ρⱼ)
 
-        delta_j = δᵩ*h*c₀*dot(Ψⱼᵢ,-WgL[i])*(m₀/ρᵢ)
+#         # For particle j
+#         Pⱼᵢᴴ  = ρ₀*g*(-dz) #!
+#         ρⱼᵢᴴ  = ρ₀*(((Pⱼᵢᴴ/Cb)+1)^(1/γ) - 1)
+#         ρᵢⱼᵀ  = -ρⱼᵢᵀ
+#         Ψⱼᵢ   = 2*(ρᵢⱼᵀ+ρⱼᵢᴴ) * (-xᵢⱼ/(r²+η²)) #Should be + ?
 
-        dpsiI[i]  += delta_i
-        dpsiI[j]  += delta_j
+#         delta_j = δᵩ*h*c₀*dot(Ψⱼᵢ,WgL[j])*(m₀/ρᵢ)
 
-        dpsiL[iter] = delta_i
-    end
-    return dpsiI,dpsiL
-end
+#         dpsiI[i]  += delta_i
+#         dpsiI[j]  += delta_j
+
+#         dpsiL[iter] = delta_i
+#     end
+#     return dpsiI,dpsiL
+# end
 
 # Equation 2.5
 function ∂ρᵢ∂t(system,points,m,ρ,v,WgL)
@@ -178,6 +179,95 @@ function ∂ρᵢ∂t(system,points,m,ρ,v,WgL)
 
     return dρdtI,dρdtL
 end
+
+# FOr use with ddt
+function ∂ρᵢ∂tDDT(list,points,h,m₀,δᵩ,c₀,γ,g,ρ₀,ρ,v,WgL,MotionLimiter)
+    N    = length(points)
+
+    η²   = (0.1*h)*(0.1*h)
+
+    dρdtI = zeros(N)
+    dρdtL = zeros(length(list))
+    for (iter,L) in collect(enumerate(list))
+        i = L[1]; j = L[2]
+
+        xᵢⱼ   = points[i] - points[j]
+        ρᵢ    = ρ[i]
+        ρⱼ    = ρ[j]
+        vᵢⱼ   = v[i] - v[j]
+        ∇ᵢWᵢⱼ = WgL[iter]
+
+
+        Cb    = (c₀^2*ρ₀)/γ
+
+        r²    = dot(xᵢⱼ,xᵢⱼ)
+
+        # DDTgz = ρ₀*g/Cb
+        # DDTkh = 2*h*δᵩ
+        # # For particle i
+        # drz   = xᵢⱼ[2]
+        # rh    = 1 + DDTgz*drz
+        # drhop = ρ₀* ^(rh,1/γ) - ρ₀
+        # visc_densi = DDTkh*c₀*(-(ρⱼ-ρᵢ)-drhop)/(r²+η²) #DEVIATED WITH MINUS HERE
+        # dot3  = dot(xᵢⱼ,∇ᵢWᵢⱼ)
+        # delta_i = visc_densi*dot3*m₀/ρⱼ
+
+        # # For particle j
+        # drz   = -xᵢⱼ[2]
+        # rh    = 1 + DDTgz*drz
+        # drhop = ρ₀* ^(rh,1/γ) - ρ₀
+        # visc_densi = DDTkh*c₀*(-(ρᵢ-ρⱼ)-drhop)/(r²+η²) #DEVIATED WITH MINUS HERE
+        # dot3  = dot(-xᵢⱼ,-∇ᵢWᵢⱼ)
+        # delta_j = visc_densi*dot3*m₀/ρᵢ
+
+        # dρdtI[i] += (dot(m₀*vᵢⱼ,∇ᵢWᵢⱼ))+delta_i*MotionLimiter[i]
+        # dρdtI[j] += (dot(m₀*-vᵢⱼ,-∇ᵢWᵢⱼ))+delta_j*MotionLimiter[j]
+
+        # dρdtL[iter] = (dot(m₀*vᵢⱼ,∇ᵢWᵢⱼ)+delta_i)*MotionLimiter[i]
+        # # For particle i
+        
+        # dz    = xᵢⱼ[2]
+        # Pᵢⱼᴴ  = ρ₀*g*dz
+        # ρᵢⱼᴴ  = ρ₀*(((Pᵢⱼᴴ/Cb) + 1)^(1/γ) - 1)
+        # ρⱼᵢᵀ  = ρⱼ-ρᵢ
+        # Ψᵢⱼ   = 2*(ρⱼᵢᵀ+ρᵢⱼᴴ) * (xᵢⱼ/(r²+η²)) #Should be + ?
+
+        # delta_i = δᵩ*h*c₀*dot(Ψᵢⱼ,∇ᵢWᵢⱼ)
+
+        # # For particle j
+        # Pⱼᵢᴴ  = ρ₀*g*(-dz) #!
+        # ρⱼᵢᴴ  = ρ₀*(((Pⱼᵢᴴ/Cb)+1)^(1/γ) - 1)
+        # ρᵢⱼᵀ  = -ρⱼᵢᵀ
+        # Ψⱼᵢ   = 2*(ρᵢⱼᵀ+ρⱼᵢᴴ) * (-xᵢⱼ/(r²+η²)) #Should be + ?
+
+        # delta_j = δᵩ*h*c₀*dot(Ψⱼᵢ,-∇ᵢWᵢⱼ)
+
+        # dρdtI[i] += ρᵢ*(dot(m₀*vᵢⱼ,∇ᵢWᵢⱼ))*(m₀/ρⱼ) +delta_i*(m₀/ρⱼ)
+        # dρdtI[j] += ρⱼ*(dot(m₀*-vᵢⱼ,-∇ᵢWᵢⱼ))*(m₀/ρⱼ)+delta_j*(m₀/ρᵢ)
+
+        # dρdtL[iter] = ρᵢ*(dot(m₀*vᵢⱼ,∇ᵢWᵢⱼ))*(m₀/ρⱼ) +delta_i*(m₀/ρⱼ)
+
+        # For particle i
+        volᵢ  = 1/ρᵢ
+        volⱼ  = 1/ρⱼ
+
+        Ψᵢⱼ   = 2*((volᵢ/volⱼ)-1) * (xᵢⱼ/(r²)) #Should be + ?
+
+        delta_i = δᵩ*h*c₀*dot(Ψᵢⱼ,∇ᵢWᵢⱼ)*(m₀/ρⱼ)
+
+        # For particle j
+        Ψⱼᵢ   = 2*((volⱼ/volᵢ)-1) * (-xᵢⱼ/(r²)) #Should be + ?
+
+        delta_j = δᵩ*h*c₀*dot(Ψⱼᵢ,-∇ᵢWᵢⱼ)*(m₀/ρᵢ)
+
+        dρdtI[i]    += (dot(m₀*vᵢⱼ,∇ᵢWᵢⱼ))+delta_i*MotionLimiter[i]
+        dρdtI[j]    += (dot(m₀*-vᵢⱼ,-∇ᵢWᵢⱼ))+delta_j*MotionLimiter[j]
+        dρdtL[iter] =  (dot(m₀*vᵢⱼ,∇ᵢWᵢⱼ))+delta_i*MotionLimiter[i]
+    end
+
+    return dρdtI,dρdtL
+end
+
 
 # Equation 2.6
 function ∂vᵢ∂t(system,points,m,ρ,WgL,c₀,γ,ρ₀)
@@ -261,8 +351,11 @@ function create_vtp_file(filename,points,Wi,Wg,ρ,dvdt,v)
     end
 end
 ### Play with code
-DF_FLUID = CSV.read("FluidPoints_Dp0.02.csv", DataFrame)
-DF_BOUND = CSV.read("BoundaryPoints_Dp0.02.csv", DataFrame)
+#DF_FLUID = CSV.read("FluidPoints_Dp0.02.csv", DataFrame)
+#DF_BOUND = CSV.read("BoundaryPoints_Dp0.02.csv", DataFrame)
+
+DF_FLUID = CSV.read("./StillFluid/StillFluid_Water_Dp0.02.csv",DataFrame)
+DF_BOUND = CSV.read("./StillFluid/StillFluid_Wall_Dp0.02.csv",DataFrame)
 
 P1F = DF_FLUID[!,"Points:0"]
 P2F = DF_FLUID[!,"Points:1"]
@@ -274,7 +367,7 @@ P3B = DF_BOUND[!,"Points:2"]
 points = SVector[]
 
 for i = 1:length(P1F)
-    push!(points,SVector(P1F[i],P3F[i],P2F[i]))
+    push!(points,SVector(P1F[i],P3F[i]+4,P2F[i]))
 end
 
 for i = 1:length(P1B)
@@ -295,7 +388,7 @@ function RunSimulation(points,GravityFactor,MotionLimiter)
     mᵢ  = mⱼ = m₀
     αD  = (7/(4*π*H^2))
     α   = 0.01
-    c₀  = 81#85.89
+    c₀  = sqrt(9.81*2)*20#81#85.89
     γ   = 7
     g   = 9.81
     dt  = 1e-5
@@ -307,6 +400,8 @@ function RunSimulation(points,GravityFactor,MotionLimiter)
     velocity = zeros(SVector{3,Float64},length(points))
     acceleration = zeros(SVector{3,Float64},length(points))
 
+    create_vtp_file("./second_approach/PlayAround_"*lpad(0,4,"0"),points,density.*0,acceleration.*0,density,acceleration,velocity)
+
     system  = InPlaceNeighborList(x=points, cutoff=2*H, parallel=false)
     neighborlist!(system)
 
@@ -317,9 +412,10 @@ function RunSimulation(points,GravityFactor,MotionLimiter)
         WiI,_   = ∑ⱼWᵢⱼ(list,points,αD,H)
         WgI,WgL = ∑ⱼ∇ᵢWᵢⱼ(list,points,αD,H)
 
-        #dΨdtI,_ = ∂Ψᵢⱼ∂t(list,points,H,m₀,δᵩ,c₀,γ,g,ρ₀,density,WgL) 
-        dρdtI,_ = ∂ρᵢ∂t(system,points,m₀,density,velocity,WgL)
-        #dρdtI  += dΨdtI .* MotionLimiter
+        #dρdtI,_ = ∂ρᵢ∂t(system,points,m₀,density,velocity,WgL)
+        dρdtI,_ = ∂ρᵢ∂tDDT(list,points,H,m₀,δᵩ,c₀,γ,g,ρ₀,density,velocity,WgL,MotionLimiter)
+        #dρdtI  .*= MotionLimiter
+     
 
         viscI,_ = ∂Πᵢⱼ∂t(list,points,H,density,α,velocity,c₀,m₀,WgL)
         dvdtI,_ = ∂vᵢ∂t(system,points,m₀,density,WgL,c₀,γ,ρ₀)
@@ -331,9 +427,9 @@ function RunSimulation(points,GravityFactor,MotionLimiter)
         velocity_n_half = velocity .+ dvdtI * (dt/2) .* MotionLimiter
         points_n_half   = points   .+ velocity_n_half * (dt/2) .* MotionLimiter
 
-        #dΨdtI_n_half,_ = ∂Ψᵢⱼ∂t(list,points_n_half,H,m₀,δᵩ,c₀,γ,g,ρ₀,density_n_half,WgL) 
-        dρdtI_n_half,_ = ∂ρᵢ∂t(system,points_n_half,m₀,density_n_half,velocity_n_half,WgL)
-        #dρdtI_n_half  += dΨdtI_n_half .* MotionLimiter
+        #dρdtI_n_half,_ = ∂ρᵢ∂t(system,points_n_half,m₀,density_n_half,velocity_n_half,WgL)
+        dρdtI_n_half,_ = ∂ρᵢ∂tDDT(list,points_n_half,H,m₀,δᵩ,c₀,γ,g,ρ₀,density_n_half,velocity_n_half,WgL,MotionLimiter)
+        #dρdtI_n_half .*= MotionLimiter
 
         viscI_n_half,_ = ∂Πᵢⱼ∂t(list,points_n_half,H,density_n_half,α,velocity_n_half,c₀,m₀,WgL)
         dvdtI_n_half,_ = ∂vᵢ∂t(system,points_n_half,m₀,density_n_half,WgL,c₀,γ,ρ₀)
@@ -352,7 +448,7 @@ function RunSimulation(points,GravityFactor,MotionLimiter)
         acceleration = dvdtI_n_half
 
         # Automatic time stepping probably does not work in non-vicous sim
-        dt = Δt(acceleration,points,velocity,c₀,H,CFL)
+        #dt = Δt(acceleration,points,velocity,c₀,H,CFL)
 
         @printf "Iteration %i | dt = %.5e \n" big_iter dt
         if big_iter % 50 == 0
