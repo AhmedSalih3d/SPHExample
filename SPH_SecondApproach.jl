@@ -5,30 +5,34 @@ using LinearAlgebra
 using CSV
 using DataFrames
 using Printf
+using ChunkSplitters
 
 function Wᵢⱼ(αD,q)
     return αD*(1-q/2)^4*(2*q + 1)
 end
 
-function ∑ⱼWᵢⱼ(list,points,αD,h)
+function ∑ⱼWᵢⱼ(list,points,αD,h,nchunks)
     N    = length(points)
 
-    sumWI = zeros(N)
-    sumWL = zeros(length(list))
-    for (iter,L) in collect(enumerate(list))
-        i = L[1]; j = L[2]; d = L[3]
+    sumWI = [ zeros(N) for _ in 1:nchunks ]
+    sumWL = [ zeros(length(list)) for _ in 1:nchunks ]
+    Threads.@threads for (list_range, ichunk) in chunks(list, nchunks)
+                        for iter in list_range
+                            L = list[iter]
+                            i = L[1]; j = L[2]; d = L[3]
 
-        q = d/h
+                            q = d/h
 
-        W = Wᵢⱼ(αD,q)
+                            W = Wᵢⱼ(αD,q)
 
-        sumWI[i] += W
-        sumWI[j] += W
+                            sumWI[ichunk][i] += W
+                            sumWI[ichunk][j] += W
 
-        sumWL[iter] = W
-    end
+                            sumWL[ichunk][iter] = W
+                        end
+                    end
 
-    return sumWI,sumWL
+    return sum(sumWI),sum(sumWL)
 end
 
 # function ∇ᵢWᵢⱼ(αD,q,xᵢⱼ,h)
@@ -58,24 +62,27 @@ end
 function ∑ⱼ∇ᵢWᵢⱼ(list,points,αD,h)
     N    = length(points)
 
-    sumWgI = zeros(SVector{3,Float64},N)
-    sumWgL = zeros(SVector{3,Float64},length(list))
-    for (iter,L) in collect(enumerate(list))
-        i = L[1]; j = L[2]; d = L[3]
+    sumWgI = [ zeros(SVector{3,Float64},N) for _ in 1:nchunks ]
+    sumWgL = [ zeros(SVector{3,Float64},length(list)) for _ in 1:nchunks ]
+    Threads.@threads for (list_range, ichunk) in chunks(list, nchunks)
+        for iter in list_range
+            L = list[iter]
+            i = L[1]; j = L[2]; d = L[3]
 
-        xᵢⱼ = points[i] - points[j]
+            xᵢⱼ = points[i] - points[j]
 
-        q = d/h
+            q = d/h
 
-        Wg = Optim∇ᵢWᵢⱼ(αD,q,xᵢⱼ,h)
+            Wg = Optim∇ᵢWᵢⱼ(αD,q,xᵢⱼ,h)
 
-        sumWgI[i] +=  Wg
-        sumWgI[j] += -Wg
+            sumWgI[ichunk][i] +=  Wg
+            sumWgI[ichunk][j] += -Wg
 
-        sumWgL[iter] = Wg
+            sumWgL[ichunk][iter] = Wg
+        end
     end
 
-    return sumWgI,sumWgL
+    return sum(sumWgI),sum(sumWgL)
 end
 
 function Pressure(ρ,c₀,γ,ρ₀)
@@ -87,185 +94,110 @@ function ∂Πᵢⱼ∂t(list,points,h,ρ,α,v,c₀,m₀,WgL)
 
     η²    = (0.1*h)*(0.1*h)
 
-    viscI = zeros(SVector{3,Float64},N)
-    viscL = zeros(SVector{3,Float64},length(list))
-    for (iter,L) in collect(enumerate(list))
-        i = L[1]; j = L[2];
-        
-        ρᵢ    = ρ[i]
-        ρⱼ    = ρ[j]
-        vᵢⱼ   = v[i] - v[j]
-        xᵢⱼ   = points[i] - points[j]
-        ρᵢⱼ   = (ρᵢ+ρⱼ)*0.5
+    viscI = [ zeros(SVector{3,Float64},N) for _ in 1:nchunks ]
+    viscL = [ zeros(SVector{3,Float64},length(list)) for _ in 1:nchunks ]
+    Threads.@threads for (list_range, ichunk) in chunks(list, nchunks)
+        for iter in list_range
+            L = list[iter]
+            i = L[1]; j = L[2];
+            
+            ρᵢ    = ρ[i]
+            ρⱼ    = ρ[j]
+            vᵢⱼ   = v[i] - v[j]
+            xᵢⱼ   = points[i] - points[j]
+            ρᵢⱼ   = (ρᵢ+ρⱼ)*0.5
 
-        cond      = dot(vᵢⱼ,xᵢⱼ)
+            cond      = dot(vᵢⱼ,xᵢⱼ)
 
-        cond_bool = cond < 0
+            cond_bool = cond < 0
 
-        μᵢⱼ = h*cond/(dot(xᵢⱼ,xᵢⱼ)+η²)
-        Πᵢⱼ = cond_bool*(-α*c₀*μᵢⱼ)/ρᵢⱼ
-        
-        viscI[i] += -Πᵢⱼ*m₀*WgL[iter]
-        viscI[j] +=  Πᵢⱼ*m₀*WgL[iter]
+            μᵢⱼ = h*cond/(dot(xᵢⱼ,xᵢⱼ)+η²)
+            Πᵢⱼ = cond_bool*(-α*c₀*μᵢⱼ)/ρᵢⱼ
+            
+            viscI[ichunk][i] += -Πᵢⱼ*m₀*WgL[iter]
+            viscI[ichunk][j] +=  Πᵢⱼ*m₀*WgL[iter]
 
-        viscL[iter] = -Πᵢⱼ*m₀*WgL[iter]
+            viscL[ichunk][iter] = -Πᵢⱼ*m₀*WgL[iter]
+        end
     end
 
-    return viscI,viscL
+    return sum(viscI),sum(viscL)
 end
-
-# function ∂Ψᵢⱼ∂t(list,points,h,m₀,δᵩ,c₀,γ,g,ρ₀,ρ,WgL)
-#     N    = length(points)
-
-#     η²    = (0.1*h)*(0.1*h)
-
-#     dpsiI = zeros(N)
-#     dpsiL = zeros(length(list))
-#     for (iter,L) in collect(enumerate(list))
-#         i = L[1]; j = L[2]; d = L[3] #norm(xᵢⱼ)
-
-#         xᵢⱼ   = points[i] - points[j]
-#         ρᵢ    = ρ[i]
-#         ρⱼ    = ρ[j]
-        
-#         Cb    = (c₀^2*ρ₀)/γ
-
-#         r²    = dot(xᵢⱼ,xᵢⱼ)
-#         # For particle i
-#         dz    = xᵢⱼ[2]
-#         Pᵢⱼᴴ  = ρ₀*g*dz
-#         ρᵢⱼᴴ  = ρ₀*(((Pᵢⱼᴴ/Cb) + 1)^(1/γ) - 1)
-#         ρⱼᵢᵀ  = ρⱼ-ρᵢ
-#         Ψᵢⱼ   = 2*(ρⱼᵢᵀ+ρᵢⱼᴴ) * (xᵢⱼ/(r²+η²)) #Should be + ?
-
-#         delta_i = δᵩ*h*c₀*dot(Ψᵢⱼ,WgL[i])*(m₀/ρⱼ)
-
-#         # For particle j
-#         Pⱼᵢᴴ  = ρ₀*g*(-dz) #!
-#         ρⱼᵢᴴ  = ρ₀*(((Pⱼᵢᴴ/Cb)+1)^(1/γ) - 1)
-#         ρᵢⱼᵀ  = -ρⱼᵢᵀ
-#         Ψⱼᵢ   = 2*(ρᵢⱼᵀ+ρⱼᵢᴴ) * (-xᵢⱼ/(r²+η²)) #Should be + ?
-
-#         delta_j = δᵩ*h*c₀*dot(Ψⱼᵢ,WgL[j])*(m₀/ρᵢ)
-
-#         dpsiI[i]  += delta_i
-#         dpsiI[j]  += delta_j
-
-#         dpsiL[iter] = delta_i
-#     end
-#     return dpsiI,dpsiL
-# end
 
 # Equation 2.5
-function ∂ρᵢ∂t(system,points,m,ρ,v,WgL)
-    list = system.nb.list
-    N    = length(points)
+# function ∂ρᵢ∂t(system,points,m,ρ,v,WgL)
+#     list = system.nb.list
+#     N    = length(points)
 
-    dρdtI = zeros(N)
-    dρdtL = zeros(length(list))
-    for (iter,L) in collect(enumerate(list))
-        i = L[1]; j = L[2]
+#     dρdtI = zeros(N)
+#     dρdtL = zeros(length(list))
+#     for (iter,L) in collect(enumerate(list))
+#         i = L[1]; j = L[2]
 
-        ρᵢ    = ρ[i]
-        ρⱼ    = ρ[j]
-        vᵢⱼ   = v[i] - v[j]
-        ∇ᵢWᵢⱼ = WgL[iter]
+#         ρᵢ    = ρ[i]
+#         ρⱼ    = ρ[j]
+#         vᵢⱼ   = v[i] - v[j]
+#         ∇ᵢWᵢⱼ = WgL[iter]
 
-        dρdtI[i] += ρᵢ*dot((m/ρⱼ)*vᵢⱼ,∇ᵢWᵢⱼ)
-        dρdtI[j] += ρⱼ*dot((m/ρᵢ)*-vᵢⱼ,-∇ᵢWᵢⱼ)
+#         dρdtI[i] += ρᵢ*dot((m/ρⱼ)*vᵢⱼ,∇ᵢWᵢⱼ)
+#         dρdtI[j] += ρⱼ*dot((m/ρᵢ)*-vᵢⱼ,-∇ᵢWᵢⱼ)
 
-        dρdtL[iter] = ρᵢ*dot((m/ρⱼ)*vᵢⱼ,∇ᵢWᵢⱼ)
-    end
+#         dρdtL[iter] = ρᵢ*dot((m/ρⱼ)*vᵢⱼ,∇ᵢWᵢⱼ)
+#     end
 
-    return dρdtI,dρdtL
-end
+#     return dρdtI,dρdtL
+# end
 
 # FOr use with ddt
-function ∂ρᵢ∂tDDT(list,points,h,m₀,δᵩ,c₀,γ,g,ρ₀,ρ,v,WgL,MotionLimiter)
+function ∂ρᵢ∂tDDT(list,points,h,m₀,δᵩ,c₀,γ,g,ρ₀,ρ,v,WgL,MotionLimiter,nchunks)
     N    = length(points)
 
     η²   = (0.1*h)*(0.1*h)
 
-    dρdtI = zeros(N)
-    dρdtL = zeros(length(list))
-    for (iter,L) in collect(enumerate(list))
-        i = L[1]; j = L[2]
+    dρdtI = [ zeros(N) for _ in 1:nchunks ]
+    dρdtL = [ zeros(length(list)) for _ in 1:nchunks ]
+    Threads.@threads for (list_range, ichunk) in chunks(list, nchunks)
+                    for iter in list_range
+                        L = list[iter]
+                        i = L[1]; j = L[2]
 
-        xᵢⱼ   = points[i] - points[j]
-        ρᵢ    = ρ[i]
-        ρⱼ    = ρ[j]
-        vᵢⱼ   = v[i] - v[j]
-        ∇ᵢWᵢⱼ = WgL[iter]
+                        xᵢⱼ   = points[i] - points[j]
+                        ρᵢ    = ρ[i]
+                        ρⱼ    = ρ[j]
+                        vᵢⱼ   = v[i] - v[j]
+                        ∇ᵢWᵢⱼ = WgL[iter]
 
 
-        Cb    = (c₀^2*ρ₀)/γ
+                        Cb    = (c₀^2*ρ₀)/γ
 
-        r²    = dot(xᵢⱼ,xᵢⱼ)
+                        r²    = dot(xᵢⱼ,xᵢⱼ)
 
-        DDTgz = ρ₀*g/Cb
-        DDTkh = 2*h*δᵩ
-        # For particle i
-        drz   = xᵢⱼ[2]
-        rh    = 1 + DDTgz*drz
-        drhop = ρ₀* ^(rh,1/γ) - ρ₀
-        visc_densi = DDTkh*c₀*(ρⱼ-ρᵢ-drhop)/(r²+η²) #DEVIATED WITH MINUS HERE
-        dot3  = dot(-xᵢⱼ,∇ᵢWᵢⱼ)
-        delta_i = visc_densi*dot3*m₀/ρⱼ
+                        DDTgz = ρ₀*g/Cb
+                        DDTkh = 2*h*δᵩ
+                        # For particle i
+                        drz   = xᵢⱼ[2]
+                        rh    = 1 + DDTgz*drz
+                        drhop = ρ₀* ^(rh,1/γ) - ρ₀
+                        visc_densi = DDTkh*c₀*(ρⱼ-ρᵢ-drhop)/(r²+η²)
+                        dot3  = dot(-xᵢⱼ,∇ᵢWᵢⱼ)
+                        delta_i = visc_densi*dot3*m₀/ρⱼ
 
-        # For particle j
-        drz   = -xᵢⱼ[2]
-        rh    = 1 + DDTgz*drz
-        drhop = ρ₀* ^(rh,1/γ) - ρ₀
-        visc_densi = DDTkh*c₀*(ρᵢ-ρⱼ-drhop)/(r²+η²) #DEVIATED WITH MINUS HERE
-        dot3  = dot(xᵢⱼ,-∇ᵢWᵢⱼ)
-        delta_j = visc_densi*dot3*m₀/ρᵢ
+                        # For particle j
+                        drz   = -xᵢⱼ[2]
+                        rh    = 1 + DDTgz*drz
+                        drhop = ρ₀* ^(rh,1/γ) - ρ₀
+                        visc_densi = DDTkh*c₀*(ρᵢ-ρⱼ-drhop)/(r²+η²)
+                        dot3  = dot(xᵢⱼ,-∇ᵢWᵢⱼ)
+                        delta_j = visc_densi*dot3*m₀/ρᵢ
 
-        dρdtI[i] += dot(m₀*vᵢⱼ,∇ᵢWᵢⱼ)+delta_i
-        dρdtI[j] += dot(m₀*-vᵢⱼ,-∇ᵢWᵢⱼ)+delta_j
+                        dρdtI[ichunk][i] += dot(m₀*vᵢⱼ,∇ᵢWᵢⱼ)+delta_i*MotionLimiter[i]
+                        dρdtI[ichunk][j] += dot(m₀*-vᵢⱼ,-∇ᵢWᵢⱼ)+delta_j*MotionLimiter[j]
 
-        dρdtL[iter] = dot(m₀*vᵢⱼ,∇ᵢWᵢⱼ)+delta_i
-        # # For particle i
-        
-        # dz    = xᵢⱼ[2]
-        # Pᵢⱼᴴ  = ρ₀*g*dz
-        # ρᵢⱼᴴ  = ρ₀*(((Pᵢⱼᴴ/Cb) + 1)^(1/γ) - 1)
-        # ρⱼᵢᵀ  = ρⱼ-ρᵢ
-        # Ψᵢⱼ   = 2*(ρⱼᵢᵀ+ρᵢⱼᴴ) * (xᵢⱼ/(r²+η²)) #Should be + ?
+                        dρdtL[ichunk][iter] = dot(m₀*vᵢⱼ,∇ᵢWᵢⱼ)+delta_i*MotionLimiter[i]
+                    end
+                end
 
-        # delta_i = δᵩ*h*c₀*dot(Ψᵢⱼ,∇ᵢWᵢⱼ)
-
-        # # For particle j
-        # Pⱼᵢᴴ  = ρ₀*g*(-dz) #!
-        # ρⱼᵢᴴ  = ρ₀*(((Pⱼᵢᴴ/Cb)+1)^(1/γ) - 1)
-        # ρᵢⱼᵀ  = -ρⱼᵢᵀ
-        # Ψⱼᵢ   = 2*(ρᵢⱼᵀ+ρⱼᵢᴴ) * (-xᵢⱼ/(r²+η²)) #Should be + ?
-
-        # delta_j = δᵩ*h*c₀*dot(Ψⱼᵢ,-∇ᵢWᵢⱼ)
-
-        # dρdtI[i] += ρᵢ*(dot(m₀*vᵢⱼ,∇ᵢWᵢⱼ))*(m₀/ρⱼ) +delta_i*(m₀/ρⱼ)
-        # dρdtI[j] += ρⱼ*(dot(m₀*-vᵢⱼ,-∇ᵢWᵢⱼ))*(m₀/ρⱼ)+delta_j*(m₀/ρᵢ)
-
-        # dρdtL[iter] = ρᵢ*(dot(m₀*vᵢⱼ,∇ᵢWᵢⱼ))*(m₀/ρⱼ) +delta_i*(m₀/ρⱼ)
-
-        # # For particle i
-        # volᵢ  = 1/ρᵢ
-        # volⱼ  = 1/ρⱼ
-
-        # Ψᵢⱼ   = 2*((volᵢ/volⱼ)-1) * (xᵢⱼ/(r²)) #Should be + ?
-
-        # delta_i = δᵩ*h*c₀*dot(Ψᵢⱼ,∇ᵢWᵢⱼ)*(m₀/ρⱼ)
-
-        # # For particle j
-        # Ψⱼᵢ   = 2*((volⱼ/volᵢ)-1) * (-xᵢⱼ/(r²)) #Should be + ?
-
-        # delta_j = δᵩ*h*c₀*dot(Ψⱼᵢ,-∇ᵢWᵢⱼ)*(m₀/ρᵢ)
-
-        # dρdtI[i]    += (dot(m₀*vᵢⱼ,∇ᵢWᵢⱼ))+delta_i*MotionLimiter[i]
-        # dρdtI[j]    += (dot(m₀*-vᵢⱼ,-∇ᵢWᵢⱼ))+delta_j*MotionLimiter[j]
-        # dρdtL[iter] =  (dot(m₀*vᵢⱼ,∇ᵢWᵢⱼ))+delta_i*MotionLimiter[i]
-    end
-
-    return dρdtI,dρdtL
+    return sum(dρdtI),sum(dρdtL)
 end
 
 
@@ -274,29 +206,32 @@ function ∂vᵢ∂t(system,points,m,ρ,WgL,c₀,γ,ρ₀)
     list = system.nb.list
     N    = length(points)
 
-    dvdtI = fill(SVector(0.0,0.0,0.0),N)
-    dvdtL = fill(SVector(0.0,0.0,0.0),length(list))
-    for (iter,L) in collect(enumerate(list))
-        i = L[1]; j = L[2]
+    dvdtI = [ zeros(SVector{3,Float64},N) for _ in 1:nchunks ]
+    dvdtL = [ zeros(SVector{3,Float64},length(list)) for _ in 1:nchunks ]
+    Threads.@threads for (list_range, ichunk) in chunks(list, nchunks)
+        for iter in list_range
+            L = list[iter]
+            i = L[1]; j = L[2]
 
-        ρᵢ    = ρ[i]
-        ρⱼ    = ρ[j]
-        Pᵢ    = Pressure(ρᵢ,c₀,γ,ρ₀)
-        Pⱼ    = Pressure(ρⱼ,c₀,γ,ρ₀)
-        ∇ᵢWᵢⱼ = WgL[iter]
+            ρᵢ    = ρ[i]
+            ρⱼ    = ρ[j]
+            Pᵢ    = Pressure(ρᵢ,c₀,γ,ρ₀)
+            Pⱼ    = Pressure(ρⱼ,c₀,γ,ρ₀)
+            ∇ᵢWᵢⱼ = WgL[iter]
 
-        Pfac  = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
+            Pfac  = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
 
 
-        dvdt  = - m * Pfac *  ∇ᵢWᵢⱼ
+            dvdt  = - m * Pfac *  ∇ᵢWᵢⱼ
 
-        dvdtI[i]    +=  dvdt
-        dvdtI[j]    +=  -dvdt
-        
-        dvdtL[iter] =   dvdt
+            dvdtI[ichunk][i]    +=  dvdt
+            dvdtI[ichunk][j]    +=  -dvdt
+            
+            dvdtL[ichunk][iter] =   dvdt
+        end
     end
 
-    return dvdtI,dvdtL
+    return sum(dvdtI),sum(dvdtL)
 end
 
 
@@ -351,11 +286,11 @@ function create_vtp_file(filename,points,Wi,Wg,ρ,dvdt,v)
     end
 end
 ### Play with code
-#DF_FLUID = CSV.read("FluidPoints_Dp0.02.csv", DataFrame)
-#DF_BOUND = CSV.read("BoundaryPoints_Dp0.02.csv", DataFrame)
+DF_FLUID = CSV.read("FluidPoints_Dp0.005.csv", DataFrame)
+DF_BOUND = CSV.read("BoundaryPoints_Dp0.005.csv", DataFrame)
 
-DF_FLUID = CSV.read("./StillFluid/StillFluid_Water_Dp0.02.csv",DataFrame)
-DF_BOUND = CSV.read("./StillFluid/StillFluid_Wall_Dp0.02.csv",DataFrame)
+# DF_FLUID = CSV.read("./StillFluid/StillFluid_Water_Dp0.02.csv",DataFrame)
+# DF_BOUND = CSV.read("./StillFluid/StillFluid_Wall_Dp0.02.csv",DataFrame)
 
 P1F = DF_FLUID[!,"Points:0"]
 P2F = DF_FLUID[!,"Points:1"]
@@ -394,6 +329,8 @@ function RunSimulation(points,GravityFactor,MotionLimiter)
     dt  = 1e-5
     δᵩ  = 0.1
     CFL = 0.1
+
+    nchunks = 4#Threads.nthreads()
     
 
     density  = Array([DF_FLUID.Rhop;DF_BOUND.Rhop])
@@ -409,13 +346,10 @@ function RunSimulation(points,GravityFactor,MotionLimiter)
         update!(system,points)
         list = neighborlist!(system)
 
-        WiI,_   = ∑ⱼWᵢⱼ(list,points,αD,H)
+        WiI,_   = ∑ⱼWᵢⱼ(list,points,αD,H,nchunks)
         WgI,WgL = ∑ⱼ∇ᵢWᵢⱼ(list,points,αD,H)
 
-        #dρdtI,_ = ∂ρᵢ∂t(system,points,m₀,density,velocity,WgL)
-        dρdtI,_ = ∂ρᵢ∂tDDT(list,points,H,m₀,δᵩ,c₀,γ,g,ρ₀,density,velocity,WgL,MotionLimiter)
-        #dρdtI  .*= MotionLimiter
-     
+        dρdtI,_ = ∂ρᵢ∂tDDT(list,points,H,m₀,δᵩ,c₀,γ,g,ρ₀,density,velocity,WgL,MotionLimiter,nchunks)
 
         viscI,_ = ∂Πᵢⱼ∂t(list,points,H,density,α,velocity,c₀,m₀,WgL)
         dvdtI,_ = ∂vᵢ∂t(system,points,m₀,density,WgL,c₀,γ,ρ₀)
@@ -427,9 +361,8 @@ function RunSimulation(points,GravityFactor,MotionLimiter)
         velocity_n_half = velocity .+ dvdtI * (dt/2) .* MotionLimiter
         points_n_half   = points   .+ velocity_n_half * (dt/2) .* MotionLimiter
 
-        #dρdtI_n_half,_ = ∂ρᵢ∂t(system,points_n_half,m₀,density_n_half,velocity_n_half,WgL)
-        dρdtI_n_half,_ = ∂ρᵢ∂tDDT(list,points_n_half,H,m₀,δᵩ,c₀,γ,g,ρ₀,density_n_half,velocity_n_half,WgL,MotionLimiter)
-        #dρdtI_n_half .*= MotionLimiter
+        dρdtI_n_half,_ = ∂ρᵢ∂tDDT(list,points_n_half,H,m₀,δᵩ,c₀,γ,g,ρ₀,density_n_half,velocity_n_half,WgL,MotionLimiter,nchunks)
+
 
         viscI_n_half,_ = ∂Πᵢⱼ∂t(list,points_n_half,H,density_n_half,α,velocity_n_half,c₀,m₀,WgL)
         dvdtI_n_half,_ = ∂vᵢ∂t(system,points_n_half,m₀,density_n_half,WgL,c₀,γ,ρ₀)
@@ -448,7 +381,7 @@ function RunSimulation(points,GravityFactor,MotionLimiter)
         acceleration = dvdtI_n_half
 
         # Automatic time stepping probably does not work in non-vicous sim
-        #dt = Δt(acceleration,points,velocity,c₀,H,CFL)
+        dt = Δt(acceleration,points,velocity,c₀,H,CFL)
 
         @printf "Iteration %i | dt = %.5e \n" big_iter dt
         if big_iter % 50 == 0
