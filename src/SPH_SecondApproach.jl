@@ -11,17 +11,19 @@ using StaticArrays
 using CellListMap
 using LinearAlgebra
 
-function RunSimulation(SaveLocation="E:/SecondApproach/")
+function RunSimulation(SaveLocation="E:/SecondApproach/Results")
     foreach(rm, filter(endswith(".vtp"), readdir(SaveLocation,join=true)))
 
     ### Play with code
-    FLUID_CSV = "FluidPoints_Dp0.02.csv"
-    BOUND_CSV = "BoundaryPoints_Dp0.02.csv"
+    FLUID_CSV = "./input/FluidPoints_Dp0.02.csv"
+    BOUND_CSV = "./input/BoundaryPoints_Dp0.02.csv"
 
     points,DF_FLUID,DF_BOUND    = LoadParticlesFromCSV(FLUID_CSV,BOUND_CSV)
 
     GravityFactor = [Int64(-1) .+ 0*collect(1:size(DF_FLUID,1));Int64(1) .+ 0*collect(1:size(DF_BOUND,1))]
     MotionLimiter = [Int64(1)  .+ 0*collect(1:size(DF_FLUID,1));Int64(0) .+ 0*collect(1:size(DF_BOUND,1))]
+
+    BoundaryBool  = .!Bool.(MotionLimiter)
 
     ρ₀  = 1000
     dx  = 0.02
@@ -35,7 +37,7 @@ function RunSimulation(SaveLocation="E:/SecondApproach/")
     g   = 9.81
     dt  = 1e-5
     δᵩ  = 0.1
-    CFL = 0.1
+    CFL = 0.2
 
     # Initialize arrays
     density  = Array([DF_FLUID.Rhop;DF_BOUND.Rhop])
@@ -51,10 +53,7 @@ function RunSimulation(SaveLocation="E:/SecondApproach/")
     WgINormals     .*= -1 .* 2dx ./ replace!(norm.(WgINormals),0.0=>1)
     create_vtp_file(SaveLocation*"/Normals",points[.!Bool.(MotionLimiter)],WiINormals,WgINormals,WiINormals*0,WgINormals*0,WgINormals*0)
 
-
-
-    system  = InPlaceNeighborList(x=points, cutoff=2*H, parallel=false)
-    neighborlist!(system)
+    system  = InPlaceNeighborList(x=points, cutoff=2*H, parallel=true)
     for big_iter = 1:200001
         update!(system,points)
         list = neighborlist!(system)
@@ -71,6 +70,9 @@ function RunSimulation(SaveLocation="E:/SecondApproach/")
 
 
         density_n_half  = density  .+ dρdtI * (dt/2)
+        clamp!(density_n_half,ρ₀,ρ₀*1.3)
+
+
         velocity_n_half = velocity .+ dvdtI * (dt/2) .* MotionLimiter
         points_n_half   = points   .+ velocity_n_half * (dt/2) .* MotionLimiter
 
@@ -85,6 +87,8 @@ function RunSimulation(SaveLocation="E:/SecondApproach/")
         epsi = -( dρdtI_n_half ./ density_n_half)*dt
 
         density_new   = density  .* (2 .- epsi)./(2 .+ epsi)
+        clamp!(density_new,ρ₀,ρ₀*1.3)
+
         velocity_new  = velocity .+ dvdtI_n_half * dt .* MotionLimiter
         points_new    = points   .+ ((velocity_new .+ velocity)/2) * dt .* MotionLimiter
 

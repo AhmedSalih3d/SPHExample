@@ -147,14 +147,13 @@ function ∂ρᵢ∂tDDT(list,points,h,m₀,δᵩ,c₀,γ,g,ρ₀,ρ,v,WgL,Motio
     dρdtI = zeros(N)
     dρdtL = zeros(length(list))
     for (iter,L) in collect(enumerate(list))
-        i = L[1]; j = L[2]
+        i = L[1]; j = L[2];
 
         xᵢⱼ   = points[i] - points[j]
         ρᵢ    = ρ[i]
         ρⱼ    = ρ[j]
         vᵢⱼ   = v[i] - v[j]
         ∇ᵢWᵢⱼ = WgL[iter]
-
 
         Cb    = (c₀^2*ρ₀)/γ
 
@@ -186,7 +185,6 @@ function ∂ρᵢ∂tDDT(list,points,h,m₀,δᵩ,c₀,γ,g,ρ₀,ρ,v,WgL,Motio
 
     return dρdtI,dρdtL
 end
-
 
 # Equation 2.6
 function ∂vᵢ∂t(system,points,m,ρ,WgL,c₀,γ,ρ₀)
