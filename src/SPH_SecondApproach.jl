@@ -70,7 +70,7 @@ function RunSimulation(SaveLocation="E:/SecondApproach/Results")
 
 
         density_n_half  = density  .+ dρdtI * (dt/2)
-        clamp!(density_n_half,ρ₀,ρ₀*1.3)
+        clamp!(density_n_half[BoundaryBool],ρ₀,ρ₀*1.3)
 
 
         velocity_n_half = velocity .+ dvdtI * (dt/2) .* MotionLimiter
@@ -87,7 +87,7 @@ function RunSimulation(SaveLocation="E:/SecondApproach/Results")
         epsi = -( dρdtI_n_half ./ density_n_half)*dt
 
         density_new   = density  .* (2 .- epsi)./(2 .+ epsi)
-        clamp!(density_new,ρ₀,ρ₀*1.3)
+        clamp!(density_new[BoundaryBool],ρ₀,ρ₀*1.3)
 
         velocity_new  = velocity .+ dvdtI_n_half * dt .* MotionLimiter
         points_new    = points   .+ ((velocity_new .+ velocity)/2) * dt .* MotionLimiter
