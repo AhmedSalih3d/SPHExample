@@ -4,8 +4,9 @@ export create_vtp_file
 
 using WriteVTK
 
-
-function create_vtp_file(filename,points,Wi,Wg,ρ,dvdt,v)
+# This function uses WriteVTK to produce a simple ParaView file for visualization
+# Make sure to use "Point Gaussian" and select something other than "Solid Color" to see the particles!
+function create_vtp_file(filename,points,Wi,Wg,ρ,P,dvdt,v)
     # Convert the particle positions and densities into the format required by the vtk_grid function:
     points = reduce(hcat,points)  # Concatenate the particle positions into a single matrix
     polys = empty(MeshCell{WriteVTK.PolyData.Polys,UnitRange{Int64}}[])
@@ -22,6 +23,7 @@ function create_vtp_file(filename,points,Wi,Wg,ρ,dvdt,v)
         vtk_point_data(vtk, Wi, "Wi")
         vtk_point_data(vtk, Wg, "Wg")
         vtk_point_data(vtk, ρ, "Density")
+        vtk_point_data(vtk, P, "Pressure")
         vtk_point_data(vtk, dvdt, "Acceleration")
         vtk_point_data(vtk, v, "Velocity")
     end

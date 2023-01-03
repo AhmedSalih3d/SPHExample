@@ -6,10 +6,14 @@ using CellListMap
 using StaticArrays
 using LinearAlgebra
 
+# Function to calculate Kernel Value
 function Wᵢⱼ(αD,q)
     return αD*(1-q/2)^4*(2*q + 1)
 end
 
+# Function to calculate kernel value in both "particle i" format and "list of interactions" format
+# Please notice how when using CellListMap since it is based on a "list of interactions", for each 
+# interaction we must add the contribution to both the i'th and j'th particle!
 function ∑ⱼWᵢⱼ(list,points,αD,h)
     N    = length(points)
 
@@ -31,6 +35,7 @@ function ∑ⱼWᵢⱼ(list,points,αD,h)
     return sumWI,sumWL
 end
 
+# Original implementation of kernel gradient
 # function ∇ᵢWᵢⱼ(αD,q,xᵢⱼ,h)
 #     # Skip distances outside the support of the kernel:
 #     if q < 0.0 || q > 2.0
@@ -55,6 +60,9 @@ function Optim∇ᵢWᵢⱼ(αD,q,xᵢⱼ,h)
     return Fac .* xᵢⱼ
 end
 
+# Function to calculate kernel gradient value in both "particle i" format and "list of interactions" format
+# Please notice how when using CellListMap since it is based on a "list of interactions", for each 
+# interaction we must add the contribution to both the i'th and j'th particle!
 function ∑ⱼ∇ᵢWᵢⱼ(list,points,αD,h)
     N    = length(points)
 
@@ -78,10 +86,12 @@ function ∑ⱼ∇ᵢWᵢⱼ(list,points,αD,h)
     return sumWgI,sumWgL
 end
 
+# Equation of State in Weakly-Compressible SPH
 function Pressure(ρ,c₀,γ,ρ₀)
     return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
 end
 
+# The artificial viscosity term
 function ∂Πᵢⱼ∂t(list,points,h,ρ,α,v,c₀,m₀,WgL)
     N    = length(points)
 
@@ -114,7 +124,7 @@ function ∂Πᵢⱼ∂t(list,points,h,ρ,α,v,c₀,m₀,WgL)
     return viscI,viscL
 end
 
-# Equation 2.5
+# The density derivative function WITHOUT density diffusion
 function ∂ρᵢ∂t(system,points,m,ρ,v,WgL)
     list = system.nb.list
     N    = length(points)
@@ -138,7 +148,7 @@ function ∂ρᵢ∂t(system,points,m,ρ,v,WgL)
     return dρdtI,dρdtL
 end
 
-# FOr use with ddt
+# The density derivative function INCLUDING density diffusion
 function ∂ρᵢ∂tDDT(list,points,h,m₀,δᵩ,c₀,γ,g,ρ₀,ρ,v,WgL,MotionLimiter)
     N    = length(points)
 
@@ -161,8 +171,8 @@ function ∂ρᵢ∂tDDT(list,points,h,m₀,δᵩ,c₀,γ,g,ρ₀,ρ,v,WgL,Motio
 
         DDTgz = ρ₀*g/Cb
         DDTkh = 2*h*δᵩ
-        # Do note that in a lot of paper they write "ij"
-        # BUT it should be ji for the direction to match
+        # Do note that in a lot of papers they write "ij"
+        # BUT it should be ji for the direction to match (in dot3)
         # the density direction
         # For particle i
         drz   = xᵢⱼ[2]
@@ -189,7 +199,7 @@ function ∂ρᵢ∂tDDT(list,points,h,m₀,δᵩ,c₀,γ,g,ρ₀,ρ,v,WgL,Motio
     return dρdtI,dρdtL
 end
 
-# Equation 2.6
+# The momentum equation without any dissipation - we add the dissipation using artificial viscosity (∂Πᵢⱼ∂t)
 function ∂vᵢ∂t(system,points,m,ρ,WgL,c₀,γ,ρ₀)
     list = system.nb.list
     N    = length(points)
