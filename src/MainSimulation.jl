@@ -19,7 +19,7 @@ function RunSimulation(SaveLocation="E:/SecondApproach/Results",SimulationName="
     # FLUID_CSV = PATH TO FLUID PARTICLES, SEE "input" FOLDER
     # BOUND_CSV = PATH TO BOUNDARY PARTICLES, SEE "input" FOLDER
     # ρ₀  = REFERENCE DENSITY
-    # dx  = INITIAL PARTICLE DISTANCE, SEE "dp" IN CSV FILES
+    # dx  = INITIAL PARTICLE DISTANCE, SEE "dp" IN CSV FILES, FOR 3D SIM: 0.0085
     # H   = SMOOTHING LENGTH
     # m₀  = INITIAL MASS (REFERENCE DENSITY * DX^(SIMULATION DIMENSIONS))
     # mᵢ  = mⱼ = m₀ | ALL PARTICLES HAVE THE SAME MASS, ALWAYS
@@ -36,13 +36,13 @@ function RunSimulation(SaveLocation="E:/SecondApproach/Results",SimulationName="
     # FLUID_CSV = "./input/3D_DamBreak_Fluid_3LAYERS.csv"
     # BOUND_CSV = "./input/3D_DamBreak_Boundary_3LAYERS.csv"
     # ρ₀  = 1000
-    # dx  = 0.0085#0.02
-    # H   = sqrt(3)*dx#sqrt(2)*dx
+    # dx  = 0.0085
+    # H   = sqrt(3)*dx
     # m₀  = ρ₀*dx*dx*dx
-    # αD  = 21/(16*π*H^3) #(7/(4*π*H^2))
+    # αD  = 21/(16*π*H^3)
     # α   = 0.01
     # g   = 9.81
-    # c₀  = sqrt(g*0.3)*20#sqrt(9.81*2)*20#81#85.89
+    # c₀  = sqrt(g*0.3)*20
     # γ   = 7
     # dt  = 1e-5
     # δᵩ  = 0.1
