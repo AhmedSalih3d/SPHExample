@@ -161,6 +161,9 @@ function ∂ρᵢ∂tDDT(list,points,h,m₀,δᵩ,c₀,γ,g,ρ₀,ρ,v,WgL,Motio
 
         DDTgz = ρ₀*g/Cb
         DDTkh = 2*h*δᵩ
+        # Do note that in a lot of paper they write "ij"
+        # BUT it should be ji for the direction to match
+        # the density direction
         # For particle i
         drz   = xᵢⱼ[2]
         rh    = 1 + DDTgz*drz
