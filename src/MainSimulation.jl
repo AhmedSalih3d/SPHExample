@@ -1,8 +1,10 @@
-include("AuxillaryFunctions.jl");   using .AuxillaryFunctions
-include("PreProcess.jl");           using .PreProcess
-include("PostProcess.jl");          using .PostProcess
-include("TimeStepping.jl");         using .TimeStepping
-include("SimulationEquations.jl");  using .SimulationEquations
+using Revise
+
+includet("AuxillaryFunctions.jl");   using .AuxillaryFunctions
+includet("PreProcess.jl");           using .PreProcess
+includet("PostProcess.jl");          using .PostProcess
+includet("TimeStepping.jl");         using .TimeStepping
+includet("SimulationEquations.jl");  using .SimulationEquations
 
 using CSV
 using DataFrames
@@ -53,7 +55,7 @@ function RunSimulation(SaveLocation="E:/SecondApproach/Results",SimulationName="
     BOUND_CSV = "./input/BoundaryPoints_Dp0.02.csv"
     ρ₀  = 1000
     dx  = 0.02
-    H   = sqrt(2)*dx
+    H   = 1.2*sqrt(2)*dx
     m₀  = ρ₀*dx*dx #mᵢ  = mⱼ = m₀
     αD  = (7/(4*π*H^2))
     α   = 0.01
