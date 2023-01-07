@@ -4,6 +4,14 @@ An example of how to write a relatively simple SPH (Smoothed Particle Hydrodynam
 
 If for some reason you end up pointing to this repository due to you writing a thesis, paper etc., I would love to know!
 
+The code can produce a 2D dam-break ([@DamBreak2D-Video](https://www.youtube.com/watch?v=7kDVjZkc_TI)):
+
+![plot](./images/2d_dambreak.png)
+
+Or if you are really patient (1+ day to calculate) a 3D case ([@DamBreak3D-Video](https://www.youtube.com/watch?v=_2e6LopvIe8))::
+
+![plot](./images/3d_dambreak.png)
+
 ## Description
 
 The purpose of this code is to serve as an introduction to the SPH (Smoothed Particle Hydrodynamics) method. I have been working in SPH for quite a few years now and noticed that although great software packages exist in this field, it was difficult to find a "simple" example of setting up an SPH solver.
