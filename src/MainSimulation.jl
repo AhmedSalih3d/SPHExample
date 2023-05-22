@@ -82,9 +82,9 @@ function RunSimulation(; SaveLocation="E:/SecondApproach/Results",SimulationName
 
 
     # Initialize arrays
-    density  = Array([DF_FLUID.Rhop;DF_BOUND.Rhop])
-    velocity = zeros(SVector{3,Float64},length(points))
-    acceleration = zeros(SVector{3,Float64},length(points))
+    density      = Array([DF_FLUID.Rhop;DF_BOUND.Rhop])
+    velocity     = zeros(eltype(points),length(points))
+    acceleration = zeros(eltype(points),length(points))
 
     # Save the initial particle layout with dummy values
     create_vtp_file(SaveLocation*"/"*SimulationName*"_"*lpad("0",4,"0"),points,density.*0,acceleration.*0,density,Pressure.(density,c₀,γ,ρ₀),acceleration,velocity)
