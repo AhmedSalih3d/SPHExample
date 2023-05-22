@@ -125,8 +125,7 @@ function ∂Πᵢⱼ∂t(list,points,h,ρ,α,v,c₀,m₀,WgL)
 end
 
 # The density derivative function WITHOUT density diffusion
-function ∂ρᵢ∂t(system,points,m,ρ,v,WgL)
-    list = system.nb.list
+function ∂ρᵢ∂t(list,points,m,ρ,v,WgL)
     N    = length(points)
 
     dρdtI = zeros(N)
