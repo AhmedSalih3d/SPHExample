@@ -13,7 +13,10 @@ using StaticArrays
 using CellListMap
 using LinearAlgebra
 
-function RunSimulation(; SaveLocation="E:/SecondApproach/Results",SimulationName="DamBreak")
+function RunSimulation(; 
+                        SaveLocation="E:/SecondApproach/Results",
+                        SimulationName="DamBreak",
+                        NumberOfIterations=200001)
     # In the standard folder, we clear results before rerunning simulation
     foreach(rm, filter(endswith(".vtp"), readdir(SaveLocation,join=true)))
 
@@ -91,7 +94,7 @@ function RunSimulation(; SaveLocation="E:/SecondApproach/Results",SimulationName
 
     # Initialize the system list
     system  = InPlaceNeighborList(x=points, cutoff=2*H, parallel=true)
-    for big_iter = 1:200001
+    for big_iter = 1:NumberOfIterations
         # Be sure to update and retrieve the updated neighbour list at each time step
         update!(system,points)
         list = neighborlist!(system)
@@ -157,4 +160,4 @@ function RunSimulation(; SaveLocation="E:/SecondApproach/Results",SimulationName
 end
 
 # And here we run the function - enjoy!
-RunSimulation(SaveLocation="D:\\PRIVATE")
+RunSimulation(SaveLocation="D:\\PRIVATE",NumberOfIterations=200)
