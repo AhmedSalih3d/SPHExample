@@ -200,8 +200,7 @@ function ∂ρᵢ∂tDDT(list,points,h,m₀,δᵩ,c₀,γ,g,ρ₀,ρ,v,WgL,Motio
 end
 
 # The momentum equation without any dissipation - we add the dissipation using artificial viscosity (∂Πᵢⱼ∂t)
-function ∂vᵢ∂t(system,points,m,ρ,WgL,c₀,γ,ρ₀)
-    list = system.nb.list
+function ∂vᵢ∂t(list,points,m,ρ,WgL,c₀,γ,ρ₀)
     N    = length(points)
 
     dvdtI = fill(SVector(0.0,0.0,0.0),N)

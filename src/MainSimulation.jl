@@ -112,7 +112,7 @@ function RunSimulation(;
 
         # We calculate viscosity contribution and momentum equation at time step "n"
         viscI,_ = ∂Πᵢⱼ∂t(list,points,H,density,α,velocity,c₀,m₀,WgL)
-        dvdtI,_ = ∂vᵢ∂t(system,points,m₀,density,WgL,c₀,γ,ρ₀)
+        dvdtI,_ = ∂vᵢ∂t(list,points,m₀,density,WgL,c₀,γ,ρ₀)
         # We add gravity as a final step for the i particles, not the L ones, since we do not split the contribution, that is unphysical!
         # So please be careful with using "L" results directly in some cases
         dvdtI .= map((x,y)->x+y*SVector(0,g,0),dvdtI+viscI,GravityFactor)
@@ -132,7 +132,7 @@ function RunSimulation(;
 
         # Viscous contribution and momentum equation at "n+½"
         viscI_n_half,_ = ∂Πᵢⱼ∂t(list,points_n_half,H,density_n_half,α,velocity_n_half,c₀,m₀,WgL)
-        dvdtI_n_half,_ = ∂vᵢ∂t(system,points_n_half,m₀,density_n_half,WgL,c₀,γ,ρ₀)
+        dvdtI_n_half,_ = ∂vᵢ∂t(list,points_n_half,m₀,density_n_half,WgL,c₀,γ,ρ₀)
         dvdtI_n_half  .= map((x,y)->x+y*SVector(0,g,0),dvdtI_n_half+viscI_n_half,GravityFactor) 
 
         # Factor for properly time stepping the density to "n+1" - We use the symplectic scheme as done in DualSPHysics
