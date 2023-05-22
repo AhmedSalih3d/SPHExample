@@ -145,10 +145,10 @@ function RunSimulation(;
         points_new    = points   .+ ((velocity_new .+ velocity)/2) * dt .* MotionLimiter
 
         # And for clarity updating the values in our simulation is done explicitly here
-        density      = density_new
-        velocity     = velocity_new
-        points       = points_new
-        acceleration = dvdtI_n_half
+        density      .= density_new
+        velocity     .= velocity_new
+        points       .= points_new
+        acceleration .= dvdtI_n_half
 
         # Automatic time stepping control
         dt = Δt(acceleration,points,velocity,c₀,H,CFL)
@@ -161,4 +161,4 @@ function RunSimulation(;
 end
 
 # And here we run the function - enjoy!
-RunSimulation(SaveLocation="D:\\PRIVATE",NumberOfIterations=200)
+RunSimulation(SaveLocation="D:\\PRIVATE",NumberOfIterations=2000)
