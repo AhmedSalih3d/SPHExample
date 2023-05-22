@@ -16,7 +16,8 @@ using LinearAlgebra
 function RunSimulation(; 
                         SaveLocation="E:/SecondApproach/Results",
                         SimulationName="DamBreak",
-                        NumberOfIterations=200001)
+                        NumberOfIterations=200001,
+                        OutputIteration=50)
     # In the standard folder, we clear results before rerunning simulation
     foreach(rm, filter(endswith(".vtp"), readdir(SaveLocation,join=true)))
 
@@ -94,7 +95,7 @@ function RunSimulation(;
 
     # Initialize the system list
     system  = InPlaceNeighborList(x=points, cutoff=2*H, parallel=true)
-    for big_iter = 1:NumberOfIterations
+    for sim_iter = 1:NumberOfIterations
         # Be sure to update and retrieve the updated neighbour list at each time step
         update!(system,points)
         list = neighborlist!(system)
@@ -152,9 +153,9 @@ function RunSimulation(;
         # Automatic time stepping control
         dt = Δt(acceleration,points,velocity,c₀,H,CFL)
 
-        @printf "Iteration %i | dt = %.5e \n" big_iter dt
-        if big_iter % 50 == 0
-            create_vtp_file(SaveLocation*"/"*SimulationName*"_"*lpad(big_iter,4,"0"),points,WiI,WgI,density,Pressure.(density,c₀,γ,ρ₀),acceleration,velocity)
+        @printf "Iteration %i | dt = %.5e \n" sim_iter dt
+        if sim_iter % OutputIteration == 0
+            create_vtp_file(SaveLocation*"/"*SimulationName*"_"*lpad(sim_iter,4,"0"),points,WiI,WgI,density,Pressure.(density,c₀,γ,ρ₀),acceleration,velocity)
         end
     end
 end
