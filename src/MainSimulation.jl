@@ -13,7 +13,7 @@ using StaticArrays
 using CellListMap
 using LinearAlgebra
 
-function RunSimulation(SaveLocation="E:/SecondApproach/Results",SimulationName="DamBreak")
+function RunSimulation(; SaveLocation="E:/SecondApproach/Results",SimulationName="DamBreak")
     # In the standard folder, we clear results before rerunning simulation
     foreach(rm, filter(endswith(".vtp"), readdir(SaveLocation,join=true)))
 
@@ -157,4 +157,4 @@ function RunSimulation(SaveLocation="E:/SecondApproach/Results",SimulationName="
 end
 
 # And here we run the function - enjoy!
-RunSimulation()
+RunSimulation(SaveLocation="D:\\PRIVATE")
