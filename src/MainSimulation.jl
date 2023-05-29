@@ -13,7 +13,11 @@ using StaticArrays
 using CellListMap
 using LinearAlgebra
 
-function RunSimulation(SaveLocation="E:/SecondApproach/Results",SimulationName="DamBreak")
+function RunSimulation(; 
+                        SaveLocation="E:/SecondApproach/Results",
+                        SimulationName="DamBreak",
+                        NumberOfIterations=200001,
+                        OutputIteration=50)
     # In the standard folder, we clear results before rerunning simulation
     foreach(rm, filter(endswith(".vtp"), readdir(SaveLocation,join=true)))
 
@@ -82,16 +86,16 @@ function RunSimulation(SaveLocation="E:/SecondApproach/Results",SimulationName="
 
 
     # Initialize arrays
-    density  = Array([DF_FLUID.Rhop;DF_BOUND.Rhop])
-    velocity = zeros(SVector{3,Float64},length(points))
-    acceleration = zeros(SVector{3,Float64},length(points))
+    density      = Array([DF_FLUID.Rhop;DF_BOUND.Rhop])
+    velocity     = zeros(eltype(points),length(points))
+    acceleration = zeros(eltype(points),length(points))
 
     # Save the initial particle layout with dummy values
     create_vtp_file(SaveLocation*"/"*SimulationName*"_"*lpad("0",4,"0"),points,density.*0,acceleration.*0,density,Pressure.(density,c₀,γ,ρ₀),acceleration,velocity)
 
     # Initialize the system list
     system  = InPlaceNeighborList(x=points, cutoff=2*H, parallel=true)
-    for big_iter = 1:200001
+    for sim_iter = 1:NumberOfIterations
         # Be sure to update and retrieve the updated neighbour list at each time step
         update!(system,points)
         list = neighborlist!(system)
@@ -108,7 +112,7 @@ function RunSimulation(SaveLocation="E:/SecondApproach/Results",SimulationName="
 
         # We calculate viscosity contribution and momentum equation at time step "n"
         viscI,_ = ∂Πᵢⱼ∂t(list,points,H,density,α,velocity,c₀,m₀,WgL)
-        dvdtI,_ = ∂vᵢ∂t(system,points,m₀,density,WgL,c₀,γ,ρ₀)
+        dvdtI,_ = ∂vᵢ∂t(list,points,m₀,density,WgL,c₀,γ,ρ₀)
         # We add gravity as a final step for the i particles, not the L ones, since we do not split the contribution, that is unphysical!
         # So please be careful with using "L" results directly in some cases
         dvdtI .= map((x,y)->x+y*SVector(0,g,0),dvdtI+viscI,GravityFactor)
@@ -128,7 +132,7 @@ function RunSimulation(SaveLocation="E:/SecondApproach/Results",SimulationName="
 
         # Viscous contribution and momentum equation at "n+½"
         viscI_n_half,_ = ∂Πᵢⱼ∂t(list,points_n_half,H,density_n_half,α,velocity_n_half,c₀,m₀,WgL)
-        dvdtI_n_half,_ = ∂vᵢ∂t(system,points_n_half,m₀,density_n_half,WgL,c₀,γ,ρ₀)
+        dvdtI_n_half,_ = ∂vᵢ∂t(list,points_n_half,m₀,density_n_half,WgL,c₀,γ,ρ₀)
         dvdtI_n_half  .= map((x,y)->x+y*SVector(0,g,0),dvdtI_n_half+viscI_n_half,GravityFactor) 
 
         # Factor for properly time stepping the density to "n+1" - We use the symplectic scheme as done in DualSPHysics
@@ -141,20 +145,20 @@ function RunSimulation(SaveLocation="E:/SecondApproach/Results",SimulationName="
         points_new    = points   .+ ((velocity_new .+ velocity)/2) * dt .* MotionLimiter
 
         # And for clarity updating the values in our simulation is done explicitly here
-        density      = density_new
-        velocity     = velocity_new
-        points       = points_new
-        acceleration = dvdtI_n_half
+        density      .= density_new
+        velocity     .= velocity_new
+        points       .= points_new
+        acceleration .= dvdtI_n_half
 
         # Automatic time stepping control
         dt = Δt(acceleration,points,velocity,c₀,H,CFL)
 
-        @printf "Iteration %i | dt = %.5e \n" big_iter dt
-        if big_iter % 50 == 0
-            create_vtp_file(SaveLocation*"/"*SimulationName*"_"*lpad(big_iter,4,"0"),points,WiI,WgI,density,Pressure.(density,c₀,γ,ρ₀),acceleration,velocity)
+        @printf "Iteration %i | dt = %.5e \n" sim_iter dt
+        if sim_iter % OutputIteration == 0
+            create_vtp_file(SaveLocation*"/"*SimulationName*"_"*lpad(sim_iter,4,"0"),points,WiI,WgI,density,Pressure.(density,c₀,γ,ρ₀),acceleration,velocity)
         end
     end
 end
 
 # And here we run the function - enjoy!
-RunSimulation()
+RunSimulation(SaveLocation="DEFINE-YOUR-SAVE-PATH")

@@ -125,8 +125,7 @@ function ∂Πᵢⱼ∂t(list,points,h,ρ,α,v,c₀,m₀,WgL)
 end
 
 # The density derivative function WITHOUT density diffusion
-function ∂ρᵢ∂t(system,points,m,ρ,v,WgL)
-    list = system.nb.list
+function ∂ρᵢ∂t(list,points,m,ρ,v,WgL)
     N    = length(points)
 
     dρdtI = zeros(N)
@@ -200,8 +199,7 @@ function ∂ρᵢ∂tDDT(list,points,h,m₀,δᵩ,c₀,γ,g,ρ₀,ρ,v,WgL,Motio
 end
 
 # The momentum equation without any dissipation - we add the dissipation using artificial viscosity (∂Πᵢⱼ∂t)
-function ∂vᵢ∂t(system,points,m,ρ,WgL,c₀,γ,ρ₀)
-    list = system.nb.list
+function ∂vᵢ∂t(list,points,m,ρ,WgL,c₀,γ,ρ₀)
     N    = length(points)
 
     dvdtI = fill(SVector(0.0,0.0,0.0),N)
