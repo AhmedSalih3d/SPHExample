@@ -117,8 +117,8 @@ Written by Ahmed Salih [@AhmedSalih3D](https://github.com/AhmedSalih3d)
 
 ## Version History
 
-* 0.1 Release Version
-* 0.2 I expect some feedback would be given, which leads to a 0.2 update of the package
+* Version 0.1 | Release Version
+* main        | A cleaned up version of the original release version
 
 ## License
 
