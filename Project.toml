@@ -1,3 +1,7 @@
+name    = "SPHExample"
+uuid    = "49649ea8-6f54-4931-9342-0ba915f114f7"
+version = "0.1.1"
+
 [deps]
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
