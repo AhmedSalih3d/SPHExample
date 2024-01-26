@@ -36,10 +36,10 @@ Key-elements of the code are:
 ## Getting Started
 
 ### Introduction
-The package is structured into "input" and "src". "input" contains some pre-generated particle layouts from DualSPHysics in .csv format. These paths are specified in the "RunSimulation" function, not as an input but as something which should be changed inside the function and recompiled. The "src" package contains all the code files used in this process. An overview of these is shown;
+The package is structured into "input", "example" and "src". "input" contains some pre-generated particle layouts from DualSPHysics in .csv format. These paths are specified in the "RunSimulation" function found in "example/MainSimulation.jl", not as an input but as something which should be changed inside the function and recompiled. After installing the package, run the code in "example/MainSimulation.jl" to start your first simulation. 
 
-* MainSimulation
-  * This script is run to start the simulation
+The "src" package contains all the code files used in this process. An overview of these is shown;
+
 * PreProcess
   * Function for loading in the files in "input"
 * PostProcess
