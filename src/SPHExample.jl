@@ -5,6 +5,8 @@ module SPHExample
     include("PostProcess.jl");        
     include("TimeStepping.jl");       
     include("SimulationEquations.jl");
+    
+    export LoadParticlesFromCSV
 
 end
 
