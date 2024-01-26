@@ -1,3 +1,5 @@
+# Ignore vscode settings
+.vscode/
 # Ignore particles folder
 particles/
 # Ignores .vtp files
