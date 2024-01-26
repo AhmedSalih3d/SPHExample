@@ -5,3 +5,5 @@ particles/
 # Ignores .vtp files
 *.vtp
 second_approach/
+# Ignores manifest.toml
+Manifest.toml
