@@ -1,10 +1,8 @@
-using Revise
-
-includet("AuxillaryFunctions.jl");   using .AuxillaryFunctions
-includet("PreProcess.jl");           using .PreProcess
-includet("PostProcess.jl");          using .PostProcess
-includet("TimeStepping.jl");         using .TimeStepping
-includet("SimulationEquations.jl");  using .SimulationEquations
+include("AuxillaryFunctions.jl");   using .AuxillaryFunctions
+include("PreProcess.jl");           using .PreProcess
+include("PostProcess.jl");          using .PostProcess
+include("TimeStepping.jl");         using .TimeStepping
+include("SimulationEquations.jl");  using .SimulationEquations
 
 using CSV
 using DataFrames
