@@ -11,11 +11,15 @@ using TimerOutputs
 using Parameters
 
 function RunSimulation(;
-                        SimulationMetaData::SimulationMetaData
+                        SimulationMetaData::SimulationMetaData,
+                        SimulationConstants::SimulationConstants
 )
 
     # Unpack the relevant simulation meta data
     @unpack HourGlass, SaveLocation, SimulationName, MaxIterations, OutputIteration, SilentOutput, ThreadsCPU, FloatType, IntType = SimulationMetaData;
+
+    # Unpack simulation constants
+    @unpack ρ₀, dx, H, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimulationConstants
 
     ### VARIABLE EXPLANATION
     # FLUID_CSV = PATH TO FLUID PARTICLES, SEE "input" FOLDER
@@ -53,18 +57,18 @@ function RunSimulation(;
     ### 2D Dam Break
     FLUID_CSV = "./input/FluidPoints_Dp0.02.csv"
     BOUND_CSV = "./input/BoundaryPoints_Dp0.02.csv"
-    ρ₀  = 1000
-    dx  = 0.02
-    H   = 1.2*sqrt(2)*dx
-    m₀  = ρ₀*dx*dx #mᵢ  = mⱼ = m₀
-    αD  = (7/(4*π*H^2))
-    α   = 0.01
-    g   = 9.81
-    c₀  = sqrt(g*2)*20
-    γ   = 7
-    dt  = 1e-5
-    δᵩ  = 0.1
-    CFL = 0.2
+    # ρ₀  = 1000
+    # dx  = 0.02
+    # H   = 1.2*sqrt(2)*dx
+    # m₀  = ρ₀*dx*dx #mᵢ  = mⱼ = m₀
+    # αD  = (7/(4*π*H^2))
+    # α   = 0.01
+    # g   = 9.81
+    # c₀  = sqrt(g*2)*20
+    # γ   = 7
+    # dt  = 1e-5
+    # δᵩ  = 0.1
+    # CFL = 0.2
 
     # Load in the fluid and boundary particles. Return these points and both data frames
     points,DF_FLUID,DF_BOUND    = LoadParticlesFromCSV(FLUID_CSV,BOUND_CSV)
@@ -157,8 +161,9 @@ function RunSimulation(;
 end
 
 # Initialize SimulationMetaData
-SimMetaData = SimulationMetaData(SimulationName="MySimulation", SaveLocation=raw"E:\SecondApproach\Results", MaxIterations=101)
+SimMetaData  = SimulationMetaData(SimulationName="MySimulation", SaveLocation=raw"E:\SecondApproach\Results", MaxIterations=101)
+SimConstants = SimulationConstants{SimMetaData.FloatType, SimMetaData.IntType}()
 # Clean up folder before running (remember to make folder before hand!)
 foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
 # And here we run the function - enjoy!
-RunSimulation(SimulationMetaData = SimMetaData)
+RunSimulation(SimulationMetaData = SimMetaData, SimulationConstants = SimConstants)
