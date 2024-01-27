@@ -44,6 +44,7 @@ metadata = SimulationMetaData(
     Iteration::Int                   = 0
     MaxIterations::Int               = 1000
     OutputIteration::Int             = 50
+    CurrentTimeStep::AbstractFloat   = 0
     SilentOutput::Bool               = false
     ThreadsCPU::Int                  = Threads.nthreads()
     FloatType::DataType              = Float64
