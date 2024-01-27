@@ -17,6 +17,7 @@ SimulationMetaData is a mutable struct representing the metadata and configurati
 - `Iteration::Int`: The current iteration of the simulation. Default is 0.
 - `MaxIterations::Int`: The maximum number of iterations for the simulation. Default is 1000.
 - `OutputIteration::Int`: The iteration interval at which simulation results are saved. Default is 50.
+- `CurrentTimeStep::AbstractFloat`: The current time step of the simulation.
 - `SilentOutput::Bool`: A boolean indicating whether to suppress output during the simulation. Default is false.
 - `ThreadsCPU::Int`: The number of CPU threads to use for the simulation. Default is the number of available threads.
 - `FloatType::DataType`: The data type to use for floating-point values. Default is `Float64`.
