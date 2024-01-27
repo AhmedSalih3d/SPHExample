@@ -87,11 +87,11 @@ function RunSimulation(;FluidCSV::String,
     acceleration = zeros(eltype(points),length(points))
 
     # Save the initial particle layout with dummy values
-    create_vtp_file(SaveLocation*"/"*SimulationName*"_"*lpad("0",4,"0"),points,density.*0,acceleration.*0,density,Pressure.(density,c₀,γ,ρ₀),acceleration,velocity)
+    create_vtp_file(SimulationMetaData,SimulationConstants,FinalResults)
 
     # Initialize the system list
     system  = InPlaceNeighborList(x=points, cutoff=2*H, parallel=true)
-    for sim_iter = 1:MaxIterations
+    for SimulationMetaData.Iteration = 1:MaxIterations
         # Be sure to update and retrieve the updated neighbour list at each time step
         update!(system,points)
         list = neighborlist!(system)
@@ -152,13 +152,13 @@ function RunSimulation(;FluidCSV::String,
         FinalResults.Position       .= points
         FinalResults.Acceleration   .= acceleration
         FinalResults.Velocity       .= velocity
-        
+
         # Automatic time stepping control
         dt = Δt(acceleration,points,velocity,c₀,H,CFL)
 
-        @printf "Iteration %i | dt = %.5e \n" sim_iter dt
-        if sim_iter % OutputIteration == 0
-            create_vtp_file(SaveLocation*"/"*SimulationName*"_"*lpad(sim_iter,4,"0"),points,WiI,WgI,density,Pressure.(density,c₀,γ,ρ₀),acceleration,velocity)
+        @printf "Iteration %i | dt = %.5e \n" SimulationMetaData.Iteration dt
+        if SimulationMetaData.Iteration % OutputIteration == 0
+            create_vtp_file(SimulationMetaData,SimulationConstants,FinalResults)
         end
     end
 end
