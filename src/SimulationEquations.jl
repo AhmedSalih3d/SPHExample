@@ -5,6 +5,7 @@ export Wᵢⱼ, ∑ⱼWᵢⱼ, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ, Pressure
 using CellListMap
 using StaticArrays
 using LinearAlgebra
+using Parameters
 
 # Function to calculate Kernel Value
 function Wᵢⱼ(αD,q)
@@ -14,7 +15,9 @@ end
 # Function to calculate kernel value in both "particle i" format and "list of interactions" format
 # Please notice how when using CellListMap since it is based on a "list of interactions", for each 
 # interaction we must add the contribution to both the i'th and j'th particle!
-function ∑ⱼWᵢⱼ(list,points,αD,h)
+function ∑ⱼWᵢⱼ(list,points,SimulationConstants)
+    @unpack αD,H = SimulationConstants
+
     N    = length(points)
 
     sumWI = zeros(N)
@@ -22,7 +25,7 @@ function ∑ⱼWᵢⱼ(list,points,αD,h)
     for (iter,L) in collect(enumerate(list))
         i = L[1]; j = L[2]; d = L[3]
 
-        q = d/h
+        q = d/H
 
         W = Wᵢⱼ(αD,q)
 
