@@ -1,3 +1,5 @@
+using Revise
+
 using SPHExample
 using CSV
 using DataFrames
@@ -5,6 +7,7 @@ using Printf
 using StaticArrays
 using CellListMap
 using LinearAlgebra
+using TimerOutputs
 
 function RunSimulation(; 
                         SaveLocation="E:/SecondApproach/Results",
