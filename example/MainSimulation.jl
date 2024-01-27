@@ -66,6 +66,9 @@ function RunSimulation(;FluidCSV::String,
     # Load in the fluid and boundary particles. Return these points and both data frames
     points,DF_FLUID,DF_BOUND    = LoadParticlesFromCSV(FluidCSV,BoundCSV)
 
+    # Generate simulation data results array
+    FinalResults = SimulationDataResults{3,FloatType}(NumberOfParticles = length(points))
+
     # Read this as "GravityFactor * g", so -1 means negative acceleration for fluid particles
     # 1 means boundary particles push back against gravity
     GravityFactor = [-ones(size(DF_FLUID,1)) ; ones(size(DF_BOUND,1))]
@@ -143,6 +146,13 @@ function RunSimulation(;FluidCSV::String,
         points       .= points_new
         acceleration .= dvdtI_n_half
 
+        FinalResults.Kernel         .= WiI
+        FinalResults.KernelGradient .= WgI
+        FinalResults.Density        .= density
+        FinalResults.Position       .= points
+        FinalResults.Acceleration   .= acceleration
+        FinalResults.Velocity       .= velocity
+        
         # Automatic time stepping control
         dt = Δt(acceleration,points,velocity,c₀,H,CFL)
 

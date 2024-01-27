@@ -7,6 +7,7 @@ module SPHExample
     include("SimulationEquations.jl");
     include("SimulationMetaDataConfiguration.jl");
     include("SimulationConstantsConfiguration.jl");
+    include("SimulationDataArrays.jl")
     
     # Re-export desired functions from each submodule
     using .PreProcess: LoadParticlesFromCSV
@@ -27,5 +28,7 @@ module SPHExample
     using .SimulationConstantsConfiguration: SimulationConstants
     export SimulationConstants
 
+    using .SimulationDataArrays: SimulationDataResults
+    export SimulationDataResults
 end
 
