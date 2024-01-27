@@ -1,16 +1,16 @@
-module SimulationMetaData
+module SimulationMetaDataConfiguration
 
 using Parameters
 using TimerOutputs
 
-export SimMetaData
+export SimulationMetaData
 
-@with_kw mutable struct SimMetaData
+@with_kw mutable struct SimulationMetaData
     SimulationName::String
     SaveLocation::String
     HourGlass::TimerOutput           = TimerOutput()
     Iteration::Int                   = 0
-    MaxIterations::Int               = Inf
+    MaxIterations::Int               = 1000
     OutputIteration::Int             = 50
     SilentOutput::Bool               = false
     ThreadsCPU::Int                  = Threads.nthreads()
