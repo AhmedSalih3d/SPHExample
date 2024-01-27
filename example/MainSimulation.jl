@@ -68,6 +68,11 @@ function RunSimulation(;FluidCSV::String,
 
     # Generate simulation data results array
     FinalResults = SimulationDataResults{3,FloatType}(NumberOfParticles = length(points))
+    @unpack Kernel, KernelGradient, Density, Position, Acceleration, Velocity = FinalResults
+    # Initialize Arrays
+    Position .= deepcopy(points)
+    Density  .= Array([DF_FLUID.Rhop;DF_BOUND.Rhop])
+
 
     # Read this as "GravityFactor * g", so -1 means negative acceleration for fluid particles
     # 1 means boundary particles push back against gravity
@@ -80,48 +85,42 @@ function RunSimulation(;FluidCSV::String,
     # Based on MotionLimiter we assess which particles are boundary particles
     BoundaryBool  = .!Bool.(MotionLimiter)
 
-
-    # Initialize arrays
-    density      = Array([DF_FLUID.Rhop;DF_BOUND.Rhop])
-    velocity     = zeros(eltype(points),length(points))
-    acceleration = zeros(eltype(points),length(points))
-
     # Save the initial particle layout with dummy values
     create_vtp_file(SimulationMetaData,SimulationConstants,FinalResults)
 
     # Initialize the system list
-    system  = InPlaceNeighborList(x=points, cutoff=2*H, parallel=true)
+    system  = InPlaceNeighborList(x=Position, cutoff=2*H, parallel=true)
     for SimulationMetaData.Iteration = 1:MaxIterations
         # Be sure to update and retrieve the updated neighbour list at each time step
-        update!(system,points)
+        update!(system,Position)
         list = neighborlist!(system)
 
         # Here we output the kernel value for each particle
-        WiI,_   = ∑ⱼWᵢⱼ(list,points,αD,H)
+        Kernel,_   = ∑ⱼWᵢⱼ(list,Position,αD,H)
         # Here we output the kernel gradient value for each particle and also the kernel gradient value
         # based on the pair-to-pair interaction list, for use in later calculations.
         # Other functions follow a similar format, with the "I" and "L" ending
-        WgI,WgL = ∑ⱼ∇ᵢWᵢⱼ(list,points,αD,H)
+        KernelGradient,WgL = ∑ⱼ∇ᵢWᵢⱼ(list,Position,αD,H)
 
         # Then we calculate the density derivative at time step "n"
-        dρdtI,_ = ∂ρᵢ∂tDDT(list,points,H,m₀,δᵩ,c₀,γ,g,ρ₀,density,velocity,WgL,MotionLimiter)
+        dρdtI,_ = ∂ρᵢ∂tDDT(list,Position,H,m₀,δᵩ,c₀,γ,g,ρ₀,Density,Velocity,WgL,MotionLimiter)
 
         # We calculate viscosity contribution and momentum equation at time step "n"
-        viscI,_ = ∂Πᵢⱼ∂t(list,points,H,density,α,velocity,c₀,m₀,WgL)
-        dvdtI,_ = ∂vᵢ∂t(list,points,m₀,density,WgL,c₀,γ,ρ₀)
+        viscI,_ = ∂Πᵢⱼ∂t(list,Position,H,Density,α,Velocity,c₀,m₀,WgL)
+        dvdtI,_ = ∂vᵢ∂t(list,Position,m₀,Density,WgL,c₀,γ,ρ₀)
         # We add gravity as a final step for the i particles, not the L ones, since we do not split the contribution, that is unphysical!
         # So please be careful with using "L" results directly in some cases
         dvdtI .= map((x,y)->x+y*SVector(0,g,0),dvdtI+viscI,GravityFactor)
 
 
         # Based on the density derivative at "n", we calculate "n+½"
-        density_n_half  = density  .+ dρdtI * (dt/2)
+        density_n_half  = Density  .+ dρdtI * (dt/2)
         # We make sure to limit the density of boundary particles in such a way that they cannot produce suction
         density_n_half[(density_n_half .< ρ₀) .* BoundaryBool] .= ρ₀
 
         # We now calculate velocity and position at "n+½"
-        velocity_n_half = velocity .+ dvdtI * (dt/2) .* MotionLimiter
-        points_n_half   = points   .+ velocity_n_half * (dt/2) .* MotionLimiter
+        velocity_n_half = Velocity   .+ dvdtI * (dt/2) .* MotionLimiter
+        points_n_half   = Position   .+ velocity_n_half * (dt/2) .* MotionLimiter
 
         # Density derivative at "n+½" - Note that we keep the kernel gradient values calculated at "n" for simplicity
         dρdtI_n_half,_ = ∂ρᵢ∂tDDT(list,points_n_half,H,m₀,δᵩ,c₀,γ,g,ρ₀,density_n_half,velocity_n_half,WgL,MotionLimiter)
@@ -135,26 +134,20 @@ function RunSimulation(;FluidCSV::String,
         epsi = -( dρdtI_n_half ./ density_n_half)*dt
 
         # Finally we update all values to their next time step, "n+1"
-        density_new   = density  .* (2 .- epsi)./(2 .+ epsi)
+        density_new   = Density  .* (2 .- epsi)./(2 .+ epsi)
         density_new[(density_new .< ρ₀) .* BoundaryBool] .= ρ₀
-        velocity_new  = velocity .+ dvdtI_n_half * dt .* MotionLimiter
-        points_new    = points   .+ ((velocity_new .+ velocity)/2) * dt .* MotionLimiter
+        velocity_new  = Velocity .+ dvdtI_n_half * dt .* MotionLimiter
+        points_new    = Position   .+ ((velocity_new .+ Velocity)/2) * dt .* MotionLimiter
 
         # And for clarity updating the values in our simulation is done explicitly here
-        density      .= density_new
-        velocity     .= velocity_new
+        Density      .= density_new
+        Velocity     .= velocity_new
         points       .= points_new
-        acceleration .= dvdtI_n_half
-
-        FinalResults.Kernel         .= WiI
-        FinalResults.KernelGradient .= WgI
-        FinalResults.Density        .= density
-        FinalResults.Position       .= points
-        FinalResults.Acceleration   .= acceleration
-        FinalResults.Velocity       .= velocity
+        Acceleration .= dvdtI_n_half
+        Position     .= points_new
 
         # Automatic time stepping control
-        dt = Δt(acceleration,points,velocity,c₀,H,CFL)
+        dt = Δt(Acceleration,points,Velocity,c₀,H,CFL)
         SimulationMetaData.CurrentTimeStep = dt
         
         OutputVTP(SimulationMetaData,SimulationConstants,FinalResults)
@@ -162,7 +155,7 @@ function RunSimulation(;FluidCSV::String,
 end
 
 # Initialize SimulationMetaData
-SimMetaData  = SimulationMetaData(SimulationName="MySimulation", SaveLocation=raw"E:\SecondApproach\Results", MaxIterations=101)
+SimMetaData  = SimulationMetaData(SimulationName="MySimulation", SaveLocation=raw"E:\SecondApproach\Results", MaxIterations=10001)
 SimConstants = SimulationConstants{SimMetaData.FloatType, SimMetaData.IntType}()
 # Clean up folder before running (remember to make folder before hand!)
 foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
