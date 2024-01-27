@@ -8,11 +8,12 @@ using StaticArrays
 using CellListMap
 using LinearAlgebra
 using TimerOutputs
+using Parameters
 
 function RunSimulation(; 
                         SaveLocation="E:/SecondApproach/Results",
                         SimulationName="DamBreak",
-                        NumberOfIterations=200001,
+                        NumberOfIterations=101,
                         OutputIteration=50)
     # In the standard folder, we clear results before rerunning simulation
     foreach(rm, filter(endswith(".vtp"), readdir(SaveLocation,join=true)))
