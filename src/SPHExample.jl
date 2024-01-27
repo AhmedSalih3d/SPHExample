@@ -13,8 +13,8 @@ module SPHExample
     using .PreProcess: LoadParticlesFromCSV
     export LoadParticlesFromCSV
 
-    using .PostProcess: create_vtp_file
-    export create_vtp_file
+    using .PostProcess: create_vtp_file, OutputVTP
+    export create_vtp_file, OutputVTP
 
     using .TimeStepping: Δt
     export Δt

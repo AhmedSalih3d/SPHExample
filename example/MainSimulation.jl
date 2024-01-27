@@ -156,10 +156,7 @@ function RunSimulation(;FluidCSV::String,
         # Automatic time stepping control
         dt = Δt(acceleration,points,velocity,c₀,H,CFL)
 
-        @printf "Iteration %i | dt = %.5e \n" SimulationMetaData.Iteration dt
-        if SimulationMetaData.Iteration % OutputIteration == 0
-            create_vtp_file(SimulationMetaData,SimulationConstants,FinalResults)
-        end
+        OutputVTP(SimulationMetaData,SimulationConstants,FinalResults,dt)
     end
 end
 
