@@ -10,11 +10,13 @@ using LinearAlgebra
 using TimerOutputs
 using Parameters
 
-function RunSimulation(; 
-                        SaveLocation="E:/SecondApproach/Results",
-                        SimulationName="DamBreak",
-                        NumberOfIterations=101,
-                        OutputIteration=50)
+function RunSimulation(;
+                        SimulationMetaData::SimulationMetaData
+)
+
+    # Unpack the relevant simulation meta data
+    @unpack HourGlass, SaveLocation, SimulationName, MaxIterations, OutputIteration, SilentOutput, ThreadsCPU, FloatType, IntType = SimulationMetaData;
+
     # In the standard folder, we clear results before rerunning simulation
     foreach(rm, filter(endswith(".vtp"), readdir(SaveLocation,join=true)))
 
@@ -92,7 +94,7 @@ function RunSimulation(;
 
     # Initialize the system list
     system  = InPlaceNeighborList(x=points, cutoff=2*H, parallel=true)
-    for sim_iter = 1:NumberOfIterations
+    for sim_iter = 1:MaxIterations
         # Be sure to update and retrieve the updated neighbour list at each time step
         update!(system,points)
         list = neighborlist!(system)
@@ -157,5 +159,6 @@ function RunSimulation(;
     end
 end
 
+SimMetaData = SimulationMetaData(SimulationName="MySimulation", SaveLocation=raw"E:\SecondApproach\Results", MaxIterations=101)
 # And here we run the function - enjoy!
-RunSimulation()
+RunSimulation(SimulationMetaData = SimMetaData)
