@@ -10,7 +10,49 @@ using LinearAlgebra
 using TimerOutputs
 using Parameters
 
-function RunSimulation(;
+"""
+    RunSimulation(;SimulationMetaData::SimulationMetaData, SimulationConstants::SimulationConstants)
+
+Run a Smoothed Particle Hydrodynamics (SPH) simulation using specified metadata and simulation constants.
+
+This function initializes the simulation environment, loads particle data, and runs the simulation iteratively until the maximum number of iterations is reached. It outputs simulation results at specified intervals.
+
+## Arguments
+- `SimulationMetaData::SimulationMetaData`: A struct containing metadata for the simulation, including the simulation name, save location, maximum iterations, output iteration frequency, and other settings.
+- `SimulationConstants::SimulationConstants`: A struct containing constants used in the simulation, such as reference density, initial particle distance, smoothing length, initial mass, normalization constant for kernel, artificial viscosity alpha value, gravity, speed of sound, gamma for the pressure equation of state, initial time step, coefficient for density diffusion, and CFL number.
+
+## Variable Explanation
+- `FLUID_CSV`: Path to CSV file containing fluid particles. See "input" folder for examples.
+- `BOUND_CSV`: Path to CSV file containing boundary particles. See "input" folder for examples.
+- `ρ₀`: Reference density.
+- `dx`: Initial particle distance. See "dp" in CSV files. For 3D simulations, a typical value might be 0.0085.
+- `H`: Smoothing length.
+- `m₀`: Initial mass, calculated as reference density multiplied by initial particle distance to the power of simulation dimensions.
+- `mᵢ = mⱼ = m₀`: All particles have the same mass.
+- `αD`: Normalization constant for the kernel.
+- `α`: Artificial viscosity alpha value.
+- `g`: Gravity (positive value).
+- `c₀`: Speed of sound, which must be 10 times the highest velocity in the simulation.
+- `γ`: Gamma, most commonly 7 for water, used in the pressure equation of state.
+- `dt`: Initial time step.
+- `δᵩ`: Coefficient for density diffusion, typically 0.1.
+- `CFL`: CFL number for the simulation.
+
+## Example
+```julia
+#See SimulationMetaData and SimulationConstants for all possible inputs
+SimMetaData  = SimulationMetaData(SimulationName="MySimulation", SaveLocation=raw"path/to/results", MaxIterations=101)
+SimConstants = SimulationConstants{SimMetaData.FloatType, SimMetaData.IntType}()
+RunSimulation(
+    FluidCSV = "./input/FluidPoints_Dp0.02.csv",
+    BoundCSV = "./input/BoundaryPoints_Dp0.02.csv",
+    SimulationMetaData = SimMetaData,
+    SimulationConstants = SimConstants
+)
+```
+"""
+function RunSimulation(;FluidCSV::String,
+                        BoundCSV::String,
                         SimulationMetaData::SimulationMetaData,
                         SimulationConstants::SimulationConstants
 )
@@ -21,45 +63,8 @@ function RunSimulation(;
     # Unpack simulation constants
     @unpack ρ₀, dx, H, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimulationConstants
 
-    ### VARIABLE EXPLANATION
-    # FLUID_CSV = PATH TO FLUID PARTICLES, SEE "input" FOLDER
-    # BOUND_CSV = PATH TO BOUNDARY PARTICLES, SEE "input" FOLDER
-    # ρ₀  = REFERENCE DENSITY
-    # dx  = INITIAL PARTICLE DISTANCE, SEE "dp" IN CSV FILES, FOR 3D SIM: 0.0085
-    # H   = SMOOTHING LENGTH
-    # m₀  = INITIAL MASS (REFERENCE DENSITY * DX^(SIMULATION DIMENSIONS))
-    # mᵢ  = mⱼ = m₀ | ALL PARTICLES HAVE THE SAME MASS, ALWAYS
-    # αD  = NORMALIZATION CONSTANT FOR KERNEL
-    # α   = ARTIFICIAL VISCOSITY ALPHA VALUE
-    # g   = GRAVITY (POSITIVE!)
-    # c₀  = SPEED OF SOUND, MUST BE 10X HIGHEST VELOCITY IN SIMULATION
-    # γ   = GAMMA, MOST COMMONLY 7 FOR WATER, USE FOR PRESSURE EQUATION OF STATE
-    # dt  = INITIAL TIME STEP
-    # δᵩ  = 0.1 | COEFFICIENT FOR DENSITY DIFFUSION, SHOULD ALWAYS BE 0.1
-    # CFL = CFL NUMBER
-
-    ### 3D Dam Break - Very slow to solve!
-    # FLUID_CSV = "./input/3D_DamBreak_Fluid_3LAYERS.csv"
-    # BOUND_CSV = "./input/3D_DamBreak_Boundary_3LAYERS.csv"
-    # ρ₀  = 1000
-    # dx  = 0.0085
-    # H   = sqrt(3)*dx
-    # m₀  = ρ₀*dx*dx*dx
-    # αD  = 21/(16*π*H^3)
-    # α   = 0.01
-    # g   = 9.81
-    # c₀  = sqrt(g*0.3)*20
-    # γ   = 7
-    # dt  = 1e-5
-    # δᵩ  = 0.1
-    # CFL = 0.2
-
-    ### 2D Dam Break
-    FLUID_CSV = "./input/FluidPoints_Dp0.02.csv"
-    BOUND_CSV = "./input/BoundaryPoints_Dp0.02.csv"
-
     # Load in the fluid and boundary particles. Return these points and both data frames
-    points,DF_FLUID,DF_BOUND    = LoadParticlesFromCSV(FLUID_CSV,BOUND_CSV)
+    points,DF_FLUID,DF_BOUND    = LoadParticlesFromCSV(FluidCSV,BoundCSV)
 
     # Read this as "GravityFactor * g", so -1 means negative acceleration for fluid particles
     # 1 means boundary particles push back against gravity
@@ -154,4 +159,9 @@ SimConstants = SimulationConstants{SimMetaData.FloatType, SimMetaData.IntType}()
 # Clean up folder before running (remember to make folder before hand!)
 foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
 # And here we run the function - enjoy!
-RunSimulation(SimulationMetaData = SimMetaData, SimulationConstants = SimConstants)
+RunSimulation(
+    FluidCSV = "./input/FluidPoints_Dp0.02.csv",
+    BoundCSV = "./input/BoundaryPoints_Dp0.02.csv",
+    SimulationMetaData = SimMetaData,
+    SimulationConstants = SimConstants
+)
