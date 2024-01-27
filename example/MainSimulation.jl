@@ -17,9 +17,6 @@ function RunSimulation(;
     # Unpack the relevant simulation meta data
     @unpack HourGlass, SaveLocation, SimulationName, MaxIterations, OutputIteration, SilentOutput, ThreadsCPU, FloatType, IntType = SimulationMetaData;
 
-    # In the standard folder, we clear results before rerunning simulation
-    foreach(rm, filter(endswith(".vtp"), readdir(SaveLocation,join=true)))
-
     ### VARIABLE EXPLANATION
     # FLUID_CSV = PATH TO FLUID PARTICLES, SEE "input" FOLDER
     # BOUND_CSV = PATH TO BOUNDARY PARTICLES, SEE "input" FOLDER
@@ -159,6 +156,9 @@ function RunSimulation(;
     end
 end
 
+# Initialize SimulationMetaData
 SimMetaData = SimulationMetaData(SimulationName="MySimulation", SaveLocation=raw"E:\SecondApproach\Results", MaxIterations=101)
+# Clean up folder before running (remember to make folder before hand!)
+foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
 # And here we run the function - enjoy!
 RunSimulation(SimulationMetaData = SimMetaData)
