@@ -57,18 +57,6 @@ function RunSimulation(;
     ### 2D Dam Break
     FLUID_CSV = "./input/FluidPoints_Dp0.02.csv"
     BOUND_CSV = "./input/BoundaryPoints_Dp0.02.csv"
-    # ρ₀  = 1000
-    # dx  = 0.02
-    # H   = 1.2*sqrt(2)*dx
-    # m₀  = ρ₀*dx*dx #mᵢ  = mⱼ = m₀
-    # αD  = (7/(4*π*H^2))
-    # α   = 0.01
-    # g   = 9.81
-    # c₀  = sqrt(g*2)*20
-    # γ   = 7
-    # dt  = 1e-5
-    # δᵩ  = 0.1
-    # CFL = 0.2
 
     # Load in the fluid and boundary particles. Return these points and both data frames
     points,DF_FLUID,DF_BOUND    = LoadParticlesFromCSV(FLUID_CSV,BOUND_CSV)
