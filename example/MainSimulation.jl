@@ -87,6 +87,10 @@ function RunSimulation(;FluidCSV::String,
     # Save the initial particle layout with dummy values
     create_vtp_file(SimulationMetaData,SimulationConstants,FinalResults)
 
+    # Functions to avoid temporary array in epsi calculation later on
+    F_Epsi(DensityDerivative, DensityValue, TimeStepValue)      =  @. -( DensityDerivative / DensityValue) * TimeStepValue
+    F_EpsiFinal(DensityDerivative, DensityValue, TimeStepValue) =  @.  ( 2 - F_Epsi(DensityDerivative, DensityValue, TimeStepValue)) /  (2 + F_Epsi(DensityDerivative, DensityValue, TimeStepValue))   
+
     # Initialize the system list
     system  = InPlaceNeighborList(x=Position, cutoff=2*H, parallel=true)
     @showprogress for SimulationMetaData.Iteration = 1:MaxIterations
@@ -95,11 +99,13 @@ function RunSimulation(;FluidCSV::String,
         list = neighborlist!(system)
 
         # Here we output the kernel value for each particle
-        Kernel,_   = ∑ⱼWᵢⱼ(list,Position,SimulationConstants)
+        KernelV,_   = ∑ⱼWᵢⱼ(list,Position,SimulationConstants)
+        Kernel     .= KernelV
         # Here we output the kernel gradient value for each particle and also the kernel gradient value
         # based on the pair-to-pair interaction list, for use in later calculations.
         # Other functions follow a similar format, with the "I" and "L" ending
-        KernelGradient,WgL = ∑ⱼ∇ᵢWᵢⱼ(list,Position,SimulationConstants)
+        KernelGradientV,WgL = ∑ⱼ∇ᵢWᵢⱼ(list,Position,SimulationConstants)
+        KernelGradient     .= KernelGradientV
 
         # Then we calculate the density derivative at time step "n"
         dρdtI,_ = ∂ρᵢ∂tDDT(list,Position,Density,Velocity,WgL,MotionLimiter, SimulationConstants)
@@ -137,19 +143,15 @@ function RunSimulation(;FluidCSV::String,
         # Density  .= Density  .* (2 .- epsi)./(2 .+ epsi)
         
         # Unsure what is better, but this should avoid allocating a temp array
-        F_Epsi(DensityDerivative, DensityValue, TimeStepValue)      =  @. -( DensityDerivative / DensityValue) * TimeStepValue
-        F_EpsiFinal(DensityDerivative, DensityValue, TimeStepValue) =  @.  ( 2 - F_Epsi(DensityDerivative, DensityValue, TimeStepValue)) /  (2 + F_Epsi(DensityDerivative, DensityValue, TimeStepValue))   
-        Density                                                   .*= F_EpsiFinal(dρdtI_n_half,density_n_half,dt)
+        Density .*= F_EpsiFinal(dρdtI_n_half,density_n_half,dt)
 
         # Unsure what is most efficient, but 'clamp!' seems to be more straightforward
         #density_new[(density_new .< ρ₀) .* BoundaryBool] .= ρ₀
         clamp!(Density[BoundaryBool], ρ₀,2ρ₀) #Never going to hit the high unless breaking sim
 
-        velocity_new  = Velocity .+ Acceleration * dt .* MotionLimiter
-        Position    .+= ((velocity_new .+ Velocity)/2) * dt .* MotionLimiter
-
-        # And for clarity updating the values in our simulation is done explicitly here
-        Velocity     .= velocity_new
+        # Update Velocity in-place and then use the updated value for Position
+        Velocity .+= Acceleration * dt .* MotionLimiter
+        Position .+= ((Velocity .+ (Velocity .- Acceleration * dt .* MotionLimiter)) / 2) * dt .* MotionLimiter
 
         # Automatic time stepping control
         dt = Δt(Acceleration,Position,Velocity,SimulationConstants)
