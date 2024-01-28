@@ -134,7 +134,11 @@ function RunSimulation(;FluidCSV::String,
 
         # Finally we update all values to their next time step, "n+1"
         density_new   = Density  .* (2 .- epsi)./(2 .+ epsi)
-        density_new[(density_new .< ρ₀) .* BoundaryBool] .= ρ₀
+        
+        # Unsure what is most efficient, but 'clamp!' seems to be more straightforward
+        #density_new[(density_new .< ρ₀) .* BoundaryBool] .= ρ₀
+        clamp!(density_new[BoundaryBool], ρ₀,2ρ₀) #Never going to hit the high unless breaking sim
+
         velocity_new  = Velocity .+ dvdtI_n_half * dt .* MotionLimiter
         points_new    = Position   .+ ((velocity_new .+ Velocity)/2) * dt .* MotionLimiter
 
