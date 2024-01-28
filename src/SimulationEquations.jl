@@ -204,7 +204,9 @@ function ∂ρᵢ∂tDDT(list,points,ρ,v,WgL,MotionLimiter, SimulationConstants
 end
 
 # The momentum equation without any dissipation - we add the dissipation using artificial viscosity (∂Πᵢⱼ∂t)
-function ∂vᵢ∂t(list,points,m,ρ,WgL,c₀,γ,ρ₀)
+function ∂vᵢ∂t(list,points,ρ,WgL, SimulationConstants)
+    @unpack m₀, c₀,γ,ρ₀ = SimulationConstants
+
     N    = length(points)
 
     dvdtI = fill(SVector(0.0,0.0,0.0),N)
@@ -221,7 +223,7 @@ function ∂vᵢ∂t(list,points,m,ρ,WgL,c₀,γ,ρ₀)
         Pfac  = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
 
 
-        dvdt  = - m * Pfac *  ∇ᵢWᵢⱼ
+        dvdt  = - m₀ * Pfac *  ∇ᵢWᵢⱼ
 
         dvdtI[i]    +=  dvdt
         dvdtI[j]    +=  -dvdt
