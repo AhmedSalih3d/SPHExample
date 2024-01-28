@@ -127,7 +127,7 @@ function RunSimulation(;FluidCSV::String,
         # Viscous contribution and momentum equation at "n+½"
         viscI_n_half,_ = ∂Πᵢⱼ∂t(list,points_n_half,density_n_half,velocity_n_half, WgL, SimulationConstants)
         dvdtI_n_half,_ = ∂vᵢ∂t(list,points_n_half,density_n_half, WgL, SimulationConstants)
-        dvdtI_n_half  .= map((x,y)->x+y*SVector(0,g,0),dvdtI_n_half+viscI_n_half,GravityFactor) 
+        Acceleration  .= map((x,y)->x+y*SVector(0,g,0),dvdtI_n_half+viscI_n_half,GravityFactor) 
 
         # Factor for properly time stepping the density to "n+1" - We use the symplectic scheme as done in DualSPHysics
         epsi = -( dρdtI_n_half ./ density_n_half)*dt
@@ -140,13 +140,12 @@ function RunSimulation(;FluidCSV::String,
         #density_new[(density_new .< ρ₀) .* BoundaryBool] .= ρ₀
         clamp!(Density[BoundaryBool], ρ₀,2ρ₀) #Never going to hit the high unless breaking sim
 
-        velocity_new  = Velocity .+ dvdtI_n_half * dt .* MotionLimiter
+        velocity_new  = Velocity .+ Acceleration * dt .* MotionLimiter
         points_new    = Position   .+ ((velocity_new .+ Velocity)/2) * dt .* MotionLimiter
 
         # And for clarity updating the values in our simulation is done explicitly here
         Velocity     .= velocity_new
         points       .= points_new
-        Acceleration .= dvdtI_n_half
         Position     .= points_new
 
         # Automatic time stepping control
