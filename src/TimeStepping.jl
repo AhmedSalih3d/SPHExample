@@ -10,8 +10,8 @@ module TimeStepping
 
         @unpack c₀, H, CFL, η² = SimulationConstants
 
-        visc  = maximum(abs.(H * dot.(v,points) ./ (dot.(points,points) .+ η²)))
-        dt1   = minimum(sqrt.(H ./ norm.(α)))
+        visc  = maximum(@. abs(H * dot(v,points) / (dot(points,points) + η²)))
+        dt1   = minimum(@. sqrt(H / norm(α)))
         dt2   = H / (c₀+visc)
 
         dt    = CFL*min(dt1,dt2)
