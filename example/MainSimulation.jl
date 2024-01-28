@@ -129,13 +129,18 @@ function RunSimulation(;FluidCSV::String,
         dvdtI_n_half,_ = ∂vᵢ∂t(list,points_n_half,density_n_half, WgL, SimulationConstants)
         Acceleration  .= map((x,y)->x+y*SVector(0,g,0),dvdtI_n_half+viscI_n_half,GravityFactor) 
 
-        # Factor for properly time stepping the density to "n+1" - We use the symplectic scheme as done in DualSPHysics
-        epsi = -( dρdtI_n_half ./ density_n_half)*dt
+        # # Factor for properly time stepping the density to "n+1" - We use the symplectic scheme as done in DualSPHysics
+        # epsi = -( dρdtI_n_half ./ density_n_half)*dt
 
-        # FinalResults update
-        # Finally we update all values to their next time step, "n+1"
-        Density  .= Density  .* (2 .- epsi)./(2 .+ epsi)
+        # # FinalResults update
+        # # Finally we update all values to their next time step, "n+1"
+        # Density  .= Density  .* (2 .- epsi)./(2 .+ epsi)
         
+        # Unsure what is better, but this should avoid allocating a temp array
+        F_Epsi(DensityDerivative, DensityValue, TimeStepValue)      =  @. -( DensityDerivative / DensityValue) * TimeStepValue
+        F_EpsiFinal(DensityDerivative, DensityValue, TimeStepValue) =  @.  ( 2 - F_Epsi(DensityDerivative, DensityValue, TimeStepValue)) /  (2 + F_Epsi(DensityDerivative, DensityValue, TimeStepValue))   
+        Density                                                   .*= F_EpsiFinal(dρdtI_n_half,density_n_half,dt)
+
         # Unsure what is most efficient, but 'clamp!' seems to be more straightforward
         #density_new[(density_new .< ρ₀) .* BoundaryBool] .= ρ₀
         clamp!(Density[BoundaryBool], ρ₀,2ρ₀) #Never going to hit the high unless breaking sim
