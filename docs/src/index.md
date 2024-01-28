@@ -1,3 +1,10 @@
+# SPHExample
+
+```@meta
+CurrentModule = SPHExample
+```
+
+
 # SPH Example
 
 An example of how to write a relatively simple SPH (Smoothed Particle Hydrodynamics) dam-break simulation in Julia. Feel free to star the package if it helped you and please do let me know if you ended up using this to learn SPH yourself, used it in your teaching etc. It is really a motivation booster to hear!

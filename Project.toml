@@ -1,6 +1,6 @@
 name    = "SPHExample"
 uuid    = "49649ea8-6f54-4931-9342-0ba915f114f7"
-version = "0.1.1"
+version = "0.1.2"
 
 [deps]
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
@@ -13,3 +13,15 @@ NearestNeighbors = "b8a86587-4115-5ab1-83bc-aa920d37bbce"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 Tensorial = "98f94333-fa9f-48a9-ad80-1c66397b2b38"
 WriteVTK = "64499a7a-5c06-52f2-abe2-ccb03c286192"
+
+[extras]
+CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["CSV", "DataFrames", "Printf", "StaticArrays", "ProgressMeter", "Test"]
+

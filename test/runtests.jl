@@ -1,3 +1,4 @@
+using Test
 using SPHExample
 using CSV
 using DataFrames
@@ -10,13 +11,16 @@ import ProgressMeter: @showprogress
 
 path    = dirname(@__FILE__)
 
+
+@testset "  Basic test                                               " begin
+
 function RunSimulation(; 
-                        SaveLocation= joinpath(path, "res"),
+                        SaveLocation=joinpath(path, "res"),
                         SimulationName="DamBreak",
-                        NumberOfIterations=200001,
+                        NumberOfIterations=2, # 2 iteration for test 
                         OutputIteration=50)
     # In the standard folder, we clear results before rerunning simulation
-    foreach(rm, filter(endswith(".vtp"), readdir(SaveLocation, join=true)))
+    # foreach(rm, filter(endswith(".vtp"), readdir(SaveLocation,join=true)))
 
     ### VARIABLE EXPLANATION
     # FLUID_CSV = PATH TO FLUID PARTICLES, SEE "input" FOLDER
@@ -88,7 +92,8 @@ function RunSimulation(;
     acceleration = zeros(eltype(points),length(points))
 
     # Save the initial particle layout with dummy values
-    create_vtp_file(SaveLocation*"/"*SimulationName*"_"*lpad("0",4,"0"), points, density.*0, acceleration.*0, density, Pressure.(density,c₀,γ,ρ₀), acceleration, velocity)
+    # Disable for test
+    # create_vtp_file(SaveLocation*"/"*SimulationName*"_"*lpad("0",4,"0"),points,density.*0,acceleration.*0,density,Pressure.(density,c₀,γ,ρ₀),acceleration,velocity)
 
     # Initialize the system list
     system  = InPlaceNeighborList(x=points, cutoff=2 * H, parallel=true)
@@ -152,11 +157,33 @@ function RunSimulation(;
         dt = Δt(acceleration, points, velocity, c₀, H, CFL)
 
         #@printf "Iteration %i | dt = %.5e \n" sim_iter dt
-        if sim_iter % OutputIteration == 0
-            create_vtp_file(SaveLocation*"/"*SimulationName*"_"*lpad(sim_iter,4,"0"), points, WiI, WgI, density, Pressure.(density,c₀,γ,ρ₀), acceleration, velocity)
-        end
+        # Disable for test
+        #if sim_iter % OutputIteration == 0
+        #    create_vtp_file(SaveLocation*"/"*SimulationName*"_"*lpad(sim_iter,4,"0"),points,WiI,WgI,density,Pressure.(density,c₀,γ,ρ₀),acceleration,velocity)
+        #end
     end
+    points, density, Pressure.(density,c₀,γ,ρ₀), acceleration, velocity
 end
 
-# And here we run the function - enjoy!
-RunSimulation()
+# Test result
+points, density, pressure, acceleration, velocity = RunSimulation()
+
+    # Dev test, may not reflect real correctness
+
+    @test sum(points) ≈ [5475.120088053588
+    6215.819913178543
+       0.0]
+
+    @test sum(density) ≈ 6.200838532554191e6
+
+    @test sum(pressure) ≈ 4.604937728177776e7
+
+    @test sum(acceleration) ≈ [ 1.4551915228366852e-11
+    -31519.530000000093
+         0.0]
+
+    @test sum(velocity) ≈ [2.0295953409284935
+    -2.0079407428925227
+     0.0]
+
+end
