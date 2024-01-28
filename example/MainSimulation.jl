@@ -1,5 +1,3 @@
-using Revise
-
 using SPHExample
 using CSV
 using DataFrames

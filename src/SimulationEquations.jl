@@ -22,7 +22,7 @@ function ∑ⱼWᵢⱼ(list,points,SimulationConstants)
 
     sumWI = zeros(N)
     sumWL = zeros(length(list))
-    for (iter,L) in collect(enumerate(list))
+    for (iter,L) in enumerate(list)
         i = L[1]; j = L[2]; d = L[3]
 
         q = d/H
@@ -72,7 +72,7 @@ function ∑ⱼ∇ᵢWᵢⱼ(list,points,SimulationConstants)
 
     sumWgI = zeros(SVector{3,Float64},N)
     sumWgL = zeros(SVector{3,Float64},length(list))
-    for (iter,L) in collect(enumerate(list))
+    for (iter,L) in enumerate(list)
         i = L[1]; j = L[2]; d = L[3]
 
         xᵢⱼ = points[i] - points[j]
@@ -104,7 +104,7 @@ function ∂Πᵢⱼ∂t(list,points,ρ,v,WgL,SimulationConstants)
 
     viscI = zeros(SVector{3,Float64},N)
     viscL = zeros(SVector{3,Float64},length(list))
-    for (iter,L) in collect(enumerate(list))
+    for (iter,L) in enumerate(list)
         i = L[1]; j = L[2];
         
         ρᵢ    = ρ[i]
@@ -135,7 +135,7 @@ function ∂ρᵢ∂t(list,points,m,ρ,v,WgL)
 
     dρdtI = zeros(N)
     dρdtL = zeros(length(list))
-    for (iter,L) in collect(enumerate(list))
+    for (iter,L) in enumerate(list)
         i = L[1]; j = L[2]
 
         ρᵢ    = ρ[i]
@@ -160,7 +160,7 @@ function ∂ρᵢ∂tDDT(list,points,ρ,v,WgL,MotionLimiter, SimulationConstants
 
     dρdtI = zeros(N)
     dρdtL = zeros(length(list))
-    for (iter,L) in collect(enumerate(list))
+    for (iter,L) in enumerate(list)
         i = L[1]; j = L[2];
 
         xᵢⱼ   = points[i] - points[j]
@@ -211,7 +211,7 @@ function ∂vᵢ∂t(list,points,ρ,WgL, SimulationConstants)
 
     dvdtI = fill(SVector(0.0,0.0,0.0),N)
     dvdtL = fill(SVector(0.0,0.0,0.0),length(list))
-    for (iter,L) in collect(enumerate(list))
+    for (iter,L) in enumerate(list)
         i = L[1]; j = L[2]
 
         ρᵢ    = ρ[i]
