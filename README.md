@@ -12,6 +12,9 @@ Or if you are really patient (1+ day to calculate) a 3D case ([@DamBreak3D-Video
 
 ![plot](./images/3d_dambreak.png)
 
+
+Docs: [![Latest docs](https://img.shields.io/badge/docs-latest-blue.svg)](https://pharmcat.github.io/SPHExample/dev/) 
+
 ## Description
 
 The purpose of this code is to serve as an introduction to the SPH (Smoothed Particle Hydrodynamics) method. I have been working in SPH for quite a few years now and noticed that although great software packages exist in this field, it was difficult to find a "simple" example of setting up an SPH solver.

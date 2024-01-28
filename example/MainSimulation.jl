@@ -6,7 +6,7 @@ using StaticArrays
 using CellListMap
 import CellListMap: update!
 using LinearAlgebra
-import ProgressMeter: @showprogress
+import ProgressMeter: @showprogress, next!, Progress, BarGlyphs
 
 path    = dirname(@__FILE__)
 
@@ -17,7 +17,11 @@ function RunSimulation(;
                         OutputIteration=50)
     # In the standard folder, we clear results before rerunning simulation
     foreach(rm, filter(endswith(".vtp"), readdir(SaveLocation, join=true)))
-
+    progr = Progress(NumberOfIterations,
+        dt=1.0,
+        barglyphs=BarGlyphs('|','█', ['▁' ,'▂' ,'▃' ,'▄' ,'▅' ,'▆', '▇'],' ','|',),
+        showspeed=true
+    )
     ### VARIABLE EXPLANATION
     # FLUID_CSV = PATH TO FLUID PARTICLES, SEE "input" FOLDER
     # BOUND_CSV = PATH TO BOUNDARY PARTICLES, SEE "input" FOLDER
@@ -93,7 +97,7 @@ function RunSimulation(;
     # Initialize the system list
     system  = InPlaceNeighborList(x=points, cutoff=2 * H, parallel=true)
     
-    @showprogress for sim_iter = 1:NumberOfIterations
+    for sim_iter = 1:NumberOfIterations
         # Be sure to update and retrieve the updated neighbour list at each time step
         update!(system, points)
         list = neighborlist!(system)
@@ -151,7 +155,10 @@ function RunSimulation(;
         # Automatic time stepping control
         dt = Δt(acceleration, points, velocity, c₀, H, CFL)
 
+
         #@printf "Iteration %i | dt = %.5e \n" sim_iter dt
+
+        next!(progr; showvalues = [(:iter, sim_iter), (:dt, dt)])
         if sim_iter % OutputIteration == 0
             create_vtp_file(SaveLocation*"/"*SimulationName*"_"*lpad(sim_iter,4,"0"), points, WiI, WgI, density, Pressure.(density,c₀,γ,ρ₀), acceleration, velocity)
         end
