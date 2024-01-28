@@ -106,7 +106,7 @@ function RunSimulation(;FluidCSV::String,
         dρdtI,_ = ∂ρᵢ∂tDDT(list,Position,Density,Velocity,WgL,MotionLimiter, SimulationConstants)
 
         # We calculate viscosity contribution and momentum equation at time step "n"
-        viscI,_ = ∂Πᵢⱼ∂t(list,Position,H,Density,α,Velocity,c₀,m₀,WgL)
+        viscI,_ = ∂Πᵢⱼ∂t(list,Position,Density,Velocity,WgL, SimulationConstants)
         dvdtI,_ = ∂vᵢ∂t(list,Position,m₀,Density,WgL,c₀,γ,ρ₀)
         # We add gravity as a final step for the i particles, not the L ones, since we do not split the contribution, that is unphysical!
         # So please be careful with using "L" results directly in some cases
@@ -126,7 +126,7 @@ function RunSimulation(;FluidCSV::String,
         dρdtI_n_half,_ = ∂ρᵢ∂tDDT(list,points_n_half,density_n_half,velocity_n_half,WgL,MotionLimiter, SimulationConstants)
 
         # Viscous contribution and momentum equation at "n+½"
-        viscI_n_half,_ = ∂Πᵢⱼ∂t(list,points_n_half,H,density_n_half,α,velocity_n_half,c₀,m₀,WgL)
+        viscI_n_half,_ = ∂Πᵢⱼ∂t(list,points_n_half,density_n_half,velocity_n_half, WgL, SimulationConstants)
         dvdtI_n_half,_ = ∂vᵢ∂t(list,points_n_half,m₀,density_n_half,WgL,c₀,γ,ρ₀)
         dvdtI_n_half  .= map((x,y)->x+y*SVector(0,g,0),dvdtI_n_half+viscI_n_half,GravityFactor) 
 
