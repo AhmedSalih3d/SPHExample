@@ -142,7 +142,7 @@ function RunSimulation(;FluidCSV::String,
         #density_new[(density_new .< ρ₀) .* BoundaryBool] .= ρ₀
         clamp!(Density[BoundaryBool], ρ₀,2ρ₀) #Never going to hit the high unless breaking sim
 
-        Velocity .+= dvdtI_n_half * dt .* MotionLimiter
+        Velocity .+= Acceleration * dt .* MotionLimiter
         Position .+= ((Velocity .- (Velocity .- Acceleration * dt .* MotionLimiter))/2) * dt .* MotionLimiter
 
         # Automatic time stepping control
