@@ -13,11 +13,11 @@ If for some reason you end up pointing to this repository due to you writing a t
 
 The code can produce a 2D dam-break ([@DamBreak2D-Video](https://www.youtube.com/watch?v=7kDVjZkc_TI)):
 
-![plot](./images/2d_dambreak.png)
+![plot](https://github.com/AhmedSalih3d/SPHExample/blob/414bf2adcb13b20abce9453b1f73acdbc7b1c909/images/2d_dambreak.png)
 
 Or if you are really patient (1+ day to calculate) a 3D case ([@DamBreak3D-Video](https://www.youtube.com/watch?v=_2e6LopvIe8))::
 
-![plot](./images/3d_dambreak.png)
+![plot](https://github.com/AhmedSalih3d/SPHExample/blob/414bf2adcb13b20abce9453b1f73acdbc7b1c909/images/3d_dambreak.png)
 
 ## Description
 

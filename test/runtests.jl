@@ -9,7 +9,7 @@ import CellListMap: update!
 using LinearAlgebra
 import ProgressMeter: @showprogress
 
-path    = dirname(@__FILE__)
+const path    = dirname(@__FILE__)
 
 
 @testset "  Basic test                                               " begin
@@ -56,8 +56,8 @@ function RunSimulation(;
     # CFL = 0.2
 
     ### 2D Dam Break
-    FLUID_CSV = "./input/FluidPoints_Dp0.02.csv"
-    BOUND_CSV = "./input/BoundaryPoints_Dp0.02.csv"
+    FLUID_CSV = joinpath(path, "../input/FluidPoints_Dp0.02.csv")
+    BOUND_CSV = joinpath(path, "../input/BoundaryPoints_Dp0.02.csv")
     ρ₀  = 1000
     dx  = 0.02
     H   = 1.2 * sqrt(2) * dx
