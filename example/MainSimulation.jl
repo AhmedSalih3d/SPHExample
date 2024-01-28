@@ -146,6 +146,7 @@ function RunSimulation(;FluidCSV::String,
         # Automatic time stepping control
         dt = Δt(Acceleration,Position,Velocity,SimulationConstants)
         SimulationMetaData.CurrentTimeStep = dt
+        SimulationMetaData.TotalTime      += dt
         
         OutputVTP(SimulationMetaData,SimulationConstants,FinalResults)
     end
