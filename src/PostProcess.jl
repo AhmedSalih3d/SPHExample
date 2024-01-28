@@ -37,7 +37,7 @@ export create_vtp_file, OutputVTP
     end
 
     function OutputVTP(SimulationMetaData,SimulationConstants,FinalResults)
-        @printf "Iteration %i | dt = %.5e \n" SimulationMetaData.Iteration SimulationMetaData.CurrentTimeStep
+        #@printf "Iteration %i | dt = %.5e \n" SimulationMetaData.Iteration SimulationMetaData.CurrentTimeStep
         if SimulationMetaData.Iteration % SimulationMetaData.OutputIteration == 0
             create_vtp_file(SimulationMetaData,SimulationConstants,FinalResults)
         end

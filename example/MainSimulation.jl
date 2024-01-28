@@ -7,6 +7,7 @@ using CellListMap
 using LinearAlgebra
 using TimerOutputs
 using Parameters
+import ProgressMeter: @showprogress
 
 """
     RunSimulation(;SimulationMetaData::SimulationMetaData, SimulationConstants::SimulationConstants)
@@ -88,7 +89,7 @@ function RunSimulation(;FluidCSV::String,
 
     # Initialize the system list
     system  = InPlaceNeighborList(x=Position, cutoff=2*H, parallel=true)
-    for SimulationMetaData.Iteration = 1:MaxIterations
+    @showprogress for SimulationMetaData.Iteration = 1:MaxIterations
         # Be sure to update and retrieve the updated neighbour list at each time step
         update!(system,Position)
         list = neighborlist!(system)
