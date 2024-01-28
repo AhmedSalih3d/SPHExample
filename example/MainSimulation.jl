@@ -141,15 +141,13 @@ function RunSimulation(;FluidCSV::String,
         clamp!(Density[BoundaryBool], ρ₀,2ρ₀) #Never going to hit the high unless breaking sim
 
         velocity_new  = Velocity .+ Acceleration * dt .* MotionLimiter
-        points_new    = Position   .+ ((velocity_new .+ Velocity)/2) * dt .* MotionLimiter
+        Position    .+= ((velocity_new .+ Velocity)/2) * dt .* MotionLimiter
 
         # And for clarity updating the values in our simulation is done explicitly here
         Velocity     .= velocity_new
-        points       .= points_new
-        Position     .= points_new
 
         # Automatic time stepping control
-        dt = Δt(Acceleration,points,Velocity,SimulationConstants)
+        dt = Δt(Acceleration,Position,Velocity,SimulationConstants)
         SimulationMetaData.CurrentTimeStep = dt
         SimulationMetaData.TotalTime      += dt
         
