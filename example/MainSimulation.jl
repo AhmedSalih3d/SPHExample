@@ -103,7 +103,7 @@ function RunSimulation(;FluidCSV::String,
         KernelGradient,WgL = ∑ⱼ∇ᵢWᵢⱼ(list,Position,SimulationConstants)
 
         # Then we calculate the density derivative at time step "n"
-        dρdtI,_ = ∂ρᵢ∂tDDT(list,Position,H,m₀,δᵩ,c₀,γ,g,ρ₀,Density,Velocity,WgL,MotionLimiter)
+        dρdtI,_ = ∂ρᵢ∂tDDT(list,Position,Density,Velocity,WgL,MotionLimiter, SimulationConstants)
 
         # We calculate viscosity contribution and momentum equation at time step "n"
         viscI,_ = ∂Πᵢⱼ∂t(list,Position,H,Density,α,Velocity,c₀,m₀,WgL)
@@ -123,7 +123,7 @@ function RunSimulation(;FluidCSV::String,
         points_n_half   = Position   .+ velocity_n_half * (dt/2) .* MotionLimiter
 
         # Density derivative at "n+½" - Note that we keep the kernel gradient values calculated at "n" for simplicity
-        dρdtI_n_half,_ = ∂ρᵢ∂tDDT(list,points_n_half,H,m₀,δᵩ,c₀,γ,g,ρ₀,density_n_half,velocity_n_half,WgL,MotionLimiter)
+        dρdtI_n_half,_ = ∂ρᵢ∂tDDT(list,points_n_half,density_n_half,velocity_n_half,WgL,MotionLimiter, SimulationConstants)
 
         # Viscous contribution and momentum equation at "n+½"
         viscI_n_half,_ = ∂Πᵢⱼ∂t(list,points_n_half,H,density_n_half,α,velocity_n_half,c₀,m₀,WgL)

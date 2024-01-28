@@ -152,10 +152,10 @@ function ∂ρᵢ∂t(list,points,m,ρ,v,WgL)
 end
 
 # The density derivative function INCLUDING density diffusion
-function ∂ρᵢ∂tDDT(list,points,h,m₀,δᵩ,c₀,γ,g,ρ₀,ρ,v,WgL,MotionLimiter)
-    N    = length(points)
+function ∂ρᵢ∂tDDT(list,points,ρ,v,WgL,MotionLimiter, SimulationConstants)
+    @unpack H,m₀,δᵩ,c₀,γ,g,ρ₀,η² = SimulationConstants
 
-    η²   = (0.1*h)*(0.1*h)
+    N    = length(points)
 
     dρdtI = zeros(N)
     dρdtL = zeros(length(list))
@@ -173,7 +173,7 @@ function ∂ρᵢ∂tDDT(list,points,h,m₀,δᵩ,c₀,γ,g,ρ₀,ρ,v,WgL,Motio
         r²    = dot(xᵢⱼ,xᵢⱼ)
 
         DDTgz = ρ₀*g/Cb
-        DDTkh = 2*h*δᵩ
+        DDTkh = 2*H*δᵩ
         # Do note that in a lot of papers they write "ij"
         # BUT it should be ji for the direction to match (in dot3)
         # the density direction
