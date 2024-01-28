@@ -100,7 +100,7 @@ function RunSimulation(;FluidCSV::String,
         # Here we output the kernel gradient value for each particle and also the kernel gradient value
         # based on the pair-to-pair interaction list, for use in later calculations.
         # Other functions follow a similar format, with the "I" and "L" ending
-        KernelGradient,WgL = ∑ⱼ∇ᵢWᵢⱼ(list,Position,αD,H)
+        KernelGradient,WgL = ∑ⱼ∇ᵢWᵢⱼ(list,Position,SimulationConstants)
 
         # Then we calculate the density derivative at time step "n"
         dρdtI,_ = ∂ρᵢ∂tDDT(list,Position,H,m₀,δᵩ,c₀,γ,g,ρ₀,Density,Velocity,WgL,MotionLimiter)

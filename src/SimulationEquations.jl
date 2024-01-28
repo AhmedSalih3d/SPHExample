@@ -66,7 +66,8 @@ end
 # Function to calculate kernel gradient value in both "particle i" format and "list of interactions" format
 # Please notice how when using CellListMap since it is based on a "list of interactions", for each 
 # interaction we must add the contribution to both the i'th and j'th particle!
-function ∑ⱼ∇ᵢWᵢⱼ(list,points,αD,h)
+function ∑ⱼ∇ᵢWᵢⱼ(list,points,SimulationConstants)
+    @unpack αD,H = SimulationConstants
     N    = length(points)
 
     sumWgI = zeros(SVector{3,Float64},N)
@@ -76,9 +77,9 @@ function ∑ⱼ∇ᵢWᵢⱼ(list,points,αD,h)
 
         xᵢⱼ = points[i] - points[j]
 
-        q = d/h
+        q = d/H
 
-        Wg = Optim∇ᵢWᵢⱼ(αD,q,xᵢⱼ,h)
+        Wg = Optim∇ᵢWᵢⱼ(αD,q,xᵢⱼ,H)
 
         sumWgI[i] +=  Wg
         sumWgI[j] += -Wg
