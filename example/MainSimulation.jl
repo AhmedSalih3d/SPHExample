@@ -72,6 +72,7 @@ function RunSimulation(;FluidCSV::String,
     Position .= deepcopy(points)
     Density  .= Array([DF_FLUID.Rhop;DF_BOUND.Rhop])
 
+    GravityContribution = SVector(0.0,g,0.0)
 
     # Read this as "GravityFactor * g", so -1 means negative acceleration for fluid particles
     # 1 means boundary particles push back against gravity
@@ -117,7 +118,7 @@ function RunSimulation(;FluidCSV::String,
         dvdtI,_ = ∂vᵢ∂t(list,Position, Density, WgL, SimulationConstants)
         # We add gravity as a final step for the i particles, not the L ones, since we do not split the contribution, that is unphysical!
         # So please be careful with using "L" results directly in some cases
-        dvdtI .= map((x,y)->x+y*SVector(0,g,0),dvdtI+viscI,GravityFactor)
+        dvdtI .= map((x,y)->x+y*GravityContribution,dvdtI+viscI,GravityFactor)
 
 
         # Based on the density derivative at "n", we calculate "n+½"
@@ -135,7 +136,7 @@ function RunSimulation(;FluidCSV::String,
         # Viscous contribution and momentum equation at "n+½"
         viscI_n_half,_ = ∂Πᵢⱼ∂t(list,points_n_half,density_n_half,velocity_n_half, WgL, SimulationConstants)
         dvdtI_n_half,_ = ∂vᵢ∂t(list,points_n_half,density_n_half, WgL, SimulationConstants)
-        Acceleration  .= map((x,y)->x+y*SVector(0,g,0),dvdtI_n_half+viscI_n_half,GravityFactor) 
+        Acceleration  .= map((x,y)->x+y*GravityContribution,dvdtI_n_half+viscI_n_half,GravityFactor) 
 
         # Factor for properly time stepping the density to "n+1" - We use the symplectic scheme as done in DualSPHysics
         Density .*= F_EpsiFinal(dρdtI_n_half,density_n_half,dt)
