@@ -1,6 +1,6 @@
 module SimulationDataArrays
 
-export SimulationDataResults
+export SimulationDataResults, ResetArray
 
 using Parameters
 using StaticArrays
@@ -13,6 +13,12 @@ using StaticArrays
     Position          ::Vector{SVector{D,T}} = zeros(SVector{D,T},NumberOfParticles)
     Acceleration      ::Vector{SVector{D,T}} = zeros(SVector{D,T},NumberOfParticles)
     Velocity          ::Vector{SVector{D,T}} = zeros(SVector{D,T},NumberOfParticles)
+end
+
+function ResetArray(arrays...)
+    @inbounds for array in arrays
+        fill!(array,zero(eltype(array)))
+    end
 end
 
 end

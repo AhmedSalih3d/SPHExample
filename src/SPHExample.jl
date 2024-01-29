@@ -19,8 +19,8 @@ module SPHExample
     using .TimeStepping: Δt
     export Δt
 
-    using .SimulationEquations: Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ, Pressure, ∂Πᵢⱼ∂t, ∂ρᵢ∂tDDT, ∂vᵢ∂t
-    export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ, Pressure, ∂Πᵢⱼ∂t, ∂ρᵢ∂tDDT, ∂vᵢ∂t
+    using .SimulationEquations: Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ!, Pressure, ∂Πᵢⱼ∂t, ∂ρᵢ∂tDDT, ∂vᵢ∂t
+    export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ!, Pressure, ∂Πᵢⱼ∂t, ∂ρᵢ∂tDDT, ∂vᵢ∂t
 
     using .SimulationMetaDataConfiguration: SimulationMetaData
     export SimulationMetaData
@@ -28,7 +28,7 @@ module SPHExample
     using .SimulationConstantsConfiguration: SimulationConstants
     export SimulationConstants
 
-    using .SimulationDataArrays: SimulationDataResults
-    export SimulationDataResults
+    using .SimulationDataArrays: SimulationDataResults, ResetArray
+    export SimulationDataResults, ResetArray
 end
 
