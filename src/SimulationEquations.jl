@@ -1,6 +1,6 @@
 module SimulationEquations
 
-export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ, Pressure, ∂Πᵢⱼ∂t, ∂ρᵢ∂tDDT!, ∂vᵢ∂t
+export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ, Pressure, ∂Πᵢⱼ∂t!, ∂ρᵢ∂tDDT!, ∂vᵢ∂t!
 
 using CellListMap
 using StaticArrays
@@ -87,14 +87,9 @@ function Pressure(ρ,c₀,γ,ρ₀)
 end
 
 # The artificial viscosity term
-function ∂Πᵢⱼ∂t(list,points,ρ,v,WgL,SimulationConstants)
-
+function ∂Πᵢⱼ∂t!(viscI, list,points,ρ,v,WgL,SimulationConstants)
     @unpack H, α, c₀, m₀, η² = SimulationConstants
 
-    N    = length(points)
-
-    viscI = zeros(SVector{3,Float64},N)
-    viscL = zeros(SVector{3,Float64},length(list))
     for (iter,L) in enumerate(list)
         i = L[1]; j = L[2];
         
@@ -113,11 +108,9 @@ function ∂Πᵢⱼ∂t(list,points,ρ,v,WgL,SimulationConstants)
         
         viscI[i] += -Πᵢⱼ*m₀*WgL[iter]
         viscI[j] +=  Πᵢⱼ*m₀*WgL[iter]
-
-        viscL[iter] = -Πᵢⱼ*m₀*WgL[iter]
     end
 
-    return viscI,viscL
+    return nothing
 end
 
 # The density derivative function WITHOUT density diffusion
@@ -189,13 +182,9 @@ function ∂ρᵢ∂tDDT!(dρdtI, list,points,ρ,v,WgL,MotionLimiter, Simulation
 end
 
 # The momentum equation without any dissipation - we add the dissipation using artificial viscosity (∂Πᵢⱼ∂t)
-function ∂vᵢ∂t(list,points,ρ,WgL, SimulationConstants)
+function ∂vᵢ∂t!(dvdtI, list,ρ,WgL, SimulationConstants)
     @unpack m₀, c₀,γ,ρ₀ = SimulationConstants
 
-    N    = length(points)
-
-    dvdtI = fill(SVector(0.0,0.0,0.0),N)
-    dvdtL = fill(SVector(0.0,0.0,0.0),length(list))
     for (iter,L) in enumerate(list)
         i = L[1]; j = L[2]
 
@@ -212,11 +201,9 @@ function ∂vᵢ∂t(list,points,ρ,WgL, SimulationConstants)
 
         dvdtI[i]    +=  dvdt
         dvdtI[j]    +=  -dvdt
-        
-        dvdtL[iter] =   dvdt
     end
 
-    return dvdtI,dvdtL
+    return nothing
 end
 
 end
