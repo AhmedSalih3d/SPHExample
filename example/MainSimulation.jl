@@ -145,9 +145,9 @@ function RunSimulation(;FluidCSV::String,
         ∂ρᵢ∂tDDT!(dρdtIₙ⁺,list,Positionₙ⁺,ρₙ⁺,vₙ⁺,KernelGradientL,MotionLimiter, SimulationConstants)
 
         # Viscous contribution and momentum equation at "n+½"
-        Acceleration  .=   ∂Πᵢⱼ∂t(list,Positionₙ⁺,ρₙ⁺,vₙ⁺, KernelGradientL, SimulationConstants)[1] .+
-                           ∂vᵢ∂t(list,Positionₙ⁺, ρₙ⁺, KernelGradientL, SimulationConstants)[1]                  .+
-                           GravityContributionArray
+        Acceleration  .= ∂vᵢ∂t(list,Positionₙ⁺, ρₙ⁺, KernelGradientL, SimulationConstants)[1]  
+        Acceleration .+= ∂Πᵢⱼ∂t(list,Positionₙ⁺,ρₙ⁺,vₙ⁺, KernelGradientL, SimulationConstants)[1]
+        Acceleration .+= GravityContributionArray
 
         # Factor for properly time stepping the density to "n+1" - We use the symplectic scheme as done in DualSPHysics
         @. Density    *= F_EpsiFinal(dρdtIₙ⁺,ρₙ⁺,dt)
