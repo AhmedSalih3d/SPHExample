@@ -94,7 +94,7 @@ function RunSimulation(;FluidCSV::String,
     F_EpsiFinal(DensityDerivative, DensityValue, TimeStepValue) =  @.  ( 2 - F_Epsi(DensityDerivative, DensityValue, TimeStepValue)) /  (2 + F_Epsi(DensityDerivative, DensityValue, TimeStepValue))   
 
     # Preallocate simulation arrays
-    dρdtI           = zeros(eltype(Position), size(Density))
+    dρdtI           = zeros(eltype(Density), size(Density))
     dvdtI           = zeros(eltype(Velocity), size(Velocity))
 
     ρₙ⁺             = zeros(eltype(Position), size(Density))
@@ -132,25 +132,25 @@ function RunSimulation(;FluidCSV::String,
 
 
         # Based on the density derivative at "n", we calculate "n+½"
-        density_n_half  = Density  .+ dρdtI * (dt/2)
+        ρₙ⁺  = Density  .+ dρdtI * (dt/2)
         # We make sure to limit the density of boundary particles in such a way that they cannot produce suction
-        density_n_half[(density_n_half .< ρ₀) .* BoundaryBool] .= ρ₀
-        #clamp!(density_n_half[BoundaryBool], ρ₀,2ρ₀) #Never going to hit the high unless breaking sim
+        ρₙ⁺[(ρₙ⁺ .< ρ₀) .* BoundaryBool] .= ρ₀
+        #clamp!(ρₙ⁺[BoundaryBool], ρ₀,2ρ₀) #Never going to hit the high unless breaking sim
 
         # We now calculate velocity and position at "n+½"
         velocity_n_half = Velocity   .+ dvdtI * (dt/2) .* MotionLimiter
         points_n_half   = Position   .+ velocity_n_half * (dt/2) .* MotionLimiter
 
         # Density derivative at "n+½" - Note that we keep the kernel gradient values calculated at "n" for simplicity
-        dρdtI_n_half,_ = ∂ρᵢ∂tDDT(list,points_n_half,density_n_half,velocity_n_half,KernelGradientL,MotionLimiter, SimulationConstants)
+        dρdtI_n_half,_ = ∂ρᵢ∂tDDT(list,points_n_half,ρₙ⁺,velocity_n_half,KernelGradientL,MotionLimiter, SimulationConstants)
 
         # Viscous contribution and momentum equation at "n+½"
-        Acceleration  .=   ∂Πᵢⱼ∂t(list,points_n_half,density_n_half,velocity_n_half, KernelGradientL, SimulationConstants)[1] .+
-                           ∂vᵢ∂t(list,points_n_half,density_n_half, KernelGradientL, SimulationConstants)[1]                  .+
+        Acceleration  .=   ∂Πᵢⱼ∂t(list,points_n_half,ρₙ⁺,velocity_n_half, KernelGradientL, SimulationConstants)[1] .+
+                           ∂vᵢ∂t(list,points_n_half, ρₙ⁺, KernelGradientL, SimulationConstants)[1]                  .+
                            GravityContributionArray
 
         # Factor for properly time stepping the density to "n+1" - We use the symplectic scheme as done in DualSPHysics
-        Density .*= F_EpsiFinal(dρdtI_n_half,density_n_half,dt)
+        Density .*= F_EpsiFinal(dρdtI_n_half,ρₙ⁺,dt)
 
         # Clamp boundary particles minimum density to avoid suction
         #clamp!(Density[BoundaryBool], ρ₀,2ρ₀) #Never going to hit the high unless breaking sim
