@@ -134,8 +134,7 @@ function RunSimulation(;FluidCSV::String,
         # Based on the density derivative at "n", we calculate "n+½"
         @. ρₙ⁺  = Density  + dρdtI * (dt/2)
         # We make sure to limit the density of boundary particles in such a way that they cannot produce suction
-        ρₙ⁺[(ρₙ⁺ .< ρ₀) .* BoundaryBool] .= ρ₀
-        #clamp!(ρₙ⁺[BoundaryBool], ρ₀,2ρ₀) #Never going to hit the high unless breaking sim
+        @. ρₙ⁺[(ρₙ⁺ < ρ₀) * BoundaryBool] = ρ₀
 
         # We now calculate velocity and position at "n+½"
         @. vₙ⁺          = Velocity   + dvdtI * (dt/2) * MotionLimiter
@@ -150,15 +149,15 @@ function RunSimulation(;FluidCSV::String,
                            GravityContributionArray
 
         # Factor for properly time stepping the density to "n+1" - We use the symplectic scheme as done in DualSPHysics
-        Density .*= F_EpsiFinal(dρdtI_n_half,ρₙ⁺,dt)
+        @. Density    *= F_EpsiFinal(dρdtI_n_half,ρₙ⁺,dt)
 
         # Clamp boundary particles minimum density to avoid suction
         #clamp!(Density[BoundaryBool], ρ₀,2ρ₀) #Never going to hit the high unless breaking sim
-        Density[(Density .< ρ₀) .* BoundaryBool] .= ρ₀
+        @. Density[(Density < ρ₀) * BoundaryBool] = ρ₀
 
         # Update Velocity in-place and then use the updated value for Position
-        Velocity .+= Acceleration * dt .* MotionLimiter
-        Position .+= ((Velocity .+ (Velocity .- Acceleration * dt .* MotionLimiter)) / 2) * dt .* MotionLimiter
+        @. Velocity += Acceleration * dt * MotionLimiter
+        @. Position += ((Velocity + (Velocity - Acceleration * dt * MotionLimiter)) / 2) * dt * MotionLimiter
 
         # Automatic time stepping control
         dt = Δt(Acceleration,Position,Velocity,SimulationConstants)
