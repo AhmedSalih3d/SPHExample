@@ -103,7 +103,7 @@ function RunSimulation(;FluidCSV::String,
 
         # Here we output the kernel value for each particle
         Kernel .= ∑ⱼWᵢⱼ(list,Position,SimulationConstants)[1]
-        
+
         # Here we output the kernel gradient value for each particle and also the kernel gradient value
         # based on the pair-to-pair interaction list, for use in later calculations.
         # Other functions follow a similar format, with the "I" and "L" ending
@@ -124,7 +124,7 @@ function RunSimulation(;FluidCSV::String,
         # Based on the density derivative at "n", we calculate "n+½"
         density_n_half  = Density  .+ dρdtI * (dt/2)
         # We make sure to limit the density of boundary particles in such a way that they cannot produce suction
-        density_n_half[(density_n_half .< ρ₀) .* BoundaryBool] .= ρ₀
+        clamp!(density_n_half[BoundaryBool], ρ₀,2ρ₀) #Never going to hit the high unless breaking sim
 
         # We now calculate velocity and position at "n+½"
         velocity_n_half = Velocity   .+ dvdtI * (dt/2) .* MotionLimiter
