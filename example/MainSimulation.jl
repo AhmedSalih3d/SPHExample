@@ -102,8 +102,8 @@ function RunSimulation(;FluidCSV::String,
         list = neighborlist!(system)
 
         # Here we output the kernel value for each particle
-        KernelV,_   = ∑ⱼWᵢⱼ(list,Position,SimulationConstants)
-        Kernel     .= KernelV
+        Kernel .= ∑ⱼWᵢⱼ(list,Position,SimulationConstants)[1]
+        
         # Here we output the kernel gradient value for each particle and also the kernel gradient value
         # based on the pair-to-pair interaction list, for use in later calculations.
         # Other functions follow a similar format, with the "I" and "L" ending
