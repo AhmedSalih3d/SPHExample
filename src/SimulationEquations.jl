@@ -1,10 +1,25 @@
 module SimulationEquations
 
-export Wᵢⱼ, ∑ⱼWᵢⱼ, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ, Pressure, ∂Πᵢⱼ∂t, ∂ρᵢ∂tDDT, ∂vᵢ∂t
+export Wᵢⱼ, ∑ⱼWᵢⱼ, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ!, Pressure, ∂Πᵢⱼ∂t!, ∂ρᵢ∂tDDT!, ∂vᵢ∂t!, updatexᵢⱼ!, resizebuffers!
 
 using CellListMap
 using StaticArrays
 using LinearAlgebra
+
+function updatexᵢⱼ!(xᵢⱼ, list, points)
+    if length(xᵢⱼ) != length(list) resize!(xᵢⱼ, length(list)) end
+    for (iter, L) in enumerate(list)
+        i = L[1]; j = L[2];
+        xᵢⱼ[iter] = points[i] - points[j]
+    end
+end
+
+function resizebuffers!(args...; N::Int = 0)
+    for a in args
+        if length(a) != N resize!(a, N) end
+    end
+    args
+end
 
 # Function to calculate Kernel Value
 """
@@ -30,7 +45,7 @@ end
 
 ```
 """
-function ∑ⱼWᵢⱼ(list, points, αD, h)
+function ∑ⱼWᵢⱼ(list, points, αD, h) # preallocation not used
     N    = length(points)
 
     sumWI = zeros(N)
@@ -97,19 +112,18 @@ end
 
 ```
 """
-function ∑ⱼ∇ᵢWᵢⱼ(list, points, αD, h)
+function ∑ⱼ∇ᵢWᵢⱼ!(sumWgI, sumWgL, xᵢⱼ, list, points, αD, h) 
     N    = length(points)
-
-    sumWgI = zeros(SVector{3, Float64}, N)
-    sumWgL = zeros(SVector{3, Float64}, length(list))
+    fill!(sumWgI, SVector(0.0, 0.0, 0.0))
+    fill!(sumWgL, SVector(0.0, 0.0, 0.0))
     for (iter, L) in enumerate(list)
         i = L[1]; j = L[2]; d = L[3]
 
-        xᵢⱼ = points[i] - points[j]
+        #xᵢⱼ = points[i] - points[j]
 
         q = d / h
 
-        Wg = Optim∇ᵢWᵢⱼ(αD, q, xᵢⱼ, h)
+        Wg = Optim∇ᵢWᵢⱼ(αD, q, xᵢⱼ[iter], h)
 
         sumWgI[i] +=  Wg
         sumWgI[j] -=  Wg
@@ -144,27 +158,28 @@ The artificial viscosity term:
 
 ```
 """
-function ∂Πᵢⱼ∂t(list, points, h, ρ, α, v, c₀, m₀, WgL)
+function ∂Πᵢⱼ∂t!(viscI, viscL, xᵢⱼ, list, points, h, ρ, α, v, c₀, m₀, WgL)
     N    = length(points)
 
     η²    = (0.1 * h) * (0.1 * h)
 
-    viscI = zeros(SVector{3, Float64}, N)
-    viscL = zeros(SVector{3, Float64}, length(list))
+    fill!(viscI, SVector(0.0, 0.0, 0.0))
+    fill!(viscL, SVector(0.0, 0.0, 0.0))
+
     for (iter,L) in enumerate(list)
         i = L[1]; j = L[2];
         
         ρᵢ    = ρ[i]
         ρⱼ    = ρ[j]
         vᵢⱼ   = v[i] - v[j]
-        xᵢⱼ   = points[i] - points[j]
+        #xᵢⱼ   = points[i] - points[j]
         ρᵢⱼ   = (ρᵢ + ρⱼ) * 0.5
 
-        cond      = dot(vᵢⱼ, xᵢⱼ)
+        cond      = dot(vᵢⱼ, xᵢⱼ[iter])
 
         cond_bool = cond < 0
 
-        μᵢⱼ = h * cond / (dot(xᵢⱼ, xᵢⱼ) + η²)
+        μᵢⱼ = h * cond / (dot(xᵢⱼ[iter], xᵢⱼ[iter]) + η²)
         Πᵢⱼ = cond_bool * (-α * c₀ * μᵢⱼ) / ρᵢⱼ
         
         Πᵢⱼm₀WgLi = Πᵢⱼ * m₀ * WgL[iter]
@@ -221,49 +236,62 @@ The density derivative function INCLUDING density diffusion:
 
 ```
 """
-function ∂ρᵢ∂tDDT(list, points, h, m₀, δᵩ, c₀, γ, g, ρ₀, ρ, v, WgL, MotionLimiter)
+function ∂ρᵢ∂tDDT!(dρdtI, dρdtL, xᵢⱼ, list, points, h, m₀, δᵩ, c₀, γ, g, ρ₀, ρ, v, WgL, MotionLimiter; drhopvp, drhopvn)
     N    = length(points)
 
     η²   = (0.1*h)*(0.1*h)
 
-    dρdtI = zeros(N)
-    dρdtL = zeros(length(list))
+    fill!(dρdtI, 0.0)
+    fill!(dρdtL, 0.0)
+
+    Cb    = (c₀ * c₀ * ρ₀) / γ
+
+    DDTgz = ρ₀ * g / Cb
+    
+    DDTkh = 2 * h * δᵩ
+
+    invγ  = 1 / γ
+
+
+    Base.Threads.@threads for i = 1:length(list)
+        drhopvp[i] = ρ₀ * (1 + DDTgz * xᵢⱼ[i][2])^invγ - ρ₀
+        drhopvn[i] = ρ₀ * (1 - DDTgz * xᵢⱼ[i][2])^invγ - ρ₀
+    end
+
     for (iter, L) in enumerate(list)
         i = L[1]; j = L[2];
 
-        xᵢⱼ   = points[i] - points[j]
+        #xᵢⱼ   = points[i] - points[j]
         ρᵢ    = ρ[i]
         ρⱼ    = ρ[j]
         vᵢⱼ   = v[i] - v[j]
         ∇ᵢWᵢⱼ = WgL[iter]
 
-        Cb    = (c₀^2 * ρ₀) / γ
+        #Cb    = (c₀ * c₀ * ρ₀) / γ
 
-        r²    = dot(xᵢⱼ, xᵢⱼ)
+        r²    = dot(xᵢⱼ[iter], xᵢⱼ[iter])
 
-        DDTgz = ρ₀ * g / Cb
-        DDTkh = 2 * h * δᵩ
-
-        dot3  = -dot(xᵢⱼ, ∇ᵢWᵢⱼ)
+        dot3  = -dot(xᵢⱼ[iter], ∇ᵢWᵢⱼ)
 
         # Do note that in a lot of papers they write "ij"
         # BUT it should be ji for the direction to match (in dot3)
         # the density direction
         # For particle i
-        drz   = xᵢⱼ[2]
-        rh    = 1 + DDTgz * drz
-        drhop = ρ₀* ^(rh, 1 / γ) - ρ₀
-        visc_densi = DDTkh * c₀ *(ρⱼ - ρᵢ - drhop) / (r² + η²)
+        #drz   = xᵢⱼ[iter][2]
+        #rh    = 1 + DDTgz * drz
+        #drhop = ρ₀ * rh^invγ - ρ₀
+
+        visc_densi = DDTkh * c₀ *(ρⱼ - ρᵢ - drhopvp[iter]) / (r² + η²)
         
-        delta_i = visc_densi * dot3 * m₀ / ρⱼ
+        delta_i    = visc_densi * dot3 * m₀ / ρⱼ
 
         # For particle j
-        drz   = -xᵢⱼ[2]
-        rh    = 1 + DDTgz * drz
-        drhop = ρ₀* ^(rh, 1/γ) - ρ₀
-        visc_densi = DDTkh * c₀ * (ρᵢ - ρⱼ - drhop) / (r² + η²)
+        #drz   = -xᵢⱼ[iter][2]
+        #rh    = 1 + DDTgz * drz
+        #drhop = ρ₀ * rh^invγ - ρ₀
+        visc_densi = DDTkh * c₀ * (ρᵢ - ρⱼ - drhopvn[iter]) / (r² + η²)
         
-        delta_j = visc_densi * dot3 * m₀ / ρᵢ
+        delta_j    = visc_densi * dot3 * m₀ / ρᵢ
 
         m₀dot     = m₀ * dot(vᵢⱼ, ∇ᵢWᵢⱼ) 
         dρdtI[i] += m₀dot + delta_i * MotionLimiter[i]
@@ -285,11 +313,12 @@ The momentum equation without any dissipation - we add the dissipation using art
 
 ```
 """
-function ∂vᵢ∂t(list, points, m, ρ, WgL, c₀, γ, ρ₀)
+function ∂vᵢ∂t!(dvdtI, dvdtL, list, points, m, ρ, WgL, c₀, γ, ρ₀)
     N    = length(points)
 
-    dvdtI = fill(SVector(0.0, 0.0, 0.0),N)
-    dvdtL = fill(SVector(0.0, 0.0, 0.0),length(list))
+    fill!(dvdtI, SVector(0.0, 0.0, 0.0))
+    fill!(dvdtL, SVector(0.0, 0.0, 0.0))
+
     for (iter,L) in enumerate(list)
         i = L[1]; j = L[2]
 

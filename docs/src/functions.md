@@ -18,10 +18,10 @@ SPHExample.∑ⱼWᵢⱼ
 SPHExample.Optim∇ᵢWᵢⱼ
 ```
 
-### SPHExample.∑ⱼ∇ᵢWᵢⱼ
+### SPHExample.∑ⱼ∇ᵢWᵢⱼ!
 
 ```@docs
-SPHExample.∑ⱼ∇ᵢWᵢⱼ
+SPHExample.∑ⱼ∇ᵢWᵢⱼ!
 ```
 
 ### SPHExample.Pressure
@@ -30,22 +30,22 @@ SPHExample.∑ⱼ∇ᵢWᵢⱼ
 SPHExample.Pressure
 ```
 
-### SPHExample.∂Πᵢⱼ∂t
+### SPHExample.∂Πᵢⱼ∂t!
 
 ```@docs
-SPHExample.∂Πᵢⱼ∂t
+SPHExample.∂Πᵢⱼ∂t!
 ```
 
-### SPHExample.∂ρᵢ∂tDDT
+### SPHExample.∂ρᵢ∂tDDT!
 
 ```@docs
-SPHExample.∂ρᵢ∂tDDT
+SPHExample.∂ρᵢ∂tDDT!
 ```
 
-### SPHExample.∂vᵢ∂t
+### SPHExample.∂vᵢ∂t!
 
 ```@docs
-SPHExample.∂vᵢ∂t
+SPHExample.∂vᵢ∂t!
 ```
 
 ### SPHExample.Δt
