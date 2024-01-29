@@ -2,6 +2,7 @@ module SimulationMetaDataConfiguration
 
 using Parameters
 using TimerOutputs
+using ProgressMeter
 
 export SimulationMetaData
 
@@ -50,7 +51,8 @@ metadata = SimulationMetaData(
     SilentOutput::Bool               = false
     ThreadsCPU::Int                  = Threads.nthreads()
     FloatType::DataType              = Float64
-    IntType::DataType                = Int64        
+    IntType::DataType                = Int64
+    ProgressSpecification::Progress  = Progress(MaxIterations)       
 end
 
 end

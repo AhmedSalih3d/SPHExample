@@ -95,7 +95,6 @@ function RunSimulation(;FluidCSV::String,
     system  = InPlaceNeighborList(x=Position, cutoff=2*H, parallel=true)
 
     # Define Progress spec
-    ProgressSpecification = Progress(MaxIterations)
     for SimulationMetaData.Iteration = 1:MaxIterations
         # Be sure to update and retrieve the updated neighbour list at each time step
         update!(system,Position)
@@ -163,7 +162,7 @@ function RunSimulation(;FluidCSV::String,
         
         OutputVTP(SimulationMetaData,SimulationConstants,FinalResults)
 
-        next!(ProgressSpecification; showvalues = [(:(SimulationMetaData.Iteration),SimulationMetaData.Iteration), (:(SimulationMetaData.TotalTime),SimulationMetaData.TotalTime)])
+        next!(SimulationMetaData.ProgressSpecification; showvalues = [(:(SimulationMetaData.Iteration),SimulationMetaData.Iteration), (:(SimulationMetaData.TotalTime),SimulationMetaData.TotalTime)])
     end
 end
 
