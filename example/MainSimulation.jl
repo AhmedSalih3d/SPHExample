@@ -97,7 +97,7 @@ function RunSimulation(;FluidCSV::String,
     dρdtI           = zeros(eltype(Density), size(Density))
     dvdtI           = zeros(eltype(Velocity), size(Velocity))
 
-    ρₙ⁺             = zeros(eltype(Position), size(Density))
+    ρₙ⁺             = zeros(eltype(Density), size(Density))
     vₙ⁺             = zeros(eltype(Position), size(Position))
 
     dρdtIₙ⁺         = zeros(eltype(Position), size(Density))
@@ -112,7 +112,7 @@ function RunSimulation(;FluidCSV::String,
         list = neighborlist!(system)
 
         # Clean up arrays
-        ResetArray(Kernel,KernelGradient)
+        ResetArray(Kernel,KernelGradient, )
 
         # Here we output the kernel value for each particle
         ∑ⱼWᵢⱼ!(Kernel, list, SimulationConstants)
@@ -132,20 +132,20 @@ function RunSimulation(;FluidCSV::String,
 
 
         # Based on the density derivative at "n", we calculate "n+½"
-        ρₙ⁺  = Density  .+ dρdtI * (dt/2)
+        @. ρₙ⁺  = Density  + dρdtI * (dt/2)
         # We make sure to limit the density of boundary particles in such a way that they cannot produce suction
         ρₙ⁺[(ρₙ⁺ .< ρ₀) .* BoundaryBool] .= ρ₀
         #clamp!(ρₙ⁺[BoundaryBool], ρ₀,2ρ₀) #Never going to hit the high unless breaking sim
 
         # We now calculate velocity and position at "n+½"
-        velocity_n_half = Velocity   .+ dvdtI * (dt/2) .* MotionLimiter
-        points_n_half   = Position   .+ velocity_n_half * (dt/2) .* MotionLimiter
+        @. vₙ⁺          = Velocity   + dvdtI * (dt/2) * MotionLimiter
+        points_n_half   = Position   .+ vₙ⁺ * (dt/2) .* MotionLimiter
 
         # Density derivative at "n+½" - Note that we keep the kernel gradient values calculated at "n" for simplicity
-        dρdtI_n_half,_ = ∂ρᵢ∂tDDT(list,points_n_half,ρₙ⁺,velocity_n_half,KernelGradientL,MotionLimiter, SimulationConstants)
+        dρdtI_n_half,_ = ∂ρᵢ∂tDDT(list,points_n_half,ρₙ⁺,vₙ⁺,KernelGradientL,MotionLimiter, SimulationConstants)
 
         # Viscous contribution and momentum equation at "n+½"
-        Acceleration  .=   ∂Πᵢⱼ∂t(list,points_n_half,ρₙ⁺,velocity_n_half, KernelGradientL, SimulationConstants)[1] .+
+        Acceleration  .=   ∂Πᵢⱼ∂t(list,points_n_half,ρₙ⁺,vₙ⁺, KernelGradientL, SimulationConstants)[1] .+
                            ∂vᵢ∂t(list,points_n_half, ρₙ⁺, KernelGradientL, SimulationConstants)[1]                  .+
                            GravityContributionArray
 
