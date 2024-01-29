@@ -77,6 +77,7 @@ function RunSimulation(;FluidCSV::String,
     # Read this as "GravityFactor * g", so -1 means negative acceleration for fluid particles
     # 1 means boundary particles push back against gravity
     GravityFactor = [-ones(size(DF_FLUID,1)) ; ones(size(DF_BOUND,1))]
+    GravityContributionArray = map((x)->x * GravityContribution,GravityFactor) 
 
     # MotionLimiter is what allows fluid particles to move, while not letting the velocity of boundary
     # particles change
@@ -91,6 +92,8 @@ function RunSimulation(;FluidCSV::String,
     # Functions to avoid temporary array in epsi calculation later on
     F_Epsi(DensityDerivative, DensityValue, TimeStepValue)      =  @. -( DensityDerivative / DensityValue) * TimeStepValue
     F_EpsiFinal(DensityDerivative, DensityValue, TimeStepValue) =  @.  ( 2 - F_Epsi(DensityDerivative, DensityValue, TimeStepValue)) /  (2 + F_Epsi(DensityDerivative, DensityValue, TimeStepValue))   
+
+
 
     # Initialize the system list
     system  = InPlaceNeighborList(x=Position, cutoff=2*H, parallel=true)
@@ -114,11 +117,9 @@ function RunSimulation(;FluidCSV::String,
         dρdtI,_ = ∂ρᵢ∂tDDT(list,Position,Density,Velocity,WgL,MotionLimiter, SimulationConstants)
 
         # We calculate viscosity contribution and momentum equation at time step "n"
-        viscI,_ = ∂Πᵢⱼ∂t(list,Position,Density,Velocity,WgL, SimulationConstants)
-        dvdtI,_ = ∂vᵢ∂t(list,Position, Density, WgL, SimulationConstants)
-        # We add gravity as a final step for the i particles, not the L ones, since we do not split the contribution, that is unphysical!
-        # So please be careful with using "L" results directly in some cases
-        dvdtI .= map((x,y)->x+y*GravityContribution,dvdtI+viscI,GravityFactor)
+        dvdtI   =    ∂Πᵢⱼ∂t(list,Position,Density,Velocity,WgL, SimulationConstants)[1]  .+
+                     ∂vᵢ∂t(list,Position, Density, WgL, SimulationConstants)[1]          .+ 
+                     GravityContributionArray
 
 
         # Based on the density derivative at "n", we calculate "n+½"
@@ -135,9 +136,9 @@ function RunSimulation(;FluidCSV::String,
         dρdtI_n_half,_ = ∂ρᵢ∂tDDT(list,points_n_half,density_n_half,velocity_n_half,WgL,MotionLimiter, SimulationConstants)
 
         # Viscous contribution and momentum equation at "n+½"
-        viscI_n_half,_ = ∂Πᵢⱼ∂t(list,points_n_half,density_n_half,velocity_n_half, WgL, SimulationConstants)
-        dvdtI_n_half,_ = ∂vᵢ∂t(list,points_n_half,density_n_half, WgL, SimulationConstants)
-        Acceleration  .= map((x,y)->x+y*GravityContribution,dvdtI_n_half+viscI_n_half,GravityFactor) 
+        Acceleration  .=   ∂Πᵢⱼ∂t(list,points_n_half,density_n_half,velocity_n_half, WgL, SimulationConstants)[1] .+
+                           ∂vᵢ∂t(list,points_n_half,density_n_half, WgL, SimulationConstants)[1]                  .+
+                           GravityContributionArray
 
         # Factor for properly time stepping the density to "n+1" - We use the symplectic scheme as done in DualSPHysics
         Density .*= F_EpsiFinal(dρdtI_n_half,density_n_half,dt)
