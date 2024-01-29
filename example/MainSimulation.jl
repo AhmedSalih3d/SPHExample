@@ -101,7 +101,7 @@ function RunSimulation(;FluidCSV::String,
     vₙ⁺             = zeros(eltype(Position), size(Position))
     Positionₙ⁺      = zeros(eltype(Position), size(Position))
 
-    dρdtIₙ⁺         = zeros(eltype(Position), size(Density))
+    dρdtIₙ⁺         = zeros(eltype(Density), size(Density))
 
     # Initialize the system list
     system  = InPlaceNeighborList(x=Position, cutoff=2*H, parallel=true)
@@ -113,7 +113,7 @@ function RunSimulation(;FluidCSV::String,
         list = neighborlist!(system)
 
         # Clean up arrays
-        ResetArray(Kernel,KernelGradient, )
+        ResetArray(Kernel,KernelGradient,dρdtI,dρdtIₙ⁺)
 
         # Here we output the kernel value for each particle
         ∑ⱼWᵢⱼ!(Kernel, list, SimulationConstants)
@@ -124,7 +124,7 @@ function RunSimulation(;FluidCSV::String,
         KernelGradientL = ∑ⱼ∇ᵢWᵢⱼ!(KernelGradient, list,Position,SimulationConstants)
 
         # Then we calculate the density derivative at time step "n"
-        dρdtI,_ = ∂ρᵢ∂tDDT(list,Position,Density,Velocity,KernelGradientL,MotionLimiter, SimulationConstants)
+        ∂ρᵢ∂tDDT!(dρdtI,list,Position,Density,Velocity,KernelGradientL,MotionLimiter, SimulationConstants)
 
         # We calculate viscosity contribution and momentum equation at time step "n"
         dvdtI   =    ∂Πᵢⱼ∂t(list,Position,Density,Velocity,KernelGradientL, SimulationConstants)[1]  .+
@@ -142,7 +142,7 @@ function RunSimulation(;FluidCSV::String,
         @. Positionₙ⁺   = Position   + vₙ⁺ * (dt/2)   * MotionLimiter
 
         # Density derivative at "n+½" - Note that we keep the kernel gradient values calculated at "n" for simplicity
-        dρdtI_n_half,_ = ∂ρᵢ∂tDDT(list,Positionₙ⁺,ρₙ⁺,vₙ⁺,KernelGradientL,MotionLimiter, SimulationConstants)
+        ∂ρᵢ∂tDDT!(dρdtIₙ⁺,list,Positionₙ⁺,ρₙ⁺,vₙ⁺,KernelGradientL,MotionLimiter, SimulationConstants)
 
         # Viscous contribution and momentum equation at "n+½"
         Acceleration  .=   ∂Πᵢⱼ∂t(list,Positionₙ⁺,ρₙ⁺,vₙ⁺, KernelGradientL, SimulationConstants)[1] .+
@@ -150,7 +150,7 @@ function RunSimulation(;FluidCSV::String,
                            GravityContributionArray
 
         # Factor for properly time stepping the density to "n+1" - We use the symplectic scheme as done in DualSPHysics
-        @. Density    *= F_EpsiFinal(dρdtI_n_half,ρₙ⁺,dt)
+        @. Density    *= F_EpsiFinal(dρdtIₙ⁺,ρₙ⁺,dt)
 
         # Clamp boundary particles minimum density to avoid suction
         #clamp!(Density[BoundaryBool], ρ₀,2ρ₀) #Never going to hit the high unless breaking sim
