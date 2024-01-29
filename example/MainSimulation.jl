@@ -114,7 +114,7 @@ function RunSimulation(;FluidCSV::String,
         list = neighborlist!(system)
 
         # Here we output the kernel value for each particle
-        Kernel .= ∑ⱼWᵢⱼ(list,Position,SimulationConstants)[1]
+        ∑ⱼWᵢⱼ!(Kernel, list, SimulationConstants)
 
         # Here we output the kernel gradient value for each particle and also the kernel gradient value
         # based on the pair-to-pair interaction list, for use in later calculations.
@@ -175,7 +175,7 @@ end
 SimMetaData  = SimulationMetaData(
                                   SimulationName="MySimulation", 
                                   SaveLocation=raw"E:\SecondApproach\Results", 
-                                  MaxIterations=101
+                                  MaxIterations=1001
 )
 # Initialze the constants to use
 SimConstants = SimulationConstants{SimMetaData.FloatType, SimMetaData.IntType}()

@@ -1,6 +1,6 @@
 module SimulationEquations
 
-export Wᵢⱼ, ∑ⱼWᵢⱼ, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ, Pressure, ∂Πᵢⱼ∂t, ∂ρᵢ∂tDDT, ∂vᵢ∂t
+export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ, Pressure, ∂Πᵢⱼ∂t, ∂ρᵢ∂tDDT, ∂vᵢ∂t
 
 using CellListMap
 using StaticArrays
@@ -15,13 +15,8 @@ end
 # Function to calculate kernel value in both "particle i" format and "list of interactions" format
 # Please notice how when using CellListMap since it is based on a "list of interactions", for each 
 # interaction we must add the contribution to both the i'th and j'th particle!
-function ∑ⱼWᵢⱼ(list,points,SimulationConstants)
+function ∑ⱼWᵢⱼ!(Kernel, list,SimulationConstants)
     @unpack αD,H = SimulationConstants
-
-    N    = length(points)
-
-    sumWI = zeros(N)
-    sumWL = zeros(length(list))
     for (iter,L) in enumerate(list)
         i = L[1]; j = L[2]; d = L[3]
 
@@ -29,13 +24,11 @@ function ∑ⱼWᵢⱼ(list,points,SimulationConstants)
 
         W = Wᵢⱼ(αD,q)
 
-        sumWI[i] += W
-        sumWI[j] += W
-
-        sumWL[iter] = W
+        Kernel[i] += W
+        Kernel[j] += W
     end
 
-    return sumWI,sumWL
+    return nothing
 end
 
 # Original implementation of kernel gradient
