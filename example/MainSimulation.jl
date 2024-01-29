@@ -127,10 +127,9 @@ function RunSimulation(;FluidCSV::String,
         ∂ρᵢ∂tDDT!(dρdtI,list,Position,Density,Velocity,KernelGradientL,MotionLimiter, SimulationConstants)
 
         # We calculate viscosity contribution and momentum equation at time step "n"
-        dvdtI   =    ∂Πᵢⱼ∂t(list,Position,Density,Velocity,KernelGradientL, SimulationConstants)[1]  .+
-                     ∂vᵢ∂t(list,Position, Density, KernelGradientL, SimulationConstants)[1]          .+ 
-                     GravityContributionArray
-
+        dvdtI    .=    ∂vᵢ∂t(list,Position, Density, KernelGradientL, SimulationConstants)[1]
+        dvdtI   .+=    ∂Πᵢⱼ∂t(list,Position,Density,Velocity,KernelGradientL, SimulationConstants)[1]
+        dvdtI   .+=    GravityContributionArray
 
         # Based on the density derivative at "n", we calculate "n+½"
         @. ρₙ⁺  = Density  + dρdtI * (dt/2)
