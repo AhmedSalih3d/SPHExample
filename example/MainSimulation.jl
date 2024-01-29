@@ -93,7 +93,16 @@ function RunSimulation(;FluidCSV::String,
     F_Epsi(DensityDerivative, DensityValue, TimeStepValue)      =  @. -( DensityDerivative / DensityValue) * TimeStepValue
     F_EpsiFinal(DensityDerivative, DensityValue, TimeStepValue) =  @.  ( 2 - F_Epsi(DensityDerivative, DensityValue, TimeStepValue)) /  (2 + F_Epsi(DensityDerivative, DensityValue, TimeStepValue))   
 
+    # Preallocate simulation arrays
+    KernelGradientI = zeros(eltype(Position), size(Position))
 
+    dρdtI           = zeros(eltype(Position), size(Density))
+    dvdtI           = zeros(eltype(Velocity), size(Velocity))
+
+    ρₙ⁺             = zeros(eltype(Position), size(Density))
+    vₙ⁺             = zeros(eltype(Position), size(Position))
+
+    dρdtIₙ⁺         = zeros(eltype(Position), size(Density))
 
     # Initialize the system list
     system  = InPlaceNeighborList(x=Position, cutoff=2*H, parallel=true)
@@ -166,7 +175,7 @@ end
 SimMetaData  = SimulationMetaData(
                                   SimulationName="MySimulation", 
                                   SaveLocation=raw"E:\SecondApproach\Results", 
-                                  MaxIterations=10001
+                                  MaxIterations=101
 )
 # Initialze the constants to use
 SimConstants = SimulationConstants{SimMetaData.FloatType, SimMetaData.IntType}()
