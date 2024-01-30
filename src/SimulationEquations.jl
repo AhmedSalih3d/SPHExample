@@ -154,27 +154,6 @@ function ∂ρᵢ∂tDDT!(dρdtI, list,points,ρ,v,WgL,MotionLimiter, Simulation
         vᵢⱼ   = v[i] - v[j]
         ∇ᵢWᵢⱼ = WgL[iter]
         
-        # # Do note that in a lot of papers they write "ij"
-        # # BUT it should be ji for the direction to match (in dot3)
-        # # the density direction
-        # # For particle i
-        # drz   = xᵢⱼ[2]
-        # rh    = 1 + DDTgz*drz
-        # drhop = ρ₀* ^(rh,γ⁻¹) - ρ₀
-        # visc_densi = DDTkh*c₀*(ρⱼ-ρᵢ-drhop)/(r²+η²)
-        # dot3  = dot(-xᵢⱼ,∇ᵢWᵢⱼ)
-        # delta_i = visc_densi*dot3*m₀/ρⱼ
-
-        # # For particle j
-        # drz   = -xᵢⱼ[2]
-        # rh    = 1 + DDTgz*drz
-        # drhop = ρ₀* ^(rh,γ⁻¹) - ρ₀
-        # visc_densi = DDTkh*c₀*(ρᵢ-ρⱼ-drhop)/(r²+η²)
-        # dot3  = dot(xᵢⱼ,-∇ᵢWᵢⱼ)
-        # delta_j = visc_densi*dot3*m₀/ρᵢ
-
-        # dρdtI[i] += dot(m₀*vᵢⱼ,∇ᵢWᵢⱼ)+delta_i*MotionLimiter[i]
-        # dρdtI[j] += dot(m₀*-vᵢⱼ,-∇ᵢWᵢⱼ)+delta_j*MotionLimiter[j]
 
         # Follow the implementation here: https://arxiv.org/abs/2110.10076
         Pᵢⱼᴴ = ρ₀ * (-g) * xⱼᵢ[2]
