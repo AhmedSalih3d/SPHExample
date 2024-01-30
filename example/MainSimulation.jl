@@ -156,7 +156,7 @@ function RunSimulation(;FluidCSV::String,
         @. Position += ((Velocity + (Velocity - Acceleration * dt * MotionLimiter)) / 2) * dt * MotionLimiter
 
         # Automatic time stepping control
-        dt = Δt(Acceleration,Position,Velocity,SimulationConstants)
+        dt = Δt(FinalResults,SimulationConstants)
         SimulationMetaData.CurrentTimeStep = dt
         SimulationMetaData.TotalTime      += dt
         
@@ -170,7 +170,7 @@ end
 SimMetaData  = SimulationMetaData(
                                   SimulationName="MySimulation", 
                                   SaveLocation=raw"E:\SecondApproach\Results", 
-                                  MaxIterations=1001
+                                  MaxIterations=10001
 )
 # Initialze the constants to use
 SimConstants = SimulationConstants{SimMetaData.FloatType, SimMetaData.IntType}()
