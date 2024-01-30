@@ -140,8 +140,6 @@ function ∂ρᵢ∂tDDT!(dρdtI, list,points,ρ,v,WgL,MotionLimiter, Simulation
     @unpack H,m₀,δᵩ,c₀,γ,g,ρ₀,η² = SimulationConstants
 
     Cb    = (c₀^2*ρ₀)/γ
-    DDTgz = ρ₀*g/Cb
-    DDTkh = 2*H*δᵩ
     γ⁻¹   = 1/γ
 
     for (iter,L) in enumerate(list)
@@ -151,27 +149,31 @@ function ∂ρᵢ∂tDDT!(dρdtI, list,points,ρ,v,WgL,MotionLimiter, Simulation
         r²    = norm(xⱼᵢ)^2
         ρᵢ    = ρ[i]
         ρⱼ    = ρ[j]
+        ρⱼᵢ   = ρⱼ - ρᵢ
         vᵢⱼ   = v[i] - v[j]
         ∇ᵢWᵢⱼ = WgL[iter]
         
+        # First part of continuity equation
+        FirstPartOfContinuity = dot(m₀*vᵢⱼ,∇ᵢWᵢⱼ) # =dot(m₀*-vᵢⱼ,-∇ᵢWᵢⱼ)
 
         # Follow the implementation here: https://arxiv.org/abs/2110.10076
+        # Implement for particle i
         Pᵢⱼᴴ = ρ₀ * (-g) * xⱼᵢ[2]
         ρᵢⱼᴴ = ρ₀ * ( ^( 1 + (Pᵢⱼᴴ/Cb), γ⁻¹) - 1)
 
-        Ψᵢⱼ  = 2 * (ρⱼ - ρᵢ - ρᵢⱼᴴ) * xⱼᵢ/(r²+η²)
+        Ψᵢⱼ  = 2 * (ρⱼᵢ - ρᵢⱼᴴ) * xⱼᵢ/(r²+η²)
         Dᵢ   = δᵩ * H * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ,∇ᵢWᵢⱼ)
 
-        dρdtI[i] += dot(m₀*vᵢⱼ,∇ᵢWᵢⱼ) + Dᵢ * MotionLimiter[i]
+        dρdtI[i] += FirstPartOfContinuity + Dᵢ * MotionLimiter[i]
 
-        # j
-        Pⱼᵢᴴ = ρ₀ * (-g) * (-xⱼᵢ[2])
+        # Implement for particle j
+        Pⱼᵢᴴ = -Pᵢⱼᴴ
         ρⱼᵢᴴ = ρ₀ * ( ^( 1 + (Pⱼᵢᴴ/Cb), γ⁻¹) - 1)
 
-        Ψⱼᵢ  = 2 * (ρᵢ - ρⱼ - ρᵢⱼᴴ) * (-xⱼᵢ)/(r²+η²)
+        Ψⱼᵢ  = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * (-xⱼᵢ)/(r²+η²)
         Dⱼ   = δᵩ * H * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ,-∇ᵢWᵢⱼ)
 
-        dρdtI[j] += dot(m₀*-vᵢⱼ,-∇ᵢWᵢⱼ) + Dⱼ * MotionLimiter[i]
+        dρdtI[j] += FirstPartOfContinuity + Dⱼ * MotionLimiter[i]
     end
 
     return nothing
