@@ -147,34 +147,52 @@ function ∂ρᵢ∂tDDT!(dρdtI, list,points,ρ,v,WgL,MotionLimiter, Simulation
     for (iter,L) in enumerate(list)
         i = L[1]; j = L[2];
 
-        xᵢⱼ   = points[i] - points[j]
-        r²    = dot(xᵢⱼ,xᵢⱼ)
+        xⱼᵢ   = points[j] - points[i]
+        r²    = norm(xⱼᵢ)^2
         ρᵢ    = ρ[i]
         ρⱼ    = ρ[j]
         vᵢⱼ   = v[i] - v[j]
         ∇ᵢWᵢⱼ = WgL[iter]
         
-        # Do note that in a lot of papers they write "ij"
-        # BUT it should be ji for the direction to match (in dot3)
-        # the density direction
-        # For particle i
-        drz   = xᵢⱼ[2]
-        rh    = 1 + DDTgz*drz
-        drhop = ρ₀* ^(rh,γ⁻¹) - ρ₀
-        visc_densi = DDTkh*c₀*(ρⱼ-ρᵢ-drhop)/(r²+η²)
-        dot3  = dot(-xᵢⱼ,∇ᵢWᵢⱼ)
-        delta_i = visc_densi*dot3*m₀/ρⱼ
+        # # Do note that in a lot of papers they write "ij"
+        # # BUT it should be ji for the direction to match (in dot3)
+        # # the density direction
+        # # For particle i
+        # drz   = xᵢⱼ[2]
+        # rh    = 1 + DDTgz*drz
+        # drhop = ρ₀* ^(rh,γ⁻¹) - ρ₀
+        # visc_densi = DDTkh*c₀*(ρⱼ-ρᵢ-drhop)/(r²+η²)
+        # dot3  = dot(-xᵢⱼ,∇ᵢWᵢⱼ)
+        # delta_i = visc_densi*dot3*m₀/ρⱼ
 
-        # For particle j
-        drz   = -xᵢⱼ[2]
-        rh    = 1 + DDTgz*drz
-        drhop = ρ₀* ^(rh,γ⁻¹) - ρ₀
-        visc_densi = DDTkh*c₀*(ρᵢ-ρⱼ-drhop)/(r²+η²)
-        dot3  = dot(xᵢⱼ,-∇ᵢWᵢⱼ)
-        delta_j = visc_densi*dot3*m₀/ρᵢ
+        # # For particle j
+        # drz   = -xᵢⱼ[2]
+        # rh    = 1 + DDTgz*drz
+        # drhop = ρ₀* ^(rh,γ⁻¹) - ρ₀
+        # visc_densi = DDTkh*c₀*(ρᵢ-ρⱼ-drhop)/(r²+η²)
+        # dot3  = dot(xᵢⱼ,-∇ᵢWᵢⱼ)
+        # delta_j = visc_densi*dot3*m₀/ρᵢ
 
-        dρdtI[i] += dot(m₀*vᵢⱼ,∇ᵢWᵢⱼ)+delta_i*MotionLimiter[i]
-        dρdtI[j] += dot(m₀*-vᵢⱼ,-∇ᵢWᵢⱼ)+delta_j*MotionLimiter[j]
+        # dρdtI[i] += dot(m₀*vᵢⱼ,∇ᵢWᵢⱼ)+delta_i*MotionLimiter[i]
+        # dρdtI[j] += dot(m₀*-vᵢⱼ,-∇ᵢWᵢⱼ)+delta_j*MotionLimiter[j]
+
+        # Follow the implementation here: https://arxiv.org/abs/2110.10076
+        Pᵢⱼᴴ = ρ₀ * (-g) * xⱼᵢ[2]
+        ρᵢⱼᴴ = ρ₀ * ( ^( 1 + (Pᵢⱼᴴ/Cb), γ⁻¹) - 1)
+
+        Ψᵢⱼ  = 2 * (ρⱼ - ρᵢ - ρᵢⱼᴴ) * xⱼᵢ/(r²+η²)
+        Dᵢ   = δᵩ * H * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ,∇ᵢWᵢⱼ)
+
+        dρdtI[i] += dot(m₀*vᵢⱼ,∇ᵢWᵢⱼ) + Dᵢ * MotionLimiter[i]
+
+        # j
+        Pⱼᵢᴴ = ρ₀ * (-g) * (-xⱼᵢ[2])
+        ρⱼᵢᴴ = ρ₀ * ( ^( 1 + (Pⱼᵢᴴ/Cb), γ⁻¹) - 1)
+
+        Ψⱼᵢ  = 2 * (ρᵢ - ρⱼ - ρᵢⱼᴴ) * (-xⱼᵢ)/(r²+η²)
+        Dⱼ   = δᵩ * H * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ,-∇ᵢWᵢⱼ)
+
+        dρdtI[j] += dot(m₀*-vᵢⱼ,-∇ᵢWᵢⱼ) + Dⱼ * MotionLimiter[i]
     end
 
     return nothing
