@@ -86,7 +86,7 @@ function Pressure(ρ,c₀,γ,ρ₀)
 end
 
 # The artificial viscosity term
-function ∂Πᵢⱼ∂t!(viscI, list,points,ρ,v,WgL,SimulationConstants)
+function ∂Πᵢⱼ∂t!(viscI, list,xᵢⱼ,ρ,v,WgL,SimulationConstants)
     @unpack H, α, c₀, m₀, η² = SimulationConstants
 
     for (iter,L) in enumerate(list)
@@ -95,14 +95,14 @@ function ∂Πᵢⱼ∂t!(viscI, list,points,ρ,v,WgL,SimulationConstants)
         ρᵢ    = ρ[i]
         ρⱼ    = ρ[j]
         vᵢⱼ   = v[i] - v[j]
-        xᵢⱼ   = points[i] - points[j]
+        xᵢⱼ⁰  = xᵢⱼ[iter] #xᵢⱼ   = points[i] - points[j]
         ρᵢⱼ   = (ρᵢ+ρⱼ)*0.5
 
-        cond      = dot(vᵢⱼ,xᵢⱼ)
+        cond      = dot(vᵢⱼ,xᵢⱼ⁰)
 
         cond_bool = cond < 0
 
-        μᵢⱼ = H*cond/(dot(xᵢⱼ,xᵢⱼ)+η²)
+        μᵢⱼ = H*cond/(dot(xᵢⱼ⁰,xᵢⱼ⁰)+η²)
         Πᵢⱼ = cond_bool*(-α*c₀*μᵢⱼ)/ρᵢⱼ
         
         viscI[i] += -Πᵢⱼ*m₀*WgL[iter]
