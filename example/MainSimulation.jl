@@ -102,6 +102,15 @@ function RunSimulation(;FluidCSV::String,
 
     KernelGradientL = zeros(eltype(Position), size(Position))
 
+    xᵢⱼ             = zeros(eltype(Position), size(Position))
+    function updatexᵢⱼ!(xᵢⱼ, list, points)
+        if length(xᵢⱼ) != length(list) resize!(xᵢⱼ, length(list)) end
+        for (iter, L) in enumerate(list)
+            i = L[1]; j = L[2];
+            xᵢⱼ[iter] = points[i] - points[j]
+        end
+    end
+
     Pressureᵢ       = zeros(eltype(Density), size(Density))
 
     # Initialize the system list
@@ -116,7 +125,9 @@ function RunSimulation(;FluidCSV::String,
         # Clean up arrays
         ResetArrays!(Kernel,KernelGradient,dρdtI,dρdtIₙ⁺, dvdtI, Acceleration)
         # Resize KernelGradientL based on length of neighborlist
-        ResizeBuffers!(KernelGradientL; N = length(list))
+        ResizeBuffers!(KernelGradientL, xᵢⱼ; N = length(list))
+
+        updatexᵢⱼ!(xᵢⱼ, list, Position)
 
         # Here we output the kernel value for each particle
         ∑ⱼWᵢⱼ!(Kernel, list, SimulationConstants)
@@ -124,7 +135,7 @@ function RunSimulation(;FluidCSV::String,
         # Here we output the kernel gradient value for each particle and also the kernel gradient value
         # based on the pair-to-pair interaction list, for use in later calculations.
         # Other functions follow a similar format, with the "I" and "L" ending
-        ∑ⱼ∇ᵢWᵢⱼ!(KernelGradient, KernelGradientL, list,Position,SimulationConstants)
+        ∑ⱼ∇ᵢWᵢⱼ!(KernelGradient, KernelGradientL, list, xᵢⱼ, SimulationConstants)
 
         # Then we calculate the density derivative at time step "n"
         ∂ρᵢ∂tDDT!(dρdtI,list,Position,Density,Velocity,KernelGradientL,MotionLimiter, SimulationConstants)
@@ -185,7 +196,7 @@ SimConstants = SimulationConstants{SimMetaData.FloatType, SimMetaData.IntType}()
 # Clean up folder before running (remember to make folder before hand!)
 foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
 # And here we run the function - enjoy!
-RunSimulation(
+@profview RunSimulation(
     FluidCSV = "./input/FluidPoints_Dp0.02.csv",
     BoundCSV = "./input/BoundaryPoints_Dp0.02.csv",
     SimulationMetaData = SimMetaData,
