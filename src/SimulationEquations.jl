@@ -1,6 +1,6 @@
 module SimulationEquations
 
-export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ, Pressure, ∂Πᵢⱼ∂t!, ∂ρᵢ∂tDDT!, ∂vᵢ∂t!, DensityEpsi!
+export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ, Pressure, ∂Πᵢⱼ∂t!, ∂ρᵢ∂tDDT!, ∂vᵢ∂t!, DensityEpsi!, LimitDensityAtBoundary!
 
 using CellListMap
 using StaticArrays
@@ -59,10 +59,9 @@ end
 # Function to calculate kernel gradient value in both "particle i" format and "list of interactions" format
 # Please notice how when using CellListMap since it is based on a "list of interactions", for each 
 # interaction we must add the contribution to both the i'th and j'th particle!
-function ∑ⱼ∇ᵢWᵢⱼ!(KernelGradientI, list,points,SimulationConstants)
+function ∑ⱼ∇ᵢWᵢⱼ!(KernelGradientI, KernelGradientL, list,points,SimulationConstants)
     @unpack αD,H = SimulationConstants
  
-    sumWgL = zeros(SVector{3,Float64},length(list))
     for (iter,L) in enumerate(list)
         i = L[1]; j = L[2]; d = L[3]
 
@@ -75,10 +74,10 @@ function ∑ⱼ∇ᵢWᵢⱼ!(KernelGradientI, list,points,SimulationConstants)
         KernelGradientI[i] +=  Wg
         KernelGradientI[j] += -Wg
 
-        sumWgL[iter] = Wg
+        KernelGradientL[iter] = Wg
     end
 
-    return sumWgL
+    return nothing
 end
 
 # Equation of State in Weakly-Compressible SPH
@@ -214,5 +213,22 @@ function DensityEpsi!(Density, dρdtIₙ⁺,ρₙ⁺,Δt)
         Density[i] *= (2 - epsi) / (2 + epsi)
     end
 end
+
+# This function is used to limit density at boundary to ρ₀ to avoid suctions at walls. Walls should
+# only push and not attract so this is fine!
+function LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
+    for i in eachindex(Density)
+        if (Density[i] < ρ₀) * Bool(BoundaryBool[i])
+            Density[i] = ρ₀
+        end
+    end
+end
+
+# Another implementation
+# function LimitDensityAtBoundary!(Density, BoundaryBool, ρ₀)
+#     # Element-wise operation to set Density values
+#     Density .= max.(Density, ρ₀ .* BoundaryBool)
+# end
+
 
 end

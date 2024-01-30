@@ -99,6 +99,14 @@ function RunSimulation(;FluidCSV::String,
 
     dρdtIₙ⁺         = zeros(eltype(Density), size(Density))
 
+    function ResizeBuffers!(args...; N::Int = 0)
+        for a in args
+            if length(a) != N resize!(a, N) end
+        end
+        args
+    end
+    KernelGradientL = zeros(eltype(Position), size(Position))
+
     # Initialize the system list
     system  = InPlaceNeighborList(x=Position, cutoff=2*H, parallel=true)
 
@@ -110,6 +118,8 @@ function RunSimulation(;FluidCSV::String,
 
         # Clean up arrays
         ResetArray(Kernel,KernelGradient,dρdtI,dρdtIₙ⁺, dvdtI, Acceleration)
+        # Resize KernelGradientL based on length of neighborlist
+        ResizeBuffers!(KernelGradientL; N = length(list))
 
         # Here we output the kernel value for each particle
         ∑ⱼWᵢⱼ!(Kernel, list, SimulationConstants)
@@ -117,7 +127,7 @@ function RunSimulation(;FluidCSV::String,
         # Here we output the kernel gradient value for each particle and also the kernel gradient value
         # based on the pair-to-pair interaction list, for use in later calculations.
         # Other functions follow a similar format, with the "I" and "L" ending
-        KernelGradientL = ∑ⱼ∇ᵢWᵢⱼ!(KernelGradient, list,Position,SimulationConstants)
+        ∑ⱼ∇ᵢWᵢⱼ!(KernelGradient, KernelGradientL, list,Position,SimulationConstants)
 
         # Then we calculate the density derivative at time step "n"
         ∂ρᵢ∂tDDT!(dρdtI,list,Position,Density,Velocity,KernelGradientL,MotionLimiter, SimulationConstants)
@@ -130,7 +140,7 @@ function RunSimulation(;FluidCSV::String,
         # Based on the density derivative at "n", we calculate "n+½"
         @. ρₙ⁺  = Density  + dρdtI * (dt/2)
         # We make sure to limit the density of boundary particles in such a way that they cannot produce suction
-        @. ρₙ⁺[(ρₙ⁺ < ρ₀) * BoundaryBool] = ρ₀
+        LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
 
         # We now calculate velocity and position at "n+½"
         @. vₙ⁺          = Velocity   + dvdtI * (dt/2) * MotionLimiter
@@ -148,8 +158,7 @@ function RunSimulation(;FluidCSV::String,
         DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
 
         # Clamp boundary particles minimum density to avoid suction
-        #clamp!(Density[BoundaryBool], ρ₀,2ρ₀) #Never going to hit the high unless breaking sim
-        @. Density[(Density < ρ₀) * BoundaryBool] = ρ₀
+        LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
 
         # Update Velocity in-place and then use the updated value for Position
         @. Velocity += Acceleration * dt * MotionLimiter
