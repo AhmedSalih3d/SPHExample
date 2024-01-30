@@ -149,7 +149,7 @@ function RunSimulation(;FluidCSV::String,
         Acceleration .+= GravityContributionArray
 
         # Factor for properly time stepping the density to "n+1" - We use the symplectic scheme as done in DualSPHysics
-        @. Density    *= F_EpsiFinal(dρdtIₙ⁺,ρₙ⁺,dt)
+        println(@allocated DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt))
 
         # Clamp boundary particles minimum density to avoid suction
         #clamp!(Density[BoundaryBool], ρ₀,2ρ₀) #Never going to hit the high unless breaking sim

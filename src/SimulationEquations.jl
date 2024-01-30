@@ -1,6 +1,6 @@
 module SimulationEquations
 
-export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ, Pressure, ∂Πᵢⱼ∂t!, ∂ρᵢ∂tDDT!, ∂vᵢ∂t!
+export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ, Pressure, ∂Πᵢⱼ∂t!, ∂ρᵢ∂tDDT!, ∂vᵢ∂t!, DensityEpsi!
 
 using CellListMap
 using StaticArrays
@@ -204,6 +204,15 @@ function ∂vᵢ∂t!(dvdtI, list,ρ,WgL, SimulationConstants)
     end
 
     return nothing
+end
+
+# This is to handle the special factor multiplied on density in the time stepping procedure, when
+# using symplectic time stepping
+function DensityEpsi!(Density, dρdtIₙ⁺,ρₙ⁺,Δt)
+    for i in eachindex(Density)
+        epsi = - (dρdtIₙ⁺[i] / ρₙ⁺[i]) * Δt
+        Density[i] *= (2 - epsi) / (2 + epsi)
+    end
 end
 
 end
