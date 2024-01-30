@@ -139,28 +139,28 @@ end
 function ∂ρᵢ∂tDDT!(dρdtI, list,points,ρ,v,WgL,MotionLimiter, SimulationConstants)
     @unpack H,m₀,δᵩ,c₀,γ,g,ρ₀,η² = SimulationConstants
 
+    Cb    = (c₀^2*ρ₀)/γ
+    DDTgz = ρ₀*g/Cb
+    DDTkh = 2*H*δᵩ
+    γ⁻¹   = 1/γ
+
     for (iter,L) in enumerate(list)
         i = L[1]; j = L[2];
 
         xᵢⱼ   = points[i] - points[j]
+        r²    = dot(xᵢⱼ,xᵢⱼ)
         ρᵢ    = ρ[i]
         ρⱼ    = ρ[j]
         vᵢⱼ   = v[i] - v[j]
         ∇ᵢWᵢⱼ = WgL[iter]
-
-        Cb    = (c₀^2*ρ₀)/γ
-
-        r²    = dot(xᵢⱼ,xᵢⱼ)
-
-        DDTgz = ρ₀*g/Cb
-        DDTkh = 2*H*δᵩ
+        
         # Do note that in a lot of papers they write "ij"
         # BUT it should be ji for the direction to match (in dot3)
         # the density direction
         # For particle i
         drz   = xᵢⱼ[2]
         rh    = 1 + DDTgz*drz
-        drhop = ρ₀* ^(rh,1/γ) - ρ₀
+        drhop = ρ₀* ^(rh,γ⁻¹) - ρ₀
         visc_densi = DDTkh*c₀*(ρⱼ-ρᵢ-drhop)/(r²+η²)
         dot3  = dot(-xᵢⱼ,∇ᵢWᵢⱼ)
         delta_i = visc_densi*dot3*m₀/ρⱼ
@@ -168,7 +168,7 @@ function ∂ρᵢ∂tDDT!(dρdtI, list,points,ρ,v,WgL,MotionLimiter, Simulation
         # For particle j
         drz   = -xᵢⱼ[2]
         rh    = 1 + DDTgz*drz
-        drhop = ρ₀* ^(rh,1/γ) - ρ₀
+        drhop = ρ₀* ^(rh,γ⁻¹) - ρ₀
         visc_densi = DDTkh*c₀*(ρᵢ-ρⱼ-drhop)/(r²+η²)
         dot3  = dot(xᵢⱼ,-∇ᵢWᵢⱼ)
         delta_j = visc_densi*dot3*m₀/ρᵢ
