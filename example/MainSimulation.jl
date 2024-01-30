@@ -89,10 +89,6 @@ function RunSimulation(;FluidCSV::String,
     # Save the initial particle layout with dummy values
     create_vtp_file(SimulationMetaData,SimulationConstants,FinalResults)
 
-    # Functions to avoid temporary array in epsi calculation later on
-    F_Epsi(DensityDerivative, DensityValue, TimeStepValue)      =  @. -( DensityDerivative / DensityValue) * TimeStepValue
-    F_EpsiFinal(DensityDerivative, DensityValue, TimeStepValue) =  @.  ( 2 - F_Epsi(DensityDerivative, DensityValue, TimeStepValue)) /  (2 + F_Epsi(DensityDerivative, DensityValue, TimeStepValue))   
-
     # Preallocate simulation arrays
     dρdtI           = zeros(eltype(Density), size(Density))
     dvdtI           = zeros(eltype(Velocity), size(Velocity))
