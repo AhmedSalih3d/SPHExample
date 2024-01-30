@@ -106,21 +106,13 @@ function RunSimulation(;FluidCSV::String,
     drhopLp         = zeros(eltype(Density), size(Density))
     drhopLn         = zeros(eltype(Density), size(Density))
 
-    function updatexᵢⱼ!(xᵢⱼ, list, points)
-        if length(xᵢⱼ) != length(list) resize!(xᵢⱼ, length(list)) end
-        for (iter, L) in enumerate(list)
-            i = L[1]; j = L[2];
-            xᵢⱼ[iter] = points[i] - points[j]
-        end
-    end
-
     Pressureᵢ       = zeros(eltype(Density), size(Density))
 
     # Initialize the system list
     system  = InPlaceNeighborList(x=Position, cutoff=2*H, parallel=true)
 
     # Define Progress spec
-    for SimulationMetaData.Iteration = 1:MaxIterations
+    @inbounds for SimulationMetaData.Iteration = 1:MaxIterations
         # Be sure to update and retrieve the updated neighbour list at each time step
         update!(system,Position)
         list = neighborlist!(system)
@@ -193,14 +185,14 @@ end
 SimMetaData  = SimulationMetaData(
                                   SimulationName="MySimulation", 
                                   SaveLocation=raw"E:\SecondApproach\Results", 
-                                  MaxIterations=10001
+                                  MaxIterations=201
 )
 # Initialze the constants to use
 SimConstants = SimulationConstants{SimMetaData.FloatType, SimMetaData.IntType}()
 # Clean up folder before running (remember to make folder before hand!)
 foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
 # And here we run the function - enjoy!
-RunSimulation(
+@profview RunSimulation(
     FluidCSV = "./input/FluidPoints_Dp0.02.csv",
     BoundCSV = "./input/BoundaryPoints_Dp0.02.csv",
     SimulationMetaData = SimMetaData,

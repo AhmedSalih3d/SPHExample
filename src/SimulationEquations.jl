@@ -1,6 +1,6 @@
 module SimulationEquations
 
-export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ, Pressure, ∂Πᵢⱼ∂t!, ∂ρᵢ∂tDDT!, ∂vᵢ∂t!, DensityEpsi!, LimitDensityAtBoundary!
+export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ, Pressure, ∂Πᵢⱼ∂t!, ∂ρᵢ∂tDDT!, ∂vᵢ∂t!, DensityEpsi!, LimitDensityAtBoundary!, updatexᵢⱼ!
 
 using CellListMap
 using StaticArrays
@@ -237,6 +237,14 @@ function LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
         if (Density[i] < ρ₀) * Bool(BoundaryBool[i])
             Density[i] = ρ₀
         end
+    end
+end
+
+function updatexᵢⱼ!(xᵢⱼ, list, points)
+    if length(xᵢⱼ) != length(list) resize!(xᵢⱼ, length(list)) end
+    for (iter, L) in enumerate(list)
+        i = L[1]; j = L[2];
+        xᵢⱼ[iter] = points[i] - points[j]
     end
 end
 
