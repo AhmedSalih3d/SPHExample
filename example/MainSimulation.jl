@@ -138,7 +138,7 @@ function RunSimulation(;FluidCSV::String,
         ∑ⱼ∇ᵢWᵢⱼ!(KernelGradient, KernelGradientL, list, xᵢⱼ, SimulationConstants)
 
         # Then we calculate the density derivative at time step "n"
-        ∂ρᵢ∂tDDT!(dρdtI,list,Position,Density,Velocity,KernelGradientL,MotionLimiter, SimulationConstants)
+        ∂ρᵢ∂tDDT!(dρdtI,list,xᵢⱼ,Density,Velocity,KernelGradientL,MotionLimiter, SimulationConstants)
 
         # We calculate viscosity contribution and momentum equation at time step "n"
         LoopVectorization.vmap!(x -> Pressure(x, c₀, γ, ρ₀), Pressureᵢ, Density)
@@ -157,7 +157,7 @@ function RunSimulation(;FluidCSV::String,
         updatexᵢⱼ!(xᵢⱼ, list, Positionₙ⁺)
 
         # Density derivative at "n+½" - Note that we keep the kernel gradient values calculated at "n" for simplicity
-        ∂ρᵢ∂tDDT!(dρdtIₙ⁺,list,Positionₙ⁺,ρₙ⁺,vₙ⁺,KernelGradientL,MotionLimiter, SimulationConstants)
+        ∂ρᵢ∂tDDT!(dρdtIₙ⁺,list,xᵢⱼ,ρₙ⁺,vₙ⁺,KernelGradientL,MotionLimiter, SimulationConstants)
 
         # Viscous contribution and momentum equation at "n+½"
         LoopVectorization.vmap!(x -> Pressure(x, c₀, γ, ρ₀), Pressureᵢ, ρₙ⁺)

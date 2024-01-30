@@ -136,7 +136,7 @@ function ∂ρᵢ∂t(list,points,m,ρ,v,WgL)
 end
 
 # The density derivative function INCLUDING density diffusion
-function ∂ρᵢ∂tDDT!(dρdtI, list,points,ρ,v,WgL,MotionLimiter, SimulationConstants)
+function ∂ρᵢ∂tDDT!(dρdtI, list, xᵢⱼ,ρ,v,WgL,MotionLimiter, SimulationConstants)
     @unpack H,m₀,δᵩ,c₀,γ,g,ρ₀,η² = SimulationConstants
 
     Cb    = (c₀^2*ρ₀)/γ
@@ -145,7 +145,8 @@ function ∂ρᵢ∂tDDT!(dρdtI, list,points,ρ,v,WgL,MotionLimiter, Simulation
     for (iter,L) in enumerate(list)
         i = L[1]; j = L[2];
 
-        xⱼᵢ   = points[j] - points[i]
+        #xⱼᵢ   = points[j] - points[i]
+        xⱼᵢ   = -xᵢⱼ[iter]
         r²    = norm(xⱼᵢ)^2
         ρᵢ    = ρ[i]
         ρⱼ    = ρ[j]
