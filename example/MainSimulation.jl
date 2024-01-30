@@ -100,9 +100,12 @@ function RunSimulation(;FluidCSV::String,
 
     dρdtIₙ⁺         = zeros(eltype(Density), size(Density))
 
-    KernelGradientL = zeros(eltype(Position), size(Position))
-
+    
     xᵢⱼ             = zeros(eltype(Position), size(Position))
+    KernelGradientL = zeros(eltype(Position), size(Position))
+    drhopLp         = zeros(eltype(Density), size(Density))
+    drhopLn         = zeros(eltype(Density), size(Density))
+
     function updatexᵢⱼ!(xᵢⱼ, list, points)
         if length(xᵢⱼ) != length(list) resize!(xᵢⱼ, length(list)) end
         for (iter, L) in enumerate(list)
@@ -125,7 +128,7 @@ function RunSimulation(;FluidCSV::String,
         # Clean up arrays
         ResetArrays!(Kernel,KernelGradient,dρdtI,dρdtIₙ⁺, dvdtI, Acceleration)
         # Resize KernelGradientL based on length of neighborlist
-        ResizeBuffers!(KernelGradientL, xᵢⱼ; N = length(list))
+        ResizeBuffers!(KernelGradientL, xᵢⱼ, drhopLp, drhopLn; N = length(list))
 
         updatexᵢⱼ!(xᵢⱼ, list, Position)
 
@@ -138,7 +141,7 @@ function RunSimulation(;FluidCSV::String,
         ∑ⱼ∇ᵢWᵢⱼ!(KernelGradient, KernelGradientL, list, xᵢⱼ, SimulationConstants)
 
         # Then we calculate the density derivative at time step "n"
-        ∂ρᵢ∂tDDT!(dρdtI,list,xᵢⱼ,Density,Velocity,KernelGradientL,MotionLimiter, SimulationConstants)
+        ∂ρᵢ∂tDDT!(dρdtI,list,xᵢⱼ,Density,Velocity,KernelGradientL,MotionLimiter,drhopLp,drhopLn, SimulationConstants)
 
         # We calculate viscosity contribution and momentum equation at time step "n"
         LoopVectorization.vmap!(x -> Pressure(x, c₀, γ, ρ₀), Pressureᵢ, Density)
@@ -157,7 +160,7 @@ function RunSimulation(;FluidCSV::String,
         updatexᵢⱼ!(xᵢⱼ, list, Positionₙ⁺)
 
         # Density derivative at "n+½" - Note that we keep the kernel gradient values calculated at "n" for simplicity
-        ∂ρᵢ∂tDDT!(dρdtIₙ⁺,list,xᵢⱼ,ρₙ⁺,vₙ⁺,KernelGradientL,MotionLimiter, SimulationConstants)
+        ∂ρᵢ∂tDDT!(dρdtIₙ⁺,list,xᵢⱼ,ρₙ⁺,vₙ⁺,KernelGradientL,MotionLimiter, drhopLp, drhopLn, SimulationConstants)
 
         # Viscous contribution and momentum equation at "n+½"
         LoopVectorization.vmap!(x -> Pressure(x, c₀, γ, ρ₀), Pressureᵢ, ρₙ⁺)
@@ -197,7 +200,7 @@ SimConstants = SimulationConstants{SimMetaData.FloatType, SimMetaData.IntType}()
 # Clean up folder before running (remember to make folder before hand!)
 foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
 # And here we run the function - enjoy!
-@profview RunSimulation(
+RunSimulation(
     FluidCSV = "./input/FluidPoints_Dp0.02.csv",
     BoundCSV = "./input/BoundaryPoints_Dp0.02.csv",
     SimulationMetaData = SimMetaData,

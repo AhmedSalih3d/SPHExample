@@ -136,16 +136,32 @@ function ∂ρᵢ∂t(list,points,m,ρ,v,WgL)
 end
 
 # The density derivative function INCLUDING density diffusion
-function ∂ρᵢ∂tDDT!(dρdtI, list, xᵢⱼ,ρ,v,WgL,MotionLimiter, SimulationConstants)
+function ∂ρᵢ∂tDDT!(dρdtI, list, xᵢⱼ,ρ,v,WgL,MotionLimiter, drhopLp, drhopLn, SimulationConstants)
     @unpack H,m₀,δᵩ,c₀,γ,g,ρ₀,η² = SimulationConstants
 
+    # Generate the needed constants
     Cb    = (c₀^2*ρ₀)/γ
     γ⁻¹   = 1/γ
+
+    # In this code, use of multi-threading to calculate the heavy part for density diffusion to work
+    Base.Threads.@threads for iter = 1:length(list)
+        xⱼᵢ   = -xᵢⱼ[iter]
+
+        Pᵢⱼᴴ  = ρ₀ * (-g) * xⱼᵢ[2]
+        ρᵢⱼᴴ  = ρ₀ * ( ^( 1 + (Pᵢⱼᴴ/Cb), γ⁻¹) - 1)
+
+        Pⱼᵢᴴ  = -Pᵢⱼᴴ
+        ρⱼᵢᴴ  = ρ₀ * ( ^( 1 + (Pⱼᵢᴴ/Cb), γ⁻¹) - 1)
+
+        drhopLp[iter] = ρᵢⱼᴴ
+        drhopLn[iter] = ρⱼᵢᴴ
+    end
 
     for (iter,L) in enumerate(list)
         i = L[1]; j = L[2];
 
         #xⱼᵢ   = points[j] - points[i]
+        #xⱼᵢ   = -xᵢⱼ[iter]
         xⱼᵢ   = -xᵢⱼ[iter]
         r²    = norm(xⱼᵢ)^2
         ρᵢ    = ρ[i]
@@ -159,18 +175,18 @@ function ∂ρᵢ∂tDDT!(dρdtI, list, xᵢⱼ,ρ,v,WgL,MotionLimiter, Simulati
 
         # Follow the implementation here: https://arxiv.org/abs/2110.10076
         # Implement for particle i
-        Pᵢⱼᴴ = ρ₀ * (-g) * xⱼᵢ[2]
-        ρᵢⱼᴴ = ρ₀ * ( ^( 1 + (Pᵢⱼᴴ/Cb), γ⁻¹) - 1)
-
+        # Pᵢⱼᴴ = ρ₀ * (-g) * xⱼᵢ[2]
+        # ρᵢⱼᴴ = ρ₀ * ( ^( 1 + (Pᵢⱼᴴ/Cb), γ⁻¹) - 1)
+        ρᵢⱼᴴ = drhopLp[iter]
         Ψᵢⱼ  = 2 * (ρⱼᵢ - ρᵢⱼᴴ) * xⱼᵢ/(r²+η²)
         Dᵢ   = δᵩ * H * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ,∇ᵢWᵢⱼ)
 
         dρdtI[i] += FirstPartOfContinuity + Dᵢ * MotionLimiter[i]
 
         # Implement for particle j
-        Pⱼᵢᴴ = -Pᵢⱼᴴ
-        ρⱼᵢᴴ = ρ₀ * ( ^( 1 + (Pⱼᵢᴴ/Cb), γ⁻¹) - 1)
-
+        # Pⱼᵢᴴ = -Pᵢⱼᴴ
+        # ρⱼᵢᴴ = ρ₀ * ( ^( 1 + (Pⱼᵢᴴ/Cb), γ⁻¹) - 1)
+        ρⱼᵢᴴ = drhopLn[iter]
         Ψⱼᵢ  = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * (-xⱼᵢ)/(r²+η²)
         Dⱼ   = δᵩ * H * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ,-∇ᵢWᵢⱼ)
 
