@@ -180,7 +180,7 @@ function ∂ρᵢ∂tDDT!(dρdtI, list,points,ρ,v,WgL,MotionLimiter, Simulation
 end
 
 # The momentum equation without any dissipation - we add the dissipation using artificial viscosity (∂Πᵢⱼ∂t)
-function ∂vᵢ∂t!(dvdtI, list,ρ,WgL, SimulationConstants)
+function ∂vᵢ∂t!(dvdtI, list,ρ,WgL,press, SimulationConstants)
     @unpack m₀, c₀,γ,ρ₀ = SimulationConstants
 
     for (iter,L) in enumerate(list)
@@ -188,8 +188,8 @@ function ∂vᵢ∂t!(dvdtI, list,ρ,WgL, SimulationConstants)
 
         ρᵢ    = ρ[i]
         ρⱼ    = ρ[j]
-        Pᵢ    = Pressure(ρᵢ,c₀,γ,ρ₀)
-        Pⱼ    = Pressure(ρⱼ,c₀,γ,ρ₀)
+        Pᵢ    = press[i] #Pᵢ    = Pressure(ρᵢ,c₀,γ,ρ₀)
+        Pⱼ    = press[j] #Pⱼ    = Pressure(ρⱼ,c₀,γ,ρ₀)
         ∇ᵢWᵢⱼ = WgL[iter]
 
         Pfac  = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)

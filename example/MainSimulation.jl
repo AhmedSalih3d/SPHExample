@@ -8,6 +8,7 @@ using LinearAlgebra
 using TimerOutputs
 using Parameters
 import ProgressMeter: Progress, next!, @showprogress
+using LoopVectorization
 
 """
     RunSimulation(;SimulationMetaData::SimulationMetaData, SimulationConstants::SimulationConstants)
@@ -101,6 +102,8 @@ function RunSimulation(;FluidCSV::String,
 
     KernelGradientL = zeros(eltype(Position), size(Position))
 
+    Pressureᵢ       = zeros(eltype(Density), size(Density))
+
     # Initialize the system list
     system  = InPlaceNeighborList(x=Position, cutoff=2*H, parallel=true)
 
@@ -127,7 +130,8 @@ function RunSimulation(;FluidCSV::String,
         ∂ρᵢ∂tDDT!(dρdtI,list,Position,Density,Velocity,KernelGradientL,MotionLimiter, SimulationConstants)
 
         # We calculate viscosity contribution and momentum equation at time step "n"
-        ∂vᵢ∂t!(dvdtI, list, Density, KernelGradientL, SimulationConstants)
+        LoopVectorization.vmap!(x -> Pressure(x, c₀, γ, ρ₀), Pressureᵢ, Density)
+        ∂vᵢ∂t!(dvdtI, list, Density, KernelGradientL,Pressureᵢ, SimulationConstants)
         ∂Πᵢⱼ∂t!(dvdtI, list,Position,Density,Velocity,KernelGradientL, SimulationConstants)
         dvdtI   .+=    GravityContributionArray
 
@@ -144,7 +148,8 @@ function RunSimulation(;FluidCSV::String,
         ∂ρᵢ∂tDDT!(dρdtIₙ⁺,list,Positionₙ⁺,ρₙ⁺,vₙ⁺,KernelGradientL,MotionLimiter, SimulationConstants)
 
         # Viscous contribution and momentum equation at "n+½"
-        ∂vᵢ∂t!(Acceleration, list, ρₙ⁺, KernelGradientL, SimulationConstants) 
+        LoopVectorization.vmap!(x -> Pressure(x, c₀, γ, ρ₀), Pressureᵢ, ρₙ⁺)
+        ∂vᵢ∂t!(Acceleration, list, ρₙ⁺, KernelGradientL, Pressureᵢ, SimulationConstants) 
         ∂Πᵢⱼ∂t!(Acceleration,list,Positionₙ⁺,ρₙ⁺,vₙ⁺, KernelGradientL, SimulationConstants)
         Acceleration .+= GravityContributionArray
 
