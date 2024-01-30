@@ -28,7 +28,7 @@ module SPHExample
     using .SimulationConstantsConfiguration: SimulationConstants
     export SimulationConstants
 
-    using .SimulationDataArrays: SimulationDataResults, ResetArray
-    export SimulationDataResults, ResetArray
+    using .SimulationDataArrays: SimulationDataResults, ResetArrays!, ResizeBuffers!
+    export SimulationDataResults, ResetArrays!, ResizeBuffers!
 end
 

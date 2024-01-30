@@ -1,6 +1,6 @@
 module SimulationDataArrays
 
-export SimulationDataResults, ResetArray
+export SimulationDataResults, ResetArrays!, ResizeBuffers!
 
 using Parameters
 using StaticArrays
@@ -15,10 +15,17 @@ using StaticArrays
     Velocity          ::Vector{SVector{D,T}} = zeros(SVector{D,T},NumberOfParticles)
 end
 
-function ResetArray(arrays...)
+function ResetArrays!(arrays...)
     @inbounds for array in arrays
         fill!(array,zero(eltype(array)))
     end
+end
+
+function ResizeBuffers!(args...; N::Int = 0)
+    for a in args
+        if length(a) != N resize!(a, N) end
+    end
+    args
 end
 
 end

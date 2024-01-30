@@ -99,12 +99,6 @@ function RunSimulation(;FluidCSV::String,
 
     dρdtIₙ⁺         = zeros(eltype(Density), size(Density))
 
-    function ResizeBuffers!(args...; N::Int = 0)
-        for a in args
-            if length(a) != N resize!(a, N) end
-        end
-        args
-    end
     KernelGradientL = zeros(eltype(Position), size(Position))
 
     # Initialize the system list
@@ -117,7 +111,7 @@ function RunSimulation(;FluidCSV::String,
         list = neighborlist!(system)
 
         # Clean up arrays
-        ResetArray(Kernel,KernelGradient,dρdtI,dρdtIₙ⁺, dvdtI, Acceleration)
+        ResetArrays!(Kernel,KernelGradient,dρdtI,dρdtIₙ⁺, dvdtI, Acceleration)
         # Resize KernelGradientL based on length of neighborlist
         ResizeBuffers!(KernelGradientL; N = length(list))
 
