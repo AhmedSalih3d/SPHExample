@@ -112,29 +112,6 @@ function ∂Πᵢⱼ∂t!(viscI, list,xᵢⱼ,ρ,v,WgL,SimulationConstants)
     return nothing
 end
 
-# The density derivative function WITHOUT density diffusion
-function ∂ρᵢ∂t(list,points,m,ρ,v,WgL)
-    N    = length(points)
-
-    dρdtI = zeros(N)
-    dρdtL = zeros(length(list))
-    for (iter,L) in enumerate(list)
-        i = L[1]; j = L[2]
-
-        ρᵢ    = ρ[i]
-        ρⱼ    = ρ[j]
-        vᵢⱼ   = v[i] - v[j]
-        ∇ᵢWᵢⱼ = WgL[iter]
-
-        dρdtI[i] += ρᵢ*dot((m/ρⱼ)*vᵢⱼ,∇ᵢWᵢⱼ)
-        dρdtI[j] += ρⱼ*dot((m/ρᵢ)*-vᵢⱼ,-∇ᵢWᵢⱼ)
-
-        dρdtL[iter] = ρᵢ*dot((m/ρⱼ)*vᵢⱼ,∇ᵢWᵢⱼ)
-    end
-
-    return dρdtI,dρdtL
-end
-
 # The density derivative function INCLUDING density diffusion
 function ∂ρᵢ∂tDDT!(dρdtI, list, xᵢⱼ,ρ,v,WgL,MotionLimiter, drhopLp, drhopLn, SimulationConstants)
     @unpack H,m₀,δᵩ,c₀,γ,g,ρ₀,η² = SimulationConstants
