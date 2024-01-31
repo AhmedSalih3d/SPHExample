@@ -191,6 +191,8 @@ function RunSimulation(;FluidCSV::String,
 
     # Print the timings in the default way
     show(HourGlass,sortby=:name)
+    show(HourGlass)
+    disable_timer!(HourGlass)
 end
 
 # Initialize SimulationMetaData
@@ -211,7 +213,4 @@ begin
         SimulationMetaData = SimMetaData,
         SimulationConstants = SimConstants
     )
-
-    # To see timings sorted by %time
-    show(SimMetaData.HourGlass)
 end

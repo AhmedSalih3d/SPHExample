@@ -136,12 +136,12 @@ function ∂ρᵢ∂tDDT!(dρdtI, list, xᵢⱼ,ρ,v,WgL,MotionLimiter, drhopLp,
     end
 
     for (iter,L) in enumerate(list)
-        i = L[1]; j = L[2];
+        i = L[1]; j = L[2]; d = L[3]
 
         #xⱼᵢ   = points[j] - points[i]
         #xⱼᵢ   = -xᵢⱼ[iter]
         xⱼᵢ   = -xᵢⱼ[iter]
-        r²    = norm(xⱼᵢ)^2
+        r²    = d*d
         ρᵢ    = ρ[i]
         ρⱼ    = ρ[j]
         ρⱼᵢ   = ρⱼ - ρᵢ
