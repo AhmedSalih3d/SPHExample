@@ -194,19 +194,24 @@ function RunSimulation(;FluidCSV::String,
 end
 
 # Initialize SimulationMetaData
-SimMetaData  = SimulationMetaData(
-                                  SimulationName="MySimulation", 
-                                  SaveLocation=raw"E:\SecondApproach\Results", 
-                                  MaxIterations=201
-)
-# Initialze the constants to use
-SimConstants = SimulationConstants{SimMetaData.FloatType, SimMetaData.IntType}()
-# Clean up folder before running (remember to make folder before hand!)
-foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
-# And here we run the function - enjoy!
-@profview RunSimulation(
-    FluidCSV = "./input/FluidPoints_Dp0.02.csv",
-    BoundCSV = "./input/BoundaryPoints_Dp0.02.csv",
-    SimulationMetaData = SimMetaData,
-    SimulationConstants = SimConstants
-)
+begin
+    SimMetaData  = SimulationMetaData(
+                                    SimulationName="MySimulation", 
+                                    SaveLocation=raw"E:\SecondApproach\Results", 
+                                    MaxIterations=10001
+    )
+    # Initialze the constants to use
+    SimConstants = SimulationConstants{SimMetaData.FloatType, SimMetaData.IntType}()
+    # Clean up folder before running (remember to make folder before hand!)
+    foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
+    # And here we run the function - enjoy!
+    @profview RunSimulation(
+        FluidCSV = "./input/FluidPoints_Dp0.02.csv",
+        BoundCSV = "./input/BoundaryPoints_Dp0.02.csv",
+        SimulationMetaData = SimMetaData,
+        SimulationConstants = SimConstants
+    )
+
+    # To see timings sorted by %time
+    show(SimMetaData.HourGlass)
+end

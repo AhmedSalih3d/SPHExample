@@ -71,8 +71,8 @@ function ∑ⱼ∇ᵢWᵢⱼ!(KernelGradientI, KernelGradientL, list, xᵢⱼ,Si
 
         Wg = Optim∇ᵢWᵢⱼ(αD,q,xᵢⱼ[iter],H)
 
-        KernelGradientI[i] +=  Wg
-        KernelGradientI[j] += -Wg
+        KernelGradientI[i]   +=  Wg
+        KernelGradientI[j]   += -Wg
 
         KernelGradientL[iter] = Wg
     end
@@ -104,9 +104,10 @@ function ∂Πᵢⱼ∂t!(viscI, list,xᵢⱼ,ρ,v,WgL,SimulationConstants)
 
         μᵢⱼ = H*cond/(dot(xᵢⱼ⁰,xᵢⱼ⁰)+η²)
         Πᵢⱼ = cond_bool*(-α*c₀*μᵢⱼ)/ρᵢⱼ
+        visc_val = -Πᵢⱼ*m₀*WgL[iter]
         
-        viscI[i] += -Πᵢⱼ*m₀*WgL[iter]
-        viscI[j] +=  Πᵢⱼ*m₀*WgL[iter]
+        viscI[i] +=  visc_val
+        viscI[j] += -visc_val
     end
 
     return nothing
@@ -192,7 +193,7 @@ function ∂vᵢ∂t!(dvdtI, list,ρ,WgL,press, SimulationConstants)
         dvdt  = - m₀ * Pfac *  ∇ᵢWᵢⱼ
 
         dvdtI[i]    +=  dvdt
-        dvdtI[j]    +=  -dvdt
+        dvdtI[j]    += -dvdt
     end
 
     return nothing

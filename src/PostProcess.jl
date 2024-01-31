@@ -24,7 +24,7 @@ export create_vtp_file, OutputVTP
 
         filename  = SaveLocation*"/"*SimulationName*"_"*lpad(Iteration,4,"0")
         # Create a .vtp file with the particle positions and densities:
-        vtk_grid(filename, points, all_cells..., compress = true, append = false) do vtk
+        vtk_grid(filename, points, all_cells..., compress = false) do vtk
 
             # Add the particle densities as a point data array:
             vtk_point_data(vtk, SimulationData.Kernel, "Wi")
