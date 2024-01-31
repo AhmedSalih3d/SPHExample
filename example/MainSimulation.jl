@@ -9,6 +9,9 @@ using TimerOutputs
 using Parameters
 import ProgressMeter: Progress, next!, @showprogress
 using LoopVectorization
+using Formatting
+
+
 
 """
     RunSimulation(;SimulationMetaData::SimulationMetaData, SimulationConstants::SimulationConstants)
@@ -183,7 +186,7 @@ function RunSimulation(;FluidCSV::String,
         
         @timeit HourGlass "4| OutputVTP" OutputVTP(SimulationMetaData,SimulationConstants,FinalResults)
 
-        next!(SimulationMetaData.ProgressSpecification; showvalues = [(:(SimulationMetaData.Iteration),SimulationMetaData.Iteration), (:(SimulationMetaData.TotalTime),SimulationMetaData.TotalTime)])
+        next!(SimulationMetaData.ProgressSpecification; showvalues = [(:(SimulationMetaData.Iteration),format(FormatExpr("{1:d}"),SimulationMetaData.Iteration)), (:(SimulationMetaData.TotalTime),format(FormatExpr("{1:3.3f}"),SimulationMetaData.TotalTime))])
     end
 
     # Print the timings in the default way
