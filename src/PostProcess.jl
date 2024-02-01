@@ -14,7 +14,6 @@ export create_vtp_file, OutputVTP
         @unpack ρ₀,c₀,γ = InputData
 
         # Convert the particle positions and densities into the format required by the vtk_grid function:
-        points = reduce(hcat,SimulationData.Position)  # Concatenate the particle positions into a single matrix
         polys = empty(MeshCell{WriteVTK.PolyData.Polys,UnitRange{Int64}}[])
         verts = empty(MeshCell{WriteVTK.PolyData.Verts,UnitRange{Int64}}[])
 
@@ -24,7 +23,7 @@ export create_vtp_file, OutputVTP
 
         filename  = SaveLocation*"/"*SimulationName*"_"*lpad(Iteration,4,"0")
         # Create a .vtp file with the particle positions and densities:
-        vtk_grid(filename, points, all_cells..., compress = false) do vtk
+        vtk_grid(filename, SimulationData.Position, all_cells..., compress = false) do vtk
 
             # Add the particle densities as a point data array:
             vtk_point_data(vtk, SimulationData.Kernel, "Wi")
