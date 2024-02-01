@@ -7,8 +7,7 @@ using CellListMap
 using LinearAlgebra
 using TimerOutputs
 using Parameters
-import ProgressMeter: Progress, next!, @showprogress
-using LoopVectorization
+import ProgressMeter: Progress, next!
 using Formatting
 
 
@@ -143,7 +142,7 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "2| DDT" ∂ρᵢ∂tDDT!(dρdtI,list,xᵢⱼ,Density,Velocity,KernelGradientL,MotionLimiter,drhopLp,drhopLn, SimulationConstants)
 
         # We calculate viscosity contribution and momentum equation at time step "n"
-        @timeit HourGlass "2| Pressure" LoopVectorization.vmap!(x -> Pressure(x, c₀, γ, ρ₀), Pressureᵢ, Density)
+        @timeit HourGlass "2| Pressure" map!(x -> Pressure(x, c₀, γ, ρ₀), Pressureᵢ, Density)
         @timeit HourGlass "2| ∂vᵢ∂t!"   ∂vᵢ∂t!(dvdtI, list, Density, KernelGradientL,Pressureᵢ, SimulationConstants)
         @timeit HourGlass "2| ∂Πᵢⱼ∂t!"  ∂Πᵢⱼ∂t!(dvdtI, list, xᵢⱼ ,Density,Velocity,KernelGradientL, SimulationConstants)
         @timeit HourGlass "2| Gravity"  dvdtI   .+=    GravityContributionArray
@@ -162,7 +161,7 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "2| DDT2" ∂ρᵢ∂tDDT!(dρdtIₙ⁺,list,xᵢⱼ,ρₙ⁺,vₙ⁺,KernelGradientL,MotionLimiter, drhopLp, drhopLn, SimulationConstants)
 
         # Viscous contribution and momentum equation at "n+½"
-        @timeit HourGlass "2| Pressure2" LoopVectorization.vmap!(x -> Pressure(x, c₀, γ, ρ₀), Pressureᵢ, ρₙ⁺)
+        @timeit HourGlass "2| Pressure2" map!(x -> Pressure(x, c₀, γ, ρ₀), Pressureᵢ, ρₙ⁺)
         @timeit HourGlass "2| ∂vᵢ∂t!2" ∂vᵢ∂t!(Acceleration, list, ρₙ⁺, KernelGradientL, Pressureᵢ, SimulationConstants) 
         @timeit HourGlass "2| ∂Πᵢⱼ∂t!2" ∂Πᵢⱼ∂t!(Acceleration,list, xᵢⱼ ,ρₙ⁺,vₙ⁺, KernelGradientL, SimulationConstants)
         @timeit HourGlass "2| Acceleration2" Acceleration .+= GravityContributionArray
