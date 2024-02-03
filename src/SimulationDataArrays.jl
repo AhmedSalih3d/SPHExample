@@ -15,7 +15,7 @@ using StaticArrays
     Velocity          ::Vector{SVector{D,T}} = zeros(SVector{D,T},NumberOfParticles)
 end
 
-function ResetArrays!(arrays...)
+function ResetArrays!(arrays::Vararg{Vector{T}}) where T
     @inbounds for array in arrays
         fill!(array,zero(eltype(array)))
     end

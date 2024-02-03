@@ -1,3 +1,5 @@
+using Revise
+
 using SPHExample
 using CSV
 using DataFrames
@@ -122,8 +124,10 @@ function RunSimulation(;FluidCSV::String,
         end
         
         @timeit HourGlass "0 | Reset arrays to zero and resize L arrays" begin
-            # Clean up arrays
-            ResetArrays!(Kernel,KernelGradient,dρdtI,dρdtIₙ⁺, dvdtI, Acceleration)
+            # Clean up arrays, Vector{T} and Vector{SVector{3,T}} must be cleansed individually,
+            # to avoid run time dispatch errors
+            ResetArrays!(Kernel, dρdtI,dρdtIₙ⁺)
+            ResetArrays!(KernelGradient, dvdtI, Acceleration)
             # Resize KernelGradientL based on length of neighborlist
             ResizeBuffers!(KernelGradientL, xᵢⱼ, drhopLp, drhopLn; N = length(list))
         end
@@ -199,7 +203,7 @@ begin
     SimMetaData  = SimulationMetaData(
                                     SimulationName="MySimulation", 
                                     SaveLocation=raw"E:\SecondApproach\Results", 
-                                    MaxIterations=10001
+                                    MaxIterations=1
     )
     # Initialze the constants to use
     SimConstants = SimulationConstants{SimMetaData.FloatType, SimMetaData.IntType}()
