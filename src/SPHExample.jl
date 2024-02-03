@@ -10,25 +10,25 @@ module SPHExample
     include("SimulationDataArrays.jl")
     
     # Re-export desired functions from each submodule
-    using .PreProcess: LoadParticlesFromCSV
+    using .PreProcess
     export LoadParticlesFromCSV
 
-    using .PostProcess: create_vtp_file, OutputVTP
+    using .PostProcess
     export create_vtp_file, OutputVTP
 
     using .TimeStepping: Δt
     export Δt
 
-    using .SimulationEquations: Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ!, Pressure, ∂Πᵢⱼ∂t!, ∂ρᵢ∂tDDT!, ∂vᵢ∂t!, DensityEpsi!, LimitDensityAtBoundary!, updatexᵢⱼ!
+    using .SimulationEquations
     export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ!, Pressure, ∂Πᵢⱼ∂t!, ∂ρᵢ∂tDDT!, ∂vᵢ∂t!, DensityEpsi!, LimitDensityAtBoundary!, updatexᵢⱼ!
 
-    using .SimulationMetaDataConfiguration: SimulationMetaData
+    using .SimulationMetaDataConfiguration
     export SimulationMetaData
 
-    using .SimulationConstantsConfiguration: SimulationConstants
+    using .SimulationConstantsConfiguration
     export SimulationConstants
 
-    using .SimulationDataArrays: SimulationDataResults, ResetArrays!, ResizeBuffers!
+    using .SimulationDataArrays
     export SimulationDataResults, ResetArrays!, ResizeBuffers!
 end
 
