@@ -182,7 +182,7 @@ function RunSimulation(;FluidCSV::String,
 
         # Automatic time stepping control
         @timeit HourGlass "3| Calculating time step" begin
-            dt = Δt(FinalResults,SimulationConstants)
+            dt =  Δt(FinalResults,SimulationConstants)
             SimulationMetaData.CurrentTimeStep = dt
             SimulationMetaData.TotalTime      += dt
         end
@@ -203,7 +203,7 @@ begin
     SimMetaData  = SimulationMetaData(
                                     SimulationName="MySimulation", 
                                     SaveLocation=raw"E:\SecondApproach\Results", 
-                                    MaxIterations=1
+                                    MaxIterations=10001
     )
     # Initialze the constants to use
     SimConstants = SimulationConstants{SimMetaData.FloatType, SimMetaData.IntType}()

@@ -21,9 +21,16 @@ module TimeStepping
         
         visc = max_visc(Velocity,Position,H,η²)
         
-        dt1   = minimum(Acceleration) do (Acceleration_)
-            sqrt(H / norm(Acceleration_))
+        # dt1   = minimum(Acceleration) do (Acceleration_)
+        #     sqrt(H / norm(Acceleration_))
+        # end
+
+        dt1 = Inf
+        for Acceleration_ in Acceleration
+            dt1_candidate = sqrt(H / norm(Acceleration_))
+            dt1 = min(dt1, dt1_candidate)
         end
+
 
         dt2   = H / (c₀+visc)
 
