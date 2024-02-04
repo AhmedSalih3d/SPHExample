@@ -15,11 +15,13 @@ using StaticArrays
     Velocity          ::Vector{SVector{D,T}} = zeros(SVector{D,T},NumberOfParticles)
 end
 
-function ResetArrays!(arrays::Vararg{Vector{T}}) where T
-    @inbounds for array in arrays
-        fill!(array,zero(eltype(array)))
-    end
-end
+# function ResetArrays!(arrays::Vararg{Vector{T}}) where T
+#     @inbounds for array in arrays
+#         fill!(array,zero(eltype(array)))
+#     end
+# end
+
+ResetArrays!(arrays...) = foreach(a -> fill!(a, zero(eltype(a))), arrays)
 
 function ResizeBuffers!(args...; N::Int = 0)
     for a in args

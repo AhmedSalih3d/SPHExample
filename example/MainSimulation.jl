@@ -126,8 +126,7 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "0 | Reset arrays to zero and resize L arrays" begin
             # Clean up arrays, Vector{T} and Vector{SVector{3,T}} must be cleansed individually,
             # to avoid run time dispatch errors
-            ResetArrays!(Kernel, dρdtI,dρdtIₙ⁺)
-            ResetArrays!(KernelGradient, dvdtI, Acceleration)
+            ResetArrays!(Kernel, dρdtI,dρdtIₙ⁺,KernelGradient,dvdtI, Acceleration)
             # Resize KernelGradientL based on length of neighborlist
             ResizeBuffers!(KernelGradientL, xᵢⱼ, drhopLp, drhopLn; N = length(list))
         end
