@@ -120,6 +120,8 @@ function RunSimulation(;FluidCSV::String,
     system  = InPlaceNeighborList(x=Position, cutoff=2*H, parallel=true)
 
     # Define Progress spec
+    show_vals(x) = [(:(Iteration),format(FormatExpr("{1:d}"), x.Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"),x.TotalTime))]
+
     @inbounds for SimulationMetaData.Iteration = 1:MaxIterations
         # Be sure to update and retrieve the updated neighbour list at each time step
         @timeit HourGlass "0 | Update Neighbour List" begin
@@ -192,7 +194,7 @@ function RunSimulation(;FluidCSV::String,
         
         @timeit HourGlass "4| OutputVTP" OutputVTP(SimulationMetaData,SimulationConstants,FinalResults)
 
-        next!(SimulationMetaData.ProgressSpecification; showvalues = [(:(SimulationMetaData.Iteration),format(FormatExpr("{1:d}"),SimulationMetaData.Iteration)), (:(SimulationMetaData.TotalTime),format(FormatExpr("{1:3.3f}"),SimulationMetaData.TotalTime))])
+        next!(SimulationMetaData.ProgressSpecification; showvalues = show_vals(SimulationMetaData))
     end
 
     # Print the timings in the default way
