@@ -5,7 +5,7 @@ export SimulationDataResults, ResetArrays!, ResizeBuffers!
 using Parameters
 using StaticArrays
 
-@with_kw mutable struct SimulationDataResults{D,T}
+@with_kw struct SimulationDataResults{D,T}
     NumberOfParticles ::Int                                 
     Kernel            ::Vector{T}            = zeros(T,NumberOfParticles)
     KernelGradient    ::Vector{SVector{D,T}} = zeros(SVector{D,T},NumberOfParticles)
