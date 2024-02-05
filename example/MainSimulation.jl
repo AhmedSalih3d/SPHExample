@@ -95,22 +95,26 @@ function RunSimulation(;FluidCSV::String,
     create_vtp_file(SimulationMetaData,SimulationConstants,FinalResults)
 
     # Preallocate simulation arrays
-    dρdtI           = zeros(eltype(Density), size(Density))
-    dvdtI           = zeros(eltype(Velocity), size(Velocity))
+    SizeOfParticlesI1 = size(Density)
+    SizeOfParticlesI3 = size(Position)
+    TypeOfParticleI3  = eltype(Position)
 
-    ρₙ⁺             = zeros(eltype(Density), size(Density))
-    vₙ⁺             = zeros(eltype(Position), size(Position))
-    Positionₙ⁺      = zeros(eltype(Position), size(Position))
-
-    dρdtIₙ⁺         = zeros(eltype(Density), size(Density))
-
-    
-    xᵢⱼ             = zeros(eltype(Position), size(Position))
-    KernelGradientL = zeros(eltype(Position), size(Position))
-    drhopLp         = zeros(eltype(Density), size(Density))
-    drhopLn         = zeros(eltype(Density), size(Density))
-
-    Pressureᵢ       = zeros(eltype(Density), size(Density))
+    dρdtI             = zeros(FloatType,         SizeOfParticlesI1)
+    dvdtI             = zeros(TypeOfParticleI3,  SizeOfParticlesI3)
+  
+    ρₙ⁺               = zeros(FloatType,         SizeOfParticlesI1)
+    vₙ⁺               = zeros(TypeOfParticleI3,  SizeOfParticlesI3)
+    Positionₙ⁺        = zeros(TypeOfParticleI3,  SizeOfParticlesI3)
+  
+    dρdtIₙ⁺           = zeros(FloatType,         SizeOfParticlesI1)
+  
+      
+    xᵢⱼ               = zeros(TypeOfParticleI3,  SizeOfParticlesI3)
+    KernelGradientL   = zeros(TypeOfParticleI3,  SizeOfParticlesI3)
+    drhopLp           = zeros(FloatType,         SizeOfParticlesI1)
+    drhopLn           = zeros(FloatType,         SizeOfParticlesI1)
+         
+    Pressureᵢ         = zeros(FloatType,         SizeOfParticlesI1)
 
     # Initialize the system list
     system  = InPlaceNeighborList(x=Position, cutoff=2*H, parallel=true)

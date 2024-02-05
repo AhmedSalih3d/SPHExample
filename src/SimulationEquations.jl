@@ -90,19 +90,20 @@ function ∂Πᵢⱼ∂t!(viscI, list,xᵢⱼ,ρ,v,WgL,SimulationConstants)
     @unpack H, α, c₀, m₀, η² = SimulationConstants
 
     for (iter,L) in enumerate(list)
-        i = L[1]; j = L[2];
+        i = L[1]; j = L[2]; d = L[3]
         
         ρᵢ    = ρ[i]
         ρⱼ    = ρ[j]
         vᵢⱼ   = v[i] - v[j]
         xᵢⱼ⁰  = xᵢⱼ[iter] #xᵢⱼ   = points[i] - points[j]
+        d²    = d*d
         ρᵢⱼ   = (ρᵢ+ρⱼ)*0.5
 
         cond      = dot(vᵢⱼ,xᵢⱼ⁰)
 
         cond_bool = cond < 0
 
-        μᵢⱼ = H*cond/(dot(xᵢⱼ⁰,xᵢⱼ⁰)+η²)
+        μᵢⱼ = H*cond/(d²+η²)
         Πᵢⱼ = cond_bool*(-α*c₀*μᵢⱼ)/ρᵢⱼ
         visc_val = -Πᵢⱼ*m₀*WgL[iter]
         
