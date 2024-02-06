@@ -65,7 +65,7 @@ function RunSimulation(;FluidCSV::String,
     @unpack HourGlass, SaveLocation, SimulationName, MaxIterations, OutputIteration, SilentOutput, ThreadsCPU, FloatType, IntType = SimulationMetaData;
 
     # Unpack simulation constants
-    @unpack ρ₀, dx, H, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimulationConstants
+    @unpack ρ₀, dx, h, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimulationConstants
 
     # Load in the fluid and boundary particles. Return these points and both data frames
     points,DF_FLUID,DF_BOUND    = LoadParticlesFromCSV(FluidCSV,BoundCSV)
@@ -117,7 +117,7 @@ function RunSimulation(;FluidCSV::String,
     Pressureᵢ         = zeros(FloatType,         SizeOfParticlesI1)
 
     # Initialize the system list
-    system  = InPlaceNeighborList(x=Position, cutoff=2*H, parallel=true)
+    system  = InPlaceNeighborList(x=Position, cutoff=2*h, parallel=true)
 
     # Define Progress spec
     show_vals(x) = [(:(Iteration),format(FormatExpr("{1:d}"), x.Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"),x.TotalTime))]
@@ -211,7 +211,7 @@ begin
                                     MaxIterations=10001
     )
     # Initialze the constants to use
-    SimConstants = SimulationConstants{SimMetaData.FloatType, SimMetaData.IntType}()
+    SimConstants = SimulationConstants{SimMetaData.FloatType}()
     # Clean up folder before running (remember to make folder before hand!)
     foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
     # And here we run the function - enjoy!

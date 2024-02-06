@@ -16,11 +16,11 @@ end
 # Please notice how when using CellListMap since it is based on a "list of interactions", for each 
 # interaction we must add the contribution to both the i'th and j'th particle!
 function ∑ⱼWᵢⱼ!(Kernel, list,SimulationConstants)
-    @unpack αD,H = SimulationConstants
+    @unpack αD, h⁻¹ = SimulationConstants
     for (iter,L) in enumerate(list)
         i = L[1]; j = L[2]; d = L[3]
 
-        q = d/H
+        q = d * h⁻¹
 
         W = Wᵢⱼ(αD,q)
 
@@ -59,17 +59,17 @@ end
 # Function to calculate kernel gradient value in both "particle i" format and "list of interactions" format
 # Please notice how when using CellListMap since it is based on a "list of interactions", for each 
 # interaction we must add the contribution to both the i'th and j'th particle!
-function ∑ⱼ∇ᵢWᵢⱼ!(KernelGradientI, KernelGradientL, list, xᵢⱼ,SimulationConstants)
-    @unpack αD,H = SimulationConstants
+function ∑ⱼ∇ᵢWᵢⱼ!(KernelGradientI, KernelGradientL, list, xᵢⱼ, SimulationConstants)
+    @unpack αD, h, h⁻¹ = SimulationConstants
  
     for (iter,L) in enumerate(list)
         i = L[1]; j = L[2]; d = L[3]
 
         #xᵢⱼ = points[i] - points[j]
 
-        q = d/H
+        q = d * h⁻¹
 
-        Wg = Optim∇ᵢWᵢⱼ(αD,q,xᵢⱼ[iter],H)
+        Wg = Optim∇ᵢWᵢⱼ(αD,q,xᵢⱼ[iter],h)
 
         KernelGradientI[i]   +=  Wg
         KernelGradientI[j]   += -Wg
@@ -87,7 +87,7 @@ end
 
 # The artificial viscosity term
 function ∂Πᵢⱼ∂t!(viscI, list,xᵢⱼ,ρ,v,WgL,SimulationConstants)
-    @unpack H, α, c₀, m₀, η² = SimulationConstants
+    @unpack h, α, c₀, m₀, η² = SimulationConstants
 
     for (iter,L) in enumerate(list)
         i = L[1]; j = L[2]; d = L[3]
@@ -103,7 +103,7 @@ function ∂Πᵢⱼ∂t!(viscI, list,xᵢⱼ,ρ,v,WgL,SimulationConstants)
 
         cond_bool = cond < 0
 
-        μᵢⱼ = H*cond/(d²+η²)
+        μᵢⱼ = h*cond/(d²+η²)
         Πᵢⱼ = cond_bool*(-α*c₀*μᵢⱼ)/ρᵢⱼ
         visc_val = -Πᵢⱼ*m₀*WgL[iter]
         
@@ -116,11 +116,10 @@ end
 
 # The density derivative function INCLUDING density diffusion
 function ∂ρᵢ∂tDDT!(dρdtI, list, xᵢⱼ,ρ,v,WgL,MotionLimiter, drhopLp, drhopLn, SimulationConstants)
-    @unpack H,m₀,δᵩ,c₀,γ,g,ρ₀,η² = SimulationConstants
+    @unpack h,m₀,δᵩ,c₀,γ,g,ρ₀,η²,γ⁻¹ = SimulationConstants
 
     # Generate the needed constants
     Cb    = (c₀^2*ρ₀)/γ
-    γ⁻¹   = 1/γ
 
     # In this code, use of multi-threading to calculate the heavy part for density diffusion to work
     Base.Threads.@threads for iter = 1:length(list)
@@ -157,7 +156,7 @@ function ∂ρᵢ∂tDDT!(dρdtI, list, xᵢⱼ,ρ,v,WgL,MotionLimiter, drhopLp,
         # ρᵢⱼᴴ = ρ₀ * ( ^( 1 + (Pᵢⱼᴴ/Cb), γ⁻¹) - 1)
         ρᵢⱼᴴ = drhopLp[iter]
         Ψᵢⱼ  = 2 * (ρⱼᵢ - ρᵢⱼᴴ) * xⱼᵢ/(r²+η²)
-        Dᵢ   = δᵩ * H * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ,∇ᵢWᵢⱼ)
+        Dᵢ   = δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ,∇ᵢWᵢⱼ)
 
         dρdtI[i] += FirstPartOfContinuity + Dᵢ * MotionLimiter[i]
 
@@ -166,7 +165,7 @@ function ∂ρᵢ∂tDDT!(dρdtI, list, xᵢⱼ,ρ,v,WgL,MotionLimiter, drhopLp,
         # ρⱼᵢᴴ = ρ₀ * ( ^( 1 + (Pⱼᵢᴴ/Cb), γ⁻¹) - 1)
         ρⱼᵢᴴ = drhopLn[iter]
         Ψⱼᵢ  = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * (-xⱼᵢ)/(r²+η²)
-        Dⱼ   = δᵩ * H * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ,-∇ᵢWᵢⱼ)
+        Dⱼ   = δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ,-∇ᵢWᵢⱼ)
 
         dρdtI[j] += FirstPartOfContinuity + Dⱼ * MotionLimiter[i]
     end
