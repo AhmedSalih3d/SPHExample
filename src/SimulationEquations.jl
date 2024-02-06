@@ -140,7 +140,6 @@ function ∂ρᵢ∂tDDT!(dρdtI, list, xᵢⱼ,ρ,v,WgL,MotionLimiter, drhopLp,
         i = L[1]; j = L[2]; d = L[3]
 
         #xⱼᵢ   = points[j] - points[i]
-        #xⱼᵢ   = -xᵢⱼ[iter]
         xⱼᵢ   = -xᵢⱼ[iter]
         r²    = d*d
         ρᵢ    = ρ[i]
