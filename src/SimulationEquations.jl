@@ -9,7 +9,7 @@ using Parameters
 
 # Function to calculate Kernel Value
 function Wᵢⱼ(αD,q)
-    return αD*(1-q*0.5)^4*(2*q + 1)
+    return αD*(1-q/2)^4*(2*q + 1)
 end
 
 # Function to calculate kernel value in both "particle i" format and "list of interactions" format
@@ -25,7 +25,7 @@ function ∑ⱼWᵢⱼ!(Kernel, list,SimulationConstants)
         W = Wᵢⱼ(αD,q)
 
         Kernel[i] += W
-        Kernel[j] += W
+        #Kernel[j] += W
     end
 
     return nothing
