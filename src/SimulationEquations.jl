@@ -25,7 +25,7 @@ function ∑ⱼWᵢⱼ!(Kernel, list,SimulationConstants)
         W = Wᵢⱼ(αD,q)
 
         Kernel[i] += W
-        #Kernel[j] += W
+        Kernel[j] += W
     end
 
     return nothing
