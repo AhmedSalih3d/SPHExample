@@ -116,44 +116,44 @@ function RunSimulation(;FluidCSV::String,
          
     Pressureᵢ         = zeros(FloatType,         SizeOfParticlesI1)
 
-    # Initialize the system list
+    # Initialize the system system.nb.list
     system  = InPlaceNeighborList(x=Position, cutoff=2*h, parallel=true)
 
     # Define Progress spec
     show_vals(x) = [(:(Iteration),format(FormatExpr("{1:d}"), x.Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"),x.TotalTime))]
 
     @inbounds for SimulationMetaData.Iteration = 1:MaxIterations
-        # Be sure to update and retrieve the updated neighbour list at each time step
-        @timeit HourGlass "0 | Update Neighbour List" begin
+        # Be sure to update and retrieve the updated neighbour system.nb.list at each time step
+        @timeit HourGlass "0 | Update Neighbour system.nb.list" begin
             update!(system,Position)
-            list = neighborlist!(system)
+            neighborlist!(system)
         end
         
         @timeit HourGlass "0 | Reset arrays to zero and resize L arrays" begin
             # Clean up arrays, Vector{T} and Vector{SVector{3,T}} must be cleansed individually,
             # to avoid run time dispatch errors
             ResetArrays!(Kernel, dρdtI,dρdtIₙ⁺,KernelGradient,dvdtI, Acceleration)
-            # Resize KernelGradientL based on length of neighborlist
-            ResizeBuffers!(KernelGradientL, xᵢⱼ, drhopLp, drhopLn; N = length(list))
+            # Resize KernelGradientL based on length of neighborsystem.nb.list
+            ResizeBuffers!(KernelGradientL, xᵢⱼ, drhopLp, drhopLn; N = system.nb.n)
         end
 
         @timeit HourGlass "1 | Update xᵢⱼ, kernel values and kernel gradient" begin
-            updatexᵢⱼ!(xᵢⱼ, list, Position)
+            updatexᵢⱼ!(xᵢⱼ, system.nb.list, Position)
             # Here we output the kernel value for each particle
-            ∑ⱼWᵢⱼ!(Kernel, list, SimulationConstants)
+            ∑ⱼWᵢⱼ!(Kernel, system.nb.list, SimulationConstants)
             # Here we output the kernel gradient value for each particle and also the kernel gradient value
-            # based on the pair-to-pair interaction list, for use in later calculations.
+            # based on the pair-to-pair interaction system.nb.list, for use in later calculations.
             # Other functions follow a similar format, with the "I" and "L" ending
-            ∑ⱼ∇ᵢWᵢⱼ!(KernelGradient, KernelGradientL, list, xᵢⱼ, SimulationConstants)
+            ∑ⱼ∇ᵢWᵢⱼ!(KernelGradient, KernelGradientL, system.nb.list, xᵢⱼ, SimulationConstants)
         end
 
         # Then we calculate the density derivative at time step "n"
-        @timeit HourGlass "2| DDT" ∂ρᵢ∂tDDT!(dρdtI,list,xᵢⱼ,Density,Velocity,KernelGradientL,MotionLimiter,drhopLp,drhopLn, SimulationConstants)
+        @timeit HourGlass "2| DDT" ∂ρᵢ∂tDDT!(dρdtI,system.nb.list,xᵢⱼ,Density,Velocity,KernelGradientL,MotionLimiter,drhopLp,drhopLn, SimulationConstants)
 
         # We calculate viscosity contribution and momentum equation at time step "n"
         @timeit HourGlass "2| Pressure" map!(x -> Pressure(x, c₀, γ, ρ₀), Pressureᵢ, Density)
-        @timeit HourGlass "2| ∂vᵢ∂t!"   ∂vᵢ∂t!(dvdtI, list, Density, KernelGradientL,Pressureᵢ, SimulationConstants)
-        @timeit HourGlass "2| ∂Πᵢⱼ∂t!"  ∂Πᵢⱼ∂t!(dvdtI, list, xᵢⱼ ,Density,Velocity,KernelGradientL, SimulationConstants)
+        @timeit HourGlass "2| ∂vᵢ∂t!"   ∂vᵢ∂t!(dvdtI, system.nb.list, Density, KernelGradientL,Pressureᵢ, SimulationConstants)
+        @timeit HourGlass "2| ∂Πᵢⱼ∂t!"  ∂Πᵢⱼ∂t!(dvdtI, system.nb.list, xᵢⱼ ,Density,Velocity,KernelGradientL, SimulationConstants)
         @timeit HourGlass "2| Gravity"  dvdtI   .+=    GravityContributionArray
 
         # Based on the density derivative at "n", we calculate "n+½"
@@ -164,15 +164,15 @@ function RunSimulation(;FluidCSV::String,
         # We now calculate velocity and position at "n+½"
         @timeit HourGlass "2| vₙ⁺" @. vₙ⁺          = Velocity   + dvdtI * (dt/2) * MotionLimiter
         @timeit HourGlass "2| Positionₙ⁺" @. Positionₙ⁺   = Position   + vₙ⁺ * (dt/2)   * MotionLimiter
-        @timeit HourGlass "2| updatexᵢⱼ!" updatexᵢⱼ!(xᵢⱼ, list, Positionₙ⁺)
+        @timeit HourGlass "2| updatexᵢⱼ!" updatexᵢⱼ!(xᵢⱼ, system.nb.list, Positionₙ⁺)
 
         # Density derivative at "n+½" - Note that we keep the kernel gradient values calculated at "n" for simplicity
-        @timeit HourGlass "2| DDT2" ∂ρᵢ∂tDDT!(dρdtIₙ⁺,list,xᵢⱼ,ρₙ⁺,vₙ⁺,KernelGradientL,MotionLimiter, drhopLp, drhopLn, SimulationConstants)
+        @timeit HourGlass "2| DDT2" ∂ρᵢ∂tDDT!(dρdtIₙ⁺,system.nb.list,xᵢⱼ,ρₙ⁺,vₙ⁺,KernelGradientL,MotionLimiter, drhopLp, drhopLn, SimulationConstants)
 
         # Viscous contribution and momentum equation at "n+½"
         @timeit HourGlass "2| Pressure2" map!(x -> Pressure(x, c₀, γ, ρ₀), Pressureᵢ, ρₙ⁺)
-        @timeit HourGlass "2| ∂vᵢ∂t!2" ∂vᵢ∂t!(Acceleration, list, ρₙ⁺, KernelGradientL, Pressureᵢ, SimulationConstants) 
-        @timeit HourGlass "2| ∂Πᵢⱼ∂t!2" ∂Πᵢⱼ∂t!(Acceleration,list, xᵢⱼ ,ρₙ⁺,vₙ⁺, KernelGradientL, SimulationConstants)
+        @timeit HourGlass "2| ∂vᵢ∂t!2" ∂vᵢ∂t!(Acceleration, system.nb.list, ρₙ⁺, KernelGradientL, Pressureᵢ, SimulationConstants) 
+        @timeit HourGlass "2| ∂Πᵢⱼ∂t!2" ∂Πᵢⱼ∂t!(Acceleration,system.nb.list, xᵢⱼ ,ρₙ⁺,vₙ⁺, KernelGradientL, SimulationConstants)
         @timeit HourGlass "2| Acceleration2" Acceleration .+= GravityContributionArray
 
         # Factor for properly time stepping the density to "n+1" - We use the symplectic scheme as done in DualSPHysics
