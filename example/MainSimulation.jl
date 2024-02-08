@@ -121,7 +121,7 @@ function RunSimulation(;FluidCSV::String,
     Pressureᵢ         = zeros(FloatType,         SizeOfParticlesI1)
 
     # Initialize the system system.nb.list
-    system  = InPlaceNeighborList(x=Position, cutoff=2*h)
+    system  = InPlaceNeighborList(x=Position, cutoff=2*h, parallel=true)
 
     # Define Progress spec
     show_vals(x) = [(:(Iteration),format(FormatExpr("{1:d}"), x.Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"),x.TotalTime))]

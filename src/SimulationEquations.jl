@@ -115,7 +115,28 @@ function ∂Πᵢⱼ∂t!(viscI, list,xᵢⱼ,ρ,v,WgL,SimulationConstants)
     return nothing
 end
 
-faux(ρ₀, P, invCb, γ⁻¹) = ρ₀ * ( ^( 1 + (P * invCb), γ⁻¹) - 1)
+#https://discourse.julialang.org/t/can-this-be-written-even-faster-cpu/109924/24?u=ahmed_salih
+function fancy7th(x::Float64)
+    # todo tune the magic constant
+    # initial guess based on fast inverse sqrt trick but adjusted to compute x^(1/8)
+    #t = copysign(reinterpret(Float64, 0x37f306fe0a31b715 + reinterpret(UInt64,abs(x))>>3), x)
+    # @fastmath for _ in 1:3
+    #     # newton's method for t^3 - x/t^4 = 0
+    #     t2 = t*t
+    #     t3 = t2*t
+    #     t4 = t2*t2
+    #     xot4 = x/t4
+    #     t = t - t*(t3 - xot4)/(4*t3 + 3*xot4)
+    # end
+    #t
+    x
+end
+
+#faux(ρ₀, P, invCb, γ⁻¹) = ρ₀ * ( ^( 1 + (P * invCb), γ⁻¹) - 1)
+faux(ρ₀, P, invCb, γ⁻¹) = ρ₀ * (expm1(γ⁻¹ * log1p(P * invCb)))
+#faux(ρ₀, P, invCb) = ρ₀ * ( fancy7th( 1 + (P * invCb)) - 1)
+
+
 
 # The density derivative function INCLUDING density diffusion
 function ∂ρᵢ∂tDDT!(dρdtI, list, xᵢⱼ,xᵢⱼʸ,ρ,v,WgL,MotionLimiter, drhopLp, drhopLn, SimulationConstants)
