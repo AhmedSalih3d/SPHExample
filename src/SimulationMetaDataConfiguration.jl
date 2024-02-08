@@ -39,19 +39,17 @@ metadata = SimulationMetaData(
 )
 ```
 """
-@with_kw mutable struct SimulationMetaData
+@with_kw mutable struct SimulationMetaData{FloatType <: AbstractFloat}
     SimulationName::String
     SaveLocation::String
     HourGlass::TimerOutput           = TimerOutput()
     Iteration::Int                   = 0
     MaxIterations::Int               = 1000
     OutputIteration::Int             = 50
-    CurrentTimeStep::AbstractFloat   = 0
-    TotalTime::AbstractFloat         = 0
+    CurrentTimeStep::FloatType       = 0
+    TotalTime::FloatType             = 0
     SilentOutput::Bool               = false
     ThreadsCPU::Int                  = Threads.nthreads()
-    FloatType::DataType              = Float64
-    IntType::DataType                = Int64
     ProgressSpecification::Progress  = Progress(MaxIterations)       
 end
 

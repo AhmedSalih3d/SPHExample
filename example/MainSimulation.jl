@@ -60,9 +60,11 @@ function RunSimulation(;FluidCSV::String,
                         SimulationMetaData::SimulationMetaData,
                         SimulationConstants::SimulationConstants
 )
+    # FloatType
+    FloatType = typeof(SimulationMetaData).parameters[1]
 
     # Unpack the relevant simulation meta data
-    @unpack HourGlass, SaveLocation, SimulationName, MaxIterations, OutputIteration, SilentOutput, ThreadsCPU, FloatType, IntType = SimulationMetaData;
+    @unpack HourGlass, SaveLocation, SimulationName, MaxIterations, OutputIteration, SilentOutput, ThreadsCPU = SimulationMetaData;
 
     # Unpack simulation constants
     @unpack ρ₀, dx, h, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimulationConstants
@@ -205,15 +207,25 @@ end
 
 # Initialize SimulationMetaData
 begin
-    SimMetaData  = SimulationMetaData(
+    T = Float64
+    SimMetaData  = SimulationMetaData{T}(
                                     SimulationName="MySimulation", 
                                     SaveLocation=raw"E:\SecondApproach\Results", 
                                     MaxIterations=10001
     )
     # Initialze the constants to use
-    SimConstants = SimulationConstants{SimMetaData.FloatType}()
+    SimConstants = SimulationConstants{T}()
     # Clean up folder before running (remember to make folder before hand!)
     foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
+
+    println( @report_opt @profview RunSimulation(
+        FluidCSV = "./input/FluidPoints_Dp0.02.csv",
+        BoundCSV = "./input/BoundaryPoints_Dp0.02.csv",
+        SimulationMetaData = SimMetaData,
+        SimulationConstants = SimConstants
+    )
+    )
+
     # And here we run the function - enjoy!
     @profview RunSimulation(
         FluidCSV = "./input/FluidPoints_Dp0.02.csv",
