@@ -57,17 +57,17 @@ RunSimulation(
 """
 function RunSimulation(;FluidCSV::String,
                         BoundCSV::String,
-                        SimulationMetaData::SimulationMetaData,
-                        SimulationConstants::SimulationConstants
+                        SimMetaData::SimulationMetaData,
+                        SimConstants::SimulationConstants
 )
-    # FloatType
-    FloatType = typeof(SimulationMetaData).parameters[1]
+    # FloatType - this  extracts the value inside of {} of the SimulationMetaData value
+    FloatType = typeof(SimMetaData).parameters[1]
 
     # Unpack the relevant simulation meta data
-    @unpack HourGlass, SaveLocation, SimulationName, MaxIterations, OutputIteration, SilentOutput, ThreadsCPU = SimulationMetaData;
+    @unpack HourGlass, SaveLocation, SimulationName, MaxIterations, OutputIteration, SilentOutput, ThreadsCPU = SimMetaData;
 
     # Unpack simulation constants
-    @unpack ρ₀, dx, h, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimulationConstants
+    @unpack ρ₀, dx, h, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimConstants
 
     # Load in the fluid and boundary particles. Return these points and both data frames
     points,DF_FLUID,DF_BOUND    = LoadParticlesFromCSV(FluidCSV,BoundCSV)
@@ -94,7 +94,7 @@ function RunSimulation(;FluidCSV::String,
     BoundaryBool  = .!Bool.(MotionLimiter)
 
     # Save the initial particle layout with dummy values
-    create_vtp_file(SimulationMetaData,SimulationConstants,FinalResults)
+    create_vtp_file(SimMetaData,SimConstants,FinalResults)
 
     # Preallocate simulation arrays
     SizeOfParticlesI1 = size(Density)
@@ -124,7 +124,7 @@ function RunSimulation(;FluidCSV::String,
     # Define Progress spec
     show_vals(x) = [(:(Iteration),format(FormatExpr("{1:d}"), x.Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"),x.TotalTime))]
 
-    @inbounds for SimulationMetaData.Iteration = 1:MaxIterations
+    @inbounds for SimMetaData.Iteration = 1:MaxIterations
         # Be sure to update and retrieve the updated neighbour system.nb.list at each time step
         @timeit HourGlass "0 | Update Neighbour system.nb.list" begin
             update!(system,Position)
@@ -142,20 +142,20 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "1 | Update xᵢⱼ, kernel values and kernel gradient" begin
             updatexᵢⱼ!(xᵢⱼ, system.nb.list, Position)
             # Here we output the kernel value for each particle
-            ∑ⱼWᵢⱼ!(Kernel, system.nb.list, SimulationConstants)
+            ∑ⱼWᵢⱼ!(Kernel, system.nb.list, SimConstants)
             # Here we output the kernel gradient value for each particle and also the kernel gradient value
             # based on the pair-to-pair interaction system.nb.list, for use in later calculations.
             # Other functions follow a similar format, with the "I" and "L" ending
-            ∑ⱼ∇ᵢWᵢⱼ!(KernelGradient, KernelGradientL, system.nb.list, xᵢⱼ, SimulationConstants)
+            ∑ⱼ∇ᵢWᵢⱼ!(KernelGradient, KernelGradientL, system.nb.list, xᵢⱼ, SimConstants)
         end
 
         # Then we calculate the density derivative at time step "n"
-        @timeit HourGlass "2| DDT" ∂ρᵢ∂tDDT!(dρdtI,system.nb.list,xᵢⱼ,Density,Velocity,KernelGradientL,MotionLimiter,drhopLp,drhopLn, SimulationConstants)
+        @timeit HourGlass "2| DDT" ∂ρᵢ∂tDDT!(dρdtI,system.nb.list,xᵢⱼ,Density,Velocity,KernelGradientL,MotionLimiter,drhopLp,drhopLn, SimConstants)
 
         # We calculate viscosity contribution and momentum equation at time step "n"
         @timeit HourGlass "2| Pressure" map!(x -> Pressure(x, c₀, γ, ρ₀), Pressureᵢ, Density)
-        @timeit HourGlass "2| ∂vᵢ∂t!"   ∂vᵢ∂t!(dvdtI, system.nb.list, Density, KernelGradientL,Pressureᵢ, SimulationConstants)
-        @timeit HourGlass "2| ∂Πᵢⱼ∂t!"  ∂Πᵢⱼ∂t!(dvdtI, system.nb.list, xᵢⱼ ,Density,Velocity,KernelGradientL, SimulationConstants)
+        @timeit HourGlass "2| ∂vᵢ∂t!"   ∂vᵢ∂t!(dvdtI, system.nb.list, Density, KernelGradientL,Pressureᵢ, SimConstants)
+        @timeit HourGlass "2| ∂Πᵢⱼ∂t!"  ∂Πᵢⱼ∂t!(dvdtI, system.nb.list, xᵢⱼ ,Density,Velocity,KernelGradientL, SimConstants)
         @timeit HourGlass "2| Gravity"  dvdtI   .+=    GravityContributionArray
 
         # Based on the density derivative at "n", we calculate "n+½"
@@ -169,12 +169,12 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "2| updatexᵢⱼ!" updatexᵢⱼ!(xᵢⱼ, system.nb.list, Positionₙ⁺)
 
         # Density derivative at "n+½" - Note that we keep the kernel gradient values calculated at "n" for simplicity
-        @timeit HourGlass "2| DDT2" ∂ρᵢ∂tDDT!(dρdtIₙ⁺,system.nb.list,xᵢⱼ,ρₙ⁺,vₙ⁺,KernelGradientL,MotionLimiter, drhopLp, drhopLn, SimulationConstants)
+        @timeit HourGlass "2| DDT2" ∂ρᵢ∂tDDT!(dρdtIₙ⁺,system.nb.list,xᵢⱼ,ρₙ⁺,vₙ⁺,KernelGradientL,MotionLimiter, drhopLp, drhopLn, SimConstants)
 
         # Viscous contribution and momentum equation at "n+½"
         @timeit HourGlass "2| Pressure2" map!(x -> Pressure(x, c₀, γ, ρ₀), Pressureᵢ, ρₙ⁺)
-        @timeit HourGlass "2| ∂vᵢ∂t!2" ∂vᵢ∂t!(Acceleration, system.nb.list, ρₙ⁺, KernelGradientL, Pressureᵢ, SimulationConstants) 
-        @timeit HourGlass "2| ∂Πᵢⱼ∂t!2" ∂Πᵢⱼ∂t!(Acceleration,system.nb.list, xᵢⱼ ,ρₙ⁺,vₙ⁺, KernelGradientL, SimulationConstants)
+        @timeit HourGlass "2| ∂vᵢ∂t!2" ∂vᵢ∂t!(Acceleration, system.nb.list, ρₙ⁺, KernelGradientL, Pressureᵢ, SimConstants) 
+        @timeit HourGlass "2| ∂Πᵢⱼ∂t!2" ∂Πᵢⱼ∂t!(Acceleration,system.nb.list, xᵢⱼ ,ρₙ⁺,vₙ⁺, KernelGradientL, SimConstants)
         @timeit HourGlass "2| Acceleration2" Acceleration .+= GravityContributionArray
 
         # Factor for properly time stepping the density to "n+1" - We use the symplectic scheme as done in DualSPHysics
@@ -189,14 +189,14 @@ function RunSimulation(;FluidCSV::String,
 
         # Automatic time stepping control
         @timeit HourGlass "3| Calculating time step" begin
-            dt =  Δt(FinalResults,SimulationConstants)
-            SimulationMetaData.CurrentTimeStep = dt
-            SimulationMetaData.TotalTime      += dt
+            dt =  Δt(FinalResults,SimConstants)
+            SimMetaData.CurrentTimeStep = dt
+            SimMetaData.TotalTime      += dt
         end
         
-        @timeit HourGlass "4| OutputVTP" OutputVTP(SimulationMetaData,SimulationConstants,FinalResults)
+        @timeit HourGlass "4| OutputVTP" OutputVTP(SimMetaData,SimConstants,FinalResults)
 
-        next!(SimulationMetaData.ProgressSpecification; showvalues = show_vals(SimulationMetaData))
+        next!(SimMetaData.ProgressSpecification; showvalues = show_vals(SimMetaData))
     end
 
     # Print the timings in the default way
@@ -219,18 +219,18 @@ begin
     foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
 
     println( @report_opt @profview RunSimulation(
-        FluidCSV = "./input/FluidPoints_Dp0.02.csv",
-        BoundCSV = "./input/BoundaryPoints_Dp0.02.csv",
-        SimulationMetaData = SimMetaData,
-        SimulationConstants = SimConstants
+        FluidCSV     = "./input/FluidPoints_Dp0.02.csv",
+        BoundCSV     = "./input/BoundaryPoints_Dp0.02.csv",
+        SimMetaData  = SimMetaData,
+        SimConstants = SimConstants
     )
     )
 
     # And here we run the function - enjoy!
     @profview RunSimulation(
-        FluidCSV = "./input/FluidPoints_Dp0.02.csv",
-        BoundCSV = "./input/BoundaryPoints_Dp0.02.csv",
-        SimulationMetaData = SimMetaData,
-        SimulationConstants = SimConstants
+        FluidCSV     = "./input/FluidPoints_Dp0.02.csv",
+        BoundCSV     = "./input/BoundaryPoints_Dp0.02.csv",
+        SimMetaData  = SimMetaData,
+        SimConstants = SimConstants
     )
 end
