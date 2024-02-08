@@ -115,6 +115,8 @@ function ∂Πᵢⱼ∂t!(viscI, list,xᵢⱼ,ρ,v,WgL,SimulationConstants)
     return nothing
 end
 
+faux(ρ₀, P, invCb, γ⁻¹) = ρ₀ * ( ^( 1 + (P * invCb), γ⁻¹) - 1)
+
 # The density derivative function INCLUDING density diffusion
 function ∂ρᵢ∂tDDT!(dρdtI, list, xᵢⱼ,xᵢⱼʸ,ρ,v,WgL,MotionLimiter, drhopLp, drhopLn, SimulationConstants)
     @unpack h,m₀,δᵩ,c₀,γ,g,ρ₀,η²,γ⁻¹ = SimulationConstants
@@ -123,12 +125,11 @@ function ∂ρᵢ∂tDDT!(dρdtI, list, xᵢⱼ,xᵢⱼʸ,ρ,v,WgL,MotionLimiter
     Cb    = (c₀^2*ρ₀)/γ
     invCb = inv(Cb)
 
-    # Bug in Julia 1.10 cannot use γ⁻¹, has to write it directly out. 
     @tturbo for iter in eachindex(list)
         Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼʸ[iter]
-        ρᵢⱼᴴ  = ρ₀ * ^( 1 + (Pᵢⱼᴴ * invCb), 0.14285714285714285) - ρ₀
+        ρᵢⱼᴴ  = faux(ρ₀, Pᵢⱼᴴ, invCb, γ⁻¹)
         Pⱼᵢᴴ  = -Pᵢⱼᴴ
-        ρⱼᵢᴴ  = ρ₀ * ^( 1 + (Pⱼᵢᴴ * invCb), 0.14285714285714285) - ρ₀
+        ρⱼᵢᴴ  = faux(ρ₀, Pⱼᵢᴴ, invCb, γ⁻¹)
         
         drhopLp[iter] = ρᵢⱼᴴ
         drhopLn[iter] = ρⱼᵢᴴ
