@@ -57,12 +57,9 @@ RunSimulation(
 """
 function RunSimulation(;FluidCSV::String,
                         BoundCSV::String,
-                        SimMetaData::SimulationMetaData,
-                        SimConstants::SimulationConstants
-)
-    # FloatType - this  extracts the value inside of {} of the SimulationMetaData value
-    FloatType = typeof(SimMetaData).parameters[1]
-
+                        SimMetaData::SimulationMetaData{FloatType},
+                        SimConstants::SimulationConstants,
+) where FloatType
     # Unpack the relevant simulation meta data
     @unpack HourGlass, SaveLocation, SimulationName, MaxIterations, OutputIteration, SilentOutput, ThreadsCPU = SimMetaData;
 
@@ -77,7 +74,7 @@ function RunSimulation(;FluidCSV::String,
     @unpack Kernel, KernelGradient, Density, Position, Acceleration, Velocity = FinalResults
     # Initialize Arrays
     Position .= deepcopy(points)
-    Density  .= Array([DF_FLUID.Rhop;DF_BOUND.Rhop])
+    Density  .= [DF_FLUID.Rhop;DF_BOUND.Rhop]
 
     GravityContribution = SVector(0.0,g,0.0)
 
@@ -199,6 +196,7 @@ function RunSimulation(;FluidCSV::String,
         next!(SimMetaData.ProgressSpecification; showvalues = show_vals(SimMetaData))
     end
 
+    
     # Print the timings in the default way
     show(HourGlass,sortby=:name)
     show(HourGlass)
@@ -217,6 +215,16 @@ begin
     SimConstants = SimulationConstants{T}()
     # Clean up folder before running (remember to make folder before hand!)
     foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
+
+    println(
+        # And here we run the function - enjoy!
+        @report_opt target_modules=(@__MODULE__,) RunSimulation(
+            FluidCSV     = "./input/FluidPoints_Dp0.02.csv",
+            BoundCSV     = "./input/BoundaryPoints_Dp0.02.csv",
+            SimMetaData  = SimMetaData,
+            SimConstants = SimConstants
+        )
+    )
 
     # And here we run the function - enjoy!
     @profview RunSimulation(
