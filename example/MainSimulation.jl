@@ -67,25 +67,25 @@ function RunSimulation(;FluidCSV::String,
     @unpack ρ₀, dx, h, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimConstants
 
     # Load in the fluid and boundary particles. Return these points and both data frames
-    points,DF_FLUID,DF_BOUND    = LoadParticlesFromCSV(FluidCSV,BoundCSV)
+    points, density_fluid, density_bound  = LoadParticlesFromCSV(FloatType, FluidCSV,BoundCSV)
 
     # Generate simulation data results array
     FinalResults = SimulationDataResults{3,FloatType}(NumberOfParticles = length(points))
     @unpack Kernel, KernelGradient, Density, Position, Acceleration, Velocity = FinalResults
     # Initialize Arrays
     Position .= deepcopy(points)
-    Density  .= [DF_FLUID.Rhop;DF_BOUND.Rhop]
+    Density  .= deepcopy([density_fluid;density_bound])
 
     GravityContribution = SVector(0.0,g,0.0)
 
     # Read this as "GravityFactor * g", so -1 means negative acceleration for fluid particles
     # 1 means boundary particles push back against gravity
-    GravityFactor = [-ones(size(DF_FLUID,1)) ; ones(size(DF_BOUND,1))]
+    GravityFactor = [-ones(size(density_fluid,1)) ; ones(size(density_bound,1))]
     GravityContributionArray = map((x)->x * GravityContribution,GravityFactor) 
 
     # MotionLimiter is what allows fluid particles to move, while not letting the velocity of boundary
     # particles change
-    MotionLimiter = [ ones(size(DF_FLUID,1)) ; zeros(size(DF_BOUND,1))]
+    MotionLimiter = [ ones(size(density_fluid,1)) ; zeros(size(density_bound,1))]
 
     # Based on MotionLimiter we assess which particles are boundary particles
     BoundaryBool  = .!Bool.(MotionLimiter)
