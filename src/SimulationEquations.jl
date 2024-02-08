@@ -6,6 +6,7 @@ using CellListMap
 using StaticArrays
 using LinearAlgebra
 using Parameters
+using LoopVectorization
 
 # Function to calculate Kernel Value
 function Wᵢⱼ(αD,q)
@@ -115,22 +116,19 @@ function ∂Πᵢⱼ∂t!(viscI, list,xᵢⱼ,ρ,v,WgL,SimulationConstants)
 end
 
 # The density derivative function INCLUDING density diffusion
-function ∂ρᵢ∂tDDT!(dρdtI, list, xᵢⱼ,ρ,v,WgL,MotionLimiter, drhopLp, drhopLn, SimulationConstants)
+function ∂ρᵢ∂tDDT!(dρdtI, list, xᵢⱼ,xᵢⱼʸ,ρ,v,WgL,MotionLimiter, drhopLp, drhopLn, SimulationConstants)
     @unpack h,m₀,δᵩ,c₀,γ,g,ρ₀,η²,γ⁻¹ = SimulationConstants
 
     # Generate the needed constants
     Cb    = (c₀^2*ρ₀)/γ
 
-    # In this code, use of multi-threading to calculate the heavy part for density diffusion to work
-    Base.Threads.@threads for iter = 1:length(list)
-        xⱼᵢ   = -xᵢⱼ[iter]
-
-        Pᵢⱼᴴ  = ρ₀ * (-g) * xⱼᵢ[2]
-        ρᵢⱼᴴ  = ρ₀ * ( ^( 1 + (Pᵢⱼᴴ/Cb), γ⁻¹) - 1)
-
+    # Bug in Julia 1.10 cannot use γ⁻¹, has to write it directly out. 
+    @tturbo for iter in eachindex(list)
+        Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼʸ[iter]
+        ρᵢⱼᴴ  = ρ₀ * ( ^( 1 + (Pᵢⱼᴴ/Cb), 0.14285714285714285) - 1)
         Pⱼᵢᴴ  = -Pᵢⱼᴴ
-        ρⱼᵢᴴ  = ρ₀ * ( ^( 1 + (Pⱼᵢᴴ/Cb), γ⁻¹) - 1)
-
+        ρⱼᵢᴴ  = ρ₀ * ( ^( 1 + (Pⱼᵢᴴ/Cb), 0.14285714285714285) - 1)
+        
         drhopLp[iter] = ρᵢⱼᴴ
         drhopLn[iter] = ρⱼᵢᴴ
     end

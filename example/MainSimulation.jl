@@ -11,6 +11,7 @@ using TimerOutputs
 using Parameters
 import ProgressMeter: Progress, next!
 using Formatting
+using StructArrays
 
 
 
@@ -107,11 +108,15 @@ function RunSimulation(;FluidCSV::String,
   
     dρdtIₙ⁺           = zeros(FloatType,         SizeOfParticlesI1)
   
-      
-    xᵢⱼ               = zeros(TypeOfParticleI3,  SizeOfParticlesI3)
+    
+    xᵢⱼˣ               = zeros(FloatType,  SizeOfParticlesI1)
+    xᵢⱼʸ               = zeros(FloatType,  SizeOfParticlesI1)
+    xᵢⱼᶻ               = zeros(FloatType,  SizeOfParticlesI1)
+    xᵢⱼ                = StructArray{TypeOfParticleI3}(( xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ))
+
     KernelGradientL   = zeros(TypeOfParticleI3,  SizeOfParticlesI3)
     drhopLp           = zeros(FloatType,         SizeOfParticlesI1)
-    drhopLn           = zeros(FloatType,         SizeOfParticlesI1)
+    drhopLn           = zeros(FloatType,         SizeOfParticlesI1) 
          
     Pressureᵢ         = zeros(FloatType,         SizeOfParticlesI1)
 
@@ -147,12 +152,12 @@ function RunSimulation(;FluidCSV::String,
         end
 
         # Then we calculate the density derivative at time step "n"
-        @timeit HourGlass "2| DDT" ∂ρᵢ∂tDDT!(dρdtI,system.nb.list,xᵢⱼ,Density,Velocity,KernelGradientL,MotionLimiter,drhopLp,drhopLn, SimConstants)
+        @timeit HourGlass "2| DDT" ∂ρᵢ∂tDDT!(dρdtI,system.nb.list,xᵢⱼ,xᵢⱼʸ,Density,Velocity,KernelGradientL,MotionLimiter,drhopLp,drhopLn, SimConstants)
 
         # We calculate viscosity contribution and momentum equation at time step "n"
         @timeit HourGlass "2| Pressure" map!(x -> Pressure(x, c₀, γ, ρ₀), Pressureᵢ, Density)
         @timeit HourGlass "2| ∂vᵢ∂t!"   ∂vᵢ∂t!(dvdtI, system.nb.list, Density, KernelGradientL,Pressureᵢ, SimConstants)
-        @timeit HourGlass "2| ∂Πᵢⱼ∂t!"  ∂Πᵢⱼ∂t!(dvdtI, system.nb.list, xᵢⱼ ,Density,Velocity,KernelGradientL, SimConstants)
+        @timeit HourGlass "2| ∂Πᵢⱼ∂t!"  ∂Πᵢⱼ∂t!(dvdtI, system.nb.list, xᵢⱼ,Density,Velocity,KernelGradientL, SimConstants)
         @timeit HourGlass "2| Gravity"  dvdtI   .+=    GravityContributionArray
 
         # Based on the density derivative at "n", we calculate "n+½"
@@ -166,7 +171,7 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "2| updatexᵢⱼ!" updatexᵢⱼ!(xᵢⱼ, system.nb.list, Positionₙ⁺)
 
         # Density derivative at "n+½" - Note that we keep the kernel gradient values calculated at "n" for simplicity
-        @timeit HourGlass "2| DDT2" ∂ρᵢ∂tDDT!(dρdtIₙ⁺,system.nb.list,xᵢⱼ,ρₙ⁺,vₙ⁺,KernelGradientL,MotionLimiter, drhopLp, drhopLn, SimConstants)
+        @timeit HourGlass "2| DDT2" ∂ρᵢ∂tDDT!(dρdtIₙ⁺,system.nb.list,xᵢⱼ,xᵢⱼʸ,ρₙ⁺,vₙ⁺,KernelGradientL,MotionLimiter, drhopLp, drhopLn, SimConstants)
 
         # Viscous contribution and momentum equation at "n+½"
         @timeit HourGlass "2| Pressure2" map!(x -> Pressure(x, c₀, γ, ρ₀), Pressureᵢ, ρₙ⁺)
@@ -216,15 +221,15 @@ begin
     # Clean up folder before running (remember to make folder before hand!)
     foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
 
-    println(
-        # And here we run the function - enjoy!
-        @report_opt target_modules=(@__MODULE__,) RunSimulation(
-            FluidCSV     = "./input/FluidPoints_Dp0.02.csv",
-            BoundCSV     = "./input/BoundaryPoints_Dp0.02.csv",
-            SimMetaData  = SimMetaData,
-            SimConstants = SimConstants
-        )
-    )
+    # println(
+    #     # And here we run the function - enjoy!
+    #     @report_opt target_modules=(@__MODULE__,) RunSimulation(
+    #         FluidCSV     = "./input/FluidPoints_Dp0.02.csv",
+    #         BoundCSV     = "./input/BoundaryPoints_Dp0.02.csv",
+    #         SimMetaData  = SimMetaData,
+    #         SimConstants = SimConstants
+    #     )
+    # )
 
     # And here we run the function - enjoy!
     @profview RunSimulation(
