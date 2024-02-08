@@ -218,14 +218,6 @@ begin
     # Clean up folder before running (remember to make folder before hand!)
     foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
 
-    println( @report_opt @profview RunSimulation(
-        FluidCSV     = "./input/FluidPoints_Dp0.02.csv",
-        BoundCSV     = "./input/BoundaryPoints_Dp0.02.csv",
-        SimMetaData  = SimMetaData,
-        SimConstants = SimConstants
-    )
-    )
-
     # And here we run the function - enjoy!
     @profview RunSimulation(
         FluidCSV     = "./input/FluidPoints_Dp0.02.csv",
