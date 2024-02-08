@@ -121,13 +121,14 @@ function ∂ρᵢ∂tDDT!(dρdtI, list, xᵢⱼ,xᵢⱼʸ,ρ,v,WgL,MotionLimiter
 
     # Generate the needed constants
     Cb    = (c₀^2*ρ₀)/γ
+    invCb = inv(Cb)
 
     # Bug in Julia 1.10 cannot use γ⁻¹, has to write it directly out. 
     @tturbo for iter in eachindex(list)
         Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼʸ[iter]
-        ρᵢⱼᴴ  = ρ₀ * ( ^( 1 + (Pᵢⱼᴴ/Cb), 0.14285714285714285) - 1)
+        ρᵢⱼᴴ  = ρ₀ * ^( 1 + (Pᵢⱼᴴ * invCb), 0.14285714285714285) - ρ₀
         Pⱼᵢᴴ  = -Pᵢⱼᴴ
-        ρⱼᵢᴴ  = ρ₀ * ( ^( 1 + (Pⱼᵢᴴ/Cb), 0.14285714285714285) - 1)
+        ρⱼᵢᴴ  = ρ₀ * ^( 1 + (Pⱼᵢᴴ * invCb), 0.14285714285714285) - ρ₀
         
         drhopLp[iter] = ρᵢⱼᴴ
         drhopLn[iter] = ρⱼᵢᴴ
