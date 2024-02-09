@@ -12,8 +12,7 @@ using Parameters
 import ProgressMeter: Progress, next!
 using Formatting
 using StructArrays
-
-
+using LoopVectorization
 
 """
     RunSimulation(;SimulationMetaData::SimulationMetaData, SimulationConstants::SimulationConstants)
@@ -91,7 +90,9 @@ function RunSimulation(;FluidCSV::String,
     TypeOfParticleI3  = SVector{3,FloatType}
 
     Density            = deepcopy([density_fluid;density_bound])
+
     Kernel             = zeros(FloatType,         SizeOfParticlesI1)
+    KernelL            = zeros(FloatType,         SizeOfParticlesI1)
 
     dρdtI             = zeros(FloatType,         SizeOfParticlesI1)
 
@@ -171,13 +172,13 @@ function RunSimulation(;FluidCSV::String,
             # to avoid run time dispatch errors
             ResetArrays!(Kernel, dρdtI,dρdtIₙ⁺,KernelGradient,dvdtI, Acceleration)
             # Resize KernelGradientL based on length of neighborsystem.nb.list
-            ResizeBuffers!(KernelGradientL, xᵢⱼ, xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, drhopLp, drhopLn; N = system.nb.n)
+            ResizeBuffers!(KernelL, KernelGradientL, xᵢⱼ, xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, drhopLp, drhopLn; N = system.nb.n)
         end
 
         @timeit HourGlass "1 | Update xᵢⱼ, kernel values and kernel gradient" begin
             updatexᵢⱼ!(xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, I, J, Positionˣ, Positionʸ, Positionᶻ)
             # Here we output the kernel value for each particle
-            ∑ⱼWᵢⱼ!(Kernel, system.nb.list, SimConstants)
+            ∑ⱼWᵢⱼ!(Kernel, KernelL, I, J, D, SimConstants)
             # Here we output the kernel gradient value for each particle and also the kernel gradient value
             # based on the pair-to-pair interaction system.nb.list, for use in later calculations.
             # Other functions follow a similar format, with the "I" and "L" ending

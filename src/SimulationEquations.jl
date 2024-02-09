@@ -16,22 +16,31 @@ end
 # Function to calculate kernel value in both "particle i" format and "list of interactions" format
 # Please notice how when using CellListMap since it is based on a "list of interactions", for each 
 # interaction we must add the contribution to both the i'th and j'th particle!
-function ∑ⱼWᵢⱼ!(Kernel, list,SimulationConstants)
+function ∑ⱼWᵢⱼ!(Kernel, KernelL, I, J, D, SimulationConstants)
     @unpack αD, h⁻¹ = SimulationConstants
-    for (iter,L) in enumerate(list)
-        i = L[1]; j = L[2]; d = L[3]
+    
+    # Calculation
+    @tturbo for iter in eachindex(D)
+        d = D[iter]
 
         q = d * h⁻¹
 
         W = Wᵢⱼ(αD,q)
 
-        Kernel[i] += W
-        Kernel[j] += W
+        KernelL[iter] = W
+    end
+
+    # Reduction
+    for iter in eachindex(I,J)
+        i = I[iter]
+        j = J[iter]
+        
+        Kernel[i] += KernelL[iter]
+        Kernel[j] += KernelL[iter]
     end
 
     return nothing
 end
-
 # Original implementation of kernel gradient
 # function ∇ᵢWᵢⱼ(αD,q,xᵢⱼ,h)
 #     # Skip distances outside the support of the kernel:
