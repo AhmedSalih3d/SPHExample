@@ -74,7 +74,7 @@ function RunSimulation(;FluidCSV::String,
     FinalResults = SimulationDataResults{3,FloatType}(NumberOfParticles = length(points))
     @unpack Kernel, KernelGradient, Density, Position, Acceleration, Velocity = FinalResults
     # Initialize Arrays
-    #Position .= deepcopy(points)
+    Position .= deepcopy(points)
     Density  .= deepcopy([density_fluid;density_bound])
 
     GravityContribution = SVector(0.0,g,0.0)
@@ -104,11 +104,7 @@ function RunSimulation(;FluidCSV::String,
   
     ρₙ⁺               = zeros(FloatType,         SizeOfParticlesI1)
     vₙ⁺               = zeros(TypeOfParticleI3,  SizeOfParticlesI3)
-
-    Positionₙ⁺ˣ         = zeros(FloatType,  SizeOfParticlesI1)
-    Positionₙ⁺ʸ         = zeros(FloatType,  SizeOfParticlesI1)
-    Positionₙ⁺ᶻ         = zeros(FloatType,  SizeOfParticlesI1)
-    Positionₙ⁺          = StructArray{TypeOfParticleI3}(( Positionₙ⁺ˣ, Positionₙ⁺ʸ, Positionₙ⁺ᶻ))
+    Positionₙ⁺        = zeros(TypeOfParticleI3,  SizeOfParticlesI3)
   
     dρdtIₙ⁺           = zeros(FloatType,         SizeOfParticlesI1)
   
@@ -117,16 +113,6 @@ function RunSimulation(;FluidCSV::String,
     xᵢⱼʸ               = zeros(FloatType,  SizeOfParticlesI1)
     xᵢⱼᶻ               = zeros(FloatType,  SizeOfParticlesI1)
     xᵢⱼ                = StructArray{TypeOfParticleI3}(( xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ))
-
-    Positionˣ         = getindex.(points,1)
-    Positionʸ         = getindex.(points,2)
-    Positionᶻ         = getindex.(points,3)
-    Position          = StructArray{TypeOfParticleI3}(( Positionˣ, Positionʸ, Positionᶻ))
-
-    I                 = zeros(Int64,   SizeOfParticlesI1)
-    J                 = zeros(Int64,   SizeOfParticlesI1)
-    D                 = zeros(Float64, SizeOfParticlesI1)
-    list_me           = StructArray{Tuple{Int64,Int64,Float64}}((I,J,D))
 
     KernelGradientL   = zeros(TypeOfParticleI3,  SizeOfParticlesI3)
     drhopLp           = zeros(FloatType,         SizeOfParticlesI1)
@@ -145,8 +131,6 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "0 | Update Neighbour system.nb.list" begin
             update!(system,Position)
             neighborlist!(system)
-            resize!(list_me, system.nb.n)
-            list_me .= system.nb.list
         end
         
         @timeit HourGlass "0 | Reset arrays to zero and resize L arrays" begin
@@ -158,7 +142,7 @@ function RunSimulation(;FluidCSV::String,
         end
 
         @timeit HourGlass "1 | Update xᵢⱼ, kernel values and kernel gradient" begin
-            updatexᵢⱼ!(xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, I, J,  Positionˣ, Positionʸ, Positionᶻ)
+            updatexᵢⱼ!(xᵢⱼ, system.nb.list, Position)
             # Here we output the kernel value for each particle
             ∑ⱼWᵢⱼ!(Kernel, system.nb.list, SimConstants)
             # Here we output the kernel gradient value for each particle and also the kernel gradient value
@@ -184,7 +168,7 @@ function RunSimulation(;FluidCSV::String,
         # We now calculate velocity and position at "n+½"
         @timeit HourGlass "2| vₙ⁺" @. vₙ⁺          = Velocity   + dvdtI * (dt/2) * MotionLimiter
         @timeit HourGlass "2| Positionₙ⁺" @. Positionₙ⁺   = Position   + vₙ⁺ * (dt/2)   * MotionLimiter
-        @timeit HourGlass "2| updatexᵢⱼ!" updatexᵢⱼ!(xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, I, J, Positionₙ⁺ˣ, Positionₙ⁺ʸ, Positionₙ⁺ᶻ)
+        @timeit HourGlass "2| updatexᵢⱼ!" updatexᵢⱼ!(xᵢⱼ, system.nb.list, Positionₙ⁺)
 
         # Density derivative at "n+½" - Note that we keep the kernel gradient values calculated at "n" for simplicity
         @timeit HourGlass "2| DDT2" ∂ρᵢ∂tDDT!(dρdtIₙ⁺,system.nb.list,xᵢⱼ,xᵢⱼʸ,ρₙ⁺,vₙ⁺,KernelGradientL,MotionLimiter, drhopLp, drhopLn, SimConstants)
@@ -223,7 +207,6 @@ function RunSimulation(;FluidCSV::String,
     show(HourGlass)
     disable_timer!(HourGlass)
 end
-
 
 # Initialize SimulationMetaData
 begin
