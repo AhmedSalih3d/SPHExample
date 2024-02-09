@@ -229,25 +229,48 @@ function ∂ρᵢ∂tDDT!(dρdtI, list, xᵢⱼ,xᵢⱼʸ,ρ,v,WgL,MotionLimiter
 end
 
 # The momentum equation without any dissipation - we add the dissipation using artificial viscosity (∂Πᵢⱼ∂t)
-function ∂vᵢ∂t!(dvdtI, list,ρ,WgL,press, SimulationConstants)
+function ∂vᵢ∂t!(I,J, dvdtIˣ, dvdtIʸ, dvdtIᶻ, dvdtLˣ, dvdtLʸ, dvdtLᶻ,Density,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ,Press, SimulationConstants)
     @unpack m₀, c₀,γ,ρ₀ = SimulationConstants
 
-    for (iter,L) in enumerate(list)
-        i = L[1]; j = L[2]
+    # Calculation
+    @tturbo for iter in eachindex(I)
+        i = I[iter]; j = J[iter];
 
-        ρᵢ    = ρ[i]
-        ρⱼ    = ρ[j]
-        Pᵢ    = press[i] #Pᵢ    = Pressure(ρᵢ,c₀,γ,ρ₀)
-        Pⱼ    = press[j] #Pⱼ    = Pressure(ρⱼ,c₀,γ,ρ₀)
-        ∇ᵢWᵢⱼ = WgL[iter]
+        ρᵢ    = Density[i]
+        ρⱼ    = Density[j]
+        Pᵢ    = Press[i] #Pᵢ    = Pressure(ρᵢ,c₀,γ,ρ₀)
+        Pⱼ    = Press[j] #Pⱼ    = Pressure(ρⱼ,c₀,γ,ρ₀)
 
         Pfac  = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
 
+        ∇ᵢWᵢⱼˣ  =  KernelGradientLˣ[iter]
+        ∇ᵢWᵢⱼʸ  =  KernelGradientLʸ[iter]
+        ∇ᵢWᵢⱼᶻ  =  KernelGradientLᶻ[iter]
 
-        dvdt  = - m₀ * Pfac *  ∇ᵢWᵢⱼ
+        dvdtˣ  = - m₀ * Pfac *  ∇ᵢWᵢⱼˣ
+        dvdtʸ  = - m₀ * Pfac *  ∇ᵢWᵢⱼʸ
+        dvdtᶻ  = - m₀ * Pfac *  ∇ᵢWᵢⱼᶻ
 
-        dvdtI[i]    +=  dvdt
-        dvdtI[j]    += -dvdt
+        dvdtLˣ[iter] = dvdtˣ
+        dvdtLʸ[iter] = dvdtʸ
+        dvdtLᶻ[iter] = dvdtᶻ
+    end
+
+    # Reduction
+    for iter in eachindex(I,J)
+        i = I[iter]
+        j = J[iter]
+    
+        dvdtˣ        =  dvdtLˣ[iter]
+        dvdtʸ        =  dvdtLʸ[iter]
+        dvdtᶻ        =  dvdtLᶻ[iter]
+    
+        dvdtIˣ[i]   +=  dvdtˣ
+        dvdtIˣ[j]   += -dvdtˣ
+        dvdtIʸ[i]   +=  dvdtʸ
+        dvdtIʸ[j]   += -dvdtʸ
+        dvdtIᶻ[i]   +=  dvdtᶻ
+        dvdtIᶻ[j]   += -dvdtᶻ
     end
 
     return nothing

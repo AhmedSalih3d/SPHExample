@@ -96,7 +96,15 @@ function RunSimulation(;FluidCSV::String,
 
     dρdtI             = zeros(FloatType,         SizeOfParticlesI1)
 
-    dvdtI             = zeros(TypeOfParticleI3,  SizeOfParticlesI3)
+    dvdtIˣ            = zeros(FloatType,  SizeOfParticlesI1)
+    dvdtIʸ            = zeros(FloatType,  SizeOfParticlesI1)
+    dvdtIᶻ            = zeros(FloatType,  SizeOfParticlesI1)
+    dvdtI             = StructArray{TypeOfParticleI3}(( dvdtIˣ, dvdtIʸ, dvdtIᶻ))
+
+    dvdtLˣ            = zeros(FloatType,  SizeOfParticlesI1)
+    dvdtLʸ            = zeros(FloatType,  SizeOfParticlesI1)
+    dvdtLᶻ            = zeros(FloatType,  SizeOfParticlesI1)
+    dvdtL             = StructArray{TypeOfParticleI3}(( dvdtLˣ, dvdtLʸ, dvdtLᶻ))
 
     ρₙ⁺               = zeros(FloatType,         SizeOfParticlesI1)
     vₙ⁺               = zeros(TypeOfParticleI3,  SizeOfParticlesI3)
@@ -175,7 +183,7 @@ function RunSimulation(;FluidCSV::String,
             # to avoid run time dispatch errors
             ResetArrays!(Kernel, dρdtI,dρdtIₙ⁺,KernelGradient,dvdtI, Acceleration)
             # Resize KernelGradientL based on length of neighborsystem.nb.list
-            ResizeBuffers!(KernelL, KernelGradientL, xᵢⱼ, xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, drhopLp, drhopLn; N = system.nb.n)
+            ResizeBuffers!(KernelL, KernelGradientL, dvdtL, xᵢⱼ, drhopLp, drhopLn; N = system.nb.n)
         end
 
         @timeit HourGlass "1 | Update xᵢⱼ, kernel values and kernel gradient" begin
@@ -193,7 +201,7 @@ function RunSimulation(;FluidCSV::String,
 
         # We calculate viscosity contribution and momentum equation at time step "n"
         @timeit HourGlass "2| Pressure" Pressure!(Pressureᵢ, Density, SimConstants)
-        @timeit HourGlass "2| ∂vᵢ∂t!"   ∂vᵢ∂t!(dvdtI, system.nb.list, Density, KernelGradientL,Pressureᵢ, SimConstants)
+        @timeit HourGlass "2| ∂vᵢ∂t!"   ∂vᵢ∂t!(I, J, dvdtIˣ, dvdtIʸ, dvdtIᶻ, dvdtLˣ, dvdtLʸ, dvdtLᶻ,Density,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ,Pressureᵢ, SimConstants)
         @timeit HourGlass "2| ∂Πᵢⱼ∂t!"  ∂Πᵢⱼ∂t!(dvdtI, system.nb.list, xᵢⱼ,Density,Velocity,KernelGradientL, SimConstants)
         @timeit HourGlass "2| Gravity"  dvdtI   .+=    GravityContributionArray
 
@@ -212,7 +220,7 @@ function RunSimulation(;FluidCSV::String,
 
         # Viscous contribution and momentum equation at "n+½"
         @timeit HourGlass "2| Pressure2"  Pressure!(Pressureᵢ, ρₙ⁺, SimConstants)
-        @timeit HourGlass "2| ∂vᵢ∂t!2" ∂vᵢ∂t!(Acceleration, system.nb.list, ρₙ⁺, KernelGradientL, Pressureᵢ, SimConstants) 
+        @timeit HourGlass "2| ∂vᵢ∂t!2"   ∂vᵢ∂t!(I, J, Accelerationˣ, Accelerationʸ, Accelerationᶻ, dvdtLˣ, dvdtLʸ, dvdtLᶻ,ρₙ⁺,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ,Pressureᵢ, SimConstants)
         @timeit HourGlass "2| ∂Πᵢⱼ∂t!2" ∂Πᵢⱼ∂t!(Acceleration,system.nb.list, xᵢⱼ ,ρₙ⁺,vₙ⁺, KernelGradientL, SimConstants)
         @timeit HourGlass "2| Acceleration2" Acceleration .+= GravityContributionArray
 
@@ -251,7 +259,7 @@ begin
     SimMetaData  = SimulationMetaData{T}(
                                     SimulationName="MySimulation", 
                                     SaveLocation=raw"E:\SecondApproach\Results", 
-                                    MaxIterations=10001,
+                                    MaxIterations=1001,
                                     OutputIteration=50,
     )
     # Initialze the constants to use
