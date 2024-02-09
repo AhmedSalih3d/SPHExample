@@ -188,7 +188,7 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "2| DDT" ∂ρᵢ∂tDDT!(dρdtI,system.nb.list,xᵢⱼ,xᵢⱼʸ,Density,Velocity,KernelGradientL,MotionLimiter,drhopLp,drhopLn, SimConstants)
 
         # We calculate viscosity contribution and momentum equation at time step "n"
-        @timeit HourGlass "2| Pressure" map!(x -> Pressure(x, c₀, γ, ρ₀), Pressureᵢ, Density)
+        @timeit HourGlass "2| Pressure" Pressure!(Pressureᵢ, Density, SimConstants)
         @timeit HourGlass "2| ∂vᵢ∂t!"   ∂vᵢ∂t!(dvdtI, system.nb.list, Density, KernelGradientL,Pressureᵢ, SimConstants)
         @timeit HourGlass "2| ∂Πᵢⱼ∂t!"  ∂Πᵢⱼ∂t!(dvdtI, system.nb.list, xᵢⱼ,Density,Velocity,KernelGradientL, SimConstants)
         @timeit HourGlass "2| Gravity"  dvdtI   .+=    GravityContributionArray
@@ -207,7 +207,7 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "2| DDT2" ∂ρᵢ∂tDDT!(dρdtIₙ⁺,system.nb.list,xᵢⱼ,xᵢⱼʸ,ρₙ⁺,vₙ⁺,KernelGradientL,MotionLimiter, drhopLp, drhopLn, SimConstants)
 
         # Viscous contribution and momentum equation at "n+½"
-        @timeit HourGlass "2| Pressure2" map!(x -> Pressure(x, c₀, γ, ρ₀), Pressureᵢ, ρₙ⁺)
+        @timeit HourGlass "2| Pressure2"  Pressure!(Pressureᵢ, ρₙ⁺, SimConstants)
         @timeit HourGlass "2| ∂vᵢ∂t!2" ∂vᵢ∂t!(Acceleration, system.nb.list, ρₙ⁺, KernelGradientL, Pressureᵢ, SimConstants) 
         @timeit HourGlass "2| ∂Πᵢⱼ∂t!2" ∂Πᵢⱼ∂t!(Acceleration,system.nb.list, xᵢⱼ ,ρₙ⁺,vₙ⁺, KernelGradientL, SimConstants)
         @timeit HourGlass "2| Acceleration2" Acceleration .+= GravityContributionArray
@@ -229,7 +229,7 @@ function RunSimulation(;FluidCSV::String,
             SimMetaData.TotalTime      += dt
         end
         
-        @timeit HourGlass "4| OutputVTP" OutputVTP(SimMetaData,SimConstants,Position; Kernel, KernelGradient, Density, Acceleration, Velocity)
+        @timeit HourGlass "4| OutputVTP" OutputVTP(SimMetaData,SimConstants,Position; Kernel, KernelGradient, Density, Acceleration, Velocity, Pressureᵢ)
 
         next!(SimMetaData.ProgressSpecification; showvalues = show_vals(SimMetaData))
     end
