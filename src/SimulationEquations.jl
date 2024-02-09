@@ -245,7 +245,7 @@ function LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
     end
 end
 
-@inline function updatexᵢⱼ!(xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, I, J, Positionˣ, Positionʸ, Positionᶻ)
+@inline @inbounds function updatexᵢⱼ!(xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, I, J, Positionˣ, Positionʸ, Positionᶻ)
     @tturbo for iter ∈ eachindex(I,J)
         i = I[iter]; j = J[iter]; 
         
