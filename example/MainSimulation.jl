@@ -70,13 +70,6 @@ function RunSimulation(;FluidCSV::String,
     # Load in the fluid and boundary particles. Return these points and both data frames
     points, density_fluid, density_bound  = LoadParticlesFromCSV(FloatType, FluidCSV,BoundCSV)
 
-    # Generate simulation data results array
-    FinalResults = SimulationDataResults{3,FloatType}(NumberOfParticles = length(points))
-    @unpack Kernel, KernelGradient, Density, Position, Acceleration, Velocity = FinalResults
-    # Initialize Arrays
-    Position .= deepcopy(points)
-    Density  .= deepcopy([density_fluid;density_bound])
-
     GravityContribution = SVector(0.0,g,0.0)
 
     # Read this as "GravityFactor * g", so -1 means negative acceleration for fluid particles
@@ -91,30 +84,59 @@ function RunSimulation(;FluidCSV::String,
     # Based on MotionLimiter we assess which particles are boundary particles
     BoundaryBool  = .!Bool.(MotionLimiter)
 
-    # Save the initial particle layout with dummy values
-    create_vtp_file(SimMetaData,SimConstants,FinalResults)
 
     # Preallocate simulation arrays
-    SizeOfParticlesI1 = size(Density)
-    SizeOfParticlesI3 = size(Position)
-    TypeOfParticleI3  = eltype(Position)
+    SizeOfParticlesI1 = (length(points),)
+    SizeOfParticlesI3 = (length(points),)
+    TypeOfParticleI3  = SVector{3,FloatType}
+
+    Density            = deepcopy([density_fluid;density_bound])
+    Kernel             = zeros(FloatType,         SizeOfParticlesI1)
 
     dρdtI             = zeros(FloatType,         SizeOfParticlesI1)
+
     dvdtI             = zeros(TypeOfParticleI3,  SizeOfParticlesI3)
-  
+
     ρₙ⁺               = zeros(FloatType,         SizeOfParticlesI1)
     vₙ⁺               = zeros(TypeOfParticleI3,  SizeOfParticlesI3)
-    Positionₙ⁺        = zeros(TypeOfParticleI3,  SizeOfParticlesI3)
+    
+
+    Positionₙ⁺ˣ               = zeros(FloatType,  SizeOfParticlesI1)
+    Positionₙ⁺ʸ               = zeros(FloatType,  SizeOfParticlesI1)
+    Positionₙ⁺ᶻ               = zeros(FloatType,  SizeOfParticlesI1)
+    Positionₙ⁺                = StructArray{TypeOfParticleI3}(( Positionₙ⁺ˣ, Positionₙ⁺ʸ, Positionₙ⁺ᶻ))
+
   
     dρdtIₙ⁺           = zeros(FloatType,         SizeOfParticlesI1)
-  
-    
-    xᵢⱼˣ               = zeros(FloatType,  SizeOfParticlesI1)
-    xᵢⱼʸ               = zeros(FloatType,  SizeOfParticlesI1)
-    xᵢⱼᶻ               = zeros(FloatType,  SizeOfParticlesI1)
-    xᵢⱼ                = StructArray{TypeOfParticleI3}(( xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ))
 
-    KernelGradientL   = zeros(TypeOfParticleI3,  SizeOfParticlesI3)
+    KernelGradientˣ         = zeros(FloatType,  SizeOfParticlesI1)
+    KernelGradientʸ         = zeros(FloatType,  SizeOfParticlesI1)
+    KernelGradientᶻ         = zeros(FloatType,  SizeOfParticlesI1)
+    KernelGradient          = StructArray{TypeOfParticleI3}(( KernelGradientˣ, KernelGradientʸ, KernelGradientᶻ))
+
+    KernelGradientL         = zeros(TypeOfParticleI3,  SizeOfParticlesI3)
+  
+
+    Accelerationˣ           = zeros(FloatType,  SizeOfParticlesI1)
+    Accelerationʸ           = zeros(FloatType,  SizeOfParticlesI1)
+    Accelerationᶻ           = zeros(FloatType,  SizeOfParticlesI1)
+    Acceleration            = StructArray{TypeOfParticleI3}(( Accelerationˣ, Accelerationʸ, Accelerationᶻ))
+  
+    Velocityˣ               = zeros(FloatType,  SizeOfParticlesI1)
+    Velocityʸ               = zeros(FloatType,  SizeOfParticlesI1)
+    Velocityᶻ               = zeros(FloatType,  SizeOfParticlesI1)
+    Velocity                = StructArray{TypeOfParticleI3}(( Velocityˣ, Velocityʸ, Velocityᶻ))
+
+    Positionˣ               = getindex.(points,1)
+    Positionʸ               = getindex.(points,2)
+    Positionᶻ               = getindex.(points,3)
+    Position                = StructArray{TypeOfParticleI3}(( Positionˣ, Positionʸ, Positionᶻ))
+
+    xᵢⱼˣ                    = zeros(FloatType,  SizeOfParticlesI1)
+    xᵢⱼʸ                    = zeros(FloatType,  SizeOfParticlesI1)
+    xᵢⱼᶻ                    = zeros(FloatType,  SizeOfParticlesI1)
+    xᵢⱼ                     = StructArray{TypeOfParticleI3}(( xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ))
+
     drhopLp           = zeros(FloatType,         SizeOfParticlesI1)
     drhopLn           = zeros(FloatType,         SizeOfParticlesI1) 
          
@@ -122,6 +144,10 @@ function RunSimulation(;FluidCSV::String,
 
     # Initialize the system system.nb.list
     system  = InPlaceNeighborList(x=Position, cutoff=2*h, parallel=true)
+
+    
+    # Save the initial particle layout with dummy values
+    create_vtp_file(SimMetaData,SimConstants,Position; Kernel, KernelGradient, Density, Acceleration, Velocity)
 
     # Define Progress spec
     show_vals(x) = [(:(Iteration),format(FormatExpr("{1:d}"), x.Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"),x.TotalTime))]
@@ -138,7 +164,7 @@ function RunSimulation(;FluidCSV::String,
             # to avoid run time dispatch errors
             ResetArrays!(Kernel, dρdtI,dρdtIₙ⁺,KernelGradient,dvdtI, Acceleration)
             # Resize KernelGradientL based on length of neighborsystem.nb.list
-            ResizeBuffers!(KernelGradientL, xᵢⱼ, drhopLp, drhopLn; N = system.nb.n)
+            ResizeBuffers!(KernelGradientL, xᵢⱼ, xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, drhopLp, drhopLn; N = system.nb.n)
         end
 
         @timeit HourGlass "1 | Update xᵢⱼ, kernel values and kernel gradient" begin
@@ -185,18 +211,18 @@ function RunSimulation(;FluidCSV::String,
         # Clamp boundary particles minimum density to avoid suction
         @timeit HourGlass "2| LimitDensityAtBoundary!(Density)" LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
 
-        # Update Velocity in-place and then use the updated value for Position
+        # # Update Velocity in-place and then use the updated value for Position
         @timeit HourGlass "2| Velocity" @. Velocity += Acceleration * dt * MotionLimiter
         @timeit HourGlass "2| Position" @. Position += ((Velocity + (Velocity - Acceleration * dt * MotionLimiter)) / 2) * dt * MotionLimiter
 
         # Automatic time stepping control
         @timeit HourGlass "3| Calculating time step" begin
-            dt =  Δt(FinalResults,SimConstants)
+            dt =  Δt(Position, Velocity, Acceleration,SimConstants)
             SimMetaData.CurrentTimeStep = dt
             SimMetaData.TotalTime      += dt
         end
         
-        @timeit HourGlass "4| OutputVTP" OutputVTP(SimMetaData,SimConstants,FinalResults)
+        @timeit HourGlass "4| OutputVTP" OutputVTP(SimMetaData,SimConstants,Position; Kernel, KernelGradient, Density, Acceleration, Velocity)
 
         next!(SimMetaData.ProgressSpecification; showvalues = show_vals(SimMetaData))
     end
@@ -214,7 +240,8 @@ begin
     SimMetaData  = SimulationMetaData{T}(
                                     SimulationName="MySimulation", 
                                     SaveLocation=raw"E:\SecondApproach\Results", 
-                                    MaxIterations=10001
+                                    MaxIterations=10001,
+                                    OutputIteration=50,
     )
     # Initialze the constants to use
     SimConstants = SimulationConstants{T}()

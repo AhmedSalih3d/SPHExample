@@ -6,9 +6,8 @@ module TimeStepping
     using Parameters
 
     # A few time stepping controls implemented to allow for an adaptive time step
-    function Δt(FinalResults,SimulationConstants)
-        @unpack c₀, h, CFL, η²                   = SimulationConstants
-        @unpack Position, Velocity, Acceleration = FinalResults
+    function Δt(Position, Velocity, Acceleration,SimulationConstants)
+        @unpack c₀, h, CFL, η² = SimulationConstants
 
         function max_visc(Velocity,Position,h,η²)
             maxval = -Inf
