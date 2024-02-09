@@ -29,6 +29,6 @@ module SPHExample
     export SimulationConstants
 
     using .SimulationDataArrays
-    export SimulationDataResults, ResetArrays!, ResizeBuffers!
+    export ResetArrays!, ResizeBuffers!
 end
 
