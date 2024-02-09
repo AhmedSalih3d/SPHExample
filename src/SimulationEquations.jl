@@ -122,8 +122,26 @@ function ∂Πᵢⱼ∂t!(viscI, list,xᵢⱼ,ρ,v,WgL,SimulationConstants)
     return nothing
 end
 
+
+@inline function fancy7th(x)
+    # todo tune the magic constant
+    # initial guess based on fast inverse sqrt trick but adjusted to compute x^(1/7)
+    t = copysign(reinterpret(Float64, 0x36cd000000000000 + reinterpret(UInt64,abs(x))÷7), x)
+    @fastmath for _ in 1:2
+        # newton's method for t^3 - x/t^4 = 0
+        t2 = t*t
+        t3 = t2*t
+        t4 = t2*t2
+        xot4 = x/t4
+        t = t - t*(t3 - xot4)/(4*t3 + 3*xot4)
+    end
+    t
+end
+
+#https://discourse.julialang.org/t/can-this-be-written-even-faster-cpu/109924/28
 #faux(ρ₀, P, invCb, γ⁻¹) = ρ₀ * ( ^( 1 + (P * invCb), γ⁻¹) - 1)
-faux(ρ₀, P, invCb, γ⁻¹) = ρ₀ * (expm1(γ⁻¹ * log1p(P * invCb)))
+@inline faux(ρ₀, P, invCb, γ⁻¹) = ρ₀ * (expm1(γ⁻¹ * log1p(P * invCb)))
+@inline faux_fancy(ρ₀, P, Cb) = ρ₀ * ( fancy7th( 1 + (P * Cb)) - 1)
 #faux(ρ₀, P, invCb) = ρ₀ * ( fancy7th( 1 + (P * invCb)) - 1)
 
 # The density derivative function INCLUDING density diffusion
@@ -136,9 +154,9 @@ function ∂ρᵢ∂tDDT!(dρdtI, list, xᵢⱼ,xᵢⱼʸ,ρ,v,WgL,MotionLimiter
 
     @tturbo for iter in eachindex(list)
         Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼʸ[iter]
-        ρᵢⱼᴴ  = faux(ρ₀, Pᵢⱼᴴ, invCb, γ⁻¹)
+        ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, invCb)
         Pⱼᵢᴴ  = -Pᵢⱼᴴ
-        ρⱼᵢᴴ  = faux(ρ₀, Pⱼᵢᴴ, invCb, γ⁻¹)
+        ρⱼᵢᴴ  = faux_fancy(ρ₀, Pⱼᵢᴴ, invCb)
         
         drhopLp[iter] = ρᵢⱼᴴ
         drhopLn[iter] = ρⱼᵢᴴ
