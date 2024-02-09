@@ -69,26 +69,45 @@ end
 # Function to calculate kernel gradient value in both "particle i" format and "list of interactions" format
 # Please notice how when using CellListMap since it is based on a "list of interactions", for each 
 # interaction we must add the contribution to both the i'th and j'th particle!
-function ∑ⱼ∇ᵢWᵢⱼ!(KernelGradientI, KernelGradientL, list, xᵢⱼ, SimulationConstants)
-    @unpack αD, h, h⁻¹ = SimulationConstants
+function ∑ⱼ∇ᵢWᵢⱼ!(KernelGradientIˣ,KernelGradientIʸ,KernelGradientIᶻ,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ, I, J, D, xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, SimulationConstants)
+    @unpack αD, h, h⁻¹, η² = SimulationConstants
  
-    for (iter,L) in enumerate(list)
-        i = L[1]; j = L[2]; d = L[3]
+    @tturbo for iter in eachindex(I)
+        i = I[iter]; j = J[iter]; d = D[iter]
 
-        #xᵢⱼ = points[i] - points[j]
+        q = clamp(d * h⁻¹, 0.0, 2.0)
 
-        q = d * h⁻¹
+        Fac = αD*5*(q-2)^3*q / (8h*(q*h+η²)) 
 
-        Wg = Optim∇ᵢWᵢⱼ(αD,q,xᵢⱼ[iter],h)
+        ∇ᵢWᵢⱼˣ = Fac * xᵢⱼˣ[iter]  
+        ∇ᵢWᵢⱼʸ = Fac * xᵢⱼʸ[iter]  
+        ∇ᵢWᵢⱼᶻ = Fac * xᵢⱼᶻ[iter] 
 
-        KernelGradientI[i]   +=  Wg
-        KernelGradientI[j]   += -Wg
+        KernelGradientLˣ[iter] =  ∇ᵢWᵢⱼˣ
+        KernelGradientLʸ[iter] =  ∇ᵢWᵢⱼʸ
+        KernelGradientLᶻ[iter] =  ∇ᵢWᵢⱼᶻ
+    end
 
-        KernelGradientL[iter] = Wg
+
+    for iter in eachindex(I,J)
+        i = I[iter]
+        j = J[iter]
+
+        ∇ᵢWᵢⱼˣ                 =  KernelGradientLˣ[iter]
+        ∇ᵢWᵢⱼʸ                 =  KernelGradientLʸ[iter]
+        ∇ᵢWᵢⱼᶻ                 =  KernelGradientLᶻ[iter]
+
+        KernelGradientIˣ[i]   +=  ∇ᵢWᵢⱼˣ
+        KernelGradientIˣ[j]   += -∇ᵢWᵢⱼˣ
+        KernelGradientIʸ[i]   +=  ∇ᵢWᵢⱼʸ
+        KernelGradientIʸ[j]   += -∇ᵢWᵢⱼʸ
+        KernelGradientIᶻ[i]   +=  ∇ᵢWᵢⱼᶻ
+        KernelGradientIᶻ[j]   += -∇ᵢWᵢⱼᶻ
     end
 
     return nothing
 end
+
 
 # Equation of State in Weakly-Compressible SPH
 function Pressure(ρ,c₀,γ,ρ₀)

@@ -115,7 +115,10 @@ function RunSimulation(;FluidCSV::String,
     KernelGradientᶻ         = zeros(FloatType,  SizeOfParticlesI1)
     KernelGradient          = StructArray{TypeOfParticleI3}(( KernelGradientˣ, KernelGradientʸ, KernelGradientᶻ))
 
-    KernelGradientL         = zeros(TypeOfParticleI3,  SizeOfParticlesI3)
+    KernelGradientLˣ        = zeros(FloatType,  SizeOfParticlesI1)
+    KernelGradientLʸ        = zeros(FloatType,  SizeOfParticlesI1)
+    KernelGradientLᶻ        = zeros(FloatType,  SizeOfParticlesI1)
+    KernelGradientL         = StructArray{TypeOfParticleI3}(( KernelGradientLˣ, KernelGradientLʸ, KernelGradientLᶻ))
   
 
     Accelerationˣ           = zeros(FloatType,  SizeOfParticlesI1)
@@ -182,7 +185,7 @@ function RunSimulation(;FluidCSV::String,
             # Here we output the kernel gradient value for each particle and also the kernel gradient value
             # based on the pair-to-pair interaction system.nb.list, for use in later calculations.
             # Other functions follow a similar format, with the "I" and "L" ending
-            ∑ⱼ∇ᵢWᵢⱼ!(KernelGradient, KernelGradientL, system.nb.list, xᵢⱼ, SimConstants)
+            ∑ⱼ∇ᵢWᵢⱼ!(KernelGradientˣ,KernelGradientʸ,KernelGradientᶻ,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ, I, J, D, xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, SimConstants)
         end
 
         # Then we calculate the density derivative at time step "n"
