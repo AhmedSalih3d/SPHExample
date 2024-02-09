@@ -121,34 +121,6 @@ end
     end
 end
 
-# The artificial viscosity term
-function ∂Πᵢⱼ∂t!(viscI, list,xᵢⱼ,ρ,v,WgL,SimulationConstants)
-    @unpack h, α, c₀, m₀, η² = SimulationConstants
-
-    for (iter,L) in enumerate(list)
-        i = L[1]; j = L[2]; d = L[3]
-        
-        ρᵢ    = ρ[i]
-        ρⱼ    = ρ[j]
-        vᵢⱼ   = v[i] - v[j]
-        xᵢⱼ⁰  = xᵢⱼ[iter] #xᵢⱼ   = points[i] - points[j]
-        d²    = d*d
-        ρᵢⱼ   = (ρᵢ+ρⱼ)*0.5
-
-        cond      = dot(vᵢⱼ,xᵢⱼ⁰)
-
-        cond_bool = cond < 0
-
-        μᵢⱼ = h*cond/(d²+η²)
-        Πᵢⱼ = cond_bool*(-α*c₀*μᵢⱼ)/ρᵢⱼ
-        visc_val = -Πᵢⱼ*m₀*WgL[iter]
-        
-        viscI[i] +=  visc_val
-        viscI[j] += -visc_val
-    end
-
-    return nothing
-end
 
 
 @inline function fancy7th(x)
@@ -275,6 +247,70 @@ function ∂vᵢ∂t!(I,J, dvdtIˣ, dvdtIʸ, dvdtIᶻ, dvdtLˣ, dvdtLʸ, dvdtL�
 
     return nothing
 end
+
+# The artificial viscosity term
+function ∂Πᵢⱼ∂t!(viscIˣ, viscIʸ, viscIᶻ, viscLˣ, viscLʸ, viscLᶻ, I,J, D, xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ ,Density, Velocityˣ, Velocityʸ, Velocityᶻ,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ,SimulationConstants)
+    @unpack h, α, c₀, m₀, η² = SimulationConstants
+
+    # Calculation
+    @tturbo for iter in eachindex(I)
+        i = I[iter]; j = J[iter]; d = D[iter]
+        
+        ρᵢ    = Density[i]
+        ρⱼ    = Density[j]
+        ρᵢⱼ   = (ρᵢ+ρⱼ)*0.5
+
+        vᵢⱼˣ  = Velocityˣ[i] - Velocityˣ[j]
+        vᵢⱼʸ  = Velocityʸ[i] - Velocityʸ[j]
+        vᵢⱼᶻ  = Velocityᶻ[i] - Velocityᶻ[j]
+
+        ∇ᵢWᵢⱼˣ = KernelGradientLˣ[iter]
+        ∇ᵢWᵢⱼʸ = KernelGradientLʸ[iter]
+        ∇ᵢWᵢⱼᶻ = KernelGradientLᶻ[iter]
+
+        xᵢⱼˣ⁰  = xᵢⱼˣ[iter]
+        xᵢⱼʸ⁰  = xᵢⱼʸ[iter]
+        xᵢⱼᶻ⁰  = xᵢⱼᶻ[iter]
+
+
+        d²    = d*d
+        
+        cond      =  vᵢⱼˣ * xᵢⱼˣ⁰ +  vᵢⱼʸ * xᵢⱼʸ⁰ + vᵢⱼᶻ * xᵢⱼᶻ⁰
+
+        cond_bool = cond < 0
+
+        μᵢⱼ = h*cond/(d²+η²)
+        Πᵢⱼ = cond_bool*(-α*c₀*μᵢⱼ)/ρᵢⱼ
+        
+        visc_valˣ = -Πᵢⱼ*m₀*∇ᵢWᵢⱼˣ
+        visc_valʸ = -Πᵢⱼ*m₀*∇ᵢWᵢⱼʸ
+        visc_valᶻ = -Πᵢⱼ*m₀*∇ᵢWᵢⱼᶻ
+        
+        viscLˣ[iter] = visc_valˣ 
+        viscLʸ[iter] = visc_valʸ
+        viscLᶻ[iter] = visc_valᶻ
+    end
+
+    # Reduction
+    for iter in eachindex(I,J)
+        i = I[iter]
+        j = J[iter]
+    
+        visc_valˣ    =  viscLˣ[iter]
+        visc_valʸ    =  viscLʸ[iter]
+        visc_valᶻ    =  viscLᶻ[iter]
+    
+        viscIˣ[i]   +=  visc_valˣ
+        viscIˣ[j]   += -visc_valˣ
+        viscIʸ[i]   +=  visc_valʸ
+        viscIʸ[j]   += -visc_valʸ
+        viscIᶻ[i]   +=  visc_valᶻ
+        viscIᶻ[j]   += -visc_valᶻ
+    end
+
+    return nothing
+end
+
 
 # This is to handle the special factor multiplied on density in the time stepping procedure, when
 # using symplectic time stepping

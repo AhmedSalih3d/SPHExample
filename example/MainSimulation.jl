@@ -107,8 +107,6 @@ function RunSimulation(;FluidCSV::String,
     dvdtL             = StructArray{TypeOfParticleI3}(( dvdtLˣ, dvdtLʸ, dvdtLᶻ))
 
     ρₙ⁺               = zeros(FloatType,         SizeOfParticlesI1)
-    vₙ⁺               = zeros(TypeOfParticleI3,  SizeOfParticlesI3)
-    
 
     Positionₙ⁺ˣ               = zeros(FloatType,  SizeOfParticlesI1)
     Positionₙ⁺ʸ               = zeros(FloatType,  SizeOfParticlesI1)
@@ -133,11 +131,16 @@ function RunSimulation(;FluidCSV::String,
     Accelerationʸ           = zeros(FloatType,  SizeOfParticlesI1)
     Accelerationᶻ           = zeros(FloatType,  SizeOfParticlesI1)
     Acceleration            = StructArray{TypeOfParticleI3}(( Accelerationˣ, Accelerationʸ, Accelerationᶻ))
-  
+
     Velocityˣ               = zeros(FloatType,  SizeOfParticlesI1)
     Velocityʸ               = zeros(FloatType,  SizeOfParticlesI1)
     Velocityᶻ               = zeros(FloatType,  SizeOfParticlesI1)
     Velocity                = StructArray{TypeOfParticleI3}(( Velocityˣ, Velocityʸ, Velocityᶻ))
+  
+    Velocityₙ⁺ˣ               = zeros(FloatType,  SizeOfParticlesI1)
+    Velocityₙ⁺ʸ               = zeros(FloatType,  SizeOfParticlesI1)
+    Velocityₙ⁺ᶻ               = zeros(FloatType,  SizeOfParticlesI1)
+    Velocityₙ⁺                = StructArray{TypeOfParticleI3}(( Velocityₙ⁺ˣ, Velocityₙ⁺ʸ, Velocityₙ⁺ᶻ))
 
     Positionˣ               = getindex.(points,1)
     Positionʸ               = getindex.(points,2)
@@ -202,7 +205,7 @@ function RunSimulation(;FluidCSV::String,
         # We calculate viscosity contribution and momentum equation at time step "n"
         @timeit HourGlass "2| Pressure" Pressure!(Pressureᵢ, Density, SimConstants)
         @timeit HourGlass "2| ∂vᵢ∂t!"   ∂vᵢ∂t!(I, J, dvdtIˣ, dvdtIʸ, dvdtIᶻ, dvdtLˣ, dvdtLʸ, dvdtLᶻ,Density,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ,Pressureᵢ, SimConstants)
-        @timeit HourGlass "2| ∂Πᵢⱼ∂t!"  ∂Πᵢⱼ∂t!(dvdtI, system.nb.list, xᵢⱼ,Density,Velocity,KernelGradientL, SimConstants)
+        @timeit HourGlass "2| ∂Πᵢⱼ∂t!"  ∂Πᵢⱼ∂t!(dvdtIˣ, dvdtIʸ, dvdtIᶻ, dvdtLˣ, dvdtLʸ, dvdtLᶻ, I,J, D, xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ ,Density, Velocityˣ, Velocityʸ, Velocityᶻ,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ,SimConstants)
         @timeit HourGlass "2| Gravity"  dvdtI   .+=    GravityContributionArray
 
         # Based on the density derivative at "n", we calculate "n+½"
@@ -211,17 +214,17 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "2| LimitDensityAtBoundary!(ρₙ⁺)" LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
 
         # We now calculate velocity and position at "n+½"
-        @timeit HourGlass "2| vₙ⁺" @. vₙ⁺          = Velocity   + dvdtI * (dt/2) * MotionLimiter
-        @timeit HourGlass "2| Positionₙ⁺" @. Positionₙ⁺   = Position   + vₙ⁺ * (dt/2)   * MotionLimiter
+        @timeit HourGlass "2| vₙ⁺" @. Velocityₙ⁺          = Velocity   + dvdtI * (dt/2) * MotionLimiter
+        @timeit HourGlass "2| Positionₙ⁺" @. Positionₙ⁺   = Position   + Velocityₙ⁺ * (dt/2)   * MotionLimiter
         @timeit HourGlass "2| updatexᵢⱼ!" updatexᵢⱼ!(xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, I, J, Positionₙ⁺ˣ, Positionₙ⁺ʸ, Positionₙ⁺ᶻ)
         
         # Density derivative at "n+½" - Note that we keep the kernel gradient values calculated at "n" for simplicity
-        @timeit HourGlass "2| DDT2" ∂ρᵢ∂tDDT!(dρdtIₙ⁺,system.nb.list,xᵢⱼ,xᵢⱼʸ,ρₙ⁺,vₙ⁺,KernelGradientL,MotionLimiter, drhopLp, drhopLn, SimConstants)
+        @timeit HourGlass "2| DDT2" ∂ρᵢ∂tDDT!(dρdtIₙ⁺,system.nb.list,xᵢⱼ,xᵢⱼʸ,ρₙ⁺,Velocityₙ⁺,KernelGradientL,MotionLimiter, drhopLp, drhopLn, SimConstants)
 
         # Viscous contribution and momentum equation at "n+½"
         @timeit HourGlass "2| Pressure2"  Pressure!(Pressureᵢ, ρₙ⁺, SimConstants)
         @timeit HourGlass "2| ∂vᵢ∂t!2"   ∂vᵢ∂t!(I, J, Accelerationˣ, Accelerationʸ, Accelerationᶻ, dvdtLˣ, dvdtLʸ, dvdtLᶻ,ρₙ⁺,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ,Pressureᵢ, SimConstants)
-        @timeit HourGlass "2| ∂Πᵢⱼ∂t!2" ∂Πᵢⱼ∂t!(Acceleration,system.nb.list, xᵢⱼ ,ρₙ⁺,vₙ⁺, KernelGradientL, SimConstants)
+        @timeit HourGlass "2| ∂Πᵢⱼ∂t!2" ∂Πᵢⱼ∂t!(Accelerationˣ, Accelerationʸ, Accelerationᶻ, dvdtLˣ, dvdtLʸ, dvdtLᶻ, I,J, D, xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ , ρₙ⁺, Velocityₙ⁺ˣ, Velocityₙ⁺ʸ, Velocityₙ⁺ᶻ,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ,SimConstants)
         @timeit HourGlass "2| Acceleration2" Acceleration .+= GravityContributionArray
 
         # Factor for properly time stepping the density to "n+1" - We use the symplectic scheme as done in DualSPHysics
@@ -259,7 +262,7 @@ begin
     SimMetaData  = SimulationMetaData{T}(
                                     SimulationName="MySimulation", 
                                     SaveLocation=raw"E:\SecondApproach\Results", 
-                                    MaxIterations=1001,
+                                    MaxIterations=10001,
                                     OutputIteration=50,
     )
     # Initialze the constants to use
