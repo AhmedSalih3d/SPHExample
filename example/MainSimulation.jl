@@ -91,9 +91,6 @@ function RunSimulation(;FluidCSV::String,
     # Based on MotionLimiter we assess which particles are boundary particles
     BoundaryBool  = .!Bool.(MotionLimiter)
 
-    # Save the initial particle layout with dummy values
-    create_vtp_file(SimMetaData,SimConstants,FinalResults)
-
     # Preallocate simulation arrays
     SizeOfParticlesI1 = size(Density)
     SizeOfParticlesI3 = size(Position)
@@ -118,10 +115,10 @@ function RunSimulation(;FluidCSV::String,
     xᵢⱼᶻ               = zeros(FloatType,  SizeOfParticlesI1)
     xᵢⱼ                = StructArray{TypeOfParticleI3}(( xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ))
 
-    Positionˣ         = getindex.(points,1)
-    Positionʸ         = getindex.(points,2)
-    Positionᶻ         = getindex.(points,3)
-    Position          = StructArray{TypeOfParticleI3}(( Positionˣ, Positionʸ, Positionᶻ))
+    Positionˣ             = getindex.(points,1)
+    Positionʸ             = getindex.(points,2)
+    Positionᶻ             = getindex.(points,3)
+    FinalResults.Position .= StructArray{TypeOfParticleI3}(( Positionˣ, Positionʸ, Positionᶻ))
 
     I                 = zeros(Int64,   SizeOfParticlesI1)
     J                 = zeros(Int64,   SizeOfParticlesI1)
@@ -133,6 +130,10 @@ function RunSimulation(;FluidCSV::String,
     drhopLn           = zeros(FloatType,         SizeOfParticlesI1) 
          
     Pressureᵢ         = zeros(FloatType,         SizeOfParticlesI1)
+
+    # Save the initial particle layout with dummy values
+    create_vtp_file(SimMetaData,SimConstants,FinalResults)
+
 
     # Initialize the system system.nb.list
     system  = InPlaceNeighborList(x=Position, cutoff=2*h, parallel=true)
