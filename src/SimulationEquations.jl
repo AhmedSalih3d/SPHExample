@@ -1,6 +1,6 @@
 module SimulationEquations
 
-export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ!, Pressure, Pressure!, ∂Πᵢⱼ∂t!, ∂ρᵢ∂tDDT!, ∂vᵢ∂t!, DensityEpsi!, LimitDensityAtBoundary!, updatexᵢⱼ!
+export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ!, EquationOfState, Pressure!, ∂Πᵢⱼ∂t!, ∂ρᵢ∂tDDT!, ∂vᵢ∂t!, DensityEpsi!, LimitDensityAtBoundary!, updatexᵢⱼ!
 
 using CellListMap
 using StaticArrays
@@ -110,14 +110,14 @@ end
 
 
 # Equation of State in Weakly-Compressible SPH
-function Pressure(ρ,c₀,γ,ρ₀)
+function EquationOfState(ρ,c₀,γ,ρ₀)
     return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
 end
 
 @inline @inbounds function Pressure!(Press, Density, SimulationConstants)
     @unpack c₀,γ,ρ₀ = SimulationConstants
     @tturbo for i ∈ eachindex(Press,Density)
-        Press[i] = Pressure(Density[i],c₀,γ,ρ₀)
+        Press[i] = EquationOfState(Density[i],c₀,γ,ρ₀)
     end
 end
 
