@@ -238,11 +238,13 @@ function LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
     end
 end
 
-function updatexᵢⱼ!(xᵢⱼ, list, points)
-    if length(xᵢⱼ) != length(list) resize!(xᵢⱼ, length(list)) end
-    for (iter, L) in enumerate(list)
-        i = L[1]; j = L[2];
-        xᵢⱼ[iter] = points[i] - points[j]
+@inline function updatexᵢⱼ!(xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, I, J, Positionˣ, Positionʸ, Positionᶻ)
+    @tturbo for iter ∈ eachindex(I,J)
+        i = I[iter]; j = J[iter]; 
+        
+        xᵢⱼˣ[iter] = Positionˣ[i] - Positionˣ[j]
+        xᵢⱼʸ[iter] = Positionʸ[i] - Positionʸ[j]
+        xᵢⱼᶻ[iter] = Positionᶻ[i] - Positionᶻ[j]
     end
 end
 
