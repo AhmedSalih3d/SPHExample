@@ -143,6 +143,11 @@ function RunSimulation(;FluidCSV::String,
     Pressureᵢ         = zeros(FloatType,         SizeOfParticlesI1)
 
     # Initialize the system system.nb.list
+    I                 = zeros(Int64,   SizeOfParticlesI1)
+    J                 = zeros(Int64,   SizeOfParticlesI1)
+    D                 = zeros(Float64, SizeOfParticlesI1)
+    list_me           = StructArray{Tuple{Int64,Int64,Float64}}((I,J,D))
+
     system  = InPlaceNeighborList(x=Position, cutoff=2*h, parallel=true)
 
     
@@ -157,6 +162,8 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "0 | Update Neighbour system.nb.list" begin
             update!(system,Position)
             neighborlist!(system)
+            resize!(list_me, system.nb.n)
+            list_me .= system.nb.list
         end
         
         @timeit HourGlass "0 | Reset arrays to zero and resize L arrays" begin
@@ -168,7 +175,7 @@ function RunSimulation(;FluidCSV::String,
         end
 
         @timeit HourGlass "1 | Update xᵢⱼ, kernel values and kernel gradient" begin
-            updatexᵢⱼ!(xᵢⱼ, system.nb.list, Position)
+            updatexᵢⱼ!(xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, I, J, Positionˣ, Positionʸ, Positionᶻ)
             # Here we output the kernel value for each particle
             ∑ⱼWᵢⱼ!(Kernel, system.nb.list, SimConstants)
             # Here we output the kernel gradient value for each particle and also the kernel gradient value
@@ -194,8 +201,8 @@ function RunSimulation(;FluidCSV::String,
         # We now calculate velocity and position at "n+½"
         @timeit HourGlass "2| vₙ⁺" @. vₙ⁺          = Velocity   + dvdtI * (dt/2) * MotionLimiter
         @timeit HourGlass "2| Positionₙ⁺" @. Positionₙ⁺   = Position   + vₙ⁺ * (dt/2)   * MotionLimiter
-        @timeit HourGlass "2| updatexᵢⱼ!" updatexᵢⱼ!(xᵢⱼ, system.nb.list, Positionₙ⁺)
-
+        @timeit HourGlass "2| updatexᵢⱼ!" updatexᵢⱼ!(xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, I, J, Positionₙ⁺ˣ, Positionₙ⁺ʸ, Positionₙ⁺ᶻ)
+        
         # Density derivative at "n+½" - Note that we keep the kernel gradient values calculated at "n" for simplicity
         @timeit HourGlass "2| DDT2" ∂ρᵢ∂tDDT!(dρdtIₙ⁺,system.nb.list,xᵢⱼ,xᵢⱼʸ,ρₙ⁺,vₙ⁺,KernelGradientL,MotionLimiter, drhopLp, drhopLn, SimConstants)
 
