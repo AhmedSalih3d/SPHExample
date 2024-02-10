@@ -3,6 +3,42 @@ using XML
 using XML: Document, Declaration, Element, Text
 using StaticArrays
 
+### Functions=================================================
+# Function to create a DataArray element for VTK files
+function create_data_array_element(name::String, data::AbstractVector{T}) where T
+    # Create the DataArray elements
+    dataarray = Element("DataArray")
+    
+    # Set attributes based on the input vector's type
+    dataarray.attributes["type"] = String(eltype(first(data)))
+    dataarray.attributes["Name"] = name  
+    dataarray.attributes["NumberOfComponents"] = String(Int(sizeof(first(s))/sizeof(eltype(first(data)))))
+    dataarray.attributes["format"] = "appended"
+    dataarray.attributes["offset"] = "nan"  # Placeholder, to be replaced later
+    
+    return dataarray
+end
+
+# Function to write a single SVector to a buffer in binary format
+function write_svector(io, vec)
+   for element in vec
+        write(io, element)
+   end
+end
+    
+
+###===========================================================
+
+# Example usage with a Vector of SVector{3, Float64}
+using StaticArrays: SVector
+data = [SVector{3,Float64}(1,2,3)]  # Example data
+
+points_element = create_data_array_element(data)
+
+# To view the generated XML structure
+println(XML.to_string(points_element))
+
+
 N              = 1
 Points = [SVector{3,Float64}(1,2,3)]
 #Points         = rand(SVector{3,Float64},N)
@@ -57,13 +93,6 @@ appendeddata = Element("AppendedData")
 appendeddata.attributes["encoding"] = "raw"
 
 push!(vtk_file,appendeddata)
-
-# Function to write a single SVector to a buffer in binary format
-function write_svector(io, vec)
-    for element in vec
-        write(io, element)
-    end
-end
 
 # Open a file in binary write mode. Change 'yourfile.bin' to your desired file name.
         
