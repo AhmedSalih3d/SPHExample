@@ -14,6 +14,8 @@ using Formatting
 using StructArrays
 using LoopVectorization
 
+include("../src/ProduceVTP.jl")
+
 """
     RunSimulation(;SimulationMetaData::SimulationMetaData, SimulationConstants::SimulationConstants)
 
@@ -244,7 +246,11 @@ function RunSimulation(;FluidCSV::String,
             SimMetaData.TotalTime      += dt
         end
         
-        @timeit HourGlass "4| OutputVTP" OutputVTP(SimMetaData,SimConstants,Position; Kernel, KernelGradient, Density, Acceleration, Velocity, Pressureᵢ)
+        
+        if SimMetaData.Iteration % SimMetaData.OutputIteration == 0
+            @timeit HourGlass "4| OutputVTP" OutputVTP(SimMetaData,SimConstants,Position; Kernel, KernelGradient, Density, Acceleration, Velocity)
+            @timeit HourGlass "4| CustomVTP" PolyDataTemplate(raw"E:\SecondApproach\CustomVTP" * "\\" * SimulationName * lpad(SimMetaData.Iteration,4,"0") * ".vtp", Position; Kernel, KernelGradient, Density, Acceleration, Velocity)
+        end
 
         next!(SimMetaData.ProgressSpecification; showvalues = show_vals(SimMetaData))
     end

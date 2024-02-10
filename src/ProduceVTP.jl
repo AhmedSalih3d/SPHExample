@@ -3,17 +3,6 @@ using XML
 using XML: Document, Declaration, Element, Text
 using StaticArrays
 
-### Dictionary for types =====================================
-# Dictionary mapping string names to actual Julia types
-type_dict = Dict(
-    "Float64" => Float64,
-    "Float32" => Float32,
-    "Int64"   => Int64,
-    "Int32"   => Int32,
-    "UInt64"  => UInt64,
-    "UInt32"  => UInt32
-)
-
 ### Functions=================================================
 # Function to create a DataArray element for VTK files
 function create_data_array_element(name::String, data::AbstractVector{T}) where T
@@ -45,7 +34,7 @@ Points         = [SVector{3,Float64}(1,2,3), SVector{3,Float64}(4,5,6)]
 Kernel         = Float64.([100, 200]) #rand(Float64,N)
 KernelGradient = [SVector{3,Float64}(-1,1,0), SVector{3,Float64}(1,-1,0)]
 
-function PolyDataTemplate(filename::String, points::Vector ; kwargs...)
+function PolyDataTemplate(filename::String, points::AbstractVector ; kwargs...)
         # Generate the XML document and then put in some fixed values
         xml_doc = Document(Declaration(version=1.0,encoding="utf-8"))
         vtk_file = Element("VTKFile")
@@ -81,13 +70,13 @@ function PolyDataTemplate(filename::String, points::Vector ; kwargs...)
         NB = 0
         io = IOBuffer()
         write(io,"\n_")
-        UncompressedHeaderN = N * parse(Int,point_dataarray.attributes["NumberOfComponents"]) *  sizeof(type_dict[point_dataarray.attributes["type"]])
+        UncompressedHeaderN = N * parse(Int,point_dataarray.attributes["NumberOfComponents"]) *  sizeof(getproperty(Base, Meta.parse(point_dataarray.attributes["type"])))
         NB += write(io, UncompressedHeaderN)
         NB += custom_write(io, points)
 
         # This loop here calculates the correct offsets and puts the specified data in
         for (arr,keyval) in zip(dataarrays,kwargs)
-            T   = type_dict[arr.attributes["type"]]
+            T   = Meta.parse(point_dataarray.attributes["type"])
             Nc  = parse(Int,arr.attributes["NumberOfComponents"])
             N   = length(keyval.second) #data = keyval.second, since it is Pair
             Tsz = sizeof(T)
