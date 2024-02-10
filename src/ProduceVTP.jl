@@ -3,6 +3,17 @@ using XML
 using XML: Document, Declaration, Element, Text
 using StaticArrays
 
+### Dictionary for types =====================================
+# Dictionary mapping string names to actual Julia types
+type_dict = Dict(
+    "Float64" => Float64,
+    "Float32" => Float32,
+    "Int64"   => Int64,
+    "Int32"   => Int32,
+    "UInt64"  => UInt64,
+    "UInt32"  => UInt32
+)
+
 ### Functions=================================================
 # Function to create a DataArray element for VTK files
 function create_data_array_element(name::String, data::AbstractVector{T}) where T
@@ -25,16 +36,14 @@ function custom_write(io, vec)
    for element in vec
         nb += write(io, element)
    end
-
    return nb
 end
     
 
 ###===========================================================
-N              = 1
-Points         = [SVector{3,Float64}(1,2,3)]
-Kernel         = [Float64.(100)] #rand(Float64,N)
-KernelGradient = [SVector{3,Float64}(-1,1,0)]
+Points         = [SVector{3,Float64}(1,2,3), SVector{3,Float64}(4,5,6)]
+Kernel         = Float64.([100, 200]) #rand(Float64,N)
+KernelGradient = [SVector{3,Float64}(-1,1,0), SVector{3,Float64}(1,-1,0)]
 
 function PolyDataTemplate(filename::String, points::Vector ; kwargs...)
         xml_doc = Document(Declaration(version=1.0,encoding="utf-8"))
@@ -46,6 +55,7 @@ function PolyDataTemplate(filename::String, points::Vector ; kwargs...)
 
         polydata  = Element("PolyData")
         piece     = Element("Piece")
+        N = length(points)
         piece.attributes["NumberOfPoints"] = string(N)
 
         points_element    = Element("Points")
@@ -68,23 +78,22 @@ function PolyDataTemplate(filename::String, points::Vector ; kwargs...)
         NB = 0
         io = IOBuffer()
         write(io,"\n_")
-        NB += write(io, Char(24)*Char(0)^7)
+        UncompressedHeaderN = N * parse(Int,dataarray.attributes["NumberOfComponents"]) *  sizeof(type_dict[dataarray.attributes["type"]])
+        NB += write(io, UncompressedHeaderN)
         NB += custom_write(io, points)
-        write(io,8)
-        write(io,Kernel)
-        write(io,24)
-        write(io,KernelGradient)
 
-        println(NB)
+        for (arr,keyval) in zip(dataarrays,kwargs)
+            T   = type_dict[arr.attributes["type"]]
+            Nc  = parse(Int,arr.attributes["NumberOfComponents"])
+            N   = length(keyval.second) #data = keyval.second, since it is Pair
+            Tsz = sizeof(T)
 
-        offset = 0
-        for arr in dataarrays
-            arr.attributes["offset"]  = string(NB)
-            NB                       += 8
+            arr.attributes["offset"] = string(NB)
+
+            HowManyBytes  = Tsz*Nc*N
+            NB += write(io, HowManyBytes)
+            NB += custom_write(io,keyval.second) 
         end
-
-        # dataarray1.attributes["offset"]              = string(8 + sizeof(Float64)*N*3)
-        # dataarray2.attributes["offset"]              = string(3 * 8 + sizeof(Float64)*N*3)
 
         v = take!(io)
         t = Text(String(v))
@@ -105,4 +114,4 @@ function PolyDataTemplate(filename::String, points::Vector ; kwargs...)
         XML.write(filename,xml_doc)
 end
 
-PolyDataTemplate(raw"E:\SPH\TestOfFile.vtp", Points ; Kernel, KernelGradient)
+PolyDataTemplate(raw"E:\SPH\TestOfFile.vtp", Points; Kernel, KernelGradient)
