@@ -10,20 +10,23 @@ function create_data_array_element(name::String, data::AbstractVector{T}) where 
     dataarray = Element("DataArray")
     
     # Set attributes based on the input vector's type
-    dataarray.attributes["type"] = string(eltype(first(data)))
-    dataarray.attributes["Name"] = name  
+    dataarray.attributes["type"]               = string(eltype(first(data)))
+    dataarray.attributes["Name"]               = name  
     dataarray.attributes["NumberOfComponents"] = string(Int(sizeof(first(data))/sizeof(eltype(first(data)))))
-    dataarray.attributes["format"] = "appended"
-    dataarray.attributes["offset"] = "nan"  # Placeholder, to be replaced later
+    dataarray.attributes["format"]             = "appended"
+    dataarray.attributes["offset"]             = "nan"  # Placeholder, to be replaced later
     
     return dataarray
 end
 
 # Function to write a single SVector to a buffer in binary format
-function write_svector(io, vec)
+function custom_write(io, vec)
+   nb = 0
    for element in vec
-        write(io, element)
+        nb += write(io, element)
    end
+
+   return nb
 end
     
 
@@ -33,7 +36,7 @@ Points         = [SVector{3,Float64}(1,2,3)]
 Kernel         = [Float64.(100)] #rand(Float64,N)
 KernelGradient = [SVector{3,Float64}(-1,1,0)]
 
-function PolyDataTemplate(filename::String)
+function PolyDataTemplate(filename::String, points::Vector ; kwargs...)
         xml_doc = Document(Declaration(version=1.0,encoding="utf-8"))
         vtk_file = Element("VTKFile")
         vtk_file.attributes["type"]        = "PolyData"
@@ -47,35 +50,41 @@ function PolyDataTemplate(filename::String)
 
         points_element    = Element("Points")
 
-        dataarray = create_data_array_element("Points",Points)
+        dataarray = create_data_array_element("Points",points)
         dataarray["offset"] = 0
 
         pointdata  = Element("PointData")
-        dataarray1 = create_data_array_element("Kernel", Kernel)
-        dataarray2 = create_data_array_element("KernelGradient", KernelGradient)
 
         dataarrays = Vector{XML.Node}()
+        for (name, data) in kwargs
+            push!(dataarrays, create_data_array_element(string(name),data))
+        end
 
         appendeddata = Element("AppendedData")
         appendeddata.attributes["encoding"] = "raw"
 
         # Open a file in binary write mode. Change 'yourfile.bin' to your desired file name.
-                
+        
+        NB = 0
         io = IOBuffer()
-        write(io,"\n")
-        write(io,"_")
-        write(io,Char(24))
-        write(io,Char(0)^7)
-        # Write the data to the buffer
-        for vec in Points
-        write_svector(io, vec)
-        end
+        write(io,"\n_")
+        NB += write(io, Char(24)*Char(0)^7)
+        NB += custom_write(io, points)
         write(io,8)
         write(io,Kernel)
         write(io,24)
         write(io,KernelGradient)
-        dataarray1.attributes["offset"]              = string(8 + sizeof(Float64)*N*3)
-        dataarray2.attributes["offset"]              = string(3 * 8 + sizeof(Float64)*N*3)
+
+        println(NB)
+
+        offset = 0
+        for arr in dataarrays
+            arr.attributes["offset"]  = string(NB)
+            NB                       += 8
+        end
+
+        # dataarray1.attributes["offset"]              = string(8 + sizeof(Float64)*N*3)
+        # dataarray2.attributes["offset"]              = string(3 * 8 + sizeof(Float64)*N*3)
 
         v = take!(io)
         t = Text(String(v))
@@ -86,16 +95,14 @@ function PolyDataTemplate(filename::String)
         # Glue all xml pieces together
         push!(xml_doc,vtk_file)
         push!(points_element,dataarray)
-        push!(points,dataarray)
         push!(piece,points_element)
         push!(polydata,piece)
         push!(vtk_file,polydata)
-        push!(pointdata, dataarray1)
-        push!(pointdata, dataarray2)
+        map(x -> push!(pointdata, x), dataarrays)
         push!(piece,pointdata)
         push!(vtk_file,appendeddata)
 
         XML.write(filename,xml_doc)
 end
 
-PolyDataTemplate(raw"E:\SPH\TestOfFile.vtp")
+PolyDataTemplate(raw"E:\SPH\TestOfFile.vtp", Points ; Kernel, KernelGradient)
