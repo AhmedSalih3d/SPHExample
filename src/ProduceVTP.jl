@@ -3,13 +3,6 @@ using XML
 using XML: Document, Declaration, Element, Text
 using StaticArrays
 
-struct DataArray{Type}
-        Name::String                                                     
-        NumberOfComponents::Int     
-        Format::String                            
-        Offset::Int                              
-end
-
 ### Functions=================================================
 # Function to create a DataArray element for VTK files
 function create_data_array_element(name::String, data::AbstractVector{T}, offset::Int) where T
@@ -24,11 +17,6 @@ function create_data_array_element(name::String, data::AbstractVector{T}, offset
     dataarray.attributes["offset"]             = string(offset)  # Placeholder, to be replaced later
     
     return dataarray
-end
-
-# Function to extract dimension and type from a StaticVector type
-function extract_info(::Type{SVector{D, T}}) where {D, T}
-        return D, T
 end
 
 # Function to write a single SVector to a buffer in binary format
@@ -47,7 +35,7 @@ Kernel         = Float64.([100, 200]) #rand(Float64,N)
 KernelGradient = [SVector{3,Float64}(-1,1,0), SVector{3,Float64}(1,-1,0)]
 
 
-function PolyDataTemplate(filename::String, points::AbstractVector{SVector{D,T}}, args::Union{AbstractVector{M},AbstractVector{T},AbstractVector{O}}...) where {D, T, M, O}
+function PolyDataTemplate(filename::String, points, args...)
         # Generate the XML document and then put in some fixed values
         xml_doc = Document(Declaration(version=1.0,encoding="utf-8"))
         vtk_file = Element("VTKFile")
@@ -76,7 +64,7 @@ function PolyDataTemplate(filename::String, points::AbstractVector{SVector{D,T}}
         NB = 0
         io = IOBuffer()
         write(io,"\n_")
-        UncompressedHeaderN::Int  = N * D *  sizeof(T)
+        UncompressedHeaderN  = N * length(first(points)) *  sizeof(typeof(first(points)))
         NB += write(io, UncompressedHeaderN)
         NB += custom_write(io, points)
 
@@ -88,10 +76,10 @@ function PolyDataTemplate(filename::String, points::AbstractVector{SVector{D,T}}
             push!(dataarrays, create_data_array_element("test"*string(i),arg,NB))
             i+=1
 
-            N             = length(arg) #data = keyval.second, since it is Pair
+            Ni            = length(arg) #data = keyval.second, since it is Pair
             Nc            = Int(sizeof(typeof(first(arg))) / sizeof(eltype(typeof(first(arg)))))
             Tsz           = sizeof(sizeof(first(arg)))
-            HowManyBytes  = Tsz*Nc*N + sizeof(UInt64)
+            HowManyBytes  = Tsz*Nc*Ni + sizeof(UInt64)
 
             NB           += HowManyBytes
 
