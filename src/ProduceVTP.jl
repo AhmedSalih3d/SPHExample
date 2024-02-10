@@ -39,7 +39,6 @@ vtk_file.attributes["type"]        = "PolyData"
 vtk_file.attributes["version"]     = "1.0"
 vtk_file.attributes["byte_order"]  = "LittleEndian"
 vtk_file.attributes["header_type"] = "UInt64"
-push!(xml_doc,vtk_file)
 
 polydata  = Element("PolyData")
 piece     = Element("Piece")
@@ -49,26 +48,13 @@ points_element    = Element("Points")
 
 dataarray = create_data_array_element("Points",Points)
 dataarray["offset"] = 0
-push!(points_element,dataarray)
-
-push!(points,dataarray)
-push!(piece,points_element)
-push!(polydata,piece)
-push!(vtk_file,polydata)
-
 
 pointdata  = Element("PointData")
 dataarray1 = create_data_array_element("Kernel", Kernel)
 dataarray2 = create_data_array_element("KernelGradient", KernelGradient)
 
-push!(pointdata, dataarray1)
-push!(pointdata, dataarray2)
-push!(piece,pointdata)
-
 appendeddata = Element("AppendedData")
 appendeddata.attributes["encoding"] = "raw"
-
-push!(vtk_file,appendeddata)
 
 # Open a file in binary write mode. Change 'yourfile.bin' to your desired file name.
         
@@ -94,6 +80,16 @@ write(io,"\n")
 push!(appendeddata,t)
 close(io)
 
-
+# Glue all xml pieces together
+push!(xml_doc,vtk_file)
+push!(points_element,dataarray)
+push!(points,dataarray)
+push!(piece,points_element)
+push!(polydata,piece)
+push!(vtk_file,polydata)
+push!(pointdata, dataarray1)
+push!(pointdata, dataarray2)
+push!(piece,pointdata)
+push!(vtk_file,appendeddata)
 
 XML.write(raw"E:\SPH\TestOfFile.vtp",xml_doc)
