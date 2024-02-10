@@ -12,7 +12,7 @@ end
 
 ### Functions=================================================
 # Function to create a DataArray element for VTK files
-function create_data_array_element(name::String, data::AbstractVector{T}) where T
+function create_data_array_element(name::String, data::AbstractVector{T}, offset::Int) where T
     # Create the DataArray elements
     dataarray = Element("DataArray")
     
@@ -21,7 +21,7 @@ function create_data_array_element(name::String, data::AbstractVector{T}) where 
     dataarray.attributes["Name"]               = name  
     dataarray.attributes["NumberOfComponents"] = string(Int(sizeof(first(data))/sizeof(eltype(first(data)))))
     dataarray.attributes["format"]             = "appended"
-    dataarray.attributes["offset"]             = "nan"  # Placeholder, to be replaced later
+    dataarray.attributes["offset"]             = string(offset)  # Placeholder, to be replaced later
     
     return dataarray
 end
@@ -64,63 +64,46 @@ function PolyDataTemplate(filename::String, points::Vector{SVector{D,T}}, args::
 
         # This Points element and its associated DataArray has to be constructed individually
         points_element    = Element("Points")
-        point_dataarray = create_data_array_element("Points",points)
+        point_dataarray = create_data_array_element("Points",points,0)
         point_dataarray["offset"] = 0
+
+        
+        # Generate appended data element
+        appendeddata = Element("AppendedData")
+        appendeddata.attributes["encoding"] = "raw"
+
+        # Start writing the file and generating the correct dataarrays with the right offsets in the loop
+        NB = 0
+        io = IOBuffer()
+        write(io,"\n_")
+        UncompressedHeaderN::Int  = N * D *  sizeof(T)
+        NB += write(io, UncompressedHeaderN)
+        NB += custom_write(io, points)
+        println(NB)
+
 
         # Generate XML tags for kwargs data
         i = 0
         pointdata  = Element("PointData")
         dataarrays = Vector{XML.Node}()
         for arg in args
-        #     t          = eltype(first(data))
-        #     components = Int(sizeof(first(data))/sizeof(t))
-        #     D = DataArray{t}(Name, components, "appended", 0)
-            push!(dataarrays, create_data_array_element("test"*string(i),arg))
-            i+=1
-        end
-
-        # Generate appended data element
-        appendeddata = Element("AppendedData")
-        appendeddata.attributes["encoding"] = "raw"
-
-        # Process of writing file has begun
-        
-        NB = 0
-        io = IOBuffer()
-        write(io,"\n_")
-        #TP = getproperty(Base, Symbol(point_dataarray.attributes["type"]))
-        #UncompressedHeaderN::Int = N * parse(Int,point_dataarray.attributes["NumberOfComponents"]) *  sizeof(Tp)
-        UncompressedHeaderN::Int  = N * D *  sizeof(T)
-        NB += write(io, UncompressedHeaderN)
-        NB += custom_write(io, points)
-
-        # This loop here calculates the correct offsets and puts the specified data in
-        for (arr,keyval) in zip(dataarrays,args)
-        #     T   = SVtype #getproperty(Base, Symbol(point_dataarray.attributes["type"]))
-            if typeof(keyval)     === Vector{M}
-                Nc = 3
-            elseif typeof(keyval) === Vector{T}
-                Nc = 1
+            if typeof(arg)     === Vector{M}
+                    Nc = 3
+            elseif typeof(arg) === Vector{T}
+                    Nc = 1
             end
 
-        #     Nc  = parse(Int,arr.attributes["NumberOfComponents"])
-            N   = length(keyval) #data = keyval.second, since it is Pair
+            push!(dataarrays, create_data_array_element("test"*string(i),arg,NB))
+            i+=1
+
+            N   = length(arg) #data = keyval.second, since it is Pair
             Tsz = sizeof(T)
+            HowManyBytes  = Tsz*Nc*N + 8
 
-            arr.attributes["offset"] = string(NB)
+            NB           += HowManyBytes
 
-            HowManyBytes  = Tsz*Nc*N
-
-            println(HowManyBytes)
-            println(N)
-            println(T)
-            println(Tsz)
-            println(Nc)
-            println(NB)
-            
-
-            NB += write(io, HowManyBytes)
-            NB += custom_write(io,keyval) 
+            write(io,NB)
+            custom_write(io,arg)
         end
 
         # Take the result from the buffer, turn to string and write it
