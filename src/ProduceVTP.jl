@@ -60,8 +60,8 @@ function PolyDataTemplate(filename::String, points::Vector ; kwargs...)
 
         points_element    = Element("Points")
 
-        dataarray = create_data_array_element("Points",points)
-        dataarray["offset"] = 0
+        point_dataarray = create_data_array_element("Points",points)
+        point_dataarray["offset"] = 0
 
         pointdata  = Element("PointData")
 
@@ -78,7 +78,7 @@ function PolyDataTemplate(filename::String, points::Vector ; kwargs...)
         NB = 0
         io = IOBuffer()
         write(io,"\n_")
-        UncompressedHeaderN = N * parse(Int,dataarray.attributes["NumberOfComponents"]) *  sizeof(type_dict[dataarray.attributes["type"]])
+        UncompressedHeaderN = N * parse(Int,point_dataarray.attributes["NumberOfComponents"]) *  sizeof(type_dict[point_dataarray.attributes["type"]])
         NB += write(io, UncompressedHeaderN)
         NB += custom_write(io, points)
 
@@ -103,7 +103,7 @@ function PolyDataTemplate(filename::String, points::Vector ; kwargs...)
 
         # Glue all xml pieces together
         push!(xml_doc,vtk_file)
-        push!(points_element,dataarray)
+        push!(points_element,point_dataarray)
         push!(piece,points_element)
         push!(polydata,piece)
         push!(vtk_file,polydata)
