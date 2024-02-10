@@ -46,6 +46,7 @@ Kernel         = Float64.([100, 200]) #rand(Float64,N)
 KernelGradient = [SVector{3,Float64}(-1,1,0), SVector{3,Float64}(1,-1,0)]
 
 function PolyDataTemplate(filename::String, points::Vector ; kwargs...)
+        # Generate the XML document and then put in some fixed values
         xml_doc = Document(Declaration(version=1.0,encoding="utf-8"))
         vtk_file = Element("VTKFile")
         vtk_file.attributes["type"]        = "PolyData"
@@ -53,27 +54,29 @@ function PolyDataTemplate(filename::String, points::Vector ; kwargs...)
         vtk_file.attributes["byte_order"]  = "LittleEndian"
         vtk_file.attributes["header_type"] = "UInt64"
 
+        # PolyData is the main section, filling it out
         polydata  = Element("PolyData")
         piece     = Element("Piece")
         N = length(points)
         piece.attributes["NumberOfPoints"] = string(N)
 
+        # This Points element and its associated DataArray has to be constructed individually
         points_element    = Element("Points")
-
         point_dataarray = create_data_array_element("Points",points)
         point_dataarray["offset"] = 0
 
+        # Generate XML tags for kwargs data
         pointdata  = Element("PointData")
-
         dataarrays = Vector{XML.Node}()
         for (name, data) in kwargs
             push!(dataarrays, create_data_array_element(string(name),data))
         end
 
+        # Generate appended data element
         appendeddata = Element("AppendedData")
         appendeddata.attributes["encoding"] = "raw"
 
-        # Open a file in binary write mode. Change 'yourfile.bin' to your desired file name.
+        # Process of writing file has begun
         
         NB = 0
         io = IOBuffer()
@@ -82,6 +85,7 @@ function PolyDataTemplate(filename::String, points::Vector ; kwargs...)
         NB += write(io, UncompressedHeaderN)
         NB += custom_write(io, points)
 
+        # This loop here calculates the correct offsets and puts the specified data in
         for (arr,keyval) in zip(dataarrays,kwargs)
             T   = type_dict[arr.attributes["type"]]
             Nc  = parse(Int,arr.attributes["NumberOfComponents"])
@@ -95,6 +99,7 @@ function PolyDataTemplate(filename::String, points::Vector ; kwargs...)
             NB += custom_write(io,keyval.second) 
         end
 
+        # Take the result from the buffer, turn to string and write it
         v = take!(io)
         t = Text(String(v))
         write(io,"\n")
