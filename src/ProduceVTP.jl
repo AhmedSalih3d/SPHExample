@@ -10,9 +10,9 @@ function create_data_array_element(name::String, data::AbstractVector{T}) where 
     dataarray = Element("DataArray")
     
     # Set attributes based on the input vector's type
-    dataarray.attributes["type"] = String(eltype(first(data)))
+    dataarray.attributes["type"] = string(eltype(first(data)))
     dataarray.attributes["Name"] = name  
-    dataarray.attributes["NumberOfComponents"] = String(Int(sizeof(first(s))/sizeof(eltype(first(data)))))
+    dataarray.attributes["NumberOfComponents"] = string(Int(sizeof(first(s))/sizeof(eltype(first(data)))))
     dataarray.attributes["format"] = "appended"
     dataarray.attributes["offset"] = "nan"  # Placeholder, to be replaced later
     
@@ -28,21 +28,10 @@ end
     
 
 ###===========================================================
-
-# Example usage with a Vector of SVector{3, Float64}
-using StaticArrays: SVector
-data = [SVector{3,Float64}(1,2,3)]  # Example data
-
-points_element = create_data_array_element(data)
-
-# To view the generated XML structure
-println(XML.to_string(points_element))
-
-
 N              = 1
 Points = [SVector{3,Float64}(1,2,3)]
 #Points         = rand(SVector{3,Float64},N)
-Kernel         = Float64.(100) #rand(Float64,N)
+Kernel         = [Float64.(100)] #rand(Float64,N)
 KernelGradient = rand(SVector{3,Float64},N)
 
 xml_doc = Document(Declaration(version=1.0,encoding="utf-8"))
@@ -57,27 +46,21 @@ polydata  = Element("PolyData")
 piece     = Element("Piece")
 piece.attributes["NumberOfPoints"] = string(N)
 
-points    = Element("Points")
-dataarray = Element("DataArray")
-dataarray.attributes["type"]                = "Float64"
-dataarray.attributes["Name"]                = "Points"
-dataarray.attributes["NumberOfComponents"]  = "3"
-dataarray.attributes["format"]              = "appended"
-dataarray.attributes["offset"]              = "0"
+points_element    = Element("Points")
+
+dataarray = create_data_array_element("Points",Points)
+dataarray["offset"] = 0
+push!(points_element,dataarray)
 
 push!(points,dataarray)
-push!(piece,points)
+push!(piece,points_element)
 push!(polydata,piece)
 push!(vtk_file,polydata)
 
 
 pointdata  = Element("PointData")
-dataarray1 = Element("DataArray")
-dataarray1.attributes["type"]                = "Float64"
-dataarray1.attributes["Name"]                = "Kernel"
-dataarray1.attributes["NumberOfComponents"]  = "1"
-dataarray1.attributes["format"]              = "appended"
 
+dataarray1 = create_data_array_element("Kernel", Kernel)
 
 # dataarray2 = Element("DataArray")
 # dataarray2.attributes["type"]                = "Float64"
