@@ -47,7 +47,7 @@ Kernel         = Float64.([100, 200]) #rand(Float64,N)
 KernelGradient = [SVector{3,Float64}(-1,1,0), SVector{3,Float64}(1,-1,0)]
 
 
-function PolyDataTemplate(filename::String, points::Vector{SVector{D,T}}, args::Union{Vector{M},Vector{T}}...) where {D, T, M}
+function PolyDataTemplate(filename::String, points::AbstractVector{SVector{D,T}}, args::Union{AbstractVector{M},AbstractVector{T},AbstractVector{O}}...) where {D, T, M, O}
         # Generate the XML document and then put in some fixed values
         xml_doc = Document(Declaration(version=1.0,encoding="utf-8"))
         vtk_file = Element("VTKFile")
@@ -79,26 +79,19 @@ function PolyDataTemplate(filename::String, points::Vector{SVector{D,T}}, args::
         UncompressedHeaderN::Int  = N * D *  sizeof(T)
         NB += write(io, UncompressedHeaderN)
         NB += custom_write(io, points)
-        println(NB)
-
 
         # Generate XML tags for kwargs data
         i = 0
         pointdata  = Element("PointData")
         dataarrays = Vector{XML.Node}()
         for arg in args
-            if typeof(arg)     === Vector{M}
-                    Nc = 3
-            elseif typeof(arg) === Vector{T}
-                    Nc = 1
-            end
-
             push!(dataarrays, create_data_array_element("test"*string(i),arg,NB))
             i+=1
 
-            N   = length(arg) #data = keyval.second, since it is Pair
-            Tsz = sizeof(T)
-            HowManyBytes  = Tsz*Nc*N + 8
+            N             = length(arg) #data = keyval.second, since it is Pair
+            Nc            = Int(sizeof(typeof(first(arg))) / sizeof(eltype(typeof(first(arg)))))
+            Tsz           = sizeof(sizeof(first(arg)))
+            HowManyBytes  = Tsz*Nc*N + sizeof(UInt64)
 
             NB           += HowManyBytes
 
@@ -126,7 +119,7 @@ function PolyDataTemplate(filename::String, points::Vector{SVector{D,T}}, args::
         XML.write(filename,xml_doc)
 end
 
-d = @report_opt target_modules=(@__MODULE__,) PolyDataTemplate(raw"E:\SPH\TestOfFile.vtp", Points, Kernel, KernelGradient)
+d = @report_opt target_modules=(@__MODULE__,) PolyDataTemplate(raw"E:\SPH\TestOfFile.vtp", Points, Kernel, Kernel, KernelGradient)
 println(d)
 
-PolyDataTemplate(raw"E:\SPH\TestOfFile.vtp", Points, Kernel, KernelGradient)
+PolyDataTemplate(raw"E:\SPH\TestOfFile.vtp", Points, Kernel, Kernel, KernelGradient, KernelGradient, KernelGradient)
