@@ -9,8 +9,8 @@ const IS_LITTLE_ENDIAN = ENDIAN_BOM == 0x04030201
 N              = 1
 Points = [SVector{3,Float64}(1,2,3)]
 #Points         = rand(SVector{3,Float64},N)
-# Kernel         = rand(Float64,N)
-# KernelGradient = rand(SVector{3,Float64},N)
+Kernel         = Float64.(100) #rand(Float64,N)
+KernelGradient = rand(SVector{3,Float64},N)
 
 xml_doc = Document(Declaration(version=1.0,encoding="utf-8"))
 vtk_file = Element("VTKFile")
@@ -23,8 +23,7 @@ push!(xml_doc,vtk_file)
 polydata  = Element("PolyData")
 piece     = Element("Piece")
 piece.attributes["NumberOfPoints"] = string(N)
-# piece.attributes["NumberOfVerts"] = "0"
-# piece.attributes["NumberOfPolys"] = "0"
+
 points    = Element("Points")
 dataarray = Element("DataArray")
 dataarray.attributes["type"]                = "Float64"
@@ -45,17 +44,17 @@ dataarray1.attributes["type"]                = "Float64"
 dataarray1.attributes["Name"]                = "Kernel"
 dataarray1.attributes["NumberOfComponents"]  = "1"
 dataarray1.attributes["format"]              = "appended"
-dataarray1.attributes["offset"]              = "0"
 
-dataarray2 = Element("DataArray")
-dataarray2.attributes["type"]                = "Float64"
-dataarray2.attributes["Name"]                = "KernelGradient"
-dataarray2.attributes["NumberOfComponents"]  = "3"
-dataarray2.attributes["format"]              = "appended"
-dataarray2.attributes["offset"]              = "0"
 
-# push!(pointdata, dataarray1, dataarray2)
-# push!(piece,pointdata)
+# dataarray2 = Element("DataArray")
+# dataarray2.attributes["type"]                = "Float64"
+# dataarray2.attributes["Name"]                = "KernelGradient"
+# dataarray2.attributes["NumberOfComponents"]  = "3"
+# dataarray2.attributes["format"]              = "appended"
+# dataarray2.attributes["offset"]              = "0"
+
+push!(pointdata, dataarray1)
+push!(piece,pointdata)
 
 appendeddata = Element("AppendedData")
 appendeddata.attributes["encoding"] = "raw"
@@ -92,11 +91,18 @@ for vec in Points
    write_svector(io, vec)
 end
 
-write(io,"\n")
+write(io,8)
+write(io,Kernel)
+
+# Calculates offsets, remember Julia is 1 indexed
+dataarray1.attributes["offset"]              = string(8 + sizeof(Float64)*N*3)
+
+
 v = take!(io)
 t = Text(String(v))
-print("This is the result from custom writer:    ", v[2:end]) #Skip newline
 push!(appendeddata,t)
+write(io,"\n")
+
 
 XML.write(raw"E:\SPH\TestOfFile.vtp",xml_doc)
 
@@ -128,16 +134,15 @@ function WriteVTK.data_to_xml_appended(vtk::WriteVTK.DatasetFile, xDA::WriteVTK.
         @assert vtk.appended
     
         buf = vtk.buf    # append buffer
-        buf_check = IOBuffer()    # append buffer
-        #compress = vtk.compression_level > 0
-        compress = false
-    
+        compress = vtk.compression_level > 0
+
         # DataArray node
         WriteVTK.set_attribute(xDA, "format", "appended")
         WriteVTK.set_attribute(xDA, "offset", position(buf))
     
         # Size of data array (in bytes).
         nb = WriteVTK.sizeof_data(data)
+        println(nb)
     
         # if compress
         #     initpos = position(buf)
@@ -164,14 +169,9 @@ function WriteVTK.data_to_xml_appended(vtk::WriteVTK.DatasetFile, xDA::WriteVTK.
         #     end
         # else
             write(buf, WriteVTK.HeaderType(nb))  # header (uncompressed version)
+            println(WriteVTK.HeaderType(nb))
             nb_write = WriteVTK.write_array(buf, data)
             @assert nb_write == nb
-
-            # buf_check to output
-            write(buf_check, WriteVTK.HeaderType(nb))  # header (uncompressed version)
-            nb_write = WriteVTK.write_array(buf_check, data)
-            @assert nb_write == nb
-            println("This is the result from WriteVTK:         _", join(Char.(take!(buf_check))))
         # end
     
         xDA
@@ -181,4 +181,5 @@ function WriteVTK.data_to_xml_appended(vtk::WriteVTK.DatasetFile, xDA::WriteVTK.
 # Initialize containers for VTK data structure
 # Create a .vtp file with the specified positions
 vtk_grid(raw"E:\SPH\TestOfFileWriteVTK.vtp", Points, all_cells...) do vtk
+        vtk_point_data(vtk, Kernel, "Kernel")
 end;
