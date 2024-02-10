@@ -70,13 +70,14 @@ function PolyDataTemplate(filename::String, points::AbstractVector ; kwargs...)
         NB = 0
         io = IOBuffer()
         write(io,"\n_")
-        UncompressedHeaderN = N * parse(Int,point_dataarray.attributes["NumberOfComponents"]) *  sizeof(getproperty(Base, Meta.parse(point_dataarray.attributes["type"])))
+        TP = getproperty(Base, Symbol(point_dataarray.attributes["type"]))
+        UncompressedHeaderN = N * parse(Int,point_dataarray.attributes["NumberOfComponents"]) *  sizeof(TP)
         NB += write(io, UncompressedHeaderN)
         NB += custom_write(io, points)
 
         # This loop here calculates the correct offsets and puts the specified data in
         for (arr,keyval) in zip(dataarrays,kwargs)
-            T   = Meta.parse(point_dataarray.attributes["type"])
+            T   = getproperty(Base, Symbol(point_dataarray.attributes["type"]))
             Nc  = parse(Int,arr.attributes["NumberOfComponents"])
             N   = length(keyval.second) #data = keyval.second, since it is Pair
             Tsz = sizeof(T)
