@@ -33,63 +33,69 @@ Points         = [SVector{3,Float64}(1,2,3)]
 Kernel         = [Float64.(100)] #rand(Float64,N)
 KernelGradient = [SVector{3,Float64}(-1,1,0)]
 
-xml_doc = Document(Declaration(version=1.0,encoding="utf-8"))
-vtk_file = Element("VTKFile")
-vtk_file.attributes["type"]        = "PolyData"
-vtk_file.attributes["version"]     = "1.0"
-vtk_file.attributes["byte_order"]  = "LittleEndian"
-vtk_file.attributes["header_type"] = "UInt64"
+function PolyDataTemplate(filename::String)
+        xml_doc = Document(Declaration(version=1.0,encoding="utf-8"))
+        vtk_file = Element("VTKFile")
+        vtk_file.attributes["type"]        = "PolyData"
+        vtk_file.attributes["version"]     = "1.0"
+        vtk_file.attributes["byte_order"]  = "LittleEndian"
+        vtk_file.attributes["header_type"] = "UInt64"
 
-polydata  = Element("PolyData")
-piece     = Element("Piece")
-piece.attributes["NumberOfPoints"] = string(N)
+        polydata  = Element("PolyData")
+        piece     = Element("Piece")
+        piece.attributes["NumberOfPoints"] = string(N)
 
-points_element    = Element("Points")
+        points_element    = Element("Points")
 
-dataarray = create_data_array_element("Points",Points)
-dataarray["offset"] = 0
+        dataarray = create_data_array_element("Points",Points)
+        dataarray["offset"] = 0
 
-pointdata  = Element("PointData")
-dataarray1 = create_data_array_element("Kernel", Kernel)
-dataarray2 = create_data_array_element("KernelGradient", KernelGradient)
+        pointdata  = Element("PointData")
+        dataarray1 = create_data_array_element("Kernel", Kernel)
+        dataarray2 = create_data_array_element("KernelGradient", KernelGradient)
 
-appendeddata = Element("AppendedData")
-appendeddata.attributes["encoding"] = "raw"
+        dataarrays = Vector{XML.Node}()
 
-# Open a file in binary write mode. Change 'yourfile.bin' to your desired file name.
-        
-io = IOBuffer()
-write(io,"\n")
-write(io,"_")
-write(io,Char(24))
-write(io,Char(0)^7)
-# Write the data to the buffer
-for vec in Points
-   write_svector(io, vec)
+        appendeddata = Element("AppendedData")
+        appendeddata.attributes["encoding"] = "raw"
+
+        # Open a file in binary write mode. Change 'yourfile.bin' to your desired file name.
+                
+        io = IOBuffer()
+        write(io,"\n")
+        write(io,"_")
+        write(io,Char(24))
+        write(io,Char(0)^7)
+        # Write the data to the buffer
+        for vec in Points
+        write_svector(io, vec)
+        end
+        write(io,8)
+        write(io,Kernel)
+        write(io,24)
+        write(io,KernelGradient)
+        dataarray1.attributes["offset"]              = string(8 + sizeof(Float64)*N*3)
+        dataarray2.attributes["offset"]              = string(3 * 8 + sizeof(Float64)*N*3)
+
+        v = take!(io)
+        t = Text(String(v))
+        write(io,"\n")
+        push!(appendeddata,t)
+        close(io)
+
+        # Glue all xml pieces together
+        push!(xml_doc,vtk_file)
+        push!(points_element,dataarray)
+        push!(points,dataarray)
+        push!(piece,points_element)
+        push!(polydata,piece)
+        push!(vtk_file,polydata)
+        push!(pointdata, dataarray1)
+        push!(pointdata, dataarray2)
+        push!(piece,pointdata)
+        push!(vtk_file,appendeddata)
+
+        XML.write(filename,xml_doc)
 end
-write(io,8)
-write(io,Kernel)
-write(io,24)
-write(io,KernelGradient)
-dataarray1.attributes["offset"]              = string(8 + sizeof(Float64)*N*3)
-dataarray2.attributes["offset"]              = string(3 * 8 + sizeof(Float64)*N*3)
 
-v = take!(io)
-t = Text(String(v))
-write(io,"\n")
-push!(appendeddata,t)
-close(io)
-
-# Glue all xml pieces together
-push!(xml_doc,vtk_file)
-push!(points_element,dataarray)
-push!(points,dataarray)
-push!(piece,points_element)
-push!(polydata,piece)
-push!(vtk_file,polydata)
-push!(pointdata, dataarray1)
-push!(pointdata, dataarray2)
-push!(piece,pointdata)
-push!(vtk_file,appendeddata)
-
-XML.write(raw"E:\SPH\TestOfFile.vtp",xml_doc)
+PolyDataTemplate(raw"E:\SPH\TestOfFile.vtp")
