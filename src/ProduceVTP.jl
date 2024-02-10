@@ -12,7 +12,7 @@ function create_data_array_element(name::String, data::AbstractVector{T}) where 
     # Set attributes based on the input vector's type
     dataarray.attributes["type"] = string(eltype(first(data)))
     dataarray.attributes["Name"] = name  
-    dataarray.attributes["NumberOfComponents"] = string(Int(sizeof(first(s))/sizeof(eltype(first(data)))))
+    dataarray.attributes["NumberOfComponents"] = string(Int(sizeof(first(data))/sizeof(eltype(first(data)))))
     dataarray.attributes["format"] = "appended"
     dataarray.attributes["offset"] = "nan"  # Placeholder, to be replaced later
     
@@ -29,10 +29,9 @@ end
 
 ###===========================================================
 N              = 1
-Points = [SVector{3,Float64}(1,2,3)]
-#Points         = rand(SVector{3,Float64},N)
+Points         = [SVector{3,Float64}(1,2,3)]
 Kernel         = [Float64.(100)] #rand(Float64,N)
-KernelGradient = rand(SVector{3,Float64},N)
+KernelGradient = [SVector{3,Float64}(-1,1,0)]
 
 xml_doc = Document(Declaration(version=1.0,encoding="utf-8"))
 vtk_file = Element("VTKFile")
@@ -59,17 +58,11 @@ push!(vtk_file,polydata)
 
 
 pointdata  = Element("PointData")
-
 dataarray1 = create_data_array_element("Kernel", Kernel)
-
-# dataarray2 = Element("DataArray")
-# dataarray2.attributes["type"]                = "Float64"
-# dataarray2.attributes["Name"]                = "KernelGradient"
-# dataarray2.attributes["NumberOfComponents"]  = "3"
-# dataarray2.attributes["format"]              = "appended"
-# dataarray2.attributes["offset"]              = "0"
+dataarray2 = create_data_array_element("KernelGradient", KernelGradient)
 
 push!(pointdata, dataarray1)
+push!(pointdata, dataarray2)
 push!(piece,pointdata)
 
 appendeddata = Element("AppendedData")
@@ -90,12 +83,17 @@ for vec in Points
 end
 write(io,8)
 write(io,Kernel)
+write(io,24)
+write(io,KernelGradient)
 dataarray1.attributes["offset"]              = string(8 + sizeof(Float64)*N*3)
+dataarray2.attributes["offset"]              = string(3 * 8 + sizeof(Float64)*N*3)
 
 v = take!(io)
 t = Text(String(v))
-push!(appendeddata,t)
 write(io,"\n")
+push!(appendeddata,t)
+close(io)
+
 
 
 XML.write(raw"E:\SPH\TestOfFile.vtp",xml_doc)
