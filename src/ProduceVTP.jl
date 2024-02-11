@@ -14,8 +14,7 @@ function create_data_array_element(name::String, data::AbstractVector{T}, offset
     dataarray.attributes["Name"]               = name  
     dataarray.attributes["NumberOfComponents"] = string(Int(sizeof(first(data))/sizeof(eltype(first(data)))))
     dataarray.attributes["format"]             = "appended"
-    dataarray.attributes["offset"]             = string(offset)  # Placeholder, to be replaced later
-    
+    dataarray.attributes["offset"]             = string(offset)
     return dataarray
 end
 
@@ -65,8 +64,9 @@ function PolyDataTemplate(filename::String, points, args...)
         # Generate XML tags for kwargs data
         pointdata  = Element("PointData")
         dataarrays = Vector{XML.Node}(undef,length(args))
-        i = 1
-        for arg in args
+
+        for i in eachindex(args)
+            arg           = args[i]
             dataarrays[i] = create_data_array_element("test"*string(i),arg,NB)
 
             A             = typeof(first(arg))
@@ -80,8 +80,6 @@ function PolyDataTemplate(filename::String, points, args...)
 
             write(io, NB)
             write(io, arg)
-
-            i += 1
         end
 
         # Take the result from the buffer, turn to string and write it
@@ -113,5 +111,6 @@ println(d)
 
 @benchmark PolyDataTemplate($save_location, $Points, $Kernel, $Kernel, $KernelGradient, $KernelGradient, $KernelGradient)
 
-PolyDataTemplate(save_location, Points, Kernel, Kernel, KernelGradient, KernelGradient, KernelGradient)
+@code_warntype PolyDataTemplate(save_location, Points, Kernel, Kernel, KernelGradient, KernelGradient, KernelGradient)
 
+PolyDataTemplate(save_location, Points, Kernel, Kernel, KernelGradient, KernelGradient, KernelGradient)
