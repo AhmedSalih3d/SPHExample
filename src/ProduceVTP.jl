@@ -22,12 +22,12 @@ end
 # Points         = [SVector{3,Float64}(1,2,3), SVector{3,Float64}(4,5,6)]
 # Kernel         = Float64.([100, 200]) 
 # KernelGradient = [SVector{3,Float64}(-1,1,0), SVector{3,Float64}(1,-1,0)]
-N              = 6195
-Points         = rand(SVector{3,Float64},N) * 10
-Kernel         = rand(Float64,N) * 1000
-KernelGradient = rand(SVector{3,Float64},N) * 100
+# N              = 6195
+# Points         = rand(SVector{3,Float64},N) * 10
+# Kernel         = rand(Float64,N) * 1000
+# KernelGradient = rand(SVector{3,Float64},N) * 100
 
-
+PolyDataTemplate(filename,points) = PolyDataTemplate(filename,points,nothing)
 function PolyDataTemplate(filename::String, points, variable_names, args...)
         # Generate the XML document and then put in some fixed values
         xml_doc = Document(Declaration(version=1.0,encoding="utf-8"))
@@ -65,21 +65,23 @@ function PolyDataTemplate(filename::String, points, variable_names, args...)
         pointdata  = Element("PointData")
         dataarrays = Vector{XML.Node}(undef,length(args))
 
-        for i in eachindex(args)
-            arg           = args[i]
-            dataarrays[i] = create_data_array_element(variable_names[i],arg,NB)
+        if !isnothing(args)
+            for i in eachindex(args)
+                arg           = args[i]
+                dataarrays[i] = create_data_array_element(variable_names[i],arg,NB)
 
-            A             = typeof(first(arg))
-            T             = eltype(A)
-            Ni            = length(arg)
-            Tsz           = sizeof(T)
-            Nc            = Int( sizeof(A) / Tsz )
-            HowManyBytes  = Tsz*Nc*Ni + Tsz
+                A             = typeof(first(arg))
+                T             = eltype(A)
+                Ni            = length(arg)
+                Tsz           = sizeof(T)
+                Nc            = Int( sizeof(A) / Tsz )
+                HowManyBytes  = Tsz*Nc*Ni + Tsz
 
-            NB           += HowManyBytes
+                NB           += HowManyBytes
 
-            write(io, NB)
-            write(io, arg)
+                write(io, NB)
+                write(io, arg)
+            end
         end
 
         # Take the result from the buffer, turn to string and write it
@@ -102,16 +104,17 @@ function PolyDataTemplate(filename::String, points, variable_names, args...)
         XML.write(filename,xml_doc)
 end
 
-save_location = raw"E:\SPH\TestOfFile.vtp"
+# save_location = raw"E:\SPH\TestOfFile.vtp"
 
-d = @report_opt target_modules=(@__MODULE__,) PolyDataTemplate(save_location, Points, ["Kernel", "KernelGradient"], Kernel, KernelGradient)
-println(d)
+# d = @report_opt target_modules=(@__MODULE__,) PolyDataTemplate(save_location, Points, ["Kernel", "KernelGradient"], Kernel, KernelGradient)
+# println(d)
 
-@profview PolyDataTemplate(save_location, Points, ["Kernel", "KernelGradient"], Kernel, KernelGradient)
+# @profview PolyDataTemplate(save_location, Points, ["Kernel", "KernelGradient"], Kernel, KernelGradient)
 
-b = @benchmark PolyDataTemplate($save_location, $Points, $(["Kernel", "KernelGradient"]), $Kernel, $KernelGradient)
-display(b)
+# b = @benchmark PolyDataTemplate($save_location, $Points, $(["Kernel", "KernelGradient"]), $Kernel, $KernelGradient)
+# display(b)
 
-@code_warntype PolyDataTemplate(save_location, Points, ["Kernel", "KernelGradient"], Kernel, KernelGradient)
+# @code_warntype PolyDataTemplate(save_location, Points, ["Kernel", "KernelGradient"], Kernel, KernelGradient)
 
-PolyDataTemplate(save_location, Points, ["Kernel", "KernelGradient"], Kernel, KernelGradient)
+# PolyDataTemplate(save_location, Points, ["Kernel", "KernelGradient"], Kernel, KernelGradient)
+# PolyDataTemplate(save_location, Points)
