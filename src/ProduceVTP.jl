@@ -69,9 +69,11 @@ function PolyDataTemplate(filename::String, points, args...)
         for arg in args
             dataarrays[i] = create_data_array_element("test"*string(i),arg,NB)
 
-            Ni            = length(arg) #data = keyval.second, since it is Pair
-            Nc            = Int(sizeof(typeof(first(arg))) / sizeof(eltype(typeof(first(arg)))))
-            Tsz           = sizeof(sizeof(first(arg)))
+            A             = typeof(first(arg))
+            T             = eltype(A)
+            Ni            = length(arg)
+            Tsz           = sizeof(T)
+            Nc            = Int( sizeof(A) / Tsz )
             HowManyBytes  = Tsz*Nc*Ni + sizeof(UInt64)
 
             NB           += HowManyBytes
@@ -95,7 +97,7 @@ function PolyDataTemplate(filename::String, points, args...)
         push!(piece,points_element)
         push!(polydata,piece)
         push!(vtk_file,polydata)
-        map(x -> push!(pointdata, x), dataarrays)
+        map(x -> push!(pointdata,x), dataarrays)
         push!(piece,pointdata)
         push!(vtk_file,appendeddata)
 
@@ -110,4 +112,6 @@ println(d)
 @profview PolyDataTemplate(save_location, Points, Kernel, Kernel, KernelGradient, KernelGradient, KernelGradient)
 
 @benchmark PolyDataTemplate($save_location, $Points, $Kernel, $Kernel, $KernelGradient, $KernelGradient, $KernelGradient)
+
+PolyDataTemplate(save_location, Points, Kernel, Kernel, KernelGradient, KernelGradient, KernelGradient)
 
