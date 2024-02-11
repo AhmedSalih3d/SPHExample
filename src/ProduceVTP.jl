@@ -28,7 +28,7 @@ Kernel         = rand(Float64,N) * 1000
 KernelGradient = rand(SVector{3,Float64},N) * 100
 
 
-function PolyDataTemplate(filename::String, points, args...)
+function PolyDataTemplate(filename::String, points, variable_names, args...)
         # Generate the XML document and then put in some fixed values
         xml_doc = Document(Declaration(version=1.0,encoding="utf-8"))
         vtk_file = Element("VTKFile")
@@ -67,7 +67,7 @@ function PolyDataTemplate(filename::String, points, args...)
 
         for i in eachindex(args)
             arg           = args[i]
-            dataarrays[i] = create_data_array_element("test"*string(i),arg,NB)
+            dataarrays[i] = create_data_array_element(variable_names[i],arg,NB)
 
             A             = typeof(first(arg))
             T             = eltype(A)
@@ -104,13 +104,14 @@ end
 
 save_location = raw"E:\SPH\TestOfFile.vtp"
 
-d = @report_opt target_modules=(@__MODULE__,) PolyDataTemplate(save_location, Points, Kernel, Kernel, KernelGradient)
+d = @report_opt target_modules=(@__MODULE__,) PolyDataTemplate(save_location, Points, ["Kernel", "KernelGradient"], Kernel, KernelGradient)
 println(d)
 
-@profview PolyDataTemplate(save_location, Points, Kernel, Kernel, KernelGradient, KernelGradient, KernelGradient)
+@profview PolyDataTemplate(save_location, Points, ["Kernel", "KernelGradient"], Kernel, KernelGradient)
 
-@benchmark PolyDataTemplate($save_location, $Points, $Kernel, $Kernel, $KernelGradient, $KernelGradient, $KernelGradient)
+b = @benchmark PolyDataTemplate($save_location, $Points, $(["Kernel", "KernelGradient"]), $Kernel, $KernelGradient)
+display(b)
 
-@code_warntype PolyDataTemplate(save_location, Points, Kernel, Kernel, KernelGradient, KernelGradient, KernelGradient)
+@code_warntype PolyDataTemplate(save_location, Points, ["Kernel", "KernelGradient"], Kernel, KernelGradient)
 
-PolyDataTemplate(save_location, Points, Kernel, Kernel, KernelGradient, KernelGradient, KernelGradient)
+PolyDataTemplate(save_location, Points, ["Kernel", "KernelGradient"], Kernel, KernelGradient)
