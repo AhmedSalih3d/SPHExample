@@ -19,20 +19,14 @@ function create_data_array_element(name::String, data::AbstractVector{T}, offset
     return dataarray
 end
 
-# Function to write a single SVector to a buffer in binary format
-function custom_write(io::IOBuffer, vec)
-   nb = 0
-   for element in vec
-        nb += write(io, element)
-   end
-   return nb
-end
-    
-
 ###===========================================================
-Points         = [SVector{3,Float64}(1,2,3), SVector{3,Float64}(4,5,6)]
-Kernel         = Float64.([100, 200]) #rand(Float64,N)
-KernelGradient = [SVector{3,Float64}(-1,1,0), SVector{3,Float64}(1,-1,0)]
+# Points         = [SVector{3,Float64}(1,2,3), SVector{3,Float64}(4,5,6)]
+# Kernel         = Float64.([100, 200]) 
+# KernelGradient = [SVector{3,Float64}(-1,1,0), SVector{3,Float64}(1,-1,0)]
+N              = 6195
+Points         = rand(SVector{3,Float64},N) * 10
+Kernel         = rand(Float64,N) * 1000
+KernelGradient = rand(SVector{3,Float64},N) * 100
 
 
 function PolyDataTemplate(filename::String, points, args...)
@@ -66,15 +60,14 @@ function PolyDataTemplate(filename::String, points, args...)
         write(io,"\n_")
         UncompressedHeaderN  = N * length(first(points)) *  sizeof(typeof(first(points)))
         NB += write(io, UncompressedHeaderN)
-        NB += custom_write(io, points)
+        NB += write(io, points)
 
         # Generate XML tags for kwargs data
-        i = 0
         pointdata  = Element("PointData")
-        dataarrays = Vector{XML.Node}()
+        dataarrays = Vector{XML.Node}(undef,length(args))
+        i = 1
         for arg in args
-            push!(dataarrays, create_data_array_element("test"*string(i),arg,NB))
-            i+=1
+            dataarrays[i] = create_data_array_element("test"*string(i),arg,NB)
 
             Ni            = length(arg) #data = keyval.second, since it is Pair
             Nc            = Int(sizeof(typeof(first(arg))) / sizeof(eltype(typeof(first(arg)))))
@@ -83,8 +76,10 @@ function PolyDataTemplate(filename::String, points, args...)
 
             NB           += HowManyBytes
 
-            write(io,NB)
-            custom_write(io,arg)
+            write(io, NB)
+            write(io, arg)
+
+            i += 1
         end
 
         # Take the result from the buffer, turn to string and write it
@@ -107,7 +102,12 @@ function PolyDataTemplate(filename::String, points, args...)
         XML.write(filename,xml_doc)
 end
 
-d = @report_opt target_modules=(@__MODULE__,) PolyDataTemplate(raw"E:\SPH\TestOfFile.vtp", Points, Kernel, Kernel, KernelGradient)
+save_location = raw"E:\SPH\TestOfFile.vtp"
+
+d = @report_opt target_modules=(@__MODULE__,) PolyDataTemplate(save_location, Points, Kernel, Kernel, KernelGradient)
 println(d)
 
-PolyDataTemplate(raw"E:\SPH\TestOfFile.vtp", Points, Kernel, Kernel, KernelGradient, KernelGradient, KernelGradient)
+@profview PolyDataTemplate(save_location, Points, Kernel, Kernel, KernelGradient, KernelGradient, KernelGradient)
+
+@benchmark PolyDataTemplate($save_location, $Points, $Kernel, $Kernel, $KernelGradient, $KernelGradient, $KernelGradient)
+
