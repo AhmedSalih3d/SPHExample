@@ -74,7 +74,7 @@ function PolyDataTemplate(filename::String, points, args...)
             Ni            = length(arg)
             Tsz           = sizeof(T)
             Nc            = Int( sizeof(A) / Tsz )
-            HowManyBytes  = Tsz*Nc*Ni + sizeof(UInt64)
+            HowManyBytes  = Tsz*Nc*Ni + Tsz
 
             NB           += HowManyBytes
 
