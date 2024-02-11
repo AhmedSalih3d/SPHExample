@@ -249,7 +249,7 @@ function RunSimulation(;FluidCSV::String,
         
         if SimMetaData.Iteration % SimMetaData.OutputIteration == 0
             @timeit HourGlass "4| OutputVTP" OutputVTP(SimMetaData,SimConstants,Position; Kernel, KernelGradient, Density, Acceleration, Velocity)
-            @timeit HourGlass "4| CustomVTP" PolyDataTemplate(raw"E:\SecondApproach\CustomVTP" * "\\" * SimulationName * lpad(SimMetaData.Iteration,4,"0") * ".vtp", Position, Kernel, KernelGradient, Density, Acceleration, Velocity)
+            @timeit HourGlass "4| CustomVTP" PolyDataTemplate(raw"E:\SecondApproach\CustomVTP" * "\\" * SimulationName * lpad(SimMetaData.Iteration,4,"0") * ".vtp", Position, ["Kernel", "KernelGradient", "Density", "Acceleration" , "Velocity"], Kernel, KernelGradient, Density, Acceleration, Velocity)
         end
 
         next!(SimMetaData.ProgressSpecification; showvalues = show_vals(SimMetaData))
