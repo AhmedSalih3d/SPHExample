@@ -152,6 +152,7 @@ function ∂ρᵢ∂tDDT!(dρdtI, list, xᵢⱼ,xᵢⱼʸ,ρ,v,WgL,MotionLimiter
     Cb    = (c₀^2*ρ₀)/γ
     invCb = inv(Cb)
 
+    # Follow the implementation here: https://arxiv.org/abs/2110.10076
     @tturbo for iter in eachindex(list)
         Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼʸ[iter]
         ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, invCb)
@@ -177,7 +178,7 @@ function ∂ρᵢ∂tDDT!(dρdtI, list, xᵢⱼ,xᵢⱼʸ,ρ,v,WgL,MotionLimiter
         # First part of continuity equation
         FirstPartOfContinuity = dot(m₀*vᵢⱼ,∇ᵢWᵢⱼ) # =dot(m₀*-vᵢⱼ,-∇ᵢWᵢⱼ)
 
-        # Follow the implementation here: https://arxiv.org/abs/2110.10076
+
         # Implement for particle i
         # Pᵢⱼᴴ = ρ₀ * (-g) * xⱼᵢ[2]
         # ρᵢⱼᴴ = ρ₀ * ( ^( 1 + (Pᵢⱼᴴ/Cb), γ⁻¹) - 1)

@@ -242,10 +242,10 @@ function RunSimulation(;FluidCSV::String,
         end
         
         # OutVTP is based on a well-developed Julia package, WriteVTK, while CustomVTP is based on my hand-rolled solution.
-        # Use the previous, if this one bugs.
+        # CustomVTP is about 10% faster, but does not mean much in this case.
         if SimMetaData.Iteration % SimMetaData.OutputIteration == 0
-            #@timeit HourGlass "4| OutputVTP" OutputVTP(SimMetaData,SimConstants,Position; Kernel, KernelGradient, Density, Acceleration, Velocity)
-            @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * lpad(SimMetaData.Iteration,6,"0") * ".vtp", Position, ["Kernel", "KernelGradient", "Density", "Acceleration" , "Velocity"], Kernel, KernelGradient, Density, Acceleration, Velocity)
+            @timeit HourGlass "4| OutputVTP" OutputVTP(SimMetaData,SimConstants,Position; Kernel, KernelGradient, Density, Acceleration, Velocity)
+            #@timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * lpad(SimMetaData.Iteration,6,"0") * ".vtp", Position, ["Kernel", "KernelGradient", "Density", "Acceleration" , "Velocity"], Kernel, KernelGradient, Density, Acceleration, Velocity)
         end
 
         next!(SimMetaData.ProgressSpecification; showvalues = show_vals(SimMetaData))
