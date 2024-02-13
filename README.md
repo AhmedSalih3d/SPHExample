@@ -66,13 +66,13 @@ A few key-packages are used and automatically imported. Listed here for your con
 * WriteVTK
   * A package which outputs results calculated in this package to the .vtp format. Remember to view results in Paraview you have to select something other than "Solid Color" and for example "Point Gaussian" instead of "Surface" repesentation.
 * LoopVectorization
-  * Following some simple rules for writing loops, it automatically multi-threads code. As a note, it is necessary to ensure that loop iterations are truly independent when doing multithreading.
+  * Following some simple rules for writing loops, it automatically multi-threads code. As a note, it is necessary to ensure that loop iterations are truly independent when doing multithreading. This works for up to Julia version 1.10.
 
 Without these, this example would have been significantly harder to write - and of course thank you to the Julia eco-system as a whole. 
 
 ### Installation
 
-It is recommended to `git clone ..` into a folder and following the instructions in `Executing program`. The `using Pkg; Pkg.add("https://github.com/AhmedSalih3d/SPHExample")` should also work if one is simply interesting in installing and using some package functionality. 
+It is recommended to `git clone ..` into a folder and following the instructions in `Executing program`. The `using Pkg; Pkg.add(url="https://github.com/AhmedSalih3d/SPHExample")` should also work if one is simply interesting in installing and using some package functionality. 
 
 ### Executing program
 
