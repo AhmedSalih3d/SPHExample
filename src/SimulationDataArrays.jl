@@ -1,8 +1,7 @@
 module SimulationDataArrays
 
-export ResetArrays!, ResizeBuffers!
+export ResetArrays!, ResizeBuffers!, DimensionalData
 
-using Parameters
 using StaticArrays
 using StructArrays
 
@@ -12,7 +11,7 @@ struct DimensionalData{D, T}
 
     # General constructor for vectors
     function DimensionalData(vectors::Vector{T}...) where {T}
-        @assert D == length(vectors) "Dimensionality mismatch"
+        D = length(vectors)
         V = StructArray{SVector{D, T}}(vectors)
         new{D, T}(Tuple(vectors), V)
     end
