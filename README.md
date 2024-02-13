@@ -118,9 +118,9 @@ Written by Ahmed Salih [@AhmedSalih3D](https://github.com/AhmedSalih3d)
 
 ## Version History
 
-* Version 0.2 | A highly optimized version for CPU, with extremely few allocations after the initial array allocation. Only the neighbour search and saving of data allocates memory now. Recommend to use this. 
-* Version 0.1 | A revised version of main, with slight improvements
-* main        | A cleaned up version of the original release version
+* (main) Version 0.3 | A highly optimized version for CPU, with extremely few allocations after the initial array allocation. Only the neighbour search and saving of data allocates memory now. Recommend to use this. 
+* Version 0.2        | A cleaned up version of the original release version data allocates memory now. Recommend to use this. 
+* Version 0.1        | Initial release version
 
 ## License
 
