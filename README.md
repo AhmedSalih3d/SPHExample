@@ -21,9 +21,9 @@ To fill this "void" I decided to go about writing one and learning the necessary
 Key-elements of the code are:
 
 - Weakly Compressible SPH
-  - Density varies about ~1% in time, for numerical reasons and the pressure equation is based on the density
-- Single threaded approach
-  - For simplicity since I consider this a teaching example. Commercial scale SPH should always be done on GPU's anyways.
+  - Density varies about ~1% in time, for numerical reasons and the pressure equation is based on the density. This ensured by enforcing a Mach Number of 0.1, by artificially setting the speed of sound of the fluid (c₀) to ten times the highest velocity in the flow (manual input) 
+- Multi-threaded approach
+  - Multi-threading has been added, especially for the SimulationEquations.jl. This gives a great speed up to the code. Loops can easily be turned to single threading, by removing the `@tturbo` macro if needed, for development
 - Dynamic Boundary Condition (as in DualSPHysics)
   - DualSPHysics is one of the most well-known SPH packages. Thought it would be a good idea to show how one implements this boundary condition.
 - Density Diffusion
@@ -41,71 +41,68 @@ The package is structured into "input", "example" and "src". "input" contains so
 The "src" package contains all the code files used in this process. An overview of these is shown;
 
 * PreProcess
-  * Function for loading in the files in "input"
+  * Function for loading in the files in "input". 
 * PostProcess
-  * Function to output .vtp files
+  * Function to output .vtp files. "ProduceVTP.jl" is a hand-rolled custom solution for those interested in that.
 * AuxillaryFunctions
   * Not used, but provided as a service to extract all particle ids based on a neighbour list
 * TimeStepping
   * Some simple time stepping controls
-* SimulatioNEquations
+* SimulationConstantsConfigurations
+  * The interface for stating the most relevant simulation constants is found here
+* SimulationDataArrays
+  * Some functions for resizing and resetting array values as needed
+* SimulationMetaDataConfiguration
+  * The interface for the meta data associated with a simulation, such as total time, save location etc.
+* SimulationEquations
   * All SPH related physics functions
+* SPHExample
+  * The "glue" package file exporting all the functions, to allow for `using SPH`. 
 
 A few key-packages are used and automatically imported. Listed here for your convenience:
 
 * CellListMap
-  * A package which allows to return an array of tuples consisting of (particle i, particle j, distance between particle i and particle j), which significantly simplifies and speeds up the calculation process.
+  * A package which allows to return an array of tuples consisting of (particle i, particle j, distance between particle i and particle j), which significantly simplifies and speeds up the calculation process. It is CPU based only. 
 * WriteVTK
   * A package which outputs results calculated in this package to the .vtp format. Remember to view results in Paraview you have to select something other than "Solid Color" and for example "Point Gaussian" instead of "Surface" repesentation.
+* LoopVectorization
+  * Following some simple rules for writing loops, it automatically multi-threads code. As a note, it is necessary to ensure that loop iterations are truly independent when doing multithreading.
 
 Without these, this example would have been significantly harder to write - and of course thank you to the Julia eco-system as a whole. 
 
 ### Executing program
 
-In "MainSimulation.jl"  you will find:
+In `example/MainSimulation.jl`  you will find:
 
 ```julia
-RunSimulation(SaveLocation="E:/SecondApproach/Results",SimulationName="DamBreak")
+
+# The actual simulation code above, which you as an user can change..
+
+# Initialize Simulation
+begin
+    T = Float64
+    SimMetaData  = SimulationMetaData{T}(
+                                    SimulationName="MySimulation", 
+                                    SaveLocation=raw"E:\SecondApproach\Results", 
+                                    MaxIterations=10001,
+                                    OutputIteration=50,
+    )
+    # Initialze the constants to use
+    SimConstants = SimulationConstants{T}()
+    # Clean up folder before running (remember to make folder before hand!)
+    foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
+
+    # And here we run the function - enjoy!
+    RunSimulation(
+        FluidCSV     = "./input/FluidPoints_Dp0.02.csv",
+        BoundCSV     = "./input/BoundaryPoints_Dp0.02.csv",
+        SimMetaData  = SimMetaData,
+        SimConstants = SimConstants
+    )
+end
 ```
 
-You have to make the save location before hand for the code to work. Then you can call the code using the following syntax from above. Inside the "RunSimulation" function you will find hard coded:
-
-```julia
-    ### VARIABLE EXPLANATION
-    # FLUID_CSV = PATH TO FLUID PARTICLES, SEE "input" FOLDER
-    # BOUND_CSV = PATH TO BOUNDARY PARTICLES, SEE "input" FOLDER
-    # ρ₀  = REFERENCE DENSITY
-    # dx  = INITIAL PARTICLE DISTANCE, SEE "dp" IN CSV FILES, FOR 3D SIM: 0.0085
-    # H   = SMOOTHING LENGTH
-    # m₀  = INITIAL MASS (REFERENCE DENSITY * DX^(SIMULATION DIMENSIONS))
-    # mᵢ  = mⱼ = m₀ | ALL PARTICLES HAVE THE SAME MASS, ALWAYS
-    # αD  = NORMALIZATION CONSTANT FOR KERNEL
-    # α   = ARTIFICIAL VISCOSITY ALPHA VALUE
-    # g   = GRAVITY (POSITIVE!)
-    # c₀  = SPEED OF SOUND, MUST BE 10X HIGHEST VELOCITY IN SIMULATION
-    # γ   = GAMMA, MOST COMMONLY 7 FOR WATER, USE FOR PRESSURE EQUATION OF STATE
-    # dt  = INITIAL TIME STEP
-    # δᵩ  = 0.1 | COEFFICIENT FOR DENSITY DIFFUSION, SHOULD ALWAYS BE 0.1
-    # CFL = CFL NUMBER
-
-    ### 2D Dam Break
-    FLUID_CSV = "./input/FluidPoints_Dp0.02.csv"
-    BOUND_CSV = "./input/BoundaryPoints_Dp0.02.csv"
-    ρ₀  = 1000
-    dx  = 0.02
-    H   = 1.2*sqrt(2)*dx
-    m₀  = ρ₀*dx*dx #mᵢ  = mⱼ = m₀
-    αD  = (7/(4*π*H^2))
-    α   = 0.01
-    g   = 9.81
-    c₀  = sqrt(g*2)*20
-    γ   = 7
-    dt  = 1e-5
-    δᵩ  = 0.1
-    CFL = 0.2
-```
-
-These parameters have been tested and should work out of the box. Other than these inputs you should not have to change anything else. 
+`SimConstants` holds some initial parameters which work for the above mentioned `FluidCSV` and `BoundCSV` out of the box, a 2d dam break. Other than these inputs you should not have to change anything else. Of course the idea is that you can overwrite functions using syntax such as `PostSPH.FunctionName` or change the main simulation loop how you please and see the effects. 
 
 ## Help
 
@@ -117,7 +114,8 @@ Written by Ahmed Salih [@AhmedSalih3D](https://github.com/AhmedSalih3d)
 
 ## Version History
 
-* Version 0.1 | Release Version
+* Version 0.2 | A highly optimized version for CPU, with extremely few allocations after the initial array allocation. Only the neighbour search and saving of data allocates memory now. Recommend to use this. 
+* Version 0.1 | A revised version of main, with slight improvements
 * main        | A cleaned up version of the original release version
 
 ## License
@@ -128,4 +126,6 @@ This project is licensed under the MIT License - see the LICENSE.md file for det
 
 DualSPHysics (https://dual.sphysics.org/) was a great inspiration for this code.
 
-Thank you to the general Julia eco-system and especially Leandro Martínez (https://github.com/lmiq) who is also the author of CellListMap.jl. He was a great help in understanding how to best use the neighbour-list algorithm. 
+Thank you to the general Julia eco-system and especially Leandro Martínez (https://github.com/lmiq) who is also the author of CellListMap.jl. He was a great help in understanding how to best use the neighbour-list algorithm. Leandro was also a big part of reviewing the whole code base and suggesting/showing potential optimizations. 
+
+Thank you for PharmCat (https://github.com/PharmCat) for his suggestions in pull requests and providing of code, which I later implemented into the library. Much appreciated. 

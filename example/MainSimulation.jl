@@ -69,6 +69,8 @@ function RunSimulation(;FluidCSV::String,
     # Load in the fluid and boundary particles. Return these points and both data frames
     points, density_fluid, density_bound  = LoadParticlesFromCSV(FloatType, FluidCSV,BoundCSV)
 
+    empty!(density_fluid)
+
     # Read this as "GravityFactor * g", so -1 means negative acceleration for fluid particles
     # 1 means boundary particles push back against gravity
     GravityFactor            = [-ones(size(density_fluid,1)) ; ones(size(density_bound,1))]
