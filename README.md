@@ -70,6 +70,10 @@ A few key-packages are used and automatically imported. Listed here for your con
 
 Without these, this example would have been significantly harder to write - and of course thank you to the Julia eco-system as a whole. 
 
+### Installation
+
+It is recommended to `git clone ..` into a folder and following the instructions in `Executing program`. The `using Pkg; Pkg.add("https://github.com/AhmedSalih3d/SPHExample")` should also work if one is simply interesting in installing and using some package functionality. 
+
 ### Executing program
 
 In `example/MainSimulation.jl`  you will find:
