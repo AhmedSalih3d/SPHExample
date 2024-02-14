@@ -1,6 +1,6 @@
 module SimulationEquations
 
-export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ!, EquationOfState, Pressure!, ∂Πᵢⱼ∂t!, ∂ρᵢ∂tDDT!, ∂vᵢ∂t!, DensityEpsi!, LimitDensityAtBoundary!, updatexᵢⱼ!
+export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ!, EquationOfState, Pressure!, ∂Πᵢⱼ∂t!, ∂ρᵢ∂tDDT!, ∂vᵢ∂t!, DensityEpsi!, LimitDensityAtBoundary!, updatexᵢⱼ!, ArtificialViscosityMomentumEquation!
 
 using CellListMap
 using StaticArrays
@@ -270,31 +270,42 @@ function ∂ρᵢ∂tDDT!(dρdtI, I, J, D , xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ , D
 end
 
 # The momentum equation without any dissipation - we add the dissipation using artificial viscosity (∂Πᵢⱼ∂t)
-function ∂vᵢ∂t!(I,J, dvdtIˣ, dvdtIʸ, dvdtIᶻ, dvdtLˣ, dvdtLʸ, dvdtLᶻ,Density,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ,Press, SimulationConstants)
-    @unpack m₀, c₀,γ,ρ₀ = SimulationConstants
-
+function ArtificialViscosityMomentumEquation!(I,J, D, dvdtIˣ, dvdtIʸ, dvdtIᶻ, dvdtLˣ, dvdtLʸ, dvdtLᶻ,Density,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ, xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ,Velocityˣ, Velocityʸ, Velocityᶻ,Press, SimulationConstants)
+    @unpack m₀, c₀,γ,ρ₀,α,h,η² = SimulationConstants
     # Calculation
     @tturbo for iter in eachindex(I)
-        i = I[iter]; j = J[iter];
-
+        i = I[iter]; j = J[iter]; d = D[iter]
         ρᵢ    = Density[i]
         ρⱼ    = Density[j]
         Pᵢ    = Press[i] #Pᵢ    = Pressure(ρᵢ,c₀,γ,ρ₀)
         Pⱼ    = Press[j] #Pⱼ    = Pressure(ρⱼ,c₀,γ,ρ₀)
-
         Pfac  = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
-
+        # First calculate the contribution from -1/∇P (Inviscid Momentum Equation)
         ∇ᵢWᵢⱼˣ  =  KernelGradientLˣ[iter]
         ∇ᵢWᵢⱼʸ  =  KernelGradientLʸ[iter]
         ∇ᵢWᵢⱼᶻ  =  KernelGradientLᶻ[iter]
-
         dvdtˣ  = - m₀ * Pfac *  ∇ᵢWᵢⱼˣ
         dvdtʸ  = - m₀ * Pfac *  ∇ᵢWᵢⱼʸ
         dvdtᶻ  = - m₀ * Pfac *  ∇ᵢWᵢⱼᶻ
-
-        dvdtLˣ[iter] = dvdtˣ
-        dvdtLʸ[iter] = dvdtʸ
-        dvdtLᶻ[iter] = dvdtᶻ
+        # Then calculate the contribution from artificial viscosity, Πᵢⱼ
+        vᵢⱼˣ  = Velocityˣ[i] - Velocityˣ[j]
+        vᵢⱼʸ  = Velocityʸ[i] - Velocityʸ[j]
+        vᵢⱼᶻ  = Velocityᶻ[i] - Velocityᶻ[j]
+        xᵢⱼˣ⁰  = xᵢⱼˣ[iter]
+        xᵢⱼʸ⁰  = xᵢⱼʸ[iter]
+        xᵢⱼᶻ⁰  = xᵢⱼᶻ[iter]
+        d²    = d*d
+        cond      = vᵢⱼˣ * xᵢⱼˣ⁰ +  vᵢⱼʸ * xᵢⱼʸ⁰ + vᵢⱼᶻ * xᵢⱼᶻ⁰
+        cond_bool = cond < 0.0
+        μᵢⱼ       = h*cond/(d²+η²)
+        Πᵢⱼ       = cond_bool*(-α*c₀*μᵢⱼ)/((ρᵢ+ρⱼ)*0.5) #(-α*c₀*μᵢⱼ)/((ρᵢ+ρⱼ)*0.5)
+        visc_valˣ = -Πᵢⱼ*m₀*∇ᵢWᵢⱼˣ
+        visc_valʸ = -Πᵢⱼ*m₀*∇ᵢWᵢⱼʸ
+        visc_valᶻ = -Πᵢⱼ*m₀*∇ᵢWᵢⱼᶻ
+        # Finally combine contributions
+        dvdtLˣ[iter] = dvdtˣ + visc_valˣ
+        dvdtLʸ[iter] = dvdtʸ + visc_valʸ
+        dvdtLᶻ[iter] = dvdtᶻ + visc_valᶻ
     end
 
     # Reduction
@@ -302,9 +313,9 @@ function ∂vᵢ∂t!(I,J, dvdtIˣ, dvdtIʸ, dvdtIᶻ, dvdtLˣ, dvdtLʸ, dvdtL�
         i = I[iter]
         j = J[iter]
     
-        dvdtˣ        =  dvdtLˣ[iter]
-        dvdtʸ        =  dvdtLʸ[iter]
-        dvdtᶻ        =  dvdtLᶻ[iter]
+        dvdtˣ       = dvdtLˣ[iter]
+        dvdtʸ       = dvdtLʸ[iter]
+        dvdtᶻ       = dvdtLᶻ[iter]
     
         dvdtIˣ[i]   +=  dvdtˣ
         dvdtIˣ[j]   += -dvdtˣ
@@ -317,68 +328,68 @@ function ∂vᵢ∂t!(I,J, dvdtIˣ, dvdtIʸ, dvdtIᶻ, dvdtLˣ, dvdtLʸ, dvdtL�
     return nothing
 end
 
-# The artificial viscosity term
-function ∂Πᵢⱼ∂t!(viscIˣ, viscIʸ, viscIᶻ, viscLˣ, viscLʸ, viscLᶻ, I,J, D, xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ ,Density, Velocityˣ, Velocityʸ, Velocityᶻ,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ,SimulationConstants)
-    @unpack h, α, c₀, m₀, η² = SimulationConstants
+# # The artificial viscosity term
+# function ∂Πᵢⱼ∂t!(viscIˣ, viscIʸ, viscIᶻ, viscLˣ, viscLʸ, viscLᶻ, I,J, D, xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ ,Density, Velocityˣ, Velocityʸ, Velocityᶻ,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ,SimulationConstants)
+#     @unpack h, α, c₀, m₀, η² = SimulationConstants
 
-    # Calculation
-    @tturbo for iter in eachindex(I)
-        i = I[iter]; j = J[iter]; d = D[iter]
+#     # Calculation
+#     @tturbo for iter in eachindex(I)
+#         i = I[iter]; j = J[iter]; d = D[iter]
         
-        ρᵢ    = Density[i]
-        ρⱼ    = Density[j]
-        ρᵢⱼ   = (ρᵢ+ρⱼ)*0.5
+#         ρᵢ    = Density[i]
+#         ρⱼ    = Density[j]
+#         ρᵢⱼ   = (ρᵢ+ρⱼ)*0.5
 
-        vᵢⱼˣ  = Velocityˣ[i] - Velocityˣ[j]
-        vᵢⱼʸ  = Velocityʸ[i] - Velocityʸ[j]
-        vᵢⱼᶻ  = Velocityᶻ[i] - Velocityᶻ[j]
+#         vᵢⱼˣ  = Velocityˣ[i] - Velocityˣ[j]
+#         vᵢⱼʸ  = Velocityʸ[i] - Velocityʸ[j]
+#         vᵢⱼᶻ  = Velocityᶻ[i] - Velocityᶻ[j]
 
-        ∇ᵢWᵢⱼˣ = KernelGradientLˣ[iter]
-        ∇ᵢWᵢⱼʸ = KernelGradientLʸ[iter]
-        ∇ᵢWᵢⱼᶻ = KernelGradientLᶻ[iter]
+#         ∇ᵢWᵢⱼˣ = KernelGradientLˣ[iter]
+#         ∇ᵢWᵢⱼʸ = KernelGradientLʸ[iter]
+#         ∇ᵢWᵢⱼᶻ = KernelGradientLᶻ[iter]
 
-        xᵢⱼˣ⁰  = xᵢⱼˣ[iter]
-        xᵢⱼʸ⁰  = xᵢⱼʸ[iter]
-        xᵢⱼᶻ⁰  = xᵢⱼᶻ[iter]
+#         xᵢⱼˣ⁰  = xᵢⱼˣ[iter]
+#         xᵢⱼʸ⁰  = xᵢⱼʸ[iter]
+#         xᵢⱼᶻ⁰  = xᵢⱼᶻ[iter]
 
 
-        d²    = d*d
+#         d²    = d*d
         
-        cond      =  vᵢⱼˣ * xᵢⱼˣ⁰ +  vᵢⱼʸ * xᵢⱼʸ⁰ + vᵢⱼᶻ * xᵢⱼᶻ⁰
+#         cond      =  vᵢⱼˣ * xᵢⱼˣ⁰ +  vᵢⱼʸ * xᵢⱼʸ⁰ + vᵢⱼᶻ * xᵢⱼᶻ⁰
 
-        cond_bool = cond < 0
+#         cond_bool = cond < 0
 
-        μᵢⱼ = h*cond/(d²+η²)
-        Πᵢⱼ = cond_bool*(-α*c₀*μᵢⱼ)/ρᵢⱼ
+#         μᵢⱼ = h*cond/(d²+η²)
+#         Πᵢⱼ = cond_bool*(-α*c₀*μᵢⱼ)/ρᵢⱼ
         
-        visc_valˣ = -Πᵢⱼ*m₀*∇ᵢWᵢⱼˣ
-        visc_valʸ = -Πᵢⱼ*m₀*∇ᵢWᵢⱼʸ
-        visc_valᶻ = -Πᵢⱼ*m₀*∇ᵢWᵢⱼᶻ
+#         visc_valˣ = -Πᵢⱼ*m₀*∇ᵢWᵢⱼˣ
+#         visc_valʸ = -Πᵢⱼ*m₀*∇ᵢWᵢⱼʸ
+#         visc_valᶻ = -Πᵢⱼ*m₀*∇ᵢWᵢⱼᶻ
         
-        viscLˣ[iter] = visc_valˣ 
-        viscLʸ[iter] = visc_valʸ
-        viscLᶻ[iter] = visc_valᶻ
-    end
+#         viscLˣ[iter] = visc_valˣ 
+#         viscLʸ[iter] = visc_valʸ
+#         viscLᶻ[iter] = visc_valᶻ
+#     end
 
-    # Reduction
-    for iter in eachindex(I,J)
-        i = I[iter]
-        j = J[iter]
+#     # Reduction
+#     for iter in eachindex(I,J)
+#         i = I[iter]
+#         j = J[iter]
     
-        visc_valˣ    =  viscLˣ[iter]
-        visc_valʸ    =  viscLʸ[iter]
-        visc_valᶻ    =  viscLᶻ[iter]
+#         visc_valˣ    =  viscLˣ[iter]
+#         visc_valʸ    =  viscLʸ[iter]
+#         visc_valᶻ    =  viscLᶻ[iter]
     
-        viscIˣ[i]   +=  visc_valˣ
-        viscIˣ[j]   += -visc_valˣ
-        viscIʸ[i]   +=  visc_valʸ
-        viscIʸ[j]   += -visc_valʸ
-        viscIᶻ[i]   +=  visc_valᶻ
-        viscIᶻ[j]   += -visc_valᶻ
-    end
+#         viscIˣ[i]   +=  visc_valˣ
+#         viscIˣ[j]   += -visc_valˣ
+#         viscIʸ[i]   +=  visc_valʸ
+#         viscIʸ[j]   += -visc_valʸ
+#         viscIᶻ[i]   +=  visc_valᶻ
+#         viscIᶻ[j]   += -visc_valᶻ
+#     end
 
-    return nothing
-end
+#     return nothing
+# end
 
 
 # This is to handle the special factor multiplied on density in the time stepping procedure, when
