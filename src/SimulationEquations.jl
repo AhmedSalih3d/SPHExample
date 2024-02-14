@@ -270,8 +270,8 @@ function ∂ρᵢ∂tDDT!(dρdtI, I, J, D , xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ , D
 end
 
 # The momentum equation without any dissipation - we add the dissipation using artificial viscosity (∂Πᵢⱼ∂t)
-function ArtificialViscosityMomentumEquation!(I,J, D, dvdtIˣ, dvdtIʸ, dvdtIᶻ, dvdtLˣ, dvdtLʸ, dvdtLᶻ,Density,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ, xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ,Velocityˣ, Velocityʸ, Velocityᶻ,Press, SimulationConstants)
-    @unpack m₀, c₀,γ,ρ₀,α,h,η² = SimulationConstants
+function ArtificialViscosityMomentumEquation!(I,J, D, dvdtIˣ, dvdtIʸ, dvdtIᶻ, dvdtLˣ, dvdtLʸ, dvdtLᶻ,Density,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ, xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ,Velocityˣ, Velocityʸ, Velocityᶻ,Press, GravityFactor, SimulationConstants)
+    @unpack m₀, c₀,γ,ρ₀,α,h,η²,g = SimulationConstants
     # Calculation
     @tturbo for iter in eachindex(I)
         i = I[iter]; j = J[iter]; d = D[iter]
@@ -323,6 +323,12 @@ function ArtificialViscosityMomentumEquation!(I,J, D, dvdtIˣ, dvdtIʸ, dvdtIᶻ
         dvdtIʸ[j]   += -dvdtʸ
         dvdtIᶻ[i]   +=  dvdtᶻ
         dvdtIᶻ[j]   += -dvdtᶻ
+    end
+
+    # Add gravity to fluid particles
+    # NOTE: Done manually and on y-axis, so 3d sim won't work right now
+    @tturbo for i in eachindex(dvdtIʸ,GravityFactor)
+        dvdtIʸ[i] += g * GravityFactor[i]
     end
 
     return nothing
