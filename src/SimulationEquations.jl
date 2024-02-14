@@ -145,58 +145,126 @@ end
 #faux(ρ₀, P, invCb) = ρ₀ * ( fancy7th( 1 + (P * invCb)) - 1)
 
 # The density derivative function INCLUDING density diffusion
-function ∂ρᵢ∂tDDT!(dρdtI, list, xᵢⱼ,xᵢⱼʸ,ρ,v,WgL,MotionLimiter, drhopLp, drhopLn, SimulationConstants)
+function ∂ρᵢ∂tDDT!(dρdtI, I, J, D , xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ , Density , Velocityˣ, Velocityʸ, Velocityᶻ, KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ ,MotionLimiter, drhopLp, drhopLn, SimulationConstants)
     @unpack h,m₀,δᵩ,c₀,γ,g,ρ₀,η²,γ⁻¹ = SimulationConstants
 
     # Generate the needed constants
-    Cb    = (c₀^2*ρ₀)/γ
-    invCb = inv(Cb)
+    Cb      = (c₀^2*ρ₀)/γ
+    invCb   = inv(Cb)
+    δₕ_h_c₀ = δᵩ * h * c₀
+
 
     # Follow the implementation here: https://arxiv.org/abs/2110.10076
-    @tturbo for iter in eachindex(list)
+    @tturbo for iter in eachindex(I,J,D)
+        i = I[iter]; j = J[iter]; d = D[iter]
+
         Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼʸ[iter]
         ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, invCb)
         Pⱼᵢᴴ  = -Pᵢⱼᴴ
         ρⱼᵢᴴ  = faux_fancy(ρ₀, Pⱼᵢᴴ, invCb)
-        
-        drhopLp[iter] = ρᵢⱼᴴ
-        drhopLn[iter] = ρⱼᵢᴴ
-    end
 
-    for (iter,L) in enumerate(list)
-        i = L[1]; j = L[2]; d = L[3]
+        xⱼᵢˣ⁰  = -xᵢⱼˣ[iter]
+        xⱼᵢʸ⁰  = -xᵢⱼʸ[iter]
+        xⱼᵢᶻ⁰  = -xᵢⱼᶻ[iter]
 
-        #xⱼᵢ   = points[j] - points[i]
-        xⱼᵢ   = -xᵢⱼ[iter]
         r²    = d*d
-        ρᵢ    = ρ[i]
-        ρⱼ    = ρ[j]
+        ρᵢ    = Density[i]
+        ρⱼ    = Density[j]
         ρⱼᵢ   = ρⱼ - ρᵢ
-        vᵢⱼ   = v[i] - v[j]
-        ∇ᵢWᵢⱼ = WgL[iter]
-        
-        # First part of continuity equation
-        FirstPartOfContinuity = dot(m₀*vᵢⱼ,∇ᵢWᵢⱼ) # =dot(m₀*-vᵢⱼ,-∇ᵢWᵢⱼ)
 
+
+        vᵢⱼˣ   = Velocityˣ[i] - Velocityˣ[j]
+        vᵢⱼʸ   = Velocityʸ[i] - Velocityʸ[j]
+        vᵢⱼᶻ   = Velocityᶻ[i] - Velocityᶻ[j]
+        
+        ∇ᵢWᵢⱼˣ   =  KernelGradientLˣ[iter]
+        ∇ᵢWᵢⱼʸ   =  KernelGradientLʸ[iter]
+        ∇ᵢWᵢⱼᶻ   =  KernelGradientLᶻ[iter]
+
+        # First part of continuity equation
+        FirstPartOfContinuity   = m₀ * (vᵢⱼˣ * ∇ᵢWᵢⱼˣ + vᵢⱼʸ * ∇ᵢWᵢⱼʸ + vᵢⱼᶻ * ∇ᵢWᵢⱼᶻ)
 
         # Implement for particle i
-        # Pᵢⱼᴴ = ρ₀ * (-g) * xⱼᵢ[2]
-        # ρᵢⱼᴴ = ρ₀ * ( ^( 1 + (Pᵢⱼᴴ/Cb), γ⁻¹) - 1)
-        ρᵢⱼᴴ = drhopLp[iter]
-        Ψᵢⱼ  = 2 * (ρⱼᵢ - ρᵢⱼᴴ) * xⱼᵢ/(r²+η²)
-        Dᵢ   = δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ,∇ᵢWᵢⱼ)
+        # Ψᵢⱼˣ  = 2 * (ρⱼᵢ - ρᵢⱼᴴ) * xⱼᵢˣ⁰/(r²+η²) ..
+        FacRhoI = 2 * (ρⱼᵢ - ρᵢⱼᴴ) * inv(r²+η²)
+        Ψᵢⱼˣ    = FacRhoI * xⱼᵢˣ⁰
+        Ψᵢⱼʸ    = FacRhoI * xⱼᵢʸ⁰
+        Ψᵢⱼᶻ    = FacRhoI * xⱼᵢᶻ⁰
 
-        dρdtI[i] += FirstPartOfContinuity + Dᵢ * MotionLimiter[i]
+        Dᵢ    =  δₕ_h_c₀ * (m₀/ρⱼ) * (Ψᵢⱼˣ * ∇ᵢWᵢⱼˣ + Ψᵢⱼʸ * ∇ᵢWᵢⱼʸ + Ψᵢⱼᶻ * ∇ᵢWᵢⱼᶻ)
+
+        drhopLp[iter] = FirstPartOfContinuity + Dᵢ * MotionLimiter[i]
 
         # Implement for particle j
-        # Pⱼᵢᴴ = -Pᵢⱼᴴ
-        # ρⱼᵢᴴ = ρ₀ * ( ^( 1 + (Pⱼᵢᴴ/Cb), γ⁻¹) - 1)
-        ρⱼᵢᴴ = drhopLn[iter]
-        Ψⱼᵢ  = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * (-xⱼᵢ)/(r²+η²)
-        Dⱼ   = δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ,-∇ᵢWᵢⱼ)
+        # Ψⱼᵢˣ  = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * (-xⱼᵢˣ⁰)/(r²+η²) ..
+        FacRhoJ = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(r²+η²)
+        Ψⱼᵢˣ  = FacRhoJ * (-xⱼᵢˣ⁰)
+        Ψⱼᵢʸ  = FacRhoJ * (-xⱼᵢʸ⁰)
+        Ψⱼᵢᶻ  = FacRhoJ * (-xⱼᵢᶻ⁰)
 
-        dρdtI[j] += FirstPartOfContinuity + Dⱼ * MotionLimiter[i]
+        Dⱼ    = δₕ_h_c₀ * (m₀/ρᵢ) * (Ψⱼᵢˣ * -∇ᵢWᵢⱼˣ + Ψⱼᵢʸ * -∇ᵢWᵢⱼʸ + Ψⱼᵢᶻ * -∇ᵢWᵢⱼᶻ)
+
+        drhopLn[iter] = FirstPartOfContinuity + Dⱼ * MotionLimiter[i]
     end
+
+    # Reduction
+    for iter in eachindex(I,J)
+        i = I[iter]
+        j = J[iter]
+
+        FinalContinuityᵢ      =  drhopLp[iter]
+        FinalContinuityⱼ      =  drhopLn[iter]
+
+        dρdtI[i]             +=  FinalContinuityᵢ
+        dρdtI[j]             +=  FinalContinuityⱼ
+    end
+
+    
+    # # Follow the implementation here: https://arxiv.org/abs/2110.10076
+    # @tturbo for iter in eachindex(I)
+    #     Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼʸ[iter]
+    #     ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, invCb)
+    #     Pⱼᵢᴴ  = -Pᵢⱼᴴ
+    #     ρⱼᵢᴴ  = faux_fancy(ρ₀, Pⱼᵢᴴ, invCb)
+        
+    #     drhopLp[iter] = ρᵢⱼᴴ
+    #     drhopLn[iter] = ρⱼᵢᴴ
+    # end
+
+    # for iter in eachindex(I,J,D)
+    #     i = I[iter]; j = J[iter]; d = D[iter]
+
+    #     #xⱼᵢ   = points[j] - points[i]
+    #     xⱼᵢ   = SVector(-xᵢⱼˣ[iter], -xᵢⱼʸ[iter], -xᵢⱼᶻ[iter])
+    #     r²    = d*d
+    #     ρᵢ    = Density[i]
+    #     ρⱼ    = Density[j]
+    #     ρⱼᵢ   = ρⱼ - ρᵢ
+    #     vᵢⱼ   = SVector(Velocityˣ[i] - Velocityˣ[j],Velocityʸ[i] - Velocityʸ[j],Velocityᶻ[i] - Velocityᶻ[j])
+    #     ∇ᵢWᵢⱼ = SVector(KernelGradientLˣ[iter],KernelGradientLʸ[iter],KernelGradientLᶻ[iter])
+        
+    #     # First part of continuity equation
+    #     FirstPartOfContinuity = dot(m₀*vᵢⱼ,∇ᵢWᵢⱼ) # =dot(m₀*-vᵢⱼ,-∇ᵢWᵢⱼ)
+
+
+    #     # Implement for particle i
+    #     # Pᵢⱼᴴ = ρ₀ * (-g) * xⱼᵢ[2]
+    #     # ρᵢⱼᴴ = ρ₀ * ( ^( 1 + (Pᵢⱼᴴ/Cb), γ⁻¹) - 1)
+    #     ρᵢⱼᴴ = drhopLp[iter]
+    #     Ψᵢⱼ  = 2 * (ρⱼᵢ - ρᵢⱼᴴ) * xⱼᵢ/(r²+η²)
+    #     Dᵢ   = δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ,∇ᵢWᵢⱼ)
+
+    #     dρdtI[i] += FirstPartOfContinuity + Dᵢ * MotionLimiter[i]
+
+    #     # Implement for particle j
+    #     # Pⱼᵢᴴ = -Pᵢⱼᴴ
+    #     # ρⱼᵢᴴ = ρ₀ * ( ^( 1 + (Pⱼᵢᴴ/Cb), γ⁻¹) - 1)
+    #     ρⱼᵢᴴ = drhopLn[iter]
+    #     Ψⱼᵢ  = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * (-xⱼᵢ)/(r²+η²)
+    #     Dⱼ   = δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ,-∇ᵢWᵢⱼ)
+
+    #     dρdtI[j] += FirstPartOfContinuity + Dⱼ * MotionLimiter[i]
+    # end
 
     return nothing
 end

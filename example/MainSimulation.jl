@@ -180,10 +180,10 @@ function RunSimulation(;FluidCSV::String,
         end
         
         @timeit HourGlass "0 | Reset arrays to zero and resize L arrays" begin
-            # Clean up arrays, Vector{T} and Vector{SVector{3,T}}
-            ResetArrays!(Kernel, dρdtI,dρdtIₙ⁺,KernelGradient,dvdtI, Acceleration)
             # Resize L based values (interactions between all particles i and j) based on length of neighborsystem.nb.list
             ResizeBuffers!(KernelL, KernelGradientL, dvdtL, xᵢⱼ, drhopLp, drhopLn; N = system.nb.n)
+            # Clean up arrays, Vector{T} and Vector{SVector{3,T}}
+            ResetArrays!(Kernel, dρdtI,dρdtIₙ⁺,KernelGradient,dvdtI, Acceleration, drhopLp, drhopLn)
         end
 
          # Here we calculate the distances between particles, output the kernel gradient value for each particle and also the kernel gradient value
@@ -197,7 +197,7 @@ function RunSimulation(;FluidCSV::String,
         end
 
         # Then we calculate the density derivative at time step "n"
-        @timeit HourGlass "2| DDT" ∂ρᵢ∂tDDT!(dρdtI,system.nb.list,xᵢⱼ,xᵢⱼʸ,Density,Velocity,KernelGradientL,MotionLimiter,drhopLp,drhopLn, SimConstants)
+        @timeit HourGlass "2| DDT" ∂ρᵢ∂tDDT!(dρdtI, I, J, D, xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ,Density, Velocityˣ, Velocityʸ, Velocityᶻ,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ,MotionLimiter,drhopLp,drhopLn, SimConstants)
 
         # We calculate viscosity contribution and momentum equation at time step "n"
         @timeit HourGlass "2| Pressure" Pressure!(Pressureᵢ, Density, SimConstants)
@@ -216,7 +216,7 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "2| updatexᵢⱼ!" updatexᵢⱼ!(xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, I, J, Positionₙ⁺ˣ, Positionₙ⁺ʸ, Positionₙ⁺ᶻ)
         
         # Density derivative at "n+½" - Note that we keep the kernel gradient values calculated at "n" for simplicity
-        @timeit HourGlass "2| DDT2" ∂ρᵢ∂tDDT!(dρdtIₙ⁺,system.nb.list,xᵢⱼ,xᵢⱼʸ,ρₙ⁺,Velocityₙ⁺,KernelGradientL,MotionLimiter, drhopLp, drhopLn, SimConstants)
+        @timeit HourGlass "2| DDT2" ∂ρᵢ∂tDDT!(dρdtIₙ⁺, I, J, D, xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ,ρₙ⁺, Velocityₙ⁺ˣ, Velocityₙ⁺ʸ, Velocityₙ⁺ᶻ,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ,MotionLimiter,drhopLp,drhopLn, SimConstants)
 
         # Viscous contribution and momentum equation at "n+½"
         @timeit HourGlass "2| Pressure2"     Pressure!(Pressureᵢ, ρₙ⁺, SimConstants)
@@ -251,8 +251,9 @@ function RunSimulation(;FluidCSV::String,
         next!(SimMetaData.ProgressSpecification; showvalues = show_vals(SimMetaData))
     end
     
-    # Print the timings in the default way
+    # # Print the timings in the default way
     show(HourGlass,sortby=:name)
+    show(HourGlass)
     disable_timer!(HourGlass)
 
     return nothing
