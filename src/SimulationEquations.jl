@@ -493,6 +493,56 @@ end
     end
 end
 
+# The momentum equation without any dissipation - we add the dissipation using artificial viscosity (∂Πᵢⱼ∂t)
+@generated function ArtificialViscosityMomentumEquation!(I,J, D, dvdtI::DimensionalData, dvdtL::DimensionalData,Density,KernelGradientL::DimensionalData, xᵢⱼ::DimensionalData{dims}, Velocity::DimensionalData, Press, GravityFactor, SimulationConstants) where {dims}
+    quote
+        @unpack m₀, c₀,γ,ρ₀,α,h,η²,g = SimulationConstants
+        # Calculation
+        @tturbo for iter in eachindex(I)
+            i = I[iter]; j = J[iter]; d = D[iter]
+            ρᵢ    = Density[i]
+            ρⱼ    = Density[j]
+            Pᵢ    = Press[i] #Pᵢ    = Pressure(ρᵢ,c₀,γ,ρ₀)
+            Pⱼ    = Press[j] #Pⱼ    = Pressure(ρⱼ,c₀,γ,ρ₀)
+            ρ̄ᵢⱼ   = (ρᵢ+ρⱼ)*0.5
+            Pfac  = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
+            d²    = d*d
+
+            Base.Cartesian.@nexprs $dims dᵅ -> begin
+                ∇ᵢWᵢⱼᵈ =  KernelGradientL.vectors[dᵅ][iter]
+                vᵢⱼᵈ      = Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j]
+                xᵢⱼᵈ      = xᵢⱼ.vectors[dᵅ][iter]
+                cond      = vᵢⱼᵈ * xᵢⱼᵈ
+                cond_bool = cond < 0.0
+                μᵢⱼᵈ      = h*cond/(d²+η²)
+                Πᵢⱼᵈ      = cond_bool*(-α*c₀*μᵢⱼᵈ)/ρ̄ᵢⱼ
+                dvdtᵈ     = - m₀ * Pfac 
+                visc_valᵈ = - m₀ * Πᵢⱼᵈ
+                # Finally combine contributions
+                dvdtL.vectors[dᵅ][iter] = (dvdtᵈ + visc_valᵈ) * ∇ᵢWᵢⱼᵈ
+            end
+        end
+
+        # Reduction
+        for iter in eachindex(I,J)
+            i = I[iter]
+            j = J[iter]
+
+            Base.Cartesian.@nexprs $dims dᵅ -> begin
+                dvdtI.vectors[dᵅ][i] += dvdtL.vectors[dᵅ][iter]
+                dvdtI.vectors[dᵅ][j] -= dvdtL.vectors[dᵅ][iter]
+            end
+        end
+
+        # Add gravity to fluid particles
+        @tturbo for i in eachindex(GravityFactor)
+            dvdtI.vectors[dims][i] += g * GravityFactor[i]
+        end
+
+        return nothing
+    end
+end
+
 # @inline @inbounds function updatexᵢⱼ!(xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, I, J, Positionˣ, Positionʸ, Positionᶻ)
 #     @tturbo for iter ∈ eachindex(I,J)
 #         i = I[iter]; j = J[iter]; 

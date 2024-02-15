@@ -91,15 +91,15 @@ function RunSimulation(;FluidCSV::String,
 
     dρdtI             = zeros(FloatType,         SizeOfParticlesI1)
 
-    dvdtIˣ            = zeros(FloatType,  SizeOfParticlesI1)
-    dvdtIʸ            = zeros(FloatType,  SizeOfParticlesI1)
-    dvdtIᶻ            = zeros(FloatType,  SizeOfParticlesI1)
-    dvdtI             = StructArray{TypeOfParticleI3}(( dvdtIˣ, dvdtIʸ, dvdtIᶻ))
+    # dvdtIˣ            = zeros(FloatType,  SizeOfParticlesI1)
+    # dvdtIʸ            = zeros(FloatType,  SizeOfParticlesI1)
+    # dvdtIᶻ            = zeros(FloatType,  SizeOfParticlesI1)
+    # dvdtI             = StructArray{TypeOfParticleI3}(( dvdtIˣ, dvdtIʸ, dvdtIᶻ))
 
-    dvdtLˣ            = zeros(FloatType,  SizeOfParticlesI1)
-    dvdtLʸ            = zeros(FloatType,  SizeOfParticlesI1)
-    dvdtLᶻ            = zeros(FloatType,  SizeOfParticlesI1)
-    dvdtL             = StructArray{TypeOfParticleI3}(( dvdtLˣ, dvdtLʸ, dvdtLᶻ))
+    # dvdtLˣ            = zeros(FloatType,  SizeOfParticlesI1)
+    # dvdtLʸ            = zeros(FloatType,  SizeOfParticlesI1)
+    # dvdtLᶻ            = zeros(FloatType,  SizeOfParticlesI1)
+    # dvdtL             = StructArray{TypeOfParticleI3}(( dvdtLˣ, dvdtLʸ, dvdtLᶻ))
 
     ρₙ⁺               = zeros(FloatType,         SizeOfParticlesI1)
 
@@ -141,16 +141,18 @@ function RunSimulation(;FluidCSV::String,
     Positionᶻ          = getindex.(points,3)
     Position           = DimensionalData(Positionˣ,Positionʸ,Positionᶻ)
 
-    KernelGradient    = DimensionalData{3,FloatType}(length(points))
-    KernelGradientL   = DimensionalData{3,FloatType}(length(points))
-    xᵢⱼ               = DimensionalData{3,FloatType}(length(points))
-    Acceleration      = DimensionalData{3,FloatType}(length(points))
-    Velocity          = DimensionalData{3,FloatType}(length(points))
-
-    drhopLp           = zeros(FloatType,         SizeOfParticlesI1)
-    drhopLn           = zeros(FloatType,         SizeOfParticlesI1) 
-         
-    Pressureᵢ         = zeros(FloatType,         SizeOfParticlesI1)
+    KernelGradient     = DimensionalData{3,FloatType}(length(points))
+    KernelGradientL    = DimensionalData{3,FloatType}(length(points))
+    xᵢⱼ                = DimensionalData{3,FloatType}(length(points))
+    Acceleration       = DimensionalData{3,FloatType}(length(points))
+    Velocity           = DimensionalData{3,FloatType}(length(points))
+    dvdtI              = DimensionalData{3,FloatType}(length(points))
+    dvdtL              = DimensionalData{3,FloatType}(length(points))
+ 
+    drhopLp            = zeros(FloatType,         SizeOfParticlesI1)
+    drhopLn            = zeros(FloatType,         SizeOfParticlesI1) 
+          
+    Pressureᵢ          = zeros(FloatType,         SizeOfParticlesI1)
 
     # Initialize the system system.nb.list
     # The result from CellListMap using neighborlist! is a vector of tuples, (i index, j index, d eucledian distance between particles)
@@ -182,7 +184,7 @@ function RunSimulation(;FluidCSV::String,
             # Resize L based values (interactions between all particles i and j) based on length of neighborsystem.nb.list
             ResizeBuffers!(KernelL, KernelGradientL, dvdtL, xᵢⱼ, drhopLp, drhopLn; N = system.nb.n)
             # Clean up arrays, Vector{T} and Vector{SVector{3,T}}
-            ResetArrays!(Kernel, dρdtI,dρdtIₙ⁺,KernelGradient.V,dvdtI, Acceleration.V, drhopLp, drhopLn)
+            ResetArrays!(Kernel, dρdtI,dρdtIₙ⁺,KernelGradient.V,dvdtI.V, Acceleration.V, drhopLp, drhopLn)
         end
 
          # Here we calculate the distances between particles, output the kernel gradient value for each particle and also the kernel gradient value
@@ -205,6 +207,7 @@ function RunSimulation(;FluidCSV::String,
         # # We calculate viscosity contribution and momentum equation at time step "n"
         @timeit HourGlass "2| Pressure" Pressure!(Pressureᵢ, Density, SimConstants)
         # @timeit HourGlass "2| Artificial Viscosity Momentum Equation" ArtificialViscosityMomentumEquation!(I,J,D, dvdtIˣ, dvdtIʸ, dvdtIᶻ, dvdtLˣ, dvdtLʸ, dvdtLᶻ,Density,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ,xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, Velocityˣ, Velocityʸ, Velocityᶻ, Pressureᵢ, GravityFactor, SimConstants)
+        @timeit HourGlass "2| Artificial Viscosity Momentum Equation" ArtificialViscosityMomentumEquation!(I,J,D, dvdtI, dvdtL,Density,KernelGradientL, xᵢⱼ, Velocity, Pressureᵢ, GravityFactor, SimConstants)
 
         # # Based on the density derivative at "n", we calculate "n+½"
         # @timeit HourGlass "2| ρₙ⁺" @. ρₙ⁺  = Density  + dρdtI * (dt/2)
