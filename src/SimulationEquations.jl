@@ -457,7 +457,7 @@ end
 
 
         # Follow the implementation here: https://arxiv.org/abs/2110.10076
-        for iter in eachindex(I,J,D)
+        @tturbo for iter in eachindex(I,J,D)
             i = I[iter]; j = J[iter]; d = D[iter]
             
                 Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ.vectors[2][iter]  #Set to dims later, when going full 2d in shaa Allah
