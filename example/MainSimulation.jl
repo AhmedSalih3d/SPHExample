@@ -144,6 +144,7 @@ function RunSimulation(;FluidCSV::String,
     KernelGradient    = DimensionalData{3,FloatType}(length(points))
     KernelGradientL   = DimensionalData{3,FloatType}(length(points))
     xᵢⱼ               = DimensionalData{3,FloatType}(length(points))
+    Acceleration      = DimensionalData{3,FloatType}(length(points))
     Velocity          = DimensionalData{3,FloatType}(length(points))
 
     drhopLp           = zeros(FloatType,         SizeOfParticlesI1)
@@ -181,7 +182,7 @@ function RunSimulation(;FluidCSV::String,
             # Resize L based values (interactions between all particles i and j) based on length of neighborsystem.nb.list
             ResizeBuffers!(KernelL, KernelGradientL, dvdtL, xᵢⱼ, drhopLp, drhopLn; N = system.nb.n)
             # Clean up arrays, Vector{T} and Vector{SVector{3,T}}
-            ResetArrays!(Kernel, dρdtI,dρdtIₙ⁺,KernelGradient.V,dvdtI, Acceleration, drhopLp, drhopLn)
+            ResetArrays!(Kernel, dρdtI,dρdtIₙ⁺,KernelGradient.V,dvdtI, Acceleration.V, drhopLp, drhopLn)
         end
 
          # Here we calculate the distances between particles, output the kernel gradient value for each particle and also the kernel gradient value
@@ -229,7 +230,7 @@ function RunSimulation(;FluidCSV::String,
         # @timeit HourGlass "2| LimitDensityAtBoundary!(Density)" LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
 
         # # # Update Velocity in-place and then use the updated value for Position
-        # @timeit HourGlass "2| Velocity" @. Velocity += Acceleration * dt * MotionLimiter
+        # @timeit HourGlass "2| Velocity" @. Velocity.V += Acceleration.V * dt * MotionLimiter
         # @timeit HourGlass "2| Position" @. Position += ((Velocity + (Velocity - Acceleration * dt * MotionLimiter)) / 2) * dt * MotionLimiter
 
         # # Automatic time stepping control

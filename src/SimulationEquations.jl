@@ -95,45 +95,6 @@ end
 # Function to calculate kernel gradient value in both "particle i" format and "list of interactions" format
 # Please notice how when using CellListMap since it is based on a "list of interactions", for each 
 # interaction we must add the contribution to both the i'th and j'th particle!
-function ∑ⱼ∇ᵢWᵢⱼ!(KernelGradientIˣ,KernelGradientIʸ,KernelGradientIᶻ,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ, I, J, D, xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, SimulationConstants)
-    @unpack αD, h, h⁻¹, η² = SimulationConstants
- 
-    @tturbo for iter in eachindex(I)
-        i = I[iter]; j = J[iter]; d = D[iter]
-
-        q = clamp(d * h⁻¹, 0.0, 2.0)
-
-        Fac = αD*5*(q-2)^3*q / (8h*(q*h+η²)) 
-
-        ∇ᵢWᵢⱼˣ = Fac * xᵢⱼˣ[iter]  
-        ∇ᵢWᵢⱼʸ = Fac * xᵢⱼʸ[iter]  
-        ∇ᵢWᵢⱼᶻ = Fac * xᵢⱼᶻ[iter] 
-
-        KernelGradientLˣ[iter] =  ∇ᵢWᵢⱼˣ
-        KernelGradientLʸ[iter] =  ∇ᵢWᵢⱼʸ
-        KernelGradientLᶻ[iter] =  ∇ᵢWᵢⱼᶻ
-    end
-
-
-    for iter in eachindex(I,J)
-        i = I[iter]
-        j = J[iter]
-
-        ∇ᵢWᵢⱼˣ                 =  KernelGradientLˣ[iter]
-        ∇ᵢWᵢⱼʸ                 =  KernelGradientLʸ[iter]
-        ∇ᵢWᵢⱼᶻ                 =  KernelGradientLᶻ[iter]
-
-        KernelGradientIˣ[i]   +=  ∇ᵢWᵢⱼˣ
-        KernelGradientIˣ[j]   += -∇ᵢWᵢⱼˣ
-        KernelGradientIʸ[i]   +=  ∇ᵢWᵢⱼʸ
-        KernelGradientIʸ[j]   += -∇ᵢWᵢⱼʸ
-        KernelGradientIᶻ[i]   +=  ∇ᵢWᵢⱼᶻ
-        KernelGradientIᶻ[j]   += -∇ᵢWᵢⱼᶻ
-    end
-
-    return nothing
-end
-
 
 # Equation of State in Weakly-Compressible SPH
 function EquationOfState(ρ,c₀,γ,ρ₀)
@@ -496,9 +457,8 @@ end
 
 
         # Follow the implementation here: https://arxiv.org/abs/2110.10076
-        @tturbo for iter in eachindex(I,J,D)
+        for iter in eachindex(I,J,D)
             i = I[iter]; j = J[iter]; d = D[iter]
-
             
                 Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ.vectors[2][iter]  #Set to dims later, when going full 2d in shaa Allah
                 ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, invCb)
@@ -510,33 +470,12 @@ end
                 ρⱼ    = Density[j]
                 ρⱼᵢ   = ρⱼ - ρᵢ
 
-            Base.Cartesian.@nexprs $dims dᵅ -> begin 
-                vᵢⱼᵈ   =  Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j]
-
-                ∇ᵢWᵢⱼᵈ =  KernelGradientL.vectors[dᵅ][iter]
-
-                # First part of continuity equation
-                FirstPartOfContinuity   = m₀ * (vᵢⱼᵈ * ∇ᵢWᵢⱼᵈ)
-
-                xⱼᵢᵈ   = -xᵢⱼ.vectors[dᵅ][iter]
-
-                # Implement for particle i
-                FacRhoI = 2 * (ρⱼᵢ - ρᵢⱼᴴ) * inv(r²+η²)
-                Ψᵢⱼᵈ    = FacRhoI * xⱼᵢᵈ
-
-                Dᵢᵈ     =  δₕ_h_c₀ * (m₀/ρⱼ) * (Ψᵢⱼᵈ * ∇ᵢWᵢⱼᵈ)
-
-                drhopLp[iter] = FirstPartOfContinuity + Dᵢᵈ * MotionLimiter[i]
-
-                # Implement for particle j
+                FacRhoI = 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * inv(r²+η²)
                 FacRhoJ = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(r²+η²)
-                Ψⱼᵢᵈ  = FacRhoJ * (-xⱼᵢᵈ)
-                Ψⱼᵢᵈ  = FacRhoJ * (-xⱼᵢᵈ)
-                Ψⱼᵢᵈ  = FacRhoJ * (-xⱼᵢᵈ)
 
-                Dⱼᵈ   = δₕ_h_c₀ * (m₀/ρᵢ) * (Ψⱼᵢᵈ * -∇ᵢWᵢⱼᵈ)
-
-                drhopLn[iter] = FirstPartOfContinuity + Dⱼᵈ * MotionLimiter[i]
+            Base.Cartesian.@nexprs $dims dᵅ -> begin
+                drhopLp[iter] += δₕ_h_c₀ * (m₀/ρⱼ) * (m₀ * (  Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j])  + FacRhoI *  -xᵢⱼ.vectors[dᵅ][iter] * MotionLimiter[i]) *  KernelGradientL.vectors[dᵅ][iter]
+                drhopLn[iter] += δₕ_h_c₀ * (m₀/ρᵢ) * (m₀ * (-(Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j])) + FacRhoJ *   xᵢⱼ.vectors[dᵅ][iter] * MotionLimiter[j]) * -KernelGradientL.vectors[dᵅ][iter]
             end
         end
 
@@ -545,11 +484,8 @@ end
             i = I[iter]
             j = J[iter]
 
-            FinalContinuityᵢ      =  drhopLp[iter]
-            FinalContinuityⱼ      =  drhopLn[iter]
-
-            dρdtI[i]             +=  FinalContinuityᵢ
-            dρdtI[j]             +=  FinalContinuityⱼ
+            dρdtI[i] +=  drhopLp[iter]
+            dρdtI[j] +=  drhopLn[iter]
         end
 
         return nothing
