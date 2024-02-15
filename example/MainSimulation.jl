@@ -67,7 +67,9 @@ function RunSimulation(;FluidCSV::String,
     @unpack ρ₀, dx, h, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimConstants
 
     # Load in the fluid and boundary particles. Return these points and both data frames
-    points, density_fluid, density_bound  = LoadParticlesFromCSV(FloatType, FluidCSV,BoundCSV)
+    # @inline is a hack here to remove all allocations further down due to uncertainty of the points type at compile time
+    Dimensions = 2
+    @inline points, density_fluid, density_bound  = LoadParticlesFromCSV(Dimensions,FloatType, FluidCSV,BoundCSV)
 
     # Read this as "GravityFactor * g", so -1 means negative acceleration for fluid particles
     # 1 means boundary particles push back against gravity
@@ -82,7 +84,6 @@ function RunSimulation(;FluidCSV::String,
 
     # Preallocate simulation arrays
     SizeOfParticlesI1 = (length(points),)
-    TypeOfParticleI3  = eltype(points)
 
     Density           = deepcopy([density_fluid;density_bound])
 
@@ -97,18 +98,18 @@ function RunSimulation(;FluidCSV::String,
 
     Positionˣ          = getindex.(points,1)
     Positionʸ          = getindex.(points,2)
-    Positionᶻ          = getindex.(points,3)
-    Position           = DimensionalData(Positionˣ,Positionʸ,Positionᶻ)
+    # Positionᶻ          = getindex.(points,3)
+    Position           = DimensionalData(Positionˣ,Positionʸ)
 
-    KernelGradient     = DimensionalData{3,FloatType}(length(points))
-    KernelGradientL    = DimensionalData{3,FloatType}(length(points))
-    xᵢⱼ                = DimensionalData{3,FloatType}(length(points))
-    Acceleration       = DimensionalData{3,FloatType}(length(points))
-    Velocity           = DimensionalData{3,FloatType}(length(points))
-    dvdtI              = DimensionalData{3,FloatType}(length(points))
-    dvdtL              = DimensionalData{3,FloatType}(length(points))
-    Velocityₙ⁺         = DimensionalData{3,FloatType}(length(points))
-    Positionₙ⁺         = DimensionalData{3,FloatType}(length(points))
+    KernelGradient     = DimensionalData{Dimensions,FloatType}(length(points))
+    KernelGradientL    = DimensionalData{Dimensions,FloatType}(length(points))
+    xᵢⱼ                = DimensionalData{Dimensions,FloatType}(length(points))
+    Acceleration       = DimensionalData{Dimensions,FloatType}(length(points))
+    Velocity           = DimensionalData{Dimensions,FloatType}(length(points))
+    dvdtI              = DimensionalData{Dimensions,FloatType}(length(points))
+    dvdtL              = DimensionalData{Dimensions,FloatType}(length(points))
+    Velocityₙ⁺         = DimensionalData{Dimensions,FloatType}(length(points))
+    Positionₙ⁺         = DimensionalData{Dimensions,FloatType}(length(points))
  
     drhopLp            = zeros(FloatType,         SizeOfParticlesI1)
     drhopLn            = zeros(FloatType,         SizeOfParticlesI1) 
@@ -209,7 +210,9 @@ function RunSimulation(;FluidCSV::String,
         # OutVTP is based on a well-developed Julia package, WriteVTK, while CustomVTP is based on my hand-rolled solution.
         # CustomVTP is about 10% faster, but does not mean much in this case.
         if SimMetaData.Iteration % SimMetaData.OutputIteration == 0
-            @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", Position.V, ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, KernelGradient.V, Density, Pressureᵢ, Acceleration.V, Velocity.V)
+            to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
+            @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(Position.V)
+            , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, to_3d(KernelGradient.V), Density, Pressureᵢ, to_3d(Acceleration.V), to_3d(Acceleration.V))
         end
 
         next!(SimMetaData.ProgressSpecification; showvalues = show_vals(SimMetaData))
@@ -238,10 +241,12 @@ begin
     foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
 
     # And here we run the function - enjoy!
+    # println( @report_opt target_modules=(@__MODULE__,) 
     RunSimulation(
         FluidCSV     = "./input/FluidPoints_Dp0.02.csv",
         BoundCSV     = "./input/BoundaryPoints_Dp0.02.csv",
         SimMetaData  = SimMetaData,
         SimConstants = SimConstants
     )
+    # )
 end

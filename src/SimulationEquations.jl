@@ -174,7 +174,7 @@ end
         @tturbo for iter in eachindex(I,J,D)
             i = I[iter]; j = J[iter]; d = D[iter]
             
-                Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ.vectors[2][iter]  #Set to dims later, when going full 2d in shaa Allah
+                Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ.vectors[dims][iter]
                 ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, invCb)
                 Pⱼᵢᴴ  = -Pᵢⱼᴴ
                 ρⱼᵢᴴ  = faux_fancy(ρ₀, Pⱼᵢᴴ, invCb)
@@ -267,9 +267,8 @@ end
         end
 
         # Add gravity to fluid particles
-        # dims hard-coded fix it!
         @tturbo for i in eachindex(GravityFactor)
-            dvdtI.vectors[2][i] += g * GravityFactor[i]
+            dvdtI.vectors[dims][i] += g * GravityFactor[i]
         end
 
         return nothing
