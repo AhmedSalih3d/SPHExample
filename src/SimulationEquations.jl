@@ -455,6 +455,36 @@ end
     end
 end
 
+@generated function ∑ⱼ∇ᵢWᵢⱼ!(KernelGradientI::DimensionalData{dims}, KernelGradientL::DimensionalData, I, J, D, xᵢⱼ::DimensionalData, SimulationConstants) where {dims}
+    quote
+        @unpack αD, h, h⁻¹, η² = SimulationConstants
+    
+        @tturbo for iter in eachindex(I)
+            i = I[iter]; j = J[iter]; d = D[iter]
+
+            q = clamp(d * h⁻¹, 0.0, 2.0)
+            Fac = αD*5*(q-2)^3*q / (8h*(q*h+η²)) 
+
+            Base.Cartesian.@nexprs $dims dᵅ -> begin 
+                KernelGradientL.vectors[dᵅ][iter] = Fac * xᵢⱼ.vectors[dᵅ][iter]
+            end
+        end
+
+        for iter in eachindex(I,J)
+            i = I[iter]
+            j = J[iter]
+    
+            Base.Cartesian.@nexprs $dims dᵅ -> begin
+                KernelGradientI.vectors[dᵅ][i]   +=  KernelGradientL.vectors[dᵅ][iter]
+                KernelGradientI.vectors[dᵅ][j]   += -KernelGradientL.vectors[dᵅ][iter]
+            end
+        end
+
+        return nothing
+    end
+end
+
+
 # @inline @inbounds function updatexᵢⱼ!(xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, I, J, Positionˣ, Positionʸ, Positionᶻ)
 #     @tturbo for iter ∈ eachindex(I,J)
 #         i = I[iter]; j = J[iter]; 

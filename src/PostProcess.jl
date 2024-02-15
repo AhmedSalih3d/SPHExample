@@ -18,7 +18,7 @@ export create_vtp_file, OutputVTP
         verts = empty(MeshCell{WriteVTK.PolyData.Verts, UnitRange{Int64}}[])
         all_cells = (verts, polys)
     
-        filename = SaveLocation * "/" * SimulationName * "_" * lpad(Iteration, 4, "0")
+        filename = SaveLocation * "/" * SimulationName * "_" * lpad(Iteration, 6, "0")
     
         # Create a .vtp file with the specified positions
         vtk_grid(filename, Positions, all_cells..., compress = false) do vtk
