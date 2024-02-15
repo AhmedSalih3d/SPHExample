@@ -474,8 +474,8 @@ end
                 FacRhoJ = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(r²+η²)
 
             Base.Cartesian.@nexprs $dims dᵅ -> begin
-                drhopLp[iter] += δₕ_h_c₀ * (m₀/ρⱼ) * (m₀ * (  Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j])  + FacRhoI *  -xᵢⱼ.vectors[dᵅ][iter] * MotionLimiter[i]) *  KernelGradientL.vectors[dᵅ][iter]
-                drhopLn[iter] += δₕ_h_c₀ * (m₀/ρᵢ) * (m₀ * (-(Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j])) + FacRhoJ *   xᵢⱼ.vectors[dᵅ][iter] * MotionLimiter[j]) * -KernelGradientL.vectors[dᵅ][iter]
+                drhopLp[iter] += m₀ * ( Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j] ) * KernelGradientL.vectors[dᵅ][iter]  #(m₀ * (  Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j])  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼ.vectors[dᵅ][iter] * MotionLimiter[i] * 0) *  KernelGradientL.vectors[dᵅ][iter]
+                drhopLn[iter] +=  -drhopLp[iter]  #(m₀ * (-(Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j])) + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼ.vectors[dᵅ][iter] * MotionLimiter[j] * 0) * -KernelGradientL.vectors[dᵅ][iter]
             end
         end
 
@@ -516,10 +516,8 @@ end
                 cond_bool = cond < 0.0
                 μᵢⱼᵈ      = h*cond/(d²+η²)
                 Πᵢⱼᵈ      = cond_bool*(-α*c₀*μᵢⱼᵈ)/ρ̄ᵢⱼ
-                dvdtᵈ     = - m₀ * Pfac 
-                visc_valᵈ = - m₀ * Πᵢⱼᵈ
                 # Finally combine contributions
-                dvdtL.vectors[dᵅ][iter] = (dvdtᵈ + visc_valᵈ) * ∇ᵢWᵢⱼᵈ
+                dvdtL.vectors[dᵅ][iter] = - m₀ * ( Pfac + Πᵢⱼᵈ) * ∇ᵢWᵢⱼᵈ
             end
         end
 
@@ -535,8 +533,9 @@ end
         end
 
         # Add gravity to fluid particles
+        # dims hard-coded fix it!
         @tturbo for i in eachindex(GravityFactor)
-            dvdtI.vectors[dims][i] += g * GravityFactor[i]
+            dvdtI.vectors[2][i] += g * GravityFactor[i]
         end
 
         return nothing

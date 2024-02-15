@@ -131,10 +131,10 @@ function RunSimulation(;FluidCSV::String,
     # Velocityᶻ         = zeros(FloatType,  SizeOfParticlesI1)
     # Velocity          = StructArray{TypeOfParticleI3}(( Velocityˣ, Velocityʸ, Velocityᶻ))
   
-    Velocityₙ⁺ˣ        = zeros(FloatType,  SizeOfParticlesI1)
-    Velocityₙ⁺ʸ        = zeros(FloatType,  SizeOfParticlesI1)
-    Velocityₙ⁺ᶻ        = zeros(FloatType,  SizeOfParticlesI1)
-    Velocityₙ⁺         = StructArray{TypeOfParticleI3}(( Velocityₙ⁺ˣ, Velocityₙ⁺ʸ, Velocityₙ⁺ᶻ))
+    # Velocityₙ⁺ˣ        = zeros(FloatType,  SizeOfParticlesI1)
+    # Velocityₙ⁺ʸ        = zeros(FloatType,  SizeOfParticlesI1)
+    # Velocityₙ⁺ᶻ        = zeros(FloatType,  SizeOfParticlesI1)
+    # Velocityₙ⁺         = StructArray{TypeOfParticleI3}(( Velocityₙ⁺ˣ, Velocityₙ⁺ʸ, Velocityₙ⁺ᶻ))
 
     Positionˣ          = getindex.(points,1)
     Positionʸ          = getindex.(points,2)
@@ -148,6 +148,8 @@ function RunSimulation(;FluidCSV::String,
     Velocity           = DimensionalData{3,FloatType}(length(points))
     dvdtI              = DimensionalData{3,FloatType}(length(points))
     dvdtL              = DimensionalData{3,FloatType}(length(points))
+    Velocityₙ⁺         = DimensionalData{3,FloatType}(length(points))
+    Positionₙ⁺         = DimensionalData{3,FloatType}(length(points))
  
     drhopLp            = zeros(FloatType,         SizeOfParticlesI1)
     drhopLn            = zeros(FloatType,         SizeOfParticlesI1) 
@@ -210,38 +212,38 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "2| Artificial Viscosity Momentum Equation" ArtificialViscosityMomentumEquation!(I,J,D, dvdtI, dvdtL,Density,KernelGradientL, xᵢⱼ, Velocity, Pressureᵢ, GravityFactor, SimConstants)
 
         # # Based on the density derivative at "n", we calculate "n+½"
-        # @timeit HourGlass "2| ρₙ⁺" @. ρₙ⁺  = Density  + dρdtI * (dt/2)
+        @timeit HourGlass "2| ρₙ⁺" @. ρₙ⁺  = Density  + dρdtI * (dt/2)
         # # We make sure to limit the density of boundary particles in such a way that they cannot produce suction
-        # @timeit HourGlass "2| LimitDensityAtBoundary!(ρₙ⁺)" LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
+        @timeit HourGlass "2| LimitDensityAtBoundary!(ρₙ⁺)" LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
 
         # # We now calculate velocity and position at "n+½"
-        # @timeit HourGlass "2| vₙ⁺"        @. Velocityₙ⁺   = Velocity   + dvdtI * (dt/2) * MotionLimiter
-        # @timeit HourGlass "2| Positionₙ⁺" @. Positionₙ⁺   = Position   + Velocityₙ⁺ * (dt/2)   * MotionLimiter
-        # @timeit HourGlass "2| updatexᵢⱼ!" updatexᵢⱼ!(xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, I, J, Positionₙ⁺ˣ, Positionₙ⁺ʸ, Positionₙ⁺ᶻ)
+        @timeit HourGlass "2| vₙ⁺"        @. Velocityₙ⁺.V   = Velocity.V   + dvdtI.V * (dt/2) * MotionLimiter
+        @timeit HourGlass "2| Positionₙ⁺" @. Positionₙ⁺.V   = Position.V   + Velocityₙ⁺.V * (dt/2)   * MotionLimiter
+        @timeit HourGlass "2| updatexᵢⱼ!" updatexᵢⱼ!(xᵢⱼ, Positionₙ⁺, I, J)
         
         # # # Density derivative at "n+½" - Note that we keep the kernel gradient values calculated at "n" for simplicity
-        # @timeit HourGlass "2| DDT2" ∂ρᵢ∂tDDT!(dρdtIₙ⁺, I, J, D, xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ,ρₙ⁺, Velocityₙ⁺ˣ, Velocityₙ⁺ʸ, Velocityₙ⁺ᶻ,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ,MotionLimiter,drhopLp,drhopLn, SimConstants)
+        @timeit HourGlass "2| DDT2" ∂ρᵢ∂tDDT!(dρdtIₙ⁺, I, J, D, xᵢⱼ,ρₙ⁺, Velocityₙ⁺,KernelGradientL,MotionLimiter,drhopLp,drhopLn, SimConstants)
 
         # # # Viscous contribution and momentum equation at "n+½"
-        # @timeit HourGlass "2| Pressure2"     Pressure!(Pressureᵢ, ρₙ⁺, SimConstants)
-        # @timeit HourGlass "2| Artificial Viscosity Momentum Equation2" ArtificialViscosityMomentumEquation!(I,J,D, Accelerationˣ, Accelerationʸ, Accelerationᶻ, dvdtLˣ, dvdtLʸ, dvdtLᶻ, ρₙ⁺,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ, xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, Velocityₙ⁺ˣ, Velocityₙ⁺ʸ, Velocityₙ⁺ᶻ, Pressureᵢ, GravityFactor, SimConstants)
+        @timeit HourGlass "2| Pressure2" Pressure!(Pressureᵢ, ρₙ⁺, SimConstants)
+        @timeit HourGlass "2| Artificial Viscosity Momentum Equation2" ArtificialViscosityMomentumEquation!(I,J,D, Acceleration, dvdtL, ρₙ⁺,KernelGradientL, xᵢⱼ, Velocityₙ⁺, Pressureᵢ, GravityFactor, SimConstants)
 
         # # Factor for properly time stepping the density to "n+1" - We use the symplectic scheme as done in DualSPHysics
-        # @timeit HourGlass "2| DensityEpsi!"  DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
+        @timeit HourGlass "2| DensityEpsi!"  DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
 
         # # Clamp boundary particles minimum density to avoid suction
-        # @timeit HourGlass "2| LimitDensityAtBoundary!(Density)" LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
+        @timeit HourGlass "2| LimitDensityAtBoundary!(Density)" LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
 
         # # # Update Velocity in-place and then use the updated value for Position
-        # @timeit HourGlass "2| Velocity" @. Velocity.V += Acceleration.V * dt * MotionLimiter
-        # @timeit HourGlass "2| Position" @. Position += ((Velocity + (Velocity - Acceleration * dt * MotionLimiter)) / 2) * dt * MotionLimiter
+        @timeit HourGlass "2| Velocity" @. Velocity.V += Acceleration.V * dt * MotionLimiter
+        @timeit HourGlass "2| Position" @. Position.V += ((Velocity.V + (Velocity.V - Acceleration.V * dt * MotionLimiter)) / 2) * dt * MotionLimiter
 
-        # # Automatic time stepping control
-        # @timeit HourGlass "3| Calculating time step" begin
-        #     dt =  Δt(Position, Velocity, Acceleration,SimConstants)
-        #     SimMetaData.CurrentTimeStep = dt
-        #     SimMetaData.TotalTime      += dt
-        # end
+        # Automatic time stepping control
+        @timeit HourGlass "3| Calculating time step" begin
+            dt =  Δt(Position.V, Velocity.V, Acceleration.V,SimConstants)
+            SimMetaData.CurrentTimeStep = dt
+            SimMetaData.TotalTime      += dt
+        end
         
         # OutVTP is based on a well-developed Julia package, WriteVTK, while CustomVTP is based on my hand-rolled solution.
         # CustomVTP is about 10% faster, but does not mean much in this case.
@@ -249,7 +251,7 @@ function RunSimulation(;FluidCSV::String,
             #@timeit HourGlass "4| OutputVTP" OutputVTP(SimMetaData,SimConstants,Position; Kernel, KernelGradient, Density, Acceleration, Velocity)
             #@timeit HourGlass "4| OutputVTP" OutputVTP(SimMetaData,SimConstants,Position.V; Kernel, KernelGradient.V)
             # @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * lpad(SimMetaData.Iteration,6,"0") * ".vtp", Position, ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, KernelGradient, Density, Pressureᵢ, Acceleration, Velocity)
-            @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", Position.V, ["Kernel", "KernelGradient", "Velocity"], Kernel, KernelGradient.V, Velocity.V)
+            @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", Position.V, ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, KernelGradient.V, Density, Pressureᵢ, Acceleration.V, Velocity.V)
         end
 
         next!(SimMetaData.ProgressSpecification; showvalues = show_vals(SimMetaData))
@@ -269,7 +271,7 @@ begin
     SimMetaData  = SimulationMetaData{T}(
                                     SimulationName="MySimulation", 
                                     SaveLocation=raw"E:\SecondApproach\Results", 
-                                    MaxIterations=101,
+                                    MaxIterations=10001,
                                     OutputIteration=50,
     )
     # Initialze the constants to use
