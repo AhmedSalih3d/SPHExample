@@ -437,7 +437,7 @@ end
     
             Base.Cartesian.@nexprs $dims dᵅ -> begin
                 KernelGradientI.vectors[dᵅ][i]   +=  KernelGradientL.vectors[dᵅ][iter]
-                KernelGradientI.vectors[dᵅ][j]   += -KernelGradientL.vectors[dᵅ][iter]
+                KernelGradientI.vectors[dᵅ][j]   -=  KernelGradientL.vectors[dᵅ][iter]
             end
         end
 
@@ -474,8 +474,8 @@ end
                 FacRhoJ = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(r²+η²)
 
             Base.Cartesian.@nexprs $dims dᵅ -> begin
-                drhopLp[iter] += m₀ * ( Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j] ) * KernelGradientL.vectors[dᵅ][iter]  #(m₀ * (  Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j])  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼ.vectors[dᵅ][iter] * MotionLimiter[i] * 0) *  KernelGradientL.vectors[dᵅ][iter]
-                drhopLn[iter] +=  -drhopLp[iter]  #(m₀ * (-(Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j])) + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼ.vectors[dᵅ][iter] * MotionLimiter[j] * 0) * -KernelGradientL.vectors[dᵅ][iter]
+                drhopLp[iter] += (m₀ * (  Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j])  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼ.vectors[dᵅ][iter] * MotionLimiter[i]) *  KernelGradientL.vectors[dᵅ][iter]
+                drhopLn[iter] += (m₀ * (-(Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j])) + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼ.vectors[dᵅ][iter] * MotionLimiter[j]) * -KernelGradientL.vectors[dᵅ][iter]
             end
         end
 
