@@ -126,10 +126,10 @@ function RunSimulation(;FluidCSV::String,
     Accelerationᶻ     = zeros(FloatType,  SizeOfParticlesI1)
     Acceleration      = StructArray{TypeOfParticleI3}(( Accelerationˣ, Accelerationʸ, Accelerationᶻ))
 
-    Velocityˣ         = zeros(FloatType,  SizeOfParticlesI1)
-    Velocityʸ         = zeros(FloatType,  SizeOfParticlesI1)
-    Velocityᶻ         = zeros(FloatType,  SizeOfParticlesI1)
-    Velocity          = StructArray{TypeOfParticleI3}(( Velocityˣ, Velocityʸ, Velocityᶻ))
+    # Velocityˣ         = zeros(FloatType,  SizeOfParticlesI1)
+    # Velocityʸ         = zeros(FloatType,  SizeOfParticlesI1)
+    # Velocityᶻ         = zeros(FloatType,  SizeOfParticlesI1)
+    # Velocity          = StructArray{TypeOfParticleI3}(( Velocityˣ, Velocityʸ, Velocityᶻ))
   
     Velocityₙ⁺ˣ        = zeros(FloatType,  SizeOfParticlesI1)
     Velocityₙ⁺ʸ        = zeros(FloatType,  SizeOfParticlesI1)
@@ -144,7 +144,7 @@ function RunSimulation(;FluidCSV::String,
     KernelGradient    = DimensionalData{3,FloatType}(length(points))
     KernelGradientL   = DimensionalData{3,FloatType}(length(points))
     xᵢⱼ               = DimensionalData{3,FloatType}(length(points))
-
+    Velocity          = DimensionalData{3,FloatType}(length(points))
 
     drhopLp           = zeros(FloatType,         SizeOfParticlesI1)
     drhopLn           = zeros(FloatType,         SizeOfParticlesI1) 
@@ -163,7 +163,7 @@ function RunSimulation(;FluidCSV::String,
     system  = InPlaceNeighborList(x=Position.V, cutoff=2*h, parallel=true)
 
     # Save the initial particle layout with dummy values
-    create_vtp_file(SimMetaData,SimConstants,Position.V; Kernel, KernelGradient.V, Density, Acceleration, Velocity)
+    # create_vtp_file(SimMetaData,SimConstants,Position.V; Kernel, KernelGradient.V, Density, Acceleration)
 
     # Define Progress spec for displaying simulation results
     show_vals(x) = [(:(Iteration),format(FormatExpr("{1:d}"), x.Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"),x.TotalTime))]
@@ -197,11 +197,12 @@ function RunSimulation(;FluidCSV::String,
             ∑ⱼ∇ᵢWᵢⱼ!(KernelGradient,KernelGradientL, I, J, D, xᵢⱼ, SimConstants)
         end
 
-        # # Then we calculate the density derivative at time step "n"
+        # Then we calculate the density derivative at time step "n"
         # @timeit HourGlass "2| DDT" ∂ρᵢ∂tDDT!(dρdtI, I, J, D, xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ,Density, Velocityˣ, Velocityʸ, Velocityᶻ,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ,MotionLimiter,drhopLp,drhopLn, SimConstants)
+        @timeit HourGlass "2| DDT" ∂ρᵢ∂tDDT!(dρdtI, I, J, D, xᵢⱼ,Density, Velocity,KernelGradientL,MotionLimiter,drhopLp,drhopLn, SimConstants)
 
         # # We calculate viscosity contribution and momentum equation at time step "n"
-        # @timeit HourGlass "2| Pressure" Pressure!(Pressureᵢ, Density, SimConstants)
+        @timeit HourGlass "2| Pressure" Pressure!(Pressureᵢ, Density, SimConstants)
         # @timeit HourGlass "2| Artificial Viscosity Momentum Equation" ArtificialViscosityMomentumEquation!(I,J,D, dvdtIˣ, dvdtIʸ, dvdtIᶻ, dvdtLˣ, dvdtLʸ, dvdtLᶻ,Density,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ,xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, Velocityˣ, Velocityʸ, Velocityᶻ, Pressureᵢ, GravityFactor, SimConstants)
 
         # # Based on the density derivative at "n", we calculate "n+½"
@@ -244,7 +245,7 @@ function RunSimulation(;FluidCSV::String,
             #@timeit HourGlass "4| OutputVTP" OutputVTP(SimMetaData,SimConstants,Position; Kernel, KernelGradient, Density, Acceleration, Velocity)
             #@timeit HourGlass "4| OutputVTP" OutputVTP(SimMetaData,SimConstants,Position.V; Kernel, KernelGradient.V)
             # @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * lpad(SimMetaData.Iteration,6,"0") * ".vtp", Position, ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, KernelGradient, Density, Pressureᵢ, Acceleration, Velocity)
-            @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", Position.V, ["Kernel", "KernelGradient"], Kernel, KernelGradient.V)
+            @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", Position.V, ["Kernel", "KernelGradient", "Velocity"], Kernel, KernelGradient.V, Velocity.V)
         end
 
         next!(SimMetaData.ProgressSpecification; showvalues = show_vals(SimMetaData))

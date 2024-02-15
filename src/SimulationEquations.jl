@@ -484,6 +484,78 @@ end
     end
 end
 
+# The density derivative function INCLUDING density diffusion
+@generated function ∂ρᵢ∂tDDT!(dρdtI, I, J, D , xᵢⱼ::DimensionalData{dims} , Density , Velocity::DimensionalData, KernelGradientL::DimensionalData, MotionLimiter, drhopLp, drhopLn, SimulationConstants) where {dims}
+    quote
+        @unpack h,m₀,δᵩ,c₀,γ,g,ρ₀,η²,γ⁻¹ = SimulationConstants
+
+        # Generate the needed constants
+        Cb      = (c₀^2*ρ₀)/γ
+        invCb   = inv(Cb)
+        δₕ_h_c₀ = δᵩ * h * c₀
+
+
+        # Follow the implementation here: https://arxiv.org/abs/2110.10076
+        @tturbo for iter in eachindex(I,J,D)
+            i = I[iter]; j = J[iter]; d = D[iter]
+
+            
+                Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ.vectors[2][iter]  #Set to dims later, when going full 2d in shaa Allah
+                ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, invCb)
+                Pⱼᵢᴴ  = -Pᵢⱼᴴ
+                ρⱼᵢᴴ  = faux_fancy(ρ₀, Pⱼᵢᴴ, invCb)
+
+                r²    = d*d
+                ρᵢ    = Density[i]
+                ρⱼ    = Density[j]
+                ρⱼᵢ   = ρⱼ - ρᵢ
+
+            Base.Cartesian.@nexprs $dims dᵅ -> begin 
+                vᵢⱼᵈ   =  Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j]
+
+                ∇ᵢWᵢⱼᵈ =  KernelGradientL.vectors[dᵅ][iter]
+
+                # First part of continuity equation
+                FirstPartOfContinuity   = m₀ * (vᵢⱼᵈ * ∇ᵢWᵢⱼᵈ)
+
+                xⱼᵢᵈ   = -xᵢⱼ.vectors[dᵅ][iter]
+
+                # Implement for particle i
+                FacRhoI = 2 * (ρⱼᵢ - ρᵢⱼᴴ) * inv(r²+η²)
+                Ψᵢⱼᵈ    = FacRhoI * xⱼᵢᵈ
+
+                Dᵢᵈ     =  δₕ_h_c₀ * (m₀/ρⱼ) * (Ψᵢⱼᵈ * ∇ᵢWᵢⱼᵈ)
+
+                drhopLp[iter] = FirstPartOfContinuity + Dᵢᵈ * MotionLimiter[i]
+
+                # Implement for particle j
+                FacRhoJ = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(r²+η²)
+                Ψⱼᵢᵈ  = FacRhoJ * (-xⱼᵢᵈ)
+                Ψⱼᵢᵈ  = FacRhoJ * (-xⱼᵢᵈ)
+                Ψⱼᵢᵈ  = FacRhoJ * (-xⱼᵢᵈ)
+
+                Dⱼᵈ   = δₕ_h_c₀ * (m₀/ρᵢ) * (Ψⱼᵢᵈ * -∇ᵢWᵢⱼᵈ)
+
+                drhopLn[iter] = FirstPartOfContinuity + Dⱼᵈ * MotionLimiter[i]
+            end
+        end
+
+        # Reduction
+        for iter in eachindex(I,J)
+            i = I[iter]
+            j = J[iter]
+
+            FinalContinuityᵢ      =  drhopLp[iter]
+            FinalContinuityⱼ      =  drhopLn[iter]
+
+            dρdtI[i]             +=  FinalContinuityᵢ
+            dρdtI[j]             +=  FinalContinuityⱼ
+        end
+
+        return nothing
+
+    end
+end
 
 # @inline @inbounds function updatexᵢⱼ!(xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, I, J, Positionˣ, Positionʸ, Positionᶻ)
 #     @tturbo for iter ∈ eachindex(I,J)
