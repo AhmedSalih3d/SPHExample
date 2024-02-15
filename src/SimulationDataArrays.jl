@@ -27,6 +27,7 @@ end
 # Overwrite resizing and fill functions for DimensionalData
 Base.resize!(data::DimensionalData,n::Int) = resize!(data.V,n) 
 reset!(data::DimensionalData)              = fill!(data.V,zero(eltype(data.V)))
+length(::DimensionalData)                  = length(data.V)
 
 ResetArrays!(arrays...) = foreach(a -> fill!(a, zero(eltype(a))), arrays)
 
