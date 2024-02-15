@@ -223,6 +223,7 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "2| updatexᵢⱼ!" updatexᵢⱼ!(xᵢⱼ, Positionₙ⁺, I, J)
         
         # # # Density derivative at "n+½" - Note that we keep the kernel gradient values calculated at "n" for simplicity
+        ResetArrays!(drhopLp, drhopLn)
         @timeit HourGlass "2| DDT2" ∂ρᵢ∂tDDT!(dρdtIₙ⁺, I, J, D, xᵢⱼ,ρₙ⁺, Velocityₙ⁺,KernelGradientL,MotionLimiter,drhopLp,drhopLn, SimConstants)
 
         # # # Viscous contribution and momentum equation at "n+½"
@@ -272,7 +273,7 @@ begin
     SimMetaData  = SimulationMetaData{T}(
                                     SimulationName="MySimulation", 
                                     SaveLocation=raw"E:\SecondApproach\Results", 
-                                    MaxIterations=2001,
+                                    MaxIterations=10001,
                                     OutputIteration=50,
     )
     # Initialze the constants to use
