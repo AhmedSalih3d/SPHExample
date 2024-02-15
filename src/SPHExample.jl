@@ -1,13 +1,13 @@
 module SPHExample
 
-    include("AuxillaryFunctions.jl"); 
-    include("PreProcess.jl");         
+    include("AuxillaryFunctions.jl");        
     include("PostProcess.jl");        
     include("TimeStepping.jl");       
     include("SimulationEquations.jl");
     include("SimulationMetaDataConfiguration.jl");
     include("SimulationConstantsConfiguration.jl");
     include("SimulationDataArrays.jl")
+    include("PreProcess.jl");  
     
     # Re-export desired functions from each submodule
     using .PreProcess
