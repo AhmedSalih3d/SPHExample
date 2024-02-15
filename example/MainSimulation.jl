@@ -91,50 +91,9 @@ function RunSimulation(;FluidCSV::String,
 
     dρdtI             = zeros(FloatType,         SizeOfParticlesI1)
 
-    # dvdtIˣ            = zeros(FloatType,  SizeOfParticlesI1)
-    # dvdtIʸ            = zeros(FloatType,  SizeOfParticlesI1)
-    # dvdtIᶻ            = zeros(FloatType,  SizeOfParticlesI1)
-    # dvdtI             = StructArray{TypeOfParticleI3}(( dvdtIˣ, dvdtIʸ, dvdtIᶻ))
-
-    # dvdtLˣ            = zeros(FloatType,  SizeOfParticlesI1)
-    # dvdtLʸ            = zeros(FloatType,  SizeOfParticlesI1)
-    # dvdtLᶻ            = zeros(FloatType,  SizeOfParticlesI1)
-    # dvdtL             = StructArray{TypeOfParticleI3}(( dvdtLˣ, dvdtLʸ, dvdtLᶻ))
-
     ρₙ⁺               = zeros(FloatType,         SizeOfParticlesI1)
 
-    Positionₙ⁺ˣ       = zeros(FloatType,  SizeOfParticlesI1)
-    Positionₙ⁺ʸ       = zeros(FloatType,  SizeOfParticlesI1)
-    Positionₙ⁺ᶻ       = zeros(FloatType,  SizeOfParticlesI1)
-    Positionₙ⁺        = StructArray{TypeOfParticleI3}(( Positionₙ⁺ˣ, Positionₙ⁺ʸ, Positionₙ⁺ᶻ))
-
-  
     dρdtIₙ⁺           = zeros(FloatType,         SizeOfParticlesI1)
-
-    # KernelGradientˣ   = zeros(FloatType,  SizeOfParticlesI1)
-    # KernelGradientʸ   = zeros(FloatType,  SizeOfParticlesI1)
-    # KernelGradientᶻ   = zeros(FloatType,  SizeOfParticlesI1)
-    # KernelGradient    = StructArray{TypeOfParticleI3}(( KernelGradientˣ, KernelGradientʸ, KernelGradientᶻ))
-
-    # KernelGradientLˣ  = zeros(FloatType,  SizeOfParticlesI1)
-    # KernelGradientLʸ  = zeros(FloatType,  SizeOfParticlesI1)
-    # KernelGradientLᶻ  = zeros(FloatType,  SizeOfParticlesI1)
-    # KernelGradientL   = StructArray{TypeOfParticleI3}(( KernelGradientLˣ, KernelGradientLʸ, KernelGradientLᶻ))
-
-    Accelerationˣ     = zeros(FloatType,  SizeOfParticlesI1)
-    Accelerationʸ     = zeros(FloatType,  SizeOfParticlesI1)
-    Accelerationᶻ     = zeros(FloatType,  SizeOfParticlesI1)
-    Acceleration      = StructArray{TypeOfParticleI3}(( Accelerationˣ, Accelerationʸ, Accelerationᶻ))
-
-    # Velocityˣ         = zeros(FloatType,  SizeOfParticlesI1)
-    # Velocityʸ         = zeros(FloatType,  SizeOfParticlesI1)
-    # Velocityᶻ         = zeros(FloatType,  SizeOfParticlesI1)
-    # Velocity          = StructArray{TypeOfParticleI3}(( Velocityˣ, Velocityʸ, Velocityᶻ))
-  
-    # Velocityₙ⁺ˣ        = zeros(FloatType,  SizeOfParticlesI1)
-    # Velocityₙ⁺ʸ        = zeros(FloatType,  SizeOfParticlesI1)
-    # Velocityₙ⁺ᶻ        = zeros(FloatType,  SizeOfParticlesI1)
-    # Velocityₙ⁺         = StructArray{TypeOfParticleI3}(( Velocityₙ⁺ˣ, Velocityₙ⁺ʸ, Velocityₙ⁺ᶻ))
 
     Positionˣ          = getindex.(points,1)
     Positionʸ          = getindex.(points,2)
@@ -250,9 +209,6 @@ function RunSimulation(;FluidCSV::String,
         # OutVTP is based on a well-developed Julia package, WriteVTK, while CustomVTP is based on my hand-rolled solution.
         # CustomVTP is about 10% faster, but does not mean much in this case.
         if SimMetaData.Iteration % SimMetaData.OutputIteration == 0
-            #@timeit HourGlass "4| OutputVTP" OutputVTP(SimMetaData,SimConstants,Position; Kernel, KernelGradient, Density, Acceleration, Velocity)
-            #@timeit HourGlass "4| OutputVTP" OutputVTP(SimMetaData,SimConstants,Position.V; Kernel, KernelGradient.V)
-            # @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * lpad(SimMetaData.Iteration,6,"0") * ".vtp", Position, ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, KernelGradient, Density, Pressureᵢ, Acceleration, Velocity)
             @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", Position.V, ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, KernelGradient.V, Density, Pressureᵢ, Acceleration.V, Velocity.V)
         end
 
