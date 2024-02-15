@@ -1,12 +1,38 @@
 module SimulationEquations
 
-export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ!, EquationOfState, Pressure!, ∂Πᵢⱼ∂t!, ∂ρᵢ∂tDDT!, ∂vᵢ∂t!, DensityEpsi!, LimitDensityAtBoundary!, updatexᵢⱼ!, ArtificialViscosityMomentumEquation!
+export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ!, EquationOfState, Pressure!, ∂Πᵢⱼ∂t!, ∂ρᵢ∂tDDT!, ∂vᵢ∂t!, DensityEpsi!, LimitDensityAtBoundary!, updatexᵢⱼ!, ArtificialViscosityMomentumEquation!, DimensionalData
 
 using CellListMap
 using StaticArrays
 using LinearAlgebra
 using Parameters
 using LoopVectorization
+
+using StructArrays
+using StaticArrays
+struct DimensionalData{D, T <: AbstractFloat}
+    vectors::Tuple{Vararg{Vector{T}, D}}
+    V::StructArray{SVector{D, T}, 1, Tuple{Vararg{Vector{T}, D}}}
+
+    # General constructor for vectors
+    function DimensionalData(vectors::Vector{T}...) where {T}
+        D = length(vectors)
+        V = StructArray{SVector{D, T}}(vectors)
+        new{D, T}(Tuple(vectors), V)
+    end
+
+    # Constructor for initializing with all zeros, adapting to dimension D
+    function DimensionalData{D, T}(len::Int) where {D, T}
+        vectors = ntuple(d -> zeros(T, len), D) # Create D vectors of zeros
+        V = StructArray{SVector{D, T}}(vectors)
+        new{D, T}(vectors, V)
+    end
+end
+
+# Overwrite resizing and fill functions for DimensionalData
+Base.resize!(data::DimensionalData,n::Int) = resize!(data.V,n) 
+reset!(data::DimensionalData)              = fill!(data.V,zero(eltype(data.V)))
+Base.length(data::DimensionalData)         = length(data.V)
 
 # Function to calculate Kernel Value
 function Wᵢⱼ(αD,q)
@@ -417,15 +443,28 @@ function LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
     end
 end
 
-@inline @inbounds function updatexᵢⱼ!(xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, I, J, Positionˣ, Positionʸ, Positionᶻ)
-    @tturbo for iter ∈ eachindex(I,J)
-        i = I[iter]; j = J[iter]; 
-        
-        xᵢⱼˣ[iter] = Positionˣ[i] - Positionˣ[j]
-        xᵢⱼʸ[iter] = Positionʸ[i] - Positionʸ[j]
-        xᵢⱼᶻ[iter] = Positionᶻ[i] - Positionᶻ[j]
+# Define a generated function to dynamically create expressions based on D
+@generated function updatexᵢⱼ!(xᵢⱼ::DimensionalData{dims}, Position::DimensionalData, I, J) where {dims}
+    quote
+        @tturbo for iter ∈ eachindex(I,J)
+            i, j = I[iter], J[iter]
+            Base.Cartesian.@nexprs $dims dᵅ -> begin
+            xᵢⱼ.vectors[dᵅ][iter] = Position.vectors[dᵅ][i] - Position.vectors[dᵅ][j]  # Compute the difference for the d-th dimension
+            end
+        end
     end
 end
+
+# @inline @inbounds function updatexᵢⱼ!(xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, I, J, Positionˣ, Positionʸ, Positionᶻ)
+#     @tturbo for iter ∈ eachindex(I,J)
+#         i = I[iter]; j = J[iter]; 
+        
+#         xᵢⱼˣ[iter] = Positionˣ[i] - Positionˣ[j]
+#         xᵢⱼʸ[iter] = Positionʸ[i] - Positionʸ[j]
+#         xᵢⱼᶻ[iter] = Positionᶻ[i] - Positionᶻ[j]
+#     end
+# end
+
 # Another implementation
 # function LimitDensityAtBoundary!(Density, BoundaryBool, ρ₀)
 #     # Element-wise operation to set Density values
