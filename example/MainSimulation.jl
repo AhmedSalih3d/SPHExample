@@ -149,11 +149,8 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "1 | Update xᵢⱼ, kernel values and kernel gradient" begin
             # updatexᵢⱼ!(xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, I, J, Positionˣ, Positionʸ, Positionᶻ)
             updatexᵢⱼ!(xᵢⱼ, Position, I, J)
-            
-            # Here we output the kernel value for each particle. Note that KernelL is list of interactions, while Kernel is the value for each actual particle
-            # ∑ⱼWᵢⱼ!(Kernel, KernelL, I, J, D, SimConstants)
-            # ∑ⱼ∇ᵢWᵢⱼ!(KernelGradientˣ,KernelGradientʸ,KernelGradientᶻ,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ, I, J, D, xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, SimConstants)
-            ∑ⱼ∇ᵢWᵢⱼ!(KernelGradient,KernelGradientL, Kernel, KernelL, I, J, D, xᵢⱼ, SimConstants)
+            # Here we output the kernel and kernel gradient value for each particle. Note that KernelL is list of interactions, while Kernel is the value for each actual particle. Similar naming for other variables
+            ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!(KernelGradient,KernelGradientL, Kernel, KernelL, I, J, D, xᵢⱼ, SimConstants)
         end
 
         # Then we calculate the density derivative at time step "n"

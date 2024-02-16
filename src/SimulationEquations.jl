@@ -1,6 +1,6 @@
 module SimulationEquations
 
-export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ!, EquationOfState, Pressure!, ∂Πᵢⱼ∂t!, ∂ρᵢ∂tDDT!, ∂vᵢ∂t!, DensityEpsi!, LimitDensityAtBoundary!, updatexᵢⱼ!, ArtificialViscosityMomentumEquation!, DimensionalData
+export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!, EquationOfState, Pressure!, ∂Πᵢⱼ∂t!, ∂ρᵢ∂tDDT!, ∂vᵢ∂t!, DensityEpsi!, LimitDensityAtBoundary!, updatexᵢⱼ!, ArtificialViscosityMomentumEquation!, DimensionalData
 
 using CellListMap
 using StaticArrays
@@ -96,7 +96,7 @@ end
 # Function to calculate kernel gradient value in both "particle i" format and "list of interactions" format
 # Please notice how when using CellListMap since it is based on a "list of interactions", for each 
 # interaction we must add the contribution to both the i'th and j'th particle!
-@generated function ∑ⱼ∇ᵢWᵢⱼ!(KernelGradientI::DimensionalData{dims}, KernelGradientL::DimensionalData, Kernel, KernelL, I, J, D, xᵢⱼ::DimensionalData, SimulationConstants) where {dims}
+@generated function ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!(KernelGradientI::DimensionalData{dims}, KernelGradientL::DimensionalData, Kernel, KernelL, I, J, D, xᵢⱼ::DimensionalData, SimulationConstants) where {dims}
     quote
         @unpack αD, h, h⁻¹, η² = SimulationConstants
     
@@ -196,7 +196,7 @@ end
 
             Base.Cartesian.@nexprs $dims dᵅ -> begin
                 drhopLp[iter] += (m₀ * (  Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j])  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼ.vectors[dᵅ][iter] * MotionLimiter[i]) *  KernelGradientL.vectors[dᵅ][iter]
-                drhopLn[iter] += (m₀ * (-(Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j])) + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼ.vectors[dᵅ][iter] * MotionLimiter[j]) * -KernelGradientL.vectors[dᵅ][iter]
+                drhopLn[iter] += (m₀ * (-(Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j])) + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼ.vectors[dᵅ][iter] * MotionLimiter[i]) * -KernelGradientL.vectors[dᵅ][iter]
             end
         end
 
