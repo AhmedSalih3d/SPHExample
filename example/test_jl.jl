@@ -4,196 +4,102 @@ using StrideArrays # Not necessary, but can make operations like broadcasting wi
 using Polyester
 using BenchmarkTools
 using LoopVectorization
+using ChunkSplitters
 
-# Sample data
-buf = default_buffer()
-A = rand(1:100, 1000) # Array of indices
-B = A#rand(1:100, 1000) # Another array of indices, different values
-X = zeros(Float64, 100)        # Shared array to update
-Y = zeros(Float64, 100)        # Another shared array to update
+function NaiveReductionFunction!(dρdtI, I,J,drhopLp,drhopLn)
+    # Reduction
+    for iter in eachindex(I,J)
+        i = I[iter]
+        j = J[iter]
 
-# function yay(A,B,X,Y)
-#     # Thread-local storage for each thread to avoid race conditions
-#     local_X = [zeros(Float64, length(X)) for _ in 1:nthreads()]
-#     local_Y = [zeros(Float64, length(Y)) for _ in 1:nthreads()]
+        dρdtI[i] +=  drhopLp[iter]
+        dρdtI[j] +=  drhopLn[iter]
+    end
+end
 
-#     @threads for iter in eachindex(A, B)
-#         i = A[iter]
-#         j = B[iter]
-
-#         # Sample update values, replace with actual computation
-#         update_val_X = 1 # Example value for X
-#         update_val_Y = -2 # Example value for Y
-
-#         # Accumulate in thread-local storage
-#         local_X[threadid()][i] += update_val_X
-#         local_X[threadid()][j] += -update_val_X
-#         local_Y[threadid()][i] += update_val_Y
-#         local_Y[threadid()][j] += -update_val_Y
-#     end
-
-#     # Reduce the thread-local storage into the shared arrays
-#     for tid in 1:nthreads()
-#         X .+= local_X[tid]
-#         Y .+= local_Y[tid]
-#     end
-# end
-
-
-# function f(A,B,X,Y)
-#     # Set up a scope where memory may be allocated, and does not escape:
-#     @no_escape begin
-#         # Allocate a `PtrArray` (see StrideArraysCore.jl) using memory from the default buffer.
-#         XT = eltype(X); XL = length(X)
-#         local_X1 = @alloc(XT, XL)
-#         local_X2 = @alloc(XT, XL)
-#         local_X3 = @alloc(XT, XL)
-#         local_X4 = @alloc(XT, XL)
-#         local_X  = (local_X1, local_X2, local_X3, local_X4)
-
-#         # local_Y1 = [@alloc(eltype(Y), length(Y)) for _ in 1:nthreads()]
-#         YT = eltype(Y); YL = length(Y)
-#         local_Y1 = @alloc(YT, YL)
-#         local_Y2 = @alloc(YT, YL)
-#         local_Y3 = @alloc(YT, YL)
-#         local_Y4 = @alloc(YT, YL)
-#         local_Y  = (local_Y1, local_Y2, local_Y3, local_Y4)
-        
-#         for x in local_X, y in local_Y
-#             x .*= zero(eltype(X))
-#             y .*= zero(eltype(Y))
-#         end
-
-
-#         # Check if local_X is being cleared
-#         # println(sum.(local_X))
-
-#         # for iter in eachindex(A, B)
-#         @batch for iter in eachindex(A,B)
-#             i = A[iter]
-#             j = B[iter]
-
-#             # Sample update values, replace with actual computation
-#             update_val_X = 1 # Example value for X
-#             update_val_Y = 1 # Example value for Y
-
-#             # Accumulate in thread-local storage
-#             local_X[threadid()][i] += update_val_X
-#             local_X[threadid()][j] += -update_val_X
-#             local_Y[threadid()][i] += update_val_Y
-#             local_Y[threadid()][j] += -update_val_Y
-#         end
-
-#         # Reduce the thread-local storage into the shared arrays
-#         for tid in 1:nthreads()
-#             X .+= local_X[tid]
-#             Y .+= local_Y[tid]
-#         end
-
-
-#     end
-# end
-
-
-# function f(A,B,X,Y, buf)
-#     # Set up a scope where memory may be allocated, and does not escape:
-#     @no_escape buf begin
-#         # Allocate a `PtrArray` (see StrideArraysCore.jl) using memory from the default buffer.
-#         XT = eltype(X); XL = length(X)
-#         local_X1 = @alloc(XT, XL)
-#         local_X2 = @alloc(XT, XL)
-#         local_X3 = @alloc(XT, XL)
-#         local_X4 = @alloc(XT, XL)
-#         local_X  = (local_X1, local_X2, local_X3, local_X4)
-
-#         # local_Y1 = [@alloc(eltype(Y), length(Y)) for _ in 1:nthreads()]
-#         YT = eltype(Y); YL = length(Y)
-#         local_Y1 = @alloc(YT, YL)
-#         local_Y2 = @alloc(YT, YL)
-#         local_Y3 = @alloc(YT, YL)
-#         local_Y4 = @alloc(YT, YL)
-#         local_Y  = (local_Y1, local_Y2, local_Y3, local_Y4)
-        
-#         # for x in local_X, y in local_Y
-#         #     x .*= zero(eltype(X))
-#         #     y .*= zero(eltype(Y))
-#         # end
-
-
-#         # Check if local_X is being cleared
-#         println(sum.(local_X))
-
-#         # for iter in eachindex(A, B)
-#         @batch for iter in eachindex(A,B)
-#             i = A[iter]
-#             j = B[iter]
-
-#             # Sample update values, replace with actual computation
-#             update_val_X = rand() # Example value for X
-#             update_val_Y = rand() # Example value for Y
-
-#             # Accumulate in thread-local storage
-#             local_X[threadid()][i] += update_val_X
-#             local_X[threadid()][j] += -update_val_X
-#             local_Y[threadid()][i] += update_val_Y
-#             local_Y[threadid()][j] += -update_val_Y
-#         end
-
-#         # Reduce the thread-local storage into the shared arrays
-#         for tid in 1:nthreads()
-#             X .+= local_X[tid]
-#             Y .+= local_Y[tid]
-#         end
-
-
-#     end
-# end
-
-function f(A,B,X,Y, buf)
+function ReductionFunction!(dρdtI,I,J,drhopLp,drhopLn, buf)
     # Set up a scope where memory may be allocated, and does not escape:
     @no_escape buf begin
         # Allocate a `PtrArray` (see StrideArraysCore.jl) using memory from the default buffer.
-        XT = eltype(X); XL = length(X)
-        local_X  = @alloc(XT, XL)
-        local_Y  = @alloc(XT, XL)
+        XT = eltype(dρdtI); XL = length(dρdtI)
 
-        for iter in eachindex(A,B)
-            i = A[iter]
-            j = B[iter]
+        # How can I do this so that I don't have to manually hard code to 4 threads?
+        # If I do, local_X = [@alloc(XT,XL) for _ in 1:nthreads()] then it will allocate!
+        local_X1 = @alloc(XT, XL)
+        local_X2 = @alloc(XT, XL)
+        local_X3 = @alloc(XT, XL)
+        local_X4 = @alloc(XT, XL)
+        local_X  = (local_X1, local_X2, local_X3, local_X4)
 
-            # Sample update values, replace with actual computation
-            update_val_X = 10 # Example value for X
-            update_val_Y = 1 # Example value for Y
+        # I thought Bumper.jl would automatically reset the buffer?
+        for x in local_X
+            x .*= zero(XT)
+        end
+
+        # Remove @batch here to verify the two functions give the same answer..
+        # @batch seems to only use 1 thread, @tturbo uses all four?
+        @batch for iter in eachindex(I,J)
+            i = I[iter]
+            j = J[iter]
 
             # Accumulate in thread-local storage
-            local_X[iter] += update_val_X
-            local_X[iter] += -update_val_X
-            local_Y[iter] += update_val_Y
-            local_Y[iter] += -update_val_Y
+            local_X[threadid()][i] +=  drhopLp[iter]
+            local_X[threadid()][j] +=  drhopLn[iter]
         end
-
-        # Check if local_X is being cleared
-        println(sum.(local_X))
 
         # Reduce the thread-local storage into the shared arrays
-        for tid in 1:100
-            X[tid] += local_X[tid]
-            Y[tid] += local_Y[tid]
+        for tid in 1:nthreads()
+            dρdtI .+= local_X[tid]
         end
 
-        # X .+= 10
+    end
+
+    return nothing
+end
+
+function ChunkFunction!(dρdtI, I,J,drhopLp,drhopLn)
+    nchunks = nthreads()
+    local_X = [zeros(length(drhopLp)) for _ in 1:nchunks]
+    @threads for (ichunk, inds) in enumerate(chunks(dρdtI; n=nchunks))
+        i = I[inds]
+        j = J[inds]
+
+        @. local_X[ichunk][i] += drhopLp[i]
+        @. local_X[ichunk][j] += drhopLn[j]
     end
 end
 
 
-# display(@benchmark yay($A,$B,$X,$Y))
+begin
+    buf                 = default_buffer()
+    NumberOfPoints      = 6195
+    NumberOfInterations = 100000
+    I           = rand(1:NumberOfPoints, NumberOfInterations)
+    J           = rand(1:NumberOfPoints, NumberOfInterations)
+    dρdtI       = zeros(NumberOfPoints) 
+    drhopLp     = rand(1.0:2.0, NumberOfInterations)    
+    drhopLn     = rand(1.0:2.0, NumberOfInterations)    
 
-# display(@benchmark   f($A,$B,$X,$Y))
+    NaiveReductionFunction!(dρdtI,I,J,drhopLp,drhopLn)
+    println("Value when doing naive reduction: ", sum(dρdtI))
+    dρdtI .= zero(eltype(dρdtI)); #Just resetting array.
+    ReductionFunction!(dρdtI, I, J, drhopLp,drhopLn, buf)
+    println("Value doing optimized reduction: ",  sum(dρdtI))
 
-# @benchmark f(a,b,x,y,buf) setup = begin
-#     buf = default_buffer()
-#     a = rand(1:100, 1000) # Array of indices
-#     b = rand(1:100, 1000) # Another array of indices, different values
-#     x = zeros(Float64, 100)        # Shared array to update
-#     y = zeros(Float64, 100)        # Another shared array to update
-# end
+    # dρdtI .= zero(eltype(dρdtI)); #Just resetting array.
+    # dρdtI[I] .+= drhopLp[I]
+    # dρdtI[J] .+= drhopLp[J]
+    # println("Value doing fused: ",  sum(dρdtI))
+
+    ChunkFunction!(dρdtI, I,J,drhopLp,drhopLn)
+    println("Value doing chunks: ",  sum(dρdtI))
+
+
+    println("Naive: ")
+    display(@benchmark NaiveReductionFunction!($dρdtI , $I, $J, $drhopLp,drhopLn))
+    println("Optimized: ")
+    display(@benchmark ReductionFunction!($dρdtI , $I, $J, $drhopLp,drhopLn, $buf))
+    println("Using ChunkSplitters: ")
+    display(@benchmark ChunkFunction!($dρdtI , $I, $J , $drhopLp,drhopLn))
+    println("I have threads enabled: ", nthreads())
+end
