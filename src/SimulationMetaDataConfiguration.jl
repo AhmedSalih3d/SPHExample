@@ -39,7 +39,7 @@ metadata = SimulationMetaData(
 )
 ```
 """
-@with_kw mutable struct SimulationMetaData{FloatType <: AbstractFloat}
+@with_kw mutable struct SimulationMetaData{Dimensions, FloatType <: AbstractFloat}
     SimulationName::String
     SaveLocation::String
     HourGlass::TimerOutput           = TimerOutput()

@@ -57,9 +57,9 @@ RunSimulation(
 """
 function RunSimulation(;FluidCSV::String,
                         BoundCSV::String,
-                        SimMetaData::SimulationMetaData{FloatType},
+                        SimMetaData::SimulationMetaData{Dimensions, FloatType},
                         SimConstants::SimulationConstants,
-) where FloatType
+) where {Dimensions,FloatType}
     # Unpack the relevant simulation meta data
     @unpack HourGlass, SaveLocation, SimulationName, MaxIterations, OutputIteration, SilentOutput, ThreadsCPU = SimMetaData;
 
@@ -68,7 +68,6 @@ function RunSimulation(;FluidCSV::String,
 
     # Load in the fluid and boundary particles. Return these points and both data frames
     # @inline is a hack here to remove all allocations further down due to uncertainty of the points type at compile time
-    Dimensions = 2
     @inline points, density_fluid, density_bound  = LoadParticlesFromCSV(Dimensions,FloatType, FluidCSV,BoundCSV)
 
     # Read this as "GravityFactor * g", so -1 means negative acceleration for fluid particles
@@ -121,7 +120,7 @@ function RunSimulation(;FluidCSV::String,
 
     # Save the initial particle layout with dummy values
     # create_vtp_file(SimMetaData,SimConstants,Position.V; Kernel, KernelGradient.V, Density, Acceleration)
-    PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", Position.V, ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, KernelGradient.V, Density, Pressureᵢ, Acceleration.V, Velocity.V)
+    # PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", Position.V, ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, KernelGradient.V, Density, Pressureᵢ, Acceleration.V, Velocity.V)
 
     # Define Progress spec for displaying simulation results
     show_vals(x) = [(:(Iteration),format(FormatExpr("{1:d}"), x.Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"),x.TotalTime))]
@@ -205,10 +204,13 @@ function RunSimulation(;FluidCSV::String,
         # CustomVTP is about 10% faster, but does not mean much in this case.
         if SimMetaData.Iteration % SimMetaData.OutputIteration == 0
             to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
-            # @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(Position.V)
-            # , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, to_3d(KernelGradient.V), Density, Pressureᵢ, to_3d(Acceleration.V), to_3d(Acceleration.V))
-            @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", Position.V
-            , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, KernelGradient.V, Density, Pressureᵢ, Acceleration.V, Acceleration.V)
+            if Dimensions == 2
+                @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(Position.V)
+                , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, to_3d(KernelGradient.V), Density, Pressureᵢ, to_3d(Acceleration.V), to_3d(Acceleration.V))
+            elseif Dimensions == 3
+                @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", Position.V
+                , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, KernelGradient.V, Density, Pressureᵢ, Acceleration.V, Acceleration.V)
+            end
         end
 
         next!(SimMetaData.ProgressSpecification; showvalues = show_vals(SimMetaData))
@@ -224,8 +226,9 @@ end
 
 # Initialize Simulation
 begin
-    T = Float64
-    SimMetaData  = SimulationMetaData{T}(
+    D          = 2
+    T          = Float64
+    SimMetaData  = SimulationMetaData{D, T}(
                                     SimulationName="MySimulation", 
                                     SaveLocation=raw"E:\SecondApproach\Results", 
                                     MaxIterations=10001,
@@ -237,12 +240,10 @@ begin
     foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
 
     # And here we run the function - enjoy!
-    # println( @report_opt target_modules=(@__MODULE__,) 
     RunSimulation(
         FluidCSV     = "./input/FluidPoints_Dp0.02.csv",
         BoundCSV     = "./input/BoundaryPoints_Dp0.02.csv",
         SimMetaData  = SimMetaData,
         SimConstants = SimConstants
     )
-    # )
 end
