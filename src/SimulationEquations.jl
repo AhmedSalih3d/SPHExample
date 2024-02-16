@@ -96,7 +96,7 @@ end
 # Function to calculate kernel gradient value in both "particle i" format and "list of interactions" format
 # Please notice how when using CellListMap since it is based on a "list of interactions", for each 
 # interaction we must add the contribution to both the i'th and j'th particle!
-@generated function ∑ⱼ∇ᵢWᵢⱼ!(KernelGradientI::DimensionalData{dims}, KernelGradientL::DimensionalData, I, J, D, xᵢⱼ::DimensionalData, SimulationConstants) where {dims}
+@generated function ∑ⱼ∇ᵢWᵢⱼ!(KernelGradientI::DimensionalData{dims}, KernelGradientL::DimensionalData, Kernel, KernelL, I, J, D, xᵢⱼ::DimensionalData, SimulationConstants) where {dims}
     quote
         @unpack αD, h, h⁻¹, η² = SimulationConstants
     
@@ -105,6 +105,10 @@ end
 
             q = clamp(d * h⁻¹, 0.0, 2.0)
             Fac = αD*5*(q-2)^3*q / (8h*(q*h+η²)) 
+    
+            W = Wᵢⱼ(αD,q)
+    
+            KernelL[iter] = W
 
             Base.Cartesian.@nexprs $dims dᵅ -> begin 
                 KernelGradientL.vectors[dᵅ][iter] = Fac * xᵢⱼ.vectors[dᵅ][iter]
@@ -114,6 +118,9 @@ end
         for iter in eachindex(I,J)
             i = I[iter]
             j = J[iter]
+
+            Kernel[i] += KernelL[iter]
+            Kernel[j] += KernelL[iter]
     
             Base.Cartesian.@nexprs $dims dᵅ -> begin
                 KernelGradientI.vectors[dᵅ][i]   +=  KernelGradientL.vectors[dᵅ][iter]

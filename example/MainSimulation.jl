@@ -151,9 +151,9 @@ function RunSimulation(;FluidCSV::String,
             updatexᵢⱼ!(xᵢⱼ, Position, I, J)
             
             # Here we output the kernel value for each particle. Note that KernelL is list of interactions, while Kernel is the value for each actual particle
-            ∑ⱼWᵢⱼ!(Kernel, KernelL, I, J, D, SimConstants)
+            # ∑ⱼWᵢⱼ!(Kernel, KernelL, I, J, D, SimConstants)
             # ∑ⱼ∇ᵢWᵢⱼ!(KernelGradientˣ,KernelGradientʸ,KernelGradientᶻ,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ, I, J, D, xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, SimConstants)
-            ∑ⱼ∇ᵢWᵢⱼ!(KernelGradient,KernelGradientL, I, J, D, xᵢⱼ, SimConstants)
+            ∑ⱼ∇ᵢWᵢⱼ!(KernelGradient,KernelGradientL, Kernel, KernelL, I, J, D, xᵢⱼ, SimConstants)
         end
 
         # Then we calculate the density derivative at time step "n"
