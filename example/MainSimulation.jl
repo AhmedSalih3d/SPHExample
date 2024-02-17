@@ -203,10 +203,10 @@ function RunSimulation(;FluidCSV::String,
             to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
             if Dimensions == 2
                 @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(Position.V)
-                , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, to_3d(KernelGradient.V), Density, Pressureᵢ, to_3d(Acceleration.V), to_3d(Acceleration.V))
+                , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, to_3d(KernelGradient.V), Density, Pressureᵢ, to_3d(Acceleration.V), to_3d(Velocity.V))
             elseif Dimensions == 3
                 @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", Position.V
-                , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, KernelGradient.V, Density, Pressureᵢ, Acceleration.V, Acceleration.V)
+                , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, KernelGradient.V, Density, Pressureᵢ, Acceleration.V, Velocity.V)
             end
         end
 
