@@ -7,9 +7,13 @@ using StaticArrays
 using LinearAlgebra
 using Parameters
 using LoopVectorization
-
+using Bumper
+using Polyester
+using Base.Threads
 using StructArrays
 using StaticArrays
+using ChunkSplitters
+
 struct DimensionalData{D, T <: AbstractFloat}
     vectors::Tuple{Vararg{Vector{T}, D}}
     V::StructArray{SVector{D, T}, 1, Tuple{Vararg{Vector{T}, D}}}
@@ -166,6 +170,40 @@ end
 @inline faux_fancy(ρ₀, P, Cb) = ρ₀ * ( fancy7th( 1 + (P * Cb)) - 1)
 #faux(ρ₀, P, invCb) = ρ₀ * ( fancy7th( 1 + (P * invCb)) - 1)
 
+function ReductionFunctionChunk!(dρdtI, I, J, drhopLp, drhopLn)
+    XT = eltype(dρdtI); XL = length(dρdtI); X0 = zero(XT)
+    nchunks = nthreads() 
+    
+    # @inbounds @no_escape begin
+    #     local_X = @alloc(XT, XL, nchunks)
+
+    #     fill!(local_X,X0)
+
+    #     # Directly iterate over the chunks
+    #     @batch for ichunk in 1:nchunks
+    #         chunk_inds = getchunk(I, ichunk; n=nchunks)
+    #         for idx in chunk_inds
+    #             i = I[idx]
+    #             j = J[idx]
+
+    #             # Accumulate the contributions into the correct place
+    #             local_X[i, ichunk] += drhopLp[idx]
+    #             local_X[j, ichunk] += drhopLn[idx]
+    #         end
+    #     end
+
+    #     # Reduction step
+    #     @tturbo for ix in 1:XL
+    #         for chunk in 1:nchunks
+    #             dρdtI[ix] += local_X[ix, chunk]
+    #         end
+    #     end
+    # end
+    
+    return nothing
+end
+
+
 # The density derivative function INCLUDING density diffusion
 @generated function ∂ρᵢ∂tDDT!(dρdtI, I, J, D , xᵢⱼ::DimensionalData{dims} , Density , Velocity::DimensionalData, KernelGradientL::DimensionalData, MotionLimiter, drhopLp, drhopLn, SimulationConstants) where {dims}
     quote
@@ -200,17 +238,9 @@ end
             end
         end
 
-        # Reduction
-        for iter in eachindex(I,J)
-            i = I[iter]
-            j = J[iter]
-
-            dρdtI[i] +=  drhopLp[iter]
-            dρdtI[j] +=  drhopLn[iter]
-        end
+        ReductionFunctionChunk!(dρdtI, I, J, drhopLp, drhopLn)
 
         return nothing
-
     end
 end
 
