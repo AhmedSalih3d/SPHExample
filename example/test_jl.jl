@@ -1,3 +1,124 @@
+# using Base.Threads
+# using Bumper
+# using StrideArrays # Not necessary, but can make operations like broadcasting with Bumper.jl faster.
+# using Polyester
+# using BenchmarkTools
+# using LoopVectorization
+# using ChunkSplitters
+# using NNlib
+
+# function NaiveReductionFunction!(dρdtI, I,J,drhopLp,drhopLn)
+#     # Reduction
+#     @inbounds for iter in eachindex(I,J)
+#         i = I[iter]
+#         j = J[iter]
+
+#         dρdtI[i] +=  drhopLp[iter]
+#         dρdtI[j] +=  drhopLn[iter]
+#     end
+# end
+
+
+# function ReductionFunction!(dρdtI,I,J,drhopLp,drhopLn)
+#     XT = eltype(dρdtI); XL = length(dρdtI); X0 = zero(XT)
+
+#     @inbounds @no_escape begin
+#         local_X = @alloc(XT,XL,nthreads())
+
+#         fill!(local_X,X0)
+
+#         @batch for iter in eachindex(I,J)
+#             i = I[iter]
+#             j = J[iter]
+
+#             # Accumulate in thread-local storage
+#             @turbo local_X[:, threadid()][i] +=  drhopLp[iter]
+#             @turbo local_X[:, threadid()][j] +=  drhopLn[iter]
+#         end
+
+#         # Reduce the thread-local storage into the shared arrays
+#         @inbounds for tid in 1:nthreads()
+#             @turbo dρdtI .+= local_X[:, tid]
+#         end
+#     end
+
+#     return nothing
+# end
+
+# function ReductionFunctionChunk!(dρdtI, I, J, drhopLp, drhopLn)
+#     XT = eltype(dρdtI); XL = length(dρdtI); X0 = zero(XT)
+#     nchunks = nthreads()  # Assuming nchunks is defined somewhere as nthreads()
+
+#     @inbounds @no_escape begin
+#         local_X = @alloc(XT, XL, nchunks)
+
+#         fill!(local_X,X0)
+
+#         # Directly iterate over the chunks
+#         @batch for ichunk in 1:nchunks
+#             chunk_inds = getchunk(I, ichunk; n=nchunks)
+#             for idx in chunk_inds
+#                 i = I[idx]
+#                 j = J[idx]
+
+#                 # Accumulate the contributions into the correct place
+#                 local_X[i, ichunk] += drhopLp[idx]
+#                 local_X[j, ichunk] += drhopLn[idx]
+#             end
+#         end
+
+#         # Reduction step
+#         @tturbo for ix in 1:XL
+#             for chunk in 1:nchunks
+#                 dρdtI[ix] += local_X[ix, chunk]
+#             end
+#         end
+#     end
+
+
+
+#     return nothing
+# end
+
+
+# begin
+#     ProblemScaleFactor  = 5
+#     NumberOfPoints      = 6195*ProblemScaleFactor
+#     NumberOfInterations = 50000*ProblemScaleFactor
+#     I           = rand(1:NumberOfPoints, NumberOfInterations)
+#     J           = I; #rand(1:NumberOfPoints, NumberOfInterations)
+#     dρdtI       = zeros(NumberOfPoints) 
+#     drhopLp     = rand(NumberOfInterations)    
+#     drhopLn     = rand(NumberOfInterations)
+#     nchunks = nthreads()
+#     local_X = [zeros(length(dρdtI)) for _ in 1:nchunks]
+
+
+#     dρdtI .= zero(eltype(dρdtI))
+#     NaiveReductionFunction!(dρdtI,I,J,drhopLp,drhopLn)
+#     println("Value when doing naive reduction: ", sum(dρdtI))
+
+#     dρdtI .= zero(eltype(dρdtI))
+#     ReductionFunction!(dρdtI, I,J,drhopLp,drhopLn)
+#     println("Value when doing advanced reduction: ", sum(dρdtI))
+
+#     dρdtI .= zero(eltype(dρdtI))
+#     ReductionFunctionChunk!(dρdtI, I,J,drhopLp,drhopLn)
+#     println("Value when doing chunk reduction: ", sum(dρdtI))
+
+
+#     # Benchmark
+#     println("Naive function:")
+#     display(@benchmark NaiveReductionFunction!($dρdtI , $I, $J, $drhopLp, $drhopLn))
+
+#     println("Reduction function:")
+#     display(@benchmark ReductionFunction!($dρdtI , $I, $J, $drhopLp, $drhopLn))
+
+#     println("Chunk function:")
+#     display(@benchmark ReductionFunctionChunk!($dρdtI , $I, $J, $drhopLp, $drhopLn))
+
+# end
+
 using Base.Threads
 using Bumper
 using StrideArrays # Not necessary, but can make operations like broadcasting with Bumper.jl faster.
@@ -8,7 +129,7 @@ using ChunkSplitters
 
 function NaiveReductionFunction!(dρdtI, I,J,drhopLp,drhopLn)
     # Reduction
-    for iter in eachindex(I,J)
+    @inbounds for iter in eachindex(I,J)
         i = I[iter]
         j = J[iter]
 
@@ -17,89 +138,64 @@ function NaiveReductionFunction!(dρdtI, I,J,drhopLp,drhopLn)
     end
 end
 
-function ReductionFunction!(dρdtI,I,J,drhopLp,drhopLn, buf)
-    # Set up a scope where memory may be allocated, and does not escape:
-    @no_escape buf begin
-        # Allocate a `PtrArray` (see StrideArraysCore.jl) using memory from the default buffer.
-        XT = eltype(dρdtI); XL = length(dρdtI)
+function ReductionFunctionChunk!(dρdtI, I, J, drhopLp, drhopLn)
+    XT = eltype(dρdtI); XL = length(dρdtI); X0 = zero(XT)
+    nchunks = nthreads()  # Assuming nchunks is defined somewhere as nthreads()
 
-        # How can I do this so that I don't have to manually hard code to 4 threads?
-        # If I do, local_X = [@alloc(XT,XL) for _ in 1:nthreads()] then it will allocate!
-        local_X1 = @alloc(XT, XL)
-        local_X2 = @alloc(XT, XL)
-        local_X3 = @alloc(XT, XL)
-        local_X4 = @alloc(XT, XL)
-        local_X  = (local_X1, local_X2, local_X3, local_X4)
+    @inbounds @no_escape begin
+        local_X = @alloc(XT, XL, nchunks)
 
-        # I thought Bumper.jl would automatically reset the buffer?
-        for x in local_X
-            x .*= zero(XT)
+        fill!(local_X,X0)
+
+        # Directly iterate over the chunks
+        @batch for ichunk in 1:nchunks
+            chunk_inds = getchunk(I, ichunk; n=nchunks)
+            for idx in chunk_inds
+                i = I[idx]
+                j = J[idx]
+
+                # Accumulate the contributions into the correct place
+                local_X[i, ichunk] += drhopLp[idx]
+                local_X[j, ichunk] += drhopLn[idx]
+            end
         end
 
-        # Remove @batch here to verify the two functions give the same answer..
-        # @batch seems to only use 1 thread, @tturbo uses all four?
-        @batch for iter in eachindex(I,J)
-            i = I[iter]
-            j = J[iter]
-
-            # Accumulate in thread-local storage
-            local_X[threadid()][i] +=  drhopLp[iter]
-            local_X[threadid()][j] +=  drhopLn[iter]
+        # Reduction step
+        @tturbo for ix in 1:XL
+            for chunk in 1:nchunks
+                dρdtI[ix] += local_X[ix, chunk]
+            end
         end
-
-        # Reduce the thread-local storage into the shared arrays
-        for tid in 1:nthreads()
-            dρdtI .+= local_X[tid]
-        end
-
     end
-
+    
     return nothing
-end
-
-function ChunkFunction!(dρdtI, I,J,drhopLp,drhopLn)
-    nchunks = nthreads()
-    local_X = [zeros(length(drhopLp)) for _ in 1:nchunks]
-    @threads for (ichunk, inds) in enumerate(chunks(dρdtI; n=nchunks))
-        i = I[inds]
-        j = J[inds]
-
-        @. local_X[ichunk][i] += drhopLp[i]
-        @. local_X[ichunk][j] += drhopLn[j]
-    end
 end
 
 
 begin
-    buf                 = default_buffer()
-    NumberOfPoints      = 6195
-    NumberOfInterations = 100000
+    ProblemScaleFactor  = 1
+    NumberOfPoints      = 6195*ProblemScaleFactor
+    NumberOfInterations = 50000*ProblemScaleFactor
     I           = rand(1:NumberOfPoints, NumberOfInterations)
-    J           = rand(1:NumberOfPoints, NumberOfInterations)
+    J           = I; #rand(1:NumberOfPoints, NumberOfInterations)
     dρdtI       = zeros(NumberOfPoints) 
-    drhopLp     = rand(1.0:2.0, NumberOfInterations)    
-    drhopLn     = rand(1.0:2.0, NumberOfInterations)    
+    drhopLp     = rand(NumberOfInterations)    
+    drhopLn     = rand(NumberOfInterations)
 
+    dρdtI .= zero(eltype(dρdtI))
     NaiveReductionFunction!(dρdtI,I,J,drhopLp,drhopLn)
     println("Value when doing naive reduction: ", sum(dρdtI))
-    dρdtI .= zero(eltype(dρdtI)); #Just resetting array.
-    ReductionFunction!(dρdtI, I, J, drhopLp,drhopLn, buf)
-    println("Value doing optimized reduction: ",  sum(dρdtI))
 
-    # dρdtI .= zero(eltype(dρdtI)); #Just resetting array.
-    # dρdtI[I] .+= drhopLp[I]
-    # dρdtI[J] .+= drhopLp[J]
-    # println("Value doing fused: ",  sum(dρdtI))
-
-    ChunkFunction!(dρdtI, I,J,drhopLp,drhopLn)
-    println("Value doing chunks: ",  sum(dρdtI))
+    dρdtI .= zero(eltype(dρdtI))
+    ReductionFunctionChunk!(dρdtI, I,J,drhopLp,drhopLn)
+    println("Value when doing chunk reduction: ", sum(dρdtI))
 
 
-    println("Naive: ")
-    display(@benchmark NaiveReductionFunction!($dρdtI , $I, $J, $drhopLp,drhopLn))
-    println("Optimized: ")
-    display(@benchmark ReductionFunction!($dρdtI , $I, $J, $drhopLp,drhopLn, $buf))
-    println("Using ChunkSplitters: ")
-    display(@benchmark ChunkFunction!($dρdtI , $I, $J , $drhopLp,drhopLn))
-    println("I have threads enabled: ", nthreads())
+    # Benchmark
+    println("Naive function:")
+    display(@benchmark NaiveReductionFunction!($dρdtI , $I, $J, $drhopLp, $drhopLn))
+
+    println("Chunk function:")
+    display(@benchmark ReductionFunctionChunk!($dρdtI , $I, $J, $drhopLp, $drhopLn))
+
 end
