@@ -169,7 +169,6 @@ end
         Base.Cartesian.@nexprs $dims dᵅ -> begin
             ReductionFunctionChunk!(KernelGradientI.vectors[dᵅ],I,J,KernelGradientL.vectors[dᵅ], KernelGradientL.vectors[dᵅ], +, -)
         end
-        # ReductionFunctionChunk!(KernelGradientI.vectors[3],I,J,KernelGradientL.vectors[3], KernelGradientL.vectors[3])
 
         # for iter in eachindex(I,J)
         #     i = I[iter]
@@ -307,16 +306,20 @@ end
             end
         end
 
-        # Reduction
-        for iter in eachindex(I,J)
-            i = I[iter]
-            j = J[iter]
-
-            Base.Cartesian.@nexprs $dims dᵅ -> begin
-                dvdtI.vectors[dᵅ][i] += dvdtL.vectors[dᵅ][iter]
-                dvdtI.vectors[dᵅ][j] -= dvdtL.vectors[dᵅ][iter]
-            end
+        Base.Cartesian.@nexprs $dims dᵅ -> begin
+            ReductionFunctionChunk!(dvdtI.vectors[dᵅ],I,J,dvdtL.vectors[dᵅ], dvdtL.vectors[dᵅ], +, -)
         end
+
+        # # Reduction
+        # for iter in eachindex(I,J)
+        #     i = I[iter]
+        #     j = J[iter]
+
+        #     Base.Cartesian.@nexprs $dims dᵅ -> begin
+        #         dvdtI.vectors[dᵅ][i] += dvdtL.vectors[dᵅ][iter]
+        #         dvdtI.vectors[dᵅ][j] -= dvdtL.vectors[dᵅ][iter]
+        #     end
+        # end
 
         # Add gravity to fluid particles
         @tturbo for i in eachindex(GravityFactor)
