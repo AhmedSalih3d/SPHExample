@@ -228,7 +228,7 @@ begin
     SimMetaData  = SimulationMetaData{D, T}(
                                     SimulationName="MySimulation", 
                                     SaveLocation=raw"E:\SecondApproach\Results", 
-                                    MaxIterations=1001,
+                                    MaxIterations=10001,
                                     OutputIteration=50,
     )
     # Initialze the constants to use
