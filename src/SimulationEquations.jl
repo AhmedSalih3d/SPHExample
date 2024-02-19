@@ -41,7 +41,7 @@ Base.length(data::DimensionalData)         = length(data.V)
 # Threaded reduction instead of single thread.
 # Variables are taken as examples
 ReductionFunctionChunk!(dρdtI, I, J, drhopLp) = ReductionFunctionChunk!(dρdtI, I, J, drhopLp, drhopLp)
-function ReductionFunctionChunk!(dρdtI, I, J, drhopLp, drhopLn)
+function ReductionFunctionChunk!(dρdtI, I, J, drhopLp, drhopLn, op1=+, op2=+)
     XT = eltype(dρdtI); XL = length(dρdtI); X0 = zero(XT)
     nchunks = nthreads() 
     
@@ -58,8 +58,8 @@ function ReductionFunctionChunk!(dρdtI, I, J, drhopLp, drhopLn)
                 j = J[idx]
 
                 # Accumulate the contributions into the correct place
-                local_X[i, ichunk] += drhopLp[idx]
-                local_X[j, ichunk] += drhopLn[idx]
+                local_X[i, ichunk] = local_X[i, ichunk] + op1(drhopLp[idx])
+                local_X[j, ichunk] = local_X[j, ichunk] + op2(drhopLn[idx])
             end
         end
 
@@ -166,16 +166,20 @@ end
 
         # Reducing kernel values
         ReductionFunctionChunk!(Kernel,I,J,KernelL)
-
-        for iter in eachindex(I,J)
-            i = I[iter]
-            j = J[iter]
-    
-            Base.Cartesian.@nexprs $dims dᵅ -> begin
-                KernelGradientI.vectors[dᵅ][i]   +=  KernelGradientL.vectors[dᵅ][iter]
-                KernelGradientI.vectors[dᵅ][j]   -=  KernelGradientL.vectors[dᵅ][iter]
-            end
+        Base.Cartesian.@nexprs $dims dᵅ -> begin
+            ReductionFunctionChunk!(KernelGradientI.vectors[dᵅ],I,J,KernelGradientL.vectors[dᵅ], KernelGradientL.vectors[dᵅ], +, -)
         end
+        # ReductionFunctionChunk!(KernelGradientI.vectors[3],I,J,KernelGradientL.vectors[3], KernelGradientL.vectors[3])
+
+        # for iter in eachindex(I,J)
+        #     i = I[iter]
+        #     j = J[iter]
+    
+        #     Base.Cartesian.@nexprs $dims dᵅ -> begin
+        #         KernelGradientI.vectors[dᵅ][i]   +=  KernelGradientL.vectors[dᵅ][iter]
+        #         KernelGradientI.vectors[dᵅ][j]   -=  KernelGradientL.vectors[dᵅ][iter]
+        #     end
+        # end
 
         return nothing
     end
