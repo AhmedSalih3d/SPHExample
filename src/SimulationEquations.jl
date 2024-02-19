@@ -4,7 +4,7 @@ export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼWᵢⱼ!∑ⱼ∇ᵢW�
 
 using CellListMap
 using StaticArrays
-import LinearAlgebra: sqrt, norm #Don't import to not get LinearAlgebra.I in scope and bug out
+import LinearAlgebra: sqrt, norm #Don't do "using" to not get LinearAlgebra.I in scope and bug out
 using Parameters
 using LoopVectorization
 using Bumper
