@@ -247,8 +247,9 @@ end
                 FacRhoJ = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(r²+η²)
 
             Base.Cartesian.@nexprs $dims dᵅ -> begin
-                drhopLp[iter] += (m₀ * (  Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j])  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼ.vectors[dᵅ][iter] * MotionLimiter[i]) *  KernelGradientL.vectors[dᵅ][iter]
-                drhopLn[iter] += (m₀ * (-(Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j])) + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼ.vectors[dᵅ][iter] * MotionLimiter[j]) * -KernelGradientL.vectors[dᵅ][iter]
+                vᵢⱼᵈ           = Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j]
+                drhopLp[iter] += (m₀ *  vᵢⱼᵈ  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼ.vectors[dᵅ][iter] * MotionLimiter[i]) *  KernelGradientL.vectors[dᵅ][iter]
+                drhopLn[iter] += (m₀ * -vᵢⱼᵈ  + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼ.vectors[dᵅ][iter] * MotionLimiter[j]) * -KernelGradientL.vectors[dᵅ][iter]
             end
         end
 
