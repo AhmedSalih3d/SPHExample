@@ -38,6 +38,51 @@ Base.resize!(data::DimensionalData,n::Int) = resize!(data.V,n)
 reset!(data::DimensionalData)              = fill!(data.V,zero(eltype(data.V)))
 Base.length(data::DimensionalData)         = length(data.V)
 
+# Threaded reduction instead of single thread.
+# Variables are taken as examples
+ReductionFunctionChunk!(dρdtI, I, J, drhopLp) = ReductionFunctionChunk!(dρdtI, I, J, drhopLp, drhopLp)
+function ReductionFunctionChunk!(dρdtI, I, J, drhopLp, drhopLn)
+    XT = eltype(dρdtI); XL = length(dρdtI); X0 = zero(XT)
+    nchunks = nthreads() 
+    
+    @inbounds @no_escape begin
+        local_X = @alloc(XT, XL, nchunks)
+
+        fill!(local_X,X0)
+
+        # Directly iterate over the chunks
+        @batch for ichunk in 1:nchunks
+            chunk_inds = getchunk(I, ichunk; n=nchunks)
+            for idx in chunk_inds
+                i = I[idx]
+                j = J[idx]
+
+                # Accumulate the contributions into the correct place
+                local_X[i, ichunk] += drhopLp[idx]
+                local_X[j, ichunk] += drhopLn[idx]
+            end
+        end
+
+        # Reduction step
+        @tturbo for ix in 1:XL
+            for chunk in 1:nchunks
+                dρdtI[ix] += local_X[ix, chunk]
+            end
+        end
+    end
+    
+    # # Reduction - Single threaded
+    # @inbounds for iter in eachindex(I,J)
+    #     i = I[iter]
+    #     j = J[iter]
+
+    #     dρdtI[i] +=  drhopLp[iter]
+    #     dρdtI[j] +=  drhopLn[iter]
+    # end
+
+    return nothing
+end
+
 # Function to calculate Kernel Value
 function Wᵢⱼ(αD,q)
     return αD*(1-q/2)^4*(2*q + 1)
@@ -119,12 +164,12 @@ end
             end
         end
 
+        # Reducing kernel values
+        ReductionFunctionChunk!(Kernel,I,J,KernelL)
+
         for iter in eachindex(I,J)
             i = I[iter]
             j = J[iter]
-
-            Kernel[i] += KernelL[iter]
-            Kernel[j] += KernelL[iter]
     
             Base.Cartesian.@nexprs $dims dᵅ -> begin
                 KernelGradientI.vectors[dᵅ][i]   +=  KernelGradientL.vectors[dᵅ][iter]
@@ -169,40 +214,6 @@ end
 @inline faux(ρ₀, P, invCb, γ⁻¹) = ρ₀ * (expm1(γ⁻¹ * log1p(P * invCb)))
 @inline faux_fancy(ρ₀, P, Cb) = ρ₀ * ( fancy7th( 1 + (P * Cb)) - 1)
 #faux(ρ₀, P, invCb) = ρ₀ * ( fancy7th( 1 + (P * invCb)) - 1)
-
-function ReductionFunctionChunk!(dρdtI, I, J, drhopLp, drhopLn)
-    XT = eltype(dρdtI); XL = length(dρdtI); X0 = zero(XT)
-    nchunks = nthreads() 
-    
-    # @inbounds @no_escape begin
-    #     local_X = @alloc(XT, XL, nchunks)
-
-    #     fill!(local_X,X0)
-
-    #     # Directly iterate over the chunks
-    #     @batch for ichunk in 1:nchunks
-    #         chunk_inds = getchunk(I, ichunk; n=nchunks)
-    #         for idx in chunk_inds
-    #             i = I[idx]
-    #             j = J[idx]
-
-    #             # Accumulate the contributions into the correct place
-    #             local_X[i, ichunk] += drhopLp[idx]
-    #             local_X[j, ichunk] += drhopLn[idx]
-    #         end
-    #     end
-
-    #     # Reduction step
-    #     @tturbo for ix in 1:XL
-    #         for chunk in 1:nchunks
-    #             dρdtI[ix] += local_X[ix, chunk]
-    #         end
-    #     end
-    # end
-    
-    return nothing
-end
-
 
 # The density derivative function INCLUDING density diffusion
 @generated function ∂ρᵢ∂tDDT!(dρdtI, I, J, D , xᵢⱼ::DimensionalData{dims} , Density , Velocity::DimensionalData, KernelGradientL::DimensionalData, MotionLimiter, drhopLp, drhopLn, SimulationConstants) where {dims}
