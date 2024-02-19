@@ -248,8 +248,11 @@ end
 
             Base.Cartesian.@nexprs $dims dᵅ -> begin
                 vᵢⱼᵈ           = Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j]
-                drhopLp[iter] += (m₀ *  vᵢⱼᵈ  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼ.vectors[dᵅ][iter] * MotionLimiter[i]) *  KernelGradientL.vectors[dᵅ][iter]
-                drhopLn[iter] += (m₀ * -vᵢⱼᵈ  + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼ.vectors[dᵅ][iter] * MotionLimiter[j]) * -KernelGradientL.vectors[dᵅ][iter]
+                xᵢⱼᵈ           = xᵢⱼ.vectors[dᵅ][iter]
+                ∇ᵢWᵢⱼᵈ         = KernelGradientL.vectors[dᵅ][iter]
+
+                drhopLp[iter] += (m₀ *  vᵢⱼᵈ  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼᵈ * MotionLimiter[i]) *  ∇ᵢWᵢⱼᵈ
+                drhopLn[iter] += (m₀ * -vᵢⱼᵈ  + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼᵈ * MotionLimiter[j]) * -∇ᵢWᵢⱼᵈ
             end
         end
 
