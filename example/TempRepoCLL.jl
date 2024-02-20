@@ -34,10 +34,11 @@ end
 end
 
 # https://jaantollander.com/post/searching-for-fixed-radius-near-neighbors-with-cell-lists-algorithm-in-julia-language/#definition
-@inline function neighbors(d::Int)
-    n_ = CartesianIndices((fill(-1:1, d)...,))
-    n  = n_[1:fld(length(n_), 2)]
-
+function neighbors(v::Val{d}) where d
+    n_ = CartesianIndices(ntuple(_->-1:1,v))
+    half_length = length(n_) ÷ 2
+    n  = n_[1:half_length]
+    
     n_svec = Vector{NTuple{d,Int}}(undef,length(n)) #zeros(SVector{d,eltype(d)},length(n))
 
     for i ∈ eachindex(n_svec)
@@ -47,6 +48,8 @@ end
 
     return n_svec
 end
+
+
 
 
 
