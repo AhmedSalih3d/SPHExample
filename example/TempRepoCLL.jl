@@ -21,9 +21,7 @@ using Plots; using Measures
     Layout::Array{Vector{I}, D}              = GenerateM(Nmax,ZeroOffset,HalfPad,Padding,Cells,Val(getsvecD(eltype(Points))))
 
     
-    # ListOfInteractions::Vector{Tuple{I,I,T}} = Vector{Tuple{Int,Int,getsvecT(eltype(Points))}}(undef,CalculateTotalPossibleNumberOfInteractions(UniqueCells,Layout,Stencil,HalfPad))
-    ListOfInteractions::Vector{I} = zeros(Int64,CalculateTotalPossibleNumberOfInteractions(UniqueCells,Layout,Stencil,HalfPad))
-# end
+    ListOfInteractions::Vector{Tuple{I,I,T}} = Vector{Tuple{Int,Int,getsvecT(eltype(Points))}}(undef,CalculateTotalPossibleNumberOfInteractions(UniqueCells,Layout,Stencil,HalfPad))
 end
 @inline getspecs(::Type{CLL{I,T,D}}) where {I,T,D} = (typeINT = I, typeFLT = T, dimensions=D)
 @inline getsvecDT(::Type{SVector{d,T}}) where {d,T} = (dimensions=d, type=T)
@@ -158,8 +156,7 @@ function CustomCLL(p,TheCLL)
 
                     # If cond true, we use nl + 1 as new index
                     ind = ifelse(cond,nl+1,length(TheCLL.ListOfInteractions))
-                    #TheCLL.ListOfInteractions[ind] = (k_idx,k_1up,sqrt(d2))
-                    TheCLL.ListOfInteractions[ind]  = k_idx
+                    TheCLL.ListOfInteractions[ind] = (k_idx,k_1up,sqrt(d2))
                     # Then if cond true, update nl
                     nl  = ifelse(cond,ind,nl)
                 end
@@ -180,8 +177,7 @@ function CustomCLL(p,TheCLL)
 
                         # If cond true, we use nl + 1 as new index
                         ind = ifelse(cond,nl+1,length(TheCLL.ListOfInteractions))
-                        #TheCLL.ListOfInteractions[ind] = (k1_idx,k2_idx,sqrt(d2))
-                        TheCLL.ListOfInteractions[ind]  = k1_idx
+                        TheCLL.ListOfInteractions[ind] = (k1_idx,k2_idx,sqrt(d2))
                         # Then if cond true, update nl
                         nl  = ifelse(cond,ind,nl)
                     end
