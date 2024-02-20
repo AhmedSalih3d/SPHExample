@@ -159,64 +159,7 @@ function EquationOfState(ρ,c₀,γ,ρ₀)
     return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
 end
 
-
-T = Float64
-FloatType = T
-D = 2
-Dimensions = D
-
-FluidCSV     = "./input/FluidPoints_Dp0.02.csv"
-BoundCSV     = "./input/BoundaryPoints_Dp0.02.csv"
-
-SimMetaData  = SimulationMetaData{D, T}(
-                                SimulationName="AllInOne", 
-                                SaveLocation=raw"E:\SecondApproach\Testing",
-                                MaxIterations=10001,
-                                OutputIteration=50,
-)
-# Initialze the constants to use
-SimConstants = SimulationConstants{T}()
-
-# Unpack the relevant simulation meta data
-@unpack HourGlass, SaveLocation, SimulationName, MaxIterations, OutputIteration, SilentOutput, ThreadsCPU = SimMetaData;
-
-# Unpack simulation constants
-@unpack ρ₀, dx, h, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimConstants
-
-# Load in the fluid and boundary particles. Return these points and both data frames
-# @inline is a hack here to remove all allocations further down due to uncertainty of the points type at compile time
-@inline points, density_fluid, density_bound  = LoadParticlesFromCSV(Dimensions,FloatType, FluidCSV,BoundCSV)
-Position           = DimensionalData(points.vectors...)
-# Read this as "GravityFactor * g", so -1 means negative acceleration for fluid particles
-GravityFactor            = [-ones(size(density_fluid,1)) ; zeros(size(density_bound,1))]
-
-# MotionLimiter is what allows fluid particles to move, while not letting the velocity of boundary
-# particles change
-MotionLimiter = [ ones(size(density_fluid,1)) ; zeros(size(density_bound,1))]
-
-# Based on MotionLimiter we assess which particles are boundary particles
-BoundaryBool  = .!Bool.(MotionLimiter)
-
-# Preallocate simulation arrays
-NumberOfPoints = length(points)
-
-Density           = deepcopy([density_fluid;density_bound])
-Kernel            = zeros(FloatType, NumberOfPoints)
-KernelL           = zeros(FloatType, NumberOfPoints)
-dρdtI             = zeros(FloatType, NumberOfPoints)
-ρₙ⁺               = zeros(FloatType, NumberOfPoints)
-dρdtIₙ⁺           = zeros(FloatType, NumberOfPoints)
-
-drhopLp            = zeros(FloatType, NumberOfPoints)
-drhopLn            = zeros(FloatType, NumberOfPoints) 
-Pressureᵢ          = zeros(FloatType, NumberOfPoints)
-
-KernelGradient     = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
-Velocity           = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
-dvdtI              = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
-
-
-function CustomCLL(p, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Kernel, KernelGradient, Density, Velocity)
+function CustomCLL(PositionNew, DensityNew, VelocityNew, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimConstants
 
     dt = 7.65e-5
@@ -226,7 +169,7 @@ function CustomCLL(p, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, 
     δₕ_h_c₀ = δᵩ * h * c₀
 
     R = 2*h
-    TheCLL = CLL(Points=p,CutOff=R)
+    TheCLL = CLL(Points=Position.V,CutOff=R)
 
     nl    = 0
 
@@ -242,13 +185,13 @@ function CustomCLL(p, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, 
                 k_idx = indices_in_cell[ki]
                   for kj = (ki+1):n_idx_cells
                     k_1up = indices_in_cell[kj]
-                    d2 = distance_condition(p[k_idx],p[k_1up])
+                    d2 = distance_condition(Position.V[k_idx],Position.V[k_1up])
 
-                    # if d2 <= TheCLL.CutOffSquared
+                    if d2 <= TheCLL.CutOffSquared
                         d  = sqrt(d2)
 
-                        xᵢ  = p[k_idx]
-                        xⱼ  = p[k_1up]
+                        xᵢ  = Position.V[k_idx]
+                        xⱼ  = Position.V[k_1up]
                         xᵢⱼ = xᵢ - xⱼ
 
                         q  = clamp(d  * h⁻¹,0.0,2.0)
@@ -279,8 +222,8 @@ function CustomCLL(p, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, 
                         vⱼ      = Velocity.V[k_1up]
                         vᵢⱼ     = vᵢ - vⱼ
 
-                        dρdt⁺   = dot((m₀ *   vᵢⱼ  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼ * MotionLimiter[k_idx]), ∇ᵢWᵢⱼ)
-                        dρdt⁻   = dot((m₀ *  -vᵢⱼ  + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼ * MotionLimiter[k_1up]),-∇ᵢWᵢⱼ)
+                        dρdt⁺   = dot(m₀ *   vᵢⱼ ,  ∇ᵢWᵢⱼ) # + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼ * MotionLimiter[k_idx]), ∇ᵢWᵢⱼ)
+                        dρdt⁻   = dot(m₀ *  -vᵢⱼ , -∇ᵢWᵢⱼ) # + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼ * MotionLimiter[k_1up]),-∇ᵢWᵢⱼ)
 
                         Pᵢ      = EquationOfState(ρᵢ,c₀,γ,ρ₀)
                         Pⱼ      = EquationOfState(ρⱼ,c₀,γ,ρ₀)
@@ -300,11 +243,11 @@ function CustomCLL(p, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, 
                         ρᵢᴺ  = ρᵢ + dρdt⁺ * (dt/2)
                         ρⱼᴺ  = ρⱼ + dρdt⁻ * (dt/2)
 
-                        if BoundaryBool[k_idx]
-                            ρᵢᴺ = clamp(ρᵢᴺ,1000.0,2000.0)
-                        elseif BoundaryBool[k_1up]
-                            ρⱼᴺ = clamp(ρⱼᴺ,1000.0,2000.0)
-                        end
+                        # if BoundaryBool[k_idx]
+                        #     ρᵢᴺ = clamp(ρᵢᴺ,1000.0,2000.0)
+                        # elseif BoundaryBool[k_1up]
+                        #     ρⱼᴺ = clamp(ρⱼᴺ,1000.0,2000.0)
+                        # end
 
                         vᵢᴺ  = vᵢ + dvdt⁺ * (dt/2) * MotionLimiter[k_idx]
                         vⱼᴺ  = vⱼ + dvdt⁻ * (dt/2) * MotionLimiter[k_1up]
@@ -329,8 +272,8 @@ function CustomCLL(p, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, 
 
                         vᵢⱼᴺ     = vᵢᴺ - vⱼᴺ
 
-                        dρdtᴺ⁺   = dot((m₀ *   vᵢⱼᴺ  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoIᴺ *  -xᵢⱼᴺ * MotionLimiter[k_idx]), ∇ᵢWᵢⱼ)
-                        dρdtᴺ⁻   = dot((m₀ *  -vᵢⱼᴺ  + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJᴺ *   xᵢⱼᴺ * MotionLimiter[k_1up]),-∇ᵢWᵢⱼ)
+                        dρdtᴺ⁺   = dot(m₀ *   vᵢⱼᴺ , ∇ᵢWᵢⱼ) #δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoIᴺ *  -xᵢⱼᴺ * MotionLimiter[k_idx]), ∇ᵢWᵢⱼ)
+                        dρdtᴺ⁻   = dot(m₀ *  -vᵢⱼᴺ ,-∇ᵢWᵢⱼ) #δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJᴺ *   xᵢⱼᴺ * MotionLimiter[k_1up]),-∇ᵢWᵢⱼ)
 
                         Pᵢᴺ     = EquationOfState(ρᵢᴺ,c₀,γ,ρ₀)
                         Pⱼᴺ     = EquationOfState(ρⱼᴺ,c₀,γ,ρ₀)
@@ -351,21 +294,21 @@ function CustomCLL(p, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, 
                         epsiᵢ   = - (dρdtᴺ⁺ / ρᵢᴺ) * dt
                         epsiⱼ   = - (dρdtᴺ⁻ / ρⱼᴺ) * dt
 
-                        Density[k_idx] *= (2 - epsiᵢ) / (2 + epsiᵢ)
-                        Density[k_1up] *= (2 - epsiⱼ) / (2 + epsiⱼ)
+                        DensityNew[k_idx] *= (2 - epsiᵢ) / (2 + epsiᵢ)
+                        DensityNew[k_1up] *= (2 - epsiⱼ) / (2 + epsiⱼ)
 
                         if BoundaryBool[k_idx]
-                            Density[k_idx] = clamp(Density[k_idx],1000.0,2000.0)
+                            DensityNew[k_idx] = clamp(DensityNew[k_idx],1000.0,2000.0)
                         elseif BoundaryBool[k_1up]
-                            Density[k_1up] = clamp(Density[k_1up],1000.0,2000.0)
+                            DensityNew[k_1up] = clamp(DensityNew[k_1up],1000.0,2000.0)
                         end
 
 
-                        Velocity.V[k_idx] += dvdtᴺ⁺ * dt * MotionLimiter[k_idx]
-                        Velocity.V[k_1up] += dvdtᴺ⁻ * dt * MotionLimiter[k_1up]
+                        VelocityNew.V[k_idx] += dvdtᴺ⁺ * dt * MotionLimiter[k_idx]
+                        VelocityNew.V[k_1up] += dvdtᴺ⁻ * dt * MotionLimiter[k_1up]
 
-                        p[k_idx] += ((Velocity.V[k_idx] - vᵢ)/2) * dt * MotionLimiter[k_idx]
-                        p[k_1up] += ((Velocity.V[k_1up] - vⱼ)/2) * dt * MotionLimiter[k_1up]
+                        PositionNew.V[k_idx] += ((Velocity.V[k_idx] - vᵢ)/2) * dt * MotionLimiter[k_idx]
+                        PositionNew.V[k_1up] += ((Velocity.V[k_1up] - vⱼ)/2) * dt * MotionLimiter[k_1up]
 
                         #cond = d2 <= TheCLL.CutOffSquared
                         # # If cond true, we use nl + 1 as new index
@@ -374,7 +317,7 @@ function CustomCLL(p, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, 
                         # # Then if cond true, update nl
                         # nl  = ifelse(cond,ind,nl)
                     end
-                # end
+                end
             end
 
             for Sind ∈ TheCLL.Stencil
@@ -386,13 +329,13 @@ function CustomCLL(p, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, 
                     k1_idx = indices_in_cell[k1]
                     for k2 ∈ eachindex(indices_in_cell_plus)
                         k2_idx = indices_in_cell_plus[k2]
-                        d2  = distance_condition(p[k1_idx],p[k2_idx])
+                        d2  = distance_condition(Position.V[k1_idx],Position.V[k2_idx])
 
-                        # if d2 <= TheCLL.CutOffSquared
+                        if d2 <= TheCLL.CutOffSquared
                             d   = sqrt(d2)
 
-                            xᵢ  = p[k1_idx]
-                            xⱼ  = p[k2_idx]
+                            xᵢ  = Position.V[k1_idx]
+                            xⱼ  = Position.V[k2_idx]
                             xᵢⱼ = xᵢ - xⱼ
 
                             q   = clamp(d  * h⁻¹,0.0,2.0)
@@ -423,8 +366,8 @@ function CustomCLL(p, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, 
                             vⱼ      = Velocity.V[k2_idx]
                             vᵢⱼ     = vᵢ - vⱼ
         
-                            dρdt⁺   = dot((m₀ *   vᵢⱼ  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼ * MotionLimiter[k1_idx]), ∇ᵢWᵢⱼ)
-                            dρdt⁻   = dot((m₀ *  -vᵢⱼ  + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼ * MotionLimiter[k2_idx]),-∇ᵢWᵢⱼ)
+                            dρdt⁺   = dot(m₀ *   vᵢⱼ ,  ∇ᵢWᵢⱼ) # + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼ * MotionLimiter[k1_idx]), ∇ᵢWᵢⱼ)
+                            dρdt⁻   = dot(m₀ *  -vᵢⱼ , -∇ᵢWᵢⱼ) # + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼ * MotionLimiter[k2_idx]),-∇ᵢWᵢⱼ)
         
                             Pᵢ      = EquationOfState(ρᵢ,c₀,γ,ρ₀)
                             Pⱼ      = EquationOfState(ρⱼ,c₀,γ,ρ₀)
@@ -475,8 +418,8 @@ function CustomCLL(p, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, 
         
                             vᵢⱼᴺ     = vᵢᴺ - vⱼᴺ
         
-                            dρdtᴺ⁺   = dot((m₀ *   vᵢⱼᴺ  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoIᴺ *  -xᵢⱼᴺ * MotionLimiter[k1_idx]), ∇ᵢWᵢⱼ)
-                            dρdtᴺ⁻   = dot((m₀ *  -vᵢⱼᴺ  + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJᴺ *   xᵢⱼᴺ * MotionLimiter[k2_idx]),-∇ᵢWᵢⱼ)
+                            dρdtᴺ⁺   = dot(m₀ *   vᵢⱼᴺ ,  ∇ᵢWᵢⱼ) #+ δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoIᴺ *  -xᵢⱼᴺ * MotionLimiter[k1_idx]), ∇ᵢWᵢⱼ)
+                            dρdtᴺ⁻   = dot(m₀ *  -vᵢⱼᴺ , -∇ᵢWᵢⱼ) #+ δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJᴺ *   xᵢⱼᴺ * MotionLimiter[k2_idx]),-∇ᵢWᵢⱼ)
         
                             Pᵢᴺ     = EquationOfState(ρᵢᴺ,c₀,γ,ρ₀)
                             Pⱼᴺ     = EquationOfState(ρⱼᴺ,c₀,γ,ρ₀)
@@ -497,21 +440,21 @@ function CustomCLL(p, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, 
                             epsiᵢ   = - (dρdtᴺ⁺ / ρᵢᴺ) * dt
                             epsiⱼ   = - (dρdtᴺ⁻ / ρⱼᴺ) * dt
 
-                            Density[k1_idx] *= (2 - epsiᵢ) / (2 + epsiᵢ)
-                            Density[k2_idx] *= (2 - epsiⱼ) / (2 + epsiⱼ)
+                            DensityNew[k1_idx] *= (2 - epsiᵢ) / (2 + epsiᵢ)
+                            DensityNew[k2_idx] *= (2 - epsiⱼ) / (2 + epsiⱼ)
 
                             if BoundaryBool[k1_idx]
-                                Density[k1_idx] = clamp( Density[k1_idx],1000,2000)
+                                DensityNew[k1_idx] = clamp( DensityNew[k1_idx],1000,2000)
                             elseif BoundaryBool[k2_idx]
-                                Density[k2_idx] = clamp( Density[k2_idx],1000,2000)
+                                DensityNew[k2_idx] = clamp( DensityNew[k2_idx],1000,2000)
                             end
 
+                            VelocityNew.V[k1_idx] += dvdtᴺ⁺ * dt * MotionLimiter[k1_idx]
+                            VelocityNew.V[k2_idx] += dvdtᴺ⁻ * dt * MotionLimiter[k2_idx]
 
-                            Velocity.V[k1_idx] += dvdtᴺ⁺ * dt * MotionLimiter[k1_idx]
-                            Velocity.V[k2_idx] += dvdtᴺ⁻ * dt * MotionLimiter[k2_idx]
+                            PositionNew.V[k1_idx] += ((Velocity.V[k1_idx] - vᵢ)/2) * dt * MotionLimiter[k1_idx]
+                            PositionNew.V[k2_idx] += ((Velocity.V[k2_idx] - vⱼ)/2) * dt * MotionLimiter[k2_idx]
 
-                            p[k1_idx] += ((Velocity.V[k1_idx] - vᵢ)/2) * dt * MotionLimiter[k1_idx]
-                            p[k2_idx] += ((Velocity.V[k2_idx] - vⱼ)/2) * dt * MotionLimiter[k2_idx]
 
                             # cond = d2 <= TheCLL.CutOffSquared
                             # # If cond true, we use nl + 1 as new index
@@ -519,10 +462,14 @@ function CustomCLL(p, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, 
                             # TheCLL.ListOfInteractions[ind] = (k1_idx,k2_idx,sqrt(d2))
                             # # Then if cond true, update nl
                             # nl  = ifelse(cond,ind,nl)
-                        # end
+                        end
                     end
                 end
             end
+        
+        Position.V .= PositionNew.V
+        Velocity.V .= VelocityNew.V
+        Density    .= DensityNew
     end
 
     TheCLL.MaxValidIndex[] = nl
@@ -531,19 +478,87 @@ function CustomCLL(p, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, 
     return nothing
 end
 
-@profview CustomCLL(Position.V,SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Kernel, KernelGradient, Density, Velocity)
-function f()
-    for iteration in 1:1001
-        CustomCLL(Position.V,SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Kernel, KernelGradient, Density, Velocity)
-        if iteration % 50 == 0
-            to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
-            PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(iteration,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity"], Kernel, KernelGradient.V, Density, Velocity.V)
-            println(iteration)
+to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
+
+# For testing script properly
+let 
+    T = Float64
+    FloatType = T
+    D = 2
+    Dimensions = D
+    
+    FluidCSV     = "./input/FluidPoints_Dp0.02.csv"
+    BoundCSV     = "./input/BoundaryPoints_Dp0.02.csv"
+    
+    SimMetaData  = SimulationMetaData{D, T}(
+                                    SimulationName="AllInOne", 
+                                    SaveLocation=raw"E:\SecondApproach\Testing",
+                                    MaxIterations=10001,
+                                    OutputIteration=50,
+    )
+    # Initialze the constants to use
+    SimConstants = SimulationConstants{T}()
+    
+    # Unpack the relevant simulation meta data
+    @unpack HourGlass, SaveLocation, SimulationName, MaxIterations, OutputIteration, SilentOutput, ThreadsCPU = SimMetaData;
+    
+    # Unpack simulation constants
+    @unpack ρ₀, dx, h, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimConstants
+    
+    # Load in the fluid and boundary particles. Return these points and both data frames
+    # @inline is a hack here to remove all allocations further down due to uncertainty of the points type at compile time
+    @inline points, density_fluid, density_bound  = LoadParticlesFromCSV(Dimensions,FloatType, FluidCSV,BoundCSV)
+    Position           = DimensionalData(points.vectors...)
+    # Read this as "GravityFactor * g", so -1 means negative acceleration for fluid particles
+    GravityFactor            = [-ones(size(density_fluid,1)) ; zeros(size(density_bound,1))]
+    
+    # MotionLimiter is what allows fluid particles to move, while not letting the velocity of boundary
+    # particles change
+    MotionLimiter = [ ones(size(density_fluid,1)) ; zeros(size(density_bound,1))]
+    
+    # Based on MotionLimiter we assess which particles are boundary particles
+    BoundaryBool  = .!Bool.(MotionLimiter)
+    
+    # Preallocate simulation arrays
+    NumberOfPoints = length(points)
+    
+    Density           = deepcopy([density_fluid;density_bound])
+    Kernel            = zeros(FloatType, NumberOfPoints)
+    KernelL           = zeros(FloatType, NumberOfPoints)
+    dρdtI             = zeros(FloatType, NumberOfPoints)
+    ρₙ⁺               = zeros(FloatType, NumberOfPoints)
+    dρdtIₙ⁺           = zeros(FloatType, NumberOfPoints)
+    
+    drhopLp            = zeros(FloatType, NumberOfPoints)
+    drhopLn            = zeros(FloatType, NumberOfPoints) 
+    Pressureᵢ          = zeros(FloatType, NumberOfPoints)
+    
+    KernelGradient     = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
+    Velocity           = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
+    dvdtI              = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
+    
+    DensityNew         = deepcopy(Density)
+    VelocityNew        = deepcopy(Velocity)
+    PositionNew        = deepcopy(Position)
+   
+    @profview CustomCLL(PositionNew, DensityNew, VelocityNew, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity)
+    function f()
+        foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
+        PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity"], Kernel, KernelGradient.V, Density, Velocity.V)
+        for iteration in 1:51
+            CustomCLL(PositionNew, DensityNew, VelocityNew, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity)
+            if iteration % 1 == 0
+                PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(iteration,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity"], Kernel, KernelGradient.V, Density, Velocity.V)
+                println(iteration)
+            end
+            ResetArrays!(Kernel, KernelGradient.V)
         end
-        ResetArrays!(Kernel, KernelGradient.V)
     end
+
+    @profview f()
+
+    @benchmark CustomCLL($PositionNew, $DensityNew, $VelocityNew, $SimConstants, $MotionLimiter, $BoundaryBool, $GravityFactor, $Position, $Kernel, $KernelGradient, $Density, $Velocity)
 end
 
-@profview f()
 
-# @benchmark CustomCLL($Position.V,$SimConstants, $MotionLimiter, $BoundaryBool, $Kernel, $KernelGradient, $Density, $Velocity)
+
