@@ -13,13 +13,17 @@ using Plots; using Measures
     HalfPad::I                               = convert(typeof(Padding),Padding//2)
     ZeroOffset::I                            = 1 #Since we start from 0 when generating cells
 
-    ListOfInteractions::Vector{Tuple{I,I,T}} = Vector{Tuple{Int,Int,getsvecT(eltype(Points))}}(undef,length(Points)^2)
     Stencil::Vector{NTuple{D, I}}            = neighbors(Val(getsvecD(eltype(Points))) )
     
     Cells::Vector{NTuple{D, I}}              = ExtractCells(Points,CutOff,Val(getsvecD(eltype(Points))))
     UniqueCells::Vector{NTuple{D, I}}        = unique(Cells)
     Nmax::I                                  = maximum(reinterpret(Int,@view(Cells[:]))) + ZeroOffset
     Layout::Array{Vector{I}, D}              = GenerateM(Nmax,ZeroOffset,HalfPad,Padding,Cells,Val(getsvecD(eltype(Points))))
+
+    
+    # ListOfInteractions::Vector{Tuple{I,I,T}} = Vector{Tuple{Int,Int,getsvecT(eltype(Points))}}(undef,CalculateTotalPossibleNumberOfInteractions(UniqueCells,Layout,Stencil,HalfPad))
+    ListOfInteractions::Vector{I} = zeros(Int64,CalculateTotalPossibleNumberOfInteractions(UniqueCells,Layout,Stencil,HalfPad))
+# end
 end
 @inline getspecs(::Type{CLL{I,T,D}}) where {I,T,D} = (typeINT = I, typeFLT = T, dimensions=D)
 @inline getsvecDT(::Type{SVector{d,T}}) where {d,T} = (dimensions=d, type=T)
@@ -82,8 +86,59 @@ function GenerateM(Nmax,ZeroOffset,HalfPad,Padding,cells,v::Val{d}) where d
     return M
 end
 
+function CalculateTotalPossibleNumberOfInteractions(UniqueCells,Layout,Stencil,HalfPad)
+    # We use the same loop as in the actual algorithm for now..
+    # In future try to simplify like this not working exactly..
+      # M = TheCLL.Layout
+    # S = TheCLL.Stencil
+    # RealNL = 0
+    # @inbounds for Cind_ ∈ TheCLL.UniqueCells
+    #     Cind = (Cind_ .+ 1 .+ TheCLL.HalfPad)
+
+    #     NumberOfParticlesInCell  = length(TheCLL.Layout[Cind...])
+    #     for Sind_ ∈ TheCLL.Stencil
+    #         Sind = (Cind .+ Sind_)
+    #         RealNL += NumberOfParticlesInCell * length(TheCLL.Layout[Sind...])
+    #         RealNL += length(TheCLL.Layout[Sind...])
+    #     end
+    # end
+
+    RealNL = 0
+
+    @inbounds for Cind_ ∈ UniqueCells
+            
+        Cind = (Cind_ .+ 1 .+ HalfPad)
+
+        # The indices in the cell are:
+        indices_in_cell = Layout[Cind...]
+        n_idx_cells = length(indices_in_cell)
+        for ki = 1:n_idx_cells-1
+            k_idx = indices_in_cell[ki]
+              for kj = (ki+1):n_idx_cells
+                k_1up = indices_in_cell[kj]
+                RealNL += 1
+            end
+        end
+
+        for Sind ∈ Stencil
+            Sind = (Cind .+ Sind)
+            indices_in_cell_plus  =Layout[Sind...]
+            # Here a double loop to compare indices_in_cell[k] to all possible neighbours
+            for k1 ∈ eachindex(indices_in_cell)
+                k1_idx = indices_in_cell[k1]
+                for k2 ∈ eachindex(indices_in_cell_plus)
+                    k2_idx = indices_in_cell_plus[k2]
+                    RealNL += 1
+                end
+            end
+        end
+    end
+
+    return RealNL
+end
+
 function CustomCLL(p,TheCLL)
-    nl = 0
+    nl    = 0
 
     @inbounds for Cind_ ∈ TheCLL.UniqueCells
             
@@ -103,7 +158,8 @@ function CustomCLL(p,TheCLL)
 
                     # If cond true, we use nl + 1 as new index
                     ind = ifelse(cond,nl+1,length(TheCLL.ListOfInteractions))
-                    TheCLL.ListOfInteractions[ind] = (k_idx,k_1up,sqrt(d2))
+                    #TheCLL.ListOfInteractions[ind] = (k_idx,k_1up,sqrt(d2))
+                    TheCLL.ListOfInteractions[ind]  = k_idx
                     # Then if cond true, update nl
                     nl  = ifelse(cond,ind,nl)
                 end
@@ -124,7 +180,8 @@ function CustomCLL(p,TheCLL)
 
                         # If cond true, we use nl + 1 as new index
                         ind = ifelse(cond,nl+1,length(TheCLL.ListOfInteractions))
-                        TheCLL.ListOfInteractions[ind] = (k1_idx,k2_idx,sqrt(d2))
+                        #TheCLL.ListOfInteractions[ind] = (k1_idx,k2_idx,sqrt(d2))
+                        TheCLL.ListOfInteractions[ind]  = k1_idx
                         # Then if cond true, update nl
                         nl  = ifelse(cond,ind,nl)
                     end
@@ -133,8 +190,7 @@ function CustomCLL(p,TheCLL)
     end
 
     TheCLL.MaxValidIndex[] = nl
-
-    #resize!(TheCLL.ListOfInteractions,nl)
+    # resize!(TheCLL.ListOfInteractions,nl)
 end
 
 ## Plotting CLL
@@ -169,8 +225,6 @@ function PlotCLL(TheCLL)
 
     return p
 end
-
-
 
 
 ## Plotting CellListMap
@@ -229,7 +283,7 @@ function SingleIterationCLL(;n=20,d=2,r=0.1,T=Float64)
     p = rand(SVector{d,T},n)
 
     TheCLL = CLL(Points=p,CutOff=R)
-    @code_warntype CLL(Points=p,CutOff=R)
+    # @code_warntype CLL(Points=p,CutOff=R)
     CustomCLL(p,TheCLL)
 
     return TheCLL
@@ -295,10 +349,10 @@ function PlotTest(;n=10,d=2,NSIM = 10)
 end
 
 # #TheCLM,TheCLL = SingleIteration(n=100,d=2);
-# CLMResults,CLLResults = PlotTest(n=7000,d=2);
+CLMResults,CLLResults = PlotTest(n=7000,d=2, NSIM=10);
 
 BenchmarkIteration(n=7000)
 
-# @profview a = SingleIterationCLL(n=7000,d=2);
+@profview a = SingleIterationCLL(n=7000,d=2);
 
 nothing
