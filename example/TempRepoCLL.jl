@@ -4,6 +4,7 @@ using StaticArrays
 using Parameters
 using Plots; using Measures
 using StructArrays
+import LinearAlgebra: dot
 include("../src/ProduceVTP.jl")
 
 @with_kw struct CLL{I,T,D}
@@ -138,6 +139,26 @@ function CalculateTotalPossibleNumberOfInteractions(UniqueCells,Layout,Stencil,H
 end
 
 using SPHExample 
+@inline function fancy7th(x)
+    # todo tune the magic constant
+    # initial guess based on fast inverse sqrt trick but adjusted to compute x^(1/7)
+    t = copysign(reinterpret(Float64, 0x36cd000000000000 + reinterpret(UInt64,abs(x))÷7), x)
+    @fastmath for _ in 1:2
+        # newton's method for t^3 - x/t^4 = 0
+        t2 = t*t
+        t3 = t2*t
+        t4 = t2*t2
+        xot4 = x/t4
+        t = t - t*(t3 - xot4)/(4*t3 + 3*xot4)
+    end
+    t
+end
+@inline faux_fancy(ρ₀, P, Cb) = ρ₀ * ( fancy7th( 1 + (P * Cb)) - 1)
+
+function EquationOfState(ρ,c₀,γ,ρ₀)
+    return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
+end
+
 
 T = Float64
 FloatType = T
@@ -191,10 +212,19 @@ drhopLn            = zeros(FloatType, NumberOfPoints)
 Pressureᵢ          = zeros(FloatType, NumberOfPoints)
 
 KernelGradient     = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
+Velocity           = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
+dvdtI              = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
 
 
-function CustomCLL(p, SimConstants, Kernel, KernelGradient)
+function CustomCLL(p, SimConstants, MotionLimiter, Kernel, KernelGradient, Density, Velocity)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimConstants
+
+    dt = 1e-5
+
+    Cb      = (c₀^2*ρ₀)/γ
+    invCb   = inv(Cb)
+    δₕ_h_c₀ = δᵩ * h * c₀
+
     R = 2*h
     TheCLL = CLL(Points=p,CutOff=R)
 
@@ -215,7 +245,9 @@ function CustomCLL(p, SimConstants, Kernel, KernelGradient)
                     d2 = distance_condition(p[k_idx],p[k_1up])
                     d  = sqrt(d2)
 
-                    xᵢⱼ = p[k_idx] - p[k_1up]
+                    xᵢ  = p[k_idx]
+                    xⱼ  = p[k_1up]
+                    xᵢⱼ = xᵢ - xⱼ
 
                     q  = clamp(d  * h⁻¹,0.0,2.0)
                     W  = αD*(1-q/2)^4*(2*q + 1)
@@ -223,9 +255,54 @@ function CustomCLL(p, SimConstants, Kernel, KernelGradient)
                     Kernel[k_1up] += W
 
                     Fac = αD*5*(q-2)^3*q / (8h*(q*h+1e-6))
-                    KernelGradient.V[k_idx] +=  Fac * xᵢⱼ
-                    KernelGradient.V[k_1up] += -Fac * xᵢⱼ
+                    ∇ᵢWᵢⱼ = Fac * xᵢⱼ
+                    KernelGradient.V[k_idx] +=  ∇ᵢWᵢⱼ
+                    KernelGradient.V[k_1up] += -∇ᵢWᵢⱼ
+
+                    d² = d*d
+                    Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
+                    ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, invCb)
+                    Pⱼᵢᴴ  = -Pᵢⱼᴴ
+                    ρⱼᵢᴴ  = faux_fancy(ρ₀, Pⱼᵢᴴ, invCb)
+
+                    ρᵢ    = Density[k_idx]
+                    ρⱼ    = Density[k_1up]
+                    ρⱼᵢ   = ρⱼ - ρᵢ
                     
+
+                    FacRhoI = 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * inv(d²+η²)
+                    FacRhoJ = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(d²+η²)
+
+                    vᵢ      = Velocity.V[k_idx]
+                    vⱼ      = Velocity.V[k_1up]
+                    vᵢⱼ     = vᵢ - vⱼ
+
+                    dρdt⁺   = dot((m₀ *   vᵢⱼ  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼ * MotionLimiter[k_idx]), ∇ᵢWᵢⱼ)
+                    dρdt⁻   = dot((m₀ *  -vᵢⱼ  + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼ * MotionLimiter[k_1up]),-∇ᵢWᵢⱼ)
+
+                    Pᵢ      = EquationOfState(ρᵢ,c₀,γ,ρ₀)
+                    Pⱼ      = EquationOfState(ρⱼ,c₀,γ,ρ₀)
+
+                    ρ̄ᵢⱼ     = (ρᵢ+ρⱼ)*0.5
+                    Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
+
+                    cond      = dot(vᵢⱼ, xᵢⱼ)
+                    cond_bool = cond < 0.0
+                    μᵢⱼ       = h*cond/(d²+η²)
+                    Πᵢⱼ       = cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ
+
+                    dvdt⁺ = - m₀ * ( Pfac + Πᵢⱼ) *  ∇ᵢWᵢⱼ
+                    dvdt⁻ = - m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ
+                    
+                    # Time stepping start - this makes suction
+                    ρᵢᴺ  = ρᵢ + dρdt⁺ * (dt/2)
+                    ρⱼᴺ  = ρⱼ + dρdt⁻ * (dt/2)
+
+                    vᵢᴺ  = vᵢ + dvdt⁺ * (dt/2) * MotionLimiter[k_idx]
+                    vⱼᴺ  = vⱼ + dvdt⁻ * (dt/2) * MotionLimiter[k_1up]
+
+                    xᵢᴺ  = xᵢ + vᵢᴺ * (dt/2) * MotionLimiter[k_idx]
+                    xⱼᴺ  = xⱼ + vⱼᴺ * (dt/2) * MotionLimiter[k_1up]
 
                     #cond = d2 <= TheCLL.CutOffSquared
                     # # If cond true, we use nl + 1 as new index
@@ -247,15 +324,65 @@ function CustomCLL(p, SimConstants, Kernel, KernelGradient)
                         k2_idx = indices_in_cell_plus[k2]
                         d2  = distance_condition(p[k1_idx],p[k2_idx])
                         d   = sqrt(d2)
-                        xᵢⱼ = p[k1_idx] - p[k2_idx]
+
+                        xᵢ  = p[k1_idx]
+                        xⱼ  = p[k2_idx]
+                        xᵢⱼ = xᵢ - xⱼ
+
                         q   = clamp(d  * h⁻¹,0.0,2.0)
                         W   = αD*(1-q/2)^4*(2*q + 1)
                         Kernel[k1_idx] += W 
                         Kernel[k2_idx] += W 
 
                         Fac = αD*5*(q-2)^3*q / (8h*(q*h+1e-6))
-                        KernelGradient.V[k1_idx] +=  Fac * xᵢⱼ
-                        KernelGradient.V[k2_idx] += -Fac * xᵢⱼ
+                        ∇ᵢWᵢⱼ = Fac * xᵢⱼ
+                        KernelGradient.V[k1_idx] +=  ∇ᵢWᵢⱼ
+                        KernelGradient.V[k2_idx] += -∇ᵢWᵢⱼ
+
+                        d² = d*d
+                        Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
+                        ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, invCb)
+                        Pⱼᵢᴴ  = -Pᵢⱼᴴ
+                        ρⱼᵢᴴ  = faux_fancy(ρ₀, Pⱼᵢᴴ, invCb)
+    
+                        ρᵢ    = Density[k1_idx]
+                        ρⱼ    = Density[k2_idx]
+                        ρⱼᵢ   = ρⱼ - ρᵢ
+                        
+    
+                        FacRhoI = 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * inv(d²+η²)
+                        FacRhoJ = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(d²+η²)
+    
+                        vᵢ      = Velocity.V[k1_idx]
+                        vⱼ      = Velocity.V[k2_idx]
+                        vᵢⱼ     = vᵢ - vⱼ
+    
+                        dρdt⁺   = dot((m₀ *   vᵢⱼ  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼ * MotionLimiter[k1_idx]), ∇ᵢWᵢⱼ)
+                        dρdt⁻   = dot((m₀ *  -vᵢⱼ  + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼ * MotionLimiter[k2_idx]),-∇ᵢWᵢⱼ)
+    
+                        Pᵢ      = EquationOfState(ρᵢ,c₀,γ,ρ₀)
+                        Pⱼ      = EquationOfState(ρⱼ,c₀,γ,ρ₀)
+
+                        ρ̄ᵢⱼ     = (ρᵢ+ρⱼ)*0.5
+                        Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
+    
+                        cond      = dot(vᵢⱼ, xᵢⱼ)
+                        cond_bool = cond < 0.0
+                        μᵢⱼ       = h*cond/(d²+η²)
+                        Πᵢⱼ       = cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ
+    
+                        dvdt⁺ = - m₀ * ( Pfac + Πᵢⱼ) *  ∇ᵢWᵢⱼ
+                        dvdt⁻ = - m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ
+
+                        # Time stepping start
+                        ρᵢᴺ  = ρᵢ + dρdt⁺ * (dt/2)
+                        ρⱼᴺ  = ρⱼ + dρdt⁻ * (dt/2)
+
+                        vᵢᴺ  = vᵢ + dvdt⁺ * (dt/2) * MotionLimiter[k1_idx]
+                        vⱼᴺ  = vⱼ + dvdt⁻ * (dt/2) * MotionLimiter[k2_idx]
+
+                        xᵢᴺ  = xᵢ + vᵢᴺ * (dt/2) * MotionLimiter[k1_idx]
+                        xⱼᴺ  = xⱼ + vⱼᴺ * (dt/2) * MotionLimiter[k2_idx]
 
                         # cond = d2 <= TheCLL.CutOffSquared
                         # # If cond true, we use nl + 1 as new index
@@ -274,9 +401,9 @@ function CustomCLL(p, SimConstants, Kernel, KernelGradient)
     return nothing
 end
 
-@profview CustomCLL(Position.V,SimConstants, Kernel, KernelGradient)
+@profview CustomCLL(Position.V,SimConstants, MotionLimiter, Kernel, KernelGradient, Density, Velocity)
 
 to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
- PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient"], Kernel, KernelGradient.V)
+ PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity"], Kernel, KernelGradient.V, Density, Velocity.V)
 
-@benchmark CustomCLL($Position.V,$SimConstants, $Kernel, $KernelGradient)
+@benchmark CustomCLL($Position.V,$SimConstants, $MotionLimiter, $Kernel, $KernelGradient, $Density, $Velocity)
