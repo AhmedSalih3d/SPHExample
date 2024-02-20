@@ -190,8 +190,10 @@ drhopLp            = zeros(FloatType, NumberOfPoints)
 drhopLn            = zeros(FloatType, NumberOfPoints) 
 Pressureᵢ          = zeros(FloatType, NumberOfPoints)
 
+KernelGradient     = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
 
-function CustomCLL(p, SimConstants, Kernel)
+
+function CustomCLL(p, SimConstants, Kernel, KernelGradient)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimConstants
     R = 2*h
     TheCLL = CLL(Points=p,CutOff=R)
@@ -213,10 +215,16 @@ function CustomCLL(p, SimConstants, Kernel)
                     d2 = distance_condition(p[k_idx],p[k_1up])
                     d  = sqrt(d2)
 
+                    xᵢⱼ = p[k_idx] - p[k_1up]
+
                     q  = clamp(d  * h⁻¹,0.0,2.0)
                     W  = αD*(1-q/2)^4*(2*q + 1)
                     Kernel[k_idx] += W
                     Kernel[k_1up] += W
+
+                    Fac = αD*5*(q-2)^3*q / (8h*(q*h+1e-6))
+                    KernelGradient.V[k_idx] +=  Fac * xᵢⱼ
+                    KernelGradient.V[k_1up] += -Fac * xᵢⱼ
                     
 
                     #cond = d2 <= TheCLL.CutOffSquared
@@ -237,13 +245,17 @@ function CustomCLL(p, SimConstants, Kernel)
                     k1_idx = indices_in_cell[k1]
                     for k2 ∈ eachindex(indices_in_cell_plus)
                         k2_idx = indices_in_cell_plus[k2]
-                        d2 = distance_condition(p[k1_idx],p[k2_idx])
-                        d  = sqrt(d2)
-
-                        q  = clamp(d  * h⁻¹,0.0,2.0)
-                        W  = αD*(1-q/2)^4*(2*q + 1)
+                        d2  = distance_condition(p[k1_idx],p[k2_idx])
+                        d   = sqrt(d2)
+                        xᵢⱼ = p[k1_idx] - p[k2_idx]
+                        q   = clamp(d  * h⁻¹,0.0,2.0)
+                        W   = αD*(1-q/2)^4*(2*q + 1)
                         Kernel[k1_idx] += W 
                         Kernel[k2_idx] += W 
+
+                        Fac = αD*5*(q-2)^3*q / (8h*(q*h+1e-6))
+                        KernelGradient.V[k1_idx] +=  Fac * xᵢⱼ
+                        KernelGradient.V[k2_idx] += -Fac * xᵢⱼ
 
                         # cond = d2 <= TheCLL.CutOffSquared
                         # # If cond true, we use nl + 1 as new index
@@ -262,9 +274,9 @@ function CustomCLL(p, SimConstants, Kernel)
     return nothing
 end
 
-@profview CustomCLL(Position.V,SimConstants, Kernel)
+@profview CustomCLL(Position.V,SimConstants, Kernel, KernelGradient)
 
 to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
- PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(Position.V), ["Kernel"], Kernel)
+ PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient"], Kernel, KernelGradient.V)
 
-# @benchmark CustomCLL($Position.V,$SimConstants, $Kernel)
+@benchmark CustomCLL($Position.V,$SimConstants, $Kernel, $KernelGradient)
