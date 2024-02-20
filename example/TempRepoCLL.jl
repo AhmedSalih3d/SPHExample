@@ -216,7 +216,7 @@ Velocity           = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
 dvdtI              = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
 
 
-function CustomCLL(p, SimConstants, MotionLimiter, Kernel, KernelGradient, Density, Velocity)
+function CustomCLL(p, SimConstants, MotionLimiter, BoundaryBool, Kernel, KernelGradient, Density, Velocity)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimConstants
 
     dt = 1e-5
@@ -291,8 +291,8 @@ function CustomCLL(p, SimConstants, MotionLimiter, Kernel, KernelGradient, Densi
                     μᵢⱼ       = h*cond/(d²+η²)
                     Πᵢⱼ       = cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ
 
-                    dvdt⁺ = - m₀ * ( Pfac + Πᵢⱼ) *  ∇ᵢWᵢⱼ
-                    dvdt⁻ = - m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ
+                    dvdt⁺ = - m₀ * ( Pfac + Πᵢⱼ) *  ∇ᵢWᵢⱼ + SVector(0, g * BoundaryBool[k_idx])
+                    dvdt⁻ = - m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ + SVector(0, g * BoundaryBool[k_1up])
                     
                     # Time stepping start - this makes suction
                     ρᵢᴺ  = ρᵢ + dρdt⁺ * (dt/2)
@@ -303,6 +303,54 @@ function CustomCLL(p, SimConstants, MotionLimiter, Kernel, KernelGradient, Densi
 
                     xᵢᴺ  = xᵢ + vᵢᴺ * (dt/2) * MotionLimiter[k_idx]
                     xⱼᴺ  = xⱼ + vⱼᴺ * (dt/2) * MotionLimiter[k_1up]
+
+                    # Update and go through same steps as above
+
+                    xᵢⱼᴺ = xᵢᴺ - xⱼᴺ
+
+                    Pᵢⱼᴴᴺ  = ρ₀ * (-g) * -xᵢⱼᴺ[end]
+                    ρᵢⱼᴴᴺ  = faux_fancy(ρ₀, Pᵢⱼᴴᴺ, invCb)
+                    Pⱼᵢᴴᴺ  = -Pᵢⱼᴴᴺ
+                    ρⱼᵢᴴᴺ  = faux_fancy(ρ₀, Pⱼᵢᴴᴺ, invCb)
+
+                    ρⱼᵢᴺ  = ρⱼᴺ - ρᵢᴺ
+                    
+
+                    FacRhoIᴺ = 2 * ( ρⱼᵢᴺ - ρᵢⱼᴴᴺ) * inv(d²+η²)
+                    FacRhoJᴺ = 2 * (-ρⱼᵢᴺ - ρⱼᵢᴴᴺ) * inv(d²+η²)
+
+                    vᵢⱼᴺ     = vᵢᴺ - vⱼᴺ
+
+                    dρdtᴺ⁺   = dot((m₀ *   vᵢⱼᴺ  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoIᴺ *  -xᵢⱼᴺ * MotionLimiter[k_idx]), ∇ᵢWᵢⱼ)
+                    dρdtᴺ⁻   = dot((m₀ *  -vᵢⱼᴺ  + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJᴺ *   xᵢⱼᴺ * MotionLimiter[k_1up]),-∇ᵢWᵢⱼ)
+
+                    Pᵢᴺ     = EquationOfState(ρᵢᴺ,c₀,γ,ρ₀)
+                    Pⱼᴺ     = EquationOfState(ρⱼᴺ,c₀,γ,ρ₀)
+
+                    ρ̄ᵢⱼᴺ     = (ρᵢᴺ+ρⱼᴺ)*0.5
+                    Pfacᴺ    = (Pᵢᴺ+Pⱼᴺ)/(ρᵢᴺ*ρⱼᴺ)
+
+                    cond      = dot(vᵢⱼᴺ, xᵢⱼᴺ)
+                    cond_bool = cond < 0.0
+                    μᵢⱼᴺ       = h*cond/(d²+η²)
+                    Πᵢⱼᴺ       = cond_bool*(-α*c₀*μᵢⱼᴺ)/ρ̄ᵢⱼᴺ
+
+                    dvdtᴺ⁺ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) *  ∇ᵢWᵢⱼ + SVector(0, g * BoundaryBool[k_idx])
+                    dvdtᴺ⁻ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) * -∇ᵢWᵢⱼ + SVector(0, g * BoundaryBool[k_1up])
+
+                    # Concluded time stepping
+                    
+                    epsiᵢ   = - (dρdtᴺ⁺ / ρᵢᴺ) * dt
+                    epsiⱼ   = - (dρdtᴺ⁻ / ρⱼᴺ) * dt
+
+                    Density[k_idx] *= (2 - epsiᵢ) / (2 + epsiᵢ)
+                    Density[k_1up] *= (2 - epsiⱼ) / (2 + epsiⱼ)
+
+                    Velocity.V[k_idx] += dvdtᴺ⁺ * dt * MotionLimiter[k_idx]
+                    Velocity.V[k_1up] += dvdtᴺ⁻ * dt * MotionLimiter[k_1up]
+
+                    p[k_idx] += ((Velocity.V[k_idx] - vᵢ)/2) * dt * MotionLimiter[k_idx]
+                    p[k_1up] += ((Velocity.V[k_1up] - vⱼ)/2) * dt * MotionLimiter[k_1up]
 
                     #cond = d2 <= TheCLL.CutOffSquared
                     # # If cond true, we use nl + 1 as new index
@@ -371,8 +419,8 @@ function CustomCLL(p, SimConstants, MotionLimiter, Kernel, KernelGradient, Densi
                         μᵢⱼ       = h*cond/(d²+η²)
                         Πᵢⱼ       = cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ
     
-                        dvdt⁺ = - m₀ * ( Pfac + Πᵢⱼ) *  ∇ᵢWᵢⱼ
-                        dvdt⁻ = - m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ
+                        dvdt⁺ = - m₀ * ( Pfac + Πᵢⱼ) *  ∇ᵢWᵢⱼ + SVector(0, g * BoundaryBool[k1_idx])
+                        dvdt⁻ = - m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ + SVector(0, g * BoundaryBool[k2_idx]) 
 
                         # Time stepping start
                         ρᵢᴺ  = ρᵢ + dρdt⁺ * (dt/2)
@@ -383,6 +431,55 @@ function CustomCLL(p, SimConstants, MotionLimiter, Kernel, KernelGradient, Densi
 
                         xᵢᴺ  = xᵢ + vᵢᴺ * (dt/2) * MotionLimiter[k1_idx]
                         xⱼᴺ  = xⱼ + vⱼᴺ * (dt/2) * MotionLimiter[k2_idx]
+
+                        # Update and go through motion again, copy paste from above
+                        # d² not updated!, neiter gradient
+
+                        xᵢⱼᴺ = xᵢᴺ - xⱼᴺ
+
+                        Pᵢⱼᴴᴺ  = ρ₀ * (-g) * -xᵢⱼᴺ[end]
+                        ρᵢⱼᴴᴺ  = faux_fancy(ρ₀, Pᵢⱼᴴᴺ, invCb)
+                        Pⱼᵢᴴᴺ  = -Pᵢⱼᴴᴺ
+                        ρⱼᵢᴴᴺ  = faux_fancy(ρ₀, Pⱼᵢᴴᴺ, invCb)
+    
+                        ρⱼᵢᴺ  = ρⱼᴺ - ρᵢᴺ
+                        
+    
+                        FacRhoIᴺ = 2 * ( ρⱼᵢᴺ - ρᵢⱼᴴᴺ) * inv(d²+η²)
+                        FacRhoJᴺ = 2 * (-ρⱼᵢᴺ - ρⱼᵢᴴᴺ) * inv(d²+η²)
+    
+                        vᵢⱼᴺ     = vᵢᴺ - vⱼᴺ
+    
+                        dρdtᴺ⁺   = dot((m₀ *   vᵢⱼᴺ  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoIᴺ *  -xᵢⱼᴺ * MotionLimiter[k1_idx]), ∇ᵢWᵢⱼ)
+                        dρdtᴺ⁻   = dot((m₀ *  -vᵢⱼᴺ  + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJᴺ *   xᵢⱼᴺ * MotionLimiter[k2_idx]),-∇ᵢWᵢⱼ)
+    
+                        Pᵢᴺ     = EquationOfState(ρᵢᴺ,c₀,γ,ρ₀)
+                        Pⱼᴺ     = EquationOfState(ρⱼᴺ,c₀,γ,ρ₀)
+
+                        ρ̄ᵢⱼᴺ     = (ρᵢᴺ+ρⱼᴺ)*0.5
+                        Pfacᴺ    = (Pᵢᴺ+Pⱼᴺ)/(ρᵢᴺ*ρⱼᴺ)
+    
+                        cond      = dot(vᵢⱼᴺ, xᵢⱼᴺ)
+                        cond_bool = cond < 0.0
+                        μᵢⱼᴺ       = h*cond/(d²+η²)
+                        Πᵢⱼᴺ       = cond_bool*(-α*c₀*μᵢⱼᴺ)/ρ̄ᵢⱼᴺ
+    
+                        dvdtᴺ⁺ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) *  ∇ᵢWᵢⱼ + SVector(0, g * BoundaryBool[k1_idx])
+                        dvdtᴺ⁻ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) * -∇ᵢWᵢⱼ + SVector(0, g * BoundaryBool[k2_idx])
+
+                        # Concluded time stepping
+                        
+                        epsiᵢ   = - (dρdtᴺ⁺ / ρᵢᴺ) * dt
+                        epsiⱼ   = - (dρdtᴺ⁻ / ρⱼᴺ) * dt
+
+                        Density[k1_idx] *= (2 - epsiᵢ) / (2 + epsiᵢ)
+                        Density[k2_idx] *= (2 - epsiⱼ) / (2 + epsiⱼ)
+
+                        Velocity.V[k1_idx] += dvdtᴺ⁺ * dt * MotionLimiter[k1_idx]
+                        Velocity.V[k2_idx] += dvdtᴺ⁻ * dt * MotionLimiter[k2_idx]
+
+                        p[k1_idx] += ((Velocity.V[k1_idx] - vᵢ)/2) * dt * MotionLimiter[k1_idx]
+                        p[k2_idx] += ((Velocity.V[k2_idx] - vⱼ)/2) * dt * MotionLimiter[k2_idx]
 
                         # cond = d2 <= TheCLL.CutOffSquared
                         # # If cond true, we use nl + 1 as new index
@@ -401,9 +498,9 @@ function CustomCLL(p, SimConstants, MotionLimiter, Kernel, KernelGradient, Densi
     return nothing
 end
 
-@profview CustomCLL(Position.V,SimConstants, MotionLimiter, Kernel, KernelGradient, Density, Velocity)
+@profview CustomCLL(Position.V,SimConstants, MotionLimiter, BoundaryBool, Kernel, KernelGradient, Density, Velocity)
 
 to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
  PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity"], Kernel, KernelGradient.V, Density, Velocity.V)
 
-@benchmark CustomCLL($Position.V,$SimConstants, $MotionLimiter, $Kernel, $KernelGradient, $Density, $Velocity)
+@benchmark CustomCLL($Position.V,$SimConstants, $MotionLimiter, $BoundaryBool, $Kernel, $KernelGradient, $Density, $Velocity)
