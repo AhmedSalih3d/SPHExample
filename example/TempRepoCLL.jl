@@ -216,10 +216,10 @@ Velocity           = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
 dvdtI              = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
 
 
-function CustomCLL(p, SimConstants, MotionLimiter, BoundaryBool, Kernel, KernelGradient, Density, Velocity)
+function CustomCLL(p, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Kernel, KernelGradient, Density, Velocity)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimConstants
 
-    dt = 1e-5
+    dt = 7.65e-5
 
     Cb      = (c₀^2*ρ₀)/γ
     invCb   = inv(Cb)
@@ -243,122 +243,138 @@ function CustomCLL(p, SimConstants, MotionLimiter, BoundaryBool, Kernel, KernelG
                   for kj = (ki+1):n_idx_cells
                     k_1up = indices_in_cell[kj]
                     d2 = distance_condition(p[k_idx],p[k_1up])
-                    d  = sqrt(d2)
 
-                    xᵢ  = p[k_idx]
-                    xⱼ  = p[k_1up]
-                    xᵢⱼ = xᵢ - xⱼ
+                    # if d2 <= TheCLL.CutOffSquared
+                        d  = sqrt(d2)
 
-                    q  = clamp(d  * h⁻¹,0.0,2.0)
-                    W  = αD*(1-q/2)^4*(2*q + 1)
-                    Kernel[k_idx] += W
-                    Kernel[k_1up] += W
+                        xᵢ  = p[k_idx]
+                        xⱼ  = p[k_1up]
+                        xᵢⱼ = xᵢ - xⱼ
 
-                    Fac = αD*5*(q-2)^3*q / (8h*(q*h+1e-6))
-                    ∇ᵢWᵢⱼ = Fac * xᵢⱼ
-                    KernelGradient.V[k_idx] +=  ∇ᵢWᵢⱼ
-                    KernelGradient.V[k_1up] += -∇ᵢWᵢⱼ
+                        q  = clamp(d  * h⁻¹,0.0,2.0)
+                        W  = αD*(1-q/2)^4*(2*q + 1)
+                        Kernel[k_idx] += W
+                        Kernel[k_1up] += W
 
-                    d² = d*d
-                    Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
-                    ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, invCb)
-                    Pⱼᵢᴴ  = -Pᵢⱼᴴ
-                    ρⱼᵢᴴ  = faux_fancy(ρ₀, Pⱼᵢᴴ, invCb)
+                        Fac = αD*5*(q-2)^3*q / (8h*(q*h+1e-6))
+                        ∇ᵢWᵢⱼ = Fac * xᵢⱼ
+                        KernelGradient.V[k_idx] +=  ∇ᵢWᵢⱼ
+                        KernelGradient.V[k_1up] += -∇ᵢWᵢⱼ
 
-                    ρᵢ    = Density[k_idx]
-                    ρⱼ    = Density[k_1up]
-                    ρⱼᵢ   = ρⱼ - ρᵢ
-                    
+                        d² = d*d
+                        Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
+                        ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, invCb)
+                        Pⱼᵢᴴ  = -Pᵢⱼᴴ
+                        ρⱼᵢᴴ  = faux_fancy(ρ₀, Pⱼᵢᴴ, invCb)
 
-                    FacRhoI = 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * inv(d²+η²)
-                    FacRhoJ = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(d²+η²)
+                        ρᵢ    = Density[k_idx]
+                        ρⱼ    = Density[k_1up]
+                        ρⱼᵢ   = ρⱼ - ρᵢ
+                        
 
-                    vᵢ      = Velocity.V[k_idx]
-                    vⱼ      = Velocity.V[k_1up]
-                    vᵢⱼ     = vᵢ - vⱼ
+                        FacRhoI = 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * inv(d²+η²)
+                        FacRhoJ = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(d²+η²)
 
-                    dρdt⁺   = dot((m₀ *   vᵢⱼ  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼ * MotionLimiter[k_idx]), ∇ᵢWᵢⱼ)
-                    dρdt⁻   = dot((m₀ *  -vᵢⱼ  + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼ * MotionLimiter[k_1up]),-∇ᵢWᵢⱼ)
+                        vᵢ      = Velocity.V[k_idx]
+                        vⱼ      = Velocity.V[k_1up]
+                        vᵢⱼ     = vᵢ - vⱼ
 
-                    Pᵢ      = EquationOfState(ρᵢ,c₀,γ,ρ₀)
-                    Pⱼ      = EquationOfState(ρⱼ,c₀,γ,ρ₀)
+                        dρdt⁺   = dot((m₀ *   vᵢⱼ  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼ * MotionLimiter[k_idx]), ∇ᵢWᵢⱼ)
+                        dρdt⁻   = dot((m₀ *  -vᵢⱼ  + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼ * MotionLimiter[k_1up]),-∇ᵢWᵢⱼ)
 
-                    ρ̄ᵢⱼ     = (ρᵢ+ρⱼ)*0.5
-                    Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
+                        Pᵢ      = EquationOfState(ρᵢ,c₀,γ,ρ₀)
+                        Pⱼ      = EquationOfState(ρⱼ,c₀,γ,ρ₀)
 
-                    cond      = dot(vᵢⱼ, xᵢⱼ)
-                    cond_bool = cond < 0.0
-                    μᵢⱼ       = h*cond/(d²+η²)
-                    Πᵢⱼ       = cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ
+                        ρ̄ᵢⱼ     = (ρᵢ+ρⱼ)*0.5
+                        Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
 
-                    dvdt⁺ = - m₀ * ( Pfac + Πᵢⱼ) *  ∇ᵢWᵢⱼ + SVector(0, g * BoundaryBool[k_idx])
-                    dvdt⁻ = - m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ + SVector(0, g * BoundaryBool[k_1up])
-                    
-                    # Time stepping start - this makes suction
-                    ρᵢᴺ  = ρᵢ + dρdt⁺ * (dt/2)
-                    ρⱼᴺ  = ρⱼ + dρdt⁻ * (dt/2)
+                        cond      = dot(vᵢⱼ, xᵢⱼ)
+                        cond_bool = cond < 0.0
+                        μᵢⱼ       = h*cond/(d²+η²)
+                        Πᵢⱼ       = cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ
 
-                    vᵢᴺ  = vᵢ + dvdt⁺ * (dt/2) * MotionLimiter[k_idx]
-                    vⱼᴺ  = vⱼ + dvdt⁻ * (dt/2) * MotionLimiter[k_1up]
+                        dvdt⁺ = - m₀ * ( Pfac + Πᵢⱼ) *  ∇ᵢWᵢⱼ + SVector(0, g * GravityFactor[k_idx])
+                        dvdt⁻ = - m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ + SVector(0, g * GravityFactor[k_1up])
+                        
+                        # Time stepping start - this makes suction
+                        ρᵢᴺ  = ρᵢ + dρdt⁺ * (dt/2)
+                        ρⱼᴺ  = ρⱼ + dρdt⁻ * (dt/2)
 
-                    xᵢᴺ  = xᵢ + vᵢᴺ * (dt/2) * MotionLimiter[k_idx]
-                    xⱼᴺ  = xⱼ + vⱼᴺ * (dt/2) * MotionLimiter[k_1up]
+                        if BoundaryBool[k_idx]
+                            ρᵢᴺ = clamp(ρᵢᴺ,1000.0,2000.0)
+                        elseif BoundaryBool[k_1up]
+                            ρⱼᴺ = clamp(ρⱼᴺ,1000.0,2000.0)
+                        end
 
-                    # Update and go through same steps as above
+                        vᵢᴺ  = vᵢ + dvdt⁺ * (dt/2) * MotionLimiter[k_idx]
+                        vⱼᴺ  = vⱼ + dvdt⁻ * (dt/2) * MotionLimiter[k_1up]
 
-                    xᵢⱼᴺ = xᵢᴺ - xⱼᴺ
+                        xᵢᴺ  = xᵢ + vᵢᴺ * (dt/2) * MotionLimiter[k_idx]
+                        xⱼᴺ  = xⱼ + vⱼᴺ * (dt/2) * MotionLimiter[k_1up]
 
-                    Pᵢⱼᴴᴺ  = ρ₀ * (-g) * -xᵢⱼᴺ[end]
-                    ρᵢⱼᴴᴺ  = faux_fancy(ρ₀, Pᵢⱼᴴᴺ, invCb)
-                    Pⱼᵢᴴᴺ  = -Pᵢⱼᴴᴺ
-                    ρⱼᵢᴴᴺ  = faux_fancy(ρ₀, Pⱼᵢᴴᴺ, invCb)
+                        # Update and go through same steps as above
 
-                    ρⱼᵢᴺ  = ρⱼᴺ - ρᵢᴺ
-                    
+                        xᵢⱼᴺ = xᵢᴺ - xⱼᴺ
 
-                    FacRhoIᴺ = 2 * ( ρⱼᵢᴺ - ρᵢⱼᴴᴺ) * inv(d²+η²)
-                    FacRhoJᴺ = 2 * (-ρⱼᵢᴺ - ρⱼᵢᴴᴺ) * inv(d²+η²)
+                        Pᵢⱼᴴᴺ  = ρ₀ * (-g) * -xᵢⱼᴺ[end]
+                        ρᵢⱼᴴᴺ  = faux_fancy(ρ₀, Pᵢⱼᴴᴺ, invCb)
+                        Pⱼᵢᴴᴺ  = -Pᵢⱼᴴᴺ
+                        ρⱼᵢᴴᴺ  = faux_fancy(ρ₀, Pⱼᵢᴴᴺ, invCb)
 
-                    vᵢⱼᴺ     = vᵢᴺ - vⱼᴺ
+                        ρⱼᵢᴺ  = ρⱼᴺ - ρᵢᴺ
+                        
 
-                    dρdtᴺ⁺   = dot((m₀ *   vᵢⱼᴺ  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoIᴺ *  -xᵢⱼᴺ * MotionLimiter[k_idx]), ∇ᵢWᵢⱼ)
-                    dρdtᴺ⁻   = dot((m₀ *  -vᵢⱼᴺ  + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJᴺ *   xᵢⱼᴺ * MotionLimiter[k_1up]),-∇ᵢWᵢⱼ)
+                        FacRhoIᴺ = 2 * ( ρⱼᵢᴺ - ρᵢⱼᴴᴺ) * inv(d²+η²)
+                        FacRhoJᴺ = 2 * (-ρⱼᵢᴺ - ρⱼᵢᴴᴺ) * inv(d²+η²)
 
-                    Pᵢᴺ     = EquationOfState(ρᵢᴺ,c₀,γ,ρ₀)
-                    Pⱼᴺ     = EquationOfState(ρⱼᴺ,c₀,γ,ρ₀)
+                        vᵢⱼᴺ     = vᵢᴺ - vⱼᴺ
 
-                    ρ̄ᵢⱼᴺ     = (ρᵢᴺ+ρⱼᴺ)*0.5
-                    Pfacᴺ    = (Pᵢᴺ+Pⱼᴺ)/(ρᵢᴺ*ρⱼᴺ)
+                        dρdtᴺ⁺   = dot((m₀ *   vᵢⱼᴺ  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoIᴺ *  -xᵢⱼᴺ * MotionLimiter[k_idx]), ∇ᵢWᵢⱼ)
+                        dρdtᴺ⁻   = dot((m₀ *  -vᵢⱼᴺ  + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJᴺ *   xᵢⱼᴺ * MotionLimiter[k_1up]),-∇ᵢWᵢⱼ)
 
-                    cond      = dot(vᵢⱼᴺ, xᵢⱼᴺ)
-                    cond_bool = cond < 0.0
-                    μᵢⱼᴺ       = h*cond/(d²+η²)
-                    Πᵢⱼᴺ       = cond_bool*(-α*c₀*μᵢⱼᴺ)/ρ̄ᵢⱼᴺ
+                        Pᵢᴺ     = EquationOfState(ρᵢᴺ,c₀,γ,ρ₀)
+                        Pⱼᴺ     = EquationOfState(ρⱼᴺ,c₀,γ,ρ₀)
 
-                    dvdtᴺ⁺ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) *  ∇ᵢWᵢⱼ + SVector(0, g * BoundaryBool[k_idx])
-                    dvdtᴺ⁻ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) * -∇ᵢWᵢⱼ + SVector(0, g * BoundaryBool[k_1up])
+                        ρ̄ᵢⱼᴺ     = (ρᵢᴺ+ρⱼᴺ)*0.5
+                        Pfacᴺ    = (Pᵢᴺ+Pⱼᴺ)/(ρᵢᴺ*ρⱼᴺ)
 
-                    # Concluded time stepping
-                    
-                    epsiᵢ   = - (dρdtᴺ⁺ / ρᵢᴺ) * dt
-                    epsiⱼ   = - (dρdtᴺ⁻ / ρⱼᴺ) * dt
+                        cond      = dot(vᵢⱼᴺ, xᵢⱼᴺ)
+                        cond_bool = cond < 0.0
+                        μᵢⱼᴺ       = h*cond/(d²+η²)
+                        Πᵢⱼᴺ       = cond_bool*(-α*c₀*μᵢⱼᴺ)/ρ̄ᵢⱼᴺ
 
-                    Density[k_idx] *= (2 - epsiᵢ) / (2 + epsiᵢ)
-                    Density[k_1up] *= (2 - epsiⱼ) / (2 + epsiⱼ)
+                        dvdtᴺ⁺ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) *  ∇ᵢWᵢⱼ + SVector(0, g * GravityFactor[k_idx])
+                        dvdtᴺ⁻ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) * -∇ᵢWᵢⱼ + SVector(0, g * GravityFactor[k_1up])
 
-                    Velocity.V[k_idx] += dvdtᴺ⁺ * dt * MotionLimiter[k_idx]
-                    Velocity.V[k_1up] += dvdtᴺ⁻ * dt * MotionLimiter[k_1up]
+                        # Concluded time stepping
+                        
+                        epsiᵢ   = - (dρdtᴺ⁺ / ρᵢᴺ) * dt
+                        epsiⱼ   = - (dρdtᴺ⁻ / ρⱼᴺ) * dt
 
-                    p[k_idx] += ((Velocity.V[k_idx] - vᵢ)/2) * dt * MotionLimiter[k_idx]
-                    p[k_1up] += ((Velocity.V[k_1up] - vⱼ)/2) * dt * MotionLimiter[k_1up]
+                        Density[k_idx] *= (2 - epsiᵢ) / (2 + epsiᵢ)
+                        Density[k_1up] *= (2 - epsiⱼ) / (2 + epsiⱼ)
 
-                    #cond = d2 <= TheCLL.CutOffSquared
-                    # # If cond true, we use nl + 1 as new index
-                    # ind = ifelse(cond,nl+1,length(TheCLL.ListOfInteractions))
-                    # TheCLL.ListOfInteractions[ind] = (k_idx,k_1up,sqrt(d2))
-                    # # Then if cond true, update nl
-                    # nl  = ifelse(cond,ind,nl)
-                end
+                        if BoundaryBool[k_idx]
+                            Density[k_idx] = clamp(Density[k_idx],1000.0,2000.0)
+                        elseif BoundaryBool[k_1up]
+                            Density[k_1up] = clamp(Density[k_1up],1000.0,2000.0)
+                        end
+
+
+                        Velocity.V[k_idx] += dvdtᴺ⁺ * dt * MotionLimiter[k_idx]
+                        Velocity.V[k_1up] += dvdtᴺ⁻ * dt * MotionLimiter[k_1up]
+
+                        p[k_idx] += ((Velocity.V[k_idx] - vᵢ)/2) * dt * MotionLimiter[k_idx]
+                        p[k_1up] += ((Velocity.V[k_1up] - vⱼ)/2) * dt * MotionLimiter[k_1up]
+
+                        #cond = d2 <= TheCLL.CutOffSquared
+                        # # If cond true, we use nl + 1 as new index
+                        # ind = ifelse(cond,nl+1,length(TheCLL.ListOfInteractions))
+                        # TheCLL.ListOfInteractions[ind] = (k_idx,k_1up,sqrt(d2))
+                        # # Then if cond true, update nl
+                        # nl  = ifelse(cond,ind,nl)
+                    end
+                # end
             end
 
             for Sind ∈ TheCLL.Stencil
@@ -371,122 +387,139 @@ function CustomCLL(p, SimConstants, MotionLimiter, BoundaryBool, Kernel, KernelG
                     for k2 ∈ eachindex(indices_in_cell_plus)
                         k2_idx = indices_in_cell_plus[k2]
                         d2  = distance_condition(p[k1_idx],p[k2_idx])
-                        d   = sqrt(d2)
 
-                        xᵢ  = p[k1_idx]
-                        xⱼ  = p[k2_idx]
-                        xᵢⱼ = xᵢ - xⱼ
+                        # if d2 <= TheCLL.CutOffSquared
+                            d   = sqrt(d2)
 
-                        q   = clamp(d  * h⁻¹,0.0,2.0)
-                        W   = αD*(1-q/2)^4*(2*q + 1)
-                        Kernel[k1_idx] += W 
-                        Kernel[k2_idx] += W 
+                            xᵢ  = p[k1_idx]
+                            xⱼ  = p[k2_idx]
+                            xᵢⱼ = xᵢ - xⱼ
 
-                        Fac = αD*5*(q-2)^3*q / (8h*(q*h+1e-6))
-                        ∇ᵢWᵢⱼ = Fac * xᵢⱼ
-                        KernelGradient.V[k1_idx] +=  ∇ᵢWᵢⱼ
-                        KernelGradient.V[k2_idx] += -∇ᵢWᵢⱼ
+                            q   = clamp(d  * h⁻¹,0.0,2.0)
+                            W   = αD*(1-q/2)^4*(2*q + 1)
+                            Kernel[k1_idx] += W 
+                            Kernel[k2_idx] += W 
 
-                        d² = d*d
-                        Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
-                        ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, invCb)
-                        Pⱼᵢᴴ  = -Pᵢⱼᴴ
-                        ρⱼᵢᴴ  = faux_fancy(ρ₀, Pⱼᵢᴴ, invCb)
-    
-                        ρᵢ    = Density[k1_idx]
-                        ρⱼ    = Density[k2_idx]
-                        ρⱼᵢ   = ρⱼ - ρᵢ
-                        
-    
-                        FacRhoI = 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * inv(d²+η²)
-                        FacRhoJ = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(d²+η²)
-    
-                        vᵢ      = Velocity.V[k1_idx]
-                        vⱼ      = Velocity.V[k2_idx]
-                        vᵢⱼ     = vᵢ - vⱼ
-    
-                        dρdt⁺   = dot((m₀ *   vᵢⱼ  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼ * MotionLimiter[k1_idx]), ∇ᵢWᵢⱼ)
-                        dρdt⁻   = dot((m₀ *  -vᵢⱼ  + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼ * MotionLimiter[k2_idx]),-∇ᵢWᵢⱼ)
-    
-                        Pᵢ      = EquationOfState(ρᵢ,c₀,γ,ρ₀)
-                        Pⱼ      = EquationOfState(ρⱼ,c₀,γ,ρ₀)
+                            Fac = αD*5*(q-2)^3*q / (8h*(q*h+1e-6))
+                            ∇ᵢWᵢⱼ = Fac * xᵢⱼ
+                            KernelGradient.V[k1_idx] +=  ∇ᵢWᵢⱼ
+                            KernelGradient.V[k2_idx] += -∇ᵢWᵢⱼ
 
-                        ρ̄ᵢⱼ     = (ρᵢ+ρⱼ)*0.5
-                        Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
-    
-                        cond      = dot(vᵢⱼ, xᵢⱼ)
-                        cond_bool = cond < 0.0
-                        μᵢⱼ       = h*cond/(d²+η²)
-                        Πᵢⱼ       = cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ
-    
-                        dvdt⁺ = - m₀ * ( Pfac + Πᵢⱼ) *  ∇ᵢWᵢⱼ + SVector(0, g * BoundaryBool[k1_idx])
-                        dvdt⁻ = - m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ + SVector(0, g * BoundaryBool[k2_idx]) 
+                            d² = d*d
+                            Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
+                            ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, invCb)
+                            Pⱼᵢᴴ  = -Pᵢⱼᴴ
+                            ρⱼᵢᴴ  = faux_fancy(ρ₀, Pⱼᵢᴴ, invCb)
+        
+                            ρᵢ    = Density[k1_idx]
+                            ρⱼ    = Density[k2_idx]
+                            ρⱼᵢ   = ρⱼ - ρᵢ
+                            
+        
+                            FacRhoI = 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * inv(d²+η²)
+                            FacRhoJ = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(d²+η²)
+        
+                            vᵢ      = Velocity.V[k1_idx]
+                            vⱼ      = Velocity.V[k2_idx]
+                            vᵢⱼ     = vᵢ - vⱼ
+        
+                            dρdt⁺   = dot((m₀ *   vᵢⱼ  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼ * MotionLimiter[k1_idx]), ∇ᵢWᵢⱼ)
+                            dρdt⁻   = dot((m₀ *  -vᵢⱼ  + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼ * MotionLimiter[k2_idx]),-∇ᵢWᵢⱼ)
+        
+                            Pᵢ      = EquationOfState(ρᵢ,c₀,γ,ρ₀)
+                            Pⱼ      = EquationOfState(ρⱼ,c₀,γ,ρ₀)
 
-                        # Time stepping start
-                        ρᵢᴺ  = ρᵢ + dρdt⁺ * (dt/2)
-                        ρⱼᴺ  = ρⱼ + dρdt⁻ * (dt/2)
+                            ρ̄ᵢⱼ     = (ρᵢ+ρⱼ)*0.5
+                            Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
+        
+                            cond      = dot(vᵢⱼ, xᵢⱼ)
+                            cond_bool = cond < 0.0
+                            μᵢⱼ       = h*cond/(d²+η²)
+                            Πᵢⱼ       = cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ
+        
+                            dvdt⁺ = - m₀ * ( Pfac + Πᵢⱼ) *  ∇ᵢWᵢⱼ + SVector(0, g * GravityFactor[k1_idx])
+                            dvdt⁻ = - m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ + SVector(0, g * GravityFactor[k2_idx]) 
 
-                        vᵢᴺ  = vᵢ + dvdt⁺ * (dt/2) * MotionLimiter[k1_idx]
-                        vⱼᴺ  = vⱼ + dvdt⁻ * (dt/2) * MotionLimiter[k2_idx]
+                            # Time stepping start
+                            ρᵢᴺ  = ρᵢ + dρdt⁺ * (dt/2)
+                            ρⱼᴺ  = ρⱼ + dρdt⁻ * (dt/2)
 
-                        xᵢᴺ  = xᵢ + vᵢᴺ * (dt/2) * MotionLimiter[k1_idx]
-                        xⱼᴺ  = xⱼ + vⱼᴺ * (dt/2) * MotionLimiter[k2_idx]
+                            if BoundaryBool[k1_idx]
+                                ρᵢᴺ = clamp(ρᵢᴺ,1000,2000)
+                            elseif BoundaryBool[k2_idx]
+                                ρⱼᴺ = clamp(ρⱼᴺ,1000,2000)
+                            end
 
-                        # Update and go through motion again, copy paste from above
-                        # d² not updated!, neiter gradient
 
-                        xᵢⱼᴺ = xᵢᴺ - xⱼᴺ
+                            vᵢᴺ  = vᵢ + dvdt⁺ * (dt/2) * MotionLimiter[k1_idx]
+                            vⱼᴺ  = vⱼ + dvdt⁻ * (dt/2) * MotionLimiter[k2_idx]
 
-                        Pᵢⱼᴴᴺ  = ρ₀ * (-g) * -xᵢⱼᴺ[end]
-                        ρᵢⱼᴴᴺ  = faux_fancy(ρ₀, Pᵢⱼᴴᴺ, invCb)
-                        Pⱼᵢᴴᴺ  = -Pᵢⱼᴴᴺ
-                        ρⱼᵢᴴᴺ  = faux_fancy(ρ₀, Pⱼᵢᴴᴺ, invCb)
-    
-                        ρⱼᵢᴺ  = ρⱼᴺ - ρᵢᴺ
-                        
-    
-                        FacRhoIᴺ = 2 * ( ρⱼᵢᴺ - ρᵢⱼᴴᴺ) * inv(d²+η²)
-                        FacRhoJᴺ = 2 * (-ρⱼᵢᴺ - ρⱼᵢᴴᴺ) * inv(d²+η²)
-    
-                        vᵢⱼᴺ     = vᵢᴺ - vⱼᴺ
-    
-                        dρdtᴺ⁺   = dot((m₀ *   vᵢⱼᴺ  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoIᴺ *  -xᵢⱼᴺ * MotionLimiter[k1_idx]), ∇ᵢWᵢⱼ)
-                        dρdtᴺ⁻   = dot((m₀ *  -vᵢⱼᴺ  + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJᴺ *   xᵢⱼᴺ * MotionLimiter[k2_idx]),-∇ᵢWᵢⱼ)
-    
-                        Pᵢᴺ     = EquationOfState(ρᵢᴺ,c₀,γ,ρ₀)
-                        Pⱼᴺ     = EquationOfState(ρⱼᴺ,c₀,γ,ρ₀)
+                            xᵢᴺ  = xᵢ + vᵢᴺ * (dt/2) * MotionLimiter[k1_idx]
+                            xⱼᴺ  = xⱼ + vⱼᴺ * (dt/2) * MotionLimiter[k2_idx]
 
-                        ρ̄ᵢⱼᴺ     = (ρᵢᴺ+ρⱼᴺ)*0.5
-                        Pfacᴺ    = (Pᵢᴺ+Pⱼᴺ)/(ρᵢᴺ*ρⱼᴺ)
-    
-                        cond      = dot(vᵢⱼᴺ, xᵢⱼᴺ)
-                        cond_bool = cond < 0.0
-                        μᵢⱼᴺ       = h*cond/(d²+η²)
-                        Πᵢⱼᴺ       = cond_bool*(-α*c₀*μᵢⱼᴺ)/ρ̄ᵢⱼᴺ
-    
-                        dvdtᴺ⁺ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) *  ∇ᵢWᵢⱼ + SVector(0, g * BoundaryBool[k1_idx])
-                        dvdtᴺ⁻ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) * -∇ᵢWᵢⱼ + SVector(0, g * BoundaryBool[k2_idx])
+                            # Update and go through motion again, copy paste from above
+                            # d² not updated!, neiter gradient
 
-                        # Concluded time stepping
-                        
-                        epsiᵢ   = - (dρdtᴺ⁺ / ρᵢᴺ) * dt
-                        epsiⱼ   = - (dρdtᴺ⁻ / ρⱼᴺ) * dt
+                            xᵢⱼᴺ = xᵢᴺ - xⱼᴺ
 
-                        Density[k1_idx] *= (2 - epsiᵢ) / (2 + epsiᵢ)
-                        Density[k2_idx] *= (2 - epsiⱼ) / (2 + epsiⱼ)
+                            Pᵢⱼᴴᴺ  = ρ₀ * (-g) * -xᵢⱼᴺ[end]
+                            ρᵢⱼᴴᴺ  = faux_fancy(ρ₀, Pᵢⱼᴴᴺ, invCb)
+                            Pⱼᵢᴴᴺ  = -Pᵢⱼᴴᴺ
+                            ρⱼᵢᴴᴺ  = faux_fancy(ρ₀, Pⱼᵢᴴᴺ, invCb)
+        
+                            ρⱼᵢᴺ  = ρⱼᴺ - ρᵢᴺ
+                            
+        
+                            FacRhoIᴺ = 2 * ( ρⱼᵢᴺ - ρᵢⱼᴴᴺ) * inv(d²+η²)
+                            FacRhoJᴺ = 2 * (-ρⱼᵢᴺ - ρⱼᵢᴴᴺ) * inv(d²+η²)
+        
+                            vᵢⱼᴺ     = vᵢᴺ - vⱼᴺ
+        
+                            dρdtᴺ⁺   = dot((m₀ *   vᵢⱼᴺ  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoIᴺ *  -xᵢⱼᴺ * MotionLimiter[k1_idx]), ∇ᵢWᵢⱼ)
+                            dρdtᴺ⁻   = dot((m₀ *  -vᵢⱼᴺ  + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJᴺ *   xᵢⱼᴺ * MotionLimiter[k2_idx]),-∇ᵢWᵢⱼ)
+        
+                            Pᵢᴺ     = EquationOfState(ρᵢᴺ,c₀,γ,ρ₀)
+                            Pⱼᴺ     = EquationOfState(ρⱼᴺ,c₀,γ,ρ₀)
 
-                        Velocity.V[k1_idx] += dvdtᴺ⁺ * dt * MotionLimiter[k1_idx]
-                        Velocity.V[k2_idx] += dvdtᴺ⁻ * dt * MotionLimiter[k2_idx]
+                            ρ̄ᵢⱼᴺ     = (ρᵢᴺ+ρⱼᴺ)*0.5
+                            Pfacᴺ    = (Pᵢᴺ+Pⱼᴺ)/(ρᵢᴺ*ρⱼᴺ)
+        
+                            cond      = dot(vᵢⱼᴺ, xᵢⱼᴺ)
+                            cond_bool = cond < 0.0
+                            μᵢⱼᴺ       = h*cond/(d²+η²)
+                            Πᵢⱼᴺ       = cond_bool*(-α*c₀*μᵢⱼᴺ)/ρ̄ᵢⱼᴺ
+        
+                            dvdtᴺ⁺ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) *  ∇ᵢWᵢⱼ + SVector(0, g * GravityFactor[k1_idx])
+                            dvdtᴺ⁻ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) * -∇ᵢWᵢⱼ + SVector(0, g * GravityFactor[k2_idx])
 
-                        p[k1_idx] += ((Velocity.V[k1_idx] - vᵢ)/2) * dt * MotionLimiter[k1_idx]
-                        p[k2_idx] += ((Velocity.V[k2_idx] - vⱼ)/2) * dt * MotionLimiter[k2_idx]
+                            # Concluded time stepping
+                            
+                            epsiᵢ   = - (dρdtᴺ⁺ / ρᵢᴺ) * dt
+                            epsiⱼ   = - (dρdtᴺ⁻ / ρⱼᴺ) * dt
 
-                        # cond = d2 <= TheCLL.CutOffSquared
-                        # # If cond true, we use nl + 1 as new index
-                        # ind = ifelse(cond,nl+1,length(TheCLL.ListOfInteractions))
-                        # TheCLL.ListOfInteractions[ind] = (k1_idx,k2_idx,sqrt(d2))
-                        # # Then if cond true, update nl
-                        # nl  = ifelse(cond,ind,nl)
+                            Density[k1_idx] *= (2 - epsiᵢ) / (2 + epsiᵢ)
+                            Density[k2_idx] *= (2 - epsiⱼ) / (2 + epsiⱼ)
+
+                            if BoundaryBool[k1_idx]
+                                Density[k1_idx] = clamp( Density[k1_idx],1000,2000)
+                            elseif BoundaryBool[k2_idx]
+                                Density[k2_idx] = clamp( Density[k2_idx],1000,2000)
+                            end
+
+
+                            Velocity.V[k1_idx] += dvdtᴺ⁺ * dt * MotionLimiter[k1_idx]
+                            Velocity.V[k2_idx] += dvdtᴺ⁻ * dt * MotionLimiter[k2_idx]
+
+                            p[k1_idx] += ((Velocity.V[k1_idx] - vᵢ)/2) * dt * MotionLimiter[k1_idx]
+                            p[k2_idx] += ((Velocity.V[k2_idx] - vⱼ)/2) * dt * MotionLimiter[k2_idx]
+
+                            # cond = d2 <= TheCLL.CutOffSquared
+                            # # If cond true, we use nl + 1 as new index
+                            # ind = ifelse(cond,nl+1,length(TheCLL.ListOfInteractions))
+                            # TheCLL.ListOfInteractions[ind] = (k1_idx,k2_idx,sqrt(d2))
+                            # # Then if cond true, update nl
+                            # nl  = ifelse(cond,ind,nl)
+                        # end
                     end
                 end
             end
@@ -498,19 +531,19 @@ function CustomCLL(p, SimConstants, MotionLimiter, BoundaryBool, Kernel, KernelG
     return nothing
 end
 
-@profview CustomCLL(Position.V,SimConstants, MotionLimiter, BoundaryBool, Kernel, KernelGradient, Density, Velocity)
+@profview CustomCLL(Position.V,SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Kernel, KernelGradient, Density, Velocity)
 function f()
-    for iteration in 1:201
-        CustomCLL(Position.V,SimConstants, MotionLimiter, BoundaryBool, Kernel, KernelGradient, Density, Velocity)
-        ResetArrays!(Kernel, KernelGradient.V)
+    for iteration in 1:1001
+        CustomCLL(Position.V,SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Kernel, KernelGradient, Density, Velocity)
         if iteration % 50 == 0
             to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
             PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(iteration,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity"], Kernel, KernelGradient.V, Density, Velocity.V)
             println(iteration)
         end
+        ResetArrays!(Kernel, KernelGradient.V)
     end
 end
 
-f()
+@profview f()
 
-@benchmark CustomCLL($Position.V,$SimConstants, $MotionLimiter, $BoundaryBool, $Kernel, $KernelGradient, $Density, $Velocity)
+# @benchmark CustomCLL($Position.V,$SimConstants, $MotionLimiter, $BoundaryBool, $Kernel, $KernelGradient, $Density, $Velocity)
