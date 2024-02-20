@@ -169,7 +169,7 @@ FluidCSV     = "./input/FluidPoints_Dp0.02.csv"
 BoundCSV     = "./input/BoundaryPoints_Dp0.02.csv"
 
 SimMetaData  = SimulationMetaData{D, T}(
-                                SimulationName="MySimulation", 
+                                SimulationName="AllInOne", 
                                 SaveLocation=raw"E:\SecondApproach\Testing",
                                 MaxIterations=10001,
                                 OutputIteration=50,
@@ -499,8 +499,18 @@ function CustomCLL(p, SimConstants, MotionLimiter, BoundaryBool, Kernel, KernelG
 end
 
 @profview CustomCLL(Position.V,SimConstants, MotionLimiter, BoundaryBool, Kernel, KernelGradient, Density, Velocity)
+function f()
+    for iteration in 1:201
+        CustomCLL(Position.V,SimConstants, MotionLimiter, BoundaryBool, Kernel, KernelGradient, Density, Velocity)
+        ResetArrays!(Kernel, KernelGradient.V)
+        if iteration % 50 == 0
+            to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
+            PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(iteration,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity"], Kernel, KernelGradient.V, Density, Velocity.V)
+            println(iteration)
+        end
+    end
+end
 
-to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
- PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity"], Kernel, KernelGradient.V, Density, Velocity.V)
+f()
 
 @benchmark CustomCLL($Position.V,$SimConstants, $MotionLimiter, $BoundaryBool, $Kernel, $KernelGradient, $Density, $Velocity)
