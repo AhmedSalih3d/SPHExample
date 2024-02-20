@@ -3,9 +3,11 @@ import CellListMap
 using StaticArrays
 using Parameters
 using Plots; using Measures
+using StructArrays
+include("../src/ProduceVTP.jl")
 
 @with_kw struct CLL{I,T,D}
-    Points::Vector{SVector{D,T}}
+    Points::StructVector{SVector{D,T}}
     MaxValidIndex::Base.RefValue{Int} = Ref(0)
     CutOff::T
     CutOffSquared::T                         = CutOff^2
@@ -135,7 +137,65 @@ function CalculateTotalPossibleNumberOfInteractions(UniqueCells,Layout,Stencil,H
     return RealNL
 end
 
-function CustomCLL(p,TheCLL)
+using SPHExample 
+
+T = Float64
+FloatType = T
+D = 2
+Dimensions = D
+
+FluidCSV     = "./input/FluidPoints_Dp0.02.csv"
+BoundCSV     = "./input/BoundaryPoints_Dp0.02.csv"
+
+SimMetaData  = SimulationMetaData{D, T}(
+                                SimulationName="MySimulation", 
+                                SaveLocation=raw"E:\SecondApproach\Testing",
+                                MaxIterations=10001,
+                                OutputIteration=50,
+)
+# Initialze the constants to use
+SimConstants = SimulationConstants{T}()
+
+# Unpack the relevant simulation meta data
+@unpack HourGlass, SaveLocation, SimulationName, MaxIterations, OutputIteration, SilentOutput, ThreadsCPU = SimMetaData;
+
+# Unpack simulation constants
+@unpack ρ₀, dx, h, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimConstants
+
+# Load in the fluid and boundary particles. Return these points and both data frames
+# @inline is a hack here to remove all allocations further down due to uncertainty of the points type at compile time
+@inline points, density_fluid, density_bound  = LoadParticlesFromCSV(Dimensions,FloatType, FluidCSV,BoundCSV)
+Position           = DimensionalData(points.vectors...)
+# Read this as "GravityFactor * g", so -1 means negative acceleration for fluid particles
+GravityFactor            = [-ones(size(density_fluid,1)) ; zeros(size(density_bound,1))]
+
+# MotionLimiter is what allows fluid particles to move, while not letting the velocity of boundary
+# particles change
+MotionLimiter = [ ones(size(density_fluid,1)) ; zeros(size(density_bound,1))]
+
+# Based on MotionLimiter we assess which particles are boundary particles
+BoundaryBool  = .!Bool.(MotionLimiter)
+
+# Preallocate simulation arrays
+NumberOfPoints = length(points)
+
+Density           = deepcopy([density_fluid;density_bound])
+Kernel            = zeros(FloatType, NumberOfPoints)
+KernelL           = zeros(FloatType, NumberOfPoints)
+dρdtI             = zeros(FloatType, NumberOfPoints)
+ρₙ⁺               = zeros(FloatType, NumberOfPoints)
+dρdtIₙ⁺           = zeros(FloatType, NumberOfPoints)
+
+drhopLp            = zeros(FloatType, NumberOfPoints)
+drhopLn            = zeros(FloatType, NumberOfPoints) 
+Pressureᵢ          = zeros(FloatType, NumberOfPoints)
+
+
+function CustomCLL(p, SimConstants, Kernel)
+    @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimConstants
+    R = 2*h
+    TheCLL = CLL(Points=p,CutOff=R)
+
     nl    = 0
 
     @inbounds for Cind_ ∈ TheCLL.UniqueCells
@@ -151,14 +211,20 @@ function CustomCLL(p,TheCLL)
                   for kj = (ki+1):n_idx_cells
                     k_1up = indices_in_cell[kj]
                     d2 = distance_condition(p[k_idx],p[k_1up])
+                    d  = sqrt(d2)
 
-                    cond = d2 <= TheCLL.CutOffSquared
+                    q  = clamp(d  * h⁻¹,0.0,2.0)
+                    W  = αD*(1-q/2)^4*(2*q + 1)
+                    Kernel[k_idx] += W
+                    Kernel[k_1up] += W
+                    
 
-                    # If cond true, we use nl + 1 as new index
-                    ind = ifelse(cond,nl+1,length(TheCLL.ListOfInteractions))
-                    TheCLL.ListOfInteractions[ind] = (k_idx,k_1up,sqrt(d2))
-                    # Then if cond true, update nl
-                    nl  = ifelse(cond,ind,nl)
+                    #cond = d2 <= TheCLL.CutOffSquared
+                    # # If cond true, we use nl + 1 as new index
+                    # ind = ifelse(cond,nl+1,length(TheCLL.ListOfInteractions))
+                    # TheCLL.ListOfInteractions[ind] = (k_idx,k_1up,sqrt(d2))
+                    # # Then if cond true, update nl
+                    # nl  = ifelse(cond,ind,nl)
                 end
             end
 
@@ -172,14 +238,19 @@ function CustomCLL(p,TheCLL)
                     for k2 ∈ eachindex(indices_in_cell_plus)
                         k2_idx = indices_in_cell_plus[k2]
                         d2 = distance_condition(p[k1_idx],p[k2_idx])
+                        d  = sqrt(d2)
 
-                        cond = d2 <= TheCLL.CutOffSquared
+                        q  = clamp(d  * h⁻¹,0.0,2.0)
+                        W  = αD*(1-q/2)^4*(2*q + 1)
+                        Kernel[k1_idx] += W 
+                        Kernel[k2_idx] += W 
 
-                        # If cond true, we use nl + 1 as new index
-                        ind = ifelse(cond,nl+1,length(TheCLL.ListOfInteractions))
-                        TheCLL.ListOfInteractions[ind] = (k1_idx,k2_idx,sqrt(d2))
-                        # Then if cond true, update nl
-                        nl  = ifelse(cond,ind,nl)
+                        # cond = d2 <= TheCLL.CutOffSquared
+                        # # If cond true, we use nl + 1 as new index
+                        # ind = ifelse(cond,nl+1,length(TheCLL.ListOfInteractions))
+                        # TheCLL.ListOfInteractions[ind] = (k1_idx,k2_idx,sqrt(d2))
+                        # # Then if cond true, update nl
+                        # nl  = ifelse(cond,ind,nl)
                     end
                 end
             end
@@ -187,168 +258,13 @@ function CustomCLL(p,TheCLL)
 
     TheCLL.MaxValidIndex[] = nl
     # resize!(TheCLL.ListOfInteractions,nl)
-end
-
-## Plotting CLL
-
-function plot_cube(x, y, z, l, opacity=0.1)
-    w = h = l
-    x = x - l/2
-    y = y - h/2
-    z = z - w/2
-    xp = [x, x, x, x, x+l, x+l, x+l, x+l];
-    yp = [y, y+h, y, y+h, y, y, y+h, y+h];
-    zp = [z, z, z+w, z+w, z+w, z, z, z+w];
-    connections = [(1,2,3), (4,2,3), (4,7,8), (7,5,6), (2,4,7), (1,6,2), (2,7,6), (7,8,5), (4,8,5), (4,5,3), (1,6,3), (6,3,5)];
-    mesh3d!(xp, yp, zp; connections, xlabel="x", proj_type = :persp, linecolor=RGBA(0,0,0,0), opacity=opacity)
-end
-
-function PlotCLL(TheCLL)
-    I,T,D = getspecs(typeof(TheCLL))
-    # define a function that returns a Plots.Shape
-    rectangle(w, h, x, y) = Shape(x .+ [0,w,w,0], y .+ [0,0,h,h])
-
-    # To visualize cell midpoints
-    p = scatter(Tuple.(TheCLL.Points), aspectrato=1, size=(500,500))
-    #scatter!(getindex.(unique(TheCLL.Cells),1)*TheCLL.CutOff .+ TheCLL.CutOff,getindex.(unique(TheCLL.Cells),2)*TheCLL.CutOff .+ TheCLL.CutOff)
-    #plot!(rectangle.(TheCLL.CutOff,TheCLL.CutOff,getindex.(unique(TheCLL.Cells),1)*TheCLL.CutOff,getindex.(unique(TheCLL.Cells),2)*TheCLL.CutOff), legend=false,opacity=.5, color=:blue, aspectrato=1)
-
-    if D == 2
-        plot!(rectangle.(TheCLL.CutOff,TheCLL.CutOff,getindex.(unique(TheCLL.Cells),1)*TheCLL.CutOff,getindex.(unique(TheCLL.Cells),2)*TheCLL.CutOff), legend=false,opacity=.5, color=:blue, aspectrato=1)
-    elseif D == 3
-        map(x->plot_cube(x[1],x[2],x[3],TheCLL.CutOff),TheCLL.Points)
-    end
-
-    return p
-end
-
-
-## Plotting CellListMap
-function PlotCLM(Points,TheCLM)
-    # define a function that returns a Plots.Shape
-    rectangle(w, h, x, y) = Shape(x .+ [0,w,w,0], y .+ [0,0,h,h])
-
-    cellpoints = map(x->x.center,TheCLM.cl.cells)
-
-    # To visualize cell midpoints
-
-    p = CellListMap.draw_computing_cell(Points,TheCLM.box)
-
-    #p      = scatter(getindex.(Points,1),getindex.(Points,2), aspectrato=1, size=(500,500))
-    #scatter!(getindex.(cellpoints,1),getindex.(cellpoints,2))
-    #scatter!(getindex.(unique(TheCLL.Cells),1)*TheCLL.CutOff .+ TheCLL.CutOff,getindex.(unique(TheCLL.Cells),2)*TheCLL.CutOff .+ TheCLL.CutOff)
-    #plot!(rectangle.(TheCLL.CutOff,TheCLL.CutOff,getindex.(unique(TheCLL.Cells),1)*TheCLL.CutOff,getindex.(unique(TheCLL.Cells),2)*TheCLL.CutOff), legend=false,opacity=.5, color=:blue, aspectrato=1)
-    return p
-end
-
-function BenchmarkIteration(;n=20,d=2,r=0.1,T=Float64)
-    R = 2*r
-    p = rand(SVector{d,T},n)
-
-    S=CellListMap.InPlaceNeighborList(x=p, cutoff=R, parallel=false)
-    CLMB = @benchmark CellListMap.neighborlist!($S)
-
-    TheCLL = CLL(Points=p,CutOff=R)
-    CLLB = @benchmark CustomCLL($p,$TheCLL)
-    
-
-    println("CellListMap")
-    display(CLMB)
-    println("CLL")
-    display(CLLB)
 
     return nothing
 end
 
+@profview CustomCLL(Position.V,SimConstants, Kernel)
 
-function SingleIteration(;n=20,d=2,r=0.1,T=Float64)
-    R = 2*r
-    p = rand(SVector{d,T},n)
+to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
+ PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(Position.V), ["Kernel"], Kernel)
 
-    S=CellListMap.InPlaceNeighborList(x=p, cutoff=R, parallel=false)
-    CellListMap.neighborlist!(S)
-
-    TheCLL = CLL(Points=p,CutOff=R)
-    CustomCLL(p,TheCLL)
-
-    return S,TheCLL
-end
-
-function SingleIterationCLL(;n=20,d=2,r=0.1,T=Float64)
-    R = 2*r
-    p = rand(SVector{d,T},n)
-
-    TheCLL = CLL(Points=p,CutOff=R)
-    # @code_warntype CLL(Points=p,CutOff=R)
-    CustomCLL(p,TheCLL)
-
-    return TheCLL
-end
-println("If the solution is correct then the sum of all values (ijd) should be very close to equal")
-
-function PlotTest(;n=10,d=2,NSIM = 10)
-    CLMResults  = Vector{CellListMap.InPlaceNeighborList}(undef,NSIM)
-    CLLResults  = Vector{CLL}(undef,NSIM)
-    VerifyArray = Vector{Bool}(undef,NSIM)
-    for i = 1:NSIM
-        S,TheCLL    = SingleIteration(n=n,d=d);
-
-        CLMsum      = sum(sum.(S.nb.list))
-        CLLsum      = sum(sum.(TheCLL.ListOfInteractions[1:TheCLL.MaxValidIndex[]]))
-
-
-        CLMResults[i]  = S
-        CLLResults[i]  = TheCLL
-
-        VerifyArray[i] = isapprox(CLMsum,CLLsum; rtol=1e-3)
-    end
-
-    for i ∈ eachindex(VerifyArray)
-        p1 = PlotCLL(CLLResults[i])
-        p2 = PlotCLM(CLLResults[i].Points,CLMResults[i])
-        pt = plot(p1,p2, layout=(1,2), legend=false,size=(1000,500),aspect_ratio=1,margin=10mm)
-        title!(pt,"Result. Iteration: $i | Success? : $(VerifyArray[i])")
-        ylabel!("Y Axis")
-        xlabel!("X Axis")
-        display(pt)
-    end
-
-    
-    if all(VerifyArray)
-        println("Success! All comparisons matched.")
-    else
-        println("Fail! Not all comparisons match.")
-        false_matches = findall(VerifyArray .== false);
-        println("Failures at: $(reduce(hcat,false_matches))")
-        
-
-        for f in false_matches
-
-            println("|===============================================================================|")
-            println("ITERATION $f")
-            #println("CLM Results:",CLMResults[f].nb.list)
-            #println("CLL Results:",CLLResults[f].ListOfInteractions[1:TheCLL.MaxValidIndex[]])
-            println("|===============================================================================|")
-
-            p1 = PlotCLL(CLLResults[f])
-            p2 = PlotCLM(CLLResults[f].Points,CLMResults[f])
-            pt = plot(p1,p2, layout=(1,2), legend=false,size=(1000,500),aspect_ratio=1,margin=10mm)
-            title!(pt,"FAIL. Iteration: $f")
-            ylabel!("Y Axis")
-            xlabel!("X Axis")
-            display(pt)
-        end
-
-    end
-
-    return CLMResults,CLLResults
-end
-
-# #TheCLM,TheCLL = SingleIteration(n=100,d=2);
-CLMResults,CLLResults = PlotTest(n=7000,d=2, NSIM=10);
-
-BenchmarkIteration(n=7000)
-
-@profview a = SingleIterationCLL(n=7000,d=2);
-
-nothing
+# @benchmark CustomCLL($Position.V,$SimConstants, $Kernel)
