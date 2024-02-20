@@ -15,7 +15,7 @@ using Plots; using Measures
     ZeroOffset::I                            = 1 #Since we start from 0 when generating cells
 
     ListOfInteractions::Vector{Tuple{I,I,T}} = Vector{Tuple{Int,Int,getsvecT(eltype(Points))}}(undef,length(Points)^2)
-    Stencil::Vector{NTuple{D, I}}            = neighbors(getsvecD(eltype(Points))) 
+    Stencil::Vector{NTuple{D, I}}            = neighbors(Val(getsvecD(eltype(Points))) )
     
     Cells::Vector{NTuple{D, I}}              = ExtractCells(Points,CutOff,getsvecD(eltype(Points)))
     UniqueCells::Vector{NTuple{D, I}}        = unique(Cells)
