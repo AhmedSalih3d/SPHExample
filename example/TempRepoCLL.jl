@@ -20,7 +20,7 @@ using Plots; using Measures
     Cells::Vector{NTuple{D, I}}              = ExtractCells(Points,CutOff,Val(getsvecD(eltype(Points))))
     UniqueCells::Vector{NTuple{D, I}}        = unique(Cells)
     Nmax::I                                  = maximum(reinterpret(Int,@view(Cells[:]))) + ZeroOffset
-    Layout::Array{Vector{I}, D}              = GenerateM(Nmax,ZeroOffset,HalfPad,Padding,Cells,getsvecDT(eltype(Points)))
+    Layout::Array{Vector{I}, D}              = GenerateM(Nmax,ZeroOffset,HalfPad,Padding,Cells,Val(getsvecD(eltype(Points))))
     
 end
 @inline getspecs(::Type{CLL{I,T,D}}) where {I,T,D} = (typeINT = I, typeFLT = T, dimensions=D)
@@ -62,9 +62,8 @@ function ExtractCells(p,R,::Val{d}) where d
     return cells
 end
 
-function GenerateM(Nmax,ZeroOffset,HalfPad,Padding,cells,PointsTD)
-
-    Msize = tuple(repeat([Nmax+Padding],PointsTD.dimensions)...)
+function GenerateM(Nmax,ZeroOffset,HalfPad,Padding,cells,v::Val{d}) where d
+    Msize = ntuple(_ -> Nmax+Padding,v)
     M     = Array{Vector{Int}}(undef,Msize)
 
     #sizehint! is a genius function
@@ -297,7 +296,7 @@ function PlotTest(;n=10,d=2,NSIM = 10)
     return CLMResults,CLLResults
 end
 
-#TheCLM,TheCLL = SingleIteration(n=100,d=2);
+# #TheCLM,TheCLL = SingleIteration(n=100,d=2);
 CLMResults,CLLResults = PlotTest(n=7000,d=2);
 
 BenchmarkIteration(n=7000)
