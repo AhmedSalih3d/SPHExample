@@ -17,7 +17,7 @@ using Plots; using Measures
     ListOfInteractions::Vector{Tuple{I,I,T}} = Vector{Tuple{Int,Int,getsvecT(eltype(Points))}}(undef,length(Points)^2)
     Stencil::Vector{NTuple{D, I}}            = neighbors(Val(getsvecD(eltype(Points))) )
     
-    Cells::Vector{NTuple{D, I}}              = ExtractCells(Points,CutOff,getsvecD(eltype(Points)))
+    Cells::Vector{NTuple{D, I}}              = ExtractCells(Points,CutOff,Val(getsvecD(eltype(Points))))
     UniqueCells::Vector{NTuple{D, I}}        = unique(Cells)
     Nmax::I                                  = maximum(reinterpret(Int,@view(Cells[:]))) + ZeroOffset
     Layout::Array{Vector{I}, D}              = GenerateM(Nmax,ZeroOffset,HalfPad,Padding,Cells,getsvecDT(eltype(Points)))
@@ -50,16 +50,13 @@ function neighbors(v::Val{d}) where d
 end
 
 
-
-
-
-function ExtractCells(p,R,d)
+function ExtractCells(p,R,::Val{d}) where d
     n = length(p)
     cells = Vector{NTuple{d,Int}}(undef,n)
 
     for i = 1:n
-        v = Int.(fld.(p[i],R))
-        cells[i] = tuple(v...)
+        vs = Int.(fld.(p[i],R))
+        cells[i] = tuple(vs...)
     end
 
     return cells
@@ -235,6 +232,7 @@ function SingleIterationCLL(;n=20,d=2,r=0.1,T=Float64)
     p = rand(SVector{d,T},n)
 
     TheCLL = CLL(Points=p,CutOff=R)
+    @code_warntype CLL(Points=p,CutOff=R)
     CustomCLL(p,TheCLL)
 
     return TheCLL
