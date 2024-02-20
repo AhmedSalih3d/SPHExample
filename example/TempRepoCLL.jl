@@ -1,13 +1,12 @@
 using BenchmarkTools
 import CellListMap
 using StaticArrays
-using LinearAlgebra
 using Parameters
 using Plots; using Measures
 
 @with_kw struct CLL{I,T,D}
     Points::Vector{SVector{D,T}}
-    MaxValidIndex::Base.RefValue{I} = Ref(0)
+    MaxValidIndex::Base.RefValue{Int} = Ref(0)
     CutOff::T
     CutOffSquared::T                         = CutOff^2
     Padding::I                               = 2
@@ -21,7 +20,6 @@ using Plots; using Measures
     UniqueCells::Vector{NTuple{D, I}}        = unique(Cells)
     Nmax::I                                  = maximum(reinterpret(Int,@view(Cells[:]))) + ZeroOffset
     Layout::Array{Vector{I}, D}              = GenerateM(Nmax,ZeroOffset,HalfPad,Padding,Cells,Val(getsvecD(eltype(Points))))
-    
 end
 @inline getspecs(::Type{CLL{I,T,D}}) where {I,T,D} = (typeINT = I, typeFLT = T, dimensions=D)
 @inline getsvecDT(::Type{SVector{d,T}}) where {d,T} = (dimensions=d, type=T)
@@ -92,20 +90,20 @@ function CustomCLL(p,TheCLL)
         Cind = (Cind_ .+ 1 .+ TheCLL.HalfPad)
 
             # The indices in the cell are:
-            @inbounds indices_in_cell = TheCLL.Layout[Cind...]
+            indices_in_cell = TheCLL.Layout[Cind...]
 
             n_idx_cells = length(indices_in_cell)
-            @inbounds for ki = 1:n_idx_cells-1
-                @inbounds  k_idx = indices_in_cell[ki]
-                  @inbounds for kj = (ki+1):n_idx_cells
-                    @inbounds  k_1up = indices_in_cell[kj]
-                    @inbounds  d2 = distance_condition(p[k_idx],p[k_1up])
+            for ki = 1:n_idx_cells-1
+                k_idx = indices_in_cell[ki]
+                  for kj = (ki+1):n_idx_cells
+                    k_1up = indices_in_cell[kj]
+                    d2 = distance_condition(p[k_idx],p[k_1up])
 
                     cond = d2 <= TheCLL.CutOffSquared
 
                     # If cond true, we use nl + 1 as new index
                     ind = ifelse(cond,nl+1,length(TheCLL.ListOfInteractions))
-                    @inbounds TheCLL.ListOfInteractions[ind] = (k_idx,k_1up,sqrt(d2))
+                    TheCLL.ListOfInteractions[ind] = (k_idx,k_1up,sqrt(d2))
                     # Then if cond true, update nl
                     nl  = ifelse(cond,ind,nl)
                 end
@@ -113,20 +111,20 @@ function CustomCLL(p,TheCLL)
 
             for Sind ∈ TheCLL.Stencil
                 Sind = (Cind .+ Sind)
-               @inbounds indices_in_cell_plus  = TheCLL.Layout[Sind...]
+                indices_in_cell_plus  = TheCLL.Layout[Sind...]
 
                 # Here a double loop to compare indices_in_cell[k] to all possible neighbours
-                @inbounds for k1 ∈ eachindex(indices_in_cell)
-                    @inbounds k1_idx = indices_in_cell[k1]
-                    @inbounds for k2 ∈ eachindex(indices_in_cell_plus)
-                        @inbounds k2_idx = indices_in_cell_plus[k2]
-                        @inbounds d2 = distance_condition(p[k1_idx],p[k2_idx])
+                for k1 ∈ eachindex(indices_in_cell)
+                    k1_idx = indices_in_cell[k1]
+                    for k2 ∈ eachindex(indices_in_cell_plus)
+                        k2_idx = indices_in_cell_plus[k2]
+                        d2 = distance_condition(p[k1_idx],p[k2_idx])
 
                         cond = d2 <= TheCLL.CutOffSquared
 
                         # If cond true, we use nl + 1 as new index
                         ind = ifelse(cond,nl+1,length(TheCLL.ListOfInteractions))
-                        @inbounds TheCLL.ListOfInteractions[ind] = (k1_idx,k2_idx,sqrt(d2))
+                        TheCLL.ListOfInteractions[ind] = (k1_idx,k2_idx,sqrt(d2))
                         # Then if cond true, update nl
                         nl  = ifelse(cond,ind,nl)
                     end
@@ -134,7 +132,7 @@ function CustomCLL(p,TheCLL)
             end
     end
 
-    @inbounds TheCLL.MaxValidIndex[] = nl
+    TheCLL.MaxValidIndex[] = nl
 
     #resize!(TheCLL.ListOfInteractions,nl)
 end
@@ -297,10 +295,10 @@ function PlotTest(;n=10,d=2,NSIM = 10)
 end
 
 # #TheCLM,TheCLL = SingleIteration(n=100,d=2);
-CLMResults,CLLResults = PlotTest(n=7000,d=2);
+# CLMResults,CLLResults = PlotTest(n=7000,d=2);
 
 BenchmarkIteration(n=7000)
 
-@profview a = SingleIterationCLL(n=7000,d=2);
+# @profview a = SingleIterationCLL(n=7000,d=2);
 
 nothing
