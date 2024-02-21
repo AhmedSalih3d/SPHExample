@@ -126,9 +126,14 @@ function RunSimulation(;FluidCSV::String,
     I_boundary       = zeros(Int64,   NumberOfBoundaryPoints)
     J_boundary       = zeros(Int64,   NumberOfBoundaryPoints)
     D_boundary       = zeros(Float64, NumberOfBoundaryPoints)
-    list_me_boundary = StructArray{Tuple{Int64,Int64,Float64}}((I,J,D))
+    list_me_boundary = StructArray{Tuple{Int64,Int64,Float64}}((I_boundary,J_boundary,D_boundary))
     xᵢⱼ_boundary     = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
-    system_boundary  = InPlaceNeighborList(x=PositionBoundary.V, cutoff=2*h*1)
+    KernelGradient_boundary     = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
+    KernelGradientL_boundary    = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
+    Kernel_boundary             = zeros(FloatType, NumberOfBoundaryPoints)
+    KernelL_boundary            = zeros(FloatType, NumberOfBoundaryPoints)
+    system_boundary             = InPlaceNeighborList(x=PositionBoundary.V, cutoff=2*h*1)
+    neighborlist!(system_boundary) #Have to calculate it once, to get system_boundary.nb.n
 
     # Save the initial particle layout with dummy values
     # create_vtp_file(SimMetaData,SimConstants,Position.V; Kernel, KernelGradient.V, Density, Acceleration)
@@ -151,8 +156,10 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "0 | Reset arrays to zero and resize L arrays" begin
             # Resize L based values (interactions between all particles i and j) based on length of neighborsystem.nb.list
             ResizeBuffers!(KernelL, KernelGradientL, dvdtL, xᵢⱼ, drhopLp, drhopLn; N = system.nb.n)
+            ResizeBuffers!(xᵢⱼ_boundary, KernelL_boundary, KernelGradientL_boundary; N = system_boundary.nb.n)
             # Clean up arrays, Vector{T} and Vector{SVector{3,T}}
             ResetArrays!(Kernel, dρdtI,dρdtIₙ⁺,KernelGradient.V,dvdtI.V, Acceleration.V, drhopLp, drhopLn)
+            ResetArrays!(Kernel_boundary, KernelGradient_boundary.V)
         end
 
          # Here we calculate the distances between particles, output the kernel gradient value for each particle and also the kernel gradient value
@@ -164,12 +171,13 @@ function RunSimulation(;FluidCSV::String,
             # Here we output the kernel and kernel gradient value for each particle. Note that KernelL is list of interactions, while Kernel is the value for each actual particle. Similar naming for other variables
             ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!(KernelGradient,KernelGradientL, Kernel, KernelL, I, J, D, xᵢⱼ, SimConstants)
 
-            # neighborlist!(system_boundary)
-            # list_me_boundary = system_boundary.nb.list
-            # updatexᵢⱼ!(xᵢⱼ_boundary, PositionBoundary, I_boundary, J_boundary)
-            # Here we output the kernel and kernel gradient value for each particle. Note that KernelL is list of interactions, while Kernel is the value for each actual particle. Similar naming for other variables
-            # ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!(KernelGradient,KernelGradientL, Kernel, KernelL, I, J, D, xᵢⱼ, SimConstants)
-            # BoundaryNormals.V[BoundaryBool] .= -KernelGradient.V[BoundaryBool]*5
+            update!(system_boundary,PositionBoundary.V)
+            neighborlist!(system_boundary)
+            resize!(list_me_boundary, system_boundary.nb.n)
+            list_me_boundary .= system_boundary.nb.list
+            updatexᵢⱼ!(xᵢⱼ_boundary, PositionBoundary, I_boundary, J_boundary)
+            ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!(KernelGradient_boundary,KernelGradientL_boundary, Kernel_boundary, KernelL_boundary, I_boundary, J_boundary, D_boundary, xᵢⱼ_boundary, SimConstants)
+            BoundaryNormals.V[BoundaryBool] .= -KernelGradient_boundary.V*5
         end
 
         # Then we calculate the density derivative at time step "n"
@@ -247,7 +255,7 @@ begin
     SimMetaData  = SimulationMetaData{D, T}(
                                     SimulationName="MySimulation", 
                                     SaveLocation=raw"E:\SecondApproach\Results", 
-                                    MaxIterations=10001,
+                                    MaxIterations=101,
                                     OutputIteration=50,
     )
     # Initialze the constants to use
