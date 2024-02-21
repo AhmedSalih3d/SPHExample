@@ -195,7 +195,7 @@ function ∂ρᵢ∂tDDT!(dρdtI, list, xᵢⱼ,xᵢⱼʸ,ρ,v,WgL,MotionLimiter
         Ψⱼᵢ  = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * (-xⱼᵢ)/(r²+η²)
         Dⱼ   = δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ,-∇ᵢWᵢⱼ)
 
-        dρdtI[j] += FirstPartOfContinuity + Dⱼ * MotionLimiter[i]
+        dρdtI[j] += FirstPartOfContinuity + Dⱼ * MotionLimiter[j]
     end
 
     return nothing
