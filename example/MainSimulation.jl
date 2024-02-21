@@ -105,18 +105,30 @@ function RunSimulation(;FluidCSV::String,
     dvdtL              = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
     Velocityₙ⁺         = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
     Positionₙ⁺         = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
+    BoundaryNormals   = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
  
 
     # Initialize the system system.nb.list
     # The result from CellListMap using neighborlist! is a vector of tuples, (i index, j index, d eucledian distance between particles)
     # By using I, J, D as below, through the StructArray composition, it is possible to do as close as possible to an in-place transfer
-    # of information. Using I, J and D vectors allows for parallezation using @tturbo from LoopVectorization.jl. 
+    # of information. Using I, J and D vectors allows for parallezation using @tturbo from LoopVectorization.jl.
+
     I                 = zeros(Int64,   NumberOfPoints)
     J                 = zeros(Int64,   NumberOfPoints)
     D                 = zeros(Float64, NumberOfPoints)
     list_me           = StructArray{Tuple{Int64,Int64,Float64}}((I,J,D))
 
-    system  = InPlaceNeighborList(x=Position.V, cutoff=2*h*1.1, parallel=true)
+    system          = InPlaceNeighborList(x=Position.V, cutoff=2*h*1)
+
+    NumberOfBoundaryPoints = length(density_bound)
+    PositionBoundary = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
+    PositionBoundary.V .= deepcopy(Position.V[length(density_fluid)+1:end])
+    I_boundary       = zeros(Int64,   NumberOfBoundaryPoints)
+    J_boundary       = zeros(Int64,   NumberOfBoundaryPoints)
+    D_boundary       = zeros(Float64, NumberOfBoundaryPoints)
+    list_me_boundary = StructArray{Tuple{Int64,Int64,Float64}}((I,J,D))
+    xᵢⱼ_boundary     = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
+    system_boundary  = InPlaceNeighborList(x=PositionBoundary.V, cutoff=2*h*1)
 
     # Save the initial particle layout with dummy values
     # create_vtp_file(SimMetaData,SimConstants,Position.V; Kernel, KernelGradient.V, Density, Acceleration)
@@ -151,6 +163,13 @@ function RunSimulation(;FluidCSV::String,
             updatexᵢⱼ!(xᵢⱼ, Position, I, J)
             # Here we output the kernel and kernel gradient value for each particle. Note that KernelL is list of interactions, while Kernel is the value for each actual particle. Similar naming for other variables
             ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!(KernelGradient,KernelGradientL, Kernel, KernelL, I, J, D, xᵢⱼ, SimConstants)
+
+            # neighborlist!(system_boundary)
+            # list_me_boundary = system_boundary.nb.list
+            # updatexᵢⱼ!(xᵢⱼ_boundary, PositionBoundary, I_boundary, J_boundary)
+            # Here we output the kernel and kernel gradient value for each particle. Note that KernelL is list of interactions, while Kernel is the value for each actual particle. Similar naming for other variables
+            # ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!(KernelGradient,KernelGradientL, Kernel, KernelL, I, J, D, xᵢⱼ, SimConstants)
+            # BoundaryNormals.V[BoundaryBool] .= -KernelGradient.V[BoundaryBool]*5
         end
 
         # Then we calculate the density derivative at time step "n"
@@ -203,7 +222,7 @@ function RunSimulation(;FluidCSV::String,
             to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
             if Dimensions == 2
                 @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(Position.V)
-                , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, to_3d(KernelGradient.V), Density, Pressureᵢ, to_3d(Acceleration.V), to_3d(Velocity.V))
+                , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity", "BoundaryNormals"], Kernel, to_3d(KernelGradient.V), Density, Pressureᵢ, to_3d(Acceleration.V), to_3d(Velocity.V), to_3d(BoundaryNormals.V))
             elseif Dimensions == 3
                 @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", Position.V
                 , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, KernelGradient.V, Density, Pressureᵢ, Acceleration.V, Velocity.V)
