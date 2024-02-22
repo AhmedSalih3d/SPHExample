@@ -209,7 +209,8 @@ function RunSimulation(;FluidCSV::String,
             IsActive                 =  Kernel_boundary/maximum(Kernel_boundary)
             NormalizedGradient =  (-KernelGradient_boundary.V ./ norm.(KernelGradient_boundary.V))
             IDGradient          = norm.(KernelGradient_boundary.V) .> 0.1 * maximum(norm.(KernelGradient_boundary.V))
-            BoundaryNormals.V .= NormalizedGradient .* IsActive .* IDGradient .* ( h .* (auto_bin_assignments(Kernel_boundary,Wᵢⱼ(αD, h))[1] .- 1))
+            println(h,dx)
+            BoundaryNormals.V .= NormalizedGradient .* IsActive .* ((dx + dx/(h/dx)) * (auto_bin_assignments(Kernel_boundary,Wᵢⱼ(αD, (dx + dx/(h/dx))))[1] .- 1))
             GhostNodes         = PositionBoundary.V[IDGradient] .+ BoundaryNormals.V[IDGradient]
         end
 
