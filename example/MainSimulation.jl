@@ -228,10 +228,10 @@ function RunSimulation(;FluidCSV::String,
         update!(system_gf, GhostNodes,Position.V[1:length(density_fluid)])
         resize!(list_me_gf,system_gf.nb.n)
         list_me_gf .= system_gf.nb.list
-        # for iter in eachindex(PositionBoundary)
-
-        #     W👻ⱼ = 
-        # end
+        for iter in eachindex(GhostNodes)
+            i,j,d = I_ghost_and_fluid[iter], J_ghost_and_fluid[iter], D_ghost_and_fluid[iter]
+            # W👻ⱼ = 
+        end
 
 
         # # We calculate viscosity contribution and momentum equation at time step "n"
