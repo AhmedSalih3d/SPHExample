@@ -204,12 +204,12 @@ function RunSimulation(;FluidCSV::String,
             list_me_boundary .= system_boundary.nb.list
             updatexᵢⱼ!(xᵢⱼ_boundary, PositionBoundary, I_boundary, J_boundary)
             ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!(KernelGradient_boundary,KernelGradientL_boundary, Kernel_boundary, KernelL_boundary, I_boundary, J_boundary, D_boundary, xᵢⱼ_boundary, SimConstants)
-            # println(auto_bin_assignments(Kernel_boundary,Wᵢⱼ(αD, 0); reverse_order=false))
+            println(auto_bin_assignments(Kernel_boundary,Wᵢⱼ(αD, dx / h))[2])
             # BoundaryNormals.V[BoundaryBool] .= ((auto_bin_assignments(Kernel_boundary,Wᵢⱼ(αD, dx / 2 / h))[1] .- 1) .* ((-KernelGradient_boundary.V ./ (norm(KernelGradient_boundary.V))) ./ abs.((Kernel_boundary/maximum(Kernel_boundary)) .-1))) .* (Kernel_boundary/maximum(Kernel_boundary))
             IsActive                 =  Kernel_boundary/maximum(Kernel_boundary)
             NormalizedGradient =  (-KernelGradient_boundary.V ./ norm.(KernelGradient_boundary.V))
             IDGradient          = norm.(KernelGradient_boundary.V) .> 0.1 * maximum(norm.(KernelGradient_boundary.V))
-            BoundaryNormals.V .= NormalizedGradient .* IsActive * dx/2 .* IDGradient .* auto_bin_assignments(Kernel_boundary,Wᵢⱼ(αD, dx / h))[1]
+            BoundaryNormals.V .= NormalizedGradient .* IsActive .* IDGradient .* ( h .* (auto_bin_assignments(Kernel_boundary,Wᵢⱼ(αD, h))[1] .- 1))
             GhostNodes         = PositionBoundary.V[IDGradient] .+ BoundaryNormals.V[IDGradient]
         end
 
