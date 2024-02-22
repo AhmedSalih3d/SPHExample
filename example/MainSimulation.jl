@@ -210,7 +210,9 @@ function RunSimulation(;FluidCSV::String,
             # BoundaryNormals.V[BoundaryBool] .= ((auto_bin_assignments(Kernel_boundary,Wᵢⱼ(αD, dx / 2 / h))[1] .- 1) .* ((-KernelGradient_boundary.V ./ (norm(KernelGradient_boundary.V))) ./ abs.((Kernel_boundary/maximum(Kernel_boundary)) .-1))) .* (Kernel_boundary/maximum(Kernel_boundary))
             IsActive           =  Kernel_boundary/maximum(Kernel_boundary)
             NormalizedGradient =  (-KernelGradient_boundary.V ./ norm(KernelGradient_boundary.V))
+            IDGradient     = norm.(KernelGradient_boundary.V) .> 0.1 * maximum(norm.(KernelGradient_boundary.V))
             BoundaryNormals.V[BoundaryBool] .=  NormalizedGradient .* auto_bin_assignments(Kernel_boundary,Wᵢⱼ(αD, h))[1] ./ IsActive / 2 #.* IsActive ./ IsActive
+            GhostNodes         = PositionBoundary.V[IDGradient] .+ BoundaryNormals.V[BoundaryBool][IDGradient]
         end
 
         # Then we calculate the density derivative at time step "n"
@@ -264,6 +266,9 @@ function RunSimulation(;FluidCSV::String,
             if Dimensions == 2
                 @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(Position.V)
                 , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity", "BoundaryNormals"], Kernel, to_3d(KernelGradient.V), Density, Pressureᵢ, to_3d(Acceleration.V), to_3d(Velocity.V), to_3d(BoundaryNormals.V))
+                @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * "BoundaryNormals" * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(PositionBoundary.V)
+                , ["Kernel", "KernelGradient", "BoundaryNormals"], Kernel_boundary, to_3d(KernelGradient_boundary.V), to_3d(BoundaryNormals.V[BoundaryBool]))
+                @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * "GhostNodes" * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(GhostNodes))
             elseif Dimensions == 3
                 @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", Position.V
                 , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, KernelGradient.V, Density, Pressureᵢ, Acceleration.V, Velocity.V)
