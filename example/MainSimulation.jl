@@ -12,6 +12,35 @@ using Formatting
 using StructArrays
 using LoopVectorization
 
+function auto_bin_assignments(V, buffer; reverse_order::Bool=true)
+    # Identify unique bin centers based on the sorted unique values
+    unique_values = sort(unique(V))
+    bins = [unique_values[1]]
+
+    # Group close values into the same bin
+    for val in unique_values[2:end]
+        if val > (bins[end] + buffer)
+            push!(bins, val)
+        end
+    end
+
+    # Reverse the bin order if requested
+    reverse_order && reverse!(bins)
+
+    # Assign bin numbers to the elements of V
+    bin_assignments = zeros(Int, length(V))
+    for (i, value) in enumerate(V)
+        for (bin_num, bin_center) in enumerate(bins)
+            if abs(value - bin_center) <= buffer
+                bin_assignments[i] = reverse_order ? length(bins) - bin_num + 1 : bin_num
+                break
+            end
+        end
+    end
+    
+    return bin_assignments, bins
+end
+
 include("../src/ProduceVTP.jl")
 
 """
@@ -118,6 +147,7 @@ function RunSimulation(;FluidCSV::String,
 
     system          = InPlaceNeighborList(x=Position.V, cutoff=2*h*1)
 
+    ### Calculate Ghost Nodes Position
     NumberOfBoundaryPoints = length(density_bound)
     PositionBoundary = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
     PositionBoundary.V .= deepcopy(Position.V[length(density_fluid)+1:end])
@@ -133,6 +163,18 @@ function RunSimulation(;FluidCSV::String,
     KernelL_boundary            = zeros(FloatType, NumberOfBoundaryPoints)
     system_boundary             = InPlaceNeighborList(x=PositionBoundary.V, cutoff=2*h*1)
     neighborlist!(system_boundary) #Have to calculate it once, to get system_boundary.nb.n
+    ResizeBuffers!(list_me_boundary, xᵢⱼ_boundary, KernelL_boundary, KernelGradientL_boundary; N = system_boundary.nb.n)
+    # ResetArrays!(Kernel_boundary, KernelGradient_boundary.V)
+    list_me_boundary .= system_boundary.nb.list
+    updatexᵢⱼ!(xᵢⱼ_boundary, PositionBoundary, I_boundary, J_boundary)
+    ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!(KernelGradient_boundary,KernelGradientL_boundary, Kernel_boundary, KernelL_boundary, I_boundary, J_boundary, D_boundary, xᵢⱼ_boundary, SimConstants)
+    IsActive                 =  Kernel_boundary/maximum(Kernel_boundary)
+    NormalizedGradient       =  (-KernelGradient_boundary.V ./ norm.(KernelGradient_boundary.V))
+    IDGradient               = norm.(KernelGradient_boundary.V) .> 0.1 * maximum(norm.(KernelGradient_boundary.V))
+    BoundaryNormals.V       .= NormalizedGradient .* IsActive .* ((dx + dx/(h/dx)) * (auto_bin_assignments(Kernel_boundary,Wᵢⱼ(αD, (dx + dx/(h/dx))))[1] .- 1))
+    GhostNodes               = PositionBoundary.V[IDGradient] .+ BoundaryNormals.V[IDGradient]
+    ### End calculate ghost nodes
+
 
     # Save the initial particle layout with dummy values
     # create_vtp_file(SimMetaData,SimConstants,Position.V; Kernel, KernelGradient.V, Density, Acceleration)
@@ -141,34 +183,6 @@ function RunSimulation(;FluidCSV::String,
     # Define Progress spec for displaying simulation results
     show_vals(x) = [(:(Iteration),format(FormatExpr("{1:d}"), x.Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"),x.TotalTime))]
     
-    function auto_bin_assignments(V, buffer; reverse_order::Bool=true)
-        # Identify unique bin centers based on the sorted unique values
-        unique_values = sort(unique(V))
-        bins = [unique_values[1]]
-    
-        # Group close values into the same bin
-        for val in unique_values[2:end]
-            if val > (bins[end] + buffer)
-                push!(bins, val)
-            end
-        end
-    
-        # Reverse the bin order if requested
-        reverse_order && reverse!(bins)
-    
-        # Assign bin numbers to the elements of V
-        bin_assignments = zeros(Int, length(V))
-        for (i, value) in enumerate(V)
-            for (bin_num, bin_center) in enumerate(bins)
-                if abs(value - bin_center) <= buffer
-                    bin_assignments[i] = reverse_order ? length(bins) - bin_num + 1 : bin_num
-                    break
-                end
-            end
-        end
-        
-        return bin_assignments, bins
-    end
     @inbounds for SimMetaData.Iteration = 1:MaxIterations
         # Be sure to update and retrieve the updated neighbour list at each time step
         @timeit HourGlass "0 | Update Neighbour system.nb.list" begin
@@ -183,10 +197,8 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "0 | Reset arrays to zero and resize L arrays" begin
             # Resize L based values (interactions between all particles i and j) based on length of neighborsystem.nb.list
             ResizeBuffers!(KernelL, KernelGradientL, dvdtL, xᵢⱼ, drhopLp, drhopLn; N = system.nb.n)
-            ResizeBuffers!(xᵢⱼ_boundary, KernelL_boundary, KernelGradientL_boundary; N = system_boundary.nb.n)
             # Clean up arrays, Vector{T} and Vector{SVector{3,T}}
             ResetArrays!(Kernel, dρdtI,dρdtIₙ⁺,KernelGradient.V,dvdtI.V, Acceleration.V, drhopLp, drhopLn)
-            ResetArrays!(Kernel_boundary, KernelGradient_boundary.V)
         end
 
          # Here we calculate the distances between particles, output the kernel gradient value for each particle and also the kernel gradient value
@@ -197,21 +209,6 @@ function RunSimulation(;FluidCSV::String,
             updatexᵢⱼ!(xᵢⱼ, Position, I, J)
             # Here we output the kernel and kernel gradient value for each particle. Note that KernelL is list of interactions, while Kernel is the value for each actual particle. Similar naming for other variables
             ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!(KernelGradient,KernelGradientL, Kernel, KernelL, I, J, D, xᵢⱼ, SimConstants)
-
-            update!(system_boundary,PositionBoundary.V)
-            neighborlist!(system_boundary)
-            resize!(list_me_boundary, system_boundary.nb.n)
-            list_me_boundary .= system_boundary.nb.list
-            updatexᵢⱼ!(xᵢⱼ_boundary, PositionBoundary, I_boundary, J_boundary)
-            ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!(KernelGradient_boundary,KernelGradientL_boundary, Kernel_boundary, KernelL_boundary, I_boundary, J_boundary, D_boundary, xᵢⱼ_boundary, SimConstants)
-            println(auto_bin_assignments(Kernel_boundary,Wᵢⱼ(αD, dx / h))[2])
-            # BoundaryNormals.V[BoundaryBool] .= ((auto_bin_assignments(Kernel_boundary,Wᵢⱼ(αD, dx / 2 / h))[1] .- 1) .* ((-KernelGradient_boundary.V ./ (norm(KernelGradient_boundary.V))) ./ abs.((Kernel_boundary/maximum(Kernel_boundary)) .-1))) .* (Kernel_boundary/maximum(Kernel_boundary))
-            IsActive                 =  Kernel_boundary/maximum(Kernel_boundary)
-            NormalizedGradient =  (-KernelGradient_boundary.V ./ norm.(KernelGradient_boundary.V))
-            IDGradient          = norm.(KernelGradient_boundary.V) .> 0.1 * maximum(norm.(KernelGradient_boundary.V))
-            println(h,dx)
-            BoundaryNormals.V .= NormalizedGradient .* IsActive .* ((dx + dx/(h/dx)) * (auto_bin_assignments(Kernel_boundary,Wᵢⱼ(αD, (dx + dx/(h/dx))))[1] .- 1))
-            GhostNodes         = PositionBoundary.V[IDGradient] .+ BoundaryNormals.V[IDGradient]
         end
 
         # Then we calculate the density derivative at time step "n"
