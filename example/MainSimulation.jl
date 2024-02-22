@@ -93,7 +93,7 @@ function RunSimulation(;FluidCSV::String,
     @unpack HourGlass, SaveLocation, SimulationName, MaxIterations, OutputIteration, SilentOutput, ThreadsCPU = SimMetaData;
 
     # Unpack simulation constants
-    @unpack ρ₀, dx, h, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimConstants
+    @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimConstants
 
     # Load in the fluid and boundary particles. Return these points and both data frames
     # @inline is a hack here to remove all allocations further down due to uncertainty of the points type at compile time
@@ -177,12 +177,19 @@ function RunSimulation(;FluidCSV::String,
 
     ### Construct a particle list holding Ghost Nodes and Fluid only - remember IDGradient is the boundary particles to deliver results to at the end
     GhostNodesRange                 = 1:length(GhostNodes)
-    GhostAndFluidNodes              = vcat(GhostNodes,Position.V[1:length(density_fluid)])
+    FluidNodes                      = Position.V[1:length(density_fluid)]
+    GhostAndFluidNodes              = vcat(GhostNodes, FluidNodes)
     I_ghost_and_fluid               = zeros(Int64,   NumberOfBoundaryPoints)
     J_ghost_and_fluid               = zeros(Int64,   NumberOfBoundaryPoints)
     D_ghost_and_fluid               = zeros(Float64, NumberOfBoundaryPoints)
     list_me_gf                      = StructArray{Tuple{Int64,Int64,Float64}}((I_ghost_and_fluid,J_ghost_and_fluid,D_ghost_and_fluid))
-    system_gf                       = InPlaceNeighborList(x=GhostNodes, y=Position.V[1:length(density_fluid)], cutoff=2*h*1)
+    system_gf                       = InPlaceNeighborList(x=GhostNodes, y=FluidNodes, cutoff=2*h*1)
+
+    # xᵢⱼ_ghost_and_fluid                = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
+    # KernelGradient_ghost_and_fluid     = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
+    # KernelGradientL_ghost_and_fluid    = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
+    # Kernel_ghost_and_fluid             = zeros(FloatType, NumberOfBoundaryPoints)
+    # KernelL_ghost_and_fluid            = zeros(FloatType, NumberOfBoundaryPoints)
 
     # Save the initial particle layout with dummy values
     # create_vtp_file(SimMetaData,SimConstants,Position.V; Kernel, KernelGradient.V, Density, Acceleration)
@@ -226,10 +233,25 @@ function RunSimulation(;FluidCSV::String,
 
         # Here we loop over the ghost particles and extract the properties from the fluid
         update!(system_gf, GhostNodes,Position.V[1:length(density_fluid)])
+        neighborlist!(system_gf)
         resize!(list_me_gf,system_gf.nb.n)
         list_me_gf .= system_gf.nb.list
-        for iter in eachindex(GhostNodes)
+
+        for iter in eachindex(I_ghost_and_fluid)
             i,j,d = I_ghost_and_fluid[iter], J_ghost_and_fluid[iter], D_ghost_and_fluid[iter]
+
+            ρⱼ = Density[j]
+
+            Vⱼ   = m₀/ρⱼ
+
+            q    = d * h⁻¹
+
+            x👻ⱼ = GhostNodes[i] - FluidNodes[j]
+
+            ∇W👻ⱼ = Optim∇ᵢWᵢⱼ(αD,q,x👻ⱼ,h) 
+
+            ∑ⱼW👻ⱼ = Wᵢⱼ(αD, q) * Vⱼ
+
             # W👻ⱼ = 
         end
 
