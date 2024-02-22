@@ -141,7 +141,35 @@ function RunSimulation(;FluidCSV::String,
 
     # Define Progress spec for displaying simulation results
     show_vals(x) = [(:(Iteration),format(FormatExpr("{1:d}"), x.Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"),x.TotalTime))]
-
+    
+    function auto_bin_assignments(V, buffer; reverse_order::Bool=true)
+        # Identify unique bin centers based on the sorted unique values
+        unique_values = sort(unique(V))
+        bins = [unique_values[1]]
+    
+        # Group close values into the same bin
+        for val in unique_values[2:end]
+            if val > (bins[end] + buffer)
+                push!(bins, val)
+            end
+        end
+    
+        # Reverse the bin order if requested
+        reverse_order && reverse!(bins)
+    
+        # Assign bin numbers to the elements of V
+        bin_assignments = zeros(Int, length(V))
+        for (i, value) in enumerate(V)
+            for (bin_num, bin_center) in enumerate(bins)
+                if abs(value - bin_center) <= buffer
+                    bin_assignments[i] = reverse_order ? length(bins) - bin_num + 1 : bin_num
+                    break
+                end
+            end
+        end
+        
+        return bin_assignments, bins
+    end
     @inbounds for SimMetaData.Iteration = 1:MaxIterations
         # Be sure to update and retrieve the updated neighbour list at each time step
         @timeit HourGlass "0 | Update Neighbour system.nb.list" begin
@@ -176,8 +204,13 @@ function RunSimulation(;FluidCSV::String,
             resize!(list_me_boundary, system_boundary.nb.n)
             list_me_boundary .= system_boundary.nb.list
             updatexᵢⱼ!(xᵢⱼ_boundary, PositionBoundary, I_boundary, J_boundary)
+            D_boundary .= abs.(2h .- D_boundary)
             ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!(KernelGradient_boundary,KernelGradientL_boundary, Kernel_boundary, KernelL_boundary, I_boundary, J_boundary, D_boundary, xᵢⱼ_boundary, SimConstants)
-            BoundaryNormals.V[BoundaryBool] .= -KernelGradient_boundary.V*5
+            # println(auto_bin_assignments(Kernel_boundary,Wᵢⱼ(αD, 0); reverse_order=false))
+            # BoundaryNormals.V[BoundaryBool] .= ((auto_bin_assignments(Kernel_boundary,Wᵢⱼ(αD, dx / 2 / h))[1] .- 1) .* ((-KernelGradient_boundary.V ./ (norm(KernelGradient_boundary.V))) ./ abs.((Kernel_boundary/maximum(Kernel_boundary)) .-1))) .* (Kernel_boundary/maximum(Kernel_boundary))
+            IsActive           =  Kernel_boundary/maximum(Kernel_boundary)
+            NormalizedGradient =  (-KernelGradient_boundary.V ./ norm(KernelGradient_boundary.V))
+            BoundaryNormals.V[BoundaryBool] .=  NormalizedGradient .* auto_bin_assignments(Kernel_boundary,Wᵢⱼ(αD, h))[1] ./ IsActive / 2 #.* IsActive ./ IsActive
         end
 
         # Then we calculate the density derivative at time step "n"
@@ -266,7 +299,7 @@ begin
     # And here we run the function - enjoy!
     RunSimulation(
         FluidCSV     = "./input/FluidPoints_Dp0.02.csv",
-        BoundCSV     = "./input/BoundaryPoints_Dp0.02.csv",
+        BoundCSV     = "./input/BoundaryPoints_Dp0.02_5LAYERS.csv",
         SimMetaData  = SimMetaData,
         SimConstants = SimConstants
     )
