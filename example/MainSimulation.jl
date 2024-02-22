@@ -105,8 +105,6 @@ function RunSimulation(;FluidCSV::String,
     dvdtL              = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
     Velocityₙ⁺         = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
     Positionₙ⁺         = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
-    BoundaryNormals   = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
- 
 
     # Initialize the system system.nb.list
     # The result from CellListMap using neighborlist! is a vector of tuples, (i index, j index, d eucledian distance between particles)
@@ -123,6 +121,7 @@ function RunSimulation(;FluidCSV::String,
     NumberOfBoundaryPoints = length(density_bound)
     PositionBoundary = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
     PositionBoundary.V .= deepcopy(Position.V[length(density_fluid)+1:end])
+    BoundaryNormals   = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
     I_boundary       = zeros(Int64,   NumberOfBoundaryPoints)
     J_boundary       = zeros(Int64,   NumberOfBoundaryPoints)
     D_boundary       = zeros(Float64, NumberOfBoundaryPoints)
@@ -211,8 +210,8 @@ function RunSimulation(;FluidCSV::String,
             IsActive           =  Kernel_boundary/maximum(Kernel_boundary)
             NormalizedGradient =  (-KernelGradient_boundary.V ./ norm(KernelGradient_boundary.V))
             IDGradient     = norm.(KernelGradient_boundary.V) .> 0.1 * maximum(norm.(KernelGradient_boundary.V))
-            BoundaryNormals.V[BoundaryBool] .=  NormalizedGradient .* auto_bin_assignments(Kernel_boundary,Wᵢⱼ(αD, h))[1] ./ IsActive / 2 #.* IsActive ./ IsActive
-            GhostNodes         = PositionBoundary.V[IDGradient] .+ BoundaryNormals.V[BoundaryBool][IDGradient]
+            BoundaryNormals.V .=  NormalizedGradient .* auto_bin_assignments(Kernel_boundary,Wᵢⱼ(αD, h))[1] ./ IsActive / 2 #.* IsActive ./ IsActive
+            GhostNodes         = PositionBoundary.V[IDGradient] .+ BoundaryNormals.V[IDGradient]
         end
 
         # Then we calculate the density derivative at time step "n"
@@ -265,9 +264,9 @@ function RunSimulation(;FluidCSV::String,
             to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
             if Dimensions == 2
                 @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(Position.V)
-                , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity", "BoundaryNormals"], Kernel, to_3d(KernelGradient.V), Density, Pressureᵢ, to_3d(Acceleration.V), to_3d(Velocity.V), to_3d(BoundaryNormals.V))
+                , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, to_3d(KernelGradient.V), Density, Pressureᵢ, to_3d(Acceleration.V), to_3d(Velocity.V))
                 @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * "BoundaryNormals" * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(PositionBoundary.V)
-                , ["Kernel", "KernelGradient", "BoundaryNormals"], Kernel_boundary, to_3d(KernelGradient_boundary.V), to_3d(BoundaryNormals.V[BoundaryBool]))
+                , ["Kernel", "KernelGradient", "BoundaryNormals"], Kernel_boundary, to_3d(KernelGradient_boundary.V), to_3d(BoundaryNormals.V))
                 @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * "GhostNodes" * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(GhostNodes))
             elseif Dimensions == 3
                 @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", Position.V
