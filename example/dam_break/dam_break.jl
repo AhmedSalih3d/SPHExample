@@ -106,6 +106,7 @@ function RunSimulation(;FluidCSV::String,
     # particles change
     MotionLimiter = [ ones(size(density_fluid,1)) ; zeros(size(density_bound,1))]
 
+
     # Based on MotionLimiter we assess which particles are boundary particles
     BoundaryBool  = .!Bool.(MotionLimiter)
 
@@ -184,7 +185,7 @@ function RunSimulation(;FluidCSV::String,
 
         # Then we calculate the density derivative at time step "n"
         # @timeit HourGlass "2| DDT" ∂ρᵢ∂tDDT!(dρdtI, I, J, D, xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ,Density, Velocityˣ, Velocityʸ, Velocityᶻ,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ,MotionLimiter,drhopLp,drhopLn, SimConstants)
-        @timeit HourGlass "2| DDT" ∂ρᵢ∂tDDT!(dρdtI, I, J, D, xᵢⱼ,Density, Velocity,KernelGradientL,MotionLimiter,drhopLp,drhopLn, SimConstants)
+        @timeit HourGlass "2| DDT" ∂ρᵢ∂tDDT!(dρdtI, I, J, D, xᵢⱼ, Density, Velocity,KernelGradientL,drhopLp,drhopLn, SimConstants)
 
 
         # # We calculate viscosity contribution and momentum equation at time step "n"
@@ -195,7 +196,7 @@ function RunSimulation(;FluidCSV::String,
         # # Based on the density derivative at "n", we calculate "n+½"
         @timeit HourGlass "2| ρₙ⁺" @. ρₙ⁺  = Density  + dρdtI * (dt/2) 
         # # We make sure to limit the density of boundary particles in such a way that they cannot produce suction
-        #@timeit HourGlass "2| LimitDensityAtBoundary!(ρₙ⁺)" LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
+        @timeit HourGlass "2| LimitDensityAtBoundary!(ρₙ⁺)" LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
 
         # # We now calculate velocity and position at "n+½"
         @timeit HourGlass "2| vₙ⁺"        @. Velocityₙ⁺.V   = Velocity.V   + dvdtI.V * (dt/2) * MotionLimiter
@@ -204,7 +205,7 @@ function RunSimulation(;FluidCSV::String,
         
         # # # Density derivative at "n+½" - Note that we keep the kernel gradient values calculated at "n" for simplicity
         ResetArrays!(drhopLp, drhopLn)
-        @timeit HourGlass "2| DDT2" ∂ρᵢ∂tDDT!(dρdtIₙ⁺, I, J, D, xᵢⱼ,ρₙ⁺, Velocityₙ⁺,KernelGradientL,MotionLimiter,drhopLp,drhopLn, SimConstants)
+        @timeit HourGlass "2| DDT2" ∂ρᵢ∂tDDT!(dρdtIₙ⁺, I, J, D, xᵢⱼ,ρₙ⁺, Velocityₙ⁺,KernelGradientL, drhopLp,drhopLn, SimConstants)
 
         # # # Viscous contribution and momentum equation at "n+½"
         @timeit HourGlass "2| Pressure2" Pressure!(Pressureᵢ, ρₙ⁺, SimConstants)
