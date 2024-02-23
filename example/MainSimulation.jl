@@ -191,8 +191,11 @@ function RunSimulation(;FluidCSV::String,
     Kernel_ghost_and_fluid             = zeros(FloatType, NumberOfBoundaryPoints)
     KernelL_ghost_and_fluid            = zeros(FloatType, NumberOfBoundaryPoints)
 
+    GhostNodes_SphepardFilteredDensity = zeros(FloatType, NumberOfBoundaryPoints)
+
     A👻 = [MMatrix{3,3,Float64}(zeros(3,3)) for _ in GhostNodesRange]
     B👻 = [MVector{3,Float64}(zeros(3))     for _ in GhostNodesRange]
+    ρ👻 = [MVector{3,Float64}(zeros(3))     for _ in GhostNodesRange]
 
     # Save the initial particle layout with dummy values
     # create_vtp_file(SimMetaData,SimConstants,Position.V; Kernel, KernelGradient.V, Density, Acceleration)
@@ -244,6 +247,7 @@ function RunSimulation(;FluidCSV::String,
             i,j,d = I_ghost_and_fluid[iter], J_ghost_and_fluid[iter], D_ghost_and_fluid[iter]
 
             ρⱼ = Density[j]
+            println(ρⱼ)
 
             Vⱼ   = m₀/ρⱼ
 
@@ -282,8 +286,21 @@ function RunSimulation(;FluidCSV::String,
             B👻[i][1]   += W👻ⱼmⱼ
             B👻[i][2]   += ∇W👻ⱼˣ * m₀
             B👻[i][3]   += ∇W👻ⱼʸ * m₀
+
+            # As precaution calculate Shephard filtered density ?
+            # GhostNodes_SphepardFilteredDensity[i] += (ρⱼ*W👻ⱼVⱼ)/W👻ⱼVⱼ
         end
 
+        for i in eachindex(ρ👻)
+            inverted_A👻 = inv(A👻[i])
+            if any(isnan.(inverted_A👻))
+                ρ👻[i][1] = ρ₀ #GhostNodes_SphepardFilteredDensity[i]
+            else
+                ρ👻[i] = inverted_A👻 \ B👻[i] 
+            end
+            #PositionBoundary.V[IDGradient]
+            Density[IDGradient][i] = ρ👻[i][1] + dot((PositionBoundary.V[IDGradient][i] - GhostNodes[i]),ρ👻[i][2:end])
+        end
 
         # # We calculate viscosity contribution and momentum equation at time step "n"
         @timeit HourGlass "2| Pressure" Pressure!(Pressureᵢ, Density, SimConstants)
@@ -359,7 +376,7 @@ begin
     SimMetaData  = SimulationMetaData{D, T}(
                                     SimulationName="MySimulation", 
                                     SaveLocation=raw"E:\SecondApproach\Results", 
-                                    MaxIterations=10001,
+                                    MaxIterations=1,
                                     OutputIteration=50,
     )
     # Initialze the constants to use
