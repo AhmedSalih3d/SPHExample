@@ -243,11 +243,14 @@ function RunSimulation(;FluidCSV::String,
         resize!(list_me_gf,system_gf.nb.n)
         list_me_gf .= system_gf.nb.list
 
+        
+        A👻 .*= 0.0
+        B👻 .*= 0.0
+        ρ👻 .*= 0.0
         for iter in eachindex(I_ghost_and_fluid)
             i,j,d = I_ghost_and_fluid[iter], J_ghost_and_fluid[iter], D_ghost_and_fluid[iter]
 
-            ρⱼ = Density[j]
-            println(ρⱼ)
+            ρⱼ = Density[1:length(density_fluid)][j]
 
             Vⱼ   = m₀/ρⱼ
 
@@ -292,12 +295,7 @@ function RunSimulation(;FluidCSV::String,
         end
 
         for i in eachindex(ρ👻)
-            inverted_A👻 = inv(A👻[i])
-            if any(isnan.(inverted_A👻))
-                ρ👻[i][1] = ρ₀ #GhostNodes_SphepardFilteredDensity[i]
-            else
-                ρ👻[i] = inverted_A👻 \ B👻[i] 
-            end
+            ρ👻[i] .= A👻[i] \ B👻[i] 
             #PositionBoundary.V[IDGradient]
             Density[IDGradient][i] = ρ👻[i][1] + dot((PositionBoundary.V[IDGradient][i] - GhostNodes[i]),ρ👻[i][2:end])
         end
@@ -308,9 +306,9 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "2| Artificial Viscosity Momentum Equation" ArtificialViscosityMomentumEquation!(I,J,D, dvdtI, dvdtL,Density,KernelGradientL, xᵢⱼ, Velocity, Pressureᵢ, GravityFactor, SimConstants)
 
         # # Based on the density derivative at "n", we calculate "n+½"
-        @timeit HourGlass "2| ρₙ⁺" @. ρₙ⁺  = Density  + dρdtI * (dt/2)
+        @timeit HourGlass "2| ρₙ⁺" @. ρₙ⁺  = Density  + dρdtI * (dt/2) 
         # # We make sure to limit the density of boundary particles in such a way that they cannot produce suction
-        @timeit HourGlass "2| LimitDensityAtBoundary!(ρₙ⁺)" LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
+        #@timeit HourGlass "2| LimitDensityAtBoundary!(ρₙ⁺)" LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
 
         # # We now calculate velocity and position at "n+½"
         @timeit HourGlass "2| vₙ⁺"        @. Velocityₙ⁺.V   = Velocity.V   + dvdtI.V * (dt/2) * MotionLimiter
@@ -321,6 +319,69 @@ function RunSimulation(;FluidCSV::String,
         ResetArrays!(drhopLp, drhopLn)
         @timeit HourGlass "2| DDT2" ∂ρᵢ∂tDDT!(dρdtIₙ⁺, I, J, D, xᵢⱼ,ρₙ⁺, Velocityₙ⁺,KernelGradientL,MotionLimiter,drhopLp,drhopLn, SimConstants)
 
+
+        # Here we loop over the ghost particles and extract the properties from the fluid
+        update!(system_gf, GhostNodes,Position.V[1:length(density_fluid)])
+        neighborlist!(system_gf)
+        resize!(list_me_gf,system_gf.nb.n)
+        list_me_gf .= system_gf.nb.list
+
+        A👻 .*= 0.0
+        B👻 .*= 0.0
+        ρ👻 .*= 0.0
+        for iter in eachindex(I_ghost_and_fluid)
+            i,j,d = I_ghost_and_fluid[iter], J_ghost_and_fluid[iter], D_ghost_and_fluid[iter]
+
+            ρⱼ = ρₙ⁺[1:length(density_fluid)][j]
+
+            Vⱼ   = m₀/ρⱼ
+
+            q    = d * h⁻¹
+
+            x👻ⱼ = GhostNodes[i] - FluidNodes[j]
+
+            ∇W👻ⱼ = Optim∇ᵢWᵢⱼ(αD,q,x👻ⱼ,h) 
+
+            W👻ⱼVⱼ = Wᵢⱼ(αD, q) * Vⱼ
+            W👻ⱼmⱼ = Wᵢⱼ(αD, q) * m₀
+
+            xⱼ👻ˣ   = -x👻ⱼ[1]
+            xⱼ👻ʸ   = -x👻ⱼ[2]
+            # xⱼ👻ᶻ   = -x👻ⱼ[3]
+
+            ∇W👻ⱼˣ  = ∇W👻ⱼ[1]
+            ∇W👻ⱼʸ  = ∇W👻ⱼ[2]
+            # ∇W👻ⱼᶻ  = ∇W👻ⱼ[3]
+
+            # W👻ⱼ = 
+            # Now add i contributions to GhostNodes A Matrix
+            # Remember no matrix to be constructed for fluid nodes (j)!
+            A👻[i][1,1] +=  W👻ⱼVⱼ
+            A👻[i][1,2] +=  xⱼ👻ˣ  * W👻ⱼVⱼ
+            A👻[i][1,3] +=  xⱼ👻ʸ  * W👻ⱼVⱼ
+            A👻[i][2,1] +=  ∇W👻ⱼˣ * W👻ⱼVⱼ
+            A👻[i][2,2] +=  xⱼ👻ˣ  * ∇W👻ⱼˣ * W👻ⱼVⱼ
+            A👻[i][2,3] +=  xⱼ👻ʸ  * ∇W👻ⱼˣ * W👻ⱼVⱼ
+            A👻[i][3,1] +=  ∇W👻ⱼʸ * W👻ⱼVⱼ
+            A👻[i][3,2] +=  xⱼ👻ˣ  * ∇W👻ⱼʸ * W👻ⱼVⱼ
+            A👻[i][3,3] +=  xⱼ👻ʸ  * ∇W👻ⱼʸ * W👻ⱼVⱼ
+
+            # Now add i contributions to GhostNodes B vector
+            # Remember no vector to be constructed for fluid nodes (j)!
+            B👻[i][1]   += W👻ⱼmⱼ
+            B👻[i][2]   += ∇W👻ⱼˣ * m₀
+            B👻[i][3]   += ∇W👻ⱼʸ * m₀
+
+            # As precaution calculate Shephard filtered density ?
+            # GhostNodes_SphepardFilteredDensity[i] += (ρⱼ*W👻ⱼVⱼ)/W👻ⱼVⱼ
+        end
+
+        for i in eachindex(ρ👻)
+            ρ👻[i] .= A👻[i] \ B👻[i] 
+            #PositionBoundary.V[IDGradient]
+            ρₙ⁺[IDGradient][i] = ρ👻[i][1] + dot((PositionBoundary.V[IDGradient][i] - GhostNodes[i]),ρ👻[i][2:end])
+        end
+
         # # # Viscous contribution and momentum equation at "n+½"
         @timeit HourGlass "2| Pressure2" Pressure!(Pressureᵢ, ρₙ⁺, SimConstants)
         @timeit HourGlass "2| Artificial Viscosity Momentum Equation2" ArtificialViscosityMomentumEquation!(I,J,D, Acceleration, dvdtL, ρₙ⁺,KernelGradientL, xᵢⱼ, Velocityₙ⁺, Pressureᵢ, GravityFactor, SimConstants)
@@ -329,7 +390,7 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "2| DensityEpsi!"  DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
 
         # # Clamp boundary particles minimum density to avoid suction
-        @timeit HourGlass "2| LimitDensityAtBoundary!(Density)" LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
+        #@timeit HourGlass "2| LimitDensityAtBoundary!(Density)" LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
 
         # # # Update Velocity in-place and then use the updated value for Position
         @timeit HourGlass "2| Velocity" @. Velocity.V += Acceleration.V * dt * MotionLimiter
@@ -341,6 +402,7 @@ function RunSimulation(;FluidCSV::String,
             SimMetaData.CurrentTimeStep = dt
             SimMetaData.TotalTime      += dt
         end
+
         
         # OutVTP is based on a well-developed Julia package, WriteVTK, while CustomVTP is based on my hand-rolled solution.
         # CustomVTP is about 10% faster, but does not mean much in this case.
@@ -376,7 +438,7 @@ begin
     SimMetaData  = SimulationMetaData{D, T}(
                                     SimulationName="MySimulation", 
                                     SaveLocation=raw"E:\SecondApproach\Results", 
-                                    MaxIterations=1,
+                                    MaxIterations=10001,
                                     OutputIteration=50,
     )
     # Initialze the constants to use
@@ -386,8 +448,8 @@ begin
 
     # And here we run the function - enjoy!
     RunSimulation(
-        FluidCSV     = "./input/FluidPoints_Dp0.02.csv",
-        BoundCSV     = "./input/BoundaryPoints_Dp0.02.csv",
+        FluidCSV     = "./input/FluidPoints_Dp0.02_5LAYERS.csv",
+        BoundCSV     = "./input/BoundaryPoints_Dp0.02_5LAYERS.csv",
         SimMetaData  = SimMetaData,
         SimConstants = SimConstants
     )
