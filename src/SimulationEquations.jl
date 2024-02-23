@@ -250,8 +250,8 @@ end
                 xᵢⱼᵈ           = xᵢⱼ.vectors[dᵅ][iter]
                 ∇ᵢWᵢⱼᵈ         = KernelGradientL.vectors[dᵅ][iter]
 
-                drhopLp[iter] += (m₀ *  vᵢⱼᵈ  + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼᵈ * MotionLimiter[i]) *  ∇ᵢWᵢⱼᵈ
-                drhopLn[iter] += (m₀ * -vᵢⱼᵈ  + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼᵈ * MotionLimiter[j]) * -∇ᵢWᵢⱼᵈ
+                drhopLp[iter] += (m₀ *  vᵢⱼᵈ ) *  ∇ᵢWᵢⱼᵈ + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼᵈ  *  ∇ᵢWᵢⱼᵈ
+                drhopLn[iter] += (m₀ * -vᵢⱼᵈ ) * -∇ᵢWᵢⱼᵈ + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼᵈ  * -∇ᵢWᵢⱼᵈ
             end
         end
 
