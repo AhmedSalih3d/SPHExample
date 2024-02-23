@@ -147,49 +147,52 @@ function RunSimulation(;FluidCSV::String,
 
     system          = InPlaceNeighborList(x=Position.V, cutoff=2*h*1)
 
-    # ### Calculate Ghost Nodes Position
-    # NumberOfBoundaryPoints = length(density_bound)
-    # PositionBoundary = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
-    # PositionBoundary.V .= deepcopy(Position.V[length(density_fluid)+1:end])
-    # BoundaryNormals   = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
-    # I_boundary       = zeros(Int64,   NumberOfBoundaryPoints)
-    # J_boundary       = zeros(Int64,   NumberOfBoundaryPoints)
-    # D_boundary       = zeros(Float64, NumberOfBoundaryPoints)
-    # list_me_boundary = StructArray{Tuple{Int64,Int64,Float64}}((I_boundary,J_boundary,D_boundary))
-    # xᵢⱼ_boundary     = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
-    # KernelGradient_boundary     = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
-    # KernelGradientL_boundary    = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
-    # Kernel_boundary             = zeros(FloatType, NumberOfBoundaryPoints)
-    # KernelL_boundary            = zeros(FloatType, NumberOfBoundaryPoints)
-    # system_boundary             = InPlaceNeighborList(x=PositionBoundary.V, cutoff=2*h*1)
-    # neighborlist!(system_boundary) #Have to calculate it once, to get system_boundary.nb.n
-    # ResizeBuffers!(list_me_boundary, xᵢⱼ_boundary, KernelL_boundary, KernelGradientL_boundary; N = system_boundary.nb.n)
-    # # ResetArrays!(Kernel_boundary, KernelGradient_boundary.V)
-    # list_me_boundary .= system_boundary.nb.list
-    # updatexᵢⱼ!(xᵢⱼ_boundary, PositionBoundary, I_boundary, J_boundary)
-    # ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!(KernelGradient_boundary,KernelGradientL_boundary, Kernel_boundary, KernelL_boundary, I_boundary, J_boundary, D_boundary, xᵢⱼ_boundary, SimConstants)
-    # IsActive                 =  Kernel_boundary/maximum(Kernel_boundary)
-    # NormalizedGradient       =  (-KernelGradient_boundary.V ./ norm.(KernelGradient_boundary.V))
-    # IDGradient               = norm.(KernelGradient_boundary.V) .> 0.1 * maximum(norm.(KernelGradient_boundary.V))
-    # BoundaryNormals.V       .= NormalizedGradient .* IsActive .* ((dx + dx/(h/dx)) * (auto_bin_assignments(Kernel_boundary,Wᵢⱼ(αD, (dx + dx/(h/dx))))[1] .- 1))
-    # GhostNodes               = PositionBoundary.V[IDGradient] .+ BoundaryNormals.V[IDGradient]
-    # ### End calculate ghost nodes
+    ### Calculate Ghost Nodes Position
+    NumberOfBoundaryPoints = length(density_bound)
+    PositionBoundary = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
+    PositionBoundary.V .= deepcopy(Position.V[length(density_fluid)+1:end])
+    BoundaryNormals   = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
+    I_boundary       = zeros(Int64,   NumberOfBoundaryPoints)
+    J_boundary       = zeros(Int64,   NumberOfBoundaryPoints)
+    D_boundary       = zeros(Float64, NumberOfBoundaryPoints)
+    list_me_boundary = StructArray{Tuple{Int64,Int64,Float64}}((I_boundary,J_boundary,D_boundary))
+    xᵢⱼ_boundary     = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
+    KernelGradient_boundary     = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
+    KernelGradientL_boundary    = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
+    Kernel_boundary             = zeros(FloatType, NumberOfBoundaryPoints)
+    KernelL_boundary            = zeros(FloatType, NumberOfBoundaryPoints)
+    system_boundary             = InPlaceNeighborList(x=PositionBoundary.V, cutoff=2*h*1)
+    neighborlist!(system_boundary) #Have to calculate it once, to get system_boundary.nb.n
+    ResizeBuffers!(list_me_boundary, xᵢⱼ_boundary, KernelL_boundary, KernelGradientL_boundary; N = system_boundary.nb.n)
+    # ResetArrays!(Kernel_boundary, KernelGradient_boundary.V)
+    list_me_boundary .= system_boundary.nb.list
+    updatexᵢⱼ!(xᵢⱼ_boundary, PositionBoundary, I_boundary, J_boundary)
+    ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!(KernelGradient_boundary,KernelGradientL_boundary, Kernel_boundary, KernelL_boundary, I_boundary, J_boundary, D_boundary, xᵢⱼ_boundary, SimConstants)
+    IsActive                 =  Kernel_boundary/maximum(Kernel_boundary)
+    NormalizedGradient       =  (-KernelGradient_boundary.V ./ norm.(KernelGradient_boundary.V))
+    IDGradient               = norm.(KernelGradient_boundary.V) .> 0.1 * maximum(norm.(KernelGradient_boundary.V))
+    BoundaryNormals.V       .= NormalizedGradient .* IsActive .* ((dx + dx/(h/dx)) * (auto_bin_assignments(Kernel_boundary,Wᵢⱼ(αD, (dx + dx/(h/dx))))[1] .- 1))
+    GhostNodes               = PositionBoundary.V[IDGradient] .+ BoundaryNormals.V[IDGradient]
+    ### End calculate ghost nodes
 
-    # ### Construct a particle list holding Ghost Nodes and Fluid only - remember IDGradient is the boundary particles to deliver results to at the end
-    # GhostNodesRange                 = 1:length(GhostNodes)
-    # FluidNodes                      = Position.V[1:length(density_fluid)]
-    # GhostAndFluidNodes              = vcat(GhostNodes, FluidNodes)
-    # I_ghost_and_fluid               = zeros(Int64,   NumberOfBoundaryPoints)
-    # J_ghost_and_fluid               = zeros(Int64,   NumberOfBoundaryPoints)
-    # D_ghost_and_fluid               = zeros(Float64, NumberOfBoundaryPoints)
-    # list_me_gf                      = StructArray{Tuple{Int64,Int64,Float64}}((I_ghost_and_fluid,J_ghost_and_fluid,D_ghost_and_fluid))
-    # system_gf                       = InPlaceNeighborList(x=GhostNodes, y=FluidNodes, cutoff=2*h*1)
+    ### Construct a particle list holding Ghost Nodes and Fluid only - remember IDGradient is the boundary particles to deliver results to at the end
+    GhostNodesRange                 = 1:length(GhostNodes)
+    FluidNodes                      = Position.V[1:length(density_fluid)]
+    GhostAndFluidNodes              = vcat(GhostNodes, FluidNodes)
+    I_ghost_and_fluid               = zeros(Int64,   NumberOfBoundaryPoints)
+    J_ghost_and_fluid               = zeros(Int64,   NumberOfBoundaryPoints)
+    D_ghost_and_fluid               = zeros(Float64, NumberOfBoundaryPoints)
+    list_me_gf                      = StructArray{Tuple{Int64,Int64,Float64}}((I_ghost_and_fluid,J_ghost_and_fluid,D_ghost_and_fluid))
+    system_gf                       = InPlaceNeighborList(x=GhostNodes, y=FluidNodes, cutoff=2*h*1)
 
-    # xᵢⱼ_ghost_and_fluid                = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
-    # KernelGradient_ghost_and_fluid     = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
-    # KernelGradientL_ghost_and_fluid    = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
-    # Kernel_ghost_and_fluid             = zeros(FloatType, NumberOfBoundaryPoints)
-    # KernelL_ghost_and_fluid            = zeros(FloatType, NumberOfBoundaryPoints)
+    xᵢⱼ_ghost_and_fluid                = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
+    KernelGradient_ghost_and_fluid     = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
+    KernelGradientL_ghost_and_fluid    = DimensionalData{Dimensions,FloatType}(NumberOfBoundaryPoints)
+    Kernel_ghost_and_fluid             = zeros(FloatType, NumberOfBoundaryPoints)
+    KernelL_ghost_and_fluid            = zeros(FloatType, NumberOfBoundaryPoints)
+
+    A👻 = [MMatrix{3,3,Float64}(zeros(3,3)) for _ in GhostNodesRange]
+    B👻 = [MVector{3,Float64}(zeros(3))     for _ in GhostNodesRange]
 
     # Save the initial particle layout with dummy values
     # create_vtp_file(SimMetaData,SimConstants,Position.V; Kernel, KernelGradient.V, Density, Acceleration)
@@ -232,28 +235,54 @@ function RunSimulation(;FluidCSV::String,
 
 
         # Here we loop over the ghost particles and extract the properties from the fluid
-        # update!(system_gf, GhostNodes,Position.V[1:length(density_fluid)])
-        # neighborlist!(system_gf)
-        # resize!(list_me_gf,system_gf.nb.n)
-        # list_me_gf .= system_gf.nb.list
+        update!(system_gf, GhostNodes,Position.V[1:length(density_fluid)])
+        neighborlist!(system_gf)
+        resize!(list_me_gf,system_gf.nb.n)
+        list_me_gf .= system_gf.nb.list
 
-        # for iter in eachindex(I_ghost_and_fluid)
-        #     i,j,d = I_ghost_and_fluid[iter], J_ghost_and_fluid[iter], D_ghost_and_fluid[iter]
+        for iter in eachindex(I_ghost_and_fluid)
+            i,j,d = I_ghost_and_fluid[iter], J_ghost_and_fluid[iter], D_ghost_and_fluid[iter]
 
-        #     ρⱼ = Density[j]
+            ρⱼ = Density[j]
 
-        #     Vⱼ   = m₀/ρⱼ
+            Vⱼ   = m₀/ρⱼ
 
-        #     q    = d * h⁻¹
+            q    = d * h⁻¹
 
-        #     x👻ⱼ = GhostNodes[i] - FluidNodes[j]
+            x👻ⱼ = GhostNodes[i] - FluidNodes[j]
 
-        #     ∇W👻ⱼ = Optim∇ᵢWᵢⱼ(αD,q,x👻ⱼ,h) 
+            ∇W👻ⱼ = Optim∇ᵢWᵢⱼ(αD,q,x👻ⱼ,h) 
 
-        #     ∑ⱼW👻ⱼ = Wᵢⱼ(αD, q) * Vⱼ
+            W👻ⱼVⱼ = Wᵢⱼ(αD, q) * Vⱼ
+            W👻ⱼmⱼ = Wᵢⱼ(αD, q) * m₀
 
-        #     # W👻ⱼ = 
-        # end
+            xⱼ👻ˣ   = -x👻ⱼ[1]
+            xⱼ👻ʸ   = -x👻ⱼ[2]
+            # xⱼ👻ᶻ   = -x👻ⱼ[3]
+
+            ∇W👻ⱼˣ  = ∇W👻ⱼ[1]
+            ∇W👻ⱼʸ  = ∇W👻ⱼ[2]
+            # ∇W👻ⱼᶻ  = ∇W👻ⱼ[3]
+
+            # W👻ⱼ = 
+            # Now add i contributions to GhostNodes A Matrix
+            # Remember no matrix to be constructed for fluid nodes (j)!
+            A👻[i][1,1] +=  W👻ⱼVⱼ
+            A👻[i][1,2] +=  xⱼ👻ˣ  * W👻ⱼVⱼ
+            A👻[i][1,3] +=  xⱼ👻ʸ  * W👻ⱼVⱼ
+            A👻[i][2,1] +=  ∇W👻ⱼˣ * W👻ⱼVⱼ
+            A👻[i][2,2] +=  xⱼ👻ˣ  * ∇W👻ⱼˣ * W👻ⱼVⱼ
+            A👻[i][2,3] +=  xⱼ👻ʸ  * ∇W👻ⱼˣ * W👻ⱼVⱼ
+            A👻[i][3,1] +=  ∇W👻ⱼʸ * W👻ⱼVⱼ
+            A👻[i][3,2] +=  xⱼ👻ˣ  * ∇W👻ⱼʸ * W👻ⱼVⱼ
+            A👻[i][3,3] +=  xⱼ👻ʸ  * ∇W👻ⱼʸ * W👻ⱼVⱼ
+
+            # Now add i contributions to GhostNodes B vector
+            # Remember no vector to be constructed for fluid nodes (j)!
+            B👻[i][1]   += W👻ⱼmⱼ
+            B👻[i][2]   += ∇W👻ⱼˣ * m₀
+            B👻[i][3]   += ∇W👻ⱼʸ * m₀
+        end
 
 
         # # We calculate viscosity contribution and momentum equation at time step "n"
@@ -303,9 +332,9 @@ function RunSimulation(;FluidCSV::String,
             if Dimensions == 2
                 @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(Position.V)
                 , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, to_3d(KernelGradient.V), Density, Pressureᵢ, to_3d(Acceleration.V), to_3d(Velocity.V))
-                # @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * "BoundaryNormals" * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(PositionBoundary.V)
-                # , ["Kernel", "KernelGradient", "BoundaryNormals"], Kernel_boundary, to_3d(KernelGradient_boundary.V), to_3d(BoundaryNormals.V))
-                # @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * "GhostNodes" * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(GhostNodes))
+                @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * "BoundaryNormals" * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(PositionBoundary.V)
+                , ["Kernel", "KernelGradient", "BoundaryNormals"], Kernel_boundary, to_3d(KernelGradient_boundary.V), to_3d(BoundaryNormals.V))
+                @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * "GhostNodes" * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(GhostNodes))
             elseif Dimensions == 3
                 @timeit HourGlass "4| CustomVTP" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", Position.V
                 , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, KernelGradient.V, Density, Pressureᵢ, Acceleration.V, Velocity.V)
