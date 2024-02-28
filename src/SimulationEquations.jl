@@ -252,8 +252,8 @@ end
 
                 # For now using MotionLimiter, should use BoundaryBool
                 # Basically, when particle j is a boundary, no transfer of density should happen with the i'th particle (whether fluid or not)
-                drhopLp[iter] += (m₀ *  vᵢⱼᵈ ) *  ∇ᵢWᵢⱼᵈ + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼᵈ  *  ∇ᵢWᵢⱼᵈ * MotionLimiter[j]
-                drhopLn[iter] += (m₀ * -vᵢⱼᵈ ) * -∇ᵢWᵢⱼᵈ + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼᵈ  * -∇ᵢWᵢⱼᵈ * MotionLimiter[i]
+                drhopLp[iter] += (m₀ *  vᵢⱼᵈ ) *  ∇ᵢWᵢⱼᵈ #+ δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼᵈ  *  ∇ᵢWᵢⱼᵈ * MotionLimiter[j]
+                drhopLn[iter] += (m₀ * -vᵢⱼᵈ ) * -∇ᵢWᵢⱼᵈ #+ δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼᵈ  * -∇ᵢWᵢⱼᵈ * MotionLimiter[i]
             end
         end
 
