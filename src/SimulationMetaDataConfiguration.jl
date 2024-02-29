@@ -44,13 +44,13 @@ metadata = SimulationMetaData(
     SaveLocation::String
     HourGlass::TimerOutput           = TimerOutput()
     Iteration::Int                   = 0
-    MaxIterations::Int               = 1000
-    OutputIteration::Int             = 50
+    OutputEach::FloatType            = 0.02 #seconds
     CurrentTimeStep::FloatType       = 0
     TotalTime::FloatType             = 0
+    SimulationTime::FloatType        = 0
     SilentOutput::Bool               = false
     ThreadsCPU::Int                  = Threads.nthreads()
-    ProgressSpecification::Progress  = Progress(MaxIterations)       
+    ProgressSpecification::ProgressUnknown  =  ProgressUnknown(desc="Burning the midnight oil:", spinner=true, showspeed=true)     
 end
 
 end
