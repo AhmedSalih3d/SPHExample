@@ -261,6 +261,30 @@ end
 
 # Initialize Simulation
 begin
+    # Fake init
+    D          = 2
+    T          = Float64
+    SimMetaData  = SimulationMetaData{D, T}(
+                                    SimulationName="MySimulation", 
+                                    SaveLocation=raw"E:\SecondApproach\Results",
+                                    SimulationTime=0, #seconds
+    )
+    # Initialze the constants to use
+    SimConstants = SimulationConstants{T}(
+    )
+    # Clean up folder before running (remember to make folder before hand!)
+    foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
+
+    # And here we run the function - enjoy!
+    RunSimulation(
+        FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
+        BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
+        SimMetaData  = SimMetaData,
+        SimConstants = SimConstants
+    )
+
+    # Actual run
+
     D          = 2
     T          = Float64
     SimMetaData  = SimulationMetaData{D, T}(
