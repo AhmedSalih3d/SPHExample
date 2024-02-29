@@ -157,103 +157,87 @@ function RunSimulation(;FluidCSV::String,
     
     @inbounds for SimMetaData.Iteration = 1:MaxIterations
         # Be sure to update and retrieve the updated neighbour list at each time step
-        @timeit HourGlass "Step 0.1 | Update Neighbour system.nb.list" begin
+        # @timeit HourGlass "Step 0.1 | Update Neighbour system.nb.list" begin
             # if SimMetaData.Iteration % 5 == 0 || SimMetaData.Iteration == 1
-                @timeit HourGlass "1.1 update particle positions"           update!(system,Position.V)
-                @timeit HourGlass "1.2 extract updated neighborlist"        neighborlist!(system)
-                @timeit HourGlass "1.3 resize split neighborlist"           resize!(list_me, system.nb.n)
-                @timeit HourGlass "1.4 update values of split neighborlist" list_me .= system.nb.list
+        @timeit HourGlass "0.1 update particle positions"           update!(system,Position.V)
+        @timeit HourGlass "0.2 extract updated neighborlist"        neighborlist!(system)
+        @timeit HourGlass "0.3 resize split neighborlist"           resize!(list_me, system.nb.n)
+        @timeit HourGlass "0.4 update values of split neighborlist" list_me .= system.nb.list
             # end
-        end
+        # end
         
-        @timeit HourGlass "Step 0.2 | Reset arrays to zero and resize L arrays" begin
+        # @timeit HourGlass "Step 0.2 | Reset arrays to zero and resize L arrays" begin
             # Resize L based values (interactions between all particles i and j) based on length of neighborsystem.nb.list
-            @timeit HourGlass "1.1 resize calculation buffers" ResizeBuffers!(KernelL, KernelGradientL, dvdtL, xᵢⱼ, drhopLp, drhopLn; N = system.nb.n)
-            # Clean up arrays, Vector{T} and Vector{SVector{3,T}}
-            @timeit HourGlass "1.2 reset calculation buffers"  ResetArrays!(Kernel, dρdtI,dρdtIₙ⁺,KernelGradient.V,dvdtI.V, Acceleration.V, drhopLp, drhopLn)
-        end
+        @timeit HourGlass "0.5 resize calculation buffers" ResizeBuffers!(KernelL, KernelGradientL, dvdtL, xᵢⱼ, drhopLp, drhopLn; N = system.nb.n)
+        # Clean up arrays, Vector{T} and Vector{SVector{3,T}}
+        @timeit HourGlass "0.6 reset calculation buffers"  ResetArrays!(Kernel, dρdtI,dρdtIₙ⁺,KernelGradient.V,dvdtI.V, Acceleration.V, drhopLp, drhopLn)
+        # end
 
          # Here we calculate the distances between particles, output the kernel gradient value for each particle and also the kernel gradient value
         # based on the pair-to-pair interaction system.nb.list, for use in later calculations.
         # Other functions follow a similar format, with the "I" and "L" ending
-        @timeit HourGlass "Step 1 | Update xᵢⱼ, kernel values and kernel gradient" begin
-            # updatexᵢⱼ!(xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, I, J, Positionˣ, Positionʸ, Positionᶻ)
-            @timeit HourGlass "1.1 calculate xᵢⱼ" updatexᵢⱼ!(xᵢⱼ, Position, I, J)
-            # Here we output the kernel and kernel gradient value for each particle. Note that KernelL is list of interactions, while Kernel is the value for each actual particle. Similar naming for other variables
-            @timeit HourGlass "1.2 calculate kernel and kernel gradient" ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!(KernelGradient,KernelGradientL, Kernel, KernelL, I, J, D, xᵢⱼ, SimConstants)
-        end
+        # @timeit HourGlass "Step 1 | Update xᵢⱼ, kernel values and kernel gradient" begin
+        # updatexᵢⱼ!(xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, I, J, Positionˣ, Positionʸ, Positionᶻ)
+        @timeit HourGlass "1.1 calculate xᵢⱼ" updatexᵢⱼ!(xᵢⱼ, Position, I, J)
+        # Here we output the kernel and kernel gradient value for each particle. Note that KernelL is list of interactions, while Kernel is the value for each actual particle. Similar naming for other variables
+        @timeit HourGlass "1.2 calculate kernel and kernel gradient" ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!(KernelGradient,KernelGradientL, Kernel, KernelL, I, J, D, xᵢⱼ, SimConstants)
+        # end
 
-        @timeit HourGlass "Step 2 | Simulation Equations to update values, preparing for n+1/2" begin
-            @timeit HourGlass "2.1 DDT" ∂ρᵢ∂tDDT!(dρdtI, I, J, D, xᵢⱼ, Density, Velocity,KernelGradientL,drhopLp,drhopLn, SimConstants, MotionLimiter)
-            # # We calculate viscosity contribution and momentum equation at time step "n"
-            @timeit HourGlass "2.2 Pressure" Pressure!(Pressureᵢ, Density, SimConstants)
-            # @timeit HourGlass "2| Artificial Viscosity Momentum Equation" ArtificialViscosityMomentumEquation!(I,J,D, dvdtIˣ, dvdtIʸ, dvdtIᶻ, dvdtLˣ, dvdtLʸ, dvdtLᶻ,Density,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ,xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, Velocityˣ, Velocityʸ, Velocityᶻ, Pressureᵢ, GravityFactor, SimConstants)
-            @timeit HourGlass "2.3 Artificial Viscosity Momentum Equation" ArtificialViscosityMomentumEquation!(I,J,D, dvdtI, dvdtL,Density,KernelGradientL, xᵢⱼ, Velocity, Pressureᵢ, GravityFactor, SimConstants)
-        end 
+        # @timeit HourGlass "Step 2 | Simulation Equations to update values, preparing for n+1/2" begin
+        @timeit HourGlass "2.1 DDT" ∂ρᵢ∂tDDT!(dρdtI, I, J, D, xᵢⱼ, Density, Velocity,KernelGradientL,drhopLp,drhopLn, SimConstants, MotionLimiter)
+        # # We calculate viscosity contribution and momentum equation at time step "n"
+        @timeit HourGlass "2.2 Pressure" Pressure!(Pressureᵢ, Density, SimConstants)
+        # @timeit HourGlass "2| Artificial Viscosity Momentum Equation" ArtificialViscosityMomentumEquation!(I,J,D, dvdtIˣ, dvdtIʸ, dvdtIᶻ, dvdtLˣ, dvdtLʸ, dvdtLᶻ,Density,KernelGradientLˣ,KernelGradientLʸ,KernelGradientLᶻ,xᵢⱼˣ, xᵢⱼʸ, xᵢⱼᶻ, Velocityˣ, Velocityʸ, Velocityᶻ, Pressureᵢ, GravityFactor, SimConstants)
+        @timeit HourGlass "2.3 Artificial Viscosity Momentum Equation" ArtificialViscosityMomentumEquation!(I,J,D, dvdtI, dvdtL,Density,KernelGradientL, xᵢⱼ, Velocity, Pressureᵢ, GravityFactor, SimConstants)
+        # end 
 
-        @timeit HourGlass "Step 3 | Update values to n+1/2" begin
-            Velocityₙ⁺.V   .= Velocity.V   .+ dvdtI.V .* (dt./2) .* MotionLimiter
-            @. Positionₙ⁺.V   = Position.V   + Velocityₙ⁺.V * (dt/2)   * MotionLimiter
-            
-            # Based on the density derivative at "n", we calculate "n+½"
-             @. ρₙ⁺  = Density  + dρdtI * (dt/2) 
-            # density of boundary particles in such a way that they cannot produce suction
-            LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
-            updatexᵢⱼ!(xᵢⱼ, Positionₙ⁺, I, J)
-        end
+        @timeit HourGlass "2.1 half step velocity" @. Velocityₙ⁺.V   = Velocity.V   + dvdtI.V * (dt/2) * MotionLimiter
+        @timeit HourGlass "2.2 half step position" @. Positionₙ⁺.V   = Position.V   + Velocityₙ⁺.V * (dt/2)   * MotionLimiter
+       
+        # Based on the density derivative at "n", we calculate "n+½"
+        @timeit HourGlass "2.3 half step density"  @. ρₙ⁺  = Density  + dρdtI * (dt/2) 
+        # density of boundary particles in such a way that they cannot produce suction
+        @timeit HourGlass "2.4 half step limit density at boundary" LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
+        @timeit HourGlass "2.5 update xᵢⱼ" updatexᵢⱼ!(xᵢⱼ, Positionₙ⁺, I, J)
+ 
         
-        @timeit HourGlass "Step 4 | Simulation Equations to update values, preparing for n+1" begin
-            # Density derivative at "n+½" - Note that we keep the kernel gradient values calculated at "n" for simplicity
-            @timeit HourGlass "4.1 reset L arrays for density diffusion" ResetArrays!(drhopLp, drhopLn)
-            @timeit HourGlass "4.2 DDT"                                    ∂ρᵢ∂tDDT!(dρdtIₙ⁺, I, J, D, xᵢⱼ,ρₙ⁺, Velocityₙ⁺,KernelGradientL, drhopLp,drhopLn, SimConstants, MotionLimiter)
-            # Viscous contribution and momentum equation at "n+½"
-            @timeit HourGlass "4.3 Pressure"                               Pressure!(Pressureᵢ, ρₙ⁺, SimConstants)
-            @timeit HourGlass "4.4 Artificial Viscosity Momentum Equation" ArtificialViscosityMomentumEquation!(I,J,D, Acceleration, dvdtL, ρₙ⁺,KernelGradientL, xᵢⱼ, Velocityₙ⁺, Pressureᵢ, GravityFactor, SimConstants)
-        end
+        # Density derivative at "n+½" - Note that we keep the kernel gradient values calculated at "n" for simplicity
+        @timeit HourGlass "3.1 reset L arrays for density diffusion" ResetArrays!(drhopLp, drhopLn)
+        @timeit HourGlass "3.2 DDT"                                    ∂ρᵢ∂tDDT!(dρdtIₙ⁺, I, J, D, xᵢⱼ,ρₙ⁺, Velocityₙ⁺,KernelGradientL, drhopLp,drhopLn, SimConstants, MotionLimiter)
+        # Viscous contribution and momentum equation at "n+½"
+        @timeit HourGlass "3.3 Pressure"                               Pressure!(Pressureᵢ, ρₙ⁺, SimConstants)
+        @timeit HourGlass "3.4 Artificial Viscosity Momentum Equation" ArtificialViscosityMomentumEquation!(I,J,D, Acceleration, dvdtL, ρₙ⁺,KernelGradientL, xᵢⱼ, Velocityₙ⁺, Pressureᵢ, GravityFactor, SimConstants)
+        # Factor for properly time stepping the density to "n+1" - We use the symplectic scheme as done in DualSPHysics
+        @timeit HourGlass "4.1 DensityEpsi!"  DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
+        # Clamp boundary particles minimum density to avoid suction
+        @timeit HourGlass "4.2 LimitDensityAtBoundary!(Density)" LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
+        # Update Velocity in-place and then use the updated value for Position
+        @timeit HourGlass "4.3 final velocity" @. Velocity.V += Acceleration.V * dt * MotionLimiter
+        @timeit HourGlass "4.4 final position" @. Position.V += ((Velocity.V + (Velocity.V - Acceleration.V * dt * MotionLimiter)) / 2) * dt * MotionLimiter
+        @timeit HourGlass "5.1 calculate dt"       dt =  Δt(Position.V, Velocity.V, Acceleration.V,SimConstants)
+        @timeit HourGlass "5.2 set new dt"         SimMetaData.CurrentTimeStep = dt
+        @timeit HourGlass "5.3 increment total dt" SimMetaData.TotalTime      += dt
 
-        @timeit HourGlass "Step 5 | Update values to n+1" begin
-            # Factor for properly time stepping the density to "n+1" - We use the symplectic scheme as done in DualSPHysics
-            @timeit HourGlass "5.1 DensityEpsi!"  DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
-
-            # Clamp boundary particles minimum density to avoid suction
-            @timeit HourGlass "5.2 LimitDensityAtBoundary!(Density)" LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
-
-            # Update Velocity in-place and then use the updated value for Position
-            @timeit HourGlass "5.3 Velocity" @. Velocity.V += Acceleration.V * dt * MotionLimiter
-            @timeit HourGlass "5.4 Position" @. Position.V += ((Velocity.V + (Velocity.V - Acceleration.V * dt * MotionLimiter)) / 2) * dt * MotionLimiter
-        end
-
-        # Automatic time stepping control
-        @timeit HourGlass "Step 6 | Calculating time step" begin
-            @timeit HourGlass "6.1 calculate dt"       dt =  Δt(Position.V, Velocity.V, Acceleration.V,SimConstants)
-            @timeit HourGlass "6.2 set new dt"         SimMetaData.CurrentTimeStep = dt
-            @timeit HourGlass "6.3 increment total dt" SimMetaData.TotalTime      += dt
-        end
-
-        
         # OutVTP is based on a well-developed Julia package, WriteVTK, while CustomVTP is based on my hand-rolled solution.
         # CustomVTP is about 10% faster, but does not mean much in this case.
-        @timeit HourGlass "Step 7 | Outputting save files and updating progress bar" begin
-            if SimMetaData.Iteration % SimMetaData.OutputIteration == 0
-                to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
-                if Dimensions == 2
-                    @timeit HourGlass "7.1 outputting savefile" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(Position.V)
-                    , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, to_3d(KernelGradient.V), Density, Pressureᵢ, to_3d(Acceleration.V), to_3d(Velocity.V))
-                elseif Dimensions == 3
-                    @timeit HourGlass "7.1 outputting savefile" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", Position.V
-                    , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, KernelGradient.V, Density, Pressureᵢ, Acceleration.V, Velocity.V)
-                end
+        if SimMetaData.Iteration % SimMetaData.OutputIteration == 0
+            to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
+            if Dimensions == 2
+                @timeit HourGlass "6.1 outputting savefile" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(Position.V)
+                , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, to_3d(KernelGradient.V), Density, Pressureᵢ, to_3d(Acceleration.V), to_3d(Velocity.V))
+            elseif Dimensions == 3
+                @timeit HourGlass "6.1 outputting savefile" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", Position.V
+                , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, KernelGradient.V, Density, Pressureᵢ, Acceleration.V, Velocity.V)
             end
-
-            @timeit HourGlass "7.2 updating progress bar" next!(SimMetaData.ProgressSpecification; showvalues = show_vals(SimMetaData))
         end
+
+        @timeit HourGlass "6.2 updating progress bar" next!(SimMetaData.ProgressSpecification; showvalues = show_vals(SimMetaData))
     end
     
-    # # Print the timings in the default way
-    TimerOutputs.complement!(HourGlass)
+    # Print the timings in the default way
     disable_timer!(HourGlass)
     show(HourGlass,sortby=:name)
-    # show(HourGlass)
+    show(HourGlass)
 
 
     return nothing
@@ -266,7 +250,7 @@ begin
     SimMetaData  = SimulationMetaData{D, T}(
                                     SimulationName="MySimulation", 
                                     SaveLocation=raw"E:\SecondApproach\Results", 
-                                    MaxIterations=1,#31205, #2 seconds
+                                    MaxIterations=31205, #2 seconds
                                     OutputIteration=50,
     )
     # Initialze the constants to use
