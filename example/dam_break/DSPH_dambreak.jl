@@ -159,8 +159,8 @@ function RunSimulation(;FluidCSV::String,
     end
 
     # Define Progress spec for displaying simulation results
-    show_vals(x) = [(:(Iteration),format(FormatExpr("{1:d}"), x.Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"),x.TotalTime))]
-    
+    generate_showvalues(Iteration, TotalTime) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime))]
+
     OutputCounter = 0.0
     @inbounds while true
         # Be sure to update and retrieve the updated neighbour list at each time step
@@ -240,7 +240,7 @@ function RunSimulation(;FluidCSV::String,
             end
         end
 
-        @timeit HourGlass "6.2 updating progress bar" next!(SimMetaData.ProgressSpecification; showvalues = show_vals(SimMetaData))
+        @timeit HourGlass "6.2 updating progress bar" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
 
         if SimMetaData.TotalTime >= SimMetaData.SimulationTime + SimMetaData.OutputEach
             break
