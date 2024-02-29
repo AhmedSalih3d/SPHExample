@@ -487,20 +487,20 @@ let
     D = 2
     Dimensions = D
     
-    FluidCSV     = "./input/FluidPoints_Dp0.02.csv"
-    BoundCSV     = "./input/BoundaryPoints_Dp0.02.csv"
+    FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv"
+    BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv"
     
     SimMetaData  = SimulationMetaData{D, T}(
                                     SimulationName="AllInOne", 
                                     SaveLocation=raw"E:\SecondApproach\Testing",
-                                    MaxIterations=10001,
-                                    OutputIteration=50,
+                                    # MaxIterations=10001,
+                                    # OutputIteration=50,
     )
     # Initialze the constants to use
     SimConstants = SimulationConstants{T}()
     
     # Unpack the relevant simulation meta data
-    @unpack HourGlass, SaveLocation, SimulationName, MaxIterations, OutputIteration, SilentOutput, ThreadsCPU = SimMetaData;
+    @unpack HourGlass, SaveLocation, SimulationName, SilentOutput, ThreadsCPU = SimMetaData;
     
     # Unpack simulation constants
     @unpack ρ₀, dx, h, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimConstants
@@ -541,7 +541,7 @@ let
     VelocityNew        = deepcopy(Velocity)
     PositionNew        = deepcopy(Position)
    
-    @profview CustomCLL(PositionNew, DensityNew, VelocityNew, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity)
+    CustomCLL(PositionNew, DensityNew, VelocityNew, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity)
     function f()
         foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
         PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity"], Kernel, KernelGradient.V, Density, Velocity.V)
@@ -557,7 +557,7 @@ let
 
     @profview f()
 
-    @benchmark CustomCLL($PositionNew, $DensityNew, $VelocityNew, $SimConstants, $MotionLimiter, $BoundaryBool, $GravityFactor, $Position, $Kernel, $KernelGradient, $Density, $Velocity)
+    # @benchmark CustomCLL($PositionNew, $DensityNew, $VelocityNew, $SimConstants, $MotionLimiter, $BoundaryBool, $GravityFactor, $Position, $Kernel, $KernelGradient, $Density, $Velocity)
 end
 
 
