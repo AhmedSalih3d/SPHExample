@@ -192,14 +192,14 @@ function RunSimulation(;FluidCSV::String,
         end 
 
         @timeit HourGlass "Step 3 | Update values to n+1/2" begin
-            @timeit HourGlass "3.1 vₙ⁺"        @. Velocityₙ⁺.V   = Velocity.V   + dvdtI.V * (dt/2) * MotionLimiter
-            @timeit HourGlass "3.2 Positionₙ⁺" @. Positionₙ⁺.V   = Position.V   + Velocityₙ⁺.V * (dt/2)   * MotionLimiter
+            Velocityₙ⁺.V   .= Velocity.V   .+ dvdtI.V .* (dt./2) .* MotionLimiter
+            @. Positionₙ⁺.V   = Position.V   + Velocityₙ⁺.V * (dt/2)   * MotionLimiter
             
             # Based on the density derivative at "n", we calculate "n+½"
-            @timeit HourGlass "3.3 ρₙ⁺" @. ρₙ⁺  = Density  + dρdtI * (dt/2) 
-            # We make sure to limit the density of boundary particles in such a way that they cannot produce suction
-            @timeit HourGlass "3.4 LimitDensityAtBoundary!(ρₙ⁺)" LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
-            @timeit HourGlass "3.5 updatexᵢⱼ!" updatexᵢⱼ!(xᵢⱼ, Positionₙ⁺, I, J)
+             @. ρₙ⁺  = Density  + dρdtI * (dt/2) 
+            # density of boundary particles in such a way that they cannot produce suction
+            LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
+            updatexᵢⱼ!(xᵢⱼ, Positionₙ⁺, I, J)
         end
         
         @timeit HourGlass "Step 4 | Simulation Equations to update values, preparing for n+1" begin
@@ -250,9 +250,10 @@ function RunSimulation(;FluidCSV::String,
     end
     
     # # Print the timings in the default way
+    TimerOutputs.complement!(HourGlass)
     disable_timer!(HourGlass)
     show(HourGlass,sortby=:name)
-    show(HourGlass)
+    # show(HourGlass)
 
 
     return nothing
@@ -265,7 +266,7 @@ begin
     SimMetaData  = SimulationMetaData{D, T}(
                                     SimulationName="MySimulation", 
                                     SaveLocation=raw"E:\SecondApproach\Results", 
-                                    MaxIterations=31205, #2 seconds
+                                    MaxIterations=1,#31205, #2 seconds
                                     OutputIteration=50,
     )
     # Initialze the constants to use
