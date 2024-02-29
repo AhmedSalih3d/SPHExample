@@ -162,6 +162,7 @@ function RunSimulation(;FluidCSV::String,
     generate_showvalues(Iteration, TotalTime) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime))]
 
     OutputCounter = 0.0
+    OutputIterationCounter = 0
     @inbounds while true
         # Be sure to update and retrieve the updated neighbour list at each time step
         # @timeit HourGlass "Step 0.1 | Update Neighbour system.nb.list" begin
@@ -170,6 +171,8 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "0.2 extract updated neighborlist"        neighborlist!(system)
         @timeit HourGlass "0.3 resize split neighborlist"           resize!(list_me, system.nb.n)
         @timeit HourGlass "0.4 update values of split neighborlist" list_me .= system.nb.list
+            # else
+            #     D .= norm.(xᵢⱼ.V)
             # end
         # end
         
@@ -229,13 +232,14 @@ function RunSimulation(;FluidCSV::String,
         OutputCounter += dt
         if OutputCounter >= SimMetaData.OutputEach
             OutputCounter = 0.0
+            OutputIterationCounter += 1
         # OutVTP is based on a well-developed Julia package, WriteVTK, while CustomVTP is based on my hand-rolled solution.
         # CustomVTP is about 10% faster, but does not mean much in this case.
             if Dimensions == 2
-                @timeit HourGlass "6.1 outputting savefile" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(Position.V)
+                @timeit HourGlass "6.1 outputting savefile" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp", to_3d(Position.V)
                 , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, to_3d(KernelGradient.V), Density, Pressureᵢ, to_3d(Acceleration.V), to_3d(Velocity.V))
             elseif Dimensions == 3
-                @timeit HourGlass "6.1 outputting savefile" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", Position.V
+                @timeit HourGlass "6.1 outputting savefile" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp", Position.V
                 , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, KernelGradient.V, Density, Pressureᵢ, Acceleration.V, Velocity.V)
             end
         end
