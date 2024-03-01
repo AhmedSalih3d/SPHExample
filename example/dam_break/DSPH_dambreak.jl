@@ -12,35 +12,6 @@ using Formatting
 using StructArrays
 using LoopVectorization
 
-function auto_bin_assignments(V, buffer; reverse_order::Bool=true)
-    # Identify unique bin centers based on the sorted unique values
-    unique_values = sort(unique(V))
-    bins = [unique_values[1]]
-
-    # Group close values into the same bin
-    for val in unique_values[2:end]
-        if val > (bins[end] + buffer)
-            push!(bins, val)
-        end
-    end
-
-    # Reverse the bin order if requested
-    reverse_order && reverse!(bins)
-
-    # Assign bin numbers to the elements of V
-    bin_assignments = zeros(Int, length(V))
-    for (i, value) in enumerate(V)
-        for (bin_num, bin_center) in enumerate(bins)
-            if abs(value - bin_center) <= buffer
-                bin_assignments[i] = reverse_order ? length(bins) - bin_num + 1 : bin_num
-                break
-            end
-        end
-    end
-    
-    return bin_assignments, bins
-end
-
 include("../../src/ProduceVTP.jl")
 
 """
@@ -228,7 +199,7 @@ function RunSimulation(;FluidCSV::String,
         # OutVTP is based on a well-developed Julia package, WriteVTK, while CustomVTP is based on my hand-rolled solution.
         # CustomVTP is about 10% faster, but does not mean much in this case.
 
-        @timeit HourGlass "6.1 outputting savefile" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp", to_3d(Position.V), ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, KernelGradient.V, Density, Pressureᵢ, Acceleration.V, Velocity.V)
+        @timeit HourGlass "6.1 outputting savefile" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp", to_3d(Position.V), ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, to_3d(KernelGradient.V), Density, Pressureᵢ, Acceleration.V, Velocity.V)
         end
 
         @timeit HourGlass "6.2 updating progress bar" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
@@ -266,16 +237,6 @@ begin
     )
     # Clean up folder before running (remember to make folder before hand!)
     foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
-
-    # Only doing this to compile code before first run
-    # And here we run the function - enjoy!
-    println(@code_warntype RunSimulation(
-        FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
-        BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
-        SimMetaData  = SimMetaData,
-        SimConstants = SimConstants
-    )
-    )
 
     # And here we run the function - enjoy!
     RunSimulation(

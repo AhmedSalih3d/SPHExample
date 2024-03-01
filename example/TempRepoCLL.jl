@@ -141,7 +141,6 @@ end
 
 function sim_step(dt, i , j, d2, h, m₀, h⁻¹, α , αD, c₀, γ, ρ₀, g,  η²,  Kernel, KernelGradient, Position, Density, Velocity, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
     d  = sqrt(d2)
-    αD = 1
 
     xᵢ  = Position[i]
     xⱼ  = Position[j]
@@ -195,11 +194,11 @@ function sim_step(dt, i , j, d2, h, m₀, h⁻¹, α , αD, c₀, γ, ρ₀, g, 
     ρᵢᴺ  = ρᵢ + dρdt⁺ * (dt/2) #Starts as  ρᵢ and becomes  ρᵢᴺ
     ρⱼᴺ  = ρⱼ + dρdt⁻ * (dt/2) #Starts as  ρⱼ and becomes  ρⱼᴺ
 
-    vᵢᴺ  = vᵢ + dvdt⁺ * (dt/2) 
-    vⱼᴺ  = vⱼ + dvdt⁻ * (dt/2) 
+    vᵢᴺ  = vᵢ + dvdt⁺ * (dt/2) * MotionLimiter[i]
+    vⱼᴺ  = vⱼ + dvdt⁻ * (dt/2) * MotionLimiter[j]
 
-    xᵢᴺ  = xᵢ + vᵢᴺ * (dt/2)
-    xⱼᴺ  = xⱼ + vⱼᴺ * (dt/2)
+    xᵢᴺ  = xᵢ + vᵢᴺ * (dt/2) * MotionLimiter[i]
+    xⱼᴺ  = xⱼ + vⱼᴺ * (dt/2) * MotionLimiter[j]
 
     # Update and go through same steps as above
 
@@ -324,13 +323,11 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
     @. Velocity.V += dvdtIₙ⁺.V * dt * MotionLimiter
     @. Position.V += ((Velocity.V + (Velocity.V - dvdtIₙ⁺.V * dt * MotionLimiter)) / 2) * dt * MotionLimiter
 
-
-
     #TheCLL.MaxValidIndex[] = nl
     # resize!(TheCLL.ListOfInteractions,nl)
 
     # println(nl)
-    println("test")
+    # println("test")
     # println(sum(Kernel))
     # println(sum(KernelGradient.V))
     # println(sum(Density))
@@ -425,7 +422,7 @@ let
         for iteration in 1:1
             CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
             if iteration % 1 == 0
-                PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(iteration,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, KernelGradient.V, Density, Velocity.V, dvdtIₙ⁺.V)
+                PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(iteration,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, to_3d(KernelGradient.V), Density, Velocity.V, dvdtIₙ⁺.V)
                 println(iteration)
             end
         end
