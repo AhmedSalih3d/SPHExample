@@ -139,7 +139,7 @@ function CalculateTotalPossibleNumberOfInteractions(UniqueCells,Layout,Stencil,H
 end
 
 
-function sim_step(dt, i , j, d2, h, m₀, h⁻¹, α , αD, c₀, γ, ρ₀, g,  η²,  Kernel, KernelGradient, Position, Density, Velocity, PositionNew, DensityNew, VelocityNew, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺)
+function sim_step(dt, i , j, d2, h, m₀, h⁻¹, α , αD, c₀, γ, ρ₀, g,  η²,  Kernel, KernelGradient, Position, Density, Velocity, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
     d  = sqrt(d2)
 
     xᵢ  = Position[i]
@@ -186,10 +186,13 @@ function sim_step(dt, i , j, d2, h, m₀, h⁻¹, α , αD, c₀, γ, ρ₀, g, 
 
     dvdt⁺ = - m₀ * ( Pfac + Πᵢⱼ) *  ∇ᵢWᵢⱼ + SVector(0, g * GravityFactor[i])
     dvdt⁻ = - m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ + SVector(0, g * GravityFactor[j])
+
+    dvdtI[i] += dvdt⁺
+    dvdtI[j] += dvdt⁻
     
     # Time stepping start - this makes suction
-    ρᵢᴺ  = dρdt⁺ * (dt/2) #Starts as  ρᵢ and becomes  ρᵢᴺ
-    ρⱼᴺ  = dρdt⁻ * (dt/2) #Starts as  ρⱼ and becomes  ρⱼᴺ
+    ρᵢᴺ  = ρᵢ + dρdt⁺ * (dt/2) #Starts as  ρᵢ and becomes  ρᵢᴺ
+    ρⱼᴺ  = ρⱼ + dρdt⁻ * (dt/2) #Starts as  ρⱼ and becomes  ρⱼᴺ
 
     if BoundaryBool[i]
         ρᵢᴺ = clamp(ρᵢᴺ,ρ₀,2ρ₀)
@@ -215,11 +218,11 @@ function sim_step(dt, i , j, d2, h, m₀, h⁻¹, α , αD, c₀, γ, ρ₀, g, 
     dρdtIₙ⁺[i] += dρdtᴺ⁺
     dρdtIₙ⁺[j] += dρdtᴺ⁻ 
 
-    Pᵢᴺ     = EquationOfState(DensityNew[i],c₀,γ,ρ₀)
-    Pⱼᴺ     = EquationOfState(DensityNew[j],c₀,γ,ρ₀)
+    Pᵢᴺ     = EquationOfState(ρᵢᴺ,c₀,γ,ρ₀)
+    Pⱼᴺ     = EquationOfState(ρⱼᴺ,c₀,γ,ρ₀)
 
-    ρ̄ᵢⱼᴺ     = (DensityNew[i]+DensityNew[j])*0.5
-    Pfacᴺ    = (Pᵢᴺ+Pⱼᴺ)/(DensityNew[i]*DensityNew[j])
+    ρ̄ᵢⱼᴺ     = (ρᵢᴺ+ρⱼᴺ)*0.5
+    Pfacᴺ    = (Pᵢᴺ+Pⱼᴺ)/(ρᵢᴺ*ρⱼᴺ)
 
     cond      = dot(vᵢⱼᴺ, xᵢⱼᴺ)
     cond_bool = cond < 0.0
@@ -228,6 +231,9 @@ function sim_step(dt, i , j, d2, h, m₀, h⁻¹, α , αD, c₀, γ, ρ₀, g, 
 
     dvdtᴺ⁺ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) *  ∇ᵢWᵢⱼ + SVector(0, g * GravityFactor[i])
     dvdtᴺ⁻ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) * -∇ᵢWᵢⱼ + SVector(0, g * GravityFactor[j])
+
+    dvdtIₙ⁺[i] += dvdtᴺ⁺
+    dvdtIₙ⁺[j] += dvdtᴺ⁻
 end
 
 using SPHExample 
@@ -251,13 +257,13 @@ function EquationOfState(ρ,c₀,γ,ρ₀)
     return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
 end
 
-function CustomCLL(PositionNew, DensityNew, VelocityNew, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI)
+function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimConstants
 
 
-    Kernel                    .*= 0
-    KernelGradient.V          .*= 0
-    dρdtI                     .*= 0
+    Kernel            .*= 0
+    KernelGradient.V  .*= 0
+    dρdtI             .*= 0
 
     dt = 7.65e-5
 
@@ -285,7 +291,7 @@ function CustomCLL(PositionNew, DensityNew, VelocityNew, SimConstants, MotionLim
                     d2 = distance_condition(Position.V[k_idx],Position.V[k_1up])
 
                     if d2 <= TheCLL.CutOffSquared
-                        sim_step(dt, k_idx, k_1up, d2, h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² , Kernel, KernelGradient.V, Position.V, Density, Velocity.V, PositionNew.V, DensityNew, VelocityNew.V, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺)
+                        sim_step(dt, k_idx, k_1up, d2, h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² , Kernel, KernelGradient.V, Position.V, Density, Velocity.V, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI.V, dvdtIₙ⁺.V)
                     end
                 end
             end
@@ -302,16 +308,24 @@ function CustomCLL(PositionNew, DensityNew, VelocityNew, SimConstants, MotionLim
                         d2  = distance_condition(Position.V[k1_idx],Position.V[k2_idx])
 
                         if d2 <= TheCLL.CutOffSquared
-                            sim_step(dt, k1_idx, k2_idx, d2, h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² , Kernel, KernelGradient.V, Position.V, Density, Velocity.V, PositionNew.V, DensityNew, VelocityNew.V, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺)
+                            sim_step(dt, k1_idx, k2_idx, d2, h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² , Kernel, KernelGradient.V, Position.V, Density, Velocity.V, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI.V, dvdtIₙ⁺.V)
                         end
                     end
                 end
             end
     end
 
-    @. Velocityₙ⁺.V   = Velocity.V + dvdtI.V      * (dt/2) * MotionLimiter
+    @. Velocityₙ⁺.V   = Velocity.V + dvdtI.V      * (dt/2)   * MotionLimiter
     @. Positionₙ⁺.V   = Position.V + Velocityₙ⁺.V  * (dt/2)   * MotionLimiter
     @. ρₙ⁺            = Density    + dρdtI        * (dt/2) 
+    LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
+
+    DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
+    LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
+
+    @. Velocity.V += dvdtIₙ⁺.V * dt * MotionLimiter
+    @. Position.V += ((Velocity.V + (Velocity.V - dvdtIₙ⁺.V * dt * MotionLimiter)) / 2) * dt * MotionLimiter
+
 
 
     TheCLL.MaxValidIndex[] = nl
@@ -383,20 +397,17 @@ let
     KernelGradient     = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
     Velocity           = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
     dvdtI              = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
-    
-    DensityNew         = deepcopy(Density)
-    VelocityNew        = deepcopy(Velocity)
-    PositionNew        = deepcopy(Position)
+    dvdtIₙ⁺            = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
 
     Velocityₙ⁺ = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
     Positionₙ⁺ = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
    
-    CustomCLL(PositionNew, DensityNew, VelocityNew, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI)
+    CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
     function f()
         foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
         PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity"], Kernel, KernelGradient.V, Density, Velocity.V)
-        for iteration in 1:51
-            CustomCLL(PositionNew, DensityNew, VelocityNew, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI)
+        for iteration in 1:20
+            CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
             if iteration % 1 == 0
                 PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(iteration,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity"], Kernel, KernelGradient.V, Density, Velocity.V)
                 println(iteration)
