@@ -148,15 +148,9 @@ function RunSimulation(;FluidCSV::String,
 
     system          = InPlaceNeighborList(x=Position.V, cutoff=2*h*1)
 
-    to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
+    to_3d(vec_2d) = length(first(vec_2d)) == 2 ? [SVector(v..., 0.0) for v in vec_2d] : nothing
     # Save the initial particle layout with dummy values
-    if Dimensions == 2
-        @timeit HourGlass "6.1 outputting savefile" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", to_3d(Position.V)
-        , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, to_3d(KernelGradient.V), Density, Pressureᵢ, to_3d(Acceleration.V), to_3d(Velocity.V))
-    elseif Dimensions == 3
-        @timeit HourGlass "6.1 outputting savefile" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtp", Position.V
-        , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, KernelGradient.V, Density, Pressureᵢ, Acceleration.V, Velocity.V)
-    end
+    @timeit HourGlass "6.1 outputting savefile" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0, 6,"0") * ".vtp", to_3d(Position.V), ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, KernelGradient.V, Density, Pressureᵢ, Acceleration.V, Velocity.V)
 
     # Define Progress spec for displaying simulation results
     generate_showvalues(Iteration, TotalTime) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime))]
@@ -222,7 +216,7 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "4.3 final velocity" @. Velocity.V += Acceleration.V * dt * MotionLimiter
         @timeit HourGlass "4.4 final position" @. Position.V += ((Velocity.V + (Velocity.V - Acceleration.V * dt * MotionLimiter)) / 2) * dt * MotionLimiter
         
-        @timeit HourGlass "5.1 calculate dt"       dt =  7.65e-5 #Δt(Position.V, Velocity.V, Acceleration.V,SimConstants)
+        @timeit HourGlass "5.1 calculate dt"       dt = Δt(Position.V, Velocity.V, Acceleration.V,SimConstants)
         @timeit HourGlass "5.1 +1 iteration"       SimMetaData.Iteration      += 1
         @timeit HourGlass "5.2 set new dt"         SimMetaData.CurrentTimeStep = dt
         @timeit HourGlass "5.3 increment total dt" SimMetaData.TotalTime      += dt
@@ -233,13 +227,8 @@ function RunSimulation(;FluidCSV::String,
             OutputIterationCounter += 1
         # OutVTP is based on a well-developed Julia package, WriteVTK, while CustomVTP is based on my hand-rolled solution.
         # CustomVTP is about 10% faster, but does not mean much in this case.
-            if Dimensions == 2
-                @timeit HourGlass "6.1 outputting savefile" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp", to_3d(Position.V)
-                , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, to_3d(KernelGradient.V), Density, Pressureᵢ, to_3d(Acceleration.V), to_3d(Velocity.V))
-            elseif Dimensions == 3
-                @timeit HourGlass "6.1 outputting savefile" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp", Position.V
-                , ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, KernelGradient.V, Density, Pressureᵢ, Acceleration.V, Velocity.V)
-            end
+
+        @timeit HourGlass "6.1 outputting savefile" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp", to_3d(Position.V), ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, KernelGradient.V, Density, Pressureᵢ, Acceleration.V, Velocity.V)
         end
 
         @timeit HourGlass "6.2 updating progress bar" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
@@ -247,21 +236,12 @@ function RunSimulation(;FluidCSV::String,
         if SimMetaData.TotalTime >= SimMetaData.SimulationTime + SimMetaData.OutputEach
             break
         end
-
-        # println(sum(Kernel))
-        # println(sum(KernelGradient.V))
-        # println(sum(Density))
-        println(sum(ρₙ⁺))
-        println(sum(Acceleration.V))
-        println(sum(Velocity.V))
-
-        break
     end
 
     # Print the timings in the default way
-    # disable_timer!(HourGlass)
-    # show(HourGlass,sortby=:name)
-    # show(HourGlass)
+    disable_timer!(HourGlass)
+    show(HourGlass,sortby=:name)
+    show(HourGlass)
 
     return nothing
 end
@@ -289,13 +269,13 @@ begin
 
     # Only doing this to compile code before first run
     # And here we run the function - enjoy!
-    # println(@code_warntype RunSimulation(
-    #     FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
-    #     BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
-    #     SimMetaData  = SimMetaData,
-    #     SimConstants = SimConstants
-    # )
-    # )
+    println(@code_warntype RunSimulation(
+        FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
+        BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
+        SimMetaData  = SimMetaData,
+        SimConstants = SimConstants
+    )
+    )
 
     # And here we run the function - enjoy!
     RunSimulation(
