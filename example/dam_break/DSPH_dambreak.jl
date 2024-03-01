@@ -170,7 +170,7 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "2.3 half step density"  @. ρₙ⁺  = Density  + dρdtI * (dt/2) 
         # density of boundary particles in such a way that they cannot produce suction
         @timeit HourGlass "2.4 half step limit density at boundary" LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
-
+# --
         # Even though particles have moved slightly, we do not update xᵢⱼ or kernel values!
 
         # Density derivative at "n+½" - Note that we keep the kernel gradient values calculated at "n" for simplicity

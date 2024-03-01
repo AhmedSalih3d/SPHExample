@@ -1,3 +1,4 @@
+using SPHExample
 using BenchmarkTools
 import CellListMap
 using StaticArrays
@@ -200,37 +201,37 @@ function sim_step(dt, i , j, d2, h, m₀, h⁻¹, α , αD, c₀, γ, ρ₀, g, 
     xᵢᴺ  = xᵢ + vᵢᴺ * (dt/2) * MotionLimiter[i]
     xⱼᴺ  = xⱼ + vⱼᴺ * (dt/2) * MotionLimiter[j]
 
-    # Update and go through same steps as above
+    # # Update and go through same steps as above
 
-    xᵢⱼᴺ = xᵢᴺ - xⱼᴺ
+    # xᵢⱼᴺ = xᵢᴺ - xⱼᴺ
 
-    vᵢⱼᴺ     = vᵢᴺ - vⱼᴺ
+    # vᵢⱼᴺ     = vᵢᴺ - vⱼᴺ
 
-    dρdtᴺ⁺   = dot(m₀ *   vᵢⱼᴺ , ∇ᵢWᵢⱼ)
-    dρdtᴺ⁻   = dot(m₀ *  -vᵢⱼᴺ ,-∇ᵢWᵢⱼ)
+    # dρdtᴺ⁺   = dot(m₀ *   vᵢⱼᴺ , ∇ᵢWᵢⱼ)
+    # dρdtᴺ⁻   = dot(m₀ *  -vᵢⱼᴺ ,-∇ᵢWᵢⱼ)
 
-    dρdtIₙ⁺[i] += dρdtᴺ⁺
-    dρdtIₙ⁺[j] += dρdtᴺ⁻ 
+    # dρdtIₙ⁺[i] += dρdtᴺ⁺
+    # dρdtIₙ⁺[j] += dρdtᴺ⁻ 
 
-    Pᵢᴺ     = EquationOfState(ρᵢᴺ,c₀,γ,ρ₀)
-    Pⱼᴺ     = EquationOfState(ρⱼᴺ,c₀,γ,ρ₀)
+    # Pᵢᴺ     = EquationOfState(ρᵢᴺ,c₀,γ,ρ₀)
+    # Pⱼᴺ     = EquationOfState(ρⱼᴺ,c₀,γ,ρ₀)
 
-    ρ̄ᵢⱼᴺ     = (ρᵢᴺ+ρⱼᴺ)*0.5
-    Pfacᴺ    = (Pᵢᴺ+Pⱼᴺ)/(ρᵢᴺ*ρⱼᴺ)
+    # ρ̄ᵢⱼᴺ     = (ρᵢᴺ+ρⱼᴺ)*0.5
+    # Pfacᴺ    = (Pᵢᴺ+Pⱼᴺ)/(ρᵢᴺ*ρⱼᴺ)
 
-    cond      = dot(vᵢⱼᴺ, xᵢⱼᴺ)
-    cond_bool = cond < 0.0
-    μᵢⱼᴺ       = h*cond/(d²+η²)
-    Πᵢⱼᴺ       = cond_bool*(-α*c₀*μᵢⱼᴺ)/ρ̄ᵢⱼᴺ
+    # cond      = dot(vᵢⱼᴺ, xᵢⱼᴺ)
+    # cond_bool = cond < 0.0
+    # μᵢⱼᴺ       = h*cond/(d²+η²)
+    # Πᵢⱼᴺ       = cond_bool*(-α*c₀*μᵢⱼᴺ)/ρ̄ᵢⱼᴺ
 
-    dvdtᴺ⁺ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) *  ∇ᵢWᵢⱼ
-    dvdtᴺ⁻ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) * -∇ᵢWᵢⱼ
+    # dvdtᴺ⁺ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) *  ∇ᵢWᵢⱼ
+    # dvdtᴺ⁻ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) * -∇ᵢWᵢⱼ
 
-    dvdtIₙ⁺[i] += dvdtᴺ⁺
-    dvdtIₙ⁺[j] += dvdtᴺ⁻
+    # dvdtIₙ⁺[i] += dvdtᴺ⁺
+    # dvdtIₙ⁺[j] += dvdtᴺ⁻
 end
 
-using SPHExample 
+
 @inline function fancy7th(x)
     # todo tune the magic constant
     # initial guess based on fast inverse sqrt trick but adjusted to compute x^(1/7)
@@ -251,7 +252,7 @@ function EquationOfState(ρ,c₀,γ,ρ₀)
     return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
 end
 
-function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
+function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimConstants
 
 
@@ -312,16 +313,68 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
 
 
     dvdtI.vectors[end]  .+= g * GravityFactor
-    dvdtIₙ⁺.vectors[end] .+= g * GravityFactor
 
+
+    @. Velocityₙ⁺.V   = Velocity.V   + dvdtI.V * (dt/2) * MotionLimiter
+    @. Positionₙ⁺.V   = Position.V   + Velocityₙ⁺.V * (dt/2)   * MotionLimiter
     @. ρₙ⁺            = Density    + dρdtI        * (dt/2) 
     LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
 
-    DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
+    Kernel            .*= 0
+    KernelGradient.V  .*= 0
+    dρdtI             .*= 0
+    dρdtIₙ⁺            .*= 0
+    dvdtI.V           .*= 0
+    dvdtIₙ⁺.V          .*= 0
+    
+    @inbounds for Cind_ ∈ TheCLL.UniqueCells
+            
+        Cind = (Cind_ .+ 1 .+ TheCLL.HalfPad)
+
+            # The indices in the cell are:
+            indices_in_cell = TheCLL.Layout[Cind...]
+
+            n_idx_cells = length(indices_in_cell)
+            for ki = 1:n_idx_cells-1
+                k_idx = indices_in_cell[ki]
+                  for kj = (ki+1):n_idx_cells
+                    k_1up = indices_in_cell[kj]
+                    d2 = distance_condition(Position.V[k_idx],Position.V[k_1up])
+
+                    if d2 <= TheCLL.CutOffSquared
+                        nl += 1
+                        sim_step(dt, k_idx, k_1up, d2, h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² , Kernel, KernelGradient.V, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI.V, dvdtIₙ⁺.V)
+                    end
+                end
+            end
+
+            for Sind ∈ TheCLL.Stencil
+                Sind = (Cind .+ Sind)
+                indices_in_cell_plus  = TheCLL.Layout[Sind...]
+
+                # Here a double loop to compare indices_in_cell[k] to all possible neighbours
+                for k1 ∈ eachindex(indices_in_cell)
+                    k1_idx = indices_in_cell[k1]
+                    for k2 ∈ eachindex(indices_in_cell_plus)
+                        k2_idx = indices_in_cell_plus[k2]
+                        d2  = distance_condition(Position.V[k1_idx],Position.V[k2_idx])
+
+                        if d2 <= TheCLL.CutOffSquared
+                            nl += 1
+                            sim_step(dt, k1_idx, k2_idx, d2, h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² , Kernel, KernelGradient.V, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI.V, dvdtIₙ⁺.V)
+                        end
+                    end
+                end
+            end
+    end
+
+
+    dvdtI.vectors[end] .+= g * GravityFactor
+    DensityEpsi!(Density,dρdtI,ρₙ⁺,dt)
     LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
 
-    @. Velocity.V += dvdtIₙ⁺.V * dt * MotionLimiter
-    @. Position.V += ((Velocity.V + (Velocity.V - dvdtIₙ⁺.V * dt * MotionLimiter)) / 2) * dt * MotionLimiter
+    @. Velocity.V += dvdtI.V * dt * MotionLimiter
+    @. Position.V += ((Velocity.V + (Velocity.V - dvdtI.V * dt * MotionLimiter)) / 2) * dt * MotionLimiter
 
     #TheCLL.MaxValidIndex[] = nl
     # resize!(TheCLL.ListOfInteractions,nl)
@@ -419,8 +472,8 @@ let
     function f()
         foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
         PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, KernelGradient.V, Density, Velocity.V, dvdtIₙ⁺.V)
-        for iteration in 1:1
-            CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
+        for iteration in 1:101
+            CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
             if iteration % 1 == 0
                 PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(iteration,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, to_3d(KernelGradient.V), Density, Velocity.V, dvdtIₙ⁺.V)
                 println(iteration)
