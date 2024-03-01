@@ -222,7 +222,7 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "4.3 final velocity" @. Velocity.V += Acceleration.V * dt * MotionLimiter
         @timeit HourGlass "4.4 final position" @. Position.V += ((Velocity.V + (Velocity.V - Acceleration.V * dt * MotionLimiter)) / 2) * dt * MotionLimiter
         
-        @timeit HourGlass "5.1 calculate dt"       dt =  Δt(Position.V, Velocity.V, Acceleration.V,SimConstants)
+        @timeit HourGlass "5.1 calculate dt"       dt =  7.65e-5 #Δt(Position.V, Velocity.V, Acceleration.V,SimConstants)
         @timeit HourGlass "5.1 +1 iteration"       SimMetaData.Iteration      += 1
         @timeit HourGlass "5.2 set new dt"         SimMetaData.CurrentTimeStep = dt
         @timeit HourGlass "5.3 increment total dt" SimMetaData.TotalTime      += dt
@@ -248,16 +248,20 @@ function RunSimulation(;FluidCSV::String,
             break
         end
 
-        println(sum(Kernel))
-        println(sum(KernelGradient.V))
-        println(sum(Density))
+        # println(sum(Kernel))
+        # println(sum(KernelGradient.V))
+        # println(sum(Density))
+        println(sum(ρₙ⁺))
+        println(sum(Acceleration.V))
+        println(sum(Velocity.V))
+
         break
     end
 
     # Print the timings in the default way
-    disable_timer!(HourGlass)
-    show(HourGlass,sortby=:name)
-    show(HourGlass)
+    # disable_timer!(HourGlass)
+    # show(HourGlass,sortby=:name)
+    # show(HourGlass)
 
     return nothing
 end
@@ -285,13 +289,13 @@ begin
 
     # Only doing this to compile code before first run
     # And here we run the function - enjoy!
-    println(@code_warntype RunSimulation(
-        FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
-        BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
-        SimMetaData  = SimMetaData,
-        SimConstants = SimConstants
-    )
-    )
+    # println(@code_warntype RunSimulation(
+    #     FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
+    #     BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
+    #     SimMetaData  = SimMetaData,
+    #     SimConstants = SimConstants
+    # )
+    # )
 
     # And here we run the function - enjoy!
     RunSimulation(

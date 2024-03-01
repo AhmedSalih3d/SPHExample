@@ -184,8 +184,8 @@ function sim_step(dt, i , j, d2, h, m₀, h⁻¹, α , αD, c₀, γ, ρ₀, g, 
     μᵢⱼ       = h*cond/(d²+η²)
     Πᵢⱼ       = cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ
 
-    dvdt⁺ = - m₀ * ( Pfac + Πᵢⱼ) *  ∇ᵢWᵢⱼ + SVector(0, g * GravityFactor[i])
-    dvdt⁻ = - m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ + SVector(0, g * GravityFactor[j])
+    dvdt⁺ = - m₀ * ( Pfac + Πᵢⱼ) *  ∇ᵢWᵢⱼ
+    dvdt⁻ = - m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ
 
     dvdtI[i] += dvdt⁺
     dvdtI[j] += dvdt⁻
@@ -229,8 +229,8 @@ function sim_step(dt, i , j, d2, h, m₀, h⁻¹, α , αD, c₀, γ, ρ₀, g, 
     μᵢⱼᴺ       = h*cond/(d²+η²)
     Πᵢⱼᴺ       = cond_bool*(-α*c₀*μᵢⱼᴺ)/ρ̄ᵢⱼᴺ
 
-    dvdtᴺ⁺ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) *  ∇ᵢWᵢⱼ + SVector(0, g * GravityFactor[i])
-    dvdtᴺ⁻ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) * -∇ᵢWᵢⱼ + SVector(0, g * GravityFactor[j])
+    dvdtᴺ⁺ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) *  ∇ᵢWᵢⱼ
+    dvdtᴺ⁻ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) * -∇ᵢWᵢⱼ
 
     dvdtIₙ⁺[i] += dvdtᴺ⁺
     dvdtIₙ⁺[j] += dvdtᴺ⁻
@@ -264,6 +264,9 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
     Kernel            .*= 0
     KernelGradient.V  .*= 0
     dρdtI             .*= 0
+    dρdtIₙ⁺            .*= 0
+    dvdtI.V           .*= 0
+    dvdtIₙ⁺.V          .*= 0
 
     dt = 7.65e-5
 
@@ -315,10 +318,16 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
             end
     end
 
+
+    dvdtI.vectors[end] .+= g * GravityFactor
+    dvdtIₙ⁺.vectors[end] .+= g * GravityFactor
+
     @. Velocityₙ⁺.V   = Velocity.V + dvdtI.V      * (dt/2)   * MotionLimiter
     @. Positionₙ⁺.V   = Position.V + Velocityₙ⁺.V  * (dt/2)   * MotionLimiter
     @. ρₙ⁺            = Density    + dρdtI        * (dt/2) 
     LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
+
+
 
     DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
     LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
@@ -330,6 +339,10 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
 
     TheCLL.MaxValidIndex[] = nl
     # resize!(TheCLL.ListOfInteractions,nl)
+
+    println(sum(ρₙ⁺))
+    println(sum(dvdtIₙ⁺.V))
+    println(sum(Velocity.V))
 
     return nothing
 end
@@ -406,7 +419,7 @@ let
     function f()
         foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
         PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity"], Kernel, KernelGradient.V, Density, Velocity.V)
-        for iteration in 1:20
+        for iteration in []
             CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
             if iteration % 1 == 0
                 PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(iteration,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity"], Kernel, KernelGradient.V, Density, Velocity.V)
@@ -415,7 +428,8 @@ let
         end
     end
 
-    @profview f()
+    f()
+    # @profview f()
 
     # @benchmark CustomCLL($PositionNew, $DensityNew, $VelocityNew, $SimConstants, $MotionLimiter, $BoundaryBool, $GravityFactor, $Position, $Kernel, $KernelGradient, $Density, $Velocity)
 end
