@@ -163,8 +163,9 @@ function CustomCLL(PositionNew, DensityNew, VelocityNew, SimConstants, MotionLim
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimConstants
 
 
-    Kernel           .*= 0
-    KernelGradient.V .*= 0
+    Kernel                    .*= 0
+    KernelGradient.V          .*= 0
+    DensityDerivativeHalfStep .*= 0
 
     dt = 7.65e-5
 
@@ -209,25 +210,17 @@ function CustomCLL(PositionNew, DensityNew, VelocityNew, SimConstants, MotionLim
                         KernelGradient.V[k_1up] += -∇ᵢWᵢⱼ
 
                         d² = d*d
-                        # Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
-                        # ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, invCb)
-                        # Pⱼᵢᴴ  = -Pᵢⱼᴴ
-                        # ρⱼᵢᴴ  = faux_fancy(ρ₀, Pⱼᵢᴴ, invCb)
 
                         ρᵢ    = Density[k_idx]
                         ρⱼ    = Density[k_1up]
-                        # ρⱼᵢ   = ρⱼ - ρᵢ
-                        
-
-                        # FacRhoI = 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * inv(d²+η²)
-                        # FacRhoJ = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(d²+η²)
+   
 
                         vᵢ      = Velocity.V[k_idx]
                         vⱼ      = Velocity.V[k_1up]
                         vᵢⱼ     = vᵢ - vⱼ
 
-                        dρdt⁺   = dot(m₀ *   vᵢⱼ ,  ∇ᵢWᵢⱼ) # + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼ * MotionLimiter[k_idx]), ∇ᵢWᵢⱼ)
-                        dρdt⁻   = dot(m₀ *  -vᵢⱼ , -∇ᵢWᵢⱼ) # + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼ * MotionLimiter[k_1up]),-∇ᵢWᵢⱼ)
+                        dρdt⁺   = dot(m₀ *   vᵢⱼ ,  ∇ᵢWᵢⱼ)
+                        dρdt⁻   = dot(m₀ *  -vᵢⱼ , -∇ᵢWᵢⱼ)
 
                         Pᵢ      = EquationOfState(ρᵢ,c₀,γ,ρ₀)
                         Pⱼ      = EquationOfState(ρⱼ,c₀,γ,ρ₀)
@@ -264,21 +257,10 @@ function CustomCLL(PositionNew, DensityNew, VelocityNew, SimConstants, MotionLim
 
                         xᵢⱼᴺ = xᵢᴺ - xⱼᴺ
 
-                        # Pᵢⱼᴴᴺ  = ρ₀ * (-g) * -xᵢⱼᴺ[end]
-                        # ρᵢⱼᴴᴺ  = faux_fancy(ρ₀, Pᵢⱼᴴᴺ, invCb)
-                        # Pⱼᵢᴴᴺ  = -Pᵢⱼᴴᴺ
-                        # ρⱼᵢᴴᴺ  = faux_fancy(ρ₀, Pⱼᵢᴴᴺ, invCb)
-
-                        # ρⱼᵢᴺ  = ρⱼᴺ - ρᵢᴺ
-                        
-
-                        # FacRhoIᴺ = 2 * ( ρⱼᵢᴺ - ρᵢⱼᴴᴺ) * inv(d²+η²)
-                        # FacRhoJᴺ = 2 * (-ρⱼᵢᴺ - ρⱼᵢᴴᴺ) * inv(d²+η²)
-
                         vᵢⱼᴺ     = vᵢᴺ - vⱼᴺ
 
-                        dρdtᴺ⁺   = dot(m₀ *   vᵢⱼᴺ , ∇ᵢWᵢⱼ) #δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoIᴺ *  -xᵢⱼᴺ * MotionLimiter[k_idx]), ∇ᵢWᵢⱼ)
-                        dρdtᴺ⁻   = dot(m₀ *  -vᵢⱼᴺ ,-∇ᵢWᵢⱼ) #δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJᴺ *   xᵢⱼᴺ * MotionLimiter[k_1up]),-∇ᵢWᵢⱼ)
+                        dρdtᴺ⁺   = dot(m₀ *   vᵢⱼᴺ , ∇ᵢWᵢⱼ)
+                        dρdtᴺ⁻   = dot(m₀ *  -vᵢⱼᴺ ,-∇ᵢWᵢⱼ)
 
                         DensityDerivativeHalfStep[k_idx]  += dρdtᴺ⁺
                         DensityDerivativeHalfStep[k_1up]  += dρdtᴺ⁻
@@ -297,33 +279,11 @@ function CustomCLL(PositionNew, DensityNew, VelocityNew, SimConstants, MotionLim
                         dvdtᴺ⁺ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) *  ∇ᵢWᵢⱼ + SVector(0, g * GravityFactor[k_idx])
                         dvdtᴺ⁻ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) * -∇ᵢWᵢⱼ + SVector(0, g * GravityFactor[k_1up])
 
-                        # Concluded time stepping
-                        
-                        # epsiᵢ   = - (dρdtᴺ⁺ / ρᵢᴺ) * dt
-                        # epsiⱼ   = - (dρdtᴺ⁻ / ρⱼᴺ) * dt
-
-                        # DensityNew[k_idx] *= (2 - epsiᵢ) / (2 + epsiᵢ)
-                        # DensityNew[k_1up] *= (2 - epsiⱼ) / (2 + epsiⱼ)
-
-                        # if BoundaryBool[k_idx]
-                        #     DensityNew[k_idx] = clamp(DensityNew[k_idx],1000.0,2000.0)
-                        # elseif BoundaryBool[k_1up]
-                        #     DensityNew[k_1up] = clamp(DensityNew[k_1up],1000.0,2000.0)
-                        # end
-
-
                         VelocityNew.V[k_idx] += dvdtᴺ⁺ * dt * MotionLimiter[k_idx]
                         VelocityNew.V[k_1up] += dvdtᴺ⁻ * dt * MotionLimiter[k_1up]
 
                         PositionNew.V[k_idx] += ((VelocityNew.V[k_idx] - vᵢ)/2) * dt * MotionLimiter[k_idx]
                         PositionNew.V[k_1up] += ((VelocityNew.V[k_1up] - vⱼ)/2) * dt * MotionLimiter[k_1up]
-
-                        #cond = d2 <= TheCLL.CutOffSquared
-                        # # If cond true, we use nl + 1 as new index
-                        # ind = ifelse(cond,nl+1,length(TheCLL.ListOfInteractions))
-                        # TheCLL.ListOfInteractions[ind] = (k_idx,k_1up,sqrt(d2))
-                        # # Then if cond true, update nl
-                        # nl  = ifelse(cond,ind,nl)
                     end
                 end
             end
@@ -341,6 +301,7 @@ function CustomCLL(PositionNew, DensityNew, VelocityNew, SimConstants, MotionLim
 
                         if d2 <= TheCLL.CutOffSquared
                             d   = sqrt(d2)
+                            d²  = d*d
 
                             xᵢ  = Position.V[k1_idx]
                             xⱼ  = Position.V[k2_idx]
@@ -355,27 +316,16 @@ function CustomCLL(PositionNew, DensityNew, VelocityNew, SimConstants, MotionLim
                             ∇ᵢWᵢⱼ = Fac * xᵢⱼ
                             KernelGradient.V[k1_idx] +=  ∇ᵢWᵢⱼ
                             KernelGradient.V[k2_idx] += -∇ᵢWᵢⱼ
-
-                            d² = d*d
-                            # Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
-                            # ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, invCb)
-                            # Pⱼᵢᴴ  = -Pᵢⱼᴴ
-                            # ρⱼᵢᴴ  = faux_fancy(ρ₀, Pⱼᵢᴴ, invCb)
         
                             ρᵢ    = Density[k1_idx]
                             ρⱼ    = Density[k2_idx]
-                            ρⱼᵢ   = ρⱼ - ρᵢ
-                            
-        
-                            # FacRhoI = 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * inv(d²+η²)
-                            # FacRhoJ = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(d²+η²)
         
                             vᵢ      = Velocity.V[k1_idx]
                             vⱼ      = Velocity.V[k2_idx]
                             vᵢⱼ     = vᵢ - vⱼ
         
-                            dρdt⁺   = dot(m₀ *   vᵢⱼ ,  ∇ᵢWᵢⱼ) # + δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼ * MotionLimiter[k1_idx]), ∇ᵢWᵢⱼ)
-                            dρdt⁻   = dot(m₀ *  -vᵢⱼ , -∇ᵢWᵢⱼ) # + δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼ * MotionLimiter[k2_idx]),-∇ᵢWᵢⱼ)
+                            dρdt⁺   = dot(m₀ *   vᵢⱼ ,  ∇ᵢWᵢⱼ) 
+                            dρdt⁻   = dot(m₀ *  -vᵢⱼ , -∇ᵢWᵢⱼ) 
         
                             Pᵢ      = EquationOfState(ρᵢ,c₀,γ,ρ₀)
                             Pⱼ      = EquationOfState(ρⱼ,c₀,γ,ρ₀)
@@ -404,29 +354,18 @@ function CustomCLL(PositionNew, DensityNew, VelocityNew, SimConstants, MotionLim
                             vᵢᴺ  = vᵢ + dvdt⁺ * (dt/2) * MotionLimiter[k1_idx]
                             vⱼᴺ  = vⱼ + dvdt⁻ * (dt/2) * MotionLimiter[k2_idx]
 
-                            xᵢᴺ  = xᵢ + vᵢᴺ * (dt/2) * MotionLimiter[k1_idx]
-                            xⱼᴺ  = xⱼ + vⱼᴺ * (dt/2) * MotionLimiter[k2_idx]
+                            xᵢᴺ  = xᵢ + vᵢᴺ   * (dt/2) * MotionLimiter[k1_idx]
+                            xⱼᴺ  = xⱼ + vⱼᴺ   * (dt/2) * MotionLimiter[k2_idx]
 
                             # Update and go through motion again, copy paste from above
                             # d² not updated!, neiter gradient
 
                             xᵢⱼᴺ = xᵢᴺ - xⱼᴺ
-
-                            # Pᵢⱼᴴᴺ  = ρ₀ * (-g) * -xᵢⱼᴺ[end]
-                            # ρᵢⱼᴴᴺ  = faux_fancy(ρ₀, Pᵢⱼᴴᴺ, invCb)
-                            # Pⱼᵢᴴᴺ  = -Pᵢⱼᴴᴺ
-                            # ρⱼᵢᴴᴺ  = faux_fancy(ρ₀, Pⱼᵢᴴᴺ, invCb)
-        
-                            # ρⱼᵢᴺ  = ρⱼᴺ - ρᵢᴺ
-                            
-        
-                            # FacRhoIᴺ = 2 * ( ρⱼᵢᴺ - ρᵢⱼᴴᴺ) * inv(d²+η²)
-                            # FacRhoJᴺ = 2 * (-ρⱼᵢᴺ - ρⱼᵢᴴᴺ) * inv(d²+η²)
         
                             vᵢⱼᴺ     = vᵢᴺ - vⱼᴺ
         
-                            dρdtᴺ⁺   = dot(m₀ *   vᵢⱼᴺ ,  ∇ᵢWᵢⱼ) #+ δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoIᴺ *  -xᵢⱼᴺ * MotionLimiter[k1_idx]), ∇ᵢWᵢⱼ)
-                            dρdtᴺ⁻   = dot(m₀ *  -vᵢⱼᴺ , -∇ᵢWᵢⱼ) #+ δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJᴺ *   xᵢⱼᴺ * MotionLimiter[k2_idx]),-∇ᵢWᵢⱼ)
+                            dρdtᴺ⁺   = dot(m₀ *   vᵢⱼᴺ ,  ∇ᵢWᵢⱼ)
+                            dρdtᴺ⁻   = dot(m₀ *  -vᵢⱼᴺ , -∇ᵢWᵢⱼ)
         
                             DensityDerivativeHalfStep[k1_idx]   += dρdtᴺ⁺
                             DensityDerivativeHalfStep[k2_idx]   += dρdtᴺ⁻    
@@ -445,49 +384,26 @@ function CustomCLL(PositionNew, DensityNew, VelocityNew, SimConstants, MotionLim
                             dvdtᴺ⁺ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) *  ∇ᵢWᵢⱼ + SVector(0, g * GravityFactor[k1_idx])
                             dvdtᴺ⁻ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) * -∇ᵢWᵢⱼ + SVector(0, g * GravityFactor[k2_idx])
 
-                            # Concluded time stepping
-                            
-                            # epsiᵢ   = - (dρdtᴺ⁺ / ρᵢᴺ) * dt
-                            # epsiⱼ   = - (dρdtᴺ⁻ / ρⱼᴺ) * dt
-
-                            # DensityNew[k1_idx] *= (2 - epsiᵢ) / (2 + epsiᵢ)
-                            # DensityNew[k2_idx] *= (2 - epsiⱼ) / (2 + epsiⱼ)
-
-                            # if BoundaryBool[k1_idx]
-                            #     DensityNew[k1_idx] = clamp( DensityNew[k1_idx],1000,2000)
-                            # elseif BoundaryBool[k2_idx]
-                            #     DensityNew[k2_idx] = clamp( DensityNew[k2_idx],1000,2000)
-                            # end
-
-
 
                             VelocityNew.V[k1_idx] += dvdtᴺ⁺ * dt * MotionLimiter[k1_idx]
                             VelocityNew.V[k2_idx] += dvdtᴺ⁻ * dt * MotionLimiter[k2_idx]
 
                             PositionNew.V[k1_idx] += ((VelocityNew.V[k1_idx] - vᵢ)/2) * dt * MotionLimiter[k1_idx]
                             PositionNew.V[k2_idx] += ((VelocityNew.V[k2_idx] - vⱼ)/2) * dt * MotionLimiter[k2_idx]
-
-
-                            # cond = d2 <= TheCLL.CutOffSquared
-                            # # If cond true, we use nl + 1 as new index
-                            # ind = ifelse(cond,nl+1,length(TheCLL.ListOfInteractions))
-                            # TheCLL.ListOfInteractions[ind] = (k1_idx,k2_idx,sqrt(d2))
-                            # # Then if cond true, update nl
-                            # nl  = ifelse(cond,ind,nl)
                         end
                     end
                 end
             end
     end
 
-    # Position.V .= PositionNew.V
+    Position.V .= PositionNew.V
     Velocity.V .= VelocityNew.V
-    #Density    .= DensityNew
+    # Density    .= DensityNew
 
     DensityEpsi!(Density, DensityDerivativeHalfStep, DensityNew, dt)
 
-    # println(sum(Kernel))
-    # println(sum(KernelGradient.V))
+    println(sum(Kernel))
+    println(sum(KernelGradient.V))
     # println(sum(Density))
     
 
