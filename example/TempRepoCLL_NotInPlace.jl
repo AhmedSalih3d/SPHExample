@@ -10,18 +10,21 @@ include("../src/ProduceVTP.jl")
 
 @with_kw struct CLL{I,T,D}
     Points::StructVector{SVector{D,T}}
-    MaxValidIndex::Base.RefValue{Int}        = Ref(0)
-    CutOff::T
-    CutOffSquared::T                         = CutOff^2
-    Padding::I                               = 2
-    HalfPad::I                               = convert(typeof(Padding),Padding//2)
-    ZeroOffset::I                            = 1 #Since we start from 0 when generating cells
-    Stencil::Vector{NTuple{D, I}}            = neighbors(Val(getsvecD(eltype(Points))) )
-    Cells::Vector{NTuple{D, I}}              = ExtractCells(Points,CutOff,Val(getsvecD(eltype(Points))))
-    UniqueCells::Vector{NTuple{D, I}}        = unique(Cells)
-    Nmax::I                                  = maximum(reinterpret(Int,@view(Cells[:]))) + ZeroOffset
-    Layout::Array{Vector{I}, D}              = GenerateM(Nmax,ZeroOffset,HalfPad,Padding,Cells,Val(getsvecD(eltype(Points))))
-    ListOfInteractions::Vector{Tuple{I,I,T}} = Vector{Tuple{Int,Int,getsvecT(eltype(Points))}}(undef,CalculateTotalPossibleNumberOfInteractions(UniqueCells,Layout,Stencil,HalfPad))
+    MaxValidIndex::Base.RefValue{Int}              = Ref(0)
+    CutOff::T      
+    CutOffSquared::T                               = CutOff^2
+    Padding::I                                     = 2
+    HalfPad::I                                     = convert(typeof(Padding),Padding//2)
+    ZeroOffset::I                                  = 1 #Since we start from 0 when generating cells
+    Stencil::Vector{NTuple{D, I}}                  = neighbors(Val(getsvecD(eltype(Points))) )
+    Cells::Vector{NTuple{D, I}}                    = ExtractCells(Points,CutOff,Val(getsvecD(eltype(Points))))
+    UniqueCells::Vector{NTuple{D, I}}              = unique(Cells)
+    Nmax::I                                        = maximum(reinterpret(Int,@view(Cells[:]))) + ZeroOffset
+    Layout::Array{Vector{I}, D}                    = GenerateM(Nmax,ZeroOffset,HalfPad,Padding,Cells,Val(getsvecD(eltype(Points))))
+    IndexI::Vector{I}                              = zeros(Int, CalculateTotalPossibleNumberOfInteractions(UniqueCells,Layout,Stencil,HalfPad))
+    IndexJ::Vector{I}                              = zeros(Int, CalculateTotalPossibleNumberOfInteractions(UniqueCells,Layout,Stencil,HalfPad))
+    IndexD::Vector{T}                              = zeros(getsvecT(eltype(Points)), CalculateTotalPossibleNumberOfInteractions(UniqueCells,Layout,Stencil,HalfPad))
+    ListOfInteractions::StructVector{Tuple{I,I,T}} = StructVector{Tuple{Int,Int,getsvecT(eltype(Points))}}((IndexI,IndexJ,IndexD))
 end
 @inline getspecs(::Type{CLL{I,T,D}}) where {I,T,D} = (typeINT = I, typeFLT = T, dimensions=D)
 @inline getsvecDT(::Type{SVector{d,T}}) where {d,T} = (dimensions=d, type=T)
