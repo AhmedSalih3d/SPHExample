@@ -130,23 +130,16 @@ function RunSimulation(;FluidCSV::String,
     OutputIterationCounter = 0
     @inbounds while true
         # Be sure to update and retrieve the updated neighbour list at each time step
-        # @timeit HourGlass "Step 0.1 | Update Neighbour system.nb.list" begin
-            # if SimMetaData.Iteration % 5 == 0 || SimMetaData.Iteration == 1
         @timeit HourGlass "0.1 update particle positions"           update!(system,Position.V)
         @timeit HourGlass "0.2 extract updated neighborlist"        neighborlist!(system)
         @timeit HourGlass "0.3 resize split neighborlist"           resize!(list_me, system.nb.n)
         @timeit HourGlass "0.4 update values of split neighborlist" list_me .= system.nb.list
-            # else
-            #     D .= norm.(xᵢⱼ.V)
-            # end
-        # end
-        
+
         # @timeit HourGlass "Step 0.2 | Reset arrays to zero and resize L arrays" begin
         # Resize L based values (interactions between all particles i and j) based on length of neighborsystem.nb.list
         @timeit HourGlass "0.5 resize calculation buffers" ResizeBuffers!(KernelL, KernelGradientL, dvdtL, xᵢⱼ, drhopLp, drhopLn; N = system.nb.n)
         # Clean up arrays, Vector{T} and Vector{SVector{3,T}}
         @timeit HourGlass "0.6 reset calculation buffers"  ResetArrays!(Kernel, dρdtI,dρdtIₙ⁺,KernelGradient.V,dvdtI.V, Acceleration.V, drhopLp, drhopLn)
-        # end
 
         # Here we calculate the distances between particles, output the kernel gradient value for each particle and also the kernel gradient value
         # based on the pair-to-pair interaction system.nb.list, for use in later calculations.
@@ -155,7 +148,6 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "1.1 calculate xᵢⱼ" updatexᵢⱼ!(xᵢⱼ, Position, I, J)
         # Here we output the kernel and kernel gradient value for each particle. Note that KernelL is list of interactions, while Kernel is the value for each actual particle. Similar naming for other variables
         @timeit HourGlass "1.2 calculate kernel and kernel gradient" ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!(KernelGradient,KernelGradientL, Kernel, KernelL, I, J, D, xᵢⱼ, SimConstants)
-        # end
 
         # @timeit HourGlass "Step 2 | Simulation Equations to update values, preparing for n+1/2" begin
         @timeit HourGlass "2.1 DDT" ∂ρᵢ∂tDDT!(dρdtI, I, J, D, xᵢⱼ, Density, Velocity,KernelGradientL,drhopLp,drhopLn, SimConstants, MotionLimiter)
@@ -170,7 +162,7 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "2.3 half step density"  @. ρₙ⁺  = Density  + dρdtI * (dt/2) 
         # density of boundary particles in such a way that they cannot produce suction
         @timeit HourGlass "2.4 half step limit density at boundary" LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
-# --
+
         # Even though particles have moved slightly, we do not update xᵢⱼ or kernel values!
 
         # Density derivative at "n+½" - Note that we keep the kernel gradient values calculated at "n" for simplicity
@@ -196,15 +188,14 @@ function RunSimulation(;FluidCSV::String,
         if OutputCounter >= SimMetaData.OutputEach
             OutputCounter = 0.0
             OutputIterationCounter += 1
-        # OutVTP is based on a well-developed Julia package, WriteVTK, while CustomVTP is based on my hand-rolled solution.
-        # CustomVTP is about 10% faster, but does not mean much in this case.
-
-        @timeit HourGlass "6.1 outputting savefile" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp", to_3d(Position.V), ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, to_3d(KernelGradient.V), Density, Pressureᵢ, Acceleration.V, Velocity.V)
+            # OutVTP is based on a well-developed Julia package, WriteVTK, while CustomVTP is based on my hand-rolled solution.
+            # CustomVTP is about 10% faster, but does not mean much in this case.
+            @timeit HourGlass "6.1 outputting savefile" PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp", to_3d(Position.V), ["Kernel", "KernelGradient", "Density", "Pressure", "Acceleration" , "Velocity"], Kernel, to_3d(KernelGradient.V), Density, Pressureᵢ, Acceleration.V, Velocity.V)
         end
 
         @timeit HourGlass "6.2 updating progress bar" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
 
-        if SimMetaData.TotalTime >= SimMetaData.SimulationTime + SimMetaData.OutputEach
+        if SimMetaData.TotalTime >= SimMetaData.SimulationTime + 1e-3
             break
         end
     end
