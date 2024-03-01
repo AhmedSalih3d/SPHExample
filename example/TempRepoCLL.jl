@@ -138,6 +138,102 @@ function CalculateTotalPossibleNumberOfInteractions(UniqueCells,Layout,Stencil,H
     return RealNL
 end
 
+
+function sim_step(i,j,d2,h⁻¹,Kernel,KernelGradient, Position,Density,Velocity)
+    d  = sqrt(d2)
+
+    xᵢ  = Position[i]
+    xⱼ  = Position[j]
+    xᵢⱼ = xᵢ - xⱼ
+
+    q  = clamp(d  * h⁻¹,0.0,2.0)
+    W  = αD*(1-q/2)^4*(2*q + 1)
+
+    Kernel[i] += W
+    Kernel[j] += W
+
+    Fac = αD*5*(q-2)^3*q / (8h*(q*h+1e-6))
+    ∇ᵢWᵢⱼ = Fac * xᵢⱼ
+    KernelGradient[i] +=  ∇ᵢWᵢⱼ
+    KernelGradient[j] += -∇ᵢWᵢⱼ
+
+    d² = d*d
+
+    ρᵢ    = Density[i]
+    ρⱼ    = Density[j]
+
+
+    vᵢ      = Velocity[i]
+    vⱼ      = Velocity[j]
+    vᵢⱼ     = vᵢ - vⱼ
+
+    dρdt⁺   = dot(m₀ *   vᵢⱼ ,  ∇ᵢWᵢⱼ)
+    dρdt⁻   = dot(m₀ *  -vᵢⱼ , -∇ᵢWᵢⱼ)
+
+    Pᵢ      = EquationOfState(ρᵢ,c₀,γ,ρ₀)
+    Pⱼ      = EquationOfState(ρⱼ,c₀,γ,ρ₀)
+
+    ρ̄ᵢⱼ     = (ρᵢ+ρⱼ)*0.5
+    Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
+
+    cond      = dot(vᵢⱼ, xᵢⱼ)
+    cond_bool = cond < 0.0
+    μᵢⱼ       = h*cond/(d²+η²)
+    Πᵢⱼ       = cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ
+
+    dvdt⁺ = - m₀ * ( Pfac + Πᵢⱼ) *  ∇ᵢWᵢⱼ + SVector(0, g * GravityFactor[i])
+    dvdt⁻ = - m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ + SVector(0, g * GravityFactor[j])
+    
+    # Time stepping start - this makes suction
+    DensityNew[i]  += dρdt⁺ * (dt/2) #Starts as  ρᵢ and becomes  ρᵢᴺ
+    DensityNew[j]  += dρdt⁻ * (dt/2) #Starts as  ρⱼ and becomes  ρⱼᴺ
+
+    if BoundaryBool[i]
+        DensityNew[i] = clamp(DensityNew[i],1000.0,2000.0)
+    elseif BoundaryBool[j]
+        DensityNew[j] = clamp(DensityNew[j],1000.0,2000.0)
+    end
+
+
+    vᵢᴺ  = vᵢ + dvdt⁺ * (dt/2) * MotionLimiter[i]
+    vⱼᴺ  = vⱼ + dvdt⁻ * (dt/2) * MotionLimiter[j]
+
+    xᵢᴺ  = xᵢ + vᵢᴺ * (dt/2) * MotionLimiter[i]
+    xⱼᴺ  = xⱼ + vⱼᴺ * (dt/2) * MotionLimiter[j]
+
+    # Update and go through same steps as above
+
+    xᵢⱼᴺ = xᵢᴺ - xⱼᴺ
+
+    vᵢⱼᴺ     = vᵢᴺ - vⱼᴺ
+
+    dρdtᴺ⁺   = dot(m₀ *   vᵢⱼᴺ , ∇ᵢWᵢⱼ)
+    dρdtᴺ⁻   = dot(m₀ *  -vᵢⱼᴺ ,-∇ᵢWᵢⱼ)
+
+    DensityDerivativeHalfStep[k_idx]  += dρdtᴺ⁺
+    DensityDerivativeHalfStep[k_1up]  += dρdtᴺ⁻
+
+    Pᵢᴺ     = EquationOfState(DensityNew[i],c₀,γ,ρ₀)
+    Pⱼᴺ     = EquationOfState(DensityNew[j],c₀,γ,ρ₀)
+
+    ρ̄ᵢⱼᴺ     = (DensityNew[i]+DensityNew[j])*0.5
+    Pfacᴺ    = (Pᵢᴺ+Pⱼᴺ)/(DensityNew[i]*DensityNew[j])
+
+    cond      = dot(vᵢⱼᴺ, xᵢⱼᴺ)
+    cond_bool = cond < 0.0
+    μᵢⱼᴺ       = h*cond/(d²+η²)
+    Πᵢⱼᴺ       = cond_bool*(-α*c₀*μᵢⱼᴺ)/ρ̄ᵢⱼᴺ
+
+    dvdtᴺ⁺ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) *  ∇ᵢWᵢⱼ + SVector(0, g * GravityFactor[i])
+    dvdtᴺ⁻ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) * -∇ᵢWᵢⱼ + SVector(0, g * GravityFactor[j])
+
+    VelocityNew[i] += dvdtᴺ⁺ * dt * MotionLimiter[i]
+    VelocityNew[j] += dvdtᴺ⁻ * dt * MotionLimiter[j]
+
+    PositionNew[i] += ((VelocityNew[i] - vᵢ)/2) * dt * MotionLimiter[i]
+    PositionNew[j] += ((VelocityNew[j] - vⱼ)/2) * dt * MotionLimiter[j]
+end
+
 using SPHExample 
 @inline function fancy7th(x)
     # todo tune the magic constant
