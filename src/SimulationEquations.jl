@@ -183,6 +183,46 @@ end
     end
 end
 
+@generated function ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!(KernelGradientI::DimensionalData{dims}, KernelGradientL::DimensionalData, Kernel, KernelL, cll, xᵢⱼ::DimensionalData, SimulationConstants) where {dims}
+    quote
+        @unpack αD, h, h⁻¹, η² = SimulationConstants
+    
+        @tturbo for iter in 1:cll.MaxValidIndex[]
+            i = cll.IndexI[iter]; j = cll.IndexJ[iter]; d = cll.IndexD[iter]
+
+            q = clamp(d * h⁻¹, 0.0, 2.0)
+            Fac = αD*5*(q-2)^3*q / (8h*(q*h+η²)) 
+    
+            W = Wᵢⱼ(αD,q)
+    
+            KernelL[iter] = W
+
+            Base.Cartesian.@nexprs $dims dᵅ -> begin 
+                KernelGradientL.vectors[dᵅ][iter] = Fac * xᵢⱼ.vectors[dᵅ][iter]
+            end
+        end
+
+        # Reducing kernel values
+        ReductionFunctionChunk!(Kernel,@view(cll.IndexI[1:cll.MaxValidIndex[]]), @view(cll.IndexJ[1:cll.MaxValidIndex[]]),KernelL)
+        Base.Cartesian.@nexprs $dims dᵅ -> begin
+            ReductionFunctionChunk!(KernelGradientI.vectors[dᵅ],@view(cll.IndexI[1:cll.MaxValidIndex[]]), @view(cll.IndexJ[1:cll.MaxValidIndex[]]),KernelGradientL.vectors[dᵅ], KernelGradientL.vectors[dᵅ], +, -)
+        end
+
+        # for iter in eachindex(I,J)
+        #     i = I[iter]
+        #     j = J[iter]
+    
+        #     Base.Cartesian.@nexprs $dims dᵅ -> begin
+        #         KernelGradientI.vectors[dᵅ][i]   +=  KernelGradientL.vectors[dᵅ][iter]
+        #         KernelGradientI.vectors[dᵅ][j]   -=  KernelGradientL.vectors[dᵅ][iter]
+        #     end
+        # end
+
+        return nothing
+    end
+end
+
+
 # Equation of State in Weakly-Compressible SPH
 function EquationOfState(ρ,c₀,γ,ρ₀)
     return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
@@ -263,6 +303,51 @@ end
     end
 end
 
+@generated function ∂ρᵢ∂tDDT!(dρdtI, cll , xᵢⱼ::DimensionalData{dims} , Density , Velocity::DimensionalData, KernelGradientL::DimensionalData, drhopLp, drhopLn, SimulationConstants, MotionLimiter) where {dims}
+    quote
+        @unpack h,m₀,δᵩ,c₀,γ,g,ρ₀,η²,γ⁻¹ = SimulationConstants
+
+        # Generate the needed constants
+        Cb      = (c₀^2*ρ₀)/γ
+        invCb   = inv(Cb)
+        δₕ_h_c₀ = δᵩ * h * c₀
+
+
+        # Follow the implementation here: https://arxiv.org/abs/2110.10076
+        @tturbo for iter in 1:cll.MaxValidIndex[]
+            i = cll.IndexI[iter]; j = cll.IndexJ[iter]; d = cll.IndexD[iter]
+            
+                Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ.vectors[dims][iter]
+                ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, invCb)
+                Pⱼᵢᴴ  = -Pᵢⱼᴴ
+                ρⱼᵢᴴ  = faux_fancy(ρ₀, Pⱼᵢᴴ, invCb)
+
+                r²    = d*d
+                ρᵢ    = Density[i]
+                ρⱼ    = Density[j]
+                ρⱼᵢ   = ρⱼ - ρᵢ
+
+                FacRhoI = 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * inv(r²+η²)
+                FacRhoJ = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(r²+η²)
+
+            Base.Cartesian.@nexprs $dims dᵅ -> begin
+                vᵢⱼᵈ           = Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j] 
+                xᵢⱼᵈ           = xᵢⱼ.vectors[dᵅ][iter]
+                ∇ᵢWᵢⱼᵈ         = KernelGradientL.vectors[dᵅ][iter]
+
+                # For now using MotionLimiter, should use BoundaryBool
+                # Basically, when particle j is a boundary, no transfer of density should happen with the i'th particle (whether fluid or not)
+                drhopLp[iter] += (m₀ *  vᵢⱼᵈ ) *  ∇ᵢWᵢⱼᵈ #+ δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼᵈ  *  ∇ᵢWᵢⱼᵈ * MotionLimiter[j]
+                drhopLn[iter] += (m₀ * -vᵢⱼᵈ ) * -∇ᵢWᵢⱼᵈ #+ δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼᵈ  * -∇ᵢWᵢⱼᵈ * MotionLimiter[i]
+            end
+        end
+
+        ReductionFunctionChunk!(dρdtI,@view(cll.IndexI[1:cll.MaxValidIndex[]]), @view(cll.IndexJ[1:cll.MaxValidIndex[]]), drhopLp, drhopLn)
+
+        return nothing
+    end
+end
+
 
 # This is to handle the special factor multiplied on density in the time stepping procedure, when
 # using symplectic time stepping
@@ -313,6 +398,58 @@ end
 
         Base.Cartesian.@nexprs $dims dᵅ -> begin
             ReductionFunctionChunk!(dvdtI.vectors[dᵅ],I,J,dvdtL.vectors[dᵅ], dvdtL.vectors[dᵅ], +, -)
+        end
+
+        # # Reduction
+        # for iter in eachindex(I,J)
+        #     i = I[iter]
+        #     j = J[iter]
+
+        #     Base.Cartesian.@nexprs $dims dᵅ -> begin
+        #         dvdtI.vectors[dᵅ][i] += dvdtL.vectors[dᵅ][iter]
+        #         dvdtI.vectors[dᵅ][j] -= dvdtL.vectors[dᵅ][iter]
+        #     end
+        # end
+
+        # Add gravity to fluid particles
+        @tturbo for i in eachindex(GravityFactor)
+            dvdtI.vectors[dims][i] += g * GravityFactor[i]
+        end
+
+        return nothing
+    end
+end
+
+@generated function ArtificialViscosityMomentumEquation!(cll, dvdtI::DimensionalData, dvdtL::DimensionalData,Density,KernelGradientL::DimensionalData, xᵢⱼ::DimensionalData{dims}, Velocity::DimensionalData, Press, GravityFactor, SimulationConstants) where {dims}
+    quote
+        @unpack m₀, c₀,γ,ρ₀,α,h,η²,g = SimulationConstants
+        # Calculation
+        @tturbo for iter in 1:cll.MaxValidIndex[]
+            i = cll.IndexI[iter]; j = cll.IndexJ[iter]; d = cll.IndexD[iter]
+
+            ρᵢ    = Density[i]
+            ρⱼ    = Density[j]
+            Pᵢ    = Press[i] #Pᵢ    = Pressure(ρᵢ,c₀,γ,ρ₀)
+            Pⱼ    = Press[j] #Pⱼ    = Pressure(ρⱼ,c₀,γ,ρ₀)
+            ρ̄ᵢⱼ   = (ρᵢ+ρⱼ)*0.5
+            Pfac  = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
+            d²    = d*d
+
+            Base.Cartesian.@nexprs $dims dᵅ -> begin
+                ∇ᵢWᵢⱼᵈ =  KernelGradientL.vectors[dᵅ][iter]
+                vᵢⱼᵈ      = Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j]
+                xᵢⱼᵈ      = xᵢⱼ.vectors[dᵅ][iter]
+                cond      = vᵢⱼᵈ * xᵢⱼᵈ
+                cond_bool = cond < 0.0
+                μᵢⱼᵈ      = h*cond/(d²+η²)
+                Πᵢⱼᵈ      = cond_bool*(-α*c₀*μᵢⱼᵈ)/ρ̄ᵢⱼ
+                # Finally combine contributions
+                dvdtL.vectors[dᵅ][iter] = - m₀ * ( Pfac + Πᵢⱼᵈ) * ∇ᵢWᵢⱼᵈ
+            end
+        end
+
+        Base.Cartesian.@nexprs $dims dᵅ -> begin
+            ReductionFunctionChunk!(dvdtI.vectors[dᵅ],@view(cll.IndexI[1:cll.MaxValidIndex[]]), @view(cll.IndexJ[1:cll.MaxValidIndex[]]),dvdtL.vectors[dᵅ], dvdtL.vectors[dᵅ], +, -)
         end
 
         # # Reduction

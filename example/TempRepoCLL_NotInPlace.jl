@@ -36,6 +36,18 @@ end
     return d2
 end
 
+function IndexI(cll::CLL)
+    cll.IndexI[1:cll.MaxValidIndex[]]
+end
+
+function IndexJ(cll::CLL)
+    cll.IndexI[1:cll.MaxValidIndex[]]
+end
+
+function IndexD(cll::CLL)
+    cll.IndexI[1:cll.MaxValidIndex[]]
+end
+
 # https://jaantollander.com/post/searching-for-fixed-radius-near-neighbors-with-cell-lists-algorithm-in-julia-language/#definition
 function neighbors(v::Val{d}) where d
     n_ = CartesianIndices(ntuple(_->-1:1,v))
@@ -192,6 +204,28 @@ function CustomCLL(Position,TheCLL)
     # resize!(TheCLL.ListOfInteractions,nl)
 end
 
+function updateCLL(cll::CLL,Points)
+    # Update Cells based on new positions of Points
+    Cells = ExtractCells(Points, cll.CutOff, Val(getsvecD(eltype(Points))))
+    
+    # Update UniqueCells with the new set of Cells
+    UniqueCells = unique(Cells)
+    
+    # Recalculate the Layout with updated Cells
+    Nmax       = maximum(reinterpret(Int, @view(Cells[:]))) + cll.ZeroOffset
+    Layout = GenerateM(Nmax, cll.ZeroOffset, cll.HalfPad, cll.Padding, Cells, Val(getsvecD(eltype(Points))))
+    
+    N_PossibleInteractions = CalculateTotalPossibleNumberOfInteractions(UniqueCells,Layout,cll.Stencil,cll.HalfPad)
+
+    if N_PossibleInteractions > length(cll.ListOfInteractions)
+        resize!(cll.ListOfInteractions,N_PossibleInteractions)
+    end
+
+    CustomCLL(Points,cll)
+
+    return cll
+end
+
 # For testing script properly
 begin 
     FloatType = Float64
@@ -199,6 +233,7 @@ begin
     
     FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv"
     BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv"
+    
     
     @inline points, density_fluid, density_bound  = LoadParticlesFromCSV(Dimensions,FloatType, FluidCSV,BoundCSV)
     Position           = DimensionalData(points.vectors...)
@@ -209,6 +244,8 @@ begin
 
     CustomCLL(Position.V,TheCLL)
     TheCLL.ListOfInteractions[1:TheCLL.MaxValidIndex[]]
+
+    # updateCLL(TheCLL,Position.V)
 end
 
 
