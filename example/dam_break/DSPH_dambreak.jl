@@ -247,6 +247,11 @@ function RunSimulation(;FluidCSV::String,
         if SimMetaData.TotalTime >= SimMetaData.SimulationTime + SimMetaData.OutputEach
             break
         end
+
+        println(sum(Kernel))
+        println(sum(KernelGradient.V))
+        println(sum(Density))
+        break
     end
 
     # Print the timings in the default way
