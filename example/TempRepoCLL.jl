@@ -162,6 +162,10 @@ end
 function CustomCLL(PositionNew, DensityNew, VelocityNew, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, DensityHalfStep, DensityDerivativeHalfStep)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimConstants
 
+
+    Kernel           .*= 0
+    KernelGradient.V .*= 0
+
     dt = 7.65e-5
 
     Cb      = (c₀^2*ρ₀)/γ
@@ -311,8 +315,8 @@ function CustomCLL(PositionNew, DensityNew, VelocityNew, SimConstants, MotionLim
                         VelocityNew.V[k_idx] += dvdtᴺ⁺ * dt * MotionLimiter[k_idx]
                         VelocityNew.V[k_1up] += dvdtᴺ⁻ * dt * MotionLimiter[k_1up]
 
-                        PositionNew.V[k_idx] += ((Velocity.V[k_idx] - vᵢ)/2) * dt * MotionLimiter[k_idx]
-                        PositionNew.V[k_1up] += ((Velocity.V[k_1up] - vⱼ)/2) * dt * MotionLimiter[k_1up]
+                        PositionNew.V[k_idx] += ((VelocityNew.V[k_idx] - vᵢ)/2) * dt * MotionLimiter[k_idx]
+                        PositionNew.V[k_1up] += ((VelocityNew.V[k_1up] - vⱼ)/2) * dt * MotionLimiter[k_1up]
 
                         #cond = d2 <= TheCLL.CutOffSquared
                         # # If cond true, we use nl + 1 as new index
@@ -460,8 +464,8 @@ function CustomCLL(PositionNew, DensityNew, VelocityNew, SimConstants, MotionLim
                             VelocityNew.V[k1_idx] += dvdtᴺ⁺ * dt * MotionLimiter[k1_idx]
                             VelocityNew.V[k2_idx] += dvdtᴺ⁻ * dt * MotionLimiter[k2_idx]
 
-                            PositionNew.V[k1_idx] += ((Velocity.V[k1_idx] - vᵢ)/2) * dt * MotionLimiter[k1_idx]
-                            PositionNew.V[k2_idx] += ((Velocity.V[k2_idx] - vⱼ)/2) * dt * MotionLimiter[k2_idx]
+                            PositionNew.V[k1_idx] += ((VelocityNew.V[k1_idx] - vᵢ)/2) * dt * MotionLimiter[k1_idx]
+                            PositionNew.V[k2_idx] += ((VelocityNew.V[k2_idx] - vⱼ)/2) * dt * MotionLimiter[k2_idx]
 
 
                             # cond = d2 <= TheCLL.CutOffSquared
@@ -477,10 +481,10 @@ function CustomCLL(PositionNew, DensityNew, VelocityNew, SimConstants, MotionLim
     end
 
     # Position.V .= PositionNew.V
-    # Velocity.V .= VelocityNew.V
-    # Density    .= DensityNew
+    Velocity.V .= VelocityNew.V
+    #Density    .= DensityNew
 
-    # # DensityEpsi!(Density, DensityDerivativeHalfStep, DensityNew, dt)
+    DensityEpsi!(Density, DensityDerivativeHalfStep, DensityNew, dt)
 
     # println(sum(Kernel))
     # println(sum(KernelGradient.V))
@@ -571,7 +575,6 @@ let
                 PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(iteration,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity"], Kernel, KernelGradient.V, Density, Velocity.V)
                 println(iteration)
             end
-            ResetArrays!(Kernel, KernelGradient.V)
         end
     end
 
