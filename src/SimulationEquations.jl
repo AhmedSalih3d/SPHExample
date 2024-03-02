@@ -82,6 +82,86 @@ function ReductionFunctionChunk!(dρdtI, I, J, drhopLp, drhopLn, op1=+, op2=+)
     return nothing
 end
 
+function ReductionFunctionChunkVectors!(dρdtI_tuple, I, J, drhopLp_tuple, drhopLn_tuple, op1=+, op2=+)
+    nchunks = nthreads()  # Number of chunks based on available threads
+    XT = eltype(eltype(dρdtI_tuple))
+    XL = length(first(dρdtI_tuple))
+    D  = length(dρdtI_tuple)  # Dimension count
+
+    @inbounds @no_escape begin
+        # Allocate local_X as a 3D array: Dimensions x Length x Chunks
+        # This allows us to work with each dimension independently while maintaining column-major access for chunks
+        local_X = @alloc(XT, D, XL, nchunks)
+        fill!(local_X, zero(XT))
+
+        # Accumulate contributions in a column-major fashion
+            @batch for ichunk in 1:nchunks
+                chunk_inds = getchunk(I, ichunk; n=nchunks)
+                for idx in chunk_inds
+                    i, j = I[idx], J[idx]
+
+                # The if statement is in reality only evaluated once, since Julia
+                # figures out how to reformulate the code
+                if D == 1
+                    local_X[1, i, ichunk] += op1(drhopLp_tuple[1][idx])
+                    local_X[1, j, ichunk] += op2(drhopLn_tuple[1][idx])
+                elseif D == 2
+                    local_X[1, i, ichunk] += op1(drhopLp_tuple[1][idx])
+                    local_X[1, j, ichunk] += op2(drhopLn_tuple[1][idx])
+                    local_X[2, i, ichunk] += op1(drhopLp_tuple[2][idx])
+                    local_X[2, j, ichunk] += op2(drhopLn_tuple[2][idx])
+                elseif D == 3
+                    local_X[1, i, ichunk] += op1(drhopLp_tuple[1][idx])
+                    local_X[1, j, ichunk] += op2(drhopLn_tuple[1][idx])
+                    local_X[2, i, ichunk] += op1(drhopLp_tuple[2][idx])
+                    local_X[2, j, ichunk] += op2(drhopLn_tuple[2][idx])
+                    local_X[3, i, ichunk] += op1(drhopLp_tuple[3][idx])
+                    local_X[3, j, ichunk] += op2(drhopLn_tuple[3][idx])
+                end
+                        
+                end
+            end
+
+            # Once again reducing according to D..
+            if D == 1
+                @tturbo for ix in 1:XL
+                    sum = zero(XT)
+                    for chunk in 1:nchunks
+                        sum += local_X[1, ix, chunk]
+                    end
+                    dρdtI_tuple[1][ix] += sum
+                end
+            elseif D == 2
+                @tturbo for ix in 1:XL
+                    sum1 = zero(XT)
+                    sum2 = zero(XT)
+                    for chunk in 1:nchunks
+                        sum1 += local_X[1, ix, chunk]
+                        sum2 += local_X[2, ix, chunk]
+                    end
+                    dρdtI_tuple[1][ix] += sum1
+                    dρdtI_tuple[2][ix] += sum2
+                end
+            elseif D == 3
+            @tturbo for ix in 1:XL
+                sum1 = zero(XT)
+                sum2 = zero(XT)
+                sum3 = zero(XT)
+                for chunk in 1:nchunks
+                    sum1 += local_X[1, ix, chunk]
+                    sum2 += local_X[2, ix, chunk]
+                    sum3 += local_X[3, ix, chunk]
+                end
+                dρdtI_tuple[1][ix] += sum1
+                dρdtI_tuple[2][ix] += sum2
+                dρdtI_tuple[3][ix] += sum3
+                end
+        end
+    end
+
+return nothing
+end
+
 # Function to calculate Kernel Value
 function Wᵢⱼ(αD,q)
     return αD*(1-q/2)^4*(2*q + 1)
@@ -165,9 +245,11 @@ end
 
         # Reducing kernel values
         ReductionFunctionChunk!(Kernel,I,J,KernelL)
-        Base.Cartesian.@nexprs $dims dᵅ -> begin
-            ReductionFunctionChunk!(KernelGradientI.vectors[dᵅ],I,J,KernelGradientL.vectors[dᵅ], KernelGradientL.vectors[dᵅ], +, -)
-        end
+        # Base.Cartesian.@nexprs $dims dᵅ -> begin
+        #     ReductionFunctionChunk!(KernelGradientI.vectors[dᵅ],I,J,KernelGradientL.vectors[dᵅ], KernelGradientL.vectors[dᵅ], +, -)
+        # end
+
+        ReductionFunctionChunkVectors!(KernelGradientI.vectors,I,J,KernelGradientL.vectors,KernelGradientL.vectors, +, -)
 
         # for iter in eachindex(I,J)
         #     i = I[iter]
