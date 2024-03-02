@@ -196,6 +196,44 @@ function ReductionFunctionChunk!(dρdtI, I, J, drhopLp, drhopLn)
     return nothing
 end
 
+function ReductionFunctionChunkVectors!(dρdtI_tuple, I, J, drhopLp_tuple, drhopLn_tuple)
+    nchunks = nthreads()  # Number of chunks based on available threads
+    D = length(dρdtI_tuple)  # Assuming dρdtI_tuple is a tuple representing each dimension
+
+    @inbounds @no_escape begin
+        # Initialize thread-local storage for each dimension
+        local_X_tuple = ntuple(d -> @alloc(eltype(dρdtI_tuple[d]), length(dρdtI_tuple[d]), nchunks), D)
+        
+        # Fill thread-local storage with zeros for each dimension
+        for d in 1:D
+            fill!(local_X_tuple[d], zero(eltype(dρdtI_tuple[d])))
+        end
+
+        # Accumulate contributions into the correct place for each dimension
+        @batch for ichunk in 1:nchunks
+            chunk_inds = getchunk(I, ichunk; n=nchunks)
+            for idx in chunk_inds
+                i, j = I[idx], J[idx]
+
+                for d in 1:D
+                    local_X_tuple[d][i, ichunk] += drhopLp_tuple[d][idx]
+                    local_X_tuple[d][j, ichunk] += drhopLn_tuple[d][idx]
+                end
+            end
+        end
+
+        # Reduction step for each dimension
+        @batch for d in 1:D
+            @tturbo for ix in 1:length(dρdtI_tuple[d])
+                for chunk in 1:nchunks
+                    dρdtI_tuple[d][ix] += local_X_tuple[d][ix, chunk]
+                end
+            end
+        end
+    end
+    
+    return nothing
+end
 
 begin
     ProblemScaleFactor  = 1
@@ -230,8 +268,8 @@ begin
     println("Value when doing chunk svector reduction: ", sum(V))
 
     VD.V .*= 0
-    ReductionFunctionChunk!(VD.V,I,J,VDL.V,VDL.V)
-    println("Value when doing chunk svector reduction with dimensional data: ", sum(VD.V))
+    ReductionFunctionChunkVectors!(VD.vectors,I,J,VDL.vectors,VDL.vectors)
+    println("Value when doing chunk svector reduction with dimensional data sdafsd: ", sum(VD.V))
 
 
     # # Benchmark
@@ -250,6 +288,9 @@ begin
 
     println("Chunk function:")
     display(@benchmark ReductionFunctionChunk!($VD.V,$I,$J,$VDL.V,$VDL.V))
+
+    println("Chunk function:")
+    display(@benchmark ReductionFunctionChunkVectors!($VD.vectors,$I,$J,$VDL.vectors,$VDL.vectors))
 
 
 
