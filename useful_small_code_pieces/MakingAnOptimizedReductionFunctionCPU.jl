@@ -162,7 +162,7 @@ function NaiveReductionFunction!(dρdtI, I,J,drhopLp,drhopLn)
     end
 end
 
-function ReductionFunctionChunk!(dρdtI, I, J, drhopLp, drhopLn)
+function ReductionFunctionChunk!(dρdtI::Vector, I, J, drhopLp, drhopLn)
     XT = eltype(dρdtI); XL = length(dρdtI); X0 = zero(XT)
     nchunks = nthreads()  # Assuming nchunks is defined somewhere as nthreads()
 
@@ -196,44 +196,86 @@ function ReductionFunctionChunk!(dρdtI, I, J, drhopLp, drhopLn)
     return nothing
 end
 
-function ReductionFunctionChunkVectors!(dρdtI_tuple, I, J, drhopLp_tuple, drhopLn_tuple)
-    nchunks = nthreads()  # Number of chunks based on available threads
-    D = length(dρdtI_tuple)  # Assuming dρdtI_tuple is a tuple representing each dimension
+function ReductionFunctionChunkVectors!(dρdtI_tuple::Tuple{Vector}, I, J, drhopLp_tuple, drhopLn_tuple)
+        nchunks = nthreads()  # Number of chunks based on available threads
+        XT = eltype(eltype(dρdtI_tuple))
+        XL = length(first(dρdtI_tuple))
+        D  = length(dρdtI_tuple)  # Dimension count
 
-    @inbounds @no_escape begin
-        # Initialize thread-local storage for each dimension
-        local_X_tuple = ntuple(d -> @alloc(eltype(dρdtI_tuple[d]), length(dρdtI_tuple[d]), nchunks), D)
-        
-        # Fill thread-local storage with zeros for each dimension
-        for d in 1:D
-            fill!(local_X_tuple[d], zero(eltype(dρdtI_tuple[d])))
-        end
+        @inbounds @no_escape begin
+            # Allocate local_X as a 3D array: Dimensions x Length x Chunks
+            # This allows us to work with each dimension independently while maintaining column-major access for chunks
+            local_X = @alloc(XT, D, XL, nchunks)
+            fill!(local_X, zero(XT))
 
-        # Accumulate contributions into the correct place for each dimension
-        @batch for ichunk in 1:nchunks
-            chunk_inds = getchunk(I, ichunk; n=nchunks)
-            for idx in chunk_inds
-                i, j = I[idx], J[idx]
+            # Accumulate contributions in a column-major fashion
+                @batch for ichunk in 1:nchunks
+                    chunk_inds = getchunk(I, ichunk; n=nchunks)
+                    for idx in chunk_inds
+                        i, j = I[idx], J[idx]
 
-                for d in 1:D
-                    local_X_tuple[d][i, ichunk] += drhopLp_tuple[d][idx]
-                    local_X_tuple[d][j, ichunk] += drhopLn_tuple[d][idx]
+                    # The if statement is in reality only evaluated once, since Julia
+                    # figures out how to reformulate the code
+                    if D == 1
+                        local_X[1, i, ichunk] += drhopLp_tuple[1][idx]
+                        local_X[1, j, ichunk] += drhopLn_tuple[1][idx]
+                    elseif D == 2
+                        local_X[1, i, ichunk] += drhopLp_tuple[1][idx]
+                        local_X[1, j, ichunk] += drhopLn_tuple[1][idx]
+                        local_X[2, i, ichunk] += drhopLp_tuple[2][idx]
+                        local_X[2, j, ichunk] += drhopLn_tuple[2][idx]
+                    elseif D == 3
+                        local_X[1, i, ichunk] += drhopLp_tuple[1][idx]
+                        local_X[1, j, ichunk] += drhopLn_tuple[1][idx]
+                        local_X[2, i, ichunk] += drhopLp_tuple[2][idx]
+                        local_X[2, j, ichunk] += drhopLn_tuple[2][idx]
+                        local_X[3, i, ichunk] += drhopLp_tuple[3][idx] 
+                        local_X[3, j, ichunk] += drhopLn_tuple[3][idx]
+                    end
+                            
+                    end
                 end
+
+                # Once again reducing according to D..
+                if D == 1
+                    @tturbo for ix in 1:XL
+                        sum = zero(XT)
+                        for chunk in 1:nchunks
+                            sum += local_X[1, ix, chunk]
+                        end
+                        dρdtI_tuple[1][ix] += sum
+                    end
+                elseif D == 2
+                    @tturbo for ix in 1:XL
+                        sum1 = zero(XT)
+                        sum2 = zero(XT)
+                        for chunk in 1:nchunks
+                            sum1 += local_X[1, ix, chunk]
+                            sum2 += local_X[2, ix, chunk]
+                        end
+                        dρdtI_tuple[1][ix] += sum1
+                        dρdtI_tuple[2][ix] += sum2
+                    end
+                elseif D == 3
+                @tturbo for ix in 1:XL
+                    sum1 = zero(XT)
+                    sum2 = zero(XT)
+                    sum3 = zero(XT)
+                    for chunk in 1:nchunks
+                        sum1 += local_X[1, ix, chunk]
+                        sum2 += local_X[2, ix, chunk]
+                        sum3 += local_X[3, ix, chunk]
+                    end
+                    dρdtI_tuple[1][ix] += sum1
+                    dρdtI_tuple[2][ix] += sum2
+                    dρdtI_tuple[3][ix] += sum3
+                    end
             end
         end
 
-        # Reduction step for each dimension
-        @batch for d in 1:D
-            @tturbo for ix in 1:length(dρdtI_tuple[d])
-                for chunk in 1:nchunks
-                    dρdtI_tuple[d][ix] += local_X_tuple[d][ix, chunk]
-                end
-            end
-        end
-    end
-    
     return nothing
 end
+
 
 begin
     ProblemScaleFactor  = 1
@@ -269,7 +311,7 @@ begin
 
     VD.V .*= 0
     ReductionFunctionChunkVectors!(VD.vectors,I,J,VDL.vectors,VDL.vectors)
-    println("Value when doing chunk svector reduction with dimensional data sdafsd: ", sum(VD.V))
+    println("Value when doing chunk svector reduction with dimensional data: ", sum(VD.V))
 
 
     # # Benchmark
