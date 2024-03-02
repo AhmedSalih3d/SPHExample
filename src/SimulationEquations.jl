@@ -1,6 +1,6 @@
 module SimulationEquations
 
-export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!, EquationOfState, Pressure!, ∂Πᵢⱼ∂t!, ∂ρᵢ∂tDDT!, ∂vᵢ∂t!, DensityEpsi!, LimitDensityAtBoundary!, updatexᵢⱼ!, ArtificialViscosityMomentumEquation!, DimensionalData, Optim∇ᵢWᵢⱼ
+export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!, EquationOfState, Pressure!, ∂Πᵢⱼ∂t!, ∂ρᵢ∂t!, ∂ρᵢ∂tDDT!, ∂vᵢ∂t!, DensityEpsi!, LimitDensityAtBoundary!, updatexᵢⱼ!, ArtificialViscosityMomentumEquation!, DimensionalData, Optim∇ᵢWᵢⱼ
 
 using CellListMap
 using StaticArrays
@@ -256,6 +256,36 @@ end
 @inline faux(ρ₀, P, invCb, γ⁻¹) = ρ₀ * (expm1(γ⁻¹ * log1p(P * invCb)))
 @inline faux_fancy(ρ₀, P, Cb) = ρ₀ * ( fancy7th( 1 + (P * Cb)) - 1)
 #faux(ρ₀, P, invCb) = ρ₀ * ( fancy7th( 1 + (P * invCb)) - 1)
+
+# The density derivative function
+@generated function ∂ρᵢ∂t!(dρdtI, I, J, D , xᵢⱼ::DimensionalData{dims} , Density , Velocity::DimensionalData, KernelGradientL::DimensionalData, drhopLp, drhopLn, SimulationConstants) where {dims}
+    quote
+        @unpack m₀ = SimulationConstants
+
+        # Follow the implementation here: https://arxiv.org/abs/2110.10076
+        @tturbo for iter in eachindex(I,J,D)
+            i = I[iter]; j = J[iter]; d = D[iter]
+
+            ρᵢ = Density[i]
+            ρⱼ = Density[j]
+
+            Base.Cartesian.@nexprs $dims dᵅ -> begin
+                vᵢⱼᵈ           = Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j] 
+                xᵢⱼᵈ           = xᵢⱼ.vectors[dᵅ][iter]
+                ∇ᵢWᵢⱼᵈ         = KernelGradientL.vectors[dᵅ][iter]
+
+                drhopLp[iter] += - ρᵢ * ((m₀/ρⱼ) * -vᵢⱼᵈ ) *  ∇ᵢWᵢⱼᵈ
+                drhopLn[iter] += - ρⱼ * ((m₀/ρᵢ) *  vᵢⱼᵈ ) * -∇ᵢWᵢⱼᵈ
+            end
+        end
+
+        ReductionFunctionChunk!(dρdtI, I, J, drhopLp, drhopLn)
+
+        return nothing
+    end
+end
+
+
 
 # The density derivative function INCLUDING density diffusion
 @generated function ∂ρᵢ∂tDDT!(dρdtI, I, J, D , xᵢⱼ::DimensionalData{dims} , Density , Velocity::DimensionalData, KernelGradientL::DimensionalData, drhopLp, drhopLn, SimulationConstants, MotionLimiter) where {dims}
