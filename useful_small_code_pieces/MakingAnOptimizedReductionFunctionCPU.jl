@@ -119,6 +119,8 @@
 
 # end
 
+
+
 using Base.Threads
 using Bumper
 using StrideArrays # Not necessary, but can make operations like broadcasting with Bumper.jl faster.
@@ -127,6 +129,27 @@ using BenchmarkTools
 using LoopVectorization
 using ChunkSplitters
 using StaticArrays
+using StructArrays
+
+struct DimensionalData{D, T <: AbstractFloat}
+    vectors::Tuple{Vararg{Vector{T}, D}}
+    V::StructArray{SVector{D, T}, 1, Tuple{Vararg{Vector{T}, D}}}
+
+    # General constructor for vectors
+    function DimensionalData(vectors::Vector{T}...) where {T}
+        D = length(vectors)
+        V = StructArray{SVector{D, T}}(vectors)
+        new{D, T}(Tuple(vectors), V)
+    end
+
+    # Constructor for initializing with all zeros, adapting to dimension D
+    function DimensionalData{D, T}(len::Int) where {D, T}
+        vectors = ntuple(d -> zeros(T, len), D) # Create D vectors of zeros
+        V = StructArray{SVector{D, T}}(vectors)
+        new{D, T}(vectors, V)
+    end
+end
+
 
 function NaiveReductionFunction!(dρdtI, I,J,drhopLp,drhopLn)
     # Reduction
@@ -186,6 +209,10 @@ begin
     V           = zeros(SVector{2,Float64},NumberOfPoints)
     VL          = rand(eltype(V),NumberOfInterations)
 
+    VD          = DimensionalData{2, Float64}(NumberOfPoints)
+    VDL         = DimensionalData{2, Float64}(NumberOfInterations)
+    VDL.V      .= VL
+
     dρdtI .= zero(eltype(dρdtI))
     NaiveReductionFunction!(dρdtI,I,J,drhopLp,drhopLn)
     println("Value when doing naive reduction: ", sum(dρdtI))
@@ -202,20 +229,28 @@ begin
     ReductionFunctionChunk!(V,I,J,VL,VL)
     println("Value when doing chunk svector reduction: ", sum(V))
 
+    VD.V .*= 0
+    ReductionFunctionChunk!(VD.V,I,J,VDL.V,VDL.V)
+    println("Value when doing chunk svector reduction with dimensional data: ", sum(VD.V))
 
-    # Benchmark
-    println("Naive function:")
-    display(@benchmark NaiveReductionFunction!($dρdtI , $I, $J, $drhopLp, $drhopLn))
+
+    # # Benchmark
+    # println("Naive function:")
+    # display(@benchmark NaiveReductionFunction!($dρdtI , $I, $J, $drhopLp, $drhopLn))
+
+    # println("Chunk function:")
+    # display(@benchmark ReductionFunctionChunk!($dρdtI , $I, $J, $drhopLp, $drhopLn))
+
+    # # Benchmark
+    # println("Naive svector function:")
+    # display(@benchmark NaiveReductionFunction!($V,$I,$J,$VL,$VL))
+
+    # println("Chunk function:")
+    # display(@benchmark ReductionFunctionChunk!($V,$I,$J,$VL,$VL))
 
     println("Chunk function:")
-    display(@benchmark ReductionFunctionChunk!($dρdtI , $I, $J, $drhopLp, $drhopLn))
+    display(@benchmark ReductionFunctionChunk!($VD.V,$I,$J,$VDL.V,$VDL.V))
 
-    # Benchmark
-    println("Naive svector function:")
-    display(@benchmark NaiveReductionFunction!($V,$I,$J,$VL,$VL))
-
-    println("Chunk function:")
-    display(@benchmark ReductionFunctionChunk!($V,$I,$J,$VL,$VL))
 
 
     
