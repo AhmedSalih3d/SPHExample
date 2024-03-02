@@ -508,9 +508,7 @@ end
             end
         end
 
-        Base.Cartesian.@nexprs $dims dᵅ -> begin
-            ReductionFunctionChunk!(dvdtI.vectors[dᵅ],I,J,dvdtL.vectors[dᵅ], dvdtL.vectors[dᵅ], +, -)
-        end
+        ReductionFunctionChunkVectors!(dvdtI.vectors,I,J,dvdtL.vectors,dvdtL.vectors, +, -)
 
         # # Reduction
         # for iter in eachindex(I,J)
