@@ -126,6 +126,7 @@ using Polyester
 using BenchmarkTools
 using LoopVectorization
 using ChunkSplitters
+using StaticArrays
 
 function NaiveReductionFunction!(dρdtI, I,J,drhopLp,drhopLn)
     # Reduction
@@ -161,7 +162,8 @@ function ReductionFunctionChunk!(dρdtI, I, J, drhopLp, drhopLn)
         end
 
         # Reduction step
-        @tturbo for ix in 1:XL
+        # using @tturbo is slightly faster than batch (28 mus), but @batch (30 mus) works for svector, so we prefer this.
+        @batch for ix in 1:XL
             for chunk in 1:nchunks
                 dρdtI[ix] += local_X[ix, chunk]
             end
@@ -181,6 +183,8 @@ begin
     dρdtI       = zeros(NumberOfPoints) 
     drhopLp     = rand(NumberOfInterations)    
     drhopLn     = rand(NumberOfInterations)
+    V           = zeros(SVector{2,Float64},NumberOfPoints)
+    VL          = rand(eltype(V),NumberOfInterations)
 
     dρdtI .= zero(eltype(dρdtI))
     NaiveReductionFunction!(dρdtI,I,J,drhopLp,drhopLn)
@@ -190,6 +194,14 @@ begin
     ReductionFunctionChunk!(dρdtI, I,J,drhopLp,drhopLn)
     println("Value when doing chunk reduction: ", sum(dρdtI))
 
+    V .*= 0
+    NaiveReductionFunction!(V,I,J,VL,VL)
+    println("Value when doing naive svector reduction: ", sum(V))
+
+    V .*= 0
+    ReductionFunctionChunk!(V,I,J,VL,VL)
+    println("Value when doing chunk svector reduction: ", sum(V))
+
 
     # Benchmark
     println("Naive function:")
@@ -197,5 +209,15 @@ begin
 
     println("Chunk function:")
     display(@benchmark ReductionFunctionChunk!($dρdtI , $I, $J, $drhopLp, $drhopLn))
+
+    # Benchmark
+    println("Naive svector function:")
+    display(@benchmark NaiveReductionFunction!($V,$I,$J,$VL,$VL))
+
+    println("Chunk function:")
+    display(@benchmark ReductionFunctionChunk!($V,$I,$J,$VL,$VL))
+
+
+    
 
 end
