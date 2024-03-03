@@ -9,31 +9,45 @@ using StructArrays
 import LinearAlgebra: dot
 using Polyester
 using Test
+using JET
 include("../src/ProduceVTP.jl")
 
-@with_kw struct CLL{I,T,D}
-    Points::StructVector{SVector{D,T}}
-    MaxValidIndex::Base.RefValue{Int} = Ref(0)
-    CutOff::T
-    CutOffSquared::T                         = CutOff^2
-    Padding::I                               = 2
-    HalfPad::I                               = convert(typeof(Padding),Padding//2)
-    ZeroOffset::I                            = 1 #Since we start from 0 when generating cells
-
-    Stencil::Vector{NTuple{D, I}}            = neighbors(Val(getsvecD(eltype(Points))) )
+function mark_first_occurrences(A::Vector{NTuple{D, Int64}}) where D
+    # Initialize an empty dictionary to track seen elements
+    seen = Dict{Tuple{Int64, Int64}, Bool}()
     
-    Cells::Vector{NTuple{D, I}}              = ExtractCells(Points,CutOff,Val(getsvecD(eltype(Points))))
-    UniqueCells::Vector{NTuple{D, I}}        = unique(Cells)
-    Nmax::I                                  = maximum(reinterpret(Int,@view(Cells[:]))) + ZeroOffset
-    Layout::Array{Vector{I}, D}              = GenerateM(Nmax,ZeroOffset,HalfPad,Padding,Cells,Val(getsvecD(eltype(Points))))
-
+    # Initialize the ID vector with false, same length as A
+    id_vector = falses(length(A))
     
-    ListOfInteractions::Vector{Tuple{I,I,T}} = Vector{Tuple{Int,Int,getsvecT(eltype(Points))}}(undef,CalculateTotalPossibleNumberOfInteractions(UniqueCells,Layout,Stencil,HalfPad))
+    # Iterate over A, marking the first occurrence with true
+    for (i, elem) in enumerate(A)
+        if !haskey(seen, elem)
+            seen[elem] = true
+            id_vector[i] = true
+        end
+    end
+    
+    return id_vector
 end
-@inline getspecs(::Type{CLL{I,T,D}}) where {I,T,D} = (typeINT = I, typeFLT = T, dimensions=D)
-@inline getsvecDT(::Type{SVector{d,T}}) where {d,T} = (dimensions=d, type=T)
+
+@with_kw mutable struct CLL{D,T}
+    Points::StructVector{SVector{D,T}}
+
+    CutOff::T
+    CutOffSquared::T                             = CutOff^2
+    Padding::Int64                               = 2
+    HalfPad::Int64                               = convert(typeof(Padding),Padding//2)
+    ZeroOffset::Int64                            = 1 #Since we start from 0 when generating cells
+
+    Stencil::Vector{NTuple{D, Int64}}            = neighbors(Val(getsvecD(eltype(Points))) )
+    
+    Cells::Vector{NTuple{D, Int64}}              = ExtractCells(Points,CutOff,Val(getsvecD(eltype(Points))))
+    UniqueCells::Vector{Bool}                    = mark_first_occurrences(Cells)
+    Nmax::Int64                                  = maximum(reinterpret(Int,@view(Cells[:]))) + ZeroOffset #Find largest dimension in x,y,z for the Cells
+    Layout::Array{Vector{Int64}, D}              = GenerateM(Nmax,ZeroOffset,HalfPad,Padding,Cells,Val(getsvecD(eltype(Points))))
+end
 @inline getsvecD(::Type{SVector{d,T}}) where {d,T} = d
-@inline getsvecT(::Type{SVector{d,T}}) where {d,T} = T
+
 
 @inline function distance_condition(p1::AbstractVector{T}, p2::AbstractVector{T}) where T <: AbstractFloat
     d2 = sum(@. (p1 - p2)^2)
@@ -255,11 +269,13 @@ end
 
 function updateCLL!(cll::CLL,Points)
     # Update Cells based on new positions of Points
-    cll.Cells = ExtractCells(Points, cll.CutOff, Val(getsvecD(eltype(Points))))
+    cll.Cells .= ExtractCells(Points, cll.CutOff, Val(getsvecD(eltype(Points))))
     
+    cll.UniqueCells .= mark_first_occurrences(cll.Cells)
+
     # Recalculate the Layout with updated Cells
     #cll.Nmax       = maximum(reinterpret(Int, @view(Cells[:]))) + cll.ZeroOffset
-    cll.Layout    .= GenerateM(cll.Nmax, cll.ZeroOffset, cll.HalfPad, cll.Padding, Cells, Val(getsvecD(eltype(Points))))
+    cll.Layout    .= GenerateM(cll.Nmax, cll.ZeroOffset, cll.HalfPad, cll.Padding, cll.Cells, Val(getsvecD(eltype(Points))))
 
 
     return nothing
@@ -290,7 +306,7 @@ function CustomCLL(TheCLL, SimConstants, MotionLimiter, BoundaryBool, GravityFac
 
     ResetArrays!(Kernel,KernelGradient.V, dρdtI, dvdtI.V)
 
-    @inbounds for Cind_ ∈ TheCLL.UniqueCells
+    @inbounds for Cind_ ∈ TheCLL.Cells[TheCLL.UniqueCells]
     # @inbounds for Cind_ ∈ TheCLL.Cells
             
         Cind = (Cind_ .+ 1 .+ TheCLL.HalfPad)
@@ -345,7 +361,7 @@ function CustomCLL(TheCLL, SimConstants, MotionLimiter, BoundaryBool, GravityFac
     ResetArrays!(dρdtIₙ⁺, dvdtIₙ⁺.V) #this gives 32 bytes??
 
     
-    @inbounds for Cind_ ∈ TheCLL.UniqueCells
+    @inbounds for Cind_ ∈ TheCLL.Cells[TheCLL.UniqueCells]
     # @inbounds for Cind_ ∈ TheCLL.Cells
             
         Cind = (Cind_ .+ 1 .+ TheCLL.HalfPad)
@@ -473,11 +489,12 @@ function RunSimulation(;FluidCSV::String,
     TheCLL = CLL(Points=Position.V,CutOff=R) #line is good idea at times
 
     for iteration in 1:10000#:101
+        updateCLL!(TheCLL, Position.V)
         CustomCLL(TheCLL, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
         if iteration % 200 == 0
-            # SaveLocation_= SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(iteration,6,"0") * ".vtp"
-            # PolyDataTemplate(SaveLocation_, to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, KernelGradient.V, Density, Velocity.V, dvdtIₙ⁺.V)
-            # println(iteration)
+            SaveLocation_= SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(iteration,6,"0") * ".vtp"
+            PolyDataTemplate(SaveLocation_, to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, KernelGradient.V, Density, Velocity.V, dvdtIₙ⁺.V)
+            println(iteration)
         end
     end
     
