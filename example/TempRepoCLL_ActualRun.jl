@@ -276,13 +276,8 @@ end
 function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimConstants
 
+    ResetArrays!(Kernel,KernelGradient.V, dρdtI, dvdtI.V)
 
-    Kernel            .*= 0
-    KernelGradient.V  .*= 0
-    dρdtI             .*= 0
-    dρdtIₙ⁺            .*= 0
-    dvdtI.V           .*= 0
-    dvdtIₙ⁺.V          .*= 0
 
     R = 2*h
     @inline TheCLL = CLL(Points=Position.V,CutOff=R)
@@ -340,10 +335,8 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
     @. ρₙ⁺            = Density    + dρdtI        * (dt/2) 
     LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
 
-    # Kernel            .*= 0
-    # KernelGradient.V  .*= 0
-    dρdtIₙ⁺            .*= 0
-    dvdtIₙ⁺.V          .*= 0
+    ResetArrays!(dρdtIₙ⁺, dvdtIₙ⁺.V)
+
     
     @inbounds for Cind_ ∈ TheCLL.UniqueCells
             
@@ -467,7 +460,7 @@ function RunSimulation(;FluidCSV::String,
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
     PolyDataTemplate(SaveLocation_, to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, KernelGradient.V, Density, Velocity.V, dvdtIₙ⁺.V)
 
-    for iteration in 1:100000#:101
+    for iteration in 1:10000#:101
         CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
         if iteration % 200 == 0
             SaveLocation_= SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(iteration,6,"0") * ".vtp"
@@ -512,7 +505,7 @@ begin
     )
     )
 
-    RunSimulation(
+    @time RunSimulation(
         FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
         BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
         SimMetaData  = SimMetaData,
