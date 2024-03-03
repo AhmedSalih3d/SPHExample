@@ -12,23 +12,6 @@ using Test
 using JET
 include("../src/ProduceVTP.jl")
 
-function mark_first_occurrences(A::Vector{NTuple{D, Int64}}) where D
-    # Initialize an empty dictionary to track seen elements
-    seen = Dict{Tuple{Int64, Int64}, Bool}()
-    
-    # Initialize the ID vector with false, same length as A
-    id_vector = falses(length(A))
-    
-    # Iterate over A, marking the first occurrence with true
-    for (i, elem) in enumerate(A)
-        if !haskey(seen, elem)
-            seen[elem] = true
-            id_vector[i] = true
-        end
-    end
-    
-    return id_vector
-end
 
 @with_kw mutable struct CLL{D,T}
     Points::StructVector{SVector{D,T}}
@@ -42,8 +25,10 @@ end
     Stencil::Vector{NTuple{D, Int64}}            = neighbors(Val(getsvecD(eltype(Points))) )
     
     Cells::Vector{NTuple{D, Int64}}              = ExtractCells(Points,CutOff,Val(getsvecD(eltype(Points))))
-    UniqueCells::Vector{Bool}                    = mark_first_occurrences(Cells)
     Nmax::Int64                                  = maximum(reinterpret(Int,@view(Cells[:]))) + ZeroOffset #Find largest dimension in x,y,z for the Cells
+
+    UniqueCells::Vector{NTuple{D, Int64}}        = unique(Cells) #just do all cells for now, optimize later
+
     Layout::Array{Vector{Int64}, D}              = GenerateM(Nmax,ZeroOffset,HalfPad,Padding,Cells,Val(getsvecD(eltype(Points))))
 end
 @inline getsvecD(::Type{SVector{d,T}}) where {d,T} = d
@@ -271,7 +256,7 @@ function updateCLL!(cll::CLL,Points)
     # Update Cells based on new positions of Points
     cll.Cells .= ExtractCells(Points, cll.CutOff, Val(getsvecD(eltype(Points))))
     
-    cll.UniqueCells .= mark_first_occurrences(cll.Cells)
+    cll.UniqueCells = unique(cll.Cells) #Don't do this due to looping over all possible cells
 
     # Recalculate the Layout with updated Cells
     #cll.Nmax       = maximum(reinterpret(Int, @view(Cells[:]))) + cll.ZeroOffset
@@ -306,9 +291,7 @@ function CustomCLL(TheCLL, SimConstants, MotionLimiter, BoundaryBool, GravityFac
 
     ResetArrays!(Kernel,KernelGradient.V, dρdtI, dvdtI.V)
 
-    @inbounds for Cind_ ∈ TheCLL.Cells[TheCLL.UniqueCells]
-    # @inbounds for Cind_ ∈ TheCLL.Cells
-            
+    @inbounds for Cind_ ∈ TheCLL.UniqueCells  
         Cind = (Cind_ .+ 1 .+ TheCLL.HalfPad)
 
             # The indices in the cell are:
@@ -361,7 +344,7 @@ function CustomCLL(TheCLL, SimConstants, MotionLimiter, BoundaryBool, GravityFac
     ResetArrays!(dρdtIₙ⁺, dvdtIₙ⁺.V) #this gives 32 bytes??
 
     
-    @inbounds for Cind_ ∈ TheCLL.Cells[TheCLL.UniqueCells]
+    @inbounds for Cind_ ∈ TheCLL.UniqueCells
     # @inbounds for Cind_ ∈ TheCLL.Cells
             
         Cind = (Cind_ .+ 1 .+ TheCLL.HalfPad)
