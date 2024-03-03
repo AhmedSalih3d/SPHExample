@@ -195,6 +195,8 @@ function sim_step(i , j, d2, SimConstants,  Kernel, KernelGradient, Position, De
 
     dvdtI[i] += dvdt⁺
     dvdtI[j] += dvdt⁻
+
+    return nothing
 end
 
 function sim_step2(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
@@ -220,8 +222,12 @@ function sim_step2(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI,
     vⱼ      = Velocity[j]
     vᵢⱼ     = vᵢ - vⱼ
 
+    # dot gives dispatch error, but @inline fixes?
     dρdt⁺   = - ρᵢ * dot((m₀/ρⱼ) *  -vᵢⱼ ,  ∇ᵢWᵢⱼ)
     dρdt⁻   = - ρⱼ * dot((m₀/ρᵢ) *   vᵢⱼ , -∇ᵢWᵢⱼ)
+
+    # dρdt⁺   = - ρᵢ * sum( (m₀/ρⱼ)  .*  -vᵢⱼ .*  ∇ᵢWᵢⱼ )
+    # dρdt⁻   = - ρⱼ * sum( (m₀/ρᵢ)  .*   vᵢⱼ .* -∇ᵢWᵢⱼ )
 
     dρdtI[i] += dρdt⁺
     dρdtI[j] += dρdt⁻
@@ -242,6 +248,8 @@ function sim_step2(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI,
 
     dvdtI[i] += dvdt⁺
     dvdtI[j] += dvdt⁻
+
+    return nothing
 end
 
 
@@ -276,10 +284,8 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
     dvdtI.V           .*= 0
     dvdtIₙ⁺.V          .*= 0
 
-    dt = 1e-5
-
     R = 2*h
-    TheCLL = CLL(Points=Position.V,CutOff=R)
+    @inline TheCLL = CLL(Points=Position.V,CutOff=R)
 
     nl    = 0
 
@@ -299,7 +305,8 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
 
                     if d2 <= TheCLL.CutOffSquared
                         nl += 1
-                        sim_step(k_idx , k_1up, d2, SimConstants,  Kernel, KernelGradient.V, Position.V, Density, Velocity.V, dρdtI, dvdtI.V)
+                        @inline sim_step(k_idx , k_1up, d2, SimConstants,  Kernel, KernelGradient.V, Position.V, Density, Velocity.V, dρdtI, dvdtI.V)
+                        # println(@report_opt sim_step(k_idx , k_1up, d2, SimConstants,  Kernel, KernelGradient.V, Position.V, Density, Velocity.V, dρdtI, dvdtI.V))
                     end
                 end
             end
@@ -317,7 +324,7 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
 
                         if d2 <= TheCLL.CutOffSquared
                             nl += 1
-                            sim_step(k1_idx , k2_idx, d2, SimConstants,  Kernel, KernelGradient.V, Position.V, Density, Velocity.V, dρdtI, dvdtI.V)
+                            @inline sim_step(k1_idx , k2_idx, d2, SimConstants,  Kernel, KernelGradient.V, Position.V, Density, Velocity.V, dρdtI, dvdtI.V)
                         end
                     end
                 end
@@ -354,7 +361,7 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
 
                     if d2 <= TheCLL.CutOffSquared
                         nl += 1
-                        sim_step2(k_idx , k_1up, d2, SimConstants, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, dρdtIₙ⁺, dvdtIₙ⁺.V)
+                        @inline sim_step2(k_idx , k_1up, d2, SimConstants, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, dρdtIₙ⁺, dvdtIₙ⁺.V)
                     end
                 end
             end
@@ -372,7 +379,7 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
 
                         if d2 <= TheCLL.CutOffSquared
                             nl += 1
-                            sim_step2(k1_idx , k2_idx, d2, SimConstants, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, dρdtIₙ⁺, dvdtIₙ⁺.V)
+                            @inline sim_step2(k1_idx , k2_idx, d2, SimConstants, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, dρdtIₙ⁺, dvdtIₙ⁺.V)
                         end
                     end
                 end
@@ -393,24 +400,12 @@ end
 to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
 
 # For testing script properly
-let 
-    T = Float64
-    FloatType = T
-    D = 2
-    Dimensions = D
-    
-    FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv"
-    BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv"
-    
-    SimMetaData  = SimulationMetaData{D, T}(
-                                    SimulationName="AllInOne", 
-                                    SaveLocation=raw"E:\SecondApproach\Testing",
-                                    # MaxIterations=10001,
-                                    # OutputIteration=50,
-    )
-    # Initialze the constants to use
-    SimConstants = SimulationConstants{T}()
-    
+function RunSimulation(;FluidCSV::String,
+    BoundCSV::String,
+    SimMetaData::SimulationMetaData{Dimensions, FloatType},
+    SimConstants::SimulationConstants,
+) where {Dimensions,FloatType}
+
     # Unpack the relevant simulation meta data
     @unpack HourGlass, SaveLocation, SimulationName, SilentOutput, ThreadsCPU = SimMetaData;
     
@@ -465,23 +460,68 @@ let
 
     Velocityₙ⁺ = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
     Positionₙ⁺ = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
-   
-    # CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
-    function f()
-        foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
-        PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, KernelGradient.V, Density, Velocity.V, dvdtIₙ⁺.V)
-        for iteration in 1:100000#:101
-            CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
-            if iteration % 50 == 0
-                PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(iteration,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, to_3d(KernelGradient.V), Density, Velocity.V, dvdtIₙ⁺.V)
-                println(iteration)
-            end
-        end
 
-        return nothing
+    foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
+   
+
+    SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
+    PolyDataTemplate(SaveLocation_, to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, KernelGradient.V, Density, Velocity.V, dvdtIₙ⁺.V)
+
+    for iteration in 1:100000#:101
+        CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
+        if iteration % 200 == 0
+            SaveLocation_= SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(iteration,6,"0") * ".vtp"
+            PolyDataTemplate(SaveLocation_, to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, KernelGradient.V, Density, Velocity.V, dvdtIₙ⁺.V)
+            println(iteration)
+        end
     end
-    f()
+    
+    return nothing
 end
 
 
 
+# Initialize Simulation
+begin
+    D = 2
+    T = Float64
+    SimMetaData  = SimulationMetaData{D, T}(
+                                    SimulationName="AllInOne", 
+                                    SaveLocation=raw"E:\SecondApproach\Testing",
+    )
+
+    # Initialze the constants to use
+    SimConstants = SimulationConstants{T}(dt=5.7142857142857142857142857142857e-5)
+    # Clean up folder before running (remember to make folder before hand!)
+    foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
+
+    # And here we run the function - enjoy!
+    println(@code_warntype RunSimulation(
+        FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
+        BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
+        SimMetaData  = SimMetaData,
+        SimConstants = SimConstants
+    )
+    )
+
+    println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
+        FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
+        BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
+        SimMetaData  = SimMetaData,
+        SimConstants = SimConstants
+    )
+    )
+
+    RunSimulation(
+        FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
+        BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
+        SimMetaData  = SimMetaData,
+        SimConstants = SimConstants
+    )
+    
+    
+    #println(@report_opt target_modules=(@__MODULE__,) f(SimMetaData, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺))
+    #println(@code_warntype f(SimMetaData, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺))
+    
+    #f(SimMetaData, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
+end
