@@ -253,6 +253,17 @@ function sim_step2(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI,
     return nothing
 end
 
+function updateCLL!(cll::CLL,Points)
+    # Update Cells based on new positions of Points
+    cll.Cells = ExtractCells(Points, cll.CutOff, Val(getsvecD(eltype(Points))))
+    
+    # Recalculate the Layout with updated Cells
+    #cll.Nmax       = maximum(reinterpret(Int, @view(Cells[:]))) + cll.ZeroOffset
+    cll.Layout    .= GenerateM(cll.Nmax, cll.ZeroOffset, cll.HalfPad, cll.Padding, Cells, Val(getsvecD(eltype(Points))))
+
+
+    return nothing
+end
 
 @inline function fancy7th(x)
     # todo tune the magic constant
@@ -280,6 +291,7 @@ function CustomCLL(TheCLL, SimConstants, MotionLimiter, BoundaryBool, GravityFac
     ResetArrays!(Kernel,KernelGradient.V, dρdtI, dvdtI.V)
 
     @inbounds for Cind_ ∈ TheCLL.UniqueCells
+    # @inbounds for Cind_ ∈ TheCLL.Cells
             
         Cind = (Cind_ .+ 1 .+ TheCLL.HalfPad)
 
@@ -334,6 +346,7 @@ function CustomCLL(TheCLL, SimConstants, MotionLimiter, BoundaryBool, GravityFac
 
     
     @inbounds for Cind_ ∈ TheCLL.UniqueCells
+    # @inbounds for Cind_ ∈ TheCLL.Cells
             
         Cind = (Cind_ .+ 1 .+ TheCLL.HalfPad)
 
@@ -462,9 +475,9 @@ function RunSimulation(;FluidCSV::String,
     for iteration in 1:10000#:101
         CustomCLL(TheCLL, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
         if iteration % 200 == 0
-            SaveLocation_= SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(iteration,6,"0") * ".vtp"
-            PolyDataTemplate(SaveLocation_, to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, KernelGradient.V, Density, Velocity.V, dvdtIₙ⁺.V)
-            println(iteration)
+            # SaveLocation_= SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(iteration,6,"0") * ".vtp"
+            # PolyDataTemplate(SaveLocation_, to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, KernelGradient.V, Density, Velocity.V, dvdtIₙ⁺.V)
+            # println(iteration)
         end
     end
     
