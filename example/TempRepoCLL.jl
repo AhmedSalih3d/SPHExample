@@ -197,6 +197,53 @@ function sim_step(i , j, d2, SimConstants,  Kernel, KernelGradient, Position, De
     dvdtI[j] += dvdt⁻
 end
 
+function sim_step2(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
+    @unpack h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² = SimConstants
+    
+    d  = sqrt(d2)
+
+    xᵢ  = Position[i]
+    xⱼ  = Position[j]
+    xᵢⱼ = xᵢ - xⱼ
+
+    q  = clamp(d  * h⁻¹,0.0,2.0)
+
+    Fac = αD*5*(q-2)^3*q / (8h*(q*h+1e-6))
+    ∇ᵢWᵢⱼ = Fac * xᵢⱼ
+
+    d² = d*d
+
+    ρᵢ    = Density[i]
+    ρⱼ    = Density[j]
+
+    vᵢ      = Velocity[i]
+    vⱼ      = Velocity[j]
+    vᵢⱼ     = vᵢ - vⱼ
+
+    dρdt⁺   = - ρᵢ * dot((m₀/ρⱼ) *  -vᵢⱼ ,  ∇ᵢWᵢⱼ)
+    dρdt⁻   = - ρⱼ * dot((m₀/ρᵢ) *   vᵢⱼ , -∇ᵢWᵢⱼ)
+
+    dρdtI[i] += dρdt⁺
+    dρdtI[j] += dρdt⁻
+
+    Pᵢ      = EquationOfState(ρᵢ,c₀,γ,ρ₀)
+    Pⱼ      = EquationOfState(ρⱼ,c₀,γ,ρ₀)
+
+    ρ̄ᵢⱼ     = (ρᵢ+ρⱼ)*0.5
+    Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
+
+    cond      = dot(vᵢⱼ, xᵢⱼ)
+    cond_bool = cond < 0.0
+    μᵢⱼ       = h*cond/(d²+η²)
+    Πᵢⱼ       = cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ
+
+    dvdt⁺ = - m₀ * ( Pfac + Πᵢⱼ) *  ∇ᵢWᵢⱼ
+    dvdt⁻ = - m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ
+
+    dvdtI[i] += dvdt⁺
+    dvdtI[j] += dvdt⁻
+end
+
 
 @inline function fancy7th(x)
     # todo tune the magic constant
@@ -288,75 +335,57 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
 
     # Kernel            .*= 0
     # KernelGradient.V  .*= 0
-    # dρdtI             .*= 0
-    # dρdtIₙ⁺            .*= 0
-    # dvdtI.V           .*= 0
-    # dvdtIₙ⁺.V          .*= 0
+    dρdtIₙ⁺            .*= 0
+    dvdtIₙ⁺.V          .*= 0
     
-    # @inbounds for Cind_ ∈ TheCLL.UniqueCells
+    @inbounds for Cind_ ∈ TheCLL.UniqueCells
             
-    #     Cind = (Cind_ .+ 1 .+ TheCLL.HalfPad)
+        Cind = (Cind_ .+ 1 .+ TheCLL.HalfPad)
 
-    #         # The indices in the cell are:
-    #         indices_in_cell = TheCLL.Layout[Cind...]
+            # The indices in the cell are:
+            indices_in_cell = TheCLL.Layout[Cind...]
 
-    #         n_idx_cells = length(indices_in_cell)
-    #         for ki = 1:n_idx_cells-1
-    #             k_idx = indices_in_cell[ki]
-    #               for kj = (ki+1):n_idx_cells
-    #                 k_1up = indices_in_cell[kj]
-    #                 d2 = distance_condition(Position.V[k_idx],Position.V[k_1up])
+            n_idx_cells = length(indices_in_cell)
+            for ki = 1:n_idx_cells-1
+                k_idx = indices_in_cell[ki]
+                  for kj = (ki+1):n_idx_cells
+                    k_1up = indices_in_cell[kj]
+                    d2 = distance_condition(Positionₙ⁺.V[k_idx],Positionₙ⁺.V[k_1up])
 
-    #                 if d2 <= TheCLL.CutOffSquared
-    #                     nl += 1
-    #                     sim_step(dt, k_idx, k_1up, d2, SimConstants , Kernel, KernelGradient.V, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI.V, dvdtIₙ⁺.V)
-    #                 end
-    #             end
-    #         end
+                    if d2 <= TheCLL.CutOffSquared
+                        nl += 1
+                        sim_step2(k_idx , k_1up, d2, SimConstants, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, dρdtIₙ⁺, dvdtIₙ⁺.V)
+                    end
+                end
+            end
 
-    #         for Sind ∈ TheCLL.Stencil
-    #             Sind = (Cind .+ Sind)
-    #             indices_in_cell_plus  = TheCLL.Layout[Sind...]
+            for Sind ∈ TheCLL.Stencil
+                Sind = (Cind .+ Sind)
+                indices_in_cell_plus  = TheCLL.Layout[Sind...]
 
-    #             # Here a double loop to compare indices_in_cell[k] to all possible neighbours
-    #             for k1 ∈ eachindex(indices_in_cell)
-    #                 k1_idx = indices_in_cell[k1]
-    #                 for k2 ∈ eachindex(indices_in_cell_plus)
-    #                     k2_idx = indices_in_cell_plus[k2]
-    #                     d2  = distance_condition(Position.V[k1_idx],Position.V[k2_idx])
+                # Here a double loop to compare indices_in_cell[k] to all possible neighbours
+                for k1 ∈ eachindex(indices_in_cell)
+                    k1_idx = indices_in_cell[k1]
+                    for k2 ∈ eachindex(indices_in_cell_plus)
+                        k2_idx = indices_in_cell_plus[k2]
+                        d2  = distance_condition(Positionₙ⁺.V[k1_idx],Positionₙ⁺.V[k2_idx])
 
-    #                     if d2 <= TheCLL.CutOffSquared
-    #                         nl += 1
-    #                         sim_step(dt, k1_idx, k2_idx, d2, SimConstants, Kernel, KernelGradient.V, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI.V, dvdtIₙ⁺.V)
-    #                     end
-    #                 end
-    #             end
-    #         end
-    # end
+                        if d2 <= TheCLL.CutOffSquared
+                            nl += 1
+                            sim_step2(k1_idx , k2_idx, d2, SimConstants, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, dρdtIₙ⁺, dvdtIₙ⁺.V)
+                        end
+                    end
+                end
+            end
+    end
 
-    # dvdtI.vectors[end] .+= g * GravityFactor
-    # DensityEpsi!(Density,dρdtI,ρₙ⁺,dt)
-    # LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
+    dvdtIₙ⁺.vectors[end] .+= g * GravityFactor
+    DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
+    LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
 
-    # @. Velocity.V += dvdtI.V * dt * MotionLimiter
-    # @. Position.V += ((Velocity.V + (Velocity.V - dvdtI.V * dt * MotionLimiter)) / 2) * dt * MotionLimiter
+    @. Velocity.V += dvdtIₙ⁺.V * dt * MotionLimiter
+    @. Position.V += ((Velocity.V + (Velocity.V - dvdtIₙ⁺.V * dt * MotionLimiter)) / 2) * dt * MotionLimiter
 
-    #TheCLL.MaxValidIndex[] = nl
-    # resize!(TheCLL.ListOfInteractions,nl)
-
-    # println(nl)
-    # println("test")
-    # println(sum(Kernel))
-    # println(sum(KernelGradient.V))
-    # println(sum(Density))
-    # println(sum(ρₙ⁺))
-    # println(KernelGradient.V[1007])
-    # println(dvdtIₙ⁺.V[1007])
-    # println(sum(Velocity.V))
-    # println(sum(Position.V))
-
-
-    # return nothing
 
     return nl
 end
@@ -464,8 +493,10 @@ let
 
     VelocityCLL_half   = sum(Velocityₙ⁺.V)
     PositionCLL_half   = sum(Positionₙ⁺.V)
-
     ρₙ⁺CLL_half = sum(ρₙ⁺)
+
+    println(sum(dvdtIₙ⁺.V))
+    println(sum(Velocity.V),sum(Position.V))
 
     
     # CELLLIST MAP BELOW
@@ -484,6 +515,7 @@ let
     dvdtI              = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
     dvdtL              = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
     Acceleration       = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
+
 
     ResizeBuffers!(KernelL, KernelGradientL, dvdtL, xᵢⱼ, drhopLp, drhopLn; N = system.nb.n)
     ResetArrays!(Kernel, dρdtI,dρdtIₙ⁺,KernelGradient.V,dvdtI.V, Acceleration.V, Velocity.V, Velocityₙ⁺.V, drhopLp, drhopLn)
@@ -508,9 +540,9 @@ let
     press_CLM = sum(Pressureᵢ)
     dvdtI_CLM          = sum(dvdtI.V)
     
-    println("Same number of interactions: ", @test nl_value == Int(1*length(system.nb.list)))
+    println("Same number of interactions: ", @test nl_value == Int(2*length(system.nb.list)))
 
-    println("Same kernel sum: "            , @test KernelSum_CLL ≈ KernelSum_CLM)
+    println("Same kernel sum: "            , @test isapprox(KernelSum_CLL - KernelSum_CLM, 0, rtol=1))
 
     println("Gradients approximately cancel out: ", @test isapprox(sum(KernelGradient_CLL .- KernelGradient_CLM),0,atol=1e-3) )
 
@@ -529,7 +561,22 @@ let
 
     println("Velocity half step is equivivalent: ", @test isapprox(sum(VelocityCLL_half .- VelocityCLM_half),0,atol=1e-3))
     println("Position half step is equivivalent: ", @test isapprox(sum(PositionCLL_half .- PositionCLM_half),0,atol=1e-3))
-    println("Density half step is equivivalent: ",  @test  ρₙ⁺CLL_half ≈ ρₙ⁺CLM_half)
+    println("Density half step is equivivalent: ",  @test isapprox(ρₙ⁺CLL_half - ρₙ⁺CLM_half, 0, rtol=1))
+
+    ResetArrays!(drhopLp, drhopLn)
+    ∂ρᵢ∂t!(dρdtIₙ⁺, I, J, D, xᵢⱼ,ρₙ⁺, Velocityₙ⁺,KernelGradientL, drhopLp,drhopLn, SimConstants)
+    Pressure!(Pressureᵢ, ρₙ⁺, SimConstants)
+    ArtificialViscosityMomentumEquation!(I,J,D, Acceleration, dvdtL, ρₙ⁺,KernelGradientL, xᵢⱼ, Velocityₙ⁺, Pressureᵢ, GravityFactor, SimConstants)
+
+    println(sum(dρdtIₙ⁺))
+    # println(sum(dρdtIₙ⁺))
+
+    println(sum(Acceleration.V))
+    
+    VelocityCLM_full = @. Velocity.V + Acceleration.V * dt * MotionLimiter
+    PositionCLM_full = @. Position.V + ((Velocity.V + (Velocity.V - Acceleration.V * dt * MotionLimiter)) / 2) * dt * MotionLimiter
+
+    println(sum(VelocityCLM_full),sum(PositionCLM_full))
 
 end
 

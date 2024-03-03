@@ -197,6 +197,53 @@ function sim_step(i , j, d2, SimConstants,  Kernel, KernelGradient, Position, De
     dvdtI[j] += dvdt⁻
 end
 
+function sim_step2(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
+    @unpack h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² = SimConstants
+    
+    d  = sqrt(d2)
+
+    xᵢ  = Position[i]
+    xⱼ  = Position[j]
+    xᵢⱼ = xᵢ - xⱼ
+
+    q  = clamp(d  * h⁻¹,0.0,2.0)
+
+    Fac = αD*5*(q-2)^3*q / (8h*(q*h+1e-6))
+    ∇ᵢWᵢⱼ = Fac * xᵢⱼ
+
+    d² = d*d
+
+    ρᵢ    = Density[i]
+    ρⱼ    = Density[j]
+
+    vᵢ      = Velocity[i]
+    vⱼ      = Velocity[j]
+    vᵢⱼ     = vᵢ - vⱼ
+
+    dρdt⁺   = - ρᵢ * dot((m₀/ρⱼ) *  -vᵢⱼ ,  ∇ᵢWᵢⱼ)
+    dρdt⁻   = - ρⱼ * dot((m₀/ρᵢ) *   vᵢⱼ , -∇ᵢWᵢⱼ)
+
+    dρdtI[i] += dρdt⁺
+    dρdtI[j] += dρdt⁻
+
+    Pᵢ      = EquationOfState(ρᵢ,c₀,γ,ρ₀)
+    Pⱼ      = EquationOfState(ρⱼ,c₀,γ,ρ₀)
+
+    ρ̄ᵢⱼ     = (ρᵢ+ρⱼ)*0.5
+    Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
+
+    cond      = dot(vᵢⱼ, xᵢⱼ)
+    cond_bool = cond < 0.0
+    μᵢⱼ       = h*cond/(d²+η²)
+    Πᵢⱼ       = cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ
+
+    dvdt⁺ = - m₀ * ( Pfac + Πᵢⱼ) *  ∇ᵢWᵢⱼ
+    dvdt⁻ = - m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ
+
+    dvdtI[i] += dvdt⁺
+    dvdtI[j] += dvdt⁻
+end
+
 
 @inline function fancy7th(x)
     # todo tune the magic constant
@@ -286,11 +333,9 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
     @. ρₙ⁺            = Density    + dρdtI        * (dt/2) 
     LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
 
-    Kernel            .*= 0
-    KernelGradient.V  .*= 0
-    dρdtI             .*= 0
+    # Kernel            .*= 0
+    # KernelGradient.V  .*= 0
     dρdtIₙ⁺            .*= 0
-    dvdtI.V           .*= 0
     dvdtIₙ⁺.V          .*= 0
     
     @inbounds for Cind_ ∈ TheCLL.UniqueCells
@@ -309,7 +354,7 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
 
                     if d2 <= TheCLL.CutOffSquared
                         nl += 1
-                        sim_step(k_idx , k_1up, d2, SimConstants,  Kernel, KernelGradient.V, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, dρdtIₙ⁺, dvdtIₙ⁺.V)
+                        sim_step2(k_idx , k_1up, d2, SimConstants, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, dρdtIₙ⁺, dvdtIₙ⁺.V)
                     end
                 end
             end
@@ -327,34 +372,19 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
 
                         if d2 <= TheCLL.CutOffSquared
                             nl += 1
-                            sim_step(k1_idx , k2_idx, d2, SimConstants,  Kernel, KernelGradient.V, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, dρdtIₙ⁺, dvdtIₙ⁺.V)
+                            sim_step2(k1_idx , k2_idx, d2, SimConstants, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, dρdtIₙ⁺, dvdtIₙ⁺.V)
                         end
                     end
                 end
             end
     end
 
-
     dvdtIₙ⁺.vectors[end] .+= g * GravityFactor
     DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
-    LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
+    LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
 
     @. Velocity.V += dvdtIₙ⁺.V * dt * MotionLimiter
     @. Position.V += ((Velocity.V + (Velocity.V - dvdtIₙ⁺.V * dt * MotionLimiter)) / 2) * dt * MotionLimiter
-
-    #TheCLL.MaxValidIndex[] = nl
-    # resize!(TheCLL.ListOfInteractions,nl)
-
-    # println(nl)
-    # println("test")
-    # println(sum(Kernel))
-    # println(sum(KernelGradient.V))
-    # println(sum(Density))
-    # println(sum(ρₙ⁺))
-    # println(KernelGradient.V[1007])
-    # println(dvdtIₙ⁺.V[1007])
-    # println(sum(Velocity.V))
-    # println(sum(Position.V))
 
 
     return nothing
@@ -440,7 +470,7 @@ let
     function f()
         foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
         PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, KernelGradient.V, Density, Velocity.V, dvdtIₙ⁺.V)
-        for iteration in 1:10001
+        for iteration in 1:100000#:101
             CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
             if iteration % 50 == 0
                 PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(iteration,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, to_3d(KernelGradient.V), Density, Velocity.V, dvdtIₙ⁺.V)
@@ -450,7 +480,6 @@ let
 
         return nothing
     end
-
     f()
 end
 
