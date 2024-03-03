@@ -464,8 +464,11 @@ let
 
     VelocityCLL_half   = sum(Velocityₙ⁺.V)
     PositionCLL_half   = sum(Positionₙ⁺.V)
+
+    ρₙ⁺CLL_half = sum(ρₙ⁺)
+
     
-    # @benchmark CustomCLL($PositionNew, $DensityNew, $VelocityNew, $SimConstants, $MotionLimiter, $BoundaryBool, $GravityFactor, $Position, $Kernel, $KernelGradient, $Density, $Velocity)
+    # CELLLIST MAP BELOW
     I                 = zeros(Int64,   NumberOfPoints)
     J                 = zeros(Int64,   NumberOfPoints)
     D                 = zeros(Float64, NumberOfPoints)
@@ -497,6 +500,8 @@ let
     ArtificialViscosityMomentumEquation!(I,J,D, dvdtI, dvdtL,Density,KernelGradientL, xᵢⱼ, Velocity, Pressureᵢ, GravityFactor, SimConstants)
 
 
+
+
     KernelSum_CLM = sum(Kernel)
     KernelGradient_CLM = sum(KernelGradient.V)
     drhodt_CLM         = sum(dρdtI)
@@ -514,15 +519,17 @@ let
     println("Pressure evaluation is equivivalent: ", @test press_CLL ≈ press_CLM)
 
     println("Momentum cancel out: ", @test isapprox(sum(dvdtI_CLL .- dvdtI_CLM),0,atol=1e-3) )
-    
-    # println(sum(dvdtI.V))
 
     VelocityCLM_half   = sum(@. Velocity.V   + dvdtI.V       * (dt/2) * MotionLimiter)
     PositionCLM_half   = sum(@. Position.V   + Velocityₙ⁺.V   * (dt/2) * MotionLimiter)
+    ρₙ⁺CLM_half  = Density  + dρdtI * (dt/2) 
+    LimitDensityAtBoundary!(ρₙ⁺CLM_half,BoundaryBool,ρ₀)
+    ρₙ⁺CLM_half = sum(ρₙ⁺CLM_half)
     
 
     println("Velocity half step is equivivalent: ", @test isapprox(sum(VelocityCLL_half .- VelocityCLM_half),0,atol=1e-3))
     println("Position half step is equivivalent: ", @test isapprox(sum(PositionCLL_half .- PositionCLM_half),0,atol=1e-3))
+    println("Density half step is equivivalent: ",  @test  ρₙ⁺CLL_half ≈ ρₙ⁺CLM_half)
 
 end
 
