@@ -1,5 +1,5 @@
 using SPHExample
-import CellListMap: InPlaceNeighborList, neighborlist!
+import CellListMap: InPlaceNeighborList, neighborlist!, update!
 using BenchmarkTools
 import CellListMap
 using StaticArrays
@@ -345,7 +345,7 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
 
                     if d2 <= TheCLL.CutOffSquared
                         nl += 1
-                        #sim_step(dt, k_idx, k_1up, d2, h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² , Kernel, KernelGradient.V, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI.V, dvdtIₙ⁺.V)
+                        sim_step(dt, k_idx, k_1up, d2, h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² , Kernel, KernelGradient.V, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI.V, dvdtIₙ⁺.V)
                     end
                 end
             end
@@ -363,14 +363,12 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
 
                         if d2 <= TheCLL.CutOffSquared
                             nl += 1
-                            #sim_step(dt, k1_idx, k2_idx, d2, h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² , Kernel, KernelGradient.V, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI.V, dvdtIₙ⁺.V)
+                            sim_step(dt, k1_idx, k2_idx, d2, h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² , Kernel, KernelGradient.V, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI.V, dvdtIₙ⁺.V)
                         end
                     end
                 end
             end
     end
-
-    println(nl)
 
     # dvdtI.vectors[end] .+= g * GravityFactor
     # DensityEpsi!(Density,dρdtI,ρₙ⁺,dt)
@@ -394,7 +392,9 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
     # println(sum(Position.V))
 
 
-    return nothing
+    # return nothing
+
+    return nl
 end
 
 to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
@@ -487,14 +487,48 @@ let
         return nl_value
     end
 
-    nl_value = f()
+    nl_value  = f()
     # @profview f()
 
-    # @benchmark CustomCLL($PositionNew, $DensityNew, $VelocityNew, $SimConstants, $MotionLimiter, $BoundaryBool, $GravityFactor, $Position, $Kernel, $KernelGradient, $Density, $Velocity)
-    system          = InPlaceNeighborList(x=Position.V, cutoff=2*h*1)
-    neighborlist!(system)
+    KernelSum_CLL =  sum(Kernel)
+    KernelGradient_CLL =  sum(KernelGradient.V)
+    println(KernelGradient.V[1:10])
 
-    @test nl_value == Int(2*length(system.nb.list))
+    # @benchmark CustomCLL($PositionNew, $DensityNew, $VelocityNew, $SimConstants, $MotionLimiter, $BoundaryBool, $GravityFactor, $Position, $Kernel, $KernelGradient, $Density, $Velocity)
+    I                 = zeros(Int64,   NumberOfPoints)
+    J                 = zeros(Int64,   NumberOfPoints)
+    D                 = zeros(Float64, NumberOfPoints)
+    list_me           = StructArray{Tuple{Int64,Int64,Float64}}((I,J,D))
+    system          = InPlaceNeighborList(x=Position.V, cutoff=2*h*1)
+    update!(system,Position.V)
+    neighborlist!(system)
+    resize!(list_me, system.nb.n)
+    list_me .= system.nb.list
+
+    KernelGradientL    = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
+    xᵢⱼ                = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
+
+    ResizeBuffers!(KernelL, KernelGradientL, xᵢⱼ; N = system.nb.n)
+    ResetArrays!(Kernel,KernelGradient.V)
+    # Here we calculate the distances between particles, output the kernel gradient value for each particle and also the kernel gradient value
+    # based on the pair-to-pair interaction system.nb.list, for use in later calculations.
+    # Other functions follow a similar format, with the "I" and "L" ending
+    # @timeit HourGlass "Step 1 | Update xᵢⱼ, kernel values and kernel gradient" begin
+    updatexᵢⱼ!(xᵢⱼ, Position, I, J)
+    # Here we output the kernel and kernel gradient value for each particle. Note that KernelL is list of interactions, while Kernel is the value for each actual particle. Similar naming for other variables
+    ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!(KernelGradient,KernelGradientL, Kernel, KernelL, I, J, D, xᵢⱼ, SimConstants)
+
+    KernelSum_CLM = sum(Kernel)
+    KernelGradient_CLM = sum(KernelGradient.V)
+    
+    println("Same number of interactions: ", @test nl_value == Int(2*length(system.nb.list)))
+
+    println("Same kernel sum: "            , @test KernelSum_CLL ≈ KernelSum_CLM)
+
+    println("Gradients approximately cancel out: ", @test isapprox(sum(KernelGradient_CLL .- KernelGradient_CLM),0,atol=1e-3) )
+
+    # println("Same gradient sum: "          , @test KernelGradientSum_CLL .≈ KernelGradientSum_CLM)     
+    
 
 end
 
