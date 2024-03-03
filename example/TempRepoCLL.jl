@@ -1,4 +1,5 @@
 using SPHExample
+import CellListMap: InPlaceNeighborList, neighborlist!
 using BenchmarkTools
 import CellListMap
 using StaticArrays
@@ -6,6 +7,7 @@ using Parameters
 using Plots; using Measures
 using StructArrays
 import LinearAlgebra: dot
+using Test
 include("../src/ProduceVTP.jl")
 
 @with_kw struct CLL{I,T,D}
@@ -343,7 +345,7 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
 
                     if d2 <= TheCLL.CutOffSquared
                         nl += 1
-                        sim_step(dt, k_idx, k_1up, d2, h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² , Kernel, KernelGradient.V, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI.V, dvdtIₙ⁺.V)
+                        #sim_step(dt, k_idx, k_1up, d2, h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² , Kernel, KernelGradient.V, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI.V, dvdtIₙ⁺.V)
                     end
                 end
             end
@@ -361,20 +363,21 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
 
                         if d2 <= TheCLL.CutOffSquared
                             nl += 1
-                            sim_step(dt, k1_idx, k2_idx, d2, h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² , Kernel, KernelGradient.V, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI.V, dvdtIₙ⁺.V)
+                            #sim_step(dt, k1_idx, k2_idx, d2, h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² , Kernel, KernelGradient.V, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI.V, dvdtIₙ⁺.V)
                         end
                     end
                 end
             end
     end
 
+    println(nl)
 
-    dvdtI.vectors[end] .+= g * GravityFactor
-    DensityEpsi!(Density,dρdtI,ρₙ⁺,dt)
-    LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
+    # dvdtI.vectors[end] .+= g * GravityFactor
+    # DensityEpsi!(Density,dρdtI,ρₙ⁺,dt)
+    # LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
 
-    @. Velocity.V += dvdtI.V * dt * MotionLimiter
-    @. Position.V += ((Velocity.V + (Velocity.V - dvdtI.V * dt * MotionLimiter)) / 2) * dt * MotionLimiter
+    # @. Velocity.V += dvdtI.V * dt * MotionLimiter
+    # @. Position.V += ((Velocity.V + (Velocity.V - dvdtI.V * dt * MotionLimiter)) / 2) * dt * MotionLimiter
 
     #TheCLL.MaxValidIndex[] = nl
     # resize!(TheCLL.ListOfInteractions,nl)
@@ -389,6 +392,7 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
     # println(dvdtIₙ⁺.V[1007])
     # println(sum(Velocity.V))
     # println(sum(Position.V))
+
 
     return nothing
 end
@@ -472,19 +476,26 @@ let
     function f()
         foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
         PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, KernelGradient.V, Density, Velocity.V, dvdtIₙ⁺.V)
-        for iteration in 1:101
-            CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
+        for iteration in 1:1#:101
+            nl_value = CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
             if iteration % 1 == 0
                 PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(iteration,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, to_3d(KernelGradient.V), Density, Velocity.V, dvdtIₙ⁺.V)
                 println(iteration)
             end
         end
+
+        return nl_value
     end
 
-    f()
+    nl_value = f()
     # @profview f()
 
     # @benchmark CustomCLL($PositionNew, $DensityNew, $VelocityNew, $SimConstants, $MotionLimiter, $BoundaryBool, $GravityFactor, $Position, $Kernel, $KernelGradient, $Density, $Velocity)
+    system          = InPlaceNeighborList(x=Position.V, cutoff=2*h*1)
+    neighborlist!(system)
+
+    @test nl_value == Int(2*length(system.nb.list))
+
 end
 
 
