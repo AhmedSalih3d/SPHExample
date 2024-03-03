@@ -13,7 +13,7 @@ using JET
 include("../src/ProduceVTP.jl")
 
 
-@with_kw mutable struct CLL{D,T}
+@with_kw struct CLL{D,T}
     Points::StructVector{SVector{D,T}}
 
     CutOff::T
@@ -68,6 +68,17 @@ function ExtractCells(p,R,::Val{d}) where d
     return cells
 end
 
+function ExtractCells!(cells, p,R,::Val{d}) where d
+    n = length(p)
+
+    for i = 1:n
+        vs = Int.(fld.(p[i],R))
+        cells[i] = tuple(vs...)
+    end
+
+    return cells
+end
+
 function GenerateM(Nmax,ZeroOffset,HalfPad,Padding,cells,v::Val{d}) where d
     Msize = ntuple(_ -> Nmax+Padding,v)
     M     = Array{Vector{Int}}(undef,Msize)
@@ -89,6 +100,26 @@ function GenerateM(Nmax,ZeroOffset,HalfPad,Padding,cells,v::Val{d}) where d
 
     return M
 end
+
+function GenerateM!(M, Nmax,ZeroOffset,HalfPad,Padding,cells,v::Val{d}) where d
+    #sizehint! is a genius function
+    # but it actually does not improve performance anymore lol
+    for i = 1:prod(size(M))
+        #arr  = Vector{Int}()
+        #sizehint!(arr,100)
+        @inbounds resize!(M[i],0)
+    end
+
+    iter = 0
+
+    for ind ∈ cells
+        iter += 1
+        @inbounds push!(M[(ind .+ ZeroOffset .+ HalfPad)...],iter)
+    end
+
+    return nothing
+end
+
 
 function CalculateTotalPossibleNumberOfInteractions(UniqueCells,Layout,Stencil,HalfPad)
     # We use the same loop as in the actual algorithm for now..
@@ -254,13 +285,17 @@ end
 
 function updateCLL!(cll::CLL,Points)
     # Update Cells based on new positions of Points
-    cll.Cells .= ExtractCells(Points, cll.CutOff, Val(getsvecD(eltype(Points))))
+    ExtractCells!(cll.Cells,Points, cll.CutOff, Val(getsvecD(eltype(Points))))
     
-    cll.UniqueCells = unique(cll.Cells) #Don't do this due to looping over all possible cells
+    if length(cll.UniqueCells) != length(unique(cll.Cells))
+        resize!(cll.UniqueCells, length(unique(cll.Cells)))
+    end
+
+    cll.UniqueCells .= unique(cll.Cells) #Don't do this due to looping over all possible cells
 
     # Recalculate the Layout with updated Cells
     #cll.Nmax       = maximum(reinterpret(Int, @view(Cells[:]))) + cll.ZeroOffset
-    cll.Layout    .= GenerateM(cll.Nmax, cll.ZeroOffset, cll.HalfPad, cll.Padding, cll.Cells, Val(getsvecD(eltype(Points))))
+    GenerateM!(cll.Layout, cll.Nmax, cll.ZeroOffset, cll.HalfPad, cll.Padding, cll.Cells, Val(getsvecD(eltype(Points))))
 
 
     return nothing
@@ -332,7 +367,7 @@ function CustomCLL(TheCLL, SimConstants, MotionLimiter, BoundaryBool, GravityFac
 
 
     # Make loop, no allocs
-    @batch for i in eachindex(dvdtI.V)
+    for i in eachindex(dvdtI.V)
         dvdtI.vectors[end][i]  += g * GravityFactor[i]
         Velocityₙ⁺.V[i]   = Velocity.V[i]   + dvdtI.V[i]       * (dt/2)  * MotionLimiter[i]
         Positionₙ⁺.V[i]   = Position.V[i]   + Velocityₙ⁺.V[i]   * (dt/2)  * MotionLimiter[i]
@@ -388,7 +423,7 @@ function CustomCLL(TheCLL, SimConstants, MotionLimiter, BoundaryBool, GravityFac
     DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
     LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
 
-    @batch for i in eachindex(dvdtIₙ⁺.V)
+    for i in eachindex(dvdtIₙ⁺.V)
         dvdtIₙ⁺.vectors[end][i]  += g * GravityFactor[i]
         Velocity.V[i]           += dvdtIₙ⁺.V[i] * dt * MotionLimiter[i]
         Position.V[i]           += ((Velocity.V[i] + (Velocity.V[i] - dvdtIₙ⁺.V[i] * dt * MotionLimiter[i])) / 2) * dt * MotionLimiter[i]
@@ -471,9 +506,10 @@ function RunSimulation(;FluidCSV::String,
     R = 2*h
     TheCLL = CLL(Points=Position.V,CutOff=R) #line is good idea at times
 
-    for iteration in 1:10000#:101
+    @time @inbounds for iteration in 1:1000#:101
         updateCLL!(TheCLL, Position.V)
-        CustomCLL(TheCLL, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
+        # inline removes 96 bytes alloc..
+        @inline CustomCLL(TheCLL, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
         if iteration % 200 == 0
             SaveLocation_= SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(iteration,6,"0") * ".vtp"
             PolyDataTemplate(SaveLocation_, to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, KernelGradient.V, Density, Velocity.V, dvdtIₙ⁺.V)
@@ -517,7 +553,7 @@ begin
     )
     )
 
-    @time RunSimulation(
+    @profview RunSimulation(
         FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
         BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
         SimMetaData  = SimMetaData,
