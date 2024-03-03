@@ -142,7 +142,7 @@ function CalculateTotalPossibleNumberOfInteractions(UniqueCells,Layout,Stencil,H
 end
 
 
-function sim_step(i , j, d2, SimConstants,  Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI)
+function sim_step(dt, i , j, d2, SimConstants,  Kernel, KernelGradient, Position, Density, Velocity, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
     @unpack h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² = SimConstants
     
     d  = sqrt(d2)
@@ -195,6 +195,45 @@ function sim_step(i , j, d2, SimConstants,  Kernel, KernelGradient, Position, De
 
     dvdtI[i] += dvdt⁺
     dvdtI[j] += dvdt⁻
+    
+    # Time stepping start - this makes suction
+    ρᵢᴺ  = ρᵢ + dρdt⁺ * (dt/2) #Starts as  ρᵢ and becomes  ρᵢᴺ
+    ρⱼᴺ  = ρⱼ + dρdt⁻ * (dt/2) #Starts as  ρⱼ and becomes  ρⱼᴺ
+
+    vᵢᴺ  = vᵢ + dvdt⁺ * (dt/2) * MotionLimiter[i]
+    vⱼᴺ  = vⱼ + dvdt⁻ * (dt/2) * MotionLimiter[j]
+
+    xᵢᴺ  = xᵢ + vᵢᴺ * (dt/2) * MotionLimiter[i]
+    xⱼᴺ  = xⱼ + vⱼᴺ * (dt/2) * MotionLimiter[j]
+
+    # # Update and go through same steps as above
+
+    # xᵢⱼᴺ = xᵢᴺ - xⱼᴺ
+
+    # vᵢⱼᴺ     = vᵢᴺ - vⱼᴺ
+
+    # dρdtᴺ⁺   = dot(m₀ *   vᵢⱼᴺ , ∇ᵢWᵢⱼ)
+    # dρdtᴺ⁻   = dot(m₀ *  -vᵢⱼᴺ ,-∇ᵢWᵢⱼ)
+
+    # dρdtIₙ⁺[i] += dρdtᴺ⁺
+    # dρdtIₙ⁺[j] += dρdtᴺ⁻ 
+
+    # Pᵢᴺ     = EquationOfState(ρᵢᴺ,c₀,γ,ρ₀)
+    # Pⱼᴺ     = EquationOfState(ρⱼᴺ,c₀,γ,ρ₀)
+
+    # ρ̄ᵢⱼᴺ     = (ρᵢᴺ+ρⱼᴺ)*0.5
+    # Pfacᴺ    = (Pᵢᴺ+Pⱼᴺ)/(ρᵢᴺ*ρⱼᴺ)
+
+    # cond      = dot(vᵢⱼᴺ, xᵢⱼᴺ)
+    # cond_bool = cond < 0.0
+    # μᵢⱼᴺ       = h*cond/(d²+η²)
+    # Πᵢⱼᴺ       = cond_bool*(-α*c₀*μᵢⱼᴺ)/ρ̄ᵢⱼᴺ
+
+    # dvdtᴺ⁺ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) *  ∇ᵢWᵢⱼ
+    # dvdtᴺ⁻ = - m₀ * ( Pfacᴺ + Πᵢⱼᴺ) * -∇ᵢWᵢⱼ
+
+    # dvdtIₙ⁺[i] += dvdtᴺ⁺
+    # dvdtIₙ⁺[j] += dvdtᴺ⁻
 end
 
 
@@ -229,7 +268,7 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
     dvdtI.V           .*= 0
     dvdtIₙ⁺.V          .*= 0
 
-    dt = 1e-5
+    dt = 1e-6 #7.65e-5
 
     R = 2*h
     TheCLL = CLL(Points=Position.V,CutOff=R)
@@ -252,7 +291,7 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
 
                     if d2 <= TheCLL.CutOffSquared
                         nl += 1
-                        sim_step(k_idx , k_1up, d2, SimConstants,  Kernel, KernelGradient.V, Position.V, Density, Velocity.V, dρdtI, dvdtI.V)
+                        sim_step(dt, k_idx, k_1up, d2, SimConstants, Kernel, KernelGradient.V, Position.V, Density, Velocity.V, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI.V, dvdtIₙ⁺.V)
                     end
                 end
             end
@@ -270,7 +309,7 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
 
                         if d2 <= TheCLL.CutOffSquared
                             nl += 1
-                            sim_step(k1_idx , k2_idx, d2, SimConstants,  Kernel, KernelGradient.V, Position.V, Density, Velocity.V, dρdtI, dvdtI.V)
+                            sim_step(dt, k1_idx, k2_idx, d2, SimConstants, Kernel, KernelGradient.V, Positionₙ⁺.V, Density, Velocityₙ⁺.V, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI.V, dvdtIₙ⁺.V)
                         end
                     end
                 end
@@ -281,65 +320,65 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
     dvdtI.vectors[end]  .+= g * GravityFactor
 
 
-    @. Velocityₙ⁺.V   = Velocity.V   + dvdtI.V       * (dt/2)  * MotionLimiter
-    @. Positionₙ⁺.V   = Position.V   + Velocityₙ⁺.V  * (dt/2)  * MotionLimiter
+    @. Velocityₙ⁺.V   = Velocity.V   + dvdtI.V * (dt/2) * MotionLimiter
+    @. Positionₙ⁺.V   = Position.V   + Velocityₙ⁺.V * (dt/2)   * MotionLimiter
     @. ρₙ⁺            = Density    + dρdtI        * (dt/2) 
     LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
 
-    # Kernel            .*= 0
-    # KernelGradient.V  .*= 0
-    # dρdtI             .*= 0
-    # dρdtIₙ⁺            .*= 0
-    # dvdtI.V           .*= 0
-    # dvdtIₙ⁺.V          .*= 0
+    Kernel            .*= 0
+    KernelGradient.V  .*= 0
+    dρdtI             .*= 0
+    dρdtIₙ⁺            .*= 0
+    dvdtI.V           .*= 0
+    dvdtIₙ⁺.V          .*= 0
     
-    # @inbounds for Cind_ ∈ TheCLL.UniqueCells
+    @inbounds for Cind_ ∈ TheCLL.UniqueCells
             
-    #     Cind = (Cind_ .+ 1 .+ TheCLL.HalfPad)
+        Cind = (Cind_ .+ 1 .+ TheCLL.HalfPad)
 
-    #         # The indices in the cell are:
-    #         indices_in_cell = TheCLL.Layout[Cind...]
+            # The indices in the cell are:
+            indices_in_cell = TheCLL.Layout[Cind...]
 
-    #         n_idx_cells = length(indices_in_cell)
-    #         for ki = 1:n_idx_cells-1
-    #             k_idx = indices_in_cell[ki]
-    #               for kj = (ki+1):n_idx_cells
-    #                 k_1up = indices_in_cell[kj]
-    #                 d2 = distance_condition(Position.V[k_idx],Position.V[k_1up])
+            n_idx_cells = length(indices_in_cell)
+            for ki = 1:n_idx_cells-1
+                k_idx = indices_in_cell[ki]
+                  for kj = (ki+1):n_idx_cells
+                    k_1up = indices_in_cell[kj]
+                    d2 = distance_condition(Position.V[k_idx],Position.V[k_1up])
 
-    #                 if d2 <= TheCLL.CutOffSquared
-    #                     nl += 1
-    #                     sim_step(dt, k_idx, k_1up, d2, SimConstants , Kernel, KernelGradient.V, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI.V, dvdtIₙ⁺.V)
-    #                 end
-    #             end
-    #         end
+                    if d2 <= TheCLL.CutOffSquared
+                        nl += 1
+                        sim_step(dt, k_idx, k_1up, d2, SimConstants , Kernel, KernelGradient.V, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI.V, dvdtIₙ⁺.V)
+                    end
+                end
+            end
 
-    #         for Sind ∈ TheCLL.Stencil
-    #             Sind = (Cind .+ Sind)
-    #             indices_in_cell_plus  = TheCLL.Layout[Sind...]
+            for Sind ∈ TheCLL.Stencil
+                Sind = (Cind .+ Sind)
+                indices_in_cell_plus  = TheCLL.Layout[Sind...]
 
-    #             # Here a double loop to compare indices_in_cell[k] to all possible neighbours
-    #             for k1 ∈ eachindex(indices_in_cell)
-    #                 k1_idx = indices_in_cell[k1]
-    #                 for k2 ∈ eachindex(indices_in_cell_plus)
-    #                     k2_idx = indices_in_cell_plus[k2]
-    #                     d2  = distance_condition(Position.V[k1_idx],Position.V[k2_idx])
+                # Here a double loop to compare indices_in_cell[k] to all possible neighbours
+                for k1 ∈ eachindex(indices_in_cell)
+                    k1_idx = indices_in_cell[k1]
+                    for k2 ∈ eachindex(indices_in_cell_plus)
+                        k2_idx = indices_in_cell_plus[k2]
+                        d2  = distance_condition(Position.V[k1_idx],Position.V[k2_idx])
 
-    #                     if d2 <= TheCLL.CutOffSquared
-    #                         nl += 1
-    #                         sim_step(dt, k1_idx, k2_idx, d2, SimConstants, Kernel, KernelGradient.V, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI.V, dvdtIₙ⁺.V)
-    #                     end
-    #                 end
-    #             end
-    #         end
-    # end
+                        if d2 <= TheCLL.CutOffSquared
+                            nl += 1
+                            sim_step(dt, k1_idx, k2_idx, d2, SimConstants, Kernel, KernelGradient.V, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, GravityFactor, BoundaryBool, MotionLimiter, ρₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI.V, dvdtIₙ⁺.V)
+                        end
+                    end
+                end
+            end
+    end
 
-    # dvdtI.vectors[end] .+= g * GravityFactor
-    # DensityEpsi!(Density,dρdtI,ρₙ⁺,dt)
-    # LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
+    dvdtI.vectors[end] .+= g * GravityFactor
+    DensityEpsi!(Density,dρdtI,ρₙ⁺,dt)
+    LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
 
-    # @. Velocity.V += dvdtI.V * dt * MotionLimiter
-    # @. Position.V += ((Velocity.V + (Velocity.V - dvdtI.V * dt * MotionLimiter)) / 2) * dt * MotionLimiter
+    @. Velocity.V += dvdtI.V * dt * MotionLimiter
+    @. Position.V += ((Velocity.V + (Velocity.V - dvdtI.V * dt * MotionLimiter)) / 2) * dt * MotionLimiter
 
     #TheCLL.MaxValidIndex[] = nl
     # resize!(TheCLL.ListOfInteractions,nl)
@@ -441,89 +480,18 @@ let
     function f()
         foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
         PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, KernelGradient.V, Density, Velocity.V, dvdtIₙ⁺.V)
-        for iteration in 1:1#:101
-            nl_value = CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
+        for iteration in 1:101
+            CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
             if iteration % 1 == 0
                 PolyDataTemplate(SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(iteration,6,"0") * ".vtp", to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, to_3d(KernelGradient.V), Density, Velocity.V, dvdtIₙ⁺.V)
                 println(iteration)
             end
         end
 
-        return nl_value
+        return nothing
     end
 
-    nl_value  = f()
-
-
-    KernelSum_CLL =  sum(Kernel)
-    KernelGradient_CLL =  sum(KernelGradient.V)
-    drhodt_CLL         = sum(dρdtI)
-    Pressure!(Pressureᵢ, Density, SimConstants); press_CLL          = sum(Pressureᵢ)
-    dvdtI_CLL          = sum(dvdtI.V)
-
-
-    VelocityCLL_half   = sum(Velocityₙ⁺.V)
-    PositionCLL_half   = sum(Positionₙ⁺.V)
-    
-    # @benchmark CustomCLL($PositionNew, $DensityNew, $VelocityNew, $SimConstants, $MotionLimiter, $BoundaryBool, $GravityFactor, $Position, $Kernel, $KernelGradient, $Density, $Velocity)
-    I                 = zeros(Int64,   NumberOfPoints)
-    J                 = zeros(Int64,   NumberOfPoints)
-    D                 = zeros(Float64, NumberOfPoints)
-    list_me           = StructArray{Tuple{Int64,Int64,Float64}}((I,J,D))
-    system          = InPlaceNeighborList(x=Position.V, cutoff=2*h*1)
-    update!(system,Position.V)
-    neighborlist!(system)
-    resize!(list_me, system.nb.n)
-    list_me .= system.nb.list
-
-    KernelGradientL    = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
-    xᵢⱼ                = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
-    dvdtI              = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
-    dvdtL              = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
-    Acceleration       = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
-
-    ResizeBuffers!(KernelL, KernelGradientL, dvdtL, xᵢⱼ, drhopLp, drhopLn; N = system.nb.n)
-    ResetArrays!(Kernel, dρdtI,dρdtIₙ⁺,KernelGradient.V,dvdtI.V, Acceleration.V, Velocity.V, Velocityₙ⁺.V, drhopLp, drhopLn)
-
-    # Here we calculate the distances between particles, output the kernel gradient value for each particle and also the kernel gradient value
-    # based on the pair-to-pair interaction system.nb.list, for use in later calculations.
-    # Other functions follow a similar format, with the "I" and "L" ending
-    # @timeit HourGlass "Step 1 | Update xᵢⱼ, kernel values and kernel gradient" begin
-    updatexᵢⱼ!(xᵢⱼ, Position, I, J)
-    # Here we output the kernel and kernel gradient value for each particle. Note that KernelL is list of interactions, while Kernel is the value for each actual particle. Similar naming for other variables
-    ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!(KernelGradient,KernelGradientL, Kernel, KernelL, I, J, D, xᵢⱼ, SimConstants)
-    ∂ρᵢ∂t!(dρdtI, I, J, D, xᵢⱼ, Density, Velocity,KernelGradientL,drhopLp,drhopLn, SimConstants)
-    Pressure!(Pressureᵢ, Density, SimConstants)
-    ArtificialViscosityMomentumEquation!(I,J,D, dvdtI, dvdtL,Density,KernelGradientL, xᵢⱼ, Velocity, Pressureᵢ, GravityFactor, SimConstants)
-
-
-    KernelSum_CLM = sum(Kernel)
-    KernelGradient_CLM = sum(KernelGradient.V)
-    drhodt_CLM         = sum(dρdtI)
-    press_CLM = sum(Pressureᵢ)
-    dvdtI_CLM          = sum(dvdtI.V)
-    
-    println("Same number of interactions: ", @test nl_value == Int(1*length(system.nb.list)))
-
-    println("Same kernel sum: "            , @test KernelSum_CLL ≈ KernelSum_CLM)
-
-    println("Gradients approximately cancel out: ", @test isapprox(sum(KernelGradient_CLL .- KernelGradient_CLM),0,atol=1e-3) )
-
-    println("First density derivative are equal: ", @test drhodt_CLL ≈ drhodt_CLM)
-
-    println("Pressure evaluation is equivivalent: ", @test press_CLL ≈ press_CLM)
-
-    println("Momentum cancel out: ", @test isapprox(sum(dvdtI_CLL .- dvdtI_CLM),0,atol=1e-3) )
-    
-    # println(sum(dvdtI.V))
-
-    VelocityCLM_half   = sum(@. Velocity.V   + dvdtI.V       * (dt/2) * MotionLimiter)
-    PositionCLM_half   = sum(@. Position.V   + Velocityₙ⁺.V   * (dt/2) * MotionLimiter)
-    
-
-    println("Velocity half step is equivivalent: ", @test isapprox(sum(VelocityCLL_half .- VelocityCLM_half),0,atol=1e-3))
-    println("Position half step is equivivalent: ", @test isapprox(sum(PositionCLL_half .- PositionCLM_half),0,atol=1e-3))
-
+    f()
 end
 
 
