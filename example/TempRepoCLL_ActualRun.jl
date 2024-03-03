@@ -7,6 +7,7 @@ using Parameters
 using Plots; using Measures
 using StructArrays
 import LinearAlgebra: dot
+using Polyester
 using Test
 include("../src/ProduceVTP.jl")
 
@@ -166,8 +167,8 @@ function sim_step(i , j, d2, SimConstants,  Kernel, KernelGradient, Position, De
 
     d² = d*d
 
-    ρᵢ    = Density[i]
-    ρⱼ    = Density[j]
+    ρᵢ      = Density[i]
+    ρⱼ      = Density[j]
 
     vᵢ      = Velocity[i]
     vⱼ      = Velocity[j]
@@ -273,16 +274,10 @@ function EquationOfState(ρ,c₀,γ,ρ₀)
     return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
 end
 
-function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
+function CustomCLL(TheCLL, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimConstants
 
     ResetArrays!(Kernel,KernelGradient.V, dρdtI, dvdtI.V)
-
-
-    R = 2*h
-    @inline TheCLL = CLL(Points=Position.V,CutOff=R)
-
-    nl    = 0
 
     @inbounds for Cind_ ∈ TheCLL.UniqueCells
             
@@ -292,14 +287,13 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
             indices_in_cell = TheCLL.Layout[Cind...]
 
             n_idx_cells = length(indices_in_cell)
-            for ki = 1:n_idx_cells-1
+            for ki = 1:n_idx_cells-1 #this line gives 64 bytes alloc unsure why
                 k_idx = indices_in_cell[ki]
                   for kj = (ki+1):n_idx_cells
                     k_1up = indices_in_cell[kj]
                     d2 = distance_condition(Position.V[k_idx],Position.V[k_1up])
 
                     if d2 <= TheCLL.CutOffSquared
-                        nl += 1
                         @inline sim_step(k_idx , k_1up, d2, SimConstants,  Kernel, KernelGradient.V, Position.V, Density, Velocity.V, dρdtI, dvdtI.V)
                         # println(@report_opt sim_step(k_idx , k_1up, d2, SimConstants,  Kernel, KernelGradient.V, Position.V, Density, Velocity.V, dρdtI, dvdtI.V))
                     end
@@ -318,7 +312,6 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
                         d2  = distance_condition(Position.V[k1_idx],Position.V[k2_idx])
 
                         if d2 <= TheCLL.CutOffSquared
-                            nl += 1
                             @inline sim_step(k1_idx , k2_idx, d2, SimConstants,  Kernel, KernelGradient.V, Position.V, Density, Velocity.V, dρdtI, dvdtI.V)
                         end
                     end
@@ -327,15 +320,17 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
     end
 
 
-    dvdtI.vectors[end]  .+= g * GravityFactor
+    # Make loop, no allocs
+    @batch for i in eachindex(dvdtI.V)
+        dvdtI.vectors[end][i]  += g * GravityFactor[i]
+        Velocityₙ⁺.V[i]   = Velocity.V[i]   + dvdtI.V[i]       * (dt/2)  * MotionLimiter[i]
+        Positionₙ⁺.V[i]   = Position.V[i]   + Velocityₙ⁺.V[i]   * (dt/2)  * MotionLimiter[i]
+        ρₙ⁺[i]            = Density[i]      + dρdtI[i]         * (dt/2) 
+    end
 
-
-    @. Velocityₙ⁺.V   = Velocity.V   + dvdtI.V       * (dt/2)  * MotionLimiter
-    @. Positionₙ⁺.V   = Position.V   + Velocityₙ⁺.V  * (dt/2)  * MotionLimiter
-    @. ρₙ⁺            = Density    + dρdtI        * (dt/2) 
     LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
 
-    ResetArrays!(dρdtIₙ⁺, dvdtIₙ⁺.V)
+    ResetArrays!(dρdtIₙ⁺, dvdtIₙ⁺.V) #this gives 32 bytes??
 
     
     @inbounds for Cind_ ∈ TheCLL.UniqueCells
@@ -353,7 +348,6 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
                     d2 = distance_condition(Positionₙ⁺.V[k_idx],Positionₙ⁺.V[k_1up])
 
                     if d2 <= TheCLL.CutOffSquared
-                        nl += 1
                         @inline sim_step2(k_idx , k_1up, d2, SimConstants, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, dρdtIₙ⁺, dvdtIₙ⁺.V)
                     end
                 end
@@ -371,7 +365,6 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
                         d2  = distance_condition(Positionₙ⁺.V[k1_idx],Positionₙ⁺.V[k2_idx])
 
                         if d2 <= TheCLL.CutOffSquared
-                            nl += 1
                             @inline sim_step2(k1_idx , k2_idx, d2, SimConstants, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, dρdtIₙ⁺, dvdtIₙ⁺.V)
                         end
                     end
@@ -379,12 +372,15 @@ function CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Pos
             end
     end
 
-    dvdtIₙ⁺.vectors[end] .+= g * GravityFactor
+    
     DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
     LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
 
-    @. Velocity.V += dvdtIₙ⁺.V * dt * MotionLimiter
-    @. Position.V += ((Velocity.V + (Velocity.V - dvdtIₙ⁺.V * dt * MotionLimiter)) / 2) * dt * MotionLimiter
+    @batch for i in eachindex(dvdtIₙ⁺.V)
+        dvdtIₙ⁺.vectors[end][i]  += g * GravityFactor[i]
+        Velocity.V[i]           += dvdtIₙ⁺.V[i] * dt * MotionLimiter[i]
+        Position.V[i]           += ((Velocity.V[i] + (Velocity.V[i] - dvdtIₙ⁺.V[i] * dt * MotionLimiter[i])) / 2) * dt * MotionLimiter[i]
+    end
 
 
     return nothing
@@ -460,8 +456,11 @@ function RunSimulation(;FluidCSV::String,
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
     PolyDataTemplate(SaveLocation_, to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, KernelGradient.V, Density, Velocity.V, dvdtIₙ⁺.V)
 
+    R = 2*h
+    TheCLL = CLL(Points=Position.V,CutOff=R) #line is good idea at times
+
     for iteration in 1:10000#:101
-        CustomCLL(SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
+        CustomCLL(TheCLL, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
         if iteration % 200 == 0
             SaveLocation_= SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(iteration,6,"0") * ".vtp"
             PolyDataTemplate(SaveLocation_, to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, KernelGradient.V, Density, Velocity.V, dvdtIₙ⁺.V)
