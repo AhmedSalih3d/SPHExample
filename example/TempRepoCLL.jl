@@ -462,6 +462,7 @@ let
     dρdtI             = zeros(FloatType, NumberOfPoints)
     ρₙ⁺               = zeros(FloatType, NumberOfPoints)
     dρdtIₙ⁺           = zeros(FloatType, NumberOfPoints)
+    Pressureᵢ          = zeros(FloatType, NumberOfPoints)
     
     drhopLp            = zeros(FloatType, NumberOfPoints)
     drhopLn            = zeros(FloatType, NumberOfPoints) 
@@ -496,9 +497,7 @@ let
     KernelSum_CLL =  sum(Kernel)
     KernelGradient_CLL =  sum(KernelGradient.V)
     drhodt_CLL         = sum(dρdtI)
-    println(size(Density))
-    println(sum(Velocity.V))
-    println(sum(dρdtI))
+    Pressure!(Pressureᵢ, Density, SimConstants); press_CLL          = sum(Pressureᵢ)
 
     # @benchmark CustomCLL($PositionNew, $DensityNew, $VelocityNew, $SimConstants, $MotionLimiter, $BoundaryBool, $GravityFactor, $Position, $Kernel, $KernelGradient, $Density, $Velocity)
     I                 = zeros(Int64,   NumberOfPoints)
@@ -515,7 +514,7 @@ let
     xᵢⱼ                = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
 
     ResizeBuffers!(KernelL, KernelGradientL, xᵢⱼ, drhopLp,drhopLn; N = system.nb.n)
-    ResetArrays!(dρdtI, Kernel,KernelGradient.V, drhopLp,drhopLn)
+    ResetArrays!(dρdtI, Kernel,KernelGradient.V, drhopLp,drhopLn, Pressureᵢ)
     # Here we calculate the distances between particles, output the kernel gradient value for each particle and also the kernel gradient value
     # based on the pair-to-pair interaction system.nb.list, for use in later calculations.
     # Other functions follow a similar format, with the "I" and "L" ending
@@ -524,6 +523,8 @@ let
     # Here we output the kernel and kernel gradient value for each particle. Note that KernelL is list of interactions, while Kernel is the value for each actual particle. Similar naming for other variables
     ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!(KernelGradient,KernelGradientL, Kernel, KernelL, I, J, D, xᵢⱼ, SimConstants)
     ∂ρᵢ∂t!(dρdtI, I, J, D, xᵢⱼ, Density, Velocity,KernelGradientL,drhopLp,drhopLn, SimConstants)
+    Pressure!(Pressureᵢ, Density, SimConstants)
+    press_CLM = sum(Pressureᵢ)
 
 
     KernelSum_CLM = sum(Kernel)
@@ -538,10 +539,7 @@ let
 
     println("First density derivative are equal: ", @test drhodt_CLL ≈ drhodt_CLM)
 
-    println(size(Density))
-    println(sum(Velocity.V))
-    println(sum(dρdtI))
-    
+    println("Pressure evaluation is equivivalent: ", @test press_CLL ≈ press_CLM)
 
 end
 
