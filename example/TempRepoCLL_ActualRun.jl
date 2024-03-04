@@ -12,6 +12,7 @@ using Test
 using JET
 using Formatting
 using ProgressMeter
+using TimerOutputs
 include("../src/ProduceVTP.jl")
 
 
@@ -509,12 +510,12 @@ function RunSimulation(;FluidCSV::String,
     OutputCounter = 0.0
     OutputIterationCounter = 0
     @time @inbounds while true
-        updateCLL!(TheCLL, Position.V)
+        @timeit HourGlass "0 Update particles in cells" updateCLL!(TheCLL, Position.V)
         # inline removes 96 bytes alloc..
-        @inline CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
+        @timeit HourGlass "1 Main simulation loop" @inline CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
         
         OutputCounter += SimMetaData.CurrentTimeStep
-        if OutputCounter >= SimMetaData.OutputEach
+        @timeit HourGlass "2 Output data" if OutputCounter >= SimMetaData.OutputEach
             OutputCounter = 0.0
             OutputIterationCounter += 1
             SaveLocation_= SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp"
@@ -523,12 +524,16 @@ function RunSimulation(;FluidCSV::String,
         end
 
 
-        next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
+        @timeit HourGlass "3 Next step" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
 
         if SimMetaData.TotalTime >= SimMetaData.SimulationTime + 1e-3
             break
         end
     end
+
+    disable_timer!(HourGlass)
+    show(HourGlass,sortby=:name)
+    show(HourGlass)
     
     return nothing
 end
@@ -542,7 +547,7 @@ begin
     SimMetaData  = SimulationMetaData{D, T}(
                                     SimulationName="AllInOne", 
                                     SaveLocation=raw"E:\SecondApproach\Testing",
-                                    SimulationTime=0.765, #2, is not possible yet, since we do not kick particles out etc.
+                                    SimulationTime=0.1#0.765, #2, is not possible yet, since we do not kick particles out etc.
     )
 
     # Initialze the constants to use
