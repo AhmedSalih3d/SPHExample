@@ -113,7 +113,8 @@ function GenerateM!(M, ZeroOffset,HalfPad, cells)
     @inbounds @batch for i = 1:prod(size(M))
         #arr  = Vector{Int}()
         #sizehint!(arr,100)
-        resize!(M[i],0)
+        # resize!(M[i],0)
+        empty!(M[i])
     end
 
     iter = 0
