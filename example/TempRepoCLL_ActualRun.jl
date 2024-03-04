@@ -18,7 +18,7 @@ include("../src/ProduceVTP.jl")
 
 
 @with_kw struct CLL{D,T}
-    Points::StructVector{SVector{D,T}}
+    Points::Vector{SVector{D,T}}
 
     CutOff::T
     CutOffSquared::T                             = CutOff^2
@@ -325,9 +325,9 @@ end
 function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, δᵩ, CFL, η² = SimConstants
 
-    dt = Δt(Position.V, Velocity.V, dvdtIₙ⁺.V,SimConstants)
+    dt = Δt(Position, Velocity, dvdtIₙ⁺,SimConstants)
 
-    ResetArrays!(Kernel,KernelGradient.V, dρdtI, dvdtI.V)
+    ResetArrays!(Kernel,KernelGradient, dρdtI, dvdtI)
 
     @inbounds for Cind_ ∈ TheCLL.UniqueCells  
         Cind = (Cind_ .+ 1 .+ TheCLL.HalfPad)
@@ -344,10 +344,10 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
                 k_idx = indices_in_cell[ki]
                   for kj = (ki+1):n_idx_cells
                     k_1up = indices_in_cell[kj]
-                    d2 = distance_condition(Position.V[k_idx],Position.V[k_1up])
+                    d2 = distance_condition(Position[k_idx],Position[k_1up])
 
                     if d2 <= TheCLL.CutOffSquared
-                        @inline sim_step(k_idx , k_1up, d2, SimConstants,  Kernel, KernelGradient.V, Position.V, Density, Velocity.V, dρdtI, dvdtI.V)
+                        @inline sim_step(k_idx , k_1up, d2, SimConstants,  Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI)
                         # println(@report_opt sim_step(k_idx , k_1up, d2, SimConstants,  Kernel, KernelGradient.V, Position.V, Density, Velocity.V, dρdtI, dvdtI.V))
                     end
                 end
@@ -366,10 +366,10 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
                     k1_idx = indices_in_cell[k1]
                     for k2 ∈ eachindex(indices_in_cell_plus)
                         k2_idx = indices_in_cell_plus[k2]
-                        d2  = distance_condition(Position.V[k1_idx],Position.V[k2_idx])
+                        d2  = distance_condition(Position[k1_idx],Position[k2_idx])
 
                         if d2 <= TheCLL.CutOffSquared
-                            @inline sim_step(k1_idx , k2_idx, d2, SimConstants,  Kernel, KernelGradient.V, Position.V, Density, Velocity.V, dρdtI, dvdtI.V)
+                            @inline sim_step(k1_idx , k2_idx, d2, SimConstants,  Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI)
                         end
                     end
                 end
@@ -378,16 +378,16 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
 
 
     # Make loop, no allocs
-    for i in eachindex(dvdtI.V)
-        dvdtI.V[i]       += SVector(0.0, g * GravityFactor[i])
-        Velocityₙ⁺.V[i]   = Velocity.V[i]   + dvdtI.V[i]       * (dt/2)  * MotionLimiter[i]
-        Positionₙ⁺.V[i]   = Position.V[i]   + Velocityₙ⁺.V[i]   * (dt/2)  * MotionLimiter[i]
+    for i in eachindex(dvdtI)
+        dvdtI[i]       += SVector(0.0, g * GravityFactor[i])
+        Velocityₙ⁺[i]   = Velocity[i]   + dvdtI[i]       * (dt/2)  * MotionLimiter[i]
+        Positionₙ⁺[i]   = Position[i]   + Velocityₙ⁺[i]   * (dt/2)  * MotionLimiter[i]
         ρₙ⁺[i]            = Density[i]      + dρdtI[i]         * (dt/2) 
     end
 
     LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
 
-    ResetArrays!(dρdtIₙ⁺, dvdtIₙ⁺.V) #this gives 32 bytes??
+    ResetArrays!(dρdtIₙ⁺, dvdtIₙ⁺) #this gives 32 bytes??
 
     
     @inbounds for Cind_ ∈ TheCLL.UniqueCells
@@ -407,10 +407,10 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
                 k_idx = indices_in_cell[ki]
                   for kj = (ki+1):n_idx_cells
                     k_1up = indices_in_cell[kj]
-                    d2 = distance_condition(Positionₙ⁺.V[k_idx],Positionₙ⁺.V[k_1up])
+                    d2 = distance_condition(Positionₙ⁺[k_idx],Positionₙ⁺[k_1up])
 
                     if d2 <= TheCLL.CutOffSquared
-                        @inline sim_step2(k_idx , k_1up, d2, SimConstants, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, dρdtIₙ⁺, dvdtIₙ⁺.V)
+                        @inline sim_step2(k_idx , k_1up, d2, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺)
                     end
                 end
             end
@@ -428,10 +428,10 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
                     k1_idx = indices_in_cell[k1]
                     for k2 ∈ eachindex(indices_in_cell_plus)
                         k2_idx = indices_in_cell_plus[k2]
-                        d2  = distance_condition(Positionₙ⁺.V[k1_idx],Positionₙ⁺.V[k2_idx])
+                        d2  = distance_condition(Positionₙ⁺[k1_idx],Positionₙ⁺[k2_idx])
 
                         if d2 <= TheCLL.CutOffSquared
-                            @inline sim_step2(k1_idx , k2_idx, d2, SimConstants, Positionₙ⁺.V, ρₙ⁺, Velocityₙ⁺.V, dρdtIₙ⁺, dvdtIₙ⁺.V)
+                            @inline sim_step2(k1_idx , k2_idx, d2, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺)
                         end
                     end
                 end
@@ -442,10 +442,10 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
     DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
     LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
 
-    for i in eachindex(dvdtIₙ⁺.V)
-        dvdtIₙ⁺.vectors[end][i]  += g * GravityFactor[i]
-        Velocity.V[i]           += dvdtIₙ⁺.V[i] * dt * MotionLimiter[i]
-        Position.V[i]           += ((Velocity.V[i] + (Velocity.V[i] - dvdtIₙ⁺.V[i] * dt * MotionLimiter[i])) / 2) * dt * MotionLimiter[i]
+    for i in eachindex(dvdtIₙ⁺)
+        dvdtIₙ⁺[i]            += SVector(0.0, g * GravityFactor[i])
+        Velocity[i]           += dvdtIₙ⁺[i] * dt * MotionLimiter[i]
+        Position[i]           += ((Velocity[i] + (Velocity[i] - dvdtIₙ⁺[i] * dt * MotionLimiter[i])) / 2) * dt * MotionLimiter[i]
     end
 
     SimMetaData.Iteration      += 1
@@ -473,7 +473,7 @@ function RunSimulation(;FluidCSV::String,
     # Load in the fluid and boundary particles. Return these points and both data frames
     # @inline is a hack here to remove all allocations further down due to uncertainty of the points type at compile time
     @inline points, density_fluid, density_bound  = LoadParticlesFromCSV(Dimensions,FloatType, FluidCSV,BoundCSV)
-    Position           = DimensionalData(points.vectors...)
+    Position           = convert(Vector{SVector{Dimensions,FloatType}},points.V)
     
     # Read this as "GravityFactor * g", so -1 means negative acceleration for fluid particles
     GravityFactor            = [-ones(size(density_fluid,1)) ; zeros(size(density_bound,1))]
@@ -503,28 +503,28 @@ function RunSimulation(;FluidCSV::String,
     Pressureᵢ          = zeros(FloatType, NumberOfPoints)
      
     
-    KernelGradient     = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
-    Velocity           = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
-    dvdtI              = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
-    dvdtIₙ⁺            = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
+    KernelGradient     = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
+    Velocity           = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
+    dvdtI              = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
+    dvdtIₙ⁺            = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
 
-    Velocityₙ⁺ = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
-    Positionₙ⁺ = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
+    Velocityₙ⁺ = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
+    Positionₙ⁺ = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
 
     foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
    
 
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
-    PolyDataTemplate(SaveLocation_, to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, KernelGradient.V, Density, Velocity.V, dvdtIₙ⁺.V)
+    PolyDataTemplate(SaveLocation_, to_3d(Position), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, KernelGradient, Density, Velocity, dvdtIₙ⁺)
 
     R = 2*h
-    TheCLL = CLL(Points=Position.V,CutOff=R) #line is good idea at times
+    TheCLL = CLL(Points=Position,CutOff=R) #line is good idea at times
 
     generate_showvalues(Iteration, TotalTime) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime))]
     OutputCounter = 0.0
     OutputIterationCounter = 0
     @time @inbounds while true
-        @timeit HourGlass "0 Update particles in cells" updateCLL!(TheCLL, Position.V)
+        @timeit HourGlass "0 Update particles in cells" updateCLL!(TheCLL, Position)
         # inline removes 96 bytes alloc..
         @timeit HourGlass "1 Main simulation loop" @inline CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
         
@@ -534,7 +534,7 @@ function RunSimulation(;FluidCSV::String,
             OutputIterationCounter += 1
             SaveLocation_= SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp"
             Pressure!(Pressureᵢ,Density,SimConstants)
-            PolyDataTemplate(SaveLocation_, to_3d(Position.V), ["Kernel","KernelGradient","Density", "Pressure", "Velocity", "Acceleration"], Kernel, KernelGradient.V, Density, Pressureᵢ, Velocity.V, dvdtIₙ⁺.V)
+            PolyDataTemplate(SaveLocation_, to_3d(Position), ["Kernel","KernelGradient","Density", "Pressure", "Velocity", "Acceleration"], Kernel, KernelGradient, Density, Pressureᵢ, Velocity, dvdtIₙ⁺)
         end
 
 
