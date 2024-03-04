@@ -43,8 +43,12 @@ end
 @inline getsvecD(::Type{SVector{d,T}}) where {d,T} = d
 
 
-@inline function distance_condition(p1::AbstractVector{T}, p2::AbstractVector{T}) where T <: AbstractFloat
-    d2 = sum(@. (p1 - p2)^2)
+# @inline function distance_condition(p1::AbstractVector{T}, p2::AbstractVector{T}) where T <: AbstractFloat
+#     d2 = sum(@. (p1 - p2)^2)
+#     return d2
+# end
+@inline function distance_condition(p1::SVector{T, N}, p2::SVector{T, N}) where {T <: AbstractFloat, N}
+    @fastpow d2 = sum(@. (p1 - p2)^2)
     return d2
 end
 
@@ -179,7 +183,8 @@ end
 function sim_step(i , j, d2, SimConstants,  Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI)
     @unpack h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² = SimConstants
     
-    d  = sqrt(d2)
+    #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/12
+    d  = sqrt(abs(d2))
 
     xᵢ  = Position[i]
     xⱼ  = Position[j]
@@ -236,7 +241,8 @@ end
 function sim_step2(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
     @unpack h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² = SimConstants
     
-    d  = sqrt(d2)
+    #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/12
+    d  = sqrt(abs(d2))
 
     xᵢ  = Position[i]
     xⱼ  = Position[j]
