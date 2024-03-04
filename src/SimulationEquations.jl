@@ -12,6 +12,7 @@ using Base.Threads
 using StructArrays
 using StaticArrays
 using ChunkSplitters
+using FastPow
 
 struct DimensionalData{D, T <: AbstractFloat}
     vectors::Tuple{Vararg{Vector{T}, D}}
@@ -163,7 +164,7 @@ return nothing
 end
 
 # Function to calculate Kernel Value
-function Wᵢⱼ(αD,q)
+@fastpow function Wᵢⱼ(αD,q)
     return αD*(1-q/2)^4*(2*q + 1)
 end
 
@@ -304,6 +305,9 @@ end
     end
 end
 
+@fastpow function EquationOfStateGamma7(ρ,c₀,ρ₀)
+    return ((c₀^2*ρ₀)/7) * ((ρ/ρ₀)^7 - 1)
+end
 
 # Equation of State in Weakly-Compressible SPH
 function EquationOfState(ρ,c₀,γ,ρ₀)
@@ -313,7 +317,8 @@ end
 @inline @inbounds function Pressure!(Press, Density, SimulationConstants)
     @unpack c₀,γ,ρ₀ = SimulationConstants
     @tturbo for i ∈ eachindex(Press,Density)
-        Press[i] = EquationOfState(Density[i],c₀,γ,ρ₀)
+        # Press[i] = EquationOfState(Density[i],c₀,γ,ρ₀)
+        Press[i] = EquationOfStateGamma7(Density[i],c₀,ρ₀)
     end
 end
 
