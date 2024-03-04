@@ -181,11 +181,13 @@ function sim_step(i , j, d2, SimConstants,  Kernel, KernelGradient, Position, De
     xⱼ  = Position[j]
     xᵢⱼ = xᵢ - xⱼ
 
-    q  = clamp(d  * h⁻¹,0.0,2.0)
-    W  = αD*(1-q/2)^4*(2*q + 1)
+    q  = d  * h⁻¹ #clamp(d  * h⁻¹,0.0,2.0), not needed when checking d2 < CutOffSquared before hand
 
-    Kernel[i] += W
-    Kernel[j] += W
+    # In current scheme kernel not needed
+    # W  = αD*(1-q/2)^4*(2*q + 1)
+
+    # Kernel[i] += W
+    # Kernel[j] += W
 
     Fac = αD*5*(q-2)^3*q / (8h*(q*h+1e-6))
     ∇ᵢWᵢⱼ = Fac * xᵢⱼ
@@ -219,7 +221,7 @@ function sim_step(i , j, d2, SimConstants,  Kernel, KernelGradient, Position, De
     Πᵢⱼ       = cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ
 
     dvdt⁺ = - m₀ * ( Pfac + Πᵢⱼ) *  ∇ᵢWᵢⱼ
-    dvdt⁻ = - m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ
+    dvdt⁻ = - dvdt⁺ #- m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ
 
     dvdtI[i] += dvdt⁺
     dvdtI[j] += dvdt⁻
@@ -236,7 +238,7 @@ function sim_step2(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI,
     xⱼ  = Position[j]
     xᵢⱼ = xᵢ - xⱼ
 
-    q  = clamp(d  * h⁻¹,0.0,2.0)
+    q  = d  * h⁻¹ #clamp(d  * h⁻¹,0.0,2.0), not needed when checking d2 < CutOffSquared before hand
 
     Fac = αD*5*(q-2)^3*q / (8h*(q*h+1e-6))
     ∇ᵢWᵢⱼ = Fac * xᵢⱼ
@@ -269,7 +271,7 @@ function sim_step2(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI,
     Πᵢⱼ       = cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ
 
     dvdt⁺ = - m₀ * ( Pfac + Πᵢⱼ) *  ∇ᵢWᵢⱼ
-    dvdt⁻ = - m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ
+    dvdt⁻ = - dvdt⁺ #- m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ
 
     dvdtI[i] += dvdt⁺
     dvdtI[j] += dvdt⁻
