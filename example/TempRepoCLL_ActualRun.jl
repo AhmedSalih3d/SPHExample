@@ -43,13 +43,8 @@ end
 @inline getsvecD(::Type{SVector{d,T}}) where {d,T} = d
 
 
-# @inline function distance_condition(p1::AbstractVector{T}, p2::AbstractVector{T}) where T <: AbstractFloat
-#     d2 = sum(@. (p1 - p2)^2)
-#     return d2
-# end
-@inline function distance_condition(p1::SVector{T, N}, p2::SVector{T, N}) where {T <: AbstractFloat, N}
-    @fastpow d2 = sum(@. (p1 - p2)^2)
-    return d2
+@inline function distance_condition(p1::SVector, p2::SVector)
+    @fastpow d2 = sum((p1 - p2) .* (p1 - p2))
 end
 
 # https://jaantollander.com/post/searching-for-fixed-radius-near-neighbors-with-cell-lists-algorithm-in-julia-language/#definition
