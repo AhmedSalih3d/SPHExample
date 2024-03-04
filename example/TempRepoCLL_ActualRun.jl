@@ -67,7 +67,7 @@ end
 function ExtractCells(p,R,::Val{d}) where d
     cells = Vector{NTuple{d,Int}}(undef,length(p))
 
-    @batch for i ∈ eachindex(p)
+    @inbounds @batch for i ∈ eachindex(p)
         vs = Int.(fld.(p[i],R))
         cells[i] = tuple(vs...)
     end
@@ -77,7 +77,7 @@ end
 
 function ExtractCells!(cells, p,R,::Val{d}) where d
 
-    @batch for i ∈ eachindex(p)
+    @inbounds @batch for i ∈ eachindex(p)
         vs = Int.(fld.(p[i],R))
         cells[i] = tuple(vs...)
     end
@@ -91,17 +91,17 @@ function GenerateM(Nmax,ZeroOffset,HalfPad,Padding,cells,v::Val{d}) where d
 
     #sizehint! is a genius function
     # but it actually does not improve performance anymore lol
-    @batch for i = 1:prod(size(M))
+    @inbounds @batch for i = 1:prod(size(M))
         arr  = Vector{Int}()
         #sizehint!(arr,100)
-        @inbounds M[i] = arr
+        M[i] = arr
     end
 
     iter = 0
 
-    for ind ∈ cells
+    @inbounds for ind ∈ cells
         iter += 1
-        @inbounds push!(M[(ind .+ ZeroOffset .+ HalfPad)...],iter)
+        push!(M[(ind .+ ZeroOffset .+ HalfPad)...],iter)
     end
 
     return M
@@ -110,17 +110,17 @@ end
 function GenerateM!(M, ZeroOffset,HalfPad, cells)
     #sizehint! is a genius function
     # but it actually does not improve performance anymore lol
-    @batch for i = 1:prod(size(M))
+    @inbounds @batch for i = 1:prod(size(M))
         #arr  = Vector{Int}()
         #sizehint!(arr,100)
-        @inbounds resize!(M[i],0)
+        resize!(M[i],0)
     end
 
     iter = 0
 
-    for ind ∈ cells
+    @inbounds for ind ∈ cells
         iter += 1
-        @inbounds push!(M[(ind .+ ZeroOffset .+ HalfPad)...],iter)
+        push!(M[(ind .+ ZeroOffset .+ HalfPad)...],iter)
     end
 
     return nothing
