@@ -188,16 +188,20 @@ function sim_step(i , j, d2, SimConstants,  Kernel, KernelGradient, Position, De
 
     q  = d  * h⁻¹ #clamp(d  * h⁻¹,0.0,2.0), not needed when checking d2 < CutOffSquared before hand
 
-    # In current scheme kernel not needed
-    # W  = αD*(1-q/2)^4*(2*q + 1)
+    # OUTPUTTING KERNEL AND KERNEL GRADIENT IS BROKEN WHEN USING
+    # SYMDIFF! COMPARED TO USING UNION
+    # I SUSPECT IT IS DUE += NATURE, NOT LOOPING OVER UNNECCESARY CELLS IN SENCE TO COMPLETE THE RESUTLS
+    # IF ONE WANTS THESE VALUES, ONE MUST MAKE LIST OF INTERACTION ETC. BUT THIS BASICALLY DOUBLES THE CODE SPEED
+    # BY USING SYMDIFF, WE CAN ALWAYS CALCULATE IT AT THE END IF WE WANT
+    # @fastpow W  = αD*(1-q/2)^4*(2*q + 1)
 
     # Kernel[i] += W
     # Kernel[j] += W
 
     Fac = αD*5*(q-2)^3*q / (8h*(q*h+1e-6))
     ∇ᵢWᵢⱼ = Fac * xᵢⱼ
-    KernelGradient[i] +=  ∇ᵢWᵢⱼ
-    KernelGradient[j] += -∇ᵢWᵢⱼ
+    # KernelGradient[i] +=  ∇ᵢWᵢⱼ
+    # KernelGradient[j] += -∇ᵢWᵢⱼ
 
     d² = d*d
 
@@ -290,13 +294,12 @@ function updateCLL!(cll::CLL,Points)
     # Update Cells based on new positions of Points
     ExtractCells!(cll.Cells,Points, cll.CutOff, Val(getsvecD(eltype(Points))))
     
-    # if length(cll.UniqueCells) != length(unique(cll.Cells))
-    #     resize!(cll.UniqueCells, length(unique(cll.Cells)))
-    # end
-
-    # cll.UniqueCells .= unique(cll.Cells) #Don't do this due to looping over all possible cells
-
-    union!(cll.UniqueCells,unique(cll.Cells))
+    # OUTPUTTING KERNEL AND KERNEL GRADIENT IS BROKEN WHEN USING
+    # SYMDIFF! COMPARED TO USING UNION
+    # I SUSPECT IT IS DUE += NATURE, NOT LOOPING OVER UNNECCESARY CELLS IN SENCE TO COMPLETE THE RESUTLS
+    # IF ONE WANTS THESE VALUES, ONE MUST MAKE LIST OF INTERACTION ETC. BUT THIS BASICALLY DOUBLES THE CODE SPEED
+    # BY USING SYMDIFF, WE CAN ALWAYS CALCULATE IT AT THE END IF WE WANT
+    symdiff!(cll.UniqueCells,unique(cll.Cells))
 
     # Recalculate the Layout with updated Cells
     #cll.Nmax       = maximum(reinterpret(Int, @view(Cells[:]))) + cll.ZeroOffset
