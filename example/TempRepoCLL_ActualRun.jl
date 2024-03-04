@@ -278,6 +278,7 @@ function sim_step2(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI,
     return nothing
 end
 
+
 function updateCLL!(cll::CLL,Points)
     # Update Cells based on new positions of Points
     ExtractCells!(cll.Cells,Points, cll.CutOff, Val(getsvecD(eltype(Points))))
@@ -312,7 +313,6 @@ end
     end
     t
 end
-@inline faux_fancy(ρ₀, P, Cb) = ρ₀ * ( fancy7th( 1 + (P * Cb)) - 1)
 
 @fastpow function EquationOfStateGamma7(ρ,c₀,ρ₀)
     return ((c₀^2*ρ₀)/7) * ((ρ/ρ₀)^7 - 1)
@@ -391,8 +391,6 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
 
     
     @inbounds for Cind_ ∈ TheCLL.UniqueCells
-    # @inbounds for Cind_ ∈ TheCLL.Cells
-            
         Cind = (Cind_ .+ 1 .+ TheCLL.HalfPad)
 
             # The indices in the cell are:
@@ -594,11 +592,4 @@ begin
         SimMetaData  = SimMetaData,
         SimConstants = SimConstants
     )
-    
-
-    
-    #println(@report_opt target_modules=(@__MODULE__,) f(SimMetaData, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺))
-    #println(@code_warntype f(SimMetaData, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺))
-    
-    #f(SimMetaData, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
 end
