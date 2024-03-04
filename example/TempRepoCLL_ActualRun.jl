@@ -1,5 +1,4 @@
 using SPHExample
-import CellListMap: InPlaceNeighborList, neighborlist!, update!
 using BenchmarkTools
 import CellListMap
 using StaticArrays
@@ -32,7 +31,7 @@ include("../src/ProduceVTP.jl")
     Cells::Vector{NTuple{D, Int64}}              = ExtractCells(Points,CutOff,Val(getsvecD(eltype(Points))))
     Nmax::Int64                                  = maximum(reinterpret(Int,@view(Cells[:]))) + ZeroOffset #Find largest dimension in x,y,z for the Cells
 
-    UniqueCells::Vector{NTuple{D, Int64}}        = union(Cells) #just do all cells for now, optimize later
+    UniqueCells::Vector{NTuple{D, Int64}}        = unique(Cells) #just do all cells for now, optimize later
 
     Layout::Array{Vector{Int64}, D}              = GenerateM(Nmax,ZeroOffset,HalfPad,Padding,Cells,Val(getsvecD(eltype(Points))))
 end
@@ -104,7 +103,7 @@ function GenerateM(Nmax,ZeroOffset,HalfPad,Padding,cells,v::Val{d}) where d
     return M
 end
 
-function GenerateM!(M, Nmax,ZeroOffset,HalfPad,Padding,cells,v::Val{d}) where d
+function GenerateM!(M, ZeroOffset,HalfPad, cells)
     #sizehint! is a genius function
     # but it actually does not improve performance anymore lol
     for i = 1:prod(size(M))
@@ -289,11 +288,11 @@ function updateCLL!(cll::CLL,Points)
 
     # cll.UniqueCells .= unique(cll.Cells) #Don't do this due to looping over all possible cells
 
-    union!(cll.UniqueCells,unique(cll.Cells))
+    #union!(cll.UniqueCells,unique(cll.Cells))
 
     # Recalculate the Layout with updated Cells
     #cll.Nmax       = maximum(reinterpret(Int, @view(Cells[:]))) + cll.ZeroOffset
-    GenerateM!(cll.Layout, cll.Nmax, cll.ZeroOffset, cll.HalfPad, cll.Padding, cll.Cells, Val(getsvecD(eltype(Points))))
+    GenerateM!(cll.Layout, cll.ZeroOffset, cll.HalfPad, cll.Cells)
 
 
     return nothing
@@ -335,6 +334,10 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
 
             # The indices in the cell are:
             indices_in_cell = TheCLL.Layout[Cind...]
+
+            if isempty(indices_in_cell)
+                continue
+            end
 
             n_idx_cells = length(indices_in_cell)
             for ki = 1:n_idx_cells-1 #this line gives 64 bytes alloc unsure why
@@ -390,6 +393,12 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
 
             # The indices in the cell are:
             indices_in_cell = TheCLL.Layout[Cind...]
+
+            
+            if isempty(indices_in_cell)
+                continue
+            end
+
 
             n_idx_cells = length(indices_in_cell)
             for ki = 1:n_idx_cells-1
