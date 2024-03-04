@@ -335,7 +335,7 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
     ResetArrays!(Kernel,KernelGradient, dρdtI, dvdtI)
 
     @inbounds for Cind_ ∈ TheCLL.UniqueCells  
-        Cind = (Cind_ .+ 1 .+ TheCLL.HalfPad)
+        Cind = @. (Cind_ + 1 + TheCLL.HalfPad)
 
             # The indices in the cell are:
             indices_in_cell = TheCLL.Layout[Cind...]
@@ -353,7 +353,6 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
 
                     if d2 <= TheCLL.CutOffSquared
                         @inline sim_step(k_idx , k_1up, d2, SimConstants,  Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI)
-                        # println(@report_opt sim_step(k_idx , k_1up, d2, SimConstants,  Kernel, KernelGradient.V, Position.V, Density, Velocity.V, dρdtI, dvdtI.V))
                     end
                 end
             end
@@ -396,7 +395,7 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
 
     
     @inbounds for Cind_ ∈ TheCLL.UniqueCells
-        Cind = (Cind_ .+ 1 .+ TheCLL.HalfPad)
+        Cind = @. (Cind_ + 1 + TheCLL.HalfPad)
 
             # The indices in the cell are:
             indices_in_cell = TheCLL.Layout[Cind...]
