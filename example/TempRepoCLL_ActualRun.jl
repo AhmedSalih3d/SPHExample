@@ -10,6 +10,8 @@ import LinearAlgebra: dot
 using Polyester
 using Test
 using JET
+using Formatting
+using ProgressMeter
 include("../src/ProduceVTP.jl")
 
 
@@ -503,6 +505,7 @@ function RunSimulation(;FluidCSV::String,
     R = 2*h
     TheCLL = CLL(Points=Position.V,CutOff=R) #line is good idea at times
 
+    generate_showvalues(Iteration, TotalTime) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime))]
     OutputCounter = 0.0
     OutputIterationCounter = 0
     @time @inbounds while true
@@ -518,6 +521,9 @@ function RunSimulation(;FluidCSV::String,
             Pressure!(Pressureᵢ,Density,SimConstants)
             PolyDataTemplate(SaveLocation_, to_3d(Position.V), ["Kernel","KernelGradient","Density", "Pressure", "Velocity", "Acceleration"], Kernel, KernelGradient.V, Density, Pressureᵢ, Velocity.V, dvdtIₙ⁺.V)
         end
+
+
+        next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
 
         if SimMetaData.TotalTime >= SimMetaData.SimulationTime + 1e-3
             break
