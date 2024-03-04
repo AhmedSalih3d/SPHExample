@@ -7,12 +7,14 @@ using Parameters
 using Plots; using Measures
 using StructArrays
 import LinearAlgebra: dot
+using LoopVectorization
 using Polyester
 using Test
 using JET
 using Formatting
 using ProgressMeter
 using TimerOutputs
+using FastPow
 include("../src/ProduceVTP.jl")
 
 
@@ -60,10 +62,9 @@ end
 
 
 function ExtractCells(p,R,::Val{d}) where d
-    n = length(p)
-    cells = Vector{NTuple{d,Int}}(undef,n)
+    cells = Vector{NTuple{d,Int}}(undef,length(p))
 
-    for i = 1:n
+    @batch for i ∈ eachindex(p)
         vs = Int.(fld.(p[i],R))
         cells[i] = tuple(vs...)
     end
@@ -72,9 +73,8 @@ function ExtractCells(p,R,::Val{d}) where d
 end
 
 function ExtractCells!(cells, p,R,::Val{d}) where d
-    n = length(p)
 
-    for i = 1:n
+    @batch for i ∈ eachindex(p)
         vs = Int.(fld.(p[i],R))
         cells[i] = tuple(vs...)
     end
@@ -209,8 +209,8 @@ function sim_step(i , j, d2, SimConstants,  Kernel, KernelGradient, Position, De
     dρdtI[i] += dρdt⁺
     dρdtI[j] += dρdt⁻
 
-    Pᵢ      = EquationOfState(ρᵢ,c₀,γ,ρ₀)
-    Pⱼ      = EquationOfState(ρⱼ,c₀,γ,ρ₀)
+    Pᵢ      =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
+    Pⱼ      =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
 
     ρ̄ᵢⱼ     = (ρᵢ+ρⱼ)*0.5
     Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
@@ -259,8 +259,8 @@ function sim_step2(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI,
     dρdtI[i] += dρdt⁺
     dρdtI[j] += dρdt⁻
 
-    Pᵢ      = EquationOfState(ρᵢ,c₀,γ,ρ₀)
-    Pⱼ      = EquationOfState(ρⱼ,c₀,γ,ρ₀)
+    Pᵢ      = EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
+    Pⱼ      = EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
 
     ρ̄ᵢⱼ     = (ρᵢ+ρⱼ)*0.5
     Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
@@ -314,6 +314,10 @@ end
     t
 end
 @inline faux_fancy(ρ₀, P, Cb) = ρ₀ * ( fancy7th( 1 + (P * Cb)) - 1)
+
+@fastpow function EquationOfStateGamma7(ρ,c₀,ρ₀)
+    return ((c₀^2*ρ₀)/7) * ((ρ/ρ₀)^7 - 1)
+end
 
 function EquationOfState(ρ,c₀,γ,ρ₀)
     return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
@@ -574,6 +578,7 @@ begin
         SimConstants = SimConstants
     )
     
+
     
     #println(@report_opt target_modules=(@__MODULE__,) f(SimMetaData, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺))
     #println(@code_warntype f(SimMetaData, SimConstants, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺))
