@@ -87,7 +87,7 @@ function GenerateM(Nmax,ZeroOffset,HalfPad,Padding,cells,v::Val{d}) where d
 
     #sizehint! is a genius function
     # but it actually does not improve performance anymore lol
-    for i = 1:prod(size(M))
+    @batch for i = 1:prod(size(M))
         arr  = Vector{Int}()
         #sizehint!(arr,100)
         @inbounds M[i] = arr
@@ -106,7 +106,7 @@ end
 function GenerateM!(M, ZeroOffset,HalfPad, cells)
     #sizehint! is a genius function
     # but it actually does not improve performance anymore lol
-    for i = 1:prod(size(M))
+    @batch for i = 1:prod(size(M))
         #arr  = Vector{Int}()
         #sizehint!(arr,100)
         @inbounds resize!(M[i],0)
@@ -379,7 +379,7 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
 
     # Make loop, no allocs
     for i in eachindex(dvdtI.V)
-        dvdtI.vectors[end][i]  += g * GravityFactor[i]
+        dvdtI.V[i]       += SVector(0.0, g * GravityFactor[i])
         Velocityₙ⁺.V[i]   = Velocity.V[i]   + dvdtI.V[i]       * (dt/2)  * MotionLimiter[i]
         Positionₙ⁺.V[i]   = Position.V[i]   + Velocityₙ⁺.V[i]   * (dt/2)  * MotionLimiter[i]
         ρₙ⁺[i]            = Density[i]      + dρdtI[i]         * (dt/2) 
