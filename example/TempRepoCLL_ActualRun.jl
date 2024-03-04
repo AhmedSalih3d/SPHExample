@@ -17,6 +17,11 @@ using FastPow
 include("../src/ProduceVTP.jl")
 
 
+function ConstructGravitySVector(_::SVector{N, T}, value) where {N, T}
+    return SVector{N, T}(ntuple(i -> i == N ? value : 0, N))
+end
+
+
 @with_kw struct CLL{D,T}
     Points::Vector{SVector{D,T}}
 
@@ -379,7 +384,7 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
 
     # Make loop, no allocs
     for i in eachindex(dvdtI)
-        dvdtI[i]       += SVector(0.0, g * GravityFactor[i])
+        dvdtI[i]       += ConstructGravitySVector(dvdtI[i], g * GravityFactor[i])
         Velocityₙ⁺[i]   = Velocity[i]   + dvdtI[i]       * (dt/2)  * MotionLimiter[i]
         Positionₙ⁺[i]   = Position[i]   + Velocityₙ⁺[i]   * (dt/2)  * MotionLimiter[i]
         ρₙ⁺[i]            = Density[i]      + dρdtI[i]         * (dt/2) 
@@ -443,7 +448,7 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
     LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
 
     for i in eachindex(dvdtIₙ⁺)
-        dvdtIₙ⁺[i]            += SVector(0.0, g * GravityFactor[i])
+        dvdtIₙ⁺[i]            +=  ConstructGravitySVector(dvdtIₙ⁺[i], g * GravityFactor[i])
         Velocity[i]           += dvdtIₙ⁺[i] * dt * MotionLimiter[i]
         Position[i]           += ((Velocity[i] + (Velocity[i] - dvdtIₙ⁺[i] * dt * MotionLimiter[i])) / 2) * dt * MotionLimiter[i]
     end
