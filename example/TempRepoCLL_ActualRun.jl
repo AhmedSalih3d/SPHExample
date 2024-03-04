@@ -30,7 +30,7 @@ include("../src/ProduceVTP.jl")
     Cells::Vector{NTuple{D, Int64}}              = ExtractCells(Points,CutOff,Val(getsvecD(eltype(Points))))
     Nmax::Int64                                  = maximum(reinterpret(Int,@view(Cells[:]))) + ZeroOffset #Find largest dimension in x,y,z for the Cells
 
-    UniqueCells::Vector{NTuple{D, Int64}}        = unique(Cells) #just do all cells for now, optimize later
+    UniqueCells::Vector{NTuple{D, Int64}}        = union(Cells) #just do all cells for now, optimize later
 
     Layout::Array{Vector{Int64}, D}              = GenerateM(Nmax,ZeroOffset,HalfPad,Padding,Cells,Val(getsvecD(eltype(Points))))
 end
@@ -151,9 +151,7 @@ function CalculateTotalPossibleNumberOfInteractions(UniqueCells,Layout,Stencil,H
         indices_in_cell = Layout[Cind...]
         n_idx_cells = length(indices_in_cell)
         for ki = 1:n_idx_cells-1
-            k_idx = indices_in_cell[ki]
-              for kj = (ki+1):n_idx_cells
-                k_1up = indices_in_cell[kj]
+            for _ = (ki+1):n_idx_cells
                 RealNL += 1
             end
         end
@@ -162,10 +160,8 @@ function CalculateTotalPossibleNumberOfInteractions(UniqueCells,Layout,Stencil,H
             Sind = (Cind .+ Sind)
             indices_in_cell_plus  =Layout[Sind...]
             # Here a double loop to compare indices_in_cell[k] to all possible neighbours
-            for k1 ∈ eachindex(indices_in_cell)
-                k1_idx = indices_in_cell[k1]
-                for k2 ∈ eachindex(indices_in_cell_plus)
-                    k2_idx = indices_in_cell_plus[k2]
+            for _ ∈ eachindex(indices_in_cell)
+                for _ ∈ eachindex(indices_in_cell_plus)
                     RealNL += 1
                 end
             end
@@ -190,8 +186,6 @@ function sim_step(i , j, d2, SimConstants,  Kernel, KernelGradient, Position, De
 
     Kernel[i] += W
     Kernel[j] += W
-
-
 
     Fac = αD*5*(q-2)^3*q / (8h*(q*h+1e-6))
     ∇ᵢWᵢⱼ = Fac * xᵢⱼ
@@ -260,9 +254,6 @@ function sim_step2(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI,
     dρdt⁺   = - ρᵢ * dot((m₀/ρⱼ) *  -vᵢⱼ ,  ∇ᵢWᵢⱼ)
     dρdt⁻   = - ρⱼ * dot((m₀/ρᵢ) *   vᵢⱼ , -∇ᵢWᵢⱼ)
 
-    # dρdt⁺   = - ρᵢ * sum( (m₀/ρⱼ)  .*  -vᵢⱼ .*  ∇ᵢWᵢⱼ )
-    # dρdt⁻   = - ρⱼ * sum( (m₀/ρᵢ)  .*   vᵢⱼ .* -∇ᵢWᵢⱼ )
-
     dρdtI[i] += dρdt⁺
     dρdtI[j] += dρdt⁻
 
@@ -290,11 +281,13 @@ function updateCLL!(cll::CLL,Points)
     # Update Cells based on new positions of Points
     ExtractCells!(cll.Cells,Points, cll.CutOff, Val(getsvecD(eltype(Points))))
     
-    if length(cll.UniqueCells) != length(unique(cll.Cells))
-        resize!(cll.UniqueCells, length(unique(cll.Cells)))
-    end
+    # if length(cll.UniqueCells) != length(unique(cll.Cells))
+    #     resize!(cll.UniqueCells, length(unique(cll.Cells)))
+    # end
 
-    cll.UniqueCells .= unique(cll.Cells) #Don't do this due to looping over all possible cells
+    # cll.UniqueCells .= unique(cll.Cells) #Don't do this due to looping over all possible cells
+
+    union!(cll.UniqueCells,unique(cll.Cells))
 
     # Recalculate the Layout with updated Cells
     #cll.Nmax       = maximum(reinterpret(Int, @view(Cells[:]))) + cll.ZeroOffset
@@ -547,7 +540,7 @@ begin
     SimMetaData  = SimulationMetaData{D, T}(
                                     SimulationName="AllInOne", 
                                     SaveLocation=raw"E:\SecondApproach\Testing",
-                                    SimulationTime=0.1#0.765, #2, is not possible yet, since we do not kick particles out etc.
+                                    SimulationTime=0.765, #2, is not possible yet, since we do not kick particles out etc.
     )
 
     # Initialze the constants to use
