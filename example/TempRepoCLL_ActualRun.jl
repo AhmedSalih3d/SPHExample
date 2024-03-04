@@ -288,7 +288,7 @@ function updateCLL!(cll::CLL,Points)
 
     # cll.UniqueCells .= unique(cll.Cells) #Don't do this due to looping over all possible cells
 
-    #union!(cll.UniqueCells,unique(cll.Cells))
+    union!(cll.UniqueCells,unique(cll.Cells))
 
     # Recalculate the Layout with updated Cells
     #cll.Nmax       = maximum(reinterpret(Int, @view(Cells[:]))) + cll.ZeroOffset
@@ -357,6 +357,10 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
                 Sind = (Cind .+ Sind)
                 indices_in_cell_plus  = TheCLL.Layout[Sind...]
 
+                if isempty(indices_in_cell_plus)
+                    continue
+                end
+
                 # Here a double loop to compare indices_in_cell[k] to all possible neighbours
                 for k1 ∈ eachindex(indices_in_cell)
                     k1_idx = indices_in_cell[k1]
@@ -416,6 +420,10 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
             for Sind ∈ TheCLL.Stencil
                 Sind = (Cind .+ Sind)
                 indices_in_cell_plus  = TheCLL.Layout[Sind...]
+
+                if isempty(indices_in_cell_plus)
+                    continue
+                end
 
                 # Here a double loop to compare indices_in_cell[k] to all possible neighbours
                 for k1 ∈ eachindex(indices_in_cell)
