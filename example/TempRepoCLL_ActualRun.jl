@@ -476,20 +476,12 @@ function RunSimulation(;FluidCSV::String,
     
     Density           = deepcopy([density_fluid;density_bound])
 
-
-    DensityHalfStep           = deepcopy(Density)
-    DensityDerivativeHalfStep = zeros(FloatType, NumberOfPoints)
-
     Kernel            = zeros(FloatType, NumberOfPoints)
-    KernelL           = zeros(FloatType, NumberOfPoints)
     dρdtI             = zeros(FloatType, NumberOfPoints)
     ρₙ⁺               = zeros(FloatType, NumberOfPoints)
     dρdtIₙ⁺           = zeros(FloatType, NumberOfPoints)
     Pressureᵢ          = zeros(FloatType, NumberOfPoints)
-    
-    drhopLp            = zeros(FloatType, NumberOfPoints)
-    drhopLn            = zeros(FloatType, NumberOfPoints) 
-    Pressureᵢ          = zeros(FloatType, NumberOfPoints)
+     
     
     KernelGradient     = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
     Velocity           = DimensionalData{Dimensions,FloatType}(NumberOfPoints)
@@ -508,13 +500,14 @@ function RunSimulation(;FluidCSV::String,
     R = 2*h
     TheCLL = CLL(Points=Position.V,CutOff=R) #line is good idea at times
 
-    @time @inbounds for iteration in 1:10000#:101
+    @time @inbounds for iteration in 1:200#:101
         updateCLL!(TheCLL, Position.V)
         # inline removes 96 bytes alloc..
         @inline CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
         if iteration % 200 == 0
             SaveLocation_= SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(iteration,6,"0") * ".vtp"
-            PolyDataTemplate(SaveLocation_, to_3d(Position.V), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Kernel, KernelGradient.V, Density, Velocity.V, dvdtIₙ⁺.V)
+            Pressure!(Pressureᵢ,Density,SimConstants)
+            PolyDataTemplate(SaveLocation_, to_3d(Position.V), ["Kernel","KernelGradient","Density", "Pressure", "Velocity", "Acceleration"], Kernel, KernelGradient.V, Density, Pressureᵢ, Velocity.V, dvdtIₙ⁺.V)
             println(iteration)
         end
     end
