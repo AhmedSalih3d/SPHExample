@@ -36,7 +36,7 @@ end
     Cells::Vector{NTuple{D, Int64}}              = ExtractCells(Points,CutOff,Val(getsvecD(eltype(Points))))
     Nmax::Int64                                  = maximum(reinterpret(Int,@view(Cells[:]))) + ZeroOffset #Find largest dimension in x,y,z for the Cells
 
-    UniqueCells::Vector{NTuple{D, Int64}}        = unique(Cells) #just do all cells for now, optimize later
+    UniqueCells::Vector{NTuple{D, Int64}}        = union(Cells) #just do all cells for now, optimize later
 
     Layout::Array{Vector{Int64}, D}              = GenerateM(Nmax,ZeroOffset,HalfPad,Padding,Cells,Val(getsvecD(eltype(Points))))
 end
@@ -176,7 +176,7 @@ function CalculateTotalPossibleNumberOfInteractions(UniqueCells,Layout,Stencil,H
 end
 
 
-function sim_step(i , j, d2, SimConstants,  Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI)
+function sim_step(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
     @unpack h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² = SimConstants
     
     #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/12
@@ -220,57 +220,6 @@ function sim_step(i , j, d2, SimConstants,  Kernel, KernelGradient, Position, De
 
     Pᵢ      =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
     Pⱼ      =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
-
-    ρ̄ᵢⱼ     = (ρᵢ+ρⱼ)*0.5
-    Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
-
-    cond      = dot(vᵢⱼ, xᵢⱼ)
-    cond_bool = cond < 0.0
-    μᵢⱼ       = h*cond/(d²+η²)
-    Πᵢⱼ       = cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ
-
-    dvdt⁺ = - m₀ * ( Pfac + Πᵢⱼ) *  ∇ᵢWᵢⱼ
-    dvdt⁻ = - dvdt⁺ #- m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ
-
-    dvdtI[i] += dvdt⁺
-    dvdtI[j] += dvdt⁻
-
-    return nothing
-end
-
-function sim_step2(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
-    @unpack h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² = SimConstants
-    
-    #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/12
-    d  = sqrt(abs(d2))
-
-    xᵢ  = Position[i]
-    xⱼ  = Position[j]
-    xᵢⱼ = xᵢ - xⱼ
-
-    q  = d  * h⁻¹ #clamp(d  * h⁻¹,0.0,2.0), not needed when checking d2 < CutOffSquared before hand
-
-    Fac = αD*5*(q-2)^3*q / (8h*(q*h+1e-6))
-    ∇ᵢWᵢⱼ = Fac * xᵢⱼ
-
-    d² = d*d
-
-    ρᵢ    = Density[i]
-    ρⱼ    = Density[j]
-
-    vᵢ      = Velocity[i]
-    vⱼ      = Velocity[j]
-    vᵢⱼ     = vᵢ - vⱼ
-
-    # dot gives dispatch error, but @inline fixes?
-    dρdt⁺   = - ρᵢ * dot((m₀/ρⱼ) *  -vᵢⱼ ,  ∇ᵢWᵢⱼ)
-    dρdt⁻   = - ρⱼ * dot((m₀/ρᵢ) *   vᵢⱼ , -∇ᵢWᵢⱼ)
-
-    dρdtI[i] += dρdt⁺
-    dρdtI[j] += dρdt⁻
-
-    Pᵢ      = EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
-    Pⱼ      = EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
 
     ρ̄ᵢⱼ     = (ρᵢ+ρⱼ)*0.5
     Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
@@ -357,7 +306,7 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
                     d2 = distance_condition(Position[k_idx],Position[k_1up])
 
                     if d2 <= TheCLL.CutOffSquared
-                        @inline sim_step(k_idx , k_1up, d2, SimConstants,  Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI)
+                        @inline sim_step(k_idx , k_1up, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
                     end
                 end
             end
@@ -378,7 +327,7 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
                         d2  = distance_condition(Position[k1_idx],Position[k2_idx])
 
                         if d2 <= TheCLL.CutOffSquared
-                            @inline sim_step(k1_idx , k2_idx, d2, SimConstants,  Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI)
+                            @inline sim_step(k1_idx , k2_idx, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
                         end
                     end
                 end
@@ -419,7 +368,7 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
                     d2 = distance_condition(Positionₙ⁺[k_idx],Positionₙ⁺[k_1up])
 
                     if d2 <= TheCLL.CutOffSquared
-                        @inline sim_step2(k_idx , k_1up, d2, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺)
+                        @inline sim_step(k_idx , k_1up, d2, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺)
                     end
                 end
             end
@@ -440,7 +389,7 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
                         d2  = distance_condition(Positionₙ⁺[k1_idx],Positionₙ⁺[k2_idx])
 
                         if d2 <= TheCLL.CutOffSquared
-                            @inline sim_step2(k1_idx , k2_idx, d2, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺)
+                            @inline sim_step(k1_idx , k2_idx, d2, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺)
                         end
                     end
                 end
@@ -574,7 +523,12 @@ begin
     )
 
     # Initialze the constants to use
-    SimConstants = SimulationConstants{T}()
+    SimConstants = SimulationConstants{T}(
+        dx = 0.02,
+        h  = 1*sqrt(2)*0.02,
+        c₀ = 88.14487860902641,
+        α  = 0.02
+    )
     # Clean up folder before running (remember to make folder before hand!)
     foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
 
