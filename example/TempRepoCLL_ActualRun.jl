@@ -431,6 +431,9 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
         Position.V[i]           += ((Velocity.V[i] + (Velocity.V[i] - dvdtIₙ⁺.V[i] * dt * MotionLimiter[i])) / 2) * dt * MotionLimiter[i]
     end
 
+    SimMetaData.Iteration      += 1
+    SimMetaData.CurrentTimeStep = dt
+    SimMetaData.TotalTime      += dt
 
     return nothing
 end
@@ -462,11 +465,11 @@ function RunSimulation(;FluidCSV::String,
     # particles change
     MotionLimiter = [ ones(size(density_fluid,1)) ; zeros(size(density_bound,1))]
 
-     # Read this as "GravityFactor * g", so -1 means negative acceleration for fluid particles
-     GravityFactor            = [-ones(size(density_fluid,1)) ; zeros(size(density_bound,1))]
-     # MotionLimiter is what allows fluid particles to move, while not letting the velocity of boundary
-     # particles change
-     MotionLimiter = [ ones(size(density_fluid,1)) ; zeros(size(density_bound,1))]
+    # Read this as "GravityFactor * g", so -1 means negative acceleration for fluid particles
+    GravityFactor            = [-ones(size(density_fluid,1)) ; zeros(size(density_bound,1))]
+    # MotionLimiter is what allows fluid particles to move, while not letting the velocity of boundary
+    # particles change
+    MotionLimiter = [ ones(size(density_fluid,1)) ; zeros(size(density_bound,1))]
     
     # Based on MotionLimiter we assess which particles are boundary particles
     BoundaryBool  = .!Bool.(MotionLimiter)
@@ -500,15 +503,24 @@ function RunSimulation(;FluidCSV::String,
     R = 2*h
     TheCLL = CLL(Points=Position.V,CutOff=R) #line is good idea at times
 
-    @time @inbounds for iteration in 1:200#:101
+    OutputCounter = 0.0
+    OutputIterationCounter = 0
+    @time @inbounds while true
         updateCLL!(TheCLL, Position.V)
         # inline removes 96 bytes alloc..
         @inline CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
-        if iteration % 200 == 0
-            SaveLocation_= SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(iteration,6,"0") * ".vtp"
+        
+        OutputCounter += SimMetaData.CurrentTimeStep
+        if OutputCounter >= SimMetaData.OutputEach
+            OutputCounter = 0.0
+            OutputIterationCounter += 1
+            SaveLocation_= SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp"
             Pressure!(Pressureᵢ,Density,SimConstants)
             PolyDataTemplate(SaveLocation_, to_3d(Position.V), ["Kernel","KernelGradient","Density", "Pressure", "Velocity", "Acceleration"], Kernel, KernelGradient.V, Density, Pressureᵢ, Velocity.V, dvdtIₙ⁺.V)
-            println(iteration)
+        end
+
+        if SimMetaData.TotalTime >= SimMetaData.SimulationTime + 1e-3
+            break
         end
     end
     
@@ -524,6 +536,7 @@ begin
     SimMetaData  = SimulationMetaData{D, T}(
                                     SimulationName="AllInOne", 
                                     SaveLocation=raw"E:\SecondApproach\Testing",
+                                    SimulationTime=0.765, #2, is not possible yet, since we do not kick particles out etc.
     )
 
     # Initialze the constants to use
