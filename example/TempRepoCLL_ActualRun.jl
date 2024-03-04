@@ -383,7 +383,7 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
 
 
     # Make loop, no allocs
-    for i in eachindex(dvdtI)
+    @batch for i in eachindex(dvdtI)
         dvdtI[i]       += ConstructGravitySVector(dvdtI[i], g * GravityFactor[i])
         Velocityₙ⁺[i]   = Velocity[i]   + dvdtI[i]       * (dt/2)  * MotionLimiter[i]
         Positionₙ⁺[i]   = Position[i]   + Velocityₙ⁺[i]   * (dt/2)  * MotionLimiter[i]
@@ -447,7 +447,7 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
     DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
     LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
 
-    for i in eachindex(dvdtIₙ⁺)
+    @batch for i in eachindex(dvdtIₙ⁺)
         dvdtIₙ⁺[i]            +=  ConstructGravitySVector(dvdtIₙ⁺[i], g * GravityFactor[i])
         Velocity[i]           += dvdtIₙ⁺[i] * dt * MotionLimiter[i]
         Position[i]           += ((Velocity[i] + (Velocity[i] - dvdtIₙ⁺[i] * dt * MotionLimiter[i])) / 2) * dt * MotionLimiter[i]
