@@ -177,8 +177,9 @@ function sim_step(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, 
     ρⱼᵢ   = ρⱼ - ρᵢ
 
     # Density diffusion
-    Dᵢ  = h * c₀ * (m₀/ρⱼ) * 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * inv(d²+η²) * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MotionLimiter[i] * MotionLimiter[j]
-    Dⱼ  = h * c₀ * (m₀/ρᵢ) * 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(d²+η²) * dot( xᵢⱼ, -∇ᵢWᵢⱼ) * MotionLimiter[i] * MotionLimiter[j]
+    MLcond = MotionLimiter[i] * MotionLimiter[j]
+    Dᵢ  = h * c₀ * (m₀/ρⱼ) * 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * inv(d²+η²) * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond
+    Dⱼ  = h * c₀ * (m₀/ρᵢ) * 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(d²+η²) * dot( xᵢⱼ, -∇ᵢWᵢⱼ) * MLcond
 
     dρdtI[i] += dρdt⁺ + Dᵢ
     dρdtI[j] += dρdt⁻ + Dⱼ
@@ -266,7 +267,7 @@ end
                             k_1up = indices_in_cell[kj]
                             d2 = distance_condition(Position[k_idx],Position[k_1up])
                             if d2 <= TheCLL.CutOffSquared
-                                @inline sim_step(k_idx , k_1up, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
+                                sim_step(k_idx , k_1up, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
                             end
                         end
                     end
@@ -282,7 +283,7 @@ end
                             k2_idx = indices_in_cell_plus[k2]
                             d2  = distance_condition(Position[k1_idx],Position[k2_idx])
                             if d2 <= TheCLL.CutOffSquared
-                                @inline sim_step(k1_idx , k2_idx, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
+                                sim_step(k1_idx , k2_idx, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
                             end
                         end
                     end
@@ -408,6 +409,10 @@ function RunSimulation(;FluidCSV::String,
     Positionₙ⁺ = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
     ρₙ⁺        = zeros(FloatType, NumberOfPoints)
 
+    if !isdir(SimMetaData.SaveLocation)
+        mkdir(SimMetaData.SaveLocation)
+    end
+    
     foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
    
 
@@ -472,8 +477,6 @@ begin
         c₀ = 88.14487860902641,
         α  = 0.02
     )
-    # Clean up folder before running (remember to make folder before hand!)
-    foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
 
     # And here we run the function - enjoy!
     println(@code_warntype RunSimulation(
