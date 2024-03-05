@@ -174,8 +174,9 @@ function sim_step(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, 
 
     ρⱼᵢ   = ρⱼ - ρᵢ
 
-    Dᵢ  = h * c₀ * (m₀/ρⱼ) * 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * inv(d²+η²) * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ)
-    Dⱼ  = h * c₀ * (m₀/ρᵢ) * 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(d²+η²) * dot( xᵢⱼ, -∇ᵢWᵢⱼ)
+    # Density diffusion
+    Dᵢ  = h * c₀ * (m₀/ρⱼ) * 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * inv(d²+η²) * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MotionLimiter[j]
+    Dⱼ  = h * c₀ * (m₀/ρᵢ) * 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(d²+η²) * dot( xᵢⱼ, -∇ᵢWᵢⱼ) * MotionLimiter[j]
 
     dρdtI[i] += dρdt⁺ + Dᵢ
     dρdtI[j] += dρdt⁻ + Dⱼ
@@ -496,11 +497,19 @@ begin
     )
     )
 
-    SimConstantsWedge = SimulationConstants{T}()
+    # SimConstantsWedge = SimulationConstants{T}()
+    # @profview RunSimulation(
+    #     FluidCSV     = "./input/StillWedge_Fluid_Dp0.02_LowResolution.csv",
+    #     BoundCSV     = "./input/StillWedge_Bound_Dp0.02_LowResolution_5LAYERS.csv",
+    #     SimMetaData  = SimMetaData,
+    #     SimConstants = SimConstantsWedge
+    # )
+
+    SimConstantsDamBreak = SimulationConstants{T}()
     @profview RunSimulation(
-        FluidCSV     = "./input/StillWedge_Fluid_Dp0.02_LowResolution.csv",
-        BoundCSV     = "./input/StillWedge_Bound_Dp0.02_LowResolution_5LAYERS.csv",
+        FluidCSV     = "./input/FluidPoints_Dp0.02_5LAYERS.csv",
+        BoundCSV     = "./input/BoundaryPoints_Dp0.02_5LAYERS.csv",
         SimMetaData  = SimMetaData,
-        SimConstants = SimConstantsWedge
+        SimConstants = SimConstantsDamBreak
     )
 end
