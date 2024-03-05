@@ -140,7 +140,7 @@ end
 @inline faux_fancy(ρ₀, P, invCb) = ρ₀ * ( fancy7th( 1 + (P * invCb)) - 1)
 
 
-@inbounds function sim_step(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
+@inbounds function sim_step(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter,BoolDDT=true)
     @unpack h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² = SimConstants
     invCb = inv((c₀^2*ρ₀)/γ)
     
@@ -175,12 +175,17 @@ end
     ρⱼᵢ   = ρⱼ - ρᵢ
 
     # Density diffusion
-    MLcond = MotionLimiter[i] * MotionLimiter[j]
-    Dᵢ  = h * c₀ * (m₀/ρⱼ) * 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * inv(d²+η²) * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond
-    Dⱼ  = h * c₀ * (m₀/ρᵢ) * 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(d²+η²) * dot( xᵢⱼ, -∇ᵢWᵢⱼ) * MLcond
+    if BoolDDT
+        MLcond = MotionLimiter[i] * MotionLimiter[j]
+        Dᵢ  = h * c₀ * (m₀/ρⱼ) * 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * inv(d²+η²) * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond
+        Dⱼ  = h * c₀ * (m₀/ρᵢ) * 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(d²+η²) * dot( xᵢⱼ, -∇ᵢWᵢⱼ) * MLcond
 
-    dρdtI[i] += dρdt⁺ + Dᵢ
-    dρdtI[j] += dρdt⁻ + Dⱼ
+        dρdtI[i] += dρdt⁺ + Dᵢ
+        dρdtI[j] += dρdt⁻ + Dⱼ
+    else
+        dρdtI[i] += dρdt⁺
+        dρdtI[j] += dρdt⁻
+    end
 
     Pᵢ      =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
     Pⱼ      =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
@@ -202,7 +207,7 @@ end
     return nothing
 end
 
-@inbounds function neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
+@inbounds function neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT=true)
         @inbounds @threads for Cind ∈ LoopLayout
 
         if !isassigned(TheCLL.Layout,Cind) continue end
@@ -217,7 +222,7 @@ end
                 d2 = distance_condition(Position[k_idx],Position[k_1up])
 
                 if d2 <= TheCLL.CutOffSquared
-                    @inbounds @inline sim_step(k_idx , k_1up, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
+                    @inbounds @inline sim_step(k_idx , k_1up, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT)
                 end
             end
         end
@@ -238,7 +243,7 @@ end
                     d2  = distance_condition(Position[k1_idx],Position[k2_idx])
 
                     if d2 <= TheCLL.CutOffSquared
-                        @inbounds @inline sim_step(k1_idx , k2_idx, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
+                        @inbounds @inline sim_step(k1_idx , k2_idx, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT)
                     end
                 end
             end
@@ -265,13 +270,14 @@ function EquationOfState(ρ,c₀,γ,ρ₀)
 end
 
 function CustomCLL(TheCLL, LoopLayout, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
+    BoolDDT = true
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, δᵩ, CFL, η² = SimConstants
 
     dt  = Δt(Position, Velocity, dvdtIₙ⁺, SimConstants)
     dt₂ = dt * 0.5
 
     ResetArrays!( dρdtI, dvdtI)
-    neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
+    neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter,  BoolDDT)
 
     # Make loop, no allocs
     @inbounds @batch for i in eachindex(dvdtI)
@@ -284,7 +290,7 @@ function CustomCLL(TheCLL, LoopLayout, SimConstants, SimMetaData, MotionLimiter,
     LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
 
     ResetArrays!(dρdtIₙ⁺, dvdtIₙ⁺)
-    neighbor_loop(TheCLL, LoopLayout, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, MotionLimiter)
+    neighbor_loop(TheCLL, LoopLayout, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, MotionLimiter,  BoolDDT)
     
     DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
     LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
