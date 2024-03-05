@@ -418,7 +418,7 @@ function EquationOfState(ρ,c₀,γ,ρ₀)
     return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
 end
 
-function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
+function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, dρdtI_threaded , dρdtIₙ⁺_threaded , dvdtI_threaded , dvdtIₙ⁺_threaded)
     nchunks = nthreads()
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, δᵩ, CFL, η² = SimConstants
 
@@ -534,7 +534,7 @@ function RunSimulation(;FluidCSV::String,
         
         @timeit HourGlass "0 Update particles in cells" updateCLL!(TheCLL, Position)
         # inline removes 96 bytes alloc..
-        @timeit HourGlass "1 Main simulation loop" @inline CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
+        @timeit HourGlass "1 Main simulation loop" @inline CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, dρdtI_threaded , dρdtIₙ⁺_threaded , dvdtI_threaded , dvdtIₙ⁺_threaded)
         
         OutputCounter += SimMetaData.CurrentTimeStep
         @timeit HourGlass "2 Output data" if OutputCounter >= SimMetaData.OutputEach
@@ -598,13 +598,13 @@ begin
     )
     )
 
-    println(@report_call target_modules=(@__MODULE__,) RunSimulation(
-        FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
-        BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
-        SimMetaData  = SimMetaData,
-        SimConstants = SimConstants
-    )
-    )
+    # println(@report_call target_modules=(@__MODULE__,) RunSimulation(
+    #     FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
+    #     BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
+    #     SimMetaData  = SimMetaData,
+    #     SimConstants = SimConstants
+    # )
+    # )
 
     @profview RunSimulation(
         FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
