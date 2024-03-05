@@ -95,7 +95,7 @@ function GenerateM(Nmax,ZeroOffset,HalfPad,Padding,cells,v::Val{d}) where d
     # but it actually does not improve performance anymore lol
     @inbounds @batch for i = 1:prod(size(M))
         arr  = Vector{Int}()
-        #sizehint!(arr,100)
+        # sizehint!(arr,100)
         M[i] = arr
     end
 
@@ -521,6 +521,7 @@ function RunSimulation(;FluidCSV::String,
 
     R = 2*h
     TheCLL = CLL(Points=Position,CutOff=R) #line is good idea at times
+    sizehint!(TheCLL.UniqueCells,size(TheCLL.Layout,1) * size(TheCLL.Layout,2))
 
     generate_showvalues(Iteration, TotalTime) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime))]
     OutputCounter = 0.0
