@@ -38,7 +38,7 @@ end
 
     UniqueIndices::Vector{Int64}                 = unique(i -> Cells[i], eachindex(Cells))
     MaxValidUniqueIndex::Int64                   = length(UniqueIndices)
-    UniqueCells::Vector{NTuple{D, Int64}}        = Cells[UniqueIndices] #just do all cells for now, optimize later
+    UniqueCells::Vector{NTuple{D, Int64}}        = union(Cells) #just do all cells for now, optimize later
 
     Layout::Array{Vector{Int64}, D}              = GenerateM(Nmax,ZeroOffset,HalfPad,Padding,Cells,Val(getsvecD(eltype(Points))))
 end
@@ -241,7 +241,7 @@ function sim_step(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, 
 end
 
 function neighbor_loop(TheCLL, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
-    @inbounds for Cind_ ∈ TheCLL.UniqueCells  
+    @inbounds for Cind_ ∈  TheCLL.UniqueCells  
         Cind = @. (Cind_ + 1 + TheCLL.HalfPad)
 
             # The indices in the cell are:
@@ -333,9 +333,6 @@ end
 # end
 
 function neighbor_loop_threaded(TheCLL, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, nchunks=4)
-    # In the case where symdiff returns no set, just skip iteration
-    # this is due to getchunk not being able to just skip iteration
-    # if !isempty(TheCLL.UniqueCells)
         nchunks_actual = min(length(TheCLL.UniqueCells),nchunks)
         # This loop is not sped up by @batch but only @threads?
         # secondly, who does this seem to work so well even though I do not use a reduction function?
@@ -343,7 +340,7 @@ function neighbor_loop_threaded(TheCLL, SimConstants, Position, Density, Velocit
         # OKAY so I actually do need a reduction, just for this case very hard to spot!
         @inbounds @batch for ichunk in 1:nchunks_actual
             chunk_inds = getchunk(TheCLL.UniqueCells, ichunk; n=nchunks_actual)
-                 for Cind_ ∈ TheCLL.UniqueCells[chunk_inds]
+                 for Cind_ ∈ @views TheCLL.UniqueCells[chunk_inds]
                     Cind = @. (Cind_ + 1 + TheCLL.HalfPad)
                     # The indices in the cell are:
                     indices_in_cell = TheCLL.Layout[Cind...]
@@ -361,27 +358,26 @@ function neighbor_loop_threaded(TheCLL, SimConstants, Position, Density, Velocit
                             end
                         end
                     end
-                 for Sind ∈ TheCLL.Stencil
-                        Sind = (Cind .+ Sind)
-                        indices_in_cell_plus  = TheCLL.Layout[Sind...]
-                        if isempty(indices_in_cell_plus)
-                            continue
-                        end
-                        # Here a double loop to compare indices_in_cell[k] to all possible neighbours
-                        for k1 ∈ eachindex(indices_in_cell)
-                            k1_idx = indices_in_cell[k1]
-                            for k2 ∈ eachindex(indices_in_cell_plus)
-                                k2_idx = indices_in_cell_plus[k2]
-                                d2  = distance_condition(Position[k1_idx],Position[k2_idx])
-                                if d2 <= TheCLL.CutOffSquared
-                                    @inline sim_step(k1_idx , k2_idx, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
-                                end
+                 for Sind ∈  TheCLL.Stencil
+                    Sind = (Cind .+ Sind)
+                    indices_in_cell_plus  = TheCLL.Layout[Sind...]
+                    if isempty(indices_in_cell_plus)
+                        continue
+                    end
+                    # Here a double loop to compare indices_in_cell[k] to all possible neighbours
+                    for k1 ∈ eachindex(indices_in_cell)
+                        k1_idx = indices_in_cell[k1]
+                        for k2 ∈ eachindex(indices_in_cell_plus)
+                            k2_idx = indices_in_cell_plus[k2]
+                            d2  = distance_condition(Position[k1_idx],Position[k2_idx])
+                            if d2 <= TheCLL.CutOffSquared
+                                @inline sim_step(k1_idx , k2_idx, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
                             end
                         end
                     end
+                end
             end
         end
-    # end
 end
 
 
@@ -397,7 +393,8 @@ function updateCLL!(cll::CLL,Points)
     # BY USING SYMDIFF, WE CAN ALWAYS CALCULATE IT AT THE END IF WE WANT
     # The reason symdiff is so faster, is that in cases where no particles have moved into new cells, then
     # symdiff returns an empty collection - this then skips an iteration? naaah
-    symdiff!(cll.UniqueCells,cll.Cells[unique(i -> cll.Cells[i], eachindex(cll.Cells))])
+    #symdiff!(cll.UniqueCells,cll.Cells[unique(i -> cll.Cells[i], eachindex(cll.Cells))])
+    union!(cll.UniqueCells,unique(cll.Cells))
 
     # Recalculate the Layout with updated Cells
     #cll.Nmax       = maximum(reinterpret(Int, @view(Cells[:]))) + cll.ZeroOffset
