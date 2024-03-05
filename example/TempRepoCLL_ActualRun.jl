@@ -343,7 +343,7 @@ function neighbor_loop_threaded(TheCLL, SimConstants, Position, Density, Velocit
         # OKAY so I actually do need a reduction, just for this case very hard to spot!
         @inbounds @batch for ichunk in 1:nchunks_actual
             chunk_inds = getchunk(TheCLL.UniqueCells, ichunk; n=nchunks_actual)
-                 for Cind_ ∈ @view(TheCLL.UniqueCells[chunk_inds])
+                 for Cind_ ∈ TheCLL.UniqueCells[chunk_inds]
                     Cind = @. (Cind_ + 1 + TheCLL.HalfPad)
                     # The indices in the cell are:
                     indices_in_cell = TheCLL.Layout[Cind...]
