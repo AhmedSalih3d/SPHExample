@@ -406,7 +406,7 @@ function updateCLL!(cll::CLL,Points)
     # BY USING SYMDIFF, WE CAN ALWAYS CALCULATE IT AT THE END IF WE WANT
     # The reason symdiff is so faster, is that in cases where no particles have moved into new cells, then
     # symdiff returns an empty collection - this then skips an iteration? naaah
-    symdiff!(cll.UniqueCells,cll.Cells[unique(i -> cll.Cells[i], eachindex(cll.Cells))])
+    #symdiff!(cll.UniqueCells,cll.Cells[unique(i -> cll.Cells[i], eachindex(cll.Cells))])
     # union!(cll.UniqueCells,unique(cll.Cells))
 
     # Recalculate the Layout with updated Cells
