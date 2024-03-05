@@ -36,8 +36,6 @@ end
     Cells::Vector{NTuple{D, Int64}}              = ExtractCells(Points,CutOff,Val(getsvecD(eltype(Points))))
     Nmax::Int64                                  = maximum(reinterpret(Int,@view(Cells[:]))) + ZeroOffset #Find largest dimension in x,y,z for the Cells
 
-    UniqueIndices::Vector{Int64}                 = unique(i -> Cells[i], eachindex(Cells))
-    MaxValidUniqueIndex::Int64                   = length(UniqueIndices)
     UniqueCells::Vector{NTuple{D, Int64}}        = union(Cells) #just do all cells for now, optimize later
     Layout::Array{Vector{Int64}, D}              = GenerateM(Nmax,ZeroOffset,HalfPad,Padding,Cells,Val(getsvecD(eltype(Points))))
 end
@@ -244,106 +242,55 @@ function neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velo
     @inbounds for Cind_ ∈ LoopLayout
         Cind = Cind_ #+ CartesianIndex(1,1) + CartesianIndex(1,1)
 
-        if !isassigned(TheCLL.Layout,Cind)
-            continue
-        end
-
         if isempty(TheCLL.Layout[Cind])
             continue
         end
 
-            # The indices in the cell are:
-            indices_in_cell = TheCLL.Layout[Cind]
+        # The indices in the cell are:
+        indices_in_cell = TheCLL.Layout[Cind]
 
-            if isempty(indices_in_cell)
+        if isempty(indices_in_cell)
+            continue
+        end
+
+        n_idx_cells = length(indices_in_cell)
+        for ki = 1:n_idx_cells-1 #this line gives 64 bytes alloc unsure why
+            k_idx = indices_in_cell[ki]
+              for kj = (ki+1):n_idx_cells
+                k_1up = indices_in_cell[kj]
+                d2 = distance_condition(Position[k_idx],Position[k_1up])
+
+                if d2 <= TheCLL.CutOffSquared
+                    @inline sim_step(k_idx , k_1up, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
+                end
+            end
+        end
+
+        for Sind ∈ TheCLL.Stencil
+            Sind = (Cind .+ CartesianIndex(Sind))
+        
+            if isempty(TheCLL.Layout[Sind])
                 continue
             end
 
-            n_idx_cells = length(indices_in_cell)
-            for ki = 1:n_idx_cells-1 #this line gives 64 bytes alloc unsure why
-                k_idx = indices_in_cell[ki]
-                  for kj = (ki+1):n_idx_cells
-                    k_1up = indices_in_cell[kj]
-                    d2 = distance_condition(Position[k_idx],Position[k_1up])
+            indices_in_cell_plus  = TheCLL.Layout[Sind]
+
+            # Here a double loop to compare indices_in_cell[k] to all possible neighbours
+            for k1 ∈ eachindex(indices_in_cell)
+                k1_idx = indices_in_cell[k1]
+                for k2 ∈ eachindex(indices_in_cell_plus)
+                    k2_idx = indices_in_cell_plus[k2]
+                    d2  = distance_condition(Position[k1_idx],Position[k2_idx])
 
                     if d2 <= TheCLL.CutOffSquared
-                        @inline sim_step(k_idx , k_1up, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
+                        @inline sim_step(k1_idx , k2_idx, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
                     end
                 end
             end
-
-            for Sind ∈ TheCLL.Stencil
-                Sind = (Cind .+ CartesianIndex(Sind))
-
-                if !isassigned(TheCLL.Layout,Cind)
-                    continue
-                end
-        
-                if isempty(TheCLL.Layout[Sind])
-                    continue
-                end
-
-                indices_in_cell_plus  = TheCLL.Layout[Sind]
-
-                # Here a double loop to compare indices_in_cell[k] to all possible neighbours
-                for k1 ∈ eachindex(indices_in_cell)
-                    k1_idx = indices_in_cell[k1]
-                    for k2 ∈ eachindex(indices_in_cell_plus)
-                        k2_idx = indices_in_cell_plus[k2]
-                        d2  = distance_condition(Position[k1_idx],Position[k2_idx])
-
-                        if d2 <= TheCLL.CutOffSquared
-                            @inline sim_step(k1_idx , k2_idx, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
-                        end
-                    end
-                end
-            end
+        end
     end
 
 end
-
-# ReductionFunctionChunk!(dρdtI, I, J, drhopLp) = ReductionFunctionChunk!(dρdtI, I, J, drhopLp, drhopLp)
-# function ReductionFunctionChunk!(dρdtI, I, J, drhopLp, drhopLn, op1=+, op2=+)
-#     XT = eltype(dρdtI); XL = length(dρdtI); X0 = zero(XT)
-#     nchunks = nthreads() 
-    
-#     @inbounds @no_escape begin
-#         local_X = @alloc(XT, XL, nchunks)
-
-#         fill!(local_X,X0)
-
-#         # Directly iterate over the chunks
-#         @batch for ichunk in 1:nchunks
-#             chunk_inds = getchunk(I, ichunk; n=nchunks)
-#             for idx in chunk_inds
-#                 i = I[idx]
-#                 j = J[idx]
-
-#                 # Accumulate the contributions into the correct place
-#                 local_X[i, ichunk] = local_X[i, ichunk] + op1(drhopLp[idx])
-#                 local_X[j, ichunk] = local_X[j, ichunk] + op2(drhopLn[idx])
-#             end
-#         end
-
-#         # Reduction step
-#         @tturbo for ix in 1:XL
-#             for chunk in 1:nchunks
-#                 dρdtI[ix] += local_X[ix, chunk]
-#             end
-#         end
-#     end
-    
-#     # # Reduction - Single threaded
-#     # @inbounds for iter in eachindex(I,J)
-#     #     i = I[iter]
-#     #     j = J[iter]
-
-#     #     dρdtI[i] +=  drhopLp[iter]
-#     #     dρdtI[j] +=  drhopLn[iter]
-#     # end
-
-#     return nothing
-# end
 
 function neighbor_loop_threaded(TheCLL, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, nchunks=4)
         nchunks_actual = min(length(TheCLL.UniqueCells),nchunks)
