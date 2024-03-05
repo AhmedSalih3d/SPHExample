@@ -307,21 +307,6 @@ function updateCLL!(cll::CLL,Points)
     return nothing
 end
 
-@inline function fancy7th(x)
-    # todo tune the magic constant
-    # initial guess based on fast inverse sqrt trick but adjusted to compute x^(1/7)
-    t = copysign(reinterpret(Float64, 0x36cd000000000000 + reinterpret(UInt64,abs(x))÷7), x)
-    @fastmath for _ in 1:2
-        # newton's method for t^3 - x/t^4 = 0
-        t2 = t*t
-        t3 = t2*t
-        t4 = t2*t2
-        xot4 = x/t4
-        t = t - t*(t3 - xot4)/(4*t3 + 3*xot4)
-    end
-    t
-end
-
 @fastpow function EquationOfStateGamma7(ρ,c₀,ρ₀)
     return ((c₀^2*ρ₀)/7) * ((ρ/ρ₀)^7 - 1)
 end
@@ -333,7 +318,8 @@ end
 function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, δᵩ, CFL, η² = SimConstants
 
-    dt = Δt(Position, Velocity, dvdtIₙ⁺, SimConstants)
+    dt  = Δt(Position, Velocity, dvdtIₙ⁺, SimConstants)
+    dt₂ = dt * 0.5
 
     ResetArrays!(Kernel,KernelGradient, dρdtI, dvdtI)
     neighbor_loop(TheCLL, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
@@ -341,9 +327,9 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
     # Make loop, no allocs
     @batch for i in eachindex(dvdtI)
         dvdtI[i]       += ConstructGravitySVector(dvdtI[i], g * GravityFactor[i])
-        Velocityₙ⁺[i]   = Velocity[i]   + dvdtI[i]       * (dt/2)  * MotionLimiter[i]
-        Positionₙ⁺[i]   = Position[i]   + Velocityₙ⁺[i]   * (dt/2)  * MotionLimiter[i]
-        ρₙ⁺[i]          = Density[i]    + dρdtI[i]       * (dt/2) 
+        Velocityₙ⁺[i]   = Velocity[i]   + dvdtI[i]       *  dt₂ * MotionLimiter[i]
+        Positionₙ⁺[i]   = Position[i]   + Velocityₙ⁺[i]   * dt₂  * MotionLimiter[i]
+        ρₙ⁺[i]          = Density[i]    + dρdtI[i]       *  dt₂
     end
 
     LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
