@@ -187,20 +187,7 @@ function sim_step(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, 
 
     q  = d  * h⁻¹ #clamp(d  * h⁻¹,0.0,2.0), not needed when checking d2 < CutOffSquared before hand
 
-    # OUTPUTTING KERNEL AND KERNEL GRADIENT IS BROKEN WHEN USING
-    # SYMDIFF! COMPARED TO USING UNION
-    # I SUSPECT IT IS DUE += NATURE, NOT LOOPING OVER UNNECCESARY CELLS IN SENCE TO COMPLETE THE RESUTLS
-    # IF ONE WANTS THESE VALUES, ONE MUST MAKE LIST OF INTERACTION ETC. BUT THIS BASICALLY DOUBLES THE CODE SPEED
-    # BY USING SYMDIFF, WE CAN ALWAYS CALCULATE IT AT THE END IF WE WANT
-    # EDIT: I think this is wrong and it was a dumb mistake because I forgot to reset arrays - have not checked
-    # @fastpow W  = αD*(1-q/2)^4*(2*q + 1)
-
-    # Kernel[i] += W
-    # Kernel[j] += W
-
     @fastpow ∇ᵢWᵢⱼ = (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
-    # KernelGradient[i] +=  ∇ᵢWᵢⱼ
-    # KernelGradient[j] += -∇ᵢWᵢⱼ
 
     d² = d*d
 
@@ -260,6 +247,7 @@ function neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velo
         for Sind ∈ TheCLL.Stencil
             Sind = Cind + CartesianIndex(Sind)
         
+            # This should not be here! This is because I have not caught yet the new indexing fully
             if !isassigned(TheCLL.Layout, Sind) continue end
 
             indices_in_cell_plus  = TheCLL.Layout[Sind]
@@ -281,14 +269,13 @@ function neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velo
 end
 
 function neighbor_loop_threaded(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, nchunks=4)
-        nchunks_actual = min(length(TheCLL.UniqueCells),nchunks)
         # This loop is not sped up by @batch but only @threads?
         # secondly, who does this seem to work so well even though I do not use a reduction function?
         # I do v[i] += val and do not ensure non-locked values etc. Subhan Allah
         # OKAY so I actually do need a reduction, just for this case very hard to spot!
-        @inbounds @batch for ichunk in 1:nchunks_actual
-            chunk_inds = getchunk(LoopLayout, ichunk; n=nchunks_actual)
-                 for Cind ∈ @views LoopLayout[chunk_inds]
+        @inbounds @batch for ichunk in 1:nchunks
+                 for Cind_ ∈ getchunk(LoopLayout, ichunk; n=nchunks)
+                    Cind = LoopLayout[Cind_]
                     # The indices in the cell are:
                     indices_in_cell = TheCLL.Layout[Cind]
 
@@ -303,9 +290,10 @@ function neighbor_loop_threaded(TheCLL, LoopLayout, SimConstants, Position, Dens
                             end
                         end
                     end
-                 for Sind ∈  TheCLL.Stencil
-                    Sind = (Cind .+ CartesianIndex(Sind))
-
+                for Sind ∈  TheCLL.Stencil
+                    Sind = Cind + CartesianIndex(Sind)
+  
+                    # This should not be here! This is because I have not caught yet the new indexing fully
                     if !isassigned(TheCLL.Layout, Sind) continue end
 
                     indices_in_cell_plus  = TheCLL.Layout[Sind]
@@ -468,10 +456,9 @@ function RunSimulation(;FluidCSV::String,
 
     R = 2*h
     TheCLL = CLL(Points=Position,CutOff=R) #line is good idea at times
-    sizehint!(TheCLL.UniqueCells,size(TheCLL.Layout,1) * size(TheCLL.Layout,2))
 
     # Assymmetric Stencil.
-    LoopLayout = CartesianIndex.(CartesianIndices(TheCLL.Layout[2:end,2:end]))[:]
+    LoopLayout = CartesianIndex.(CartesianIndices(TheCLL.Layout))[1:end .!= end, 1:end .!= end][:]
 
     generate_showvalues(Iteration, TotalTime) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime))]
     OutputCounter = 0.0
