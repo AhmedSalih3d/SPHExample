@@ -140,7 +140,7 @@ end
 @inline faux_fancy(ρ₀, P, invCb) = ρ₀ * ( fancy7th( 1 + (P * invCb)) - 1)
 
 
-function sim_step(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
+@inbounds function sim_step(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
     @unpack h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² = SimConstants
     invCb = inv((c₀^2*ρ₀)/γ)
     
@@ -166,8 +166,6 @@ function sim_step(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, 
 
     dρdt⁺   = - ρᵢ * dot((m₀/ρⱼ) *  -vᵢⱼ ,  ∇ᵢWᵢⱼ)
     dρdt⁻   = - ρⱼ * dot((m₀/ρᵢ) *   vᵢⱼ , -∇ᵢWᵢⱼ)
-
-    
 
     Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
     ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, invCb)
@@ -204,9 +202,9 @@ function sim_step(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, 
     return nothing
 end
 
-function neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
+@inbounds function neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
     # @inbounds for Cind_ ∈  TheCLL.UniqueCells
-    @inbounds for Cind ∈ LoopLayout
+     @threads for Cind ∈ LoopLayout
 
         if !isassigned(TheCLL.Layout,Cind) continue end
         # The indices in the cell are:
