@@ -497,19 +497,19 @@ begin
     )
     )
 
-    # SimConstantsWedge = SimulationConstants{T}()
-    # @profview RunSimulation(
-    #     FluidCSV     = "./input/StillWedge_Fluid_Dp0.02_LowResolution.csv",
-    #     BoundCSV     = "./input/StillWedge_Bound_Dp0.02_LowResolution_5LAYERS.csv",
-    #     SimMetaData  = SimMetaData,
-    #     SimConstants = SimConstantsWedge
-    # )
-
-    SimConstantsDamBreak = SimulationConstants{T}()
+    SimConstantsWedge = SimulationConstants{T}()
     @profview RunSimulation(
-        FluidCSV     = "./input/FluidPoints_Dp0.02_5LAYERS.csv",
-        BoundCSV     = "./input/BoundaryPoints_Dp0.02_5LAYERS.csv",
+        FluidCSV     = "./input/StillWedge_Fluid_Dp0.02_LowResolution.csv",
+        BoundCSV     = "./input/StillWedge_Bound_Dp0.02_LowResolution_5LAYERS.csv",
         SimMetaData  = SimMetaData,
-        SimConstants = SimConstantsDamBreak
+        SimConstants = SimConstantsWedge
     )
+
+    # SimConstantsDamBreak = SimulationConstants{T}()
+    # @profview RunSimulation(
+    #     FluidCSV     = "./input/FluidPoints_Dp0.02_5LAYERS.csv",
+    #     BoundCSV     = "./input/BoundaryPoints_Dp0.02_5LAYERS.csv",
+    #     SimMetaData  = SimMetaData,
+    #     SimConstants = SimConstantsDamBreak
+    # )
 end
