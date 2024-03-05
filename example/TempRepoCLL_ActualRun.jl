@@ -1,6 +1,5 @@
 using SPHExample
 using BenchmarkTools
-import CellListMap
 using StaticArrays
 using Parameters
 using Plots; using Measures
@@ -8,7 +7,6 @@ using StructArrays
 import LinearAlgebra: dot
 using LoopVectorization
 using Polyester
-using Test
 using JET
 using Formatting
 using ProgressMeter
@@ -337,17 +335,17 @@ end
 function neighbor_loop_threaded(TheCLL, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, nchunks=4)
     # In the case where symdiff returns no set, just skip iteration
     # this is due to getchunk not being able to just skip iteration
-    if !isempty(TheCLL.UniqueCells)
+    # if !isempty(TheCLL.UniqueCells)
         nchunks_actual = min(length(TheCLL.UniqueCells),nchunks)
         # This loop is not sped up by @batch but only @threads?
         # secondly, who does this seem to work so well even though I do not use a reduction function?
         # I do v[i] += val and do not ensure non-locked values etc. Subhan Allah
         # OKAY so I actually do need a reduction, just for this case very hard to spot!
-        @threads for ichunk in 1:nchunks_actual
-            chunk_inds = getchunk(TheCLL.UniqueCells, ichunk; n=nchunks_actual, split=:batch)
-                @inbounds for Cind_ ∈ @views TheCLL.UniqueCells[chunk_inds]
+        @inbounds @batch for ichunk in 1:nchunks_actual
+            chunk_inds = getchunk(TheCLL.UniqueCells, ichunk; n=nchunks_actual)
+                 for Cind_ ∈ @view(TheCLL.UniqueCells[chunk_inds])
                     Cind = @. (Cind_ + 1 + TheCLL.HalfPad)
-                 # The indices in the cell are:
+                    # The indices in the cell are:
                     indices_in_cell = TheCLL.Layout[Cind...]
                     if isempty(indices_in_cell)
                         continue
@@ -383,7 +381,7 @@ function neighbor_loop_threaded(TheCLL, SimConstants, Position, Density, Velocit
                     end
             end
         end
-    end
+    # end
 end
 
 
@@ -425,8 +423,8 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
     dt₂ = dt * 0.5
 
     ResetArrays!( dρdtI, dvdtI)
-    neighbor_loop(TheCLL, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
-    # neighbor_loop_threaded(TheCLL, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, nchunks)
+    # neighbor_loop(TheCLL, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
+    neighbor_loop_threaded(TheCLL, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, nchunks)
 
     # Make loop, no allocs
     @batch for i in eachindex(dvdtI)
@@ -439,8 +437,8 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
     LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
 
     ResetArrays!(dρdtIₙ⁺, dvdtIₙ⁺)
-    neighbor_loop(TheCLL, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺)
-    # neighbor_loop_threaded(TheCLL, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, nchunks)
+    # neighbor_loop(TheCLL, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺)
+    neighbor_loop_threaded(TheCLL, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, nchunks)
 
     
     DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
