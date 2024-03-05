@@ -193,6 +193,7 @@ function sim_step(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, 
     # I SUSPECT IT IS DUE += NATURE, NOT LOOPING OVER UNNECCESARY CELLS IN SENCE TO COMPLETE THE RESUTLS
     # IF ONE WANTS THESE VALUES, ONE MUST MAKE LIST OF INTERACTION ETC. BUT THIS BASICALLY DOUBLES THE CODE SPEED
     # BY USING SYMDIFF, WE CAN ALWAYS CALCULATE IT AT THE END IF WE WANT
+    # EDIT: I think this is wrong and it was a dumb mistake because I forgot to reset arrays - have not checked
     # @fastpow W  = αD*(1-q/2)^4*(2*q + 1)
 
     # Kernel[i] += W
@@ -333,10 +334,9 @@ end
 function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Kernel, KernelGradient, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, δᵩ, CFL, η² = SimConstants
 
-    dt = Δt(Position, Velocity, dvdtIₙ⁺,SimConstants)
+    dt = Δt(Position, Velocity, dvdtIₙ⁺, SimConstants)
 
     ResetArrays!(Kernel,KernelGradient, dρdtI, dvdtI)
-
     neighbor_loop(TheCLL, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
 
     # Make loop, no allocs
@@ -344,13 +344,12 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
         dvdtI[i]       += ConstructGravitySVector(dvdtI[i], g * GravityFactor[i])
         Velocityₙ⁺[i]   = Velocity[i]   + dvdtI[i]       * (dt/2)  * MotionLimiter[i]
         Positionₙ⁺[i]   = Position[i]   + Velocityₙ⁺[i]   * (dt/2)  * MotionLimiter[i]
-        ρₙ⁺[i]            = Density[i]      + dρdtI[i]         * (dt/2) 
+        ρₙ⁺[i]          = Density[i]    + dρdtI[i]       * (dt/2) 
     end
 
     LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
 
-    ResetArrays!(dρdtIₙ⁺, dvdtIₙ⁺) #this gives 32 bytes??
-
+    ResetArrays!(dρdtIₙ⁺, dvdtIₙ⁺)
     neighbor_loop(TheCLL, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺)
 
     
@@ -499,6 +498,14 @@ begin
     )
 
     println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
+        FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
+        BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
+        SimMetaData  = SimMetaData,
+        SimConstants = SimConstants
+    )
+    )
+
+    println(@report_call target_modules=(@__MODULE__,) RunSimulation(
         FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
         BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
         SimMetaData  = SimMetaData,
