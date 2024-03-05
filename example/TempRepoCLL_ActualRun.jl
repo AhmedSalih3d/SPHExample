@@ -246,9 +246,6 @@ function neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velo
 
         for Sind ∈ TheCLL.Stencil
             Sind = Cind + CartesianIndex(Sind)
-        
-            # This should not be here! This is because I have not caught yet the new indexing fully
-            if !isassigned(TheCLL.Layout, Sind) continue end
 
             indices_in_cell_plus  = TheCLL.Layout[Sind]
 
@@ -292,10 +289,7 @@ function neighbor_loop_threaded(TheCLL, LoopLayout, SimConstants, Position, Dens
                     end
                 for Sind ∈  TheCLL.Stencil
                     Sind = Cind + CartesianIndex(Sind)
-  
-                    # This should not be here! This is because I have not caught yet the new indexing fully
-                    if !isassigned(TheCLL.Layout, Sind) continue end
-
+                    
                     indices_in_cell_plus  = TheCLL.Layout[Sind]
 
                     # Here a double loop to compare indices_in_cell[k] to all possible neighbours
@@ -458,7 +452,7 @@ function RunSimulation(;FluidCSV::String,
     TheCLL = CLL(Points=Position,CutOff=R) #line is good idea at times
 
     # Assymmetric Stencil.
-    LoopLayout = CartesianIndex.(CartesianIndices(TheCLL.Layout))[1:end .!= end, 1:end .!= end][:]
+    LoopLayout = CartesianIndex.(CartesianIndices(TheCLL.Layout))[1:end-1, 2:end-1][:]
 
     generate_showvalues(Iteration, TotalTime) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime))]
     OutputCounter = 0.0
