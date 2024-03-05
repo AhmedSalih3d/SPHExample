@@ -18,9 +18,6 @@ using ChunkSplitters
 import Base.Threads: nthreads, @threads
 include("../src/ProduceVTP.jl")
 
-function ThreadedAllocator(values,N=nthreads())
-    return [zeros(eltype(values),length(values)) for _ in 1:N]
-end
 
 function ConstructGravitySVector(_::SVector{N, T}, value) where {N, T}
     return SVector{N, T}(ntuple(i -> i == N ? value : 0, N))
@@ -335,7 +332,7 @@ end
 #     return nothing
 # end
 
-function neighbor_loop_threaded(TheCLL, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, nchunks=1)
+function neighbor_loop_threaded(TheCLL, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, nchunks=4)
     # In the case where symdiff returns no set, just skip iteration
     # this is due to getchunk not being able to just skip iteration
     if !isempty(TheCLL.UniqueCells)
@@ -418,15 +415,16 @@ function EquationOfState(ρ,c₀,γ,ρ₀)
     return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
 end
 
-function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, dρdtI_threaded , dρdtIₙ⁺_threaded , dvdtI_threaded , dvdtIₙ⁺_threaded)
+function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
     nchunks = nthreads()
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, δᵩ, CFL, η² = SimConstants
 
     dt  = Δt(Position, Velocity, dvdtIₙ⁺, SimConstants)
     dt₂ = dt * 0.5
 
-    ResetArrays!(dρdtI, dvdtI)
-    neighbor_loop_threaded(TheCLL, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, nchunks)
+    ResetArrays!( dρdtI, dvdtI)
+    neighbor_loop(TheCLL, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
+    # neighbor_loop_threaded(TheCLL, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, nchunks)
 
     # Make loop, no allocs
     @batch for i in eachindex(dvdtI)
@@ -439,7 +437,8 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
     LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
 
     ResetArrays!(dρdtIₙ⁺, dvdtIₙ⁺)
-    neighbor_loop_threaded(TheCLL, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, nchunks)
+    neighbor_loop(TheCLL, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺)
+    # neighbor_loop_threaded(TheCLL, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, nchunks)
 
     
     DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
@@ -476,7 +475,8 @@ function RunSimulation(;FluidCSV::String,
     # Load in the fluid and boundary particles. Return these points and both data frames
     # @inline is a hack here to remove all allocations further down due to uncertainty of the points type at compile time
     @inline points, density_fluid, density_bound  = LoadParticlesFromCSV(Dimensions,FloatType, FluidCSV,BoundCSV)
-
+    Position           = convert(Vector{SVector{Dimensions,FloatType}},points.V)
+    
     # Read this as "GravityFactor * g", so -1 means negative acceleration for fluid particles
     GravityFactor            = [-ones(size(density_fluid,1)) ; zeros(size(density_bound,1))]
     
@@ -496,7 +496,7 @@ function RunSimulation(;FluidCSV::String,
     # Preallocate simulation arrays
     NumberOfPoints = length(points)
     
-    # State variables
+        # State variables
     Position          = convert(Vector{SVector{Dimensions,FloatType}},points.V)
     Velocity          = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
     Density           = deepcopy([density_fluid;density_bound])
@@ -508,18 +508,13 @@ function RunSimulation(;FluidCSV::String,
     dvdtI              = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
     dvdtIₙ⁺            = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
 
-    # Derivatives threaded
-    dρdtI_threaded   = ThreadedAllocator(dρdtI  ) 
-    dρdtIₙ⁺_threaded  = ThreadedAllocator(dρdtIₙ⁺) 
-    dvdtI_threaded   = ThreadedAllocator(dvdtI  ) 
-    dvdtIₙ⁺_threaded  = ThreadedAllocator(dvdtIₙ⁺) 
-
     # Half point values for predictor-corrector algorithm
     Velocityₙ⁺ = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
     Positionₙ⁺ = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
     ρₙ⁺        = zeros(FloatType, NumberOfPoints)
 
     foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
+   
 
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
     PolyDataTemplate(SaveLocation_, to_3d(Position), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Density, Velocity, dvdtIₙ⁺)
@@ -534,7 +529,7 @@ function RunSimulation(;FluidCSV::String,
         
         @timeit HourGlass "0 Update particles in cells" updateCLL!(TheCLL, Position)
         # inline removes 96 bytes alloc..
-        @timeit HourGlass "1 Main simulation loop" @inline CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, dρdtI_threaded , dρdtIₙ⁺_threaded , dvdtI_threaded , dvdtIₙ⁺_threaded)
+        @timeit HourGlass "1 Main simulation loop" @inline CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
         
         OutputCounter += SimMetaData.CurrentTimeStep
         @timeit HourGlass "2 Output data" if OutputCounter >= SimMetaData.OutputEach
@@ -598,13 +593,13 @@ begin
     )
     )
 
-    # println(@report_call target_modules=(@__MODULE__,) RunSimulation(
-    #     FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
-    #     BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
-    #     SimMetaData  = SimMetaData,
-    #     SimConstants = SimConstants
-    # )
-    # )
+    println(@report_call target_modules=(@__MODULE__,) RunSimulation(
+        FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
+        BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
+        SimMetaData  = SimMetaData,
+        SimConstants = SimConstants
+    )
+    )
 
     @profview RunSimulation(
         FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
