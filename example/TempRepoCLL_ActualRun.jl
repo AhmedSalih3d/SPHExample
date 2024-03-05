@@ -39,7 +39,6 @@ end
     UniqueIndices::Vector{Int64}                 = unique(i -> Cells[i], eachindex(Cells))
     MaxValidUniqueIndex::Int64                   = length(UniqueIndices)
     UniqueCells::Vector{NTuple{D, Int64}}        = union(Cells) #just do all cells for now, optimize later
-
     Layout::Array{Vector{Int64}, D}              = GenerateM(Nmax,ZeroOffset,HalfPad,Padding,Cells,Val(getsvecD(eltype(Points))))
 end
 @inline getsvecD(::Type{SVector{d,T}}) where {d,T} = d
@@ -240,12 +239,21 @@ function sim_step(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, 
     return nothing
 end
 
-function neighbor_loop(TheCLL, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
-    @inbounds for Cind_ ∈  TheCLL.UniqueCells  
-        Cind = @. (Cind_ + 1 + TheCLL.HalfPad)
+function neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
+    # @inbounds for Cind_ ∈  TheCLL.UniqueCells
+    @inbounds for Cind_ ∈ LoopLayout
+        Cind = Cind_ #+ CartesianIndex(1,1) + CartesianIndex(1,1)
+
+        if !isassigned(TheCLL.Layout,Cind)
+            continue
+        end
+
+        if isempty(TheCLL.Layout[Cind])
+            continue
+        end
 
             # The indices in the cell are:
-            indices_in_cell = TheCLL.Layout[Cind...]
+            indices_in_cell = TheCLL.Layout[Cind]
 
             if isempty(indices_in_cell)
                 continue
@@ -265,12 +273,17 @@ function neighbor_loop(TheCLL, SimConstants, Position, Density, Velocity, dρdtI
             end
 
             for Sind ∈ TheCLL.Stencil
-                Sind = (Cind .+ Sind)
-                indices_in_cell_plus  = TheCLL.Layout[Sind...]
+                Sind = (Cind .+ CartesianIndex(Sind))
 
-                if isempty(indices_in_cell_plus)
+                if !isassigned(TheCLL.Layout,Cind)
                     continue
                 end
+        
+                if isempty(TheCLL.Layout[Sind])
+                    continue
+                end
+
+                indices_in_cell_plus  = TheCLL.Layout[Sind]
 
                 # Here a double loop to compare indices_in_cell[k] to all possible neighbours
                 for k1 ∈ eachindex(indices_in_cell)
@@ -341,7 +354,7 @@ function neighbor_loop_threaded(TheCLL, SimConstants, Position, Density, Velocit
         @inbounds @batch for ichunk in 1:nchunks_actual
             chunk_inds = getchunk(TheCLL.UniqueCells, ichunk; n=nchunks_actual)
                  for Cind_ ∈ @views TheCLL.UniqueCells[chunk_inds]
-                    Cind = @. (Cind_ + 1 + TheCLL.HalfPad)
+                    @inbounds Cind = @. (Cind_ + 1 + TheCLL.HalfPad)
                     # The indices in the cell are:
                     indices_in_cell = TheCLL.Layout[Cind...]
                     if isempty(indices_in_cell)
@@ -393,13 +406,17 @@ function updateCLL!(cll::CLL,Points)
     # BY USING SYMDIFF, WE CAN ALWAYS CALCULATE IT AT THE END IF WE WANT
     # The reason symdiff is so faster, is that in cases where no particles have moved into new cells, then
     # symdiff returns an empty collection - this then skips an iteration? naaah
-    #symdiff!(cll.UniqueCells,cll.Cells[unique(i -> cll.Cells[i], eachindex(cll.Cells))])
-    union!(cll.UniqueCells,unique(cll.Cells))
+    symdiff!(cll.UniqueCells,cll.Cells[unique(i -> cll.Cells[i], eachindex(cll.Cells))])
+    # union!(cll.UniqueCells,unique(cll.Cells))
 
     # Recalculate the Layout with updated Cells
     #cll.Nmax       = maximum(reinterpret(Int, @view(Cells[:]))) + cll.ZeroOffset
+
     GenerateM!(cll.Layout, cll.ZeroOffset, cll.HalfPad, cll.Cells)
 
+    # println(cll.Layout)
+    # println(sum(isempty.(cll.Layout)))
+    # println(sum(.!isempty.(cll.Layout)))
 
     return nothing
 end
@@ -412,7 +429,7 @@ function EquationOfState(ρ,c₀,γ,ρ₀)
     return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
 end
 
-function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
+function CustomCLL(TheCLL, LoopLayout, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
     nchunks = nthreads()
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, δᵩ, CFL, η² = SimConstants
 
@@ -420,8 +437,8 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
     dt₂ = dt * 0.5
 
     ResetArrays!( dρdtI, dvdtI)
-    # neighbor_loop(TheCLL, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
-    neighbor_loop_threaded(TheCLL, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, nchunks)
+    neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
+    # neighbor_loop_threaded(TheCLL, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, nchunks)
 
     # Make loop, no allocs
     @batch for i in eachindex(dvdtI)
@@ -434,8 +451,8 @@ function CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBoo
     LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
 
     ResetArrays!(dρdtIₙ⁺, dvdtIₙ⁺)
-    # neighbor_loop(TheCLL, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺)
-    neighbor_loop_threaded(TheCLL, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, nchunks)
+    neighbor_loop(TheCLL, LoopLayout, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺)
+    # neighbor_loop_threaded(TheCLL, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, nchunks)
 
     
     DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
@@ -520,6 +537,8 @@ function RunSimulation(;FluidCSV::String,
     TheCLL = CLL(Points=Position,CutOff=R) #line is good idea at times
     sizehint!(TheCLL.UniqueCells,size(TheCLL.Layout,1) * size(TheCLL.Layout,2))
 
+    LoopLayout = CartesianIndex.(CartesianIndices(TheCLL.Layout))[:]
+
     generate_showvalues(Iteration, TotalTime) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime))]
     OutputCounter = 0.0
     OutputIterationCounter = 0
@@ -527,7 +546,7 @@ function RunSimulation(;FluidCSV::String,
         
         @timeit HourGlass "0 Update particles in cells" updateCLL!(TheCLL, Position)
         # inline removes 96 bytes alloc..
-        @timeit HourGlass "1 Main simulation loop" @inline CustomCLL(TheCLL, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
+        @timeit HourGlass "1 Main simulation loop" @inline CustomCLL(TheCLL, LoopLayout, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
         
         OutputCounter += SimMetaData.CurrentTimeStep
         @timeit HourGlass "2 Output data" if OutputCounter >= SimMetaData.OutputEach
