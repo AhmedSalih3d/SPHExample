@@ -203,28 +203,27 @@ end
 end
 
 @inbounds function neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
-    # @inbounds for Cind_ ∈  TheCLL.UniqueCells
-     @threads for Cind ∈ LoopLayout
+        @inbounds @threads for Cind ∈ LoopLayout
 
         if !isassigned(TheCLL.Layout,Cind) continue end
         # The indices in the cell are:
         indices_in_cell = TheCLL.Layout[Cind]
 
         n_idx_cells = length(indices_in_cell)
-        for ki = 1:n_idx_cells-1 #this line gives 64 bytes alloc unsure why
+        @inbounds @batch for ki = 1:n_idx_cells-1 #this line gives 64 bytes alloc unsure why
             k_idx = indices_in_cell[ki]
-              for kj = (ki+1):n_idx_cells
+            @inbounds for kj = (ki+1):n_idx_cells
                 k_1up = indices_in_cell[kj]
                 d2 = distance_condition(Position[k_idx],Position[k_1up])
 
                 if d2 <= TheCLL.CutOffSquared
-                    @inline sim_step(k_idx , k_1up, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
+                    @inbounds @inline sim_step(k_idx , k_1up, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
                 end
             end
         end
 
-        for Sind ∈ TheCLL.Stencil
-            Sind = Cind + CartesianIndex(Sind)
+        @inbounds @batch for Sind_ ∈ TheCLL.Stencil
+            Sind = Cind + CartesianIndex(Sind_)
 
             # Keep this in, because some cases break without it..
             if !isassigned(TheCLL.Layout,Sind) continue end
@@ -232,64 +231,20 @@ end
             indices_in_cell_plus  = TheCLL.Layout[Sind]
 
             # Here a double loop to compare indices_in_cell[k] to all possible neighbours
-            for k1 ∈ eachindex(indices_in_cell)
+            @inbounds for k1 ∈ eachindex(indices_in_cell)
                 k1_idx = indices_in_cell[k1]
-                for k2 ∈ eachindex(indices_in_cell_plus)
+                @inbounds for k2 ∈ eachindex(indices_in_cell_plus)
                     k2_idx = indices_in_cell_plus[k2]
                     d2  = distance_condition(Position[k1_idx],Position[k2_idx])
 
                     if d2 <= TheCLL.CutOffSquared
-                        @inline sim_step(k1_idx , k2_idx, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
+                        @inbounds @inline sim_step(k1_idx , k2_idx, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
                     end
                 end
             end
         end
     end
 end
-
-@inbounds function neighbor_loop_threaded(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, nchunks=4)
-        # This loop is not sped up by @batch but only @threads?
-        # secondly, who does this seem to work so well even though I do not use a reduction function?
-        # I do v[i] += val and do not ensure non-locked values etc. Subhan Allah
-        # OKAY so I actually do need a reduction, just for this case very hard to spot!
-        @batch for ichunk in 1:nchunks
-                 for Cind_ ∈ getchunk(LoopLayout, ichunk; n=nchunks)
-                    Cind = LoopLayout[Cind_]
-                    # The indices in the cell are:
-                    indices_in_cell = TheCLL.Layout[Cind]
-
-                    n_idx_cells = length(indices_in_cell)
-                    for ki = 1:n_idx_cells-1 #this line gives 64 bytes alloc unsure why
-                        k_idx = indices_in_cell[ki]
-                        for kj = (ki+1):n_idx_cells
-                            k_1up = indices_in_cell[kj]
-                            d2 = distance_condition(Position[k_idx],Position[k_1up])
-                            if d2 <= TheCLL.CutOffSquared
-                                sim_step(k_idx , k_1up, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
-                            end
-                        end
-                    end
-                for Sind ∈  TheCLL.Stencil
-                    Sind = Cind + CartesianIndex(Sind)
-                    
-                    indices_in_cell_plus  = TheCLL.Layout[Sind]
-
-                    # Here a double loop to compare indices_in_cell[k] to all possible neighbours
-                    for k1 ∈ eachindex(indices_in_cell)
-                        k1_idx = indices_in_cell[k1]
-                        for k2 ∈ eachindex(indices_in_cell_plus)
-                            k2_idx = indices_in_cell_plus[k2]
-                            d2  = distance_condition(Position[k1_idx],Position[k2_idx])
-                            if d2 <= TheCLL.CutOffSquared
-                                sim_step(k1_idx , k2_idx, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
-                            end
-                        end
-                    end
-                end
-            end
-        end
-end
-
 
 
 function updateCLL!(cll::CLL,Points)
@@ -310,7 +265,6 @@ function EquationOfState(ρ,c₀,γ,ρ₀)
 end
 
 function CustomCLL(TheCLL, LoopLayout, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
-    nchunks = nthreads()
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, δᵩ, CFL, η² = SimConstants
 
     dt  = Δt(Position, Velocity, dvdtIₙ⁺, SimConstants)
@@ -318,10 +272,9 @@ function CustomCLL(TheCLL, LoopLayout, SimConstants, SimMetaData, MotionLimiter,
 
     ResetArrays!( dρdtI, dvdtI)
     neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
-    # neighbor_loop_threaded(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, nchunks)
 
     # Make loop, no allocs
-    @batch for i in eachindex(dvdtI)
+    @inbounds @batch for i in eachindex(dvdtI)
         dvdtI[i]       += ConstructGravitySVector(dvdtI[i], g * GravityFactor[i])
         Velocityₙ⁺[i]   = Velocity[i]   + dvdtI[i]       *  dt₂ * MotionLimiter[i]
         Positionₙ⁺[i]   = Position[i]   + Velocityₙ⁺[i]   * dt₂  * MotionLimiter[i]
@@ -332,13 +285,11 @@ function CustomCLL(TheCLL, LoopLayout, SimConstants, SimMetaData, MotionLimiter,
 
     ResetArrays!(dρdtIₙ⁺, dvdtIₙ⁺)
     neighbor_loop(TheCLL, LoopLayout, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, MotionLimiter)
-    # neighbor_loop_threaded(TheCLL, LoopLayout, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, nchunks)
-
     
     DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
     LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
 
-    @batch for i in eachindex(dvdtIₙ⁺)
+    @inbounds @batch for i in eachindex(dvdtIₙ⁺)
         dvdtIₙ⁺[i]            +=  ConstructGravitySVector(dvdtIₙ⁺[i], g * GravityFactor[i])
         Velocity[i]           += dvdtIₙ⁺[i] * dt * MotionLimiter[i]
         Position[i]           += ((Velocity[i] + (Velocity[i] - dvdtIₙ⁺[i] * dt * MotionLimiter[i])) / 2) * dt * MotionLimiter[i]
