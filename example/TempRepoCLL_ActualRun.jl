@@ -478,7 +478,7 @@ function RunSimulation(;FluidCSV::String,
    
 
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
-    PolyDataTemplate(SaveLocation_, to_3d(Position), ["Kernel","KernelGradient","Density","Velocity", "Acceleration"], Density, Velocity, dvdtIₙ⁺)
+    PolyDataTemplate(SaveLocation_, to_3d(Position), ["Density","Velocity", "Acceleration"], Density, Velocity, dvdtIₙ⁺)
 
     R = 2*h
     TheCLL = CLL(Points=Position,CutOff=R) #line is good idea at times
@@ -501,7 +501,7 @@ function RunSimulation(;FluidCSV::String,
             OutputIterationCounter += 1
             SaveLocation_= SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp"
             Pressure!(Pressureᵢ,Density,SimConstants)
-            PolyDataTemplate(SaveLocation_, to_3d(Position), ["Kernel","KernelGradient","Density", "Pressure", "Velocity", "Acceleration"], Density, Pressureᵢ, Velocity, dvdtIₙ⁺)
+            PolyDataTemplate(SaveLocation_, to_3d(Position), ["Density", "Pressure", "Velocity", "Acceleration"], Density, Pressureᵢ, Velocity, dvdtIₙ⁺)
         end
 
         @timeit HourGlass "3 Next step" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
