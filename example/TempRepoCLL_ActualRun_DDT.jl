@@ -112,7 +112,9 @@ function GenerateM!(M, ZeroOffset,HalfPad, cells)
     iter = 0
     @inbounds for ind ∈ cells
         iter += 1
-        push!(M[(ind .+ ZeroOffset .+ HalfPad)...],iter)
+        subind = @. ind + ZeroOffset + HalfPad
+        if !checkbounds(Bool, M,subind...) continue end
+        push!(M[subind...],iter)
     end
 
     return nothing
@@ -205,6 +207,7 @@ function neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velo
     # @inbounds for Cind_ ∈  TheCLL.UniqueCells
     @inbounds for Cind ∈ LoopLayout
 
+        if !isassigned(TheCLL.Layout,Cind) continue end
         # The indices in the cell are:
         indices_in_cell = TheCLL.Layout[Cind]
 
@@ -458,7 +461,7 @@ begin
     SimMetaData  = SimulationMetaData{D, T}(
                                     SimulationName="AllInOne", 
                                     SaveLocation=raw"E:\SecondApproach\Testing",
-                                    SimulationTime=0.765,#0.765, #2, is not possible yet, since we do not kick particles out etc.
+                                    SimulationTime=2,#0.765, #2, is not possible yet, since we do not kick particles out etc.
                                     OutputEach=0.02
     )
 
@@ -497,19 +500,19 @@ begin
     )
     )
 
-    SimConstantsWedge = SimulationConstants{T}()
-    @profview RunSimulation(
-        FluidCSV     = "./input/StillWedge_Fluid_Dp0.02_LowResolution.csv",
-        BoundCSV     = "./input/StillWedge_Bound_Dp0.02_LowResolution_5LAYERS.csv",
-        SimMetaData  = SimMetaData,
-        SimConstants = SimConstantsWedge
-    )
-
-    # SimConstantsDamBreak = SimulationConstants{T}()
+    # SimConstantsWedge = SimulationConstants{T}()
     # @profview RunSimulation(
-    #     FluidCSV     = "./input/FluidPoints_Dp0.02_5LAYERS.csv",
-    #     BoundCSV     = "./input/BoundaryPoints_Dp0.02_5LAYERS.csv",
+    #     FluidCSV     = "./input/StillWedge_Fluid_Dp0.02_LowResolution.csv",
+    #     BoundCSV     = "./input/StillWedge_Bound_Dp0.02_LowResolution_5LAYERS.csv",
     #     SimMetaData  = SimMetaData,
-    #     SimConstants = SimConstantsDamBreak
+    #     SimConstants = SimConstantsWedge
     # )
+
+    SimConstantsDamBreak = SimulationConstants{T}()
+    @profview RunSimulation(
+        FluidCSV     = "./input/FluidPoints_Dp0.02_5LAYERS.csv",
+        BoundCSV     = "./input/BoundaryPoints_Dp0.02_5LAYERS.csv",
+        SimMetaData  = SimMetaData,
+        SimConstants = SimConstantsDamBreak
+    )
 end
