@@ -119,8 +119,28 @@ function GenerateM!(M, ZeroOffset,HalfPad, cells)
 end
 
 
-function sim_step(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
+@inline function fancy7th(x)
+    # todo tune the magic constant
+    # initial guess based on fast inverse sqrt trick but adjusted to compute x^(1/7)
+    t = copysign(reinterpret(Float64, 0x36cd000000000000 + reinterpret(UInt64,abs(x))÷7), x)
+    @fastmath for _ in 1:2
+        # newton's method for t^3 - x/t^4 = 0
+        t2 = t*t
+        t3 = t2*t
+        t4 = t2*t2
+        xot4 = x/t4
+        t = t - t*(t3 - xot4)/(4*t3 + 3*xot4)
+    end
+    t
+end
+
+#https://discourse.julialang.org/t/can-this-be-written-even-faster-cpu/109924/28
+@inline faux_fancy(ρ₀, P, invCb) = ρ₀ * ( fancy7th( 1 + (P * invCb)) - 1)
+
+
+function sim_step(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
     @unpack h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² = SimConstants
+    invCb = inv((c₀^2*ρ₀)/γ)
     
     #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/12
     d  = sqrt(abs(d2))
@@ -145,8 +165,20 @@ function sim_step(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, 
     dρdt⁺   = - ρᵢ * dot((m₀/ρⱼ) *  -vᵢⱼ ,  ∇ᵢWᵢⱼ)
     dρdt⁻   = - ρⱼ * dot((m₀/ρᵢ) *   vᵢⱼ , -∇ᵢWᵢⱼ)
 
-    dρdtI[i] += dρdt⁺
-    dρdtI[j] += dρdt⁻
+    
+
+    Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
+    ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, invCb)
+    Pⱼᵢᴴ  = -Pᵢⱼᴴ
+    ρⱼᵢᴴ  = faux_fancy(ρ₀, Pⱼᵢᴴ, invCb)
+
+    ρⱼᵢ   = ρⱼ - ρᵢ
+
+    Dᵢ  = h * c₀ * (m₀/ρⱼ) * 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * inv(d²+η²) * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ)
+    Dⱼ  = h * c₀ * (m₀/ρᵢ) * 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(d²+η²) * dot( xᵢⱼ, -∇ᵢWᵢⱼ)
+
+    dρdtI[i] += dρdt⁺ + Dᵢ
+    dρdtI[j] += dρdt⁻ + Dⱼ
 
     Pᵢ      =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
     Pⱼ      =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
@@ -168,7 +200,7 @@ function sim_step(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, 
     return nothing
 end
 
-function neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
+function neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
     # @inbounds for Cind_ ∈  TheCLL.UniqueCells
     @inbounds for Cind ∈ LoopLayout
 
@@ -183,13 +215,16 @@ function neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velo
                 d2 = distance_condition(Position[k_idx],Position[k_1up])
 
                 if d2 <= TheCLL.CutOffSquared
-                    @inline sim_step(k_idx , k_1up, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
+                    @inline sim_step(k_idx , k_1up, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
                 end
             end
         end
 
         for Sind ∈ TheCLL.Stencil
             Sind = Cind + CartesianIndex(Sind)
+
+            # Keep this in, because some cases break without it..
+            if !isassigned(TheCLL.Layout,Sind) continue end
 
             indices_in_cell_plus  = TheCLL.Layout[Sind]
 
@@ -201,7 +236,7 @@ function neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velo
                     d2  = distance_condition(Position[k1_idx],Position[k2_idx])
 
                     if d2 <= TheCLL.CutOffSquared
-                        @inline sim_step(k1_idx , k2_idx, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
+                        @inline sim_step(k1_idx , k2_idx, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
                     end
                 end
             end
@@ -227,7 +262,7 @@ end
                             k_1up = indices_in_cell[kj]
                             d2 = distance_condition(Position[k_idx],Position[k_1up])
                             if d2 <= TheCLL.CutOffSquared
-                                @inline sim_step(k_idx , k_1up, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
+                                @inline sim_step(k_idx , k_1up, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
                             end
                         end
                     end
@@ -243,7 +278,7 @@ end
                             k2_idx = indices_in_cell_plus[k2]
                             d2  = distance_condition(Position[k1_idx],Position[k2_idx])
                             if d2 <= TheCLL.CutOffSquared
-                                @inline sim_step(k1_idx , k2_idx, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
+                                @inline sim_step(k1_idx , k2_idx, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
                             end
                         end
                     end
@@ -279,7 +314,7 @@ function CustomCLL(TheCLL, LoopLayout, SimConstants, SimMetaData, MotionLimiter,
     dt₂ = dt * 0.5
 
     ResetArrays!( dρdtI, dvdtI)
-    neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
+    neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter)
     # neighbor_loop_threaded(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, nchunks)
 
     # Make loop, no allocs
@@ -293,7 +328,7 @@ function CustomCLL(TheCLL, LoopLayout, SimConstants, SimMetaData, MotionLimiter,
     LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
 
     ResetArrays!(dρdtIₙ⁺, dvdtIₙ⁺)
-    neighbor_loop(TheCLL, LoopLayout, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺)
+    neighbor_loop(TheCLL, LoopLayout, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, MotionLimiter)
     # neighbor_loop_threaded(TheCLL, LoopLayout, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, nchunks)
 
     
@@ -422,7 +457,8 @@ begin
     SimMetaData  = SimulationMetaData{D, T}(
                                     SimulationName="AllInOne", 
                                     SaveLocation=raw"E:\SecondApproach\Testing",
-                                    SimulationTime=0.765, #2, is not possible yet, since we do not kick particles out etc.
+                                    SimulationTime=0.765,#0.765, #2, is not possible yet, since we do not kick particles out etc.
+                                    OutputEach=0.02
     )
 
     # Initialze the constants to use
@@ -460,18 +496,11 @@ begin
     )
     )
 
+    SimConstantsWedge = SimulationConstants{T}()
     @profview RunSimulation(
-        FluidCSV     = "./input/FluidPoints_Dp0.02_5LAYERS.csv",
-        BoundCSV     = "./input/BoundaryPoints_Dp0.02_5LAYERS.csv",
+        FluidCSV     = "./input/StillWedge_Fluid_Dp0.02_LowResolution.csv",
+        BoundCSV     = "./input/StillWedge_Bound_Dp0.02_LowResolution_5LAYERS.csv",
         SimMetaData  = SimMetaData,
-        SimConstants = SimConstants
+        SimConstants = SimConstantsWedge
     )
-
-
-    # @profview RunSimulation(
-    #     FluidCSV     = "./input/StillWedge_Fluid_Dp0.02_LowResolution.csv",
-    #     BoundCSV     = "./input/StillWedge_Bound_Dp0.02_LowResolution_5LAYERS.csv",
-    #     SimMetaData  = SimMetaData,
-    #     SimConstants = SimConstants
-    # )
 end
