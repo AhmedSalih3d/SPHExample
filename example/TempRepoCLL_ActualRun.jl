@@ -265,12 +265,12 @@ function neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velo
     end
 end
 
-function neighbor_loop_threaded(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, nchunks=4)
+@inbounds function neighbor_loop_threaded(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, nchunks=4)
         # This loop is not sped up by @batch but only @threads?
         # secondly, who does this seem to work so well even though I do not use a reduction function?
         # I do v[i] += val and do not ensure non-locked values etc. Subhan Allah
         # OKAY so I actually do need a reduction, just for this case very hard to spot!
-        @inbounds @batch for ichunk in 1:nchunks
+        @batch for ichunk in 1:nchunks
                  for Cind_ ∈ getchunk(LoopLayout, ichunk; n=nchunks)
                     Cind = LoopLayout[Cind_]
                     # The indices in the cell are:
@@ -314,24 +314,7 @@ function updateCLL!(cll::CLL,Points)
     # Update Cells based on new positions of Points
     ExtractCells!(cll.Cells,Points, cll.CutOff, Val(getsvecD(eltype(Points))))
     
-    # OUTPUTTING KERNEL AND KERNEL GRADIENT IS BROKEN WHEN USING
-    # SYMDIFF! COMPARED TO USING UNION
-    # I SUSPECT IT IS DUE += NATURE, NOT LOOPING OVER UNNECCESARY CELLS IN SENCE TO COMPLETE THE RESUTLS
-    # IF ONE WANTS THESE VALUES, ONE MUST MAKE LIST OF INTERACTION ETC. BUT THIS BASICALLY DOUBLES THE CODE SPEED
-    # BY USING SYMDIFF, WE CAN ALWAYS CALCULATE IT AT THE END IF WE WANT
-    # The reason symdiff is so faster, is that in cases where no particles have moved into new cells, then
-    # symdiff returns an empty collection - this then skips an iteration? naaah
-    #symdiff!(cll.UniqueCells,cll.Cells[unique(i -> cll.Cells[i], eachindex(cll.Cells))])
-    # union!(cll.UniqueCells,unique(cll.Cells))
-
-    # Recalculate the Layout with updated Cells
-    #cll.Nmax       = maximum(reinterpret(Int, @view(Cells[:]))) + cll.ZeroOffset
-
     GenerateM!(cll.Layout, cll.ZeroOffset, cll.HalfPad, cll.Cells)
-
-    # println(cll.Layout)
-    # println(sum(isempty.(cll.Layout)))
-    # println(sum(.!isempty.(cll.Layout)))
 
     return nothing
 end
@@ -352,8 +335,8 @@ function CustomCLL(TheCLL, LoopLayout, SimConstants, SimMetaData, MotionLimiter,
     dt₂ = dt * 0.5
 
     ResetArrays!( dρdtI, dvdtI)
-    # neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
-    neighbor_loop_threaded(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, nchunks)
+    neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI)
+    # neighbor_loop_threaded(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, nchunks)
 
     # Make loop, no allocs
     @batch for i in eachindex(dvdtI)
@@ -366,8 +349,8 @@ function CustomCLL(TheCLL, LoopLayout, SimConstants, SimMetaData, MotionLimiter,
     LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
 
     ResetArrays!(dρdtIₙ⁺, dvdtIₙ⁺)
-    # neighbor_loop(TheCLL, LoopLayout, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺)
-    neighbor_loop_threaded(TheCLL, LoopLayout, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, nchunks)
+    neighbor_loop(TheCLL, LoopLayout, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺)
+    # neighbor_loop_threaded(TheCLL, LoopLayout, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, nchunks)
 
     
     DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
