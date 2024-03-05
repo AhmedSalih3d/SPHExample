@@ -38,7 +38,9 @@ end
     Cells::Vector{NTuple{D, Int64}}              = ExtractCells(Points,CutOff,Val(getsvecD(eltype(Points))))
     Nmax::Int64                                  = maximum(reinterpret(Int,@view(Cells[:]))) + ZeroOffset #Find largest dimension in x,y,z for the Cells
 
-    UniqueCells::Vector{NTuple{D, Int64}}        = unique(Cells) #just do all cells for now, optimize later
+    UniqueIndices::Vector{Int64}                 = unique(i -> Cells[i], eachindex(Cells))
+    MaxValidUniqueIndex::Int64                   = length(UniqueIndices)
+    UniqueCells::Vector{NTuple{D, Int64}}        = Cells[UniqueIndices] #just do all cells for now, optimize later
 
     Layout::Array{Vector{Int64}, D}              = GenerateM(Nmax,ZeroOffset,HalfPad,Padding,Cells,Val(getsvecD(eltype(Points))))
 end
@@ -397,7 +399,7 @@ function updateCLL!(cll::CLL,Points)
     # BY USING SYMDIFF, WE CAN ALWAYS CALCULATE IT AT THE END IF WE WANT
     # The reason symdiff is so faster, is that in cases where no particles have moved into new cells, then
     # symdiff returns an empty collection - this then skips an iteration? naaah
-    symdiff!(cll.UniqueCells,unique(cll.Cells))
+    symdiff!(cll.UniqueCells,cll.Cells[unique(i -> cll.Cells[i], eachindex(cll.Cells))])
 
     # Recalculate the Layout with updated Cells
     #cll.Nmax       = maximum(reinterpret(Int, @view(Cells[:]))) + cll.ZeroOffset
