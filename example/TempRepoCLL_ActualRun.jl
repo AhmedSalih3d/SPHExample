@@ -18,6 +18,9 @@ using ChunkSplitters
 import Base.Threads: nthreads, @threads
 include("../src/ProduceVTP.jl")
 
+function ThreadedAllocator(values,N=nthreads())
+    return [zeros(eltype(values),length(values)) for _ in 1:N]
+end
 
 function ConstructGravitySVector(_::SVector{N, T}, value) where {N, T}
     return SVector{N, T}(ntuple(i -> i == N ? value : 0, N))
@@ -504,6 +507,12 @@ function RunSimulation(;FluidCSV::String,
     dρdtIₙ⁺           = zeros(FloatType, NumberOfPoints)
     dvdtI              = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
     dvdtIₙ⁺            = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
+
+    # Derivatives threaded
+    dρdtI_threaded   = ThreadedAllocator(dρdtI  ) 
+    dρdtIₙ⁺_threaded  = ThreadedAllocator(dρdtIₙ⁺) 
+    dvdtI_threaded   = ThreadedAllocator(dvdtI  ) 
+    dvdtIₙ⁺_threaded  = ThreadedAllocator(dvdtIₙ⁺) 
 
     # Half point values for predictor-corrector algorithm
     Velocityₙ⁺ = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
