@@ -199,8 +199,7 @@ function sim_step(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, 
     # Kernel[i] += W
     # Kernel[j] += W
 
-    Fac = αD*5*(q-2)^3*q / (8h*(q*h+1e-6))
-    ∇ᵢWᵢⱼ = Fac * xᵢⱼ
+    @fastpow ∇ᵢWᵢⱼ = (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
     # KernelGradient[i] +=  ∇ᵢWᵢⱼ
     # KernelGradient[j] += -∇ᵢWᵢⱼ
 
