@@ -222,6 +222,10 @@ end
     dvdtI[i] += dvdt⁺
     dvdtI[j] += dvdt⁻
 
+    # Particle Shifting
+    ∇Cᵢ[i]   += (m₀/ρⱼ) *  ∇ᵢWᵢⱼ
+    ∇Cᵢ[j]   += (m₀/ρᵢ) * -∇ᵢWᵢⱼ
+
     return nothing
 end
 
@@ -299,7 +303,7 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
     dt  = Δt(Position, Velocity, dvdtIₙ⁺, SimConstants)
     dt₂ = dt * 0.5
 
-    ResetArrays!(KernelGradient, dρdtI, dvdtI)
+    ResetArrays!(∇Cᵢ, KernelGradient, dρdtI, dvdtI)
     neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, ∇Cᵢ, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter,  BoolDDT)
 
     # Make loop, no allocs
@@ -312,7 +316,7 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
 
     LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
 
-    ResetArrays!(KernelGradient, dρdtIₙ⁺, dvdtIₙ⁺)
+    ResetArrays!(∇Cᵢ, KernelGradient, dρdtIₙ⁺, dvdtIₙ⁺)
     neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, ∇Cᵢ, KernelGradient, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, MotionLimiter,  BoolDDT)
     
     DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
@@ -402,7 +406,7 @@ function RunSimulation(;FluidCSV::String,
    
 
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
-    PolyDataTemplate(SaveLocation_, to_3d(Position), ["KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], KernelGradient, Density, Pressureᵢ, Velocity, dvdtIₙ⁺)
+    PolyDataTemplate(SaveLocation_, to_3d(Position), ["ParticleConcentration", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], ∇Cᵢ, KernelGradient, Density, Pressureᵢ, Velocity, dvdtIₙ⁺)
 
     R = 2*h
     TheCLL = CLL(Points=Position,CutOff=R) #line is good idea at times
@@ -427,7 +431,7 @@ function RunSimulation(;FluidCSV::String,
             OutputIterationCounter += 1
             SaveLocation_= SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp"
             Pressure!(Pressureᵢ,Density,SimConstants)
-            PolyDataTemplate(SaveLocation_, to_3d(Position), ["KernelGradient", "Density", "Pressure", "Velocity", "Acceleration"], KernelGradient, Density, Pressureᵢ, Velocity, dvdtIₙ⁺)
+            PolyDataTemplate(SaveLocation_, to_3d(Position), ["ParticleConcentration", "KernelGradient", "Density", "Pressure", "Velocity", "Acceleration"], ∇Cᵢ, KernelGradient, Density, Pressureᵢ, Velocity, dvdtIₙ⁺)
         end
 
         @timeit HourGlass "3 Next step" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
