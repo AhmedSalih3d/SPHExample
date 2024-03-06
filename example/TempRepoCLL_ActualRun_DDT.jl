@@ -283,8 +283,7 @@ function EquationOfState(ρ,c₀,γ,ρ₀)
     return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
 end
 
-function CustomCLL(TheCLL, LoopLayout, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
-    BoolDDT = true
+function CustomCLL(TheCLL, LoopLayout, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺; BoolDDT = true)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, δᵩ, CFL, η² = SimConstants
 
     dt  = Δt(Position, Velocity, dvdtIₙ⁺, SimConstants)
@@ -329,6 +328,7 @@ function RunSimulation(;FluidCSV::String,
     BoundCSV::String,
     SimMetaData::SimulationMetaData{Dimensions, FloatType},
     SimConstants::SimulationConstants,
+    BoolDDT = true,
 ) where {Dimensions,FloatType}
 
     # Unpack the relevant simulation meta data
@@ -401,7 +401,8 @@ function RunSimulation(;FluidCSV::String,
         
         @timeit HourGlass "0 Update particles in cells" updateCLL!(TheCLL, Position)
         # inline removes 96 bytes alloc..
-        @timeit HourGlass "1 Main simulation loop" CustomCLL(TheCLL, LoopLayout, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺)
+        @timeit HourGlass "1 Main simulation loop" CustomCLL(TheCLL, LoopLayout, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺; 
+        BoolDDT)
         
         OutputCounter += SimMetaData.CurrentTimeStep
         @timeit HourGlass "2 Output data" if OutputCounter >= SimMetaData.OutputEach
@@ -485,6 +486,7 @@ begin
         FluidCSV     = "./input/FluidPoints_Dp0.02_5LAYERS.csv",
         BoundCSV     = "./input/BoundaryPoints_Dp0.02_5LAYERS.csv",
         SimMetaData  = SimMetaData,
-        SimConstants = SimConstantsDamBreak
+        SimConstants = SimConstantsDamBreak,
+        BoolDDT      = true
     )
 end
