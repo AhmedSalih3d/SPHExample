@@ -223,12 +223,20 @@ end
     dvdtI[j] += dvdt⁻
 
     # Particle Shifting
+    # if BoolShifting
+    #     ∇Cᵢ[i]   += (m₀/ρⱼ) *  ∇ᵢWᵢⱼ
+    #     ∇Cᵢ[j]   += (m₀/ρᵢ) * -∇ᵢWᵢⱼ
+
+    #     ∇◌rᵢ[i]  += (m₀/ρⱼ) * dot(xᵢⱼ , ∇ᵢWᵢⱼ)
+    #     ∇◌rᵢ[j]  += (m₀/ρᵢ) * dot(-xᵢⱼ ,-∇ᵢWᵢⱼ)
+    # end
+
     if BoolShifting
         ∇Cᵢ[i]   += (m₀/ρⱼ) *  ∇ᵢWᵢⱼ
         ∇Cᵢ[j]   += (m₀/ρᵢ) * -∇ᵢWᵢⱼ
 
-        ∇◌rᵢ[i]  += (m₀/ρⱼ) * dot(xᵢⱼ , ∇ᵢWᵢⱼ)
-        ∇◌rᵢ[j]  += (m₀/ρᵢ) * dot(-xᵢⱼ ,-∇ᵢWᵢⱼ)
+        ∇◌rᵢ[i]  += -(m₀/ρⱼ) * dot(xᵢⱼ , ∇ᵢWᵢⱼ)
+        ∇◌rᵢ[j]  += -(m₀/ρᵢ) * dot(-xᵢⱼ ,-∇ᵢWᵢⱼ)
     end
 
     return nothing
@@ -338,7 +346,7 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
         ShiftingCondition      = (∇◌rᵢ[i] - A_FST) < 0
         δxᵢ                    = - A_FSC * A * h * norm(Velocity[i]) * dt * ∇Cᵢ[i] * ShiftingCondition + -A * h * norm(Velocity[i]) * dt * ∇Cᵢ[i] * (ShiftingCondition == 0)
 
-        Position[i]           += ((Velocity[i] + (Velocity[i] - dvdtIₙ⁺[i] * dt * MotionLimiter[i])) / 2) * dt * MotionLimiter[i]
+        Position[i]           += (((Velocity[i] + (Velocity[i] - dvdtIₙ⁺[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
     end
 
     SimMetaData.Iteration      += 1
