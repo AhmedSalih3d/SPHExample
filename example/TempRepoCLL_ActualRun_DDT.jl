@@ -140,14 +140,22 @@ end
     @fastpow return (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
 end
 
+# Combine into terms, this way can utilize slight symmetry
+@inline function dρᵢdt_dρⱼdt_(ρᵢ,ρⱼ,m₀,vᵢⱼ,∇ᵢWᵢⱼ)
+    #original: - ρᵢ * dot((m₀/ρⱼ) *  -vᵢⱼ ,  ∇ᵢWᵢⱼ)
+    symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ) # = dot(vᵢⱼ , -∇ᵢWᵢⱼ)
+    dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  symmetric_term
+    dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  symmetric_term
+
+    return dρdt⁺, dρdt⁻
+end
+
 #https://discourse.julialang.org/t/can-this-be-written-even-faster-cpu/109924/28
 @inline faux_fancy(ρ₀, P, invCb) = ρ₀ * ( fancy7th( 1 + (P * invCb)) - 1)
 
 
 @inbounds function sim_step(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter,BoolDDT=true)
-    @unpack h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, g, η² = SimConstants
-    invCb = inv((c₀^2*ρ₀)/γ)
-    
+    @unpack h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, Cb⁻¹, g, η² = SimConstants
     #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/12
     d  = sqrt(abs(d2))
     d² = d*d
@@ -155,6 +163,9 @@ end
     xᵢ  = Position[i]
     xⱼ  = Position[j]
     xᵢⱼ = xᵢ - xⱼ
+
+    invd²η² = inv(d²+η²) 
+    
 
     q  = d  * h⁻¹ #clamp(d  * h⁻¹,0.0,2.0), not needed when checking d2 < CutOffSquared before hand
 
@@ -167,21 +178,20 @@ end
     vⱼ      = Velocity[j]
     vᵢⱼ     = vᵢ - vⱼ
 
-    dρdt⁺   = - ρᵢ * dot((m₀/ρⱼ) *  -vᵢⱼ ,  ∇ᵢWᵢⱼ)
-    dρdt⁻   = - ρⱼ * dot((m₀/ρᵢ) *   vᵢⱼ , -∇ᵢWᵢⱼ)
-
-    Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
-    ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, invCb)
-    Pⱼᵢᴴ  = -Pᵢⱼᴴ
-    ρⱼᵢᴴ  = faux_fancy(ρ₀, Pⱼᵢᴴ, invCb)
-
-    ρⱼᵢ   = ρⱼ - ρᵢ
+    dρdt⁺, dρdt⁻ = dρᵢdt_dρⱼdt_(ρᵢ,ρⱼ,m₀,vᵢⱼ,∇ᵢWᵢⱼ)
 
     # Density diffusion
     if BoolDDT
+        Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
+        ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
+        Pⱼᵢᴴ  = -Pᵢⱼᴴ
+        ρⱼᵢᴴ  = faux_fancy(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
+    
+        ρⱼᵢ   = ρⱼ - ρᵢ
+
         MLcond = MotionLimiter[i] * MotionLimiter[j]
-        Dᵢ  = h * c₀ * (m₀/ρⱼ) * 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * inv(d²+η²) * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond
-        Dⱼ  = h * c₀ * (m₀/ρᵢ) * 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(d²+η²) * dot( xᵢⱼ, -∇ᵢWᵢⱼ) * MLcond
+        Dᵢ  = h * c₀ * (m₀/ρⱼ) * 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond
+        Dⱼ  = h * c₀ * (m₀/ρᵢ) * 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * invd²η² * dot( xᵢⱼ, -∇ᵢWᵢⱼ) * MLcond
 
         dρdtI[i] += dρdt⁺ + Dᵢ
         dρdtI[j] += dρdt⁻ + Dⱼ
@@ -198,7 +208,7 @@ end
 
     cond      = dot(vᵢⱼ, xᵢⱼ)
     cond_bool = cond < 0.0
-    μᵢⱼ       = h*cond/(d²+η²)
+    μᵢⱼ       = h*cond * invd²η²
     Πᵢⱼ       = cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ
 
     dvdt⁺ = - m₀ * ( Pfac + Πᵢⱼ) *  ∇ᵢWᵢⱼ
