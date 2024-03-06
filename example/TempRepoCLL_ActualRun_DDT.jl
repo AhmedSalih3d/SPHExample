@@ -156,7 +156,7 @@ end
 @inline faux_fancy(ρ₀, P, invCb) = ρ₀ * ( fancy7th( 1 + (P * invCb)) - 1)
 
 
-@inbounds function sim_step(i , j, d2, SimConstants, ∇Cᵢ, ∇◌rᵢ, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter,BoolDDT=true)
+@inbounds function sim_step(i , j, d2, SimConstants, ∇Cᵢ, ∇◌rᵢ, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter,BoolDDT,BoolShifting)
     @unpack h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, Cb⁻¹, g, η² = SimConstants
     #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/12
     d  = sqrt(abs(d2))
@@ -223,16 +223,18 @@ end
     dvdtI[j] += dvdt⁻
 
     # Particle Shifting
-    ∇Cᵢ[i]   += (m₀/ρⱼ) *  ∇ᵢWᵢⱼ
-    ∇Cᵢ[j]   += (m₀/ρᵢ) * -∇ᵢWᵢⱼ
+    if BoolShifting
+        ∇Cᵢ[i]   += (m₀/ρⱼ) *  ∇ᵢWᵢⱼ
+        ∇Cᵢ[j]   += (m₀/ρᵢ) * -∇ᵢWᵢⱼ
 
-    ∇◌rᵢ[i]  += (m₀/ρⱼ) * dot(xᵢⱼ , ∇ᵢWᵢⱼ)
-    ∇◌rᵢ[j]  += (m₀/ρᵢ) * dot(-xᵢⱼ ,-∇ᵢWᵢⱼ)
+        ∇◌rᵢ[i]  += (m₀/ρⱼ) * dot(xᵢⱼ , ∇ᵢWᵢⱼ)
+        ∇◌rᵢ[j]  += (m₀/ρᵢ) * dot(-xᵢⱼ ,-∇ᵢWᵢⱼ)
+    end
 
     return nothing
 end
 
-@inbounds function neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, ∇Cᵢ, ∇◌rᵢ, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT=true)
+@inbounds function neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, ∇Cᵢ, ∇◌rᵢ, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT=true, BoolShifting=true)
     nchunks = nthreads()
     @threads for ichunk in 1:nchunks
         for Cind_ ∈ getchunk(LoopLayout, ichunk; n=nchunks)
@@ -250,7 +252,7 @@ end
                         d2 = distance_condition(Position[k_idx],Position[k_1up])
 
                         if d2 < TheCLL.CutOffSquared
-                            @inbounds @inline sim_step(k_idx , k_1up, d2, SimConstants, ∇Cᵢ, ∇◌rᵢ, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT)
+                            @inbounds @inline sim_step(k_idx , k_1up, d2, SimConstants, ∇Cᵢ, ∇◌rᵢ, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT, BoolShifting)
                         end
                     end
                 end
@@ -271,7 +273,7 @@ end
                             d2  = distance_condition(Position[k1_idx],Position[k2_idx])
         
                             if d2 < TheCLL.CutOffSquared
-                                @inbounds @inline sim_step(k1_idx , k2_idx, d2, SimConstants, ∇Cᵢ, ∇◌rᵢ, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT)
+                                @inbounds @inline sim_step(k1_idx , k2_idx, d2, SimConstants, ∇Cᵢ, ∇◌rᵢ, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT, BoolShifting)
                             end
                         end
                     end
@@ -300,14 +302,14 @@ function EquationOfState(ρ,c₀,γ,ρ₀)
     return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
 end
 
-function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺; BoolDDT = true)
+function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺; BoolDDT, BoolShifting)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, δᵩ, CFL, η² = SimConstants
 
     dt  = Δt(Position, Velocity, dvdtIₙ⁺, SimConstants)
     dt₂ = dt * 0.5
 
     ResetArrays!(∇Cᵢ, ∇◌rᵢ, KernelGradient, dρdtI, dvdtI)
-    neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, ∇Cᵢ, ∇◌rᵢ, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter,  BoolDDT)
+    neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, ∇Cᵢ, ∇◌rᵢ, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter,  BoolDDT, BoolShifting)
 
     # Make loop, no allocs
     @inbounds @batch for i in eachindex(dvdtI)
@@ -320,7 +322,7 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
     LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
 
     ResetArrays!(∇Cᵢ, ∇◌rᵢ, KernelGradient, dρdtIₙ⁺, dvdtIₙ⁺)
-    neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, ∇Cᵢ, ∇◌rᵢ, KernelGradient, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, MotionLimiter,  BoolDDT)
+    neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, ∇Cᵢ, ∇◌rᵢ, KernelGradient, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, MotionLimiter,  BoolDDT, BoolShifting)
     
     DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
     LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
@@ -345,7 +347,8 @@ function RunSimulation(;FluidCSV::String,
     BoundCSV::String,
     SimMetaData::SimulationMetaData{Dimensions, FloatType},
     SimConstants::SimulationConstants,
-    BoolDDT = true
+    BoolDDT = true,
+    BoolShifting = true
 ) where {Dimensions,FloatType}
 
     # Unpack the relevant simulation meta data
@@ -427,7 +430,7 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "0 Update particles in cells" updateCLL!(TheCLL, Position)
         # inline removes 96 bytes alloc..
         @timeit HourGlass "1 Main simulation loop" CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺; 
-        BoolDDT)
+        BoolDDT, BoolShifting)
         
         OutputCounter += SimMetaData.CurrentTimeStep
         @timeit HourGlass "2 Output data" if OutputCounter >= SimMetaData.OutputEach
@@ -503,7 +506,9 @@ begin
         FluidCSV     = "./input/StillWedge_Fluid_Dp0.02_LowResolution.csv",
         BoundCSV     = "./input/StillWedge_Bound_Dp0.02_LowResolution_5LAYERS.csv",
         SimMetaData  = SimMetaData,
-        SimConstants = SimConstantsWedge
+        SimConstants = SimConstantsWedge,
+        BoolDDT      = true,
+        BoolShifting = true
     )
 
     SimConstantsDamBreak = SimulationConstants{T}()
