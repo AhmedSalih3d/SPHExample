@@ -43,7 +43,7 @@ end
 
 
 @inline function distance_condition(p1::SVector, p2::SVector)
-    @fastpow d2 = sum((p1 - p2) .* (p1 - p2))
+    return dot(p1 - p2, p1 - p2)
 end
 
 # https://jaantollander.com/post/searching-for-fixed-radius-near-neighbors-with-cell-lists-algorithm-in-julia-language/#definition
@@ -229,13 +229,13 @@ end
         indices_in_cell = TheCLL.Layout[Cind]
 
         n_idx_cells = length(indices_in_cell)
-        @inbounds for ki = 1:n_idx_cells-1 #this line gives 64 bytes alloc unsure why
+        @inbounds for ki = 1:n_idx_cells-1
             k_idx = indices_in_cell[ki]
             @inbounds for kj = (ki+1):n_idx_cells
                 k_1up = indices_in_cell[kj]
                 d2 = distance_condition(Position[k_idx],Position[k_1up])
 
-                if d2 <= TheCLL.CutOffSquared
+                if d2 < TheCLL.CutOffSquared
                     @inbounds @inline sim_step(k_idx , k_1up, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT)
                 end
             end
@@ -256,7 +256,7 @@ end
                     k2_idx = indices_in_cell_plus[k2]
                     d2  = distance_condition(Position[k1_idx],Position[k2_idx])
 
-                    if d2 <= TheCLL.CutOffSquared
+                    if d2 < TheCLL.CutOffSquared
                         @inbounds @inline sim_step(k1_idx , k2_idx, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT)
                     end
                 end
