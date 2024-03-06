@@ -220,6 +220,8 @@ end
     dvdt⁺ = - m₀ * ( Pfac ) *  ∇ᵢWᵢⱼ
     dvdt⁻ = - dvdt⁺ #- m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ  
 
+    #https://www.mdpi.com/2073-4441/12/11/3189?type=check_update&version=2
+    #A WCSPH Particle Shifting Strategy for Simulating Violent Free Surface Flows
     dvdtI[i] += dvdt⁺ + α*h*c₀*(ρ₀/ρᵢ) * (dot(vⱼ - vᵢ, xⱼ - xᵢ) / (dot(xⱼ - xᵢ, xⱼ - xᵢ) + η²)) *  ∇ᵢWᵢⱼ * (m₀/ρⱼ)  
     dvdtI[j] += dvdt⁻ + α*h*c₀*(ρ₀/ρⱼ) * (dot(vᵢ - vⱼ, xᵢ - xⱼ) / (dot(xᵢ - xⱼ, xᵢ - xⱼ) + η²)) * -∇ᵢWᵢⱼ * (m₀/ρᵢ) 
 
