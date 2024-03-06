@@ -221,49 +221,97 @@ end
 end
 
 @inbounds function neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT=true)
-        # @inbounds @threads for Cind ∈ LoopLayout
-        @inbounds for Cind ∈ LoopLayout
+    nchunks = nthreads()
+    @threads for ichunk in 1:nchunks
+        for Cind_ ∈ getchunk(LoopLayout, ichunk; n=nchunks)
+            for Ci ∈ Cind_
+                Cind = LoopLayout[Ci]
+                if !isassigned(TheCLL.Layout,Cind) continue end
+                # The indices in the cell are:
+                indices_in_cell = TheCLL.Layout[Cind]
 
-        if !isassigned(TheCLL.Layout,Cind) continue end
-        # The indices in the cell are:
-        indices_in_cell = TheCLL.Layout[Cind]
+                n_idx_cells = length(indices_in_cell)
+                @inbounds for ki = 1:n_idx_cells-1
+                    k_idx = indices_in_cell[ki]
+                    @inbounds for kj = (ki+1):n_idx_cells
+                        k_1up = indices_in_cell[kj]
+                        d2 = distance_condition(Position[k_idx],Position[k_1up])
 
-        n_idx_cells = length(indices_in_cell)
-        @inbounds for ki = 1:n_idx_cells-1
-            k_idx = indices_in_cell[ki]
-            @inbounds for kj = (ki+1):n_idx_cells
-                k_1up = indices_in_cell[kj]
-                d2 = distance_condition(Position[k_idx],Position[k_1up])
-
-                if d2 < TheCLL.CutOffSquared
-                    @inbounds @inline sim_step(k_idx , k_1up, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT)
+                        if d2 < TheCLL.CutOffSquared
+                            @inbounds @inline sim_step(k_idx , k_1up, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT)
+                        end
+                    end
                 end
-            end
-        end
-
-        @inbounds for Sind_ ∈ Stencil
-            Sind = Cind + Sind_
-
-            # Keep this in, because some cases break without it..
-            if !isassigned(TheCLL.Layout,Sind) continue end
-
-            indices_in_cell_plus  = TheCLL.Layout[Sind]
-
-            # Here a double loop to compare indices_in_cell[k] to all possible neighbours
-            @inbounds for k1 ∈ eachindex(indices_in_cell)
-                k1_idx = indices_in_cell[k1]
-                @inbounds for k2 ∈ eachindex(indices_in_cell_plus)
-                    k2_idx = indices_in_cell_plus[k2]
-                    d2  = distance_condition(Position[k1_idx],Position[k2_idx])
-
-                    if d2 < TheCLL.CutOffSquared
-                        @inbounds @inline sim_step(k1_idx , k2_idx, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT)
+        
+                for Sind_ ∈ Stencil
+                        Sind = Cind + Sind_
+            
+                        # Keep this in, because some cases break without it..
+                        if !isassigned(TheCLL.Layout,Sind) continue end
+            
+                        indices_in_cell_plus  = TheCLL.Layout[Sind]
+            
+                        # Here a double loop to compare indices_in_cell[k] to all possible neighbours
+                        for k1 ∈ eachindex(indices_in_cell)
+                            k1_idx = indices_in_cell[k1]
+                            for k2 ∈ eachindex(indices_in_cell_plus)
+                                k2_idx = indices_in_cell_plus[k2]
+                                d2  = distance_condition(Position[k1_idx],Position[k2_idx])
+            
+                                if d2 < TheCLL.CutOffSquared
+                                    @inbounds @inline sim_step(k1_idx , k2_idx, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT)
+                                end
+                            end
+                        end
                     end
                 end
             end
-        end
-    end
 end
+
+#         # @inbounds @threads for Cind ∈ LoopLayout
+#         @inbounds for Cind ∈ LoopLayout
+
+#         if !isassigned(TheCLL.Layout,Cind) continue end
+#         # The indices in the cell are:
+#         indices_in_cell = TheCLL.Layout[Cind]
+
+#         n_idx_cells = length(indices_in_cell)
+#         @inbounds for ki = 1:n_idx_cells-1
+#             k_idx = indices_in_cell[ki]
+#             @inbounds for kj = (ki+1):n_idx_cells
+#                 k_1up = indices_in_cell[kj]
+#                 d2 = distance_condition(Position[k_idx],Position[k_1up])
+
+#                 if d2 < TheCLL.CutOffSquared
+#                     @inbounds @inline sim_step(k_idx , k_1up, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT)
+#                 end
+#             end
+#         end
+
+#         @inbounds for Sind_ ∈ Stencil
+#             Sind = Cind + Sind_
+
+#             # Keep this in, because some cases break without it..
+#             if !isassigned(TheCLL.Layout,Sind) continue end
+
+#             indices_in_cell_plus  = TheCLL.Layout[Sind]
+
+#             # Here a double loop to compare indices_in_cell[k] to all possible neighbours
+#             @inbounds for k1 ∈ eachindex(indices_in_cell)
+#                 k1_idx = indices_in_cell[k1]
+#                 @inbounds for k2 ∈ eachindex(indices_in_cell_plus)
+#                     k2_idx = indices_in_cell_plus[k2]
+#                     d2  = distance_condition(Position[k1_idx],Position[k2_idx])
+
+#                     if d2 < TheCLL.CutOffSquared
+#                         @inbounds @inline sim_step(k1_idx , k2_idx, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT)
+#                     end
+#                 end
+#             end
+#         end
+#     end
+end
+
 
 
 function updateCLL!(cll::CLL,Points)
