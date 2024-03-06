@@ -13,6 +13,8 @@ using ProgressMeter
 using TimerOutputs
 using FastPow
 using ChunkSplitters
+import Cthulhu as Deep
+
 import Base.Threads: nthreads, @threads
 include("../src/ProduceVTP.jl")
 
@@ -244,72 +246,29 @@ end
                 end
         
                 for Sind_ ∈ Stencil
-                        Sind = Cind + Sind_
-            
-                        # Keep this in, because some cases break without it..
-                        if !isassigned(TheCLL.Layout,Sind) continue end
-            
-                        indices_in_cell_plus  = TheCLL.Layout[Sind]
-            
-                        # Here a double loop to compare indices_in_cell[k] to all possible neighbours
-                        for k1 ∈ eachindex(indices_in_cell)
-                            k1_idx = indices_in_cell[k1]
-                            for k2 ∈ eachindex(indices_in_cell_plus)
-                                k2_idx = indices_in_cell_plus[k2]
-                                d2  = distance_condition(Position[k1_idx],Position[k2_idx])
-            
-                                if d2 < TheCLL.CutOffSquared
-                                    @inbounds @inline sim_step(k1_idx , k2_idx, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT)
-                                end
+                    Sind = Cind + Sind_
+        
+                    # Keep this in, because some cases break without it..
+                    if !isassigned(TheCLL.Layout,Sind) continue end
+        
+                    indices_in_cell_plus  = TheCLL.Layout[Sind]
+        
+                    # Here a double loop to compare indices_in_cell[k] to all possible neighbours
+                    for k1 ∈ eachindex(indices_in_cell)
+                        k1_idx = indices_in_cell[k1]
+                        for k2 ∈ eachindex(indices_in_cell_plus)
+                            k2_idx = indices_in_cell_plus[k2]
+                            d2  = distance_condition(Position[k1_idx],Position[k2_idx])
+        
+                            if d2 < TheCLL.CutOffSquared
+                                @inbounds @inline sim_step(k1_idx , k2_idx, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT)
                             end
                         end
                     end
                 end
             end
-end
-
-#         # @inbounds @threads for Cind ∈ LoopLayout
-#         @inbounds for Cind ∈ LoopLayout
-
-#         if !isassigned(TheCLL.Layout,Cind) continue end
-#         # The indices in the cell are:
-#         indices_in_cell = TheCLL.Layout[Cind]
-
-#         n_idx_cells = length(indices_in_cell)
-#         @inbounds for ki = 1:n_idx_cells-1
-#             k_idx = indices_in_cell[ki]
-#             @inbounds for kj = (ki+1):n_idx_cells
-#                 k_1up = indices_in_cell[kj]
-#                 d2 = distance_condition(Position[k_idx],Position[k_1up])
-
-#                 if d2 < TheCLL.CutOffSquared
-#                     @inbounds @inline sim_step(k_idx , k_1up, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT)
-#                 end
-#             end
-#         end
-
-#         @inbounds for Sind_ ∈ Stencil
-#             Sind = Cind + Sind_
-
-#             # Keep this in, because some cases break without it..
-#             if !isassigned(TheCLL.Layout,Sind) continue end
-
-#             indices_in_cell_plus  = TheCLL.Layout[Sind]
-
-#             # Here a double loop to compare indices_in_cell[k] to all possible neighbours
-#             @inbounds for k1 ∈ eachindex(indices_in_cell)
-#                 k1_idx = indices_in_cell[k1]
-#                 @inbounds for k2 ∈ eachindex(indices_in_cell_plus)
-#                     k2_idx = indices_in_cell_plus[k2]
-#                     d2  = distance_condition(Position[k1_idx],Position[k2_idx])
-
-#                     if d2 < TheCLL.CutOffSquared
-#                         @inbounds @inline sim_step(k1_idx , k2_idx, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT)
-#                     end
-#                 end
-#             end
-#         end
-#     end
+        end
+    end
 end
 
 
@@ -409,7 +368,7 @@ function RunSimulation(;FluidCSV::String,
     # Preallocate simulation arrays
     NumberOfPoints = length(points)
     
-        # State variables
+    # State variables
     Position          = convert(Vector{SVector{Dimensions,FloatType}},points.V)
     Velocity          = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
     Density           = deepcopy([density_fluid;density_bound])
@@ -485,7 +444,7 @@ begin
     SimMetaData  = SimulationMetaData{D, T}(
                                     SimulationName="AllInOne", 
                                     SaveLocation=raw"E:\SecondApproach\Testing",
-                                    SimulationTime=4,#0.765, #2, is not possible yet, since we do not kick particles out etc.
+                                    SimulationTime=4,
                                     OutputEach=0.01
     )
 
@@ -522,20 +481,28 @@ begin
     )
     )
 
-    # SimConstantsWedge = SimulationConstants{T}()
-    # @profview RunSimulation(
-    #     FluidCSV     = "./input/StillWedge_Fluid_Dp0.02_LowResolution.csv",
-    #     BoundCSV     = "./input/StillWedge_Bound_Dp0.02_LowResolution_5LAYERS.csv",
-    #     SimMetaData  = SimMetaData,
-    #     SimConstants = SimConstantsWedge
-    # )
+    SimConstantsWedge = SimulationConstants{T}()
+    @profview RunSimulation(
+        FluidCSV     = "./input/StillWedge_Fluid_Dp0.02_LowResolution.csv",
+        BoundCSV     = "./input/StillWedge_Bound_Dp0.02_LowResolution_5LAYERS.csv",
+        SimMetaData  = SimMetaData,
+        SimConstants = SimConstantsWedge
+    )
 
     SimConstantsDamBreak = SimulationConstants{T}()
-    @profview RunSimulation(
-        FluidCSV     = "./input/FluidPoints_Dp0.02_5LAYERS.csv",
-        BoundCSV     = "./input/BoundaryPoints_Dp0.02_5LAYERS.csv",
-        SimMetaData  = SimMetaData,
-        SimConstants = SimConstantsDamBreak,
-        BoolDDT      = true
-    )
+    # @profview RunSimulation(
+    #     FluidCSV     = "./input/FluidPoints_Dp0.02_5LAYERS.csv",
+    #     BoundCSV     = "./input/BoundaryPoints_Dp0.02_5LAYERS.csv",
+    #     SimMetaData  = SimMetaData,
+    #     SimConstants = SimConstantsDamBreak,
+    #     BoolDDT      = true
+    # )
+
+    # RunSimulation(
+    #     FluidCSV     = "./input/FluidPoints_Dp0.02_5LAYERS.csv",
+    #     BoundCSV     = "./input/BoundaryPoints_Dp0.02_5LAYERS.csv",
+    #     SimMetaData  = SimMetaData,
+    #     SimConstants = SimConstantsDamBreak,
+    #     BoolDDT      = true
+    # )
 end
