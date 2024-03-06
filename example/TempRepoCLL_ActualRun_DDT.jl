@@ -220,7 +220,7 @@ end
     return nothing
 end
 
-@inbounds function neighbor_loop(TheCLL, LoopLayout,  Stencil, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT=true)
+@inbounds function neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT=true)
         # @inbounds @threads for Cind ∈ LoopLayout
         @inbounds for Cind ∈ LoopLayout
 
@@ -386,7 +386,7 @@ function RunSimulation(;FluidCSV::String,
    
 
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
-    PolyDataTemplate(SaveLocation_, to_3d(Position), ["Density","Velocity", "Acceleration"], Density, Velocity, dvdtIₙ⁺)
+    PolyDataTemplate(SaveLocation_, to_3d(Position), ["Density", "Pressure","Velocity", "Acceleration"], Density, Pressureᵢ, Velocity, dvdtIₙ⁺)
 
     R = 2*h
     TheCLL = CLL(Points=Position,CutOff=R) #line is good idea at times
