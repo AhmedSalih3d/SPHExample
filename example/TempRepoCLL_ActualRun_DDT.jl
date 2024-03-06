@@ -136,6 +136,10 @@ end
     t
 end
 
+@inline function ∇ᵢWᵢⱼ_(αD,h,xᵢⱼ,q, η²)
+    @fastpow return (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
+end
+
 #https://discourse.julialang.org/t/can-this-be-written-even-faster-cpu/109924/28
 @inline faux_fancy(ρ₀, P, invCb) = ρ₀ * ( fancy7th( 1 + (P * invCb)) - 1)
 
@@ -146,6 +150,7 @@ end
     
     #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/12
     d  = sqrt(abs(d2))
+    d² = d*d
 
     xᵢ  = Position[i]
     xⱼ  = Position[j]
@@ -153,9 +158,7 @@ end
 
     q  = d  * h⁻¹ #clamp(d  * h⁻¹,0.0,2.0), not needed when checking d2 < CutOffSquared before hand
 
-    @fastpow ∇ᵢWᵢⱼ = (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
-
-    d² = d*d
+    @fastpow ∇ᵢWᵢⱼ = ∇ᵢWᵢⱼ_(αD,h,xᵢⱼ,q, η²)
 
     ρᵢ      = Density[i]
     ρⱼ      = Density[j]
