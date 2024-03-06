@@ -31,8 +31,6 @@ end
     HalfPad::Int64                               = convert(typeof(Padding),Padding//2)
     ZeroOffset::Int64                            = 1 #Since we start from 0 when generating cells
 
-    Stencil::Vector{NTuple{D, Int64}}            = neighbors(Val(getsvecD(eltype(Points))) )
-    
     Cells::Vector{NTuple{D, Int64}}              = ExtractCells(Points,CutOff,Val(getsvecD(eltype(Points))))
     Nmax::Int64                                  = maximum(reinterpret(Int,@view(Cells[:]))) + ZeroOffset #Find largest dimension in x,y,z for the Cells
 
@@ -52,14 +50,16 @@ function neighbors(v::Val{d}) where d
     half_length = length(n_) ÷ 2
     n  = n_[1:half_length]
     
-    n_svec = Vector{NTuple{d,Int}}(undef,length(n)) #zeros(SVector{d,eltype(d)},length(n))
+    # n_svec = Vector{NTuple{d,Int}}(undef,length(n)) #zeros(SVector{d,eltype(d)},length(n))
 
-    for i ∈ eachindex(n_svec)
-        val       = n[i]
-        n_svec[i] = (val.I)
-    end
+    # for i ∈ eachindex(n_svec)
+    #     val       = n[i]
+    #     n_svec[i] = (val.I)
+    # end
 
-    return n_svec
+    # return n_svec
+
+    return n
 end
 
 
@@ -220,7 +220,7 @@ end
     return nothing
 end
 
-@inbounds function neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT=true)
+@inbounds function neighbor_loop(TheCLL, LoopLayout,  Stencil, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT=true)
         # @inbounds @threads for Cind ∈ LoopLayout
         @inbounds for Cind ∈ LoopLayout
 
@@ -241,8 +241,8 @@ end
             end
         end
 
-        @inbounds for Sind_ ∈ TheCLL.Stencil
-            Sind = Cind + CartesianIndex(Sind_)
+        @inbounds for Sind_ ∈ Stencil
+            Sind = Cind + Sind_
 
             # Keep this in, because some cases break without it..
             if !isassigned(TheCLL.Layout,Sind) continue end
@@ -283,14 +283,14 @@ function EquationOfState(ρ,c₀,γ,ρ₀)
     return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
 end
 
-function CustomCLL(TheCLL, LoopLayout, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺; BoolDDT = true)
+function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺; BoolDDT = true)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, δᵩ, CFL, η² = SimConstants
 
     dt  = Δt(Position, Velocity, dvdtIₙ⁺, SimConstants)
     dt₂ = dt * 0.5
 
     ResetArrays!( dρdtI, dvdtI)
-    neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter,  BoolDDT)
+    neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter,  BoolDDT)
 
     # Make loop, no allocs
     @inbounds @batch for i in eachindex(dvdtI)
@@ -303,7 +303,7 @@ function CustomCLL(TheCLL, LoopLayout, SimConstants, SimMetaData, MotionLimiter,
     LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
 
     ResetArrays!(dρdtIₙ⁺, dvdtIₙ⁺)
-    neighbor_loop(TheCLL, LoopLayout, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, MotionLimiter,  BoolDDT)
+    neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, MotionLimiter,  BoolDDT)
     
     DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
     LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
@@ -328,7 +328,7 @@ function RunSimulation(;FluidCSV::String,
     BoundCSV::String,
     SimMetaData::SimulationMetaData{Dimensions, FloatType},
     SimConstants::SimulationConstants,
-    BoolDDT = true,
+    BoolDDT = true
 ) where {Dimensions,FloatType}
 
     # Unpack the relevant simulation meta data
@@ -393,6 +393,7 @@ function RunSimulation(;FluidCSV::String,
 
     # Assymmetric Stencil.
     LoopLayout = CartesianIndex.(CartesianIndices(TheCLL.Layout))[1:end-1, 2:end-1][:]
+    Stencil    = neighbors(Val(getsvecD(eltype(Position))))
 
     generate_showvalues(Iteration, TotalTime) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime))]
     OutputCounter = 0.0
@@ -401,7 +402,7 @@ function RunSimulation(;FluidCSV::String,
         
         @timeit HourGlass "0 Update particles in cells" updateCLL!(TheCLL, Position)
         # inline removes 96 bytes alloc..
-        @timeit HourGlass "1 Main simulation loop" CustomCLL(TheCLL, LoopLayout, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺; 
+        @timeit HourGlass "1 Main simulation loop" CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺; 
         BoolDDT)
         
         OutputCounter += SimMetaData.CurrentTimeStep
