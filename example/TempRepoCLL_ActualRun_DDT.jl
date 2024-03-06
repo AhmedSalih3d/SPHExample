@@ -211,16 +211,17 @@ end
     ρ̄ᵢⱼ     = (ρᵢ+ρⱼ)*0.5
     Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
 
-    cond      = dot(vᵢⱼ, xᵢⱼ)
-    cond_bool = cond < 0.0
-    μᵢⱼ       = h*cond * invd²η²
-    Πᵢⱼ       = cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ
+    # cond      = dot(vᵢⱼ, xᵢⱼ)
+    # cond_bool = cond < 0.0
+    # μᵢⱼ       = h*cond * invd²η²
+    # Πᵢⱼ       = cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ
 
-    dvdt⁺ = - m₀ * ( Pfac + Πᵢⱼ) *  ∇ᵢWᵢⱼ
-    dvdt⁻ = - dvdt⁺ #- m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ
+    # dvdt⁺ = - m₀ * ( Pfac + Πᵢⱼ) *  ∇ᵢWᵢⱼ
+    dvdt⁺ = - m₀ * ( Pfac ) *  ∇ᵢWᵢⱼ
+    dvdt⁻ = - dvdt⁺ #- m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ  
 
-    dvdtI[i] += dvdt⁺
-    dvdtI[j] += dvdt⁻
+    dvdtI[i] += dvdt⁺ + α*h*c₀*(ρ₀/ρᵢ) * (dot(vⱼ - vᵢ, xⱼ - xᵢ) / (dot(xⱼ - xᵢ, xⱼ - xᵢ) + η²)) *  ∇ᵢWᵢⱼ * (m₀/ρⱼ)  
+    dvdtI[j] += dvdt⁻ + α*h*c₀*(ρ₀/ρⱼ) * (dot(vᵢ - vⱼ, xᵢ - xⱼ) / (dot(xᵢ - xⱼ, xᵢ - xⱼ) + η²)) * -∇ᵢWᵢⱼ * (m₀/ρᵢ) 
 
     # Particle Shifting
     # if BoolShifting
