@@ -67,7 +67,7 @@ function ExtractCells(p,R,::Val{d}) where d
     cells = Vector{NTuple{d,Int}}(undef,length(p))
 
     @inbounds @batch for i ∈ eachindex(p)
-        vs = Int.(fld.(p[i],R))
+        vs = @. Int(fld(p[i],R))
         cells[i] = tuple(vs...)
     end
 
@@ -77,7 +77,7 @@ end
 function ExtractCells!(cells, p,R,::Val{d}) where d
 
     @inbounds @batch for i ∈ eachindex(p)
-        vs = Int.(fld.(p[i],R))
+        vs = @. Int(fld(p[i],R))
         cells[i] = tuple(vs...)
     end
 
@@ -208,14 +208,15 @@ end
 end
 
 @inbounds function neighbor_loop(TheCLL, LoopLayout, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT=true)
-        @inbounds @threads for Cind ∈ LoopLayout
+        # @inbounds @threads for Cind ∈ LoopLayout
+        @inbounds for Cind ∈ LoopLayout
 
         if !isassigned(TheCLL.Layout,Cind) continue end
         # The indices in the cell are:
         indices_in_cell = TheCLL.Layout[Cind]
 
         n_idx_cells = length(indices_in_cell)
-        @inbounds @batch for ki = 1:n_idx_cells-1 #this line gives 64 bytes alloc unsure why
+        @inbounds for ki = 1:n_idx_cells-1 #this line gives 64 bytes alloc unsure why
             k_idx = indices_in_cell[ki]
             @inbounds for kj = (ki+1):n_idx_cells
                 k_1up = indices_in_cell[kj]
@@ -227,7 +228,7 @@ end
             end
         end
 
-        @inbounds @batch for Sind_ ∈ TheCLL.Stencil
+        @inbounds for Sind_ ∈ TheCLL.Stencil
             Sind = Cind + CartesianIndex(Sind_)
 
             # Keep this in, because some cases break without it..
@@ -421,8 +422,8 @@ begin
     SimMetaData  = SimulationMetaData{D, T}(
                                     SimulationName="AllInOne", 
                                     SaveLocation=raw"E:\SecondApproach\Testing",
-                                    SimulationTime=2,#0.765, #2, is not possible yet, since we do not kick particles out etc.
-                                    OutputEach=0.02
+                                    SimulationTime=4,#0.765, #2, is not possible yet, since we do not kick particles out etc.
+                                    OutputEach=0.01
     )
 
     # Initialze the constants to use
