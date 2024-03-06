@@ -156,7 +156,7 @@ end
 @inline faux_fancy(ρ₀, P, invCb) = ρ₀ * ( fancy7th( 1 + (P * invCb)) - 1)
 
 
-@inbounds function sim_step(i , j, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter,BoolDDT=true)
+@inbounds function sim_step(i , j, d2, SimConstants, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter,BoolDDT=true)
     @unpack h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, Cb⁻¹, g, η² = SimConstants
     #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/12
     d  = sqrt(abs(d2))
@@ -172,6 +172,9 @@ end
     q  = d  * h⁻¹ #clamp(d  * h⁻¹,0.0,2.0), not needed when checking d2 < CutOffSquared before hand
 
     @fastpow ∇ᵢWᵢⱼ = ∇ᵢWᵢⱼ_(αD,h,xᵢⱼ,q, η²)
+
+    KernelGradient[i] +=  ∇ᵢWᵢⱼ
+    KernelGradient[j] += -∇ᵢWᵢⱼ 
 
     ρᵢ      = Density[i]
     ρⱼ      = Density[j]
@@ -222,7 +225,7 @@ end
     return nothing
 end
 
-@inbounds function neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT=true)
+@inbounds function neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT=true)
     nchunks = nthreads()
     @threads for ichunk in 1:nchunks
         for Cind_ ∈ getchunk(LoopLayout, ichunk; n=nchunks)
@@ -240,7 +243,7 @@ end
                         d2 = distance_condition(Position[k_idx],Position[k_1up])
 
                         if d2 < TheCLL.CutOffSquared
-                            @inbounds @inline sim_step(k_idx , k_1up, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT)
+                            @inbounds @inline sim_step(k_idx , k_1up, d2, SimConstants, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT)
                         end
                     end
                 end
@@ -261,7 +264,7 @@ end
                             d2  = distance_condition(Position[k1_idx],Position[k2_idx])
         
                             if d2 < TheCLL.CutOffSquared
-                                @inbounds @inline sim_step(k1_idx , k2_idx, d2, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT)
+                                @inbounds @inline sim_step(k1_idx , k2_idx, d2, SimConstants, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT)
                             end
                         end
                     end
@@ -290,14 +293,14 @@ function EquationOfState(ρ,c₀,γ,ρ₀)
     return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
 end
 
-function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺; BoolDDT = true)
+function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺; BoolDDT = true)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, δᵩ, CFL, η² = SimConstants
 
     dt  = Δt(Position, Velocity, dvdtIₙ⁺, SimConstants)
     dt₂ = dt * 0.5
 
-    ResetArrays!( dρdtI, dvdtI)
-    neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter,  BoolDDT)
+    ResetArrays!(KernelGradient, dρdtI, dvdtI)
+    neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter,  BoolDDT)
 
     # Make loop, no allocs
     @inbounds @batch for i in eachindex(dvdtI)
@@ -309,8 +312,8 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
 
     LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
 
-    ResetArrays!(dρdtIₙ⁺, dvdtIₙ⁺)
-    neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, MotionLimiter,  BoolDDT)
+    ResetArrays!(KernelGradient, dρdtIₙ⁺, dvdtIₙ⁺)
+    neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, KernelGradient, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, MotionLimiter,  BoolDDT)
     
     DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
     LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
@@ -380,6 +383,9 @@ function RunSimulation(;FluidCSV::String,
     dvdtI              = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
     dvdtIₙ⁺            = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
 
+    # Kernel values
+    KernelGradient    = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
+
     # Half point values for predictor-corrector algorithm
     Velocityₙ⁺ = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
     Positionₙ⁺ = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
@@ -393,7 +399,7 @@ function RunSimulation(;FluidCSV::String,
    
 
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
-    PolyDataTemplate(SaveLocation_, to_3d(Position), ["Density", "Pressure","Velocity", "Acceleration"], Density, Pressureᵢ, Velocity, dvdtIₙ⁺)
+    PolyDataTemplate(SaveLocation_, to_3d(Position), ["KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], KernelGradient, Density, Pressureᵢ, Velocity, dvdtIₙ⁺)
 
     R = 2*h
     TheCLL = CLL(Points=Position,CutOff=R) #line is good idea at times
@@ -409,7 +415,7 @@ function RunSimulation(;FluidCSV::String,
         
         @timeit HourGlass "0 Update particles in cells" updateCLL!(TheCLL, Position)
         # inline removes 96 bytes alloc..
-        @timeit HourGlass "1 Main simulation loop" CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺; 
+        @timeit HourGlass "1 Main simulation loop" CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺; 
         BoolDDT)
         
         OutputCounter += SimMetaData.CurrentTimeStep
@@ -418,7 +424,7 @@ function RunSimulation(;FluidCSV::String,
             OutputIterationCounter += 1
             SaveLocation_= SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp"
             Pressure!(Pressureᵢ,Density,SimConstants)
-            PolyDataTemplate(SaveLocation_, to_3d(Position), ["Density", "Pressure", "Velocity", "Acceleration"], Density, Pressureᵢ, Velocity, dvdtIₙ⁺)
+            PolyDataTemplate(SaveLocation_, to_3d(Position), ["KernelGradient", "Density", "Pressure", "Velocity", "Acceleration"], KernelGradient, Density, Pressureᵢ, Velocity, dvdtIₙ⁺)
         end
 
         @timeit HourGlass "3 Next step" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
