@@ -225,15 +225,6 @@ end
     dvdtI[i] += dvdt⁺ + α*h*c₀*(ρ₀/ρᵢ) * (dot(vⱼ - vᵢ, xⱼ - xᵢ) / (dot(xⱼ - xᵢ, xⱼ - xᵢ) + η²)) *  ∇ᵢWᵢⱼ * (m₀/ρⱼ)  
     dvdtI[j] += dvdt⁻ + α*h*c₀*(ρ₀/ρⱼ) * (dot(vᵢ - vⱼ, xᵢ - xⱼ) / (dot(xᵢ - xⱼ, xᵢ - xⱼ) + η²)) * -∇ᵢWᵢⱼ * (m₀/ρᵢ) 
 
-    # Particle Shifting
-    # if BoolShifting
-    #     ∇Cᵢ[i]   += (m₀/ρⱼ) *  ∇ᵢWᵢⱼ
-    #     ∇Cᵢ[j]   += (m₀/ρᵢ) * -∇ᵢWᵢⱼ
-
-    #     ∇◌rᵢ[i]  += (m₀/ρⱼ) * dot(xᵢⱼ , ∇ᵢWᵢⱼ)
-    #     ∇◌rᵢ[j]  += (m₀/ρᵢ) * dot(-xᵢⱼ ,-∇ᵢWᵢⱼ)
-    # end
-
     if BoolShifting
         Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
 
@@ -248,6 +239,7 @@ end
         ∇Cᵢ[i]   += (Cⱼ - Cᵢ) * (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
         ∇Cᵢ[j]   += (Cᵢ - Cⱼ) * (m₀/ρⱼ) * -∇ᵢWᵢⱼ
 
+        # Switch signs compared to DSPH, else free surface detection does not make sense
         ∇◌rᵢ[i]  += -(m₀/ρᵢ) * dot(xᵢⱼ , ∇ᵢWᵢⱼ)  * MLcond
         ∇◌rᵢ[j]  += -(m₀/ρⱼ) * dot(-xᵢⱼ ,-∇ᵢWᵢⱼ) * MLcond
     end
