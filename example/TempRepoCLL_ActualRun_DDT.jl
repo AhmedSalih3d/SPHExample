@@ -4,7 +4,7 @@ using StaticArrays
 using Parameters
 using Plots; using Measures
 using StructArrays
-import LinearAlgebra: dot
+import LinearAlgebra: dot, norm
 using LoopVectorization
 using Polyester
 using JET
@@ -327,9 +327,17 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
     DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
     LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
 
+    A     = 2# Value between 1 to 6 advised
+    A_FST = 1.5; #2d, 3d val different
+    A_FSM = 2.0; #2d, 3d val different
     @inbounds @batch for i in eachindex(dvdtIₙ⁺)
         dvdtIₙ⁺[i]            +=  ConstructGravitySVector(dvdtIₙ⁺[i], g * GravityFactor[i])
         Velocity[i]           += dvdtIₙ⁺[i] * dt * MotionLimiter[i]
+
+        A_FSC                  = (∇◌rᵢ[i] - A_FST)/(A_FSM - A_FST)
+        ShiftingCondition      = (∇◌rᵢ[i] - A_FST) < 0
+        δxᵢ                    = - A_FSC * A * h * norm(Velocity[i]) * dt * ∇Cᵢ[i] * ShiftingCondition + -A * h * norm(Velocity[i]) * dt * ∇Cᵢ[i] * (ShiftingCondition == 0)
+
         Position[i]           += ((Velocity[i] + (Velocity[i] - dvdtIₙ⁺[i] * dt * MotionLimiter[i])) / 2) * dt * MotionLimiter[i]
     end
 
