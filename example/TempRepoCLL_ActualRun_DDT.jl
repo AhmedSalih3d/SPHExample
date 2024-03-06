@@ -240,12 +240,13 @@ end
         Cᵢ  = (m₀/ρᵢ) * Wᵢⱼ
         Cⱼ  = (m₀/ρⱼ) * Wᵢⱼ
 
+        MLcond = MotionLimiter[i] * MotionLimiter[j]
 
         ∇Cᵢ[i]   += (Cⱼ - Cᵢ) * (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
         ∇Cᵢ[j]   += (Cᵢ - Cⱼ) * (m₀/ρⱼ) * -∇ᵢWᵢⱼ
 
-        ∇◌rᵢ[i]  += -(m₀/ρᵢ) * dot(xᵢⱼ , ∇ᵢWᵢⱼ)
-        ∇◌rᵢ[j]  += -(m₀/ρⱼ) * dot(-xᵢⱼ ,-∇ᵢWᵢⱼ)
+        ∇◌rᵢ[i]  += -(m₀/ρᵢ) * dot(xᵢⱼ , ∇ᵢWᵢⱼ)  * MLcond
+        ∇◌rᵢ[j]  += -(m₀/ρⱼ) * dot(-xᵢⱼ ,-∇ᵢWᵢⱼ) * MLcond
     end
 
     return nothing
@@ -353,7 +354,7 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
 
         A_FSC                  = (∇◌rᵢ[i] - A_FST)/(A_FSM - A_FST)
         ShiftingCondition      = (∇◌rᵢ[i] - A_FST) < 0
-        δxᵢ                    = - (ShiftingCondition * A_FSC * A + (ShiftingCondition == 0) * A) * h * norm(Velocity[i]) * dt * ∇Cᵢ[i] * ShiftingCondition
+        δxᵢ                    = - (ShiftingCondition * A_FSC * A + (ShiftingCondition == 0) * A) * h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
 
         Position[i]           += (((Velocity[i] + (Velocity[i] - dvdtIₙ⁺[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
     end
