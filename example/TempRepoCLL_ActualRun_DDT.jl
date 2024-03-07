@@ -107,9 +107,10 @@ end
 
 function GenerateM!(M, ZeroOffset,HalfPad, cells)
 
-    @inbounds @batch for i = 1:prod(size(M))
-        empty!(M[i])
-    end
+    @. empty!(M)
+    # @inbounds @batch for i = 1:prod(size(M))
+    #     empty!(M[i])
+    # end
 
     iter = 0
     @inbounds for ind ∈ cells
