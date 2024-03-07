@@ -216,7 +216,7 @@ begin
     SimMetaData  = SimulationMetaData{D, T}(
                                     SimulationName="MySimulation", 
                                     SaveLocation=raw"E:\SecondApproach\Results", 
-                                    SimulationTime=0.5, #seconds
+                                    SimulationTime=2, #seconds
                                     OutputEach=0.02,  #seconds
     )
     # Initialze the constants to use

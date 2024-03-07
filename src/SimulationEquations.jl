@@ -388,59 +388,6 @@ end
     end
 end
 
-
-
-# The density derivative function INCLUDING density diffusion
-@generated function ∂ρᵢ∂tDDT!(dρdtI, I, J, D , xᵢⱼ::DimensionalData{dims} , Density , Velocity::DimensionalData, KernelGradientL::DimensionalData, drhopLp, drhopLn, SimulationConstants, MotionLimiter) where {dims}
-    quote
-        @unpack h,m₀,δᵩ,c₀,γ,g,ρ₀,η²,γ⁻¹ = SimulationConstants
-
-        # Generate the needed constants
-        Cb      = (c₀^2*ρ₀)/γ
-        invCb   = inv(Cb)
-        δₕ_h_c₀ = δᵩ * h * c₀
-
-
-        # Follow the implementation here: https://arxiv.org/abs/2110.10076
-        @tturbo for iter in eachindex(I,J,D)
-            i = I[iter]; j = J[iter]; d = D[iter]
-            
-                Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ.vectors[dims][iter]
-                ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, invCb)
-                Pⱼᵢᴴ  = -Pᵢⱼᴴ
-                ρⱼᵢᴴ  = faux_fancy(ρ₀, Pⱼᵢᴴ, invCb)
-
-                r²    = d*d
-                ρᵢ    = Density[i]
-                ρⱼ    = Density[j]
-                ρⱼᵢ   = ρⱼ - ρᵢ
-
-                FacRhoI = 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * inv(r²+η²)
-                FacRhoJ = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(r²+η²)
-
-                # MLcond = MotionLimiter[i] * MotionLimiter[j]
-                # Dᵢ  = h * c₀ * (m₀/ρⱼ) * 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond
-                # Dⱼ  = h * c₀ * (m₀/ρᵢ) * 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * invd²η² * dot( xᵢⱼ, -∇ᵢWᵢⱼ) * MLcond
-
-            Base.Cartesian.@nexprs $dims dᵅ -> begin
-                vᵢⱼᵈ           = Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j] 
-                xᵢⱼᵈ           = xᵢⱼ.vectors[dᵅ][iter]
-                ∇ᵢWᵢⱼᵈ         = KernelGradientL.vectors[dᵅ][iter]
-
-                # For now using MotionLimiter, should use BoundaryBool
-                # Basically, when particle j is a boundary, no transfer of density should happen with the i'th particle (whether fluid or not)
-                MLcond = MotionLimiter[i] * MotionLimiter[j]
-                drhopLp[iter] += - ρᵢ * ( vᵢⱼᵈ ) *  ∇ᵢWᵢⱼᵈ #+ δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼᵈ  *  ∇ᵢWᵢⱼᵈ * MLcond
-                drhopLn[iter] += - ρⱼ * (-vᵢⱼᵈ ) * -∇ᵢWᵢⱼᵈ #+ δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼᵈ  * -∇ᵢWᵢⱼᵈ * MLcond
-            end
-        end
-
-        ReductionFunctionChunk!(dρdtI, I, J, drhopLp, drhopLn)
-
-        return nothing
-    end
-end
-
 @generated function ∂ρᵢ∂tDDT!(dρdtI, cll , xᵢⱼ::DimensionalData{dims} , Density , Velocity::DimensionalData, KernelGradientL::DimensionalData, drhopLp, drhopLn, SimulationConstants, MotionLimiter) where {dims}
     quote
         @unpack h,m₀,δᵩ,c₀,γ,g,ρ₀,η²,γ⁻¹ = SimulationConstants
