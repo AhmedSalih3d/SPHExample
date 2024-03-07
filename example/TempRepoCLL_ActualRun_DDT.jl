@@ -215,9 +215,11 @@ end
         cond      = dot(vᵢⱼ, xᵢⱼ)
         cond_bool = cond < 0.0
         μᵢⱼ       = h*cond * invd²η²
-        Πᵢⱼ       = cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ
+        Πᵢ        = - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
+        Πⱼ        = - Πᵢ
     else
-        Πᵢⱼ       = zero(xᵢⱼ)
+        Πᵢ        = zero(xᵢⱼ)
+        Πⱼ        = Πᵢ
     end
 
     if ViscosityTreatment == :Laminar
@@ -232,8 +234,8 @@ end
     dvdt⁺ = - m₀ * Pfac *  ∇ᵢWᵢⱼ
     dvdt⁻ = - dvdt⁺
 
-    dvdtI[i] += dvdt⁺ + Πᵢⱼ + ν₀∇²uᵢ
-    dvdtI[j] += dvdt⁻ + Πᵢⱼ + ν₀∇²uⱼ
+    dvdtI[i] += dvdt⁺ + Πᵢ + ν₀∇²uᵢ
+    dvdtI[j] += dvdt⁻ + Πⱼ + ν₀∇²uⱼ
 
     if BoolShifting
         Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
@@ -543,7 +545,7 @@ begin
         BoundCSV           = "./input/StillWedge_Bound_Dp0.02_LowResolution_5LAYERS.csv",
         SimMetaData        = SimMetaData,
         SimConstants       = SimConstantsWedge,
-        ViscosityTreatment = :Laminar,
+        ViscosityTreatment = :ArtificialViscosity,
         BoolDDT            = true,
         BoolShifting       = false,
     )
