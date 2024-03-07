@@ -243,6 +243,10 @@ end
 
     νtᵢ      = (SmagorinskyConstant * dx)^2 * norm_Sᵢ
 
+    Iᴹ       = diagm(one.(xᵢ))
+    trace_Sᵢ = sum(diag(Sᵢ))
+    τᶿᵢ      = 2*νtᵢ*ρᵢ * (Sᵢ - (1/3) * trace_Sᵢ * Iᴹ)
+
     dvdt⁺ = - m₀ * Pfac *  ∇ᵢWᵢⱼ
     dvdt⁻ = - dvdt⁺
 
