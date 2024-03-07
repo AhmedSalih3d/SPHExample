@@ -240,12 +240,16 @@ end
     # Strain *rate* tensor is the gradient of velocity
     Sᵢ = ∇vᵢ =  (m₀/ρⱼ) * (vⱼ - vᵢ) * ∇ᵢWᵢⱼ'
     norm_Sᵢ  = sqrt(2 * sum(Sᵢ .^ 2))
-
     νtᵢ      = (SmagorinskyConstant * dx)^2 * norm_Sᵢ
-
     Iᴹ       = diagm(one.(xᵢ))
     trace_Sᵢ = sum(diag(Sᵢ))
-    τᶿᵢ      = 2*νtᵢ*ρᵢ * (Sᵢ - (1/3) * trace_Sᵢ * Iᴹ)
+    τᶿᵢ      = 2*νtᵢ*ρᵢ * (Sᵢ - (1/3) * trace_Sᵢ * Iᴹ) - (2/3) * ρᵢ * BlinConstant * dx^2 * norm_Sᵢ^2 * Iᴹ
+
+    Sⱼ = ∇vⱼ =  (m₀/ρᵢ) * (vᵢ - vⱼ) * -∇ᵢWᵢⱼ'
+    norm_Sⱼ  = sqrt(2 * sum(Sⱼ .^ 2))
+    νtⱼ      = (SmagorinskyConstant * dx)^2 * norm_Sⱼ
+    trace_Sⱼ = sum(diag(Sⱼ))
+    τᶿⱼ      = 2*νtⱼ*ρⱼ * (Sⱼ - (1/3) * trace_Sⱼ * Iᴹ) - (2/3) * ρⱼ * BlinConstant * dx^2 * norm_Sⱼ^2 * Iᴹ
 
     dvdt⁺ = - m₀ * Pfac *  ∇ᵢWᵢⱼ
     dvdt⁻ = - dvdt⁺
@@ -562,7 +566,7 @@ begin
         BoundCSV           = "./input/StillWedge_Bound_Dp0.02_LowResolution_5LAYERS.csv",
         SimMetaData        = SimMetaData,
         SimConstants       = SimConstantsWedge,
-        ViscosityTreatment = :ArtificialViscosity,
+        ViscosityTreatment = :Laminar,
         BoolDDT            = true,
         BoolShifting       = false,
     )
