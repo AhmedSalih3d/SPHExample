@@ -157,7 +157,7 @@ end
 
 
 @inbounds function sim_step(i , j, d2, SimConstants, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter,BoolDDT,BoolShifting)
-    @unpack h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, Cb⁻¹, g, η² = SimConstants
+    @unpack h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, Cb⁻¹, g, η², ν₀ = SimConstants
     #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/12
     d  = sqrt(abs(d2))
     d² = d*d
@@ -211,18 +211,19 @@ end
     ρ̄ᵢⱼ     = (ρᵢ+ρⱼ)*0.5
     Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
 
-    cond      = dot(vᵢⱼ, xᵢⱼ)
-    cond_bool = cond < 0.0
-    μᵢⱼ       = h*cond * invd²η²
-    Πᵢⱼ       = cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ
+    # cond      = dot(vᵢⱼ, xᵢⱼ)
+    # cond_bool = cond < 0.0
+    # μᵢⱼ       = h*cond * invd²η²
+    # Πᵢⱼ       = cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ
 
-    dvdt⁺ = - m₀ * ( Pfac + Πᵢⱼ) *  ∇ᵢWᵢⱼ
+    dvdt⁺ = - m₀ * Pfac *  ∇ᵢWᵢⱼ
     dvdt⁻ = - dvdt⁺ #- m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ  
 
-    #https://www.mdpi.com/2073-4441/12/11/3189?type=check_update&version=2
-    #A WCSPH Particle Shifting Strategy for Simulating Violent Free Surface Flows
-    dvdtI[i] += dvdt⁺ #+ α*h*c₀*(ρ₀/ρᵢ) * (dot(vⱼ - vᵢ, xⱼ - xᵢ) / (dot(xⱼ - xᵢ, xⱼ - xᵢ) + η²)) *  ∇ᵢWᵢⱼ * (m₀/ρⱼ)  
-    dvdtI[j] += dvdt⁻ #+ α*h*c₀*(ρ₀/ρⱼ) * (dot(vᵢ - vⱼ, xᵢ - xⱼ) / (dot(xᵢ - xⱼ, xᵢ - xⱼ) + η²)) * -∇ᵢWᵢⱼ * (m₀/ρᵢ) 
+    ν₀∇²uᵢ = ( (4 * m₀ * (ρᵢ * ν₀ + ρⱼ * ν₀) * dot( xᵢⱼ, ∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) * (ρᵢ + ρⱼ) + (d² + η²) ) ) *  vᵢⱼ
+    ν₀∇²uⱼ = ( (4 * m₀ * (ρᵢ * ν₀ + ρⱼ * ν₀) * dot(-xᵢⱼ,-∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) * (ρᵢ + ρⱼ) + (d² + η²) ) ) * -vᵢⱼ
+
+    dvdtI[i] += dvdt⁺ + ν₀∇²uᵢ
+    dvdtI[j] += dvdt⁻ + ν₀∇²uⱼ
 
     if BoolShifting
         Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
