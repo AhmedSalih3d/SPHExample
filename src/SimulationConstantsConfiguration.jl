@@ -50,6 +50,7 @@ constants = SimulationConstants(ρ₀=1017, dx=0.03, α=0.02)
     η²::T  = (0.01 * h)^2         ; @assert η²   > 0 "Eta squared (η²) must be positive"
     Cb::T  = (c₀^2 * ρ₀)/γ        ; @assert Cb  >= 0 "Cb (pressure coefficient) must be positive"
     Cb⁻¹::T  = inv(Cb)            ; @assert Cb⁻¹>= 0 "Inverse Cb (inverse pressure coefficient) must be positive"
+    ν₀::T    = 1e-6               ; @assert ν₀  >= 0 "Kinematic viscosity must be positive"
 end
 
 end
