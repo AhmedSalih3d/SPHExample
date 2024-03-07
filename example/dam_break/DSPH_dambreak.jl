@@ -130,7 +130,7 @@ function RunSimulation(;FluidCSV::String,
     OutputIterationCounter = 0
     @inbounds while true
         # Be sure to update and retrieve the updated neighbour list at each time step
-        @timeit HourGlass "0.1 update particle positions"           update!(system,Position.V)
+        @timeit HourGlass "0.1 update particle positions"           CellListMap.update!(system,Position.V)
         @timeit HourGlass "0.2 extract updated neighborlist"        neighborlist!(system)
         @timeit HourGlass "0.3 resize split neighborlist"           resize!(list_me, system.nb.n)
         @timeit HourGlass "0.4 update values of split neighborlist" list_me .= system.nb.list
@@ -150,7 +150,7 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "1.2 calculate kernel and kernel gradient" ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!(KernelGradient,KernelGradientL, Kernel, KernelL, I, J, D, xᵢⱼ, SimConstants)
 
         # @timeit HourGlass "Step 2 | Simulation Equations to update values, preparing for n+1/2" begin
-        @timeit HourGlass "2.1 DDT" ∂ρᵢ∂t!(dρdtI, I, J, D, xᵢⱼ, Density, Velocity,KernelGradientL,drhopLp,drhopLn, SimConstants)
+        @timeit HourGlass "2.1 DDT" ∂ρᵢ∂t!(dρdtI, I, J, D, xᵢⱼ, Density, Velocity,KernelGradientL,drhopLp,drhopLn, SimConstants, MotionLimiter)
         # We calculate viscosity contribution and momentum equation at time step "n"
         @timeit HourGlass "2.2 Pressure" Pressure!(Pressureᵢ, Density, SimConstants)
         @timeit HourGlass "2.3 Artificial Viscosity Momentum Equation" ArtificialViscosityMomentumEquation!(I,J,D, dvdtI, dvdtL,Density,KernelGradientL, xᵢⱼ, Velocity, Pressureᵢ, GravityFactor, SimConstants)
@@ -167,7 +167,7 @@ function RunSimulation(;FluidCSV::String,
 
         # Density derivative at "n+½" - Note that we keep the kernel gradient values calculated at "n" for simplicity
         @timeit HourGlass "3.1 reset L arrays for density diffusion"   ResetArrays!(drhopLp, drhopLn)
-        @timeit HourGlass "3.2 DDT"                                    ∂ρᵢ∂t!(dρdtIₙ⁺, I, J, D, xᵢⱼ,ρₙ⁺, Velocityₙ⁺,KernelGradientL, drhopLp,drhopLn, SimConstants)
+        @timeit HourGlass "3.2 DDT"                                    ∂ρᵢ∂t!(dρdtIₙ⁺, I, J, D, xᵢⱼ, ρₙ⁺, Velocityₙ⁺, KernelGradientL, drhopLp,drhopLn, SimConstants, MotionLimiter)
         # Viscous contribution and momentum equation at "n+½"
         @timeit HourGlass "3.3 Pressure"                               Pressure!(Pressureᵢ, ρₙ⁺, SimConstants)
         @timeit HourGlass "3.4 Artificial Viscosity Momentum Equation" ArtificialViscosityMomentumEquation!(I,J,D, Acceleration, dvdtL, ρₙ⁺,KernelGradientL, xᵢⱼ, Velocityₙ⁺, Pressureᵢ, GravityFactor, SimConstants)
@@ -216,7 +216,7 @@ begin
     SimMetaData  = SimulationMetaData{D, T}(
                                     SimulationName="MySimulation", 
                                     SaveLocation=raw"E:\SecondApproach\Results", 
-                                    SimulationTime=2, #seconds
+                                    SimulationTime=0.5, #seconds
                                     OutputEach=0.02,  #seconds
     )
     # Initialze the constants to use

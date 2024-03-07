@@ -345,24 +345,40 @@ end
 #faux(ρ₀, P, invCb) = ρ₀ * ( fancy7th( 1 + (P * invCb)) - 1)
 
 # The density derivative function
-@generated function ∂ρᵢ∂t!(dρdtI, I, J, D , xᵢⱼ::DimensionalData{dims} , Density , Velocity::DimensionalData, KernelGradientL::DimensionalData, drhopLp, drhopLn, SimulationConstants) where {dims}
+@generated function ∂ρᵢ∂t!(dρdtI, I, J, D , xᵢⱼ::DimensionalData{dims} , Density , Velocity::DimensionalData, KernelGradientL::DimensionalData, drhopLp, drhopLn, SimulationConstants, MotionLimiter) where {dims}
     quote
-        @unpack m₀ = SimulationConstants
+        @unpack m₀, ρ₀, h, c₀, g, Cb⁻¹, η² = SimulationConstants
 
         # Follow the implementation here: https://arxiv.org/abs/2110.10076
         @tturbo for iter in eachindex(I,J,D)
             i = I[iter]; j = J[iter]; d = D[iter]
 
+            d² = d*d
+
             ρᵢ = Density[i]
             ρⱼ = Density[j]
+
+            Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ.vectors[dims][i]
+            ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
+            Pⱼᵢᴴ  = -Pᵢⱼᴴ
+            ρⱼᵢᴴ  = faux_fancy(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
+        
+            ρⱼᵢ   = ρⱼ - ρᵢ
+
+            invd²η² = inv(d²+η²) 
+
+            MLcond = MotionLimiter[i] * MotionLimiter[j]
 
             Base.Cartesian.@nexprs $dims dᵅ -> begin
                 vᵢⱼᵈ           = Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j] 
                 xᵢⱼᵈ           = xᵢⱼ.vectors[dᵅ][iter]
                 ∇ᵢWᵢⱼᵈ         = KernelGradientL.vectors[dᵅ][iter]
 
-                drhopLp[iter] += - ρᵢ * ((m₀/ρⱼ) * -vᵢⱼᵈ ) *  ∇ᵢWᵢⱼᵈ
-                drhopLn[iter] += - ρⱼ * ((m₀/ρᵢ) *  vᵢⱼᵈ ) * -∇ᵢWᵢⱼᵈ
+                Dᵢ  = h * c₀ * (m₀/ρⱼ) * 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * invd²η² * -xᵢⱼᵈ *  ∇ᵢWᵢⱼᵈ * MLcond
+                Dⱼ  = h * c₀ * (m₀/ρᵢ) * 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * invd²η² *  xᵢⱼᵈ * -∇ᵢWᵢⱼᵈ * MLcond
+
+                drhopLp[iter] += - ρᵢ * ((m₀/ρⱼ) * -vᵢⱼᵈ ) *  ∇ᵢWᵢⱼᵈ + Dᵢ 
+                drhopLn[iter] += - ρⱼ * ((m₀/ρᵢ) *  vᵢⱼᵈ ) * -∇ᵢWᵢⱼᵈ + Dⱼ
             end
         end
 
@@ -402,6 +418,10 @@ end
                 FacRhoI = 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * inv(r²+η²)
                 FacRhoJ = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(r²+η²)
 
+                # MLcond = MotionLimiter[i] * MotionLimiter[j]
+                # Dᵢ  = h * c₀ * (m₀/ρⱼ) * 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond
+                # Dⱼ  = h * c₀ * (m₀/ρᵢ) * 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * invd²η² * dot( xᵢⱼ, -∇ᵢWᵢⱼ) * MLcond
+
             Base.Cartesian.@nexprs $dims dᵅ -> begin
                 vᵢⱼᵈ           = Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j] 
                 xᵢⱼᵈ           = xᵢⱼ.vectors[dᵅ][iter]
@@ -409,8 +429,9 @@ end
 
                 # For now using MotionLimiter, should use BoundaryBool
                 # Basically, when particle j is a boundary, no transfer of density should happen with the i'th particle (whether fluid or not)
-                drhopLp[iter] += (m₀ *  vᵢⱼᵈ ) *  ∇ᵢWᵢⱼᵈ #+ δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼᵈ  *  ∇ᵢWᵢⱼᵈ * MotionLimiter[j]
-                drhopLn[iter] += (m₀ * -vᵢⱼᵈ ) * -∇ᵢWᵢⱼᵈ #+ δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼᵈ  * -∇ᵢWᵢⱼᵈ * MotionLimiter[i]
+                MLcond = MotionLimiter[i] * MotionLimiter[j]
+                drhopLp[iter] += - ρᵢ * ( vᵢⱼᵈ ) *  ∇ᵢWᵢⱼᵈ #+ δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼᵈ  *  ∇ᵢWᵢⱼᵈ * MLcond
+                drhopLn[iter] += - ρⱼ * (-vᵢⱼᵈ ) * -∇ᵢWᵢⱼᵈ #+ δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼᵈ  * -∇ᵢWᵢⱼᵈ * MLcond
             end
         end
 
