@@ -4,7 +4,7 @@ using StaticArrays
 using Parameters
 using Plots; using Measures
 using StructArrays
-import LinearAlgebra: dot, norm
+import LinearAlgebra: dot, norm, diagm, diag
 using LoopVectorization
 using Polyester
 using JET
@@ -254,8 +254,11 @@ end
     dvdt⁺ = - m₀ * Pfac *  ∇ᵢWᵢⱼ
     dvdt⁻ = - dvdt⁺
 
-    dvdtI[i] += dvdt⁺ + Πᵢ + ν₀∇²uᵢ
-    dvdtI[j] += dvdt⁻ + Πⱼ + ν₀∇²uⱼ
+    dτdtᵢ = (m₀/ρⱼ) * (τᶿᵢ + τᶿⱼ) *  ∇ᵢWᵢⱼ # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA THIS TIME
+    dτdtⱼ = (m₀/ρᵢ) * (τᶿᵢ + τᶿⱼ) * -∇ᵢWᵢⱼ # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA THIS TIME
+
+    dvdtI[i] += dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ
+    dvdtI[j] += dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
 
     if BoolShifting
         Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
