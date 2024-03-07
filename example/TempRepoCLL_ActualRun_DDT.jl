@@ -489,38 +489,38 @@ begin
                                     OutputEach=0.01
     )
 
-    # Initialze the constants to use
-    SimConstants = SimulationConstants{T}(
-        dx = 0.02,
-        h  = 1*sqrt(2)*0.02,
-        c₀ = 88.14487860902641,
-        α  = 0.02
-    )
+    # # Initialze the constants to use
+    # SimConstants = SimulationConstants{T}(
+    #     dx = 0.02,
+    #     h  = 1*sqrt(2)*0.02,
+    #     c₀ = 88.14487860902641,
+    #     α  = 0.02
+    # )
 
-    # And here we run the function - enjoy!
-    println(@code_warntype RunSimulation(
-        FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
-        BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
-        SimMetaData  = SimMetaData,
-        SimConstants = SimConstants
-    )
-    )
+    # # And here we run the function - enjoy!
+    # println(@code_warntype RunSimulation(
+    #     FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
+    #     BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
+    #     SimMetaData  = SimMetaData,
+    #     SimConstants = SimConstants
+    # )
+    # )
 
-    println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
-        FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
-        BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
-        SimMetaData  = SimMetaData,
-        SimConstants = SimConstants
-    )
-    )
+    # println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
+    #     FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
+    #     BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
+    #     SimMetaData  = SimMetaData,
+    #     SimConstants = SimConstants
+    # )
+    # )
 
-    println(@report_call target_modules=(@__MODULE__,) RunSimulation(
-        FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
-        BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
-        SimMetaData  = SimMetaData,
-        SimConstants = SimConstants
-    )
-    )
+    # println(@report_call target_modules=(@__MODULE__,) RunSimulation(
+    #     FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
+    #     BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
+    #     SimMetaData  = SimMetaData,
+    #     SimConstants = SimConstants
+    # )
+    # )
 
     SimConstantsWedge = SimulationConstants{T}(c₀=42.48576250492629)
     @profview RunSimulation(
@@ -529,7 +529,7 @@ begin
         SimMetaData  = SimMetaData,
         SimConstants = SimConstantsWedge,
         BoolDDT      = true,
-        BoolShifting = false,
+        BoolShifting = true,
     )
 
     # SimConstantsDamBreak = SimulationConstants{T}()
