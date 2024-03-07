@@ -345,7 +345,7 @@ end
 #faux(ρ₀, P, invCb) = ρ₀ * ( fancy7th( 1 + (P * invCb)) - 1)
 
 # The density derivative function
-@generated function ∂ρᵢ∂t!(dρdtI, I, J, D , xᵢⱼ::DimensionalData{dims} , Density , Velocity::DimensionalData, KernelGradientL::DimensionalData, drhopLp, drhopLn, SimulationConstants, MotionLimiter) where {dims}
+@generated function ∂ρᵢ∂tDDT!(dρdtI, I, J, D , xᵢⱼ::DimensionalData{dims} , Density , Velocity::DimensionalData, KernelGradientL::DimensionalData, drhopLp, drhopLn, SimulationConstants, MotionLimiter) where {dims}
     quote
         @unpack m₀, ρ₀, h, c₀, g, Cb⁻¹, η² = SimulationConstants
 
@@ -387,52 +387,6 @@ end
         return nothing
     end
 end
-
-@generated function ∂ρᵢ∂tDDT!(dρdtI, cll , xᵢⱼ::DimensionalData{dims} , Density , Velocity::DimensionalData, KernelGradientL::DimensionalData, drhopLp, drhopLn, SimulationConstants, MotionLimiter) where {dims}
-    quote
-        @unpack h,m₀,δᵩ,c₀,γ,g,ρ₀,η²,γ⁻¹ = SimulationConstants
-
-        # Generate the needed constants
-        Cb      = (c₀^2*ρ₀)/γ
-        invCb   = inv(Cb)
-        δₕ_h_c₀ = δᵩ * h * c₀
-
-
-        # Follow the implementation here: https://arxiv.org/abs/2110.10076
-        @tturbo for iter in 1:cll.MaxValidIndex[]
-            i = cll.IndexI[iter]; j = cll.IndexJ[iter]; d = cll.IndexD[iter]
-            
-                Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ.vectors[dims][iter]
-                ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, invCb)
-                Pⱼᵢᴴ  = -Pᵢⱼᴴ
-                ρⱼᵢᴴ  = faux_fancy(ρ₀, Pⱼᵢᴴ, invCb)
-
-                r²    = d*d
-                ρᵢ    = Density[i]
-                ρⱼ    = Density[j]
-                ρⱼᵢ   = ρⱼ - ρᵢ
-
-                FacRhoI = 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * inv(r²+η²)
-                FacRhoJ = 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * inv(r²+η²)
-
-            Base.Cartesian.@nexprs $dims dᵅ -> begin
-                vᵢⱼᵈ           = Velocity.vectors[dᵅ][i] - Velocity.vectors[dᵅ][j] 
-                xᵢⱼᵈ           = xᵢⱼ.vectors[dᵅ][iter]
-                ∇ᵢWᵢⱼᵈ         = KernelGradientL.vectors[dᵅ][iter]
-
-                # For now using MotionLimiter, should use BoundaryBool
-                # Basically, when particle j is a boundary, no transfer of density should happen with the i'th particle (whether fluid or not)
-                drhopLp[iter] += (m₀ *  vᵢⱼᵈ ) *  ∇ᵢWᵢⱼᵈ #+ δₕ_h_c₀ * (m₀/ρⱼ) * FacRhoI *  -xᵢⱼᵈ  *  ∇ᵢWᵢⱼᵈ * MotionLimiter[j]
-                drhopLn[iter] += (m₀ * -vᵢⱼᵈ ) * -∇ᵢWᵢⱼᵈ #+ δₕ_h_c₀ * (m₀/ρᵢ) * FacRhoJ *   xᵢⱼᵈ  * -∇ᵢWᵢⱼᵈ * MotionLimiter[i]
-            end
-        end
-
-        ReductionFunctionChunk!(dρdtI,@view(cll.IndexI[1:cll.MaxValidIndex[]]), @view(cll.IndexJ[1:cll.MaxValidIndex[]]), drhopLp, drhopLn)
-
-        return nothing
-    end
-end
-
 
 # This is to handle the special factor multiplied on density in the time stepping procedure, when
 # using symplectic time stepping
