@@ -225,8 +225,9 @@ end
 
     if ViscosityTreatment == :Laminar
         # 4 comes from 2 divided by 0.5 from average density
-        ν₀∇²uᵢ = ( (4 * m₀ * (ρᵢ * ν₀ + ρⱼ * ν₀) * dot( xᵢⱼ, ∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) * (ρᵢ + ρⱼ) + (d² + η²) ) ) *  vᵢⱼ
-        ν₀∇²uⱼ = - ν₀∇²uᵢ #( (4 * m₀ * (ρᵢ * ν₀ + ρⱼ * ν₀) * dot(-xᵢⱼ,-∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) * (ρᵢ + ρⱼ) + (d² + η²) ) ) * -vᵢⱼ
+        # should divide by ρᵢ eq 6 DPC
+        ν₀∇²uᵢ = (1/ρᵢ) * ( (4 * m₀ * (ρᵢ * ν₀) * dot( xᵢⱼ, ∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) + (d² + η²) ) ) *  vᵢⱼ
+        ν₀∇²uⱼ = (1/ρⱼ) * ( (4 * m₀ * (ρⱼ * ν₀) * dot(-xᵢⱼ,-∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) + (d² + η²) ) ) * -vᵢⱼ
     else
         ν₀∇²uᵢ = zero(xᵢⱼ)
         ν₀∇²uⱼ = ν₀∇²uᵢ
@@ -254,8 +255,8 @@ end
     dvdt⁺ = - m₀ * Pfac *  ∇ᵢWᵢⱼ
     dvdt⁻ = - dvdt⁺
 
-    dτdtᵢ = (m₀/ρⱼ) * (τᶿᵢ + τᶿⱼ) *  ∇ᵢWᵢⱼ # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA THIS TIME
-    dτdtⱼ = (m₀/ρᵢ) * (τᶿᵢ + τᶿⱼ) * -∇ᵢWᵢⱼ # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA THIS TIME
+    dτdtᵢ = (m₀/(ρⱼ * ρᵢ)) * (τᶿᵢ + τᶿⱼ) *  ∇ᵢWᵢⱼ # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA THIS TIME
+    dτdtⱼ = (m₀/(ρᵢ * ρⱼ)) * (τᶿᵢ + τᶿⱼ) * -∇ᵢWᵢⱼ # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA THIS TIME
 
     dvdtI[i] += dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ
     dvdtI[j] += dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
