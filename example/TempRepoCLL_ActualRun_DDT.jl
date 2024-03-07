@@ -156,7 +156,8 @@ end
 @inline faux_fancy(ρ₀, P, invCb) = ρ₀ * ( fancy7th( 1 + (P * invCb)) - 1)
 
 
-@inbounds function sim_step(i , j, d2, SimConstants, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter,BoolDDT,BoolShifting)
+@inbounds function sim_step(i , j, d2, SimConstants, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, ViscosityTreatment::Symbol, BoolDDT,BoolShifting)
+
     @unpack h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, Cb⁻¹, g, η², ν₀ = SimConstants
     #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/12
     d  = sqrt(abs(d2))
@@ -207,23 +208,32 @@ end
 
     Pᵢ      =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
     Pⱼ      =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
-
-    ρ̄ᵢⱼ     = (ρᵢ+ρⱼ)*0.5
     Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
 
-    # cond      = dot(vᵢⱼ, xᵢⱼ)
-    # cond_bool = cond < 0.0
-    # μᵢⱼ       = h*cond * invd²η²
-    # Πᵢⱼ       = cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ
+    if ViscosityTreatment == :ArtificialViscosity
+        ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
+        cond      = dot(vᵢⱼ, xᵢⱼ)
+        cond_bool = cond < 0.0
+        μᵢⱼ       = h*cond * invd²η²
+        Πᵢⱼ       = cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ
+    else
+        Πᵢⱼ       = zero(xᵢⱼ)
+    end
+
+    if ViscosityTreatment == :Laminar
+        # 4 comes from 2 divided by 0.5 from average density
+        ν₀∇²uᵢ = ( (4 * m₀ * (ρᵢ * ν₀ + ρⱼ * ν₀) * dot( xᵢⱼ, ∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) * (ρᵢ + ρⱼ) + (d² + η²) ) ) *  vᵢⱼ
+        ν₀∇²uⱼ = - ν₀∇²uᵢ #( (4 * m₀ * (ρᵢ * ν₀ + ρⱼ * ν₀) * dot(-xᵢⱼ,-∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) * (ρᵢ + ρⱼ) + (d² + η²) ) ) * -vᵢⱼ
+    else
+        ν₀∇²uᵢ = zero(xᵢⱼ)
+        ν₀∇²uⱼ = ν₀∇²uᵢ
+    end
 
     dvdt⁺ = - m₀ * Pfac *  ∇ᵢWᵢⱼ
-    dvdt⁻ = - dvdt⁺ #- m₀ * ( Pfac + Πᵢⱼ) * -∇ᵢWᵢⱼ  
+    dvdt⁻ = - dvdt⁺
 
-    ν₀∇²uᵢ = ( (4 * m₀ * (ρᵢ * ν₀ + ρⱼ * ν₀) * dot( xᵢⱼ, ∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) * (ρᵢ + ρⱼ) + (d² + η²) ) ) *  vᵢⱼ
-    ν₀∇²uⱼ = ( (4 * m₀ * (ρᵢ * ν₀ + ρⱼ * ν₀) * dot(-xᵢⱼ,-∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) * (ρᵢ + ρⱼ) + (d² + η²) ) ) * -vᵢⱼ
-
-    dvdtI[i] += dvdt⁺ + ν₀∇²uᵢ
-    dvdtI[j] += dvdt⁻ + ν₀∇²uⱼ
+    dvdtI[i] += dvdt⁺ + Πᵢⱼ + ν₀∇²uᵢ
+    dvdtI[j] += dvdt⁻ + Πᵢⱼ + ν₀∇²uⱼ
 
     if BoolShifting
         Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
@@ -247,7 +257,7 @@ end
     return nothing
 end
 
-@inbounds function neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT=true, BoolShifting=true)
+@inbounds function neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, ViscosityTreatment, BoolDDT=true, BoolShifting=true)
     nchunks = nthreads()
     @threads for ichunk in 1:nchunks
         for Cind_ ∈ getchunk(LoopLayout, ichunk; n=nchunks)
@@ -265,7 +275,7 @@ end
                         d2 = distance_condition(Position[k_idx],Position[k_1up])
 
                         if d2 < TheCLL.CutOffSquared
-                            @inbounds @inline sim_step(k_idx , k_1up, d2, SimConstants, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT, BoolShifting)
+                            @inbounds @inline sim_step(k_idx , k_1up, d2, SimConstants, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, ViscosityTreatment, BoolDDT, BoolShifting)
                         end
                     end
                 end
@@ -286,7 +296,7 @@ end
                             d2  = distance_condition(Position[k1_idx],Position[k2_idx])
         
                             if d2 < TheCLL.CutOffSquared
-                                @inbounds @inline sim_step(k1_idx , k2_idx, d2, SimConstants, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, BoolDDT, BoolShifting)
+                                @inbounds @inline sim_step(k1_idx , k2_idx, d2, SimConstants, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, ViscosityTreatment, BoolDDT, BoolShifting)
                             end
                         end
                     end
@@ -315,14 +325,14 @@ function EquationOfState(ρ,c₀,γ,ρ₀)
     return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
 end
 
-function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺; BoolDDT, BoolShifting)
+function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺; ViscosityTreatment, BoolDDT, BoolShifting)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, δᵩ, CFL, η² = SimConstants
 
     dt  = Δt(Position, Velocity, dvdtIₙ⁺, SimConstants)
     dt₂ = dt * 0.5
 
     ResetArrays!(∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, dρdtI, dvdtI)
-    neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter,  BoolDDT, BoolShifting)
+    neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, ViscosityTreatment, BoolDDT, BoolShifting)
 
     # Make loop, no allocs
     @inbounds @batch for i in eachindex(dvdtI)
@@ -335,7 +345,7 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
     LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
 
     ResetArrays!(∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, dρdtIₙ⁺, dvdtIₙ⁺)
-    neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, MotionLimiter,  BoolDDT, BoolShifting)
+    neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, MotionLimiter, ViscosityTreatment, BoolDDT, BoolShifting)
     
     DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
     LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
@@ -368,9 +378,13 @@ function RunSimulation(;FluidCSV::String,
     BoundCSV::String,
     SimMetaData::SimulationMetaData{Dimensions, FloatType},
     SimConstants::SimulationConstants,
+    ViscosityTreatment = :Laminar,
     BoolDDT = true,
     BoolShifting = true
 ) where {Dimensions,FloatType}
+    if ViscosityTreatment ∉ Set((:None, :ArtificialViscosity, :Laminar))
+        error("ViscosityTreatment must be either :None, :ArtificialViscosity, :Laminar")
+    end
 
     # Unpack the relevant simulation meta data
     @unpack HourGlass, SaveLocation, SimulationName, SilentOutput, ThreadsCPU = SimMetaData;
@@ -452,7 +466,7 @@ function RunSimulation(;FluidCSV::String,
         @timeit HourGlass "0 Update particles in cells" updateCLL!(TheCLL, Position)
         # inline removes 96 bytes alloc..
         @timeit HourGlass "1 Main simulation loop" CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺; 
-        BoolDDT, BoolShifting)
+        ViscosityTreatment, BoolDDT, BoolShifting)
         
         OutputCounter += SimMetaData.CurrentTimeStep
         @timeit HourGlass "2 Output data" if OutputCounter >= SimMetaData.OutputEach
@@ -490,13 +504,13 @@ begin
                                     OutputEach=0.01
     )
 
-    # # Initialze the constants to use
-    # SimConstants = SimulationConstants{T}(
-    #     dx = 0.02,
-    #     h  = 1*sqrt(2)*0.02,
-    #     c₀ = 88.14487860902641,
-    #     α  = 0.02
-    # )
+    # Initialze the constants to use
+    SimConstants = SimulationConstants{T}(
+        dx = 0.02,
+        h  = 1*sqrt(2)*0.02,
+        c₀ = 88.14487860902641,
+        α  = 0.02
+    )
 
     # # And here we run the function - enjoy!
     # println(@code_warntype RunSimulation(
@@ -507,30 +521,31 @@ begin
     # )
     # )
 
-    # println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
-    #     FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
-    #     BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
-    #     SimMetaData  = SimMetaData,
-    #     SimConstants = SimConstants
-    # )
-    # )
+    println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
+        FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
+        BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
+        SimMetaData  = SimMetaData,
+        SimConstants = SimConstants
+    )
+    )
 
-    # println(@report_call target_modules=(@__MODULE__,) RunSimulation(
-    #     FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
-    #     BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
-    #     SimMetaData  = SimMetaData,
-    #     SimConstants = SimConstants
-    # )
-    # )
+    println(@report_call target_modules=(@__MODULE__,) RunSimulation(
+        FluidCSV     = "./input/DSPH_DamBreak_Fluid_Dp0.02.csv",
+        BoundCSV     = "./input/DSPH_DamBreak_Boundary_Dp0.02.csv",
+        SimMetaData  = SimMetaData,
+        SimConstants = SimConstants
+    )
+    )
 
     SimConstantsWedge = SimulationConstants{T}(c₀=42.48576250492629)
     @profview RunSimulation(
-        FluidCSV     = "./input/StillWedge_Fluid_Dp0.02_LowResolution.csv",
-        BoundCSV     = "./input/StillWedge_Bound_Dp0.02_LowResolution_5LAYERS.csv",
-        SimMetaData  = SimMetaData,
-        SimConstants = SimConstantsWedge,
-        BoolDDT      = true,
-        BoolShifting = true,
+        FluidCSV           = "./input/StillWedge_Fluid_Dp0.02_LowResolution.csv",
+        BoundCSV           = "./input/StillWedge_Bound_Dp0.02_LowResolution_5LAYERS.csv",
+        SimMetaData        = SimMetaData,
+        SimConstants       = SimConstantsWedge,
+        ViscosityTreatment = :Laminar,
+        BoolDDT            = true,
+        BoolShifting       = true,
     )
 
     # SimConstantsDamBreak = SimulationConstants{T}()
