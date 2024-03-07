@@ -545,7 +545,7 @@ begin
         SimConstants       = SimConstantsWedge,
         ViscosityTreatment = :Laminar,
         BoolDDT            = true,
-        BoolShifting       = true,
+        BoolShifting       = false,
     )
 
     # SimConstantsDamBreak = SimulationConstants{T}()
