@@ -252,8 +252,9 @@ end
         ∇Cᵢ[j]   += (Cᵢ - Cⱼ) * (m₀/ρⱼ) * -∇ᵢWᵢⱼ
 
         # Switch signs compared to DSPH, else free surface detection does not make sense
-        ∇◌rᵢ[i]  += -(m₀/ρᵢ) * dot(xᵢⱼ , ∇ᵢWᵢⱼ)  * MLcond
-        ∇◌rᵢ[j]  += -(m₀/ρⱼ) * dot(-xᵢⱼ ,-∇ᵢWᵢⱼ) * MLcond
+        # Agrees, https://arxiv.org/abs/2110.10076, it should have been r_ji
+        ∇◌rᵢ[i]  += (m₀/ρⱼ) * dot(-xᵢⱼ , ∇ᵢWᵢⱼ)  * MLcond
+        ∇◌rᵢ[j]  += (m₀/ρᵢ) * dot( xᵢⱼ ,-∇ᵢWᵢⱼ)  * MLcond
     end
 
     return nothing
