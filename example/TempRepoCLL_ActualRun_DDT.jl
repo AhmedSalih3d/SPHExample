@@ -159,7 +159,7 @@ end
 
 @inbounds function sim_step(i , j, d2, SimConstants, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, ViscosityTreatment::Symbol, BoolDDT,BoolShifting)
 
-    @unpack h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, Cb⁻¹, g, η², ν₀, δᵩ = SimConstants
+    @unpack h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, Cb⁻¹, g, η², ν₀, δᵩ, dx, SmagorinskyConstant, BlinConstant = SimConstants
     #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/12
     d  = sqrt(abs(d2))
     d² = d*d
@@ -231,6 +231,17 @@ end
         ν₀∇²uᵢ = zero(xᵢⱼ)
         ν₀∇²uⱼ = ν₀∇²uᵢ
     end
+
+    #julia> a .- a'
+    # 3×3 SMatrix{3, 3, Float64, 9} with indices SOneTo(3)×SOneTo(3):
+    # 0.0  0.0  0.0
+    # 0.0  0.0  0.0
+    # 0.0  0.0  0.0
+    # Strain *rate* tensor is the gradient of velocity
+    Sᵢ = ∇vᵢ =  (m₀/ρⱼ) * (vⱼ - vᵢ) * ∇ᵢWᵢⱼ'
+    norm_Sᵢ  = sqrt(2 * sum(Sᵢ .^ 2))
+
+    νtᵢ      = (SmagorinskyConstant * dx)^2 * norm_Sᵢ
 
     dvdt⁺ = - m₀ * Pfac *  ∇ᵢWᵢⱼ
     dvdt⁻ = - dvdt⁺
