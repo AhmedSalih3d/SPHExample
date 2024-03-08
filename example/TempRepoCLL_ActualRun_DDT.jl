@@ -234,6 +234,7 @@ end
     end
 
     if ViscosityTreatment == :LaminarSPS 
+        Iᴹ       = diagm(one.(xᵢ))
         #julia> a .- a'
         # 3×3 SMatrix{3, 3, Float64, 9} with indices SOneTo(3)×SOneTo(3):
         # 0.0  0.0  0.0
@@ -243,7 +244,6 @@ end
         Sᵢ = ∇vᵢ =  (m₀/ρⱼ) * (vⱼ - vᵢ) * ∇ᵢWᵢⱼ'
         norm_Sᵢ  = sqrt(2 * sum(Sᵢ .^ 2))
         νtᵢ      = (SmagorinskyConstant * dx)^2 * norm_Sᵢ
-        Iᴹ       = diagm(one.(xᵢ))
         trace_Sᵢ = sum(diag(Sᵢ))
         τᶿᵢ      = 2*νtᵢ*ρᵢ * (Sᵢ - (1/3) * trace_Sᵢ * Iᴹ) - (2/3) * ρᵢ * BlinConstant * dx^2 * norm_Sᵢ^2 * Iᴹ
         Sⱼ = ∇vⱼ =  (m₀/ρᵢ) * (vᵢ - vⱼ) * -∇ᵢWᵢⱼ'
@@ -410,7 +410,7 @@ function RunSimulation(;FluidCSV::String,
     BoundCSV::String,
     SimMetaData::SimulationMetaData{Dimensions, FloatType},
     SimConstants::SimulationConstants,
-    ViscosityTreatment = :Laminar,
+    ViscosityTreatment = :LaminarSPS,
     BoolDDT = true,
     BoolShifting = true
 ) where {Dimensions,FloatType}
@@ -569,25 +569,26 @@ begin
     )
     )
 
-    SimConstantsWedge = SimulationConstants{T}(c₀=42.48576250492629)
-    @profview RunSimulation(
-        FluidCSV           = "./input/StillWedge_Fluid_Dp0.02_LowResolution.csv",
-        BoundCSV           = "./input/StillWedge_Bound_Dp0.02_LowResolution_5LAYERS.csv",
-        SimMetaData        = SimMetaData,
-        SimConstants       = SimConstantsWedge,
-        ViscosityTreatment = :LaminarSPS,
-        BoolDDT            = true,
-        BoolShifting       = false,
-    )
-
-    # SimConstantsDamBreak = SimulationConstants{T}()
+    # SimConstantsWedge = SimulationConstants{T}(c₀=42.48576250492629)
     # @profview RunSimulation(
-    #     FluidCSV     = "./input/FluidPoints_Dp0.02_5LAYERS.csv",
-    #     BoundCSV     = "./input/BoundaryPoints_Dp0.02_5LAYERS.csv",
-    #     SimMetaData  = SimMetaData,
-    #     SimConstants = SimConstantsDamBreak,
-    #     BoolDDT      = true,
-    #     BoolShifting = true
+    #     FluidCSV           = "./input/StillWedge_Fluid_Dp0.02_LowResolution.csv",
+    #     BoundCSV           = "./input/StillWedge_Bound_Dp0.02_LowResolution_5LAYERS.csv",
+    #     SimMetaData        = SimMetaData,
+    #     SimConstants       = SimConstantsWedge,
+    #     ViscosityTreatment = :LaminarSPS,
+    #     BoolDDT            = true,
+    #     BoolShifting       = false,
     # )
+
+    SimConstantsDamBreak = SimulationConstants{T}()
+    @profview RunSimulation(
+        FluidCSV     = "./input/FluidPoints_Dp0.02_5LAYERS.csv",
+        BoundCSV     = "./input/BoundaryPoints_Dp0.02_5LAYERS.csv",
+        SimMetaData  = SimMetaData,
+        SimConstants = SimConstantsDamBreak,
+        BoolDDT      = true,
+        BoolShifting = true,
+        ViscosityTreatment = :LaminarSPS
+    )
 
 end
