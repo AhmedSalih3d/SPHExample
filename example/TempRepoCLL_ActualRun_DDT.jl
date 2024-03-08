@@ -469,9 +469,9 @@ function RunSimulation(;FluidCSV::String,
     ∇◌rᵢ              = zeros(FloatType,NumberOfPoints)            
 
     # Half point values for predictor-corrector algorithm
-    Velocityₙ⁺ = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
-    Positionₙ⁺ = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
-    ρₙ⁺        = zeros(FloatType, NumberOfPoints)
+    Velocityₙ⁺        = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
+    Positionₙ⁺        = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
+    ρₙ⁺               = zeros(FloatType, NumberOfPoints)
 
     if !isdir(SimMetaData.SaveLocation)
         mkdir(SimMetaData.SaveLocation)
