@@ -429,7 +429,7 @@ function RunSimulation(;FluidCSV::String,
     @inline points, density_fluid, density_bound  = LoadParticlesFromCSV(Dimensions,FloatType, FluidCSV,BoundCSV)
     Position           = convert(Vector{SVector{Dimensions,FloatType}},points.V)
     
-    BoundaryNormals    = LoadBoundaryNormals(Dimensions, FloatType, "input/StillWedge_Dp0.02_BoundNormals.csv")
+    _, GhostPoints, BoundaryNormals    = LoadBoundaryNormals(Dimensions, FloatType, "input/StillWedge_Dp0.02_BoundNormals.csv")
     # Read this as "GravityFactor * g", so -1 means negative acceleration for fluid particles
     GravityFactor            = [zeros(size(density_bound,1)) ; -ones(size(density_fluid,1)) ]
     

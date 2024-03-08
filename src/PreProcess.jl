@@ -66,23 +66,28 @@ function LoadBoundaryNormals(dims, float_type, path_mdbc)
     # Read the CSV file into a DataFrame
     df = CSV.read(path_mdbc, DataFrame)
 
-    normals = Vector{SVector{dims,float_type}}()
-    points  = Vector{SVector{dims,float_type}}()
+    normals       = Vector{SVector{dims,float_type}}()
+    points        = Vector{SVector{dims,float_type}}()
+    ghost_points  = Vector{SVector{dims,float_type}}()
 
     # Loop over each row of the DataFrame
     for i in 1:size(df, 1)
         # Extract the "Normal" fields into an SVector
         if dims == 3
             normal = SVector{dims,float_type}(df[i, "Normal:0"], df[i, "Normal:1"], df[i, "Normal:2"])
+            point  = SVector{dims,float_type}(df[i, "Points:0"], df[i, "Points:1"], df[i, "Points:2"])
         elseif dims == 2
             normal = SVector{dims,float_type}(df[i, "Normal:0"], df[i, "Normal:2"])
+            point  = SVector{dims,float_type}(df[i, "Points:0"], df[i, "Points:2"])
         end
 
         push!(normals, normal)
+        push!(points,  point)
+        push!(ghost_points,  point+normal)
 
     end
 
-    return normals
+    return points, ghost_points, normals
 end
 
 end
