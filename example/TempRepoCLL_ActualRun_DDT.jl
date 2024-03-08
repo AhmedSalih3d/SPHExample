@@ -430,17 +430,17 @@ function RunSimulation(;FluidCSV::String,
     Position           = convert(Vector{SVector{Dimensions,FloatType}},points.V)
     
     # Read this as "GravityFactor * g", so -1 means negative acceleration for fluid particles
-    GravityFactor            = [-ones(size(density_fluid,1)) ; zeros(size(density_bound,1))]
+    GravityFactor            = [zeros(size(density_bound,1)) ; -ones(size(density_fluid,1)) ]
     
     # MotionLimiter is what allows fluid particles to move, while not letting the velocity of boundary
     # particles change
-    MotionLimiter = [ ones(size(density_fluid,1)) ; zeros(size(density_bound,1))]
+    MotionLimiter = [ zeros(size(density_bound,1)) ; ones(size(density_fluid,1)) ]
 
     # Read this as "GravityFactor * g", so -1 means negative acceleration for fluid particles
-    GravityFactor            = [-ones(size(density_fluid,1)) ; zeros(size(density_bound,1))]
+    GravityFactor            = [ zeros(size(density_bound,1)) ; -ones(size(density_fluid,1))]
     # MotionLimiter is what allows fluid particles to move, while not letting the velocity of boundary
     # particles change
-    MotionLimiter = [ ones(size(density_fluid,1)) ; zeros(size(density_bound,1))]
+    MotionLimiter = [ zeros(size(density_bound,1)) ; ones(size(density_fluid,1))]
     
     # Based on MotionLimiter we assess which particles are boundary particles
     BoundaryBool  = .!Bool.(MotionLimiter)
@@ -451,7 +451,7 @@ function RunSimulation(;FluidCSV::String,
     # State variables
     Position          = convert(Vector{SVector{Dimensions,FloatType}},points.V)
     Velocity          = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
-    Density           = deepcopy([density_fluid;density_bound])
+    Density           = deepcopy([density_bound;density_fluid])
     Pressureᵢ         = @. EquationOfStateGamma7(Density,c₀,ρ₀)
 
     # Derivatives

@@ -28,18 +28,6 @@ function LoadParticlesFromCSV(dims, float_type, fluid_csv,boundary_csv)
     density_bound    = Vector{float_type}()
 
     # Since the particles are produced in DualSPHysics
-    for i = 1:length(P1F)
-        if dims == 3
-            push!(points1,P1F[i])
-            push!(points2,P2F[i])
-            push!(points3,P3F[i])
-        elseif dims == 2
-            push!(points1,P1F[i])
-            push!(points2,P3F[i])
-        end
-        push!(density_fluid,DF_FLUID.Rhop[i])
-    end
-
     for i = 1:length(P1B)
         if dims == 3
             push!(points1,P1B[i])
@@ -50,6 +38,18 @@ function LoadParticlesFromCSV(dims, float_type, fluid_csv,boundary_csv)
             push!(points2,P3B[i])
         end
         push!(density_bound,DF_BOUND.Rhop[i])
+    end
+    
+    for i = 1:length(P1F)
+        if dims == 3
+            push!(points1,P1F[i])
+            push!(points2,P2F[i])
+            push!(points3,P3F[i])
+        elseif dims == 2
+            push!(points1,P1F[i])
+            push!(points2,P3F[i])
+        end
+        push!(density_fluid,DF_FLUID.Rhop[i])
     end
 
     if dims == 3
