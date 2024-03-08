@@ -338,7 +338,7 @@ end
     end
 end
 
-@inbounds function neighbor_loop_ghostpoints(TheCLL, LoopLayout, Stencil, GhostPoints_UniqueCells, Position)
+@inbounds function neighbor_loop_ghostpoints(TheCLL, Stencil, GhostPoints_UniqueCells, Position)
     nchunks = nthreads()
     @threads for ichunk in 1:nchunks
         for Cind_ ∈ getchunk(GhostPoints_UniqueCells, ichunk; n=nchunks)
@@ -416,7 +416,7 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
 
     ResetArrays!(∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, dρdtI, dvdtI)
     neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, ViscosityTreatment, BoolDDT, BoolShifting)
-    neighbor_loop_ghostpoints(TheCLL, LoopLayout, Stencil, GhostPoints_UniqueCells, Position)
+    neighbor_loop_ghostpoints(TheCLL, Stencil, GhostPoints_UniqueCells, Position)
 
     # Make loop, no allocs
     @inbounds @batch for i in eachindex(dvdtI)
