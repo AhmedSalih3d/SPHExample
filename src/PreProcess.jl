@@ -1,6 +1,6 @@
 module PreProcess
 
-export LoadParticlesFromCSV
+export LoadParticlesFromCSV, LoadBoundaryNormals
 
 using CSV
 using DataFrames
@@ -61,4 +61,29 @@ function LoadParticlesFromCSV(dims, float_type, fluid_csv,boundary_csv)
     return points,density_fluid,density_bound
 end
 
+
+function LoadBoundaryNormals(dims, float_type, path_mdbc)
+    # Read the CSV file into a DataFrame
+    df = CSV.read(path_mdbc, DataFrame)
+
+    normals = Vector{SVector{dims,float_type}}()
+    points  = Vector{SVector{dims,float_type}}()
+
+    # Loop over each row of the DataFrame
+    for i in 1:size(df, 1)
+        # Extract the "Normal" fields into an SVector
+        if dims == 3
+            normal = SVector{dims,float_type}(df[i, "Normal:0"], df[i, "Normal:1"], df[i, "Normal:2"])
+        elseif dims == 2
+            normal = SVector{dims,float_type}(df[i, "Normal:0"], df[i, "Normal:2"])
+        end
+
+        push!(normals, normal)
+
+    end
+
+    return normals
 end
+
+end
+
