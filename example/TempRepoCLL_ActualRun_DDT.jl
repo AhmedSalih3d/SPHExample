@@ -223,7 +223,7 @@ end
         Πⱼ        = Πᵢ
     end
 
-    if ViscosityTreatment == :Laminar
+    if ViscosityTreatment == :Laminar || ViscosityTreatment == :LaminarSPS
         # 4 comes from 2 divided by 0.5 from average density
         # should divide by ρᵢ eq 6 DPC
         ν₀∇²uᵢ = (1/ρᵢ) * ( (4 * m₀ * (ρᵢ * ν₀) * dot( xᵢⱼ, ∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) + (d² + η²) ) ) *  vᵢⱼ
@@ -233,30 +233,35 @@ end
         ν₀∇²uⱼ = ν₀∇²uᵢ
     end
 
-    #julia> a .- a'
-    # 3×3 SMatrix{3, 3, Float64, 9} with indices SOneTo(3)×SOneTo(3):
-    # 0.0  0.0  0.0
-    # 0.0  0.0  0.0
-    # 0.0  0.0  0.0
-    # Strain *rate* tensor is the gradient of velocity
-    Sᵢ = ∇vᵢ =  (m₀/ρⱼ) * (vⱼ - vᵢ) * ∇ᵢWᵢⱼ'
-    norm_Sᵢ  = sqrt(2 * sum(Sᵢ .^ 2))
-    νtᵢ      = (SmagorinskyConstant * dx)^2 * norm_Sᵢ
-    Iᴹ       = diagm(one.(xᵢ))
-    trace_Sᵢ = sum(diag(Sᵢ))
-    τᶿᵢ      = 2*νtᵢ*ρᵢ * (Sᵢ - (1/3) * trace_Sᵢ * Iᴹ) - (2/3) * ρᵢ * BlinConstant * dx^2 * norm_Sᵢ^2 * Iᴹ
+    if ViscosityTreatment == :LaminarSPS 
+        #julia> a .- a'
+        # 3×3 SMatrix{3, 3, Float64, 9} with indices SOneTo(3)×SOneTo(3):
+        # 0.0  0.0  0.0
+        # 0.0  0.0  0.0
+        # 0.0  0.0  0.0
+        # Strain *rate* tensor is the gradient of velocity
+        Sᵢ = ∇vᵢ =  (m₀/ρⱼ) * (vⱼ - vᵢ) * ∇ᵢWᵢⱼ'
+        norm_Sᵢ  = sqrt(2 * sum(Sᵢ .^ 2))
+        νtᵢ      = (SmagorinskyConstant * dx)^2 * norm_Sᵢ
+        Iᴹ       = diagm(one.(xᵢ))
+        trace_Sᵢ = sum(diag(Sᵢ))
+        τᶿᵢ      = 2*νtᵢ*ρᵢ * (Sᵢ - (1/3) * trace_Sᵢ * Iᴹ) - (2/3) * ρᵢ * BlinConstant * dx^2 * norm_Sᵢ^2 * Iᴹ
+        Sⱼ = ∇vⱼ =  (m₀/ρᵢ) * (vᵢ - vⱼ) * -∇ᵢWᵢⱼ'
+        norm_Sⱼ  = sqrt(2 * sum(Sⱼ .^ 2))
+        νtⱼ      = (SmagorinskyConstant * dx)^2 * norm_Sⱼ
+        trace_Sⱼ = sum(diag(Sⱼ))
+        τᶿⱼ      = 2*νtⱼ*ρⱼ * (Sⱼ - (1/3) * trace_Sⱼ * Iᴹ) - (2/3) * ρⱼ * BlinConstant * dx^2 * norm_Sⱼ^2 * Iᴹ
 
-    Sⱼ = ∇vⱼ =  (m₀/ρᵢ) * (vᵢ - vⱼ) * -∇ᵢWᵢⱼ'
-    norm_Sⱼ  = sqrt(2 * sum(Sⱼ .^ 2))
-    νtⱼ      = (SmagorinskyConstant * dx)^2 * norm_Sⱼ
-    trace_Sⱼ = sum(diag(Sⱼ))
-    τᶿⱼ      = 2*νtⱼ*ρⱼ * (Sⱼ - (1/3) * trace_Sⱼ * Iᴹ) - (2/3) * ρⱼ * BlinConstant * dx^2 * norm_Sⱼ^2 * Iᴹ
+        
+        dτdtᵢ = (m₀/(ρⱼ * ρᵢ)) * (τᶿᵢ + τᶿⱼ) *  ∇ᵢWᵢⱼ # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA THIS TIME
+        dτdtⱼ = (m₀/(ρᵢ * ρⱼ)) * (τᶿᵢ + τᶿⱼ) * -∇ᵢWᵢⱼ # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA THIS TIME
+    else
+        dτdtᵢ  = zero(xᵢⱼ)
+        dτdtⱼ  = dτdtᵢ
+    end
 
     dvdt⁺ = - m₀ * Pfac *  ∇ᵢWᵢⱼ
     dvdt⁻ = - dvdt⁺
-
-    dτdtᵢ = (m₀/(ρⱼ * ρᵢ)) * (τᶿᵢ + τᶿⱼ) *  ∇ᵢWᵢⱼ # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA THIS TIME
-    dτdtⱼ = (m₀/(ρᵢ * ρⱼ)) * (τᶿᵢ + τᶿⱼ) * -∇ᵢWᵢⱼ # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA THIS TIME
 
     dvdtI[i] += dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ
     dvdtI[j] += dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
@@ -409,8 +414,8 @@ function RunSimulation(;FluidCSV::String,
     BoolDDT = true,
     BoolShifting = true
 ) where {Dimensions,FloatType}
-    if ViscosityTreatment ∉ Set((:None, :ArtificialViscosity, :Laminar))
-        error("ViscosityTreatment must be either :None, :ArtificialViscosity, :Laminar")
+    if ViscosityTreatment ∉ Set((:None, :ArtificialViscosity, :Laminar, :LaminarSPS))
+        error("ViscosityTreatment must be either :None, :ArtificialViscosity, :Laminar, :LaminarSPS")
     end
 
     # Unpack the relevant simulation meta data
@@ -570,7 +575,7 @@ begin
         BoundCSV           = "./input/StillWedge_Bound_Dp0.02_LowResolution_5LAYERS.csv",
         SimMetaData        = SimMetaData,
         SimConstants       = SimConstantsWedge,
-        ViscosityTreatment = :Laminar,
+        ViscosityTreatment = :LaminarSPS,
         BoolDDT            = true,
         BoolShifting       = false,
     )
