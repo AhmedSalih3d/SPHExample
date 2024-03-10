@@ -357,7 +357,7 @@ function EquationOfState(ρ,c₀,γ,ρ₀)
     return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
 end
 
-function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, GhostNeighborList, FluidNodesRange, GhostPoints, GhostKernel, GhostKernelGradient; ViscosityTreatment, BoolDDT, BoolShifting)
+function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, GhostNeighborList, FluidNodesRange, GhostPoints, GhostKernel, GhostKernelGradient, GhostMatrixA, GhostVectorB; ViscosityTreatment, BoolDDT, BoolShifting)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, δᵩ, CFL, η² = SimConstants
 
     dt  = Δt(Position, Velocity, dvdtIₙ⁺, SimConstants)
@@ -379,11 +379,13 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
         xᵢⱼ = GhostPoints[i] - Position[FluidNodesRange][j]
         @fastpow ∇ᵢWᵢⱼ = ∇ᵢWᵢⱼ_(αD,h,xᵢⱼ,q, η²)
 
-        GhostKernelGradient[i] += ∇ᵢWᵢⱼ
-
         ρⱼ    = Density[j]
         Vⱼ    = m₀/ρⱼ
         WᵢⱼVⱼ = Wᵢⱼ * Vⱼ 
+
+        GhostKernelGradient[i] += ∇ᵢWᵢⱼ
+
+        xⱼᵢ = - xᵢⱼ
     end
 
     # Make loop, no allocs
@@ -490,6 +492,9 @@ function RunSimulation(;FluidCSV::String,
     Kernel              = zeros(FloatType,NumberOfPoints)
     KernelGradient      = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
 
+    GhostMatrixA        = [@MMatrix zeros(Dimensions+1, Dimensions+1) for _ in GhostPoints]
+    GhostVectorB        = [@MVector zeros(Dimensions+1)               for _ in GhostPoints]
+
     # Shifting correction
     ∇Cᵢ               = zeros(SVector{Dimensions,FloatType},NumberOfPoints)            
     ∇◌rᵢ              = zeros(FloatType,NumberOfPoints)            
@@ -532,7 +537,7 @@ function RunSimulation(;FluidCSV::String,
     @time @inbounds while true
         
         @timeit HourGlass "0 Update particles in cells" updateCLL!(TheCLL, Position)
-        @timeit HourGlass "1 Main simulation loop" CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, GhostNeighborList, FluidNodesRange, GhostPoints, GhostKernel, GhostKernelGradient; 
+        @timeit HourGlass "1 Main simulation loop" CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, GhostNeighborList, FluidNodesRange, GhostPoints, GhostKernel, GhostKernelGradient, GhostMatrixA, GhostVectorB; 
         ViscosityTreatment, BoolDDT, BoolShifting)
         
         OutputCounter += SimMetaData.CurrentTimeStep
