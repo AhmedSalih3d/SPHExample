@@ -14,6 +14,7 @@ using TimerOutputs
 using FastPow
 using ChunkSplitters
 import Cthulhu as Deep
+import CellListMap: InPlaceNeighborList
 
 import Base.Threads: nthreads, @threads
 include("../src/ProduceVTP.jl")
@@ -356,7 +357,7 @@ function EquationOfState(ρ,c₀,γ,ρ₀)
     return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
 end
 
-function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, GhostLayout, GhostPoints_UniqueCells, GhostPoints, GhostKernel; ViscosityTreatment, BoolDDT, BoolShifting)
+function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, GhostNeighborList, GhostLayout, GhostPoints_UniqueCells, GhostPoints, GhostKernel; ViscosityTreatment, BoolDDT, BoolShifting)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, δᵩ, CFL, η² = SimConstants
 
     dt  = Δt(Position, Velocity, dvdtIₙ⁺, SimConstants)
@@ -426,18 +427,21 @@ function RunSimulation(;FluidCSV::String,
     # Load in the fluid and boundary particles. Return these points and both data frames
     # @inline is a hack here to remove all allocations further down due to uncertainty of the points type at compile time
     @inline points, density_fluid, density_bound  = LoadParticlesFromCSV(Dimensions,FloatType, FluidCSV,BoundCSV)
-    Position           = convert(Vector{SVector{Dimensions,FloatType}},points.V)
+    Position = convert(Vector{SVector{Dimensions,FloatType}},points.V)
+
+    BoundNodesRange = 1:length(density_bound)
+    FluidNodesRange = (length(density_fluid)+1):length(points)
     
     _, GhostPoints, BoundaryNormals    = LoadBoundaryNormals(Dimensions, FloatType, "input/StillWedge_Dp0.02_BoundNormals.csv")
     # Read this as "GravityFactor * g", so -1 means negative acceleration for fluid particles
-    GravityFactor            = [zeros(size(density_bound,1)) ; -ones(size(density_fluid,1)) ]
+    GravityFactor = [zeros(size(density_bound,1)) ; -ones(size(density_fluid,1)) ]
     
     # MotionLimiter is what allows fluid particles to move, while not letting the velocity of boundary
     # particles change
     MotionLimiter = [ zeros(size(density_bound,1)) ; ones(size(density_fluid,1)) ]
 
     # Read this as "GravityFactor * g", so -1 means negative acceleration for fluid particles
-    GravityFactor            = [ zeros(size(density_bound,1)) ; -ones(size(density_fluid,1))]
+    GravityFactor = [ zeros(size(density_bound,1)) ; -ones(size(density_fluid,1))]
     # MotionLimiter is what allows fluid particles to move, while not letting the velocity of boundary
     # particles change
     MotionLimiter = [ zeros(size(density_bound,1)) ; ones(size(density_fluid,1))]
@@ -455,10 +459,10 @@ function RunSimulation(;FluidCSV::String,
     Pressureᵢ         = @. EquationOfStateGamma7(Density,c₀,ρ₀)
 
     # Derivatives
-    dρdtI             = zeros(FloatType, NumberOfPoints)
+    dρdtI            = zeros(FloatType, NumberOfPoints)
     dρdtIₙ⁺           = zeros(FloatType, NumberOfPoints)
-    dvdtI              = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
-    dvdtIₙ⁺            = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
+    dvdtI             = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
+    dvdtIₙ⁺           = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
 
     # Kernel values
     GhostKernel       = zeros(FloatType,NumberOfPoints)
@@ -479,12 +483,10 @@ function RunSimulation(;FluidCSV::String,
     end
     
     foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
-   
 
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
     PolyDataTemplate(SaveLocation_, to_3d(Position), ["Kernel", "ParticleConcentration", "ParticleDivergence", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, ∇Cᵢ, ∇◌rᵢ, KernelGradient, Density, Pressureᵢ, Velocity, dvdtIₙ⁺)
     PolyDataTemplate(SimMetaData.SaveLocation * "/" * "GhostNodes" * "_" * lpad(0,6,"0") * ".vtp", to_3d(GhostPoints), ["Kernel"], GhostKernel)
-
 
     R = 2*h
     TheCLL = CLL(Points=Position,CutOff=R) #line is good idea at times
@@ -500,8 +502,8 @@ function RunSimulation(;FluidCSV::String,
     end
     GhostPoints_UniqueCells = unique(GhostCells)
     GhostLayout = GenerateM(maximum(reinterpret(Int,@view(GhostCells[:]))) + 1,1,1,2,GhostCells,Val(Dimensions))
-    # println(CartesianIndex(LoopLayout[GhostCells[1]]))
-    # println(GhostLayout)
+
+    GhostNeighborList = InPlaceNeighborList(x = GhostPoints, y = Position[FluidNodesRange], cutoff = R)
 
     generate_showvalues(Iteration, TotalTime) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime))]
     OutputCounter = 0.0
@@ -509,8 +511,7 @@ function RunSimulation(;FluidCSV::String,
     @time @inbounds while true
         
         @timeit HourGlass "0 Update particles in cells" updateCLL!(TheCLL, Position)
-        # inline removes 96 bytes alloc..
-        @timeit HourGlass "1 Main simulation loop" CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, GhostLayout, GhostPoints_UniqueCells, GhostPoints, GhostKernel; 
+        @timeit HourGlass "1 Main simulation loop" CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, GhostNeighborList, GhostLayout, GhostPoints_UniqueCells, GhostPoints, GhostKernel; 
         ViscosityTreatment, BoolDDT, BoolShifting)
         
         OutputCounter += SimMetaData.CurrentTimeStep
