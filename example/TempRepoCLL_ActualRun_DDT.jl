@@ -357,7 +357,7 @@ function EquationOfState(ρ,c₀,γ,ρ₀)
     return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
 end
 
-function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, GhostNeighborList, GhostLayout, GhostPoints_UniqueCells, GhostPoints, GhostKernel; ViscosityTreatment, BoolDDT, BoolShifting)
+function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, GhostNeighborList, FluidNodesRange, GhostLayout, GhostPoints_UniqueCells, GhostPoints, GhostKernel; ViscosityTreatment, BoolDDT, BoolShifting)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, δᵩ, CFL, η² = SimConstants
 
     dt  = Δt(Position, Velocity, dvdtIₙ⁺, SimConstants)
@@ -365,8 +365,7 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
 
     ResetArrays!(∇Cᵢ, ∇◌rᵢ, Kernel, GhostKernel, KernelGradient, dρdtI, dvdtI)
     neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, ViscosityTreatment, BoolDDT, BoolShifting)
-
-    update!(GhostNeighborList,GhostPoints,Position)
+    update!(GhostNeighborList,GhostPoints,Position[FluidNodesRange])
     neighborlist!(GhostNeighborList)
 
     for iter ∈ eachindex(GhostNeighborList.nb.list)
@@ -441,7 +440,7 @@ function RunSimulation(;FluidCSV::String,
     Position = convert(Vector{SVector{Dimensions,FloatType}},points.V)
 
     BoundNodesRange = 1:length(density_bound)
-    FluidNodesRange = (length(density_fluid)+1):length(points)
+    FluidNodesRange = (length(density_bound)+1):length(points)
     
     _, GhostPoints, BoundaryNormals    = LoadBoundaryNormals(Dimensions, FloatType, "input/StillWedge_Dp0.02_BoundNormals.csv")
     # Read this as "GravityFactor * g", so -1 means negative acceleration for fluid particles
@@ -522,7 +521,7 @@ function RunSimulation(;FluidCSV::String,
     @time @inbounds while true
         
         @timeit HourGlass "0 Update particles in cells" updateCLL!(TheCLL, Position)
-        @timeit HourGlass "1 Main simulation loop" CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, GhostNeighborList, GhostLayout, GhostPoints_UniqueCells, GhostPoints, GhostKernel; 
+        @timeit HourGlass "1 Main simulation loop" CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, GhostNeighborList, FluidNodesRange, GhostLayout, GhostPoints_UniqueCells, GhostPoints, GhostKernel; 
         ViscosityTreatment, BoolDDT, BoolShifting)
         
         OutputCounter += SimMetaData.CurrentTimeStep
@@ -533,6 +532,7 @@ function RunSimulation(;FluidCSV::String,
             Pressure!(Pressureᵢ,Density,SimConstants)
             PolyDataTemplate(SaveLocation_, to_3d(Position), ["Kernel", "ParticleConcentration", "ParticleDivergence", "KernelGradient", "Density", "Pressure", "Velocity", "Acceleration"], Kernel, ∇Cᵢ, ∇◌rᵢ, KernelGradient, Density, Pressureᵢ, Velocity, dvdtIₙ⁺)
             PolyDataTemplate(SimMetaData.SaveLocation * "/" * "GhostNodes" * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp", to_3d(GhostPoints), ["Kernel"], GhostKernel)
+            PolyDataTemplate(SimMetaData.SaveLocation * "/" * "FluidNodesRange" * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp", to_3d(Position[FluidNodesRange]))
         end
 
         @timeit HourGlass "3 Next step" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
@@ -558,7 +558,7 @@ begin
     SimMetaData  = SimulationMetaData{D, T}(
                                     SimulationName="AllInOne", 
                                     SaveLocation=raw"E:\SecondApproach\Testing",
-                                    SimulationTime=2,
+                                    SimulationTime=4,
                                     OutputEach=0.01
     )
 
