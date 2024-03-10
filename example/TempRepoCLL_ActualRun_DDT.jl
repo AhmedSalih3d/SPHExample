@@ -383,7 +383,8 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
     
     DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
 
-         # For each particle i in ghost nodes, we find the fluid node j which
+    ListOfParticlesForShephardFiltering = Vector{Int}()
+    # For each particle i in ghost nodes, we find the fluid node j which
     # is its neighbor and add the influence
     @threads for iter ∈ eachindex(GhostNeighborList.nb.list)
         i,j,d = GhostNeighborList.nb.list[iter]
@@ -419,15 +420,33 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
 
         
         if cond(GhostMatrixA[i]) > 2
+            push!(ListOfParticlesForShephardFiltering, i)
         else
-            v   = GhostMatrixA[i] \ GhostVectorB[i]
-            if v[1] <= 700 || v[1] >= 1300
-                continue
-            else
-                Density[i] = v[1] + dot(x_b - x_g , v[2:end])
-            end
+            v          = GhostMatrixA[i] \ GhostVectorB[i]
+            Density[i] = v[1] + dot(x_b - x_g , v[2:end])
         end
     end
+
+    # for i ∈ ListOfParticlesForShephardFiltering
+    #     volnorm_kernel  = 0.0
+    #     volnorm_density = 0.0
+    #     specific_interactions = filter(t -> any(x -> x == i, t), GhostNeighborList.nb.list)
+    #     @threads for iter ∈ eachindex(specific_interactions)
+    #         i,j,d = GhostNeighborList.nb.list[iter]
+    #         q     = clamp(d * h⁻¹,0.0,2.0)
+    #         Wᵢⱼ   = @fastpow αD*(1-q/2)^4*(2*q + 1)
+    #         GhostKernel[i] += Wᵢⱼ
+
+    #         ρⱼ    = Density[j]
+    #         Vⱼ    = m₀/ρⱼ
+
+    #         volnorm_kernel  += Wᵢⱼ * Vⱼ
+    #         volnorm_density += ρⱼ * Wᵢⱼ * Vⱼ
+    #     end
+    #     Density[i] = volnorm_density / volnorm_kernel
+    # end
+
+    empty!(ListOfParticlesForShephardFiltering)
 
     LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
 
