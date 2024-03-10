@@ -387,10 +387,10 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
         xⱼᵢ = - xᵢⱼ
 
         # Insert values in ghost matrices
-        GhostMatrixA[i][1,1]        += Wᵢⱼ   * Vⱼ
-        @. GhostMatrixA[i][2:end,1] += ∇ᵢWᵢⱼ * Vⱼ
-        @. GhostMatrixA[i][1,2:end] += xⱼᵢ   * Wᵢⱼ   * Vⱼ
-
+        GhostMatrixA[i][1,1]            += Wᵢⱼ   * Vⱼ
+        @. GhostMatrixA[i][1,2:end]     += xⱼᵢ   * Wᵢⱼ   * Vⱼ
+        @. GhostMatrixA[i][2:end,1]     += ∇ᵢWᵢⱼ * Vⱼ
+        @. GhostMatrixA[i][2:end,2:end] += Vⱼ    * ∇ᵢWᵢⱼ * xⱼᵢ'
 
         GhostVectorB[i][1]        += Wᵢⱼ   * m₀
         # This line below breaks @batch
