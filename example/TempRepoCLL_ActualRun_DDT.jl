@@ -370,11 +370,15 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
 
     # For each particle i in ghost nodes, we find the fluid node j which
     # is its neighbor and add the influence
-    for iter ∈ eachindex(GhostNeighborList.nb.list)
-        i,_,d = GhostNeighborList.nb.list[iter]
+    @batch for iter ∈ eachindex(GhostNeighborList.nb.list)
+        i,j,d = GhostNeighborList.nb.list[iter]
         q     = clamp(d * h⁻¹,0.0,2.0)
         Wᵢⱼ   = @fastpow αD*(1-q/2)^4*(2*q + 1)
         GhostKernel[i] += Wᵢⱼ
+
+        ρⱼ    = Density[j]
+        Vⱼ    = m₀/ρⱼ
+        WᵢⱼVⱼ = Wᵢⱼ * Vⱼ 
     end
 
     # Make loop, no allocs
