@@ -357,13 +357,13 @@ function EquationOfState(ρ,c₀,γ,ρ₀)
     return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
 end
 
-function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, GhostNeighborList, FluidNodesRange, GhostLayout, GhostPoints_UniqueCells, GhostPoints, GhostKernel; ViscosityTreatment, BoolDDT, BoolShifting)
+function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, GhostNeighborList, FluidNodesRange, GhostPoints, GhostKernel, GhostKernelGradient; ViscosityTreatment, BoolDDT, BoolShifting)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, δᵩ, CFL, η² = SimConstants
 
     dt  = Δt(Position, Velocity, dvdtIₙ⁺, SimConstants)
     dt₂ = dt * 0.5
 
-    ResetArrays!(∇Cᵢ, ∇◌rᵢ, Kernel, GhostKernel, KernelGradient, dρdtI, dvdtI)
+    ResetArrays!(∇Cᵢ, ∇◌rᵢ, Kernel, GhostKernel, GhostKernelGradient, KernelGradient, dρdtI, dvdtI)
     neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, ViscosityTreatment, BoolDDT, BoolShifting)
     update!(GhostNeighborList,GhostPoints,Position[FluidNodesRange])
     neighborlist!(GhostNeighborList)
@@ -375,6 +375,11 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
         q     = clamp(d * h⁻¹,0.0,2.0)
         Wᵢⱼ   = @fastpow αD*(1-q/2)^4*(2*q + 1)
         GhostKernel[i] += Wᵢⱼ
+
+        xᵢⱼ = GhostPoints[i] - Position[FluidNodesRange][j]
+        @fastpow ∇ᵢWᵢⱼ = ∇ᵢWᵢⱼ_(αD,h,xᵢⱼ,q, η²)
+
+        GhostKernelGradient[i] += ∇ᵢWᵢⱼ
 
         ρⱼ    = Density[j]
         Vⱼ    = m₀/ρⱼ
@@ -480,9 +485,10 @@ function RunSimulation(;FluidCSV::String,
     dvdtIₙ⁺           = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
 
     # Kernel values
-    GhostKernel       = zeros(FloatType,NumberOfPoints)
-    Kernel            = zeros(FloatType,NumberOfPoints)
-    KernelGradient    = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
+    GhostKernel         = zeros(FloatType,NumberOfPoints)
+    GhostKernelGradient = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
+    Kernel              = zeros(FloatType,NumberOfPoints)
+    KernelGradient      = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
 
     # Shifting correction
     ∇Cᵢ               = zeros(SVector{Dimensions,FloatType},NumberOfPoints)            
@@ -501,7 +507,7 @@ function RunSimulation(;FluidCSV::String,
 
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
     PolyDataTemplate(SaveLocation_, to_3d(Position), ["Kernel", "ParticleConcentration", "ParticleDivergence", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, ∇Cᵢ, ∇◌rᵢ, KernelGradient, Density, Pressureᵢ, Velocity, dvdtIₙ⁺)
-    PolyDataTemplate(SimMetaData.SaveLocation * "/" * "GhostNodes" * "_" * lpad(0,6,"0") * ".vtp", to_3d(GhostPoints), ["Kernel"], GhostKernel)
+    PolyDataTemplate(SimMetaData.SaveLocation * "/" * "GhostNodes" * "_" * lpad(0,6,"0") * ".vtp", to_3d(GhostPoints), ["Kernel", "KernelGradient"], GhostKernel, GhostKernelGradient)
 
     R = 2*h
     TheCLL = CLL(Points=Position,CutOff=R) #line is good idea at times
@@ -511,12 +517,12 @@ function RunSimulation(;FluidCSV::String,
     Stencil    = neighbors(Val(getsvecD(eltype(Position))))
 
     # GhostPoints Layout
-    GhostCells  = ExtractCells(GhostPoints,R,Val(Dimensions)) 
-    for i in eachindex(GhostCells)
-        GhostCells[i] = GhostCells[i] .+ (1,1) .+ (1,1) #ZeroOffset and HalfPad
-    end
-    GhostPoints_UniqueCells = unique(GhostCells)
-    GhostLayout = GenerateM(maximum(reinterpret(Int,@view(GhostCells[:]))) + 1,1,1,2,GhostCells,Val(Dimensions))
+    # GhostCells  = ExtractCells(GhostPoints,R,Val(Dimensions)) 
+    # for i in eachindex(GhostCells)
+    #     GhostCells[i] = GhostCells[i] .+ (1,1) .+ (1,1) #ZeroOffset and HalfPad
+    # end
+    # GhostPoints_UniqueCells = unique(GhostCells)
+    # GhostLayout = GenerateM(maximum(reinterpret(Int,@view(GhostCells[:]))) + 1,1,1,2,GhostCells,Val(Dimensions))
 
     GhostNeighborList = InPlaceNeighborList(x = GhostPoints, y = Position[FluidNodesRange], cutoff = R)
 
@@ -526,7 +532,7 @@ function RunSimulation(;FluidCSV::String,
     @time @inbounds while true
         
         @timeit HourGlass "0 Update particles in cells" updateCLL!(TheCLL, Position)
-        @timeit HourGlass "1 Main simulation loop" CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, GhostNeighborList, FluidNodesRange, GhostLayout, GhostPoints_UniqueCells, GhostPoints, GhostKernel; 
+        @timeit HourGlass "1 Main simulation loop" CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, GhostNeighborList, FluidNodesRange, GhostPoints, GhostKernel, GhostKernelGradient; 
         ViscosityTreatment, BoolDDT, BoolShifting)
         
         OutputCounter += SimMetaData.CurrentTimeStep
@@ -536,8 +542,9 @@ function RunSimulation(;FluidCSV::String,
             SaveLocation_= SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp"
             Pressure!(Pressureᵢ,Density,SimConstants)
             PolyDataTemplate(SaveLocation_, to_3d(Position), ["Kernel", "ParticleConcentration", "ParticleDivergence", "KernelGradient", "Density", "Pressure", "Velocity", "Acceleration"], Kernel, ∇Cᵢ, ∇◌rᵢ, KernelGradient, Density, Pressureᵢ, Velocity, dvdtIₙ⁺)
-            PolyDataTemplate(SimMetaData.SaveLocation * "/" * "GhostNodes" * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp", to_3d(GhostPoints), ["Kernel"], GhostKernel)
-            PolyDataTemplate(SimMetaData.SaveLocation * "/" * "FluidNodesRange" * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp", to_3d(Position[FluidNodesRange]))
+            PolyDataTemplate(SimMetaData.SaveLocation * "/" * "GhostNodes" * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp", to_3d(GhostPoints), ["Kernel", "KernelGradient"], GhostKernel, GhostKernelGradient)
+            # To check FluidNodesRange
+            # PolyDataTemplate(SimMetaData.SaveLocation * "/" * "FluidNodesRange" * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp", to_3d(Position[FluidNodesRange]))
         end
 
         @timeit HourGlass "3 Next step" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
