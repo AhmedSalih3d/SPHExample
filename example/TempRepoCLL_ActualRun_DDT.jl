@@ -172,7 +172,7 @@ end
     invd²η² = inv(d²+η²) 
     
 
-    q  = d  * h⁻¹ #clamp(d  * h⁻¹,0.0,2.0), not needed when checking d2 < CutOffSquared before hand
+    q  = clamp(d  * h⁻¹,0.0,2.0) #needed since checking only d2 < CutOffSquared before hand
 
     @fastpow ∇ᵢWᵢⱼ = ∇ᵢWᵢⱼ_(αD,h,xᵢⱼ,q, η²)
 
@@ -558,7 +558,7 @@ begin
     SimMetaData  = SimulationMetaData{D, T}(
                                     SimulationName="AllInOne", 
                                     SaveLocation=raw"E:\SecondApproach\Testing",
-                                    SimulationTime=0.1,
+                                    SimulationTime=2,
                                     OutputEach=0.01
     )
 
