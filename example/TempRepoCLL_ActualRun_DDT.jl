@@ -14,7 +14,7 @@ using TimerOutputs
 using FastPow
 using ChunkSplitters
 import Cthulhu as Deep
-import CellListMap: InPlaceNeighborList
+import CellListMap: InPlaceNeighborList, update!, neighborlist!
 
 import Base.Threads: nthreads, @threads
 include("../src/ProduceVTP.jl")
@@ -365,6 +365,17 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
 
     ResetArrays!(∇Cᵢ, ∇◌rᵢ, Kernel, GhostKernel, KernelGradient, dρdtI, dvdtI)
     neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, ViscosityTreatment, BoolDDT, BoolShifting)
+
+    update!(GhostNeighborList,GhostPoints,Position)
+    neighborlist!(GhostNeighborList)
+
+    for iter ∈ eachindex(GhostNeighborList.nb.list)
+        i,j,d = GhostNeighborList.nb.list[iter]
+        q     = clamp(d * h⁻¹,0.0,2.0)
+        Wᵢⱼ   = @fastpow αD*(1-q/2)^4*(2*q + 1)
+        GhostKernel[i] += Wᵢⱼ 
+        GhostKernel[j] += Wᵢⱼ
+    end
 
     # Make loop, no allocs
     @inbounds @batch for i in eachindex(dvdtI)
