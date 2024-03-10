@@ -376,7 +376,7 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
         Wᵢⱼ   = @fastpow αD*(1-q/2)^4*(2*q + 1)
         GhostKernel[i] += Wᵢⱼ
 
-        xᵢⱼ = GhostPoints[i] - Position[FluidNodesRange][j]
+        @views xᵢⱼ = GhostPoints[i] - Position[FluidNodesRange][j] #@views important here else code takes multiple seconds!
         @fastpow ∇ᵢWᵢⱼ = ∇ᵢWᵢⱼ_(αD,h,xᵢⱼ,q, η²)
 
         ρⱼ    = Density[j]
@@ -386,15 +386,15 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
 
         xⱼᵢ = - xᵢⱼ
 
-        # # Insert values in ghost matrices
-        # GhostMatrixA[i][1,1]        += Wᵢⱼ   * Vⱼ
-        # @. GhostMatrixA[i][2:end,1] += ∇ᵢWᵢⱼ * Vⱼ
-        # @. GhostMatrixA[i][1,2:end] += xⱼᵢ   * Wᵢⱼ   * Vⱼ
+        # Insert values in ghost matrices
+        GhostMatrixA[i][1,1]        += Wᵢⱼ   * Vⱼ
+        @. GhostMatrixA[i][2:end,1] += ∇ᵢWᵢⱼ * Vⱼ
+        @. GhostMatrixA[i][1,2:end] += xⱼᵢ   * Wᵢⱼ   * Vⱼ
 
 
-        # GhostVectorB[i][1]        += Wᵢⱼ   * m₀
-        # # This line below breaks @batch
-        # @. GhostVectorB[i][2:end] += ∇ᵢWᵢⱼ * m₀
+        GhostVectorB[i][1]        += Wᵢⱼ   * m₀
+        # This line below breaks @batch
+        @. GhostVectorB[i][2:end] += ∇ᵢWᵢⱼ * m₀
     end
 
     # Make loop, no allocs
