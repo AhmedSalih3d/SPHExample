@@ -368,7 +368,22 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
     update!(GhostNeighborList,GhostPoints,Position[FluidNodesRange])
     neighborlist!(GhostNeighborList)
 
-    # For each particle i in ghost nodes, we find the fluid node j which
+    # Make loop, no allocs
+    @inbounds @batch for i in eachindex(dvdtI)
+        dvdtI[i]       += ConstructGravitySVector(dvdtI[i], g * GravityFactor[i])
+        Velocityₙ⁺[i]   = Velocity[i]   + dvdtI[i]       *  dt₂ * MotionLimiter[i]
+        Positionₙ⁺[i]   = Position[i]   + Velocityₙ⁺[i]   * dt₂  * MotionLimiter[i]
+        ρₙ⁺[i]          = Density[i]    + dρdtI[i]       *  dt₂
+    end
+
+    LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
+
+    ResetArrays!(∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, dρdtIₙ⁺, dvdtIₙ⁺) #GhostKernel,  reset later
+    neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, MotionLimiter, ViscosityTreatment, BoolDDT, BoolShifting)
+    
+    DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
+
+         # For each particle i in ghost nodes, we find the fluid node j which
     # is its neighbor and add the influence
     @threads for iter ∈ eachindex(GhostNeighborList.nb.list)
         i,j,d = GhostNeighborList.nb.list[iter]
@@ -403,29 +418,17 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
         x_g = GhostPoints[i]
 
         
-
-        if cond(GhostMatrixA[i]) > 1.01
-            Density[i] = Density[i] #simpf
+        if cond(GhostMatrixA[i]) > 2
         else
             v   = GhostMatrixA[i] \ GhostVectorB[i]
-            Density[i] = v[1] + dot(x_b - x_g , v[2:end])
+            if v[1] <= 700 || v[1] >= 1300
+                continue
+            else
+                Density[i] = v[1] + dot(x_b - x_g , v[2:end])
+            end
         end
     end
 
-    # Make loop, no allocs
-    @inbounds @batch for i in eachindex(dvdtI)
-        dvdtI[i]       += ConstructGravitySVector(dvdtI[i], g * GravityFactor[i])
-        Velocityₙ⁺[i]   = Velocity[i]   + dvdtI[i]       *  dt₂ * MotionLimiter[i]
-        Positionₙ⁺[i]   = Position[i]   + Velocityₙ⁺[i]   * dt₂  * MotionLimiter[i]
-        ρₙ⁺[i]          = Density[i]    + dρdtI[i]       *  dt₂
-    end
-
-    LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
-
-    ResetArrays!(∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, dρdtIₙ⁺, dvdtIₙ⁺) #GhostKernel,  reset later
-    neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, MotionLimiter, ViscosityTreatment, BoolDDT, BoolShifting)
-    
-    DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
     LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
 
     A     = 2# Value between 1 to 6 advised
