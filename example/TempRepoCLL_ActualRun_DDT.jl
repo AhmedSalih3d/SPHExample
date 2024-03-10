@@ -382,10 +382,17 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
         ρⱼ    = Density[j]
         Vⱼ    = m₀/ρⱼ
         WᵢⱼVⱼ = Wᵢⱼ * Vⱼ 
+        Wᵢⱼmⱼ = Wᵢⱼ * m₀
 
         GhostKernelGradient[i] += ∇ᵢWᵢⱼ
 
         xⱼᵢ = - xᵢⱼ
+
+        # Insert values
+        GhostMatrixA[i][1,1] += WᵢⱼVⱼ
+
+        GhostVectorB[i][1]   += Wᵢⱼmⱼ
+        
     end
 
     # Make loop, no allocs
