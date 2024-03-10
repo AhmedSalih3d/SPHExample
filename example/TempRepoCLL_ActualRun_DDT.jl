@@ -338,80 +338,6 @@ end
     end
 end
 
-# i is ghost node
-@inbounds function ghostnodes_simstep(i , j, d2, SimConstants, GhostPoints, Position, GhostKernel)
-    @unpack h, m₀, h⁻¹,  α ,  αD, c₀, γ, ρ₀, Cb⁻¹, g, η², ν₀, δᵩ, dx, SmagorinskyConstant, BlinConstant = SimConstants
-
-    #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/12
-    d  = sqrt(abs(d2))
-    d² = d*d
-
-    xᵢ  = GhostPoints[i]
-    xⱼ  = Position[j]
-    xᵢⱼ = xᵢ - xⱼ
-
-    invd²η² = inv(d²+η²) 
-    
-
-    q  = d  * h⁻¹ #clamp(d  * h⁻¹,0.0,2.0), not needed when checking d2 < CutOffSquared before hand
-
-    Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
-
-    GhostKernel[i] += Wᵢⱼ
-    GhostKernel[j] += Wᵢⱼ
-end
-
-@inbounds function neighbor_loop_ghostpoints(TheCLL, Stencil, GhostPoints_UniqueCells, GhostPoints, Position, GhostKernel)
-    nchunks = nthreads()
-    @threads for ichunk in 1:nchunks
-        for Cind_ ∈ getchunk(GhostPoints_UniqueCells, ichunk; n=nchunks)
-            for Ci ∈ Cind_
-                Cind = CartesianIndex(GhostPoints_UniqueCells[Ci])
-                
-                if !isassigned(TheCLL.Layout,Cind) continue end
-                # The indices in the cell are:
-                indices_in_cell = TheCLL.Layout[Cind]
-
-                n_idx_cells = length(indices_in_cell)
-                @inbounds for ki = 1:n_idx_cells-1
-                    k_idx = indices_in_cell[ki]
-                    @inbounds for kj = (ki+1):n_idx_cells
-                        k_1up = indices_in_cell[kj]
-                        d2 = distance_condition(Position[k_idx],Position[k_1up])
-
-                        if d2 < TheCLL.CutOffSquared
-                            @inbounds @inline ghostnodes_simstep(k_idx , k_1up, d2, SimConstants, GhostPoints, Position, GhostKernel)
-                        end
-                    end
-                end
-        
-                for Sind_ ∈ Stencil
-                    Sind = Cind + Sind_
-        
-                    # Keep this in, because some cases break without it..
-                    if !isassigned(TheCLL.Layout,Sind) continue end
-        
-                    indices_in_cell_plus  = TheCLL.Layout[Sind]
-        
-                    # Here a double loop to compare indices_in_cell[k] to all possible neighbours
-                    for k1 ∈ eachindex(indices_in_cell)
-                        k1_idx = indices_in_cell[k1]
-                        for k2 ∈ eachindex(indices_in_cell_plus)
-                            k2_idx = indices_in_cell_plus[k2]
-                            d2  = distance_condition(Position[k1_idx],Position[k2_idx])
-        
-                            if d2 < TheCLL.CutOffSquared
-                                @inbounds @inline ghostnodes_simstep(k1_idx , k2_idx, d2, SimConstants, GhostPoints, Position, GhostKernel)
-                            end
-                        end
-                    end
-                end
-            end
-        end
-    end
-end
-
-
 
 function updateCLL!(cll::CLL,Points)
     # Update Cells based on new positions of Points
@@ -430,7 +356,7 @@ function EquationOfState(ρ,c₀,γ,ρ₀)
     return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
 end
 
-function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, GhostPoints_UniqueCells, GhostPoints, GhostKernel; ViscosityTreatment, BoolDDT, BoolShifting)
+function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, GhostLayout, GhostPoints_UniqueCells, GhostPoints, GhostKernel; ViscosityTreatment, BoolDDT, BoolShifting)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, δᵩ, CFL, η² = SimConstants
 
     dt  = Δt(Position, Velocity, dvdtIₙ⁺, SimConstants)
@@ -438,7 +364,6 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
 
     ResetArrays!(∇Cᵢ, ∇◌rᵢ, Kernel, GhostKernel, KernelGradient, dρdtI, dvdtI)
     neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, dρdtI, dvdtI, MotionLimiter, ViscosityTreatment, BoolDDT, BoolShifting)
-    neighbor_loop_ghostpoints(TheCLL, Stencil, GhostPoints_UniqueCells, GhostPoints, Position, GhostKernel)
 
     # Make loop, no allocs
     @inbounds @batch for i in eachindex(dvdtI)
@@ -450,7 +375,7 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
 
     LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool,ρ₀)
 
-    ResetArrays!(∇Cᵢ, ∇◌rᵢ, Kernel, GhostKernel, KernelGradient, dρdtIₙ⁺, dvdtIₙ⁺)
+    ResetArrays!(∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, dρdtIₙ⁺, dvdtIₙ⁺) #GhostKernel,  reset later
     neighbor_loop(TheCLL, LoopLayout, Stencil, SimConstants, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Positionₙ⁺, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIₙ⁺, MotionLimiter, ViscosityTreatment, BoolDDT, BoolShifting)
     
     DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
@@ -574,7 +499,7 @@ function RunSimulation(;FluidCSV::String,
         GhostCells[i] = GhostCells[i] .+ (1,1) .+ (1,1) #ZeroOffset and HalfPad
     end
     GhostPoints_UniqueCells = unique(GhostCells)
-    # GhostLayout = GenerateM(maximum(reinterpret(Int,@view(GhostCells[:]))) + 1,1,1,2,GhostCells,Val(Dimensions))
+    GhostLayout = GenerateM(maximum(reinterpret(Int,@view(GhostCells[:]))) + 1,1,1,2,GhostCells,Val(Dimensions))
     # println(CartesianIndex(LoopLayout[GhostCells[1]]))
     # println(GhostLayout)
 
@@ -585,7 +510,7 @@ function RunSimulation(;FluidCSV::String,
         
         @timeit HourGlass "0 Update particles in cells" updateCLL!(TheCLL, Position)
         # inline removes 96 bytes alloc..
-        @timeit HourGlass "1 Main simulation loop" CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, GhostPoints_UniqueCells, GhostPoints, GhostKernel; 
+        @timeit HourGlass "1 Main simulation loop" CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, GhostLayout, GhostPoints_UniqueCells, GhostPoints, GhostKernel; 
         ViscosityTreatment, BoolDDT, BoolShifting)
         
         OutputCounter += SimMetaData.CurrentTimeStep
@@ -621,7 +546,7 @@ begin
     SimMetaData  = SimulationMetaData{D, T}(
                                     SimulationName="AllInOne", 
                                     SaveLocation=raw"E:\SecondApproach\Testing",
-                                    SimulationTime=1,
+                                    SimulationTime=0.1,
                                     OutputEach=0.01
     )
 
