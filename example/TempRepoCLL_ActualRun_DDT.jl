@@ -4,7 +4,7 @@ using StaticArrays
 using Parameters
 using Plots; using Measures
 using StructArrays
-import LinearAlgebra: dot, norm, diagm, diag
+import LinearAlgebra: dot, norm, diagm, diag, cond
 using LoopVectorization
 using Polyester
 using JET
@@ -395,6 +395,21 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
         GhostVectorB[i][1]        += Wᵢⱼ   * m₀
         # This line below breaks @batch
         @. GhostVectorB[i][2:end] += ∇ᵢWᵢⱼ * m₀
+    end
+
+    # Assummes position and ghostpoints are intercorrelated
+    for i ∈ eachindex(GhostPoints)
+        x_b = Position[i]
+        x_g = GhostPoints[i]
+
+        
+
+        if cond(GhostMatrixA[i]) > 1.01
+            Density[i] = Density[i] #simpf
+        else
+            v   = GhostMatrixA[i] \ GhostVectorB[i]
+            Density[i] = v[1] + dot(x_b - x_g , v[2:end])
+        end
     end
 
     # Make loop, no allocs
