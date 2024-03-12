@@ -403,7 +403,7 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
             @views xᵢⱼ = GhostPoints[i] - Position[FluidNodesRange][j] #@views important here else code takes multiple seconds!
             @fastpow ∇ᵢWᵢⱼ = ∇ᵢWᵢⱼ_(αD,h,xᵢⱼ,q, η²)
 
-            ρⱼ    = Density[j]
+            @views ρⱼ    = Density[FluidNodesRange][j]
             Vⱼ    = m₀/ρⱼ
 
             rhopp1[i] += m₀ * Wᵢⱼ
@@ -426,23 +426,23 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
         end
 
         mdbcthreshold = 0.0
-        determ_limit   = 1000
+        determ_limit   = 1e-3
         @batch for i ∈ eachindex(GhostPoints)
             if sumwab[i]>=mdbcthreshold || (mdbcthreshold>=2 && sumwab[i]+2>=mdbcthreshold)
                 Aval = GhostMatrixA[i]
-                if cond(Aval) <= 1.15
+                if det(Aval) >= determ_limit
                     v = Aval \ GhostVectorB[i]
                     Density[i] = v[1] + dot((Position[i] - GhostPoints[i]),v[2:n_mem])
                     # println("v :", Density[i])
                 elseif GhostMatrixA[i][1,1] > 0
-                    # Density[i] = rhopp1[i]/GhostMatrixA[i][1,1]
+                    Density[i] = rhopp1[i]/GhostMatrixA[i][1,1]
                     # println("v2 :", Density[i])
                 end
             end
         end
     end
-
-    # LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
+    
+    LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
 
     A     = 2# Value between 1 to 6 advised
     A_FST = 1.5; #2d, 3d val different
