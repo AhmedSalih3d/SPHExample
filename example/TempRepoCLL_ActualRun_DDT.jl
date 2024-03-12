@@ -418,53 +418,34 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
 
             # Insert values in ghost matrices
             GhostMatrixA[i][1,1]                += Wᵢⱼ   * Vⱼ
-            GhostMatrixA[i][1,2]                += xᵢⱼ[1] * Wᵢⱼ   * Vⱼ
-            GhostMatrixA[i][1,3]                += xᵢⱼ[2] * Wᵢⱼ   * Vⱼ
-
-            GhostMatrixA[i][2,1]                += ∇ᵢWᵢⱼ[1] * Vⱼ
-            GhostMatrixA[i][2,2]                += xᵢⱼ[1] * ∇ᵢWᵢⱼ[1] * Vⱼ
-            GhostMatrixA[i][2,3]                += xᵢⱼ[2] * ∇ᵢWᵢⱼ[1] * Vⱼ
-            
-            GhostMatrixA[i][3,1]                += ∇ᵢWᵢⱼ[2] * Vⱼ
-            GhostMatrixA[i][3,2]                += xᵢⱼ[1] * ∇ᵢWᵢⱼ[2] * Vⱼ
-            GhostMatrixA[i][3,3]                += xᵢⱼ[2] * ∇ᵢWᵢⱼ[2] * Vⱼ
-            # @. GhostMatrixA[i][1,2:n_mem]       += xⱼᵢ   * Wᵢⱼ   * Vⱼ #cannot use end in bumper
-            # @. GhostMatrixA[i][2:n_mem,1]       += ∇ᵢWᵢⱼ * Vⱼ
-            # @. GhostMatrixA[i][2:n_mem,2:n_mem] += Vⱼ    * ∇ᵢWᵢⱼ * xⱼᵢ'
+            @. GhostMatrixA[i][1,2:n_mem]       += xⱼᵢ   * Wᵢⱼ   * Vⱼ #cannot use end in bumper
+            @. GhostMatrixA[i][2:n_mem,1]       += ∇ᵢWᵢⱼ * Vⱼ
+            @. GhostMatrixA[i][2:n_mem,2:n_mem] += Vⱼ    * ∇ᵢWᵢⱼ * xⱼᵢ'
 
             GhostVectorB[i][1]                  += Wᵢⱼ        * m₀
-            GhostVectorB[i][2]                  += ∇ᵢWᵢⱼ[1]   * m₀
-            GhostVectorB[i][3]                  += ∇ᵢWᵢⱼ[2]   * m₀
-
-            # @. GhostVectorB[i][2:n_mem]         += ∇ᵢWᵢⱼ * m₀
-
-
+            @. GhostVectorB[i][2:n_mem]         += ∇ᵢWᵢⱼ * m₀
         end
 
 
         mdbcthreshold = 0.0
-        determ_limit   = 1000
+        determ_limit   = 1e-3
         for i ∈ eachindex(GhostPoints)
-            if GhostMatrixA[i][1,1]>=mdbcthreshold #|| (mdbcthreshold>=2 && sumwab[i]+2>=mdbcthreshold)
-                if det(GhostMatrixA[i]) >= determ_limit
-                    Ainv = inv(GhostMatrixA[i])
-
-                    dpos      = Position[i] - GhostPoints[i]
-                    rho_ghost =    Ainv[1,1] * rhopp1[i] + Ainv[1,2] * GhostVectorB[i][2] + Ainv[1,3] * GhostVectorB[i][3]
-                    grx       = - (Ainv[2,1] * rhopp1[i] + Ainv[2,2] * GhostVectorB[i][2] + Ainv[2,3] * GhostVectorB[i][3])
-                    grz       = - (Ainv[3,1] * rhopp1[i] + Ainv[3,2] * GhostVectorB[i][2] + Ainv[3,3] * GhostVectorB[i][3])
-                    
-                    Density[i] = rho_ghost + grx*dpos[1] + grz*dpos[2]
+            if GhostMatrixA[i][1,1]>=mdbcthreshold #|| (mdbcthreshold>=2 && sumwab[i]+2>=mdbcthreshold) what is this?
+                Aval = GhostMatrixA[i]
+                if cond(GhostMatrixA[i]) < 1.10 #det(Aval) >= determ_limit
+                    # println("I AM IN USE")
+                    v          = Aval \ GhostVectorB[i]
+                    Density[i] = v[1] + dot((Position[i] - GhostPoints[i]),v[2:n_mem])
+                    # println(v, " is still activated ")
+                    if v[1] < 900 || v[1] > 1100
+                        println(cond(GhostMatrixA[i]))
+                        println(v)
+                    end
                 elseif GhostMatrixA[i][1,1] > 0
-                    Density[i] = rhopp1[i]/GhostMatrixA[i][1,1]
+                    # This leads to some spurious modes?
+                    # I don't think this is needed tbh. If a particle is not mDBC, then it is DBC per default
+                    # Density[i]   = rhopp1[i]/GhostMatrixA[i][1,1] #Have double chedkd this makes sense
                 end
-                # Aval = GhostMatrixA[i]
-                # if det(Aval) >= determ_limit
-                #     v          = Aval \ GhostVectorB[i]
-                #     Density[i] = v[1] + dot((Position[i] - GhostPoints[i]),v[2:n_mem])
-                # elseif GhostMatrixA[i][1,1] > 0
-                #     # Density[i]   = rhopp1[i]/GhostMatrixA[i][1,1] #Have double chedkd this makes sense
-                # end
             end
         end
     end
@@ -649,7 +630,7 @@ begin
     SimMetaData  = SimulationMetaData{D, T}(
                                     SimulationName="AllInOne", 
                                     SaveLocation=raw"E:\SecondApproach\Testing",
-                                    SimulationTime=0.1,
+                                    SimulationTime=2,
                                     OutputEach=0.01,
     )
 
