@@ -418,30 +418,53 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
 
             # Insert values in ghost matrices
             GhostMatrixA[i][1,1]                += Wᵢⱼ   * Vⱼ
-            @. GhostMatrixA[i][1,2:n_mem]       += xⱼᵢ   * Wᵢⱼ   * Vⱼ #cannot use end in bumper
-            @. GhostMatrixA[i][2:n_mem,1]       += ∇ᵢWᵢⱼ * Vⱼ
-            @. GhostMatrixA[i][2:n_mem,2:n_mem] += Vⱼ    * ∇ᵢWᵢⱼ * xⱼᵢ'
+            GhostMatrixA[i][1,2]                += xᵢⱼ[1] * Wᵢⱼ   * Vⱼ
+            GhostMatrixA[i][1,3]                += xᵢⱼ[2] * Wᵢⱼ   * Vⱼ
 
-            GhostVectorB[i][1]                  += Wᵢⱼ   * m₀
-            # This line below breaks @batch
-            @. GhostVectorB[i][2:n_mem]         += ∇ᵢWᵢⱼ * m₀
+            GhostMatrixA[i][2,1]                += ∇ᵢWᵢⱼ[1] * Vⱼ
+            GhostMatrixA[i][2,2]                += xᵢⱼ[1] * ∇ᵢWᵢⱼ[1] * Vⱼ
+            GhostMatrixA[i][2,3]                += xᵢⱼ[2] * ∇ᵢWᵢⱼ[1] * Vⱼ
+            
+            GhostMatrixA[i][3,1]                += ∇ᵢWᵢⱼ[2] * Vⱼ
+            GhostMatrixA[i][3,2]                += xᵢⱼ[1] * ∇ᵢWᵢⱼ[2] * Vⱼ
+            GhostMatrixA[i][3,3]                += xᵢⱼ[2] * ∇ᵢWᵢⱼ[2] * Vⱼ
+            # @. GhostMatrixA[i][1,2:n_mem]       += xⱼᵢ   * Wᵢⱼ   * Vⱼ #cannot use end in bumper
+            # @. GhostMatrixA[i][2:n_mem,1]       += ∇ᵢWᵢⱼ * Vⱼ
+            # @. GhostMatrixA[i][2:n_mem,2:n_mem] += Vⱼ    * ∇ᵢWᵢⱼ * xⱼᵢ'
+
+            GhostVectorB[i][1]                  += Wᵢⱼ        * m₀
+            GhostVectorB[i][2]                  += ∇ᵢWᵢⱼ[1]   * m₀
+            GhostVectorB[i][3]                  += ∇ᵢWᵢⱼ[2]   * m₀
+
+            # @. GhostVectorB[i][2:n_mem]         += ∇ᵢWᵢⱼ * m₀
+
 
         end
 
 
         mdbcthreshold = 0.0
-        determ_limit   = 1e-3
+        determ_limit   = 1000
         for i ∈ eachindex(GhostPoints)
             if GhostMatrixA[i][1,1]>=mdbcthreshold #|| (mdbcthreshold>=2 && sumwab[i]+2>=mdbcthreshold)
-                Aval = GhostMatrixA[i]
-                if det(Aval) >= determ_limit
-                    v          = Aval \ GhostVectorB[i]
-                    Density[i] = v[1] + dot((Position[i] - GhostPoints[i]),v[2:n_mem])
-                # elseif GhostMatrixA[i][1,1] > 0
-                    # Density[i] = rhopp1[i]/GhostMatrixA[i][1,1]
-                # elseif GhostMatrixA[i][1,1] > 0
-                #     Density[i]   = rhopp1[i]/GhostMatrixA[i][1,1] #Have double chedkd this makes sense
+                if det(GhostMatrixA[i]) >= determ_limit
+                    Ainv = inv(GhostMatrixA[i])
+
+                    dpos      = Position[i] - GhostPoints[i]
+                    rho_ghost =    Ainv[1,1] * rhopp1[i] + Ainv[1,2] * GhostVectorB[i][2] + Ainv[1,3] * GhostVectorB[i][3]
+                    grx       = - (Ainv[2,1] * rhopp1[i] + Ainv[2,2] * GhostVectorB[i][2] + Ainv[2,3] * GhostVectorB[i][3])
+                    grz       = - (Ainv[3,1] * rhopp1[i] + Ainv[3,2] * GhostVectorB[i][2] + Ainv[3,3] * GhostVectorB[i][3])
+                    
+                    Density[i] = rho_ghost + grx*dpos[1] + grz*dpos[2]
+                elseif GhostMatrixA[i][1,1] > 0
+                    Density[i] = rhopp1[i]/GhostMatrixA[i][1,1]
                 end
+                # Aval = GhostMatrixA[i]
+                # if det(Aval) >= determ_limit
+                #     v          = Aval \ GhostVectorB[i]
+                #     Density[i] = v[1] + dot((Position[i] - GhostPoints[i]),v[2:n_mem])
+                # elseif GhostMatrixA[i][1,1] > 0
+                #     # Density[i]   = rhopp1[i]/GhostMatrixA[i][1,1] #Have double chedkd this makes sense
+                # end
             end
         end
     end
@@ -498,7 +521,10 @@ function RunSimulation(;FluidCSV::String,
     BoundNodesRange = 1:length(density_bound)
     FluidNodesRange = (length(density_bound)+1):length(points)
     
-    _, GhostPoints, BoundaryNormals    = LoadBoundaryNormals(Dimensions, FloatType, "input/StillWedge_Dp0.02_BoundNormals.csv")
+    _, GhostPoints, BoundaryNormals    = LoadBoundaryNormals(Dimensions, FloatType, "input/still_wedge_mdbc/StillWedge_Dp0.02_BoundNormals.csv")
+    println(BoundNodesRange)
+    println(size(GhostPoints))
+    println(size(BoundaryNormals))
     # Read this as "GravityFactor * g", so -1 means negative acceleration for fluid particles
     GravityFactor = [zeros(size(density_bound,1)) ; -ones(size(density_fluid,1)) ]
     
@@ -597,6 +623,7 @@ function RunSimulation(;FluidCSV::String,
             # To check FluidNodesRange
             # PolyDataTemplate(SimMetaData.SaveLocation * "/" * "FluidNodesRange" * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp", to_3d(Position[FluidNodesRange]))
             PolyDataTemplate(SimMetaData.SaveLocation * "/" * "BoundNodesRange" * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp", to_3d(Position[BoundNodesRange]))
+            PolyDataTemplate(SimMetaData.SaveLocation * "/" * "BoundaryPoints" * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp", to_3d(Position[BoundNodesRange]), ["Normals"],to_3d(BoundaryNormals))
         end
 
         @timeit HourGlass "3 Next step" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
@@ -622,8 +649,8 @@ begin
     SimMetaData  = SimulationMetaData{D, T}(
                                     SimulationName="AllInOne", 
                                     SaveLocation=raw"E:\SecondApproach\Testing",
-                                    SimulationTime=4,
-                                    OutputEach=0.01
+                                    SimulationTime=0.1,
+                                    OutputEach=0.01,
     )
 
     # Initialze the constants to use
@@ -661,8 +688,8 @@ begin
 
     SimConstantsWedge = SimulationConstants{T}(c₀=42.48576250492629)
     @profview RunSimulation(
-        FluidCSV           = "./input/StillWedge_Fluid_Dp0.02_LowResolution.csv",
-        BoundCSV           = "./input/StillWedge_Bound_Dp0.02_LowResolution_5LAYERS.csv",
+        FluidCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Fluid.csv",
+        BoundCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Bound.csv",
         SimMetaData        = SimMetaData,
         SimConstants       = SimConstantsWedge,
         ViscosityTreatment = :LaminarSPS,

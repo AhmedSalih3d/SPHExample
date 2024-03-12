@@ -40,6 +40,7 @@ function LoadParticlesFromCSV(dims, float_type, fluid_csv,boundary_csv)
         push!(density_bound,DF_BOUND.Rhop[i])
     end
     
+
     for i = 1:length(P1F)
         if dims == 3
             push!(points1,P1F[i])
