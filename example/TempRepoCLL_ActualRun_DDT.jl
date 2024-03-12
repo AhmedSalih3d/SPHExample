@@ -388,12 +388,15 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
     # is its neighbor and add the influence
     
     @no_escape begin
-        rhopp1 = @alloc(eltype(Density)    , length(Density))
-        sumwab = @alloc(eltype(GhostKernel), length(GhostKernel))
+        rhopp1 = @alloc(eltype(Density)    , length(GhostPoints))
+        sumwab = @alloc(eltype(GhostKernel), length(GhostPoints))
         n_mem  = length(first(GhostPoints)) + 1
 
         @. rhopp1 *= 0
         @. sumwab *= 0
+
+        @. GhostMatrixA *= 0
+        @. GhostVectorB *= 0
         @batch for iter ∈ eachindex(GhostNeighborList.nb.list)
             i,j,d = GhostNeighborList.nb.list[iter]
             q     = clamp(d * h⁻¹,0.0,2.0)
@@ -407,7 +410,7 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
             Vⱼ    = m₀/ρⱼ
 
             rhopp1[i] += m₀ * Wᵢⱼ
-            sumwab[i] += Vⱼ * Wᵢⱼ
+            sumwab[i] += Vⱼ * Wᵢⱼ # GhostMatrixA[i][1,1]
 
             GhostKernelGradient[i] += ∇ᵢWᵢⱼ
 
@@ -425,18 +428,19 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
 
         end
 
+
         mdbcthreshold = 0.0
         determ_limit   = 1e-3
-        @batch for i ∈ eachindex(GhostPoints)
-            if sumwab[i]>=mdbcthreshold || (mdbcthreshold>=2 && sumwab[i]+2>=mdbcthreshold)
+        for i ∈ eachindex(GhostPoints)
+            if GhostMatrixA[i][1,1]>=mdbcthreshold #|| (mdbcthreshold>=2 && sumwab[i]+2>=mdbcthreshold)
                 Aval = GhostMatrixA[i]
                 if det(Aval) >= determ_limit
-                    v = Aval \ GhostVectorB[i]
+                    v          = Aval \ GhostVectorB[i]
                     Density[i] = v[1] + dot((Position[i] - GhostPoints[i]),v[2:n_mem])
-                    # println("v :", Density[i])
-                elseif GhostMatrixA[i][1,1] > 0
-                    Density[i] = rhopp1[i]/GhostMatrixA[i][1,1]
-                    # println("v2 :", Density[i])
+                # elseif GhostMatrixA[i][1,1] > 0
+                    # Density[i] = rhopp1[i]/GhostMatrixA[i][1,1]
+                # elseif GhostMatrixA[i][1,1] > 0
+                #     Density[i]   = rhopp1[i]/GhostMatrixA[i][1,1] #Have double chedkd this makes sense
                 end
             end
         end
@@ -592,6 +596,7 @@ function RunSimulation(;FluidCSV::String,
             PolyDataTemplate(SimMetaData.SaveLocation * "/" * "GhostNodes" * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp", to_3d(GhostPoints), ["Kernel", "KernelGradient"], GhostKernel, GhostKernelGradient)
             # To check FluidNodesRange
             # PolyDataTemplate(SimMetaData.SaveLocation * "/" * "FluidNodesRange" * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp", to_3d(Position[FluidNodesRange]))
+            PolyDataTemplate(SimMetaData.SaveLocation * "/" * "BoundNodesRange" * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp", to_3d(Position[BoundNodesRange]))
         end
 
         @timeit HourGlass "3 Next step" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
