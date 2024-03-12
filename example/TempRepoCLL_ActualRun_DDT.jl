@@ -4,7 +4,7 @@ using StaticArrays
 using Parameters
 using Plots; using Measures
 using StructArrays
-import LinearAlgebra: dot, norm, diagm, diag, cond
+import LinearAlgebra: dot, norm, diagm, diag, cond, det
 using LoopVectorization
 using Polyester
 using JET
@@ -15,6 +15,7 @@ using FastPow
 using ChunkSplitters
 import Cthulhu as Deep
 import CellListMap: InPlaceNeighborList, update!, neighborlist!
+using Bumper
 
 import Base.Threads: nthreads, @threads
 include("../src/ProduceVTP.jl")
@@ -357,7 +358,7 @@ function EquationOfState(ρ,c₀,γ,ρ₀)
     return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
 end
 
-function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, GhostNeighborList, FluidNodesRange, GhostPoints, GhostKernel, GhostKernelGradient, GhostMatrixA, GhostVectorB; ViscosityTreatment, BoolDDT, BoolShifting)
+function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI, dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, GhostNeighborList, FluidNodesRange, GhostPoints, GhostKernel, GhostKernelGradient, GhostMatrixA, GhostVectorB, ShephardFilteredDensity_Nominator, ShephardFilteredDensity_Denominator; ViscosityTreatment, BoolDDT, BoolShifting)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, δᵩ, CFL, η² = SimConstants
 
     dt  = Δt(Position, Velocity, dvdtIₙ⁺, SimConstants)
@@ -383,72 +384,65 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
     
     DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
 
-    ListOfParticlesForShephardFiltering = Vector{Int}()
     # For each particle i in ghost nodes, we find the fluid node j which
     # is its neighbor and add the influence
-    @threads for iter ∈ eachindex(GhostNeighborList.nb.list)
-        i,j,d = GhostNeighborList.nb.list[iter]
-        q     = clamp(d * h⁻¹,0.0,2.0)
-        Wᵢⱼ   = @fastpow αD*(1-q/2)^4*(2*q + 1)
-        GhostKernel[i] += Wᵢⱼ
+    
+    @no_escape begin
+        rhopp1 = @alloc(eltype(Density)    , length(Density))
+        sumwab = @alloc(eltype(GhostKernel), length(GhostKernel))
+        n_mem  = length(first(GhostPoints)) + 1
 
-        @views xᵢⱼ = GhostPoints[i] - Position[FluidNodesRange][j] #@views important here else code takes multiple seconds!
-        @fastpow ∇ᵢWᵢⱼ = ∇ᵢWᵢⱼ_(αD,h,xᵢⱼ,q, η²)
+        @. rhopp1 *= 0
+        @. sumwab *= 0
+        @batch for iter ∈ eachindex(GhostNeighborList.nb.list)
+            i,j,d = GhostNeighborList.nb.list[iter]
+            q     = clamp(d * h⁻¹,0.0,2.0)
+            Wᵢⱼ   = @fastpow αD*(1-q/2)^4*(2*q + 1)
+            GhostKernel[i] += Wᵢⱼ
 
-        ρⱼ    = Density[j]
-        Vⱼ    = m₀/ρⱼ
+            @views xᵢⱼ = GhostPoints[i] - Position[FluidNodesRange][j] #@views important here else code takes multiple seconds!
+            @fastpow ∇ᵢWᵢⱼ = ∇ᵢWᵢⱼ_(αD,h,xᵢⱼ,q, η²)
 
-        GhostKernelGradient[i] += ∇ᵢWᵢⱼ
+            ρⱼ    = Density[j]
+            Vⱼ    = m₀/ρⱼ
 
-        xⱼᵢ = - xᵢⱼ
+            rhopp1[i] += m₀ * Wᵢⱼ
+            sumwab[i] += Vⱼ * Wᵢⱼ
 
-        # Insert values in ghost matrices
-        GhostMatrixA[i][1,1]            += Wᵢⱼ   * Vⱼ
-        @. GhostMatrixA[i][1,2:end]     += xⱼᵢ   * Wᵢⱼ   * Vⱼ
-        @. GhostMatrixA[i][2:end,1]     += ∇ᵢWᵢⱼ * Vⱼ
-        @. GhostMatrixA[i][2:end,2:end] += Vⱼ    * ∇ᵢWᵢⱼ * xⱼᵢ'
+            GhostKernelGradient[i] += ∇ᵢWᵢⱼ
 
-        GhostVectorB[i][1]        += Wᵢⱼ   * m₀
-        # This line below breaks @batch
-        @. GhostVectorB[i][2:end] += ∇ᵢWᵢⱼ * m₀
-    end
+            xⱼᵢ = - xᵢⱼ
 
-    # Assummes position and ghostpoints are intercorrelated
-    for i ∈ eachindex(GhostPoints)
-        x_b = Position[i]
-        x_g = GhostPoints[i]
+            # Insert values in ghost matrices
+            GhostMatrixA[i][1,1]                += Wᵢⱼ   * Vⱼ
+            @. GhostMatrixA[i][1,2:n_mem]       += xⱼᵢ   * Wᵢⱼ   * Vⱼ #cannot use end in bumper
+            @. GhostMatrixA[i][2:n_mem,1]       += ∇ᵢWᵢⱼ * Vⱼ
+            @. GhostMatrixA[i][2:n_mem,2:n_mem] += Vⱼ    * ∇ᵢWᵢⱼ * xⱼᵢ'
 
-        
-        if cond(GhostMatrixA[i]) > 2
-            push!(ListOfParticlesForShephardFiltering, i)
-        else
-            v          = GhostMatrixA[i] \ GhostVectorB[i]
-            Density[i] = v[1] + dot(x_b - x_g , v[2:end])
+            GhostVectorB[i][1]                  += Wᵢⱼ   * m₀
+            # This line below breaks @batch
+            @. GhostVectorB[i][2:n_mem]         += ∇ᵢWᵢⱼ * m₀
+
+        end
+
+        mdbcthreshold = 0.0
+        determ_limit   = 1000
+        @batch for i ∈ eachindex(GhostPoints)
+            if sumwab[i]>=mdbcthreshold || (mdbcthreshold>=2 && sumwab[i]+2>=mdbcthreshold)
+                Aval = GhostMatrixA[i]
+                if cond(Aval) <= 1.15
+                    v = Aval \ GhostVectorB[i]
+                    Density[i] = v[1] + dot((Position[i] - GhostPoints[i]),v[2:n_mem])
+                    # println("v :", Density[i])
+                elseif GhostMatrixA[i][1,1] > 0
+                    # Density[i] = rhopp1[i]/GhostMatrixA[i][1,1]
+                    # println("v2 :", Density[i])
+                end
+            end
         end
     end
 
-    # for i ∈ ListOfParticlesForShephardFiltering
-    #     volnorm_kernel  = 0.0
-    #     volnorm_density = 0.0
-    #     specific_interactions = filter(t -> any(x -> x == i, t), GhostNeighborList.nb.list)
-    #     @threads for iter ∈ eachindex(specific_interactions)
-    #         i,j,d = GhostNeighborList.nb.list[iter]
-    #         q     = clamp(d * h⁻¹,0.0,2.0)
-    #         Wᵢⱼ   = @fastpow αD*(1-q/2)^4*(2*q + 1)
-    #         GhostKernel[i] += Wᵢⱼ
-
-    #         ρⱼ    = Density[j]
-    #         Vⱼ    = m₀/ρⱼ
-
-    #         volnorm_kernel  += Wᵢⱼ * Vⱼ
-    #         volnorm_density += ρⱼ * Wᵢⱼ * Vⱼ
-    #     end
-    #     Density[i] = volnorm_density / volnorm_kernel
-    # end
-
-    empty!(ListOfParticlesForShephardFiltering)
-
-    LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
+    # LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
 
     A     = 2# Value between 1 to 6 advised
     A_FST = 1.5; #2d, 3d val different
@@ -549,6 +543,8 @@ function RunSimulation(;FluidCSV::String,
     Velocityₙ⁺        = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
     Positionₙ⁺        = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
     ρₙ⁺               = zeros(FloatType, NumberOfPoints)
+    ShephardFilteredDensity_Nominator   = zeros(FloatType, length(GhostPoints))
+    ShephardFilteredDensity_Denominator = zeros(FloatType, length(GhostPoints))
 
     if !isdir(SimMetaData.SaveLocation)
         mkdir(SimMetaData.SaveLocation)
@@ -583,7 +579,7 @@ function RunSimulation(;FluidCSV::String,
     @time @inbounds while true
         
         @timeit HourGlass "0 Update particles in cells" updateCLL!(TheCLL, Position)
-        @timeit HourGlass "1 Main simulation loop" CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, GhostNeighborList, FluidNodesRange, GhostPoints, GhostKernel, GhostKernelGradient, GhostMatrixA, GhostVectorB; 
+        @timeit HourGlass "1 Main simulation loop" CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, MotionLimiter, BoundaryBool, GravityFactor, ∇Cᵢ, ∇◌rᵢ, Kernel, KernelGradient, Position, Density, Velocity, ρₙ⁺, Velocityₙ⁺, Positionₙ⁺, dρdtI,  dρdtIₙ⁺, dvdtI, dvdtIₙ⁺, GhostNeighborList, FluidNodesRange, GhostPoints, GhostKernel, GhostKernelGradient, GhostMatrixA, GhostVectorB, ShephardFilteredDensity_Nominator, ShephardFilteredDensity_Denominator; 
         ViscosityTreatment, BoolDDT, BoolShifting)
         
         OutputCounter += SimMetaData.CurrentTimeStep
