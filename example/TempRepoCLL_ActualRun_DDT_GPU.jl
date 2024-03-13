@@ -185,6 +185,7 @@ FunctionExtractCells!(cuCells,cuPosition)
 sortperm!(p,cuCells)
 
 cuCells         .= cuCells[p]
+cuPosition      .= cuPosition[p]
 cuDensity       .= cuDensity[p]     
 cuAcceleration  .= cuAcceleration[p]
 cuVelocity      .= cuVelocity[p]  
@@ -197,8 +198,7 @@ UniqueCells    = cuCells[ParticleRanges]
 
 
 FuncNeighborLoop!, ThreadsNeighborLoop!, BlocksNeighborLoop! = KernelNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, CutOffSquared, cuPosition, cuKernel)
-# FunctionNeighborLoop!(UniqueCells, ParticleRanges, Stencil, Position) = @cuda threads=ThreadsNeighborLoop! blocks=BlocksNeighborLoop!  NeighborLoop!(UniqueCells, ParticleRanges, Stencil, Position)
-FunctionNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel) = @cuda threads=1  blocks=1  NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel)
+FunctionNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel) = @cuda threads=ThreadsNeighborLoop!  blocks=BlocksNeighborLoop!  NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel)
 FunctionNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, CutOffSquared, cuPosition, cuKernel)
 
 to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
