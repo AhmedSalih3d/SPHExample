@@ -53,9 +53,7 @@ function KernelExtractCells!(Cells, Points, CutOff, Nmax=length(Cells))
     threads = min(Nmax, config.threads)
     blocks  = 1 #cld(Nmax, threads)
 
-    CUDA.@sync begin
-        kernel(Cells, Points, CutOff, Nmax; threads, blocks)
-    end
+    CUDA.@sync kernel(Cells, Points, CutOff, Nmax; threads, blocks)
 end
 
 ###===
@@ -92,11 +90,11 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
 
     sortperm!(SortedIndices,Cells)
 
-    Cells         .= Cells[SortedIndices]
-    Position      .= Position[SortedIndices]
-    Density       .= Density[SortedIndices]     
-    Acceleration  .= Acceleration[SortedIndices]
-    Velocity      .= Velocity[SortedIndices]  
+    Cells           .= @view Cells[SortedIndices]
+    Position        .= @view Position[SortedIndices]
+    Density         .= @view Density[SortedIndices]
+    Acceleration    .= @view Acceleration[SortedIndices]
+    Velocity        .= @view Velocity[SortedIndices]
 
     ParticleRanges = [1 ; findall(.!iszero.(diff(cuCells))) .+ 1]
     CUDA.@allowscalar push!(ParticleRanges, length(Cells) + 1)
@@ -165,9 +163,7 @@ function KernelNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil,
     threads = min(length(UniqueCells), config.threads)
     blocks  = 1 #cld(length(UniqueCells), threads)
 
-    CUDA.@sync begin
-        kernel(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient; threads, blocks)
-    end
+    CUDA.@sync kernel(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient; threads, blocks)
 end
 ###===
 
