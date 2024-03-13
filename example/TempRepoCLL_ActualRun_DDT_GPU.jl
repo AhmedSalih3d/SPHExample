@@ -76,6 +76,37 @@ function SimStep(SimConstants, i,j, Position, Kernel)
 end
 ###===
 
+###=== Function to update ordering
+#https://cuda.juliagpu.org/stable/tutorials/performance/
+function UpdateNeighbors!(Cells, SortedIndices, ParticleRanges, Position, Density, Acceleration, Velocity)
+    FunctionExtractCells!(Cells,Position)
+
+    sortperm!(SortedIndices,Cells)
+
+    Cells         .= Cells[SortedIndices]
+    Position      .= Position[SortedIndices]
+    Density       .= Density[SortedIndices]     
+    Acceleration  .= Acceleration[SortedIndices]
+    Velocity      .= Velocity[SortedIndices]  
+
+    ParticleRanges = [1 ; findall(.!iszero.(diff(cuCells))) .+ 1]
+    CUDA.@allowscalar push!(ParticleRanges, length(Cells) + 1)
+
+    UniqueCells    = cuCells[ParticleRanges[1:end-1]]
+
+    return ParticleRanges, UniqueCells #Optimize out in shaa Allah!
+end
+
+function KernelNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel)
+    kernel  = @cuda launch=false NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel)
+    config  = launch_configuration(kernel.fun)
+    threads = min(length(UniqueCells), config.threads)
+    blocks  = cld(length(UniqueCells), threads)
+
+    return (kernel,threads,blocks)
+end
+###===
+
 ###=== Function to process each cell and its neighbors
 #https://cuda.juliagpu.org/stable/tutorials/performance/
 function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel)
@@ -86,12 +117,12 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
     iter = index
     @inbounds while iter <= Nmax
         CellIndex = UniqueCells[iter]
-        @cuprint "CellIndex: " CellIndex[1] "," CellIndex[2]
+        # @cuprint "CellIndex: " CellIndex[1] "," CellIndex[2]
 
         StartIndex = ParticleRanges[iter] 
         EndIndex   = ParticleRanges[iter+1] - 1
 
-        @cuprint " |> StartIndex: " StartIndex " EndIndex: " EndIndex "\n"
+        # @cuprint " |> StartIndex: " StartIndex " EndIndex: " EndIndex "\n"
         for i = StartIndex:EndIndex
             for j = (i+1):EndIndex
                 SimStep(SimConstants, i,j, Position, Kernel)
@@ -101,8 +132,7 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
         for S ∈ Stencil
             SCellIndex = CellIndex + S
     
-            @cuprint "SCellIndex: " SCellIndex[1] "," SCellIndex[2] " "
-            @cuprintln ""
+            # @cuprint "SCellIndex: " SCellIndex[1] "," SCellIndex[2] " " @cuprintln ""
     
             if SCellIndex ∈ UniqueCells
                 NeighborCellIndex = findfirst(isequal(SCellIndex), UniqueCells)
@@ -114,7 +144,7 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
                 StartIndex_       = ParticleRanges[NeighborCellIndex] 
                 EndIndex_         = ParticleRanges[NeighborCellIndex+1] - 1 
 
-                @cuprintln "    StartIndex_: " StartIndex_ " EndIndex_: " EndIndex_
+                # @cuprintln "    StartIndex_: " StartIndex_ " EndIndex_: " EndIndex_
 
                 for i = StartIndex:EndIndex
                     for j = StartIndex_:EndIndex_
@@ -123,7 +153,7 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
                 end
             end
         end
-        @cuprintln ""
+        # @cuprintln ""
 
         iter += stride
     end
@@ -165,41 +195,43 @@ cuVelocity      = similar(cuPosition)
 cuKernel        = similar(cuDensity)
 
 cuCells         = similar(cuPosition, CartesianIndex{Dimensions})
-cuRanges        = similar(cuCells, Int)
-p               = similar(cuCells, Int)
+# ParticleRanges  = CUDA.zeros(Int,length(cuCells)+1) #+1 last cell to include as well, first cell is included in directly due to use of diff which reduces number of elements by 1!
+# CUDA.@allowscalar ParticleRanges[1]   = 1
+# CUDA.@allowscalar ParticleRanges[end] = length(cuCells) + 1 #Have to add 1 even though it is wrong due to -1 at EndIndex
+SortedIndices   = similar(cuCells, Int)
 
 Stencil         = cu(ConstructStencil(Val(Dimensions)))
 
-
 # Ensure zero, similar does not!
-ResetArrays!(cuAcceleration, cuVelocity, cuKernel, cuCells, cuRanges)
+ResetArrays!(cuAcceleration, cuVelocity, cuKernel, cuCells, cuRanges, SortedIndices)
 
 ###= Preallocate functions and sizes for GPU exec
 FuncExtractCells!, ThreadsExtractCells!, BlocksExtractCells! = KernelExtractCells!(cuCells,cuPosition,H)
 FunctionExtractCells!(cuCells,cuPosition) = @cuda threads=ThreadsExtractCells! blocks=BlocksExtractCells!  ExtractCells!(cuCells,cuPosition,H)
 ###=
 
-FunctionExtractCells!(cuCells,cuPosition)
+# FunctionExtractCells!(cuCells,cuPosition)
 
-sortperm!(p,cuCells)
+# sortperm!(p,cuCells)
 
-cuCells         .= cuCells[p]
-cuPosition      .= cuPosition[p]
-cuDensity       .= cuDensity[p]     
-cuAcceleration  .= cuAcceleration[p]
-cuVelocity      .= cuVelocity[p]  
+# cuCells         .= cuCells[p]
+# cuPosition      .= cuPosition[p]
+# cuDensity       .= cuDensity[p]     
+# cuAcceleration  .= cuAcceleration[p]
+# cuVelocity      .= cuVelocity[p]  
 
-cuRanges[1:1]   .= 1
-cuRanges[2:end] .= .!iszero.(diff(cuCells))
+# cuRanges[1:1]   .= 1
+# cuRanges[2:end] .= .!iszero.(diff(cuCells))
 
-ParticleRanges = [1;findall(.!iszero.(diff(cuCells))) .+ 1] #This works but not findall on cuRanges
-CUDA.@allowscalar push!(ParticleRanges,length(cuPosition) + 1) #Have to add 1 even though it is wrong due to -1 at EndIndex
-UniqueCells    = cuCells[ParticleRanges[1:end-1]]
+# ParticleRanges = [1;findall(.!iszero.(diff(cuCells))) .+ 1] #This works but not findall on cuRanges
+# CUDA.@allowscalar push!(ParticleRanges,length(cuPosition) + 1) #Have to add 1 even though it is wrong due to -1 at EndIndex
+# UniqueCells    = cuCells[ParticleRanges[1:end-1]]
 
 
 FuncNeighborLoop!, ThreadsNeighborLoop!, BlocksNeighborLoop! = KernelNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil,  cuPosition, cuKernel)
 FunctionNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel) = @cuda threads=ThreadsNeighborLoop! blocks=BlocksNeighborLoop!  NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel)
 
+ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, SortedIndices, ParticleRanges, cuPosition, cuDensity, cuAcceleration, cuVelocity)
 FunctionNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel)
 
 to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
