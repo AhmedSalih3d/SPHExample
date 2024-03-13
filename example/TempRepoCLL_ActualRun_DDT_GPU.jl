@@ -58,12 +58,12 @@ end
 
 ###=== SimStep
 function SimStep(SimConstants, i,j, CutOffSquared, Position, Kernel)
-    @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimConstants
+    @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H² = SimConstants
 
     xᵢⱼ  = Position[i] - Position[j]
     xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)
 
-    if  xᵢⱼ² <= CutOffSquared
+    if  xᵢⱼ² <= H²
         dᵢⱼ  = sqrt(xᵢⱼ²)
         q    = clamp(dᵢⱼ * h⁻¹,0.0,2.0)
         Wᵢⱼ  = αD*(1-q/2)^4*(2*q + 1)
