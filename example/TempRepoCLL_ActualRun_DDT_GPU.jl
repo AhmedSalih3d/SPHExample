@@ -21,6 +21,8 @@ using CUDA
 import Base.Threads: nthreads, @threads
 include("../src/ProduceVTP.jl")
 
+const MaxThreads = attribute(device(),CUDA.DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK)
+
 
 function ConstructGravitySVector(_::SVector{N, T}, value) where {N, T}
     return SVector{N, T}(ntuple(i -> i == N ? value : 0, N))
@@ -49,9 +51,11 @@ function KernelExtractCells!(Cells, Points, CutOff, Nmax=length(Cells))
     kernel  = @cuda launch=false ExtractCells!(Cells, Points, CutOff, Nmax)
     config  = launch_configuration(kernel.fun)
     threads = min(Nmax, config.threads)
-    blocks  = cld(Nmax, threads)
+    blocks  = 1 #cld(Nmax, threads)
 
-    return (kernel,threads,blocks)
+    CUDA.@sync begin
+        kernel(Cells, Points, CutOff, Nmax; threads, blocks)
+    end
 end
 
 ###===
@@ -78,8 +82,8 @@ end
 
 ###=== Function to update ordering
 #https://cuda.juliagpu.org/stable/tutorials/performance/
-function UpdateNeighbors!(Cells, SortedIndices, Position, Density, Acceleration, Velocity)
-    FunctionExtractCells!(Cells,Position)
+function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Acceleration, Velocity)
+    KernelExtractCells!(Cells,Position,CutOff)
 
     sortperm!(SortedIndices,Cells)
 
@@ -95,15 +99,6 @@ function UpdateNeighbors!(Cells, SortedIndices, Position, Density, Acceleration,
     UniqueCells    = cuCells[ParticleRanges[1:end-1]]
 
     return ParticleRanges, UniqueCells #Optimize out in shaa Allah!
-end
-
-function KernelNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel)
-    kernel  = @cuda launch=false NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel)
-    config  = launch_configuration(kernel.fun)
-    threads = min(length(UniqueCells), config.threads)
-    blocks  = cld(length(UniqueCells), threads)
-
-    return (kernel,threads,blocks)
 end
 ###===
 
@@ -163,9 +158,11 @@ function KernelNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil,
     kernel  = @cuda launch=false NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel)
     config  = launch_configuration(kernel.fun)
     threads = min(length(UniqueCells), config.threads)
-    blocks  = cld(length(UniqueCells), threads)
+    blocks  = 1 #cld(length(UniqueCells), threads)
 
-    return (kernel,threads,blocks)
+    CUDA.@sync begin
+        kernel(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel; threads, blocks)
+    end
 end
 ###===
 
@@ -205,20 +202,13 @@ Stencil         = cu(ConstructStencil(Val(Dimensions)))
 # Ensure zero, similar does not!
 ResetArrays!(cuAcceleration, cuVelocity, cuKernel, cuCells, SortedIndices)
 
-###= Preallocate functions and sizes for GPU exec
-FuncExtractCells!, ThreadsExtractCells!, BlocksExtractCells! = KernelExtractCells!(cuCells,cuPosition,H)
-FunctionExtractCells!(cuCells,cuPosition) = @cuda threads=ThreadsExtractCells! blocks=BlocksExtractCells!  ExtractCells!(cuCells,cuPosition,H)
-###=
-
-ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity)
-
-FuncNeighborLoop!, ThreadsNeighborLoop!, BlocksNeighborLoop! = KernelNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil,  cuPosition, cuKernel)
-FunctionNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel) = @cuda threads=ThreadsNeighborLoop! blocks=BlocksNeighborLoop!  NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel)
-
-FunctionNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel)
+ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity)
+KernelNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel)
 
 to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
 PolyDataTemplate("E:/GPU_SPH/TESTING/Test" * "_" * lpad(0,6,"0") * ".vtp", to_3d(Array(cuPosition)), ["Kernel"], Array(cuKernel))
+
+
 
 # CUDA.@allowscalar for iter = 5#1:length(UniqueCells) - 1
 #     CellIndex = UniqueCells[iter]
