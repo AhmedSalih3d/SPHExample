@@ -28,22 +28,11 @@ end
 
 
 ###=== Extract Cells
-
-function ExtractCells!(cells, p,R,::Val{d}) where d
-
-    @inbounds @batch for i ∈ eachindex(p)
-        vs = @. Int(fld(p[i],R))
-        cells[i] = tuple(vs...)
-    end
-
-    return cells
-end
-
 function ExtractCells!(Cells, Points, CutOff, Nmax=length(Cells))
     index  = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     stride = gridDim().x * blockDim().x
     @inbounds for i = index:stride:Nmax
-        Cells[i] =  CartesianIndex(@. Int(fld(Points[i], CutOff)) ...)
+        Cells[i] =  CartesianIndex(@. Int(fld(Points[i], CutOff)) ...) + CartesianIndex(1,1) + CartesianIndex(1,1) #+ ZeroOffset + HalfPad
     end
     return nothing
 end
@@ -93,4 +82,5 @@ FunctionExtractCells!(cuCells,cuPosition) = @cuda threads=ThreadsExtractCells! b
 ###=
 
 FunctionExtractCells!(cuCells,cuPosition)
-println(cuCells)
+
+cuCells
