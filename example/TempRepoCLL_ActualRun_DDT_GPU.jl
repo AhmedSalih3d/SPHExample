@@ -81,8 +81,8 @@ end
 function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel)
     index  = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     stride = gridDim().x * blockDim().x
-    Nmax   = length(UniqueCells) - 1
-    
+    Nmax   = length(UniqueCells) + 1
+
     iter = index
     @inbounds while iter <= Nmax
         CellIndex = UniqueCells[iter]
@@ -196,12 +196,13 @@ cuRanges[1:1]   .= 1
 cuRanges[2:end] .= .!iszero.(diff(cuCells))
 
 ParticleRanges = [1;findall(.!iszero.(diff(cuCells))) .+ 1] #This works but not findall on cuRanges
-UniqueCells    = cuCells[ParticleRanges]
+CUDA.@allowscalar push!(ParticleRanges,length(cuPosition))
+UniqueCells    = cuCells[ParticleRanges[1:end-1]]
 
 
 FuncNeighborLoop!, ThreadsNeighborLoop!, BlocksNeighborLoop! = KernelNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, CutOffSquared, cuPosition, cuKernel)
 # FunctionNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel) = @cuda threads=ThreadsNeighborLoop!  blocks=BlocksNeighborLoop!  NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel)
-FunctionNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel) = @cuda threads=ThreadsNeighborLoop! blocks=1  NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel)
+FunctionNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel) = @cuda threads=ThreadsNeighborLoop! blocks=3  NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel)
 FunctionNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, CutOffSquared, cuPosition, cuKernel)
 
 to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
