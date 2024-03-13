@@ -384,71 +384,71 @@ function CustomCLL(TheCLL, LoopLayout, Stencil, SimConstants, SimMetaData, Motio
     
     DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
 
+    #mDBC not going too well
     # For each particle i in ghost nodes, we find the fluid node j which
     # is its neighbor and add the influence
-    
-    @no_escape begin
-        rhopp1 = @alloc(eltype(Density)    , length(GhostPoints))
-        sumwab = @alloc(eltype(GhostKernel), length(GhostPoints))
-        n_mem  = length(first(GhostPoints)) + 1
+    # @no_escape begin
+    #     rhopp1 = @alloc(eltype(Density)    , length(GhostPoints))
+    #     sumwab = @alloc(eltype(GhostKernel), length(GhostPoints))
+    #     n_mem  = length(first(GhostPoints)) + 1
 
-        @. rhopp1 *= 0
-        @. sumwab *= 0
+    #     @. rhopp1 *= 0
+    #     @. sumwab *= 0
 
-        @. GhostMatrixA *= 0
-        @. GhostVectorB *= 0
-        @batch for iter ∈ eachindex(GhostNeighborList.nb.list)
-            i,j,d = GhostNeighborList.nb.list[iter]
-            q     = clamp(d * h⁻¹,0.0,2.0)
-            Wᵢⱼ   = @fastpow αD*(1-q/2)^4*(2*q + 1)
-            GhostKernel[i] += Wᵢⱼ
+    #     @. GhostMatrixA *= 0
+    #     @. GhostVectorB *= 0
+    #     @batch for iter ∈ eachindex(GhostNeighborList.nb.list)
+    #         i,j,d = GhostNeighborList.nb.list[iter]
+    #         q     = clamp(d * h⁻¹,0.0,2.0)
+    #         Wᵢⱼ   = @fastpow αD*(1-q/2)^4*(2*q + 1)
+    #         GhostKernel[i] += Wᵢⱼ
 
-            @views xᵢⱼ = GhostPoints[i] - Position[FluidNodesRange][j] #@views important here else code takes multiple seconds!
-            @fastpow ∇ᵢWᵢⱼ = ∇ᵢWᵢⱼ_(αD,h,xᵢⱼ,q, η²)
+    #         @views xᵢⱼ = GhostPoints[i] - Position[FluidNodesRange][j] #@views important here else code takes multiple seconds!
+    #         @fastpow ∇ᵢWᵢⱼ = ∇ᵢWᵢⱼ_(αD,h,xᵢⱼ,q, η²)
 
-            @views ρⱼ    = Density[FluidNodesRange][j]
-            Vⱼ    = m₀/ρⱼ
+    #         @views ρⱼ    = Density[FluidNodesRange][j]
+    #         Vⱼ    = m₀/ρⱼ
 
-            rhopp1[i] += m₀ * Wᵢⱼ
-            sumwab[i] += Vⱼ * Wᵢⱼ # GhostMatrixA[i][1,1]
+    #         rhopp1[i] += m₀ * Wᵢⱼ
+    #         sumwab[i] += Vⱼ * Wᵢⱼ # GhostMatrixA[i][1,1]
 
-            GhostKernelGradient[i] += ∇ᵢWᵢⱼ
+    #         GhostKernelGradient[i] += ∇ᵢWᵢⱼ
 
-            xⱼᵢ = - xᵢⱼ
+    #         xⱼᵢ = - xᵢⱼ
 
-            # Insert values in ghost matrices
-            GhostMatrixA[i][1,1]                += Wᵢⱼ   * Vⱼ
-            @. GhostMatrixA[i][1,2:n_mem]       += xⱼᵢ   * Wᵢⱼ   * Vⱼ #cannot use end in bumper
-            @. GhostMatrixA[i][2:n_mem,1]       += ∇ᵢWᵢⱼ * Vⱼ
-            @. GhostMatrixA[i][2:n_mem,2:n_mem] += Vⱼ    * ∇ᵢWᵢⱼ * xⱼᵢ'
+    #         # Insert values in ghost matrices
+    #         GhostMatrixA[i][1,1]                += Wᵢⱼ   * Vⱼ
+    #         @. GhostMatrixA[i][1,2:n_mem]       += xⱼᵢ   * Wᵢⱼ   * Vⱼ #cannot use end in bumper
+    #         @. GhostMatrixA[i][2:n_mem,1]       += ∇ᵢWᵢⱼ * Vⱼ
+    #         @. GhostMatrixA[i][2:n_mem,2:n_mem] += Vⱼ    * ∇ᵢWᵢⱼ * xⱼᵢ'
 
-            GhostVectorB[i][1]                  += Wᵢⱼ        * m₀
-            @. GhostVectorB[i][2:n_mem]         += ∇ᵢWᵢⱼ * m₀
-        end
+    #         GhostVectorB[i][1]                  += Wᵢⱼ        * m₀
+    #         @. GhostVectorB[i][2:n_mem]         += ∇ᵢWᵢⱼ * m₀
+    #     end
 
 
-        mdbcthreshold = 0.0
-        determ_limit   = 1e-3
-        for i ∈ eachindex(GhostPoints)
-            if GhostMatrixA[i][1,1]>=mdbcthreshold #|| (mdbcthreshold>=2 && sumwab[i]+2>=mdbcthreshold) what is this?
-                Aval = GhostMatrixA[i]
-                if cond(GhostMatrixA[i]) < 1.10 #det(Aval) >= determ_limit
-                    # println("I AM IN USE")
-                    v          = Aval \ GhostVectorB[i]
-                    Density[i] = v[1] + dot((Position[i] - GhostPoints[i]),v[2:n_mem])
-                    # println(v, " is still activated ")
-                    if v[1] < 900 || v[1] > 1100
-                        println(cond(GhostMatrixA[i]))
-                        println(v)
-                    end
-                elseif GhostMatrixA[i][1,1] > 0
-                    # This leads to some spurious modes?
-                    # I don't think this is needed tbh. If a particle is not mDBC, then it is DBC per default
-                    # Density[i]   = rhopp1[i]/GhostMatrixA[i][1,1] #Have double chedkd this makes sense
-                end
-            end
-        end
-    end
+    #     mdbcthreshold = 0.0
+    #     determ_limit   = 1e-3
+    #     for i ∈ eachindex(GhostPoints)
+    #         if GhostMatrixA[i][1,1]>=mdbcthreshold #|| (mdbcthreshold>=2 && sumwab[i]+2>=mdbcthreshold) what is this?
+    #             Aval = GhostMatrixA[i]
+    #             if cond(GhostMatrixA[i]) < 1.10 #det(Aval) >= determ_limit
+    #                 # println("I AM IN USE")
+    #                 v          = Aval \ GhostVectorB[i]
+    #                 Density[i] = v[1] + dot((Position[i] - GhostPoints[i]),v[2:n_mem])
+    #                 # println(v, " is still activated ")
+    #                 if v[1] < 900 || v[1] > 1100
+    #                     println(cond(GhostMatrixA[i]))
+    #                     println(v)
+    #                 end
+    #             elseif GhostMatrixA[i][1,1] > 0
+    #                 # This leads to some spurious modes?
+    #                 # I don't think this is needed tbh. If a particle is not mDBC, then it is DBC per default
+    #                 # Density[i]   = rhopp1[i]/GhostMatrixA[i][1,1] #Have double chedkd this makes sense
+    #             end
+    #         end
+    #     end
+    # end
     
     LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
 
