@@ -59,9 +59,11 @@ end
 ###=== Function to process each cell and its neighbors
 function NeighborLoop!(UniqueCells, ParticleRanges, Stencil)
     index  = (blockIdx().x - 1) * blockDim().x + threadIdx().x
-    # stride = gridDim().x * blockDim().x
+    stride = gridDim().x * blockDim().x
     Nmax   = length(UniqueCells) - 1
-    @inbounds for iter = 1:Nmax
+    
+    iter = index
+    @inbounds while iter <= Nmax
         CellIndex = UniqueCells[iter]
         @cuprint "CellIndex: " CellIndex[1] "," CellIndex[2]
         # @cuprintln "iter: " iter "iter+1: " iter+1
@@ -95,6 +97,8 @@ function NeighborLoop!(UniqueCells, ParticleRanges, Stencil)
             end
         end
         @cuprintln ""
+
+        iter += stride
     end
 end
 
