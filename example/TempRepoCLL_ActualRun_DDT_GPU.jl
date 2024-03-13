@@ -61,7 +61,7 @@ end
 ###===
 
 ###=== SimStep
-function SimStep(SimConstants, i,j, Position, Kernel)
+function SimStep(SimConstants, i,j, Position, Kernel, KernelGradient)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H² = SimConstants
 
     xᵢⱼ  = Position[i] - Position[j]
@@ -74,6 +74,11 @@ function SimStep(SimConstants, i,j, Position, Kernel)
 
         Kernel[i] += Wᵢⱼ
         Kernel[j] += Wᵢⱼ
+
+        ∇ᵢWᵢⱼ = (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
+
+        KernelGradient[i] +=  ∇ᵢWᵢⱼ
+        KernelGradient[j] += -∇ᵢWᵢⱼ 
     end
 
     
@@ -104,7 +109,7 @@ end
 
 ###=== Function to process each cell and its neighbors
 #https://cuda.juliagpu.org/stable/tutorials/performance/
-function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel)
+function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient)
     index  = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     stride = gridDim().x * blockDim().x
     Nmax   = length(UniqueCells)
@@ -120,7 +125,7 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
         # @cuprint " |> StartIndex: " StartIndex " EndIndex: " EndIndex "\n"
         for i = StartIndex:EndIndex
             for j = (i+1):EndIndex
-                SimStep(SimConstants, i,j, Position, Kernel)
+                SimStep(SimConstants, i,j, Position, Kernel, KernelGradient)
             end
         end
         
@@ -143,7 +148,7 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
 
                 for i = StartIndex:EndIndex
                     for j = StartIndex_:EndIndex_
-                        SimStep(SimConstants, i, j, Position, Kernel)
+                        SimStep(SimConstants, i, j, Position, Kernel, KernelGradient)
                     end
                 end
             end
@@ -154,14 +159,14 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
     end
 end
 
-function KernelNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel)
-    kernel  = @cuda launch=false NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel)
+function KernelNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient)
+    kernel  = @cuda launch=false NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient)
     config  = launch_configuration(kernel.fun)
     threads = min(length(UniqueCells), config.threads)
     blocks  = 1 #cld(length(UniqueCells), threads)
 
     CUDA.@sync begin
-        kernel(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel; threads, blocks)
+        kernel(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient; threads, blocks)
     end
 end
 ###===
@@ -185,11 +190,12 @@ Position = convert(Vector{SVector{Dimensions,FloatType}},points.V)
 Density  = deepcopy([density_bound; density_fluid])
 
 
-cuPosition      = cu(Position)
-cuDensity       = cu(Density)
-cuAcceleration  = similar(cuPosition)
-cuVelocity      = similar(cuPosition)
-cuKernel        = similar(cuDensity)
+cuPosition       = cu(Position)
+cuDensity        = cu(Density)
+cuAcceleration   = similar(cuPosition)
+cuVelocity       = similar(cuPosition)
+cuKernel         = similar(cuDensity)
+cuKernelGradient = similar(cuPosition)
 
 cuCells         = similar(cuPosition, CartesianIndex{Dimensions})
 # ParticleRanges  = CUDA.zeros(Int,length(cuCells)+1) #+1 last cell to include as well, first cell is included in directly due to use of diff which reduces number of elements by 1!
@@ -200,35 +206,20 @@ SortedIndices   = similar(cuCells, Int)
 Stencil         = cu(ConstructStencil(Val(Dimensions)))
 
 # Ensure zero, similar does not!
-ResetArrays!(cuAcceleration, cuVelocity, cuKernel, cuCells, SortedIndices)
+ResetArrays!(cuAcceleration, cuVelocity, cuKernel, cuKernelGradient, cuCells, SortedIndices)
 
 ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity)
-KernelNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel)
+KernelNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient)
 
 to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
-PolyDataTemplate("E:/GPU_SPH/TESTING/Test" * "_" * lpad(0,6,"0") * ".vtp", to_3d(Array(cuPosition)), ["Kernel"], Array(cuKernel))
+# Array is opionated and converts to Float32 directly, which is why it bugs out
+# PolyDataTemplate("E:/GPU_SPH/TESTING/Test" * "_" * lpad(0,6,"0") * ".vtp", to_3d(Array(cuPosition)), ["Kernel", "KernelGradient"], Array(cuKernel), to_3d(Array(cuKernelGradient)))
 
+SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
+    SimulationName="Test", 
+    SaveLocation="E:/GPU_SPH/TESTING/",
+)
 
-
-# CUDA.@allowscalar for iter = 5#1:length(UniqueCells) - 1
-#     CellIndex = UniqueCells[iter]
-#     @cuprintln "CellIndex: " CellIndex[1] "," CellIndex[2]
-
-#     PR        = ParticleRanges[iter:iter+1]
-#     PR[2]    -= 1 #Non inclusive range
-#     # Particles in sorted Cells
-#     @cuprintln "ParticleRanges: " PR[1] ":" PR[2]
- 
-#     for S ∈ Stencil
-#         SCellIndex = CellIndex + S
-
-#         @cuprintln "SCellIndex: " SCellIndex[1] "," SCellIndex[2]
-
-#         if SCellIndex ∈ UniqueCells
-#             NeighborCellIndex = findfirst(isequal(SCellIndex), UniqueCells)
-#             PR_     = ParticleRanges[NeighborCellIndex:iter+1]
-#             PR_[2] -= 1 #Non inclusive range
-#             @cuprintln "    ParticleRanges: " PR_[1] ":" PR_[2]
-#         end
-#     end
-# end
+KERNEL = Array(cuKernel)
+KERNEL_GRADIENT = Array(cuKernelGradient)
+create_vtp_file(SimMetaData, SimConstantsWedge, to_3d(Array(cuPosition)); KERNEL, KERNEL_GRADIENT)
