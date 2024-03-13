@@ -57,7 +57,7 @@ end
 ###===
 
 ###=== SimStep
-function SimStep(i,j, CutOffSquared, Position)
+function SimStep(i,j, CutOffSquared, Position, Kernel)
     xᵢⱼ  = Position[i] - Position[j]
     xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)
     dᵢⱼ  = sqrt(xᵢⱼ²)
@@ -66,7 +66,7 @@ end
 
 ###=== Function to process each cell and its neighbors
 #https://cuda.juliagpu.org/stable/tutorials/performance/
-function NeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position)
+function NeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel)
     index  = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     stride = gridDim().x * blockDim().x
     Nmax   = length(UniqueCells) - 1
@@ -82,7 +82,7 @@ function NeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, Posi
         @cuprint " |> StartIndex: " StartIndex " EndIndex: " EndIndex "\n"
         for i = StartIndex:EndIndex
             for j = StartIndex:EndIndex
-                SimStep(i,j, CutOffSquared, Position)
+                SimStep(i,j, CutOffSquared, Position, Kernel)
             end
         end
         
@@ -105,7 +105,7 @@ function NeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, Posi
                 @cuprintln "    StartIndex_: " StartIndex_ " EndIndex_: " EndIndex_
                 for i = StartIndex:EndIndex
                     for j = StartIndex_:EndIndex_
-                        SimStep(i, j, CutOffSquared, Position)
+                        SimStep(i, j, CutOffSquared, Position, Kernel)
                     end
                 end
             end
@@ -116,8 +116,8 @@ function NeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, Posi
     end
 end
 
-function KernelNeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position)
-    kernel  = @cuda launch=false NeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position)
+function KernelNeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel)
+    kernel  = @cuda launch=false NeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel)
     config  = launch_configuration(kernel.fun)
     threads = min(length(UniqueCells), config.threads)
     blocks  = cld(length(UniqueCells), threads)
@@ -151,6 +151,7 @@ cuPosition     = cu(Position)
 cuDensity      = cu(Density)
 cuAcceleration = similar(cuPosition)
 cuVelocity     = similar(cuPosition)
+cuKernel        = similar(cuDensity)
 
 cuCells        = similar(cuPosition, CartesianIndex{Dimensions})
 cuRanges       = similar(cuCells, Int)
@@ -173,6 +174,8 @@ cuDensity       .= cuDensity[p]
 cuAcceleration  .= cuAcceleration[p]
 cuVelocity      .= cuVelocity[p]    
 
+
+
 cuRanges[1:1]   .= 1
 cuRanges[2:end] .= .!iszero.(diff(cuCells))
 
@@ -180,10 +183,10 @@ ParticleRanges = [1;findall(.!iszero.(diff(cuCells))) .+ 1] #This works but not 
 UniqueCells    = cuCells[ParticleRanges]
 
 
-FuncNeighborLoop!, ThreadsNeighborLoop!, BlocksNeighborLoop! = KernelNeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, cuPosition)
+FuncNeighborLoop!, ThreadsNeighborLoop!, BlocksNeighborLoop! = KernelNeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, cuPosition, cuKernel)
 # FunctionNeighborLoop!(UniqueCells, ParticleRanges, Stencil, Position) = @cuda threads=ThreadsNeighborLoop! blocks=BlocksNeighborLoop!  NeighborLoop!(UniqueCells, ParticleRanges, Stencil, Position)
-FunctionNeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position) = @cuda threads=1  blocks=1  NeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position)
-FunctionNeighborLoop!(UniqueCells[1:5], ParticleRanges, Stencil, CutOffSquared, cuPosition)
+FunctionNeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel) = @cuda threads=1  blocks=1  NeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel)
+FunctionNeighborLoop!(UniqueCells[1:5], ParticleRanges, Stencil, CutOffSquared, cuPosition, cuKernel)
 
 # CUDA.@allowscalar for iter = 5#1:length(UniqueCells) - 1
 #     CellIndex = UniqueCells[iter]
