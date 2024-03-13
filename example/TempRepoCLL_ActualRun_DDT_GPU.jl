@@ -57,7 +57,7 @@ end
 ###===
 
 ###=== SimStep
-function SimStep(i,j, Position)
+function SimStep(i,j, CutOffSquared, Position)
     xᵢⱼ  = Position[i] - Position[j]
     xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)
     dᵢⱼ  = sqrt(xᵢⱼ²)
@@ -66,7 +66,7 @@ end
 
 ###=== Function to process each cell and its neighbors
 #https://cuda.juliagpu.org/stable/tutorials/performance/
-function NeighborLoop!(UniqueCells, ParticleRanges, Stencil, Position)
+function NeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position)
     index  = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     stride = gridDim().x * blockDim().x
     Nmax   = length(UniqueCells) - 1
@@ -82,7 +82,7 @@ function NeighborLoop!(UniqueCells, ParticleRanges, Stencil, Position)
         @cuprint " |> StartIndex: " StartIndex " EndIndex: " EndIndex "\n"
         for i = StartIndex:EndIndex
             for j = StartIndex:EndIndex
-                SimStep(i,j, Position)
+                SimStep(i,j, CutOffSquared, Position)
             end
         end
         
@@ -105,7 +105,7 @@ function NeighborLoop!(UniqueCells, ParticleRanges, Stencil, Position)
                 @cuprintln "    StartIndex_: " StartIndex_ " EndIndex_: " EndIndex_
                 for i = StartIndex:EndIndex
                     for j = StartIndex_:EndIndex_
-                        SimStep(i, j, Position)
+                        SimStep(i, j, CutOffSquared, Position)
                     end
                 end
             end
@@ -116,8 +116,8 @@ function NeighborLoop!(UniqueCells, ParticleRanges, Stencil, Position)
     end
 end
 
-function KernelNeighborLoop!(UniqueCells, ParticleRanges, Stencil, Position)
-    kernel  = @cuda launch=false NeighborLoop!(UniqueCells, ParticleRanges, Stencil, Position)
+function KernelNeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position)
+    kernel  = @cuda launch=false NeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position)
     config  = launch_configuration(kernel.fun)
     threads = min(length(UniqueCells), config.threads)
     blocks  = cld(length(UniqueCells), threads)
@@ -138,6 +138,7 @@ BoundCSV   = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Bound.csv"
 SimConstantsWedge = SimulationConstants{FloatType}(c₀=42.48576250492629)
 @unpack ρ₀, dx, h, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimConstantsWedge
 CutOff = 2h
+CutOffSquared = CutOff^2
 
 # Load in the fluid and boundary particles. Return these points and both data frames
 # @inline is a hack here to remove all allocations further down due to uncertainty of the points type at compile time
@@ -179,10 +180,10 @@ ParticleRanges = [1;findall(.!iszero.(diff(cuCells))) .+ 1] #This works but not 
 UniqueCells    = cuCells[ParticleRanges]
 
 
-FuncNeighborLoop!, ThreadsNeighborLoop!, BlocksNeighborLoop! = KernelNeighborLoop!(UniqueCells, ParticleRanges, Stencil, cuPosition)
+FuncNeighborLoop!, ThreadsNeighborLoop!, BlocksNeighborLoop! = KernelNeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, cuPosition)
 # FunctionNeighborLoop!(UniqueCells, ParticleRanges, Stencil, Position) = @cuda threads=ThreadsNeighborLoop! blocks=BlocksNeighborLoop!  NeighborLoop!(UniqueCells, ParticleRanges, Stencil, Position)
-FunctionNeighborLoop!(UniqueCells, ParticleRanges, Stencil, Position) = @cuda threads=1  blocks=1  NeighborLoop!(UniqueCells, ParticleRanges, Stencil, Position)
-FunctionNeighborLoop!(UniqueCells, ParticleRanges, Stencil, cuPosition)
+FunctionNeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position) = @cuda threads=1  blocks=1  NeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position)
+FunctionNeighborLoop!(UniqueCells[1:5], ParticleRanges, Stencil, CutOffSquared, cuPosition)
 
 # CUDA.@allowscalar for iter = 5#1:length(UniqueCells) - 1
 #     CellIndex = UniqueCells[iter]
