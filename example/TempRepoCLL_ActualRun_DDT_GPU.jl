@@ -180,9 +180,9 @@ UniqueCells    = cuCells[ParticleRanges]
 
 
 FuncNeighborLoop!, ThreadsNeighborLoop!, BlocksNeighborLoop! = KernelNeighborLoop!(UniqueCells, ParticleRanges, Stencil, cuPosition)
-# FunctionNeighborLoop!(UniqueCells, ParticleRanges, Stencil) = @cuda threads=ThreadsNeighborLoop! blocks=BlocksNeighborLoop!  NeighborLoop!(UniqueCells, ParticleRanges, Stencil)
-FunctionNeighborLoop!(UniqueCells, ParticleRanges, Stencil, Position) = @cuda threads=1  blocks=1  NeighborLoop!(UniqueCells, ParticleRanges, Stencil, cuPosition)
-FunctionNeighborLoop!(UniqueCells[1:5], ParticleRanges, Stencil, cuPosition)
+# FunctionNeighborLoop!(UniqueCells, ParticleRanges, Stencil, Position) = @cuda threads=ThreadsNeighborLoop! blocks=BlocksNeighborLoop!  NeighborLoop!(UniqueCells, ParticleRanges, Stencil, Position)
+FunctionNeighborLoop!(UniqueCells, ParticleRanges, Stencil, Position) = @cuda threads=1  blocks=1  NeighborLoop!(UniqueCells, ParticleRanges, Stencil, Position)
+FunctionNeighborLoop!(UniqueCells, ParticleRanges, Stencil, cuPosition)
 
 # CUDA.@allowscalar for iter = 5#1:length(UniqueCells) - 1
 #     CellIndex = UniqueCells[iter]
