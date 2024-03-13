@@ -83,6 +83,7 @@ cuVelocity     = similar(cuPosition)
 
 cuCells        = similar(cuPosition, CartesianIndex{Dimensions})
 cuRanges       = similar(cuCells, Int)
+p              = similar(cuCells, Int)
 
 ###= Preallocate functions and sizes for GPU exec
 FuncExtractCells!, ThreadsExtractCells!, BlocksExtractCells! = KernelExtractCells!(cuCells,cuPosition,CutOff)
@@ -93,7 +94,12 @@ Stencil = ConstructStencil(Val(Dimensions))
 
 FunctionExtractCells!(cuCells,cuPosition)
 
-sort!(cuCells)
+sortperm!(p,cuCells)
+
+cuCells         .= cuCells[p]
+cuDensity       .= cuDensity[p]     
+cuAcceleration  .= cuAcceleration[p]
+cuVelocity      .= cuVelocity[p]    
 
 cuRanges[1:1]   .= 1
 cuRanges[2:end] .= .!iszero.(diff(cuCells))
