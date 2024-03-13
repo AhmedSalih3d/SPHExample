@@ -210,24 +210,6 @@ FuncExtractCells!, ThreadsExtractCells!, BlocksExtractCells! = KernelExtractCell
 FunctionExtractCells!(cuCells,cuPosition) = @cuda threads=ThreadsExtractCells! blocks=BlocksExtractCells!  ExtractCells!(cuCells,cuPosition,H)
 ###=
 
-# FunctionExtractCells!(cuCells,cuPosition)
-
-# sortperm!(p,cuCells)
-
-# cuCells         .= cuCells[p]
-# cuPosition      .= cuPosition[p]
-# cuDensity       .= cuDensity[p]     
-# cuAcceleration  .= cuAcceleration[p]
-# cuVelocity      .= cuVelocity[p]  
-
-# cuRanges[1:1]   .= 1
-# cuRanges[2:end] .= .!iszero.(diff(cuCells))
-
-# ParticleRanges = [1;findall(.!iszero.(diff(cuCells))) .+ 1] #This works but not findall on cuRanges
-# CUDA.@allowscalar push!(ParticleRanges,length(cuPosition) + 1) #Have to add 1 even though it is wrong due to -1 at EndIndex
-# UniqueCells    = cuCells[ParticleRanges[1:end-1]]
-
-
 FuncNeighborLoop!, ThreadsNeighborLoop!, BlocksNeighborLoop! = KernelNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil,  cuPosition, cuKernel)
 FunctionNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel) = @cuda threads=ThreadsNeighborLoop! blocks=BlocksNeighborLoop!  NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel)
 
