@@ -107,11 +107,12 @@ cuRanges[2:end] .= .!iszero.(diff(cuCells))
 ParticleRanges = [1;findall(.!iszero.(diff(cuCells))) .+ 1] #This works but not findall on cuRanges
 UniqueCells    = cuCells[ParticleRanges]
 
-CUDA.@allowscalar for iter = 1:5#1:length(UniqueCells) - 1
+CUDA.@allowscalar for iter = 5#1:length(UniqueCells) - 1
     CellIndex = UniqueCells[iter]
     @cuprintln "CellIndex: " CellIndex[1] "," CellIndex[2]
 
     PR        = ParticleRanges[iter:iter+1]
+    PR[2]    -= 1 #Non inclusive range
     # Particles in sorted Cells
     @cuprintln "ParticleRanges: " PR[1] ":" PR[2]
  
@@ -121,7 +122,9 @@ CUDA.@allowscalar for iter = 1:5#1:length(UniqueCells) - 1
         @cuprintln "SCellIndex: " SCellIndex[1] "," SCellIndex[2]
 
         if SCellIndex ∈ UniqueCells
-            PR_ = ParticleRanges[iter:iter+1]
+            NeighborCellIndex = findfirst(isequal(SCellIndex), UniqueCells)
+            PR_     = ParticleRanges[NeighborCellIndex:iter+1]
+            PR_[2] -= 1 #Non inclusive range
             @cuprintln "    ParticleRanges: " PR_[1] ":" PR_[2]
         end
     end
