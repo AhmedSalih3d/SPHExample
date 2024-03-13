@@ -178,7 +178,8 @@ ResetArrays!(cuAcceleration, cuVelocity, cuKernel, cuCells, cuRanges)
 
 ###= Preallocate functions and sizes for GPU exec
 FuncExtractCells!, ThreadsExtractCells!, BlocksExtractCells! = KernelExtractCells!(cuCells,cuPosition,CutOff)
-FunctionExtractCells!(cuCells,cuPosition) = @cuda threads=ThreadsExtractCells! blocks=BlocksExtractCells!  ExtractCells!(cuCells,cuPosition,CutOff)
+# FunctionExtractCells!(cuCells,cuPosition) = @cuda threads=ThreadsExtractCells! blocks=BlocksExtractCells!  ExtractCells!(cuCells,cuPosition,CutOff)
+FunctionExtractCells!(cuCells,cuPosition) = @cuda threads=ThreadsExtractCells! blocks=1  ExtractCells!(cuCells,cuPosition,CutOff)
 ###=
 
 FunctionExtractCells!(cuCells,cuPosition)
