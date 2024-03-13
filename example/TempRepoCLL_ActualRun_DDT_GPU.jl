@@ -56,6 +56,36 @@ end
 
 ###===
 
+###=== Function to process each cell and its neighbors
+function NeighborLoop!(UniqueCells, ParticleRanges, Stencil)
+    index  = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    stride = gridDim().x * blockDim().x
+    Nmax   = length(UniqueCells) - 1
+    @inbounds for iter = index:stride:Nmax
+        CellIndex = UniqueCells[iter]
+        @cuprintln "CellIndex: " CellIndex[1] "," CellIndex[2]
+    
+        PR        = ParticleRanges[iter:iter+1]
+        PR[2]    -= 1 #Non inclusive range
+        # Particles in sorted Cells
+        @cuprintln "ParticleRanges: " PR[1] ":" PR[2]
+        
+        for S ∈ Stencil
+            SCellIndex = CellIndex + S
+    
+            @cuprintln "SCellIndex: " SCellIndex[1] "," SCellIndex[2]
+    
+            if SCellIndex ∈ UniqueCells
+                NeighborCellIndex = findfirst(isequal(SCellIndex), UniqueCells)
+                PR_     = ParticleRanges[NeighborCellIndex:iter+1]
+                PR_[2] -= 1 #Non inclusive range
+                @cuprintln "    ParticleRanges: " PR_[1] ":" PR_[2]
+            end
+        end
+    end
+end
+###===
+
 Dimensions = 2
 FloatType  = Float64
 FluidCSV   = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Fluid.csv"
@@ -107,25 +137,25 @@ cuRanges[2:end] .= .!iszero.(diff(cuCells))
 ParticleRanges = [1;findall(.!iszero.(diff(cuCells))) .+ 1] #This works but not findall on cuRanges
 UniqueCells    = cuCells[ParticleRanges]
 
-CUDA.@allowscalar for iter = 5#1:length(UniqueCells) - 1
-    CellIndex = UniqueCells[iter]
-    @cuprintln "CellIndex: " CellIndex[1] "," CellIndex[2]
+# CUDA.@allowscalar for iter = 5#1:length(UniqueCells) - 1
+#     CellIndex = UniqueCells[iter]
+#     @cuprintln "CellIndex: " CellIndex[1] "," CellIndex[2]
 
-    PR        = ParticleRanges[iter:iter+1]
-    PR[2]    -= 1 #Non inclusive range
-    # Particles in sorted Cells
-    @cuprintln "ParticleRanges: " PR[1] ":" PR[2]
+#     PR        = ParticleRanges[iter:iter+1]
+#     PR[2]    -= 1 #Non inclusive range
+#     # Particles in sorted Cells
+#     @cuprintln "ParticleRanges: " PR[1] ":" PR[2]
  
-    for S ∈ Stencil
-        SCellIndex = CellIndex + S
+#     for S ∈ Stencil
+#         SCellIndex = CellIndex + S
 
-        @cuprintln "SCellIndex: " SCellIndex[1] "," SCellIndex[2]
+#         @cuprintln "SCellIndex: " SCellIndex[1] "," SCellIndex[2]
 
-        if SCellIndex ∈ UniqueCells
-            NeighborCellIndex = findfirst(isequal(SCellIndex), UniqueCells)
-            PR_     = ParticleRanges[NeighborCellIndex:iter+1]
-            PR_[2] -= 1 #Non inclusive range
-            @cuprintln "    ParticleRanges: " PR_[1] ":" PR_[2]
-        end
-    end
-end
+#         if SCellIndex ∈ UniqueCells
+#             NeighborCellIndex = findfirst(isequal(SCellIndex), UniqueCells)
+#             PR_     = ParticleRanges[NeighborCellIndex:iter+1]
+#             PR_[2] -= 1 #Non inclusive range
+#             @cuprintln "    ParticleRanges: " PR_[1] ":" PR_[2]
+#         end
+#     end
+# end
