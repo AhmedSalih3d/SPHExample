@@ -69,7 +69,7 @@ function NeighborLoop!(UniqueCells, ParticleRanges, Stencil)
         StartIndex = ParticleRanges[iter] 
         EndIndex   = ParticleRanges[iter+1] - 1
 
-        @cuprint " |> StartIndex: " StartIndex " EndIndex: " EndIndex
+        @cuprint " |> StartIndex: " StartIndex " EndIndex: " EndIndex "\n"
         for i = StartIndex:EndIndex
             # @cuprintln i " "
         end
