@@ -60,7 +60,17 @@ end
 function SimStep(i,j, CutOffSquared, Position, Kernel)
     xᵢⱼ  = Position[i] - Position[j]
     xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)
-    dᵢⱼ  = sqrt(xᵢⱼ²)
+
+    if  xᵢⱼ² <= CutOffSquared
+        dᵢⱼ  = sqrt(xᵢⱼ²)
+        q    = dᵢⱼ/(2*0.03394112549695428)
+        Wᵢⱼ  = 1*(1-q/2)^4*(2*q + 1) #αD
+
+        Kernel[i] += Wᵢⱼ
+        Kernel[j] += Wᵢⱼ
+    end
+
+    
 end
 ###===
 
@@ -147,18 +157,21 @@ Position = convert(Vector{SVector{Dimensions,FloatType}},points.V)
 Density  = deepcopy([density_bound; density_fluid])
 
 
-cuPosition     = cu(Position)
-cuDensity      = cu(Density)
-cuAcceleration = similar(cuPosition)
-cuVelocity     = similar(cuPosition)
+cuPosition      = cu(Position)
+cuDensity       = cu(Density)
+cuAcceleration  = similar(cuPosition)
+cuVelocity      = similar(cuPosition)
 cuKernel        = similar(cuDensity)
 
-cuCells        = similar(cuPosition, CartesianIndex{Dimensions})
-cuRanges       = similar(cuCells, Int)
-p              = similar(cuCells, Int)
+cuCells         = similar(cuPosition, CartesianIndex{Dimensions})
+cuRanges        = similar(cuCells, Int)
+p               = similar(cuCells, Int)
 
-Stencil        = cu(ConstructStencil(Val(Dimensions)))
+Stencil         = cu(ConstructStencil(Val(Dimensions)))
 
+
+# Ensure zero, similar does not!
+ResetArrays!(cuAcceleration, cuVelocity, cuKernel, cuCells, cuRanges)
 
 ###= Preallocate functions and sizes for GPU exec
 FuncExtractCells!, ThreadsExtractCells!, BlocksExtractCells! = KernelExtractCells!(cuCells,cuPosition,CutOff)
@@ -186,7 +199,7 @@ UniqueCells    = cuCells[ParticleRanges]
 FuncNeighborLoop!, ThreadsNeighborLoop!, BlocksNeighborLoop! = KernelNeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, cuPosition, cuKernel)
 # FunctionNeighborLoop!(UniqueCells, ParticleRanges, Stencil, Position) = @cuda threads=ThreadsNeighborLoop! blocks=BlocksNeighborLoop!  NeighborLoop!(UniqueCells, ParticleRanges, Stencil, Position)
 FunctionNeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel) = @cuda threads=1  blocks=1  NeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel)
-FunctionNeighborLoop!(UniqueCells[1:5], ParticleRanges, Stencil, CutOffSquared, cuPosition, cuKernel)
+FunctionNeighborLoop!(UniqueCells, ParticleRanges, Stencil, CutOffSquared, cuPosition, cuKernel)
 
 # CUDA.@allowscalar for iter = 5#1:length(UniqueCells) - 1
 #     CellIndex = UniqueCells[iter]
