@@ -17,6 +17,7 @@ import Cthulhu as Deep
 import CellListMap: InPlaceNeighborList, update!, neighborlist!
 using Bumper
 using CUDA
+CUDA.allowscalar(false)
 
 import Base.Threads: nthreads, @threads
 include("../src/ProduceVTP.jl")
@@ -102,6 +103,8 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
     UniqueCells    = cuCells[ParticleRanges[1:end-1]]
 
     return ParticleRanges, UniqueCells #Optimize out in shaa Allah!
+
+    return nothing
 end
 ###===
 
