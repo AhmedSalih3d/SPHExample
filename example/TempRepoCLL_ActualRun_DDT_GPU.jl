@@ -75,6 +75,7 @@ cuAcceleration = similar(cuPosition)
 cuVelocity     = similar(cuPosition)
 
 cuCells        = similar(cuPosition, CartesianIndex{Dimensions})
+cuRanges       = similar(cuCells, Int)
 
 ###= Preallocate functions and sizes for GPU exec
 FuncExtractCells!, ThreadsExtractCells!, BlocksExtractCells! = KernelExtractCells!(cuCells,cuPosition,CutOff)
@@ -83,4 +84,11 @@ FunctionExtractCells!(cuCells,cuPosition) = @cuda threads=ThreadsExtractCells! b
 
 FunctionExtractCells!(cuCells,cuPosition)
 
-cuCells
+sort!(cuCells)
+
+cuRanges[1:1]   .= 1
+cuRanges[2:end] .= .!iszero.(diff(cuCells))
+
+ParticleRanges = findall(.!iszero.(diff(cuCells))) .+ 1 #This works but not findall on cuRanges
+
+UniqueCells = cuCells[[1;ParticleRanges]]
