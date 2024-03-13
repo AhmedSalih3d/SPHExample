@@ -57,7 +57,7 @@ end
 ###===
 
 ###=== SimStep
-function SimStep(SimConstants, i,j, CutOffSquared, Position, Kernel)
+function SimStep(SimConstants, i,j, Position, Kernel)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H² = SimConstants
 
     xᵢⱼ  = Position[i] - Position[j]
@@ -78,7 +78,7 @@ end
 
 ###=== Function to process each cell and its neighbors
 #https://cuda.juliagpu.org/stable/tutorials/performance/
-function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel)
+function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel)
     index  = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     stride = gridDim().x * blockDim().x
     Nmax   = length(UniqueCells) + 1
@@ -94,7 +94,7 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOf
         @cuprint " |> StartIndex: " StartIndex " EndIndex: " EndIndex "\n"
         for i = StartIndex:EndIndex
             for j = (i+1):EndIndex
-                SimStep(SimConstants, i,j, CutOffSquared, Position, Kernel)
+                SimStep(SimConstants, i,j, Position, Kernel)
             end
         end
         
@@ -118,7 +118,7 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOf
 
                 for i = StartIndex:EndIndex
                     for j = StartIndex_:EndIndex_
-                        SimStep(SimConstants, i, j, CutOffSquared, Position, Kernel)
+                        SimStep(SimConstants, i, j, Position, Kernel)
                     end
                 end
             end
@@ -129,8 +129,8 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOf
     end
 end
 
-function KernelNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel)
-    kernel  = @cuda launch=false NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel)
+function KernelNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel)
+    kernel  = @cuda launch=false NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel)
     config  = launch_configuration(kernel.fun)
     threads = min(length(UniqueCells), config.threads)
     blocks  = cld(length(UniqueCells), threads)
@@ -149,9 +149,7 @@ BoundCSV   = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Bound.csv"
 
 # Unpack simulation constants
 SimConstantsWedge = SimulationConstants{FloatType}(c₀=42.48576250492629)
-@unpack ρ₀, dx, h, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η² = SimConstantsWedge
-CutOff = 2h
-CutOffSquared = CutOff^2
+@unpack ρ₀, dx, h, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H = SimConstantsWedge
 
 # Load in the fluid and boundary particles. Return these points and both data frames
 # @inline is a hack here to remove all allocations further down due to uncertainty of the points type at compile time
@@ -177,9 +175,9 @@ Stencil         = cu(ConstructStencil(Val(Dimensions)))
 ResetArrays!(cuAcceleration, cuVelocity, cuKernel, cuCells, cuRanges)
 
 ###= Preallocate functions and sizes for GPU exec
-FuncExtractCells!, ThreadsExtractCells!, BlocksExtractCells! = KernelExtractCells!(cuCells,cuPosition,CutOff)
-# FunctionExtractCells!(cuCells,cuPosition) = @cuda threads=ThreadsExtractCells! blocks=BlocksExtractCells!  ExtractCells!(cuCells,cuPosition,CutOff)
-FunctionExtractCells!(cuCells,cuPosition) = @cuda threads=ThreadsExtractCells! blocks=1  ExtractCells!(cuCells,cuPosition,CutOff)
+FuncExtractCells!, ThreadsExtractCells!, BlocksExtractCells! = KernelExtractCells!(cuCells,cuPosition,H)
+# FunctionExtractCells!(cuCells,cuPosition) = @cuda threads=ThreadsExtractCells! blocks=BlocksExtractCells!  ExtractCells!(cuCells,cuPosition,H)
+FunctionExtractCells!(cuCells,cuPosition) = @cuda threads=ThreadsExtractCells! blocks=1  ExtractCells!(cuCells,cuPosition,H)
 ###=
 
 FunctionExtractCells!(cuCells,cuPosition)
@@ -200,10 +198,10 @@ CUDA.@allowscalar push!(ParticleRanges,length(cuPosition))
 UniqueCells    = cuCells[ParticleRanges[1:end-1]]
 
 
-FuncNeighborLoop!, ThreadsNeighborLoop!, BlocksNeighborLoop! = KernelNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, CutOffSquared, cuPosition, cuKernel)
+FuncNeighborLoop!, ThreadsNeighborLoop!, BlocksNeighborLoop! = KernelNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil,  cuPosition, cuKernel)
 # FunctionNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel) = @cuda threads=ThreadsNeighborLoop!  blocks=BlocksNeighborLoop!  NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel)
-FunctionNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel) = @cuda threads=ThreadsNeighborLoop! blocks=3  NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel)
-FunctionNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, CutOffSquared, cuPosition, cuKernel)
+FunctionNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel) = @cuda threads=ThreadsNeighborLoop! blocks=3  NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel)
+FunctionNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel)
 
 to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
 PolyDataTemplate("E:/GPU_SPH/TESTING/Test" * "_" * lpad(0,6,"0") * ".vtp", to_3d(Array(cuPosition)), ["Kernel"], Array(cuKernel))
