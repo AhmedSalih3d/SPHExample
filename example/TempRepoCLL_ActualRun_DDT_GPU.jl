@@ -92,9 +92,7 @@ function UpdateNeighbors!(Cells, SortedIndices, ParticleRanges, Position, Densit
     ParticleRanges = [1 ; findall(.!iszero.(diff(cuCells))) .+ 1]
     CUDA.@allowscalar push!(ParticleRanges, length(Cells) + 1)
 
-    UniqueCells    = cuCells[ParticleRanges[1:end-1]]
-
-    return ParticleRanges, UniqueCells #Optimize out in shaa Allah!
+    return ParticleRanges #Optimize out in shaa Allah!
 end
 
 function KernelNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel)
@@ -109,9 +107,12 @@ end
 
 ###=== Function to process each cell and its neighbors
 #https://cuda.juliagpu.org/stable/tutorials/performance/
-function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel)
+function NeighborLoop!(SimConstants, Cells, ParticleRanges, Stencil, Position, Kernel)
     index  = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     stride = gridDim().x * blockDim().x
+
+    @views UniqueCells = Cells[ParticleRanges[1:end-1]]
+
     Nmax   = length(UniqueCells)
 
     iter = index
@@ -159,8 +160,8 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
     end
 end
 
-function KernelNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel)
-    kernel  = @cuda launch=false NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel)
+function KernelNeighborLoop!(SimConstants, Cells, ParticleRanges, Stencil, Position, Kernel)
+    kernel  = @cuda launch=false NeighborLoop!(SimConstants, Cells, ParticleRanges, Stencil, Position, Kernel)
     config  = launch_configuration(kernel.fun)
     threads = min(length(UniqueCells), config.threads)
     blocks  = cld(length(UniqueCells), threads)
@@ -207,37 +208,15 @@ ResetArrays!(cuAcceleration, cuVelocity, cuKernel, cuCells, cuRanges, SortedIndi
 
 ###= Preallocate functions and sizes for GPU exec
 FuncExtractCells!, ThreadsExtractCells!, BlocksExtractCells! = KernelExtractCells!(cuCells,cuPosition,H)
-FunctionExtractCells!(cuCells,cuPosition) = @cuda threads=ThreadsExtractCells! blocks=BlocksExtractCells!  ExtractCells!(cuCells,cuPosition,H)
+FunctionExtractCells!(cuCells,cuPosition) = @cuda threads=ThreadsExtractCells! blocks=2  ExtractCells!(cuCells,cuPosition,H)
 ###=
 
-FuncNeighborLoop!, ThreadsNeighborLoop!, BlocksNeighborLoop! = KernelNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil,  cuPosition, cuKernel)
-FunctionNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel) = @cuda threads=ThreadsNeighborLoop! blocks=BlocksNeighborLoop!  NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel)
+FuncNeighborLoop!, ThreadsNeighborLoop!, BlocksNeighborLoop! = KernelNeighborLoop!(SimConstantsWedge, cuCells, ParticleRanges, Stencil,  cuPosition, cuKernel)
+# More than two blocks leads to a race-condition
+FunctionNeighborLoop!(SimConstants, Cells, ParticleRanges, Stencil, Position, Kernel) = @cuda threads=ThreadsNeighborLoop! blocks=2  NeighborLoop!(SimConstants, Cells, ParticleRanges, Stencil, Position, Kernel)
 
-ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, SortedIndices, ParticleRanges, cuPosition, cuDensity, cuAcceleration, cuVelocity)
-FunctionNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel)
+ParticleRanges  = UpdateNeighbors!(cuCells, SortedIndices, ParticleRanges, cuPosition, cuDensity, cuAcceleration, cuVelocity)
+FunctionNeighborLoop!(SimConstantsWedge, cuCells, ParticleRanges, Stencil, cuPosition, cuKernel)
 
 to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
 PolyDataTemplate("E:/GPU_SPH/TESTING/Test" * "_" * lpad(0,6,"0") * ".vtp", to_3d(Array(cuPosition)), ["Kernel"], Array(cuKernel))
-
-# CUDA.@allowscalar for iter = 5#1:length(UniqueCells) - 1
-#     CellIndex = UniqueCells[iter]
-#     @cuprintln "CellIndex: " CellIndex[1] "," CellIndex[2]
-
-#     PR        = ParticleRanges[iter:iter+1]
-#     PR[2]    -= 1 #Non inclusive range
-#     # Particles in sorted Cells
-#     @cuprintln "ParticleRanges: " PR[1] ":" PR[2]
- 
-#     for S ∈ Stencil
-#         SCellIndex = CellIndex + S
-
-#         @cuprintln "SCellIndex: " SCellIndex[1] "," SCellIndex[2]
-
-#         if SCellIndex ∈ UniqueCells
-#             NeighborCellIndex = findfirst(isequal(SCellIndex), UniqueCells)
-#             PR_     = ParticleRanges[NeighborCellIndex:iter+1]
-#             PR_[2] -= 1 #Non inclusive range
-#             @cuprintln "    ParticleRanges: " PR_[1] ":" PR_[2]
-#         end
-#     end
-# end
