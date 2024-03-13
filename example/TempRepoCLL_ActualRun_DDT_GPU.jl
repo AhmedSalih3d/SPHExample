@@ -201,6 +201,9 @@ FuncNeighborLoop!, ThreadsNeighborLoop!, BlocksNeighborLoop! = KernelNeighborLoo
 FunctionNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel) = @cuda threads=1  blocks=1  NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel)
 FunctionNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, CutOffSquared, cuPosition, cuKernel)
 
+to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
+PolyDataTemplate("E:/GPU_SPH/TESTING/Test" * "_" * lpad(0,6,"0") * ".vtp", to_3d(Array(cuPosition)), ["Kernel"], Array(cuKernel))
+
 # CUDA.@allowscalar for iter = 5#1:length(UniqueCells) - 1
 #     CellIndex = UniqueCells[iter]
 #     @cuprintln "CellIndex: " CellIndex[1] "," CellIndex[2]
