@@ -94,7 +94,9 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOf
         @cuprint " |> StartIndex: " StartIndex " EndIndex: " EndIndex "\n"
         for i = StartIndex:EndIndex
             for j = StartIndex:EndIndex
-                SimStep(SimConstants, i,j, CutOffSquared, Position, Kernel)
+                if i != j
+                    SimStep(SimConstants, i,j, CutOffSquared, Position, Kernel)
+                end
             end
         end
         
@@ -117,7 +119,9 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOf
                 @cuprintln "    StartIndex_: " StartIndex_ " EndIndex_: " EndIndex_
                 for i = StartIndex:EndIndex
                     for j = StartIndex_:EndIndex_
-                        SimStep(SimConstants, i, j, CutOffSquared, Position, Kernel)
+                        if i != j
+                            SimStep(SimConstants, i, j, CutOffSquared, Position, Kernel)
+                        end
                     end
                 end
             end
