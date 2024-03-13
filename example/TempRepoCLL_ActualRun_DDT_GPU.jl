@@ -81,7 +81,7 @@ end
 function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel)
     index  = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     stride = gridDim().x * blockDim().x
-    Nmax   = length(UniqueCells) + 1
+    Nmax   = length(UniqueCells)
 
     iter = index
     @inbounds while iter <= Nmax
@@ -112,7 +112,7 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
                 end
 
                 StartIndex_       = ParticleRanges[NeighborCellIndex] 
-                EndIndex_         = ParticleRanges[NeighborCellIndex+1] - 1
+                EndIndex_         = ParticleRanges[NeighborCellIndex+1] - 1 
 
                 @cuprintln "    StartIndex_: " StartIndex_ " EndIndex_: " EndIndex_
 
@@ -194,7 +194,7 @@ cuRanges[1:1]   .= 1
 cuRanges[2:end] .= .!iszero.(diff(cuCells))
 
 ParticleRanges = [1;findall(.!iszero.(diff(cuCells))) .+ 1] #This works but not findall on cuRanges
-CUDA.@allowscalar push!(ParticleRanges,length(cuPosition))
+CUDA.@allowscalar push!(ParticleRanges,length(cuPosition) + 1) #Have to add 1 even though it is wrong due to -1 at EndIndex
 UniqueCells    = cuCells[ParticleRanges[1:end-1]]
 
 
