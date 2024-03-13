@@ -176,8 +176,7 @@ ResetArrays!(cuAcceleration, cuVelocity, cuKernel, cuCells, cuRanges)
 
 ###= Preallocate functions and sizes for GPU exec
 FuncExtractCells!, ThreadsExtractCells!, BlocksExtractCells! = KernelExtractCells!(cuCells,cuPosition,H)
-# FunctionExtractCells!(cuCells,cuPosition) = @cuda threads=ThreadsExtractCells! blocks=BlocksExtractCells!  ExtractCells!(cuCells,cuPosition,H)
-FunctionExtractCells!(cuCells,cuPosition) = @cuda threads=ThreadsExtractCells! blocks=1  ExtractCells!(cuCells,cuPosition,H)
+FunctionExtractCells!(cuCells,cuPosition) = @cuda threads=ThreadsExtractCells! blocks=BlocksExtractCells!  ExtractCells!(cuCells,cuPosition,H)
 ###=
 
 FunctionExtractCells!(cuCells,cuPosition)
@@ -199,8 +198,8 @@ UniqueCells    = cuCells[ParticleRanges[1:end-1]]
 
 
 FuncNeighborLoop!, ThreadsNeighborLoop!, BlocksNeighborLoop! = KernelNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil,  cuPosition, cuKernel)
-# FunctionNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel) = @cuda threads=ThreadsNeighborLoop!  blocks=BlocksNeighborLoop!  NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel)
-FunctionNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel) = @cuda threads=ThreadsNeighborLoop! blocks=3  NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel)
+FunctionNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel) = @cuda threads=ThreadsNeighborLoop! blocks=BlocksNeighborLoop!  NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel)
+
 FunctionNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel)
 
 to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
