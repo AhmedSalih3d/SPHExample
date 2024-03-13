@@ -93,10 +93,8 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOf
 
         @cuprint " |> StartIndex: " StartIndex " EndIndex: " EndIndex "\n"
         for i = StartIndex:EndIndex
-            for j = StartIndex:EndIndex
-                if i != j
-                    SimStep(SimConstants, i,j, CutOffSquared, Position, Kernel)
-                end
+            for j = (i+1):EndIndex
+                SimStep(SimConstants, i,j, CutOffSquared, Position, Kernel)
             end
         end
         
@@ -117,11 +115,10 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOf
                 EndIndex_         = ParticleRanges[NeighborCellIndex+1] - 1
 
                 @cuprintln "    StartIndex_: " StartIndex_ " EndIndex_: " EndIndex_
+
                 for i = StartIndex:EndIndex
                     for j = StartIndex_:EndIndex_
-                        if i != j
-                            SimStep(SimConstants, i, j, CutOffSquared, Position, Kernel)
-                        end
+                        SimStep(SimConstants, i, j, CutOffSquared, Position, Kernel)
                     end
                 end
             end
@@ -202,7 +199,8 @@ UniqueCells    = cuCells[ParticleRanges]
 
 
 FuncNeighborLoop!, ThreadsNeighborLoop!, BlocksNeighborLoop! = KernelNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, CutOffSquared, cuPosition, cuKernel)
-FunctionNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel) = @cuda threads=ThreadsNeighborLoop!  blocks=BlocksNeighborLoop!  NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel)
+# FunctionNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel) = @cuda threads=ThreadsNeighborLoop!  blocks=BlocksNeighborLoop!  NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel)
+FunctionNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel) = @cuda threads=1 blocks=1  NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, CutOffSquared, Position, Kernel)
 FunctionNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, CutOffSquared, cuPosition, cuKernel)
 
 to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
