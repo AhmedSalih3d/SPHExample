@@ -59,30 +59,52 @@ end
 ###=== Function to process each cell and its neighbors
 function NeighborLoop!(UniqueCells, ParticleRanges, Stencil)
     index  = (blockIdx().x - 1) * blockDim().x + threadIdx().x
-    stride = gridDim().x * blockDim().x
+    # stride = gridDim().x * blockDim().x
     Nmax   = length(UniqueCells) - 1
-    @inbounds for iter = index:stride:Nmax
+    @inbounds for iter = 1:Nmax
         CellIndex = UniqueCells[iter]
-        @cuprintln "CellIndex: " CellIndex[1] "," CellIndex[2]
-    
-        PR        = ParticleRanges[iter:iter+1]
-        PR[2]    -= 1 #Non inclusive range
-        # Particles in sorted Cells
-        @cuprintln "ParticleRanges: " PR[1] ":" PR[2]
+        @cuprint "CellIndex: " CellIndex[1] "," CellIndex[2]
+        # @cuprintln "iter: " iter "iter+1: " iter+1
+
+        StartIndex = ParticleRanges[iter] 
+        EndIndex   = ParticleRanges[iter+1] - 1
+
+        @cuprint " |> StartIndex: " StartIndex " EndIndex: " EndIndex
+        for i = StartIndex:EndIndex
+            # @cuprintln i " "
+        end
         
         for S ∈ Stencil
             SCellIndex = CellIndex + S
     
-            @cuprintln "SCellIndex: " SCellIndex[1] "," SCellIndex[2]
+            @cuprint "SCellIndex: " SCellIndex[1] "," SCellIndex[2] " "
+            @cuprintln ""
     
             if SCellIndex ∈ UniqueCells
                 NeighborCellIndex = findfirst(isequal(SCellIndex), UniqueCells)
-                PR_     = ParticleRanges[NeighborCellIndex:iter+1]
-                PR_[2] -= 1 #Non inclusive range
-                @cuprintln "    ParticleRanges: " PR_[1] ":" PR_[2]
+                if !isnothing(NeighborCellIndex)
+                    ParticleRanges[NeighborCellIndex]
+                    StartIndex_       = ParticleRanges[NeighborCellIndex] 
+                    EndIndex_         = ParticleRanges[NeighborCellIndex+1] - 1
+
+                    @cuprintln "    StartIndex_: " StartIndex_ " EndIndex_: " EndIndex_
+                    for i = StartIndex_:EndIndex_
+                        # @cuprintln i " "
+                    end
+                end
             end
         end
+        @cuprintln ""
     end
+end
+
+function KernelNeighborLoop!(UniqueCells, ParticleRanges, Stencil)
+    kernel  = @cuda launch=false NeighborLoop!(UniqueCells, ParticleRanges, Stencil)
+    config  = launch_configuration(kernel.fun)
+    threads = min(length(UniqueCells), config.threads)
+    blocks  = cld(length(UniqueCells), threads)
+
+    return (kernel,threads,blocks)
 end
 ###===
 
@@ -115,12 +137,13 @@ cuCells        = similar(cuPosition, CartesianIndex{Dimensions})
 cuRanges       = similar(cuCells, Int)
 p              = similar(cuCells, Int)
 
+Stencil        = cu(ConstructStencil(Val(Dimensions)))
+
+
 ###= Preallocate functions and sizes for GPU exec
 FuncExtractCells!, ThreadsExtractCells!, BlocksExtractCells! = KernelExtractCells!(cuCells,cuPosition,CutOff)
 FunctionExtractCells!(cuCells,cuPosition) = @cuda threads=ThreadsExtractCells! blocks=BlocksExtractCells!  ExtractCells!(cuCells,cuPosition,CutOff)
 ###=
-
-Stencil = ConstructStencil(Val(Dimensions))
 
 FunctionExtractCells!(cuCells,cuPosition)
 
@@ -136,6 +159,12 @@ cuRanges[2:end] .= .!iszero.(diff(cuCells))
 
 ParticleRanges = [1;findall(.!iszero.(diff(cuCells))) .+ 1] #This works but not findall on cuRanges
 UniqueCells    = cuCells[ParticleRanges]
+
+
+FuncNeighborLoop!, ThreadsNeighborLoop!, BlocksNeighborLoop! = KernelNeighborLoop!(UniqueCells, ParticleRanges, Stencil)
+# FunctionNeighborLoop!(UniqueCells, ParticleRanges, Stencil) = @cuda threads=ThreadsNeighborLoop! blocks=BlocksNeighborLoop!  NeighborLoop!(UniqueCells, ParticleRanges, Stencil)
+FunctionNeighborLoop!(UniqueCells, ParticleRanges, Stencil) = @cuda threads=1  blocks=1  NeighborLoop!(UniqueCells, ParticleRanges, Stencil)
+FunctionNeighborLoop!(UniqueCells[1:5], ParticleRanges, Stencil)
 
 # CUDA.@allowscalar for iter = 5#1:length(UniqueCells) - 1
 #     CellIndex = UniqueCells[iter]
