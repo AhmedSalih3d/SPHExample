@@ -5,6 +5,7 @@ version = "0.2.0"
 [deps]
 Bumper = "8ce10254-0962-460f-a3d8-1f77fea1446e"
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 CellListMap = "69e1c6dd-3888-40e6-b3c8-31ac5f578864"
 ChunkSplitters = "ae650224-84b6-46f8-82ea-d812ca08434e"
 Cthulhu = "f68482b8-f384-11e8-15f7-abe071a5a75f"
