@@ -67,20 +67,20 @@ function SimStep(SimConstants, i,j, Position, Kernel, KernelGradient)
     xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)
 
     if  xᵢⱼ² <= H²
-        dᵢⱼ  = sqrt(xᵢⱼ²)
+        dᵢⱼ  = sqrt(xᵢⱼ²) #Using sqrt is what takes a lot of time?
         q    = clamp(dᵢⱼ * h⁻¹,0.0,2.0)
-        Wᵢⱼ  = αD*(1-q/2)^4*(2*q + 1)
+        Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
 
         Kernel[i] += Wᵢⱼ
         Kernel[j] += Wᵢⱼ
 
-        ∇ᵢWᵢⱼ = (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
+        ∇ᵢWᵢⱼ = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
 
         KernelGradient[i] +=  ∇ᵢWᵢⱼ
         KernelGradient[j] += -∇ᵢWᵢⱼ 
     end
 
-    
+    return nothing
 end
 ###===
 
@@ -145,7 +145,7 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
 
                 for i = StartIndex:EndIndex
                     for j = StartIndex_:EndIndex_
-                        SimStep(SimConstants, i, j, Position, Kernel, KernelGradient)
+                        #SimStep(SimConstants, i, j, Position, Kernel, KernelGradient)
                     end
                 end
             end
