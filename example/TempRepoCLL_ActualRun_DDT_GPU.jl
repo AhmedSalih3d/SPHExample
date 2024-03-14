@@ -110,7 +110,7 @@ end
 ###=== Function to process each cell and its neighbors
 #https://cuda.juliagpu.org/stable/tutorials/performance/
 # 192 bytes and 4 allocs from launch config
-function NeighborLoop!(SimConstants, UniqueCells, DiffCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient)
+function NeighborLoop!(SimConstants, UniqueCells, Cells, DiffCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient)
     index  = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     stride = gridDim().x * blockDim().x
     Nmax   = length(UniqueCells)
@@ -166,13 +166,13 @@ function NeighborLoop!(SimConstants, UniqueCells, DiffCells, ParticleRanges, Ste
     end
 end
 
-function KernelNeighborLoop!(SimConstants, UniqueCells, DiffCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient)
-    kernel  = @cuda launch=false NeighborLoop!(SimConstants, UniqueCells, DiffCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient)
+function KernelNeighborLoop!(SimConstants, UniqueCells, Cells, DiffCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient)
+    kernel  = @cuda launch=false NeighborLoop!(SimConstants, UniqueCells, Cells, DiffCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient)
     config  = launch_configuration(kernel.fun)
     threads = min(length(UniqueCells), config.threads)
     blocks  = cld(length(UniqueCells), threads)
 
-    CUDA.@sync kernel(SimConstants, UniqueCells, DiffCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient; threads, blocks)
+    CUDA.@sync kernel(SimConstants, UniqueCells, Cells, DiffCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient; threads, blocks)
 end
 ###===
 
@@ -215,7 +215,7 @@ ResetArrays!(cuAcceleration, cuVelocity, cuKernel, cuKernelGradient, cuCells, So
 
 # Normal run and save data
 ParticleRanges, UniqueCells, DiffCells = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity)
-KernelNeighborLoop!(SimConstantsWedge, UniqueCells, DiffCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient)
+KernelNeighborLoop!(SimConstantsWedge, UniqueCells, cuCells, DiffCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient)
 SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
     SimulationName="Test", 
     SaveLocation="E:/GPU_SPH/TESTING/",
@@ -227,12 +227,12 @@ create_vtp_file(SimMetaData, SimConstantsWedge, to_3d(Array(cuPosition)); KERNEL
 #
 
 println(CUDA.@profile trace=true ParticleRanges, UniqueCells, DiffCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity))
-println(CUDA.@profile trace=true KernelNeighborLoop!(SimConstantsWedge, UniqueCells, DiffCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient))
+println(CUDA.@profile trace=true KernelNeighborLoop!(SimConstantsWedge, UniqueCells, cuCells, DiffCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient))
 
 
 
 display(@benchmark CUDA.@sync ParticleRanges, UniqueCells, DiffCells  = UpdateNeighbors!($cuCells, $H, $SortedIndices, $cuPosition, $cuDensity, $cuAcceleration, $cuVelocity))
-display(@benchmark CUDA.@sync KernelNeighborLoop!($SimConstantsWedge, $UniqueCells, $DiffCells, $ParticleRanges, $Stencil, $cuPosition, $cuKernel, $cuKernelGradient))
+display(@benchmark CUDA.@sync KernelNeighborLoop!($SimConstantsWedge, $UniqueCells, $cuCells, $DiffCells, $ParticleRanges, $Stencil, $cuPosition, $cuKernel, $cuKernelGradient))
 
 # Array is opionated and converts to Float32 directly, which is why it bugs out
 # PolyDataTemplate("E:/GPU_SPH/TESTING/Test" * "_" * lpad(0,6,"0") * ".vtp", to_3d(Array(cuPosition)), ["Kernel", "KernelGradient"], Array(cuKernel), to_3d(Array(cuKernelGradient)))
