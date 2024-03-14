@@ -108,6 +108,7 @@ end
 
 ###=== Function to process each cell and its neighbors
 #https://cuda.juliagpu.org/stable/tutorials/performance/
+# 192 bytes and 4 allocs from launch config
 function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient)
     index  = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     stride = gridDim().x * blockDim().x
@@ -133,7 +134,7 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
     
             # @cuprint "SCellIndex: " SCellIndex[1] "," SCellIndex[2] " " @cuprintln ""
     
-            Needle = isequal(SCellIndex)
+            Needle = isequal(SCellIndex) #This allocates 8 bytes :(
             NeighborCellIndex = findfirst(Needle, UniqueCells)
 
             if !isnothing(NeighborCellIndex)
