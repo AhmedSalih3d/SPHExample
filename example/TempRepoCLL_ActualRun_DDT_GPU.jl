@@ -97,11 +97,11 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
     @. Acceleration    =  Acceleration[SortedIndices]
     @. Velocity        =  Velocity[SortedIndices]
 
-    DiffCells              .= diff(cuCells)
+    DiffCells              .= diff(Cells)
     ParticleRanges          = [1 ; findall(.!iszero.(DiffCells)) .+ 1]
     ParticleRanges[end:end] = length(Cells) + 1
 
-    UniqueCells        = cuCells[ParticleRanges[1:end-1]]
+    UniqueCells        = Cells[ParticleRanges[1:end-1]]
 
     return ParticleRanges, UniqueCells #Optimize out in shaa Allah!
 end
