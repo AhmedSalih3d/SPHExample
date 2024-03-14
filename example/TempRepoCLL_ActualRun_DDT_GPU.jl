@@ -86,7 +86,7 @@ end
 
 ###=== Function to update ordering
 #https://cuda.juliagpu.org/stable/tutorials/performance/
-function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Acceleration, Velocity)
+function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Acceleration, Velocity, DiffCells)
     KernelExtractCells!(Cells,Position,CutOff)
 
     sortperm!(SortedIndices,Cells)
@@ -97,13 +97,13 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
     @. Acceleration    =  Acceleration[SortedIndices]
     @. Velocity        =  Velocity[SortedIndices]
 
-    DiffCells          = diff(cuCells)
+    DiffCells         .= diff(cuCells)
     ParticleRanges     = [1 ; findall(.!iszero.(DiffCells)) .+ 1]
     CUDA.@allowscalar push!(ParticleRanges, length(Cells) + 1)
 
     UniqueCells        = cuCells[ParticleRanges[1:end-1]]
 
-    return ParticleRanges, UniqueCells, DiffCells #Optimize out in shaa Allah!
+    return ParticleRanges, UniqueCells #Optimize out in shaa Allah!
 end
 ###===
 
@@ -190,7 +190,8 @@ cuVelocity       = similar(cuPosition)
 cuKernel         = similar(cuDensity)
 cuKernelGradient = similar(cuPosition)
 
-cuCells         = similar(cuPosition, CartesianIndex{Dimensions})
+cuCells          = similar(cuPosition, CartesianIndex{Dimensions})
+cuDiffCells      = cu(zeros(CartesianIndex{Dimensions},length(cuCells)-1))
 # ParticleRanges  = CUDA.zeros(Int,length(cuCells)+1) #+1 last cell to include as well, first cell is included in directly due to use of diff which reduces number of elements by 1!
 # CUDA.@allowscalar ParticleRanges[1]   = 1
 # CUDA.@allowscalar ParticleRanges[end] = length(cuCells) + 1 #Have to add 1 even though it is wrong due to -1 at EndIndex
@@ -202,7 +203,7 @@ Stencil         = cu(ConstructStencil(Val(Dimensions)))
 ResetArrays!(cuAcceleration, cuVelocity, cuKernel, cuKernelGradient, cuCells, SortedIndices)
 
 # Normal run and save data
-ParticleRanges, UniqueCells, DiffCells = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity)
+ParticleRanges, UniqueCells = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity, cuDiffCells)
 KernelNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient)
 SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
     SimulationName="Test", 
@@ -214,12 +215,12 @@ to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
 create_vtp_file(SimMetaData, SimConstantsWedge, to_3d(Array(cuPosition)); KERNEL, KERNEL_GRADIENT)
 #
 
-println(CUDA.@profile trace=true ParticleRanges, UniqueCells, DiffCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity))
+println(CUDA.@profile trace=true ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity,  cuDiffCells))
 println(CUDA.@profile trace=true KernelNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient))
 
 
 
-display(@benchmark CUDA.@sync ParticleRanges, UniqueCells, DiffCells  = UpdateNeighbors!($cuCells, $H, $SortedIndices, $cuPosition, $cuDensity, $cuAcceleration, $cuVelocity))
+display(@benchmark CUDA.@sync ParticleRanges, UniqueCells  = UpdateNeighbors!($cuCells, $H, $SortedIndices, $cuPosition, $cuDensity, $cuAcceleration, $cuVelocity,  $cuDiffCells))
 display(@benchmark CUDA.@sync KernelNeighborLoop!($SimConstantsWedge, $UniqueCells, $ParticleRanges, $Stencil, $cuPosition, $cuKernel, $cuKernelGradient))
 
 # Array is opionated and converts to Float32 directly, which is why it bugs out
