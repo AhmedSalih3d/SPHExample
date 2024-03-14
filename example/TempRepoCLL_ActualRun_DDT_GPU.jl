@@ -134,7 +134,7 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
         #     # @cuprint "SCellIndex: " SCellIndex[1] "," SCellIndex[2] " " @cuprintln ""
     
             Needle = isequal(SCellIndex)
-            if SCellIndex ∈ UniqueCells
+            # if SCellIndex ∈ UniqueCells
                 NeighborCellIndex = findfirst(Needle, UniqueCells)
 
                 if isnothing(NeighborCellIndex)
@@ -151,7 +151,7 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
                         SimStep(SimConstants, i, j, Position, Kernel, KernelGradient)
                     end
                 end
-            end
+            # end
         end
         # @cuprintln ""
 
