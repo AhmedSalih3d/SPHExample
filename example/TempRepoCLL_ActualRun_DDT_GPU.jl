@@ -205,8 +205,11 @@ Stencil         = cu(ConstructStencil(Val(Dimensions)))
 # Ensure zero, similar does not!
 ResetArrays!(cuAcceleration, cuVelocity, cuKernel, cuKernelGradient, cuCells, SortedIndices)
 
-ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity)
-CUDA.@profile KernelNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient)
+println(CUDA.@profile trace=true ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity))
+println(CUDA.@profile trace=true KernelNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient))
+
+display(@benchmark CUDA.@sync ParticleRanges, UniqueCells  = UpdateNeighbors!($cuCells, $H, $SortedIndices, $cuPosition, $cuDensity, $cuAcceleration, $cuVelocity))
+display(@benchmark CUDA.@sync KernelNeighborLoop!($SimConstantsWedge, $UniqueCells, $ParticleRanges, $Stencil, $cuPosition, $cuKernel, $cuKernelGradient))
 
 to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
 # Array is opionated and converts to Float32 directly, which is why it bugs out
