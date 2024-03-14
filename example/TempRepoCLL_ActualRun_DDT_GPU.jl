@@ -101,7 +101,7 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
     ParticleRanges     = [1 ; findall(.!iszero.(DiffCells)) .+ 1]
     CUDA.@allowscalar push!(ParticleRanges, length(Cells) + 1)
 
-    UniqueCells    = cuCells[ParticleRanges[1:end-1]]
+    UniqueCells        = cuCells[ParticleRanges[1:end-1]]
 
     return ParticleRanges, UniqueCells, DiffCells #Optimize out in shaa Allah!
 end
@@ -124,11 +124,11 @@ end
         EndIndex   = ParticleRanges[iter+1] - 1
 
         # @cuprint " |> StartIndex: " StartIndex " EndIndex: " EndIndex "\n"
-        for i = StartIndex:EndIndex, j = (i+1):EndIndex
+        @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
             @inline SimStep(SimConstants, i,j, Position, Kernel, KernelGradient)
         end
         
-        for S ∈ Stencil
+        @inbounds for S ∈ Stencil
             SCellIndex = CellIndex + S
     
             # @cuprint "SCellIndex: " SCellIndex[1] "," SCellIndex[2] " " @cuprintln ""
@@ -142,7 +142,7 @@ end
 
                 # @cuprintln "    StartIndex_: " StartIndex_ " EndIndex_: " EndIndex_
 
-                for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
+                @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
                     @inline SimStep(SimConstants, i, j, Position, Kernel, KernelGradient)
                 end
 
