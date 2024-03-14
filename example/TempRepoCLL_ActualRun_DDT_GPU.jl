@@ -91,11 +91,11 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
 
     sortperm!(SortedIndices,Cells)
 
-    Cells           .= @view Cells[SortedIndices]
-    Position        .= @view Position[SortedIndices]
-    Density         .= @view Density[SortedIndices]
-    Acceleration    .= @view Acceleration[SortedIndices]
-    Velocity        .= @view Velocity[SortedIndices]
+    @. Cells           =  Cells[SortedIndices]
+    @. Position        =  Position[SortedIndices]
+    @. Density         =  Density[SortedIndices]
+    @. Acceleration    =  Acceleration[SortedIndices]
+    @. Velocity        =  Velocity[SortedIndices]
 
     ParticleRanges = [1 ; findall(.!iszero.(diff(cuCells))) .+ 1]
     CUDA.@allowscalar push!(ParticleRanges, length(Cells) + 1)
@@ -103,8 +103,6 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
     UniqueCells    = cuCells[ParticleRanges[1:end-1]]
 
     return ParticleRanges, UniqueCells #Optimize out in shaa Allah!
-
-    return nothing
 end
 ###===
 
