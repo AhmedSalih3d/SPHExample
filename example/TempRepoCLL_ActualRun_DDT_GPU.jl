@@ -192,6 +192,7 @@ cuKernelGradient = similar(cuPosition)
 
 cuCells          = similar(cuPosition, CartesianIndex{Dimensions})
 cuDiffCells      = cu(zeros(CartesianIndex{Dimensions},length(cuCells)-1))
+cuParticleRanges = cu(zeros(Int, length(cuCells) + 1))
 # ParticleRanges  = CUDA.zeros(Int,length(cuCells)+1) #+1 last cell to include as well, first cell is included in directly due to use of diff which reduces number of elements by 1!
 # CUDA.@allowscalar ParticleRanges[1]   = 1
 # CUDA.@allowscalar ParticleRanges[end] = length(cuCells) + 1 #Have to add 1 even though it is wrong due to -1 at EndIndex
