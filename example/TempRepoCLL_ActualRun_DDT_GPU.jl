@@ -138,16 +138,15 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
             NeighborCellIndex = findfirst(Needle, UniqueCells)
 
             if !isnothing(NeighborCellIndex)
-            StartIndex_       = ParticleRanges[NeighborCellIndex] 
-            EndIndex_         = ParticleRanges[NeighborCellIndex+1] - 1
+                StartIndex_       = ParticleRanges[NeighborCellIndex] 
+                EndIndex_         = ParticleRanges[NeighborCellIndex+1] - 1
 
-            # @cuprintln "    StartIndex_: " StartIndex_ " EndIndex_: " EndIndex_
+                # @cuprintln "    StartIndex_: " StartIndex_ " EndIndex_: " EndIndex_
 
-                for i = StartIndex:EndIndex
-                    for j = StartIndex_:EndIndex_
-                        SimStep(SimConstants, i, j, Position, Kernel, KernelGradient)
-                    end
+                for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
+                    SimStep(SimConstants, i, j, Position, Kernel, KernelGradient)
                 end
+                
             end
         end
         # @cuprintln ""
