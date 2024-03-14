@@ -97,12 +97,13 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
     @. Acceleration    =  Acceleration[SortedIndices]
     @. Velocity        =  Velocity[SortedIndices]
 
-    ParticleRanges = [1 ; findall(.!iszero.(diff(cuCells))) .+ 1]
+    DiffCells          = diff(cuCells)
+    ParticleRanges     = [1 ; findall(.!iszero.(DiffCells)) .+ 1]
     CUDA.@allowscalar push!(ParticleRanges, length(Cells) + 1)
 
     UniqueCells    = cuCells[ParticleRanges[1:end-1]]
 
-    return ParticleRanges, UniqueCells #Optimize out in shaa Allah!
+    return ParticleRanges, UniqueCells, DiffCells #Optimize out in shaa Allah!
 end
 ###===
 
@@ -146,7 +147,7 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
                 for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
                     SimStep(SimConstants, i, j, Position, Kernel, KernelGradient)
                 end
-                
+
             end
         end
         # @cuprintln ""
@@ -203,7 +204,7 @@ Stencil         = cu(ConstructStencil(Val(Dimensions)))
 ResetArrays!(cuAcceleration, cuVelocity, cuKernel, cuKernelGradient, cuCells, SortedIndices)
 
 # Normal run and save data
-ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity)
+ParticleRanges, UniqueCells, DiffCells = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity)
 KernelNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient)
 SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
     SimulationName="Test", 
@@ -215,14 +216,33 @@ to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
 create_vtp_file(SimMetaData, SimConstantsWedge, to_3d(Array(cuPosition)); KERNEL, KERNEL_GRADIENT)
 #
 
-println(CUDA.@profile trace=true ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity))
+println(CUDA.@profile trace=true ParticleRanges, UniqueCells, DiffCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity))
 println(CUDA.@profile trace=true KernelNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient))
 
 
 
-display(@benchmark CUDA.@sync ParticleRanges, UniqueCells  = UpdateNeighbors!($cuCells, $H, $SortedIndices, $cuPosition, $cuDensity, $cuAcceleration, $cuVelocity))
+display(@benchmark CUDA.@sync ParticleRanges, UniqueCells, DiffCells  = UpdateNeighbors!($cuCells, $H, $SortedIndices, $cuPosition, $cuDensity, $cuAcceleration, $cuVelocity))
 display(@benchmark CUDA.@sync KernelNeighborLoop!($SimConstantsWedge, $UniqueCells, $ParticleRanges, $Stencil, $cuPosition, $cuKernel, $cuKernelGradient))
 
 # Array is opionated and converts to Float32 directly, which is why it bugs out
 # PolyDataTemplate("E:/GPU_SPH/TESTING/Test" * "_" * lpad(0,6,"0") * ".vtp", to_3d(Array(cuPosition)), ["Kernel", "KernelGradient"], Array(cuKernel), to_3d(Array(cuKernelGradient)))
 
+Counter      = 1
+ArrayPostion = 1
+NextIndex    = 1
+CUDA.@allowscalar while true
+    @cuprintln NextIndex
+    @cuprintln "CartesianIndex(" cuCells[NextIndex][1] "," cuCells[NextIndex][2] ")"
+
+    NextIndex = findnext(!=(CartesianIndex(0,0)),DiffCells,ArrayPostion)
+
+    if isnothing(NextIndex)
+        break
+    end
+
+    ArrayPostion = NextIndex + 1 #+1 temp to match original ParticleRanges definition
+
+    Counter += 1
+
+    @cuprintln Counter
+end
