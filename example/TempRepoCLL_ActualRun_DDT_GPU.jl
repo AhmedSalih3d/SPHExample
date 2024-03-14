@@ -131,27 +131,23 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
         for S ∈ Stencil
             SCellIndex = CellIndex + S
     
-        #     # @cuprint "SCellIndex: " SCellIndex[1] "," SCellIndex[2] " " @cuprintln ""
+            # @cuprint "SCellIndex: " SCellIndex[1] "," SCellIndex[2] " " @cuprintln ""
     
             Needle = isequal(SCellIndex)
-            # if SCellIndex ∈ UniqueCells
-                NeighborCellIndex = findfirst(Needle, UniqueCells)
+            NeighborCellIndex = findfirst(Needle, UniqueCells)
 
-                if isnothing(NeighborCellIndex)
-                    continue
-                end
+            if !isnothing(NeighborCellIndex)
+            StartIndex_       = ParticleRanges[NeighborCellIndex] 
+            EndIndex_         = ParticleRanges[NeighborCellIndex+1] - 1
 
-                StartIndex_       = ParticleRanges[NeighborCellIndex] 
-                EndIndex_         = ParticleRanges[NeighborCellIndex+1] - 1 
-
-                # @cuprintln "    StartIndex_: " StartIndex_ " EndIndex_: " EndIndex_
+            # @cuprintln "    StartIndex_: " StartIndex_ " EndIndex_: " EndIndex_
 
                 for i = StartIndex:EndIndex
                     for j = StartIndex_:EndIndex_
                         SimStep(SimConstants, i, j, Position, Kernel, KernelGradient)
                     end
                 end
-            # end
+            end
         end
         # @cuprintln ""
 
