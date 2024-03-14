@@ -145,7 +145,7 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
 
                 for i = StartIndex:EndIndex
                     for j = StartIndex_:EndIndex_
-                        #SimStep(SimConstants, i, j, Position, Kernel, KernelGradient)
+                        SimStep(SimConstants, i, j, Position, Kernel, KernelGradient)
                     end
                 end
             end
@@ -203,22 +203,27 @@ Stencil         = cu(ConstructStencil(Val(Dimensions)))
 # Ensure zero, similar does not!
 ResetArrays!(cuAcceleration, cuVelocity, cuKernel, cuKernelGradient, cuCells, SortedIndices)
 
-println(CUDA.@profile trace=true ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity))
-println(CUDA.@profile trace=true KernelNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient))
-
+# Normal run and save data
+ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity)
+KernelNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient)
 SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
     SimulationName="Test", 
     SaveLocation="E:/GPU_SPH/TESTING/",
 )
-
 KERNEL = Array(cuKernel)
 KERNEL_GRADIENT = Array(cuKernelGradient)
+to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
 create_vtp_file(SimMetaData, SimConstantsWedge, to_3d(Array(cuPosition)); KERNEL, KERNEL_GRADIENT)
+#
+
+println(CUDA.@profile trace=true ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity))
+println(CUDA.@profile trace=true KernelNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient))
+
+
 
 display(@benchmark CUDA.@sync ParticleRanges, UniqueCells  = UpdateNeighbors!($cuCells, $H, $SortedIndices, $cuPosition, $cuDensity, $cuAcceleration, $cuVelocity))
 display(@benchmark CUDA.@sync KernelNeighborLoop!($SimConstantsWedge, $UniqueCells, $ParticleRanges, $Stencil, $cuPosition, $cuKernel, $cuKernelGradient))
 
-to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
 # Array is opionated and converts to Float32 directly, which is why it bugs out
 # PolyDataTemplate("E:/GPU_SPH/TESTING/Test" * "_" * lpad(0,6,"0") * ".vtp", to_3d(Array(cuPosition)), ["Kernel", "KernelGradient"], Array(cuKernel), to_3d(Array(cuKernelGradient)))
 
