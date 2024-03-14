@@ -97,9 +97,9 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
     @. Acceleration    =  Acceleration[SortedIndices]
     @. Velocity        =  Velocity[SortedIndices]
 
-    DiffCells         .= diff(cuCells)
-    ParticleRanges     = [1 ; findall(.!iszero.(DiffCells)) .+ 1]
-    CUDA.@allowscalar push!(ParticleRanges, length(Cells) + 1)
+    DiffCells              .= diff(cuCells)
+    ParticleRanges          = [1 ; findall(.!iszero.(DiffCells)) .+ 1]
+    ParticleRanges[end:end] = length(Cells) + 1
 
     UniqueCells        = cuCells[ParticleRanges[1:end-1]]
 
