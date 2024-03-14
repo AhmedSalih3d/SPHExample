@@ -111,7 +111,7 @@ end
 #https://cuda.juliagpu.org/stable/tutorials/performance/
 # 192 bytes and 4 allocs from launch config
 # INLINE IS SO IMPORTANT 10X SPEED
-function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient)
+@inline function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient)
     index  = (blockIdx().x - Int32(1)) * blockDim().x + threadIdx().x
     stride = gridDim().x * blockDim().x
 
@@ -124,10 +124,8 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
         EndIndex   = ParticleRanges[iter+1] - 1
 
         # @cuprint " |> StartIndex: " StartIndex " EndIndex: " EndIndex "\n"
-        for i = StartIndex:EndIndex
-            for j = (i+1):EndIndex
-                @inline SimStep(SimConstants, i,j, Position, Kernel, KernelGradient)
-            end
+        for i = StartIndex:EndIndex, j = (i+1):EndIndex
+            @inline SimStep(SimConstants, i,j, Position, Kernel, KernelGradient)
         end
         
         for S ∈ Stencil
