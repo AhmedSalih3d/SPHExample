@@ -52,7 +52,7 @@ function KernelExtractCells!(Cells, Points, CutOff, Nmax=length(Cells))
     kernel  = @cuda launch=false ExtractCells!(Cells, Points, CutOff, Nmax)
     config  = launch_configuration(kernel.fun)
     threads = min(Nmax, config.threads)
-    blocks  = 1 #cld(Nmax, threads)
+    blocks  = cld(Nmax, threads)
 
     CUDA.@sync kernel(Cells, Points, CutOff, Nmax; threads, blocks)
 end
@@ -160,7 +160,7 @@ function KernelNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil,
     kernel  = @cuda launch=false NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient)
     config  = launch_configuration(kernel.fun)
     threads = min(length(UniqueCells), config.threads)
-    blocks  = 1 #cld(length(UniqueCells), threads)
+    blocks  = cld(length(UniqueCells), threads)
 
     CUDA.@sync kernel(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient; threads, blocks)
 end
