@@ -103,6 +103,10 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
 
     UniqueCells        = Cells[ParticleRanges[1:end-1]]
 
+    # After Cells has been sorted max element is found there
+    # UniqueCells does not guarantee sort for some reason?
+    CUDA.@allowscalar zeros(Bool,Tuple(Cells[end]))
+
     return ParticleRanges, UniqueCells #Optimize out in shaa Allah!
 end
 ###===
