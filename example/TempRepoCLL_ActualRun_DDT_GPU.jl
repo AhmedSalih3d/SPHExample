@@ -143,8 +143,7 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
     @. Velocity        =  Velocity[SortedIndices]
 
     DiffCells         .= diff(cuCells)
-    ParticleRanges     = [1 ; findall(.!iszero.(DiffCells)) .+ 1]
-    CUDA.@allowscalar push!(ParticleRanges, length(Cells) + 1)
+    ParticleRanges     = [cu([1]) ; findall(.!iszero.(DiffCells)) .+ 1; cu([length(Cells) + 1])]
 
     # Passing the view is fine, since it is not needed to actualize the vector
     @views UniqueCells        = cuCells[ParticleRanges[1:end-1]]
@@ -190,6 +189,8 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
                     NeighborCellIndex = c
                 end
             end
+
+            # NeighborCellIndex = argmax(UniqueCells .== SCellIndex)
 
             # if !isnothing(NeighborCellIndex)
             if !iszero(NeighborCellIndex)
