@@ -140,7 +140,7 @@ end
             NeighborCellIndex = 0
             @inbounds for i ∈ eachindex(UniqueCells)
                 c += 1
-                @inline if LinearIndices(Tuple(UniqueCells[end]))[SCellIndex] == LinearIndices(Tuple(UniqueCells[end]))[UniqueCells[i]]
+                if LinearIndices(Tuple(UniqueCells[end]))[SCellIndex] == LinearIndices(Tuple(UniqueCells[end]))[UniqueCells[i]]
                     NeighborCellIndex = c
                 end
             end
