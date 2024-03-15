@@ -22,7 +22,7 @@ CUDA.allowscalar(false)
 import Base.Threads: nthreads, @threads
 include("../src/ProduceVTP.jl")
 
-const MaxThreads = attribute(device(),CUDA.DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK)
+const MaxThreads = attribute(device(), CUDA.DEVICE_ATTRIBUTE_MAX_THREADS_PER_BLOCK)
 
 
 function ConstructGravitySVector(_::SVector{N, T}, value) where {N, T}
@@ -118,11 +118,11 @@ function SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, V
         dvdt⁺ = - m₀ * (Pfac) *  ∇ᵢWᵢⱼ + Πᵢ
         dvdt⁻ = - dvdt⁺ + Πⱼ
 
-        dvdtI[i] += dvdt⁺
-        dvdtI[j] += dvdt⁻
+        # dvdtI[i] += dvdt⁺
+        # dvdtI[j] += dvdt⁻
 
-        dρdtI[i] += dρdt⁺
-        dρdtI[j] += dρdt⁻
+        # dρdtI[i] += dρdt⁺
+        # dρdtI[j] += dρdt⁻
     end
 
     return nothing
@@ -156,7 +156,7 @@ end
 #https://cuda.juliagpu.org/stable/tutorials/performance/
 # 192 bytes and 4 allocs from launch config
 # INLINE IS SO IMPORTANT 10X SPEED
-@inline function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI)
+function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI)
     index  = (blockIdx().x - Int32(1)) * blockDim().x + threadIdx().x
     stride = gridDim().x * blockDim().x
 
@@ -170,7 +170,7 @@ end
 
         # @cuprint " |> StartIndex: " StartIndex " EndIndex: " EndIndex "\n"
         @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-            @inline SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI)
+            SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI)
         end
         
         @inbounds for S ∈ Stencil
@@ -198,7 +198,7 @@ end
                 # @cuprintln "    StartIndex_: " StartIndex_ " EndIndex_: " EndIndex_
 
                 @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                    @inline SimStep(SimConstants, i, j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI)
+                    SimStep(SimConstants, i, j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI)
                 end
 
             end
@@ -207,15 +207,19 @@ end
 
         iter += stride
     end
+
+    return nothing
 end
 
-function KernelNeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, cudρdtI, cudvdtI)
+function ThreadsAndBlocksNeighborLoop(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, cudρdtI, cudvdtI)
     kernel  = @cuda launch=false NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, cudρdtI, cudvdtI)
     config  = launch_configuration(kernel.fun)
     threads = min(length(UniqueCells), config.threads)
     blocks  = cld(length(UniqueCells), threads)
 
-    CUDA.@sync kernel(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, cudρdtI, cudvdtI; threads, blocks)
+    #CUDA.@sync kernel(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, cudρdtI, cudvdtI; threads, blocks)
+
+    return threads, blocks
 end
 ###===
 
@@ -262,9 +266,11 @@ Stencil         = cu(ConstructStencil(Val(Dimensions)))
 # Ensure zero, similar does not!
 ResetArrays!(cuAcceleration, cuVelocity, cuKernel, cuKernelGradient, cuCells, SortedIndices, cudρdtI, cudvdtI)
 
+
 # Normal run and save data
 ParticleRanges, UniqueCells = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity, cuDiffCells)
-KernelNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient, cuDensity, cuVelocity, cudρdtI, cudvdtI)
+threads1,blocks1 = ThreadsAndBlocksNeighborLoop(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient, cuDensity, cuVelocity, cudρdtI, cudvdtI)
+@cuda always_inline=true fastmath=true threads=threads1 blocks=blocks1 NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient, cuDensity, cuVelocity, cudρdtI, cudvdtI)
 SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
     SimulationName="Test", 
     SaveLocation="E:/GPU_SPH/TESTING/",
@@ -276,32 +282,7 @@ create_vtp_file(SimMetaData, SimConstantsWedge, to_3d(Array(cuPosition)); KERNEL
 #
 
 println(CUDA.@profile trace=true ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity,  cuDiffCells))
-println(CUDA.@profile trace=true KernelNeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient, cuDensity, cuVelocity, cudρdtI, cudvdtI))
-
-
+println(CUDA.@profile trace=true @cuda always_inline=true fastmath=true threads=threads1 blocks=blocks1 NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient, cuDensity, cuVelocity, cudρdtI, cudvdtI))
 
 display(@benchmark CUDA.@sync ParticleRanges, UniqueCells  = UpdateNeighbors!($cuCells, $H, $SortedIndices, $cuPosition, $cuDensity, $cuAcceleration, $cuVelocity,  $cuDiffCells))
-display(@benchmark CUDA.@sync KernelNeighborLoop!($SimConstantsWedge, $UniqueCells, $ParticleRanges, $Stencil, $cuPosition, $cuKernel, $cuKernelGradient, $cuDensity, $cuVelocity, $cudρdtI, $cudvdtI))
-
-# Array is opionated and converts to Float32 directly, which is why it bugs out
-# PolyDataTemplate("E:/GPU_SPH/TESTING/Test" * "_" * lpad(0,6,"0") * ".vtp", to_3d(Array(cuPosition)), ["Kernel", "KernelGradient"], Array(cuKernel), to_3d(Array(cuKernelGradient)))
-
-# Counter      = 1
-# ArrayPostion = 1
-# NextIndex    = 1
-# CUDA.@allowscalar while true
-#     @cuprintln NextIndex
-#     @cuprintln "CartesianIndex(" cuCells[NextIndex][1] "," cuCells[NextIndex][2] ")"
-
-#     NextIndex = findnext(!=(CartesianIndex(0,0)),DiffCells,ArrayPostion)
-
-#     if isnothing(NextIndex)
-#         break
-#     end
-
-#     ArrayPostion = NextIndex + 1 #+1 temp to match original ParticleRanges definition
-
-#     Counter += 1
-
-#     @cuprintln Counter
-# end
+display(@benchmark CUDA.@sync @cuda always_inline=true fastmath=true threads=500 blocks=2 NeighborLoop!($SimConstantsWedge, $UniqueCells, $ParticleRanges, $Stencil, $cuPosition, $cuKernel, $cuKernelGradient, $cuDensity, $cuVelocity, $cudρdtI, $cudvdtI))
