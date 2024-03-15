@@ -74,7 +74,7 @@ end
 end
 
 
-function SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI)
+function SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, SharedMemory)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H² = SimConstants
 
     xᵢⱼ  = Position[i] - Position[j]
@@ -159,8 +159,8 @@ end
 function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI)
     index  = (blockIdx().x - Int32(1)) * blockDim().x + threadIdx().x
     stride = gridDim().x * blockDim().x
-
     iter = index
+
     @inbounds while iter <= length(UniqueCells)
         CellIndex = UniqueCells[iter]
         # @cuprint "CellIndex: " CellIndex[1] "," CellIndex[2]
@@ -168,9 +168,14 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
         StartIndex = ParticleRanges[iter] 
         EndIndex   = ParticleRanges[iter+1] - 1
 
+
+        n = EndIndex - StartIndex + 1
+
+        SharedMemory = CuDynamicSharedArray(Float64, Int(ceil((n * (n - 1)) / 2)))
+
         # @cuprint " |> StartIndex: " StartIndex " EndIndex: " EndIndex "\n"
         @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-            SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI)
+            SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, SharedMemory)
         end
         
         @inbounds for S ∈ Stencil
@@ -200,7 +205,7 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
                 # @cuprintln "    StartIndex_: " StartIndex_ " EndIndex_: " EndIndex_
 
                 @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                    SimStep(SimConstants, i, j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI)
+                    SimStep(SimConstants, i, j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, SharedMemory)
                 end
 
             end
