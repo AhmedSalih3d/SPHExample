@@ -217,8 +217,6 @@ function ThreadsAndBlocksNeighborLoop(SimConstants, UniqueCells, ParticleRanges,
     threads = min(length(UniqueCells), config.threads)
     blocks  = cld(length(UniqueCells), threads)
 
-    #CUDA.@sync kernel(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, cudρdtI, cudvdtI; threads, blocks)
-
     return threads, blocks
 end
 ###===
