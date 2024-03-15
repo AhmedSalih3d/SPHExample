@@ -81,6 +81,7 @@ function SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, V
     xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)
 
     if  xᵢⱼ² <= H²
+        SharedMemory[1]
         dᵢⱼ  = sqrt(xᵢⱼ²) #Using sqrt is what takes a lot of time?
         q    = clamp(dᵢⱼ * h⁻¹,0.0,2.0)
         Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
@@ -170,8 +171,9 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
 
 
         n = EndIndex - StartIndex + 1
+        to_alloc = Int(ceil((n * (n - 1)) / 2))
 
-        SharedMemory = CuDynamicSharedArray(Float64, Int(ceil((n * (n - 1)) / 2)))
+        SharedMemory = CuDynamicSharedArray(Float64, to_alloc)
 
         # @cuprint " |> StartIndex: " StartIndex " EndIndex: " EndIndex "\n"
         @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
@@ -204,8 +206,14 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
 
                 # @cuprintln "    StartIndex_: " StartIndex_ " EndIndex_: " EndIndex_
 
+                n_        = EndIndex_ - StartIndex_ + 1
+                to_alloc_ = Int(ceil((n_ * (n_ - 1)) / 2))
+        
+                # As explained by ChatGPT this should be intra particle interactions and then outside * inside to account for it all
+                SharedMemory_ = CuDynamicSharedArray(Float64, n * n_ + to_alloc_)
+
                 @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                    SimStep(SimConstants, i, j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, SharedMemory)
+                    SimStep(SimConstants, i, j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, SharedMemory_)
                 end
 
             end
