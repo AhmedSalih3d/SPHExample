@@ -97,15 +97,11 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
     @. Acceleration    =  Acceleration[SortedIndices]
     @. Velocity        =  Velocity[SortedIndices]
 
-    DiffCells              .= diff(Cells)
-    ParticleRanges          = [1 ; findall(.!iszero.(DiffCells)) .+ 1]
-    ParticleRanges[end:end] = length(Cells) + 1
+    DiffCells         .= diff(cuCells)
+    ParticleRanges     = [1 ; findall(.!iszero.(DiffCells)) .+ 1]
+    CUDA.@allowscalar push!(ParticleRanges, length(Cells) + 1)
 
-    UniqueCells        = Cells[ParticleRanges[1:end-1]]
-
-    # After Cells has been sorted max element is found there
-    # UniqueCells does not guarantee sort for some reason?
-    CUDA.@allowscalar zeros(Bool,Tuple(Cells[end]))
+    UniqueCells        = cuCells[ParticleRanges[1:end-1]]
 
     return ParticleRanges, UniqueCells #Optimize out in shaa Allah!
 end
