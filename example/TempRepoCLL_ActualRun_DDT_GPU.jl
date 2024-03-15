@@ -146,7 +146,8 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
     ParticleRanges     = [1 ; findall(.!iszero.(DiffCells)) .+ 1]
     CUDA.@allowscalar push!(ParticleRanges, length(Cells) + 1)
 
-    UniqueCells        = cuCells[ParticleRanges[1:end-1]]
+    # Passing the view is fine, since it is not needed to actualize the vector
+    @views UniqueCells        = cuCells[ParticleRanges[1:end-1]]
 
     return ParticleRanges, UniqueCells #Optimize out in shaa Allah!
 end
@@ -283,7 +284,7 @@ println(CUDA.@profile trace=true ParticleRanges, UniqueCells  = UpdateNeighbors!
 println(CUDA.@profile trace=true @cuda always_inline=true fastmath=true threads=threads1 blocks=blocks1 NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient, cuDensity, cuVelocity, cudρdtI, cudvdtI))
 
 display(@benchmark CUDA.@sync ParticleRanges, UniqueCells  = UpdateNeighbors!($cuCells, $H, $SortedIndices, $cuPosition, $cuDensity, $cuAcceleration, $cuVelocity,  $cuDiffCells))
-println("CUDA allocations: ", CUDA.@allocated ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity,  cuDiffCells))
 display(@benchmark CUDA.@sync @cuda always_inline=true fastmath=true threads=$threads1 blocks=$blocks1 NeighborLoop!($SimConstantsWedge, $UniqueCells, $ParticleRanges, $Stencil, $cuPosition, $cuKernel, $cuKernelGradient, $cuDensity, $cuVelocity, $cudρdtI, $cudvdtI))
+println("CUDA allocations: ", CUDA.@allocated ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity,  cuDiffCells))
 println("CUDA allocations: ", CUDA.@allocated @cuda always_inline=true fastmath=true threads=threads1 blocks=blocks1 NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient, cuDensity, cuVelocity, cudρdtI, cudvdtI))
 
