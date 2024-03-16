@@ -45,12 +45,12 @@ function dot(a,b,c, N, threadsPerBlock)
     return nothing
 end
 
-function main()
 
+let
     # Initialise variables
-    N::Int64 = 33 * 1024
-    threadsPerBlock::Int64 = 256
-    blocksPerGrid::Int64 = min(32, (N + threadsPerBlock - 1) / threadsPerBlock)
+    N                    = 33 * 1024
+    threadsPerBlock      = 256
+    blocksPerGrid::Int   = min(32, (N + threadsPerBlock - 1) / threadsPerBlock)
 
     # Create a,b and c
     a = CuArray(fill(0, N))
@@ -63,10 +63,11 @@ function main()
         b[i] = 2*i
     end
 
+    
     # Execute the kernel. Note the shmem argument - this is necessary to allocate
     # space for the cache we allocate on the gpu with @cuDynamicSharedMem
     @cuda blocks = blocksPerGrid threads = threadsPerBlock shmem =
-    (threadsPerBlock * sizeof(Int64)) dot(a,b,c, N, threadsPerBlock)
+    (threadsPerBlock * sizeof(eltype(a))) dot(a,b,c, N, threadsPerBlock)
 
     # Copy c back from the gpu (device) to the host
     c = Array(c)
@@ -84,7 +85,4 @@ function main()
     cpu_sum = sum(Array(a) .* Array(b))
     println("Does GPU value ", result, " = ", cpu_sum)
     @test result == cpu_sum
-
 end
-
-main()
