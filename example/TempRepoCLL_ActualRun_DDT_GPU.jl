@@ -143,11 +143,11 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
     @. Acceleration    =  Acceleration[SortedIndices]
     @. Velocity        =  Velocity[SortedIndices]
 
-    DiffCells         .= diff(cuCells)
+    DiffCells         .= diff(Cells)
     ParticleRanges     = [cu([1]) ; findall(.!iszero.(DiffCells)) .+ 1; cu([length(Cells) + 1])]
 
     # Passing the view is fine, since it is not needed to actualize the vector
-    @views UniqueCells        = cuCells[ParticleRanges[1:end-1]]
+    @views UniqueCells        = Cells[ParticleRanges[1:end-1]]
 
     return ParticleRanges, UniqueCells #Optimize out in shaa Allah!
 end
