@@ -69,13 +69,13 @@ let
     @cuda blocks = blocksPerGrid threads = threadsPerBlock shmem = (threadsPerBlock * sizeof(eltype(a))) dot(a,b,c, N, threadsPerBlock)
 
     # Copy c back from the gpu (device) to the host
-    c = Array(c)
+    c_cpu = Array(c)
 
     local result = 0
 
     # Sum the values in c
     for i in 1:blocksPerGrid
-        result += c[i]
+        result += c_cpu[i]
     end
 
     # Check whether output is correct
@@ -83,31 +83,12 @@ let
     # so compare with cpu directly
     cpu_sum = sum(Array(a) .* Array(b))
     println("Does GPU value ", result, " = ", cpu_sum)
-    @test result == cpu_sum
-end
+    println(@test result == cpu_sum)
 
-# For benchmark
-let 
-    # Initialise variables
-    N                    = 33 * 1024
-    threadsPerBlock      = 256
-    blocksPerGrid::Int   = min(32, (N + threadsPerBlock - 1) / threadsPerBlock)
-
-    # Create a,b and c
-    a = CuArray(fill(0, N))
-    b = CuArray(fill(0, N))
-    c = CuArray(fill(0, blocksPerGrid))
-
-    # Fill a and b
-    CUDA.@allowscalar for i in 1:N
-        a[i] = i
-        b[i] = 2*i
-    end
-
-    # Execute the kernel. Note the shmem argument - this is necessary to allocate
-    # space for the cache we allocate on the gpu with @cuDynamicSharedMem
-    println(CUDA.@allocated @cuda blocks = blocksPerGrid threads = threadsPerBlock shmem = (threadsPerBlock * sizeof(eltype(a))) dot(a,b,c, N, threadsPerBlock))
+    # Benchmark
+    println("Allocated CUDA memory: ", CUDA.@allocated @cuda blocks = blocksPerGrid threads = threadsPerBlock shmem = (threadsPerBlock * sizeof(eltype(a))) dot(a,b,c, N, threadsPerBlock))
     println(CUDA.@profile trace=true @cuda blocks = blocksPerGrid threads = threadsPerBlock shmem = (threadsPerBlock * sizeof(eltype(a))) dot(a,b,c, N, threadsPerBlock))
     bench = @benchmark CUDA.@sync @cuda  blocks = $blocksPerGrid threads = $threadsPerBlock shmem = ($threadsPerBlock * sizeof(eltype($a))) dot($a,$b,$c, $N, $threadsPerBlock)
     display(bench)
 end
+
