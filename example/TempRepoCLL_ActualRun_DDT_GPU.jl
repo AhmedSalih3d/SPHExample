@@ -96,28 +96,28 @@ function SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, V
         KernelGradient[i] +=  ∇ᵢWᵢⱼ
         KernelGradient[j] += -∇ᵢWᵢⱼ
 
-        ρᵢ        = Density[i]
-        ρⱼ        = Density[j]
+        # ρᵢ        = Density[i]
+        # ρⱼ        = Density[j]
       
-        vᵢ        = Velocity[i]
-        vⱼ        = Velocity[j]
-        vᵢⱼ       = vᵢ - vⱼ
+        # vᵢ        = Velocity[i]
+        # vⱼ        = Velocity[j]
+        # vᵢⱼ       = vᵢ - vⱼ
 
-        dρdt⁺, dρdt⁻ = dρᵢdt_dρⱼdt_(ρᵢ,ρⱼ,m₀,vᵢⱼ,∇ᵢWᵢⱼ)
+        # dρdt⁺, dρdt⁻ = dρᵢdt_dρⱼdt_(ρᵢ,ρⱼ,m₀,vᵢⱼ,∇ᵢWᵢⱼ)
 
-        Pᵢ        =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
-        Pⱼ        =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
-        Pfac      = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
+        # Pᵢ        =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
+        # Pⱼ        =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
+        # Pfac      = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
 
-        ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
-        cond      = dot(vᵢⱼ, xᵢⱼ)
-        cond_bool = cond < 0.0
-        μᵢⱼ       = h*cond * invd²η²
-        Πᵢ        = - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
-        Πⱼ        = - Πᵢ
+        # ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
+        # cond      = dot(vᵢⱼ, xᵢⱼ)
+        # cond_bool = cond < 0.0
+        # μᵢⱼ       = h*cond * invd²η²
+        # Πᵢ        = - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
+        # Πⱼ        = - Πᵢ
 
-        dvdt⁺ = - m₀ * (Pfac) *  ∇ᵢWᵢⱼ + Πᵢ
-        dvdt⁻ = - dvdt⁺ + Πⱼ
+        # dvdt⁺ = - m₀ * (Pfac) *  ∇ᵢWᵢⱼ + Πᵢ
+        # dvdt⁻ = - dvdt⁺ + Πⱼ
 
         # dvdtI[i] += dvdt⁺
         # dvdtI[j] += dvdt⁻
