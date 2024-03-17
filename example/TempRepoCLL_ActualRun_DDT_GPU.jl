@@ -161,7 +161,7 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
     stride = gridDim().x * blockDim().x
     iter = index
 
-    @inbounds while iter <= 1 #length(UniqueCells)
+    @inbounds while iter <= length(UniqueCells)
         CellIndex = UniqueCells[iter]
         # @cuprint "CellIndex: " CellIndex[1] "," CellIndex[2]
 
@@ -175,61 +175,49 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
         # SharedMemory = CuDynamicSharedArray(Float64, to_alloc)
         SharedMemory   = @cuDynamicSharedMem(eltype(eltype(Position)), 1) #to_alloc)
 
-        tid = threadIdx().x
-
-        @cuprintln size(SharedMemory)
-        @cuprintln Position[1][1]
-        @cuprintln tid
-
-        SharedIndex = tid
-
-        SharedMemory[1:1] = 1.0
-
-        sync_threads()
-
         # @cuprint " |> StartIndex: " StartIndex " EndIndex: " EndIndex "\n"
         @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-            SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, SharedMemory, SharedIndex)
+            SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, SharedMemory, 0)
         end
         
-        # @inbounds for S ∈ Stencil
-            # SCellIndex = CellIndex + S
+        @inbounds for S ∈ Stencil
+            SCellIndex = CellIndex + S
     
-            # # @cuprint "SCellIndex: " SCellIndex[1] "," SCellIndex[2] " " @cuprintln ""
+            # @cuprint "SCellIndex: " SCellIndex[1] "," SCellIndex[2] " " @cuprintln ""
     
-            # # This is weirdly enough 5-10% faster than isequal approach bu still allocates?
-            # # Needle = isequal(SCellIndex) #This allocates 8 bytes :(
-            # # NeighborCellIndex = findfirst(Needle, UniqueCells)
-            # c = 0
-            # NeighborCellIndex = 0
-            # @inbounds for i ∈ eachindex(UniqueCells)
-            #     c += 1
-            #     if LinearIndices(Tuple(UniqueCells[end]))[SCellIndex] == LinearIndices(Tuple(UniqueCells[end]))[UniqueCells[i]]
-            #         NeighborCellIndex = c
-            #     end
-            # end
+            # This is weirdly enough 5-10% faster than isequal approach bu still allocates?
+            # Needle = isequal(SCellIndex) #This allocates 8 bytes :(
+            # NeighborCellIndex = findfirst(Needle, UniqueCells)
+            c = 0
+            NeighborCellIndex = 0
+            @inbounds for i ∈ eachindex(UniqueCells)
+                c += 1
+                if LinearIndices(Tuple(UniqueCells[end]))[SCellIndex] == LinearIndices(Tuple(UniqueCells[end]))[UniqueCells[i]]
+                    NeighborCellIndex = c
+                end
+            end
 
-            # # NeighborCellIndex = argmax(UniqueCells .== SCellIndex)
+            # NeighborCellIndex = argmax(UniqueCells .== SCellIndex)
 
-            # # if !isnothing(NeighborCellIndex)
-            # if !iszero(NeighborCellIndex)
-            #     StartIndex_       = ParticleRanges[NeighborCellIndex] 
-            #     EndIndex_         = ParticleRanges[NeighborCellIndex+1] - 1
+            # if !isnothing(NeighborCellIndex)
+            if !iszero(NeighborCellIndex)
+                StartIndex_       = ParticleRanges[NeighborCellIndex] 
+                EndIndex_         = ParticleRanges[NeighborCellIndex+1] - 1
 
-            #     # @cuprintln "    StartIndex_: " StartIndex_ " EndIndex_: " EndIndex_
+                # @cuprintln "    StartIndex_: " StartIndex_ " EndIndex_: " EndIndex_
 
-            #     n_        = EndIndex_ - StartIndex_ + 1
-            #     to_alloc_ = Int(ceil((n_ * (n_ - 1)) / 2))
+                n_        = EndIndex_ - StartIndex_ + 1
+                to_alloc_ = Int(ceil((n_ * (n_ - 1)) / 2))
         
-            #     # As explained by ChatGPT this should be intra particle interactions and then outside * inside to account for it all
-            #     SharedMemory_ = CuDynamicSharedArray(Float64, n * n_ + to_alloc_)
+                # As explained by ChatGPT this should be intra particle interactions and then outside * inside to account for it all
+                SharedMemory_ = CuDynamicSharedArray(Float64, n * n_ + to_alloc_)
 
-            #     @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-            #         SimStep(SimConstants, i, j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, SharedMemory_)
-            #     end
+                @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
+                    SimStep(SimConstants, i, j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, SharedMemory_, 0)
+                end
 
-            # end
-        # end
+            end
+        end
         # @cuprintln ""
 
         iter += stride
@@ -306,11 +294,11 @@ to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
 create_vtp_file(SimMetaData, SimConstantsWedge, to_3d(Array(cuPosition)); KERNEL, KERNEL_GRADIENT)
 #
 
-# println(CUDA.@profile trace=true ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity,  cuDiffCells))
-# println(CUDA.@profile trace=true @cuda always_inline=true fastmath=true threads=threads1 blocks=blocks1 NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient, cuDensity, cuVelocity, cudρdtI, cudvdtI))
+println(CUDA.@profile trace=true ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity,  cuDiffCells))
+println(CUDA.@profile trace=true @cuda always_inline=true fastmath=true threads=threads1 blocks=blocks1 NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient, cuDensity, cuVelocity, cudρdtI, cudvdtI))
 
-# display(@benchmark CUDA.@sync ParticleRanges, UniqueCells  = UpdateNeighbors!($cuCells, $H, $SortedIndices, $cuPosition, $cuDensity, $cuAcceleration, $cuVelocity,  $cuDiffCells))
-# display(@benchmark CUDA.@sync @cuda always_inline=true fastmath=true threads=$threads1 blocks=$blocks1 NeighborLoop!($SimConstantsWedge, $UniqueCells, $ParticleRanges, $Stencil, $cuPosition, $cuKernel, $cuKernelGradient, $cuDensity, $cuVelocity, $cudρdtI, $cudvdtI))
-# println("CUDA allocations: ", CUDA.@allocated ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity,  cuDiffCells))
-# println("CUDA allocations: ", CUDA.@allocated @cuda always_inline=true fastmath=true threads=threads1 blocks=blocks1 NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient, cuDensity, cuVelocity, cudρdtI, cudvdtI))
+display(@benchmark CUDA.@sync ParticleRanges, UniqueCells  = UpdateNeighbors!($cuCells, $H, $SortedIndices, $cuPosition, $cuDensity, $cuAcceleration, $cuVelocity,  $cuDiffCells))
+display(@benchmark CUDA.@sync @cuda always_inline=true fastmath=true threads=$threads1 blocks=$blocks1 NeighborLoop!($SimConstantsWedge, $UniqueCells, $ParticleRanges, $Stencil, $cuPosition, $cuKernel, $cuKernelGradient, $cuDensity, $cuVelocity, $cudρdtI, $cudvdtI))
+println("CUDA allocations: ", CUDA.@allocated ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity,  cuDiffCells))
+println("CUDA allocations: ", CUDA.@allocated @cuda always_inline=true fastmath=true threads=threads1 blocks=blocks1 NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient, cuDensity, cuVelocity, cudρdtI, cudvdtI))
 

@@ -7,18 +7,18 @@ using BenchmarkTools
 function dot(a,b,c, N, threadsPerBlock)
 
     # Set up shared memory cache for this current block.
-    cache = @cuDynamicSharedMem(eltype(a), threadsPerBlock)
+    cache        = CuDynamicSharedArray(eltype(a), threadsPerBlock)
 
     # Initialise some variables.
-    tid = (threadIdx().x - 1) + (blockIdx().x - 1) * blockDim().x
+    tid          = (threadIdx().x - 1) + (blockIdx().x - 1) * blockDim().x
     totalThreads = blockDim().x * gridDim().x
-    cacheIndex = threadIdx().x - 1
-    temp = 0
+    cacheIndex   = threadIdx().x - 1
+    temp         = 0
 
     # Iterate over vector to do dot product in parallel way
     while tid < N
         temp += a[tid + 1] * b[tid + 1]
-        tid += totalThreads
+        tid  += totalThreads
     end
 
     # set cache values
@@ -29,6 +29,7 @@ function dot(a,b,c, N, threadsPerBlock)
 
     # In the step below, we add up all of the values stored in the cache
     i = blockDim().x ÷ 2
+    # @cuprintln cacheIndex
     while i!=0
         if cacheIndex < i
             cache[cacheIndex + 1] += cache[cacheIndex + i + 1]
@@ -85,10 +86,11 @@ let
     println("Does GPU value ", result, " = ", cpu_sum)
     println(@test result == cpu_sum)
 
+    shmem_size = threadsPerBlock * sizeof(eltype(a))
     # Benchmark
-    println("Allocated CUDA memory: ", CUDA.@allocated @cuda blocks = blocksPerGrid threads = threadsPerBlock shmem = (threadsPerBlock * sizeof(eltype(a))) dot(a,b,c, N, threadsPerBlock))
-    println(CUDA.@profile trace=true @cuda blocks = blocksPerGrid threads = threadsPerBlock shmem = (threadsPerBlock * sizeof(eltype(a))) dot(a,b,c, N, threadsPerBlock))
-    bench = @benchmark CUDA.@sync @cuda  blocks = $blocksPerGrid threads = $threadsPerBlock shmem = ($threadsPerBlock * sizeof(eltype($a))) dot($a,$b,$c, $N, $threadsPerBlock)
+    println("Allocated CUDA memory: ", CUDA.@allocated @cuda blocks = blocksPerGrid threads = threadsPerBlock shmem = shmem_size dot(a,b,c, N, threadsPerBlock))
+    println(CUDA.@profile trace=true @cuda blocks = blocksPerGrid threads = threadsPerBlock shmem = shmem_size  dot(a,b,c, N, threadsPerBlock))
+    bench = @benchmark CUDA.@sync @cuda maxregs=8 blocks = $blocksPerGrid threads = $threadsPerBlock shmem = $shmem_size dot($a,$b,$c, $N, $threadsPerBlock)
     display(bench)
 end
 
