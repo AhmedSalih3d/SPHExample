@@ -192,12 +192,18 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
             NeighborCellIndex = 0
             @inbounds for i ∈ eachindex(UniqueCells)
                 c += 1
-                if LinearIndices(Tuple(UniqueCells[end]))[SCellIndex] == LinearIndices(Tuple(UniqueCells[end]))[UniqueCells[i]]
-                # if SCellIndex == UniqueCells[i]
-                    NeighborCellIndex = c
-                    # break - in reality I should break, but letting it run fully is faster, incredible
-                end
+                # if LinearIndices(Tuple(UniqueCells[end]))[SCellIndex] == LinearIndices(Tuple(UniqueCells[end]))[UniqueCells[i]]
+                # # if SCellIndex == UniqueCells[i]
+                #     NeighborCellIndex = c
+                #     # break - in reality I should break, but letting it run fully is faster, incredible
+                # end
+                cond = LinearIndices(Tuple(UniqueCells[end]))[SCellIndex] == LinearIndices(Tuple(UniqueCells[end]))[UniqueCells[i]]
+
+                val = ifelse(cond, c, 0)
+
+                NeighborCellIndex += val
             end
+            # @cuprintln c
 
             # NeighborCellIndex = argmax(UniqueCells .== SCellIndex)
 
