@@ -193,6 +193,7 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
             @inbounds for i ∈ eachindex(UniqueCells)
                 c += 1
                 if LinearIndices(Tuple(UniqueCells[end]))[SCellIndex] == LinearIndices(Tuple(UniqueCells[end]))[UniqueCells[i]]
+                # if SCellIndex == UniqueCells[i]
                     NeighborCellIndex = c
                 end
             end
