@@ -77,18 +77,6 @@ end
 function SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, SharedMemory)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H² = SimConstants
 
-    # Initialise some variables.
-    tid          = (threadIdx().x - 1) + (blockIdx().x - 1) * blockDim().x
-    totalThreads = blockDim().x * gridDim().x
-    cacheIndex   = threadIdx().x - 1
-    temp         = 0
- 
-
-    # @cuprintln threadIdx().x - 1
-    SharedMemory[threadIdx().x] += 1
-
-    # sync_threads()
-
     xᵢⱼ  = Position[i] - Position[j]
     xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)
 
@@ -96,6 +84,8 @@ function SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, V
         dᵢⱼ  = sqrt(xᵢⱼ²) #Using sqrt is what takes a lot of time?
         q    = clamp(dᵢⱼ * h⁻¹,0.0,2.0)
         Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
+
+        SharedMemory[threadIdx().x] = Wᵢⱼ
 
         invd²η² = inv(dᵢⱼ*dᵢⱼ+η²)
 
@@ -175,7 +165,7 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
 
     SharedMemory = CuDynamicSharedArray(eltype(Kernel), threadsPerBlock)
 
-    @inbounds while iter <= length(UniqueCells)
+    @inbounds while iter <= 1#length(UniqueCells)
         CellIndex = UniqueCells[iter]
         # @cuprint "CellIndex: " CellIndex[1] "," CellIndex[2]
 
@@ -186,6 +176,7 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
 
         @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
             SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, SharedMemory)
+            @cuprintln "i: " i " j: " j " W_ij: " SharedMemory[threadIdx().x]
         end
         sync_threads() #just keep it for now
         
@@ -219,8 +210,6 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
 
         iter += stride
     end
-
-    @cuprintln sum(SharedMemory)
 
     return nothing
 end
