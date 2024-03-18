@@ -66,65 +66,133 @@ end
 end
 
 
-function SimStep(SimConstants, i,j, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtIX, dvdtIY)
+function SimStepLocalCell(SimConstants, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtIX, dvdtIY, StartIndex, EndIndex)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H² = SimConstants
 
-    xᵢⱼ  = Position[i] - Position[j]
-    xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)
+    @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
 
-    if  xᵢⱼ² <= H²
-        dᵢⱼ  = sqrt(xᵢⱼ²) #Using sqrt is what takes a lot of time?
-        q    = clamp(dᵢⱼ * h⁻¹,0.0,2.0)
-        Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
+        xᵢⱼ  = Position[i] - Position[j]
+        xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)
 
-        invd²η² = inv(dᵢⱼ*dᵢⱼ+η²)
+        if  xᵢⱼ² <= H²
+            dᵢⱼ  = sqrt(xᵢⱼ²) #Using sqrt is what takes a lot of time?
+            q    = clamp(dᵢⱼ * h⁻¹,0.0,2.0)
+            Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
 
-        ∇ᵢWᵢⱼ = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
+            invd²η² = inv(dᵢⱼ*dᵢⱼ+η²)
 
-        ρᵢ        = Density[i]
-        ρⱼ        = Density[j]
-      
-        vᵢ        = Velocity[i]
-        vⱼ        = Velocity[j]
-        vᵢⱼ       = vᵢ - vⱼ
+            ∇ᵢWᵢⱼ = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
 
-        dρdt⁺, dρdt⁻ = dρᵢdt_dρⱼdt_(ρᵢ,ρⱼ,m₀,vᵢⱼ,∇ᵢWᵢⱼ)
+            ρᵢ        = Density[i]
+            ρⱼ        = Density[j]
+        
+            vᵢ        = Velocity[i]
+            vⱼ        = Velocity[j]
+            vᵢⱼ       = vᵢ - vⱼ
 
-        Pᵢ        =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
-        Pⱼ        =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
-        Pfac      = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
+            dρdt⁺, dρdt⁻ = dρᵢdt_dρⱼdt_(ρᵢ,ρⱼ,m₀,vᵢⱼ,∇ᵢWᵢⱼ)
 
-        ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
-        cond      = dot(vᵢⱼ, xᵢⱼ)
-        cond_bool = cond < 0.0
-        μᵢⱼ       = h*cond * invd²η²
-        Πᵢ        = - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
-        Πⱼ        = - Πᵢ
+            Pᵢ        =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
+            Pⱼ        =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
+            Pfac      = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
 
-        dvdt⁺ = - m₀ * (Pfac) *  ∇ᵢWᵢⱼ + Πᵢ
-        dvdt⁻ = - dvdt⁺ + Πⱼ
+            ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
+            cond      = dot(vᵢⱼ, xᵢⱼ)
+            cond_bool = cond < 0.0
+            μᵢⱼ       = h*cond * invd²η²
+            Πᵢ        = - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
+            Πⱼ        = - Πᵢ
 
-        # CUDA.@atomic dρdtI[i] += dρdt⁺
-        # CUDA.@atomic dρdtI[j] += dρdt⁻
+            dvdt⁺ = - m₀ * (Pfac) *  ∇ᵢWᵢⱼ + Πᵢ
+            dvdt⁻ = - dvdt⁺ + Πⱼ
 
-        # CUDA.@atomic dvdtIX[i] +=  dvdt⁺[1]
-        # CUDA.@atomic dvdtIX[j] +=  dvdt⁻[1]
-        # CUDA.@atomic dvdtIY[i] +=  dvdt⁺[2]
-        # CUDA.@atomic dvdtIY[j] +=  dvdt⁻[2]
+            # CUDA.@atomic dρdtI[i] += dρdt⁺
+            # CUDA.@atomic dρdtI[j] += dρdt⁻
 
-        # CUDA.@atomic Kernel[i] += Wᵢⱼ
-        # CUDA.@atomic Kernel[j] += Wᵢⱼ
+            # CUDA.@atomic dvdtIX[i] +=  dvdt⁺[1]
+            # CUDA.@atomic dvdtIX[j] +=  dvdt⁻[1]
+            # CUDA.@atomic dvdtIY[i] +=  dvdt⁺[2]
+            # CUDA.@atomic dvdtIY[j] +=  dvdt⁻[2]
 
-        # CUDA.@atomic KernelGradientX[i] +=  ∇ᵢWᵢⱼ[1]
-        # CUDA.@atomic KernelGradientX[j] += -∇ᵢWᵢⱼ[1]
-        # CUDA.@atomic KernelGradientY[i] +=  ∇ᵢWᵢⱼ[2]
-        # CUDA.@atomic KernelGradientY[j] += -∇ᵢWᵢⱼ[2]
+            CUDA.@atomic Kernel[i] += Wᵢⱼ
+            CUDA.@atomic Kernel[j] += Wᵢⱼ
 
-  
+            CUDA.@atomic KernelGradientX[i] +=  ∇ᵢWᵢⱼ[1]
+            CUDA.@atomic KernelGradientX[j] += -∇ᵢWᵢⱼ[1]
+            CUDA.@atomic KernelGradientY[i] +=  ∇ᵢWᵢⱼ[2]
+            CUDA.@atomic KernelGradientY[j] += -∇ᵢWᵢⱼ[2]
+
+    
+        end
     end
 
     return nothing
 end
+
+
+function SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtIX, dvdtIY, StartIndex, EndIndex, StartIndex_, EndIndex_)
+    @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H² = SimConstants
+
+    @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
+
+        xᵢⱼ  = Position[i] - Position[j]
+        xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)
+
+        if  xᵢⱼ² <= H²
+            dᵢⱼ  = sqrt(xᵢⱼ²) #Using sqrt is what takes a lot of time?
+            q    = clamp(dᵢⱼ * h⁻¹,0.0,2.0)
+            Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
+
+            invd²η² = inv(dᵢⱼ*dᵢⱼ+η²)
+
+            ∇ᵢWᵢⱼ = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
+
+            ρᵢ        = Density[i]
+            ρⱼ        = Density[j]
+        
+            vᵢ        = Velocity[i]
+            vⱼ        = Velocity[j]
+            vᵢⱼ       = vᵢ - vⱼ
+
+            dρdt⁺, dρdt⁻ = dρᵢdt_dρⱼdt_(ρᵢ,ρⱼ,m₀,vᵢⱼ,∇ᵢWᵢⱼ)
+
+            Pᵢ        =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
+            Pⱼ        =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
+            Pfac      = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
+
+            ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
+            cond      = dot(vᵢⱼ, xᵢⱼ)
+            cond_bool = cond < 0.0
+            μᵢⱼ       = h*cond * invd²η²
+            Πᵢ        = - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
+            Πⱼ        = - Πᵢ
+
+            dvdt⁺ = - m₀ * (Pfac) *  ∇ᵢWᵢⱼ + Πᵢ
+            dvdt⁻ = - dvdt⁺ + Πⱼ
+
+            # CUDA.@atomic dρdtI[i] += dρdt⁺
+            # CUDA.@atomic dρdtI[j] += dρdt⁻
+
+            # CUDA.@atomic dvdtIX[i] +=  dvdt⁺[1]
+            # CUDA.@atomic dvdtIX[j] +=  dvdt⁻[1]
+            # CUDA.@atomic dvdtIY[i] +=  dvdt⁺[2]
+            # CUDA.@atomic dvdtIY[j] +=  dvdt⁻[2]
+
+            CUDA.@atomic Kernel[i] += Wᵢⱼ
+            CUDA.@atomic Kernel[j] += Wᵢⱼ
+
+            CUDA.@atomic KernelGradientX[i] +=  ∇ᵢWᵢⱼ[1]
+            CUDA.@atomic KernelGradientX[j] += -∇ᵢWᵢⱼ[1]
+            CUDA.@atomic KernelGradientY[i] +=  ∇ᵢWᵢⱼ[2]
+            CUDA.@atomic KernelGradientY[j] += -∇ᵢWᵢⱼ[2]
+
+    
+        end
+    end
+
+    return nothing
+end
+
 ###===
 
 ###=== Function to update ordering
@@ -168,33 +236,33 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
 
         # @cuprint " |> StartIndex: " StartIndex " EndIndex: " EndIndex "\n"
 
-        @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-            SimStep(SimConstants, i,j, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtIX, dvdtIY)
-        end
-        
-        # @inbounds for S ∈ Stencil
-        #     SCellIndex = CellIndex + S
-    
-        #     c = 0
-        #     NeighborCellIndex = 0
-        #     @inbounds for i ∈ eachindex(UniqueCells)
-        #         c += 1
-        #         cond = LinearIndices(Tuple(UniqueCells[end]))[SCellIndex] == LinearIndices(Tuple(UniqueCells[end]))[UniqueCells[i]]
-        #         val  = ifelse(cond, c, 0)
-        #         NeighborCellIndex += val
-        #     end
-        #     # @cuprintln c
-
-        #     if !iszero(NeighborCellIndex)
-        #         StartIndex_       = ParticleRanges[NeighborCellIndex] 
-        #         EndIndex_         = ParticleRanges[NeighborCellIndex+1] - 1
-
-        #         @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-        #             SimStep(SimConstants, i, j, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtIX, dvdtIY)
-        #         end
-
-        #     end
+        # @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
+            SimStepLocalCell(SimConstants, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtIX, dvdtIY, StartIndex, EndIndex)
         # end
+        
+        @inbounds for S ∈ Stencil
+            SCellIndex = CellIndex + S
+    
+            c = 0
+            NeighborCellIndex = 0
+            @inbounds for i ∈ eachindex(UniqueCells)
+                c += 1
+                cond = LinearIndices(Tuple(UniqueCells[end]))[SCellIndex] == LinearIndices(Tuple(UniqueCells[end]))[UniqueCells[i]]
+                val  = ifelse(cond, c, 0)
+                NeighborCellIndex += val
+            end
+            # @cuprintln c
+
+            if !iszero(NeighborCellIndex)
+                StartIndex_       = ParticleRanges[NeighborCellIndex] 
+                EndIndex_         = ParticleRanges[NeighborCellIndex+1] - 1
+
+                # @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
+                    SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtIX, dvdtIY, StartIndex, EndIndex, StartIndex_, EndIndex_)
+                # end
+
+            end
+        end
 
         iter += stride
     end
