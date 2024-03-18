@@ -77,6 +77,13 @@ end
 function SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H² = SimConstants
 
+    # Initialise some variables.
+    tid          = (threadIdx().x - 1) + (blockIdx().x - 1) * blockDim().x
+    totalThreads = blockDim().x * gridDim().x
+    cacheIndex   = threadIdx().x - 1
+    temp         = 0
+    # @cuprintln cacheIndex
+
     xᵢⱼ  = Position[i] - Position[j]
     xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)
 
@@ -85,7 +92,7 @@ function SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, V
         q    = clamp(dᵢⱼ * h⁻¹,0.0,2.0)
         Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
 
-        invd²η² = inv(dᵢⱼ*dᵢⱼ+η²) 
+        invd²η² = inv(dᵢⱼ*dᵢⱼ+η²)
 
         # Kernel[i] += Wᵢⱼ
         # Kernel[j] += Wᵢⱼ
@@ -169,6 +176,7 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
         EndIndex   = ParticleRanges[iter+1] - 1
 
         # @cuprint " |> StartIndex: " StartIndex " EndIndex: " EndIndex "\n"
+
         @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
             SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI)
         end
