@@ -79,16 +79,9 @@ function SimStep(SimConstants, i,j, Position, Kernel, KernelGradientX, KernelGra
 
         invd²η² = inv(dᵢⱼ*dᵢⱼ+η²)
 
-        CUDA.@atomic Kernel[i] += Wᵢⱼ
-        CUDA.@atomic Kernel[j] += Wᵢⱼ
 
         ∇ᵢWᵢⱼ = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
 
-        CUDA.@atomic KernelGradientX[i] +=  ∇ᵢWᵢⱼ[1]
-        CUDA.@atomic KernelGradientX[j] += -∇ᵢWᵢⱼ[1]
-
-        CUDA.@atomic KernelGradientY[i] +=  ∇ᵢWᵢⱼ[2]
-        CUDA.@atomic KernelGradientY[j] += -∇ᵢWᵢⱼ[2]
         # CUDA.atomic_add!(KernelGradient[i], ∇ᵢWᵢⱼ)
 
         # ρᵢ        = Density[i]
@@ -119,6 +112,16 @@ function SimStep(SimConstants, i,j, Position, Kernel, KernelGradientX, KernelGra
 
         # dρdtI[i] += dρdt⁺
         # dρdtI[j] += dρdt⁻
+
+        
+
+        CUDA.@atomic Kernel[i] += Wᵢⱼ
+        CUDA.@atomic Kernel[j] += Wᵢⱼ
+
+        CUDA.@atomic KernelGradientX[i] +=  ∇ᵢWᵢⱼ[1]
+        CUDA.@atomic KernelGradientX[j] += -∇ᵢWᵢⱼ[1]
+        CUDA.@atomic KernelGradientY[i] +=  ∇ᵢWᵢⱼ[2]
+        CUDA.@atomic KernelGradientY[j] += -∇ᵢWᵢⱼ[2]
     end
 
     return nothing
