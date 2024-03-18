@@ -94,13 +94,13 @@ function SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, V
 
         invd²η² = inv(dᵢⱼ*dᵢⱼ+η²)
 
-        Kernel[i] += Wᵢⱼ
-        Kernel[j] += Wᵢⱼ
+        # Kernel[i] += Wᵢⱼ
+        # Kernel[j] += Wᵢⱼ
 
         ∇ᵢWᵢⱼ = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
 
-        KernelGradient[i] +=  ∇ᵢWᵢⱼ
-        KernelGradient[j] += -∇ᵢWᵢⱼ
+        # KernelGradient[i] +=  ∇ᵢWᵢⱼ
+        # KernelGradient[j] += -∇ᵢWᵢⱼ
 
         # ρᵢ        = Density[i]
         # ρⱼ        = Density[j]
