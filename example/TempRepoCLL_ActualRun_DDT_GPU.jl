@@ -185,26 +185,16 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
             SCellIndex = CellIndex + S
     
             # @cuprint "SCellIndex: " SCellIndex[1] "," SCellIndex[2] " " @cuprintln ""
-    
-            # This is weirdly enough 5-10% faster than isequal approach but still allocates?
-            # Needle = isequal(SCellIndex) #This allocates 8 bytes :(
-            # NeighborCellIndex = findfirst(Needle, UniqueCells)
             c = 0
             NeighborCellIndex = 0
             @inbounds for i ∈ eachindex(UniqueCells)
                 c += 1
-                # if LinearIndices(Tuple(UniqueCells[end]))[SCellIndex] == LinearIndices(Tuple(UniqueCells[end]))[UniqueCells[i]]
-                # # if SCellIndex == UniqueCells[i]
-                #     NeighborCellIndex = c
-                #     # break - in reality I should break, but letting it run fully is faster, incredible
-                # end
                 cond = LinearIndices(Tuple(UniqueCells[end]))[SCellIndex] == LinearIndices(Tuple(UniqueCells[end]))[UniqueCells[i]]
                 val  = ifelse(cond, c, 0)
                 NeighborCellIndex += val
             end
             # @cuprintln c
 
-            # if !isnothing(NeighborCellIndex)
             if !iszero(NeighborCellIndex)
                 StartIndex_       = ParticleRanges[NeighborCellIndex] 
                 EndIndex_         = ParticleRanges[NeighborCellIndex+1] - 1
