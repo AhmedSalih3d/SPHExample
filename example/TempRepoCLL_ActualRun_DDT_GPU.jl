@@ -186,8 +186,8 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
 
         @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
             SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, SharedMemory)
-            sync_threads()
         end
+        sync_threads() #just keep it for now
         
         @inbounds for S ∈ Stencil
             SCellIndex = CellIndex + S
