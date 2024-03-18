@@ -114,13 +114,13 @@ function SimStepLocalCell(SimConstants, Position, Kernel, KernelGradientX, Kerne
             # CUDA.@atomic dvdtIY[i] +=  dvdt⁺[2]
             # CUDA.@atomic dvdtIY[j] +=  dvdt⁻[2]
 
-            CUDA.@atomic Kernel[i] += Wᵢⱼ
-            CUDA.@atomic Kernel[j] += Wᵢⱼ
+            # CUDA.@atomic Kernel[i] += Wᵢⱼ
+            # CUDA.@atomic Kernel[j] += Wᵢⱼ
 
-            CUDA.@atomic KernelGradientX[i] +=  ∇ᵢWᵢⱼ[1]
-            CUDA.@atomic KernelGradientX[j] += -∇ᵢWᵢⱼ[1]
-            CUDA.@atomic KernelGradientY[i] +=  ∇ᵢWᵢⱼ[2]
-            CUDA.@atomic KernelGradientY[j] += -∇ᵢWᵢⱼ[2]
+            # CUDA.@atomic KernelGradientX[i] +=  ∇ᵢWᵢⱼ[1]
+            # CUDA.@atomic KernelGradientX[j] += -∇ᵢWᵢⱼ[1]
+            # CUDA.@atomic KernelGradientY[i] +=  ∇ᵢWᵢⱼ[2]
+            # CUDA.@atomic KernelGradientY[j] += -∇ᵢWᵢⱼ[2]
 
     
         end
@@ -178,15 +178,13 @@ function SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradientX, Ke
             # CUDA.@atomic dvdtIY[i] +=  dvdt⁺[2]
             # CUDA.@atomic dvdtIY[j] +=  dvdt⁻[2]
 
-            CUDA.@atomic Kernel[i] += Wᵢⱼ
-            CUDA.@atomic Kernel[j] += Wᵢⱼ
+            # CUDA.@atomic Kernel[i] += Wᵢⱼ
+            # CUDA.@atomic Kernel[j] += Wᵢⱼ
 
-            CUDA.@atomic KernelGradientX[i] +=  ∇ᵢWᵢⱼ[1]
-            CUDA.@atomic KernelGradientX[j] += -∇ᵢWᵢⱼ[1]
-            CUDA.@atomic KernelGradientY[i] +=  ∇ᵢWᵢⱼ[2]
-            CUDA.@atomic KernelGradientY[j] += -∇ᵢWᵢⱼ[2]
-
-    
+            # CUDA.@atomic KernelGradientX[i] +=  ∇ᵢWᵢⱼ[1]
+            # CUDA.@atomic KernelGradientX[j] += -∇ᵢWᵢⱼ[1]
+            # CUDA.@atomic KernelGradientY[i] +=  ∇ᵢWᵢⱼ[2]
+            # CUDA.@atomic KernelGradientY[j] += -∇ᵢWᵢⱼ[2]
         end
     end
 
