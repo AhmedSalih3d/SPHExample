@@ -74,7 +74,7 @@ end
 end
 
 
-function SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, SharedMemory, SharedIndex)
+function SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H² = SimConstants
 
     xᵢⱼ  = Position[i] - Position[j]
@@ -87,13 +87,13 @@ function SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, V
 
         invd²η² = inv(dᵢⱼ*dᵢⱼ+η²) 
 
-        Kernel[i] += Wᵢⱼ
-        Kernel[j] += Wᵢⱼ
+        # Kernel[i] += Wᵢⱼ
+        # Kernel[j] += Wᵢⱼ
 
         ∇ᵢWᵢⱼ = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
 
-        KernelGradient[i] +=  ∇ᵢWᵢⱼ
-        KernelGradient[j] += -∇ᵢWᵢⱼ
+        # KernelGradient[i] +=  ∇ᵢWᵢⱼ
+        # KernelGradient[j] += -∇ᵢWᵢⱼ
 
         # ρᵢ        = Density[i]
         # ρⱼ        = Density[j]
@@ -168,16 +168,9 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
         StartIndex = ParticleRanges[iter] 
         EndIndex   = ParticleRanges[iter+1] - 1
 
-
-        n = EndIndex - StartIndex + 1
-        to_alloc = Int(ceil((n * (n - 1)) / 2))
-
-        # SharedMemory = CuDynamicSharedArray(Float64, to_alloc)
-        SharedMemory   = @cuDynamicSharedMem(eltype(eltype(Position)), 1) #to_alloc)
-
         # @cuprint " |> StartIndex: " StartIndex " EndIndex: " EndIndex "\n"
         @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-            SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, SharedMemory, 0)
+            SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI)
         end
         
         @inbounds for S ∈ Stencil
@@ -185,7 +178,7 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
     
             # @cuprint "SCellIndex: " SCellIndex[1] "," SCellIndex[2] " " @cuprintln ""
     
-            # This is weirdly enough 5-10% faster than isequal approach bu still allocates?
+            # This is weirdly enough 5-10% faster than isequal approach but still allocates?
             # Needle = isequal(SCellIndex) #This allocates 8 bytes :(
             # NeighborCellIndex = findfirst(Needle, UniqueCells)
             c = 0
@@ -210,14 +203,8 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
 
                 # @cuprintln "    StartIndex_: " StartIndex_ " EndIndex_: " EndIndex_
 
-                n_        = EndIndex_ - StartIndex_ + 1
-                to_alloc_ = Int(ceil((n_ * (n_ - 1)) / 2))
-        
-                # As explained by ChatGPT this should be intra particle interactions and then outside * inside to account for it all
-                SharedMemory_ = CuDynamicSharedArray(Float64, n * n_ + to_alloc_)
-
                 @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                    SimStep(SimConstants, i, j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, SharedMemory_, 0)
+                    SimStep(SimConstants, i, j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI)
                 end
 
             end
