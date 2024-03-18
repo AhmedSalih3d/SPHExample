@@ -138,7 +138,7 @@ end
 
 ###=== Function to update ordering
 #https://cuda.juliagpu.org/stable/tutorials/performance/
-function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Acceleration, Velocity, DiffCells)
+function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Acceleration, Velocity, DiffCells, ParticleSplitter, ParticleSplitterLinearIndices)
     KernelExtractCells!(Cells,Position,CutOff)
 
     sortperm!(SortedIndices,Cells)
@@ -149,10 +149,10 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
     @. Acceleration    =  Acceleration[SortedIndices]
     @. Velocity        =  Velocity[SortedIndices]
 
-    DiffCells         .= diff(Cells)
-    ParticleRanges     = [cu([1]) ; findall(.!iszero.(DiffCells)) .+ 1; cu([length(Cells) + 1])]
+    ParticleSplitter[findall(.!iszero.(diff(Cells))) .+ 1] .= true
 
     # Passing the view is fine, since it is not needed to actualize the vector
+    @views ParticleRanges     = ParticleSplitterLinearIndices[ParticleSplitter]
     @views UniqueCells        = Cells[ParticleRanges[1:end-1]]
 
     return ParticleRanges, UniqueCells #Optimize out in shaa Allah!
@@ -267,10 +267,13 @@ cudvdtI          = similar(cuPosition)
 
 cuCells          = similar(cuPosition, CartesianIndex{Dimensions})
 cuDiffCells      = cu(zeros(CartesianIndex{Dimensions},length(cuCells)-1))
-cuParticleRanges = cu(zeros(Int, length(cuCells) + 1))
+cuParticleSplitter = cu(zeros(Bool, length(cuCells) + 1))
 # ParticleRanges  = CUDA.zeros(Int,length(cuCells)+1) #+1 last cell to include as well, first cell is included in directly due to use of diff which reduces number of elements by 1!
-# CUDA.@allowscalar ParticleRanges[1]   = 1
-# CUDA.@allowscalar ParticleRanges[end] = length(cuCells) + 1 #Have to add 1 even though it is wrong due to -1 at EndIndex
+CUDA.@allowscalar cuParticleSplitter[1]   = true
+CUDA.@allowscalar cuParticleSplitter[end] = true #Have to add 1 even though it is wrong due to -1 at EndIndex, length + 1
+
+cuParticleSplitterLinearIndices = CuArray(LinearIndices(cuParticleSplitter))
+
 SortedIndices   = similar(cuCells, Int)
 
 Stencil         = cu(ConstructStencil(Val(Dimensions)))
@@ -280,9 +283,9 @@ ResetArrays!(cuAcceleration, cuVelocity, cuKernel, cuKernelGradient, cuCells, So
 
 
 # Normal run and save data
-ParticleRanges, UniqueCells = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity, cuDiffCells)
+ParticleRanges, UniqueCells = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity, cuDiffCells, cuParticleSplitter, cuParticleSplitterLinearIndices)  
 threads1,blocks1 = ThreadsAndBlocksNeighborLoop(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient, cuDensity, cuVelocity, cudρdtI, cudvdtI)
-@cuda always_inline=true fastmath=true threads=threads1 blocks=blocks1 shmem = 100*sizeof(FloatType) NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient, cuDensity, cuVelocity, cudρdtI, cudvdtI)
+@cuda always_inline=true fastmath=true threads=threads1 blocks=blocks1 NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient, cuDensity, cuVelocity, cudρdtI, cudvdtI)
 SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
     SimulationName="Test", 
     SaveLocation="E:/GPU_SPH/TESTING/",
@@ -293,11 +296,11 @@ to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
 create_vtp_file(SimMetaData, SimConstantsWedge, to_3d(Array(cuPosition)); KERNEL, KERNEL_GRADIENT)
 #
 
-println(CUDA.@profile trace=true ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity,  cuDiffCells))
+println(CUDA.@profile trace=true ParticleRanges,UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity,  cuDiffCells, cuParticleSplitter, cuParticleSplitterLinearIndices))
 println(CUDA.@profile trace=true @cuda always_inline=true fastmath=true threads=threads1 blocks=blocks1 NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient, cuDensity, cuVelocity, cudρdtI, cudvdtI))
 
-display(@benchmark CUDA.@sync ParticleRanges, UniqueCells  = UpdateNeighbors!($cuCells, $H, $SortedIndices, $cuPosition, $cuDensity, $cuAcceleration, $cuVelocity,  $cuDiffCells))
+display(@benchmark CUDA.@sync ParticleRanges,UniqueCells     = UpdateNeighbors!($cuCells, $H, $SortedIndices, $cuPosition, $cuDensity, $cuAcceleration, $cuVelocity,  $cuDiffCells, $cuParticleSplitter, $cuParticleSplitterLinearIndices))
 display(@benchmark CUDA.@sync @cuda always_inline=true fastmath=true threads=$threads1 blocks=$blocks1 NeighborLoop!($SimConstantsWedge, $UniqueCells, $ParticleRanges, $Stencil, $cuPosition, $cuKernel, $cuKernelGradient, $cuDensity, $cuVelocity, $cudρdtI, $cudvdtI))
-println("CUDA allocations: ", CUDA.@allocated ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity,  cuDiffCells))
+println("CUDA allocations: ", CUDA.@allocated ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity,  cuDiffCells, cuParticleSplitter, cuParticleSplitterLinearIndices))
 println("CUDA allocations: ", CUDA.@allocated @cuda always_inline=true fastmath=true threads=threads1 blocks=blocks1 NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient, cuDensity, cuVelocity, cudρdtI, cudvdtI))
 
