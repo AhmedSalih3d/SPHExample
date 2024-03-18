@@ -157,7 +157,7 @@ end
 # 192 bytes and 4 allocs from launch config
 # INLINE IS SO IMPORTANT 10X SPEED
 function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI)
-    index  = (blockIdx().x - Int32(1)) * blockDim().x + threadIdx().x
+    index  = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     stride = gridDim().x * blockDim().x
     iter = index
 
@@ -198,14 +198,10 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
                 #     # break - in reality I should break, but letting it run fully is faster, incredible
                 # end
                 cond = LinearIndices(Tuple(UniqueCells[end]))[SCellIndex] == LinearIndices(Tuple(UniqueCells[end]))[UniqueCells[i]]
-
-                val = ifelse(cond, c, 0)
-
+                val  = ifelse(cond, c, 0)
                 NeighborCellIndex += val
             end
             # @cuprintln c
-
-            # NeighborCellIndex = argmax(UniqueCells .== SCellIndex)
 
             # if !isnothing(NeighborCellIndex)
             if !iszero(NeighborCellIndex)
