@@ -114,15 +114,13 @@ function SimStepLocalCell(SimConstants, Position, Kernel, KernelGradientX, Kerne
             # CUDA.@atomic dvdtIY[i] +=  dvdt⁺[2]
             # CUDA.@atomic dvdtIY[j] +=  dvdt⁻[2]
 
-            # CUDA.@atomic Kernel[i] += Wᵢⱼ
-            # CUDA.@atomic Kernel[j] += Wᵢⱼ
+            CUDA.@atomic Kernel[i] += Wᵢⱼ
+            CUDA.@atomic Kernel[j] += Wᵢⱼ
 
-            # CUDA.@atomic KernelGradientX[i] +=  ∇ᵢWᵢⱼ[1]
-            # CUDA.@atomic KernelGradientX[j] += -∇ᵢWᵢⱼ[1]
-            # CUDA.@atomic KernelGradientY[i] +=  ∇ᵢWᵢⱼ[2]
-            # CUDA.@atomic KernelGradientY[j] += -∇ᵢWᵢⱼ[2]
-
-    
+            CUDA.@atomic KernelGradientX[i] +=  ∇ᵢWᵢⱼ[1]
+            CUDA.@atomic KernelGradientX[j] += -∇ᵢWᵢⱼ[1]
+            CUDA.@atomic KernelGradientY[i] +=  ∇ᵢWᵢⱼ[2]
+            CUDA.@atomic KernelGradientY[j] += -∇ᵢWᵢⱼ[2]
         end
     end
 
@@ -178,13 +176,13 @@ function SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradientX, Ke
             # CUDA.@atomic dvdtIY[i] +=  dvdt⁺[2]
             # CUDA.@atomic dvdtIY[j] +=  dvdt⁻[2]
 
-            # CUDA.@atomic Kernel[i] += Wᵢⱼ
-            # CUDA.@atomic Kernel[j] += Wᵢⱼ
+            CUDA.@atomic Kernel[i] += Wᵢⱼ
+            CUDA.@atomic Kernel[j] += Wᵢⱼ
 
-            # CUDA.@atomic KernelGradientX[i] +=  ∇ᵢWᵢⱼ[1]
-            # CUDA.@atomic KernelGradientX[j] += -∇ᵢWᵢⱼ[1]
-            # CUDA.@atomic KernelGradientY[i] +=  ∇ᵢWᵢⱼ[2]
-            # CUDA.@atomic KernelGradientY[j] += -∇ᵢWᵢⱼ[2]
+            CUDA.@atomic KernelGradientX[i] +=  ∇ᵢWᵢⱼ[1]
+            CUDA.@atomic KernelGradientX[j] += -∇ᵢWᵢⱼ[1]
+            CUDA.@atomic KernelGradientY[i] +=  ∇ᵢWᵢⱼ[2]
+            CUDA.@atomic KernelGradientY[j] += -∇ᵢWᵢⱼ[2]
         end
     end
 
@@ -227,17 +225,12 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
 
     @inbounds while iter <= length(UniqueCells)
         CellIndex = UniqueCells[iter]
-        # @cuprint "CellIndex: " CellIndex[1] "," CellIndex[2]
 
         StartIndex = ParticleRanges[iter] 
         EndIndex   = ParticleRanges[iter+1] - 1
 
-        # @cuprint " |> StartIndex: " StartIndex " EndIndex: " EndIndex "\n"
+        SimStepLocalCell(SimConstants, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtIX, dvdtIY, StartIndex, EndIndex)
 
-        # @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-            SimStepLocalCell(SimConstants, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtIX, dvdtIY, StartIndex, EndIndex)
-        # end
-        
         @inbounds for S ∈ Stencil
             SCellIndex = CellIndex + S
     
@@ -249,26 +242,17 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
                 val  = ifelse(cond, c, 0)
                 NeighborCellIndex += val
             end
-            # @cuprintln c
 
             if !iszero(NeighborCellIndex)
                 StartIndex_       = ParticleRanges[NeighborCellIndex] 
                 EndIndex_         = ParticleRanges[NeighborCellIndex+1] - 1
 
-                # @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                    SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtIX, dvdtIY, StartIndex, EndIndex, StartIndex_, EndIndex_)
-                # end
-
+                SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtIX, dvdtIY, StartIndex, EndIndex, StartIndex_, EndIndex_)
             end
         end
 
         iter += stride
     end
-
-    ###=
-
-
-    ###=
 
     return nothing
 end
