@@ -2,22 +2,14 @@ using SPHExample
 using BenchmarkTools
 using StaticArrays
 using Parameters
-using Plots; using Measures
 using StructArrays
 import LinearAlgebra: dot, norm, diagm, diag, cond, det
 using LoopVectorization
-using Polyester
-using JET
-using Formatting
-using ProgressMeter
-using TimerOutputs
 using FastPow
-using ChunkSplitters
-import Cthulhu as Deep
 import CellListMap: InPlaceNeighborList, update!, neighborlist!
 using Bumper
 using CUDA
-CUDA.allowscalar(false)
+# CUDA.allowscalar(false)
 
 import Base.Threads: nthreads, @threads
 include("../src/ProduceVTP.jl")
@@ -74,7 +66,7 @@ end
 end
 
 
-function SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, SharedMemory)
+function SimStep(SimConstants, i,j, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtI, SharedMemory)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H² = SimConstants
 
     xᵢⱼ  = Position[i] - Position[j]
@@ -85,18 +77,19 @@ function SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, V
         q    = clamp(dᵢⱼ * h⁻¹,0.0,2.0)
         Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
 
-        CUDA.@atomic SharedMemory[i] += Wᵢⱼ
-        CUDA.@atomic SharedMemory[j] += Wᵢⱼ
-
         invd²η² = inv(dᵢⱼ*dᵢⱼ+η²)
 
-        # Kernel[i] += Wᵢⱼ
-        # Kernel[j] += Wᵢⱼ
+        CUDA.@atomic Kernel[i] += Wᵢⱼ
+        CUDA.@atomic Kernel[j] += Wᵢⱼ
 
         ∇ᵢWᵢⱼ = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
 
-        # KernelGradient[i] +=  ∇ᵢWᵢⱼ
-        # KernelGradient[j] += -∇ᵢWᵢⱼ
+        CUDA.@atomic KernelGradientX[i] +=  ∇ᵢWᵢⱼ[1]
+        CUDA.@atomic KernelGradientX[j] += -∇ᵢWᵢⱼ[1]
+
+        CUDA.@atomic KernelGradientY[i] +=  ∇ᵢWᵢⱼ[2]
+        CUDA.@atomic KernelGradientY[j] += -∇ᵢWᵢⱼ[2]
+        # CUDA.atomic_add!(KernelGradient[i], ∇ᵢWᵢⱼ)
 
         # ρᵢ        = Density[i]
         # ρⱼ        = Density[j]
@@ -159,7 +152,7 @@ end
 #https://cuda.juliagpu.org/stable/tutorials/performance/
 # 192 bytes and 4 allocs from launch config
 # INLINE IS SO IMPORTANT 10X SPEED
-function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI)
+function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtI)
     index  = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     stride = gridDim().x * blockDim().x
     iter = index
@@ -176,7 +169,7 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
         # @cuprint " |> StartIndex: " StartIndex " EndIndex: " EndIndex "\n"
 
         @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-            SimStep(SimConstants, i,j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, SharedMemory)
+            SimStep(SimConstants, i,j, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtI, SharedMemory)
             # @cuprintln "i: " i " j: " j " W_ij: " SharedMemory[threadIdx().x]
         end
         
@@ -201,22 +194,22 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
                 # @cuprintln "    StartIndex_: " StartIndex_ " EndIndex_: " EndIndex_
 
                 @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                    SimStep(SimConstants, i, j, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, SharedMemory)
+                    SimStep(SimConstants, i, j, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtI, SharedMemory)
                 end
 
             end
         end
         # @cuprintln ""
 
-        Kernel .= SharedMemory
+        # Kernel .= SharedMemory
         iter += stride
     end
 
     return nothing
 end
 
-function ThreadsAndBlocksNeighborLoop(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, cudρdtI, cudvdtI)
-    kernel  = @cuda launch=false NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, cudρdtI, cudvdtI)
+function ThreadsAndBlocksNeighborLoop(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, cudρdtI, cudvdtI)
+    kernel  = @cuda launch=false NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, cudρdtI, cudvdtI)
     config  = launch_configuration(kernel.fun)
     threads = min(length(UniqueCells), config.threads)
     blocks  = cld(length(UniqueCells), threads)
@@ -250,7 +243,13 @@ cuDensity        = cu(Density)
 cuAcceleration   = similar(cuPosition)
 cuVelocity       = similar(cuPosition)
 cuKernel         = similar(cuDensity)
-cuKernelGradient = similar(cuPosition)
+
+
+cuKernelGradientX = CUDA.zeros(length(Density))
+cuKernelGradientY = CUDA.zeros(length(Density))
+
+
+# cuKernelGradient = similar(cuPosition)
 
 cudρdtI          = similar(cuDensity)
 cudvdtI          = similar(cuPosition)
@@ -269,31 +268,31 @@ SortedIndices   = similar(cuCells, Int)
 Stencil         = cu(ConstructStencil(Val(Dimensions)))
 
 # Ensure zero, similar does not!
-ResetArrays!(cuAcceleration, cuVelocity, cuKernel, cuKernelGradient, cuCells, SortedIndices, cudρdtI, cudvdtI)
+ResetArrays!(cuAcceleration, cuVelocity, cuKernel, cuKernelGradientX, cuKernelGradientY, cuCells, SortedIndices, cudρdtI, cudvdtI)
 
 
 
 # Normal run and save data
 ParticleRanges, UniqueCells = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity, cuParticleSplitter, cuParticleSplitterLinearIndices)  
-threads1,blocks1 = ThreadsAndBlocksNeighborLoop(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient, cuDensity, cuVelocity, cudρdtI, cudvdtI)
+threads1,blocks1 = ThreadsAndBlocksNeighborLoop(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradientX, cuKernelGradientY, cuDensity, cuVelocity, cudρdtI, cudvdtI)
 
 shmem = sizeof(eltype(cuKernel)) * length(cuKernel)
-@cuda always_inline=true fastmath=true threads=threads1 blocks=blocks1 shmem = shmem NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient, cuDensity, cuVelocity, cudρdtI, cudvdtI)
+@cuda always_inline=true fastmath=true threads=threads1 blocks=blocks1 shmem = shmem NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradientX, cuKernelGradientY, cuDensity, cuVelocity, cudρdtI, cudvdtI)
 SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
     SimulationName="Test", 
     SaveLocation="E:/GPU_SPH/TESTING/",
 )
 KERNEL = Array(cuKernel)
-KERNEL_GRADIENT = Array(cuKernelGradient)
+KERNEL_GRADIENT = Array([cuKernelGradientX'; cuKernelGradientY'])
 to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
 create_vtp_file(SimMetaData, SimConstantsWedge, to_3d(Array(cuPosition)); KERNEL, KERNEL_GRADIENT)
 #
 
-# println(CUDA.@profile trace=true ParticleRanges,UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity, cuParticleSplitter, cuParticleSplitterLinearIndices))
-println(CUDA.@profile trace=true @cuda always_inline=true fastmath=true threads=threads1 blocks=blocks1 shmem=shmem NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient, cuDensity, cuVelocity, cudρdtI, cudvdtI))
+println(CUDA.@profile trace=true ParticleRanges,UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity, cuParticleSplitter, cuParticleSplitterLinearIndices))
+println(CUDA.@profile trace=true @cuda always_inline=true fastmath=true threads=threads1 blocks=blocks1 shmem=shmem NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradientX, cuKernelGradientY, cuDensity, cuVelocity, cudρdtI, cudvdtI))
 
-# display(@benchmark CUDA.@sync ParticleRanges,UniqueCells     = UpdateNeighbors!($cuCells, $H, $SortedIndices, $cuPosition, $cuDensity, $cuAcceleration, $cuVelocity, $cuParticleSplitter, $cuParticleSplitterLinearIndices))
-display(@benchmark CUDA.@sync @cuda always_inline=true fastmath=true threads=$threads1 blocks=$blocks1 shmem=$shmem NeighborLoop!($SimConstantsWedge, $UniqueCells, $ParticleRanges, $Stencil, $cuPosition, $cuKernel, $cuKernelGradient, $cuDensity, $cuVelocity, $cudρdtI, $cudvdtI))
-# println("CUDA allocations: ", CUDA.@allocated ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity, cuParticleSplitter, cuParticleSplitterLinearIndices))
-println("CUDA allocations: ", CUDA.@allocated @cuda always_inline=true fastmath=true threads=threads1 blocks=blocks1 shmem = shmem NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradient, cuDensity, cuVelocity, cudρdtI, cudvdtI))
+display(@benchmark CUDA.@sync ParticleRanges,UniqueCells     = UpdateNeighbors!($cuCells, $H, $SortedIndices, $cuPosition, $cuDensity, $cuAcceleration, $cuVelocity, $cuParticleSplitter, $cuParticleSplitterLinearIndices))
+display(@benchmark CUDA.@sync @cuda always_inline=true fastmath=true threads=$threads1 blocks=$blocks1 shmem=$shmem NeighborLoop!($SimConstantsWedge, $UniqueCells, $ParticleRanges, $Stencil, $cuPosition, $cuKernel, $cuKernelGradientX, $cuKernelGradientY, $cuDensity, $cuVelocity, $cudρdtI, $cudvdtI))
+println("CUDA allocations: ", CUDA.@allocated ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity, cuParticleSplitter, cuParticleSplitterLinearIndices))
+println("CUDA allocations: ", CUDA.@allocated @cuda always_inline=true fastmath=true threads=threads1 blocks=blocks1 shmem = shmem NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradientX, cuKernelGradientY, cuDensity, cuVelocity, cudρdtI, cudvdtI))
 
