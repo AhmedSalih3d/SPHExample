@@ -62,7 +62,7 @@ end
 end
 
 
-function SimStepLocalCell(SimConstants, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtIX, dvdtIY, StartIndex, EndIndex)
+function SimStepLocalCell(SimConstants, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H² = SimConstants
 
     @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
@@ -105,18 +105,14 @@ function SimStepLocalCell(SimConstants, Position, Kernel, KernelGradientX, Kerne
             dρdtI[i] += dρdt⁺
             dρdtI[j] += dρdt⁻
 
-            dvdtIX[i] +=  dvdt⁺[1]
-            dvdtIX[j] +=  dvdt⁻[1]
-            dvdtIY[i] +=  dvdt⁺[2]
-            dvdtIY[j] +=  dvdt⁻[2]
+            dvdtI[i] +=  dvdt⁺
+            dvdtI[j] +=  dvdt⁻
 
             Kernel[i] += Wᵢⱼ
             Kernel[j] += Wᵢⱼ
 
-            KernelGradientX[i] +=  ∇ᵢWᵢⱼ[1]
-            KernelGradientX[j] += -∇ᵢWᵢⱼ[1]
-            KernelGradientY[i] +=  ∇ᵢWᵢⱼ[2]
-            KernelGradientY[j] += -∇ᵢWᵢⱼ[2]
+            KernelGradient[i] +=  ∇ᵢWᵢⱼ
+            KernelGradient[j] += -∇ᵢWᵢⱼ
         end
     end
 
@@ -124,7 +120,7 @@ function SimStepLocalCell(SimConstants, Position, Kernel, KernelGradientX, Kerne
 end
 
 
-function SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtIX, dvdtIY, StartIndex, EndIndex, StartIndex_, EndIndex_)
+function SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H² = SimConstants
 
     @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
@@ -167,18 +163,14 @@ function SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradientX, Ke
             dρdtI[i] += dρdt⁺
             dρdtI[j] += dρdt⁻
 
-            dvdtIX[i] +=  dvdt⁺[1]
-            dvdtIX[j] +=  dvdt⁻[1]
-            dvdtIY[i] +=  dvdt⁺[2]
-            dvdtIY[j] +=  dvdt⁻[2]
+            dvdtI[i] +=  dvdt⁺
+            dvdtI[j] +=  dvdt⁻
 
             Kernel[i] += Wᵢⱼ
             Kernel[j] += Wᵢⱼ
 
-            KernelGradientX[i] +=  ∇ᵢWᵢⱼ[1]
-            KernelGradientX[j] += -∇ᵢWᵢⱼ[1]
-            KernelGradientY[i] +=  ∇ᵢWᵢⱼ[2]
-            KernelGradientY[j] += -∇ᵢWᵢⱼ[2]
+            KernelGradient[i] +=  ∇ᵢWᵢⱼ
+            KernelGradient[j] += -∇ᵢWᵢⱼ
         end
     end
 
@@ -220,14 +212,14 @@ end
 #https://cuda.juliagpu.org/stable/tutorials/performance/
 # 192 bytes and 4 allocs from launch config
 # INLINE IS SO IMPORTANT 10X SPEED
-function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtIX, dvdtIY)
+function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI)
     for iter ∈ eachindex(UniqueCells)
         CellIndex = UniqueCells[iter]
 
         StartIndex = ParticleRanges[iter] 
         EndIndex   = ParticleRanges[iter+1] - 1
 
-        SimStepLocalCell(SimConstants, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtIX, dvdtIY, StartIndex, EndIndex)
+        @inline SimStepLocalCell(SimConstants, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex)
 
         @inbounds for S ∈ Stencil
             SCellIndex = CellIndex + S
@@ -239,7 +231,7 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
                 StartIndex_       = ParticleRanges[NeighborCellIndex] 
                 EndIndex_         = ParticleRanges[NeighborCellIndex+1] - 1
 
-                SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtIX, dvdtIY, StartIndex, EndIndex, StartIndex_, EndIndex_)
+                @inline SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_)
             end
         end
     end
@@ -247,36 +239,36 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
     return nothing
 end
 
-function SimulationLoop(SimConstants, Cells, Stencil, SortedIndices, ParticleSplitter, ParticleSplitterLinearIndices, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, Acceleration, dρdtI, dvdtIX, dvdtIY, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoundaryBool)
+function SimulationLoop(SimConstants, Cells, Stencil, SortedIndices, ParticleSplitter, ParticleSplitterLinearIndices, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoundaryBool)
     dt  = 1e-5
     dt₂ = dt * 0.5
 
     ParticleRanges,UniqueCells     = UpdateNeighbors!(Cells, SimConstants.H, SortedIndices, Position, Density, Acceleration, Velocity, ParticleSplitter, ParticleSplitterLinearIndices)
     
-    ResetArrays!(Kernel, KernelGradientX, KernelGradientY, dρdtI, dvdtIX, dvdtIY)
+    ResetArrays!(Kernel, KernelGradient, dρdtI, dvdtI)
 
-    NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtIX, dvdtIY)
+    NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI)
 
     @inbounds for i in eachindex(Position)
-        dvdtIY[i]       +=  SimConstants.g * GravityFactor[i]
-        Velocityₙ⁺[i]    =  Velocity[i]   + SVector(dvdtIX[i],dvdtIY[i])  *  dt₂ * MotionLimiter[i]
+        dvdtI[i]        +=  ConstructGravitySVector(dvdtI[i], g * GravityFactor[i])
+        Velocityₙ⁺[i]    =  Velocity[i]   + dvdtI[i]  *  dt₂ * MotionLimiter[i]
         Positionₙ⁺[i]    =  Position[i]   + Velocityₙ⁺[i]   * dt₂  * MotionLimiter[i]
         ρₙ⁺[i]           =  Density[i]    + dρdtI[i]       *  dt₂
     end
 
     LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool, SimConstants.ρ₀)
 
-    ResetArrays!(Kernel, KernelGradientX, KernelGradientY, dρdtI, dρdtIₙ⁺, dvdtIX, dvdtIY)
+    ResetArrays!(Kernel, KernelGradient, dρdtI, dρdtIₙ⁺, dvdtI)
 
-    NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradientX, KernelGradientY, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIX, dvdtIY)
+    NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtI)
 
     DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
 
     LimitDensityAtBoundary!(Density,BoundaryBool, SimConstants.ρ₀)
 
     @inbounds for i in eachindex(Position)
-        dvdtIY[i]       +=  SimConstants.g * GravityFactor[i]
-        Velocity[i]     +=  SVector(dvdtIX[i],dvdtIY[i]) * dt * MotionLimiter[i]
+        dvdtI[i]       +=  ConstructGravitySVector(dvdtI[i], g * GravityFactor[i])
+        Velocity[i]     +=  dvdtI[i] * dt * MotionLimiter[i]
         Position[i]     += (((Velocity[i] + (Velocity[i] - SVector(dvdtIX[i],dvdtIY[i]) * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
     end
 
@@ -344,13 +336,17 @@ function RunSimulation(;FluidCSV::String,
     KernelGradientX = zeros(length(Density))
     KernelGradientY = zeros(length(Density))
 
+    KernelGradient  = similar(Position)
+
     dρdtI           = similar(Density)
+
 
     dvdtIX = zeros(length(Density))
     dvdtIY = zeros(length(Density))
+    dvdtI  = similar(Position)
 
-    Velocityₙ⁺        = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
-    Positionₙ⁺        = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
+    Velocityₙ⁺        = similar(Position)
+    Positionₙ⁺        = similar(Position)
     ρₙ⁺               = zeros(FloatType, NumberOfPoints)
     dρdtIₙ⁺           = zeros(FloatType, NumberOfPoints)
 
@@ -369,14 +365,14 @@ function RunSimulation(;FluidCSV::String,
     Stencil         = ConstructStencil(Val(Dimensions))
 
     # Ensure zero, similar does not!
-    ResetArrays!(Acceleration, Velocity, Kernel, KernelGradientX, KernelGradientY, Cells, SortedIndices, dρdtI, dvdtIX, dvdtIY)
+    ResetArrays!(Acceleration, Velocity, Kernel, KernelGradient, KernelGradientX, KernelGradientY, Cells, SortedIndices, dρdtI, dvdtIX, dvdtIY, dvdtI, Positionₙ⁺, Velocityₙ⁺)
 
     # Normal run and save data
     generate_showvalues(Iteration, TotalTime) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime))]
     OutputCounter = 0.0
     OutputIterationCounter = 0
     @inbounds while true
-        SimulationLoop(SimConstants, Cells, Stencil, SortedIndices, ParticleSplitter, ParticleSplitterLinearIndices, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, Acceleration, dρdtI, dvdtIX, dvdtIY, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoundaryBool)
+        SimulationLoop(SimConstants, Cells, Stencil, SortedIndices, ParticleSplitter, ParticleSplitterLinearIndices, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoundaryBool)
         
         OutputCounter += SimMetaData.CurrentTimeStep
         if OutputCounter >= SimMetaData.OutputEach
