@@ -232,24 +232,29 @@ end
 ###=== Function to update ordering
 #https://cuda.juliagpu.org/stable/tutorials/performance/
 function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, BoundaryBool, ParticleSplitter, ParticleSplitterLinearIndices)
+    ParticleSplitter .= false
+    
     ExtractCells!(Cells,Position,CutOff)
 
     sortperm!(SortedIndices,Cells)
 
-    # @. Cells           =  Cells[SortedIndices]
-    # @. Position        =  Position[SortedIndices]
-    # @. Density         =  Density[SortedIndices]
-    # @. Acceleration    =  Acceleration[SortedIndices]
-    # @. Velocity        =  Velocity[SortedIndices]
+    @. Cells           =  Cells[SortedIndices]
+    @. Position        =  Position[SortedIndices]
+    @. Density         =  Density[SortedIndices]
+    @. Acceleration    =  Acceleration[SortedIndices]
+    @. Velocity        =  Velocity[SortedIndices]
+    @. GravityFactor   =  GravityFactor[SortedIndices]
+    @. MotionLimiter   =  MotionLimiter[SortedIndices]
+    @. BoundaryBool    =  BoundaryBool[SortedIndices]
 
-    update_arr1_bumper!(Cells, SortedIndices)
-    update_arr1_bumper!(Position, SortedIndices)
-    update_arr1_bumper!(Density, SortedIndices)
-    update_arr1_bumper!(Acceleration, SortedIndices)
-    update_arr1_bumper!(Velocity, SortedIndices)    
-    update_arr1_bumper!(GravityFactor, SortedIndices)    
-    update_arr1_bumper!(MotionLimiter, SortedIndices)    
-    update_arr1_bumper!(BoundaryBool, SortedIndices)    
+    # update_arr1_bumper!(Cells, SortedIndices)
+    # update_arr1_bumper!(Position, SortedIndices)
+    # update_arr1_bumper!(Density, SortedIndices)
+    # update_arr1_bumper!(Acceleration, SortedIndices)
+    # update_arr1_bumper!(Velocity, SortedIndices)    
+    # update_arr1_bumper!(GravityFactor, SortedIndices)    
+    # update_arr1_bumper!(MotionLimiter, SortedIndices)    
+    # update_arr1_bumper!(BoundaryBool, SortedIndices)    
 
     ParticleSplitter[findall(.!iszero.(diff(Cells))) .+ 1] .= true
 
