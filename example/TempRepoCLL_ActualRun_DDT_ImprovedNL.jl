@@ -232,7 +232,9 @@ end
 ###=== Function to update ordering
 #https://cuda.juliagpu.org/stable/tutorials/performance/
 function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, BoundaryBool, ParticleSplitter, ParticleSplitterLinearIndices)
-    ParticleSplitter[2:end-1] .= false
+    ParticleSplitter     .= false
+    ParticleSplitter[1]   = true
+    ParticleSplitter[end] = true
     
     ExtractCells!(Cells,Position,CutOff)
 
