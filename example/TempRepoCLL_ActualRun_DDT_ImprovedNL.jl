@@ -100,21 +100,21 @@ function SimStepLocalCell(SimConstants, Position, Kernel, KernelGradientX, Kerne
             dvdt⁺ = - m₀ * (Pfac) *  ∇ᵢWᵢⱼ + Πᵢ
             dvdt⁻ = - dvdt⁺ + Πⱼ
 
-            # @atomic dρdtI[i] += dρdt⁺
-            # @atomic dρdtI[j] += dρdt⁻
+            dρdtI[i] += dρdt⁺
+            dρdtI[j] += dρdt⁻
 
-            # @atomic dvdtIX[i] +=  dvdt⁺[1]
-            # @atomic dvdtIX[j] +=  dvdt⁻[1]
-            # @atomic dvdtIY[i] +=  dvdt⁺[2]
-            # @atomic dvdtIY[j] +=  dvdt⁻[2]
+            dvdtIX[i] +=  dvdt⁺[1]
+            dvdtIX[j] +=  dvdt⁻[1]
+            dvdtIY[i] +=  dvdt⁺[2]
+            dvdtIY[j] +=  dvdt⁻[2]
 
-            # @atomic Kernel[i] += Wᵢⱼ
-            # @atomic Kernel[j] += Wᵢⱼ
+            Kernel[i] += Wᵢⱼ
+            Kernel[j] += Wᵢⱼ
 
-            # @atomic KernelGradientX[i] +=  ∇ᵢWᵢⱼ[1]
-            # @atomic KernelGradientX[j] += -∇ᵢWᵢⱼ[1]
-            # @atomic KernelGradientY[i] +=  ∇ᵢWᵢⱼ[2]
-            # @atomic KernelGradientY[j] += -∇ᵢWᵢⱼ[2]
+            KernelGradientX[i] +=  ∇ᵢWᵢⱼ[1]
+            KernelGradientX[j] += -∇ᵢWᵢⱼ[1]
+            KernelGradientY[i] +=  ∇ᵢWᵢⱼ[2]
+            KernelGradientY[j] += -∇ᵢWᵢⱼ[2]
         end
     end
 
@@ -162,21 +162,21 @@ function SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradientX, Ke
             dvdt⁺ = - m₀ * (Pfac) *  ∇ᵢWᵢⱼ + Πᵢ
             dvdt⁻ = - dvdt⁺ + Πⱼ
 
-            # @atomic dρdtI[i] += dρdt⁺
-            # @atomic dρdtI[j] += dρdt⁻
+            dρdtI[i] += dρdt⁺
+            dρdtI[j] += dρdt⁻
 
-            # @atomic dvdtIX[i] +=  dvdt⁺[1]
-            # @atomic dvdtIX[j] +=  dvdt⁻[1]
-            # @atomic dvdtIY[i] +=  dvdt⁺[2]
-            # @atomic dvdtIY[j] +=  dvdt⁻[2]
+            dvdtIX[i] +=  dvdt⁺[1]
+            dvdtIX[j] +=  dvdt⁻[1]
+            dvdtIY[i] +=  dvdt⁺[2]
+            dvdtIY[j] +=  dvdt⁻[2]
 
-            # @atomic Kernel[i] += Wᵢⱼ
-            # @atomic Kernel[j] += Wᵢⱼ
+            Kernel[i] += Wᵢⱼ
+            Kernel[j] += Wᵢⱼ
 
-            # @atomic KernelGradientX[i] +=  ∇ᵢWᵢⱼ[1]
-            # @atomic KernelGradientX[j] += -∇ᵢWᵢⱼ[1]
-            # @atomic KernelGradientY[i] +=  ∇ᵢWᵢⱼ[2]
-            # @atomic KernelGradientY[j] += -∇ᵢWᵢⱼ[2]
+            KernelGradientX[i] +=  ∇ᵢWᵢⱼ[1]
+            KernelGradientX[j] += -∇ᵢWᵢⱼ[1]
+            KernelGradientY[i] +=  ∇ᵢWᵢⱼ[2]
+            KernelGradientY[j] += -∇ᵢWᵢⱼ[2]
         end
     end
 
@@ -303,15 +303,13 @@ ResetArrays!(Acceleration, Velocity, Kernel, KernelGradientX, KernelGradientY, C
 # Normal run and save data
 ParticleRanges, UniqueCells = UpdateNeighbors!(Cells, H, SortedIndices, Position, Density, Acceleration, Velocity, ParticleSplitter, ParticleSplitterLinearIndices)  
 NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtIX, dvdtIY)
-# SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
-#     SimulationName="Test", 
-#     SaveLocation="E:/GPU_SPH/TESTING/",
-# )
-# KERNEL = Array(cuKernel)
-# KERNEL_GRADIENT = Array([cuKernelGradientX'; cuKernelGradientY'])
-# to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
-# create_vtp_file(SimMetaData, SimConstantsWedge, to_3d(Array(cuPosition)); KERNEL, KERNEL_GRADIENT)
-#
+SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
+    SimulationName="Test", 
+    SaveLocation="E:/SecondApproach/TESTING_CPU",
+)
+KernelGradient = [KernelGradientX'; KernelGradientY']
+to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
+create_vtp_file(SimMetaData, SimConstantsWedge, to_3d(Position); Kernel, KernelGradient)
 
 # println(CUDA.@profile trace=true @cuda always_inline=true fastmath=true threads=threads1 blocks=blocks1 shmem=shmem NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradientX, cuKernelGradientY, cuDensity, cuVelocity, cudρdtI, cudvdtIX, cudvdtIY))
 
