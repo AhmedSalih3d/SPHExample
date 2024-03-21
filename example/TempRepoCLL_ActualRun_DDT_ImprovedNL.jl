@@ -258,18 +258,18 @@ function SimulationLoop(SimConstants, Cells, Stencil, SortedIndices, ParticleSpl
 
     LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool, SimConstants.ρ₀)
 
-    ResetArrays!(Kernel, KernelGradient, dρdtI, dρdtIₙ⁺, dvdtI)
+    ResetArrays!(Kernel, KernelGradient, dρdtI, dρdtIₙ⁺, Acceleration)
 
-    NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtI)
+    NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, Acceleration)
 
     DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
 
     LimitDensityAtBoundary!(Density,BoundaryBool, SimConstants.ρ₀)
 
     @inbounds for i in eachindex(Position)
-        dvdtI[i]       +=  ConstructGravitySVector(dvdtI[i], SimConstants.g * GravityFactor[i])
-        Velocity[i]     +=  dvdtI[i] * dt * MotionLimiter[i]
-        Position[i]     += (((Velocity[i] + (Velocity[i] - dvdtI[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
+        Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+        Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
+        Position[i]       += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
     end
 
     SimMetaData.Iteration      += 1
@@ -346,9 +346,8 @@ function RunSimulation(;FluidCSV::String,
 
     Pressureᵢ        = zeros(FloatType, NumberOfPoints)
 
-    Cells                                   = similar(Position, CartesianIndex{Dimensions})
-    ParticleSplitter                        = zeros(Bool, length(Cells) + 1)
-    # ParticleRanges  = CUDA.zeros(Int,length(cuCells)+1) #+1 last cell to include as well, first cell is included in directly due to use of diff which reduces number of elements by 1!
+    Cells                 = similar(Position, CartesianIndex{Dimensions})
+    ParticleSplitter      = zeros(Bool, length(Cells) + 1)
     ParticleSplitter[1]   = true
     ParticleSplitter[end] = true #Have to add 1 even though it is wrong due to -1 at EndIndex, length + 1
 
@@ -360,6 +359,10 @@ function RunSimulation(;FluidCSV::String,
 
     # Ensure zero, similar does not!
     ResetArrays!(Acceleration, Velocity, Kernel, KernelGradient, Cells, SortedIndices, dρdtI, dvdtI, Positionₙ⁺, Velocityₙ⁺)
+
+    SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
+    Pressure!(Pressureᵢ,Density,SimConstants)
+    PolyDataTemplate(SaveLocation_, to_3d(Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, Density, Pressureᵢ, Velocity, Acceleration)
 
     # Normal run and save data
     generate_showvalues(Iteration, TotalTime) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime))]
@@ -375,7 +378,7 @@ function RunSimulation(;FluidCSV::String,
 
             SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp"
             Pressure!(Pressureᵢ,Density,SimConstants)
-            PolyDataTemplate(SaveLocation_, to_3d(Position), ["Kernel", "Density", "Pressure","Velocity", "Acceleration"], Kernel, Density, Pressureᵢ, Velocity, Acceleration)
+            PolyDataTemplate(SaveLocation_, to_3d(Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, Density, Pressureᵢ, Velocity, Acceleration)
         end
 
         next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
