@@ -10,6 +10,7 @@ import CellListMap: InPlaceNeighborList, update!, neighborlist!
 import ProgressMeter: next!
 using Formatting
 using Bumper
+using TimerOutputs
 
 function SPHExample.LimitDensityAtBoundary!(Density,ρ₀, MotionLimiter)
     for i in eachindex(Density)
@@ -429,10 +430,10 @@ function RunSimulation(;FluidCSV::String,
     OutputIterationCounter = 0
     @inbounds while true
 
-        SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, SortedIndices, ParticleSplitter, ParticleSplitterLinearIndices, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoundaryBool)
+        @timeit HourGlass "1 SimulationLoop" SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, SortedIndices, ParticleSplitter, ParticleSplitterLinearIndices, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoundaryBool)
 
         OutputCounter += SimMetaData.CurrentTimeStep
-        if OutputCounter >= SimMetaData.OutputEach
+        @timeit HourGlass "2 Output Data" if OutputCounter >= SimMetaData.OutputEach
             OutputCounter = 0.0
             OutputIterationCounter += 1
 
@@ -447,6 +448,7 @@ function RunSimulation(;FluidCSV::String,
             break
         end
     end
+    show(HourGlass,sortby=:name)
 end
 
 to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
@@ -459,7 +461,7 @@ let
     SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=4,
+        SimulationTime=0.1,
         OutputEach=0.01,
     )
 
