@@ -230,16 +230,10 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
         @inbounds for S ∈ Stencil
             SCellIndex = CellIndex + S
     
-            c = 0
-            NeighborCellIndex = 0
-            @inbounds for i ∈ eachindex(UniqueCells)
-                c += 1
-                cond = LinearIndices(Tuple(UniqueCells[end]))[SCellIndex] == LinearIndices(Tuple(UniqueCells[end]))[UniqueCells[i]]
-                val  = ifelse(cond, c, 0)
-                NeighborCellIndex += val
-            end
+            Needle            = isequal(SCellIndex)
+            NeighborCellIndex = findfirst(Needle, UniqueCells)
 
-            if !iszero(NeighborCellIndex)
+            if !isnothing(NeighborCellIndex)
                 StartIndex_       = ParticleRanges[NeighborCellIndex] 
                 EndIndex_         = ParticleRanges[NeighborCellIndex+1] - 1
 
@@ -311,10 +305,8 @@ KernelGradient = [KernelGradientX'; KernelGradientY']
 to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
 create_vtp_file(SimMetaData, SimConstantsWedge, to_3d(Position); Kernel, KernelGradient)
 
-# println(CUDA.@profile trace=true @cuda always_inline=true fastmath=true threads=threads1 blocks=blocks1 shmem=shmem NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradientX, cuKernelGradientY, cuDensity, cuVelocity, cudρdtI, cudvdtIX, cudvdtIY))
-
 display(@benchmark ParticleRanges,UniqueCells     = UpdateNeighbors!($Cells, $H, $SortedIndices, $Position, $Density, $Acceleration, $Velocity, $ParticleSplitter, $ParticleSplitterLinearIndices))
 display(@benchmark NeighborLoop!($SimConstantsWedge, $UniqueCells, $ParticleRanges, $Stencil, $Position, $Kernel, $KernelGradientX, $KernelGradientY, $Density, $Velocity, $dρdtI, $dvdtIX, $dvdtIY))
-# println("CUDA allocations: ", CUDA.@allocated ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity, cuParticleSplitter, cuParticleSplitterLinearIndices))
-# println("CUDA allocations: ", CUDA.@allocated @cuda always_inline=true fastmath=true threads=threads1 blocks=blocks1 shmem = shmem NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradientX, cuKernelGradientY, cuDensity, cuVelocity, cudρdtI, cudvdtIX, cudvdtIY))
 
+# @profview ParticleRanges,UniqueCells     = UpdateNeighbors!(Cells, H, SortedIndices, Position, Density, Acceleration, Velocity, ParticleSplitter, ParticleSplitterLinearIndices)
+# @profview NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtIX, dvdtIY)
