@@ -427,8 +427,9 @@ function RunSimulation(;FluidCSV::String,
     OutputCounter = 0.0
     OutputIterationCounter = 0
     @inbounds while true
-        println(@report_opt target_modules=(@__MODULE__,) SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, SortedIndices, ParticleSplitter, ParticleSplitterLinearIndices, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoundaryBool))
-        break
+
+        SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, SortedIndices, ParticleSplitter, ParticleSplitterLinearIndices, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoundaryBool)
+
         OutputCounter += SimMetaData.CurrentTimeStep
         if OutputCounter >= SimMetaData.OutputEach
             OutputCounter = 0.0
@@ -456,7 +457,7 @@ FloatType  = Float64
 SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
     SimulationName="Test", 
     SaveLocation="E:/SecondApproach/TESTING_CPU",
-    SimulationTime=2,
+    SimulationTime=0.1,
     OutputEach=0.01,
 )
 
