@@ -256,7 +256,13 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
     update_arr1_bumper!(MotionLimiter, SortedIndices)    
     update_arr1_bumper!(BoundaryBool, SortedIndices)    
 
-    ParticleSplitter[findall(.!iszero.(diff(Cells))) .+ 1] .= true
+    # These two are equivalent lol
+    # @time ParticleSplitter[findall(.!iszero.(diff(Cells))) .+ 1] .= true
+    for i in 2:length(Cells)
+        if Cells[i] != Cells[i-1] # Equivalent to diff(Cells) != 0
+            ParticleSplitter[i] = true
+        end
+    end
 
     # # Passing the view is fine, since it is not needed to actualize the vector
     @views ParticleRanges     = ParticleSplitterLinearIndices[ParticleSplitter]
@@ -428,7 +434,7 @@ function RunSimulation(;FluidCSV::String,
     OutputIterationCounter = 0
     @inbounds while true
 
-        SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, SortedIndices, ParticleSplitter, ParticleSplitterLinearIndices, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoundaryBool)
+        @time SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, SortedIndices, ParticleSplitter, ParticleSplitterLinearIndices, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoundaryBool)
 
         OutputCounter += SimMetaData.CurrentTimeStep
         if OutputCounter >= SimMetaData.OutputEach
@@ -457,7 +463,7 @@ FloatType  = Float64
 SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
     SimulationName="Test", 
     SaveLocation="E:/SecondApproach/TESTING_CPU",
-    SimulationTime=0.1,
+    SimulationTime=0.5,
     OutputEach=0.01,
 )
 
