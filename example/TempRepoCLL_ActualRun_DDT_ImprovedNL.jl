@@ -250,7 +250,7 @@ function SimulationLoop(SimConstants, Cells, Stencil, SortedIndices, ParticleSpl
     NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI)
 
     @inbounds for i in eachindex(Position)
-        dvdtI[i]        +=  ConstructGravitySVector(dvdtI[i], g * GravityFactor[i])
+        dvdtI[i]        +=  ConstructGravitySVector(dvdtI[i], SimConstants.g * GravityFactor[i])
         Velocityₙ⁺[i]    =  Velocity[i]   + dvdtI[i]  *  dt₂ * MotionLimiter[i]
         Positionₙ⁺[i]    =  Position[i]   + Velocityₙ⁺[i]   * dt₂  * MotionLimiter[i]
         ρₙ⁺[i]           =  Density[i]    + dρdtI[i]       *  dt₂
@@ -267,9 +267,9 @@ function SimulationLoop(SimConstants, Cells, Stencil, SortedIndices, ParticleSpl
     LimitDensityAtBoundary!(Density,BoundaryBool, SimConstants.ρ₀)
 
     @inbounds for i in eachindex(Position)
-        dvdtI[i]       +=  ConstructGravitySVector(dvdtI[i], g * GravityFactor[i])
+        dvdtI[i]       +=  ConstructGravitySVector(dvdtI[i], SimConstants.g * GravityFactor[i])
         Velocity[i]     +=  dvdtI[i] * dt * MotionLimiter[i]
-        Position[i]     += (((Velocity[i] + (Velocity[i] - SVector(dvdtIX[i],dvdtIY[i]) * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
+        Position[i]     += (((Velocity[i] + (Velocity[i] - dvdtI[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
     end
 
     SimMetaData.Iteration      += 1
