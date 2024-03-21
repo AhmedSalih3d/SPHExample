@@ -181,7 +181,7 @@ end
 
 ###=== Function to update ordering
 #https://cuda.juliagpu.org/stable/tutorials/performance/
-function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Acceleration, Velocity, ParticleSplitter, ParticleSplitterLinearIndices)
+function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, BoundaryBool, ParticleSplitter, ParticleSplitterLinearIndices)
     ExtractCells!(Cells,Position,CutOff)
 
     sortperm!(SortedIndices,Cells)
@@ -197,6 +197,9 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
     update_arr1_bumper!(Density, SortedIndices)
     update_arr1_bumper!(Acceleration, SortedIndices)
     update_arr1_bumper!(Velocity, SortedIndices)    
+    update_arr1_bumper!(GravityFactor, SortedIndices)    
+    update_arr1_bumper!(MotionLimiter, SortedIndices)    
+    update_arr1_bumper!(BoundaryBool, SortedIndices)    
 
     ParticleSplitter[findall(.!iszero.(diff(Cells))) .+ 1] .= true
 
@@ -243,7 +246,7 @@ function SimulationLoop(SimConstants, Cells, Stencil, SortedIndices, ParticleSpl
     dt  = 1e-5
     dt₂ = dt * 0.5
 
-    ParticleRanges,UniqueCells     = UpdateNeighbors!(Cells, SimConstants.H, SortedIndices, Position, Density, Acceleration, Velocity, ParticleSplitter, ParticleSplitterLinearIndices)
+    ParticleRanges,UniqueCells     = UpdateNeighbors!(Cells, SimConstants.H, SortedIndices, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, BoundaryBool, ParticleSplitter, ParticleSplitterLinearIndices)
     
     ResetArrays!(Kernel, KernelGradient, dρdtI, dvdtI)
 
