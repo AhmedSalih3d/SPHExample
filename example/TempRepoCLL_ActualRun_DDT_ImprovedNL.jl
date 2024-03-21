@@ -333,16 +333,10 @@ function RunSimulation(;FluidCSV::String,
     Acceleration    = similar(Position)
     Velocity        = similar(Position)
     Kernel          = similar(Density)
-    KernelGradientX = zeros(length(Density))
-    KernelGradientY = zeros(length(Density))
-
     KernelGradient  = similar(Position)
 
     dρdtI           = similar(Density)
 
-
-    dvdtIX = zeros(length(Density))
-    dvdtIY = zeros(length(Density))
     dvdtI  = similar(Position)
 
     Velocityₙ⁺        = similar(Position)
@@ -365,7 +359,7 @@ function RunSimulation(;FluidCSV::String,
     Stencil         = ConstructStencil(Val(Dimensions))
 
     # Ensure zero, similar does not!
-    ResetArrays!(Acceleration, Velocity, Kernel, KernelGradient, KernelGradientX, KernelGradientY, Cells, SortedIndices, dρdtI, dvdtIX, dvdtIY, dvdtI, Positionₙ⁺, Velocityₙ⁺)
+    ResetArrays!(Acceleration, Velocity, Kernel, KernelGradient, Cells, SortedIndices, dρdtI, dvdtI, Positionₙ⁺, Velocityₙ⁺)
 
     # Normal run and save data
     generate_showvalues(Iteration, TotalTime) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime))]
