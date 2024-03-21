@@ -377,6 +377,8 @@ function RunSimulation(;FluidCSV::String,
     OutputIterationCounter = 0
     @inbounds while true
         SimulationLoop(SimConstants, Cells, Stencil, SortedIndices, ParticleSplitter, ParticleSplitterLinearIndices, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, Acceleration, dρdtI, dvdtIX, dvdtIY, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoundaryBool)
+        
+        OutputCounter += SimMetaData.CurrentTimeStep
         if OutputCounter >= SimMetaData.OutputEach
             OutputCounter = 0.0
             OutputIterationCounter += 1
@@ -393,6 +395,9 @@ function RunSimulation(;FluidCSV::String,
         end
     end
 end
+
+to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
+
 
 Dimensions = 2
 FloatType  = Float64
