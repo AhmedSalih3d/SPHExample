@@ -14,6 +14,23 @@ using Bumper
 import Base.Threads: nthreads, @threads
 include("../src/ProduceVTP.jl")
 
+#https://discourse.julialang.org/t/can-this-be-written-even-faster-cpu/109924/28
+@inline function fancy7th(x)
+    # todo tune the magic constant
+    # initial guess based on fast inverse sqrt trick but adjusted to compute x^(1/7)
+    t = copysign(reinterpret(Float64, 0x36cd000000000000 + reinterpret(UInt64,abs(x))÷7), x)
+    @fastmath for _ in 1:2
+        # newton's method for t^3 - x/t^4 = 0
+        t2 = t*t
+        t3 = t2*t
+        t4 = t2*t2
+        xot4 = x/t4
+        t = t - t*(t3 - xot4)/(4*t3 + 3*xot4)
+    end
+    t
+end
+@inline faux_fancy(ρ₀, P, invCb) = ρ₀ * ( fancy7th( 1 + (P * invCb)) - 1)
+
 function update_arr1_bumper!(arr1,indices)
     @no_escape begin
         temp  = @alloc(eltype(arr1),length(arr1))
@@ -62,8 +79,8 @@ end
 end
 
 
-function SimStepLocalCell(SimConstants, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex)
-    @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H² = SimConstants
+function SimStepLocalCell(SimConstants, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, MotionLimiter, BoolDDT=true)
+    @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H², Cb⁻¹ = SimConstants
 
     @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
 
@@ -88,6 +105,26 @@ function SimStepLocalCell(SimConstants, Position, Kernel, KernelGradient, Densit
 
             dρdt⁺, dρdt⁻ = dρᵢdt_dρⱼdt_(ρᵢ,ρⱼ,m₀,vᵢⱼ,∇ᵢWᵢⱼ)
 
+            # Density diffusion
+            if BoolDDT
+                Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
+                ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
+                Pⱼᵢᴴ  = -Pᵢⱼᴴ
+                ρⱼᵢᴴ  = faux_fancy(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
+            
+                ρⱼᵢ   = ρⱼ - ρᵢ
+
+                MLcond = MotionLimiter[i] * MotionLimiter[j]
+                Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond
+                Dⱼ  = δᵩ * h * c₀ * (m₀/ρᵢ) * 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * invd²η² * dot( xᵢⱼ, -∇ᵢWᵢⱼ) * MLcond
+
+                dρdtI[i] += dρdt⁺ + Dᵢ
+                dρdtI[j] += dρdt⁻ + Dⱼ
+            else
+                dρdtI[i] += dρdt⁺
+                dρdtI[j] += dρdt⁻
+            end
+
             Pᵢ        =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
             Pⱼ        =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
             Pfac      = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
@@ -101,9 +138,6 @@ function SimStepLocalCell(SimConstants, Position, Kernel, KernelGradient, Densit
 
             dvdt⁺ = - m₀ * (Pfac) *  ∇ᵢWᵢⱼ + Πᵢ
             dvdt⁻ = - dvdt⁺ + Πⱼ
-
-            dρdtI[i] += dρdt⁺
-            dρdtI[j] += dρdt⁻
 
             dvdtI[i] +=  dvdt⁺
             dvdtI[j] +=  dvdt⁻
@@ -120,8 +154,8 @@ function SimStepLocalCell(SimConstants, Position, Kernel, KernelGradient, Densit
 end
 
 
-function SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_)
-    @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H² = SimConstants
+function SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_, MotionLimiter, BoolDDT=true)
+    @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H², Cb⁻¹ = SimConstants
 
     @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
 
@@ -145,6 +179,25 @@ function SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradient, Den
             vᵢⱼ       = vᵢ - vⱼ
 
             dρdt⁺, dρdt⁻ = dρᵢdt_dρⱼdt_(ρᵢ,ρⱼ,m₀,vᵢⱼ,∇ᵢWᵢⱼ)
+            # Density diffusion
+            if BoolDDT
+                Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
+                ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
+                Pⱼᵢᴴ  = -Pᵢⱼᴴ
+                ρⱼᵢᴴ  = faux_fancy(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
+            
+                ρⱼᵢ   = ρⱼ - ρᵢ
+
+                MLcond = MotionLimiter[i] * MotionLimiter[j]
+                Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond
+                Dⱼ  = δᵩ * h * c₀ * (m₀/ρᵢ) * 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * invd²η² * dot( xᵢⱼ, -∇ᵢWᵢⱼ) * MLcond
+
+                dρdtI[i] += dρdt⁺ + Dᵢ
+                dρdtI[j] += dρdt⁻ + Dⱼ
+            else
+                dρdtI[i] += dρdt⁺
+                dρdtI[j] += dρdt⁻
+            end
 
             Pᵢ        =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
             Pⱼ        =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
@@ -159,9 +212,6 @@ function SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradient, Den
 
             dvdt⁺ = - m₀ * (Pfac) *  ∇ᵢWᵢⱼ + Πᵢ
             dvdt⁻ = - dvdt⁺ + Πⱼ
-
-            dρdtI[i] += dρdt⁺
-            dρdtI[j] += dρdt⁻
 
             dvdtI[i] +=  dvdt⁺
             dvdtI[j] +=  dvdt⁻
@@ -215,14 +265,14 @@ end
 #https://cuda.juliagpu.org/stable/tutorials/performance/
 # 192 bytes and 4 allocs from launch config
 # INLINE IS SO IMPORTANT 10X SPEED
-function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI)
+function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter)
     for iter ∈ eachindex(UniqueCells)
         CellIndex = UniqueCells[iter]
 
         StartIndex = ParticleRanges[iter] 
         EndIndex   = ParticleRanges[iter+1] - 1
 
-        @inline SimStepLocalCell(SimConstants, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex)
+        @inline SimStepLocalCell(SimConstants, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, MotionLimiter)
 
         @inbounds for S ∈ Stencil
             SCellIndex = CellIndex + S
@@ -234,7 +284,7 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
                 StartIndex_       = ParticleRanges[NeighborCellIndex] 
                 EndIndex_         = ParticleRanges[NeighborCellIndex+1] - 1
 
-                @inline SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_)
+                @inline SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_, MotionLimiter)
             end
         end
     end
@@ -243,14 +293,14 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
 end
 
 function SimulationLoop(SimConstants, Cells, Stencil, SortedIndices, ParticleSplitter, ParticleSplitterLinearIndices, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoundaryBool)
-    dt  = 1e-5
+    dt  = Δt(Position, Velocity, Acceleration, SimConstants)
     dt₂ = dt * 0.5
 
     ParticleRanges,UniqueCells     = UpdateNeighbors!(Cells, SimConstants.H, SortedIndices, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, BoundaryBool, ParticleSplitter, ParticleSplitterLinearIndices)
     
     ResetArrays!(Kernel, KernelGradient, dρdtI, dvdtI)
 
-    NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI)
+    NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter)
 
     @inbounds for i in eachindex(Position)
         dvdtI[i]        +=  ConstructGravitySVector(dvdtI[i], SimConstants.g * GravityFactor[i])
@@ -263,9 +313,9 @@ function SimulationLoop(SimConstants, Cells, Stencil, SortedIndices, ParticleSpl
 
     ResetArrays!(Kernel, KernelGradient, dρdtI, dρdtIₙ⁺, Acceleration)
 
-    NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, Acceleration)
+    NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, Acceleration, MotionLimiter)
 
-    DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
+    DensityEpsi!(Density, dρdtIₙ⁺, ρₙ⁺, dt)
 
     LimitDensityAtBoundary!(Density,BoundaryBool, SimConstants.ρ₀)
 
@@ -401,7 +451,7 @@ FloatType  = Float64
 SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
     SimulationName="Test", 
     SaveLocation="E:/SecondApproach/TESTING_CPU",
-    SimulationTime=0.1,
+    SimulationTime=2,
     OutputEach=0.01,
 )
 
