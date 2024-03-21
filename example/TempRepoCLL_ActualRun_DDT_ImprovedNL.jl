@@ -444,21 +444,23 @@ end
 to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
 
 
-Dimensions = 2
-FloatType  = Float64
+let
+    Dimensions = 2
+    FloatType  = Float64
 
-SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
-    SimulationName="Test", 
-    SaveLocation="E:/SecondApproach/TESTING_CPU",
-    SimulationTime=4,
-    OutputEach=0.01,
-)
+    SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
+        SimulationName="Test", 
+        SaveLocation="E:/SecondApproach/TESTING_CPU",
+        SimulationTime=4,
+        OutputEach=0.01,
+    )
 
-SimConstantsWedge = SimulationConstants{FloatType}(c₀=42.48576250492629)
+    SimConstantsWedge = SimulationConstants{FloatType}(c₀=42.48576250492629)
 
-@time @profview RunSimulation(
-    FluidCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Fluid.csv",
-    BoundCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Bound.csv",
-    SimMetaData  = SimMetaData,
-    SimConstants = SimConstantsWedge
-)
+    @time @profview RunSimulation(
+        FluidCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Fluid.csv",
+        BoundCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Bound.csv",
+        SimMetaData  = SimMetaData,
+        SimConstants = SimConstantsWedge
+    )
+end
