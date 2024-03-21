@@ -7,6 +7,8 @@ import LinearAlgebra: dot, norm, diagm, diag, cond, det
 using LoopVectorization
 using FastPow
 import CellListMap: InPlaceNeighborList, update!, neighborlist!
+import ProgressMeter: next!
+using Formatting
 using Bumper
 
 import Base.Threads: nthreads, @threads
@@ -245,68 +247,168 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
     return nothing
 end
 
+function SimulationLoop(SimConstants, Cells, Stencil, SortedIndices, ParticleSplitter, ParticleSplitterLinearIndices, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, Acceleration, dρdtI, dvdtIX, dvdtIY, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoundaryBool)
+    dt  = 1e-5
+    dt₂ = dt * 0.5
+
+    ParticleRanges,UniqueCells     = UpdateNeighbors!(Cells, SimConstants.H, SortedIndices, Position, Density, Acceleration, Velocity, ParticleSplitter, ParticleSplitterLinearIndices)
+    
+    ResetArrays!(Kernel, KernelGradientX, KernelGradientY, dρdtI, dvdtIX, dvdtIY)
+
+    NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtIX, dvdtIY)
+
+    @inbounds for i in eachindex(Position)
+        dvdtIY[i]       +=  SimConstants.g * GravityFactor[i]
+        Velocityₙ⁺[i]    =  Velocity[i]   + SVector(dvdtIX[i],dvdtIY[i])  *  dt₂ * MotionLimiter[i]
+        Positionₙ⁺[i]    =  Position[i]   + Velocityₙ⁺[i]   * dt₂  * MotionLimiter[i]
+        ρₙ⁺[i]           =  Density[i]    + dρdtI[i]       *  dt₂
+    end
+
+    LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool, SimConstants.ρ₀)
+
+    ResetArrays!(Kernel, KernelGradientX, KernelGradientY, dρdtI, dρdtIₙ⁺, dvdtIX, dvdtIY)
+
+    NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradientX, KernelGradientY, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, dvdtIX, dvdtIY)
+
+    DensityEpsi!(Density,dρdtIₙ⁺,ρₙ⁺,dt)
+
+    LimitDensityAtBoundary!(Density,BoundaryBool, SimConstants.ρ₀)
+
+    @inbounds for i in eachindex(Position)
+        dvdtIY[i]       +=  SimConstants.g * GravityFactor[i]
+        Velocity[i]     +=  SVector(dvdtIX[i],dvdtIY[i]) * dt * MotionLimiter[i]
+        Position[i]     += (((Velocity[i] + (Velocity[i] - SVector(dvdtIX[i],dvdtIY[i]) * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
+    end
+
+    SimMetaData.Iteration      += 1
+    SimMetaData.CurrentTimeStep = dt
+    SimMetaData.TotalTime      += dt
+end
+
 ###===
 
-Dimensions = 2
-FloatType  = Float64
-FluidCSV   = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Fluid.csv"
-BoundCSV   = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Bound.csv"
+# Dimensions = 2
+# FloatType  = Float64
+# FluidCSV   = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Fluid.csv"
+# BoundCSV   = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Bound.csv"
 
-# Unpack the relevant simulation meta data
-# @unpack HourGlass, SaveLocation, SimulationName, SilentOutput, ThreadsCPU = SimMetaData;
+# KernelGradient = [KernelGradientX'; KernelGradientY']
+# to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
+# create_vtp_file(SimMetaData, SimConstantsWedge, to_3d(Position); Kernel, KernelGradient)
 
-# Unpack simulation constants
-SimConstantsWedge = SimulationConstants{FloatType}(c₀=42.48576250492629)
-@unpack ρ₀, dx, h, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H = SimConstantsWedge
-
-# Load in the fluid and boundary particles. Return these points and both data frames
-# @inline is a hack here to remove all allocations further down due to uncertainty of the points type at compile time
-@inline points, density_fluid, density_bound  = LoadParticlesFromCSV(Dimensions,FloatType, FluidCSV,BoundCSV)
-Position = convert(Vector{SVector{Dimensions,FloatType}},points.V)
-Density  = deepcopy([density_bound; density_fluid])
-
-Acceleration    = similar(Position)
-Velocity        = similar(Position)
-Kernel          = similar(Density)
-KernelGradientX = zeros(length(Density))
-KernelGradientY = zeros(length(Density))
-
-dρdtI           = similar(Density)
-
-dvdtIX = zeros(length(Density))
-dvdtIY = zeros(length(Density))
-
-Cells                                   = similar(Position, CartesianIndex{Dimensions})
-DiffCells                               = zeros(CartesianIndex{Dimensions},length(Cells)-1)
-ParticleSplitter                        = zeros(Bool, length(Cells) + 1)
-# ParticleRanges  = CUDA.zeros(Int,length(cuCells)+1) #+1 last cell to include as well, first cell is included in directly due to use of diff which reduces number of elements by 1!
-ParticleSplitter[1]   = true
-ParticleSplitter[end] = true #Have to add 1 even though it is wrong due to -1 at EndIndex, length + 1
-
-ParticleSplitterLinearIndices = LinearIndices(ParticleSplitter)
-
-SortedIndices   = similar(Cells, Int)
-
-Stencil         = ConstructStencil(Val(Dimensions))
-
-# Ensure zero, similar does not!
-ResetArrays!(Acceleration, Velocity, Kernel, KernelGradientX, KernelGradientY, Cells, SortedIndices, dρdtI, dvdtIX, dvdtIY)
-
-
-
-# Normal run and save data
-ParticleRanges, UniqueCells = UpdateNeighbors!(Cells, H, SortedIndices, Position, Density, Acceleration, Velocity, ParticleSplitter, ParticleSplitterLinearIndices)  
-NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtIX, dvdtIY)
-SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
-    SimulationName="Test", 
-    SaveLocation="E:/SecondApproach/TESTING_CPU",
-)
-KernelGradient = [KernelGradientX'; KernelGradientY']
-to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
-create_vtp_file(SimMetaData, SimConstantsWedge, to_3d(Position); Kernel, KernelGradient)
-
-display(@benchmark ParticleRanges,UniqueCells     = UpdateNeighbors!($Cells, $H, $SortedIndices, $Position, $Density, $Acceleration, $Velocity, $ParticleSplitter, $ParticleSplitterLinearIndices))
-display(@benchmark NeighborLoop!($SimConstantsWedge, $UniqueCells, $ParticleRanges, $Stencil, $Position, $Kernel, $KernelGradientX, $KernelGradientY, $Density, $Velocity, $dρdtI, $dvdtIX, $dvdtIY))
+# display(@benchmark ParticleRanges,UniqueCells     = UpdateNeighbors!($Cells, $H, $SortedIndices, $Position, $Density, $Acceleration, $Velocity, $ParticleSplitter, $ParticleSplitterLinearIndices))
+# display(@benchmark NeighborLoop!($SimConstantsWedge, $UniqueCells, $ParticleRanges, $Stencil, $Position, $Kernel, $KernelGradientX, $KernelGradientY, $Density, $Velocity, $dρdtI, $dvdtIX, $dvdtIY))
 
 # @profview ParticleRanges,UniqueCells     = UpdateNeighbors!(Cells, H, SortedIndices, Position, Density, Acceleration, Velocity, ParticleSplitter, ParticleSplitterLinearIndices)
 # @profview NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, dρdtI, dvdtIX, dvdtIY)
+
+function RunSimulation(;FluidCSV::String,
+    BoundCSV::String,
+    SimMetaData::SimulationMetaData{Dimensions, FloatType},
+    SimConstants::SimulationConstants,
+    ViscosityTreatment = :LaminarSPS,
+    BoolDDT = true,
+    BoolShifting = true
+    ) where {Dimensions,FloatType}
+
+    if !isdir(SimMetaData.SaveLocation)
+        mkdir(SimMetaData.SaveLocation)
+    end
+    
+    foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
+
+    # Unpack the relevant simulation meta data
+    @unpack HourGlass, SaveLocation, SimulationName, SilentOutput, ThreadsCPU = SimMetaData;
+
+    # Unpack simulation constants
+    @unpack ρ₀, dx, h, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H = SimConstants
+
+    # Load in the fluid and boundary particles. Return these points and both data frames
+    # @inline is a hack here to remove all allocations further down due to uncertainty of the points type at compile time
+    @inline points, density_fluid, density_bound  = LoadParticlesFromCSV(Dimensions,FloatType, FluidCSV,BoundCSV)
+    NumberOfPoints = length(points)
+    Position = convert(Vector{SVector{Dimensions,FloatType}},points.V)
+    Density  = deepcopy([density_bound; density_fluid])
+
+    
+
+    GravityFactor = [ zeros(size(density_bound,1)) ; -ones(size(density_fluid,1)) ]
+    
+    MotionLimiter = [ zeros(size(density_bound,1)) ;  ones(size(density_fluid,1)) ]
+
+    BoundaryBool  = .!Bool.(MotionLimiter)
+
+    Acceleration    = similar(Position)
+    Velocity        = similar(Position)
+    Kernel          = similar(Density)
+    KernelGradientX = zeros(length(Density))
+    KernelGradientY = zeros(length(Density))
+
+    dρdtI           = similar(Density)
+
+    dvdtIX = zeros(length(Density))
+    dvdtIY = zeros(length(Density))
+
+    Velocityₙ⁺        = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
+    Positionₙ⁺        = zeros(SVector{Dimensions,FloatType},NumberOfPoints)
+    ρₙ⁺               = zeros(FloatType, NumberOfPoints)
+    dρdtIₙ⁺           = zeros(FloatType, NumberOfPoints)
+
+    Pressureᵢ        = zeros(FloatType, NumberOfPoints)
+
+    Cells                                   = similar(Position, CartesianIndex{Dimensions})
+    ParticleSplitter                        = zeros(Bool, length(Cells) + 1)
+    # ParticleRanges  = CUDA.zeros(Int,length(cuCells)+1) #+1 last cell to include as well, first cell is included in directly due to use of diff which reduces number of elements by 1!
+    ParticleSplitter[1]   = true
+    ParticleSplitter[end] = true #Have to add 1 even though it is wrong due to -1 at EndIndex, length + 1
+
+    ParticleSplitterLinearIndices = LinearIndices(ParticleSplitter)
+
+    SortedIndices   = similar(Cells, Int)
+
+    Stencil         = ConstructStencil(Val(Dimensions))
+
+    # Ensure zero, similar does not!
+    ResetArrays!(Acceleration, Velocity, Kernel, KernelGradientX, KernelGradientY, Cells, SortedIndices, dρdtI, dvdtIX, dvdtIY)
+
+    # Normal run and save data
+    generate_showvalues(Iteration, TotalTime) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime))]
+    OutputCounter = 0.0
+    OutputIterationCounter = 0
+    @inbounds while true
+        SimulationLoop(SimConstants, Cells, Stencil, SortedIndices, ParticleSplitter, ParticleSplitterLinearIndices, Position, Kernel, KernelGradientX, KernelGradientY, Density, Velocity, Acceleration, dρdtI, dvdtIX, dvdtIY, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoundaryBool)
+        if OutputCounter >= SimMetaData.OutputEach
+            OutputCounter = 0.0
+            OutputIterationCounter += 1
+
+            SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp"
+            Pressure!(Pressureᵢ,Density,SimConstants)
+            PolyDataTemplate(SaveLocation_, to_3d(Position), ["Kernel", "Density", "Pressure","Velocity", "Acceleration"], Kernel, Density, Pressureᵢ, Velocity, Acceleration)
+        end
+
+        next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
+
+        if SimMetaData.TotalTime >= SimMetaData.SimulationTime + 1e-3
+            break
+        end
+    end
+end
+
+Dimensions = 2
+FloatType  = Float64
+
+SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
+    SimulationName="Test", 
+    SaveLocation="E:/SecondApproach/TESTING_CPU",
+    SimulationTime=0.1,
+    OutputEach=0.01,
+)
+
+SimConstantsWedge = SimulationConstants{FloatType}(c₀=42.48576250492629)
+
+@time @profview RunSimulation(
+    FluidCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Fluid.csv",
+    BoundCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Bound.csv",
+    SimMetaData  = SimMetaData,
+    SimConstants = SimConstantsWedge
+)
