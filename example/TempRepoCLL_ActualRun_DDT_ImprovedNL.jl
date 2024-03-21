@@ -192,15 +192,21 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
 
     sortperm!(SortedIndices,Cells)
 
-    @. Cells           =  Cells[SortedIndices]
-    @. Position        =  Position[SortedIndices]
-    @. Density         =  Density[SortedIndices]
-    @. Acceleration    =  Acceleration[SortedIndices]
-    @. Velocity        =  Velocity[SortedIndices]
+    # @. Cells           =  Cells[SortedIndices]
+    # @. Position        =  Position[SortedIndices]
+    # @. Density         =  Density[SortedIndices]
+    # @. Acceleration    =  Acceleration[SortedIndices]
+    # @. Velocity        =  Velocity[SortedIndices]
+
+    update_arr1_bumper!(Cells, SortedIndices)
+    update_arr1_bumper!(Position, SortedIndices)
+    update_arr1_bumper!(Density, SortedIndices)
+    update_arr1_bumper!(Acceleration, SortedIndices)
+    update_arr1_bumper!(Velocity, SortedIndices)    
 
     ParticleSplitter[findall(.!iszero.(diff(Cells))) .+ 1] .= true
 
-    # Passing the view is fine, since it is not needed to actualize the vector
+    # # Passing the view is fine, since it is not needed to actualize the vector
     @views ParticleRanges     = ParticleSplitterLinearIndices[ParticleSplitter]
     @views UniqueCells        = Cells[ParticleRanges[1:end-1]]
 
