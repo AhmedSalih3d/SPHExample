@@ -11,6 +11,14 @@ import ProgressMeter: next!
 using Formatting
 using Bumper
 
+function SPHExample.LimitDensityAtBoundary!(Density,ρ₀, MotionLimiter)
+    for i in eachindex(Density)
+        if (Density[i] < ρ₀) * !Bool(MotionLimiter[i])
+            Density[i] = ρ₀
+        end
+    end
+end
+
 import Base.Threads: nthreads, @threads
 include("../src/ProduceVTP.jl")
 
@@ -231,7 +239,7 @@ end
 
 ###=== Function to update ordering
 #https://cuda.juliagpu.org/stable/tutorials/performance/
-function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, BoundaryBool, ParticleSplitter, ParticleSplitterLinearIndices)
+function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleSplitter, ParticleSplitterLinearIndices)
     ParticleSplitter     .= false
     ParticleSplitter[1]   = true
     ParticleSplitter[end] = true
@@ -256,7 +264,7 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
     update_arr1_bumper!(Velocity, SortedIndices)    
     update_arr1_bumper!(GravityFactor, SortedIndices)    
     update_arr1_bumper!(MotionLimiter, SortedIndices)    
-    update_arr1_bumper!(BoundaryBool, SortedIndices)    
+    # update_arr1_bumper!(BoundaryBool, SortedIndices)    
 
     # These two are equivalent lol
     # @time ParticleSplitter[findall(.!iszero.(diff(Cells))) .+ 1] .= true
@@ -309,7 +317,7 @@ function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, SortedIndices
     dt  = Δt(Position, Velocity, Acceleration, SimConstants)
     dt₂ = dt * 0.5
 
-    ParticleRanges,UniqueCells     = UpdateNeighbors!(Cells, SimConstants.H, SortedIndices, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, BoundaryBool, ParticleSplitter, ParticleSplitterLinearIndices)
+    ParticleRanges,UniqueCells     = UpdateNeighbors!(Cells, SimConstants.H, SortedIndices, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleSplitter, ParticleSplitterLinearIndices)
     
     ResetArrays!(Kernel, KernelGradient, dρdtI, dvdtI)
 
@@ -322,7 +330,7 @@ function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, SortedIndices
         ρₙ⁺[i]           =  Density[i]    + dρdtI[i]       *  dt₂
     end
 
-    LimitDensityAtBoundary!(ρₙ⁺,BoundaryBool, SimConstants.ρ₀)
+    LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
 
     ResetArrays!(Kernel, KernelGradient, dρdtI, dρdtIₙ⁺, Acceleration)
 
@@ -330,7 +338,7 @@ function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, SortedIndices
 
     DensityEpsi!(Density, dρdtIₙ⁺, ρₙ⁺, dt)
 
-    LimitDensityAtBoundary!(Density,BoundaryBool, SimConstants.ρ₀)
+    LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
 
     @inbounds for i in eachindex(Position)
         Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
