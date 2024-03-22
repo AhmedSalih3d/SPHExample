@@ -317,7 +317,10 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
         @inline SimStepLocalCell(SimConstants, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex2, EndIndex2, MotionLimiter, ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H², Cb⁻¹)
 
         @inbounds for S ∈ Stencil
-            SCellIndex = CellIndex + S
+            SCellIndex  = CellIndex  + S
+            SCellIndex2 = CellIndex2 + S
+
+            # println(SCellIndex, " | ", SCellIndex2)
 
             # Returns a range, x:x for exact match and x:(x-1) for no match
             # utilizes that it is a sorted array and requires no isequal constructor,
