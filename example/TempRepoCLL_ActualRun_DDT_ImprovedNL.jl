@@ -386,18 +386,18 @@ function RunSimulation(;FluidCSV::String,
     Kernel          = similar(Density)
     KernelGradient  = similar(Position)
 
-    dρdtI           = similar(Density)
+    dρdtI  = similar(Density)
 
     dvdtI  = similar(Position)
 
-    Velocityₙ⁺        = similar(Position)
-    Positionₙ⁺        = similar(Position)
-    ρₙ⁺               = zeros(FloatType, NumberOfPoints)
-    dρdtIₙ⁺           = zeros(FloatType, NumberOfPoints)
+    Velocityₙ⁺ = similar(Position)
+    Positionₙ⁺ = similar(Position)
+    ρₙ⁺        = zeros(FloatType, NumberOfPoints)
+    dρdtIₙ⁺    = zeros(FloatType, NumberOfPoints)
 
-    Pressureᵢ        = zeros(FloatType, NumberOfPoints)
+    Pressureᵢ  = zeros(FloatType, NumberOfPoints)
 
-    Cells           = similar(Position, CartesianIndex{Dimensions})
+    Cells      = similar(Position, CartesianIndex{Dimensions})
 
     ParticleRanges  = zeros(Int, length(Cells) + 1)
     UniqueCells     = zeros(CartesianIndex{Dimensions}, length(Cells))
@@ -417,7 +417,7 @@ function RunSimulation(;FluidCSV::String,
     generate_showvalues(Iteration, TotalTime) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime))]
     OutputCounter = 0.0
     OutputIterationCounter = 0
-    @inbounds while true
+    @time @inbounds while true
 
         @timeit HourGlass "1 SimulationLoop" SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, ParticleRanges, UniqueCells, SortedIndices, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter)
 
@@ -428,9 +428,9 @@ function RunSimulation(;FluidCSV::String,
 
             SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp"
             Pressure!(Pressureᵢ,Density,SimConstants)
-            @timeit HourGlass "2 Output Data"  PolyDataTemplate(SaveLocation_, to_3d(Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, Density, Pressureᵢ, Velocity, Acceleration)
+            # @timeit HourGlass "2 Output Data"  PolyDataTemplate(SaveLocation_, to_3d(Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, Density, Pressureᵢ, Velocity, Acceleration)
         end
-        @timeit HourGlass "3 Next TimeStep"  next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
+        # @timeit HourGlass "3 Next TimeStep"  next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
 
         if SimMetaData.TotalTime >= SimMetaData.SimulationTime + 1e-3
             break
@@ -455,7 +455,7 @@ let
 
     SimConstantsWedge = SimulationConstants{FloatType}(c₀=42.48576250492629)
 
-    @time @profview RunSimulation(
+    @profview RunSimulation(
         FluidCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Fluid.csv",
         BoundCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Bound.csv",
         SimMetaData  = SimMetaData,
