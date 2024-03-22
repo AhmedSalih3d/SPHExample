@@ -296,15 +296,25 @@ end
 #https://cuda.juliagpu.org/stable/tutorials/performance/
 # 192 bytes and 4 allocs from launch config
 # INLINE IS SO IMPORTANT 10X SPEED
-function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, ParticleRanges2)
+function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, ParticleRanges2, Cells)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H², Cb⁻¹ = SimConstants
+    c = 1
     for iter ∈ eachindex(UniqueCells)
         CellIndex = UniqueCells[iter]
 
-        StartIndex = ParticleRanges[iter] 
-        EndIndex   = ParticleRanges[iter+1] - 1
+        CellIndex2_ = findnext(!iszero, ParticleRanges2, c)
+        CellIndex2  = Cells[CellIndex2_]
 
-        @inline SimStepLocalCell(SimConstants, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, MotionLimiter, ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H², Cb⁻¹)
+        # println(CellIndex, " | " , CellIndex2)
+
+        StartIndex  = ParticleRanges[iter]
+        StartIndex2 = ParticleRanges2[CellIndex2_]
+        # println(StartIndex, " | ", StartIndex2)
+        EndIndex    = ParticleRanges[iter+1] - 1
+        EndIndex2   = ParticleRanges2[findnext(!iszero, ParticleRanges2, CellIndex2_ + 1)] - 1
+        # println(EndIndex, " | ", EndIndex2)
+
+        @inline SimStepLocalCell(SimConstants, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex2, EndIndex2, MotionLimiter, ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H², Cb⁻¹)
 
         @inbounds for S ∈ Stencil
             SCellIndex = CellIndex + S
@@ -321,6 +331,8 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
                 @inline SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_, MotionLimiter, ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H², Cb⁻¹)
             end
         end
+
+        c = CellIndex2_ + 1
     end
 
     return nothing
@@ -334,7 +346,7 @@ function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, SortedIndices
     
     ResetArrays!(Kernel, KernelGradient, dρdtI, dvdtI)
 
-    NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, ParticleRanges2)
+    NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, ParticleRanges2, Cells)
 
     @inbounds for i in eachindex(Position)
         dvdtI[i]        +=  ConstructGravitySVector(dvdtI[i], SimConstants.g * GravityFactor[i])
@@ -347,7 +359,7 @@ function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, SortedIndices
 
     ResetArrays!(Kernel, KernelGradient, dρdtI, dρdtIₙ⁺, Acceleration)
 
-    NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, Acceleration, MotionLimiter, ParticleRanges2)
+    NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, Acceleration, MotionLimiter, ParticleRanges2, Cells)
 
     DensityEpsi!(Density, dρdtIₙ⁺, ρₙ⁺, dt)
 
