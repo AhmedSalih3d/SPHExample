@@ -298,13 +298,15 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
 
         @inbounds for S ∈ Stencil
             SCellIndex = CellIndex + S
-    
-            Needle            = isequal(SCellIndex)
-            NeighborCellIndex = findfirst(Needle, UniqueCells)
 
-            if !isnothing(NeighborCellIndex)
-                StartIndex_       = ParticleRanges[NeighborCellIndex] 
-                EndIndex_         = ParticleRanges[NeighborCellIndex+1] - 1
+            # Returns a range, x:x for exact match and x:(x-1) for no match
+            # utilizes that it is a sorted array and requires no isequal constructor,
+            # so I prefer this for now
+            NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
+
+            if length(NeighborCellIndex) != 0
+                StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
+                EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
 
                 @inline SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_, MotionLimiter)
             end
@@ -461,7 +463,7 @@ let
     SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=0.1,
+        SimulationTime=1,
         OutputEach=0.01,
     )
 
