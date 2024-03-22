@@ -249,6 +249,10 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
     ParticleSplitter     .= false
     ParticleSplitter[1]   = true
     ParticleSplitter[end] = true
+
+    ParticleRanges2      .= 0
+    ParticleRanges2[1]    = 1
+    ParticleRanges2[end]  = length(ParticleRanges2)
     
     ExtractCells!(Cells,Position,CutOff)
 
@@ -276,6 +280,7 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
     for i in 2:length(Cells)
         if Cells[i] != Cells[i-1] # Equivalent to diff(Cells) != 0
             ParticleSplitter[i] = true
+            ParticleRanges2[i]  = i
         end
     end
 
@@ -291,7 +296,7 @@ end
 #https://cuda.juliagpu.org/stable/tutorials/performance/
 # 192 bytes and 4 allocs from launch config
 # INLINE IS SO IMPORTANT 10X SPEED
-function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter)
+function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, ParticleRanges2)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H², Cb⁻¹ = SimConstants
     for iter ∈ eachindex(UniqueCells)
         CellIndex = UniqueCells[iter]
@@ -329,7 +334,7 @@ function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, SortedIndices
     
     ResetArrays!(Kernel, KernelGradient, dρdtI, dvdtI)
 
-    NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter)
+    NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, ParticleRanges2)
 
     @inbounds for i in eachindex(Position)
         dvdtI[i]        +=  ConstructGravitySVector(dvdtI[i], SimConstants.g * GravityFactor[i])
@@ -342,7 +347,7 @@ function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, SortedIndices
 
     ResetArrays!(Kernel, KernelGradient, dρdtI, dρdtIₙ⁺, Acceleration)
 
-    NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, Acceleration, MotionLimiter)
+    NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, Acceleration, MotionLimiter, ParticleRanges2)
 
     DensityEpsi!(Density, dρdtIₙ⁺, ρₙ⁺, dt)
 
