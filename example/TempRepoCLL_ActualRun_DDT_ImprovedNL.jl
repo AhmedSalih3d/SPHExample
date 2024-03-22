@@ -11,6 +11,7 @@ import ProgressMeter: next!
 using Formatting
 using Bumper
 using TimerOutputs
+using Distances
 
 function SPHExample.LimitDensityAtBoundary!(Density,ρ₀, MotionLimiter)
     for i in eachindex(Density)
@@ -93,7 +94,8 @@ function SimStepLocalCell(SimConstants, Position, Kernel, KernelGradient, Densit
     @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
 
         xᵢⱼ  = Position[i] - Position[j]
-        xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)
+        # xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)
+        xᵢⱼ² = evaluate(SqEuclidean(), Position[i], Position[j])
 
         if  xᵢⱼ² <= H²
             dᵢⱼ  = sqrt(xᵢⱼ²) #Using sqrt is what takes a lot of time?
@@ -167,7 +169,8 @@ function SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradient, Den
     @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
 
         xᵢⱼ  = Position[i] - Position[j]
-        xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)
+        # xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)
+        xᵢⱼ² = evaluate(SqEuclidean(), Position[i], Position[j])
 
         if  xᵢⱼ² <= H²
             dᵢⱼ  = sqrt(xᵢⱼ²) #Using sqrt is what takes a lot of time?
