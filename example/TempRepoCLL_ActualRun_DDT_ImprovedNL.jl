@@ -98,7 +98,7 @@ function SimStepLocalCell(SimConstants, Position, Kernel, KernelGradient, Densit
         if  xᵢⱼ² <= H²
             dᵢⱼ  = sqrt(xᵢⱼ²) #Using sqrt is what takes a lot of time?
             q    = clamp(dᵢⱼ * h⁻¹,0.0,2.0)
-            Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
+            # Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
 
             invd²η² = inv(dᵢⱼ*dᵢⱼ+η²)
 
@@ -123,8 +123,9 @@ function SimStepLocalCell(SimConstants, Position, Kernel, KernelGradient, Densit
                 ρⱼᵢ   = ρⱼ - ρᵢ
 
                 MLcond = MotionLimiter[i] * MotionLimiter[j]
-                Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond
-                Dⱼ  = δᵩ * h * c₀ * (m₀/ρᵢ) * 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * invd²η² * dot( xᵢⱼ, -∇ᵢWᵢⱼ) * MLcond
+                ddt_symmetric_term =  δᵩ * h * c₀ * 2 * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond #  dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) =  dot( xᵢⱼ, -∇ᵢWᵢⱼ)
+                Dᵢ  = ddt_symmetric_term * (m₀/ρⱼ) * ( ρⱼᵢ - ρᵢⱼᴴ)
+                Dⱼ  = ddt_symmetric_term * (m₀/ρᵢ) * (-ρⱼᵢ - ρⱼᵢᴴ)
 
                 dρdtI[i] += dρdt⁺ + Dᵢ
                 dρdtI[j] += dρdt⁻ + Dⱼ
@@ -171,7 +172,7 @@ function SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradient, Den
         if  xᵢⱼ² <= H²
             dᵢⱼ  = sqrt(xᵢⱼ²) #Using sqrt is what takes a lot of time?
             q    = clamp(dᵢⱼ * h⁻¹,0.0,2.0)
-            Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
+            # Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
 
             invd²η² = inv(dᵢⱼ*dᵢⱼ+η²)
 
@@ -194,9 +195,13 @@ function SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradient, Den
             
                 ρⱼᵢ   = ρⱼ - ρᵢ
 
+                # Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond
+                # Dⱼ  = δᵩ * h * c₀ * (m₀/ρᵢ) * 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * invd²η² * dot( xᵢⱼ, -∇ᵢWᵢⱼ) * MLcond
                 MLcond = MotionLimiter[i] * MotionLimiter[j]
-                Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond
-                Dⱼ  = δᵩ * h * c₀ * (m₀/ρᵢ) * 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * invd²η² * dot( xᵢⱼ, -∇ᵢWᵢⱼ) * MLcond
+                ddt_symmetric_term =  δᵩ * h * c₀ * 2 * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond #  dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) =  dot( xᵢⱼ, -∇ᵢWᵢⱼ)
+                Dᵢ  = ddt_symmetric_term * (m₀/ρⱼ) * ( ρⱼᵢ - ρᵢⱼᴴ)
+                Dⱼ  = ddt_symmetric_term * (m₀/ρᵢ) * (-ρⱼᵢ - ρⱼᵢᴴ)
+
 
                 dρdtI[i] += dρdt⁺ + Dᵢ
                 dρdtI[j] += dρdt⁻ + Dⱼ
