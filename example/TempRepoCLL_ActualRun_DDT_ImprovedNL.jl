@@ -339,7 +339,7 @@ function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil,  ParticleRang
     @inbounds for i in eachindex(Position)
         Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
         Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
-        # The increment of position is assigning 986 bytes with no reason when measuring using TimerOutputs
+        # The increment of position is assigning 985 bytes with no reason when measuring using TimerOutputs
         Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
     end
 
@@ -414,6 +414,11 @@ function RunSimulation(;FluidCSV::String,
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
     Pressure!(Pressureᵢ,Density,SimConstants)
     PolyDataTemplate(SaveLocation_, to_3d(Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, Density, Pressureᵢ, Velocity, Acceleration)
+
+    # This run is not needed in theory
+    # It is simply called to precompile the function, since sortperm!
+    # seems to need to be precompiled to sort CartesianIndex{Dimensions}
+    UpdateNeighbors!(Cells, SimConstants.H, SortedIndices, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleRanges, UniqueCells)
 
     # Normal run and save data
     generate_showvalues(Iteration, TotalTime) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime))]
