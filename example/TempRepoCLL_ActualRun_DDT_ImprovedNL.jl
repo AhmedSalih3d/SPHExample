@@ -93,11 +93,11 @@ function SimStepLocalCell(SimConstants, Position, Kernel, KernelGradient, Densit
 
     @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
 
-        xᵢⱼ  = Position[i] - Position[j]
-        # xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)
         xᵢⱼ² = evaluate(SqEuclidean(), Position[i], Position[j])
 
         if  xᵢⱼ² <= H²
+            xᵢⱼ  = Position[i] - Position[j]
+            
             dᵢⱼ  = sqrt(xᵢⱼ²) #Using sqrt is what takes a lot of time?
             q    = clamp(dᵢⱼ * h⁻¹,0.0,2.0)
             # Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
@@ -168,11 +168,11 @@ end
 function SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_, MotionLimiter, ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H², Cb⁻¹, BoolDDT=true)
     @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
 
-        xᵢⱼ  = Position[i] - Position[j]
-        # xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)
         xᵢⱼ² = evaluate(SqEuclidean(), Position[i], Position[j])
 
         if  xᵢⱼ² <= H²
+            xᵢⱼ  = Position[i] - Position[j]
+
             dᵢⱼ  = sqrt(xᵢⱼ²) #Using sqrt is what takes a lot of time?
             q    = clamp(dᵢⱼ * h⁻¹,0.0,2.0)
             # Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
