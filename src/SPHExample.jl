@@ -11,7 +11,7 @@ module SPHExample
     
     # Re-export desired functions from each submodule
     using .PreProcess
-    export LoadParticlesFromCSV, LoadBoundaryNormals
+    export LoadParticlesFromCSV, LoadParticlesFromCSV_StaticArrays, LoadBoundaryNormals
 
     using .PostProcess
     export create_vtp_file, OutputVTP

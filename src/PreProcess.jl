@@ -1,6 +1,6 @@
 module PreProcess
 
-export LoadParticlesFromCSV, LoadBoundaryNormals
+export LoadParticlesFromCSV, LoadParticlesFromCSV_StaticArrays, LoadBoundaryNormals
 
 using CSV
 using DataFrames
@@ -60,6 +60,32 @@ function LoadParticlesFromCSV(dims, float_type, fluid_csv,boundary_csv)
     end
 
     return points,density_fluid,density_bound
+end
+
+function LoadParticlesFromCSV_StaticArrays(dims, float_type, fluid_csv, boundary_csv)
+    DF_FLUID = CSV.read(fluid_csv, DataFrame)
+    DF_BOUND = CSV.read(boundary_csv, DataFrame)
+
+    P1F = DF_FLUID[!, "Points:0"]
+    P2F = DF_FLUID[!, "Points:1"]
+    P3F = DF_FLUID[!, "Points:2"] 
+    P1B = DF_BOUND[!, "Points:0"]
+    P2B = DF_BOUND[!, "Points:1"]
+    P3B = DF_BOUND[!, "Points:2"]
+
+    points = Vector{SVector{dims,float_type}}()
+    density_fluid = Vector{float_type}()
+    density_bound = Vector{float_type}()
+
+    for (P1, P2, P3, DF, density) in [(P1B, P2B, P3B, DF_BOUND, density_bound), (P1F, P2F, P3F, DF_FLUID, density_fluid)]
+        for i = 1:length(P1)
+            point = dims == 3 ? SVector{dims,float_type}(P1[i], P2[i], P3[i]) : SVector{dims,float_type}(P1[i], P3[i])
+            push!(points, point)
+            push!(density, DF.Rhop[i])
+        end
+    end
+
+    return points, density_fluid, density_bound
 end
 
 

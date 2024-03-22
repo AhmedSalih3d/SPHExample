@@ -339,7 +339,8 @@ function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil,  ParticleRang
     @inbounds for i in eachindex(Position)
         Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
         Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
-        Position[i]       += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
+        # The increment of position is assigning 986 bytes with no reason when measuring using TimerOutputs
+        Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
     end
 
     SimMetaData.Iteration      += 1
@@ -372,9 +373,10 @@ function RunSimulation(;FluidCSV::String,
 
     # Load in the fluid and boundary particles. Return these points and both data frames
     # @inline is a hack here to remove all allocations further down due to uncertainty of the points type at compile time
-    @inline points, density_fluid, density_bound  = LoadParticlesFromCSV(Dimensions,FloatType, FluidCSV,BoundCSV)
-    NumberOfPoints = length(points)
-    Position = convert(Vector{SVector{Dimensions,FloatType}},points.V)
+    # @inline points, density_fluid, density_bound  = LoadParticlesFromCSV(Dimensions,FloatType, FluidCSV,BoundCSV)
+    @inline Position, density_fluid, density_bound  = LoadParticlesFromCSV_StaticArrays(Dimensions,FloatType, FluidCSV,BoundCSV)
+    NumberOfPoints = length(Position)
+    # Position = deepcopy(points)
     Density  = deepcopy([density_bound; density_fluid])
 
     GravityFactor = [ zeros(size(density_bound,1)) ; -ones(size(density_fluid,1)) ]
