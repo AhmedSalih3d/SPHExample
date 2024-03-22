@@ -281,9 +281,9 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
 
     # # Passing the view is fine, since it is not needed to actualize the vector
     @views ParticleRanges     = ParticleSplitterLinearIndices[ParticleSplitter]
-    @views UniqueCells        = Cells[ParticleRanges[1:end-1]]
+    # @views UniqueCells        = Cells[ParticleRanges[1:end-1]]
 
-    return ParticleRanges, UniqueCells #Optimize out in shaa Allah!
+    return ParticleRanges # UniqueCells #Optimize out in shaa Allah!
 end
 ###===
 
@@ -291,8 +291,10 @@ end
 #https://cuda.juliagpu.org/stable/tutorials/performance/
 # 192 bytes and 4 allocs from launch config
 # INLINE IS SO IMPORTANT 10X SPEED
-function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter)
+function NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, Cells)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H², Cb⁻¹ = SimConstants
+
+    UniqueCells = @views Cells[ParticleRanges[1:end-1]]
     for iter ∈ eachindex(UniqueCells)
         CellIndex = UniqueCells[iter]
 
@@ -325,11 +327,11 @@ function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, SortedIndices
     dt  = Δt(Position, Velocity, Acceleration, SimConstants)
     dt₂ = dt * 0.5
 
-    ParticleRanges,UniqueCells     = UpdateNeighbors!(Cells, SimConstants.H, SortedIndices, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleSplitter, ParticleSplitterLinearIndices)
+    ParticleRanges = UpdateNeighbors!(Cells, SimConstants.H, SortedIndices, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleSplitter, ParticleSplitterLinearIndices)
     
     ResetArrays!(Kernel, KernelGradient, dρdtI, dvdtI)
 
-    NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter)
+    NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, Cells)
 
     @inbounds for i in eachindex(Position)
         dvdtI[i]        +=  ConstructGravitySVector(dvdtI[i], SimConstants.g * GravityFactor[i])
@@ -342,7 +344,7 @@ function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, SortedIndices
 
     ResetArrays!(Kernel, KernelGradient, dρdtI, dρdtIₙ⁺, Acceleration)
 
-    NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, Acceleration, MotionLimiter)
+    NeighborLoop!(SimConstants, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, Acceleration, MotionLimiter, Cells)
 
     DensityEpsi!(Density, dρdtIₙ⁺, ρₙ⁺, dt)
 
