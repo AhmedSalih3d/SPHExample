@@ -254,15 +254,6 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
 
     sortperm!(SortedIndices,Cells)
 
-    # @. Cells           =  Cells[SortedIndices]
-    # @. Position        =  Position[SortedIndices]
-    # @. Density         =  Density[SortedIndices]
-    # @. Acceleration    =  Acceleration[SortedIndices]
-    # @. Velocity        =  Velocity[SortedIndices]
-    # @. GravityFactor   =  GravityFactor[SortedIndices]
-    # @. MotionLimiter   =  MotionLimiter[SortedIndices]
-    # @. BoundaryBool    =  BoundaryBool[SortedIndices]
-
     update_arr1_bumper!(Cells, SortedIndices)
     update_arr1_bumper!(Position, SortedIndices)
     update_arr1_bumper!(Density, SortedIndices)
@@ -282,10 +273,6 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
             IndexCounter += 1
         end
     end
-
-    # # Passing the view is fine, since it is not needed to actualize the vector
-    # @views ParticleRanges     = ParticleSplitterLinearIndices[ParticleSplitter]
-    # @views UniqueCells        = Cells[ParticleRanges[1:end-1]]
 
     return IndexCounter
 end
@@ -395,8 +382,6 @@ function RunSimulation(;FluidCSV::String,
     Position = convert(Vector{SVector{Dimensions,FloatType}},points.V)
     Density  = deepcopy([density_bound; density_fluid])
 
-    
-
     GravityFactor = [ zeros(size(density_bound,1)) ; -ones(size(density_fluid,1)) ]
     
     MotionLimiter = [ zeros(size(density_bound,1)) ;  ones(size(density_fluid,1)) ]
@@ -426,8 +411,8 @@ function RunSimulation(;FluidCSV::String,
 
     ParticleSplitterLinearIndices = LinearIndices(ParticleSplitter)
 
-    ParticleRanges        = zeros(Int, length(Cells) + 1)
-    UniqueCells           = zeros(CartesianIndex{Dimensions}, length(Cells))
+    ParticleRanges  = zeros(Int, length(Cells) + 1)
+    UniqueCells     = zeros(CartesianIndex{Dimensions}, length(Cells))
 
     SortedIndices   = similar(Cells, Int)
 
