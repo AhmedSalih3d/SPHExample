@@ -151,11 +151,11 @@ function SimStepLocalCell(SimConstants, Position, Kernel, KernelGradient, Densit
             dvdtI[i] +=  dvdt⁺
             dvdtI[j] +=  dvdt⁻
 
-            Kernel[i] += Wᵢⱼ
-            Kernel[j] += Wᵢⱼ
+            # Kernel[i] += Wᵢⱼ
+            # Kernel[j] += Wᵢⱼ
 
-            KernelGradient[i] +=  ∇ᵢWᵢⱼ
-            KernelGradient[j] += -∇ᵢWᵢⱼ
+            # KernelGradient[i] +=  ∇ᵢWᵢⱼ
+            # KernelGradient[j] += -∇ᵢWᵢⱼ
         end
     end
 
@@ -225,11 +225,11 @@ function SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradient, Den
             dvdtI[i] +=  dvdt⁺
             dvdtI[j] +=  dvdt⁻
 
-            Kernel[i] += Wᵢⱼ
-            Kernel[j] += Wᵢⱼ
+            # Kernel[i] += Wᵢⱼ
+            # Kernel[j] += Wᵢⱼ
 
-            KernelGradient[i] +=  ∇ᵢWᵢⱼ
-            KernelGradient[j] += -∇ᵢWᵢⱼ
+            # KernelGradient[i] +=  ∇ᵢWᵢⱼ
+            # KernelGradient[j] += -∇ᵢWᵢⱼ
         end
     end
 
@@ -265,7 +265,6 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Accel
     update_arr1_bumper!(Velocity, SortedIndices)    
     update_arr1_bumper!(GravityFactor, SortedIndices)    
     update_arr1_bumper!(MotionLimiter, SortedIndices)    
-    # update_arr1_bumper!(BoundaryBool, SortedIndices)    
 
     # These two are equivalent lol
     # @time ParticleSplitter[findall(.!iszero.(diff(Cells))) .+ 1] .= true
