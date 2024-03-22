@@ -245,7 +245,7 @@ end
 
 ###=== Function to update ordering
 #https://cuda.juliagpu.org/stable/tutorials/performance/
-function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleSplitter, ParticleSplitterLinearIndices)
+function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleRanges2, ParticleSplitter, ParticleSplitterLinearIndices)
     ParticleSplitter     .= false
     ParticleSplitter[1]   = true
     ParticleSplitter[end] = true
@@ -321,11 +321,11 @@ function NeighborLoop!(SimConstants, UniqueCells, ParticleRanges, Stencil, Posit
     return nothing
 end
 
-function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, SortedIndices, ParticleSplitter, ParticleSplitterLinearIndices, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoundaryBool)
+function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, SortedIndices, ParticleRanges2, ParticleSplitter, ParticleSplitterLinearIndices, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoundaryBool)
     dt  = Δt(Position, Velocity, Acceleration, SimConstants)
     dt₂ = dt * 0.5
 
-    ParticleRanges,UniqueCells     = UpdateNeighbors!(Cells, SimConstants.H, SortedIndices, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleSplitter, ParticleSplitterLinearIndices)
+    ParticleRanges,UniqueCells     = UpdateNeighbors!(Cells, SimConstants.H, SortedIndices, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleRanges2, ParticleSplitter, ParticleSplitterLinearIndices)
     
     ResetArrays!(Kernel, KernelGradient, dρdtI, dvdtI)
 
@@ -418,6 +418,8 @@ function RunSimulation(;FluidCSV::String,
     ParticleSplitter[1]   = true
     ParticleSplitter[end] = true #Have to add 1 even though it is wrong due to -1 at EndIndex, length + 1
 
+    ParticleRanges2        = zeros(Int, length(Cells) + 1)
+
     ParticleSplitterLinearIndices = LinearIndices(ParticleSplitter)
 
     SortedIndices   = similar(Cells, Int)
@@ -437,7 +439,7 @@ function RunSimulation(;FluidCSV::String,
     OutputIterationCounter = 0
     @inbounds while true
 
-        @timeit HourGlass "1 SimulationLoop" SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, SortedIndices, ParticleSplitter, ParticleSplitterLinearIndices, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoundaryBool)
+        @timeit HourGlass "1 SimulationLoop" SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, SortedIndices, ParticleRanges2, ParticleSplitter, ParticleSplitterLinearIndices, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoundaryBool)
 
         OutputCounter += SimMetaData.CurrentTimeStep
         if OutputCounter >= SimMetaData.OutputEach
