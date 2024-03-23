@@ -310,33 +310,33 @@ function NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, 
 end
 
 function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil,  ParticleRanges, UniqueCells, SortedIndices, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter)
-    dt  = Δt(Position, Velocity, Acceleration, SimConstants)
+    @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
     dt₂ = dt * 0.5
 
-    IndexCounter = UpdateNeighbors!(Cells, SimConstants.H, SortedIndices, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleRanges, UniqueCells)
+    @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(Cells, SimConstants.H, SortedIndices, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleRanges, UniqueCells)
 
-    ResetArrays!(Kernel, KernelGradient, dρdtI, dvdtI)
+    @timeit SimMetaData.HourGlass "03 ResetArrays" ResetArrays!(Kernel, KernelGradient, dρdtI, dvdtI)
 
-    NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, Cells, UniqueCells, IndexCounter)
+    @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, Cells, UniqueCells, IndexCounter)
 
-    @inbounds for i in eachindex(Position)
+    @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" @inbounds for i in eachindex(Position)
         dvdtI[i]        +=  ConstructGravitySVector(dvdtI[i], SimConstants.g * GravityFactor[i])
         Velocityₙ⁺[i]    =  Velocity[i]   + dvdtI[i]  *  dt₂ * MotionLimiter[i]
         Positionₙ⁺[i]    =  Position[i]   + Velocityₙ⁺[i]   * dt₂  * MotionLimiter[i]
         ρₙ⁺[i]           =  Density[i]    + dρdtI[i]       *  dt₂
     end
 
-    LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+    @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"  LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
 
-    ResetArrays!(Kernel, KernelGradient, dρdtI, dρdtIₙ⁺, Acceleration)
+    @timeit SimMetaData.HourGlass "07 ResetArrays" ResetArrays!(Kernel, KernelGradient, dρdtI, dρdtIₙ⁺, Acceleration)
 
-    NeighborLoop!(SimConstants, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, Acceleration, MotionLimiter, Cells, UniqueCells, IndexCounter)
+    @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoop!(SimConstants, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, Acceleration, MotionLimiter, Cells, UniqueCells, IndexCounter)
 
-    DensityEpsi!(Density, dρdtIₙ⁺, ρₙ⁺, dt)
+    @timeit SimMetaData.HourGlass "09 Final Density" DensityEpsi!(Density, dρdtIₙ⁺, ρₙ⁺, dt)
 
-    LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
+    @timeit SimMetaData.HourGlass "10 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
 
-    @inbounds for i in eachindex(Position)
+    @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"  @inbounds for i in eachindex(Position)
         Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
         Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
         # The increment of position is assigning 985 bytes with no reason when measuring using TimerOutputs
@@ -424,9 +424,9 @@ function RunSimulation(;FluidCSV::String,
     generate_showvalues(Iteration, TotalTime) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime))]
     OutputCounter = 0.0
     OutputIterationCounter = 0
-    @time @inbounds while true
+    @inbounds while true
 
-        @timeit HourGlass "1 SimulationLoop" SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, ParticleRanges, UniqueCells, SortedIndices, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter)
+        SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, ParticleRanges, UniqueCells, SortedIndices, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter)
 
         OutputCounter += SimMetaData.CurrentTimeStep
         if OutputCounter >= SimMetaData.OutputEach
@@ -435,15 +435,16 @@ function RunSimulation(;FluidCSV::String,
 
             SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp"
             Pressure!(Pressureᵢ,Density,SimConstants)
-            @timeit HourGlass "2 Output Data"  PolyDataTemplate(SaveLocation_, to_3d(Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, Density, Pressureᵢ, Velocity, Acceleration)
+            @timeit HourGlass "12 Output Data"  PolyDataTemplate(SaveLocation_, to_3d(Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, Density, Pressureᵢ, Velocity, Acceleration)
         end
-        @timeit HourGlass "3 Next TimeStep"  next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
+        @timeit HourGlass "13 Next TimeStep"  next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
 
         if SimMetaData.TotalTime >= SimMetaData.SimulationTime + 1e-3
             break
         end
     end
     show(HourGlass,sortby=:name)
+    show(HourGlass)
 end
 
 to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
@@ -456,7 +457,7 @@ let
     SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=0.02,
+        SimulationTime=1,
         OutputEach=0.01,
     )
 
