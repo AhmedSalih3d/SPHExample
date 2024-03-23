@@ -165,7 +165,7 @@ function SimStepLocalCell(Position, Kernel, KernelGradient, Density, Velocity, d
 end
 
 
-function SimStepNeighborCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, BoolDDT=true)
+function SimStepNeighborCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, BoolDDT)
     @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
 
         xᵢⱼ² = evaluate(SqEuclidean(), Position[i], Position[j])
