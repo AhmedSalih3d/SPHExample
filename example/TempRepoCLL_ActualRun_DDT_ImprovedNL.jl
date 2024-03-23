@@ -42,12 +42,12 @@ end
 @inline faux_fancy(ρ₀, P, invCb) = ρ₀ * ( fancy7th( 1 + (P * invCb)) - 1)
 
 function update_arr1_bumper!(arr1,indices)
-    @no_escape begin
+    buf = default_buffer()
+    @no_escape buf begin
         temp  = @alloc(eltype(arr1),length(arr1))
 
         temp .= @view arr1[indices]
         arr1 .= temp
-        
     end
 end
 
