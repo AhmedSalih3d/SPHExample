@@ -248,6 +248,7 @@ end
 function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleRanges, UniqueCells)
     ExtractCells!(Cells,Position,CutOff)
 
+    # First call allocates, which is why TimerOutputs shows allocs - it should be alloc free otherwise
     sortperm!(SortedIndices,Cells)
 
     update_arr1_bumper!(Cells, SortedIndices)
@@ -418,7 +419,7 @@ function RunSimulation(;FluidCSV::String,
     # This run is not needed in theory
     # It is simply called to precompile the function, since sortperm!
     # seems to need to be precompiled to sort CartesianIndex{Dimensions}
-    UpdateNeighbors!(Cells, SimConstants.H, SortedIndices, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleRanges, UniqueCells)
+    # UpdateNeighbors!(Cells, SimConstants.H, SortedIndices, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleRanges, UniqueCells)
 
     # Normal run and save data
     generate_showvalues(Iteration, TotalTime) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime))]
