@@ -89,7 +89,7 @@ end
 end
 
 
-function SimStepLocalCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, MotionLimiter, ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H², Cb⁻¹, BoolDDT)
+function SimStepLocalCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, BoolDDT)
 
     @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
 
@@ -165,7 +165,7 @@ function SimStepLocalCell(Position, Kernel, KernelGradient, Density, Velocity, d
 end
 
 
-function SimStepNeighborCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_, MotionLimiter, ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H², Cb⁻¹, BoolDDT=true)
+function SimStepNeighborCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, BoolDDT=true)
     @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
 
         xᵢⱼ² = evaluate(SqEuclidean(), Position[i], Position[j])
@@ -278,7 +278,7 @@ end
 #https://cuda.juliagpu.org/stable/tutorials/performance/
 # 192 bytes and 4 allocs from launch config
 # INLINE IS SO IMPORTANT 10X SPEED
-function NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, Cells, UniqueCells, IndexCounter, BoolDDT)
+function NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, UniqueCells, IndexCounter, BoolDDT)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H², Cb⁻¹ = SimConstants
 
     UniqueCells = view(UniqueCells, 1:IndexCounter)
@@ -288,7 +288,7 @@ function NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, 
         StartIndex = ParticleRanges[iter] 
         EndIndex   = ParticleRanges[iter+1] - 1
 
-        @inline SimStepLocalCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, MotionLimiter, ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H², Cb⁻¹, BoolDDT)
+        @inline SimStepLocalCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, BoolDDT)
 
         @inbounds for S ∈ Stencil
             SCellIndex = CellIndex + S
@@ -302,7 +302,7 @@ function NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, 
                 StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
                 EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
 
-                @inline SimStepNeighborCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_, MotionLimiter, ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H², Cb⁻¹, BoolDDT)
+                @inline SimStepNeighborCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, BoolDDT)
             end
         end
     end
@@ -318,7 +318,7 @@ function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil,  ParticleRang
 
     @timeit SimMetaData.HourGlass "03 ResetArrays" ResetArrays!(Kernel, KernelGradient, dρdtI, dvdtI)
 
-    @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, Cells, UniqueCells, IndexCounter, BoolDDT)
+    @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, UniqueCells, IndexCounter, BoolDDT)
 
     @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" @inbounds for i in eachindex(Position)
         dvdtI[i]        +=  ConstructGravitySVector(dvdtI[i], SimConstants.g * GravityFactor[i])
@@ -331,7 +331,7 @@ function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil,  ParticleRang
 
     @timeit SimMetaData.HourGlass "07 ResetArrays" ResetArrays!(Kernel, KernelGradient, dρdtI, dρdtIₙ⁺, Acceleration)
 
-    @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoop!(SimConstants, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, Acceleration, MotionLimiter, Cells, UniqueCells, IndexCounter, BoolDDT)
+    @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoop!(SimConstants, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, Acceleration, MotionLimiter, UniqueCells, IndexCounter, BoolDDT)
 
     @timeit SimMetaData.HourGlass "09 Final Density" DensityEpsi!(Density, dρdtIₙ⁺, ρₙ⁺, dt)
 
