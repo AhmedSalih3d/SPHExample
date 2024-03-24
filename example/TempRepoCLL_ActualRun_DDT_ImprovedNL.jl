@@ -267,18 +267,18 @@ let
     SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=4,
+        SimulationTime=1,
         OutputEach=0.01,
     )
 
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=42.48576250492629, δᵩ = 1)
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 1)
 
     @profview RunSimulation(
-        FluidCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.01_Fluid.csv",
-        BoundCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.01_Bound.csv",
-        SimMetaData  = SimMetaData,
-        SimConstants = SimConstantsWedge,
-        ViscosityTreatment = :LaminarSPS,
+        FluidCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Fluid.csv",
+        BoundCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Bound.csv",
+        SimMetaData        = SimMetaData,
+        SimConstants       = SimConstantsWedge,
+        ViscosityTreatment = :ArtificialViscosity,
         BoolDDT            = true
     )
 end
