@@ -379,11 +379,6 @@ function RunSimulation(;FluidCSV::String,
     Pressure!(Pressureᵢ,Density,SimConstants)
     PolyDataTemplate(SaveLocation_, to_3d(Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, Density, Pressureᵢ, Velocity, Acceleration)
 
-    # This run is not needed in theory
-    # It is simply called to precompile the function, since sortperm!
-    # seems to need to be precompiled to sort CartesianIndex{Dimensions}
-    # UpdateNeighbors!(Cells, SimConstants.H, SortedIndices, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleRanges, UniqueCells)
-
     # Normal run and save data
     generate_showvalues(Iteration, TotalTime) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime))]
     OutputCounter = 0.0
