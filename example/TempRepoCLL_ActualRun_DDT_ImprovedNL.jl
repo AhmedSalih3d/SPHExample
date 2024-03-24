@@ -67,7 +67,8 @@ end
 ###=== Extract Cells
 function ExtractCells!(Cells, Points, CutOff)
     for i ∈ eachindex(Cells)
-        Cells[i] =  CartesianIndex(@. Int(fld(Points[i], CutOff)) ...) + CartesianIndex(1,1) + CartesianIndex(1,1) #+ ZeroOffset + HalfPad
+        Cells[i]  =  CartesianIndex(@. Int(fld(Points[i], CutOff)) ...)
+        Cells[i] +=  2 * one(Cells[i])  # + CartesianIndex(1,1) + CartesianIndex(1,1) #+ ZeroOffset + HalfPad
     end
     return nothing
 end
