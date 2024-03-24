@@ -1,4 +1,7 @@
 module AuxillaryFunctions
+using Bumper
+
+export RearrangeVector!
 
 # This function is never used in this project but added as a courtesy
 # if you wish to convert a NeighbourList of Tuples into a format
@@ -19,5 +22,17 @@ function ListToIndex(points, list)
         end
         return out,rout
 end
+
+# Proper in-place re-arranging of vector
+function RearrangeVector!(vec1,indices)
+    buf = default_buffer()
+    @no_escape buf begin
+        temp  = @alloc(eltype(vec1),length(vec1))
+
+        temp .= @view vec1[indices]
+        vec1 .= temp
+    end
+end
+
 
 end

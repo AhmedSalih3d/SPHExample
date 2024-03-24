@@ -10,6 +10,9 @@ module SPHExample
     include("PreProcess.jl");  
     
     # Re-export desired functions from each submodule
+    using .AuxillaryFunctions
+    export RearrangeVector!
+
     using .PreProcess
     export LoadParticlesFromCSV, LoadParticlesFromCSV_StaticArrays, LoadBoundaryNormals
 

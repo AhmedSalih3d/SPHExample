@@ -16,16 +16,6 @@ using Distances
 import Base.Threads: nthreads, @threads
 include("../src/ProduceVTP.jl")
 
-function update_arr1_bumper!(arr1,indices)
-    buf = default_buffer()
-    @no_escape buf begin
-        temp  = @alloc(eltype(arr1),length(arr1))
-
-        temp .= @view arr1[indices]
-        arr1 .= temp
-    end
-end
-
 function ConstructStencil(v::Val{d}) where d
     n_ = CartesianIndices(ntuple(_->-1:1,v))
     half_length = length(n_) ÷ 2
@@ -213,13 +203,13 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, SortingScratchSpace, Pos
     # First call allocates, which is why TimerOutputs shows allocs - it should be alloc free otherwise
     sortperm!(SortedIndices,Cells; scratch=SortingScratchSpace)
 
-    update_arr1_bumper!(Cells, SortedIndices)
-    update_arr1_bumper!(Position, SortedIndices)
-    update_arr1_bumper!(Density, SortedIndices)
-    update_arr1_bumper!(Acceleration, SortedIndices)
-    update_arr1_bumper!(Velocity, SortedIndices)    
-    update_arr1_bumper!(GravityFactor, SortedIndices)    
-    update_arr1_bumper!(MotionLimiter, SortedIndices)    
+    RearrangeVector!(Cells         , SortedIndices)
+    RearrangeVector!(Position      , SortedIndices)
+    RearrangeVector!(Density       , SortedIndices)
+    RearrangeVector!(Acceleration  , SortedIndices)
+    RearrangeVector!(Velocity      , SortedIndices)    
+    RearrangeVector!(GravityFactor , SortedIndices)    
+    RearrangeVector!(MotionLimiter , SortedIndices)    
 
     # These two are equivalent lol
     # @time ParticleSplitter[findall(.!iszero.(diff(Cells))) .+ 1] .= true
