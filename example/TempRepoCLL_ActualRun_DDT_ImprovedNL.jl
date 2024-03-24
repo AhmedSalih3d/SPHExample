@@ -16,23 +16,6 @@ using Distances
 import Base.Threads: nthreads, @threads
 include("../src/ProduceVTP.jl")
 
-#https://discourse.julialang.org/t/can-this-be-written-even-faster-cpu/109924/28
-@inline function fancy7th(x)
-    # todo tune the magic constant
-    # initial guess based on fast inverse sqrt trick but adjusted to compute x^(1/7)
-    t = copysign(reinterpret(Float64, 0x36cd000000000000 + reinterpret(UInt64,abs(x))÷7), x)
-    @fastmath for _ in 1:2
-        # newton's method for t^3 - x/t^4 = 0
-        t2 = t*t
-        t3 = t2*t
-        t4 = t2*t2
-        xot4 = x/t4
-        t = t - t*(t3 - xot4)/(4*t3 + 3*xot4)
-    end
-    t
-end
-@inline faux_fancy(ρ₀, P, invCb) = ρ₀ * ( fancy7th( 1 + (P * invCb)) - 1)
-
 function update_arr1_bumper!(arr1,indices)
     buf = default_buffer()
     @no_escape buf begin
@@ -41,11 +24,6 @@ function update_arr1_bumper!(arr1,indices)
         temp .= @view arr1[indices]
         arr1 .= temp
     end
-end
-
-
-function ConstructGravitySVector(_::SVector{N, T}, value) where {N, T}
-    return SVector{N, T}(ntuple(i -> i == N ? value : 0, N))
 end
 
 function ConstructStencil(v::Val{d}) where d
@@ -68,12 +46,6 @@ end
 ###===
 
 ###=== SimStep
-
-@fastpow function EquationOfStateGamma7(ρ,c₀,ρ₀)
-    return ((c₀^2*ρ₀)/7) * ((ρ/ρ₀)^7 - 1)
-end
-
-
 function SimStepLocalCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, BoolDDT)
 
     @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
@@ -105,9 +77,9 @@ function SimStepLocalCell(Position, Kernel, KernelGradient, Density, Velocity, d
             # Density diffusion
             if BoolDDT
                 Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
-                ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
+                ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
                 Pⱼᵢᴴ  = -Pᵢⱼᴴ
-                ρⱼᵢᴴ  = faux_fancy(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
+                ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
             
                 ρⱼᵢ   = ρⱼ - ρᵢ
 
@@ -182,9 +154,9 @@ function SimStepNeighborCell(Position, Kernel, KernelGradient, Density, Velocity
             # Density diffusion
             if BoolDDT
                 Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
-                ρᵢⱼᴴ  = faux_fancy(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
+                ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
                 Pⱼᵢᴴ  = -Pᵢⱼᴴ
-                ρⱼᵢᴴ  = faux_fancy(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
+                ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
             
                 ρⱼᵢ   = ρⱼ - ρᵢ
 

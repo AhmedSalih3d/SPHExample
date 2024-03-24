@@ -1,6 +1,6 @@
 module SimulationEquations
 
-export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!, EquationOfState, Pressure!, ∂Πᵢⱼ∂t!, ∂ρᵢ∂t!, ∂ρᵢ∂tDDT!, ∂vᵢ∂t!, DensityEpsi!, LimitDensityAtBoundary!, updatexᵢⱼ!, ArtificialViscosityMomentumEquation!, DimensionalData, Optim∇ᵢWᵢⱼ
+export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!, EquationOfState, EquationOfStateGamma7, Pressure!, ∂Πᵢⱼ∂t!, ∂ρᵢ∂t!, ∂ρᵢ∂tDDT!, ∂vᵢ∂t!, DensityEpsi!, LimitDensityAtBoundary!, updatexᵢⱼ!, ArtificialViscosityMomentumEquation!, DimensionalData, Optim∇ᵢWᵢⱼ, ConstructGravitySVector, InverseHydrostaticEquationOfState
 
 using CellListMap
 using StaticArrays
@@ -529,5 +529,26 @@ end
         end
     end
 end
+
+function ConstructGravitySVector(_::SVector{N, T}, value) where {N, T}
+    return SVector{N, T}(ntuple(i -> i == N ? value : 0, N))
+end
+
+#https://discourse.julialang.org/t/can-this-be-written-even-faster-cpu/109924/28
+@inline function Estimate7thRoot(x)
+    # todo tune the magic constant
+    # initial guess based on fast inverse sqrt trick but adjusted to compute x^(1/7)
+    t = copysign(reinterpret(Float64, 0x36cd000000000000 + reinterpret(UInt64,abs(x))÷7), x)
+    @fastmath for _ in 1:2
+        # newton's method for t^3 - x/t^4 = 0
+        t2 = t*t
+        t3 = t2*t
+        t4 = t2*t2
+        xot4 = x/t4
+        t = t - t*(t3 - xot4)/(4*t3 + 3*xot4)
+    end
+    t
+end
+@inline InverseHydrostaticEquationOfState(ρ₀, P, invCb) = ρ₀ * ( Estimate7thRoot( 1 + (P * invCb)) - 1)
 
 end
