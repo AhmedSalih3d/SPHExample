@@ -264,7 +264,7 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, SortingScratchSpace, Pos
         if Cells[i] != Cells[i-1] # Equivalent to diff(Cells) != 0
             ParticleRanges[IndexCounter] = i
             UniqueCells[IndexCounter]    = Cells[i]
-            IndexCounter += 1
+            IndexCounter                += 1
         end
     end
 
@@ -437,7 +437,7 @@ function RunSimulation(;FluidCSV::String,
             Pressure!(Pressureᵢ,Density,SimConstants)
             @timeit HourGlass "12 Output Data"  PolyDataTemplate(SaveLocation_, to_3d(Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, Density, Pressureᵢ, Velocity, Acceleration)
         end
-        @timeit HourGlass "13 Next TimeStep"  next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
+        @timeit HourGlass "13 Next TimeStep"  next!(SimMetaData.ProgressSpecification)#; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
 
         if SimMetaData.TotalTime >= SimMetaData.SimulationTime + 1e-3
             break
