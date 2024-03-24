@@ -4,6 +4,7 @@ export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, Compute
 
 using Parameters, FastPow, Distances
 import LinearAlgebra: dot
+using StaticArrays
 
 include("SimulationEquations.jl"); using .SimulationEquations
 

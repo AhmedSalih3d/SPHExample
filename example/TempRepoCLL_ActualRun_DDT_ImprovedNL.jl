@@ -267,7 +267,7 @@ let
     SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=1,
+        SimulationTime=4,
         OutputEach=0.01,
     )
 
@@ -278,7 +278,7 @@ let
         BoundCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Bound.csv",
         SimMetaData  = SimMetaData,
         SimConstants = SimConstantsWedge,
-        ViscosityTreatment = :ArtificialViscosity,
+        ViscosityTreatment = :LaminarSPS,
         BoolDDT            = true
     )
 end
