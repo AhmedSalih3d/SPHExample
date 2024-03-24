@@ -215,13 +215,13 @@ function RunSimulation(;FluidCSV::String,
     
     Cells          = similar(Position, CartesianIndex{Dimensions})
 
-    ParticleRanges  = zeros(Int, length(Cells) + 1)
-    UniqueCells     = zeros(CartesianIndex{Dimensions}, length(Cells))
+    ParticleRanges         = zeros(Int, length(Cells) + 1)
+    UniqueCells            = zeros(CartesianIndex{Dimensions}, length(Cells))
 
     SortedIndices          = similar(Cells, Int)
     _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SortedIndices), length(Cells))
 
-    Stencil         = ConstructStencil(Val(Dimensions))
+    Stencil                = ConstructStencil(Val(Dimensions))
 
     # Ensure zero, similar does not!
     ResetArrays!(Acceleration, Velocity, Kernel, KernelGradient, Cells, SortedIndices, dρdtI, dvdtI, Positionₙ⁺, Velocityₙ⁺)
@@ -247,7 +247,7 @@ function RunSimulation(;FluidCSV::String,
             Pressure!(Pressureᵢ,Density,SimConstants)
             @timeit HourGlass "12 Output Data"  ExportVTP(SaveLocation_, to_3d(Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, Density, Pressureᵢ, Velocity, Acceleration)
         end
-        @timeit HourGlass "13 Next TimeStep"  next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
+        @timeit HourGlass "13 Next TimeStep"    next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
 
         if SimMetaData.TotalTime >= SimMetaData.SimulationTime + 1e-3
             break
