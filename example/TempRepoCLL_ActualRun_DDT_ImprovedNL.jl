@@ -76,14 +76,6 @@ end
 ###===
 
 ###=== SimStep
-@inline function dρᵢdt_dρⱼdt_(ρᵢ,ρⱼ,m₀,vᵢⱼ,∇ᵢWᵢⱼ)
-    #original: - ρᵢ * dot((m₀/ρⱼ) *  -vᵢⱼ ,  ∇ᵢWᵢⱼ)
-    symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ) # = dot(vᵢⱼ , -∇ᵢWᵢⱼ)
-    dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  symmetric_term
-    dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  symmetric_term
-
-    return dρdt⁺, dρdt⁻
-end
 
 @fastpow function EquationOfStateGamma7(ρ,c₀,ρ₀)
     return ((c₀^2*ρ₀)/7) * ((ρ/ρ₀)^7 - 1)
@@ -114,7 +106,9 @@ function SimStepLocalCell(Position, Kernel, KernelGradient, Density, Velocity, d
             vⱼ        = Velocity[j]
             vᵢⱼ       = vᵢ - vⱼ
 
-            dρdt⁺, dρdt⁻ = dρᵢdt_dρⱼdt_(ρᵢ,ρⱼ,m₀,vᵢⱼ,∇ᵢWᵢⱼ)
+            symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ) # = dot(vᵢⱼ , -∇ᵢWᵢⱼ)
+            dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  symmetric_term
+            dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  symmetric_term
 
             # Density diffusion
             if BoolDDT
@@ -189,7 +183,10 @@ function SimStepNeighborCell(Position, Kernel, KernelGradient, Density, Velocity
             vⱼ        = Velocity[j]
             vᵢⱼ       = vᵢ - vⱼ
 
-            dρdt⁺, dρdt⁻ = dρᵢdt_dρⱼdt_(ρᵢ,ρⱼ,m₀,vᵢⱼ,∇ᵢWᵢⱼ)
+            symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ) # = dot(vᵢⱼ , -∇ᵢWᵢⱼ)
+            dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  symmetric_term
+            dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  symmetric_term
+            
             # Density diffusion
             if BoolDDT
                 Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
@@ -246,11 +243,11 @@ end
 
 ###=== Function to update ordering
 #https://cuda.juliagpu.org/stable/tutorials/performance/
-function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleRanges, UniqueCells)
+function UpdateNeighbors!(Cells, CutOff, SortedIndices, SortingScratchSpace, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleRanges, UniqueCells)
     ExtractCells!(Cells,Position,CutOff)
 
     # First call allocates, which is why TimerOutputs shows allocs - it should be alloc free otherwise
-    sortperm!(SortedIndices,Cells)
+    sortperm!(SortedIndices,Cells; scratch=SortingScratchSpace)
 
     update_arr1_bumper!(Cells, SortedIndices)
     update_arr1_bumper!(Position, SortedIndices)
@@ -311,11 +308,11 @@ function NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, 
     return nothing
 end
 
-function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil,  ParticleRanges, UniqueCells, SortedIndices, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoolDDT)
+function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil,  ParticleRanges, UniqueCells, SortedIndices, SortingScratchSpace, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoolDDT)
     @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
     dt₂ = dt * 0.5
 
-    @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(Cells, SimConstants.H, SortedIndices, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleRanges, UniqueCells)
+    @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(Cells, SimConstants.H, SortedIndices, SortingScratchSpace, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleRanges, UniqueCells)
 
     @timeit SimMetaData.HourGlass "03 ResetArrays" ResetArrays!(Kernel, KernelGradient, dρdtI, dvdtI)
 
@@ -406,7 +403,8 @@ function RunSimulation(;FluidCSV::String,
     ParticleRanges  = zeros(Int, length(Cells) + 1)
     UniqueCells     = zeros(CartesianIndex{Dimensions}, length(Cells))
 
-    SortedIndices   = similar(Cells, Int)
+    SortedIndices          = similar(Cells, Int)
+    _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SortedIndices), length(Cells))
 
     Stencil         = ConstructStencil(Val(Dimensions))
 
@@ -428,7 +426,7 @@ function RunSimulation(;FluidCSV::String,
     OutputIterationCounter = 0
     @inbounds while true
 
-        SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, ParticleRanges, UniqueCells, SortedIndices, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoolDDT)
+        SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, ParticleRanges, UniqueCells, SortedIndices, SortingScratchSpace, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoolDDT)
 
         OutputCounter += SimMetaData.CurrentTimeStep
         if OutputCounter >= SimMetaData.OutputEach
@@ -462,11 +460,11 @@ let
         OutputEach=0.01,
     )
 
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=42.48576250492629)
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629)
 
     @profview RunSimulation(
-        FluidCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.01_Fluid.csv",
-        BoundCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.01_Bound.csv",
+        FluidCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Fluid.csv",
+        BoundCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Bound.csv",
         SimMetaData  = SimMetaData,
         SimConstants = SimConstantsWedge
     )
