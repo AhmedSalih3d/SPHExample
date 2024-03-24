@@ -272,30 +272,30 @@ let
         OutputEach=0.01,
     )
 
-    # SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 1)
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 1)
 
-    # @profview RunSimulation(
-    #     FluidCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Fluid.csv",
-    #     BoundCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Bound.csv",
-    #     SimMetaData        = SimMetaData,
-    #     SimConstants       = SimConstantsWedge,
-    #     ViscosityTreatment = :ArtificialViscosity,
-    #     BoolDDT            = true
-    # )
-
-    SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
-        SimulationName="Test", 
-        SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=2,
-        OutputEach=0.01,
-    )
-    SimConstantsDamBreak = SimulationConstants{FloatType}()
     @profview RunSimulation(
-        FluidCSV     = "./input/FluidPoints_Dp0.02_5LAYERS.csv",
-        BoundCSV     = "./input/BoundaryPoints_Dp0.02_5LAYERS.csv",
-        SimMetaData  = SimMetaData,
-        SimConstants = SimConstantsDamBreak,
-        BoolDDT      = true,
-        ViscosityTreatment = :ArtificialViscosity
+        FluidCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Fluid.csv",
+        BoundCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Bound.csv",
+        SimMetaData        = SimMetaData,
+        SimConstants       = SimConstantsWedge,
+        ViscosityTreatment = :ArtificialViscosity,
+        BoolDDT            = true
     )
+
+    # SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
+    #     SimulationName="Test", 
+    #     SaveLocation="E:/SecondApproach/TESTING_CPU",
+    #     SimulationTime=2,
+    #     OutputEach=0.01,
+    # )
+    # SimConstantsDamBreak = SimulationConstants{FloatType}()
+    # @profview RunSimulation(
+    #     FluidCSV     = "./input/FluidPoints_Dp0.02_5LAYERS.csv",
+    #     BoundCSV     = "./input/BoundaryPoints_Dp0.02_5LAYERS.csv",
+    #     SimMetaData  = SimMetaData,
+    #     SimConstants = SimConstantsDamBreak,
+    #     BoolDDT      = true,
+    #     ViscosityTreatment = :ArtificialViscosity
+    # )
 end

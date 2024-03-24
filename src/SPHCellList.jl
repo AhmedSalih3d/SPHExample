@@ -2,9 +2,8 @@ module SPHCellList
 
 export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!
 
-using Parameters, FastPow, Distances
+using Parameters, FastPow, Distances, StaticArrays, Base.Threads
 import LinearAlgebra: dot
-using StaticArrays
 
 include("SimulationEquations.jl"); using .SimulationEquations
 
@@ -19,7 +18,7 @@ include("AuxillaryFunctions.jl"); using .AuxillaryFunctions
     end
 
     function ExtractCells!(Cells, Points, CutOff)
-        for i ∈ eachindex(Cells)
+        @threads for i ∈ eachindex(Cells)
             Cells[i]  =  CartesianIndex(@. Int(fld(Points[i], CutOff)) ...)
             Cells[i] +=  2 * one(Cells[i])  # + CartesianIndex(1,1) + CartesianIndex(1,1) #+ ZeroOffset + HalfPad
         end
