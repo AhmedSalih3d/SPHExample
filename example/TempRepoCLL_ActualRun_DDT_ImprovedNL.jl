@@ -166,7 +166,6 @@ function RunSimulation(;FluidCSV::String,
     SimConstants::SimulationConstants,
     ViscosityTreatment = :LaminarSPS,
     BoolDDT = true,
-    BoolShifting = true
     ) where {Dimensions,FloatType}
 
     if ViscosityTreatment ∉ Set((:None, :ArtificialViscosity, :Laminar, :LaminarSPS))
