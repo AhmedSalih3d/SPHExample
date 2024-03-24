@@ -7,7 +7,7 @@ import LinearAlgebra: dot, norm, diagm, diag, cond, det
 using LoopVectorization
 using FastPow
 import CellListMap: InPlaceNeighborList, update!, neighborlist!
-import ProgressMeter: next!
+import ProgressMeter: next!, finish!
 using Formatting
 using Bumper
 using TimerOutputs
@@ -443,6 +443,7 @@ function RunSimulation(;FluidCSV::String,
             break
         end
     end
+    finish!(SimMetaData.ProgressSpecification)
     show(HourGlass,sortby=:name)
     show(HourGlass)
 end
@@ -460,7 +461,7 @@ let
         OutputEach=0.01,
     )
 
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629)
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 1)
 
     @profview RunSimulation(
         FluidCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Fluid.csv",
