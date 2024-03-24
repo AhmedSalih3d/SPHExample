@@ -13,8 +13,8 @@ using Bumper
 using TimerOutputs
 using Distances
 
-###=== SimStep
-function ComputeInteractions(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, BoolDDT)
+# Overload the default function to do what you please
+function SPHExample.ComputeInteractions!(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, BoolDDT)
     xᵢⱼ² = evaluate(SqEuclidean(), Position[i], Position[j])
     if  xᵢⱼ² <= H²
         xᵢⱼ  = Position[i] - Position[j]
@@ -73,97 +73,15 @@ function ComputeInteractions(Position, Kernel, KernelGradient, Density, Velocity
     return nothing
 end
 
-
-function SimStepLocalCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, BoolDDT)
-
-    @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-        @inline ComputeInteractions(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, BoolDDT)
-    end
-
-    return nothing
-end
-
-
-function SimStepNeighborCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, BoolDDT)
-    @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-        @inline ComputeInteractions(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, BoolDDT)
-    end
-    return nothing
-end
-
-###===
-
-###=== Function to update ordering
-#https://cuda.juliagpu.org/stable/tutorials/performance/
-function UpdateNeighbors!(Cells, CutOff, SortedIndices, SortingScratchSpace, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleRanges, UniqueCells)
-    ExtractCells!(Cells,Position,CutOff)
-
-    # First call allocates, which is why TimerOutputs shows allocs - it should be alloc free otherwise
-    sortperm!(SortedIndices,Cells; scratch=SortingScratchSpace)
-
-    RearrangeVector!(Cells         , SortedIndices)
-    RearrangeVector!(Position      , SortedIndices)
-    RearrangeVector!(Density       , SortedIndices)
-    RearrangeVector!(Acceleration  , SortedIndices)
-    RearrangeVector!(Velocity      , SortedIndices)    
-    RearrangeVector!(GravityFactor , SortedIndices)    
-    RearrangeVector!(MotionLimiter , SortedIndices)    
-
-    IndexCounter = 1
-    for i in 2:length(Cells)
-        if Cells[i] != Cells[i-1] # Equivalent to diff(Cells) != 0
-            ParticleRanges[IndexCounter] = i
-            UniqueCells[IndexCounter]    = Cells[i]
-            IndexCounter                += 1
-        end
-    end
-
-    return IndexCounter
-end
-###===
-
-###=== Function to process each cell and its neighbors
-function NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, UniqueCells, IndexCounter, BoolDDT)
-    @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H², Cb⁻¹ = SimConstants
-
-    UniqueCells = view(UniqueCells, 1:IndexCounter)
-    for iter ∈ eachindex(UniqueCells)
-        CellIndex = UniqueCells[iter]
-
-        StartIndex = ParticleRanges[iter] 
-        EndIndex   = ParticleRanges[iter+1] - 1
-
-        @inline SimStepLocalCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, BoolDDT)
-
-        @inbounds for S ∈ Stencil
-            SCellIndex = CellIndex + S
-
-            # Returns a range, x:x for exact match and x:(x-1) for no match
-            # utilizes that it is a sorted array and requires no isequal constructor,
-            # so I prefer this for now
-            NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
-
-            if length(NeighborCellIndex) != 0
-                StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
-                EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
-
-                @inline SimStepNeighborCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, BoolDDT)
-            end
-        end
-    end
-
-    return nothing
-end
-
 function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil,  ParticleRanges, UniqueCells, SortedIndices, SortingScratchSpace, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoolDDT)
     @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
     dt₂ = dt * 0.5
 
     @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(Cells, SimConstants.H, SortedIndices, SortingScratchSpace, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleRanges, UniqueCells)
 
-    @timeit SimMetaData.HourGlass "03 ResetArrays" ResetArrays!(Kernel, KernelGradient, dρdtI, dvdtI)
+    @timeit SimMetaData.HourGlass "03 ResetArrays"                           ResetArrays!(Kernel, KernelGradient, dρdtI, dvdtI)
 
-    @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, UniqueCells, IndexCounter, BoolDDT)
+    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                    NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, UniqueCells, IndexCounter, BoolDDT)
 
     @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" @inbounds for i in eachindex(Position)
         dvdtI[i]        +=  ConstructGravitySVector(dvdtI[i], SimConstants.g * GravityFactor[i])
@@ -174,11 +92,11 @@ function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil,  ParticleRang
 
     @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"  LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
 
-    @timeit SimMetaData.HourGlass "07 ResetArrays" ResetArrays!(Kernel, KernelGradient, dρdtI, dρdtIₙ⁺, Acceleration)
+    @timeit SimMetaData.HourGlass "07 ResetArrays"                  ResetArrays!(Kernel, KernelGradient, dρdtI, dρdtIₙ⁺, Acceleration)
 
-    @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoop!(SimConstants, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, Acceleration, MotionLimiter, UniqueCells, IndexCounter, BoolDDT)
+    @timeit SimMetaData.HourGlass "08 Second NeighborLoop"          NeighborLoop!(SimConstants, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, Acceleration, MotionLimiter, UniqueCells, IndexCounter, BoolDDT)
 
-    @timeit SimMetaData.HourGlass "09 Final Density" DensityEpsi!(Density, dρdtIₙ⁺, ρₙ⁺, dt)
+    @timeit SimMetaData.HourGlass "09 Final Density"                DensityEpsi!(Density, dρdtIₙ⁺, ρₙ⁺, dt)
 
     @timeit SimMetaData.HourGlass "10 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
 
@@ -233,18 +151,18 @@ function RunSimulation(;FluidCSV::String,
     Kernel          = similar(Density)
     KernelGradient  = similar(Position)
 
-    dρdtI  = similar(Density)
+    dρdtI           = similar(Density)
 
-    dvdtI  = similar(Position)
+    dvdtI           = similar(Position)
 
-    Velocityₙ⁺ = similar(Position)
-    Positionₙ⁺ = similar(Position)
-    ρₙ⁺        = zeros(FloatType, NumberOfPoints)
-    dρdtIₙ⁺    = zeros(FloatType, NumberOfPoints)
+    Velocityₙ⁺      = similar(Position)
+    Positionₙ⁺      = similar(Position)
+    ρₙ⁺             = zeros(FloatType, NumberOfPoints)
+    dρdtIₙ⁺         = zeros(FloatType, NumberOfPoints)
 
-    Pressureᵢ  = zeros(FloatType, NumberOfPoints)
-
-    Cells      = similar(Position, CartesianIndex{Dimensions})
+    Pressureᵢ      = zeros(FloatType, NumberOfPoints)
+    
+    Cells          = similar(Position, CartesianIndex{Dimensions})
 
     ParticleRanges  = zeros(Int, length(Cells) + 1)
     UniqueCells     = zeros(CartesianIndex{Dimensions}, length(Cells))

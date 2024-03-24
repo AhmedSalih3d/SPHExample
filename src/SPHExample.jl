@@ -40,6 +40,6 @@ module SPHExample
     export ResetArrays!, ResizeBuffers!
 
     using .SPHCellList
-    export ConstructStencil, ExtractCells!
+    export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!
 end
 
