@@ -13,14 +13,6 @@ using Bumper
 using TimerOutputs
 using Distances
 
-function SPHExample.LimitDensityAtBoundary!(Density,ρ₀, MotionLimiter)
-    for i in eachindex(Density)
-        if (Density[i] < ρ₀) * !Bool(MotionLimiter[i])
-            Density[i] = ρ₀
-        end
-    end
-end
-
 import Base.Threads: nthreads, @threads
 include("../src/ProduceVTP.jl")
 
@@ -437,7 +429,7 @@ function RunSimulation(;FluidCSV::String,
             Pressure!(Pressureᵢ,Density,SimConstants)
             @timeit HourGlass "12 Output Data"  PolyDataTemplate(SaveLocation_, to_3d(Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, Density, Pressureᵢ, Velocity, Acceleration)
         end
-        @timeit HourGlass "13 Next TimeStep"  next!(SimMetaData.ProgressSpecification)#; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
+        @timeit HourGlass "13 Next TimeStep"  next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
 
         if SimMetaData.TotalTime >= SimMetaData.SimulationTime + 1e-3
             break

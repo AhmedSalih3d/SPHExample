@@ -399,9 +399,18 @@ end
 
 # This function is used to limit density at boundary to ρ₀ to avoid suctions at walls. Walls should
 # only push and not attract so this is fine!
-function LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
-    for i in eachindex(Density)
-        if (Density[i] < ρ₀) * Bool(BoundaryBool[i])
+# function LimitDensityAtBoundary!(Density,BoundaryBool,ρ₀)
+#     for i in eachindex(Density)
+#         if (Density[i] < ρ₀) * Bool(BoundaryBool[i])
+#             Density[i] = ρ₀
+#         end
+#     end
+# end
+
+# This version of the function using !Bool(MotionLimiter) instead of BoundaryBool
+function LimitDensityAtBoundary!(Density,ρ₀, MotionLimiter)
+    @inbounds for i in eachindex(Density)
+        if (Density[i] < ρ₀) * !Bool(MotionLimiter[i])
             Density[i] = ρ₀
         end
     end
