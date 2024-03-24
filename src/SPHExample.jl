@@ -8,7 +8,8 @@ module SPHExample
     include("SimulationMetaDataConfiguration.jl");
     include("SimulationConstantsConfiguration.jl");
     include("SimulationDataArrays.jl")
-    include("PreProcess.jl");  
+    include("PreProcess.jl");
+    include("SPHCellList.jl")
     
     # Re-export desired functions from each submodule
     using .AuxillaryFunctions
@@ -37,5 +38,8 @@ module SPHExample
 
     using .SimulationDataArrays
     export ResetArrays!, ResizeBuffers!
+
+    using .SPHCellList
+    export ConstructStencil, ExtractCells!
 end
 

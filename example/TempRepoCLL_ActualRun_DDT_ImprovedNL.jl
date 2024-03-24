@@ -13,25 +13,6 @@ using Bumper
 using TimerOutputs
 using Distances
 
-function ConstructStencil(v::Val{d}) where d
-    n_ = CartesianIndices(ntuple(_->-1:1,v))
-    half_length = length(n_) ÷ 2
-    n  = n_[1:half_length]
-
-    return n
-end
-
-###=== Extract Cells
-function ExtractCells!(Cells, Points, CutOff)
-    for i ∈ eachindex(Cells)
-        Cells[i]  =  CartesianIndex(@. Int(fld(Points[i], CutOff)) ...)
-        Cells[i] +=  2 * one(Cells[i])  # + CartesianIndex(1,1) + CartesianIndex(1,1) #+ ZeroOffset + HalfPad
-    end
-    return nothing
-end
-
-###===
-
 ###=== SimStep
 function SimStepLocalCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, BoolDDT)
 
@@ -208,8 +189,6 @@ function UpdateNeighbors!(Cells, CutOff, SortedIndices, SortingScratchSpace, Pos
     RearrangeVector!(GravityFactor , SortedIndices)    
     RearrangeVector!(MotionLimiter , SortedIndices)    
 
-    # These two are equivalent lol
-    # @time ParticleSplitter[findall(.!iszero.(diff(Cells))) .+ 1] .= true
     IndexCounter = 1
     for i in 2:length(Cells)
         if Cells[i] != Cells[i-1] # Equivalent to diff(Cells) != 0
@@ -224,9 +203,6 @@ end
 ###===
 
 ###=== Function to process each cell and its neighbors
-#https://cuda.juliagpu.org/stable/tutorials/performance/
-# 192 bytes and 4 allocs from launch config
-# INLINE IS SO IMPORTANT 10X SPEED
 function NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, UniqueCells, IndexCounter, BoolDDT)
     @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H², Cb⁻¹ = SimConstants
 
