@@ -14,7 +14,7 @@ using TimerOutputs
 using Distances
 
 # Overload the default function to do what you please
-function SPHExample.ComputeInteractions!(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, BoolDDT)
+function SPHExample.ComputeInteractions!(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT)
     xᵢⱼ² = evaluate(SqEuclidean(), Position[i], Position[j])
     if  xᵢⱼ² <= H²
         xᵢⱼ  = Position[i] - Position[j]
@@ -51,19 +51,66 @@ function SPHExample.ComputeInteractions!(Position, Kernel, KernelGradient, Densi
             dρdtI[i] += dρdt⁺
             dρdtI[j] += dρdt⁻
         end
-        Pᵢ        =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
-        Pⱼ        =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
-        Pfac      = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
-        ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
-        cond      = dot(vᵢⱼ, xᵢⱼ)
-        cond_bool = cond < 0.0
-        μᵢⱼ       = h*cond * invd²η²
-        Πᵢ        = - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
-        Πⱼ        = - Πᵢ
-        dvdt⁺ = - m₀ * (Pfac) *  ∇ᵢWᵢⱼ + Πᵢ
-        dvdt⁻ = - dvdt⁺ + Πⱼ
-        dvdtI[i] +=  dvdt⁺
-        dvdtI[j] +=  dvdt⁻
+
+        Pᵢ      =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
+        Pⱼ      =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
+        Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
+
+        if ViscosityTreatment == :ArtificialViscosity
+            ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
+            cond      = dot(vᵢⱼ, xᵢⱼ)
+            cond_bool = cond < 0.0
+            μᵢⱼ       = h*cond * invd²η²
+            Πᵢ        = - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
+            Πⱼ        = - Πᵢ
+        else
+            Πᵢ        = zero(xᵢⱼ)
+            Πⱼ        = Πᵢ
+        end
+    
+        if ViscosityTreatment == :Laminar || ViscosityTreatment == :LaminarSPS
+            # 4 comes from 2 divided by 0.5 from average density
+            # should divide by ρᵢ eq 6 DPC
+            ν₀∇²uᵢ = (1/ρᵢ) * ( (4 * m₀ * (ρᵢ * ν₀) * dot( xᵢⱼ, ∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²) ) ) *  vᵢⱼ
+            ν₀∇²uⱼ = (1/ρⱼ) * ( (4 * m₀ * (ρⱼ * ν₀) * dot(-xᵢⱼ,-∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²) ) ) * -vᵢⱼ
+        else
+            ν₀∇²uᵢ = zero(xᵢⱼ)
+            ν₀∇²uⱼ = ν₀∇²uᵢ
+        end
+    
+        if ViscosityTreatment == :LaminarSPS 
+            Iᴹ       = diagm(one.(xᵢⱼ))
+            #julia> a .- a'
+            # 3×3 SMatrix{3, 3, Float64, 9} with indices SOneTo(3)×SOneTo(3):
+            # 0.0  0.0  0.0
+            # 0.0  0.0  0.0
+            # 0.0  0.0  0.0
+            # Strain *rate* tensor is the gradient of velocity
+            Sᵢ = ∇vᵢ =  (m₀/ρⱼ) * (vⱼ - vᵢ) * ∇ᵢWᵢⱼ'
+            norm_Sᵢ  = sqrt(2 * sum(Sᵢ .^ 2))
+            νtᵢ      = (SmagorinskyConstant * dx)^2 * norm_Sᵢ
+            trace_Sᵢ = sum(diag(Sᵢ))
+            τᶿᵢ      = 2*νtᵢ*ρᵢ * (Sᵢ - (1/3) * trace_Sᵢ * Iᴹ) - (2/3) * ρᵢ * BlinConstant * dx^2 * norm_Sᵢ^2 * Iᴹ
+            Sⱼ = ∇vⱼ =  (m₀/ρᵢ) * (vᵢ - vⱼ) * -∇ᵢWᵢⱼ'
+            norm_Sⱼ  = sqrt(2 * sum(Sⱼ .^ 2))
+            νtⱼ      = (SmagorinskyConstant * dx)^2 * norm_Sⱼ
+            trace_Sⱼ = sum(diag(Sⱼ))
+            τᶿⱼ      = 2*νtⱼ*ρⱼ * (Sⱼ - (1/3) * trace_Sⱼ * Iᴹ) - (2/3) * ρⱼ * BlinConstant * dx^2 * norm_Sⱼ^2 * Iᴹ
+    
+            
+            dτdtᵢ = (m₀/(ρⱼ * ρᵢ)) * (τᶿᵢ + τᶿⱼ) *  ∇ᵢWᵢⱼ # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA THIS TIME
+            dτdtⱼ = (m₀/(ρᵢ * ρⱼ)) * (τᶿᵢ + τᶿⱼ) * -∇ᵢWᵢⱼ # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA THIS TIME
+        else
+            dτdtᵢ  = zero(xᵢⱼ)
+            dτdtⱼ  = dτdtᵢ
+        end
+    
+        dvdt⁺ = - m₀ * Pfac *  ∇ᵢWᵢⱼ
+        dvdt⁻ = - dvdt⁺
+    
+        dvdtI[i] += dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ
+        dvdtI[j] += dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
+
         # Kernel[i] += Wᵢⱼ
         # Kernel[j] += Wᵢⱼ
         # KernelGradient[i] +=  ∇ᵢWᵢⱼ
@@ -73,7 +120,7 @@ function SPHExample.ComputeInteractions!(Position, Kernel, KernelGradient, Densi
     return nothing
 end
 
-function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil,  ParticleRanges, UniqueCells, SortedIndices, SortingScratchSpace, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoolDDT)
+function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil,  ParticleRanges, UniqueCells, SortedIndices, SortingScratchSpace, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, ViscosityTreatment, BoolDDT)
     @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
     dt₂ = dt * 0.5
 
@@ -81,7 +128,7 @@ function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil,  ParticleRang
 
     @timeit SimMetaData.HourGlass "03 ResetArrays"                           ResetArrays!(Kernel, KernelGradient, dρdtI, dvdtI)
 
-    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                    NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, UniqueCells, IndexCounter, BoolDDT)
+    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                    NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT)
 
     @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" @inbounds for i in eachindex(Position)
         dvdtI[i]        +=  ConstructGravitySVector(dvdtI[i], SimConstants.g * GravityFactor[i])
@@ -94,7 +141,7 @@ function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil,  ParticleRang
 
     @timeit SimMetaData.HourGlass "07 ResetArrays"                  ResetArrays!(Kernel, KernelGradient, dρdtI, dρdtIₙ⁺, Acceleration)
 
-    @timeit SimMetaData.HourGlass "08 Second NeighborLoop"          NeighborLoop!(SimConstants, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, Acceleration, MotionLimiter, UniqueCells, IndexCounter, BoolDDT)
+    @timeit SimMetaData.HourGlass "08 Second NeighborLoop"          NeighborLoop!(SimConstants, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, Acceleration, MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT)
 
     @timeit SimMetaData.HourGlass "09 Final Density"                DensityEpsi!(Density, dρdtIₙ⁺, ρₙ⁺, dt)
 
@@ -121,6 +168,10 @@ function RunSimulation(;FluidCSV::String,
     BoolDDT = true,
     BoolShifting = true
     ) where {Dimensions,FloatType}
+
+    if ViscosityTreatment ∉ Set((:None, :ArtificialViscosity, :Laminar, :LaminarSPS))
+        error("ViscosityTreatment must be either :None, :ArtificialViscosity, :Laminar, :LaminarSPS")
+    end
 
     if !isdir(SimMetaData.SaveLocation)
         mkdir(SimMetaData.SaveLocation)
@@ -185,7 +236,7 @@ function RunSimulation(;FluidCSV::String,
     OutputIterationCounter = 0
     @inbounds while true
 
-        SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, ParticleRanges, UniqueCells, SortedIndices, SortingScratchSpace, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoolDDT)
+        SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, ParticleRanges, UniqueCells, SortedIndices, SortingScratchSpace, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, ViscosityTreatment, BoolDDT)
 
         OutputCounter += SimMetaData.CurrentTimeStep
         if OutputCounter >= SimMetaData.OutputEach
@@ -226,6 +277,8 @@ let
         FluidCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Fluid.csv",
         BoundCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Bound.csv",
         SimMetaData  = SimMetaData,
-        SimConstants = SimConstantsWedge
+        SimConstants = SimConstantsWedge,
+        ViscosityTreatment = :ArtificialViscosity,
+        BoolDDT            = true
     )
 end
