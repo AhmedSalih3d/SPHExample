@@ -289,7 +289,6 @@ function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil,  ParticleRang
     @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"  @inbounds for i in eachindex(Position)
         Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
         Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
-        # The increment of position is assigning 985 bytes with no reason when measuring using TimerOutputs
         Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
     end
 
