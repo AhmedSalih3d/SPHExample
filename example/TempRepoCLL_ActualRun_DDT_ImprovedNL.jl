@@ -226,8 +226,11 @@ function RunSimulation(;FluidCSV::String,
     ResetArrays!(Acceleration, Velocity, Kernel, KernelGradient, Cells, SortedIndices, dρdtI, dvdtI, Positionₙ⁺, Velocityₙ⁺)
 
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
+    SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, to_3d(Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, Density, Pressureᵢ, Velocity, Acceleration)
+    SaveFile(SaveLocation_)
+
     Pressure!(Pressureᵢ,Density,SimConstants)
-    ExportVTP(SaveLocation_, to_3d(Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, Density, Pressureᵢ, Velocity, Acceleration)
+    
 
     # Normal run and save data
     generate_showvalues(Iteration, TotalTime) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime))]
@@ -244,7 +247,7 @@ function RunSimulation(;FluidCSV::String,
 
             SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp"
             Pressure!(Pressureᵢ,Density,SimConstants)
-            @timeit HourGlass "12 Output Data"  ExportVTP(SaveLocation_, to_3d(Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, Density, Pressureᵢ, Velocity, Acceleration)
+            @timeit HourGlass "12 Output Data"  SaveFile(SaveLocation_)
         end
         @timeit HourGlass "13 Next TimeStep"    next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
 
