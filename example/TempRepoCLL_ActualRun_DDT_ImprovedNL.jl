@@ -14,78 +14,70 @@ using TimerOutputs
 using Distances
 
 ###=== SimStep
+function ComputeInteractions(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, BoolDDT)
+    xᵢⱼ² = evaluate(SqEuclidean(), Position[i], Position[j])
+    if  xᵢⱼ² <= H²
+        xᵢⱼ  = Position[i] - Position[j]
+        
+        dᵢⱼ  = sqrt(xᵢⱼ²) #Using sqrt is what takes a lot of time?
+        q    = clamp(dᵢⱼ * h⁻¹,0.0,2.0)
+        # Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
+        invd²η² = inv(dᵢⱼ*dᵢⱼ+η²)
+        ∇ᵢWᵢⱼ = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
+        ρᵢ        = Density[i]
+        ρⱼ        = Density[j]
+    
+        vᵢ        = Velocity[i]
+        vⱼ        = Velocity[j]
+        vᵢⱼ       = vᵢ - vⱼ
+        symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ) # = dot(vᵢⱼ , -∇ᵢWᵢⱼ)
+        dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  symmetric_term
+        dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  symmetric_term
+        # Density diffusion
+        if BoolDDT
+            Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
+            ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
+            Pⱼᵢᴴ  = -Pᵢⱼᴴ
+            ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
+        
+            ρⱼᵢ   = ρⱼ - ρᵢ
+            MLcond = MotionLimiter[i] * MotionLimiter[j]
+            ddt_symmetric_term =  δᵩ * h * c₀ * 2 * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond #  dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) =  dot( xᵢⱼ, -∇ᵢWᵢⱼ)
+            Dᵢ  = ddt_symmetric_term * (m₀/ρⱼ) * ( ρⱼᵢ - ρᵢⱼᴴ)
+            Dⱼ  = ddt_symmetric_term * (m₀/ρᵢ) * (-ρⱼᵢ - ρⱼᵢᴴ)
+            dρdtI[i] += dρdt⁺ + Dᵢ
+            dρdtI[j] += dρdt⁻ + Dⱼ
+        else
+            dρdtI[i] += dρdt⁺
+            dρdtI[j] += dρdt⁻
+        end
+        Pᵢ        =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
+        Pⱼ        =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
+        Pfac      = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
+        ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
+        cond      = dot(vᵢⱼ, xᵢⱼ)
+        cond_bool = cond < 0.0
+        μᵢⱼ       = h*cond * invd²η²
+        Πᵢ        = - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
+        Πⱼ        = - Πᵢ
+        dvdt⁺ = - m₀ * (Pfac) *  ∇ᵢWᵢⱼ + Πᵢ
+        dvdt⁻ = - dvdt⁺ + Πⱼ
+        dvdtI[i] +=  dvdt⁺
+        dvdtI[j] +=  dvdt⁻
+        # Kernel[i] += Wᵢⱼ
+        # Kernel[j] += Wᵢⱼ
+        # KernelGradient[i] +=  ∇ᵢWᵢⱼ
+        # KernelGradient[j] += -∇ᵢWᵢⱼ
+    end
+
+    return nothing
+end
+
+
 function SimStepLocalCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, BoolDDT)
 
     @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-
-        xᵢⱼ² = evaluate(SqEuclidean(), Position[i], Position[j])
-
-        if  xᵢⱼ² <= H²
-            xᵢⱼ  = Position[i] - Position[j]
-            
-            dᵢⱼ  = sqrt(xᵢⱼ²) #Using sqrt is what takes a lot of time?
-            q    = clamp(dᵢⱼ * h⁻¹,0.0,2.0)
-            # Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
-
-            invd²η² = inv(dᵢⱼ*dᵢⱼ+η²)
-
-            ∇ᵢWᵢⱼ = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
-
-            ρᵢ        = Density[i]
-            ρⱼ        = Density[j]
-        
-            vᵢ        = Velocity[i]
-            vⱼ        = Velocity[j]
-            vᵢⱼ       = vᵢ - vⱼ
-
-            symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ) # = dot(vᵢⱼ , -∇ᵢWᵢⱼ)
-            dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  symmetric_term
-            dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  symmetric_term
-
-            # Density diffusion
-            if BoolDDT
-                Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
-                ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
-                Pⱼᵢᴴ  = -Pᵢⱼᴴ
-                ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
-            
-                ρⱼᵢ   = ρⱼ - ρᵢ
-
-                MLcond = MotionLimiter[i] * MotionLimiter[j]
-                ddt_symmetric_term =  δᵩ * h * c₀ * 2 * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond #  dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) =  dot( xᵢⱼ, -∇ᵢWᵢⱼ)
-                Dᵢ  = ddt_symmetric_term * (m₀/ρⱼ) * ( ρⱼᵢ - ρᵢⱼᴴ)
-                Dⱼ  = ddt_symmetric_term * (m₀/ρᵢ) * (-ρⱼᵢ - ρⱼᵢᴴ)
-
-                dρdtI[i] += dρdt⁺ + Dᵢ
-                dρdtI[j] += dρdt⁻ + Dⱼ
-            else
-                dρdtI[i] += dρdt⁺
-                dρdtI[j] += dρdt⁻
-            end
-
-            Pᵢ        =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
-            Pⱼ        =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
-            Pfac      = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
-
-            ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
-            cond      = dot(vᵢⱼ, xᵢⱼ)
-            cond_bool = cond < 0.0
-            μᵢⱼ       = h*cond * invd²η²
-            Πᵢ        = - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
-            Πⱼ        = - Πᵢ
-
-            dvdt⁺ = - m₀ * (Pfac) *  ∇ᵢWᵢⱼ + Πᵢ
-            dvdt⁻ = - dvdt⁺ + Πⱼ
-
-            dvdtI[i] +=  dvdt⁺
-            dvdtI[j] +=  dvdt⁻
-
-            # Kernel[i] += Wᵢⱼ
-            # Kernel[j] += Wᵢⱼ
-
-            # KernelGradient[i] +=  ∇ᵢWᵢⱼ
-            # KernelGradient[j] += -∇ᵢWᵢⱼ
-        end
+        @inline ComputeInteractions(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, BoolDDT)
     end
 
     return nothing
@@ -94,80 +86,8 @@ end
 
 function SimStepNeighborCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, BoolDDT)
     @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-
-        xᵢⱼ² = evaluate(SqEuclidean(), Position[i], Position[j])
-
-        if  xᵢⱼ² <= H²
-            xᵢⱼ  = Position[i] - Position[j]
-
-            dᵢⱼ  = sqrt(xᵢⱼ²) #Using sqrt is what takes a lot of time?
-            q    = clamp(dᵢⱼ * h⁻¹,0.0,2.0)
-            # Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
-
-            invd²η² = inv(dᵢⱼ*dᵢⱼ+η²)
-
-            ∇ᵢWᵢⱼ = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
-
-            ρᵢ        = Density[i]
-            ρⱼ        = Density[j]
-        
-            vᵢ        = Velocity[i]
-            vⱼ        = Velocity[j]
-            vᵢⱼ       = vᵢ - vⱼ
-
-            symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ) # = dot(vᵢⱼ , -∇ᵢWᵢⱼ)
-            dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  symmetric_term
-            dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  symmetric_term
-            
-            # Density diffusion
-            if BoolDDT
-                Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
-                ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
-                Pⱼᵢᴴ  = -Pᵢⱼᴴ
-                ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
-            
-                ρⱼᵢ   = ρⱼ - ρᵢ
-
-                # Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * 2 * ( ρⱼᵢ - ρᵢⱼᴴ) * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond
-                # Dⱼ  = δᵩ * h * c₀ * (m₀/ρᵢ) * 2 * (-ρⱼᵢ - ρⱼᵢᴴ) * invd²η² * dot( xᵢⱼ, -∇ᵢWᵢⱼ) * MLcond
-                MLcond = MotionLimiter[i] * MotionLimiter[j]
-                ddt_symmetric_term =  δᵩ * h * c₀ * 2 * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond #  dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) =  dot( xᵢⱼ, -∇ᵢWᵢⱼ)
-                Dᵢ  = ddt_symmetric_term * (m₀/ρⱼ) * ( ρⱼᵢ - ρᵢⱼᴴ)
-                Dⱼ  = ddt_symmetric_term * (m₀/ρᵢ) * (-ρⱼᵢ - ρⱼᵢᴴ)
-
-
-                dρdtI[i] += dρdt⁺ + Dᵢ
-                dρdtI[j] += dρdt⁻ + Dⱼ
-            else
-                dρdtI[i] += dρdt⁺
-                dρdtI[j] += dρdt⁻
-            end
-
-            Pᵢ        =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
-            Pⱼ        =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
-            Pfac      = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
-
-            ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
-            cond      = dot(vᵢⱼ, xᵢⱼ)
-            cond_bool = cond < 0.0
-            μᵢⱼ       = h*cond * invd²η²
-            Πᵢ        = - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
-            Πⱼ        = - Πᵢ
-
-            dvdt⁺ = - m₀ * (Pfac) *  ∇ᵢWᵢⱼ + Πᵢ
-            dvdt⁻ = - dvdt⁺ + Πⱼ
-
-            dvdtI[i] +=  dvdt⁺
-            dvdtI[j] +=  dvdt⁻
-
-            # Kernel[i] += Wᵢⱼ
-            # Kernel[j] += Wᵢⱼ
-
-            # KernelGradient[i] +=  ∇ᵢWᵢⱼ
-            # KernelGradient[j] += -∇ᵢWᵢⱼ
-        end
+        @inline ComputeInteractions(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, BoolDDT)
     end
-
     return nothing
 end
 
