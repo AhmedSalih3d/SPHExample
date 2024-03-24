@@ -13,6 +13,15 @@ using Bumper
 using TimerOutputs
 using Distances
 
+@kwdef struct MaterialPoint{D,T}
+    Position::SVector{D,T}
+    Velocity::SVector{D,T}
+    Acceleration::SVector{D,T}
+    Density::T
+    GravityFactor::T
+    MotionLimiter::T
+end
+
 function SPHExample.LimitDensityAtBoundary!(Density,ρ₀, MotionLimiter)
     for i in eachindex(Density)
         if (Density[i] < ρ₀) * !Bool(MotionLimiter[i])
@@ -311,7 +320,7 @@ function NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, 
     return nothing
 end
 
-function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil,  ParticleRanges, UniqueCells, SortedIndices, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoolDDT)
+function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil,  ParticleRanges, UniqueCells, SortedIndices, MaterialPointVector, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoolDDT)
     @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
     dt₂ = dt * 0.5
 
@@ -410,6 +419,12 @@ function RunSimulation(;FluidCSV::String,
 
     Stencil         = ConstructStencil(Val(Dimensions))
 
+    MaterialPointVector = Vector{MaterialPoint}(undef, NumberOfPoints)
+
+    for i ∈ eachindex(Position)
+        MaterialPointVector[i] = MaterialPoint(Position=Position[i],Velocity=Velocity[i],Acceleration=Acceleration[i],Density=Density[i],GravityFactor=GravityFactor[i], MotionLimiter=MotionLimiter[i])
+    end
+
     # Ensure zero, similar does not!
     ResetArrays!(Acceleration, Velocity, Kernel, KernelGradient, Cells, SortedIndices, dρdtI, dvdtI, Positionₙ⁺, Velocityₙ⁺)
 
@@ -428,7 +443,7 @@ function RunSimulation(;FluidCSV::String,
     OutputIterationCounter = 0
     @inbounds while true
 
-        SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, ParticleRanges, UniqueCells, SortedIndices, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoolDDT)
+        SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, ParticleRanges, UniqueCells, SortedIndices, MaterialPointVector, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, BoolDDT)
 
         OutputCounter += SimMetaData.CurrentTimeStep
         if OutputCounter >= SimMetaData.OutputEach
@@ -458,15 +473,15 @@ let
     SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=1,
+        SimulationTime=0.1,
         OutputEach=0.01,
     )
 
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=42.48576250492629)
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629)
 
     @profview RunSimulation(
-        FluidCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.01_Fluid.csv",
-        BoundCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.01_Bound.csv",
+        FluidCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Fluid.csv",
+        BoundCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Bound.csv",
         SimMetaData  = SimMetaData,
         SimConstants = SimConstantsWedge
     )
