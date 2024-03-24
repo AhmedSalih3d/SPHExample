@@ -1,7 +1,8 @@
 module SPHExample
 
     include("AuxillaryFunctions.jl");        
-    include("PostProcess.jl");        
+    include("PostProcess.jl");    
+    include("ProduceVTP.jl")    
     include("TimeStepping.jl");       
     include("SimulationEquations.jl");
     include("SimulationMetaDataConfiguration.jl");
@@ -18,6 +19,9 @@ module SPHExample
 
     using .PostProcess
     export create_vtp_file, OutputVTP
+
+    using .ProduceVTP
+    export ExportVTP
 
     using .TimeStepping: Δt
     export Δt
