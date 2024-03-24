@@ -271,11 +271,11 @@ let
         OutputEach=0.01,
     )
 
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 1)
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=42.48576250492629, δᵩ = 1)
 
     @profview RunSimulation(
-        FluidCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Fluid.csv",
-        BoundCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Bound.csv",
+        FluidCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.01_Fluid.csv",
+        BoundCSV     = "./input/still_wedge_mdbc/StillWedge_Dp0.01_Bound.csv",
         SimMetaData  = SimMetaData,
         SimConstants = SimConstantsWedge,
         ViscosityTreatment = :LaminarSPS,
