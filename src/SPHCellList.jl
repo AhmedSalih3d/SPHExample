@@ -188,7 +188,7 @@ include("AuxillaryFunctions.jl"); using .AuxillaryFunctions
             StartIndex = ParticleRanges[iter] 
             EndIndex   = ParticleRanges[iter+1] - 1
 
-            @inline SimStepLocalCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT)
+            SimStepLocalCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT)
 
             @inbounds for S ∈ Stencil
                 SCellIndex = CellIndex + S
@@ -202,7 +202,7 @@ include("AuxillaryFunctions.jl"); using .AuxillaryFunctions
                     StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
                     EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
 
-                    @inline SimStepNeighborCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀,  dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT)
+                    SimStepNeighborCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀,  dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT)
                 end
             end
         end
