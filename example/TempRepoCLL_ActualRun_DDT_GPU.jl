@@ -9,7 +9,7 @@ using FastPow
 import CellListMap: InPlaceNeighborList, update!, neighborlist!
 using Bumper
 using CUDA
-# CUDA.allowscalar(false)
+CUDA.allowscalar(false)
 
 import Base.Threads: nthreads, @threads
 include("../src/ProduceVTP.jl")
@@ -206,33 +206,26 @@ end
 #https://cuda.juliagpu.org/stable/tutorials/performance/
 function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Acceleration, Velocity, ParticleRanges, UniqueCells)
 
-    ParticleRanges[2:end-1] .= 0
+    # ParticleRanges[2:end-1] .= 0
 
-    KernelExtractCells!(Cells,Position,CutOff)
+    # KernelExtractCells!(Cells,Position,CutOff)
 
-    sortperm!(SortedIndices,Cells)
+    # sortperm!(SortedIndices,Cells)
 
-    @. Cells           =  Cells[SortedIndices]
-    @. Position        =  Position[SortedIndices]
-    @. Density         =  Density[SortedIndices]
-    @. Acceleration    =  Acceleration[SortedIndices]
-    @. Velocity        =  Velocity[SortedIndices]
+    # @. Cells           =  Cells[SortedIndices]
+    # @. Position        =  Position[SortedIndices]
+    # @. Density         =  Density[SortedIndices]
+    # @. Acceleration    =  Acceleration[SortedIndices]
+    # @. Velocity        =  Velocity[SortedIndices]
 
-    # IndexCounter = 1
-    # for i in 2:length(Cells)
-    #     if Cells[i] != Cells[i-1] # Equivalent to diff(Cells) != 0
-    #         ParticleRanges[IndexCounter] = i
-    #         UniqueCells[IndexCounter]    = Cells[i]
-    #         IndexCounter                += 1
-    #     end
-    # end
-
-    KernelExtractParticleRangesAndUniqueCells!(ParticleRanges, UniqueCells, Cells)
+    # KernelExtractParticleRangesAndUniqueCells!(ParticleRanges, UniqueCells, Cells)
     
-    sort!(cuParticleRanges; rev=true)
-    sort!(cuUniqueCells; rev=true)
+    # sort!(ParticleRanges; rev=true)
+    # sort!(UniqueCells; rev=true)
 
-    # return IndexCounter
+    # IndexCounter = findfirst(isequal(0), ParticleRanges) - 2 #-2 due to having one more index than unique cells
+
+    return 0
 end
 ###===
 
@@ -369,10 +362,10 @@ IndexCounter = UpdateNeighbors!(cuCells, H, cuSortedIndices, cuPosition, cuDensi
 # create_vtp_file(SimMetaData, SimConstantsWedge, to_3d(Array(cuPosition)); KERNEL, KERNEL_GRADIENT)
 # #
 
-# println(CUDA.@profile trace=true ParticleRanges,UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity, cuParticleSplitter, cuParticleSplitterLinearIndices))
+println(CUDA.@profile trace=true IndexCounter = UpdateNeighbors!(cuCells, H, cuSortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity, cuParticleRanges, cuUniqueCells) )
 # println(CUDA.@profile trace=true @cuda always_inline=true fastmath=true threads=threads1 blocks=blocks1 shmem=shmem NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradientX, cuKernelGradientY, cuDensity, cuVelocity, cudρdtI, cudvdtIX, cudvdtIY))
 
-# display(@benchmark CUDA.@sync ParticleRanges,UniqueCells     = UpdateNeighbors!($cuCells, $H, $SortedIndices, $cuPosition, $cuDensity, $cuAcceleration, $cuVelocity, $cuParticleSplitter, $cuParticleSplitterLinearIndices))
+display(@benchmark CUDA.@sync IndexCounter = UpdateNeighbors!($cuCells, $H, $cuSortedIndices, $cuPosition, $cuDensity, $cuAcceleration, $cuVelocity, $cuParticleRanges, $cuUniqueCells) )
 # display(@benchmark CUDA.@sync @cuda always_inline=true fastmath=true threads=$threads1 blocks=$blocks1 shmem=$shmem NeighborLoop!($SimConstantsWedge, $UniqueCells, $ParticleRanges, $Stencil, $cuPosition, $cuKernel, $cuKernelGradientX, $cuKernelGradientY, $cuDensity, $cuVelocity, $cudρdtI, $cudvdtIX, $cudvdtIY))
 # println("CUDA allocations: ", CUDA.@allocated ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity, cuParticleSplitter, cuParticleSplitterLinearIndices))
 # println("CUDA allocations: ", CUDA.@allocated @cuda always_inline=true fastmath=true threads=threads1 blocks=blocks1 shmem = shmem NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradientX, cuKernelGradientY, cuDensity, cuVelocity, cudρdtI, cudvdtIX, cudvdtIY))
