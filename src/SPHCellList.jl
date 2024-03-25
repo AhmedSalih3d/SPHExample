@@ -5,9 +5,8 @@ export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, Compute
 using Parameters, FastPow, Distances, StaticArrays, Base.Threads
 import LinearAlgebra: dot
 
-include("SimulationEquations.jl"); using .SimulationEquations
-
-include("AuxillaryFunctions.jl"); using .AuxillaryFunctions
+using ..SimulationEquations
+using ..AuxillaryFunctions
 
     function ConstructStencil(v::Val{d}) where d
         n_ = CartesianIndices(ntuple(_->-1:1,v))
