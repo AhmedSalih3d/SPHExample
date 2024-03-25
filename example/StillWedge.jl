@@ -15,7 +15,7 @@ using Distances
 
 # Really important to overload default function, gives 10x speed up?
 # Overload the default function to do what you please
- function SPHExample.ComputeInteractions!(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT, OutputKernelValues)
+function SPHExample.ComputeInteractions!(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT, OutputKernelValues)
     xᵢⱼ² = evaluate(SqEuclidean(), Position[i], Position[j])
     if  xᵢⱼ² <= H²
         xᵢⱼ  = Position[i] - Position[j]
@@ -45,12 +45,12 @@ using Distances
             ddt_symmetric_term =  δᵩ * h * c₀ * 2 * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond #  dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) =  dot( xᵢⱼ, -∇ᵢWᵢⱼ)
             Dᵢ  = ddt_symmetric_term * (m₀/ρⱼ) * ( ρⱼᵢ - ρᵢⱼᴴ)
             Dⱼ  = ddt_symmetric_term * (m₀/ρᵢ) * (-ρⱼᵢ - ρⱼᵢᴴ)
-            dρdtI[i] += dρdt⁺ + Dᵢ
-            dρdtI[j] += dρdt⁻ + Dⱼ
         else
-            dρdtI[i] += dρdt⁺
-            dρdtI[j] += dρdt⁻
+            Dᵢ  = zero(Density)
+            Dⱼ  = Dᵢ
         end
+        dρdtI[i] += dρdt⁺ + Dᵢ
+        dρdtI[j] += dρdt⁻ + Dⱼ
 
         Pᵢ      =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
         Pⱼ      =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
