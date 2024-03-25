@@ -22,9 +22,9 @@ function SPHExample.ComputeInteractions!(Position, Kernel, KernelGradient, Densi
         
         dᵢⱼ  = sqrt(xᵢⱼ²) #Using sqrt is what takes a lot of time?
         # Unsure what is faster, min should do less operations?
-        q    = min(dᵢⱼ * h⁻¹, 2.0) #clamp(dᵢⱼ * h⁻¹,0.0,2.0)
-        invd²η² = inv(dᵢⱼ*dᵢⱼ+η²)
-        ∇ᵢWᵢⱼ = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
+        q         = min(dᵢⱼ * h⁻¹, 2.0) #clamp(dᵢⱼ * h⁻¹,0.0,2.0)
+        invd²η²   = inv(dᵢⱼ*dᵢⱼ+η²)
+        ∇ᵢWᵢⱼ     = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
         ρᵢ        = Density[i]
         ρⱼ        = Density[j]
     
@@ -187,15 +187,10 @@ function RunSimulation(;FluidCSV::String,
     # Unpack the relevant simulation meta data
     @unpack HourGlass, SaveLocation, SimulationName, SilentOutput, ThreadsCPU = SimMetaData;
 
-    # Unpack simulation constants
-    @unpack ρ₀, dx, h, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H = SimConstants
-
     # Load in the fluid and boundary particles. Return these points and both data frames
     # @inline is a hack here to remove all allocations further down due to uncertainty of the points type at compile time
-    # @inline points, density_fluid, density_bound  = LoadParticlesFromCSV(Dimensions,FloatType, FluidCSV,BoundCSV)
     @inline Position, density_fluid, density_bound  = LoadParticlesFromCSV_StaticArrays(Dimensions,FloatType, FluidCSV,BoundCSV)
     NumberOfPoints = length(Position)
-    # Position = deepcopy(points)
     Density  = deepcopy([density_bound; density_fluid])
 
     GravityFactor = [ zeros(size(density_bound,1)) ; -ones(size(density_fluid,1)) ]
