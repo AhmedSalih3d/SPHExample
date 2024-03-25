@@ -21,7 +21,8 @@ function SPHExample.ComputeInteractions!(Position, Kernel, KernelGradient, Densi
         xᵢⱼ  = Position[i] - Position[j]
         
         dᵢⱼ  = sqrt(xᵢⱼ²) #Using sqrt is what takes a lot of time?
-        q    = clamp(dᵢⱼ * h⁻¹,0.0,2.0)
+        # Unsure what is faster, min should do less operations?
+        q    = min(dᵢⱼ * h⁻¹, 2.0) #clamp(dᵢⱼ * h⁻¹,0.0,2.0)
         invd²η² = inv(dᵢⱼ*dᵢⱼ+η²)
         ∇ᵢWᵢⱼ = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
         ρᵢ        = Density[i]
@@ -283,7 +284,7 @@ let
         SimMetaData        = SimMetaData,
         SimConstants       = SimConstantsWedge,
         ViscosityTreatment = :ArtificialViscosity,
-        BoolDDT            = false,
+        BoolDDT            = true,
         OutputKernelValues = false,
     )
 
