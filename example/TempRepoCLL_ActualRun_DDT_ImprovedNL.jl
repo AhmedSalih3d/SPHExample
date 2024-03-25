@@ -269,11 +269,11 @@ let
     SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=1,
+        SimulationTime=4,
         OutputEach=0.01,
     )
 
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 1)
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1)
 
     @profview RunSimulation(
         FluidCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Fluid.csv",
@@ -287,7 +287,7 @@ let
     # SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
     #     SimulationName="Test", 
     #     SaveLocation="E:/SecondApproach/TESTING_CPU",
-    #     SimulationTime=2,
+    #     SimulationTime=4,
     #     OutputEach=0.01,
     # )
     # SimConstantsDamBreak = SimulationConstants{FloatType}()
