@@ -30,9 +30,10 @@ function SPHExample.ComputeInteractions!(Position, Kernel, KernelGradient, Densi
         vᵢ        = Velocity[i]
         vⱼ        = Velocity[j]
         vᵢⱼ       = vᵢ - vⱼ
-        symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ) # = dot(vᵢⱼ , -∇ᵢWᵢⱼ)
-        dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  symmetric_term
-        dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  symmetric_term
+        density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ) # = dot(vᵢⱼ , -∇ᵢWᵢⱼ)
+        dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  density_symmetric_term
+        dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  density_symmetric_term
+        
         # Density diffusion
         if BoolDDT
             Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
@@ -55,6 +56,8 @@ function SPHExample.ComputeInteractions!(Position, Kernel, KernelGradient, Densi
         Pᵢ      =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
         Pⱼ      =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
         Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
+        dvdt⁺   = - m₀ * Pfac *  ∇ᵢWᵢⱼ
+        dvdt⁻   = - dvdt⁺
 
         if ViscosityTreatment == :ArtificialViscosity
             ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
@@ -104,9 +107,6 @@ function SPHExample.ComputeInteractions!(Position, Kernel, KernelGradient, Densi
             dτdtᵢ  = zero(xᵢⱼ)
             dτdtⱼ  = dτdtᵢ
         end
-    
-        dvdt⁺ = - m₀ * Pfac *  ∇ᵢWᵢⱼ
-        dvdt⁻ = - dvdt⁺
     
         dvdtI[i] += dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ
         dvdtI[j] += dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
