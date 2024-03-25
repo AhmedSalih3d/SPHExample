@@ -13,6 +13,7 @@ using Bumper
 using TimerOutputs
 using Distances
 
+# Really important to overload default function, gives 10x speed up?
 # Overload the default function to do what you please
 function SPHExample.ComputeInteractions!(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT)
     xᵢⱼ² = evaluate(SqEuclidean(), Position[i], Position[j])
