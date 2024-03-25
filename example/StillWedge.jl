@@ -251,7 +251,7 @@ function RunSimulation(;FluidCSV::String,
         end
         @timeit HourGlass "13 Next TimeStep"    next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
 
-        if SimMetaData.TotalTime >= SimMetaData.SimulationTime + 1e-3
+        if SimMetaData.TotalTime > SimMetaData.SimulationTime
             break
         end
     end
