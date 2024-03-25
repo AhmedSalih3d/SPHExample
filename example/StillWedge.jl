@@ -47,8 +47,8 @@ function SPHExample.ComputeInteractions!(Position, Kernel, KernelGradient, Densi
             Dᵢ  = ddt_symmetric_term * (m₀/ρⱼ) * ( ρⱼᵢ - ρᵢⱼᴴ)
             Dⱼ  = ddt_symmetric_term * (m₀/ρᵢ) * (-ρⱼᵢ - ρⱼᵢᴴ)
         else
-            Dᵢ  = zero(Density)
-            Dⱼ  = Dᵢ
+            Dᵢ  = 0.0
+            Dⱼ  = 0.0
         end
         dρdtI[i] += dρdt⁺ + Dᵢ
         dρdtI[j] += dρdt⁻ + Dⱼ
@@ -283,8 +283,8 @@ let
         SimMetaData        = SimMetaData,
         SimConstants       = SimConstantsWedge,
         ViscosityTreatment = :ArtificialViscosity,
-        BoolDDT            = true,
-        OutputKernelValues = true,
+        BoolDDT            = false,
+        OutputKernelValues = false,
     )
 
     # SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
