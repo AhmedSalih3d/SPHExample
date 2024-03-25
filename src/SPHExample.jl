@@ -28,7 +28,7 @@ module SPHExample
     export Δt
 
     using .SimulationEquations
-    export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼWᵢⱼ!∑ⱼ∇ᵢWᵢⱼ!, EquationOfState, EquationOfStateGamma7, Pressure!, ∂Πᵢⱼ∂t!, ∂ρᵢ∂t!, ∂ρᵢ∂tDDT!, ∂vᵢ∂t!, DensityEpsi!, LimitDensityAtBoundary!, updatexᵢⱼ!, ArtificialViscosityMomentumEquation!, DimensionalData, Optim∇ᵢWᵢⱼ, ConstructGravitySVector, InverseHydrostaticEquationOfState
+    export EquationOfState, EquationOfStateGamma7, Pressure!, DensityEpsi!, LimitDensityAtBoundary!, ConstructGravitySVector, InverseHydrostaticEquationOfState
 
     using .SimulationMetaDataConfiguration
     export SimulationMetaData
