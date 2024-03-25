@@ -206,13 +206,13 @@ end
 #https://cuda.juliagpu.org/stable/tutorials/performance/
 function UpdateNeighbors!(Cells, CutOff, SortedIndices, Position, Density, Acceleration, Velocity, ParticleRanges, UniqueCells)
 
-    # ParticleRanges[2:end-1] .= 0
+    ParticleRanges[2:end-1] .= 0
 
-    # KernelExtractCells!(Cells,Position,CutOff)
+    KernelExtractCells!(Cells,Position,CutOff)
 
-    # sortperm!(SortedIndices,Cells)
+    sortperm!(SortedIndices,Cells)
 
-    # @. Cells           =  Cells[SortedIndices]
+    @. Cells           =  Cells[SortedIndices]
     # @. Position        =  Position[SortedIndices]
     # @. Density         =  Density[SortedIndices]
     # @. Acceleration    =  Acceleration[SortedIndices]
@@ -367,6 +367,6 @@ println(CUDA.@profile trace=true IndexCounter = UpdateNeighbors!(cuCells, H, cuS
 
 display(@benchmark CUDA.@sync IndexCounter = UpdateNeighbors!($cuCells, $H, $cuSortedIndices, $cuPosition, $cuDensity, $cuAcceleration, $cuVelocity, $cuParticleRanges, $cuUniqueCells) )
 # display(@benchmark CUDA.@sync @cuda always_inline=true fastmath=true threads=$threads1 blocks=$blocks1 shmem=$shmem NeighborLoop!($SimConstantsWedge, $UniqueCells, $ParticleRanges, $Stencil, $cuPosition, $cuKernel, $cuKernelGradientX, $cuKernelGradientY, $cuDensity, $cuVelocity, $cudρdtI, $cudvdtIX, $cudvdtIY))
-# println("CUDA allocations: ", CUDA.@allocated ParticleRanges, UniqueCells  = UpdateNeighbors!(cuCells, H, SortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity, cuParticleSplitter, cuParticleSplitterLinearIndices))
+println("CUDA allocations: ", UpdateNeighbors!(cuCells, H, cuSortedIndices, cuPosition, cuDensity, cuAcceleration, cuVelocity, cuParticleRanges, cuUniqueCells) )
 # println("CUDA allocations: ", CUDA.@allocated @cuda always_inline=true fastmath=true threads=threads1 blocks=blocks1 shmem = shmem NeighborLoop!(SimConstantsWedge, UniqueCells, ParticleRanges, Stencil, cuPosition, cuKernel, cuKernelGradientX, cuKernelGradientY, cuDensity, cuVelocity, cudρdtI, cudvdtIX, cudvdtIY))
 
