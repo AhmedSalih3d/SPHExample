@@ -7,16 +7,15 @@ module SPHExample
     include("SimulationEquations.jl");
     include("SimulationMetaDataConfiguration.jl");
     include("SimulationConstantsConfiguration.jl");
-    include("SimulationDataArrays.jl")
     include("PreProcess.jl");
     include("SPHCellList.jl")
     
     # Re-export desired functions from each submodule
     using .AuxillaryFunctions
-    export RearrangeVector!
+    export RearrangeVector!, ResetArrays!
 
     using .PreProcess
-    export LoadParticlesFromCSV, LoadParticlesFromCSV_StaticArrays, LoadBoundaryNormals
+    export LoadParticlesFromCSV_StaticArrays, LoadBoundaryNormals
 
     using .PostProcess
     export create_vtp_file, OutputVTP
@@ -35,9 +34,6 @@ module SPHExample
 
     using .SimulationConstantsConfiguration
     export SimulationConstants
-
-    using .SimulationDataArrays
-    export ResetArrays!, ResizeBuffers!
 
     using .SPHCellList
     export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!
