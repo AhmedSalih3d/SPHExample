@@ -177,12 +177,13 @@ include("AuxillaryFunctions.jl"); using .AuxillaryFunctions
     end
 
 
+
 ###=== Function to process each cell and its neighbors
     function NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT)
         @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant, = SimConstants
 
         UniqueCells = view(UniqueCells, 1:IndexCounter)
-        @inbounds for iter ∈ eachindex(UniqueCells)
+        @inbounds Base.Threads.@threads for iter ∈ eachindex(UniqueCells)
             CellIndex = UniqueCells[iter]
 
             StartIndex = ParticleRanges[iter] 
