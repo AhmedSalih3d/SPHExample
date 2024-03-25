@@ -12,7 +12,7 @@ module SPHExample
     
     # Re-export desired functions from each submodule
     using .AuxillaryFunctions
-    export RearrangeVector!, ResetArrays!
+    export RearrangeVector!, ResetArrays!, to_3d
 
     using .PreProcess
     export LoadParticlesFromCSV_StaticArrays, LoadBoundaryNormals

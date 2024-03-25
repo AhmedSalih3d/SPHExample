@@ -4,7 +4,6 @@ export EquationOfState, EquationOfStateGamma7, Pressure!, DensityEpsi!, LimitDen
 
 using StaticArrays
 using Parameters
-using LoopVectorization
 using FastPow
 
 @fastpow function EquationOfStateGamma7(ρ,c₀,ρ₀)
@@ -16,9 +15,9 @@ function EquationOfState(ρ,c₀,γ,ρ₀)
     return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
 end
 
-@inline @inbounds function Pressure!(Press, Density, SimulationConstants)
+@inline function Pressure!(Press, Density, SimulationConstants)
     @unpack c₀,γ,ρ₀ = SimulationConstants
-    @tturbo for i ∈ eachindex(Press,Density)
+    @inbounds for i ∈ eachindex(Press,Density)
         # Press[i] = EquationOfState(Density[i],c₀,γ,ρ₀)
         Press[i] = EquationOfStateGamma7(Density[i],c₀,ρ₀)
     end
@@ -26,15 +25,15 @@ end
 
 # This is to handle the special factor multiplied on density in the time stepping procedure, when
 # using symplectic time stepping
-function DensityEpsi!(Density, dρdtIₙ⁺,ρₙ⁺,Δt)
-    for i in eachindex(Density)
+@inline function DensityEpsi!(Density, dρdtIₙ⁺,ρₙ⁺,Δt)
+    @inbounds for i in eachindex(Density)
         epsi = - (dρdtIₙ⁺[i] / ρₙ⁺[i]) * Δt
         Density[i] *= (2 - epsi) / (2 + epsi)
     end
 end
 
 # This version of the function using !Bool(MotionLimiter) instead of BoundaryBool
-function LimitDensityAtBoundary!(Density,ρ₀, MotionLimiter)
+@inline function LimitDensityAtBoundary!(Density,ρ₀, MotionLimiter)
     @inbounds for i in eachindex(Density)
         if (Density[i] < ρ₀) * !Bool(MotionLimiter[i])
             Density[i] = ρ₀
@@ -42,7 +41,7 @@ function LimitDensityAtBoundary!(Density,ρ₀, MotionLimiter)
     end
 end
 
-function ConstructGravitySVector(_::SVector{N, T}, value) where {N, T}
+@inline function ConstructGravitySVector(_::SVector{N, T}, value) where {N, T}
     return SVector{N, T}(ntuple(i -> i == N ? value : 0, N))
 end
 

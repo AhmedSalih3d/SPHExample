@@ -264,8 +264,6 @@ function RunSimulation(;FluidCSV::String,
     show(HourGlass)
 end
 
-to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
-
 let
     Dimensions = 2
     FloatType  = Float64
