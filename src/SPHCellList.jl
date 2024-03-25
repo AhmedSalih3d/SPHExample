@@ -43,18 +43,18 @@ include("AuxillaryFunctions.jl"); using .AuxillaryFunctions
         @. ParticleRanges             = zero(eltype(ParticleRanges))
         IndexCounter                  = 1
         ParticleRanges[IndexCounter]  = 1
-        ParticleRanges[end]           = length(ParticleRanges)
         UniqueCells[IndexCounter]     = Cells[1]
 
         for i in 2:length(Cells)
             if Cells[i] != Cells[i-1] # Equivalent to diff(Cells) != 0
+                IndexCounter                += 1
                 ParticleRanges[IndexCounter] = i
                 UniqueCells[IndexCounter]    = Cells[i]
-                IndexCounter                += 1
             end
         end
+        ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
 
-        return IndexCounter
+        return IndexCounter 
     end
 
     function ComputeInteractions!(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT, OutputKernelValues)
