@@ -15,14 +15,13 @@ using Distances
 
 # Really important to overload default function, gives 10x speed up?
 # Overload the default function to do what you please
- function SPHExample.ComputeInteractions!(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT)
+ function SPHExample.ComputeInteractions!(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT, OutputKernelValues)
     xᵢⱼ² = evaluate(SqEuclidean(), Position[i], Position[j])
     if  xᵢⱼ² <= H²
         xᵢⱼ  = Position[i] - Position[j]
         
         dᵢⱼ  = sqrt(xᵢⱼ²) #Using sqrt is what takes a lot of time?
         q    = clamp(dᵢⱼ * h⁻¹,0.0,2.0)
-        # Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
         invd²η² = inv(dᵢⱼ*dᵢⱼ+η²)
         ∇ᵢWᵢⱼ = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
         ρᵢ        = Density[i]
@@ -112,24 +111,28 @@ using Distances
         dvdtI[i] += dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ
         dvdtI[j] += dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
 
-        # Kernel[i] += Wᵢⱼ
-        # Kernel[j] += Wᵢⱼ
-        # KernelGradient[i] +=  ∇ᵢWᵢⱼ
-        # KernelGradient[j] += -∇ᵢWᵢⱼ
+        if OutputKernelValues
+            Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
+            Kernel[i]         += Wᵢⱼ
+            Kernel[j]         += Wᵢⱼ
+            KernelGradient[i] +=  ∇ᵢWᵢⱼ
+            KernelGradient[j] += -∇ᵢWᵢⱼ
+        end
     end
 
     return nothing
 end
 
-function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil,  ParticleRanges, UniqueCells, SortedIndices, SortingScratchSpace, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, ViscosityTreatment, BoolDDT)
+function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil,  ParticleRanges, UniqueCells, SortedIndices, SortingScratchSpace, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
     @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
     dt₂ = dt * 0.5
 
+    ResetArrays!(ParticleRanges)
     @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(Cells, SimConstants.H, SortedIndices, SortingScratchSpace, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleRanges, UniqueCells)
 
     @timeit SimMetaData.HourGlass "03 ResetArrays"                           ResetArrays!(Kernel, KernelGradient, dρdtI, dvdtI)
 
-    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                    NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT)
+    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                    NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
     @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" @inbounds for i in eachindex(Position)
         dvdtI[i]        +=  ConstructGravitySVector(dvdtI[i], SimConstants.g * GravityFactor[i])
@@ -142,7 +145,7 @@ function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil,  ParticleRang
 
     @timeit SimMetaData.HourGlass "07 ResetArrays"                  ResetArrays!(Kernel, KernelGradient, dρdtI, dρdtIₙ⁺, Acceleration)
 
-    @timeit SimMetaData.HourGlass "08 Second NeighborLoop"          NeighborLoop!(SimConstants, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, Acceleration, MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT)
+    @timeit SimMetaData.HourGlass "08 Second NeighborLoop"          NeighborLoop!(SimConstants, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, Acceleration, MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
     @timeit SimMetaData.HourGlass "09 Final Density"                DensityEpsi!(Density, dρdtIₙ⁺, ρₙ⁺, dt)
 
@@ -167,6 +170,7 @@ function RunSimulation(;FluidCSV::String,
     SimConstants::SimulationConstants,
     ViscosityTreatment = :LaminarSPS,
     BoolDDT = true,
+    OutputKernelValues = false
     ) where {Dimensions,FloatType}
 
     if ViscosityTreatment ∉ Set((:None, :ArtificialViscosity, :Laminar, :LaminarSPS))
@@ -238,7 +242,7 @@ function RunSimulation(;FluidCSV::String,
     OutputIterationCounter = 0
     @inbounds while true
 
-        SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, ParticleRanges, UniqueCells, SortedIndices, SortingScratchSpace, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, ViscosityTreatment, BoolDDT)
+        SimulationLoop(SimMetaData, SimConstants, Cells, Stencil, ParticleRanges, UniqueCells, SortedIndices, SortingScratchSpace, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
         OutputCounter += SimMetaData.CurrentTimeStep
         if OutputCounter >= SimMetaData.OutputEach
@@ -281,7 +285,8 @@ let
         SimMetaData        = SimMetaData,
         SimConstants       = SimConstantsWedge,
         ViscosityTreatment = :ArtificialViscosity,
-        BoolDDT            = true
+        BoolDDT            = true,
+        OutputKernelValues = true,
     )
 
     # SimMetaData  = SimulationMetaData{Dimensions,FloatType}(

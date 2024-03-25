@@ -40,7 +40,12 @@ include("AuxillaryFunctions.jl"); using .AuxillaryFunctions
         RearrangeVector!(GravityFactor , SortedIndices)    
         RearrangeVector!(MotionLimiter , SortedIndices)    
 
-        IndexCounter = 1
+        @. ParticleRanges             = zero(eltype(ParticleRanges))
+        IndexCounter                  = 1
+        ParticleRanges[IndexCounter]  = 1
+        ParticleRanges[end]           = length(ParticleRanges)
+        UniqueCells[IndexCounter]     = Cells[1]
+
         for i in 2:length(Cells)
             if Cells[i] != Cells[i-1] # Equivalent to diff(Cells) != 0
                 ParticleRanges[IndexCounter] = i
@@ -52,7 +57,7 @@ include("AuxillaryFunctions.jl"); using .AuxillaryFunctions
         return IndexCounter
     end
 
-    function ComputeInteractions!(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT)
+    function ComputeInteractions!(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT, OutputKernelValues)
         xᵢⱼ² = evaluate(SqEuclidean(), Position[i], Position[j])
         if  xᵢⱼ² <= H²
             xᵢⱼ  = Position[i] - Position[j]
@@ -149,29 +154,31 @@ include("AuxillaryFunctions.jl"); using .AuxillaryFunctions
             dvdtI[i] += dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ
             dvdtI[j] += dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
     
-            # Kernel[i] += Wᵢⱼ
-            # Kernel[j] += Wᵢⱼ
-            # KernelGradient[i] +=  ∇ᵢWᵢⱼ
-            # KernelGradient[j] += -∇ᵢWᵢⱼ
+            if OutputKernelValues
+                Kernel[i] += Wᵢⱼ
+                Kernel[j] += Wᵢⱼ
+                KernelGradient[i] +=  ∇ᵢWᵢⱼ
+                KernelGradient[j] += -∇ᵢWᵢⱼ
+            end
         end
     
         return nothing
     end
 
     
-    function SimStepLocalCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT)
+    function SimStepLocalCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
         @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-            @inline ComputeInteractions!(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant,ViscosityTreatment, BoolDDT)
+            @inline ComputeInteractions!(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant,ViscosityTreatment, BoolDDT, OutputKernelValues)
         end
 
         return nothing
     end
 
 
-    function SimStepNeighborCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT)
+    function SimStepNeighborCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT, OutputKernelValues)
         @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-            @inline ComputeInteractions!(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant,ViscosityTreatment, BoolDDT)
+            @inline ComputeInteractions!(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant,ViscosityTreatment, BoolDDT, OutputKernelValues)
         end
         return nothing
     end
@@ -180,7 +187,7 @@ include("AuxillaryFunctions.jl"); using .AuxillaryFunctions
 
 # Neither Polyester.@batch per core or thread is faster
 ###=== Function to process each cell and its neighbors
-    function NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT)
+    function NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
         @unpack ρ₀, dx, h, h⁻¹, m₀, αD, α, g, c₀, γ, dt, δᵩ, CFL, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant, = SimConstants
 
         UniqueCells = view(UniqueCells, 1:IndexCounter)
@@ -190,7 +197,7 @@ include("AuxillaryFunctions.jl"); using .AuxillaryFunctions
             StartIndex = ParticleRanges[iter] 
             EndIndex   = ParticleRanges[iter+1] - 1
 
-            SimStepLocalCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT)
+            SimStepLocalCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
             @inbounds for S ∈ Stencil
                 SCellIndex = CellIndex + S
@@ -204,7 +211,7 @@ include("AuxillaryFunctions.jl"); using .AuxillaryFunctions
                     StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
                     EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
 
-                    SimStepNeighborCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀,  dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT)
+                    SimStepNeighborCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀,  dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT, OutputKernelValues)
                 end
             end
         end
