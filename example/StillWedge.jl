@@ -33,7 +33,7 @@ function SPHExample.ComputeInteractions!(Position, Kernel, KernelGradient, Densi
         density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ) # = dot(vᵢⱼ , -∇ᵢWᵢⱼ)
         dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  density_symmetric_term
         dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  density_symmetric_term
-        
+
         # Density diffusion
         if BoolDDT
             Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]

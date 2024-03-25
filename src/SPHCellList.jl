@@ -56,14 +56,13 @@ using ..AuxillaryFunctions
         return IndexCounter 
     end
 
-    function ComputeInteractions!(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT, OutputKernelValues)
+    @inline function ComputeInteractions!(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT, OutputKernelValues)
         xᵢⱼ² = evaluate(SqEuclidean(), Position[i], Position[j])
         if  xᵢⱼ² <= H²
             xᵢⱼ  = Position[i] - Position[j]
             
             dᵢⱼ  = sqrt(xᵢⱼ²) #Using sqrt is what takes a lot of time?
             q    = clamp(dᵢⱼ * h⁻¹,0.0,2.0)
-            # Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
             invd²η² = inv(dᵢⱼ*dᵢⱼ+η²)
             ∇ᵢWᵢⱼ = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
             ρᵢ        = Density[i]
@@ -72,9 +71,10 @@ using ..AuxillaryFunctions
             vᵢ        = Velocity[i]
             vⱼ        = Velocity[j]
             vᵢⱼ       = vᵢ - vⱼ
-            symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ) # = dot(vᵢⱼ , -∇ᵢWᵢⱼ)
-            dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  symmetric_term
-            dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  symmetric_term
+            density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ) # = dot(vᵢⱼ , -∇ᵢWᵢⱼ)
+            dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  density_symmetric_term
+            dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  density_symmetric_term
+            
             # Density diffusion
             if BoolDDT
                 Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
@@ -87,16 +87,18 @@ using ..AuxillaryFunctions
                 ddt_symmetric_term =  δᵩ * h * c₀ * 2 * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond #  dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) =  dot( xᵢⱼ, -∇ᵢWᵢⱼ)
                 Dᵢ  = ddt_symmetric_term * (m₀/ρⱼ) * ( ρⱼᵢ - ρᵢⱼᴴ)
                 Dⱼ  = ddt_symmetric_term * (m₀/ρᵢ) * (-ρⱼᵢ - ρⱼᵢᴴ)
-                dρdtI[i] += dρdt⁺ + Dᵢ
-                dρdtI[j] += dρdt⁻ + Dⱼ
             else
-                dρdtI[i] += dρdt⁺
-                dρdtI[j] += dρdt⁻
+                Dᵢ  = zero(Density)
+                Dⱼ  = Dᵢ
             end
-    
+            dρdtI[i] += dρdt⁺ + Dᵢ
+            dρdtI[j] += dρdt⁻ + Dⱼ
+
             Pᵢ      =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
             Pⱼ      =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
             Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
+        dvdt⁺   = - m₀ * Pfac *  ∇ᵢWᵢⱼ
+            dvdt⁻   = - dvdt⁺
     
             if ViscosityTreatment == :ArtificialViscosity
                 ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
@@ -147,23 +149,20 @@ using ..AuxillaryFunctions
                 dτdtⱼ  = dτdtᵢ
             end
         
-            dvdt⁺ = - m₀ * Pfac *  ∇ᵢWᵢⱼ
-            dvdt⁻ = - dvdt⁺
-        
             dvdtI[i] += dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ
             dvdtI[j] += dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
     
-            if OutputKernelValues
-                Kernel[i] += Wᵢⱼ
-                Kernel[j] += Wᵢⱼ
+        if OutputKernelValues
+                Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
+                Kernel[i]         += Wᵢⱼ
+                Kernel[j]         += Wᵢⱼ
                 KernelGradient[i] +=  ∇ᵢWᵢⱼ
                 KernelGradient[j] += -∇ᵢWᵢⱼ
             end
         end
-    
+
         return nothing
     end
-
     
     function SimStepLocalCell(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
