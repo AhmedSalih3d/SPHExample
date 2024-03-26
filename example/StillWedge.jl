@@ -15,7 +15,9 @@ using Distances
 
 # Really important to overload default function, gives 10x speed up?
 # Overload the default function to do what you please
-function SPHExample.ComputeInteractions!(Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant, ViscosityTreatment, BoolDDT, OutputKernelValues)
+function SPHExample.ComputeInteractions!(SimConstants, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
+    @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
+
     xᵢⱼ² = evaluate(SqEuclidean(), Position[i], Position[j])
     if  xᵢⱼ² <= H²
         xᵢⱼ  = Position[i] - Position[j]
@@ -129,7 +131,7 @@ function SimulationLoop(SimMetaData, SimConstants, Cells, Stencil,  ParticleRang
     dt₂ = dt * 0.5
 
     ResetArrays!(ParticleRanges)
-    @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(Cells, SimConstants.H, SortedIndices, SortingScratchSpace, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleRanges, UniqueCells)
+    @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(Cells, SimConstants.H*2, SortedIndices, SortingScratchSpace, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleRanges, UniqueCells)
 
     @timeit SimMetaData.HourGlass "03 ResetArrays"                           ResetArrays!(Kernel, KernelGradient, dρdtI, dvdtI)
 
@@ -267,11 +269,30 @@ let
     SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
+        SimulationTime=0,
+        OutputEach=0.01,
+    )
+
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
+
+    @profview RunSimulation(
+        FluidCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.01_Fluid.csv",
+        BoundCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.01_Bound.csv",
+        SimMetaData        = SimMetaData,
+        SimConstants       = SimConstantsWedge,
+        ViscosityTreatment = :ArtificialViscosity,
+        BoolDDT            = true,
+        OutputKernelValues = false,
+    )
+
+    SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
+        SimulationName="Test", 
+        SaveLocation="E:/SecondApproach/TESTING_CPU",
         SimulationTime=1,
         OutputEach=0.01,
     )
 
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1)
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
 
     @profview RunSimulation(
         FluidCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Fluid.csv",
