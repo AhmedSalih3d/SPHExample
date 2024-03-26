@@ -133,7 +133,7 @@ function SPHExample.ComputeInteractions!(SimConstants, Position, Kernel, KernelG
     return nothing
 end
 
-function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ViscosityTreatment, BoolDDT, OutputKernelValues)
+@inbounds function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ViscosityTreatment, BoolDDT, OutputKernelValues)
     Position      = @views SimParticles.Position
     Density       = @views SimParticles.Density
     Pressure      = @views SimParticles.Pressure
