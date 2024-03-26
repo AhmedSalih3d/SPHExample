@@ -128,12 +128,12 @@ function SPHExample.ComputeInteractions!(SimConstants, Position, Kernel, KernelG
     return nothing
 end
 
-function SimulationLoop(SimMetaData, SimConstants, SimParticles, Cells, Stencil,  ParticleRanges, UniqueCells, SortedIndices, SortingScratchSpace, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
+function SimulationLoop(SimMetaData, SimConstants, SimParticles, Cells, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
     @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
     dt₂ = dt * 0.5
 
     ResetArrays!(ParticleRanges)
-    @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(Cells, SimConstants.H*2, SortedIndices, SortingScratchSpace, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleRanges, UniqueCells, SimParticles)
+    @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(Cells, SimConstants.H*2, SortingScratchSpace,  ParticleRanges, UniqueCells, SimParticles)
 
     @timeit SimMetaData.HourGlass "03 ResetArrays"                           ResetArrays!(Kernel, KernelGradient, dρdtI, dvdtI)
 
@@ -222,16 +222,17 @@ function RunSimulation(;FluidCSV::String,
     ParticleRanges         = zeros(Int, length(Cells) + 1)
     UniqueCells            = zeros(CartesianIndex{Dimensions}, length(Cells))
 
-    SortedIndices          = similar(Cells, Int)
-    _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SortedIndices), length(Cells))
+
 
     Stencil                = ConstructStencil(Val(Dimensions))
 
     # Ensure zero, similar does not!
-    ResetArrays!(Acceleration, Velocity, Kernel, KernelGradient, Cells, SortedIndices, dρdtI, dvdtI, Positionₙ⁺, Velocityₙ⁺)
+    ResetArrays!(Acceleration, Velocity, Kernel, KernelGradient, Cells, dρdtI, dvdtI, Positionₙ⁺, Velocityₙ⁺)
     Pressure!(Pressureᵢ,Density,SimConstants)
 
     SimParticles = StructArray((Cell = Cells, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, ID = collect(1:NumberOfPoints)))
+
+    _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), length(Cells))
 
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
     SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, to_3d(Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, Density, Pressureᵢ, Velocity, Acceleration)
@@ -244,7 +245,7 @@ function RunSimulation(;FluidCSV::String,
     OutputIterationCounter = 0
     @inbounds while true
 
-        SimulationLoop(SimMetaData, SimConstants, SimParticles, Cells, Stencil, ParticleRanges, UniqueCells, SortedIndices, SortingScratchSpace, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
+        SimulationLoop(SimMetaData, SimConstants, SimParticles, Cells, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, Position, Kernel, KernelGradient, Density, Velocity, Acceleration, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
         OutputCounter += SimMetaData.CurrentTimeStep
         if OutputCounter >= SimMetaData.OutputEach
@@ -292,15 +293,15 @@ let
     SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=4,
+        SimulationTime=1,
         OutputEach=0.01,
     )
 
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
 
     @profview RunSimulation(
-        FluidCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Fluid.csv",
-        BoundCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Bound.csv",
+        FluidCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.01_Fluid.csv",
+        BoundCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.01_Bound.csv",
         SimMetaData        = SimMetaData,
         SimConstants       = SimConstantsWedge,
         ViscosityTreatment = :ArtificialViscosity,

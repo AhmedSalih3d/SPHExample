@@ -27,7 +27,7 @@ using ..AuxillaryFunctions
     end
 
     ###=== Function to update ordering
-    function UpdateNeighbors!(Cells, CutOff, SortedIndices, SortingScratchSpace, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleRanges, UniqueCells, Particles)
+    function UpdateNeighbors!(Cells, CutOff, SortingScratchSpace, ParticleRanges, UniqueCells, Particles)
         ExtractCells!(Particles, CutOff)
 
         # First call allocates, which is why TimerOutputs shows allocs - it should be alloc free otherwise
@@ -41,7 +41,7 @@ using ..AuxillaryFunctions
         # RearrangeVector!(GravityFactor , SortedIndices)    
         # RearrangeVector!(MotionLimiter , SortedIndices)    
 
-        sort!(Particles, by = p -> p.Cell)
+        sort!(Particles, by = p -> p.Cell; scratch=SortingScratchSpace)
 
         @. ParticleRanges             = zero(eltype(ParticleRanges))
         IndexCounter                  = 1
