@@ -128,7 +128,7 @@ function SPHExample.ComputeInteractions!(SimConstants, Position, Kernel, KernelG
     return nothing
 end
 
-function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, ViscosityTreatment, BoolDDT, OutputKernelValues)
+function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ViscosityTreatment, BoolDDT, OutputKernelValues)
     Cells         = @views SimParticles.Cells
     Position      = @views SimParticles.Position
     Density       = @views SimParticles.Density
@@ -156,11 +156,11 @@ function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  Parti
 
     @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"  LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
 
-    @timeit SimMetaData.HourGlass "07 ResetArrays"                  ResetArrays!(Kernel, KernelGradient, dρdtI, dρdtIₙ⁺, Acceleration)
+    @timeit SimMetaData.HourGlass "07 ResetArrays"                  ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration)
 
-    @timeit SimMetaData.HourGlass "08 Second NeighborLoop"          NeighborLoop!(SimConstants, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Velocityₙ⁺, dρdtIₙ⁺, Acceleration, MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
+    @timeit SimMetaData.HourGlass "08 Second NeighborLoop"          NeighborLoop!(SimConstants, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Velocityₙ⁺, dρdtI, Acceleration, MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
-    @timeit SimMetaData.HourGlass "09 Final Density"                DensityEpsi!(Density, dρdtIₙ⁺, ρₙ⁺, dt)
+    @timeit SimMetaData.HourGlass "09 Final Density"                DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
 
     @timeit SimMetaData.HourGlass "10 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
 
@@ -221,7 +221,6 @@ function RunSimulation(;FluidCSV::String,
     Velocityₙ⁺      = similar(Position)
     Positionₙ⁺      = similar(Position)
     ρₙ⁺             = zeros(FloatType, NumberOfPoints)
-    dρdtIₙ⁺         = zeros(FloatType, NumberOfPoints)
 
     Pressureᵢ      = zeros(FloatType, NumberOfPoints)
     
@@ -250,7 +249,7 @@ function RunSimulation(;FluidCSV::String,
     OutputIterationCounter = 0
     @inbounds while true
 
-        SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, ViscosityTreatment, BoolDDT, OutputKernelValues)
+        SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
         OutputCounter += SimMetaData.CurrentTimeStep
         if OutputCounter >= SimMetaData.OutputEach
