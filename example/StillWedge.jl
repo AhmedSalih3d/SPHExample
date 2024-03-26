@@ -264,7 +264,10 @@ function RunSimulation(;FluidCSV::String,
             Pressure!(Pressureᵢ,Density,SimConstants)
             @timeit HourGlass "12 Output Data"  SaveFile(SaveLocation_)
         end
-        @timeit HourGlass "13 Next TimeStep"    next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
+
+        if !SilentOutput
+            @timeit HourGlass "13 Next TimeStep"    next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
+        end
 
         if SimMetaData.TotalTime > SimMetaData.SimulationTime
             finish!(SimMetaData.ProgressSpecification)
@@ -312,7 +315,7 @@ let
         BoundCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Bound.csv",
         SimMetaData        = SimMetaData,
         SimConstants       = SimConstantsWedge,
-        ViscosityTreatment = :Laminar,
+        ViscosityTreatment = :ArtificialViscosity,
         BoolDDT            = true,
         OutputKernelValues = false,
     )
