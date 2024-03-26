@@ -74,6 +74,20 @@ let
     display(b4)
 end
 
+struct Particle
+    Field::Int
+    Val1::Int 
+    Val2::Float64
+end
+
+let
+    arr1    = [Particle(rand(1:100), rand(1:500), rand()) for _ in 1:3027]
+    indices = zeros(Int,length(arr1))
+    u       = zeros(Int,length(arr1))
+    b5      = @benchmark sort!($arr1, by = p -> p.Field)
+    display(b5)
+end
+
 # display(b1)
 # display(b2)
 
