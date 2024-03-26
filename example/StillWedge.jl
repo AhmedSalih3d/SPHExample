@@ -231,6 +231,11 @@ function RunSimulation(;FluidCSV::String,
     ResetArrays!(Acceleration, Velocity, Kernel, KernelGradient, Cells, SortedIndices, dρdtI, dvdtI, Positionₙ⁺, Velocityₙ⁺)
     Pressure!(Pressureᵢ,Density,SimConstants)
 
+    SimParticles = Vector{Particle}(undef, NumberOfPoints)
+    for i = 1:NumberOfPoints
+        SimParticles[i] = Particle(Cell = Cells[i], Position = Position[i], Acceleration = Acceleration[i], Velocity = Velocity[i], Density = Density[i], GravityFactor = GravityFactor[i], MotionLimiter = MotionLimiter[i], ID = i)
+    end
+
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
     SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, to_3d(Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, Density, Pressureᵢ, Velocity, Acceleration)
     SaveFile(SaveLocation_)
