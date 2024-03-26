@@ -179,6 +179,42 @@ function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  Parti
     SimMetaData.TotalTime      += dt
 end
 
+
+function AllocateDataStructures(Dimensions,FloatType, FluidCSV,BoundCSV)
+    @inline Position, density_fluid, density_bound  = LoadParticlesFromCSV_StaticArrays(Dimensions,FloatType, FluidCSV,BoundCSV)
+
+    NumberOfPoints = length(Position)
+    Density        = deepcopy([density_bound; density_fluid])
+
+    GravityFactor = [ zeros(size(density_bound,1)) ; -ones(size(density_fluid,1)) ]
+    
+    MotionLimiter = [ zeros(size(density_bound,1)) ;  ones(size(density_fluid,1)) ]
+
+    Acceleration    = similar(Position)
+    Velocity        = similar(Position)
+    Kernel          = similar(Density)
+    KernelGradient  = similar(Position)
+
+    dρdtI           = similar(Density)
+
+    dvdtI           = similar(Position)
+
+    Velocityₙ⁺      = similar(Position)
+    Positionₙ⁺      = similar(Position)
+    ρₙ⁺             = zeros(FloatType, NumberOfPoints)
+
+    Pressureᵢ      = zeros(FloatType, NumberOfPoints)
+    
+    Cells          = similar(Position, CartesianIndex{Dimensions})
+
+    # Ensure zero, similar does not!
+    ResetArrays!(Acceleration, Velocity, Kernel, KernelGradient, Cells, dρdtI, dvdtI, Positionₙ⁺, Velocityₙ⁺)
+
+    SimParticles = StructArray((Cells = Cells, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, ID = collect(1:NumberOfPoints)))
+
+    return SimParticles, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Pressureᵢ, Kernel, KernelGradient
+end
+
 ###===
 
 function RunSimulation(;FluidCSV::String,
@@ -203,47 +239,17 @@ function RunSimulation(;FluidCSV::String,
     # Unpack the relevant simulation meta data
     @unpack HourGlass, SaveLocation, SimulationName, SilentOutput, ThreadsCPU = SimMetaData;
 
-    # Load in the fluid and boundary particles. Return these points and both data frames
-    # @inline is a hack here to remove all allocations further down due to uncertainty of the points type at compile time
-    @inline Position, density_fluid, density_bound  = LoadParticlesFromCSV_StaticArrays(Dimensions,FloatType, FluidCSV,BoundCSV)
-    NumberOfPoints = length(Position)
-    Density  = deepcopy([density_bound; density_fluid])
+    # Load in particles
+    SimParticles, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Pressureᵢ, Kernel, KernelGradient = AllocateDataStructures(Dimensions,FloatType, FluidCSV,BoundCSV)
 
-    GravityFactor = [ zeros(size(density_bound,1)) ; -ones(size(density_fluid,1)) ]
-    
-    MotionLimiter = [ zeros(size(density_bound,1)) ;  ones(size(density_fluid,1)) ]
-
-    Acceleration    = similar(Position)
-    Velocity        = similar(Position)
-    Kernel          = similar(Density)
-    KernelGradient  = similar(Position)
-
-    dρdtI           = similar(Density)
-
-    dvdtI           = similar(Position)
-
-    Velocityₙ⁺      = similar(Position)
-    Positionₙ⁺      = similar(Position)
-    ρₙ⁺             = zeros(FloatType, NumberOfPoints)
-
-    Pressureᵢ      = zeros(FloatType, NumberOfPoints)
-    
-    Cells          = similar(Position, CartesianIndex{Dimensions})
-
-    ParticleRanges = zeros(Int, length(Cells) + 1)
-    UniqueCells    = zeros(CartesianIndex{Dimensions}, length(Cells))
+    ParticleRanges = zeros(Int, length(SimParticles) + 1)
+    UniqueCells    = zeros(CartesianIndex{Dimensions}, length(SimParticles))
     Stencil        = ConstructStencil(Val(Dimensions))
+    _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), length(SimParticles))
 
-    # Ensure zero, similar does not!
-    ResetArrays!(Acceleration, Velocity, Kernel, KernelGradient, Cells, dρdtI, dvdtI, Positionₙ⁺, Velocityₙ⁺)
-    Pressure!(Pressureᵢ,Density,SimConstants)
-
-    SimParticles = StructArray((Cells = Cells, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, ID = collect(1:NumberOfPoints)))
-
-    _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), length(Cells))
-
+    Pressure!(Pressureᵢ,SimParticles.Density,SimConstants)
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
-    SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, to_3d(Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, Density, Pressureᵢ, Velocity, Acceleration)
+    SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, to_3d(SimParticles.Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, SimParticles.Density, Pressureᵢ, SimParticles.Velocity, SimParticles.Acceleration)
     # SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, Position, ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, Density, Pressureᵢ, Velocity, Acceleration)
     SaveFile(SaveLocation_)
 
@@ -262,7 +268,7 @@ function RunSimulation(;FluidCSV::String,
             OutputIterationCounter += 1
 
             SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp"
-            Pressure!(Pressureᵢ,Density,SimConstants)
+            Pressure!(Pressureᵢ,SimParticles.Density,SimConstants)
             @timeit HourGlass "12 Output Data"  SaveFile(SaveLocation_)
         end
 
