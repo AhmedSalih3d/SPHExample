@@ -128,12 +128,15 @@ function SPHExample.ComputeInteractions!(SimConstants, Position, Kernel, KernelG
     return nothing
 end
 
-function SimulationLoop(SimMetaData, SimConstants, SimParticles, Cells, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
-    Position     = @views SimParticles.Position
-    Density      = @views SimParticles.Density
-    Velocity     = @views SimParticles.Velocity
-    Acceleration = @views SimParticles.Acceleration
-    
+function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, ViscosityTreatment, BoolDDT, OutputKernelValues)
+    Cells         = @views SimParticles.Cells
+    Position      = @views SimParticles.Position
+    Density       = @views SimParticles.Density
+    Velocity      = @views SimParticles.Velocity
+    Acceleration  = @views SimParticles.Acceleration
+    GravityFactor = @views SimParticles.GravityFactor
+    MotionLimiter = @views SimParticles.MotionLimiter
+
     @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
     dt₂ = dt * 0.5
 
@@ -224,18 +227,15 @@ function RunSimulation(;FluidCSV::String,
     
     Cells          = similar(Position, CartesianIndex{Dimensions})
 
-    ParticleRanges         = zeros(Int, length(Cells) + 1)
-    UniqueCells            = zeros(CartesianIndex{Dimensions}, length(Cells))
-
-
-
-    Stencil                = ConstructStencil(Val(Dimensions))
+    ParticleRanges = zeros(Int, length(Cells) + 1)
+    UniqueCells    = zeros(CartesianIndex{Dimensions}, length(Cells))
+    Stencil        = ConstructStencil(Val(Dimensions))
 
     # Ensure zero, similar does not!
     ResetArrays!(Acceleration, Velocity, Kernel, KernelGradient, Cells, dρdtI, dvdtI, Positionₙ⁺, Velocityₙ⁺)
     Pressure!(Pressureᵢ,Density,SimConstants)
 
-    SimParticles = StructArray((Cell = Cells, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, ID = collect(1:NumberOfPoints)))
+    SimParticles = StructArray((Cells = Cells, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, ID = collect(1:NumberOfPoints)))
 
     _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), length(Cells))
 
@@ -250,7 +250,7 @@ function RunSimulation(;FluidCSV::String,
     OutputIterationCounter = 0
     @inbounds while true
 
-        SimulationLoop(SimMetaData, SimConstants, SimParticles, Cells, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, GravityFactor, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
+        SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, dρdtIₙ⁺, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
         OutputCounter += SimMetaData.CurrentTimeStep
         if OutputCounter >= SimMetaData.OutputEach

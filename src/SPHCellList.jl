@@ -17,8 +17,8 @@ using ..AuxillaryFunctions
     end
 
     @inline function ExtractCells!(Particles, CutOff)
+        Cells  = @views Particles.Cells
         Points = @views Particles.Position
-        Cells  = @views Particles.Cell
         Base.Threads.@threads for i ∈ eachindex(Particles)
             Cells[i]  =  CartesianIndex(@. Int(fld(Points[i], CutOff)) ...)
             Cells[i] +=  2 * one(Cells[i])  # + CartesianIndex(1,1) + CartesianIndex(1,1) #+ ZeroOffset + HalfPad
@@ -41,7 +41,7 @@ using ..AuxillaryFunctions
         # RearrangeVector!(GravityFactor , SortedIndices)    
         # RearrangeVector!(MotionLimiter , SortedIndices)    
 
-        sort!(Particles, by = p -> p.Cell; scratch=SortingScratchSpace)
+        sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
 
         @. ParticleRanges             = zero(eltype(ParticleRanges))
         IndexCounter                  = 1
