@@ -17,7 +17,7 @@ end
 
 @inline function Pressure!(Press, Density, SimulationConstants)
     @unpack c₀,γ,ρ₀ = SimulationConstants
-    @inbounds for i ∈ eachindex(Press,Density)
+    @inbounds Base.Threads.@threads for i ∈ eachindex(Press,Density)
         # Press[i] = EquationOfState(Density[i],c₀,γ,ρ₀)
         Press[i] = EquationOfStateGamma7(Density[i],c₀,ρ₀)
     end
