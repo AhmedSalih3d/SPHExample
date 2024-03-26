@@ -6,8 +6,8 @@ using StaticArrays
 using Parameters
 using FastPow
 
-@fastpow function EquationOfStateGamma7(ρ,c₀,ρ₀)
-    return ((c₀^2*ρ₀)/7) * ((ρ/ρ₀)^7 - 1)
+@inline function EquationOfStateGamma7(ρ,c₀,ρ₀)
+    return @fastpow ((c₀^2*ρ₀)/7) * ((ρ/ρ₀)^7 - 1)
 end
 
 # Equation of State in Weakly-Compressible SPH
