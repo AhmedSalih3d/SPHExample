@@ -107,3 +107,32 @@ let
     b5      = @benchmark sort!($arr1, by = p -> p.Cell)
     display(b5)
 end
+
+struct CoSorterElement{T1,T2}
+    x::T1
+    y::T2
+end
+struct CoSorter{T1,T2,S<:AbstractArray{T1},C<:AbstractArray{T2}} <: AbstractVector{CoSorterElement{T1,T2}}
+    sortarray::S
+    coarray::C
+end
+
+Base.size(c::CoSorter) = size(c.sortarray)
+Base.getindex(c::CoSorter, i...) = 
+    CoSorterElement(getindex(c.sortarray, i...), getindex(c.coarray, i...))
+Base.setindex!(c::CoSorter, t::CoSorterElement, i...) = 
+    (setindex!(c.sortarray, t.x, i...); setindex!(c.coarray, t.y, i...); c) 
+Base.isless(a::CoSorterElement, b::CoSorterElement) = isless(a.x, b.x)
+Base.Sort.defalg(v::C) where {T<:Union{Number, Missing}, C<:CoSorter{T}} = 
+    Base.DEFAULT_UNSTABLE
+
+#https://discourse.julialang.org/t/how-to-sort-two-or-more-lists-at-once/12073/13
+# c = CoSorter(cur_x, cur_y)
+
+let
+    arr1    = rand(Int,3027)
+    arr2    = rand(SVector{2,Float64},3027)
+    arr     = CoSorter(arr1,arr2)
+    b6      = @benchmark sort!($arr)
+    display(b6)
+end

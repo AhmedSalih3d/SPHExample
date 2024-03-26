@@ -231,10 +231,12 @@ function RunSimulation(;FluidCSV::String,
     ResetArrays!(Acceleration, Velocity, Kernel, KernelGradient, Cells, SortedIndices, dρdtI, dvdtI, Positionₙ⁺, Velocityₙ⁺)
     Pressure!(Pressureᵢ,Density,SimConstants)
 
-    SimParticles = Vector{Particle}(undef, NumberOfPoints)
-    for i = 1:NumberOfPoints
-        SimParticles[i] = Particle(Cell = Cells[i], Position = Position[i], Acceleration = Acceleration[i], Velocity = Velocity[i], Density = Density[i], GravityFactor = GravityFactor[i], MotionLimiter = MotionLimiter[i], ID = i)
-    end
+    # SimParticles = s = StructArray{Particle}(undef, NumberOfPoints)
+    # for i = 1:NumberOfPoints
+    #     SimParticles[i] = Particle(Cell = Cells[i], Position = Position[i], Acceleration = Acceleration[i], Velocity = Velocity[i], Density = Density[i], GravityFactor = GravityFactor[i], MotionLimiter = MotionLimiter[i], ID = i)
+    # end
+
+    SimParticles = StructArray((Cell = Cells, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, ID = 1:NumberOfPoints))
 
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
     SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, to_3d(Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, Density, Pressureᵢ, Velocity, Acceleration)
@@ -295,7 +297,7 @@ let
     SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=1,
+        SimulationTime=0.1,
         OutputEach=0.01,
     )
 
