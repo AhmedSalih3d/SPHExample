@@ -244,6 +244,7 @@ function RunSimulation(;FluidCSV::String,
 
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
     SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, to_3d(Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, Density, Pressureᵢ, Velocity, Acceleration)
+    # SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, Position, ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, Density, Pressureᵢ, Velocity, Acceleration)
     SaveFile(SaveLocation_)
 
 
@@ -266,7 +267,7 @@ function RunSimulation(;FluidCSV::String,
         end
 
         if !SilentOutput
-            @timeit HourGlass "13 Next TimeStep"    next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
+            @timeit HourGlass "13 Next TimeStep" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
         end
 
         if SimMetaData.TotalTime > SimMetaData.SimulationTime
