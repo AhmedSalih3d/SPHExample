@@ -141,7 +141,7 @@ function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  Parti
     dt₂ = dt * 0.5
 
     ResetArrays!(ParticleRanges)
-    @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(Cells, SimConstants.H*2, SortingScratchSpace,  ParticleRanges, UniqueCells, SimParticles)
+    @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, SimConstants.H*2, SortingScratchSpace,  ParticleRanges, UniqueCells)
 
     @timeit SimMetaData.HourGlass "03 ResetArrays"                           ResetArrays!(Kernel, KernelGradient, dρdtI, dvdtI)
 

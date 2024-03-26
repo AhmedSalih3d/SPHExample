@@ -27,7 +27,7 @@ using ..AuxillaryFunctions
     end
 
     ###=== Function to update ordering
-    function UpdateNeighbors!(Cells, CutOff, SortingScratchSpace, ParticleRanges, UniqueCells, Particles)
+    function UpdateNeighbors!(Particles, CutOff, SortingScratchSpace, ParticleRanges, UniqueCells)
         ExtractCells!(Particles, CutOff)
 
         # First call allocates, which is why TimerOutputs shows allocs - it should be alloc free otherwise
@@ -43,6 +43,7 @@ using ..AuxillaryFunctions
 
         sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
 
+        Cells = @views Particles.Cells
         @. ParticleRanges             = zero(eltype(ParticleRanges))
         IndexCounter                  = 1
         ParticleRanges[IndexCounter]  = 1
