@@ -79,8 +79,13 @@ function SPHExample.ComputeInteractions!(SimConstants, Position, Kernel, KernelG
         if ViscosityTreatment == :Laminar || ViscosityTreatment == :LaminarSPS
             # 4 comes from 2 divided by 0.5 from average density
             # should divide by ρᵢ eq 6 DPC
-            ν₀∇²uᵢ = (1/ρᵢ) * ( (4 * m₀ * (ρᵢ * ν₀) * dot( xᵢⱼ, ∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²) ) ) *  vᵢⱼ
-            ν₀∇²uⱼ = (1/ρⱼ) * ( (4 * m₀ * (ρⱼ * ν₀) * dot(-xᵢⱼ,-∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²) ) ) * -vᵢⱼ
+            # ν₀∇²uᵢ = (1/ρᵢ) * ( (4 * m₀ * (ρᵢ * ν₀) * dot( xᵢⱼ, ∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²) ) ) *  vᵢⱼ
+            # ν₀∇²uⱼ = (1/ρⱼ) * ( (4 * m₀ * (ρⱼ * ν₀) * dot(-xᵢⱼ,-∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²) ) ) * -vᵢⱼ
+            visc_symmetric_term = (4 * m₀ * ν₀ * dot( xᵢⱼ, ∇ᵢWᵢⱼ)) / ((ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²))
+            # ν₀∇²uᵢ = (1/ρᵢ) * visc_symmetric_term *  vᵢⱼ * ρᵢ
+            # ν₀∇²uⱼ = (1/ρⱼ) * visc_symmetric_term * -vᵢⱼ * ρⱼ
+            ν₀∇²uᵢ =  visc_symmetric_term *  vᵢⱼ
+            ν₀∇²uⱼ = -ν₀∇²uᵢ #visc_symmetric_term * -vᵢⱼ
         else
             ν₀∇²uᵢ = zero(xᵢⱼ)
             ν₀∇²uⱼ = ν₀∇²uᵢ
@@ -307,7 +312,7 @@ let
         BoundCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Bound.csv",
         SimMetaData        = SimMetaData,
         SimConstants       = SimConstantsWedge,
-        ViscosityTreatment = :ArtificialViscosity,
+        ViscosityTreatment = :Laminar,
         BoolDDT            = true,
         OutputKernelValues = false,
     )
