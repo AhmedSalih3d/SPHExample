@@ -129,7 +129,6 @@ function SPHExample.ComputeInteractions!(SimConstants, Position, Kernel, KernelG
 end
 
 function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, dvdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ViscosityTreatment, BoolDDT, OutputKernelValues)
-    Cells         = @views SimParticles.Cells
     Position      = @views SimParticles.Position
     Density       = @views SimParticles.Density
     Velocity      = @views SimParticles.Velocity
@@ -143,15 +142,15 @@ function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  Parti
     ResetArrays!(ParticleRanges)
     @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, SimConstants.H*2, SortingScratchSpace,  ParticleRanges, UniqueCells)
 
-    @timeit SimMetaData.HourGlass "03 ResetArrays"                           ResetArrays!(Kernel, KernelGradient, dρdtI, dvdtI)
+    @timeit SimMetaData.HourGlass "03 ResetArrays"                           ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration)
 
-    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                    NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI,  MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
+    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                    NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, Acceleration,  MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
     @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" @inbounds for i in eachindex(Position)
-        dvdtI[i]        +=  ConstructGravitySVector(dvdtI[i], SimConstants.g * GravityFactor[i])
-        Velocityₙ⁺[i]    =  Velocity[i]   + dvdtI[i]  *  dt₂ * MotionLimiter[i]
-        Positionₙ⁺[i]    =  Position[i]   + Velocityₙ⁺[i]   * dt₂  * MotionLimiter[i]
-        ρₙ⁺[i]           =  Density[i]    + dρdtI[i]       *  dt₂
+        Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+        Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
+        Positionₙ⁺[i]     =  Position[i]   + Velocityₙ⁺[i]   * dt₂  * MotionLimiter[i]
+        ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
     end
 
     @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"  LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
