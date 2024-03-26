@@ -31,15 +31,17 @@ using ..AuxillaryFunctions
         ExtractCells!(Particles, CutOff)
 
         # First call allocates, which is why TimerOutputs shows allocs - it should be alloc free otherwise
-        sortperm!(SortedIndices,Cells; scratch=SortingScratchSpace)
+        # sortperm!(SortedIndices,Cells; scratch=SortingScratchSpace)
 
-        RearrangeVector!(Cells         , SortedIndices)
-        RearrangeVector!(Position      , SortedIndices)
-        RearrangeVector!(Density       , SortedIndices)
-        RearrangeVector!(Acceleration  , SortedIndices)
-        RearrangeVector!(Velocity      , SortedIndices)    
-        RearrangeVector!(GravityFactor , SortedIndices)    
-        RearrangeVector!(MotionLimiter , SortedIndices)    
+        # RearrangeVector!(Cells         , SortedIndices)
+        # RearrangeVector!(Position      , SortedIndices)
+        # RearrangeVector!(Density       , SortedIndices)
+        # RearrangeVector!(Acceleration  , SortedIndices)
+        # RearrangeVector!(Velocity      , SortedIndices)    
+        # RearrangeVector!(GravityFactor , SortedIndices)    
+        # RearrangeVector!(MotionLimiter , SortedIndices)    
+
+        sort!(Particles, by = p -> p.Cell)
 
         @. ParticleRanges             = zero(eltype(ParticleRanges))
         IndexCounter                  = 1

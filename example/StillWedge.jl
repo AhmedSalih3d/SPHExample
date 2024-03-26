@@ -236,7 +236,7 @@ function RunSimulation(;FluidCSV::String,
     #     SimParticles[i] = Particle(Cell = Cells[i], Position = Position[i], Acceleration = Acceleration[i], Velocity = Velocity[i], Density = Density[i], GravityFactor = GravityFactor[i], MotionLimiter = MotionLimiter[i], ID = i)
     # end
 
-    SimParticles = StructArray((Cell = Cells, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, ID = 1:NumberOfPoints))
+    SimParticles = StructArray((Cell = Cells, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, ID = collect(1:NumberOfPoints)))
 
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
     SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, to_3d(Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, Density, Pressureᵢ, Velocity, Acceleration)
