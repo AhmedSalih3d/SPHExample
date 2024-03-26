@@ -16,24 +16,19 @@ using ..AuxillaryFunctions
         return n
     end
 
-    @inline function ExtractCells!(Particles, Cells, Points, CutOff)
-        Base.Threads.@threads for i ∈ eachindex(Cells)
+    @inline function ExtractCells!(Particles, CutOff)
+        Points = @views Particles.Position
+        Cells  = @views Particles.Cell
+        Base.Threads.@threads for i ∈ eachindex(Particles)
             Cells[i]  =  CartesianIndex(@. Int(fld(Points[i], CutOff)) ...)
             Cells[i] +=  2 * one(Cells[i])  # + CartesianIndex(1,1) + CartesianIndex(1,1) #+ ZeroOffset + HalfPad
         end
-
-        Cells_ = @views Particles.Cell
-        Base.Threads.@threads for i ∈ eachindex(Particles)
-            Cells_[i]  =  CartesianIndex(@. Int(fld(Points[i], CutOff)) ...)
-            Cells_[i] +=  2 * one(Cells[i])  # + CartesianIndex(1,1) + CartesianIndex(1,1) #+ ZeroOffset + HalfPad
-        end
-
         return nothing
     end
 
     ###=== Function to update ordering
     function UpdateNeighbors!(Cells, CutOff, SortedIndices, SortingScratchSpace, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleRanges, UniqueCells, Particles)
-        ExtractCells!(Particles, Cells,Position,CutOff)
+        ExtractCells!(Particles, CutOff)
 
         # First call allocates, which is why TimerOutputs shows allocs - it should be alloc free otherwise
         sortperm!(SortedIndices,Cells; scratch=SortingScratchSpace)
