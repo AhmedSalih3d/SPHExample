@@ -25,7 +25,7 @@ using ..AuxillaryFunctions
     end
 
     ###=== Function to update ordering
-    function UpdateNeighbors!(Cells, CutOff, SortedIndices, SortingScratchSpace, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleRanges, UniqueCells)
+    function UpdateNeighbors!(Cells, CutOff, SortedIndices, SortingScratchSpace, Position, Density, Acceleration, Velocity, GravityFactor, MotionLimiter, ParticleRanges, UniqueCells, Particles)
         ExtractCells!(Cells,Position,CutOff)
 
         # First call allocates, which is why TimerOutputs shows allocs - it should be alloc free otherwise
