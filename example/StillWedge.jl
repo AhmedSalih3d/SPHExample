@@ -13,6 +13,8 @@ using Bumper
 using TimerOutputs
 using Distances
 
+
+
 # Really important to overload default function, gives 10x speed up?
 # Overload the default function to do what you please
 function SPHExample.ComputeInteractions!(SimConstants, Position, Kernel, KernelGradient, Density, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
