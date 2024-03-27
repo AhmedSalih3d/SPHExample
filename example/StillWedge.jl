@@ -246,12 +246,12 @@ let
     Dimensions = 2
     FloatType  = Float64
 
-    SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
+    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
         SimulationTime=1,
         OutputEach=0.01,
-        FlagDensityDiffusion=true
+        FlagDensityDiffusion=false
     )
 
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 1, CFL=0.2)
@@ -259,7 +259,7 @@ let
     @profview RunSimulation(
         FluidCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Fluid.csv",
         BoundCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Bound.csv",
-        SimMetaData        = SimMetaData,
+        SimMetaData        = SimMetaDataWedge,
         SimConstants       = SimConstantsWedge
     )
 end
