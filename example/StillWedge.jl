@@ -43,14 +43,7 @@ function SPHExample.ComputeInteractions!(SimConstants, Position, Kernel, KernelG
             ddt_symmetric_term =  δᵩ * h * c₀ * 2 * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond #  dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) =  dot( xᵢⱼ, -∇ᵢWᵢⱼ)
             Dᵢ  = ddt_symmetric_term * (m₀/ρⱼ) * ( ρⱼᵢ - ρᵢⱼᴴ)
             Dⱼ  = ddt_symmetric_term * (m₀/ρᵢ) * (-ρⱼᵢ - ρⱼᵢᴴ)
-
-            Pᵢ      =  Pressure[i]
-            Pⱼ      =  Pressure[j]
         else
-            # Weird bug with false BoolDDT, it needs to calc pressure here?
-            Pᵢ      =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
-            Pⱼ      =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
-
             Dᵢ  = 0.0
             Dⱼ  = 0.0
         end
@@ -58,6 +51,8 @@ function SPHExample.ComputeInteractions!(SimConstants, Position, Kernel, KernelG
         dρdtI[j] += dρdt⁻ + Dⱼ
 
 
+        Pᵢ      =  Pressure[i]
+        Pⱼ      =  Pressure[j]
         Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
         dvdt⁺   = - m₀ * Pfac *  ∇ᵢWᵢⱼ
         dvdt⁻   = - dvdt⁺
@@ -148,6 +143,7 @@ end
 
     @timeit SimMetaData.HourGlass "03 ResetArrays"                           ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration)
 
+    Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
     @timeit SimMetaData.HourGlass "04 First NeighborLoop"                    NeighborLoop!(SimConstants, SimParticles, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, Acceleration,  MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
     @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" @inbounds for i in eachindex(Position)
@@ -161,6 +157,7 @@ end
 
     @timeit SimMetaData.HourGlass "07 ResetArrays"                  ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration)
 
+    Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
     @timeit SimMetaData.HourGlass "08 Second NeighborLoop"          NeighborLoop!(SimConstants, SimParticles, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtI, Acceleration, MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
     @timeit SimMetaData.HourGlass "09 Final Density"                DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
@@ -227,7 +224,6 @@ function RunSimulation(;FluidCSV::String,
     OutputIterationCounter = 0
     @inbounds while true
 
-        Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
         SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
         OutputCounter += SimMetaData.CurrentTimeStep
@@ -263,7 +259,7 @@ let
         OutputEach=0.01,
     )
 
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 1, CFL=0.2)
 
     @profview RunSimulation(
         FluidCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Fluid.csv",
@@ -271,7 +267,7 @@ let
         SimMetaData        = SimMetaData,
         SimConstants       = SimConstantsWedge,
         ViscosityTreatment = :ArtificialViscosity,
-        BoolDDT            = false,
+        BoolDDT            = true,
         OutputKernelValues = false, 
     )
 end
