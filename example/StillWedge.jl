@@ -132,7 +132,8 @@ function SPHExample.ComputeInteractions!(SimConstants, SimParticles, Kernel, Ker
     return nothing
 end
 
-@inbounds function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ViscosityTreatment, BoolDDT, OutputKernelValues)
+@inbounds function SimulationLoop(SimMetaData, SimConstants, SimParticles, SimHalfTime, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, ViscosityTreatment, BoolDDT, OutputKernelValues)
+    # General Particle Data
     Position      = @views SimParticles.Position
     Density       = @views SimParticles.Density
     Pressure      = @views SimParticles.Pressure
@@ -140,6 +141,11 @@ end
     Acceleration  = @views SimParticles.Acceleration
     GravityFactor = @views SimParticles.GravityFactor
     MotionLimiter = @views SimParticles.MotionLimiter
+
+    # Half-time data
+    Velocityₙ⁺    = @views SimHalfTime.Velocityₙ⁺ 
+    Positionₙ⁺    = @views SimHalfTime.Positionₙ⁺
+    ρₙ⁺           = @views SimHalfTime.ρₙ⁺       
 
     @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
     dt₂ = dt * 0.5
@@ -149,7 +155,7 @@ end
 
     @timeit SimMetaData.HourGlass "03 ResetArrays"                           ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration)
 
-    Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
+    Pressure!(Pressure,SimParticles.Density,SimConstants)
     @timeit SimMetaData.HourGlass "04 First NeighborLoop"                    NeighborLoop!(SimConstants, SimParticles, ParticleRanges, Stencil, Kernel, KernelGradient, dρdtI, Acceleration, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
     @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" @inbounds for i in eachindex(Position)
@@ -163,7 +169,7 @@ end
 
     @timeit SimMetaData.HourGlass "07 ResetArrays"                  ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration)
 
-    Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
+    Pressure!(Pressure, ρₙ⁺,SimConstants)
     @timeit SimMetaData.HourGlass "08 Second NeighborLoop"          NeighborLoop!(SimConstants, SimParticles, ParticleRanges, Stencil, Kernel, KernelGradient, dρdtI, Acceleration, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
     @timeit SimMetaData.HourGlass "09 Final Density"                DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
@@ -209,7 +215,7 @@ function RunSimulation(;FluidCSV::String,
     @unpack HourGlass, SaveLocation, SimulationName, SilentOutput, ThreadsCPU = SimMetaData;
 
     # Load in particles
-    SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Kernel, KernelGradient = AllocateDataStructures(Dimensions,FloatType, FluidCSV,BoundCSV)
+    SimParticles, dρdtI, Kernel, KernelGradient, SimHalfTime = AllocateDataStructures(Dimensions,FloatType, FluidCSV,BoundCSV)
     Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
 
     # Produce sorting related variables
@@ -230,7 +236,7 @@ function RunSimulation(;FluidCSV::String,
     OutputIterationCounter = 0
     @inbounds while true
 
-        SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ViscosityTreatment, BoolDDT, OutputKernelValues)
+        SimulationLoop(SimMetaData, SimConstants, SimParticles, SimHalfTime, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
         OutputCounter += SimMetaData.CurrentTimeStep
         if OutputCounter >= SimMetaData.OutputEach
