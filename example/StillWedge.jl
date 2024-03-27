@@ -17,7 +17,8 @@ function ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, Kerne
     xᵢⱼ  = Position[i] - Position[j]
     xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)                 #evaluate(SqEuclidean(), Position[i], Position[j]) from Distances.jl seemed slower
     if  xᵢⱼ² <= H²
-        dᵢⱼ  = sqrt(xᵢⱼ²) #Using sqrt is what takes a lot of time?
+        #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/2
+        dᵢⱼ  = sqrt(abs(xᵢⱼ²))
         # Unsure what is faster, min should do less operations?
         q         = min(dᵢⱼ * h⁻¹, 2.0) #clamp(dᵢⱼ * h⁻¹,0.0,2.0)
         invd²η²   = inv(dᵢⱼ*dᵢⱼ+η²)
@@ -128,13 +129,13 @@ function ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, Kerne
 end
 
 @inbounds function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺)
-    Position      = @views SimParticles.Position
-    Density       = @views SimParticles.Density
-    Pressure      = @views SimParticles.Pressure
-    Velocity      = @views SimParticles.Velocity
-    Acceleration  = @views SimParticles.Acceleration
-    GravityFactor = @views SimParticles.GravityFactor
-    MotionLimiter = @views SimParticles.MotionLimiter
+    Position      = SimParticles.Position
+    Density       = SimParticles.Density
+    Pressure      = SimParticles.Pressure
+    Velocity      = SimParticles.Velocity
+    Acceleration  = SimParticles.Acceleration
+    GravityFactor = SimParticles.GravityFactor
+    MotionLimiter = SimParticles.MotionLimiter
 
     @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
     dt₂ = dt * 0.5
@@ -251,7 +252,7 @@ let
         SaveLocation="E:/SecondApproach/TESTING_CPU",
         SimulationTime=1,
         OutputEach=0.01,
-        FlagDensityDiffusion=false
+        FlagDensityDiffusion=true
     )
 
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 1, CFL=0.2)
