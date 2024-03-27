@@ -5,7 +5,7 @@ import LinearAlgebra: dot, norm, diagm, diag, cond, det
 import Parameters: @unpack
 import FastPow: @fastpow
 import ProgressMeter: next!, finish!
-using Formatting
+using Format
 using TimerOutputs
 
 # Really important to overload default function, gives 10x speed up?
@@ -252,7 +252,7 @@ let
         SaveLocation="E:/SecondApproach/TESTING_CPU",
         SimulationTime=1,
         OutputEach=0.01,
-        FlagDensityDiffusion=false,
+        FlagDensityDiffusion=true,
     )
 
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 1, CFL=0.2)
