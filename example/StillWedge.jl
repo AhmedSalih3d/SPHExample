@@ -10,19 +10,15 @@ import ProgressMeter: next!, finish!
 using Formatting
 using Bumper
 using TimerOutputs
-using Distances
-
-
 
 # Really important to overload default function, gives 10x speed up?
 # Overload the default function to do what you please
 function SPHExample.ComputeInteractions!(SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
     @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
-    xᵢⱼ² = evaluate(SqEuclidean(), Position[i], Position[j])
+    xᵢⱼ  = Position[i] - Position[j]
+    xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)                 #evaluate(SqEuclidean(), Position[i], Position[j]) from Distances.jl seemed slower
     if  xᵢⱼ² <= H²
-        xᵢⱼ  = Position[i] - Position[j]
-        
         dᵢⱼ  = sqrt(xᵢⱼ²) #Using sqrt is what takes a lot of time?
         # Unsure what is faster, min should do less operations?
         q         = min(dᵢⱼ * h⁻¹, 2.0) #clamp(dᵢⱼ * h⁻¹,0.0,2.0)
