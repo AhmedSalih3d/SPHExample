@@ -10,7 +10,8 @@ using TimerOutputs
 
 # Really important to overload default function, gives 10x speed up?
 # Overload the default function to do what you please
-function ComputeInteractions!(SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
+function ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter)
+    @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues = SimMetaData
     @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
     xᵢⱼ  = Position[i] - Position[j]
@@ -32,7 +33,7 @@ function ComputeInteractions!(SimConstants, Position, Kernel, KernelGradient, De
         dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  density_symmetric_term
 
         # Density diffusion
-        if BoolDDT
+        if FlagDensityDiffusion
             Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
             ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
             Pⱼᵢᴴ  = -Pᵢⱼᴴ
@@ -57,7 +58,7 @@ function ComputeInteractions!(SimConstants, Position, Kernel, KernelGradient, De
         dvdt⁺   = - m₀ * Pfac *  ∇ᵢWᵢⱼ
         dvdt⁻   = - dvdt⁺
 
-        if ViscosityTreatment == :ArtificialViscosity
+        if FlagViscosityTreatment == :ArtificialViscosity
             ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
             cond      = dot(vᵢⱼ, xᵢⱼ)
             cond_bool = cond < 0.0
@@ -69,7 +70,7 @@ function ComputeInteractions!(SimConstants, Position, Kernel, KernelGradient, De
             Πⱼ        = Πᵢ
         end
     
-        if ViscosityTreatment == :Laminar || ViscosityTreatment == :LaminarSPS
+        if FlagViscosityTreatment == :Laminar || FlagViscosityTreatment == :LaminarSPS
             # 4 comes from 2 divided by 0.5 from average density
             # should divide by ρᵢ eq 6 DPC
             # ν₀∇²uᵢ = (1/ρᵢ) * ( (4 * m₀ * (ρᵢ * ν₀) * dot( xᵢⱼ, ∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²) ) ) *  vᵢⱼ
@@ -84,7 +85,7 @@ function ComputeInteractions!(SimConstants, Position, Kernel, KernelGradient, De
             ν₀∇²uⱼ = ν₀∇²uᵢ
         end
     
-        if ViscosityTreatment == :LaminarSPS 
+        if FlagViscosityTreatment == :LaminarSPS 
             Iᴹ       = diagm(one.(xᵢⱼ))
             #julia> a .- a'
             # 3×3 SMatrix{3, 3, Float64, 9} with indices SOneTo(3)×SOneTo(3):
@@ -114,7 +115,7 @@ function ComputeInteractions!(SimConstants, Position, Kernel, KernelGradient, De
         dvdtI[i] += dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ
         dvdtI[j] += dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
 
-        if OutputKernelValues
+        if FlagOutputKernelValues
             Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
             Kernel[i]         += Wᵢⱼ
             Kernel[j]         += Wᵢⱼ
@@ -126,7 +127,7 @@ function ComputeInteractions!(SimConstants, Position, Kernel, KernelGradient, De
     return nothing
 end
 
-@inbounds function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ViscosityTreatment, BoolDDT, OutputKernelValues)
+@inbounds function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺)
     Position      = @views SimParticles.Position
     Density       = @views SimParticles.Density
     Pressure      = @views SimParticles.Pressure
@@ -144,7 +145,7 @@ end
     @timeit SimMetaData.HourGlass "03 ResetArrays"                           ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration)
 
     Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                    NeighborLoop!(ComputeInteractions!, SimConstants, SimParticles, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, Acceleration,  MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
+    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                    NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, Acceleration,  MotionLimiter, UniqueCells, IndexCounter)
 
     @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" @inbounds for i in eachindex(Position)
         Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
@@ -158,7 +159,7 @@ end
     @timeit SimMetaData.HourGlass "07 ResetArrays"                  ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration)
 
     Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-    @timeit SimMetaData.HourGlass "08 Second NeighborLoop"          NeighborLoop!(ComputeInteractions!, SimConstants, SimParticles, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtI, Acceleration, MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
+    @timeit SimMetaData.HourGlass "08 Second NeighborLoop"          NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtI, Acceleration, MotionLimiter, UniqueCells, IndexCounter)
 
     @timeit SimMetaData.HourGlass "09 Final Density"                DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
 
@@ -180,16 +181,9 @@ end
 function RunSimulation(;FluidCSV::String,
     BoundCSV::String,
     SimMetaData::SimulationMetaData{Dimensions, FloatType},
-    SimConstants::SimulationConstants,
-    ViscosityTreatment = :LaminarSPS,
-    BoolDDT = true,
-    OutputKernelValues = false
+    SimConstants::SimulationConstants
     ) where {Dimensions,FloatType}
 
-    # Possible choices for viscosity modelling
-    if ViscosityTreatment ∉ Set((:None, :ArtificialViscosity, :Laminar, :LaminarSPS))
-        error("ViscosityTreatment must be either :None, :ArtificialViscosity, :Laminar, :LaminarSPS")
-    end
 
     # If save directory is not already made, make it
     if !isdir(SimMetaData.SaveLocation)
@@ -224,7 +218,7 @@ function RunSimulation(;FluidCSV::String,
     OutputIterationCounter = 0
     @inbounds while true
 
-        SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ViscosityTreatment, BoolDDT, OutputKernelValues)
+        SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺)
 
         OutputCounter += SimMetaData.CurrentTimeStep
         if OutputCounter >= SimMetaData.OutputEach
@@ -257,6 +251,7 @@ let
         SaveLocation="E:/SecondApproach/TESTING_CPU",
         SimulationTime=1,
         OutputEach=0.01,
+        FlagDensityDiffusion=true
     )
 
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 1, CFL=0.2)
@@ -265,9 +260,6 @@ let
         FluidCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Fluid.csv",
         BoundCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Bound.csv",
         SimMetaData        = SimMetaData,
-        SimConstants       = SimConstantsWedge,
-        ViscosityTreatment = :ArtificialViscosity,
-        BoolDDT            = false,
-        OutputKernelValues = false, 
+        SimConstants       = SimConstantsWedge
     )
 end
