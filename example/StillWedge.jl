@@ -15,12 +15,12 @@ function ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, Kerne
     @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
     xᵢⱼ  = Position[i] - Position[j]
-    xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)                 #evaluate(SqEuclidean(), Position[i], Position[j]) from Distances.jl seemed slower
+    xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)              
     if  xᵢⱼ² <= H²
         #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/2
         dᵢⱼ  = sqrt(abs(xᵢⱼ²))
-        # Unsure what is faster, min should do less operations?
-        q         = min(dᵢⱼ * h⁻¹, 2.0) #clamp(dᵢⱼ * h⁻¹,0.0,2.0)
+
+        q         = min(dᵢⱼ * h⁻¹, 2.0)
         invd²η²   = inv(dᵢⱼ*dᵢⱼ+η²)
         ∇ᵢWᵢⱼ     = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
         ρᵢ        = Density[i]
@@ -29,7 +29,7 @@ function ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, Kerne
         vᵢ        = Velocity[i]
         vⱼ        = Velocity[j]
         vᵢⱼ       = vᵢ - vⱼ
-        density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ) # = dot(vᵢⱼ , -∇ᵢWᵢⱼ)
+        density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
         dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  density_symmetric_term
         dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  density_symmetric_term
 
@@ -42,7 +42,7 @@ function ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, Kerne
         
             ρⱼᵢ   = ρⱼ - ρᵢ
             MLcond = MotionLimiter[i] * MotionLimiter[j]
-            ddt_symmetric_term =  δᵩ * h * c₀ * 2 * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond #  dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) =  dot( xᵢⱼ, -∇ᵢWᵢⱼ)
+            ddt_symmetric_term =  δᵩ * h * c₀ * 2 * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond
             Dᵢ  = ddt_symmetric_term * (m₀/ρⱼ) * ( ρⱼᵢ - ρᵢⱼᴴ)
             Dⱼ  = ddt_symmetric_term * (m₀/ρᵢ) * (-ρⱼᵢ - ρⱼᵢᴴ)
         else
@@ -105,9 +105,9 @@ function ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, Kerne
             trace_Sⱼ = sum(diag(Sⱼ))
             τᶿⱼ      = 2*νtⱼ*ρⱼ * (Sⱼ - (1/3) * trace_Sⱼ * Iᴹ) - (2/3) * ρⱼ * BlinConstant * dx^2 * norm_Sⱼ^2 * Iᴹ
     
-            
-            dτdtᵢ = (m₀/(ρⱼ * ρᵢ)) * (τᶿᵢ + τᶿⱼ) *  ∇ᵢWᵢⱼ # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA THIS TIME
-            dτdtⱼ = (m₀/(ρᵢ * ρⱼ)) * (τᶿᵢ + τᶿⱼ) * -∇ᵢWᵢⱼ # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA THIS TIME
+            # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA TO REPRESENT IT
+            dτdtᵢ = (m₀/(ρⱼ * ρᵢ)) * (τᶿᵢ + τᶿⱼ) *  ∇ᵢWᵢⱼ 
+            dτdtⱼ = (m₀/(ρᵢ * ρⱼ)) * (τᶿᵢ + τᶿⱼ) * -∇ᵢWᵢⱼ 
         else
             dτdtᵢ  = zero(xᵢⱼ)
             dτdtⱼ  = dτdtᵢ
