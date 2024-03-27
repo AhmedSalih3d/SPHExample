@@ -10,7 +10,13 @@ using TimerOutputs
 
 # Really important to overload default function, gives 10x speed up?
 # Overload the default function to do what you please
-function SPHExample.ComputeInteractions!(SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
+function SPHExample.ComputeInteractions!(SimConstants, SimParticles, Kernel, KernelGradient, dρdtI, dvdtI, i, j, ViscosityTreatment, BoolDDT, OutputKernelValues)
+    Position      = @views SimParticles.Position
+    Density       = @views SimParticles.Density
+    Pressure      = @views SimParticles.Pressure
+    Velocity      = @views SimParticles.Velocity
+    MotionLimiter = @views SimParticles.MotionLimiter
+
     @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
     xᵢⱼ  = Position[i] - Position[j]
@@ -144,7 +150,7 @@ end
     @timeit SimMetaData.HourGlass "03 ResetArrays"                           ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration)
 
     Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                    NeighborLoop!(SimConstants, SimParticles, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, Acceleration,  MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
+    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                    NeighborLoop!(SimConstants, SimParticles, ParticleRanges, Stencil, Kernel, KernelGradient, dρdtI, Acceleration, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
     @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" @inbounds for i in eachindex(Position)
         Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
@@ -158,7 +164,7 @@ end
     @timeit SimMetaData.HourGlass "07 ResetArrays"                  ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration)
 
     Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-    @timeit SimMetaData.HourGlass "08 Second NeighborLoop"          NeighborLoop!(SimConstants, SimParticles, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtI, Acceleration, MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
+    @timeit SimMetaData.HourGlass "08 Second NeighborLoop"          NeighborLoop!(SimConstants, SimParticles, ParticleRanges, Stencil, Kernel, KernelGradient, dρdtI, Acceleration, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
     @timeit SimMetaData.HourGlass "09 Final Density"                DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
 

@@ -50,7 +50,13 @@ using ..AuxillaryFunctions
         return IndexCounter 
     end
 
-    function ComputeInteractions!(SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
+    function ComputeInteractions!(SimConstants, SimParticles, Kernel, KernelGradient, dρdtI, dvdtI, i, j, ViscosityTreatment, BoolDDT, OutputKernelValues)
+        Position      = @views SimParticles.Position
+        Density       = @views SimParticles.Density
+        Pressure      = @views SimParticles.Pressure
+        Velocity      = @views SimParticles.Velocity
+        MotionLimiter = @views SimParticles.MotionLimiter
+        
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
     
         xᵢⱼ  = Position[i] - Position[j]
@@ -168,7 +174,7 @@ using ..AuxillaryFunctions
 
 # Neither Polyester.@batch per core or thread is faster
 ###=== Function to process each cell and its neighbors
-    function NeighborLoop!(SimConstants, SimParticles, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
+    function NeighborLoop!(SimConstants, SimParticles, ParticleRanges, Stencil, Kernel, KernelGradient, dρdtI, dvdtI, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
         UniqueCells = view(UniqueCells, 1:IndexCounter)
         @inbounds Base.Threads.@threads for iter ∈ eachindex(UniqueCells)
             CellIndex = UniqueCells[iter]
@@ -177,7 +183,7 @@ using ..AuxillaryFunctions
             EndIndex   = ParticleRanges[iter+1] - 1
 
             @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-                @inline ComputeInteractions!(SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
+                @inline ComputeInteractions!(SimConstants, SimParticles, Kernel, KernelGradient, dρdtI, dvdtI, i, j, ViscosityTreatment, BoolDDT, OutputKernelValues)
             end
 
             @inbounds for S ∈ Stencil
@@ -193,7 +199,7 @@ using ..AuxillaryFunctions
                     EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
 
                     @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                        @inline ComputeInteractions!(SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
+                        @inline ComputeInteractions!(SimConstants, SimParticles, Kernel, KernelGradient, dρdtI, dvdtI, i, j, ViscosityTreatment, BoolDDT, OutputKernelValues)
                     end
                 end
             end
