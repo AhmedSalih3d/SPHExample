@@ -10,7 +10,7 @@ using TimerOutputs
 
 # Really important to overload default function, gives 10x speed up?
 # Overload the default function to do what you please
-function SPHExample.ComputeInteractions!(SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
+function ComputeInteractions!(SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
     @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
     xᵢⱼ  = Position[i] - Position[j]
@@ -126,7 +126,7 @@ function SPHExample.ComputeInteractions!(SimConstants, Position, Kernel, KernelG
     return nothing
 end
 
-@inbounds function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ViscosityTreatment, BoolDDT, OutputKernelValues)
+@inbounds function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ViscosityTreatment, BoolDDT, OutputKernelValues)
     Position      = @views SimParticles.Position
     Density       = @views SimParticles.Density
     Pressure      = @views SimParticles.Pressure
@@ -144,7 +144,7 @@ end
     @timeit SimMetaData.HourGlass "03 ResetArrays"                           ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration)
 
     Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                    NeighborLoop!(SimConstants, SimParticles, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, Acceleration,  MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
+    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                    NeighborLoop!(ComputeInteractions!, SimConstants, SimParticles, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, Acceleration,  MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
     @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" @inbounds for i in eachindex(Position)
         Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
@@ -158,7 +158,7 @@ end
     @timeit SimMetaData.HourGlass "07 ResetArrays"                  ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration)
 
     Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-    @timeit SimMetaData.HourGlass "08 Second NeighborLoop"          NeighborLoop!(SimConstants, SimParticles, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtI, Acceleration, MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
+    @timeit SimMetaData.HourGlass "08 Second NeighborLoop"          NeighborLoop!(ComputeInteractions!, SimConstants, SimParticles, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtI, Acceleration, MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
     @timeit SimMetaData.HourGlass "09 Final Density"                DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
 
@@ -224,7 +224,7 @@ function RunSimulation(;FluidCSV::String,
     OutputIterationCounter = 0
     @inbounds while true
 
-        SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ViscosityTreatment, BoolDDT, OutputKernelValues)
+        SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
         OutputCounter += SimMetaData.CurrentTimeStep
         if OutputCounter >= SimMetaData.OutputEach
@@ -267,7 +267,7 @@ let
         SimMetaData        = SimMetaData,
         SimConstants       = SimConstantsWedge,
         ViscosityTreatment = :ArtificialViscosity,
-        BoolDDT            = true,
+        BoolDDT            = false,
         OutputKernelValues = false, 
     )
 end
