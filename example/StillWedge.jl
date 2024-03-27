@@ -43,15 +43,21 @@ function SPHExample.ComputeInteractions!(SimConstants, Position, Kernel, KernelG
             ddt_symmetric_term =  δᵩ * h * c₀ * 2 * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond #  dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) =  dot( xᵢⱼ, -∇ᵢWᵢⱼ)
             Dᵢ  = ddt_symmetric_term * (m₀/ρⱼ) * ( ρⱼᵢ - ρᵢⱼᴴ)
             Dⱼ  = ddt_symmetric_term * (m₀/ρᵢ) * (-ρⱼᵢ - ρⱼᵢᴴ)
+
+            Pᵢ      =  Pressure[i]
+            Pⱼ      =  Pressure[j]
         else
+            # Weird bug with false BoolDDT, it needs to calc pressure here?
+            Pᵢ      =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
+            Pⱼ      =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
+
             Dᵢ  = 0.0
             Dⱼ  = 0.0
         end
         dρdtI[i] += dρdt⁺ + Dᵢ
         dρdtI[j] += dρdt⁻ + Dⱼ
 
-        Pᵢ      =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
-        Pⱼ      =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
+
         Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
         dvdt⁺   = - m₀ * Pfac *  ∇ᵢWᵢⱼ
         dvdt⁻   = - dvdt⁺
@@ -221,6 +227,7 @@ function RunSimulation(;FluidCSV::String,
     OutputIterationCounter = 0
     @inbounds while true
 
+        Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
         SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
         OutputCounter += SimMetaData.CurrentTimeStep
@@ -228,7 +235,6 @@ function RunSimulation(;FluidCSV::String,
             OutputCounter = 0.0
             OutputIterationCounter += 1
 
-            Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
             SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp"
             @timeit HourGlass "12 Output Data"  SaveFile(SaveLocation_)
         end
@@ -265,7 +271,7 @@ let
         SimMetaData        = SimMetaData,
         SimConstants       = SimConstantsWedge,
         ViscosityTreatment = :ArtificialViscosity,
-        BoolDDT            = true,
+        BoolDDT            = false,
         OutputKernelValues = false, 
     )
 end
