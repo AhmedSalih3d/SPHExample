@@ -61,13 +61,9 @@ function AllocateDataStructures(Dimensions,FloatType, FluidCSV,BoundCSV)
     
     Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
 
-    # Holding general particle data
     SimParticles = StructArray((Cells = Cells, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, ID = collect(1:NumberOfPoints)))
 
-    # Holding half-time step data
-    SimHalfTime  = StructArray((Positionₙ⁺ = Positionₙ⁺, Velocityₙ⁺ = Velocityₙ⁺, ρₙ⁺ = ρₙ⁺))
-
-    return SimParticles, dρdtI, Kernel, KernelGradient, SimHalfTime
+    return SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Kernel, KernelGradient
 end
 
 function LoadBoundaryNormals(dims, float_type, path_mdbc)
