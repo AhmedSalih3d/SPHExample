@@ -6,7 +6,6 @@ using StructArrays
 import LinearAlgebra: dot, norm, diagm, diag, cond, det
 using LoopVectorization
 using FastPow
-import CellListMap: InPlaceNeighborList, update!, neighborlist!
 import ProgressMeter: next!, finish!
 using Formatting
 using Bumper
@@ -180,40 +179,6 @@ end
     SimMetaData.TotalTime      += dt
 end
 
-
-function AllocateDataStructures(Dimensions,FloatType, FluidCSV,BoundCSV)
-    @inline Position, density_fluid, density_bound  = LoadParticlesFromCSV_StaticArrays(Dimensions,FloatType, FluidCSV,BoundCSV)
-
-    NumberOfPoints           = length(Position)
-    PositionType             = eltype(Position)
-    PositionUnderlyingType   = eltype(PositionType)
-
-    Density        = deepcopy([density_bound; density_fluid])
-
-    GravityFactor = [ zeros(size(density_bound,1)) ; -ones(size(density_fluid,1)) ]
-    
-    MotionLimiter = [ zeros(size(density_bound,1)) ;  ones(size(density_fluid,1)) ]
-
-    Acceleration    = zeros(PositionType, NumberOfPoints)
-    Velocity        = zeros(PositionType, NumberOfPoints)
-    Kernel          = zeros(PositionUnderlyingType, NumberOfPoints)
-    KernelGradient  = zeros(PositionType, NumberOfPoints)
-
-    dρdtI           = zeros(PositionUnderlyingType, NumberOfPoints)
-
-    Velocityₙ⁺      = zeros(PositionType, NumberOfPoints)
-    Positionₙ⁺      = zeros(PositionType, NumberOfPoints)
-    ρₙ⁺             = zeros(PositionUnderlyingType, NumberOfPoints)
-
-    Pressureᵢ      = zeros(PositionUnderlyingType, NumberOfPoints)
-    
-    Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
-
-    SimParticles = StructArray((Cells = Cells, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, ID = collect(1:NumberOfPoints)))
-
-    return SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Kernel, KernelGradient
-end
-
 ###===
 
 function RunSimulation(;FluidCSV::String,
@@ -314,7 +279,7 @@ let
     SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=4,
+        SimulationTime=1,
         OutputEach=0.01,
     )
 

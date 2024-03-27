@@ -1,10 +1,11 @@
 module PreProcess
 
-export LoadParticlesFromCSV_StaticArrays, LoadBoundaryNormals
+export LoadParticlesFromCSV_StaticArrays, LoadBoundaryNormals, AllocateDataStructures
 
 using CSV
 using DataFrames
 using StaticArrays
+using StructArrays
 
 function LoadParticlesFromCSV_StaticArrays(dims, float_type, fluid_csv, boundary_csv)
     DF_FLUID = CSV.read(fluid_csv, DataFrame)
@@ -32,6 +33,38 @@ function LoadParticlesFromCSV_StaticArrays(dims, float_type, fluid_csv, boundary
     return points, density_fluid, density_bound
 end
 
+function AllocateDataStructures(Dimensions,FloatType, FluidCSV,BoundCSV)
+    @inline Position, density_fluid, density_bound  = LoadParticlesFromCSV_StaticArrays(Dimensions,FloatType, FluidCSV,BoundCSV)
+
+    NumberOfPoints           = length(Position)
+    PositionType             = eltype(Position)
+    PositionUnderlyingType   = eltype(PositionType)
+
+    Density        = deepcopy([density_bound; density_fluid])
+
+    GravityFactor = [ zeros(size(density_bound,1)) ; -ones(size(density_fluid,1)) ]
+    
+    MotionLimiter = [ zeros(size(density_bound,1)) ;  ones(size(density_fluid,1)) ]
+
+    Acceleration    = zeros(PositionType, NumberOfPoints)
+    Velocity        = zeros(PositionType, NumberOfPoints)
+    Kernel          = zeros(PositionUnderlyingType, NumberOfPoints)
+    KernelGradient  = zeros(PositionType, NumberOfPoints)
+
+    dρdtI           = zeros(PositionUnderlyingType, NumberOfPoints)
+
+    Velocityₙ⁺      = zeros(PositionType, NumberOfPoints)
+    Positionₙ⁺      = zeros(PositionType, NumberOfPoints)
+    ρₙ⁺             = zeros(PositionUnderlyingType, NumberOfPoints)
+
+    Pressureᵢ      = zeros(PositionUnderlyingType, NumberOfPoints)
+    
+    Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
+
+    SimParticles = StructArray((Cells = Cells, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, ID = collect(1:NumberOfPoints)))
+
+    return SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Kernel, KernelGradient
+end
 
 function LoadBoundaryNormals(dims, float_type, path_mdbc)
     # Read the CSV file into a DataFrame

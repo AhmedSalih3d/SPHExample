@@ -15,7 +15,7 @@ module SPHExample
     export RearrangeVector!, ResetArrays!, to_3d
 
     using .PreProcess
-    export LoadParticlesFromCSV_StaticArrays, LoadBoundaryNormals
+    export LoadParticlesFromCSV_StaticArrays, AllocateDataStructures, LoadBoundaryNormals
 
     using .PostProcess
     export create_vtp_file, OutputVTP
@@ -38,19 +38,5 @@ module SPHExample
     using .SPHCellList
     export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!
 
-    # Temp
-    using Parameters, StaticArrays
-    @with_kw struct Particle{D,T}
-        Cell::CartesianIndex{D}
-        Position::SVector{D,T}
-        Acceleration::SVector{D,T}
-        Velocity::SVector{D,T} 
-        Density::T
-        GravityFactor::T
-        MotionLimiter::T
-        ID::Int64
-    end
-
-    export Particle
 end
 
