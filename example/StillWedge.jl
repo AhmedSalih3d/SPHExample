@@ -265,23 +265,10 @@ let
         SimMetaData        = SimMetaData,
         SimConstants       = SimConstantsWedge,
         ViscosityTreatment = :ArtificialViscosity,
+        # Currently, a bug seems to be present in relation to running without BoolDDT
+        # This bug persists, even if @threads is not enabled
+        # Maybe just disable not running with DDT, since it is objectively better anyways?
         BoolDDT            = true,
-        OutputKernelValues = false,
+        OutputKernelValues = false, 
     )
-
-    # SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
-    #     SimulationName="Test", 
-    #     SaveLocation="E:/SecondApproach/TESTING_CPU",
-    #     SimulationTime=4,
-    #     OutputEach=0.01,
-    # )
-    # SimConstantsDamBreak = SimulationConstants{FloatType}()
-    # @profview RunSimulation(
-    #     FluidCSV     = "./input/FluidPoints_Dp0.02_5LAYERS.csv",
-    #     BoundCSV     = "./input/BoundaryPoints_Dp0.02_5LAYERS.csv",
-    #     SimMetaData  = SimMetaData,
-    #     SimConstants = SimConstantsDamBreak,
-    #     BoolDDT      = true,
-    #     ViscosityTreatment = :ArtificialViscosity
-    # )
 end
