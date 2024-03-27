@@ -57,8 +57,8 @@ function SPHExample.ComputeInteractions!(SimConstants, SimParticles, Kernel, Ker
         dρdtI[j] += dρdt⁻ + Dⱼ
 
         # Something is going wrong for pressure eval.
-        Pᵢ      =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀) #Pressure[i]
-        Pⱼ      =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀) #Pressure[j]
+        Pᵢ      =  Pressure[i] #EquationOfStateGamma7(ρᵢ,c₀,ρ₀) #Pressure[i]
+        Pⱼ      =  Pressure[j] #EquationOfStateGamma7(ρⱼ,c₀,ρ₀) #Pressure[j]
         Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
         dvdt⁺   = - m₀ * Pfac *  ∇ᵢWᵢⱼ
         dvdt⁻   = - dvdt⁺
@@ -154,7 +154,7 @@ end
 
     @timeit SimMetaData.HourGlass "03 ResetArrays"                           ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration)
 
-    # Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
+    Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
     @timeit SimMetaData.HourGlass "04 First NeighborLoop"                    NeighborLoop!(SimConstants, SimParticles, ParticleRanges, Stencil, Kernel, KernelGradient, dρdtI, Acceleration, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
     @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" @inbounds for i in eachindex(Position)
@@ -168,7 +168,7 @@ end
 
     @timeit SimMetaData.HourGlass "07 ResetArrays"                          ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration)
 
-    # Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
+    Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
     @timeit SimMetaData.HourGlass "08 Second NeighborLoop"                  NeighborLoop!(SimConstants, SimParticles, ParticleRanges, Stencil, Kernel, KernelGradient, dρdtI, Acceleration, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
     @timeit SimMetaData.HourGlass "09 Final Density"                        DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
@@ -278,6 +278,7 @@ let
         SimMetaData        = SimMetaData,
         SimConstants       = SimConstantsWedge,
         ViscosityTreatment = :ArtificialViscosity,
+        # Bug with non-DDT unsure why, must investigate.
         BoolDDT            = true,
         OutputKernelValues = false, 
     )
