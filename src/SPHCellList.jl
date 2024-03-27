@@ -171,29 +171,10 @@ using ..AuxillaryFunctions
     
         return nothing
     end
-    
-    function SimStepLocalCell(SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, MotionLimiter,  ViscosityTreatment, BoolDDT, OutputKernelValues)
-
-        @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-            @inline ComputeInteractions!(SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
-        end
-
-        return nothing
-    end
-
-
-    function SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
-        @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-            @inline ComputeInteractions!(SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
-        end
-        return nothing
-    end
-
-
 
 # Neither Polyester.@batch per core or thread is faster
 ###=== Function to process each cell and its neighbors
-    function NeighborLoop!(SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
+    function NeighborLoop!(SimConstants, SimParticles, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  MotionLimiter, UniqueCells, IndexCounter, ViscosityTreatment, BoolDDT, OutputKernelValues)
         UniqueCells = view(UniqueCells, 1:IndexCounter)
         @inbounds Base.Threads.@threads for iter ∈ eachindex(UniqueCells)
             CellIndex = UniqueCells[iter]
@@ -201,7 +182,9 @@ using ..AuxillaryFunctions
             StartIndex = ParticleRanges[iter] 
             EndIndex   = ParticleRanges[iter+1] - 1
 
-            SimStepLocalCell(SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
+            @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
+                @inline ComputeInteractions!(SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
+            end
 
             @inbounds for S ∈ Stencil
                 SCellIndex = CellIndex + S
@@ -215,7 +198,9 @@ using ..AuxillaryFunctions
                     StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
                     EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
 
-                    SimStepNeighborCell(SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, StartIndex, EndIndex, StartIndex_, EndIndex_, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
+                    @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
+                        @inline ComputeInteractions!(SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
+                    end
                 end
             end
         end
