@@ -184,34 +184,31 @@ end
 function AllocateDataStructures(Dimensions,FloatType, FluidCSV,BoundCSV)
     @inline Position, density_fluid, density_bound  = LoadParticlesFromCSV_StaticArrays(Dimensions,FloatType, FluidCSV,BoundCSV)
 
-    NumberOfPoints = length(Position)
+    NumberOfPoints           = length(Position)
+    PositionType             = eltype(Position)
+    PositionUnderlyingType   = eltype(PositionType)
+
     Density        = deepcopy([density_bound; density_fluid])
 
     GravityFactor = [ zeros(size(density_bound,1)) ; -ones(size(density_fluid,1)) ]
     
     MotionLimiter = [ zeros(size(density_bound,1)) ;  ones(size(density_fluid,1)) ]
 
-    Acceleration    = similar(Position)
-    Velocity        = similar(Position)
-    Kernel          = similar(Density)
-    KernelGradient  = similar(Position)
+    Acceleration    = zeros(PositionType, NumberOfPoints)
+    Velocity        = zeros(PositionType, NumberOfPoints)
+    Kernel          = zeros(PositionUnderlyingType, NumberOfPoints)
+    KernelGradient  = zeros(PositionType, NumberOfPoints)
 
-    dρdtI           = similar(Density)
+    dρdtI           = zeros(PositionUnderlyingType, NumberOfPoints)
 
-    dvdtI           = similar(Position)
+    Velocityₙ⁺      = zeros(PositionType, NumberOfPoints)
+    Positionₙ⁺      = zeros(PositionType, NumberOfPoints)
+    ρₙ⁺             = zeros(PositionUnderlyingType, NumberOfPoints)
 
-    Velocityₙ⁺      = similar(Position)
-    Positionₙ⁺      = similar(Position)
-    ρₙ⁺             = zeros(FloatType, NumberOfPoints)
-
-    Pressureᵢ      = zeros(FloatType, NumberOfPoints)
+    Pressureᵢ      = zeros(PositionUnderlyingType, NumberOfPoints)
     
-    Cells          = similar(Position, CartesianIndex{Dimensions})
+    Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
 
-    # Ensure zero, similar does not!
-    ResetArrays!(Acceleration, Velocity, Kernel, KernelGradient, Cells, dρdtI, dvdtI, Positionₙ⁺, Velocityₙ⁺)
-
-    
     SimParticles = StructArray((Cells = Cells, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, ID = collect(1:NumberOfPoints)))
 
     return SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Kernel, KernelGradient
@@ -228,14 +225,17 @@ function RunSimulation(;FluidCSV::String,
     OutputKernelValues = false
     ) where {Dimensions,FloatType}
 
+    # Possible choices for viscosity modelling
     if ViscosityTreatment ∉ Set((:None, :ArtificialViscosity, :Laminar, :LaminarSPS))
         error("ViscosityTreatment must be either :None, :ArtificialViscosity, :Laminar, :LaminarSPS")
     end
 
+    # If save directory is not already made, make it
     if !isdir(SimMetaData.SaveLocation)
         mkdir(SimMetaData.SaveLocation)
     end
     
+    # Delete previous result files
     foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
 
     # Unpack the relevant simulation meta data
@@ -245,14 +245,15 @@ function RunSimulation(;FluidCSV::String,
     SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Kernel, KernelGradient = AllocateDataStructures(Dimensions,FloatType, FluidCSV,BoundCSV)
     Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
 
+    # Produce sorting related variables
     ParticleRanges = zeros(Int, length(SimParticles) + 1)
     UniqueCells    = zeros(CartesianIndex{Dimensions}, length(SimParticles))
     Stencil        = ConstructStencil(Val(Dimensions))
     _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), length(SimParticles))
 
+    # Produce data saving functions
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
     SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, to_3d(SimParticles.Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration)
-    # SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, Position, ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration"], Kernel, KernelGradient, Density, Pressureᵢ, Velocity, Acceleration)
     SaveFile(SaveLocation_)
 
 
@@ -313,7 +314,7 @@ let
     SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=1,
+        SimulationTime=4,
         OutputEach=0.01,
     )
 
