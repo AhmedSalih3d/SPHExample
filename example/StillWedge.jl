@@ -50,8 +50,8 @@ function SPHExample.ComputeInteractions!(SimConstants, Position, Kernel, KernelG
         dρdtI[i] += dρdt⁺ + Dᵢ
         dρdtI[j] += dρdt⁻ + Dⱼ
 
-        Pᵢ      =  Pressure[i] #EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
-        Pⱼ      =  Pressure[j] #EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
+        Pᵢ      =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
+        Pⱼ      =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
         Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
         dvdt⁺   = - m₀ * Pfac *  ∇ᵢWᵢⱼ
         dvdt⁻   = - dvdt⁺
@@ -221,7 +221,6 @@ function RunSimulation(;FluidCSV::String,
     OutputIterationCounter = 0
     @inbounds while true
 
-        Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
         SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelGradient, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ViscosityTreatment, BoolDDT, OutputKernelValues)
 
         OutputCounter += SimMetaData.CurrentTimeStep
@@ -229,6 +228,7 @@ function RunSimulation(;FluidCSV::String,
             OutputCounter = 0.0
             OutputIterationCounter += 1
 
+            Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
             SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp"
             @timeit HourGlass "12 Output Data"  SaveFile(SaveLocation_)
         end
@@ -265,9 +265,6 @@ let
         SimMetaData        = SimMetaData,
         SimConstants       = SimConstantsWedge,
         ViscosityTreatment = :ArtificialViscosity,
-        # Currently, a bug seems to be present in relation to running without BoolDDT
-        # This bug persists, even if @threads is not enabled
-        # Maybe just disable not running with DDT, since it is objectively better anyways?
         BoolDDT            = true,
         OutputKernelValues = false, 
     )
