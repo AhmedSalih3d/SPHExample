@@ -2,7 +2,7 @@ module SPHCellList
 
 export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!
 
-using Parameters, FastPow, Distances, StaticArrays, Base.Threads
+using Parameters, FastPow, StaticArrays, Base.Threads
 import LinearAlgebra: dot
 
 using ..SimulationEquations
@@ -30,17 +30,6 @@ using ..AuxillaryFunctions
     function UpdateNeighbors!(Particles, CutOff, SortingScratchSpace, ParticleRanges, UniqueCells)
         ExtractCells!(Particles, CutOff)
 
-        # First call allocates, which is why TimerOutputs shows allocs - it should be alloc free otherwise
-        # sortperm!(SortedIndices,Cells; scratch=SortingScratchSpace)
-
-        # RearrangeVector!(Cells         , SortedIndices)
-        # RearrangeVector!(Position      , SortedIndices)
-        # RearrangeVector!(Density       , SortedIndices)
-        # RearrangeVector!(Acceleration  , SortedIndices)
-        # RearrangeVector!(Velocity      , SortedIndices)    
-        # RearrangeVector!(GravityFactor , SortedIndices)    
-        # RearrangeVector!(MotionLimiter , SortedIndices)    
-
         sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
 
         Cells = @views Particles.Cells
@@ -64,10 +53,9 @@ using ..AuxillaryFunctions
     function ComputeInteractions!(SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ViscosityTreatment, BoolDDT, OutputKernelValues)
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
     
-        xᵢⱼ² = evaluate(SqEuclidean(), Position[i], Position[j])
+        xᵢⱼ  = Position[i] - Position[j]
+        xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)                 #evaluate(SqEuclidean(), Position[i], Position[j]) from Distances.jl seemed slower
         if  xᵢⱼ² <= H²
-            xᵢⱼ  = Position[i] - Position[j]
-            
             dᵢⱼ  = sqrt(xᵢⱼ²) #Using sqrt is what takes a lot of time?
             # Unsure what is faster, min should do less operations?
             q         = min(dᵢⱼ * h⁻¹, 2.0) #clamp(dᵢⱼ * h⁻¹,0.0,2.0)
@@ -102,8 +90,9 @@ using ..AuxillaryFunctions
             dρdtI[i] += dρdt⁺ + Dᵢ
             dρdtI[j] += dρdt⁻ + Dⱼ
     
-            Pᵢ      =  EquationOfStateGamma7(ρᵢ,c₀,ρ₀)
-            Pⱼ      =  EquationOfStateGamma7(ρⱼ,c₀,ρ₀)
+    
+            Pᵢ      =  Pressure[i]
+            Pⱼ      =  Pressure[j]
             Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
             dvdt⁺   = - m₀ * Pfac *  ∇ᵢWᵢⱼ
             dvdt⁻   = - dvdt⁺
@@ -123,8 +112,13 @@ using ..AuxillaryFunctions
             if ViscosityTreatment == :Laminar || ViscosityTreatment == :LaminarSPS
                 # 4 comes from 2 divided by 0.5 from average density
                 # should divide by ρᵢ eq 6 DPC
-                ν₀∇²uᵢ = (1/ρᵢ) * ( (4 * m₀ * (ρᵢ * ν₀) * dot( xᵢⱼ, ∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²) ) ) *  vᵢⱼ
-                ν₀∇²uⱼ = (1/ρⱼ) * ( (4 * m₀ * (ρⱼ * ν₀) * dot(-xᵢⱼ,-∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²) ) ) * -vᵢⱼ
+                # ν₀∇²uᵢ = (1/ρᵢ) * ( (4 * m₀ * (ρᵢ * ν₀) * dot( xᵢⱼ, ∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²) ) ) *  vᵢⱼ
+                # ν₀∇²uⱼ = (1/ρⱼ) * ( (4 * m₀ * (ρⱼ * ν₀) * dot(-xᵢⱼ,-∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²) ) ) * -vᵢⱼ
+                visc_symmetric_term = (4 * m₀ * ν₀ * dot( xᵢⱼ, ∇ᵢWᵢⱼ)) / ((ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²))
+                # ν₀∇²uᵢ = (1/ρᵢ) * visc_symmetric_term *  vᵢⱼ * ρᵢ
+                # ν₀∇²uⱼ = (1/ρⱼ) * visc_symmetric_term * -vᵢⱼ * ρⱼ
+                ν₀∇²uᵢ =  visc_symmetric_term *  vᵢⱼ
+                ν₀∇²uⱼ = -ν₀∇²uᵢ #visc_symmetric_term * -vᵢⱼ
             else
                 ν₀∇²uᵢ = zero(xᵢⱼ)
                 ν₀∇²uⱼ = ν₀∇²uᵢ
