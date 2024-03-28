@@ -255,12 +255,13 @@ let
         FlagOutputKernelValues=false,
     )
 
-    SimConstantsWedge = SimulationConstants{FloatType}(dx = 0.0085, c₀ = 33.6754507672132, CFL = 0.2)
+    # SimConstantsWedge = SimulationConstants{FloatType}(dx = 0.0085, c₀ = 33.6754507672132, CFL = 0.2)
+    SimConstantsWedge = SimulationConstants{FloatType}(dx = 0.02, c₀ = 33.14, CFL = 0.2)
 
     # Remove '@profview' if you do not want VS Code timers
     @profview RunSimulation(
-        FluidCSV           = "./input/dam_break_3d/DamBreak3d_Dp0.0085_Fluid.csv",
-        BoundCSV           = "./input/dam_break_3d/DamBreak3d_Dp0.0085_Bound.csv",
+        FluidCSV           = "./input/dam_break_3d/DamBreak3d_Dp0.02_Fluid.csv",
+        BoundCSV           = "./input/dam_break_3d/DamBreak3d_Dp0.02_Bound.csv",
         SimMetaData        = SimMetaDataWedge,
         SimConstants       = SimConstantsWedge
     )
