@@ -242,7 +242,6 @@ function RunSimulation(;FluidCSV::String,
     end
 end
 
-# 3D is included, but has not been extensively tested.
 let
     Dimensions = 3
     FloatType  = Float64
@@ -267,6 +266,10 @@ let
         αD  = 21/(16*π*(1.2 * sqrt(3) * dx)^3),
         m₀  = 1000 * dx^3,
         CFL = 0.2)
+
+    @warn("3D is included, but has not been extensively tested.
+    # With only one particle layer for boundary, it seems that fluid particles
+    # can wiggle through when the initial water column is dissolved")
 
     # Remove '@profview' if you do not want VS Code timers
     @profview RunSimulation(
