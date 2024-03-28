@@ -259,8 +259,8 @@ let
 
     # Remove '@profview' if you do not want VS Code timers
     @profview RunSimulation(
-        FluidCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Fluid.csv",
-        BoundCSV           = "./input/still_wedge_mdbc/StillWedge_Dp0.02_Bound.csv",
+        FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
+        BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
         SimMetaData        = SimMetaDataWedge,
         SimConstants       = SimConstantsWedge
     )
