@@ -208,7 +208,7 @@ function RunSimulation(;FluidCSV::String,
 
     # Produce data saving functions
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
-    SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, to_3d(SimParticles.Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
+    SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, SimParticles.Position, ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
     SaveFile(SaveLocation_)
 
 
@@ -243,20 +243,29 @@ function RunSimulation(;FluidCSV::String,
 end
 
 let
-    Dimensions = 2
+    Dimensions = 3
     FloatType  = Float64
 
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=2,
+        SimulationTime=1.6,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
     )
 
     # SimConstantsWedge = SimulationConstants{FloatType}(dx = 0.0085, c₀ = 33.6754507672132, CFL = 0.2)
-    SimConstantsWedge = SimulationConstants{FloatType}(dx = 0.02, c₀ = 33.14, CFL = 0.2)
+    
+    dx = 0.02
+    SimConstantsWedge = SimulationConstants{FloatType}(
+        dx  = dx,
+        c₀  = 33.14,
+        h   = 1 * sqrt(3 * dx^2),
+        α   = 0.1,
+        αD  = 21/(16*π*(1.2 * sqrt(3) * dx)^3),
+        m₀  = 1000 * dx^3,
+        CFL = 0.2)
 
     # Remove '@profview' if you do not want VS Code timers
     @profview RunSimulation(
