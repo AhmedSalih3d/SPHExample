@@ -242,6 +242,7 @@ function RunSimulation(;FluidCSV::String,
     end
 end
 
+# 3D is included, but has not been extensively tested.
 let
     Dimensions = 3
     FloatType  = Float64
