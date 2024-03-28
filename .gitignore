@@ -7,3 +7,5 @@ particles/
 second_approach/
 # Ignores manifest.toml
 Manifest.toml
+# Ignore log files
+*.log
