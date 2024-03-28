@@ -268,8 +268,8 @@ let
         CFL = 0.2)
 
     @warn("3D is included, but has not been extensively tested.
-    # With only one particle layer for boundary, it seems that fluid particles
-    # can wiggle through when the initial water column is dissolved")
+    With only one particle layer for boundary, it seems that fluid particles
+    can wiggle through when the initial water column is dissolved")
 
     # Remove '@profview' if you do not want VS Code timers
     @profview RunSimulation(
