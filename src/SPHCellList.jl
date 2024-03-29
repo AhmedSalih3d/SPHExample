@@ -2,7 +2,7 @@ module SPHCellList
 
 export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!
 
-using Parameters, FastPow, StaticArrays, Base.Threads
+using Parameters, FastPow, StaticArrays, Base.Threads, ChunkSplitters
 import LinearAlgebra: dot
 
 using ..SimulationEquations
@@ -54,30 +54,32 @@ using ..AuxillaryFunctions
 ###=== Function to process each cell and its neighbors
     function NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  MotionLimiter, UniqueCells, IndexCounter)
         UniqueCells = view(UniqueCells, 1:IndexCounter)
-        @inbounds @threads for iter ∈ eachindex(UniqueCells)
-            CellIndex = UniqueCells[iter]
+        @threads for (ichunk, inds) in enumerate(chunks(UniqueCells; n=nthreads()))
+            for iter in inds
+                CellIndex = UniqueCells[iter]
 
-            StartIndex = ParticleRanges[iter] 
-            EndIndex   = ParticleRanges[iter+1] - 1
+                StartIndex = ParticleRanges[iter] 
+                EndIndex   = ParticleRanges[iter+1] - 1
 
-            @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-                @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter)
-            end
+                @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
+                    @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter)
+                end
 
-            @inbounds for S ∈ Stencil
-                SCellIndex = CellIndex + S
+                @inbounds for S ∈ Stencil
+                    SCellIndex = CellIndex + S
 
-                # Returns a range, x:x for exact match and x:(x-1) for no match
-                # utilizes that it is a sorted array and requires no isequal constructor,
-                # so I prefer this for now
-                NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
+                    # Returns a range, x:x for exact match and x:(x-1) for no match
+                    # utilizes that it is a sorted array and requires no isequal constructor,
+                    # so I prefer this for now
+                    NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
 
-                if length(NeighborCellIndex) != 0
-                    StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
-                    EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
+                    if length(NeighborCellIndex) != 0
+                        StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
+                        EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
 
-                    @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                        @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter)
+                        @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
+                            @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter)
+                        end
                     end
                 end
             end
