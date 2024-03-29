@@ -4,7 +4,6 @@ export create_vtp_file, OutputVTP
 
     using WriteVTK
     using Parameters
-    using Printf
     include("SimulationEquations.jl");  using .SimulationEquations
 
     # This function uses WriteVTK to produce a simple ParaView file for visualization
