@@ -1,26 +1,33 @@
 module SPHExample
 
-    include("AuxillaryFunctions.jl"); 
-    include("PreProcess.jl");         
-    include("PostProcess.jl");        
+    include("AuxillaryFunctions.jl");        
+    include("PostProcess.jl");    
+    include("ProduceVTP.jl")    
     include("TimeStepping.jl");       
     include("SimulationEquations.jl");
     include("SimulationMetaDataConfiguration.jl");
     include("SimulationConstantsConfiguration.jl");
-    include("SimulationDataArrays.jl")
+    include("PreProcess.jl");
+    include("SPHCellList.jl")
     
     # Re-export desired functions from each submodule
+    using .AuxillaryFunctions
+    export ResetArrays!, to_3d
+
     using .PreProcess
-    export LoadParticlesFromCSV
+    export LoadParticlesFromCSV_StaticArrays, AllocateDataStructures, LoadBoundaryNormals
 
     using .PostProcess
     export create_vtp_file, OutputVTP
+
+    using .ProduceVTP
+    export ExportVTP
 
     using .TimeStepping: Δt
     export Δt
 
     using .SimulationEquations
-    export Wᵢⱼ, ∑ⱼWᵢⱼ!, Optim∇ᵢWᵢⱼ, ∑ⱼ∇ᵢWᵢⱼ!, EquationOfState, Pressure!, ∂Πᵢⱼ∂t!, ∂ρᵢ∂tDDT!, ∂vᵢ∂t!, DensityEpsi!, LimitDensityAtBoundary!, updatexᵢⱼ!
+    export EquationOfState, EquationOfStateGamma7, Pressure!, DensityEpsi!, LimitDensityAtBoundary!, ConstructGravitySVector, InverseHydrostaticEquationOfState
 
     using .SimulationMetaDataConfiguration
     export SimulationMetaData
@@ -28,7 +35,8 @@ module SPHExample
     using .SimulationConstantsConfiguration
     export SimulationConstants
 
-    using .SimulationDataArrays
-    export ResetArrays!, ResizeBuffers!
+    using .SPHCellList
+    export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!
+
 end
 

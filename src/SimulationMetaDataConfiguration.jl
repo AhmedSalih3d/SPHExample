@@ -39,18 +39,21 @@ metadata = SimulationMetaData(
 )
 ```
 """
-@with_kw mutable struct SimulationMetaData{FloatType <: AbstractFloat}
+@with_kw mutable struct SimulationMetaData{Dimensions, FloatType <: AbstractFloat}
     SimulationName::String
     SaveLocation::String
-    HourGlass::TimerOutput           = TimerOutput()
-    Iteration::Int                   = 0
-    MaxIterations::Int               = 1000
-    OutputIteration::Int             = 50
-    CurrentTimeStep::FloatType       = 0
-    TotalTime::FloatType             = 0
-    SilentOutput::Bool               = false
-    ThreadsCPU::Int                  = Threads.nthreads()
-    ProgressSpecification::Progress  = Progress(MaxIterations)       
+    HourGlass::TimerOutput                  = TimerOutput()
+    Iteration::Int                          = 0
+    OutputEach::FloatType                   = 0.02 #seconds
+    CurrentTimeStep::FloatType              = 0
+    TotalTime::FloatType                    = 0
+    SimulationTime::FloatType               = 0
+    SilentOutput::Bool                      = false
+    ThreadsCPU::Int                         = Threads.nthreads()
+    ProgressSpecification::ProgressUnknown  =  ProgressUnknown(desc="Burning the midnight oil:", spinner=true, showspeed=true) 
+    FlagViscosityTreatment::Symbol          = :ArtificialViscosity; @assert in(FlagViscosityTreatment, Set((:None, :ArtificialViscosity, :Laminar, :LaminarSPS))) == true "ViscosityTreatment must be either :None, :ArtificialViscosity, :Laminar, :LaminarSPS"
+    FlagDensityDiffusion::Bool              = false
+    FlagOutputKernelValues::Bool            = false     
 end
 
 end

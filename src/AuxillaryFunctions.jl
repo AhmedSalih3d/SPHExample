@@ -1,23 +1,10 @@
 module AuxillaryFunctions
+using StaticArrays
 
-# This function is never used in this project but added as a courtesy
-# if you wish to convert a NeighbourList of Tuples into a format
-# in which all indices realted to a particles neighbours is stored
-function ListToIndex(points, list)
-    out  = [ Int[] for _ in points ]
-    rout = [ Float64[] for _ in points]
+export ResetArrays!, to_3d
 
-    for i in eachindex(out,rout)
-            push!(out[i],i)
-            push!(rout[i],0)
-        end
+ResetArrays!(arrays...) = foreach(a -> fill!(a, zero(eltype(a))), arrays)
 
-        for (i,j,d) in list
-            push!(out[i], j)
-            push!(out[j], i)
-            push!(rout[i],d)
-        end
-        return out,rout
-end
+to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
 
 end
