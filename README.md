@@ -66,11 +66,11 @@ The "src" package contains all the code files used in this process. An overview 
 
 ### Installation
 
-It is recommended to `git clone ..` into a folder and following the instructions in `Executing program`. The `using Pkg; Pkg.add(url="https://github.com/AhmedSalih3d/SPHExample")` should also work if one is simply interesting in installing and using some package functionality. 
+It is recommended to fork the project and then  `git clone ..` into a folder and following the instructions in `Executing program`. The `using Pkg; Pkg.add(url="https://github.com/AhmedSalih3d/SPHExample")` should also work if one is simply interesting in installing and using some package functionality. 
 
 Then you can open one of the files in `example` such as `example\still_wedge.jl` and modify the `ComputerInteractions!` function which determines particle interaction to your liking or `SimulationLoop` which controls the time-stepping. You also have access to the whole `RunSimulation` functionality and can adapt that to your needs. 
 
-Since this is the preferred workflow and the way to gain most out of this package, please use the `git clone ..` approach. 
+Since this is the preferred workflow and the way to gain most out of this package, please use the fork and `git clone ..` approach. 
 
 ## Help
 
