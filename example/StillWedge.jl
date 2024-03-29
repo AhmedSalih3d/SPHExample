@@ -147,7 +147,7 @@ end
     dt₂ = dt * 0.5
 
     if mod(SimMetaData.Iteration,50) == 0
-        @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, SimConstants.H * 0.75, SortingScratchSpace,  ParticleRanges, UniqueCells)
+        @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, SimConstants.H, SortingScratchSpace,  ParticleRanges, UniqueCells)
     else
         IndexCounter = findfirst(isequal(0), ParticleRanges) - 2
     end
@@ -275,7 +275,7 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=1,
+        SimulationTime=4,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
