@@ -187,10 +187,9 @@ end
     SimMetaData.TotalTime      += dt
 
     if SimMetaData.FlagOutputKernelValues
-        for kt  in KernelThreaded; Kernel .+= kt end
-        for ktg in KernelGradientThreaded; KernelGradient .+= ktg end
+        reduce_sum!(Kernel, KernelThreaded)
+        reduce_sum!(KernelGradient, KernelGradientThreaded)
     end
-    
 
 end
 
