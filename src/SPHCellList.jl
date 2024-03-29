@@ -62,7 +62,7 @@ using ..AuxillaryFunctions
                 EndIndex   = ParticleRanges[iter+1] - 1
 
                 @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-                    @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter)
+                    @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ichunk)
                 end
 
                 @inbounds for S ∈ Stencil
@@ -78,7 +78,7 @@ using ..AuxillaryFunctions
                         EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
 
                         @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                            @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter)
+                            @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ichunk)
                         end
                     end
                 end

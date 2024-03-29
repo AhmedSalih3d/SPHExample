@@ -10,7 +10,7 @@ using TimerOutputs
 
 # Really important to overload default function, gives 10x speed up?
 # Overload the default function to do what you please
-function ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter)
+function ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ichunk)
     @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues = SimMetaData
     @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
@@ -118,8 +118,8 @@ function ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, Kerne
 
         if FlagOutputKernelValues
             Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
-            Kernel[i]         += Wᵢⱼ
-            Kernel[j]         += Wᵢⱼ
+            Kernel[ichunk][i] += Wᵢⱼ
+            Kernel[ichunk][j] += Wᵢⱼ
             KernelGradient[i] +=  ∇ᵢWᵢⱼ
             KernelGradient[j] += -∇ᵢWᵢⱼ
         end
@@ -142,7 +142,7 @@ end
 
     @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, SimConstants.H*2, SortingScratchSpace,  ParticleRanges, UniqueCells)
 
-    @timeit SimMetaData.HourGlass "03 ResetArrays"                           ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration)
+    @timeit SimMetaData.HourGlass "03 ResetArrays"                           ResetArrays!(KernelGradient, dρdtI, Acceleration); ResetArrays!.(Kernel)
 
     Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
     @timeit SimMetaData.HourGlass "04 First NeighborLoop"                    NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, Acceleration,  MotionLimiter, UniqueCells, IndexCounter)
@@ -156,7 +156,7 @@ end
 
     @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"  LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
 
-    @timeit SimMetaData.HourGlass "07 ResetArrays"                  ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration)
+    @timeit SimMetaData.HourGlass "07 ResetArrays"                  ResetArrays!(KernelGradient, dρdtI, Acceleration); ResetArrays!.(Kernel)
 
     Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
     @timeit SimMetaData.HourGlass "08 Second NeighborLoop"          NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtI, Acceleration, MotionLimiter, UniqueCells, IndexCounter)
@@ -200,6 +200,8 @@ function RunSimulation(;FluidCSV::String,
     SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Kernel, KernelGradient = AllocateDataStructures(Dimensions,FloatType, FluidCSV,BoundCSV)
     Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
 
+    Kernel = [copy(Kernel) for _ in 1:Base.Threads.nthreads()]
+
     # Produce sorting related variables
     ParticleRanges = zeros(Int, length(SimParticles) + 1)
     UniqueCells    = zeros(CartesianIndex{Dimensions}, length(SimParticles))
@@ -208,7 +210,7 @@ function RunSimulation(;FluidCSV::String,
 
     # Produce data saving functions
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
-    SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, to_3d(SimParticles.Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
+    SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, to_3d(SimParticles.Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], sum(Kernel), KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
     SaveFile(SaveLocation_)
 
 
@@ -252,7 +254,7 @@ let
         SimulationTime=1,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
-        FlagOutputKernelValues=false,
+        FlagOutputKernelValues=true,
     )
 
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 1, CFL=0.2)
