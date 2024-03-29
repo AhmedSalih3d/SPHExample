@@ -19,7 +19,7 @@ using ..AuxillaryFunctions
     @inline function ExtractCells!(Particles, CutOff)
         Cells  = @views Particles.Cells
         Points = @views Particles.Position
-        Base.Threads.@threads for i ∈ eachindex(Particles)
+        @threads for i ∈ eachindex(Particles)
             Cells[i]  =  CartesianIndex(@. Int(fld(Points[i], CutOff)) ...)
             Cells[i] +=  2 * one(Cells[i])  # + CartesianIndex(1,1) + CartesianIndex(1,1) #+ ZeroOffset + HalfPad
         end
@@ -54,7 +54,7 @@ using ..AuxillaryFunctions
 ###=== Function to process each cell and its neighbors
     function NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  MotionLimiter, UniqueCells, IndexCounter)
         UniqueCells = view(UniqueCells, 1:IndexCounter)
-        @inbounds Base.Threads.@threads for iter ∈ eachindex(UniqueCells)
+        @inbounds @threads for iter ∈ eachindex(UniqueCells)
             CellIndex = UniqueCells[iter]
 
             StartIndex = ParticleRanges[iter] 
