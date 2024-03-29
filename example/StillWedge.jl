@@ -271,7 +271,7 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=1,
+        SimulationTime=4,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=true,
