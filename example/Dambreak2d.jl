@@ -146,11 +146,11 @@ end
     @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
     dt₂ = dt * 0.5
 
-    # if mod(SimMetaData.Iteration,50) == 0
+    if mod(SimMetaData.Iteration,10) == 0
         @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, SimConstants.H, SortingScratchSpace,  ParticleRanges, UniqueCells)
-    # else
-        # IndexCounter = findfirst(isequal(0), ParticleRanges) - 2
-    # end
+    else
+        IndexCounter = findfirst(isequal(0), ParticleRanges) - 2
+    end
 
     @timeit SimMetaData.HourGlass "03 ResetArrays"                           ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration); ResetArrays!.(KernelThreaded, KernelGradientThreaded, dρdtIThreaded, AccelerationThreaded)
 
