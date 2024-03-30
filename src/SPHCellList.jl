@@ -2,7 +2,7 @@ module SPHCellList
 
 export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!
 
-using Parameters, FastPow, StaticArrays, Base.Threads, ChunkSplitters
+using Parameters, FastPow, StaticArrays, Base.Threads, ChunkSplitters, Polyester
 import LinearAlgebra: dot
 
 using ..SimulationEquations
@@ -19,9 +19,11 @@ using ..AuxillaryFunctions
     @inline function ExtractCells!(Particles, CutOff)
         Cells  = @views Particles.Cells
         Points = @views Particles.Position
-        @threads for i ∈ eachindex(Particles)
-            Cells[i]  =  CartesianIndex(@. Int(fld(Points[i] + 2, CutOff)) ...)
+        # Now it seems more feasible to do @batch, since floating division being used now
+        @batch per=thread for i ∈ eachindex(Particles)
+            # Cells[i]  =  CartesianIndex(@. Int(fld(Points[i] + 2, CutOff)) ...)
             # Cells[i] +=  2 * one(Cells[i])  # + CartesianIndex(1,1) + CartesianIndex(1,1) #+ ZeroOffset + HalfPad
+            Cells[i]   = CartesianIndex(@. floor(Int, 4 + Points[i] / CutOff)...)
         end
         return nothing
     end
