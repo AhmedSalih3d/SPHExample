@@ -20,8 +20,8 @@ using ..AuxillaryFunctions
         Cells  = @views Particles.Cells
         Points = @views Particles.Position
         @threads for i ∈ eachindex(Particles)
-            Cells[i]  =  CartesianIndex(@. Int(fld(Points[i], CutOff)) ...)
-            Cells[i] +=  2 * one(Cells[i])  # + CartesianIndex(1,1) + CartesianIndex(1,1) #+ ZeroOffset + HalfPad
+            Cells[i]  =  CartesianIndex(@. Int(fld(Points[i] + 2, CutOff)) ...)
+            # Cells[i] +=  2 * one(Cells[i])  # + CartesianIndex(1,1) + CartesianIndex(1,1) #+ ZeroOffset + HalfPad
         end
         return nothing
     end
