@@ -135,6 +135,8 @@ end
     end
 end
 @inbounds function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelThreaded, KernelGradient, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺)
+    InverseCutOff = Val(1/SimConstants.H)
+    
     Position      = SimParticles.Position
     Density       = SimParticles.Density
     Pressure      = SimParticles.Pressure
@@ -147,7 +149,7 @@ end
     dt₂ = dt * 0.5
 
     # if mod(SimMetaData.Iteration,10) == 0
-        @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, SimConstants.H, SortingScratchSpace,  ParticleRanges, UniqueCells)
+        @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, InverseCutOff, SortingScratchSpace,  ParticleRanges, UniqueCells)
     # else
         # IndexCounter = findfirst(isequal(0), ParticleRanges) - 2
     # end
@@ -281,12 +283,12 @@ let
         FlagOutputKernelValues=false,
     )
 
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=43.48576250492629, δᵩ = 0.1, CFL=0.2)
 
     # Remove '@profview' if you do not want VS Code timers
     @profview RunSimulation(
-        FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
-        BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
+        FluidCSV           = "./input/still_wedge/StillWedge_Dp0.01_Fluid.csv",
+        BoundCSV           = "./input/still_wedge/StillWedge_Dp0.01_Bound.csv",
         SimMetaData        = SimMetaDataWedge,
         SimConstants       = SimConstantsWedge
     )
