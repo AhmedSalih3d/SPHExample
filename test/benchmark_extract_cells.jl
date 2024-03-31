@@ -17,11 +17,18 @@ function BatchExtractCellsFloor!(Cells, Points, CutOff)
     end
 end
 
-function BatchExtractCells3!(Cells, Points, CutOff)
+function BatchExtractCellsFloor!(Cells, Points, CutOff)
+    @batch per=thread for i ∈ eachindex(Cells)
+        Cells[i]   = CartesianIndex(@. floor(Int, 4 + Points[i] / CutOff)...)
+    end
+end
+
+
+function BatchExtractCellsMap!(Cells, Points, CutOff)
     # @batch per=thread
-    for i ∈ eachindex(Cells)
-        t = map(Tuple(Points[i])) do x
-            floor(Int, x/CutOff)+2
+    @batch per=thread for i ∈ eachindex(Cells)
+         t = map(Tuple(Points[i])) do x
+            floor(Int, x/0.5)+4
         end
         Cells[i] = CartesianIndex(t)
     end
@@ -46,9 +53,8 @@ println("BatchExtractCells!"); display(benchmark_result)
 benchmark_result = @b BatchExtractCellsFloor!($Cells, $Points, $CutOff)
 println("BatchExtractCellsFloor!"); display(benchmark_result)
 
-BatchExtractCells3!(Cells, Points, CutOff)
 benchmark_result = @b BatchExtractCells3!($Cells, $Points, $CutOff)
-println("BatchExtractCells3!"); display(benchmark_result)
+println("BatchExtractCellsMap!"); display(benchmark_result)
 
 # Initialize Cells as an array of CartesianIndex{3}, dummy initialization
 CellsA = [zero(CartesianIndex{Dims}) for _ = 1:N]
@@ -57,7 +63,7 @@ CellsC = [zero(CartesianIndex{Dims}) for _ = 1:N]
 
 BatchExtractCells!(CellsA, Points, CutOff)
 BatchExtractCellsFloor!(CellsB, Points, CutOff)
-BatchExtractCellsFloor!(CellsC, Points, CutOff)
+BatchExtractCellsMap!(CellsC, Points, CutOff)
 
 @test CellsA == CellsB == CellsC
 
