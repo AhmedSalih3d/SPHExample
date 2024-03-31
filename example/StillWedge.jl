@@ -196,6 +196,7 @@ end
         reduce_sum!(KernelGradient, KernelGradientThreaded)
     end
     
+    return nothing
 end
 
 ###===
@@ -221,23 +222,27 @@ function RunSimulation(;FluidCSV::String,
 
     # Load in particles
     SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Kernel, KernelGradient = AllocateDataStructures(Dimensions,FloatType, FluidCSV,BoundCSV)
-    Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
+    NumberOfPoints = length(SimParticles)::Int #Have to type declare, else error?
+    @inline Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
 
-    KernelThreaded         = [copy(Kernel)         for _ in 1:Base.Threads.nthreads()]
-    KernelGradientThreaded = [copy(KernelGradient) for _ in 1:Base.Threads.nthreads()]
-    dρdtIThreaded          = [copy(dρdtI)          for _ in 1:Base.Threads.nthreads()]
-    AccelerationThreaded   = [copy(KernelGradient) for _ in 1:Base.Threads.nthreads()]
+    @inline begin
+        n_copy = Base.Threads.nthreads()
+        KernelThreaded         = [copy(Kernel)         for _ in 1:n_copy]
+        KernelGradientThreaded = [copy(KernelGradient) for _ in 1:n_copy]
+        dρdtIThreaded          = [copy(dρdtI)          for _ in 1:n_copy]
+        AccelerationThreaded   = [copy(KernelGradient) for _ in 1:n_copy]
+    end
 
     # Produce sorting related variables
-    ParticleRanges         = zeros(Int, length(SimParticles) + 1)
-    UniqueCells            = zeros(CartesianIndex{Dimensions}, length(SimParticles))
+    ParticleRanges         = zeros(Int, NumberOfPoints + 1)
+    UniqueCells            = zeros(CartesianIndex{Dimensions}, NumberOfPoints)
     Stencil                = ConstructStencil(Val(Dimensions))
-    _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), length(SimParticles))
+    _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
 
     # Produce data saving functions
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
     SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, to_3d(SimParticles.Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
-    SaveFile(SaveLocation_)
+    # SaveFile(SaveLocation_)
 
     if SimMetaData.FlagLog
         # Make logger
@@ -269,7 +274,7 @@ function RunSimulation(;FluidCSV::String,
             OutputIterationCounter += 1
 
             SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp"
-            @timeit HourGlass "12 Output Data"  SaveFile(SaveLocation_)
+            # @timeit HourGlass "12 Output Data"  SaveFile(SaveLocation_)
         end
 
         if !SilentOutput
@@ -302,7 +307,14 @@ let
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
 
     # Remove '@profview' if you do not want VS Code timers
-    @profview RunSimulation(
+    # println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
+    #     FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
+    #     BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
+    #     SimMetaData        = SimMetaDataWedge,
+    #     SimConstants       = SimConstantsWedge
+    # ))
+
+    @profview  RunSimulation(
         FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
         BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
         SimMetaData        = SimMetaDataWedge,
