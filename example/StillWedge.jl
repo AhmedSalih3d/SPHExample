@@ -242,7 +242,7 @@ function RunSimulation(;FluidCSV::String,
     # Produce data saving functions
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
     SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, to_3d(SimParticles.Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
-    # SaveFile(SaveLocation_)
+    @inline SaveFile(SaveLocation_)
 
     if SimMetaData.FlagLog
         # Make logger
@@ -274,7 +274,7 @@ function RunSimulation(;FluidCSV::String,
             OutputIterationCounter += 1
 
             SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp"
-            # @timeit HourGlass "12 Output Data"  SaveFile(SaveLocation_)
+            @timeit HourGlass "12 Output Data"  SaveFile(SaveLocation_)
         end
 
         if !SilentOutput
