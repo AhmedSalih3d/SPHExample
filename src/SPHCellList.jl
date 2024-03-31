@@ -16,12 +16,22 @@ using ..AuxillaryFunctions
         return n
     end
 
+    # function BatchExtractCellsOriginal!(Cells, Points, CutOff)
+    #     @batch per=thread for i ∈ eachindex(Cells)
+    #         ci = CartesianIndex(@. Int(fld(Points[i], CutOff))...)
+    #         Cells[i] = ci + 2 * one(ci) 
+    #     end
+    # end
+
     @inline function ExtractCells!(Particles, CutOff)
         Cells  = @views Particles.Cells
         Points = @views Particles.Position
         @threads for i ∈ eachindex(Particles)
             # Cells[i]  =  CartesianIndex(@. Int(fld(Points[i] + 2, CutOff)) ...)
-            Cells[i]   = CartesianIndex(@. floor(Int, 4 + Points[i] / CutOff)...)
+            # Cells[i]   = CartesianIndex(@. floor(Int, 4 + Points[i] / CutOff)...)
+            # Unsure about +2 or +4, compare with original implementation in main branch.
+            # Both works, but we should be accurate.
+            Cells[i]   = CartesianIndex(@. floor(Int, 2 + Points[i] / CutOff)...)
         end
         return nothing
     end

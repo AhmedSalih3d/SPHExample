@@ -26,7 +26,7 @@ end
 
 function BatchExtractCellsFloorMap!(Cells, Points, ::Val{CutOff}) where CutOff
     function map_floor(x)
-        floor(Int, x / CutOff) + 2
+        @fastmath floor(Int, x / CutOff) + 2
     end
     
     @batch per=thread for i ∈ eachindex(Cells)
