@@ -23,6 +23,22 @@ using ..AuxillaryFunctions
     #     end
     # end
 
+    # I believe it should be +2
+    # julia> fld(1,0.5)
+    # 2.0
+
+    # julia> Int(fld(1,0.5))
+    # 2
+
+    # julia> Int(fld(1,0.5)) + 2
+    # 4
+
+    # julia> floor(Int, 4 + 1/0.5)
+    # 6
+
+    # julia> floor(Int, 2 + 1/0.5)
+    # 4
+
     @inline function ExtractCells!(Particles, CutOff)
         Cells  = @views Particles.Cells
         Points = @views Particles.Position
