@@ -16,51 +16,16 @@ using ..AuxillaryFunctions
         return n
     end
 
-    # function BatchExtractCellsOriginal!(Cells, Points, CutOff)
-    #     @batch per=thread for i ∈ eachindex(Cells)
-    #         ci = CartesianIndex(@. Int(fld(Points[i], CutOff))...)
-    #         Cells[i] = ci + 2 * one(ci) 
-    #     end
-    # end
-
-    # I believe it should be +2
-    # julia> fld(1,0.5)
-    # 2.0
-
-    # julia> Int(fld(1,0.5))
-    # 2
-
-    # julia> Int(fld(1,0.5)) + 2
-    # 4
-
-    # julia> floor(Int, 4 + 1/0.5)
-    # 6
-
-    # julia> floor(Int, 2 + 1/0.5)
-    # 4
-
-    # @inline function ExtractCells!(Particles, CutOff)
-    #     Cells  = @views Particles.Cells
-    #     Points = @views Particles.Position
-    #     @threads for i ∈ eachindex(Particles)
-    #         # Cells[i]  =  CartesianIndex(@. Int(fld(Points[i] + 2, CutOff)) ...)
-    #         # Cells[i]   = CartesianIndex(@. floor(Int, 4 + Points[i] / CutOff)...)
-    #         # Unsure about +2 or +4, compare with original implementation in main branch.
-    #         # Both works, but we should be accurate.
-    #         Cells[i]   = CartesianIndex(@. floor(Int, 2 + Points[i] / CutOff)...)
-    #     end
-    #     return nothing
-    # end
-
     using Polyester
     @inline function ExtractCells!(Particles, ::Val{InverseCutOff}) where InverseCutOff
+        # Replace unsafe_trunc with trunc if this ever errors
         function map_floor(x)
             unsafe_trunc(Int, muladd(x,InverseCutOff,2))
         end
 
         Cells  = @views Particles.Cells
         Points = @views Particles.Position
-        @batch per=thread for i ∈ eachindex(Particles)
+        @threads for i ∈ eachindex(Particles)
             t = map(map_floor, Tuple(Points[i]))
             Cells[i] = CartesianIndex(t)
         end
