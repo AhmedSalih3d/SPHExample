@@ -134,9 +134,7 @@ end
         target_array .+= array
     end
 end
-@inbounds function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelThreaded, KernelGradient, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺)
-    InverseCutOff = Val(1/SimConstants.H)
-    
+@inbounds function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelThreaded, KernelGradient, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, InverseCutOff)
     Position      = SimParticles.Position
     Density       = SimParticles.Density
     Pressure      = SimParticles.Pressure
@@ -239,6 +237,7 @@ function RunSimulation(;FluidCSV::String,
     SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, to_3d(SimParticles.Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
     SaveFile(SaveLocation_)
 
+    InverseCutOff = Val(1/SimConstants.H)
 
     # Normal run and save data
     generate_showvalues(Iteration, TotalTime) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime))]
@@ -246,7 +245,7 @@ function RunSimulation(;FluidCSV::String,
     OutputIterationCounter = 0
     @inbounds while true
 
-        SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelThreaded, KernelGradient, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺)
+        SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelThreaded, KernelGradient, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, InverseCutOff)
 
         OutputCounter += SimMetaData.CurrentTimeStep
         if OutputCounter >= SimMetaData.OutputEach
@@ -283,12 +282,12 @@ let
         FlagOutputKernelValues=false,
     )
 
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=43.48576250492629, δᵩ = 0.1, CFL=0.2)
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
 
     # Remove '@profview' if you do not want VS Code timers
     @profview RunSimulation(
-        FluidCSV           = "./input/still_wedge/StillWedge_Dp0.01_Fluid.csv",
-        BoundCSV           = "./input/still_wedge/StillWedge_Dp0.01_Bound.csv",
+        FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
+        BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
         SimMetaData        = SimMetaDataWedge,
         SimConstants       = SimConstantsWedge
     )
