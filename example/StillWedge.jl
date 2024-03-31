@@ -7,6 +7,7 @@ import FastPow: @fastpow
 import ProgressMeter: next!, finish!
 using Format
 using TimerOutputs
+using Logging, LoggingExtras
 
 # Really important to overload default function, gives 10x speed up?
 # Overload the default function to do what you please
@@ -213,6 +214,7 @@ function RunSimulation(;FluidCSV::String,
     
     # Delete previous result files
     foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
+    foreach(rm, filter(endswith(".log"), readdir(SimMetaData.SaveLocation,join=true)))
 
     # Unpack the relevant simulation meta data
     @unpack HourGlass, SaveLocation, SimulationName, SilentOutput, ThreadsCPU = SimMetaData;
@@ -236,6 +238,20 @@ function RunSimulation(;FluidCSV::String,
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
     SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, to_3d(SimParticles.Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
     SaveFile(SaveLocation_)
+
+    if SimMetaData.FlagLog
+        # Make logger
+        Logger = FormatLogger(open(SimMetaData.SaveLocation * "/" * "SimulationOutput.log", "w")) do io, args
+            # Write the module, level and message only
+            println(io, args._module, " | ", "[", args.level, "] ", args.message)
+        end
+        with_logger(Logger) do
+            @info sprint(versioninfo)
+            @info SimConstants
+            @info "Info message to the FormatLogger!"
+            @warn "Warning message to the FormatLogger!"
+        end
+    end
 
     InverseCutOff = Val(1/SimConstants.H)
 
@@ -276,10 +292,11 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=1,
+        SimulationTime=4,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
+        FlagLog=true
     )
 
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)

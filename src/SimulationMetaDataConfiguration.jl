@@ -54,6 +54,7 @@ metadata = SimulationMetaData(
     FlagViscosityTreatment::Symbol          = :ArtificialViscosity; @assert in(FlagViscosityTreatment, Set((:None, :ArtificialViscosity, :Laminar, :LaminarSPS))) == true "ViscosityTreatment must be either :None, :ArtificialViscosity, :Laminar, :LaminarSPS"
     FlagDensityDiffusion::Bool              = false
     FlagOutputKernelValues::Bool            = false     
+    FlagLog::Bool                           = false     
 end
 
 end
