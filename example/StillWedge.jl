@@ -248,7 +248,7 @@ function RunSimulation(;FluidCSV::String,
     if SimMetaData.FlagLog
         # Make logger
         io_logger = open(SimMetaData.SaveLocation * "/" * "SimulationOutput.log", "w")
-        Logger = FormatLogger(io_logger) do io, args
+        Logger = FormatLogger(io_logger::IOStream) do io, args
             # Write the module, level and message only
             # println(io, args._module, " | ", "[", args.level, "] ", args.message)
             println(io, args.message)
@@ -277,7 +277,7 @@ function RunSimulation(;FluidCSV::String,
             OutputCounter = 0.0
             OutputIterationCounter::Int += 1
 
-            SaveLocation_ = SimMetaData.SaveLocation::Int * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp"
+            SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter::Int,6,"0") * ".vtp"
             @timeit HourGlass "12 Output Data"  SaveFile(SaveLocation_)
 
             if SimMetaData.FlagLog
@@ -285,13 +285,13 @@ function RunSimulation(;FluidCSV::String,
                     PartNumber      = "Part_" * lpad(OutputIterationCounter::Int,4,"0")
                     PartTime        = string(@sprintf("%-.6f", SimMetaData.TotalTime))
                     PartTotalSteps  = string(SimMetaData.Iteration)
-                    CurrentSteps    = string(SimMetaData.Iteration::FloatType - OldPartTotalSteps::FloatType)
+                    CurrentSteps    = string(SimMetaData.Iteration::Int - OldPartTotalSteps::Int)
                     TimeUptillNow   = string(@sprintf("%-.3f",TimerOutputs.tottime(HourGlass)/1e9))
                     TimePerPhysicalSecond = string(@sprintf("%-.2f", TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime))
                     @info @sprintf("%-14s %-17s %-17s %-12s %-14s %-14s", PartNumber, PartTime, PartTotalSteps,  CurrentSteps, TimeUptillNow, TimePerPhysicalSecond)
                 end
                 # Store it afterwards
-                OldPartTotalSteps = SimMetaData.Iteration
+                global OldPartTotalSteps = SimMetaData.Iteration
             end
         end
 
@@ -305,19 +305,20 @@ function RunSimulation(;FluidCSV::String,
             show(HourGlass)
 
             if SimMetaData.FlagLog
-                with_logger(Logger) do
+                with_logger(Logger::FormatLogger) do
                     PartNumber      = "Part_" * lpad(OutputIterationCounter::Int,4,"0")
                     PartTime        = string(@sprintf("%-.6f", SimMetaData.TotalTime))
                     PartTotalSteps  = string(SimMetaData.Iteration)
-                    CurrentSteps    = string(SimMetaData.Iteration::FloatType - OldPartTotalSteps::FloatType)
+                    CurrentSteps    = string(SimMetaData.Iteration::Int - OldPartTotalSteps::Int)
                     TimeUptillNow   = string(@sprintf("%-.3f",TimerOutputs.tottime(HourGlass)/1e9))
                     @info @sprintf("%-14s %-17s %-17s %-12s %-14s\n", PartNumber, PartTime, PartTotalSteps,  CurrentSteps, TimeUptillNow)
-                    show(io_logger, HourGlass,sortby=:name)
+                    @info sprint(HourGlass)
+                    # show(io_logger, HourGlass,sortby=:name)
                     @info "\n Sorted by time \n"
-                    show(io_logger, HourGlass)
+                    # show(io_logger, HourGlass)
                 end
 
-                close(io_logger)
+                # close(io_logger)
             end
 
             SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter::Int,6,"0") * ".vtp"
@@ -335,7 +336,7 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=4,
+        SimulationTime=0.01,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
