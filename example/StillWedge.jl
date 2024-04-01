@@ -246,6 +246,7 @@ function RunSimulation(;FluidCSV::String,
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
     SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, to_3d(SimParticles.Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
     @inline SaveFile(SaveLocation_)
+    SimMetaData.OutputIterationCounter += 1 # Since a file has been saved at time 0
 
     InverseCutOff = Val(1/SimConstants.H)
 
@@ -256,7 +257,6 @@ function RunSimulation(;FluidCSV::String,
         SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelThreaded, KernelGradient, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, InverseCutOff)
 
         if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
-            SimMetaData.OutputIterationCounter += 1
 
             SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.OutputIterationCounter,6,"0") * ".vtp"
             @timeit HourGlass "12 Output Data"  SaveFile(SaveLocation_)
@@ -274,6 +274,8 @@ function RunSimulation(;FluidCSV::String,
                 # Store it afterwards
                 SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
             end
+
+            SimMetaData.OutputIterationCounter += 1
         end
 
         if !SilentOutput
@@ -317,6 +319,8 @@ let
         FlagLog=true
     )
 
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
+
     if SimMetaDataWedge.FlagLog
         # Make logger
         io_logger = open(SimMetaDataWedge.SaveLocation * "/" * "SimulationOutput.log", "w")
@@ -327,13 +331,12 @@ let
         end
         with_logger(Logger) do
             @info sprint(versioninfo)
-            @info SimConstants
+            @info SimConstantsWedge
+            @info SimMetaDataWedge
             @info @sprintf("%-14s %-17s %-17s %-12s %-14s %-14s", "PART [-]", "PartTime [s]", "TotalSteps [-] ", "Steps  [-] ", "Run Time [s]", "Time/Sec [-]")
             @info @sprintf("%-14s %-17s %-17s %-12s %-14s %-14s", "=========", "============", "============", "============", "==============", "==============")
         end
     end
-
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
 
     # Remove '@profview' if you do not want VS Code timers
     # println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
