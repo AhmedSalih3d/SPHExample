@@ -207,8 +207,7 @@ function RunSimulation(;FluidCSV::String,
     BoundCSV::String,
     SimMetaData::SimulationMetaData{Dimensions, FloatType},
     SimConstants::SimulationConstants,
-    Logger::FormatLogger,
-    io_logger::IOStream
+    SimLogger::SimulationLogger
     ) where {Dimensions,FloatType}
 
 
@@ -262,7 +261,7 @@ function RunSimulation(;FluidCSV::String,
             @timeit HourGlass "12 Output Data"  SaveFile(SaveLocation_)
 
             if SimMetaData.FlagLog
-                with_logger(Logger) do
+                with_logger(SimLogger.Logger) do
                     PartNumber      = "Part_" * lpad(SimMetaData.OutputIterationCounter,4,"0")
                     PartTime        = string(@sprintf("%-.6f", SimMetaData.TotalTime))
                     PartTotalSteps  = string(SimMetaData.Iteration)
@@ -288,13 +287,13 @@ function RunSimulation(;FluidCSV::String,
             show(HourGlass)
 
             if SimMetaData.FlagLog
-                with_logger(Logger) do
-                    show(io_logger, HourGlass,sortby=:name)
+                with_logger(SimLogger.Logger) do
+                    show(SimLogger.LoggerIo, HourGlass,sortby=:name)
                     @info "\n Sorted by time \n"
-                    show(io_logger, HourGlass)
+                    show(SimLogger.LoggerIo, HourGlass)
                 end
 
-                close(io_logger)
+                close(SimLogger.LoggerIo)
             end
 
             SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.OutputIterationCounter,6,"0") * ".vtp"
@@ -321,15 +320,10 @@ let
 
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
 
+    SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
+
     if SimMetaDataWedge.FlagLog
-        # Make logger
-        io_logger = open(SimMetaDataWedge.SaveLocation * "/" * "SimulationOutput.log", "w")
-        Logger = FormatLogger(io_logger::IOStream) do io, args
-            # Write the module, level and message only
-            # println(io, args._module, " | ", "[", args.level, "] ", args.message)
-            println(io, args.message)
-        end
-        with_logger(Logger) do
+        with_logger(SimLogger.Logger) do
             @info sprint(versioninfo)
             @info SimConstantsWedge
             @info SimMetaDataWedge
@@ -344,8 +338,7 @@ let
         BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
         SimMetaData        = SimMetaDataWedge,
         SimConstants       = SimConstantsWedge,
-        Logger             = Logger,
-        io_logger          = io_logger
+        SimLogger          = SimLogger,
     ))
 
     @profview  RunSimulation(
@@ -353,7 +346,6 @@ let
         BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
         SimMetaData        = SimMetaDataWedge,
         SimConstants       = SimConstantsWedge,
-        Logger             = Logger,
-        io_logger          = io_logger
+        SimLogger          = SimLogger
     )
 end

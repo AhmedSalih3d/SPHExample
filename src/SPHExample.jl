@@ -7,6 +7,7 @@ module SPHExample
     include("SimulationEquations.jl");
     include("SimulationMetaDataConfiguration.jl");
     include("SimulationConstantsConfiguration.jl");
+    include("SimulationLoggerConfiguration.jl");
     include("PreProcess.jl");
     include("SPHCellList.jl")
     
@@ -28,6 +29,9 @@ module SPHExample
 
     using .SimulationEquations
     export EquationOfState, EquationOfStateGamma7, Pressure!, DensityEpsi!, LimitDensityAtBoundary!, ConstructGravitySVector, InverseHydrostaticEquationOfState
+
+    using .SimulationLoggerConfiguration
+    export SimulationLogger
 
     using .SimulationMetaDataConfiguration
     export SimulationMetaData
