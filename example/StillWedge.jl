@@ -275,17 +275,17 @@ function RunSimulation(;FluidCSV::String,
         OutputCounter += SimMetaData.CurrentTimeStep
         if OutputCounter >= SimMetaData.OutputEach
             OutputCounter = 0.0
-            OutputIterationCounter += 1
+            OutputIterationCounter::Int += 1
 
-            SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp"
+            SaveLocation_ = SimMetaData.SaveLocation::Int * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp"
             @timeit HourGlass "12 Output Data"  SaveFile(SaveLocation_)
 
             if SimMetaData.FlagLog
                 with_logger(Logger) do
-                    PartNumber      = "Part_" * lpad(OutputIterationCounter,4,"0")
+                    PartNumber      = "Part_" * lpad(OutputIterationCounter::Int,4,"0")
                     PartTime        = string(@sprintf("%-.6f", SimMetaData.TotalTime))
                     PartTotalSteps  = string(SimMetaData.Iteration)
-                    CurrentSteps    = string(SimMetaData.Iteration - OldPartTotalSteps)
+                    CurrentSteps    = string(SimMetaData.Iteration::FloatType - OldPartTotalSteps::FloatType)
                     TimeUptillNow   = string(@sprintf("%-.3f",TimerOutputs.tottime(HourGlass)/1e9))
                     TimePerPhysicalSecond = string(@sprintf("%-.2f", TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime))
                     @info @sprintf("%-14s %-17s %-17s %-12s %-14s %-14s", PartNumber, PartTime, PartTotalSteps,  CurrentSteps, TimeUptillNow, TimePerPhysicalSecond)
@@ -306,10 +306,10 @@ function RunSimulation(;FluidCSV::String,
 
             if SimMetaData.FlagLog
                 with_logger(Logger) do
-                    PartNumber      = "Part_" * lpad(OutputIterationCounter,4,"0")
+                    PartNumber      = "Part_" * lpad(OutputIterationCounter::Int,4,"0")
                     PartTime        = string(@sprintf("%-.6f", SimMetaData.TotalTime))
                     PartTotalSteps  = string(SimMetaData.Iteration)
-                    CurrentSteps    = string(SimMetaData.Iteration - OldPartTotalSteps)
+                    CurrentSteps    = string(SimMetaData.Iteration::FloatType - OldPartTotalSteps::FloatType)
                     TimeUptillNow   = string(@sprintf("%-.3f",TimerOutputs.tottime(HourGlass)/1e9))
                     @info @sprintf("%-14s %-17s %-17s %-12s %-14s\n", PartNumber, PartTime, PartTotalSteps,  CurrentSteps, TimeUptillNow)
                     show(io_logger, HourGlass,sortby=:name)
@@ -320,7 +320,7 @@ function RunSimulation(;FluidCSV::String,
                 close(io_logger)
             end
 
-            SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp"
+            SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter::Int,6,"0") * ".vtp"
             @timeit HourGlass "12 Output Data"  SaveFile(SaveLocation_)
 
             break
@@ -345,17 +345,17 @@ let
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
 
     # Remove '@profview' if you do not want VS Code timers
-    # println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
-    #     FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
-    #     BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
-    #     SimMetaData        = SimMetaDataWedge,
-    #     SimConstants       = SimConstantsWedge
-    # ))
-
-    @profview  RunSimulation(
+    println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
         FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
         BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
         SimMetaData        = SimMetaDataWedge,
         SimConstants       = SimConstantsWedge
-    )
+    ))
+
+    # @profview  RunSimulation(
+    #     FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
+    #     BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
+    #     SimMetaData        = SimMetaDataWedge,
+    #     SimConstants       = SimConstantsWedge
+    # )
 end
