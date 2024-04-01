@@ -64,9 +64,8 @@ function AllocateDataStructures(Dimensions,FloatType, FluidCSV,BoundCSV)
     Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
 
     SimParticles = StructArray((Cells = Cells, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = collect(1:NumberOfPoints)))
-    TypeOfSimParticles = typeof(SimParticles)
 
-    return SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Kernel, KernelGradient, TypeOfSimParticles
+    return SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Kernel, KernelGradient
 end
 
 function LoadBoundaryNormals(dims, float_type, path_mdbc)
