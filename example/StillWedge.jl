@@ -247,15 +247,17 @@ function RunSimulation(;FluidCSV::String,
 
     if SimMetaData.FlagLog
         # Make logger
-        Logger = FormatLogger(open(SimMetaData.SaveLocation * "/" * "SimulationOutput.log", "w")) do io, args
+        io_logger = open(SimMetaData.SaveLocation * "/" * "SimulationOutput.log", "w")
+        Logger = FormatLogger(io_logger) do io, args
             # Write the module, level and message only
-            println(io, args._module, " | ", "[", args.level, "] ", args.message)
+            # println(io, args._module, " | ", "[", args.level, "] ", args.message)
+            println(io, args.message)
         end
         with_logger(Logger) do
             @info sprint(versioninfo)
             @info SimConstants
-            @info @sprintf("%-14s %-17s %-17s %-12s %-14s \n", "PART [-]", "PartTime [s]", "TotalSteps [-] ", "Steps  [-] ", "Run Time [s]")
-            @info @sprintf("%-14s %-17s %-17s %-12s %-14s \n", "=========", "============", "============", "============", "==============")
+            @info @sprintf("%-14s %-17s %-17s %-12s %-14s", "PART [-]", "PartTime [s]", "TotalSteps [-] ", "Steps  [-] ", "Run Time [s]")
+            @info @sprintf("%-14s %-17s %-17s %-12s %-14s", "=========", "============", "============", "============", "==============")
         end
     end
 
@@ -285,7 +287,7 @@ function RunSimulation(;FluidCSV::String,
                     PartTotalSteps  = string(SimMetaData.Iteration)
                     CurrentSteps    = string(SimMetaData.Iteration - OldPartTotalSteps)
                     TimeUptillNow   = string(@sprintf("%-.3f",TimerOutputs.tottime(HourGlass)/1e9))
-                    @info @sprintf("%-14s %-17s %-17s %-12s %-14s\n", PartNumber, PartTime, PartTotalSteps,  CurrentSteps, TimeUptillNow)
+                    @info @sprintf("%-14s %-17s %-17s %-12s %-14s", PartNumber, PartTime, PartTotalSteps,  CurrentSteps, TimeUptillNow)
                 end
                 # Store it afterwards
                 OldPartTotalSteps = SimMetaData.Iteration
@@ -309,11 +311,16 @@ function RunSimulation(;FluidCSV::String,
                     CurrentSteps    = string(SimMetaData.Iteration - OldPartTotalSteps)
                     TimeUptillNow   = string(@sprintf("%-.3f",TimerOutputs.tottime(HourGlass)/1e9))
                     @info @sprintf("%-14s %-17s %-17s %-12s %-14s\n", PartNumber, PartTime, PartTotalSteps,  CurrentSteps, TimeUptillNow)
+                    show(io_logger, HourGlass,sortby=:name)
+                    @info "\n Sorted by time \n"
+                    show(io_logger, HourGlass)
                 end
 
-                SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp"
-                @timeit HourGlass "12 Output Data"  SaveFile(SaveLocation_)
+                close(io_logger)
             end
+
+            SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp"
+            @timeit HourGlass "12 Output Data"  SaveFile(SaveLocation_)
 
             break
         end
