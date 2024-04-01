@@ -287,12 +287,6 @@ function RunSimulation(;FluidCSV::String,
 
             if SimMetaData.FlagLog
                 with_logger(Logger) do
-                    PartNumber      = "Part_" * lpad(SimMetaData.OutputIterationCounter,4,"0")
-                    PartTime        = string(@sprintf("%-.6f", SimMetaData.TotalTime))
-                    PartTotalSteps  = string(SimMetaData.Iteration)
-                    CurrentSteps    = string(SimMetaData.Iteration - SimMetaData.StepsTakenForLastOutput)
-                    TimeUptillNow   = string(@sprintf("%-.3f",TimerOutputs.tottime(HourGlass)/1e9))
-                    @info @sprintf("%-14s %-17s %-17s %-12s %-14s\n", PartNumber, PartTime, PartTotalSteps,  CurrentSteps, TimeUptillNow)
                     show(io_logger, HourGlass,sortby=:name)
                     @info "\n Sorted by time \n"
                     show(io_logger, HourGlass)
@@ -318,7 +312,7 @@ let
         SaveLocation="E:/SecondApproach/TESTING_CPU",
         SimulationTime=4,
         OutputEach=0.01,
-        FlagDensityDiffusion=true,
+        FlagDensityDiffusion=false,
         FlagOutputKernelValues=false,
         FlagLog=true
     )
