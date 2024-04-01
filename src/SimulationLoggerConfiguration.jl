@@ -12,7 +12,7 @@ module SimulationLoggerConfiguration
         lengths = [length(string(value)) for value in values]
         
         # Optionally, add extra padding
-        padding = maximum(lengths)  # Adjust padding as needed
+        padding = 10 #maximum(lengths)  # Adjust padding as needed
         lengths = [len + padding for len in lengths]
         
         # Build format specifiers for each length

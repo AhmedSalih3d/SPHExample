@@ -10,6 +10,7 @@ using TimerOutputs
 using Logging, LoggingExtras
 using Printf
 using JET
+using Dates
 
 # Really important to overload default function, gives 10x speed up?
 # Overload the default function to do what you please
@@ -213,7 +214,7 @@ function RunSimulation(;FluidCSV::String,
     # Some printing of log values
     if SimMetaData.FlagLog
     # Define the values to format
-    values    = ("PART [-]", "PartTime [s]", "TotalSteps [-] ", "Steps  [-] ", "Run Time [s]", "Time/Sec [-]")
+    values    = ("PART [-]", "PartTime [s]", "TotalSteps [-] ", "Steps  [-] ", "Run Time [s]", "Time/Sec [-]", "Remaining Time [Date]")
     values_eq = map(x -> repeat("=", length(x)), values)
     # Define the format string
     format_str = generate_format_string(values)
@@ -221,6 +222,16 @@ function RunSimulation(;FluidCSV::String,
             @info sprint(versioninfo)
             @info SimConstants
             @info SimMetaData
+            
+            # Get the current date and time
+            current_time = now()
+
+            # Format the current date and time
+            formatted_time = "Simulation Start Time: " * Dates.format(current_time, "dd-mm-yyyy HH:MM:SS")
+
+            # Print the formatted date and time
+            @info formatted_time
+
             @info @. $join(cfmt(format_str, values))
             @info @. $join(cfmt(format_str, values_eq))
         end
@@ -283,7 +294,13 @@ function RunSimulation(;FluidCSV::String,
                     CurrentSteps    = string(SimMetaData.Iteration -SimMetaData.StepsTakenForLastOutput)
                     TimeUptillNow   = string(@sprintf("%-.3f",TimerOutputs.tottime(HourGlass)/1e9))
                     TimePerPhysicalSecond = string(@sprintf("%-.2f", TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime))
-                    @info @. $join(cfmt(format_str, (PartNumber, PartTime, PartTotalSteps,  CurrentSteps, TimeUptillNow, TimePerPhysicalSecond)))
+
+                    SecondsToFinish          = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime)
+                    ExpectedFinishTime       = now() + Second(trunc(Int,SecondsToFinish)) #should be current time
+                    ExpectedFinishTimeString = Dates.format(ExpectedFinishTime, "dd-mm-yyyy HH:MM:SS")
+                    # TimeLeftToFinish      = string(@sprintf("%-.2f", (SimMetaData.SimulationTime - SimMetaData.TotalTime) * TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime)) 
+                    
+                    @info @. $join(cfmt(format_str, (PartNumber, PartTime, PartTotalSteps,  CurrentSteps, TimeUptillNow, TimePerPhysicalSecond, ExpectedFinishTimeString)))
                 end
                 # Store it afterwards
                 SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
@@ -303,6 +320,12 @@ function RunSimulation(;FluidCSV::String,
 
             if SimMetaData.FlagLog
                 with_logger(SimLogger.Logger) do
+                    # Get the current date and time
+                    current_time = now()
+                    # Format the current date and time
+                    formatted_time = "Simulation finished at: " * Dates.format(current_time, "dd-mm-yyyy HH:MM:SS")
+
+                    @info formatted_time
                     show(SimLogger.LoggerIo, HourGlass,sortby=:name)
                     @info "\n Sorted by time \n"
                     show(SimLogger.LoggerIo, HourGlass)
