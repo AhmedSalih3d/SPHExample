@@ -9,6 +9,7 @@ using Format
 using TimerOutputs
 using Logging, LoggingExtras
 using Printf
+using JET
 
 # Really important to overload default function, gives 10x speed up?
 # Overload the default function to do what you please
@@ -265,7 +266,6 @@ function RunSimulation(;FluidCSV::String,
 
     # Normal run and save data
     generate_showvalues(Iteration, TotalTime) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime))]
-    OldPartTotalSteps      = 0
     @inbounds while true
 
         SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelThreaded, KernelGradient, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, InverseCutOff)
@@ -281,13 +281,13 @@ function RunSimulation(;FluidCSV::String,
                     PartNumber      = "Part_" * lpad(SimMetaData.OutputIterationCounter::Int,4,"0")
                     PartTime        = string(@sprintf("%-.6f", SimMetaData.TotalTime))
                     PartTotalSteps  = string(SimMetaData.Iteration)
-                    CurrentSteps    = string(SimMetaData.Iteration::Int - OldPartTotalSteps::Int)
+                    CurrentSteps    = string(SimMetaData.Iteration::Int -SimMetaData.StepsTakenForLastOutput::Int)
                     TimeUptillNow   = string(@sprintf("%-.3f",TimerOutputs.tottime(HourGlass)/1e9))
                     TimePerPhysicalSecond = string(@sprintf("%-.2f", TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime))
                     @info @sprintf("%-14s %-17s %-17s %-12s %-14s %-14s", PartNumber, PartTime, PartTotalSteps,  CurrentSteps, TimeUptillNow, TimePerPhysicalSecond)
                 end
                 # Store it afterwards
-                OldPartTotalSteps = SimMetaData.Iteration
+                SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
             end
         end
 
@@ -305,7 +305,7 @@ function RunSimulation(;FluidCSV::String,
                     PartNumber      = "Part_" * lpad(SimMetaData.OutputIterationCounter::Int,4,"0")
                     PartTime        = string(@sprintf("%-.6f", SimMetaData.TotalTime))
                     PartTotalSteps  = string(SimMetaData.Iteration)
-                    CurrentSteps    = string(SimMetaData.Iteration::Int - OldPartTotalSteps::Int)
+                    CurrentSteps    = string(SimMetaData.Iteration::Int - SimMetaData.StepsTakenForLastOutput::Int)
                     TimeUptillNow   = string(@sprintf("%-.3f",TimerOutputs.tottime(HourGlass)/1e9))
                     @info @sprintf("%-14s %-17s %-17s %-12s %-14s\n", PartNumber, PartTime, PartTotalSteps,  CurrentSteps, TimeUptillNow)
                     @info sprint(HourGlass)
@@ -332,7 +332,7 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=4,
+        SimulationTime=1,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
