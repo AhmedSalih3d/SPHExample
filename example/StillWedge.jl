@@ -210,6 +210,39 @@ function RunSimulation(;FluidCSV::String,
     SimLogger::SimulationLogger
     ) where {Dimensions,FloatType}
 
+    # Function to dynamically generate a format string based on values
+    function generate_format_string(values)
+        # Calculate the display length for each value
+        lengths = [length(string(value)) for value in values]
+        
+        # Optionally, add extra padding
+        padding = maximum(lengths)  # Adjust padding as needed
+        lengths = [len + padding for len in lengths]
+        
+        # Build format specifiers for each length
+        format_specifiers = ["%-$(len)s" for len in lengths]
+        
+        # Combine into a single format string
+        format_str = join(format_specifiers, " ")
+        
+        return format_str
+    end
+    # Define the values to format
+    values    = ("PART [-]", "PartTime [s]", "TotalSteps [-] ", "Steps  [-] ", "Run Time [s]", "Time/Sec [-]")
+    values_eq = map(x -> repeat("=", length(x)), values)
+
+    # Define the format string
+    format_str = generate_format_string(values)
+
+    if SimMetaData.FlagLog
+        with_logger(SimLogger.Logger) do
+            @info sprint(versioninfo)
+            @info SimConstants
+            @info SimMetaData
+            @info @. $join(cfmt(format_str, values))
+            @info @. $join(cfmt(format_str, values_eq))
+        end
+    end
 
     # If save directory is not already made, make it
     if !isdir(SimMetaData.SaveLocation)
@@ -268,7 +301,7 @@ function RunSimulation(;FluidCSV::String,
                     CurrentSteps    = string(SimMetaData.Iteration -SimMetaData.StepsTakenForLastOutput)
                     TimeUptillNow   = string(@sprintf("%-.3f",TimerOutputs.tottime(HourGlass)/1e9))
                     TimePerPhysicalSecond = string(@sprintf("%-.2f", TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime))
-                    @info @sprintf("%-14s %-17s %-17s %-12s %-14s %-14s", PartNumber, PartTime, PartTotalSteps,  CurrentSteps, TimeUptillNow, TimePerPhysicalSecond)
+                    @info @. $join(cfmt(format_str, (PartNumber, PartTime, PartTotalSteps,  CurrentSteps, TimeUptillNow, TimePerPhysicalSecond)))
                 end
                 # Store it afterwards
                 SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
@@ -321,16 +354,6 @@ let
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
 
     SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
-
-    if SimMetaDataWedge.FlagLog
-        with_logger(SimLogger.Logger) do
-            @info sprint(versioninfo)
-            @info SimConstantsWedge
-            @info SimMetaDataWedge
-            @info @sprintf("%-14s %-17s %-17s %-12s %-14s %-14s", "PART [-]", "PartTime [s]", "TotalSteps [-] ", "Steps  [-] ", "Run Time [s]", "Time/Sec [-]")
-            @info @sprintf("%-14s %-17s %-17s %-12s %-14s %-14s", "=========", "============", "============", "============", "==============", "==============")
-        end
-    end
 
     # Remove '@profview' if you do not want VS Code timers
     println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
