@@ -339,20 +339,21 @@ let
     end
 
     # Remove '@profview' if you do not want VS Code timers
-    # println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
-    #     FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
-    #     BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
-    #     SimMetaData        = SimMetaDataWedge,
-    #     SimConstants       = SimConstantsWedge,
-    #     Logger             = Logger
-    # ))
-
-    @profview  RunSimulation(
+    println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
         FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
         BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
         SimMetaData        = SimMetaDataWedge,
         SimConstants       = SimConstantsWedge,
         Logger             = Logger,
         io_logger          = io_logger
-    )
+    ))
+
+    # @profview  RunSimulation(
+    #     FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
+    #     BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
+    #     SimMetaData        = SimMetaDataWedge,
+    #     SimConstants       = SimConstantsWedge,
+    #     Logger             = Logger,
+    #     io_logger          = io_logger
+    # )
 end
