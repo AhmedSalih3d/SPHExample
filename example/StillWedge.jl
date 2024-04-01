@@ -213,11 +213,7 @@ function RunSimulation(;FluidCSV::String,
 
     # Some printing of log values
     if SimMetaData.FlagLog
-    # Define the values to format
-    values    = ("PART [-]", "PartTime [s]", "TotalSteps [-] ", "Steps  [-] ", "Run Time [s]", "Time/Sec [-]", "Remaining Time [Date]")
-    values_eq = map(x -> repeat("=", length(x)), values)
     # Define the format string
-    format_str = generate_format_string(values)
         with_logger(SimLogger.Logger) do
             @info sprint(versioninfo)
             @info SimConstants
@@ -232,8 +228,8 @@ function RunSimulation(;FluidCSV::String,
             # Print the formatted date and time
             @info formatted_time
 
-            @info @. $join(cfmt(format_str, values))
-            @info @. $join(cfmt(format_str, values_eq))
+            @info @. SimLogger.ValuesToPrint
+            @info @. SimLogger.ValuesToPrintC
         end
     end
 
@@ -300,7 +296,7 @@ function RunSimulation(;FluidCSV::String,
                     ExpectedFinishTimeString = Dates.format(ExpectedFinishTime, "dd-mm-yyyy HH:MM:SS")
                     # TimeLeftToFinish      = string(@sprintf("%-.2f", (SimMetaData.SimulationTime - SimMetaData.TotalTime) * TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime)) 
                     
-                    @info @. $join(cfmt(format_str, (PartNumber, PartTime, PartTotalSteps,  CurrentSteps, TimeUptillNow, TimePerPhysicalSecond, ExpectedFinishTimeString)))
+                    @info @. $join(cfmt(SimLogger.FormatStr, (PartNumber, PartTime, PartTotalSteps,  CurrentSteps, TimeUptillNow, TimePerPhysicalSecond, ExpectedFinishTimeString)))
                 end
                 # Store it afterwards
                 SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration

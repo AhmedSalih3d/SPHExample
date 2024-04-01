@@ -28,6 +28,8 @@ module SimulationLoggerConfiguration
         LoggerIo::IOStream
         Logger::FormatLogger
         FormatStr::String
+        ValuesToPrint::String
+        ValuesToPrintC::String
 
         function SimulationLogger(SaveLocation::String)
             io_logger = open(SaveLocation * "/" * "SimulationOutput.log", "w")
@@ -37,9 +39,14 @@ module SimulationLoggerConfiguration
                 println(io, args.message)
             end
 
-            format_string = "%-14s %-17s %-17s %-12s %-14s %-14s"
+            values        = ("PART [-]", "PartTime [s]", "TotalSteps [-] ", "Steps  [-] ", "Run Time [s]", "Time/Sec [-]", "Remaining Time [Date]")
+            values_eq     = map(x -> repeat("=", length(x)), values)
+            format_string = generate_format_string(values)
 
-            new(io_logger, logger, format_string)
+            ValuesToPrint  = @. $join(cfmt(format_string, values))
+            ValuesToPrintC = @. $join(cfmt(format_string, values_eq))
+
+            new(io_logger, logger, format_string, ValuesToPrint, ValuesToPrintC)
         end
         
     end
