@@ -3,8 +3,9 @@ module SimulationLoggerConfiguration
     using TimerOutputs
     using Logging, LoggingExtras
     using Printf
+    using Dates
 
-    export SimulationLogger, generate_format_string
+    export SimulationLogger, generate_format_string, InitializeLogger, LogStep, LogFinal
 
     # Function to dynamically generate a format string based on values
     function generate_format_string(values)
@@ -30,6 +31,9 @@ module SimulationLoggerConfiguration
         FormatStr::String
         ValuesToPrint::String
         ValuesToPrintC::String
+        CurrentDate::DateTime
+        CurrentDataStr::String
+
 
         function SimulationLogger(SaveLocation::String)
             io_logger = open(SaveLocation * "/" * "SimulationOutput.log", "w")
@@ -46,9 +50,57 @@ module SimulationLoggerConfiguration
             ValuesToPrint  = @. $join(cfmt(format_string, values))
             ValuesToPrintC = @. $join(cfmt(format_string, values_eq))
 
-            new(io_logger, logger, format_string, ValuesToPrint, ValuesToPrintC)
+            # This should not be hardcoded here.
+            CurrentDate    = now()
+            CurrentDataStr = Dates.format(CurrentDate, "dd-mm-yyyy HH:MM:SS")
+
+            new(io_logger, logger, format_string, ValuesToPrint, ValuesToPrintC, CurrentDate, CurrentDataStr)
         end
-        
+    end
+
+    function InitializeLogger(SimLogger,SimConstants,SimMetaData)
+        with_logger(SimLogger.Logger) do
+            @info sprint(versioninfo)
+            @info SimConstants
+            @info SimMetaData
+            
+            # Print the formatted date and time
+            @info "Logger Start Time: " * SimLogger.CurrentDataStr
+
+            @info @. SimLogger.ValuesToPrint
+            @info @. SimLogger.ValuesToPrintC
+        end
+    end
+
+    function LogStep(SimLogger, SimMetaData, HourGlass)
+        with_logger(SimLogger.Logger) do
+            PartNumber               = "Part_" * lpad(SimMetaData.OutputIterationCounter,4,"0")
+            PartTime                 = string(@sprintf("%-.6f", SimMetaData.TotalTime))
+            PartTotalSteps           = string(SimMetaData.Iteration)
+            CurrentSteps             = string(SimMetaData.Iteration -SimMetaData.StepsTakenForLastOutput)
+            TimeUptillNow            = string(@sprintf("%-.3f",TimerOutputs.tottime(HourGlass)/1e9))
+            TimePerPhysicalSecond    = string(@sprintf("%-.2f", TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime))
+
+            SecondsToFinish          = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime)
+            ExpectedFinishTime       = now() + Second(trunc(Int,SecondsToFinish))
+            ExpectedFinishTimeString = Dates.format(ExpectedFinishTime, "dd-mm-yyyy HH:MM:SS")
+
+            @info @. $join(cfmt(SimLogger.FormatStr, (PartNumber, PartTime, PartTotalSteps,  CurrentSteps, TimeUptillNow, TimePerPhysicalSecond, ExpectedFinishTimeString)))
+        end
+    end
+
+    function LogFinal(SimLogger, HourGlass)
+        with_logger(SimLogger.Logger) do
+            # Get the current date and time
+            current_time = now()
+            # Format the current date and time
+            formatted_time = "Simulation finished at: " * Dates.format(current_time, "dd-mm-yyyy HH:MM:SS")
+
+            @info formatted_time
+            show(SimLogger.LoggerIo, HourGlass,sortby=:name)
+            @info "\n Sorted by time \n"
+            show(SimLogger.LoggerIo, HourGlass)
+        end
     end
 
 end

@@ -31,7 +31,7 @@ module SPHExample
     export EquationOfState, EquationOfStateGamma7, Pressure!, DensityEpsi!, LimitDensityAtBoundary!, ConstructGravitySVector, InverseHydrostaticEquationOfState
 
     using .SimulationLoggerConfiguration
-    export SimulationLogger, generate_format_string
+    export SimulationLogger, generate_format_string, InitializeLogger, LogStep, LogFinal
 
     using .SimulationMetaDataConfiguration
     export SimulationMetaData
