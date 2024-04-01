@@ -210,31 +210,13 @@ function RunSimulation(;FluidCSV::String,
     SimLogger::SimulationLogger
     ) where {Dimensions,FloatType}
 
-    # Function to dynamically generate a format string based on values
-    function generate_format_string(values)
-        # Calculate the display length for each value
-        lengths = [length(string(value)) for value in values]
-        
-        # Optionally, add extra padding
-        padding = maximum(lengths)  # Adjust padding as needed
-        lengths = [len + padding for len in lengths]
-        
-        # Build format specifiers for each length
-        format_specifiers = ["%-$(len)s" for len in lengths]
-        
-        # Combine into a single format string
-        format_str = join(format_specifiers, " ")
-        
-        return format_str
-    end
+    # Some printing of log values
+    if SimMetaData.FlagLog
     # Define the values to format
     values    = ("PART [-]", "PartTime [s]", "TotalSteps [-] ", "Steps  [-] ", "Run Time [s]", "Time/Sec [-]")
     values_eq = map(x -> repeat("=", length(x)), values)
-
     # Define the format string
     format_str = generate_format_string(values)
-
-    if SimMetaData.FlagLog
         with_logger(SimLogger.Logger) do
             @info sprint(versioninfo)
             @info SimConstants
