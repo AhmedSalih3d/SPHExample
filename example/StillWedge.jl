@@ -256,8 +256,8 @@ function RunSimulation(;FluidCSV::String,
         with_logger(Logger) do
             @info sprint(versioninfo)
             @info SimConstants
-            @info @sprintf("%-14s %-17s %-17s %-12s %-14s", "PART [-]", "PartTime [s]", "TotalSteps [-] ", "Steps  [-] ", "Run Time [s]")
-            @info @sprintf("%-14s %-17s %-17s %-12s %-14s", "=========", "============", "============", "============", "==============")
+            @info @sprintf("%-14s %-17s %-17s %-12s %-14s %-14s", "PART [-]", "PartTime [s]", "TotalSteps [-] ", "Steps  [-] ", "Run Time [s]", "Time/Sec [-]")
+            @info @sprintf("%-14s %-17s %-17s %-12s %-14s %-14s", "=========", "============", "============", "============", "==============", "==============")
         end
     end
 
@@ -287,7 +287,8 @@ function RunSimulation(;FluidCSV::String,
                     PartTotalSteps  = string(SimMetaData.Iteration)
                     CurrentSteps    = string(SimMetaData.Iteration - OldPartTotalSteps)
                     TimeUptillNow   = string(@sprintf("%-.3f",TimerOutputs.tottime(HourGlass)/1e9))
-                    @info @sprintf("%-14s %-17s %-17s %-12s %-14s", PartNumber, PartTime, PartTotalSteps,  CurrentSteps, TimeUptillNow)
+                    TimePerPhysicalSecond = string(@sprintf("%-.2f", TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime))
+                    @info @sprintf("%-14s %-17s %-17s %-12s %-14s %-14s", PartNumber, PartTime, PartTotalSteps,  CurrentSteps, TimeUptillNow, TimePerPhysicalSecond)
                 end
                 # Store it afterwards
                 OldPartTotalSteps = SimMetaData.Iteration
@@ -334,7 +335,7 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=1,
+        SimulationTime=4,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
