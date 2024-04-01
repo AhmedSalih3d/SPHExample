@@ -45,6 +45,7 @@ metadata = SimulationMetaData(
     HourGlass::TimerOutput                  = TimerOutput()
     Iteration::Int                          = 0
     OutputEach::FloatType                   = 0.02 #seconds
+    OutputIterationCounter::Int             = 0
     CurrentTimeStep::FloatType              = 0
     TotalTime::FloatType                    = 0
     SimulationTime::FloatType               = 0
