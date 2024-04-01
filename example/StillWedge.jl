@@ -178,9 +178,9 @@ end
     @timeit SimMetaData.HourGlass "08A Reduction"                   reduce_sum!(dρdtI, dρdtIThreaded)
     @timeit SimMetaData.HourGlass "08B Reduction"                   reduce_sum!(Acceleration, AccelerationThreaded)
 
-    @timeit SimMetaData.HourGlass "09 Final Density"                DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
+    @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
 
-    @timeit SimMetaData.HourGlass "10 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
+    @timeit SimMetaData.HourGlass "10 Final Density"                DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
 
 
     @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"  @inbounds for i in eachindex(Position)
@@ -312,9 +312,9 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=4,
+        SimulationTime=1,
         OutputEach=0.01,
-        FlagDensityDiffusion=false,
+        FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
         FlagLog=true
     )
@@ -348,12 +348,12 @@ let
         io_logger          = io_logger
     ))
 
-    # @profview  RunSimulation(
-    #     FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
-    #     BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
-    #     SimMetaData        = SimMetaDataWedge,
-    #     SimConstants       = SimConstantsWedge,
-    #     Logger             = Logger,
-    #     io_logger          = io_logger
-    # )
+    @profview  RunSimulation(
+        FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
+        BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
+        SimMetaData        = SimMetaDataWedge,
+        SimConstants       = SimConstantsWedge,
+        Logger             = Logger,
+        io_logger          = io_logger
+    )
 end
