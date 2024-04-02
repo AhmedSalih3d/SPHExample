@@ -32,6 +32,6 @@ for (key, value) in data
     end
 
     val = reinterpret(reshape, data_type, value)
-
-    println(val)
 end
+
+keys(fid)
