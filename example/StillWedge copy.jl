@@ -302,14 +302,14 @@ function RunSimulation(;FluidCSV::String,
         if SimMetaData.TotalTime > SimMetaData.SimulationTime
             @timeit HourGlass "12B Close h5 output file"  close(FidBig)
 
-            finish!(SimMetaData.ProgressSpecification)
-            show(HourGlass,sortby=:name)
-            show(HourGlass)
-
             if SimMetaData.FlagLog
                 LogFinal(SimLogger, HourGlass)
                 close(SimLogger.LoggerIo)
             end
+
+            finish!(SimMetaData.ProgressSpecification)
+            show(HourGlass,sortby=:name)
+            show(HourGlass)
 
             break
         end
@@ -323,7 +323,7 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=1,
+        SimulationTime=0.9,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
@@ -352,4 +352,17 @@ let
         SimConstants       = SimConstantsWedge,
         SimLogger          = SimLogger
     )
+
+
+    # # Should be hardcoded into metadata
+    # SaveLocation_ = SimMetaDataWedge.SaveLocation * "/" * SimMetaDataWedge.SimulationName * ".h5"
+    # fid       = h5open(SaveLocation_, "r")
+    # dict_keys = keys(fid)
+
+    # # Converting to .vtp 
+    # for iter in dict_keys
+    #     dict = read(fid[iter])
+    #     ConvertHDFtoVTP("E:/SecondApproach/TESTING_CPU/" * iter * ".vtp", dict)
+    # end
+    # close(fid)
 end
