@@ -98,6 +98,7 @@ module SimulationLoggerConfiguration
             formatted_time = "Simulation finished at: " * Dates.format(current_time, "dd-mm-yyyy HH:MM:SS")
 
             @info formatted_time
+            @info "Simulation took " * @sprintf("%-.2f", TimerOutputs.tottime(HourGlass)/1e9) * "[s]"
             show(SimLogger.LoggerIo, HourGlass,sortby=:name)
             @info "\n Sorted by time \n"
             show(SimLogger.LoggerIo, HourGlass)

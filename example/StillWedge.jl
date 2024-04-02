@@ -290,6 +290,7 @@ function RunSimulation(;FluidCSV::String,
     FidBig        = h5open(SaveLocation_, "w")
 
     SaveFile = (GroupName) -> SaveHDF5OneBig!(FidBig, GroupName, ["Position", "Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], to_3d(SimParticles.Position), Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
+    # SaveFile = (GroupName) -> SaveHDF5OneBig!(FidBig, GroupName, ["Position", "Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], to_3d(SimParticles.Position), Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.ID)
     @inline SaveFile(string(SimMetaData.OutputIterationCounter))
     SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
 
@@ -348,7 +349,7 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=4,
+        SimulationTime=1,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
