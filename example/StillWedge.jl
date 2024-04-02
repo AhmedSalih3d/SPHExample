@@ -215,7 +215,7 @@ function SaveHDF5(filename::String, variable_names, args...)
         end
     end
 
-    close(fid)
+    #close(fid)
 end
 
 ###===
@@ -317,8 +317,8 @@ function RunSimulation(;FluidCSV::String,
             end
 
             SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.OutputIterationCounter,6,"0") * ".vtp"
-            @timeit HourGlass "12A Output Data"  SaveFile(SaveLocation_)
-            @timeit HourGlass "12B Output Data"  SaveFile2(SaveLocation_2)
+            # @timeit HourGlass "12A Output Data"  SaveFile(SaveLocation_)
+            # @timeit HourGlass "12B Output Data"  SaveFile2(SaveLocation_2)
 
             break
         end
