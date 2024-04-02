@@ -238,6 +238,7 @@ function RunSimulation(;FluidCSV::String,
     
     # Delete previous result files
     foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
+    foreach(rm, filter(endswith(".h5"), readdir(SimMetaData.SaveLocation,join=true)))
 
     # Unpack the relevant simulation meta data
     @unpack HourGlass, SaveLocation, SimulationName, SilentOutput, ThreadsCPU = SimMetaData;
@@ -268,8 +269,8 @@ function RunSimulation(;FluidCSV::String,
     SaveLocation_2 = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".h5"
     SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, to_3d(SimParticles.Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
     SaveFile2 = (SaveLocation_2) -> SaveHDF5(SaveLocation_2, ["Position", "Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], to_3d(SimParticles.Position), Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
-    # SaveFile(SaveLocation_)
-    # SaveFile2(SaveLocation_2)
+    @inline SaveFile(SaveLocation_)
+    @inline SaveFile2(SaveLocation_2)
     SimMetaData.OutputIterationCounter += 1 # Since a file has been saved at time 0
 
     InverseCutOff = Val(1/SimConstants.H)
