@@ -4,6 +4,7 @@ module SimulationLoggerConfiguration
     using Logging, LoggingExtras
     using Printf
     using Dates
+    using InteractiveUtils
 
     export SimulationLogger, generate_format_string, InitializeLogger, LogStep, LogFinal
 
@@ -60,7 +61,7 @@ module SimulationLoggerConfiguration
 
     function InitializeLogger(SimLogger,SimConstants,SimMetaData)
         with_logger(SimLogger.Logger) do
-            @info sprint(versioninfo)
+            @info sprint(InteractiveUtils.versioninfo)
             @info SimConstants
             @info SimMetaData
             
