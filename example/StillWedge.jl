@@ -218,6 +218,34 @@ function SaveHDF5(filename::String, variable_names, args...)
     #close(fid)
 end
 
+function SaveHDF5Close(filename::String, variable_names, args...)
+    fid   = h5open(filename, "w")
+
+    if !isnothing(args)
+        for i in eachindex(args)
+            arg           = args[i]
+            name          = variable_names[i]
+            fid[name] = arg
+        end
+    end
+
+    close(fid)
+end
+
+function SaveHDF5Do(filename::String, variable_names, args...)
+    h5open(filename, "w") do fid
+        if !isnothing(args)
+            for i in eachindex(args)
+                arg           = args[i]
+                name          = variable_names[i]
+                fid[name] = arg
+            end
+        end
+    end
+end
+
+
+
 ###===
 
 function RunSimulation(;FluidCSV::String,
@@ -266,11 +294,17 @@ function RunSimulation(;FluidCSV::String,
 
     # Produce data saving functions
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
-    SaveLocation_2 = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".h5"
+    SaveLocation_2 = SimMetaData.SaveLocation * "/" * SimulationName * "_2" * lpad(0,6,"0") * ".h5"
+    SaveLocation_3 = SimMetaData.SaveLocation * "/" * SimulationName * "_3" * lpad(0,6,"0") * ".h5"
+    SaveLocation_4 = SimMetaData.SaveLocation * "/" * SimulationName * "_4" * lpad(0,6,"0") * ".h5"
     SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, to_3d(SimParticles.Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
     SaveFile2 = (SaveLocation_2) -> SaveHDF5(SaveLocation_2, ["Position", "Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], to_3d(SimParticles.Position), Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
+    SaveFile3 = (SaveLocation_3) -> SaveHDF5(SaveLocation_3, ["Position", "Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], to_3d(SimParticles.Position), Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
+    SaveFile4 = (SaveLocation_4) -> SaveHDF5(SaveLocation_4, ["Position", "Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], to_3d(SimParticles.Position), Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
     @inline SaveFile(SaveLocation_)
     @inline SaveFile2(SaveLocation_2)
+    @inline SaveFile3(SaveLocation_3)
+    @inline SaveFile4(SaveLocation_4)
     SimMetaData.OutputIterationCounter += 1 # Since a file has been saved at time 0
 
     InverseCutOff = Val(1/SimConstants.H)
@@ -289,9 +323,13 @@ function RunSimulation(;FluidCSV::String,
         if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
 
             SaveLocation_  = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.OutputIterationCounter,6,"0") * ".vtp"
-            SaveLocation_2 = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.OutputIterationCounter,6,"0") * ".h5"
+            SaveLocation_2 = SimMetaData.SaveLocation * "/" * SimulationName * "_2" * lpad(SimMetaData.OutputIterationCounter,6,"0") * ".h5"
+            SaveLocation_3 = SimMetaData.SaveLocation * "/" * SimulationName * "_3" * lpad(SimMetaData.OutputIterationCounter,6,"0") * ".h5"
+            SaveLocation_4 = SimMetaData.SaveLocation * "/" * SimulationName * "_4" * lpad(SimMetaData.OutputIterationCounter,6,"0") * ".h5"
             @timeit HourGlass "12A Output Data"  SaveFile(SaveLocation_)
             @timeit HourGlass "12B Output Data"  SaveFile2(SaveLocation_2)
+            @timeit HourGlass "12C Output Data"  SaveFile3(SaveLocation_3)
+            @timeit HourGlass "12D Output Data"  SaveFile4(SaveLocation_4)
 
             if SimMetaData.FlagLog
                 LogStep(SimLogger, SimMetaData, HourGlass)
