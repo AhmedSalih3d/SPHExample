@@ -203,27 +203,13 @@ end
     return nothing
 end
 
-
-function SaveHDF5OneBig!(fid::HDF5.File, group_name, variable_names, args...)
+function SaveHDF5!(fid::HDF5.File, group_name, variable_names, args...)
     create_group(fid, group_name)
     if !isnothing(args)
         for i in eachindex(args)
             arg           = args[i]
             var_name          = variable_names[i]
             fid[group_name][var_name] = arg
-        end
-    end
-end
-
-function SaveHDF5!(filelist::Vector{HDF5.File}, index, filename::String, variable_names, args...)
-    fid             = h5open(filename, "w")
-    filelist[index] = fid
-
-    if !isnothing(args)
-        for i in eachindex(args)
-            arg           = args[i]
-            name          = variable_names[i]
-            fid[name] = arg
         end
     end
 end
@@ -277,7 +263,7 @@ function RunSimulation(;FluidCSV::String,
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * ".h5"
     FidBig        = h5open(SaveLocation_, "w")
 
-    SaveFile = (GroupName) -> SaveHDF5OneBig!(FidBig, GroupName, ["Position", "Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], to_3d(SimParticles.Position), Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
+    SaveFile = (GroupName) -> SaveHDF5!(FidBig, GroupName, ["Position", "Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], to_3d(SimParticles.Position), Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
     # SaveFile = (GroupName) -> SaveHDF5OneBig!(FidBig, GroupName, ["Position", "Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], to_3d(SimParticles.Position), Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.ID)
     @inline SaveFile(string(SimMetaData.OutputIterationCounter))
     SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
@@ -337,7 +323,7 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=2,
+        SimulationTime=4,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
