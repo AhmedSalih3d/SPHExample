@@ -11,6 +11,7 @@ using Logging, LoggingExtras
 using Printf
 using JET
 using Dates
+using HDF5
 
 # Really important to overload default function, gives 10x speed up?
 # Overload the default function to do what you please
@@ -202,6 +203,21 @@ end
     return nothing
 end
 
+
+function SaveHDF5(filename::String, variable_names, args...)
+    fid   = h5open(filename, "w")
+
+    if !isnothing(args)
+        for i in eachindex(args)
+            arg           = args[i]
+            name          = variable_names[i]
+            fid[name] = arg
+        end
+    end
+
+    close(fid)
+end
+
 ###===
 
 function RunSimulation(;FluidCSV::String,
@@ -249,8 +265,11 @@ function RunSimulation(;FluidCSV::String,
 
     # Produce data saving functions
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
+    SaveLocation_2 = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".h5"
     SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, to_3d(SimParticles.Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
-    @inline SaveFile(SaveLocation_)
+    SaveFile2 = (SaveLocation_2) -> SaveHDF5(SaveLocation_2, ["Position", "Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], to_3d(SimParticles.Position), Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
+    # SaveFile(SaveLocation_)
+    # SaveFile2(SaveLocation_2)
     SimMetaData.OutputIterationCounter += 1 # Since a file has been saved at time 0
 
     InverseCutOff = Val(1/SimConstants.H)
@@ -268,8 +287,10 @@ function RunSimulation(;FluidCSV::String,
 
         if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
 
-            SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.OutputIterationCounter,6,"0") * ".vtp"
-            @timeit HourGlass "12 Output Data"  SaveFile(SaveLocation_)
+            SaveLocation_  = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.OutputIterationCounter,6,"0") * ".vtp"
+            SaveLocation_2 = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.OutputIterationCounter,6,"0") * ".h5"
+            @timeit HourGlass "12A Output Data"  SaveFile(SaveLocation_)
+            @timeit HourGlass "12B Output Data"  SaveFile2(SaveLocation_2)
 
             if SimMetaData.FlagLog
                 LogStep(SimLogger, SimMetaData, HourGlass)
@@ -295,7 +316,8 @@ function RunSimulation(;FluidCSV::String,
             end
 
             SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.OutputIterationCounter,6,"0") * ".vtp"
-            @timeit HourGlass "12 Output Data"  SaveFile(SaveLocation_)
+            @timeit HourGlass "12A Output Data"  SaveFile(SaveLocation_)
+            @timeit HourGlass "12B Output Data"  SaveFile2(SaveLocation_2)
 
             break
         end
@@ -309,7 +331,7 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=1,
+        SimulationTime=4,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
