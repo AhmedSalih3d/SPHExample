@@ -204,6 +204,17 @@ end
 end
 
 
+function SaveHDF5OneBig!(fid::HDF5.File, group_name, variable_names, args...)
+    create_group(fid, group_name)
+    if !isnothing(args)
+        for i in eachindex(args)
+            arg           = args[i]
+            var_name          = variable_names[i]
+            fid[group_name][var_name] = arg
+        end
+    end
+end
+
 function SaveHDF5!(filelist::Vector{HDF5.File}, index, filename::String, variable_names, args...)
     # # Using do syntax is important, using `close` directly
     # # is a performance loss in my small benchmark
@@ -236,9 +247,6 @@ function RunSimulation(;FluidCSV::String,
     SimConstants::SimulationConstants,
     SimLogger::SimulationLogger
     ) where {Dimensions,FloatType}
-
-    N_OutputFiles = Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1)
-    OutputFiles   = Vector{HDF5.File}(undef, N_OutputFiles)
 
     if SimMetaData.FlagLog
         InitializeLogger(SimLogger,SimConstants,SimMetaData)
@@ -278,14 +286,13 @@ function RunSimulation(;FluidCSV::String,
     _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
 
     # Produce data saving functions
-    SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
-    SaveLocation_2 = SimMetaData.SaveLocation * "/" * SimulationName * "_2" * lpad(0,6,"0") * ".h5"
-    SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, to_3d(SimParticles.Position), ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
-    SaveFile2 = (SaveLocation_2, FileIndex) -> SaveHDF5!(OutputFiles, FileIndex, SaveLocation_2, ["Position", "Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], to_3d(SimParticles.Position), Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
-    @inline SaveFile(SaveLocation_)
-    SimMetaData.OutputIterationCounter += 1 # Since a file has been saved at time 0
-    @inline SaveFile2(SaveLocation_2, SimMetaData.OutputIterationCounter)
-    
+    SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * ".h5"
+    FidBig        = h5open(SaveLocation_, "w")
+
+    SaveFile = (GroupName) -> SaveHDF5OneBig!(FidBig, GroupName, ["Position", "Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], to_3d(SimParticles.Position), Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
+    @inline SaveFile(string(SimMetaData.OutputIterationCounter))
+    SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
+
 
     InverseCutOff = Val(1/SimConstants.H)
 
@@ -302,10 +309,7 @@ function RunSimulation(;FluidCSV::String,
 
         if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
 
-            SaveLocation_  = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.OutputIterationCounter,6,"0") * ".vtp"
-            SaveLocation_2 = SimMetaData.SaveLocation * "/" * SimulationName * "_2" * lpad(SimMetaData.OutputIterationCounter,6,"0") * ".h5"
-            @timeit HourGlass "12A Output Data"  SaveFile(SaveLocation_)
-            @timeit HourGlass "12B Output Data"  SaveFile2(SaveLocation_2,  SimMetaData.OutputIterationCounter + 1)
+            @timeit HourGlass "12A Output Data" SaveFile(string(SimMetaData.OutputIterationCounter))
 
             if SimMetaData.FlagLog
                 LogStep(SimLogger, SimMetaData, HourGlass)
@@ -321,9 +325,7 @@ function RunSimulation(;FluidCSV::String,
         end
 
         if SimMetaData.TotalTime > SimMetaData.SimulationTime
-            @timeit HourGlass "14 Close open save files" Base.Threads.@threads for file in OutputFiles 
-                close(file)
-            end
+            @timeit HourGlass "12B Close h5 output file"  close(FidBig)
 
             finish!(SimMetaData.ProgressSpecification)
             show(HourGlass,sortby=:name)
