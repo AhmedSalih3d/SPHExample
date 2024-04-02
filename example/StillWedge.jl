@@ -216,18 +216,6 @@ function SaveHDF5OneBig!(fid::HDF5.File, group_name, variable_names, args...)
 end
 
 function SaveHDF5!(filelist::Vector{HDF5.File}, index, filename::String, variable_names, args...)
-    # # Using do syntax is important, using `close` directly
-    # # is a performance loss in my small benchmark
-    # h5open(filename, "w") do fid
-    #     if !isnothing(args)
-    #         for i in eachindex(args)
-    #             arg           = args[i]
-    #             name          = variable_names[i]
-    #             fid[name] = arg
-    #         end
-    #     end
-    # end
-
     fid             = h5open(filename, "w")
     filelist[index] = fid
 
