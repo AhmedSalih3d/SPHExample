@@ -210,29 +210,7 @@ module ProduceVTP     export ExportVTP, ConvertHDFtoVTP, SaveHDF5!, HDFtoVTP, Op
             end
         end
     end
-
-    function HDFtoVTP(SimMetaData)
-        fid = h5open(SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName * ".h5","r")
-        
-        all_keys = keys(fid)
-
-        lk = ReentrantLock()
-            Threads.@spawn begin
-        @sync for (ichunk,inds) ∈ chunks(all_keys; n=Base.Threads.nthreads())
-                for iter in inds
-                    key = all_keys[iter]
-                    lock(lk) do
-                        DictVariable = read(fid[key])
-                        ConvertHDFtoVTP(SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName * "_" * key * ".vtp", DictVariable)
-                    end
-                end
-            end
-        end
-
-        close(fid)
-    end
     
-
  # @profview PolyDataTemplate(save_location, Points, ["Kernel", "KernelGradient"], Kernel, KernelGradient)
 
     # b = @benchmark PolyDataTemplate($save_location, $Points, $(["Kernel", "KernelGradient"]), $Kernel, $KernelGradient)
