@@ -22,7 +22,7 @@ module SPHExample
     export create_vtp_file, OutputVTP
 
     using .ProduceVTP
-    export ExportVTP
+    export ExportVTP, ConvertHDFtoVTP
 
     using .TimeStepping: Δt
     export Δt

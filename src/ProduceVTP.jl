@@ -1,5 +1,5 @@
 module ProduceVTP
-    export ExportVTP
+    export ExportVTP, ConvertHDFtoVTP
 
     #https://www.analytech-solutions.com/analytech-solutions/blog/binary-io.html
     using XML
@@ -107,6 +107,94 @@ module ProduceVTP
             XML.write(filename,xml_doc)
     end
 
+    function ConvertHDFtoVTP(filename::String, DictVariable)
+        points = reinterpret(reshape, SVector{3,Float64}, DictVariable["Position"])
+        # Generate the XML document and then put in some fixed values
+        xml_doc = Document(XML.Declaration(version=1.0,encoding="utf-8"))
+        vtk_file = Element("VTKFile")
+        vtk_file.attributes["type"]        = "PolyData"
+        vtk_file.attributes["version"]     = "1.0"
+        vtk_file.attributes["byte_order"]  = "LittleEndian"
+        vtk_file.attributes["header_type"] = "UInt64"
+    
+        # PolyData is the main section, filling it out
+        polydata  = Element("PolyData")
+        piece     = Element("Piece")
+        N = length(points)
+        piece.attributes["NumberOfPoints"] = string(N)
+    
+        # This Points element and its associated DataArray has to be constructed individually
+        points_element    = Element("Points")
+        point_dataarray = create_data_array_element("Points",points,0)
+        point_dataarray["offset"] = 0
+    
+        
+        # Generate appended data element
+        appendeddata = Element("AppendedData")
+        appendeddata.attributes["encoding"] = "raw"
+    
+        # Start writing the file and generating the correct dataarrays with the right offsets in the loop
+        NB = 0
+        io = IOBuffer()
+        write(io,"\n_")
+        UncompressedHeaderN  = N * length(first(points)) *  sizeof(typeof(first(points)))
+        NB += write(io, UncompressedHeaderN)
+        NB += write(io, points)
+    
+        # Generate XML tags for kwargs data
+        pointdata  = Element("PointData")
+        pop!(DictVariable,"Position")
+        dataarrays = Vector{XML.Node}(undef,length(DictVariable))
+    
+        i = 1
+        for (key,value) in DictVariable
+            
+            T = eltype(value)
+            NumberOfFields = fieldcount(eltype(T))
+    
+            if NumberOfFields > 0
+                T = unique(fieldtypes(eltype(T)))[1]
+                data_type = SVector{NumberOfFields, T}
+            else
+                data_type = T
+            end
+    
+            val = reinterpret(reshape, data_type, value)
+            arg           = val
+    
+            dataarrays[i] = create_data_array_element(key,arg,NB)
+            A             = typeof(first(arg))
+            T             = eltype(A)
+            Ni            = length(arg)
+            Tsz           = sizeof(T)
+            Nc            = Int( sizeof(A) / Tsz )
+            HowManyBytes  = Tsz*Nc*Ni + Tsz
+            NB           += HowManyBytes
+            write(io, NB)
+            write(io, arg)
+    
+            i += 1
+        end
+    
+        # Take the result from the buffer, turn to string and write it
+        v = take!(io)
+        t = Text(String(v))
+        write(io,"\n")
+        push!(appendeddata,t)
+        close(io)
+    
+        # Glue all xml pieces together
+        push!(xml_doc,vtk_file)
+        push!(points_element,point_dataarray)
+        push!(piece,points_element)
+        push!(polydata,piece)
+        push!(vtk_file,polydata)
+        map(x -> push!(pointdata,x), dataarrays)
+        push!(piece,pointdata)
+        push!(vtk_file,appendeddata)
+    
+        XML.write(filename,xml_doc)
+    end
     
     # save_location = raw"E:\SPH\TestOfFile.vtp"
 
