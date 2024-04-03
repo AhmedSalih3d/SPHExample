@@ -313,7 +313,7 @@ let
     FloatType  = Float64
 
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
-        SimulationName="Test4", 
+        SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
         SimulationTime=4,
         OutputEach=0.01,
