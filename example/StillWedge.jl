@@ -203,17 +203,6 @@ end
     return nothing
 end
 
-function SaveHDF5!(fid::HDF5.File, group_name, variable_names, args...)
-    create_group(fid, group_name)
-    if !isnothing(args)
-        for i in eachindex(args)
-            arg           = args[i]
-            var_name          = variable_names[i]
-            fid[group_name][var_name] = arg
-        end
-    end
-end
-
 ###===
 function RunSimulation(;FluidCSV::String,
     BoundCSV::String,
@@ -233,7 +222,10 @@ function RunSimulation(;FluidCSV::String,
     
     # Delete previous result files
     foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
-    foreach(rm, filter(endswith(".h5"), readdir(SimMetaData.SaveLocation,join=true)))
+    try
+        foreach(rm, filter(endswith(".h5"), readdir(SimMetaData.SaveLocation,join=true)))
+    catch
+    end
 
     # Unpack the relevant simulation meta data
     @unpack HourGlass, SaveLocation, SimulationName, SilentOutput, ThreadsCPU = SimMetaData;
@@ -321,9 +313,9 @@ let
     FloatType  = Float64
 
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
-        SimulationName="Test", 
+        SimulationName="Test4", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=0.41,
+        SimulationTime=4,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
@@ -335,7 +327,7 @@ let
     SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
 
     # Remove '@profview' if you do not want VS Code timers
-    println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
+    println(@report_call target_modules=(@__MODULE__,) RunSimulation(
         FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
         BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
         SimMetaData        = SimMetaDataWedge,
@@ -352,4 +344,8 @@ let
         SimConstants       = SimConstantsWedge,
         SimLogger          = SimLogger
     )
+
+
+    HDFtoVTP(SimMetaDataWedge)
+
 end

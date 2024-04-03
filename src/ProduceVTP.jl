@@ -200,10 +200,12 @@ module ProduceVTP
     function SaveHDF5!(fid::HDF5.File, group_name, variable_names, args...)
         create_group(fid, group_name)
         if !isnothing(args)
+            group         = fid[group_name]
             for i in eachindex(args)
                 arg           = args[i]
-                var_name          = variable_names[i]
-                fid[group_name][var_name] = arg
+                var_name      = variable_names[i]
+    
+                write_dataset(group::HDF5.Group, var_name, arg)
             end
         end
     end
