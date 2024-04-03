@@ -13,8 +13,8 @@ using Distributed
 
     # This block ensures that each worker is using the same environment as the master process
     @everywhere begin
-        using Pkg
-        Pkg.activate(".") # Activate the current project environment. Adjust the path as necessary.
+        # using Pkg
+        # Pkg.activate(".") # Activate the current project environment. Adjust the path as necessary.
         # Pkg.instantiate() # Ensure all dependencies are installed
         using SPHExample
     end
