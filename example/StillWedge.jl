@@ -324,7 +324,7 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=0.19,
+        SimulationTime=1,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
@@ -334,6 +334,8 @@ let
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
 
     SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
+
+    precompile(RunSimulation, (String, String, SimulationMetaData, SimulationConstants, SimulationLogger))
 
     # Remove '@profview' if you do not want VS Code timers
     println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
