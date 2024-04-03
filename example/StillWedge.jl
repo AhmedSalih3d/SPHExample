@@ -11,6 +11,19 @@ using Logging, LoggingExtras
 using Printf
 using JET
 using Dates
+using HDF5
+
+function SaveHDF5!(fid::HDF5.File, group_name, variable_names, args...)
+    create_group(fid, group_name)
+    if !isnothing(args)
+        for i in eachindex(args)
+            arg           = args[i]
+            var_name          = variable_names[i]
+            fid[group_name][var_name] = arg
+        end
+    end
+end
+
 
 # Really important to overload default function, gives 10x speed up?
 # Overload the default function to do what you please
@@ -202,17 +215,6 @@ end
     return nothing
 end
 
-function SaveHDF5!(fid::HDF5.File, group_name, variable_names, args...)
-    create_group(fid, group_name)
-    if !isnothing(args)
-        for i in eachindex(args)
-            arg           = args[i]
-            var_name          = variable_names[i]
-            fid[group_name][var_name] = arg
-        end
-    end
-end
-
 ###===
 function RunSimulation(;FluidCSV::String,
     BoundCSV::String,
@@ -322,7 +324,7 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=0.41,
+        SimulationTime=0.19,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
@@ -351,4 +353,6 @@ let
         SimConstants       = SimConstantsWedge,
         SimLogger          = SimLogger
     )
+
+    HDFtoVTP(SimMetaDataWedge)
 end

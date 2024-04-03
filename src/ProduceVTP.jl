@@ -1,10 +1,11 @@
 module ProduceVTP
-    export ExportVTP, ConvertHDFtoVTP
+    export ExportVTP, ConvertHDFtoVTP, SaveHDF5!, HDFtoVTP, OpenForWriteH5
 
     #https://www.analytech-solutions.com/analytech-solutions/blog/binary-io.html
     using XML
     using XML: Document, Declaration, Element, Text
     using StaticArrays
+    using HDF5
 
     ### Functions=================================================
     # Function to create a DataArray element for VTK files
@@ -194,6 +195,30 @@ module ProduceVTP
         push!(vtk_file,appendeddata)
     
         XML.write(filename,xml_doc)
+    end
+
+    function SaveHDF5!(fid::HDF5.File, group_name, variable_names, args...)
+        create_group(fid, group_name)
+        if !isnothing(args)
+            for i in eachindex(args)
+                arg           = args[i]
+                var_name          = variable_names[i]
+                fid[group_name][var_name] = arg
+            end
+        end
+    end
+
+    function HDFtoVTP(SimMetaData)
+        fid = h5open(SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName * ".h5","r")
+        for key in keys(fid)
+            DictVariable = read(fid[key])
+            ConvertHDFtoVTP(SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName * "_" * key * ".vtp", DictVariable)
+        end
+        close(fid)
+    end
+
+    function OpenForWriteH5(path)
+        return h5open(path, "w")
     end
     
     # save_location = raw"E:\SPH\TestOfFile.vtp"
