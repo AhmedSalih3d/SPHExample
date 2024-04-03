@@ -1,11 +1,12 @@
-module ProduceVTP
-    export ExportVTP, ConvertHDFtoVTP, SaveHDF5!, HDFtoVTP, OpenForWriteH5
+module ProduceVTP     export ExportVTP, ConvertHDFtoVTP, SaveHDF5!, HDFtoVTP, OpenForWriteH5
 
     #https://www.analytech-solutions.com/analytech-solutions/blog/binary-io.html
     using XML
     using XML: Document, Declaration, Element, Text
     using StaticArrays
     using HDF5
+    using ChunkSplitters
+    using Polyester
 
     ### Functions=================================================
     # Function to create a DataArray element for VTK files
@@ -212,23 +213,27 @@ module ProduceVTP
 
     function HDFtoVTP(SimMetaData)
         fid = h5open(SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName * ".h5","r")
-        for key in keys(fid)
-            DictVariable = read(fid[key])
-            ConvertHDFtoVTP(SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName * "_" * key * ".vtp", DictVariable)
+        
+        all_keys = keys(fid)
+
+        lk = ReentrantLock()
+            Threads.@spawn begin
+        @sync for (ichunk,inds) ∈ chunks(all_keys; n=Base.Threads.nthreads())
+                for iter in inds
+                    key = all_keys[iter]
+                    lock(lk) do
+                        DictVariable = read(fid[key])
+                        ConvertHDFtoVTP(SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName * "_" * key * ".vtp", DictVariable)
+                    end
+                end
+            end
         end
+
         close(fid)
     end
-
-    function OpenForWriteH5(path)
-        return h5open(path, "w")
-    end
     
-    # save_location = raw"E:\SPH\TestOfFile.vtp"
 
-    # d = @report_opt target_modules=(@__MODULE__,) PolyDataTemplate(save_location, Points, ["Kernel", "KernelGradient"], Kernel, KernelGradient)
-    # println(d)
-
-    # @profview PolyDataTemplate(save_location, Points, ["Kernel", "KernelGradient"], Kernel, KernelGradient)
+ # @profview PolyDataTemplate(save_location, Points, ["Kernel", "KernelGradient"], Kernel, KernelGradient)
 
     # b = @benchmark PolyDataTemplate($save_location, $Points, $(["Kernel", "KernelGradient"]), $Kernel, $KernelGradient)
     # display(b)

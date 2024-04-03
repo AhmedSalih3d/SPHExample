@@ -8,9 +8,6 @@ import ProgressMeter: next!, finish!
 using Format
 using TimerOutputs
 using Logging, LoggingExtras
-using Printf
-using JET
-using Dates
 using HDF5
 
 # Really important to overload default function, gives 10x speed up?
@@ -308,6 +305,9 @@ function RunSimulation(;FluidCSV::String,
     end
 end
 
+
+
+
 let
     Dimensions = 2
     FloatType  = Float64
@@ -327,25 +327,19 @@ let
     SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
 
     # Remove '@profview' if you do not want VS Code timers
-    println(@report_call target_modules=(@__MODULE__,) RunSimulation(
-        FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
-        BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
-        SimMetaData        = SimMetaDataWedge,
-        SimConstants       = SimConstantsWedge,
-        SimLogger          = SimLogger,
-    ))
+    # println(@report_call target_modules=(@__MODULE__,) RunSimulation(
+    #     FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
+    #     BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
+    #     SimMetaData        = SimMetaDataWedge,
+    #     SimConstants       = SimConstantsWedge,
+    #     SimLogger          = SimLogger,
+    # ))
 
-    @profview  RunSimulation(
+    RunSimulation(
         FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
         BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
-        # FluidCSV           = "./input/dam_break_2d/DamBreak2d_Dp0.02_Fluid.csv",
-        # BoundCSV           = "./input/dam_break_2d/DamBreak2d_Dp0.02_Bound.csv",
         SimMetaData        = SimMetaDataWedge,
         SimConstants       = SimConstantsWedge,
         SimLogger          = SimLogger
     )
-
-
-    HDFtoVTP(SimMetaDataWedge)
-
 end
