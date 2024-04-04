@@ -1,17 +1,19 @@
 using HDF5
 
 # Open an HDF5 file
-filename = "it_only_took_a_few_hours_sigh.vtkhdf"
+filename = "it_only_took_a_few_hours_sigh1.vtkhdf"
 file = h5open(filename, "w") 
 
 # Create the top-level group 'VTKHDF' and set its attributes
 vtkhdf_group = create_group(file, "VTKHDF")
 write_attribute(vtkhdf_group, "Version", [1, 0])
 
+TypeString = "ImageData"
+
 # write_attribute(vtkhdf_group,"Type", "ImageData")
 # Create the ASCII string datatype with fixed length and null padding
 strtype = HDF5.h5t_copy(HDF5.H5T_C_S1)
-HDF5.h5t_set_size(strtype, 9)  # Length of the string "ImageData"
+HDF5.h5t_set_size(strtype, length(TypeString))  # Length of the string "ImageData"
 HDF5.h5t_set_strpad(strtype, HDF5.H5T_STR_NULLPAD)  # Null padding
 HDF5.h5t_set_cset(strtype, HDF5.H5T_CSET_ASCII)  # Set character set to ASCII
 # Define a scalar dataspace for the attribute
