@@ -43,10 +43,10 @@ function ComputeInteractions!(SimMetaData, SimConstants, Position, KernelThreade
             ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
         
             ρⱼᵢ   = ρⱼ - ρᵢ
-            # MLcond = MotionLimiter[i] * MotionLimiter[j]
+            MLcond = MotionLimiter[i] * MotionLimiter[j]
             ddt_symmetric_term =  δᵩ * h * c₀ * 2 * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) #* MLcond
-            Dᵢ  = ddt_symmetric_term * (m₀/ρⱼ) * ( ρⱼᵢ - ρᵢⱼᴴ) * MotionLimiter[j]
-            Dⱼ  = ddt_symmetric_term * (m₀/ρᵢ) * (-ρⱼᵢ - ρⱼᵢᴴ) * MotionLimiter[i]
+            Dᵢ  = ddt_symmetric_term * (m₀/ρⱼ) * ( ρⱼᵢ - ρᵢⱼᴴ) * MLcond
+            Dⱼ  = ddt_symmetric_term * (m₀/ρᵢ) * (-ρⱼᵢ - ρⱼᵢᴴ) * MLcond
         else
             Dᵢ  = 0.0
             Dⱼ  = 0.0
@@ -163,8 +163,8 @@ end
 
     @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" @inbounds for i in eachindex(Position)
         Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+        Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
         Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
-        Positionₙ⁺[i]     =  Position[i]   + Velocityₙ⁺[i]   * dt₂  * MotionLimiter[i]
         ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
     end
 
@@ -258,7 +258,7 @@ function RunSimulation(;FluidCSV::String,
     SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
 
 
-    InverseCutOff = Val(1/SimConstants.H)
+    InverseCutOff = Val(1/(SimConstants.H))
 
     # Normal run and save data
     generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
@@ -315,9 +315,9 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=4,
+        SimulationTime=2,
         OutputEach=0.01,
-        FlagDensityDiffusion=false,
+        FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
         FlagLog=true
     )
@@ -336,8 +336,10 @@ let
     # ))
 
     RunSimulation(
-        FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
-        BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
+        # FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
+        # BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
+        FluidCSV           = "./input/dam_break_2d/DamBreak2d_Dp0.02_Fluid.csv",
+        BoundCSV           = "./input/dam_break_2d/DamBreak2d_Dp0.02_Bound.csv",
         SimMetaData        = SimMetaDataWedge,
         SimConstants       = SimConstantsWedge,
         SimLogger          = SimLogger
