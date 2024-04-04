@@ -1,12 +1,12 @@
 using HDF5
 
 # Open an HDF5 file
-filename = "it_only_took_a_few_hours_sigh1.vtkhdf"
+filename = "it_only_took_a_few_hours_sigh2.vtkhdf"
 file = h5open(filename, "w") 
 
 # Create the top-level group 'VTKHDF' and set its attributes
 vtkhdf_group = create_group(file, "VTKHDF")
-write_attribute(vtkhdf_group, "Version", [1, 0])
+write_attribute(vtkhdf_group, "Version", [2, 1])
 
 TypeString = "ImageData"
 
