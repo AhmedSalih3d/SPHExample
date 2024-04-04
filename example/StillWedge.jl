@@ -9,6 +9,7 @@ using Format
 using TimerOutputs
 using Logging, LoggingExtras
 using HDF5
+using Base.Threads
 
 # Really important to overload default function, gives 10x speed up?
 # Overload the default function to do what you please
@@ -303,6 +304,51 @@ function RunSimulation(;FluidCSV::String,
             break
         end
     end
+
+    # Function to distribute keys among threads
+    function distribute_keys(keys, nthreads)
+        chunk_size = ceil(Int, length(keys) / nthreads)
+        return [keys[(i-1)*chunk_size+1:min(i*chunk_size, end)] for i in 1:nthreads]
+    end
+
+    # Open the HDF5 file once to read all keys, keep the file open for subsequent access
+    file = h5open(SaveLocation_, "r")  # Open file without 'do' to keep it open
+    all_keys = collect(keys(file))
+    close(file)
+
+    n_chunks = 2 #nthreads()  # Define the number of chunks (or parallel tasks)
+    keys_per_thread = distribute_keys(all_keys, n_chunks)  # Distribute keys among the defined chunks
+
+    filter!(!isempty, keys_per_thread)
+
+    unsuccesful_keys = String[]
+    @sync for t in 1:n_chunks
+        @spawn h5open(SaveLocation_, "r") do f
+            DictVariable = Dict()
+            for key in keys_per_thread[t]
+                try
+                    DictVariable = read(f[key])
+                    filepath = SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName * "_" * key * ".vtp"  # Adjust output path as needed
+                    ConvertHDFtoVTP(filepath, DictVariable)
+                catch
+                    push!(unsuccesful_keys, key)
+                finally
+                    n_fails = length(unsuccesful_keys)
+                    if n_fails > 0
+                        @warn "Amount of unsuccesful_keys: " * string(n_fails)
+                    end
+                end
+            end
+        end
+    end
+
+    for key ∈ unsuccesful_keys
+        h5open(SaveLocation_, "r") do f
+            DictVariable = read(f[key])
+            filepath = SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName * "_" * key * ".vtp"  # Adjust output path as needed
+            ConvertHDFtoVTP(filepath, DictVariable)
+        end
+    end
 end
 
 
@@ -313,9 +359,9 @@ let
     FloatType  = Float64
 
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
-        SimulationName="Test", 
+        SimulationName="Test4", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=2,
+        SimulationTime=0.1,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
