@@ -307,7 +307,7 @@ function RunSimulation(;FluidCSV::String,
     _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
 
     # Produce data saving functions
-    SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtkhdf"
+    SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.OutputIterationCounter,6,"0") * ".vtkhdf"
     # FidBig        = h5open(SaveLocation_, "w")
 
     # SaveFile = (GroupName) -> SaveHDF5!(FidBig, GroupName, ["Position", "Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], to_3d(SimParticles.Position), Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
@@ -333,7 +333,7 @@ function RunSimulation(;FluidCSV::String,
         if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
 
             # @timeit HourGlass "12A Output Data" SaveFile(string(SimMetaData.OutputIterationCounter))
-            SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.Iteration,6,"0") * ".vtkhdf"
+            SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.OutputIterationCounter,6,"0") * ".vtkhdf"
             @timeit HourGlass "12A Output Data" SaveFile(SaveLocation_)
 
             if SimMetaData.FlagLog
