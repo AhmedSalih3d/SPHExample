@@ -228,7 +228,7 @@ function RunSimulation(;FluidCSV::String,
     end
 
     # Unpack the relevant simulation meta data
-    @unpack HourGlass, SaveLocation, SimulationName, SilentOutput, ThreadsCPU = SimMetaData;
+    @unpack HourGlass, SimulationName, SilentOutput, ThreadsCPU = SimMetaData;
 
     # Load in particles
     SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Kernel, KernelGradient = AllocateDataStructures(Dimensions,FloatType, FluidCSV,BoundCSV)
@@ -252,14 +252,14 @@ function RunSimulation(;FluidCSV::String,
     _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
 
     # Produce data saving functions
-    SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.OutputIterationCounter,6,"0") * ".vtkhdf"
+    SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName
+    SaveLocation  = (Iteration) -> SaveLocation_ * "_" * lpad(Iteration,6,"0") * ".vtkhdf"
 
     fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
 
-    SaveFile   = (SaveLocation_, Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation_,to_3d(SimParticles.Position),["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
-    @inline SaveFile(SaveLocation_, SimMetaData.OutputIterationCounter + 1)
+    SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position),["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
+    @inline SaveFile(SimMetaData.OutputIterationCounter + 1)
     SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
-
 
     InverseCutOff = Val(1/(SimConstants.H))
 
@@ -275,9 +275,7 @@ function RunSimulation(;FluidCSV::String,
         @inline f()
 
         if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
-
-            SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.OutputIterationCounter,6,"0") * ".vtkhdf"
-            @timeit HourGlass "12A Output Data" SaveFile(SaveLocation_, SimMetaData.OutputIterationCounter + 1)
+            @timeit HourGlass "12A Output Data" SaveFile(SimMetaData.OutputIterationCounter + 1)
 
             if SimMetaData.FlagLog
                 LogStep(SimLogger, SimMetaData, HourGlass)
@@ -331,13 +329,13 @@ let
     SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
 
     #Remove '@profview' if you do not want VS Code timers
-    # println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
-    #     FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
-    #     BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
-    #     SimMetaData        = SimMetaDataWedge,
-    #     SimConstants       = SimConstantsWedge,
-    #     SimLogger          = SimLogger,
-    # ))
+    println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
+        FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
+        BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
+        SimMetaData        = SimMetaDataWedge,
+        SimConstants       = SimConstantsWedge,
+        SimLogger          = SimLogger,
+    ))
 
     @profview RunSimulation(
         FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
