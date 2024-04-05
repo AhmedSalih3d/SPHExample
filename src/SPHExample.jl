@@ -2,7 +2,7 @@ module SPHExample
 
     include("AuxillaryFunctions.jl");        
     include("PostProcess.jl");    
-    include("ProduceVTP.jl")    
+    include("ProduceHDFVTK.jl")    
     include("TimeStepping.jl");       
     include("SimulationEquations.jl");
     include("SimulationMetaDataConfiguration.jl");
@@ -21,8 +21,8 @@ module SPHExample
     using .PostProcess
     export create_vtp_file, OutputVTP
 
-    using .ProduceVTP
-    export ExportVTP, ConvertHDFtoVTP, SaveHDF5!, HDFtoVTP, OpenForWriteH5
+    using .ProduceHDFVTK
+    export SaveVTKHDF
 
     using .TimeStepping: Δt
     export Δt
