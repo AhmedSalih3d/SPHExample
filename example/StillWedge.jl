@@ -11,9 +11,10 @@ using Logging, LoggingExtras
 using HDF5
 using Base.Threads
 
-function SaveVTKHDF(filepath,points, variable_names, args...)
+
+function SaveVTKHDF(fid_vector, index, filepath,points, variable_names, args...)
     @assert length(variable_names) == length(args) "Same number of variable_names as args is necessary"
-    h5open(filepath, "w") do io
+        io = h5open(filepath, "w")
         # Create toplevel group /VTKHDF
         gtop = HDF5.create_group(io, "VTKHDF")
 
@@ -65,7 +66,8 @@ function SaveVTKHDF(filepath,points, variable_names, args...)
             gempty["Offsets"] = [0]
             close(gempty)
         end
-    end
+
+        fid_vector[index] = io
 end
 
 # Really important to overload default function, gives 10x speed up?
@@ -278,7 +280,7 @@ function RunSimulation(;FluidCSV::String,
     # Delete previous result files
     foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
     try
-        foreach(rm, filter(endswith(".h5"), readdir(SimMetaData.SaveLocation,join=true)))
+        foreach(rm, filter(endswith(".vtkhdf"), readdir(SimMetaData.SaveLocation,join=true)))
     catch
     end
 
@@ -309,11 +311,12 @@ function RunSimulation(;FluidCSV::String,
     # Produce data saving functions
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.OutputIterationCounter,6,"0") * ".vtkhdf"
     # FidBig        = h5open(SaveLocation_, "w")
+    fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
 
     # SaveFile = (GroupName) -> SaveHDF5!(FidBig, GroupName, ["Position", "Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], to_3d(SimParticles.Position), Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
     # SaveFile = (GroupName) -> SaveHDF5OneBig!(FidBig, GroupName, ["Position", "Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], to_3d(SimParticles.Position), Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.ID)
-    SaveFile   = (SaveLocation_) -> SaveVTKHDF(SaveLocation_,to_3d(SimParticles.Position),["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
-    @inline SaveFile(SaveLocation_)
+    SaveFile   = (SaveLocation_, Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation_,to_3d(SimParticles.Position),["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
+    @inline SaveFile(SaveLocation_, SimMetaData.OutputIterationCounter + 1)
     SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
 
 
@@ -334,7 +337,7 @@ function RunSimulation(;FluidCSV::String,
 
             # @timeit HourGlass "12A Output Data" SaveFile(string(SimMetaData.OutputIterationCounter))
             SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.OutputIterationCounter,6,"0") * ".vtkhdf"
-            @timeit HourGlass "12A Output Data" SaveFile(SaveLocation_)
+            @timeit HourGlass "12A Output Data" SaveFile(SaveLocation_, SimMetaData.OutputIterationCounter + 1)
 
             if SimMetaData.FlagLog
                 LogStep(SimLogger, SimMetaData, HourGlass)
@@ -351,6 +354,7 @@ function RunSimulation(;FluidCSV::String,
 
         if SimMetaData.TotalTime > SimMetaData.SimulationTime
             # @timeit HourGlass "12B Close h5 output file"  close(FidBig)
+            @timeit HourGlass "12B Close hdfvtk output files"  close.(fid_vector)
 
             finish!(SimMetaData.ProgressSpecification)
             show(HourGlass,sortby=:name)
