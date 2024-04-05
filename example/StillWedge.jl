@@ -279,6 +279,8 @@ function RunSimulation(;FluidCSV::String,
     
     # Delete previous result files
     foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
+    # https://discourse.julialang.org/t/find-what-has-locked-held-a-file/23278
+    GC.gc()
     try
         foreach(rm, filter(endswith(".vtkhdf"), readdir(SimMetaData.SaveLocation,join=true)))
     catch
@@ -310,11 +312,9 @@ function RunSimulation(;FluidCSV::String,
 
     # Produce data saving functions
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.OutputIterationCounter,6,"0") * ".vtkhdf"
-    # FidBig        = h5open(SaveLocation_, "w")
+
     fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
 
-    # SaveFile = (GroupName) -> SaveHDF5!(FidBig, GroupName, ["Position", "Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], to_3d(SimParticles.Position), Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
-    # SaveFile = (GroupName) -> SaveHDF5OneBig!(FidBig, GroupName, ["Position", "Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], to_3d(SimParticles.Position), Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.ID)
     SaveFile   = (SaveLocation_, Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation_,to_3d(SimParticles.Position),["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
     @inline SaveFile(SaveLocation_, SimMetaData.OutputIterationCounter + 1)
     SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
@@ -335,7 +335,6 @@ function RunSimulation(;FluidCSV::String,
 
         if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
 
-            # @timeit HourGlass "12A Output Data" SaveFile(string(SimMetaData.OutputIterationCounter))
             SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(SimMetaData.OutputIterationCounter,6,"0") * ".vtkhdf"
             @timeit HourGlass "12A Output Data" SaveFile(SaveLocation_, SimMetaData.OutputIterationCounter + 1)
 
@@ -353,17 +352,18 @@ function RunSimulation(;FluidCSV::String,
         end
 
         if SimMetaData.TotalTime > SimMetaData.SimulationTime
-            # @timeit HourGlass "12B Close h5 output file"  close(FidBig)
-            @timeit HourGlass "12B Close hdfvtk output files"  close.(fid_vector)
+            
+            if SimMetaData.FlagLog
+                LogFinal(SimLogger, HourGlass)
+                close(SimLogger.LoggerIo)
+            end
 
             finish!(SimMetaData.ProgressSpecification)
             show(HourGlass,sortby=:name)
             show(HourGlass)
 
-            if SimMetaData.FlagLog
-                LogFinal(SimLogger, HourGlass)
-                close(SimLogger.LoggerIo)
-            end
+            # This should not be counted in actual run 
+            @timeit HourGlass "12B Close hdfvtk output files"  close.(fid_vector)
 
             break
         end
@@ -378,9 +378,9 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=4,
+        SimulationTime=1,
         OutputEach=0.01,
-        FlagDensityDiffusion=true,
+        FlagDensityDiffusion=false,
         FlagOutputKernelValues=false,
         FlagLog=true
     )
@@ -389,8 +389,8 @@ let
 
     SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
 
-    # Remove '@profview' if you do not want VS Code timers
-    # println(@report_call target_modules=(@__MODULE__,) RunSimulation(
+    #Remove '@profview' if you do not want VS Code timers
+    # println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
     #     FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
     #     BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
     #     SimMetaData        = SimMetaDataWedge,
@@ -398,7 +398,7 @@ let
     #     SimLogger          = SimLogger,
     # ))
 
-    RunSimulation(
+    @profview RunSimulation(
         FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
         BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
         # FluidCSV           = "./input/dam_break_2d/DamBreak2d_Dp0.02_Fluid.csv",
