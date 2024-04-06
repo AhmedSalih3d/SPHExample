@@ -42,11 +42,15 @@ function ComputeInteractions!(SimMetaData, SimConstants, Position, KernelThreade
             ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
             Pⱼᵢᴴ  = -Pᵢⱼᴴ
             ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
-        
+
             ρⱼᵢ   = ρⱼ - ρᵢ
-            ddt_symmetric_term =  δᵩ * h * c₀ * 2 * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ)
-            Dᵢ  = ddt_symmetric_term * (m₀/ρⱼ) * ( ρⱼᵢ - ρᵢⱼᴴ) * MotionLimiter[i] 
-            Dⱼ  = ddt_symmetric_term * (m₀/ρᵢ) * (-ρⱼᵢ - ρⱼᵢᴴ) * MotionLimiter[j]
+
+            Ψᵢⱼ   = 2( ρⱼᵢ  - ρᵢⱼᴴ) * (-xᵢⱼ)/(dᵢⱼ^2 + η²)
+            Ψⱼᵢ   = 2(-ρⱼᵢ  - ρⱼᵢᴴ) * ( xᵢⱼ)/(dᵢⱼ^2 + η²) 
+
+            MLcond = MotionLimiter[i] * MotionLimiter[j]
+            Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
+            Dⱼ    =  δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
         else
             Dᵢ  = 0.0
             Dⱼ  = 0.0
@@ -153,8 +157,6 @@ end
     # else
         # IndexCounter = findfirst(isequal(0), ParticleRanges) - 2
     # end
-
-    @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
 
     @timeit SimMetaData.HourGlass "03 ResetArrays"                           ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration); ResetArrays!.(KernelThreaded, KernelGradientThreaded, dρdtIThreaded, AccelerationThreaded)
 
@@ -310,7 +312,6 @@ function RunSimulation(;FluidCSV::String,
         end
     end
 end
-
 
 let
     Dimensions = 2

@@ -42,11 +42,15 @@ function ComputeInteractions!(SimMetaData, SimConstants, Position, KernelThreade
             ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
             Pⱼᵢᴴ  = -Pᵢⱼᴴ
             ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
-        
+
             ρⱼᵢ   = ρⱼ - ρᵢ
-            ddt_symmetric_term =  δᵩ * h * c₀ * 2 * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ)
-            Dᵢ  = ddt_symmetric_term * (m₀/ρⱼ) * ( ρⱼᵢ - ρᵢⱼᴴ) * MotionLimiter[i] 
-            Dⱼ  = ddt_symmetric_term * (m₀/ρᵢ) * (-ρⱼᵢ - ρⱼᵢᴴ) * MotionLimiter[i]
+
+            Ψᵢⱼ   = 2( ρⱼᵢ  - ρᵢⱼᴴ) * (-xᵢⱼ)/(dᵢⱼ^2 + η²)
+            Ψⱼᵢ   = 2(-ρⱼᵢ  - ρⱼᵢᴴ) * ( xᵢⱼ)/(dᵢⱼ^2 + η²) 
+
+            MLcond = MotionLimiter[i] * MotionLimiter[j]
+            Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
+            Dⱼ    =  δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
         else
             Dᵢ  = 0.0
             Dⱼ  = 0.0
@@ -168,7 +172,7 @@ end
         ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
     end
 
-    # @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"  LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+    @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"  LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
 
     @timeit SimMetaData.HourGlass "07 ResetArrays"                  ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration); ResetArrays!.(KernelThreaded, KernelGradientThreaded, dρdtIThreaded, AccelerationThreaded)
 
@@ -177,7 +181,7 @@ end
     @timeit SimMetaData.HourGlass "08A Reduction"                   reduce_sum!(dρdtI, dρdtIThreaded)
     @timeit SimMetaData.HourGlass "08B Reduction"                   reduce_sum!(Acceleration, AccelerationThreaded)
 
-    # @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
+    @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
 
     @timeit SimMetaData.HourGlass "10 Final Density"                DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
 
@@ -308,7 +312,6 @@ function RunSimulation(;FluidCSV::String,
         end
     end
 end
-
 
 let
     Dimensions = 2
