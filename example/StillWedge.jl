@@ -258,8 +258,9 @@ function RunSimulation(;FluidCSV::String,
     fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
 
     SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position),["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
-    @inline SaveFile(SimMetaData.OutputIterationCounter + 1)
     SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
+    @inline SaveFile(SimMetaData.OutputIterationCounter)
+    
 
     InverseCutOff = Val(1/(SimConstants.H))
 
@@ -319,7 +320,7 @@ let
         SaveLocation="E:/SecondApproach/TESTING_CPU",
         SimulationTime=4,
         OutputEach=0.01,
-        FlagDensityDiffusion=true,
+        FlagDensityDiffusion=false,
         FlagOutputKernelValues=false,
         FlagLog=true
     )
