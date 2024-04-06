@@ -1,7 +1,6 @@
 module SPHExample
 
-    include("AuxillaryFunctions.jl");        
-    include("PostProcess.jl");    
+    include("AuxillaryFunctions.jl");          
     include("ProduceHDFVTK.jl")    
     include("TimeStepping.jl");       
     include("SimulationEquations.jl");
@@ -17,9 +16,6 @@ module SPHExample
 
     using .PreProcess
     export LoadParticlesFromCSV_StaticArrays, AllocateDataStructures, LoadBoundaryNormals
-
-    using .PostProcess
-    export create_vtp_file, OutputVTP
 
     using .ProduceHDFVTK
     export SaveVTKHDF
