@@ -46,8 +46,6 @@ The "src" package contains all the code files used in this process. An overview 
 
 * PreProcess
   * Function for loading in the files in "input". 
-* PostProcess
-  * Function to output .vtp files. "ProduceVTP.jl" is a hand-rolled custom solution for those interested in that.
 * ProduceHDFVTK
   * Function to output the simulation data in the efficient `HDF5` format, directly readable in Paraview 5.12. Files can be opened after a simulation has concluded, since they must be closed at the end of a simulation for performance reasons. 
 * AuxillaryFunctions
