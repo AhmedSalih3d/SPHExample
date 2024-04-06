@@ -329,13 +329,13 @@ let
     SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
 
     #Remove '@profview' if you do not want VS Code timers
-    println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
-        FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
-        BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
-        SimMetaData        = SimMetaDataWedge,
-        SimConstants       = SimConstantsWedge,
-        SimLogger          = SimLogger,
-    ))
+    # println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
+    #     FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
+    #     BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
+    #     SimMetaData        = SimMetaDataWedge,
+    #     SimConstants       = SimConstantsWedge,
+    #     SimLogger          = SimLogger,
+    # ))
 
     @profview RunSimulation(
         FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
