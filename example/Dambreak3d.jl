@@ -273,7 +273,7 @@ let
         SaveLocation="E:/SecondApproach/TESTING_CPU",
         SimulationTime=1.6,
         OutputEach=0.01,
-        FlagDensityDiffusion=true,
+        FlagDensityDiffusion=false,
         FlagOutputKernelValues=false,
     )
 
