@@ -16,7 +16,6 @@ using ..AuxillaryFunctions
         return n
     end
 
-    using Polyester
     @inline function ExtractCells!(Particles, ::Val{InverseCutOff}) where InverseCutOff
         # Replace unsafe_trunc with trunc if this ever errors
         function map_floor(x)
