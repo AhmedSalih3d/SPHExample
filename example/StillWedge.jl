@@ -331,7 +331,7 @@ let
 
     SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
 
-    @profview RunSimulation(
+    RunSimulation(
         FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
         BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
         SimMetaData        = SimMetaDataWedge,

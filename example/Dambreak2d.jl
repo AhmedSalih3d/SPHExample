@@ -331,7 +331,7 @@ let
 
     SimLogger = SimulationLogger(SimMetaDataDamBreak.SaveLocation)
 
-    @profview RunSimulation(
+    RunSimulation(
         FluidCSV           = "./input/dam_break_2d/DamBreak2d_Dp0.02_Fluid_OneLayer.csv",
         BoundCSV           = "./input/dam_break_2d/DamBreak2d_Dp0.02_Bound_ThreeLayers.csv",
         SimMetaData        = SimMetaDataDamBreak,
