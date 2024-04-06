@@ -44,10 +44,9 @@ function ComputeInteractions!(SimMetaData, SimConstants, Position, KernelThreade
             ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
         
             ρⱼᵢ   = ρⱼ - ρᵢ
-            MLcond = MotionLimiter[i] * MotionLimiter[j]
-            ddt_symmetric_term =  δᵩ * h * c₀ * 2 * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) #* MLcond
-            Dᵢ  = ddt_symmetric_term * (m₀/ρⱼ) * ( ρⱼᵢ - ρᵢⱼᴴ) * MLcond
-            Dⱼ  = ddt_symmetric_term * (m₀/ρᵢ) * (-ρⱼᵢ - ρⱼᵢᴴ) * MLcond
+            ddt_symmetric_term =  δᵩ * h * c₀ * 2 * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ)
+            Dᵢ  = ddt_symmetric_term * (m₀/ρⱼ) * ( ρⱼᵢ - ρᵢⱼᴴ) * MotionLimiter[i] 
+            Dⱼ  = ddt_symmetric_term * (m₀/ρᵢ) * (-ρⱼᵢ - ρⱼᵢᴴ) * MotionLimiter[j]
         else
             Dᵢ  = 0.0
             Dⱼ  = 0.0
@@ -154,6 +153,8 @@ end
     # else
         # IndexCounter = findfirst(isequal(0), ParticleRanges) - 2
     # end
+
+    @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
 
     @timeit SimMetaData.HourGlass "03 ResetArrays"                           ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration); ResetArrays!.(KernelThreaded, KernelGradientThreaded, dρdtIThreaded, AccelerationThreaded)
 
@@ -331,7 +332,7 @@ let
 
     @profview RunSimulation(
         FluidCSV           = "./input/dam_break_2d/DamBreak2d_Dp0.02_Fluid_OneLayer.csv",
-        BoundCSV           = "./input/dam_break_2d/DamBreak2d_Dp0.02_Bound_OneLayer.csv",
+        BoundCSV           = "./input/dam_break_2d/DamBreak2d_Dp0.02_Bound_ThreeLayers.csv",
         SimMetaData        = SimMetaDataDamBreak,
         SimConstants       = SimConstantsDamBreak,
         SimLogger          = SimLogger

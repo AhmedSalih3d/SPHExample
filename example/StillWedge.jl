@@ -44,10 +44,9 @@ function ComputeInteractions!(SimMetaData, SimConstants, Position, KernelThreade
             ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
         
             ρⱼᵢ   = ρⱼ - ρᵢ
-            MLcond = MotionLimiter[i] * MotionLimiter[j]
-            ddt_symmetric_term =  δᵩ * h * c₀ * 2 * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) #* MLcond
-            Dᵢ  = ddt_symmetric_term * (m₀/ρⱼ) * ( ρⱼᵢ - ρᵢⱼᴴ) * MLcond
-            Dⱼ  = ddt_symmetric_term * (m₀/ρᵢ) * (-ρⱼᵢ - ρⱼᵢᴴ) * MLcond
+            ddt_symmetric_term =  δᵩ * h * c₀ * 2 * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ)
+            Dᵢ  = ddt_symmetric_term * (m₀/ρⱼ) * ( ρⱼᵢ - ρᵢⱼᴴ) * MotionLimiter[i] 
+            Dⱼ  = ddt_symmetric_term * (m₀/ρᵢ) * (-ρⱼᵢ - ρⱼᵢᴴ) * MotionLimiter[i]
         else
             Dᵢ  = 0.0
             Dⱼ  = 0.0
@@ -169,7 +168,7 @@ end
         ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
     end
 
-    @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"  LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+    # @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"  LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
 
     @timeit SimMetaData.HourGlass "07 ResetArrays"                  ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration); ResetArrays!.(KernelThreaded, KernelGradientThreaded, dρdtIThreaded, AccelerationThreaded)
 
@@ -178,7 +177,7 @@ end
     @timeit SimMetaData.HourGlass "08A Reduction"                   reduce_sum!(dρdtI, dρdtIThreaded)
     @timeit SimMetaData.HourGlass "08B Reduction"                   reduce_sum!(Acceleration, AccelerationThreaded)
 
-    @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
+    # @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
 
     @timeit SimMetaData.HourGlass "10 Final Density"                DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
 
@@ -318,9 +317,9 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=4,
+        SimulationTime=1,
         OutputEach=0.01,
-        FlagDensityDiffusion=false,
+        FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
         FlagLog=true
     )
@@ -329,20 +328,9 @@ let
 
     SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
 
-    #Remove '@profview' if you do not want VS Code timers
-    # println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
-    #     FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
-    #     BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
-    #     SimMetaData        = SimMetaDataWedge,
-    #     SimConstants       = SimConstantsWedge,
-    #     SimLogger          = SimLogger,
-    # ))
-
     @profview RunSimulation(
         FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
         BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
-        # FluidCSV           = "./input/dam_break_2d/DamBreak2d_Dp0.02_Fluid.csv",
-        # BoundCSV           = "./input/dam_break_2d/DamBreak2d_Dp0.02_Bound.csv",
         SimMetaData        = SimMetaDataWedge,
         SimConstants       = SimConstantsWedge,
         SimLogger          = SimLogger
