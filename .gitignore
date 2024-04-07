@@ -9,3 +9,5 @@ second_approach/
 Manifest.toml
 # Ignore log files
 *.log
+# Ignore test files
+test/

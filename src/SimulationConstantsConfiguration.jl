@@ -35,7 +35,7 @@ constants = SimulationConstants(ρ₀=1017, dx=0.03, α=0.02)
 @with_kw struct SimulationConstants{T<:AbstractFloat}
     ρ₀::T  = 1000                 ; @assert ρ₀   > 0 "Density (ρ₀) must be positive"
     dx::T  = 0.02                 ; @assert dx   > 0 "Grid spacing (dx) must be positive"
-    h::T   = 1.2 * sqrt(2) * dx   ; @assert h    > 0 "Smoothing length (h) must be positive"
+    h::T   = 2 * dx               ; @assert h    > 0 "Smoothing length (h) must be positive"
     H::T   = 2h                   ; @assert H    > 0 "Kernel support domain (CutOff) (H) must be positive"
     H²::T  = H^2                  ; @assert H²   > 0 "CutOffSquared  (H^2) must be positive"
     h⁻¹::T = 1/h                  ; @assert h⁻¹  > 0 "Inverse smoothing length (h⁻¹) must be positive"

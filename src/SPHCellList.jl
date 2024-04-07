@@ -16,12 +16,17 @@ using ..AuxillaryFunctions
         return n
     end
 
-    @inline function ExtractCells!(Particles, CutOff)
+    @inline function ExtractCells!(Particles, ::Val{InverseCutOff}) where InverseCutOff
+        # Replace unsafe_trunc with trunc if this ever errors
+        function map_floor(x)
+            unsafe_trunc(Int, muladd(x,InverseCutOff,2))
+        end
+
         Cells  = @views Particles.Cells
         Points = @views Particles.Position
         @threads for i ∈ eachindex(Particles)
-            Cells[i]  =  CartesianIndex(@. Int(fld(Points[i], CutOff)) ...)
-            Cells[i] +=  2 * one(Cells[i])  # + CartesianIndex(1,1) + CartesianIndex(1,1) #+ ZeroOffset + HalfPad
+            t = map(map_floor, Tuple(Points[i]))
+            Cells[i] = CartesianIndex(t)
         end
         return nothing
     end

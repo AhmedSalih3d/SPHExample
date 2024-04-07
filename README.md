@@ -1,11 +1,10 @@
 # SPH Example
 
-This package serves as an example of how to write a relatively simple SPH (Smooehd Particle Hydrodynamics) simulation in Julia. A few examples are provided out of the box; still wedge and dam break. Custom particle distributions can be loaded in as well. 
+This package serves as an example of how to write a relatively simple SPH (Smoothed Particle Hydrodynamics) simulation in Julia. A few examples are provided out of the box; still wedge and dam break. Custom particle distributions can be loaded in as well. 
 
 Please consider 🌟 the package if it has been useful for you. I would love to know if you have used it to learn SPH, for your teaching and more, it really motivates me!
 
 If you are using this package for an academic project or a scientific paper, please do cite the project - and feel free to reach out too!
-
 
 Below are some examples of what the code can run: 
 
@@ -36,7 +35,7 @@ Key-elements of the code are:
 - Wendland Quintic Kernel (as in DualSPHysics)
   - One of the simpler kernels which does not require tensile correction to be applied.
 
-*Please* remember that the main aim of this code is not to be performant. It is made to teach and showcase one way to code a relatively simple SPH code. *Unofficially*  I have benchmarked this code up against DualSPHysics similar cases and found that for 2D simulations this code is on par with DualSPHysics. 
+*Please* remember that the main aim of this code is not to be performant. It is made to teach and showcase one way to code a relatively simple SPH code. *Unofficially*  I have benchmarked this code up against DualSPHysics similar cases and found that for 2D simulations this code is on par with DualSPHysics in regards to execution speed on CPU.
 
 ## Getting Started
 
@@ -47,8 +46,8 @@ The "src" package contains all the code files used in this process. An overview 
 
 * PreProcess
   * Function for loading in the files in "input". 
-* PostProcess
-  * Function to output .vtp files. "ProduceVTP.jl" is a hand-rolled custom solution for those interested in that.
+* ProduceHDFVTK
+  * Function to output the simulation data in the efficient `HDF5` format, directly readable in Paraview 5.12. Files can be opened after a simulation has concluded, since they must be closed at the end of a simulation for performance reasons. 
 * AuxillaryFunctions
   * To store some small, repeatedly used smaller functions
 * TimeStepping
@@ -57,6 +56,8 @@ The "src" package contains all the code files used in this process. An overview 
   * The interface for stating the most relevant simulation constants is found here
 * SimulationMetaDataConfiguration
   * The interface for the meta data associated with a simulation, such as total time, save location etc.
+* SimulationLoggerConfiguration
+  * Functions for logging data of execution
 * SimulationEquations
   * SPH physics functions
 * SPHCellList
@@ -82,7 +83,8 @@ Written by Ahmed Salih [@AhmedSalih3D](https://github.com/AhmedSalih3d)
 
 ## Version History
 
-* (main) Version 0.4 | Complete rewrite, letting go of `LoopVectorization.jl` and `CellListMap.jl` to only code exactly what is needed and improve performance. 
+* (main) Version 0.5 | Introduced logging, `hdfvtk` output format and other minor improvements.
+* Version 0.4 | Complete rewrite, letting go of `LoopVectorization.jl` and `CellListMap.jl` to only code exactly what is needed and improve performance. (Not provided anymore)
 * Version 0.3 | A highly optimized version for CPU, with extremely few allocations after the initial array allocation. Only the neighbour search and saving of data allocates memory now. Recommend to use this. (Not provided anymore)
 * Version 0.2        | A cleaned up version of the original release version data allocates memory now. (Not provided anymore)
 * Version 0.1        | Initial release version

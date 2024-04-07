@@ -45,6 +45,8 @@ metadata = SimulationMetaData(
     HourGlass::TimerOutput                  = TimerOutput()
     Iteration::Int                          = 0
     OutputEach::FloatType                   = 0.02 #seconds
+    OutputIterationCounter::Int             = 0
+    StepsTakenForLastOutput::Int            = 0
     CurrentTimeStep::FloatType              = 0
     TotalTime::FloatType                    = 0
     SimulationTime::FloatType               = 0
@@ -54,6 +56,7 @@ metadata = SimulationMetaData(
     FlagViscosityTreatment::Symbol          = :ArtificialViscosity; @assert in(FlagViscosityTreatment, Set((:None, :ArtificialViscosity, :Laminar, :LaminarSPS))) == true "ViscosityTreatment must be either :None, :ArtificialViscosity, :Laminar, :LaminarSPS"
     FlagDensityDiffusion::Bool              = false
     FlagOutputKernelValues::Bool            = false     
+    FlagLog::Bool                           = false     
 end
 
 end
