@@ -24,7 +24,7 @@ function ComputeInteractions!(SimMetaData, SimConstants, Position, KernelThreade
         dᵢⱼ  = sqrt(abs(xᵢⱼ²))
 
         q         = min(dᵢⱼ * h⁻¹, 2.0)
-        invd²η²   = inv(dᵢⱼ*dᵢⱼ+η²)
+        invd²η²   =  1.0 / (dᵢⱼ*dᵢⱼ+η²)
         ∇ᵢWᵢⱼ     = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
         ρᵢ        = Density[i]
         ρⱼ        = Density[j]
@@ -45,8 +45,8 @@ function ComputeInteractions!(SimMetaData, SimConstants, Position, KernelThreade
 
             ρⱼᵢ   = ρⱼ - ρᵢ
 
-            Ψᵢⱼ   = 2( ρⱼᵢ  - ρᵢⱼᴴ) * (-xᵢⱼ)/(dᵢⱼ^2 + η²)
-            Ψⱼᵢ   = 2(-ρⱼᵢ  - ρⱼᵢᴴ) * ( xᵢⱼ)/(dᵢⱼ^2 + η²) 
+            Ψᵢⱼ   = 2( ρⱼᵢ  - ρᵢⱼᴴ) * (-xᵢⱼ) * invd²η²
+            Ψⱼᵢ   = 2(-ρⱼᵢ  - ρⱼᵢᴴ) * ( xᵢⱼ) * invd²η²
 
             MLcond = MotionLimiter[i] * MotionLimiter[j]
             Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
@@ -152,11 +152,7 @@ end
     @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
     dt₂ = dt * 0.5
 
-    # if mod(SimMetaData.Iteration,10) == 0
-        @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, InverseCutOff, SortingScratchSpace,  ParticleRanges, UniqueCells)
-    # else
-        # IndexCounter = findfirst(isequal(0), ParticleRanges) - 2
-    # end
+    @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, InverseCutOff, SortingScratchSpace,  ParticleRanges, UniqueCells)
 
     @timeit SimMetaData.HourGlass "03 ResetArrays"                           ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration); ResetArrays!.(KernelThreaded, KernelGradientThreaded, dρdtIThreaded, AccelerationThreaded)
 
@@ -318,9 +314,9 @@ let
     FloatType  = Float64
 
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
-        SimulationName="Test", 
+        SimulationName="StillWedge", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=0.01,
+        SimulationTime=1,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
