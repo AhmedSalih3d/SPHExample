@@ -83,7 +83,7 @@ Written by Ahmed Salih [@AhmedSalih3D](https://github.com/AhmedSalih3d)
 
 ## Version History
 
-* (main) Version 0.5 | Introduced logging, `hdfvtk` output format and minor improvements.
+* (main) Version 0.5 | Introduced logging, `hdfvtk` output format and other minor improvements.
 * Version 0.4 | Complete rewrite, letting go of `LoopVectorization.jl` and `CellListMap.jl` to only code exactly what is needed and improve performance. (Not provided anymore)
 * Version 0.3 | A highly optimized version for CPU, with extremely few allocations after the initial array allocation. Only the neighbour search and saving of data allocates memory now. Recommend to use this. (Not provided anymore)
 * Version 0.2        | A cleaned up version of the original release version data allocates memory now. (Not provided anymore)
