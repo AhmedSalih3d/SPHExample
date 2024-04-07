@@ -7,6 +7,9 @@ import FastPow: @fastpow
 import ProgressMeter: next!, finish!
 using Format
 using TimerOutputs
+using Logging, LoggingExtras
+using HDF5
+using Base.Threads
 
 # Really important to overload default function, gives 10x speed up?
 # Overload the default function to do what you please
@@ -39,12 +42,15 @@ function ComputeInteractions!(SimMetaData, SimConstants, Position, KernelThreade
             ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
             Pⱼᵢᴴ  = -Pᵢⱼᴴ
             ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
-        
+
             ρⱼᵢ   = ρⱼ - ρᵢ
+
+            Ψᵢⱼ   = 2( ρⱼᵢ  - ρᵢⱼᴴ) * (-xᵢⱼ)/(dᵢⱼ^2 + η²)
+            Ψⱼᵢ   = 2(-ρⱼᵢ  - ρⱼᵢᴴ) * ( xᵢⱼ)/(dᵢⱼ^2 + η²) 
+
             MLcond = MotionLimiter[i] * MotionLimiter[j]
-            ddt_symmetric_term =  δᵩ * h * c₀ * 2 * invd²η² * dot(-xᵢⱼ,  ∇ᵢWᵢⱼ) * MLcond
-            Dᵢ  = ddt_symmetric_term * (m₀/ρⱼ) * ( ρⱼᵢ - ρᵢⱼᴴ)
-            Dⱼ  = ddt_symmetric_term * (m₀/ρᵢ) * (-ρⱼᵢ - ρⱼᵢᴴ)
+            Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
+            Dⱼ    =  δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
         else
             Dᵢ  = 0.0
             Dⱼ  = 0.0
@@ -134,7 +140,7 @@ end
         target_array .+= array
     end
 end
-@inbounds function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelThreaded, KernelGradient, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺)
+@inbounds function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelThreaded, KernelGradient, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, InverseCutOff)
     Position      = SimParticles.Position
     Density       = SimParticles.Density
     Pressure      = SimParticles.Pressure
@@ -146,7 +152,11 @@ end
     @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
     dt₂ = dt * 0.5
 
-    @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, SimConstants.H, SortingScratchSpace,  ParticleRanges, UniqueCells)
+    # if mod(SimMetaData.Iteration,10) == 0
+        @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, InverseCutOff, SortingScratchSpace,  ParticleRanges, UniqueCells)
+    # else
+        # IndexCounter = findfirst(isequal(0), ParticleRanges) - 2
+    # end
 
     @timeit SimMetaData.HourGlass "03 ResetArrays"                           ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration); ResetArrays!.(KernelThreaded, KernelGradientThreaded, dρdtIThreaded, AccelerationThreaded)
 
@@ -157,8 +167,8 @@ end
 
     @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" @inbounds for i in eachindex(Position)
         Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+        Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
         Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
-        Positionₙ⁺[i]     =  Position[i]   + Velocityₙ⁺[i]   * dt₂  * MotionLimiter[i]
         ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
     end
 
@@ -171,9 +181,9 @@ end
     @timeit SimMetaData.HourGlass "08A Reduction"                   reduce_sum!(dρdtI, dρdtIThreaded)
     @timeit SimMetaData.HourGlass "08B Reduction"                   reduce_sum!(Acceleration, AccelerationThreaded)
 
-    @timeit SimMetaData.HourGlass "09 Final Density"                DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
+    @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
 
-    @timeit SimMetaData.HourGlass "10 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
+    @timeit SimMetaData.HourGlass "10 Final Density"                DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
 
 
     @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"  @inbounds for i in eachindex(Position)
@@ -190,17 +200,21 @@ end
         reduce_sum!(Kernel, KernelThreaded)
         reduce_sum!(KernelGradient, KernelGradientThreaded)
     end
-
+    
+    return nothing
 end
 
 ###===
-
 function RunSimulation(;FluidCSV::String,
     BoundCSV::String,
     SimMetaData::SimulationMetaData{Dimensions, FloatType},
-    SimConstants::SimulationConstants
+    SimConstants::SimulationConstants,
+    SimLogger::SimulationLogger
     ) where {Dimensions,FloatType}
 
+    if SimMetaData.FlagLog
+        InitializeLogger(SimLogger,SimConstants,SimMetaData)
+    end
 
     # If save directory is not already made, make it
     if !isdir(SimMetaData.SaveLocation)
@@ -209,56 +223,90 @@ function RunSimulation(;FluidCSV::String,
     
     # Delete previous result files
     foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
+    # https://discourse.julialang.org/t/find-what-has-locked-held-a-file/23278
+    GC.gc()
+    try
+        foreach(rm, filter(endswith(".vtkhdf"), readdir(SimMetaData.SaveLocation,join=true)))
+    catch
+    end
 
     # Unpack the relevant simulation meta data
-    @unpack HourGlass, SaveLocation, SimulationName, SilentOutput, ThreadsCPU = SimMetaData;
+    @unpack HourGlass, SimulationName, SilentOutput, ThreadsCPU = SimMetaData;
 
     # Load in particles
     SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Kernel, KernelGradient = AllocateDataStructures(Dimensions,FloatType, FluidCSV,BoundCSV)
-    Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
+    
+    
+    NumberOfPoints = length(SimParticles)::Int #Have to type declare, else error?
+    @inline Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
 
-    KernelThreaded         = [copy(Kernel)         for _ in 1:Base.Threads.nthreads()]
-    KernelGradientThreaded = [copy(KernelGradient) for _ in 1:Base.Threads.nthreads()]
-    dρdtIThreaded          = [copy(dρdtI)          for _ in 1:Base.Threads.nthreads()]
-    AccelerationThreaded   = [copy(KernelGradient) for _ in 1:Base.Threads.nthreads()]
+    @inline begin
+        n_copy = Base.Threads.nthreads()
+        KernelThreaded         = [copy(Kernel)         for _ in 1:n_copy]
+        KernelGradientThreaded = [copy(KernelGradient) for _ in 1:n_copy]
+        dρdtIThreaded          = [copy(dρdtI)          for _ in 1:n_copy]
+        AccelerationThreaded   = [copy(KernelGradient) for _ in 1:n_copy]
+    end
 
     # Produce sorting related variables
-    ParticleRanges         = zeros(Int, length(SimParticles) + 1)
-    UniqueCells            = zeros(CartesianIndex{Dimensions}, length(SimParticles))
+    ParticleRanges         = zeros(Int, NumberOfPoints + 1)
+    UniqueCells            = zeros(CartesianIndex{Dimensions}, NumberOfPoints)
     Stencil                = ConstructStencil(Val(Dimensions))
-    _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), length(SimParticles))
+    _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
 
     # Produce data saving functions
-    SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(0,6,"0") * ".vtp"
-    SaveFile = (SaveLocation_) -> ExportVTP(SaveLocation_, SimParticles.Position, ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
-    SaveFile(SaveLocation_)
+    SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName
+    SaveLocation  = (Iteration) -> SaveLocation_ * "_" * lpad(Iteration,6,"0") * ".vtkhdf"
 
+    fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
+
+    SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),SimParticles.Position,["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, Int.(SimParticles.BoundaryBool), SimParticles.ID)
+    SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
+    @inline SaveFile(SimMetaData.OutputIterationCounter)
+
+    InverseCutOff = Val(1/(SimConstants.H))
 
     # Normal run and save data
-    generate_showvalues(Iteration, TotalTime) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime))]
-    OutputCounter = 0.0
-    OutputIterationCounter = 0
+    generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
+    
+    # This is for some reason to trick the compiler to avoid dispatch error on SimulationLoop due to SimParticles
+    # @inline on SimulationLoop directly slows down code
+    f = () -> SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelThreaded, KernelGradient, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, InverseCutOff)
+
     @inbounds while true
 
-        SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelThreaded, KernelGradient, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺)
+        @inline f()
 
-        OutputCounter += SimMetaData.CurrentTimeStep
-        if OutputCounter >= SimMetaData.OutputEach
-            OutputCounter = 0.0
-            OutputIterationCounter += 1
+        if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
+            @timeit HourGlass "12A Output Data" SaveFile(SimMetaData.OutputIterationCounter + 1)
 
-            SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName * "_" * lpad(OutputIterationCounter,6,"0") * ".vtp"
-            @timeit HourGlass "12 Output Data"  SaveFile(SaveLocation_)
+            if SimMetaData.FlagLog
+                LogStep(SimLogger, SimMetaData, HourGlass)
+                SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
+            end
+
+            SimMetaData.OutputIterationCounter += 1
         end
 
         if !SilentOutput
-            @timeit HourGlass "13 Next TimeStep" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime))
+            TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime)
+            @timeit HourGlass "13 Next TimeStep" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime, TimeLeftInSeconds))
         end
 
         if SimMetaData.TotalTime > SimMetaData.SimulationTime
+            
+            if SimMetaData.FlagLog
+                LogFinal(SimLogger, HourGlass)
+                close(SimLogger.LoggerIo)
+            end
+
             finish!(SimMetaData.ProgressSpecification)
             show(HourGlass,sortby=:name)
             show(HourGlass)
+
+            # This should not be counted in actual run 
+            @timeit HourGlass "12B Close hdfvtk output files"  close.(fid_vector)
+
             break
         end
     end
@@ -268,19 +316,18 @@ let
     Dimensions = 3
     FloatType  = Float64
 
-    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
-        SimulationName="Test", 
+    SimMetaDataDamBreak3D  = SimulationMetaData{Dimensions,FloatType}(
+        SimulationName="DamBreak3D", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
         SimulationTime=1.6,
         OutputEach=0.01,
         FlagDensityDiffusion=false,
         FlagOutputKernelValues=false,
+        FlagLog=true
     )
-
-    # SimConstantsWedge = SimulationConstants{FloatType}(dx = 0.0085, c₀ = 33.6754507672132, CFL = 0.2)
     
     dx = 0.02
-    SimConstantsWedge = SimulationConstants{FloatType}(
+    SimConstantsDamBreak3D = SimulationConstants{FloatType}(
         dx  = dx,
         c₀  = 33.14,
         h   = 1 * sqrt(3 * dx^2),
@@ -289,15 +336,18 @@ let
         m₀  = 1000 * dx^3,
         CFL = 0.2)
 
+    SimLogger = SimulationLogger(SimMetaDataDamBreak3D.SaveLocation)
+
     @warn("3D is included, but has not been extensively tested.
     With only one particle layer for boundary, it seems that fluid particles
     can wiggle through when the initial water column is dissolved")
 
     # Remove '@profview' if you do not want VS Code timers
-    @profview RunSimulation(
+    RunSimulation(
         FluidCSV           = "./input/dam_break_3d/DamBreak3d_Dp0.02_Fluid.csv",
         BoundCSV           = "./input/dam_break_3d/DamBreak3d_Dp0.02_Bound.csv",
-        SimMetaData        = SimMetaDataWedge,
-        SimConstants       = SimConstantsWedge
+        SimMetaData        = SimMetaDataDamBreak3D,
+        SimConstants       = SimConstantsDamBreak3D,
+        SimLogger          = SimLogger
     )
 end
