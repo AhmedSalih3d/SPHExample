@@ -1,2 +1,0 @@
-MainInfo message to the FormatLogger!
-MainWarning message to the FormatLogger!
