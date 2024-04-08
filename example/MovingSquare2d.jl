@@ -173,8 +173,8 @@ end
 
     @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(Position)
         if ParticleType[i] == 1
-            Velocity[i]   = 0.1 * 2.8 * SVector{2,Float64}(1,0)
-            Position[i]  += Velocity[i] * dt₂/100
+            Velocity[i]   = 2.8 * SVector{2,Float64}(1,0)
+            Position[i]  += Velocity[i] * dt
         end
     end
 
@@ -324,8 +324,8 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="MovingSquare_2D", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=10,
-        OutputEach=0.1,
+        SimulationTime=2.5,
+        OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
         FlagLog=true

@@ -62,11 +62,12 @@ function AllocateDataStructures(Dimensions,FloatType, FluidCSV,BoundCSV)
 
     BoundaryBool  = .!Bool.(MotionLimiter)
 
-    for i ∈ eachindex(MotionLimiter)
-        if type_particles[i] == 1
-            MotionLimiter[i] = 1
-        end
-    end
+    # If this is true, then values are updated in time stepping + forced motion
+    # for i ∈ eachindex(MotionLimiter)
+    #     if type_particles[i] == 1
+    #         MotionLimiter[i] = 1
+    #     end
+    # end
 
     Acceleration    = zeros(PositionType, NumberOfPoints)
     Velocity        = zeros(PositionType, NumberOfPoints)
@@ -83,7 +84,7 @@ function AllocateDataStructures(Dimensions,FloatType, FluidCSV,BoundCSV)
     
     Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
 
-    SimParticles = StructArray((Cells = Cells, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = collect(1:NumberOfPoints) , Type = type_particles))
+    SimParticles = StructArray((Cells = Cells, InitialPosition = Position, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = collect(1:NumberOfPoints) , Type = type_particles))
 
     return SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Kernel, KernelGradient
 end
