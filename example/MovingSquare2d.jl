@@ -155,6 +155,13 @@ end
 
     @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, InverseCutOff, SortingScratchSpace,  ParticleRanges, UniqueCells)
 
+    @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(Position)
+        if ParticleType[i] == 1
+            Velocity[i]     = 2.8 * SVector{2,Float64}(1,0)
+            Position[i]    += Velocity[i] * dt₂
+        end
+    end
+
     @timeit SimMetaData.HourGlass "03 ResetArrays"                           ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration); ResetArrays!.(KernelThreaded, KernelGradientThreaded, dρdtIThreaded, AccelerationThreaded)
 
     Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
@@ -171,15 +178,15 @@ end
 
     @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"  LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
 
-    @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(Position)
-        if ParticleType[i] == 1
-            Velocity[i]   = 2.8 * SVector{2,Float64}(1,0)
-            Position[i]  += Velocity[i] * dt
-        end
-    end
-
     @timeit SimMetaData.HourGlass "07 ResetArrays"                  ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration); ResetArrays!.(KernelThreaded, KernelGradientThreaded, dρdtIThreaded, AccelerationThreaded)
 
+    @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(Position)
+        if ParticleType[i] == 1
+            Velocity[i]     = 2.8 * SVector{2,Float64}(1,0)
+            Position[i]    += Velocity[i] * dt₂
+        end
+    end
+    
     Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
     @timeit SimMetaData.HourGlass "08 Second NeighborLoop"          NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Positionₙ⁺, KernelThreaded, KernelGradientThreaded, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtIThreaded, AccelerationThreaded, MotionLimiter, UniqueCells, IndexCounter)
     @timeit SimMetaData.HourGlass "08A Reduction"                   reduce_sum!(dρdtI, dρdtIThreaded)
