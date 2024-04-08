@@ -57,7 +57,7 @@ using ..AuxillaryFunctions
 
 # Neither Polyester.@batch per core or thread is faster
 ###=== Function to process each cell and its neighbors
-    function NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  MotionLimiter, UniqueCells, IndexCounter)
+    function NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, IndexCounter)
         UniqueCells = view(UniqueCells, 1:IndexCounter)
         @threads for (ichunk, inds) in enumerate(chunks(UniqueCells; n=nthreads()))
             for iter in inds
@@ -67,7 +67,7 @@ using ..AuxillaryFunctions
                 EndIndex   = ParticleRanges[iter+1] - 1
 
                 @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-                    @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ichunk)
+                    @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
                 end
 
                 @inbounds for S ∈ Stencil
@@ -83,7 +83,7 @@ using ..AuxillaryFunctions
                         EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
 
                         @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                            @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j, MotionLimiter, ichunk)
+                            @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
                         end
                     end
                 end
