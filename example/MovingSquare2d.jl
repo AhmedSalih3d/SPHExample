@@ -171,6 +171,13 @@ end
 
     @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"  LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
 
+    @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(Position)
+        if ParticleType[i] == 1
+            Velocity[i]   = 0.1 * 2.8 * SVector{2,Float64}(1,0)
+            Position[i]  += Velocity[i] * dt₂/100
+        end
+    end
+
     @timeit SimMetaData.HourGlass "07 ResetArrays"                  ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration); ResetArrays!.(KernelThreaded, KernelGradientThreaded, dρdtIThreaded, AccelerationThreaded)
 
     Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
@@ -187,13 +194,6 @@ end
         Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
         Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
         Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
-    end
-
-    @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(Position)
-        if ParticleType[i] == 1
-            Velocity[i]   = 2.8 * SVector{2,Float64}(1,0)
-            Position[i]  += Velocity[i] * dt
-        end
     end
 
     SimMetaData.Iteration      += 1
@@ -322,10 +322,10 @@ let
     FloatType  = Float64
 
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
-        SimulationName="MovingSquare2D", 
+        SimulationName="MovingSquare_2D", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=2.5,
-        OutputEach=0.01,
+        SimulationTime=10,
+        OutputEach=0.1,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
         FlagLog=true
