@@ -133,13 +133,13 @@ function ComputeInteractions!(SimMetaData, SimConstants, Position, KernelThreade
         if SimMetaData.FlagShifting
             Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
     
-            Cᵢ  = (m₀/ρᵢ) * Wᵢⱼ
-            Cⱼ  = (m₀/ρⱼ) * Wᵢⱼ
+            # Cᵢ  = (m₀/ρᵢ) * Wᵢⱼ
+            # Cⱼ  = (m₀/ρⱼ) * Wᵢⱼ
     
             MLcond = MotionLimiter[i] * MotionLimiter[j]
     
-            ∇CᵢThreaded[ichunk][i]   += (Cⱼ - Cᵢ) * (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
-            ∇CᵢThreaded[ichunk][j]   += (Cᵢ - Cⱼ) * (m₀/ρⱼ) * -∇ᵢWᵢⱼ
+            ∇CᵢThreaded[ichunk][i]   += (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
+            ∇CᵢThreaded[ichunk][j]   += (m₀/ρⱼ) * -∇ᵢWᵢⱼ
     
             # Switch signs compared to DSPH, else free surface detection does not make sense
             # Agrees, https://arxiv.org/abs/2110.10076, it should have been r_ji
@@ -227,15 +227,20 @@ end
     # end
 
     A     = 2# Value between 1 to 6 advised
-    A_FST = 1.5; #2d, 3d val different
+    A_FST = 0; # zero for internal flows
     A_FSM = 2.0; #2d, 3d val different
     @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"  @inbounds for i in eachindex(Position)
         Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
         Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
 
         A_FSC                  = (∇◌rᵢ[i] - A_FST)/(A_FSM - A_FST)
-        ShiftingCondition      = (∇◌rᵢ[i] - A_FST) < 0
-        δxᵢ                    = - (ShiftingCondition * A_FSC * A + (ShiftingCondition == 0) * A) * SimConstants.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
+        # ShiftingCondition      = (∇◌rᵢ[i] - A_FST) < 0
+        # δxᵢ                    = - (ShiftingCondition * A_FSC * A + (ShiftingCondition == 0) * A) * SimConstants.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
+        if A_FSC < 0
+            δxᵢ = zero(eltype(Position))
+        else
+            δxᵢ = -A_FSC * A * SimConstants.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
+        end
 
         Position[i]           += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
     end
@@ -375,7 +380,7 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="MovingSquare_2D", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=0.1,
+        SimulationTime=2.5,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
