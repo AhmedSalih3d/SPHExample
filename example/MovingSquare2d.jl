@@ -268,11 +268,6 @@ function RunSimulation(;FluidCSV::String,
     if SimMetaData.FlagLog
         InitializeLogger(SimLogger,SimConstants,SimMetaData)
     end
-
-    # If save directory is not already made, make it
-    if !isdir(SimMetaData.SaveLocation)
-        mkdir(SimMetaData.SaveLocation)
-    end
     
     # Delete previous result files
     foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
@@ -381,18 +376,24 @@ let
     FloatType  = Float64
 
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
-        SimulationName="MovingSquare_2D", 
-        SaveLocation="E:/SecondApproach/TESTING_CPU",
+        SimulationName="MovingSquare2D", 
+        SaveLocation="E:/SecondApproach/MovingSquare2D",
         SimulationTime=2.5,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
         FlagLog=true,
-        FlagShifting=true
+        FlagShifting=true,
+        FlagViscosityTreatment=:LaminarSPS
     )
 
+    # If save directory is not already made, make it
+    if !isdir(SimMetaDataWedge.SaveLocation)
+        mkdir(SimMetaDataWedge.SaveLocation)
+    end
+
     # ViscoBoundFactor should be 1, but need to understand how to implement it
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.04,
     c₀=28, 
     δᵩ = 0.1,
     g  = 0,
@@ -404,8 +405,8 @@ let
     SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
 
     RunSimulation(
-        FluidCSV           = "./input/moving_square_2d/MovingSquare_Dp0.02_Fluid.csv",
-        BoundCSV           = "./input/moving_square_2d/MovingSquare_Dp0.02_Bound.csv",
+        FluidCSV           = "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsWedge.dx)_Fluid.csv",
+        BoundCSV           = "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsWedge.dx)_Bound.csv",
         SimMetaData        = SimMetaDataWedge,
         SimConstants       = SimConstantsWedge,
         SimLogger          = SimLogger
