@@ -361,12 +361,15 @@ function RunSimulation(;FluidCSV::String,
                 close(SimLogger.LoggerIo)
             end
 
+            
+            # This should not be counted in actual run 
+            @timeit HourGlass "12B Close hdfvtk output files"  @threads for f in fid_vector
+                close(f)
+            end
+
             finish!(SimMetaData.ProgressSpecification)
             show(HourGlass,sortby=:name)
             show(HourGlass)
-
-            # This should not be counted in actual run 
-            @timeit HourGlass "12B Close hdfvtk output files"  close.(fid_vector)
 
             break
         end
@@ -389,7 +392,7 @@ let
     )
 
     # ViscoBoundFactor should be 1, but need to understand how to implement it
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.04,
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,
     c₀=28, 
     δᵩ = 0.1,
     g  = 0,
@@ -401,8 +404,8 @@ let
     SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
 
     RunSimulation(
-        FluidCSV           = "./input/moving_square_2d/MovingSquare_Dp0.04_Fluid.csv",
-        BoundCSV           = "./input/moving_square_2d/MovingSquare_Dp0.04_Bound.csv",
+        FluidCSV           = "./input/moving_square_2d/MovingSquare_Dp0.02_Fluid.csv",
+        BoundCSV           = "./input/moving_square_2d/MovingSquare_Dp0.02_Bound.csv",
         SimMetaData        = SimMetaDataWedge,
         SimConstants       = SimConstantsWedge,
         SimLogger          = SimLogger
