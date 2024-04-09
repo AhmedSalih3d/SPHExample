@@ -17,9 +17,7 @@ function LoadParticlesFromCSV_StaticArrays(dims, float_type, fluid_csv, boundary
     P1B = DF_BOUND[!, "Points:0"]
     P2B = DF_BOUND[!, "Points:1"]
     P3B = DF_BOUND[!, "Points:2"]
-    TYF = DF_FLUID[!, "Type"]
-    TYB = DF_BOUND[!, "Type"]
-    TFB = [TYB;TYF]
+
 
     points = Vector{SVector{dims,float_type}}()
     density_fluid  = Vector{float_type}()
@@ -34,14 +32,21 @@ function LoadParticlesFromCSV_StaticArrays(dims, float_type, fluid_csv, boundary
         end
     end
 
-    for i ∈ eachindex(TFB)
-        type = TFB[i]
-        # if type == 0
-        #     push!(type_particles, :Moving)
-        # else
-        #     push!(type_particles, :None)
-        # end
-        push!(type_particles, type)
+    try
+        TYF = DF_FLUID[!, "Type"]
+        TYB = DF_BOUND[!, "Type"]
+        TFB = [TYB;TYF]
+        for i ∈ eachindex(TFB)
+            type = TFB[i]
+            # if type == 0
+            #     push!(type_particles, :Moving)
+            # else
+            #     push!(type_particles, :None)
+            # end
+            push!(type_particles, type)
+        end
+    catch
+        type_particles = nothing
     end
 
     return points, density_fluid, density_bound, type_particles
@@ -84,7 +89,11 @@ function AllocateDataStructures(Dimensions,FloatType, FluidCSV,BoundCSV)
     
     Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
 
-    SimParticles = StructArray((Cells = Cells, InitialPosition = Position, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = collect(1:NumberOfPoints) , Type = type_particles))
+    if type_particles == nothing
+        SimParticles = StructArray((Cells = Cells, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = collect(1:NumberOfPoints)))
+    else
+        SimParticles = StructArray((Cells = Cells, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = collect(1:NumberOfPoints) , Type = type_particles))
+    end
 
     return SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Kernel, KernelGradient
 end
