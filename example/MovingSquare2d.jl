@@ -10,6 +10,7 @@ using TimerOutputs
 using Logging, LoggingExtras
 using HDF5
 using Base.Threads
+using Plots
 
 # Really important to overload default function, gives 10x speed up?
 # Overload the default function to do what you pleas
@@ -325,6 +326,8 @@ function RunSimulation(;FluidCSV::String,
     SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
     @inline SaveFile(SimMetaData.OutputIterationCounter)
     
+    ForceX      = zeros(NumberOfPoints)
+    OutputTimes = zeros(NumberOfPoints)
 
     InverseCutOff = Val(1/(SimConstants.H))
 
@@ -335,11 +338,26 @@ function RunSimulation(;FluidCSV::String,
     # @inline on SimulationLoop directly slows down code
     f = () -> SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelThreaded, KernelGradient, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, InverseCutOff)
 
+    force_file = open("MovingSquare_Dp0.02_ForceX.txt", "w")
     @inbounds while true
 
         @inline f()
 
         if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
+            
+        # Post-process force
+        ForceX_ = 0.0
+        @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(SimParticles.Position)
+            if SimParticles.Type[i] == 1
+                ForceX_ += SimConstants.m₀ * SimParticles.Acceleration[i][1]
+            end
+        end
+        OutputTimes[SimMetaData.OutputIterationCounter] = SimMetaData.TotalTime
+        ForceX[SimMetaData.OutputIterationCounter]      = ForceX_
+
+        write(force_file, string(SimMetaData.TotalTime) * " ; " * string(ForceX_) * "\n")
+    
+
             @timeit HourGlass "12A Output Data" SaveFile(SimMetaData.OutputIterationCounter + 1)
 
             if SimMetaData.FlagLog
@@ -372,6 +390,8 @@ function RunSimulation(;FluidCSV::String,
             show(HourGlass,sortby=:name)
             show(HourGlass)
 
+            close(force_file)
+
             break
         end
     end
@@ -399,12 +419,12 @@ let
     end
 
     # ViscoBoundFactor should be 1, but need to understand how to implement it
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.04,
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,
     c₀=28, 
     δᵩ = 0.1,
     g  = 0,
     Cb = 112000,
-    α  = 0.00001,
+    α  = 1e-6,
     k  = sqrt(2),
     CFL=0.2)
 
