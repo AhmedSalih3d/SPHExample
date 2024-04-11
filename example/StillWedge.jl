@@ -308,7 +308,7 @@ function RunSimulation(;FluidCSV::String,
             show(HourGlass)
 
             # This should not be counted in actual run 
-            # @timeit HourGlass "12B Close hdfvtk output files"  close.(fid_vector)
+            @timeit HourGlass "12B Close hdfvtk output files"  close.(fid_vector)
 
             break
         end
