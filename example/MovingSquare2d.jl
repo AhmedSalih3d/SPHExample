@@ -259,7 +259,8 @@ end
 
 ###===
 function RunSimulation(;FluidCSV::String,
-    BoundCSV::String,
+    FixedCSV::String,
+    MovingCSV::Union{String,Nothing},
     SimMetaData::SimulationMetaData{Dimensions, FloatType},
     SimConstants::SimulationConstants,
     SimLogger::SimulationLogger
@@ -282,7 +283,7 @@ function RunSimulation(;FluidCSV::String,
     @unpack HourGlass, SimulationName, SilentOutput, ThreadsCPU = SimMetaData;
 
     # Load in particles
-    SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Kernel, KernelGradient = AllocateDataStructures(Dimensions,FloatType, FluidCSV,BoundCSV)
+    SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Kernel, KernelGradient = AllocateDataStructures(Dimensions,FloatType, FluidCSV,MovingCSV)
     
     
     
@@ -406,7 +407,8 @@ let
 
     RunSimulation(
         FluidCSV           = "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsWedge.dx)_Fluid.csv",
-        BoundCSV           = "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsWedge.dx)_Bound.csv",
+        FixedCSV           = "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsWedge.dx)_Bound.csv",
+        MovingCSV          = "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsWedge.dx)_Bound.csv",
         SimMetaData        = SimMetaDataWedge,
         SimConstants       = SimConstantsWedge,
         SimLogger          = SimLogger

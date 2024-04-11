@@ -29,21 +29,27 @@ function LoadSpecificCSV(dims, float_type, particle_type, specific_csv)
     return points, density, types
 end
 
-function LoadParticlesFromCSV_StaticArrays(dims, float_type, fluid_csv, boundary_csv)
+function LoadParticlesFromCSV_StaticArrays(dims, float_type, fluid_csv, fixed_csv, moving_csv)
 
     FluidParticlesPoints,          FluidParticlesDensity         , FluidParticlesTypes          = LoadSpecificCSV(dims, float_type, 4, fluid_csv)
-    FixedBoundaryParticlesPoints,  FixedBoundaryParticlesDensity , FixedBoundaryParticlesTypes  = LoadSpecificCSV(dims, float_type, 0, boundary_csv)
-    MovingBoundaryParticlesPoints, MovingBoundaryParticlesDensity, MovingBoundaryParticlesTypes = LoadSpecificCSV(dims, float_type, 1, boundary_csv)
+    FixedBoundaryParticlesPoints,  FixedBoundaryParticlesDensity , FixedBoundaryParticlesTypes  = LoadSpecificCSV(dims, float_type, 0, fixed_csv)
 
     points  = [FluidParticlesPoints;  FixedBoundaryParticlesPoints]
     density = [FluidParticlesDensity; FixedBoundaryParticlesDensity]
     types   = [FluidParticlesTypes;   FixedBoundaryParticlesTypes]
 
+    if !isnothing(moving_csv)
+        MovingBoundaryParticlesPoints, MovingBoundaryParticlesDensity, MovingBoundaryParticlesTypes = LoadSpecificCSV(dims, float_type, 1, moving_csv)
+        points  = [points;  MovingBoundaryParticlesPoints]
+        density = [density; MovingBoundaryParticlesDensity]
+        types   = [types;   MovingBoundaryParticlesTypes]
+    end
+
     return points, density, types
 end
 
-function AllocateDataStructures(Dimensions,FloatType, FluidCSV,BoundCSV)
-    @inline Position, Density, Types  = LoadParticlesFromCSV_StaticArrays(Dimensions,FloatType, FluidCSV,BoundCSV)
+function AllocateDataStructures(Dimensions,FloatType, FluidCSV, FixedCSV, MovingCSV)
+    @inline Position, Density, Types  = LoadParticlesFromCSV_StaticArrays(Dimensions,FloatType, FluidCSV, FixedCSV, MovingCSV)
 
     NumberOfPoints           = length(Position)
     PositionType             = eltype(Position)
@@ -92,11 +98,7 @@ function AllocateDataStructures(Dimensions,FloatType, FluidCSV,BoundCSV)
     
     Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
 
-    if Types == nothing
-        SimParticles = StructArray((Cells = Cells, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = collect(1:NumberOfPoints)))
-    else
-        SimParticles = StructArray((Cells = Cells, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = collect(1:NumberOfPoints) , Type = Types))
-    end
+    SimParticles = StructArray((Cells = Cells, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = collect(1:NumberOfPoints) , Type = Types))
 
     return SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Kernel, KernelGradient
 end

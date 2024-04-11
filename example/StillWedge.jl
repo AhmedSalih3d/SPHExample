@@ -202,7 +202,8 @@ end
 
 ###===
 function RunSimulation(;FluidCSV::String,
-    BoundCSV::String,
+    FixedCSV::String,
+    MovingCSV::Union{String,Nothing},
     SimMetaData::SimulationMetaData{Dimensions, FloatType},
     SimConstants::SimulationConstants,
     SimLogger::SimulationLogger
@@ -230,7 +231,7 @@ function RunSimulation(;FluidCSV::String,
     @unpack HourGlass, SimulationName, SilentOutput, ThreadsCPU = SimMetaData;
 
     # Load in particles
-    SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Kernel, KernelGradient = AllocateDataStructures(Dimensions,FloatType, FluidCSV,BoundCSV)
+    SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Kernel, KernelGradient = AllocateDataStructures(Dimensions,FloatType, FluidCSV, FixedCSV, MovingCSV)
     
     
     NumberOfPoints = length(SimParticles)::Int #Have to type declare, else error?
@@ -322,7 +323,7 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="StillWedge", 
         SaveLocation="E:/SecondApproach/TESTING_CPU_StillWedge",
-        SimulationTime=4,
+        SimulationTime=1,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
@@ -336,7 +337,8 @@ let
 
     RunSimulation(
         FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
-        BoundCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
+        FixedCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
+        MovingCSV           = nothing,
         SimMetaData        = SimMetaDataWedge,
         SimConstants       = SimConstantsWedge,
         SimLogger          = SimLogger
