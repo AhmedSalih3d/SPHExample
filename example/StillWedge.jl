@@ -38,10 +38,15 @@ function ComputeInteractions!(SimMetaData, SimConstants, Position, KernelThreade
 
         # Density diffusion
         if FlagDensityDiffusion
-            Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
-            ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
-            Pⱼᵢᴴ  = -Pᵢⱼᴴ
-            ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
+            if SimConstants.g == 0
+                ρᵢⱼᴴ  = 0.0
+                ρⱼᵢᴴ  = 0.0
+            else
+                Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
+                ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
+                Pⱼᵢᴴ  = -Pᵢⱼᴴ
+                ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
+            end
 
             ρⱼᵢ   = ρⱼ - ρᵢ
 
@@ -325,7 +330,7 @@ let
         SaveLocation="E:/SecondApproach/TESTING_CPU_StillWedge",
         SimulationTime=4,
         OutputEach=0.01,
-        FlagDensityDiffusion=false,
+        FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
         FlagLog=true,
         FlagShifting=false,
@@ -336,8 +341,8 @@ let
     SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
 
     RunSimulation(
-        FluidCSV           = "./input/still_wedge/StillWedge_Dp0.02_Fluid.csv",
-        FixedCSV           = "./input/still_wedge/StillWedge_Dp0.02_Bound.csv",
+        FluidCSV           = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Fluid.csv",
+        FixedCSV           = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Bound.csv",
         MovingCSV           = nothing,
         SimMetaData        = SimMetaDataWedge,
         SimConstants       = SimConstantsWedge,

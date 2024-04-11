@@ -38,10 +38,15 @@ function ComputeInteractions!(SimMetaData, SimConstants, Position, KernelThreade
 
         # Density diffusion
         if FlagDensityDiffusion
-            Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
-            ρᵢⱼᴴ  = 0.0 #InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
-            Pⱼᵢᴴ  = -Pᵢⱼᴴ
-            ρⱼᵢᴴ  = 0.0 #InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
+            if SimConstants.g == 0
+                ρᵢⱼᴴ  = 0.0
+                ρⱼᵢᴴ  = 0.0
+            else
+                Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
+                ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
+                Pⱼᵢᴴ  = -Pᵢⱼᴴ
+                ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
+            end
 
             ρⱼᵢ   = ρⱼ - ρᵢ
 
