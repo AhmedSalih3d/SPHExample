@@ -308,7 +308,7 @@ function RunSimulation(;FluidCSV::String,
             show(HourGlass)
 
             # This should not be counted in actual run 
-            @timeit HourGlass "12B Close hdfvtk output files"  close.(fid_vector)
+            # @timeit HourGlass "12B Close hdfvtk output files"  close.(fid_vector)
 
             break
         end
@@ -322,7 +322,7 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="StillWedge", 
         SaveLocation="E:/SecondApproach/TESTING_CPU_StillWedge",
-        SimulationTime=1,
+        SimulationTime=4,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
