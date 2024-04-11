@@ -67,13 +67,6 @@ function AllocateDataStructures(Dimensions,FloatType, FluidCSV,BoundCSV)
 
     BoundaryBool  = .!Bool.(MotionLimiter)
 
-    # If this is true, then values are updated in time stepping + forced motion
-    # for i ∈ eachindex(MotionLimiter)
-    #     if type_particles[i] == 1
-    #         MotionLimiter[i] = 1
-    #     end
-    # end
-
     Acceleration    = zeros(PositionType, NumberOfPoints)
     Velocity        = zeros(PositionType, NumberOfPoints)
     Kernel          = zeros(PositionUnderlyingType, NumberOfPoints)
