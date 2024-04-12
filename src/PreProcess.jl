@@ -1,18 +1,24 @@
 module PreProcess
 
-export LoadParticlesFromCSV_StaticArrays, LoadBoundaryNormals, AllocateDataStructures
+export LoadParticlesFromCSV_StaticArrays, LoadBoundaryNormals, AllocateDataStructures, Fluid, Fixed, Moving
 
 using CSV
 using DataFrames
 using StaticArrays
 using StructArrays
 
+@enum ParticleType::UInt8 begin
+    Fluid  = UInt8(1)
+    Fixed  = UInt8(2)
+    Moving = UInt8(3)
+end
+
 function LoadSpecificCSV(dims, float_type, particle_type, specific_csv)
     DF_SPECIFIC = CSV.read(specific_csv, DataFrame)
 
     points      = Vector{SVector{dims,float_type}}()
     density     = Vector{float_type}()
-    types       = Vector{Int}()
+    types       = Vector{ParticleType}()
 
     for DF ∈ eachrow(DF_SPECIFIC)
         P1   = DF["Points:0"]
@@ -31,15 +37,15 @@ end
 
 function LoadParticlesFromCSV_StaticArrays(dims, float_type, fluid_csv, fixed_csv, moving_csv)
 
-    FluidParticlesPoints,          FluidParticlesDensity         , FluidParticlesTypes          = LoadSpecificCSV(dims, float_type, 4, fluid_csv)
-    FixedBoundaryParticlesPoints,  FixedBoundaryParticlesDensity , FixedBoundaryParticlesTypes  = LoadSpecificCSV(dims, float_type, 0, fixed_csv)
+    FluidParticlesPoints,          FluidParticlesDensity         , FluidParticlesTypes          = LoadSpecificCSV(dims, float_type, Fluid, fluid_csv)
+    FixedBoundaryParticlesPoints,  FixedBoundaryParticlesDensity , FixedBoundaryParticlesTypes  = LoadSpecificCSV(dims, float_type, Fixed, fixed_csv)
 
     points  = [FluidParticlesPoints;  FixedBoundaryParticlesPoints]
     density = [FluidParticlesDensity; FixedBoundaryParticlesDensity]
     types   = [FluidParticlesTypes;   FixedBoundaryParticlesTypes]
 
     if !isnothing(moving_csv)
-        MovingBoundaryParticlesPoints, MovingBoundaryParticlesDensity, MovingBoundaryParticlesTypes = LoadSpecificCSV(dims, float_type, 1, moving_csv)
+        MovingBoundaryParticlesPoints, MovingBoundaryParticlesDensity, MovingBoundaryParticlesTypes = LoadSpecificCSV(dims, float_type, Moving, moving_csv)
         points  = [points;  MovingBoundaryParticlesPoints]
         density = [density; MovingBoundaryParticlesDensity]
         types   = [types;   MovingBoundaryParticlesTypes]
@@ -58,28 +64,24 @@ function AllocateDataStructures(Dimensions,FloatType, FluidCSV, FixedCSV, Moving
     GravityFactor = similar(Density)
     for i ∈ eachindex(GravityFactor)
         fac = 0
-        if     Types[i] == 4
+        if     Types[i] == Fluid
             fac = -1
-        elseif Types[i] == 1
+        elseif Types[i] == Moving
             fac =  1
         end
         GravityFactor[i] = fac
     end
 
-    # GravityFactor = [ zeros(size(density_bound,1)) ; -ones(size(density_fluid,1)) ]
-    
     MotionLimiter = similar(Density)
     for i ∈ eachindex(MotionLimiter)
         fac = 0
-        if   Types[i] == 4
+        if   Types[i] == Fluid
             fac =  1
-        else Types[i] == 1
+        else Types[i] == Moving
             fac =  0
         end
         MotionLimiter[i] = fac
     end
-
-    # MotionLimiter = [ zeros(size(density_bound,1)) ;  ones(size(density_fluid,1)) ]
 
     BoundaryBool  = UInt8.(.!Bool.(MotionLimiter))
 

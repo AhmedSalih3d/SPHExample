@@ -270,10 +270,8 @@ function RunSimulation(;FluidCSV::String,
 
     fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
 
-    println(String.(propertynames(SimParticles)))
-
-    # SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position),["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID)
-    SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position),["Cells"], SimParticles.Cells)
+    SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position),["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID)
+    # SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position),["Cells"], SimParticles.Cells)
     
     SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
     @inline SaveFile(SimMetaData.OutputIterationCounter)
@@ -345,6 +343,16 @@ let
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
 
     SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
+
+    println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
+        FluidCSV           = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Fluid.csv",
+        FixedCSV           = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Bound.csv",
+        MovingCSV           = nothing,
+        SimMetaData        = SimMetaDataWedge,
+        SimConstants       = SimConstantsWedge,
+        SimLogger          = SimLogger
+    )
+    )
 
     RunSimulation(
         FluidCSV           = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Fluid.csv",
