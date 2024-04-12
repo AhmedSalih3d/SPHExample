@@ -181,7 +181,7 @@ end
 
     @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(Position)
         if ParticleType[i] == 1
-            Velocity[i]     = 2.8 * SVector{2,Float64}(1,0)
+            Velocity[i]     = 1.0 * SVector{2,Float64}(1,0)
             Position[i]    += Velocity[i] * dt₂
         end
     end
@@ -208,7 +208,7 @@ end
 
     @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(Position)
         if ParticleType[i] == 1
-            Velocity[i]     = 2.8 * SVector{2,Float64}(1,0)
+            Velocity[i]     = 1.0 * SVector{2,Float64}(1,0)
             Position[i]    += Velocity[i] * dt₂
         end
     end
@@ -419,7 +419,7 @@ let
     end
 
     # ViscoBoundFactor should be 1, but need to understand how to implement it
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.04,
     c₀=28, 
     δᵩ = 0.1,
     g  = 0,
