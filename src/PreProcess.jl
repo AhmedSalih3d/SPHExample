@@ -81,7 +81,7 @@ function AllocateDataStructures(Dimensions,FloatType, FluidCSV, FixedCSV, Moving
 
     # MotionLimiter = [ zeros(size(density_bound,1)) ;  ones(size(density_fluid,1)) ]
 
-    BoundaryBool  = .!Bool.(MotionLimiter)
+    BoundaryBool  = UInt8.(.!Bool.(MotionLimiter))
 
     Acceleration    = zeros(PositionType, NumberOfPoints)
     Velocity        = zeros(PositionType, NumberOfPoints)
