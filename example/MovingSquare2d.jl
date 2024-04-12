@@ -181,7 +181,7 @@ end
 
     @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(Position)
         if ParticleType[i] == 1
-            Velocity[i]     = 1.0 * SVector{2,Float64}(1,0)
+            Velocity[i]     = 1.0 * eltype(Velocity)(1,0)
             Position[i]    += Velocity[i] * dt₂
         end
     end
@@ -208,7 +208,7 @@ end
 
     @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(Position)
         if ParticleType[i] == 1
-            Velocity[i]     = 1.0 * SVector{2,Float64}(1,0)
+            Velocity[i]     = 1.0 * eltype(Velocity)(1,0)
             Position[i]    += Velocity[i] * dt₂
         end
     end
