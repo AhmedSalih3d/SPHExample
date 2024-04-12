@@ -347,7 +347,7 @@ function RunSimulation(;FluidCSV::String,
             
         # Post-process force
         ForceX_ = 0.0
-        @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(SimParticles.Position)
+        @timeit SimMetaData.HourGlass "XX Calculate Force" @inbounds @threads for i in eachindex(SimParticles.Position)
             if SimParticles.Type[i] == Moving
                 ForceX_ += SimConstants.m₀ * SimParticles.Acceleration[i][1]
             end
@@ -404,7 +404,7 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="MovingSquare2D", 
         SaveLocation="E:/SecondApproach/MovingSquare2D",
-        SimulationTime=2.5,
+        SimulationTime=0.1,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
