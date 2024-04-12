@@ -145,14 +145,16 @@ end
         target_array .+= array
     end
 end
-@inbounds function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelThreaded, KernelGradient, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, InverseCutOff)
-    Position      = SimParticles.Position
-    Density       = SimParticles.Density
-    Pressure      = SimParticles.Pressure
-    Velocity      = SimParticles.Velocity
-    Acceleration  = SimParticles.Acceleration
-    GravityFactor = SimParticles.GravityFactor
-    MotionLimiter = SimParticles.MotionLimiter
+@inbounds function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, InverseCutOff)
+    Position       = SimParticles.Position
+    Density        = SimParticles.Density
+    Pressure       = SimParticles.Pressure
+    Velocity       = SimParticles.Velocity
+    Acceleration   = SimParticles.Acceleration
+    GravityFactor  = SimParticles.GravityFactor
+    MotionLimiter  = SimParticles.MotionLimiter
+    Kernel         = SimParticles.Kernel
+    KernelGradient = SimParticles.KernelGradient
 
     @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
     dt₂ = dt * 0.5
@@ -236,7 +238,7 @@ function RunSimulation(;FluidCSV::String,
     @unpack HourGlass, SimulationName, SilentOutput, ThreadsCPU = SimMetaData;
 
     # Load in particles
-    SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Kernel, KernelGradient = AllocateDataStructures(Dimensions,FloatType, FluidCSV, FixedCSV, MovingCSV)
+    SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺ = AllocateDataStructures(Dimensions,FloatType, FluidCSV, FixedCSV, MovingCSV)
     
     
     NumberOfPoints = length(SimParticles)::Int #Have to type declare, else error?
@@ -248,12 +250,12 @@ function RunSimulation(;FluidCSV::String,
 
     @inline begin
         n_copy = Base.Threads.nthreads()
-        KernelThreaded         = [copy(Kernel)         for _ in 1:n_copy]
-        KernelGradientThreaded = [copy(KernelGradient) for _ in 1:n_copy]
-        dρdtIThreaded          = [copy(dρdtI)          for _ in 1:n_copy]
-        AccelerationThreaded   = [copy(KernelGradient) for _ in 1:n_copy]
-        ∇CᵢThreaded            = [copy(∇Cᵢ )           for _ in 1:n_copy]
-        ∇◌rᵢThreaded           = [copy(∇◌rᵢ)           for _ in 1:n_copy]   
+        KernelThreaded         = [copy(SimParticles.Kernel)         for _ in 1:n_copy]
+        KernelGradientThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
+        dρdtIThreaded          = [copy(dρdtI)                       for _ in 1:n_copy]
+        AccelerationThreaded   = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
+        ∇CᵢThreaded            = [copy(∇Cᵢ )                        for _ in 1:n_copy]
+        ∇◌rᵢThreaded           = [copy(∇◌rᵢ)                        for _ in 1:n_copy]   
     end
 
     # Produce sorting related variables
@@ -268,7 +270,7 @@ function RunSimulation(;FluidCSV::String,
 
     fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
 
-    SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position),["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], Kernel, KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID)
+    SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position),["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID"], SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID)
     SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
     @inline SaveFile(SimMetaData.OutputIterationCounter)
     
@@ -280,7 +282,7 @@ function RunSimulation(;FluidCSV::String,
     
     # This is for some reason to trick the compiler to avoid dispatch error on SimulationLoop due to SimParticles
     # @inline on SimulationLoop directly slows down code
-    f = () -> SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, Kernel, KernelThreaded, KernelGradient, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, InverseCutOff)
+    f = () -> SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, InverseCutOff)
 
     @inbounds while true
 
