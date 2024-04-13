@@ -139,12 +139,22 @@ function ComputeInteractions!(SimMetaData, SimConstants, Position, KernelThreade
     return nothing
 end
 
-# Reduce threaded arrays
-@inline function reduce_sum!(target_array, arrays)
-    for array in arrays
-        target_array .+= array
+function reduce_sum!(target_array, arrays)
+    n = length(target_array)
+    num_threads = nthreads()
+    chunk_size = ceil(Int, n / num_threads)
+    @inbounds @threads for t in 1:num_threads
+        local start_idx = 1 + (t-1) * chunk_size
+        local end_idx = min(t * chunk_size, n)
+        for j in eachindex(arrays)
+            local array = arrays[j]  # Access array only once per thread
+            @simd for i in start_idx:end_idx
+                @inbounds target_array[i] += array[i]
+            end
+        end
     end
 end
+
 @inbounds function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, InverseCutOff)
     Position       = SimParticles.Position
     Density        = SimParticles.Density
@@ -332,7 +342,7 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="StillWedge", 
         SaveLocation="E:/SecondApproach/TESTING_CPU_StillWedge",
-        SimulationTime=1,
+        SimulationTime=4,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
