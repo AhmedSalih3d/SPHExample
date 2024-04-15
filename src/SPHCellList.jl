@@ -347,29 +347,29 @@ using Base.Threads
         @timeit SimMetaData.HourGlass "10 Final Density"                DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
     
     
-        # @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"  @inbounds for i in eachindex(Position)
-        #     Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
-        #     Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
-        #     Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
-        # end
-    
-        A     = 2# Value between 1 to 6 advised
-        A_FST = 0; # zero for internal flows
-        A_FSM = 2.0; #2d, 3d val different
-        @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"  @inbounds for i in eachindex(Position)
-            Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
-            Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
-    
-            A_FSC                  = (∇◌rᵢ[i] - A_FST)/(A_FSM - A_FST)
-            # ShiftingCondition      = (∇◌rᵢ[i] - A_FST) < 0
-            # δxᵢ                    = - (ShiftingCondition * A_FSC * A + (ShiftingCondition == 0) * A) * SimConstants.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
-            if A_FSC < 0
-                δxᵢ = zero(eltype(Position))
-            else
-                δxᵢ = -A_FSC * A * SimConstants.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
+        if !SimMetaData.FlagShifting
+            @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"  @inbounds for i in eachindex(Position)
+                Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+                Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
+                Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
             end
-    
-            Position[i]           += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
+        else
+            A     = 2# Value between 1 to 6 advised
+            A_FST = 0; # zero for internal flows
+            A_FSM = 2.0; #2d, 3d val different
+            @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"  @inbounds for i in eachindex(Position)
+                Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+                Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
+        
+                A_FSC                  = (∇◌rᵢ[i] - A_FST)/(A_FSM - A_FST)
+                if A_FSC < 0
+                    δxᵢ = zero(eltype(Position))
+                else
+                    δxᵢ = -A_FSC * A * SimConstants.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
+                end
+        
+                Position[i]           += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
+            end
         end
     
         SimMetaData.Iteration      += 1
