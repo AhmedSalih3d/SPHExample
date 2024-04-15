@@ -300,16 +300,16 @@ using Base.Threads
     
         @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(Position)
             if ParticleType[i] == Moving
-                Velocity[i]     = 1.0 * eltype(Velocity)(1,0)
+                Velocity[i]     = 2.8 * eltype(Velocity)(1,0)
                 Position[i]    += Velocity[i] * dt₂
             end
         end
     
-        @timeit SimMetaData.HourGlass "03A ResetArrays" ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration)
-        @timeit SimMetaData.HourGlass "03B ResetArrays" ResetArrays!.(KernelThreaded, KernelGradientThreaded, dρdtIThreaded, AccelerationThreaded)
+        @timeit SimMetaData.HourGlass "03A ResetArrays" ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ); 
+        @timeit SimMetaData.HourGlass "03B ResetArrays" ResetArrays!.(KernelThreaded, KernelGradientThreaded, dρdtIThreaded, AccelerationThreaded, ∇CᵢThreaded, ∇◌rᵢThreaded)
     
         Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-        @timeit SimMetaData.HourGlass "04 First NeighborLoop"                    NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtIThreaded, AccelerationThreaded,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, IndexCounter)
+        @timeit SimMetaData.HourGlass "04 First NeighborLoop"                   NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtIThreaded, AccelerationThreaded,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, IndexCounter)
         @timeit SimMetaData.HourGlass "04 Reduction"                            reduce_sum!(dρdtI, dρdtIThreaded)
         @timeit SimMetaData.HourGlass "04 Reduction"                            reduce_sum!(Acceleration, AccelerationThreaded)
         @timeit SimMetaData.HourGlass "04 Reduction"                            reduce_sum!(∇Cᵢ, ∇CᵢThreaded)
@@ -329,13 +329,13 @@ using Base.Threads
     
         @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(Position)
             if ParticleType[i] == Moving
-                Velocity[i]     = 1.0 * eltype(Velocity)(1,0)
+                Velocity[i]     = 2.8 * eltype(Velocity)(1,0)
                 Position[i]    += Velocity[i] * dt₂
             end
         end
     
         Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-        @timeit SimMetaData.HourGlass "08 Second NeighborLoop"          NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Positionₙ⁺, KernelThreaded, KernelGradientThreaded, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtIThreaded, AccelerationThreaded, ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, IndexCounter)
+        @timeit SimMetaData.HourGlass "08 Second NeighborLoop"         NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Positionₙ⁺, KernelThreaded, KernelGradientThreaded, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtIThreaded, AccelerationThreaded, ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, IndexCounter)
         @timeit SimMetaData.HourGlass "08 Reduction"                   reduce_sum!(dρdtI, dρdtIThreaded)
         @timeit SimMetaData.HourGlass "08 Reduction"                   reduce_sum!(Acceleration, AccelerationThreaded)
         @timeit SimMetaData.HourGlass "08 Reduction"                   reduce_sum!(∇Cᵢ, ∇CᵢThreaded)
@@ -356,7 +356,7 @@ using Base.Threads
         else
             A     = 2# Value between 1 to 6 advised
             A_FST = 0; # zero for internal flows
-            A_FSM = 2.0; #2d, 3d val different
+            A_FSM = length(first(Position)); #2d, 3d val different
             @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"  @inbounds for i in eachindex(Position)
                 Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
                 Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
