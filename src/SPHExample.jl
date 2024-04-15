@@ -36,7 +36,7 @@ module SPHExample
     export SimulationConstants
 
     using .SPHCellList
-    export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!
+    export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!, RunSimulation
 
 end
 
