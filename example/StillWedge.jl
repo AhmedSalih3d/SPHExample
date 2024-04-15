@@ -169,8 +169,16 @@ end
     @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
     dt₂ = dt * 0.5
 
-    @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, InverseCutOff, SortingScratchSpace,  ParticleRanges, UniqueCells)
-
+    # In theory, the maximal speed is the speed of sound, this should give a safe guard
+    # any ensure it is always updated in a reasonable manner. This only works well, assuming that
+    # c₀ >= maximum(norm.(Velocity))
+    # Remove if statement logic if you want to update each iteration
+    if mod(SimMetaData.Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
+        @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, InverseCutOff, SortingScratchSpace,  ParticleRanges, UniqueCells)
+    else
+        IndexCounter    = findfirst(isequal(0), ParticleRanges) - 2
+    end
+    
     @timeit SimMetaData.HourGlass "03 ResetArrays"                           ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration); ResetArrays!.(KernelThreaded, KernelGradientThreaded, dρdtIThreaded, AccelerationThreaded)
 
     Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
@@ -350,7 +358,7 @@ let
         FlagShifting=false,
     )
 
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=43.48576250492629, δᵩ = 0.1, CFL=0.2)
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
 
     SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
 
