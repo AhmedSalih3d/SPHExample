@@ -227,6 +227,7 @@ using Base.Threads
             dvdtI[ichunk][i] += dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ
             dvdtI[ichunk][j] += dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
 
+            
             if FlagOutputKernelValues
                 Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
                 KernelThreaded[ichunk][i]         += Wᵢⱼ
@@ -235,14 +236,12 @@ using Base.Threads
                 KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
             end
 
+
             if SimMetaData.FlagShifting
                 Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
         
-                # Cᵢ  = (m₀/ρᵢ) * Wᵢⱼ
-                # Cⱼ  = (m₀/ρⱼ) * Wᵢⱼ
-        
                 MLcond = MotionLimiter[i] * MotionLimiter[j]
-        
+
                 ∇CᵢThreaded[ichunk][i]   += (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
                 ∇CᵢThreaded[ichunk][j]   += (m₀/ρⱼ) * -∇ᵢWᵢⱼ
         
@@ -325,8 +324,12 @@ using Base.Threads
         @timeit SimMetaData.HourGlass "04 First NeighborLoop"                   NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtIThreaded, AccelerationThreaded,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, IndexCounter)
         @timeit SimMetaData.HourGlass "04 Reduction"                            reduce_sum!(dρdtI, dρdtIThreaded)
         @timeit SimMetaData.HourGlass "04 Reduction"                            reduce_sum!(Acceleration, AccelerationThreaded)
-        @timeit SimMetaData.HourGlass "04 Reduction"                            reduce_sum!(∇Cᵢ, ∇CᵢThreaded)
-        @timeit SimMetaData.HourGlass "04 Reduction"                            reduce_sum!(∇◌rᵢ, ∇◌rᵢThreaded)
+
+        if SimMetaData.FlagShifting
+            @timeit SimMetaData.HourGlass "04 Reduction"                        reduce_sum!(∇Cᵢ, ∇CᵢThreaded)
+            @timeit SimMetaData.HourGlass "04 Reduction"                        reduce_sum!(∇◌rᵢ, ∇◌rᵢThreaded)
+        end
+    
     
         @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" @inbounds for i in eachindex(Position)
             Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
@@ -363,8 +366,11 @@ using Base.Threads
         @timeit SimMetaData.HourGlass "08 Second NeighborLoop"         NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Positionₙ⁺, KernelThreaded, KernelGradientThreaded, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtIThreaded, AccelerationThreaded, ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, IndexCounter)
         @timeit SimMetaData.HourGlass "08 Reduction"                   reduce_sum!(dρdtI, dρdtIThreaded)
         @timeit SimMetaData.HourGlass "08 Reduction"                   reduce_sum!(Acceleration, AccelerationThreaded)
-        @timeit SimMetaData.HourGlass "08 Reduction"                   reduce_sum!(∇Cᵢ, ∇CᵢThreaded)
-        @timeit SimMetaData.HourGlass "08 Reduction"                   reduce_sum!(∇◌rᵢ, ∇◌rᵢThreaded)
+
+        if SimMetaData.FlagShifting
+            @timeit SimMetaData.HourGlass "08 Reduction"               reduce_sum!(∇Cᵢ, ∇CᵢThreaded)
+            @timeit SimMetaData.HourGlass "08 Reduction"               reduce_sum!(∇◌rᵢ, ∇◌rᵢThreaded)
+        end
     
     
         @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
