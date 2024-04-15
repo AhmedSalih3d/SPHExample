@@ -33,7 +33,9 @@ let
 
     SimLogger = SimulationLogger(SimMetaDataMovingSquare.SaveLocation)
 
-    @profview RunSimulation(
+    # println(
+    # @report_opt 
+    RunSimulation(
         FluidCSV           = "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Fluid.csv",
         FixedCSV           = "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Fixed.csv",
         MovingCSV          = "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Square.csv",
@@ -41,4 +43,5 @@ let
         SimConstants       = SimConstantsMovingSquare,
         SimLogger          = SimLogger
     )
+    # )
 end

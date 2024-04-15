@@ -305,8 +305,21 @@ using Base.Threads
             end
         end
     
-        @timeit SimMetaData.HourGlass "03A ResetArrays" ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ); 
-        @timeit SimMetaData.HourGlass "03B ResetArrays" ResetArrays!.(KernelThreaded, KernelGradientThreaded, dρdtIThreaded, AccelerationThreaded, ∇CᵢThreaded, ∇◌rᵢThreaded)
+        ###=== First step of resetting arrays
+        @timeit SimMetaData.HourGlass "03A ResetArrays" ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ)
+        @timeit SimMetaData.HourGlass "03B ResetArrays" @. ResetArrays!(dρdtIThreaded, AccelerationThreaded)
+
+        if SimMetaData.FlagOutputKernelValues
+            @timeit SimMetaData.HourGlass "03A ResetArrays" ResetArrays!(Kernel, KernelGradient)
+            @timeit SimMetaData.HourGlass "03B ResetArrays" @. ResetArrays!(KernelThreaded, KernelGradientThreaded)
+        end
+
+        if SimMetaData.FlagShifting
+            @timeit SimMetaData.HourGlass "03A ResetArrays" ResetArrays!(∇Cᵢ, ∇◌rᵢ)
+            @timeit SimMetaData.HourGlass "03B ResetArrays" @. ResetArrays!(∇CᵢThreaded, ∇◌rᵢThreaded)
+        end
+        ###===
+
     
         Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
         @timeit SimMetaData.HourGlass "04 First NeighborLoop"                   NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtIThreaded, AccelerationThreaded,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, IndexCounter)
@@ -324,9 +337,21 @@ using Base.Threads
     
         @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"  LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
     
-        @timeit SimMetaData.HourGlass "07A ResetArrays"  ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ); 
-        @timeit SimMetaData.HourGlass "07B ResetArrays"  ResetArrays!.(KernelThreaded, KernelGradientThreaded, dρdtIThreaded, AccelerationThreaded, ∇CᵢThreaded, ∇◌rᵢThreaded)
-    
+        ###=== Second step of resetting arrays
+        @timeit SimMetaData.HourGlass "07A ResetArrays" ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ)
+        @timeit SimMetaData.HourGlass "07B ResetArrays" @. ResetArrays!(dρdtIThreaded, AccelerationThreaded)
+
+        if SimMetaData.FlagOutputKernelValues
+            @timeit SimMetaData.HourGlass "07A ResetArrays" ResetArrays!(Kernel, KernelGradient)
+            @timeit SimMetaData.HourGlass "07B ResetArrays" @. ResetArrays!(KernelThreaded, KernelGradientThreaded)
+        end
+
+        if SimMetaData.FlagShifting
+            @timeit SimMetaData.HourGlass "07A ResetArrays" ResetArrays!(∇Cᵢ, ∇◌rᵢ)
+            @timeit SimMetaData.HourGlass "07B ResetArrays" @. ResetArrays!(∇CᵢThreaded, ∇◌rᵢThreaded)
+        end
+        ###===
+
         @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(Position)
             if ParticleType[i] == Moving
                 Velocity[i]     = 2.8 * eltype(Velocity)(1,0)
