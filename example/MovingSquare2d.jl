@@ -10,7 +10,6 @@ using TimerOutputs
 using Logging, LoggingExtras
 using HDF5
 using Base.Threads
-using Plots
 
 # Really important to overload default function, gives 10x speed up?
 # Overload the default function to do what you pleas
