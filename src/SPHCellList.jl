@@ -48,6 +48,14 @@ using Base.Threads
             t = map(map_floor, Tuple(Points[i]))
             Cells[i] = CartesianIndex(t)
         end
+
+        MaxSize          = maximum(Cells) #Has not been sorted yet
+        CellsLinearIndex = @views Particles.CellsLinearIndex
+        @threads for i ∈ eachindex(Cells)
+            # CellsLinearIndex[i] = GetLinearIndex(Tuple(Cells[i]),MaxSize)
+            CellsLinearIndex[i] = Base._sub2ind(Tuple(MaxSize), Cells[i][1], Cells[i][2])
+        end
+
         return nothing
     end
 
@@ -58,8 +66,6 @@ using Base.Threads
         sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
 
         Cells = @views Particles.Cells
-
-        MaxCell           = Cells[end] #Has been sorted
 
         @. ParticleRanges             = zero(eltype(ParticleRanges))
         IndexCounter                  = 1
@@ -74,7 +80,7 @@ using Base.Threads
             end
         end
         ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
-
+            
         return IndexCounter 
     end
 
@@ -166,8 +172,8 @@ using Base.Threads
                 Dᵢ  = 0.0
                 Dⱼ  = 0.0
             end
-            dρdtI[ichunk][i] += (dρdt⁺ + Dᵢ) * 1e-3
-            dρdtI[ichunk][j] += (dρdt⁻ + Dⱼ) * 1e-3
+            dρdtI[ichunk][i] += (dρdt⁺ + Dᵢ)
+            dρdtI[ichunk][j] += (dρdt⁻ + Dⱼ)
 
 
             Pᵢ      =  Pressure[i]
@@ -230,8 +236,8 @@ using Base.Threads
                 dτdtⱼ  = dτdtᵢ
             end
         
-            dvdtI[ichunk][i] += (dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ) * 1e-3
-            dvdtI[ichunk][j] += (dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ) * 1e-3
+            dvdtI[ichunk][i] += (dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ)
+            dvdtI[ichunk][j] += (dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ)
 
             
             if FlagOutputKernelValues
@@ -478,7 +484,7 @@ using Base.Threads
     
         fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
     
-        SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position),["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID", "Type"], SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type))
+        SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position),["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID", "Type", "LinearIndex"], SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.CellsLinearIndex)
         SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
         @inline SaveFile(SimMetaData.OutputIterationCounter)
         

@@ -98,9 +98,10 @@ function AllocateDataStructures(Dimensions,FloatType, FluidCSV, FixedCSV, Moving
 
     Pressureᵢ      = zeros(PositionUnderlyingType, NumberOfPoints)
     
-    Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
+    Cells            = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
+    CellsLinearIndex = zeros(Int, NumberOfPoints)
 
-    SimParticles = StructArray((Cells = Cells, Kernel = Kernel, KernelGradient = KernelGradient, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = collect(1:NumberOfPoints) , Type = Types))
+    SimParticles = StructArray((Cells = Cells, CellsLinearIndex=CellsLinearIndex, Kernel = Kernel, KernelGradient = KernelGradient, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = collect(1:NumberOfPoints) , Type = Types))
 
     return SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺
 end
