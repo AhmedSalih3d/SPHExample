@@ -53,7 +53,7 @@ using Base.Threads
         CellsLinearIndex = @views Particles.CellsLinearIndex
         @threads for i ∈ eachindex(Cells)
             # CellsLinearIndex[i] = GetLinearIndex(Tuple(Cells[i]),MaxSize)
-            CellsLinearIndex[i] = Base._sub2ind(Tuple(MaxSize), Cells[i][1], Cells[i][2])
+            CellsLinearIndex[i] = Base._sub2ind(Tuple(MaxSize), Tuple(Cells[i])...)
         end
 
         return nothing
