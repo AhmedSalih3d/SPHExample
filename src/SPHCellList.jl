@@ -52,8 +52,8 @@ using Base.Threads
         MaxSize          = maximum(Cells) #Has not been sorted yet
         CellsLinearIndex = @views Particles.CellsLinearIndex
         @threads for i ∈ eachindex(Cells)
-            # CellsLinearIndex[i] = GetLinearIndex(Tuple(Cells[i]),MaxSize)
-            CellsLinearIndex[i] = Base._sub2ind(Tuple(MaxSize), Tuple(Cells[i])...)
+            CellsLinearIndex[i] = GetLinearIndex(Tuple(Cells[i]),Tuple(MaxSize))
+            # CellsLinearIndex[i] = Base._sub2ind(Tuple(MaxSize), Tuple(Cells[i])...)
         end
 
         return nothing
