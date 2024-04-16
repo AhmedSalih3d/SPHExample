@@ -34,6 +34,8 @@ using Base.Threads
         return n
     end
 
+    GetLinearIndex(x,MaxSize) = LinearIndices(CartesianIndices(MaxSize))[x...]
+
     @inline function ExtractCells!(Particles, ::Val{InverseCutOff}) where InverseCutOff
         # Replace unsafe_trunc with trunc if this ever errors
         function map_floor(x)
@@ -56,6 +58,9 @@ using Base.Threads
         sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
 
         Cells = @views Particles.Cells
+
+        MaxCell           = Cells[end] #Has been sorted
+
         @. ParticleRanges             = zero(eltype(ParticleRanges))
         IndexCounter                  = 1
         ParticleRanges[IndexCounter]  = 1
@@ -95,6 +100,7 @@ using Base.Threads
                     # utilizes that it is a sorted array and requires no isequal constructor,
                     # so I prefer this for now
                     NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
+                    # NeighborCellIndex = rand(1:244)
 
                     if length(NeighborCellIndex) != 0
                         StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
@@ -160,8 +166,8 @@ using Base.Threads
                 Dᵢ  = 0.0
                 Dⱼ  = 0.0
             end
-            dρdtI[ichunk][i] += dρdt⁺ + Dᵢ
-            dρdtI[ichunk][j] += dρdt⁻ + Dⱼ
+            dρdtI[ichunk][i] += (dρdt⁺ + Dᵢ) * 1e-3
+            dρdtI[ichunk][j] += (dρdt⁻ + Dⱼ) * 1e-3
 
 
             Pᵢ      =  Pressure[i]
@@ -224,8 +230,8 @@ using Base.Threads
                 dτdtⱼ  = dτdtᵢ
             end
         
-            dvdtI[ichunk][i] += dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ
-            dvdtI[ichunk][j] += dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
+            dvdtI[ichunk][i] += (dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ) * 1e-3
+            dvdtI[ichunk][j] += (dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ) * 1e-3
 
             
             if FlagOutputKernelValues
