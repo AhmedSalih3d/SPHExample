@@ -60,7 +60,7 @@ using Base.Threads
     end
 
     ###=== Function to update ordering
-    function UpdateNeighbors!(Particles, CutOff, SortingScratchSpace, ParticleRanges, UniqueCells)
+    function UpdateNeighbors!(Particles, CutOff, SortingScratchSpace, ParticleRanges, UniqueCells, UniqueCellsLinearIndex)
         ExtractCells!(Particles, CutOff)
 
         sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
@@ -80,6 +80,11 @@ using Base.Threads
             end
         end
         ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
+
+        MaxSize = Cells[end]
+        for i = 1:IndexCounter
+            UniqueCellsLinearIndex[i] = GetLinearIndex(Tuple(UniqueCells[i]), MaxSize)
+        end
             
         return IndexCounter 
     end
@@ -284,7 +289,7 @@ using Base.Threads
         end
     end
     
-    @inbounds function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, InverseCutOff)
+    @inbounds function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, UniqueCellsLinearIndex, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, InverseCutOff)
         Position       = SimParticles.Position
         Density        = SimParticles.Density
         Pressure       = SimParticles.Pressure
@@ -304,7 +309,7 @@ using Base.Threads
         # c₀ >= maximum(norm.(Velocity))
         # Remove if statement logic if you want to update each iteration
         if mod(SimMetaData.Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
-            @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, InverseCutOff, SortingScratchSpace,  ParticleRanges, UniqueCells)
+            @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, InverseCutOff, SortingScratchSpace,  ParticleRanges, UniqueCells, UniqueCellsLinearIndex)
         else
             IndexCounter    = findfirst(isequal(0), ParticleRanges) - 2
         end
@@ -475,6 +480,7 @@ using Base.Threads
         # Produce sorting related variables
         ParticleRanges         = zeros(Int, NumberOfPoints + 1)
         UniqueCells            = zeros(CartesianIndex{Dimensions}, NumberOfPoints)
+        UniqueCellsLinearIndex = zeros(Int, NumberOfPoints)
         Stencil                = ConstructStencil(Val(Dimensions))
         _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
     
@@ -498,7 +504,7 @@ using Base.Threads
         
         # This is for some reason to trick the compiler to avoid dispatch error on SimulationLoop due to SimParticles
         # @inline on SimulationLoop directly slows down code
-        f = () -> SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, InverseCutOff)
+        f = () -> SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, UniqueCellsLinearIndex, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, InverseCutOff)
     
         force_file = open("MovingSquare_Dp0.02_ForceX.txt", "w")
         @inbounds while true
