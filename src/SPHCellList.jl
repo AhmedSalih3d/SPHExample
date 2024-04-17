@@ -51,10 +51,10 @@ using Base.Threads
 
         MaxSize          = maximum(Cells) #Has not been sorted yet
         CellsLinearIndex = @views Particles.CellsLinearIndex
-        @threads for i ∈ eachindex(Cells)
-            CellsLinearIndex[i] = GetLinearIndex(Tuple(Cells[i]),Tuple(MaxSize))
-            # CellsLinearIndex[i] = Base._sub2ind(Tuple(MaxSize), Tuple(Cells[i])...)
-        end
+        # @threads for i ∈ eachindex(Cells)
+        #     CellsLinearIndex[i] = GetLinearIndex(Tuple(Cells[i]),Tuple(MaxSize))
+        #     # CellsLinearIndex[i] = Base._sub2ind(Tuple(MaxSize), Tuple(Cells[i])...)
+        # end
 
         return nothing
     end
@@ -86,7 +86,7 @@ using Base.Threads
 
 # Neither Polyester.@batch per core or thread is faster
 ###=== Function to process each cell and its neighbors
-    function NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, IndexCounter)
+    function NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, ActiveNeighbours, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, IndexCounter)
         UniqueCells = view(UniqueCells, 1:IndexCounter)
         @threads for (ichunk, inds) in enumerate(chunks(UniqueCells; n=nthreads()))
             for iter in inds
@@ -105,17 +105,17 @@ using Base.Threads
                     # Returns a range, x:x for exact match and x:(x-1) for no match
                     # utilizes that it is a sorted array and requires no isequal constructor,
                     # so I prefer this for now
-                    NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
-                    # NeighborCellIndex = rand(1:244)
+                    # NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
+                    NeighborCellIndex = ActiveNeighbours[rand(1:200)][rand(1:4)]
 
-                    if length(NeighborCellIndex) != 0
+                    # if length(NeighborCellIndex) != 0
                         StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
                         EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
 
                         @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
                             @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
                         end
-                    end
+                    # end
                 end
             end
         end
@@ -172,8 +172,8 @@ using Base.Threads
                 Dᵢ  = 0.0
                 Dⱼ  = 0.0
             end
-            dρdtI[ichunk][i] += (dρdt⁺ + Dᵢ)
-            dρdtI[ichunk][j] += (dρdt⁻ + Dⱼ)
+            dρdtI[ichunk][i] += (dρdt⁺ + Dᵢ) * 1e-3
+            dρdtI[ichunk][j] += (dρdt⁻ + Dⱼ) * 1e-3
 
 
             Pᵢ      =  Pressure[i]
@@ -236,8 +236,8 @@ using Base.Threads
                 dτdtⱼ  = dτdtᵢ
             end
         
-            dvdtI[ichunk][i] += (dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ)
-            dvdtI[ichunk][j] += (dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ)
+            dvdtI[ichunk][i] += (dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ) * 1e-3
+            dvdtI[ichunk][j] += (dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ) * 1e-3
 
             
             if FlagOutputKernelValues
@@ -284,7 +284,7 @@ using Base.Threads
         end
     end
     
-    @inbounds function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, InverseCutOff)
+    @inbounds function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, ActiveNeighbours, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, InverseCutOff)
         Position       = SimParticles.Position
         Density        = SimParticles.Density
         Pressure       = SimParticles.Pressure
@@ -333,7 +333,7 @@ using Base.Threads
 
     
         Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-        @timeit SimMetaData.HourGlass "04 First NeighborLoop"                   NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtIThreaded, AccelerationThreaded,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, IndexCounter)
+        @timeit SimMetaData.HourGlass "04 First NeighborLoop"                   NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, ActiveNeighbours, Stencil, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtIThreaded, AccelerationThreaded,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, IndexCounter)
         @timeit SimMetaData.HourGlass "04 Reduction"                            reduce_sum!(dρdtI, dρdtIThreaded)
         @timeit SimMetaData.HourGlass "04 Reduction"                            reduce_sum!(Acceleration, AccelerationThreaded)
 
@@ -375,7 +375,7 @@ using Base.Threads
         end
     
         Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-        @timeit SimMetaData.HourGlass "08 Second NeighborLoop"         NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Positionₙ⁺, KernelThreaded, KernelGradientThreaded, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtIThreaded, AccelerationThreaded, ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, IndexCounter)
+        @timeit SimMetaData.HourGlass "08 Second NeighborLoop"         NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges,  ActiveNeighbours, Stencil, Positionₙ⁺, KernelThreaded, KernelGradientThreaded, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtIThreaded, AccelerationThreaded, ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, IndexCounter)
         @timeit SimMetaData.HourGlass "08 Reduction"                   reduce_sum!(dρdtI, dρdtIThreaded)
         @timeit SimMetaData.HourGlass "08 Reduction"                   reduce_sum!(Acceleration, AccelerationThreaded)
 
@@ -477,6 +477,10 @@ using Base.Threads
         UniqueCells            = zeros(CartesianIndex{Dimensions}, NumberOfPoints)
         Stencil                = ConstructStencil(Val(Dimensions))
         _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
+
+        # ActiveNeighbours       = [zeros(Int, length(Stencil)) for _ in 1:NumberOfPoints]
+        ActiveNeighbours         = [rand(1:length(Stencil), length(Stencil)) for _ in 1:NumberOfPoints]
+
     
         # Produce data saving functions
         SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName
@@ -498,7 +502,7 @@ using Base.Threads
         
         # This is for some reason to trick the compiler to avoid dispatch error on SimulationLoop due to SimParticles
         # @inline on SimulationLoop directly slows down code
-        f = () -> SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, InverseCutOff)
+        f = () -> SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, ActiveNeighbours, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, InverseCutOff)
     
         force_file = open("MovingSquare_Dp0.02_ForceX.txt", "w")
         @inbounds while true
