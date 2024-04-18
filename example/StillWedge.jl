@@ -1,3 +1,5 @@
+using SPHExample
+
 let
     Dimensions = 2
     FloatType  = Float64
