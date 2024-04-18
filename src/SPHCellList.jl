@@ -99,23 +99,29 @@ using Base.Threads
                     @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
                 end
 
+                j = 1
                 @inbounds for S ∈ Stencil
                     SCellIndex = CellIndex + S
 
+                    
                     # Returns a range, x:x for exact match and x:(x-1) for no match
                     # utilizes that it is a sorted array and requires no isequal constructor,
                     # so I prefer this for now
-                    # NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
-                    NeighborCellIndex = ActiveNeighbours[rand(1:200)][rand(1:4)]
+                    NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
+                    # NeighborCellIndex = ActiveNeighbours[rand(1:200)][rand(1:4)]
 
-                    # if length(NeighborCellIndex) != 0
+                    if length(NeighborCellIndex) != 0
+                        ActiveNeighbours[iter][j] = NeighborCellIndex[1]
+
                         StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
                         EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
 
                         @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
                             @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
                         end
-                    # end
+                    end
+
+                    j += 1
                 end
             end
         end
@@ -172,8 +178,8 @@ using Base.Threads
                 Dᵢ  = 0.0
                 Dⱼ  = 0.0
             end
-            dρdtI[ichunk][i] += (dρdt⁺ + Dᵢ) * 1e-3
-            dρdtI[ichunk][j] += (dρdt⁻ + Dⱼ) * 1e-3
+            dρdtI[ichunk][i] += (dρdt⁺ + Dᵢ)
+            dρdtI[ichunk][j] += (dρdt⁻ + Dⱼ)
 
 
             Pᵢ      =  Pressure[i]
@@ -236,8 +242,8 @@ using Base.Threads
                 dτdtⱼ  = dτdtᵢ
             end
         
-            dvdtI[ichunk][i] += (dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ) * 1e-3
-            dvdtI[ichunk][j] += (dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ) * 1e-3
+            dvdtI[ichunk][i] += (dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ)
+            dvdtI[ichunk][j] += (dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ)
 
             
             if FlagOutputKernelValues
