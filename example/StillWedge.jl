@@ -29,7 +29,7 @@ let
     )
     )
 
-    RunSimulation(
+    @profview RunSimulation(
         FluidCSV           = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Fluid.csv",
         FixedCSV           = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Bound.csv",
         MovingCSV           = nothing,
