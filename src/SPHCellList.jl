@@ -321,7 +321,6 @@ using Base.Threads
         else
             IndexCounter    = findfirst(isequal(0), ParticleRanges) - 2
         end
-        # MaxSize = maximum(SimParticles.Cells)
 
         @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(Position)
             if ParticleType[i] == Moving
