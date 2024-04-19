@@ -4,6 +4,8 @@ let
     Dimensions = 2
     FloatType  = Float64
 
+    # Let us define the 
+
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="StillWedge", 
         SaveLocation="E:/SecondApproach/TESTING_CPU_StillWedge",
