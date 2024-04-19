@@ -299,12 +299,12 @@ using Base.Threads
         UniqueCells       = view(UniqueCells, 1:IndexCounter)
         EnumeratedIndices = enumerate(chunks(UniqueCells; n=nthreads()))
     
-        @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(Position)
-            if ParticleType[i] == Moving
-                Velocity[i]     = 2.8 * eltype(Velocity)(1,0)
-                Position[i]    += Velocity[i] * dt₂
-            end
-        end
+        # @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(Position)
+        #     if ParticleType[i] == Moving
+        #         Velocity[i]     = 2.8 * eltype(Velocity)(1,0)
+        #         Position[i]    += Velocity[i] * dt₂
+        #     end
+        # end
     
         ###=== First step of resetting arrays
         @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ)
@@ -357,12 +357,12 @@ using Base.Threads
         end
         ###===
 
-        @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(Position)
-            if ParticleType[i] == Moving
-                Velocity[i]     = 2.8 * eltype(Velocity)(1,0)
-                Position[i]    += Velocity[i] * dt₂
-            end
-        end
+        # @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(Position)
+        #     if ParticleType[i] == Moving
+        #         Velocity[i]     = 2.8 * eltype(Velocity)(1,0)
+        #         Position[i]    += Velocity[i] * dt₂
+        #     end
+        # end
     
         @timeit SimMetaData.HourGlass "03 Pressure"                 Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
         @timeit SimMetaData.HourGlass "08 Second NeighborLoop"      NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Positionₙ⁺, KernelThreaded, KernelGradientThreaded, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtIThreaded, AccelerationThreaded, ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, EnumeratedIndices)
@@ -498,16 +498,16 @@ using Base.Threads
             if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
                 
             # Post-process force
-            ForceX_ = 0.0
-            @timeit SimMetaData.HourGlass "XX Calculate Force" @inbounds @threads for i in eachindex(SimParticles.Position)
-                if SimParticles.Type[i] == Moving
-                    ForceX_ += SimConstants.m₀ * SimParticles.Acceleration[i][1]
-                end
-            end
-            OutputTimes[SimMetaData.OutputIterationCounter] = SimMetaData.TotalTime
-            ForceX[SimMetaData.OutputIterationCounter]      = ForceX_
+            # ForceX_ = 0.0
+            # @timeit SimMetaData.HourGlass "XX Calculate Force" @inbounds @threads for i in eachindex(SimParticles.Position)
+            #     if SimParticles.Type[i] == Moving
+            #         ForceX_ += SimConstants.m₀ * SimParticles.Acceleration[i][1]
+            #     end
+            # end
+            # OutputTimes[SimMetaData.OutputIterationCounter] = SimMetaData.TotalTime
+            # ForceX[SimMetaData.OutputIterationCounter]      = ForceX_
     
-            write(force_file, string(SimMetaData.TotalTime) * " ; " * string(ForceX_) * "\n")
+            # write(force_file, string(SimMetaData.TotalTime) * " ; " * string(ForceX_) * "\n")
 
             try 
                 @timeit HourGlass "12A Output Data" SaveFile(SimMetaData.OutputIterationCounter + 1)
