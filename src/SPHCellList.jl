@@ -487,9 +487,6 @@ using Base.Threads
     
         # Normal run and save data
         generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
-        
-        # This is for some reason to trick the compiler to avoid dispatch error on SimulationLoop due to SimParticles
-        # @inline on SimulationLoop directly slows down code
     
         force_file = open("MovingSquare_Dp0.02_ForceX.txt", "w")
         @inbounds while true
