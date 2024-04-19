@@ -434,7 +434,9 @@ using Base.Threads
         GC.gc()
         try
             foreach(rm, filter(endswith(".vtkhdf"), readdir(SimMetaData.SaveLocation,join=true)))
-        catch
+        catch err
+            @warn("File could not be deleted, manually delete else program cannot conclude.")
+            display(err)
         end
     
         # Unpack the relevant simulation meta data
@@ -506,9 +508,13 @@ using Base.Threads
             ForceX[SimMetaData.OutputIterationCounter]      = ForceX_
     
             write(force_file, string(SimMetaData.TotalTime) * " ; " * string(ForceX_) * "\n")
-        
-    
+
+            try 
                 @timeit HourGlass "12A Output Data" SaveFile(SimMetaData.OutputIterationCounter + 1)
+            catch err
+                @warn("File write failed.")
+                display(err)
+            end
     
                 if SimMetaData.FlagLog
                     LogStep(SimLogger, SimMetaData, HourGlass)
@@ -532,8 +538,10 @@ using Base.Threads
     
                 
                 # This should not be counted in actual run 
-                @timeit HourGlass "12B Close hdfvtk output files"  @threads for f in fid_vector
-                    close(f)
+                @timeit HourGlass "12B Close hdfvtk output files"  @threads for i in eachindex(fid_vector)
+                    if isassigned(fid_vector, i)
+                        close(fid_vector[i])
+                    end
                 end
     
                 finish!(SimMetaData.ProgressSpecification)
