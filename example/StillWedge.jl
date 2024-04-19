@@ -7,7 +7,7 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="StillWedge", 
         SaveLocation="E:/SecondApproach/TESTING_CPU_StillWedge",
-        SimulationTime=1,
+        SimulationTime=4,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
@@ -15,7 +15,7 @@ let
         FlagShifting=false,
     )
 
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 1, CFL=0.2)
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
 
     SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
 
@@ -29,7 +29,7 @@ let
     )
     )
 
-    @profview RunSimulation(
+    RunSimulation(
         FluidCSV           = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Fluid.csv",
         FixedCSV           = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Bound.csv",
         MovingCSV           = nothing,
