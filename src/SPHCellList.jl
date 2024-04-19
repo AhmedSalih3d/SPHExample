@@ -307,29 +307,29 @@ using Base.Threads
         end
     
         ###=== First step of resetting arrays
-        @timeit SimMetaData.HourGlass "03A ResetArrays" ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ)
-        @timeit SimMetaData.HourGlass "03B ResetArrays" @. ResetArrays!(dρdtIThreaded, AccelerationThreaded)
+        @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ)
+        @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(dρdtIThreaded, AccelerationThreaded)
 
         if SimMetaData.FlagOutputKernelValues
-            @timeit SimMetaData.HourGlass "03A ResetArrays" ResetArrays!(Kernel, KernelGradient)
-            @timeit SimMetaData.HourGlass "03B ResetArrays" @. ResetArrays!(KernelThreaded, KernelGradientThreaded)
+            @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(Kernel, KernelGradient)
+            @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(KernelThreaded, KernelGradientThreaded)
         end
 
         if SimMetaData.FlagShifting
-            @timeit SimMetaData.HourGlass "03A ResetArrays" ResetArrays!(∇Cᵢ, ∇◌rᵢ)
-            @timeit SimMetaData.HourGlass "03B ResetArrays" @. ResetArrays!(∇CᵢThreaded, ∇◌rᵢThreaded)
+            @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(∇Cᵢ, ∇◌rᵢ)
+            @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(∇CᵢThreaded, ∇◌rᵢThreaded)
         end
         ###===
 
     
         Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
         @timeit SimMetaData.HourGlass "04 First NeighborLoop"                   NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtIThreaded, AccelerationThreaded,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, EnumeratedIndices)
-        @timeit SimMetaData.HourGlass "04 Reduction"                            reduce_sum!(dρdtI, dρdtIThreaded)
-        @timeit SimMetaData.HourGlass "04 Reduction"                            reduce_sum!(Acceleration, AccelerationThreaded)
+        @timeit SimMetaData.HourGlass "Reduction"                            reduce_sum!(dρdtI, dρdtIThreaded)
+        @timeit SimMetaData.HourGlass "Reduction"                            reduce_sum!(Acceleration, AccelerationThreaded)
 
         if SimMetaData.FlagShifting
-            @timeit SimMetaData.HourGlass "04 Reduction"                        reduce_sum!(∇Cᵢ, ∇CᵢThreaded)
-            @timeit SimMetaData.HourGlass "04 Reduction"                        reduce_sum!(∇◌rᵢ, ∇◌rᵢThreaded)
+            @timeit SimMetaData.HourGlass "Reduction"                        reduce_sum!(∇Cᵢ, ∇CᵢThreaded)
+            @timeit SimMetaData.HourGlass "Reduction"                        reduce_sum!(∇◌rᵢ, ∇◌rᵢThreaded)
         end
     
     
@@ -343,17 +343,17 @@ using Base.Threads
         @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"  LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
     
         ###=== Second step of resetting arrays
-        @timeit SimMetaData.HourGlass "07A ResetArrays" ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ)
-        @timeit SimMetaData.HourGlass "07B ResetArrays" @. ResetArrays!(dρdtIThreaded, AccelerationThreaded)
+        @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(Kernel, KernelGradient, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ)
+        @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(dρdtIThreaded, AccelerationThreaded)
 
         if SimMetaData.FlagOutputKernelValues
-            @timeit SimMetaData.HourGlass "07A ResetArrays" ResetArrays!(Kernel, KernelGradient)
-            @timeit SimMetaData.HourGlass "07B ResetArrays" @. ResetArrays!(KernelThreaded, KernelGradientThreaded)
+            @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(Kernel, KernelGradient)
+            @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(KernelThreaded, KernelGradientThreaded)
         end
 
         if SimMetaData.FlagShifting
-            @timeit SimMetaData.HourGlass "07A ResetArrays" ResetArrays!(∇Cᵢ, ∇◌rᵢ)
-            @timeit SimMetaData.HourGlass "07B ResetArrays" @. ResetArrays!(∇CᵢThreaded, ∇◌rᵢThreaded)
+            @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(∇Cᵢ, ∇◌rᵢ)
+            @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(∇CᵢThreaded, ∇◌rᵢThreaded)
         end
         ###===
 
@@ -366,12 +366,12 @@ using Base.Threads
     
         Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
         @timeit SimMetaData.HourGlass "08 Second NeighborLoop"         NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Positionₙ⁺, KernelThreaded, KernelGradientThreaded, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtIThreaded, AccelerationThreaded, ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, EnumeratedIndices)
-        @timeit SimMetaData.HourGlass "08 Reduction"                   reduce_sum!(dρdtI, dρdtIThreaded)
-        @timeit SimMetaData.HourGlass "08 Reduction"                   reduce_sum!(Acceleration, AccelerationThreaded)
+        @timeit SimMetaData.HourGlass "Reduction"                   reduce_sum!(dρdtI, dρdtIThreaded)
+        @timeit SimMetaData.HourGlass "Reduction"                   reduce_sum!(Acceleration, AccelerationThreaded)
 
         if SimMetaData.FlagShifting
-            @timeit SimMetaData.HourGlass "08 Reduction"               reduce_sum!(∇Cᵢ, ∇CᵢThreaded)
-            @timeit SimMetaData.HourGlass "08 Reduction"               reduce_sum!(∇◌rᵢ, ∇◌rᵢThreaded)
+            @timeit SimMetaData.HourGlass "Reduction"               reduce_sum!(∇Cᵢ, ∇CᵢThreaded)
+            @timeit SimMetaData.HourGlass "Reduction"               reduce_sum!(∇◌rᵢ, ∇◌rᵢThreaded)
         end
     
     
