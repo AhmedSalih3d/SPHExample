@@ -47,7 +47,6 @@ constants = SimulationConstants(ρ₀=1017, dx=0.03, α=0.02)
     c₀::T  = sqrt(g * 2) * 20     ; @assert c₀   > 0 "Speed of sound (c₀) must be positive"
     γ::T  = 7                     ; @assert γ    > 0 "Adiabatic index (γ) must be positive"
     γ⁻¹::T  = 1/γ                 ; @assert γ⁻¹  > 0 "Inverse adiabatic index (γ⁻¹) must be positive"
-    dt::T  = 1e-5                 ; @assert dt   > 0 "Time step (dt) must be positive"
     δᵩ::T  = 0.1                  ; @assert δᵩ   > 0 "Density variation (δᵩ) must be positive"
     CFL::T = 0.2                  ; @assert CFL  > 0 "CFL condition (CFL) must be positive"
     η²::T  = (0.01 * h)^2         ; @assert η²   > 0 "Eta squared (η²) must be positive"
