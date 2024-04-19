@@ -7,7 +7,7 @@ let
     SimMetaDataMovingSquare  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="MovingSquare2D", 
         SaveLocation="E:/SecondApproach/MovingSquare2D",
-        SimulationTime=2.5,
+        SimulationTime=0.5,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
