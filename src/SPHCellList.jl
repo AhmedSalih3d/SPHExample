@@ -49,13 +49,6 @@ using Base.Threads
             Cells[i] = CartesianIndex(t)
         end
 
-        # MaxSize          = maximum(Cells) #Has not been sorted yet
-        # CellsLinearIndex = @views Particles.CellsLinearIndex
-        # @threads for i ∈ eachindex(Cells)
-        #     CellsLinearIndex[i] = GetLinearIndex(Tuple(Cells[i]),Tuple(MaxSize))
-        #     # CellsLinearIndex[i] = Base._sub2ind(Tuple(MaxSize), Tuple(Cells[i])...)
-        # end
-
         return nothing
     end
 
@@ -115,7 +108,7 @@ using Base.Threads
         return nothing
     end
 
-    function NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, ActiveNeighbours, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, IndexCounter)
+    function NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, ActiveNeighbours, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, IndexCounter)
         UniqueCells = view(UniqueCells, 1:IndexCounter)
         @threads for (ichunk, inds) in enumerate(chunks(UniqueCells; n=nthreads()))
             for iter in inds
@@ -354,7 +347,7 @@ using Base.Threads
 
     
         Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-        @timeit SimMetaData.HourGlass "04 First NeighborLoop"                   NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, ActiveNeighbours, Stencil, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtIThreaded, AccelerationThreaded,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, IndexCounter)
+        @timeit SimMetaData.HourGlass "04 First NeighborLoop"                   NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, ActiveNeighbours, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtIThreaded, AccelerationThreaded,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, IndexCounter)
         @timeit SimMetaData.HourGlass "04 Reduction"                            reduce_sum!(dρdtI, dρdtIThreaded)
         @timeit SimMetaData.HourGlass "04 Reduction"                            reduce_sum!(Acceleration, AccelerationThreaded)
 
@@ -396,7 +389,7 @@ using Base.Threads
         end
     
         Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-        @timeit SimMetaData.HourGlass "08 Second NeighborLoop"         NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges,  ActiveNeighbours, Stencil, Positionₙ⁺, KernelThreaded, KernelGradientThreaded, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtIThreaded, AccelerationThreaded, ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, IndexCounter)
+        @timeit SimMetaData.HourGlass "08 Second NeighborLoop"         NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges,  ActiveNeighbours, Positionₙ⁺, KernelThreaded, KernelGradientThreaded, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtIThreaded, AccelerationThreaded, ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, IndexCounter)
         @timeit SimMetaData.HourGlass "08 Reduction"                   reduce_sum!(dρdtI, dρdtIThreaded)
         @timeit SimMetaData.HourGlass "08 Reduction"                   reduce_sum!(Acceleration, AccelerationThreaded)
 
