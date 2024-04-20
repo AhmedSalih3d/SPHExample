@@ -1,52 +1,90 @@
 module PreProcess
 
-export LoadParticlesFromCSV_StaticArrays, LoadBoundaryNormals, AllocateDataStructures
+export LoadParticlesFromCSV_StaticArrays, LoadBoundaryNormals, AllocateDataStructures, ParticleType, Fluid, Fixed, Moving
 
 using CSV
 using DataFrames
 using StaticArrays
 using StructArrays
 
-function LoadParticlesFromCSV_StaticArrays(dims, float_type, fluid_csv, boundary_csv)
-    DF_FLUID = CSV.read(fluid_csv, DataFrame)
-    DF_BOUND = CSV.read(boundary_csv, DataFrame)
-
-    P1F = DF_FLUID[!, "Points:0"]
-    P2F = DF_FLUID[!, "Points:1"]
-    P3F = DF_FLUID[!, "Points:2"] 
-    P1B = DF_BOUND[!, "Points:0"]
-    P2B = DF_BOUND[!, "Points:1"]
-    P3B = DF_BOUND[!, "Points:2"]
-
-    points = Vector{SVector{dims,float_type}}()
-    density_fluid = Vector{float_type}()
-    density_bound = Vector{float_type}()
-
-    for (P1, P2, P3, DF, density) in [(P1B, P2B, P3B, DF_BOUND, density_bound), (P1F, P2F, P3F, DF_FLUID, density_fluid)]
-        for i = 1:length(P1)
-            point = dims == 3 ? SVector{dims,float_type}(P1[i], P2[i], P3[i]) : SVector{dims,float_type}(P1[i], P3[i])
-            push!(points, point)
-            push!(density, DF.Rhop[i])
-        end
-    end
-
-    return points, density_fluid, density_bound
+@enum ParticleType::UInt8 begin
+    Fluid  = UInt8(1)
+    Fixed  = UInt8(2)
+    Moving = UInt8(3)
 end
 
-function AllocateDataStructures(Dimensions,FloatType, FluidCSV,BoundCSV)
-    @inline Position, density_fluid, density_bound  = LoadParticlesFromCSV_StaticArrays(Dimensions,FloatType, FluidCSV,BoundCSV)
+function LoadSpecificCSV(dims, float_type, particle_type, particle_group_marker, specific_csv)
+    DF_SPECIFIC = CSV.read(specific_csv, DataFrame)
+
+    points       = Vector{SVector{dims,float_type}}()
+    density      = Vector{float_type}()
+    types        = Vector{ParticleType}()
+    group_marker = Vector{Int}()
+
+    for DF ∈ eachrow(DF_SPECIFIC)
+        P1   = DF["Points:0"]
+        P2   = DF["Points:1"]
+        P3   = DF["Points:2"]
+        Rhop = DF["Rhop"]
+
+        point = dims == 3 ? SVector{dims,float_type}(P1, P2, P3) : SVector{dims,float_type}(P1, P3)
+        push!(points,  point)
+        push!(density, Rhop)
+        push!(types, particle_type)
+        push!(group_marker, particle_group_marker)
+    end
+
+    return points, density, types, group_marker
+end
+
+function AllocateDataStructures(Dimensions,FloatType, SimGeometry)
+    Position    = Vector{SVector{Dimensions, FloatType}}()
+    Density     = Vector{FloatType}()
+    Types       = Vector{ParticleType}()
+    GroupMarker = Vector{UInt}()
+    
+    for key in keys(SimGeometry)
+        CurrentDict = SimGeometry[key]
+
+        particle_type         = CurrentDict["Type"]
+        particle_group_marker = CurrentDict["GroupMarker"]
+        specific_csv          = CurrentDict["CSVFile"]
+
+        points, density, types, group_marker = LoadSpecificCSV(Dimensions,FloatType, particle_type, particle_group_marker, specific_csv)
+
+        Position    = vcat(Position    , points)
+        Density     = vcat(Density     , density)
+        Types       = vcat(Types       , types)
+        GroupMarker = vcat(GroupMarker , group_marker)
+    end
 
     NumberOfPoints           = length(Position)
     PositionType             = eltype(Position)
     PositionUnderlyingType   = eltype(PositionType)
 
-    Density        = deepcopy([density_bound; density_fluid])
+    GravityFactor = similar(Density)
+    for i ∈ eachindex(GravityFactor)
+        fac = 0
+        if     Types[i] == Fluid
+            fac = -1
+        elseif Types[i] == Moving
+            fac =  1
+        end
+        GravityFactor[i] = fac
+    end
 
-    GravityFactor = [ zeros(size(density_bound,1)) ; -ones(size(density_fluid,1)) ]
-    
-    MotionLimiter = [ zeros(size(density_bound,1)) ;  ones(size(density_fluid,1)) ]
+    MotionLimiter = similar(Density)
+    for i ∈ eachindex(MotionLimiter)
+        fac = 0
+        if   Types[i] == Fluid
+            fac =  1
+        else Types[i] == Moving
+            fac =  0
+        end
+        MotionLimiter[i] = fac
+    end
 
-    BoundaryBool  = .!Bool.(MotionLimiter)
+    BoundaryBool  = UInt8.(.!Bool.(MotionLimiter))
 
     Acceleration    = zeros(PositionType, NumberOfPoints)
     Velocity        = zeros(PositionType, NumberOfPoints)
@@ -63,9 +101,9 @@ function AllocateDataStructures(Dimensions,FloatType, FluidCSV,BoundCSV)
     
     Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
 
-    SimParticles = StructArray((Cells = Cells, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = collect(1:NumberOfPoints)))
+    SimParticles = StructArray((Cells = Cells, Kernel = Kernel, KernelGradient = KernelGradient, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = collect(1:NumberOfPoints) , Type = Types, GroupMarker = GroupMarker))
 
-    return SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Kernel, KernelGradient
+    return SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺
 end
 
 function LoadBoundaryNormals(dims, float_type, path_mdbc)

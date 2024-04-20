@@ -15,7 +15,7 @@ module SPHExample
     export ResetArrays!, to_3d
 
     using .PreProcess
-    export LoadParticlesFromCSV_StaticArrays, AllocateDataStructures, LoadBoundaryNormals
+    export LoadParticlesFromCSV_StaticArrays, AllocateDataStructures, LoadBoundaryNormals, ParticleType, Fluid, Fixed, Moving
 
     using .ProduceHDFVTK
     export SaveVTKHDF
@@ -27,7 +27,7 @@ module SPHExample
     export EquationOfState, EquationOfStateGamma7, Pressure!, DensityEpsi!, LimitDensityAtBoundary!, ConstructGravitySVector, InverseHydrostaticEquationOfState
 
     using .SimulationLoggerConfiguration
-    export SimulationLogger, generate_format_string, InitializeLogger, LogStep, LogFinal
+    export SimulationLogger, generate_format_string, InitializeLogger, LogSimulationDetails, LogStep, LogFinal
 
     using .SimulationMetaDataConfiguration
     export SimulationMetaData
@@ -36,7 +36,7 @@ module SPHExample
     export SimulationConstants
 
     using .SPHCellList
-    export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!
+    export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!, RunSimulation
 
 end
 
