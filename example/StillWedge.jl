@@ -39,14 +39,6 @@ let
 
     SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
 
-    println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
-        SimGeometry        = SimulationGeometry,
-        SimMetaData        = SimMetaDataWedge,
-        SimConstants       = SimConstantsWedge,
-        SimLogger          = SimLogger
-    )
-    )
-
     @profview RunSimulation(
         SimGeometry        = SimulationGeometry,
         SimMetaData        = SimMetaDataWedge,

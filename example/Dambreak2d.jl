@@ -38,14 +38,6 @@ let
 
     SimLogger = SimulationLogger(SimMetaDataDambreak.SaveLocation)
 
-    println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
-        SimGeometry        = SimulationGeometry,
-        SimMetaData        = SimMetaDataDambreak,
-        SimConstants       = SimConstantsDambreak,
-        SimLogger          = SimLogger
-    )
-    )
-
     RunSimulation(
         SimGeometry        = SimulationGeometry,
         SimMetaData        = SimMetaDataDambreak,

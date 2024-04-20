@@ -6,7 +6,7 @@ let
     FloatType  = Float64
 
     # ViscoBoundFactor should be 1, but need to understand how to implement it
-    SimConstantsMovingSquare = SimulationConstants{FloatType}(dx=0.04,
+    SimConstantsMovingSquare = SimulationConstants{FloatType}(dx=0.02,
         c₀=28, 
         δᵩ = 0.1,
         g  = 0,
@@ -58,14 +58,6 @@ let
     end
 
     SimLogger = SimulationLogger(SimMetaDataMovingSquare.SaveLocation)
-
-    println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
-        SimGeometry        = SimulationGeometry,
-        SimMetaData        = SimMetaDataMovingSquare,
-        SimConstants       = SimConstantsMovingSquare,
-        SimLogger          = SimLogger
-    )
-    )
 
     RunSimulation(
         SimGeometry        = SimulationGeometry,
