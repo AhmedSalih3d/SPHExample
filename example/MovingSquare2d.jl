@@ -19,7 +19,7 @@ let
     SimMetaDataMovingSquare  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="MovingSquare2D", 
         SaveLocation="E:/SecondApproach/MovingSquare2D",
-        SimulationTime=3,
+        SimulationTime=2.5,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
@@ -28,7 +28,6 @@ let
         FlagViscosityTreatment=:LaminarSPS
     )
 
-    # Define the dictionary with specific types for keys and values to avoid any type ambiguity
     SimulationGeometry = Dict{Symbol, Dict{String, Any}}()
 
     # Populate the dictionary
@@ -46,7 +45,7 @@ let
         "Motion"      => nothing
     )
 
-    @inline SimulationGeometry[:MovingSquare] = Dict(
+    SimulationGeometry[:MovingSquare] = Dict(
         "CSVFile"     => "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Square.csv",
         "GroupMarker" => 3,
         "Type"        => Moving,

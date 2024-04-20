@@ -283,6 +283,21 @@ using Base.Threads
         ParticleMarker = SimParticles.GroupMarker
         Kernel         = SimParticles.Kernel
         KernelGradient = SimParticles.KernelGradient
+
+        ### Some functions to simplify code inside of this function
+        function ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
+            @inbounds for i in eachindex(Position)
+                if ParticleType[i] == Moving
+                    ShouldMove      = MotionDefinition[ParticleMarker[i]]["StartTime"] <= SimMetaData.TotalTime <= (MotionDefinition[ParticleMarker[i]]["StartTime"] + MotionDefinition[ParticleMarker[i]]["Duration"])
+                    MotionVel       = MotionDefinition[ParticleMarker[i]]["Velocity"]  
+                    MotionDir       = MotionDefinition[ParticleMarker[i]]["Direction"]
+                    Velocity[i]     = MotionVel   * MotionDir * ShouldMove
+                    Position[i]    += Velocity[i] * dt₂
+                end
+            end
+        end
+    
+        ###
     
         @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
         dt₂ = dt * 0.5
@@ -300,15 +315,7 @@ using Base.Threads
         UniqueCells       = view(UniqueCells, 1:IndexCounter)
         EnumeratedIndices = enumerate(chunks(UniqueCells; n=nthreads()))
 
-        @timeit SimMetaData.HourGlass "Motion" @inbounds for i in eachindex(Position)
-            if ParticleType[i] == Moving
-                ShouldMove      = MotionDefinition[ParticleMarker[i]]["StartTime"] <= SimMetaData.TotalTime <= (MotionDefinition[ParticleMarker[i]]["StartTime"] + MotionDefinition[ParticleMarker[i]]["Duration"])
-                MotionVel       = MotionDefinition[ParticleMarker[i]]["Velocity"]  
-                MotionDir       = MotionDefinition[ParticleMarker[i]]["Direction"]
-                Velocity[i]     = MotionVel   * MotionDir * ShouldMove
-                Position[i]    += Velocity[i] * dt₂
-            end
-        end
+        @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
     
         ###=== First step of resetting arrays
         @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ)
@@ -360,16 +367,8 @@ using Base.Threads
             @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(∇CᵢThreaded, ∇◌rᵢThreaded)
         end
         ###===
-        
-        @timeit SimMetaData.HourGlass "Motion" @inbounds for i in eachindex(Position)
-            if ParticleType[i] == Moving
-                ShouldMove      = MotionDefinition[ParticleMarker[i]]["StartTime"] <= SimMetaData.TotalTime <= (MotionDefinition[ParticleMarker[i]]["StartTime"] + MotionDefinition[ParticleMarker[i]]["Duration"])
-                MotionVel       = MotionDefinition[ParticleMarker[i]]["Velocity"]  
-                MotionDir       = MotionDefinition[ParticleMarker[i]]["Direction"]
-                Velocity[i]     = MotionVel   * MotionDir * ShouldMove
-                Position[i]    += Velocity[i] * dt₂
-            end
-        end
+
+        @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
     
         @timeit SimMetaData.HourGlass "03 Pressure"                 Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
         @timeit SimMetaData.HourGlass "08 Second NeighborLoop"      NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Positionₙ⁺, KernelThreaded, KernelGradientThreaded, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtIThreaded, AccelerationThreaded, ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, EnumeratedIndices)
