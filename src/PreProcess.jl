@@ -13,12 +13,13 @@ using StructArrays
     Moving = UInt8(3)
 end
 
-function LoadSpecificCSV(dims, float_type, particle_type, specific_csv)
+function LoadSpecificCSV(dims, float_type, particle_type, particle_group_marker, specific_csv)
     DF_SPECIFIC = CSV.read(specific_csv, DataFrame)
 
-    points      = Vector{SVector{dims,float_type}}()
-    density     = Vector{float_type}()
-    types       = Vector{ParticleType}()
+    points       = Vector{SVector{dims,float_type}}()
+    density      = Vector{float_type}()
+    types        = Vector{ParticleType}()
+    group_marker = Vector{Int}()
 
     for DF ∈ eachrow(DF_SPECIFIC)
         P1   = DF["Points:0"]
@@ -30,26 +31,30 @@ function LoadSpecificCSV(dims, float_type, particle_type, specific_csv)
         push!(points,  point)
         push!(density, Rhop)
         push!(types, particle_type)
+        push!(group_marker, particle_group_marker)
     end
 
-    return points, density, types
+    return points, density, types, group_marker
 end
 
 function AllocateDataStructures(Dimensions,FloatType, SimGeometry)
-    Position = Vector{SVector{Dimensions, FloatType}}()
-    Density  = Vector{FloatType}()
-    Types    = Vector{ParticleType}()
+    Position    = Vector{SVector{Dimensions, FloatType}}()
+    Density     = Vector{FloatType}()
+    Types       = Vector{ParticleType}()
+    GroupMarker = Vector{UInt}()
     for key in keys(SimGeometry)
         CurrentDict = SimGeometry[key]
 
-        particle_type = CurrentDict["Type"]
-        specific_csv  = CurrentDict["CSVFile"]
+        particle_type         = CurrentDict["Type"]
+        particle_group_marker = CurrentDict["GroupMarker"]
+        specific_csv          = CurrentDict["CSVFile"]
 
-        points, density, types = LoadSpecificCSV(Dimensions,FloatType, particle_type, specific_csv)
+        points, density, types, group_marker = LoadSpecificCSV(Dimensions,FloatType, particle_type, particle_group_marker, specific_csv)
 
-        Position = vcat(Position , points)
-        Density  = vcat(Density  , density)
-        Types    = vcat(Types    , types)
+        Position    = vcat(Position    , points)
+        Density     = vcat(Density     , density)
+        Types       = vcat(Types       , types)
+        GroupMarker = vcat(GroupMarker , group_marker)
     end
 
     NumberOfPoints           = length(Position)
@@ -95,7 +100,7 @@ function AllocateDataStructures(Dimensions,FloatType, SimGeometry)
     
     Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
 
-    SimParticles = StructArray((Cells = Cells, Kernel = Kernel, KernelGradient = KernelGradient, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = collect(1:NumberOfPoints) , Type = Types))
+    SimParticles = StructArray((Cells = Cells, Kernel = Kernel, KernelGradient = KernelGradient, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = collect(1:NumberOfPoints) , Type = Types, GroupMarker = GroupMarker))
 
     return SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺
 end
