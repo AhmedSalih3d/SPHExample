@@ -487,9 +487,6 @@ using Base.Threads
         SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
         @inline SaveFile(SimMetaData.OutputIterationCounter)
         
-        ForceX      = zeros(NumberOfPoints)
-        OutputTimes = zeros(NumberOfPoints)
-    
         InverseCutOff = Val(1/(SimConstants.H))
 
         # Construct Motion Definition
@@ -507,24 +504,12 @@ using Base.Threads
         # Normal run and save data
         generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
     
-        force_file = open("MovingSquare_Dp0.02_ForceX.txt", "w")
         @inbounds while true
     
             SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
     
             if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
-                
-            # Post-process force
-            # ForceX_ = 0.0
-            # @timeit SimMetaData.HourGlass "XX Calculate Force" @inbounds @threads for i in eachindex(SimParticles.Position)
-            #     if SimParticles.Type[i] == Moving
-            #         ForceX_ += SimConstants.m₀ * SimParticles.Acceleration[i][1]
-            #     end
-            # end
-            # OutputTimes[SimMetaData.OutputIterationCounter] = SimMetaData.TotalTime
-            # ForceX[SimMetaData.OutputIterationCounter]      = ForceX_
     
-            # write(force_file, string(SimMetaData.TotalTime) * " ; " * string(ForceX_) * "\n")
 
             try 
                 @timeit HourGlass "12A Output Data" SaveFile(SimMetaData.OutputIterationCounter + 1)
