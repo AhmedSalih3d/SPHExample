@@ -35,28 +35,7 @@ function LoadSpecificCSV(dims, float_type, particle_type, specific_csv)
     return points, density, types
 end
 
-# function LoadParticlesFromCSV_StaticArrays(dims, float_type, fluid_csv, fixed_csv, moving_csv)
-
-#     FluidParticlesPoints,          FluidParticlesDensity         , FluidParticlesTypes          = LoadSpecificCSV(dims, float_type, Fluid, fluid_csv)
-#     FixedBoundaryParticlesPoints,  FixedBoundaryParticlesDensity , FixedBoundaryParticlesTypes  = LoadSpecificCSV(dims, float_type, Fixed, fixed_csv)
-
-#     points  = [FluidParticlesPoints;  FixedBoundaryParticlesPoints]
-#     density = [FluidParticlesDensity; FixedBoundaryParticlesDensity]
-#     types   = [FluidParticlesTypes;   FixedBoundaryParticlesTypes]
-
-#     if !isnothing(moving_csv)
-#         MovingBoundaryParticlesPoints, MovingBoundaryParticlesDensity, MovingBoundaryParticlesTypes = LoadSpecificCSV(dims, float_type, Moving, moving_csv)
-#         points  = [points;  MovingBoundaryParticlesPoints]
-#         density = [density; MovingBoundaryParticlesDensity]
-#         types   = [types;   MovingBoundaryParticlesTypes]
-#     end
-
-#     return points, density, types
-# end
-
 function AllocateDataStructures(Dimensions,FloatType, SimGeometry)
-    # @inline Position, Density, Types  = LoadParticlesFromCSV_StaticArrays(Dimensions,FloatType, FluidCSV, FixedCSV, MovingCSV)
-
     Position = Vector{SVector{Dimensions, FloatType}}()
     Density  = Vector{FloatType}()
     Types    = Vector{ParticleType}()

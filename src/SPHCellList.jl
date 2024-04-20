@@ -420,7 +420,7 @@ using Base.Threads
     end
     
     ###===
-    function RunSimulation(;SimGeometry::Dict,
+    function RunSimulation(;SimGeometry::Dict{Symbol, Dict{String, Union{String, Int, ParticleType, Nothing}}},
         SimMetaData::SimulationMetaData{Dimensions, FloatType},
         SimConstants::SimulationConstants,
         SimLogger::SimulationLogger
