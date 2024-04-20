@@ -271,7 +271,7 @@ using Base.Threads
         end
     end
     
-    @inbounds function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, InverseCutOff)
+    @inbounds function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
         Position       = SimParticles.Position
         Density        = SimParticles.Density
         Pressure       = SimParticles.Pressure
@@ -280,6 +280,7 @@ using Base.Threads
         GravityFactor  = SimParticles.GravityFactor
         MotionLimiter  = SimParticles.MotionLimiter
         ParticleType   = SimParticles.Type
+        ParticleMarker = SimParticles.GroupMarker
         Kernel         = SimParticles.Kernel
         KernelGradient = SimParticles.KernelGradient
     
@@ -298,13 +299,13 @@ using Base.Threads
 
         UniqueCells       = view(UniqueCells, 1:IndexCounter)
         EnumeratedIndices = enumerate(chunks(UniqueCells; n=nthreads()))
-    
-        # @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(Position)
-        #     if ParticleType[i] == Moving
-        #         Velocity[i]     = 2.8 * eltype(Velocity)(1,0)
-        #         Position[i]    += Velocity[i] * dt₂
-        #     end
-        # end
+
+        @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(Position)
+            if ParticleType[i] == Moving
+                Velocity[i]     = MotionDefinition[ParticleMarker[i]]["Velocity"] * eltype(Velocity)(1,0)
+                Position[i]    += Velocity[i] * dt₂
+            end
+        end
     
         ###=== First step of resetting arrays
         @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ)
@@ -357,12 +358,12 @@ using Base.Threads
         end
         ###===
 
-        # @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(Position)
-        #     if ParticleType[i] == Moving
-        #         Velocity[i]     = 2.8 * eltype(Velocity)(1,0)
-        #         Position[i]    += Velocity[i] * dt₂
-        #     end
-        # end
+        @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(Position)
+            if ParticleType[i] == Moving
+                Velocity[i]     = MotionDefinition[ParticleMarker[i]]["Velocity"] * eltype(Velocity)(1,0)
+                Position[i]    += Velocity[i] * dt₂
+            end
+        end
     
         @timeit SimMetaData.HourGlass "03 Pressure"                 Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
         @timeit SimMetaData.HourGlass "08 Second NeighborLoop"      NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Positionₙ⁺, KernelThreaded, KernelGradientThreaded, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtIThreaded, AccelerationThreaded, ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, EnumeratedIndices)
@@ -485,6 +486,18 @@ using Base.Threads
         OutputTimes = zeros(NumberOfPoints)
     
         InverseCutOff = Val(1/(SimConstants.H))
+
+        # Construct Motion Definition
+        MotionDefinition = Dict{Int, Dict{String, FloatType}}()
+
+        # Loop through SimulationGeometry to populate MotionDefinition
+        for (_, details) in pairs(SimGeometry)
+            motion = get(details, "Motion", nothing)
+            if isa(motion, Dict)
+                group_marker = details["GroupMarker"]
+                MotionDefinition[group_marker] = motion
+            end
+        end
     
         # Normal run and save data
         generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
@@ -492,7 +505,7 @@ using Base.Threads
         force_file = open("MovingSquare_Dp0.02_ForceX.txt", "w")
         @inbounds while true
     
-            SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, InverseCutOff)
+            SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
     
             if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
                 
