@@ -302,9 +302,10 @@ using Base.Threads
 
         @timeit SimMetaData.HourGlass "Motion" @inbounds for i in eachindex(Position)
             if ParticleType[i] == Moving
-                MotionVel       = MotionDefinition[ParticleMarker[i]]["Velocity"]
+                ShouldMove      = MotionDefinition[ParticleMarker[i]]["StartTime"] <= SimMetaData.TotalTime <= (MotionDefinition[ParticleMarker[i]]["StartTime"] + MotionDefinition[ParticleMarker[i]]["Duration"])
+                MotionVel       = MotionDefinition[ParticleMarker[i]]["Velocity"]  
                 MotionDir       = MotionDefinition[ParticleMarker[i]]["Direction"]
-                Velocity[i]     = MotionVel   * MotionDir
+                Velocity[i]     = MotionVel   * MotionDir * ShouldMove
                 Position[i]    += Velocity[i] * dt₂
             end
         end
@@ -359,12 +360,13 @@ using Base.Threads
             @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(∇CᵢThreaded, ∇◌rᵢThreaded)
         end
         ###===
-
+        
         @timeit SimMetaData.HourGlass "Motion" @inbounds for i in eachindex(Position)
             if ParticleType[i] == Moving
-                MotionVel       = MotionDefinition[ParticleMarker[i]]["Velocity"]
+                ShouldMove      = MotionDefinition[ParticleMarker[i]]["StartTime"] <= SimMetaData.TotalTime <= (MotionDefinition[ParticleMarker[i]]["StartTime"] + MotionDefinition[ParticleMarker[i]]["Duration"])
+                MotionVel       = MotionDefinition[ParticleMarker[i]]["Velocity"]  
                 MotionDir       = MotionDefinition[ParticleMarker[i]]["Direction"]
-                Velocity[i]     = MotionVel   * MotionDir
+                Velocity[i]     = MotionVel   * MotionDir * ShouldMove
                 Position[i]    += Velocity[i] * dt₂
             end
         end

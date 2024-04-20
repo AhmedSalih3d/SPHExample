@@ -6,7 +6,7 @@ let
     FloatType  = Float64
 
     # ViscoBoundFactor should be 1, but need to understand how to implement it
-    SimConstantsMovingSquare = SimulationConstants{FloatType}(dx=0.02,
+    SimConstantsMovingSquare = SimulationConstants{FloatType}(dx=0.04,
         c₀=28, 
         δᵩ = 0.1,
         g  = 0,
@@ -19,7 +19,7 @@ let
     SimMetaDataMovingSquare  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="MovingSquare2D", 
         SaveLocation="E:/SecondApproach/MovingSquare2D",
-        SimulationTime=0.5,
+        SimulationTime=3,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
