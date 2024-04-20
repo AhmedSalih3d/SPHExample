@@ -1,3 +1,4 @@
+import StaticArrays: SVector
 using SPHExample
 
 let
@@ -18,7 +19,7 @@ let
     SimMetaDataMovingSquare  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="MovingSquare2D", 
         SaveLocation="E:/SecondApproach/MovingSquare2D",
-        SimulationTime=2.5,
+        SimulationTime=0.5,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
@@ -28,7 +29,7 @@ let
     )
 
     # Define the dictionary with specific types for keys and values to avoid any type ambiguity
-    SimulationGeometry = Dict{Symbol, Dict{String, Union{String, Int, FloatType, ParticleType, Nothing, Dict{String, Float64}}}}()
+    SimulationGeometry = Dict{Symbol, Dict{String, Any}}()
 
     # Populate the dictionary
     SimulationGeometry[:FixedBoundary] = Dict(
@@ -45,11 +46,11 @@ let
         "Motion"      => nothing
     )
 
-    SimulationGeometry[:MovingSquare] = Dict(
+    @inline SimulationGeometry[:MovingSquare] = Dict(
         "CSVFile"     => "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Square.csv",
         "GroupMarker" => 3,
         "Type"        => Moving,
-        "Motion"      => Dict("Velocity" => 2.8, "StartTime" => 0.0, "Duration" => 3.0)
+        "Motion"      => Dict("Velocity" => 2.8, "StartTime" => 0.0, "Duration" => 3.0, "Direction" => SVector{Dimensions,FloatType}(1,0))
     )
 
     # If save directory is not already made, make it

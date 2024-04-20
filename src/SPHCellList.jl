@@ -300,9 +300,11 @@ using Base.Threads
         UniqueCells       = view(UniqueCells, 1:IndexCounter)
         EnumeratedIndices = enumerate(chunks(UniqueCells; n=nthreads()))
 
-        @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(Position)
+        @timeit SimMetaData.HourGlass "Motion" @inbounds for i in eachindex(Position)
             if ParticleType[i] == Moving
-                Velocity[i]     = MotionDefinition[ParticleMarker[i]]["Velocity"] * eltype(Velocity)(1,0)
+                MotionVel       = MotionDefinition[ParticleMarker[i]]["Velocity"]
+                MotionDir       = MotionDefinition[ParticleMarker[i]]["Direction"]
+                Velocity[i]     = MotionVel   * MotionDir
                 Position[i]    += Velocity[i] * dt₂
             end
         end
@@ -358,9 +360,11 @@ using Base.Threads
         end
         ###===
 
-        @timeit SimMetaData.HourGlass "XX Move" @inbounds for i in eachindex(Position)
+        @timeit SimMetaData.HourGlass "Motion" @inbounds for i in eachindex(Position)
             if ParticleType[i] == Moving
-                Velocity[i]     = MotionDefinition[ParticleMarker[i]]["Velocity"] * eltype(Velocity)(1,0)
+                MotionVel       = MotionDefinition[ParticleMarker[i]]["Velocity"]
+                MotionDir       = MotionDefinition[ParticleMarker[i]]["Direction"]
+                Velocity[i]     = MotionVel   * MotionDir
                 Position[i]    += Velocity[i] * dt₂
             end
         end
@@ -488,7 +492,7 @@ using Base.Threads
         InverseCutOff = Val(1/(SimConstants.H))
 
         # Construct Motion Definition
-        MotionDefinition = Dict{Int, Dict{String, FloatType}}()
+        MotionDefinition = Dict{Int, Dict{String, Union{FloatType, SVector{Dimensions, FloatType}}}}()
 
         # Loop through SimulationGeometry to populate MotionDefinition
         for (_, details) in pairs(SimGeometry)
