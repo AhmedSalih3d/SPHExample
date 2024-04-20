@@ -28,8 +28,8 @@ let
     )
 
     # Define the dictionary with specific types for keys and values to avoid any type ambiguity
-    SimulationGeometry = Dict{Symbol, Dict{String, Union{String, Int, ParticleType, Nothing}}}()
-
+    SimulationGeometry = Dict{Symbol, Dict{String, Union{String, Int, FloatType, ParticleType, Nothing, Dict{String, Float64}}}}()
+    
     # Populate the dictionary
     SimulationGeometry[:FixedBoundary] = Dict(
         "CSVFile"     => "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Fixed.csv",
@@ -49,7 +49,7 @@ let
         "CSVFile"     => "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Square.csv",
         "GroupMarker" => 3,
         "Type"        => Moving,
-        "Motion"      => nothing
+        "Motion"      => Dict("Velocity" => 2.8, "StartTime" => 0.0, "Duration" => 3.0)
     )
 
     # If save directory is not already made, make it
