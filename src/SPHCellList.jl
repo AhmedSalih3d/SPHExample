@@ -420,9 +420,7 @@ using Base.Threads
     end
     
     ###===
-    function RunSimulation(;FluidCSV::String,
-        FixedCSV::String,
-        MovingCSV::Union{String,Nothing},
+    function RunSimulation(;SimGeometry::Dict,
         SimMetaData::SimulationMetaData{Dimensions, FloatType},
         SimConstants::SimulationConstants,
         SimLogger::SimulationLogger
@@ -447,7 +445,8 @@ using Base.Threads
         @unpack HourGlass, SimulationName, SilentOutput, ThreadsCPU = SimMetaData;
     
         # Load in particles
-        SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺ = AllocateDataStructures(Dimensions,FloatType, FluidCSV, FixedCSV, MovingCSV)
+        SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺ = AllocateDataStructures(Dimensions,FloatType, SimGeometry)
+        
         
         NumberOfPoints = length(SimParticles)::Int #Have to type declare, else error?
         @inline Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)

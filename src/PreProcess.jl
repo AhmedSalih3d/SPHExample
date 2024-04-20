@@ -1,6 +1,6 @@
 module PreProcess
 
-export LoadParticlesFromCSV_StaticArrays, LoadBoundaryNormals, AllocateDataStructures, Fluid, Fixed, Moving
+export LoadParticlesFromCSV_StaticArrays, LoadBoundaryNormals, AllocateDataStructures, ParticleType, Fluid, Fixed, Moving
 
 using CSV
 using DataFrames
@@ -35,27 +35,43 @@ function LoadSpecificCSV(dims, float_type, particle_type, specific_csv)
     return points, density, types
 end
 
-function LoadParticlesFromCSV_StaticArrays(dims, float_type, fluid_csv, fixed_csv, moving_csv)
+# function LoadParticlesFromCSV_StaticArrays(dims, float_type, fluid_csv, fixed_csv, moving_csv)
 
-    FluidParticlesPoints,          FluidParticlesDensity         , FluidParticlesTypes          = LoadSpecificCSV(dims, float_type, Fluid, fluid_csv)
-    FixedBoundaryParticlesPoints,  FixedBoundaryParticlesDensity , FixedBoundaryParticlesTypes  = LoadSpecificCSV(dims, float_type, Fixed, fixed_csv)
+#     FluidParticlesPoints,          FluidParticlesDensity         , FluidParticlesTypes          = LoadSpecificCSV(dims, float_type, Fluid, fluid_csv)
+#     FixedBoundaryParticlesPoints,  FixedBoundaryParticlesDensity , FixedBoundaryParticlesTypes  = LoadSpecificCSV(dims, float_type, Fixed, fixed_csv)
 
-    points  = [FluidParticlesPoints;  FixedBoundaryParticlesPoints]
-    density = [FluidParticlesDensity; FixedBoundaryParticlesDensity]
-    types   = [FluidParticlesTypes;   FixedBoundaryParticlesTypes]
+#     points  = [FluidParticlesPoints;  FixedBoundaryParticlesPoints]
+#     density = [FluidParticlesDensity; FixedBoundaryParticlesDensity]
+#     types   = [FluidParticlesTypes;   FixedBoundaryParticlesTypes]
 
-    if !isnothing(moving_csv)
-        MovingBoundaryParticlesPoints, MovingBoundaryParticlesDensity, MovingBoundaryParticlesTypes = LoadSpecificCSV(dims, float_type, Moving, moving_csv)
-        points  = [points;  MovingBoundaryParticlesPoints]
-        density = [density; MovingBoundaryParticlesDensity]
-        types   = [types;   MovingBoundaryParticlesTypes]
+#     if !isnothing(moving_csv)
+#         MovingBoundaryParticlesPoints, MovingBoundaryParticlesDensity, MovingBoundaryParticlesTypes = LoadSpecificCSV(dims, float_type, Moving, moving_csv)
+#         points  = [points;  MovingBoundaryParticlesPoints]
+#         density = [density; MovingBoundaryParticlesDensity]
+#         types   = [types;   MovingBoundaryParticlesTypes]
+#     end
+
+#     return points, density, types
+# end
+
+function AllocateDataStructures(Dimensions,FloatType, SimGeometry)
+    # @inline Position, Density, Types  = LoadParticlesFromCSV_StaticArrays(Dimensions,FloatType, FluidCSV, FixedCSV, MovingCSV)
+
+    Position = Vector{SVector{Dimensions, FloatType}}()
+    Density  = Vector{FloatType}()
+    Types    = Vector{ParticleType}()
+    for key in keys(SimGeometry)
+        CurrentDict = SimGeometry[key]
+
+        particle_type = CurrentDict["Type"]
+        specific_csv  = CurrentDict["CSVFile"]
+
+        points, density, types = LoadSpecificCSV(Dimensions,FloatType, particle_type, specific_csv)
+
+        Position = vcat(Position , points)
+        Density  = vcat(Density  , density)
+        Types    = vcat(Types    , types)
     end
-
-    return points, density, types
-end
-
-function AllocateDataStructures(Dimensions,FloatType, FluidCSV, FixedCSV, MovingCSV)
-    @inline Position, Density, Types  = LoadParticlesFromCSV_StaticArrays(Dimensions,FloatType, FluidCSV, FixedCSV, MovingCSV)
 
     NumberOfPoints           = length(Position)
     PositionType             = eltype(Position)
