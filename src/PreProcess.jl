@@ -42,6 +42,7 @@ function AllocateDataStructures(Dimensions,FloatType, SimGeometry)
     Density     = Vector{FloatType}()
     Types       = Vector{ParticleType}()
     GroupMarker = Vector{UInt}()
+    
     for key in keys(SimGeometry)
         CurrentDict = SimGeometry[key]
 

@@ -432,9 +432,6 @@ using Base.Threads
         SimLogger::SimulationLogger
         ) where {Dimensions,FloatType}
     
-        if SimMetaData.FlagLog
-            InitializeLogger(SimLogger,SimConstants,SimMetaData)
-        end
         
         # Delete previous result files
         foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
@@ -453,6 +450,9 @@ using Base.Threads
         # Load in particles
         SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺ = AllocateDataStructures(Dimensions,FloatType, SimGeometry)
         
+        if SimMetaData.FlagLog
+            InitializeLogger(SimLogger,SimConstants,SimMetaData, SimGeometry, SimParticles)
+        end
         
         NumberOfPoints = length(SimParticles)::Int #Have to type declare, else error?
         @inline Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)

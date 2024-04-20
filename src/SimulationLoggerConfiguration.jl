@@ -6,7 +6,7 @@ module SimulationLoggerConfiguration
     using Dates
     using InteractiveUtils
 
-    export SimulationLogger, generate_format_string, InitializeLogger, LogStep, LogFinal
+    export SimulationLogger, generate_format_string, InitializeLogger, LogSimulationDetails, LogStep, LogFinal
 
     # Function to dynamically generate a format string based on values
     function generate_format_string(values)
@@ -59,7 +59,40 @@ module SimulationLoggerConfiguration
         end
     end
 
-    function InitializeLogger(SimLogger,SimConstants,SimMetaData)
+    function LogSimulationDetails(SimLogger::SimulationLogger, SimGeometry, SimParticles)
+        with_logger(SimLogger.Logger) do
+            # Improved logging format for simulation geometry
+            @info "Simulation Geometry Details:"
+            for (key, value) in pairs(SimGeometry)
+                csv_file = value["CSVFile"]
+                group_marker = value["GroupMarker"]
+                particle_type = value["Type"]
+                motion = if value["Motion"] === nothing "None" else string(value["Motion"]) end
+    
+                @info "$(lpad(string(key), 15)): CSV File -> $(lpad(csv_file, 50)), Group Marker -> $(lpad(string(group_marker), 3)), Type -> $(lpad(string(particle_type), 6)), Motion -> $(lpad(motion, 10))"
+            end
+    
+            # Improved logging format for particle types and counts
+            @info "Particle Types and Counts:"
+            types = unique(SimParticles.Type)
+            for t in types
+                count = sum(SimParticles.Type .== t)
+                @info "Type $(lpad(string(t), 6)): $(lpad(string(count), 6)) particles"
+            end
+    
+            total_particles = length(SimParticles.Type)
+            unique_markers = unique(SimParticles.GroupMarker)
+            marker_counts = [(marker, sum(SimParticles.GroupMarker .== marker)) for marker in unique_markers]
+            @info "Total number of particles: $total_particles"
+            @info "Group Markers and Counts:"
+            for (marker, count) in marker_counts
+                @info "Marker $(lpad(string(marker), 3)): $(lpad(string(count), 6)) particles"
+            end
+            @info ""
+        end
+    end
+
+    function InitializeLogger(SimLogger,SimConstants,SimMetaData, SimGeometry, SimParticles)
         with_logger(SimLogger.Logger) do
             @info sprint(InteractiveUtils.versioninfo)
             @info SimConstants
@@ -68,10 +101,13 @@ module SimulationLoggerConfiguration
             # Print the formatted date and time
             @info "Logger Start Time: " * SimLogger.CurrentDataStr
 
+            LogSimulationDetails(SimLogger, SimGeometry, SimParticles)
+
             @info @. SimLogger.ValuesToPrint
             @info @. SimLogger.ValuesToPrintC
         end
     end
+
 
     function LogStep(SimLogger, SimMetaData, HourGlass)
         with_logger(SimLogger.Logger) do
