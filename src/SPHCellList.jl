@@ -550,8 +550,6 @@ using Base.Threads
                 show(HourGlass,sortby=:name)
                 show(HourGlass)
     
-                close(force_file)
-    
                 break
             end
         end
