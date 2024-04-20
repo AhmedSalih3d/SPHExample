@@ -59,7 +59,7 @@ module SimulationLoggerConfiguration
         end
     end
 
-    function LogSimulationDetails(SimLogger::SimulationLogger, SimGeometry, SimParticles)
+    function LogSimulationDetails(SimLogger::SimulationLogger, SimGeometry, SimParticles; sort_by=:GroupMarker)
         with_logger(SimLogger.Logger) do
             # Improved logging format for simulation geometry
             @info "Simulation Geometry Details:"
@@ -72,26 +72,30 @@ module SimulationLoggerConfiguration
                 @info "$(lpad(string(key), 15)): CSV File -> $(lpad(csv_file, 50)), Group Marker -> $(lpad(string(group_marker), 3)), Type -> $(lpad(string(particle_type), 6)), Motion -> $(lpad(motion, 10))"
             end
     
-            # Improved logging format for particle types and counts
+            # Logging particle types and counts sorted by enum values
             @info "Particle Types and Counts:"
-            types = unique(SimParticles.Type)
-            for t in types
-                count = sum(SimParticles.Type .== t)
-                @info "Type $(lpad(string(t), 6)): $(lpad(string(count), 6)) particles"
+            type_counts = [(t, sum(SimParticles.Type .== t)) for t in unique(SimParticles.Type)]
+            # Sort based on the enum integer value
+            sort!(type_counts, by=x -> Int(x[1]))
+    
+            for (type, count) in type_counts
+                @info "Type $(lpad(string(type), 6)): $(lpad(string(count), 6)) particles"
             end
     
             total_particles = length(SimParticles.Type)
-            unique_markers = unique(SimParticles.GroupMarker)
-            marker_counts = [(marker, sum(SimParticles.GroupMarker .== marker)) for marker in unique_markers]
             @info "Total number of particles: $total_particles"
-            @info "Group Markers and Counts:"
-            for (marker, count) in marker_counts
-                @info "Marker $(lpad(string(marker), 3)): $(lpad(string(count), 6)) particles"
+    
+            if sort_by == :GroupMarker
+                @info "Group Markers and Counts (Sorted):"
+                marker_counts = sort([(marker, sum(SimParticles.GroupMarker .== marker)) for marker in unique(SimParticles.GroupMarker)])
+                for (marker, count) in marker_counts
+                    @info "Marker $(lpad(string(marker), 3)): $(lpad(string(count), 6)) particles"
+                end
             end
             @info ""
         end
     end
-
+    
     function InitializeLogger(SimLogger,SimConstants,SimMetaData, SimGeometry, SimParticles)
         with_logger(SimLogger.Logger) do
             @info sprint(InteractiveUtils.versioninfo)
