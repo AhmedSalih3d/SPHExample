@@ -4,6 +4,17 @@ let
     Dimensions = 2
     FloatType  = Float64
 
+    # ViscoBoundFactor should be 1, but need to understand how to implement it
+    SimConstantsMovingSquare = SimulationConstants{FloatType}(dx=0.02,
+        c₀=28, 
+        δᵩ = 0.1,
+        g  = 0,
+        Cb = 112000,
+        α  = 1e-6,
+        k  = sqrt(2),
+        CFL=0.2
+    )
+
     SimMetaDataMovingSquare  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="MovingSquare2D", 
         SaveLocation="E:/SecondApproach/MovingSquare2D",
@@ -16,32 +27,50 @@ let
         FlagViscosityTreatment=:LaminarSPS
     )
 
+    # Define the dictionary with specific types for keys and values to avoid any type ambiguity
+    SimulationGeometry = Dict{Symbol, Dict{String, Union{String, Int, ParticleType, Nothing}}}()
+
+    # Populate the dictionary
+    SimulationGeometry[:FixedBoundary] = Dict(
+        "CSVFile"     => "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Fixed.csv",
+        "GroupMarker" => 1,
+        "Type"        => Fixed,
+        "Motion"      => nothing
+    )
+
+    SimulationGeometry[:Water] = Dict(
+        "CSVFile"     => "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Fluid.csv",
+        "GroupMarker" => 2,
+        "Type"        => Fluid,
+        "Motion"      => nothing
+    )
+
+    SimulationGeometry[:MovingSquare] = Dict(
+        "CSVFile"     => "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Square.csv",
+        "GroupMarker" => 3,
+        "Type"        => Moving,
+        "Motion"      => nothing
+    )
+
     # If save directory is not already made, make it
     if !isdir(SimMetaDataMovingSquare.SaveLocation)
         mkdir(SimMetaDataMovingSquare.SaveLocation)
     end
 
-    # ViscoBoundFactor should be 1, but need to understand how to implement it
-    SimConstantsMovingSquare = SimulationConstants{FloatType}(dx=0.02,
-    c₀=28, 
-    δᵩ = 0.1,
-    g  = 0,
-    Cb = 112000,
-    α  = 1e-6,
-    k  = sqrt(2),
-    CFL=0.2)
-
     SimLogger = SimulationLogger(SimMetaDataMovingSquare.SaveLocation)
 
-    # println(
-    # @report_opt 
-    RunSimulation(
-        FluidCSV           = "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Fluid.csv",
-        FixedCSV           = "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Fixed.csv",
-        MovingCSV          = "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Square.csv",
+    println(@report_opt target_modules=(@__MODULE__,) RunSimulation(
+        SimGeometry        = SimulationGeometry,
         SimMetaData        = SimMetaDataMovingSquare,
         SimConstants       = SimConstantsMovingSquare,
         SimLogger          = SimLogger
     )
-    # )
+    )
+
+    RunSimulation(
+        SimGeometry        = SimulationGeometry,
+        SimMetaData        = SimMetaDataMovingSquare,
+        SimConstants       = SimConstantsMovingSquare,
+        SimLogger          = SimLogger
+    )
 end
