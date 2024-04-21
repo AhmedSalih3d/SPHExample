@@ -28,8 +28,9 @@ using Base.Threads
 
     function ConstructStencil(v::Val{d}) where d
         n_ = CartesianIndices(ntuple(_->-1:1,v))
-        half_length = length(n_) ÷ 2
-        n  = n_[1:half_length]
+        #half_length = length(n_) ÷ 2
+        #n  = n_[1:half_length]
+        n   = n_
 
         return n
     end
@@ -79,7 +80,7 @@ using Base.Threads
             CellIndex = UniqueCells[iter]
         
             StartIndex = ParticleRanges[iter] 
-            EndIndex = ParticleRanges[iter+1] - 1
+            EndIndex   = ParticleRanges[iter+1] - 1
         
             for i = StartIndex:EndIndex
                 push!(NeighborListVector, i)  # Add the particle index itself
@@ -87,12 +88,12 @@ using Base.Threads
                 current_index += 1
                 
                 # Add neighbors within the same cell
-                for j = StartIndex:EndIndex
-                    if i != j
-                        push!(NeighborListVector, j)
-                        current_index += 1
-                    end
-                end
+                # for j = StartIndex:EndIndex
+                #     if i != j
+                #         push!(NeighborListVector, j)
+                #         current_index += 1
+                #     end
+                # end
                 
                 # Add neighbors from neighboring cells based on the stencil
                 for S in Stencil
@@ -112,7 +113,9 @@ using Base.Threads
                 current_index += 1
             end
         end
-        
+    
+        # println(NeighborListVector)
+
         return IndexCounter
     end
 
