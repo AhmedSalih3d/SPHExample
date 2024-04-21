@@ -26,11 +26,10 @@ using Logging, LoggingExtras
 using HDF5
 using Base.Threads
 
+    # In this form of neighbor list it is necessary to output all
+    # cells, instead of half, since at the end a verlet list is produced
     function ConstructStencil(v::Val{d}) where d
-        n_ = CartesianIndices(ntuple(_->-1:1,v))
-        #half_length = length(n_) ÷ 2
-        #n  = n_[1:half_length]
-        n   = n_
+        n = CartesianIndices(ntuple(_->-1:1,v))
 
         return n
     end
@@ -73,7 +72,6 @@ using Base.Threads
         UniqueCells = view(UniqueCells, 1:IndexCounter)
         
         resize!(NeighborListVector, 0)
-        ResetArrays!(IndexStarts)
 
         current_index = 1
         for iter = 1:IndexCounter
