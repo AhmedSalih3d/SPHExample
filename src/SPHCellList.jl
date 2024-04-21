@@ -534,16 +534,6 @@ using Base.Threads
         ∇Cᵢ               = zeros(SVector{Dimensions,FloatType},NumberOfPoints)            
         ∇◌rᵢ              = zeros(FloatType,NumberOfPoints)    
     
-        @inline begin
-            n_copy = Base.Threads.nthreads()
-            KernelThreaded         = [copy(SimParticles.Kernel)         for _ in 1:n_copy]
-            KernelGradientThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
-            dρdtIThreaded          = [copy(dρdtI)                       for _ in 1:n_copy]
-            AccelerationThreaded   = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
-            ∇CᵢThreaded            = [copy(∇Cᵢ )                        for _ in 1:n_copy]
-            ∇◌rᵢThreaded           = [copy(∇◌rᵢ)                        for _ in 1:n_copy]   
-        end
-    
         # Produce sorting related variables
         ParticleRanges         = zeros(Int, NumberOfPoints + 1)
         UniqueCells            = zeros(CartesianIndex{Dimensions}, NumberOfPoints)
