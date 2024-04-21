@@ -85,14 +85,7 @@ using Base.Threads
                 IndexStarts[i] = current_index  # Mark the start of this particle's neighbors in NeighborListVector
                 current_index += 1
                 
-                # Add neighbors within the same cell
-                # for j = StartIndex:EndIndex
-                #     if i != j
-                #         push!(NeighborListVector, j)
-                #         current_index += 1
-                #     end
-                # end
-                
+
                 # Add neighbors from neighboring cells based on the stencil
                 for S in Stencil
                     SCellIndex = CellIndex + S
@@ -101,8 +94,10 @@ using Base.Threads
                         StartIndex_ = ParticleRanges[NeighborCellRange[1]]
                         EndIndex_   = ParticleRanges[NeighborCellRange[1] + 1] - 1
                         for j = StartIndex_:EndIndex_
-                            push!(NeighborListVector, j)
-                            current_index += 1
+                            if i != j
+                                push!(NeighborListVector, j)
+                                current_index += 1
+                            end
                         end
                     end
                 end
