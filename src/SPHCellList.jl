@@ -332,7 +332,43 @@ using Base.Threads
                         local_dvdtI += Πᵢ
                     end
                 end
+
+                if FlagViscosityTreatment == :Laminar || FlagViscosityTreatment == :LaminarSPS
+                    # 4 comes from 2 divided by 0.5 from average density
+                    # should divide by ρᵢ eq 6 DPC
+                    # ν₀∇²uᵢ = (1/ρᵢ) * ( (4 * m₀ * (ρᵢ * ν₀) * dot( xᵢⱼ, ∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²) ) ) *  vᵢⱼ
+                    visc_symmetric_term = (4 * m₀ * ν₀ * dot( xᵢⱼ, ∇ᵢWᵢⱼ)) / ((ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²))
+                    # ν₀∇²uᵢ = (1/ρᵢ) * visc_symmetric_term *  vᵢⱼ * ρᵢ
+                    ν₀∇²uᵢ       =  visc_symmetric_term *  vᵢⱼ
+                    local_dvdtI +=  ν₀∇²uᵢ
+                end
+
+                if FlagViscosityTreatment == :LaminarSPS 
+                    Iᴹ       = diagm(one.(xᵢⱼ))
+                    #julia> a .- a'
+                    # 3×3 SMatrix{3, 3, Float64, 9} with indices SOneTo(3)×SOneTo(3):
+                    # 0.0  0.0  0.0
+                    # 0.0  0.0  0.0
+                    # 0.0  0.0  0.0
+                    # Strain *rate* tensor is the gradient of velocity
+                    Sᵢ = ∇vᵢ =  (m₀/ρⱼ) * (vⱼ - vᵢ) * ∇ᵢWᵢⱼ'
+                    norm_Sᵢ  = sqrt(2 * sum(Sᵢ .^ 2))
+                    νtᵢ      = (SmagorinskyConstant * dx)^2 * norm_Sᵢ
+                    trace_Sᵢ = sum(diag(Sᵢ))
+                    τᶿᵢ      = 2*νtᵢ*ρᵢ * (Sᵢ - (1/3) * trace_Sᵢ * Iᴹ) - (2/3) * ρᵢ * BlinConstant * dx^2 * norm_Sᵢ^2 * Iᴹ
+
+                    Sⱼ = ∇vⱼ =  (m₀/ρᵢ) * (vᵢ - vⱼ) * -∇ᵢWᵢⱼ'
+                    norm_Sⱼ  = sqrt(2 * sum(Sⱼ .^ 2))
+                    νtⱼ      = (SmagorinskyConstant * dx)^2 * norm_Sⱼ
+                    trace_Sⱼ = sum(diag(Sⱼ))
+                    τᶿⱼ      = 2*νtⱼ*ρⱼ * (Sⱼ - (1/3) * trace_Sⱼ * Iᴹ) - (2/3) * ρⱼ * BlinConstant * dx^2 * norm_Sⱼ^2 * Iᴹ                    
         
+                    # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA TO REPRESENT IT
+                    dτdtᵢ = (m₀/(ρⱼ * ρᵢ)) * (τᶿᵢ + τᶿⱼ) *  ∇ᵢWᵢⱼ 
+
+                    local_dvdtI += dτdtᵢ
+                end
+
                 if FlagOutputKernelValues
                     Wᵢⱼ = @fastpow αD * (1 - q / 2)^4 * (2 * q + 1)
                     local_Kernel            += Wᵢⱼ
