@@ -97,7 +97,7 @@ using Base.Threads
                     NeighborCellRange = searchsorted(UniqueCells, SCellIndex)
                     if length(NeighborCellRange) != 0
                         StartIndex_ = ParticleRanges[NeighborCellRange[1]]
-                        EndIndex_ = ParticleRanges[NeighborCellRange[1] + 1] - 1
+                        EndIndex_   = ParticleRanges[NeighborCellRange[1] + 1] - 1
                         for j = StartIndex_:EndIndex_
                             push!(NeighborListVector, j)
                             current_index += 1
@@ -153,7 +153,7 @@ using Base.Threads
     function NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, NeighborListVector, IndexStarts, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI)
         @threads for i in eachindex(IndexStarts)
             start_idx = IndexStarts[i]
-            end_idx = findnext(==(0), NeighborListVector, start_idx) - 1  # Finds the next zero after the current index start
+            end_idx   = findnext(==(0), NeighborListVector, start_idx) - 1  # Finds the next zero after the current index start
     
             @inbounds for j = start_idx:end_idx
                 neighbor_index = NeighborListVector[j]
@@ -329,7 +329,7 @@ using Base.Threads
             
             density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
             dρdt⁺  = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
-            dρdtI[i] += dρdt⁺  # Update only for particle i
+            # dρdtI[i] += dρdt⁺  # Update only for particle i
     
             if FlagDensityDiffusion
                 if g == 0
@@ -342,14 +342,14 @@ using Base.Threads
                 ρⱼᵢ = ρⱼ - ρᵢ
                 Ψᵢⱼ = 2 * (ρⱼᵢ - ρᵢⱼᴴ) * (-xᵢⱼ) * invd²η²
                 Dᵢ = δᵩ * h * c₀ * (m₀ / ρⱼ) * dot(Ψᵢⱼ, ∇ᵢWᵢⱼ)
-                dρdtI[i] += Dᵢ
+                # dρdtI[i] += Dᵢ
             end
     
             Pᵢ = Pressure[i]
             Pⱼ = Pressure[j]
             Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
             dvdt⁺ = -m₀ * Pfac * ∇ᵢWᵢⱼ
-            dvdtI[i] += dvdt⁺
+            # dvdtI[i] += dvdt⁺
     
             if FlagViscosityTreatment == :ArtificialViscosity
                 ρ̄ᵢⱼ = (ρᵢ + ρⱼ) * 0.5
@@ -451,7 +451,7 @@ using Base.Threads
 
     
         @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-        @timeit SimMetaData.HourGlass "04 First NeighborLoop"                  NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, NeighborListVector, IndexStarts, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, Acceleration) #dvdtI == Acceleration for now
+        @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, NeighborListVector, IndexStarts, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, Acceleration) #dvdtI == Acceleration for now
         @timeit SimMetaData.HourGlass "Reduction"                            reduce_sum!(dρdtI, dρdtIThreaded)
         @timeit SimMetaData.HourGlass "Reduction"                            reduce_sum!(Acceleration, AccelerationThreaded)
 
@@ -488,7 +488,7 @@ using Base.Threads
         @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
     
         @timeit SimMetaData.HourGlass "03 Pressure"                 Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-        @timeit SimMetaData.HourGlass "04 First NeighborLoop"       NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, NeighborListVector, IndexStarts, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtI, Acceleration) #dvdtI == Acceleration for now
+        @timeit SimMetaData.HourGlass "08 Second NeighborLoop"      NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, NeighborListVector, IndexStarts, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtI, Acceleration) #dvdtI == Acceleration for now
         @timeit SimMetaData.HourGlass "Reduction"                   reduce_sum!(dρdtI, dρdtIThreaded)
         @timeit SimMetaData.HourGlass "Reduction"                   reduce_sum!(Acceleration, AccelerationThreaded)
 
