@@ -357,7 +357,7 @@ using Base.Threads
                 if cond < 0
                     μᵢⱼ = h * cond * invd²η²
                     Πᵢ = -m₀ * ((-α * c₀ * μᵢⱼ) / ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
-                    dvdtI[i] += Πᵢ
+                    # dvdtI[i] += Πᵢ
                 end
             end
     
