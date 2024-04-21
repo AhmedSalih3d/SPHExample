@@ -115,12 +115,12 @@ using Base.Threads
         return IndexCounter
     end
 
-    function NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, NeighborListVector, IndexStarts, Position, Kernel, KernelGradient, Density, Pressure, Velocity, MotionLimiter, dρdtI, dvdtI)
+    function NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, NeighborListVector, IndexStarts, Position, Kernel, KernelGradient, Density, Pressure, Velocity, MotionLimiter, dρdtI, dvdtI, ∇◌rᵢ, ∇Cᵢ,)
         @threads for i in eachindex(IndexStarts)
             start_idx = IndexStarts[i]
             end_idx   = findnext(==(0), NeighborListVector, start_idx + 1) - 1  # Finds the next zero after the current index start
     
-        ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, MotionLimiter, dρdtI, dvdtI, i, start_idx, end_idx, NeighborListVector)
+        ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, MotionLimiter, dρdtI, dvdtI, ∇◌rᵢ, ∇Cᵢ, i, start_idx, end_idx, NeighborListVector)
         end
     
         return nothing
@@ -271,12 +271,15 @@ using Base.Threads
     #     return nothing
     # end
 
-    function ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, MotionLimiter, dρdtI, dvdtI, i, start_idx, end_idx, NeighborListVector)
-        @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues = SimMetaData
+    function ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, MotionLimiter, dρdtI, dvdtI, ∇◌rᵢ, ∇Cᵢ, i, start_idx, end_idx, NeighborListVector)
+        @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues, FlagShifting = SimMetaData
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
     
         local_dρdtI          = 0.0
         local_dvdtI          = zero(eltype(Velocity))
+
+        local_∇◌rᵢ           = 0.0
+        local_∇Cᵢ            = zero(eltype(Velocity))
 
         local_Kernel         = 0.0
         local_KernelGradient = zero(eltype(Velocity))
@@ -369,6 +372,19 @@ using Base.Threads
                     local_dvdtI += dτdtᵢ
                 end
 
+                
+                if FlagShifting
+                    Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
+            
+                    MLcond = MotionLimiter[i] * MotionLimiter[j]
+
+                    local_∇Cᵢ   += (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
+
+                    # Switch signs compared to DSPH, else free surface detection does not make sense
+                    # Agrees, https://arxiv.org/abs/2110.10076, it should have been r_ji
+                    local_∇◌rᵢ  += (m₀/ρⱼ) * dot(-xᵢⱼ , ∇ᵢWᵢⱼ)  * MLcond
+                end
+
                 if FlagOutputKernelValues
                     Wᵢⱼ = @fastpow αD * (1 - q / 2)^4 * (2 * q + 1)
                     local_Kernel            += Wᵢⱼ
@@ -383,6 +399,11 @@ using Base.Threads
         if FlagOutputKernelValues
             Kernel[i]         = local_Kernel
             KernelGradient[i] = local_KernelGradient
+        end
+
+        if FlagShifting
+            ∇◌rᵢ[i] = local_∇◌rᵢ
+            ∇Cᵢ[i]  = local_∇Cᵢ
         end
 
         return nothing
@@ -459,7 +480,7 @@ using Base.Threads
         ###===
     
         @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-        @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, NeighborListVector, IndexStarts, Position, Kernel, KernelGradient, Density, Pressure, Velocity, MotionLimiter, dρdtI, Acceleration) #dvdtI == Acceleration for now
+        @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, NeighborListVector, IndexStarts, Position, Kernel, KernelGradient, Density, Pressure, Velocity, MotionLimiter, dρdtI, Acceleration, ∇◌rᵢ, ∇Cᵢ,) #dvdtI == Acceleration for now
     
         @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" @inbounds for i in eachindex(Position)
             Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
@@ -480,7 +501,7 @@ using Base.Threads
         @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
     
         @timeit SimMetaData.HourGlass "03 Pressure"                 Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-        @timeit SimMetaData.HourGlass "08 Second NeighborLoop"      NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, NeighborListVector, IndexStarts, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, dρdtI, Acceleration) #dvdtI == Acceleration for now
+        @timeit SimMetaData.HourGlass "08 Second NeighborLoop"      NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, NeighborListVector, IndexStarts, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, dρdtI, Acceleration, ∇◌rᵢ, ∇Cᵢ,) #dvdtI == Acceleration for now
     
     
         @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
