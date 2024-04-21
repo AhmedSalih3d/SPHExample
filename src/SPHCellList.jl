@@ -71,6 +71,9 @@ using Base.Threads
         
         UniqueCells = view(UniqueCells, 1:IndexCounter)
         
+        resize!(NeighborListVector, 0)
+        ResetArrays!(IndexStarts)
+
         current_index = 1
         for iter = 1:IndexCounter
             CellIndex = UniqueCells[iter]
@@ -153,7 +156,7 @@ using Base.Threads
     function NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, NeighborListVector, IndexStarts, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI)
         @threads for i in eachindex(IndexStarts)
             start_idx = IndexStarts[i]
-            end_idx   = findnext(==(0), NeighborListVector, start_idx) - 1  # Finds the next zero after the current index start
+            end_idx   = findnext(==(0), NeighborListVector, start_idx + 1) - 1  # Finds the next zero after the current index start
     
             @inbounds for j = start_idx:end_idx
                 neighbor_index = NeighborListVector[j]
