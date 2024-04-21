@@ -32,7 +32,7 @@ let
         SimulationTime=1,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
-        FlagOutputKernelValues=true,
+        FlagOutputKernelValues=false,
         FlagLog=true,
         FlagShifting=false,
     )

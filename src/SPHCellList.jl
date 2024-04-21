@@ -161,10 +161,7 @@ using Base.Threads
             start_idx = IndexStarts[i]
             end_idx   = findnext(==(0), NeighborListVector, start_idx + 1) - 1  # Finds the next zero after the current index start
     
-            @inbounds for j = start_idx:end_idx
-                neighbor_index = NeighborListVector[j]
-                @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, neighbor_index)
-            end
+        ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, start_idx, end_idx, NeighborListVector)
         end
     
         return nothing
@@ -315,65 +312,82 @@ using Base.Threads
     #     return nothing
     # end
 
-    function ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, j)
+    function ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, start_idx, end_idx, NeighborListVector)
         @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues = SimMetaData
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
     
-        xᵢⱼ  = Position[i] - Position[j]
-        xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)              
-        if xᵢⱼ² <= H²
-            dᵢⱼ  = sqrt(abs(xᵢⱼ²))
-            q    = min(dᵢⱼ * h⁻¹, 2.0)
-            invd²η²   = 1.0 / (dᵢⱼ * dᵢⱼ + η²)
-            ∇ᵢWᵢⱼ     = @fastpow (αD * 5 * (q - 2)^3 * q / (8 * h * (q * h + η²))) * xᵢⱼ 
-            
-            ρᵢ    = Density[i]
-            ρⱼ    = Density[j]
-            vᵢ    = Velocity[i]
-            vⱼ    = Velocity[j]
-            vᵢⱼ   = vᵢ - vⱼ
-            
-            density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
-            dρdt⁺  = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
-            dρdtI[i] += dρdt⁺  # Update only for particle i
-    
-            if FlagDensityDiffusion
-                if g == 0
-                    ρᵢⱼᴴ = 0.0
-                else
-                    Pᵢⱼᴴ = ρ₀ * (-g) * -xᵢⱼ[end]
-                    ρᵢⱼᴴ = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
+        local_dρdtI          = 0.0
+        local_dvdtI          = zero(eltype(Velocity))
+
+        local_Kernel         = 0.0
+        local_KernelGradient = zero(eltype(Velocity))
+
+        @inbounds @inline for j_ = start_idx:end_idx
+            j    = NeighborListVector[j_]
+            xᵢⱼ  = Position[i] - Position[j]
+            xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)              
+            if xᵢⱼ² <= H²
+                dᵢⱼ  = sqrt(abs(xᵢⱼ²))
+                q    = min(dᵢⱼ * h⁻¹, 2.0)
+                invd²η²   = 1.0 / (dᵢⱼ * dᵢⱼ + η²)
+                ∇ᵢWᵢⱼ     = @fastpow (αD * 5 * (q - 2)^3 * q / (8 * h * (q * h + η²))) * xᵢⱼ 
+                
+                ρᵢ    = Density[i]
+                ρⱼ    = Density[j]
+                vᵢ    = Velocity[i]
+                vⱼ    = Velocity[j]
+                vᵢⱼ   = vᵢ - vⱼ
+                
+                density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
+                dρdt⁺  = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
+                local_dρdtI += dρdt⁺  # Update only for particle i
+        
+                if FlagDensityDiffusion
+                    if g == 0
+                        ρᵢⱼᴴ = 0.0
+                    else
+                        Pᵢⱼᴴ = ρ₀ * (-g) * -xᵢⱼ[end]
+                        ρᵢⱼᴴ = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
+                    end
+        
+                    ρⱼᵢ = ρⱼ - ρᵢ
+                    Ψᵢⱼ = 2 * (ρⱼᵢ - ρᵢⱼᴴ) * (-xᵢⱼ) * invd²η²
+                    Dᵢ = δᵩ * h * c₀ * (m₀ / ρⱼ) * dot(Ψᵢⱼ, ∇ᵢWᵢⱼ)
+                    local_dρdtI += Dᵢ
                 end
-    
-                ρⱼᵢ = ρⱼ - ρᵢ
-                Ψᵢⱼ = 2 * (ρⱼᵢ - ρᵢⱼᴴ) * (-xᵢⱼ) * invd²η²
-                Dᵢ = δᵩ * h * c₀ * (m₀ / ρⱼ) * dot(Ψᵢⱼ, ∇ᵢWᵢⱼ)
-                dρdtI[i] += Dᵢ
-            end
-    
-            Pᵢ = Pressure[i]
-            Pⱼ = Pressure[j]
-            Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
-            dvdt⁺ = -m₀ * Pfac * ∇ᵢWᵢⱼ
-            dvdtI[i] += dvdt⁺
-    
-            if FlagViscosityTreatment == :ArtificialViscosity
-                ρ̄ᵢⱼ = (ρᵢ + ρⱼ) * 0.5
-                cond = dot(vᵢⱼ, xᵢⱼ)
-                if cond < 0
-                    μᵢⱼ = h * cond * invd²η²
-                    Πᵢ = -m₀ * ((-α * c₀ * μᵢⱼ) / ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
-                    dvdtI[i] += Πᵢ
+        
+                Pᵢ = Pressure[i]
+                Pⱼ = Pressure[j]
+                Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
+                dvdt⁺ = -m₀ * Pfac * ∇ᵢWᵢⱼ
+                local_dvdtI += dvdt⁺
+        
+                if FlagViscosityTreatment == :ArtificialViscosity
+                    ρ̄ᵢⱼ = (ρᵢ + ρⱼ) * 0.5
+                    cond = dot(vᵢⱼ, xᵢⱼ)
+                    if cond < 0
+                        μᵢⱼ = h * cond * invd²η²
+                        Πᵢ = -m₀ * ((-α * c₀ * μᵢⱼ) / ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
+                        local_dvdtI += Πᵢ
+                    end
                 end
-            end
-    
-            if FlagOutputKernelValues
-                Wᵢⱼ = @fastpow αD * (1 - q / 2)^4 * (2 * q + 1)
-                Kernel[i] += Wᵢⱼ
-                KernelGradient[i] += ∇ᵢWᵢⱼ
+        
+                if FlagOutputKernelValues
+                    Wᵢⱼ = @fastpow αD * (1 - q / 2)^4 * (2 * q + 1)
+                    local_Kernel            += Wᵢⱼ
+                    local_KernelGradient    += ∇ᵢWᵢⱼ
+                end
             end
         end
-    
+
+        dρdtI[i] = local_dρdtI
+        dvdtI[i] = local_dvdtI
+
+        if FlagOutputKernelValues
+            Kernel[i]         = local_Kernel
+            KernelGradient[i] = local_KernelGradient
+        end
+
         return nothing
     end
     
