@@ -335,7 +335,7 @@ using Base.Threads
             
             density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
             dρdt⁺  = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
-            # dρdtI[i] += dρdt⁺  # Update only for particle i
+            dρdtI[i] += dρdt⁺  # Update only for particle i
     
             if FlagDensityDiffusion
                 if g == 0
@@ -348,14 +348,14 @@ using Base.Threads
                 ρⱼᵢ = ρⱼ - ρᵢ
                 Ψᵢⱼ = 2 * (ρⱼᵢ - ρᵢⱼᴴ) * (-xᵢⱼ) * invd²η²
                 Dᵢ = δᵩ * h * c₀ * (m₀ / ρⱼ) * dot(Ψᵢⱼ, ∇ᵢWᵢⱼ)
-                # dρdtI[i] += Dᵢ
+                dρdtI[i] += Dᵢ
             end
     
             Pᵢ = Pressure[i]
             Pⱼ = Pressure[j]
             Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
             dvdt⁺ = -m₀ * Pfac * ∇ᵢWᵢⱼ
-            # dvdtI[i] += dvdt⁺
+            dvdtI[i] += dvdt⁺
     
             if FlagViscosityTreatment == :ArtificialViscosity
                 ρ̄ᵢⱼ = (ρᵢ + ρⱼ) * 0.5
@@ -363,7 +363,7 @@ using Base.Threads
                 if cond < 0
                     μᵢⱼ = h * cond * invd²η²
                     Πᵢ = -m₀ * ((-α * c₀ * μᵢⱼ) / ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
-                    # dvdtI[i] += Πᵢ
+                    dvdtI[i] += Πᵢ
                 end
             end
     
