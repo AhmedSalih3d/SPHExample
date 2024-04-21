@@ -150,152 +150,171 @@ using Base.Threads
     #     return nothing
     # end
 
+    function NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, NeighborListVector, IndexStarts, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI)
+        @threads for i in eachindex(IndexStarts)
+            start_idx = IndexStarts[i]
+            end_idx = findnext(==(0), NeighborListVector, start_idx) - 1  # Finds the next zero after the current index start
+    
+            @inbounds for j = start_idx:end_idx
+                neighbor_index = NeighborListVector[j]
+                @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, neighbor_index)
+            end
+        end
+    
+        return nothing
+    end
     
 
     # Really important to overload default function, gives 10x speed up?
     # Overload the default function to do what you pleas
-    function ComputeInteractions!(SimMetaData, SimConstants, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
+    # function ComputeInteractions!(SimMetaData, SimConstants, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
+    #     @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues = SimMetaData
+    #     @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
+
+    #     xᵢⱼ  = Position[i] - Position[j]
+    #     xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)              
+    #     if  xᵢⱼ² <= H²
+    #         #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/2
+    #         dᵢⱼ  = sqrt(abs(xᵢⱼ²))
+
+    #         q         = min(dᵢⱼ * h⁻¹, 2.0)
+    #         invd²η²   =  1.0 / (dᵢⱼ*dᵢⱼ+η²)
+    #         ∇ᵢWᵢⱼ     = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
+    #         ρᵢ        = Density[i]
+    #         ρⱼ        = Density[j]
+        
+    #         vᵢ        = Velocity[i]
+    #         vⱼ        = Velocity[j]
+    #         vᵢⱼ       = vᵢ - vⱼ
+    #         density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
+    #         dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  density_symmetric_term
+    #         dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  density_symmetric_term
+
+    #         # Density diffusion
+    #         if FlagDensityDiffusion
+    #             if SimConstants.g == 0
+    #                 ρᵢⱼᴴ  = 0.0
+    #                 ρⱼᵢᴴ  = 0.0
+    #             else
+    #                 Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
+    #                 ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
+    #                 Pⱼᵢᴴ  = -Pᵢⱼᴴ
+    #                 ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
+    #             end
+
+    #             ρⱼᵢ   = ρⱼ - ρᵢ
+
+    #             Ψᵢⱼ   = 2( ρⱼᵢ  - ρᵢⱼᴴ) * (-xᵢⱼ) * invd²η²
+    #             Ψⱼᵢ   = 2(-ρⱼᵢ  - ρⱼᵢᴴ) * ( xᵢⱼ) * invd²η²
+
+    #             MLcond = MotionLimiter[i] * MotionLimiter[j]
+    #             Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
+    #             Dⱼ    =  δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
+    #         else
+    #             Dᵢ  = 0.0
+    #             Dⱼ  = 0.0
+    #         end
+    #         dρdtI[ichunk][i] += dρdt⁺ + Dᵢ
+    #         dρdtI[ichunk][j] += dρdt⁻ + Dⱼ
+
+
+    #         Pᵢ      =  Pressure[i]
+    #         Pⱼ      =  Pressure[j]
+    #         Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
+    #         dvdt⁺   = - m₀ * Pfac *  ∇ᵢWᵢⱼ
+    #         dvdt⁻   = - dvdt⁺
+
+    #         if FlagViscosityTreatment == :ArtificialViscosity
+    #             ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
+    #             cond      = dot(vᵢⱼ, xᵢⱼ)
+    #             cond_bool = cond < 0.0
+    #             μᵢⱼ       = h*cond * invd²η²
+    #             Πᵢ        = - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
+    #             Πⱼ        = - Πᵢ
+    #         else
+    #             Πᵢ        = zero(xᵢⱼ)
+    #             Πⱼ        = Πᵢ
+    #         end
+        
+    #         if FlagViscosityTreatment == :Laminar || FlagViscosityTreatment == :LaminarSPS
+    #             # 4 comes from 2 divided by 0.5 from average density
+    #             # should divide by ρᵢ eq 6 DPC
+    #             # ν₀∇²uᵢ = (1/ρᵢ) * ( (4 * m₀ * (ρᵢ * ν₀) * dot( xᵢⱼ, ∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²) ) ) *  vᵢⱼ
+    #             # ν₀∇²uⱼ = (1/ρⱼ) * ( (4 * m₀ * (ρⱼ * ν₀) * dot(-xᵢⱼ,-∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²) ) ) * -vᵢⱼ
+    #             visc_symmetric_term = (4 * m₀ * ν₀ * dot( xᵢⱼ, ∇ᵢWᵢⱼ)) / ((ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²))
+    #             # ν₀∇²uᵢ = (1/ρᵢ) * visc_symmetric_term *  vᵢⱼ * ρᵢ
+    #             # ν₀∇²uⱼ = (1/ρⱼ) * visc_symmetric_term * -vᵢⱼ * ρⱼ
+    #             ν₀∇²uᵢ =  visc_symmetric_term *  vᵢⱼ
+    #             ν₀∇²uⱼ = -ν₀∇²uᵢ #visc_symmetric_term * -vᵢⱼ
+    #         else
+    #             ν₀∇²uᵢ = zero(xᵢⱼ)
+    #             ν₀∇²uⱼ = ν₀∇²uᵢ
+    #         end
+        
+    #         if FlagViscosityTreatment == :LaminarSPS 
+    #             Iᴹ       = diagm(one.(xᵢⱼ))
+    #             #julia> a .- a'
+    #             # 3×3 SMatrix{3, 3, Float64, 9} with indices SOneTo(3)×SOneTo(3):
+    #             # 0.0  0.0  0.0
+    #             # 0.0  0.0  0.0
+    #             # 0.0  0.0  0.0
+    #             # Strain *rate* tensor is the gradient of velocity
+    #             Sᵢ = ∇vᵢ =  (m₀/ρⱼ) * (vⱼ - vᵢ) * ∇ᵢWᵢⱼ'
+    #             norm_Sᵢ  = sqrt(2 * sum(Sᵢ .^ 2))
+    #             νtᵢ      = (SmagorinskyConstant * dx)^2 * norm_Sᵢ
+    #             trace_Sᵢ = sum(diag(Sᵢ))
+    #             τᶿᵢ      = 2*νtᵢ*ρᵢ * (Sᵢ - (1/3) * trace_Sᵢ * Iᴹ) - (2/3) * ρᵢ * BlinConstant * dx^2 * norm_Sᵢ^2 * Iᴹ
+    #             Sⱼ = ∇vⱼ =  (m₀/ρᵢ) * (vᵢ - vⱼ) * -∇ᵢWᵢⱼ'
+    #             norm_Sⱼ  = sqrt(2 * sum(Sⱼ .^ 2))
+    #             νtⱼ      = (SmagorinskyConstant * dx)^2 * norm_Sⱼ
+    #             trace_Sⱼ = sum(diag(Sⱼ))
+    #             τᶿⱼ      = 2*νtⱼ*ρⱼ * (Sⱼ - (1/3) * trace_Sⱼ * Iᴹ) - (2/3) * ρⱼ * BlinConstant * dx^2 * norm_Sⱼ^2 * Iᴹ
+        
+    #             # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA TO REPRESENT IT
+    #             dτdtᵢ = (m₀/(ρⱼ * ρᵢ)) * (τᶿᵢ + τᶿⱼ) *  ∇ᵢWᵢⱼ 
+    #             dτdtⱼ = (m₀/(ρᵢ * ρⱼ)) * (τᶿᵢ + τᶿⱼ) * -∇ᵢWᵢⱼ 
+    #         else
+    #             dτdtᵢ  = zero(xᵢⱼ)
+    #             dτdtⱼ  = dτdtᵢ
+    #         end
+        
+    #         dvdtI[ichunk][i] += dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ
+    #         dvdtI[ichunk][j] += dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
+
+            
+    #         if FlagOutputKernelValues
+    #             Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
+    #             KernelThreaded[ichunk][i]         += Wᵢⱼ
+    #             KernelThreaded[ichunk][j]         += Wᵢⱼ
+    #             KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
+    #             KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
+    #         end
+
+
+    #         if SimMetaData.FlagShifting
+    #             Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
+        
+    #             MLcond = MotionLimiter[i] * MotionLimiter[j]
+
+    #             ∇CᵢThreaded[ichunk][i]   += (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
+    #             ∇CᵢThreaded[ichunk][j]   += (m₀/ρⱼ) * -∇ᵢWᵢⱼ
+        
+    #             # Switch signs compared to DSPH, else free surface detection does not make sense
+    #             # Agrees, https://arxiv.org/abs/2110.10076, it should have been r_ji
+    #             ∇◌rᵢThreaded[ichunk][i]  += (m₀/ρⱼ) * dot(-xᵢⱼ , ∇ᵢWᵢⱼ)  * MLcond
+    #             ∇◌rᵢThreaded[ichunk][j]  += (m₀/ρᵢ) * dot( xᵢⱼ ,-∇ᵢWᵢⱼ)  * MLcond
+    #         end
+    #     end
+
+    #     return nothing
+    # end
+
+    function ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, neighbor_index)
         @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues = SimMetaData
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
-        xᵢⱼ  = Position[i] - Position[j]
-        xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)              
-        if  xᵢⱼ² <= H²
-            #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/2
-            dᵢⱼ  = sqrt(abs(xᵢⱼ²))
-
-            q         = min(dᵢⱼ * h⁻¹, 2.0)
-            invd²η²   =  1.0 / (dᵢⱼ*dᵢⱼ+η²)
-            ∇ᵢWᵢⱼ     = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
-            ρᵢ        = Density[i]
-            ρⱼ        = Density[j]
-        
-            vᵢ        = Velocity[i]
-            vⱼ        = Velocity[j]
-            vᵢⱼ       = vᵢ - vⱼ
-            density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
-            dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  density_symmetric_term
-            dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  density_symmetric_term
-
-            # Density diffusion
-            if FlagDensityDiffusion
-                if SimConstants.g == 0
-                    ρᵢⱼᴴ  = 0.0
-                    ρⱼᵢᴴ  = 0.0
-                else
-                    Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
-                    ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
-                    Pⱼᵢᴴ  = -Pᵢⱼᴴ
-                    ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
-                end
-
-                ρⱼᵢ   = ρⱼ - ρᵢ
-
-                Ψᵢⱼ   = 2( ρⱼᵢ  - ρᵢⱼᴴ) * (-xᵢⱼ) * invd²η²
-                Ψⱼᵢ   = 2(-ρⱼᵢ  - ρⱼᵢᴴ) * ( xᵢⱼ) * invd²η²
-
-                MLcond = MotionLimiter[i] * MotionLimiter[j]
-                Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
-                Dⱼ    =  δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
-            else
-                Dᵢ  = 0.0
-                Dⱼ  = 0.0
-            end
-            dρdtI[ichunk][i] += dρdt⁺ + Dᵢ
-            dρdtI[ichunk][j] += dρdt⁻ + Dⱼ
-
-
-            Pᵢ      =  Pressure[i]
-            Pⱼ      =  Pressure[j]
-            Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
-            dvdt⁺   = - m₀ * Pfac *  ∇ᵢWᵢⱼ
-            dvdt⁻   = - dvdt⁺
-
-            if FlagViscosityTreatment == :ArtificialViscosity
-                ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
-                cond      = dot(vᵢⱼ, xᵢⱼ)
-                cond_bool = cond < 0.0
-                μᵢⱼ       = h*cond * invd²η²
-                Πᵢ        = - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
-                Πⱼ        = - Πᵢ
-            else
-                Πᵢ        = zero(xᵢⱼ)
-                Πⱼ        = Πᵢ
-            end
-        
-            if FlagViscosityTreatment == :Laminar || FlagViscosityTreatment == :LaminarSPS
-                # 4 comes from 2 divided by 0.5 from average density
-                # should divide by ρᵢ eq 6 DPC
-                # ν₀∇²uᵢ = (1/ρᵢ) * ( (4 * m₀ * (ρᵢ * ν₀) * dot( xᵢⱼ, ∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²) ) ) *  vᵢⱼ
-                # ν₀∇²uⱼ = (1/ρⱼ) * ( (4 * m₀ * (ρⱼ * ν₀) * dot(-xᵢⱼ,-∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²) ) ) * -vᵢⱼ
-                visc_symmetric_term = (4 * m₀ * ν₀ * dot( xᵢⱼ, ∇ᵢWᵢⱼ)) / ((ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²))
-                # ν₀∇²uᵢ = (1/ρᵢ) * visc_symmetric_term *  vᵢⱼ * ρᵢ
-                # ν₀∇²uⱼ = (1/ρⱼ) * visc_symmetric_term * -vᵢⱼ * ρⱼ
-                ν₀∇²uᵢ =  visc_symmetric_term *  vᵢⱼ
-                ν₀∇²uⱼ = -ν₀∇²uᵢ #visc_symmetric_term * -vᵢⱼ
-            else
-                ν₀∇²uᵢ = zero(xᵢⱼ)
-                ν₀∇²uⱼ = ν₀∇²uᵢ
-            end
-        
-            if FlagViscosityTreatment == :LaminarSPS 
-                Iᴹ       = diagm(one.(xᵢⱼ))
-                #julia> a .- a'
-                # 3×3 SMatrix{3, 3, Float64, 9} with indices SOneTo(3)×SOneTo(3):
-                # 0.0  0.0  0.0
-                # 0.0  0.0  0.0
-                # 0.0  0.0  0.0
-                # Strain *rate* tensor is the gradient of velocity
-                Sᵢ = ∇vᵢ =  (m₀/ρⱼ) * (vⱼ - vᵢ) * ∇ᵢWᵢⱼ'
-                norm_Sᵢ  = sqrt(2 * sum(Sᵢ .^ 2))
-                νtᵢ      = (SmagorinskyConstant * dx)^2 * norm_Sᵢ
-                trace_Sᵢ = sum(diag(Sᵢ))
-                τᶿᵢ      = 2*νtᵢ*ρᵢ * (Sᵢ - (1/3) * trace_Sᵢ * Iᴹ) - (2/3) * ρᵢ * BlinConstant * dx^2 * norm_Sᵢ^2 * Iᴹ
-                Sⱼ = ∇vⱼ =  (m₀/ρᵢ) * (vᵢ - vⱼ) * -∇ᵢWᵢⱼ'
-                norm_Sⱼ  = sqrt(2 * sum(Sⱼ .^ 2))
-                νtⱼ      = (SmagorinskyConstant * dx)^2 * norm_Sⱼ
-                trace_Sⱼ = sum(diag(Sⱼ))
-                τᶿⱼ      = 2*νtⱼ*ρⱼ * (Sⱼ - (1/3) * trace_Sⱼ * Iᴹ) - (2/3) * ρⱼ * BlinConstant * dx^2 * norm_Sⱼ^2 * Iᴹ
-        
-                # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA TO REPRESENT IT
-                dτdtᵢ = (m₀/(ρⱼ * ρᵢ)) * (τᶿᵢ + τᶿⱼ) *  ∇ᵢWᵢⱼ 
-                dτdtⱼ = (m₀/(ρᵢ * ρⱼ)) * (τᶿᵢ + τᶿⱼ) * -∇ᵢWᵢⱼ 
-            else
-                dτdtᵢ  = zero(xᵢⱼ)
-                dτdtⱼ  = dτdtᵢ
-            end
-        
-            dvdtI[ichunk][i] += dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ
-            dvdtI[ichunk][j] += dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
-
-            
-            if FlagOutputKernelValues
-                Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
-                KernelThreaded[ichunk][i]         += Wᵢⱼ
-                KernelThreaded[ichunk][j]         += Wᵢⱼ
-                KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
-                KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
-            end
-
-
-            if SimMetaData.FlagShifting
-                Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
-        
-                MLcond = MotionLimiter[i] * MotionLimiter[j]
-
-                ∇CᵢThreaded[ichunk][i]   += (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
-                ∇CᵢThreaded[ichunk][j]   += (m₀/ρⱼ) * -∇ᵢWᵢⱼ
-        
-                # Switch signs compared to DSPH, else free surface detection does not make sense
-                # Agrees, https://arxiv.org/abs/2110.10076, it should have been r_ji
-                ∇◌rᵢThreaded[ichunk][i]  += (m₀/ρⱼ) * dot(-xᵢⱼ , ∇ᵢWᵢⱼ)  * MLcond
-                ∇◌rᵢThreaded[ichunk][j]  += (m₀/ρᵢ) * dot( xᵢⱼ ,-∇ᵢWᵢⱼ)  * MLcond
-            end
-        end
-
         return nothing
     end
-
 
     function reduce_sum!(target_array, arrays)
         n = length(target_array)
@@ -377,6 +396,7 @@ using Base.Threads
     
         @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
         # @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtIThreaded, AccelerationThreaded,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, EnumeratedIndices)
+        @timeit SimMetaData.HourGlass "04 First NeighborLoop"                  NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, NeighborListVector, IndexStarts, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, Acceleration) #dvdtI == Acceleration for now
         # @timeit SimMetaData.HourGlass "Reduction"                            reduce_sum!(dρdtI, dρdtIThreaded)
         # @timeit SimMetaData.HourGlass "Reduction"                            reduce_sum!(Acceleration, AccelerationThreaded)
 
