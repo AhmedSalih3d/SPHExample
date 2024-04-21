@@ -49,29 +49,70 @@ using Base.Threads
         return nothing
     end
 
-    ###=== Function to update ordering
-    function UpdateNeighbors!(Particles, CutOff, SortingScratchSpace, ParticleRanges, UniqueCells)
-        ExtractCells!(Particles, CutOff)
-
+    function UpdateNeighbors!(Particles, Stencil, InverseCutOff, SortingScratchSpace, ParticleRanges, UniqueCells)
+        ExtractCells!(Particles, InverseCutOff)
+        
         sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
-
+        
         Cells = @views Particles.Cells
-        @. ParticleRanges             = zero(eltype(ParticleRanges))
-        IndexCounter                  = 1
-        ParticleRanges[IndexCounter]  = 1
-        UniqueCells[IndexCounter]     = Cells[1]
-
+        @. ParticleRanges = zero(eltype(ParticleRanges))
+        IndexCounter = 1
+        ParticleRanges[IndexCounter] = 1
+        UniqueCells[IndexCounter] = Cells[1]
+        
         for i in 2:length(Cells)
-            if Cells[i] != Cells[i-1] # Equivalent to diff(Cells) != 0
-                IndexCounter                += 1
+            if Cells[i] != Cells[i-1]
+                IndexCounter += 1
                 ParticleRanges[IndexCounter] = i
-                UniqueCells[IndexCounter]    = Cells[i]
+                UniqueCells[IndexCounter] = Cells[i]
             end
         end
-        ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
+        ParticleRanges[IndexCounter + 1] = length(Particles) + 1
+        
+        UniqueCells = view(UniqueCells, 1:IndexCounter)
+        
+        # Initialize the list that will hold neighbors for each particle followed by a zero
+        NeighborListVector = Vector{Int}()
+        
+        for iter = 1:IndexCounter
+            CellIndex = UniqueCells[iter]
+        
+            StartIndex = ParticleRanges[iter] 
+            EndIndex = ParticleRanges[iter+1] - 1
+        
+            # Process each particle within the cell
+            for i = StartIndex:EndIndex
+                push!(NeighborListVector, i)  # Add the particle index itself
+                
+                # Add neighbors within the same cell
+                for j = StartIndex:EndIndex
+                    if i != j
+                        push!(NeighborListVector, j)
+                    end
+                end
+                
+                # Add neighbors from neighboring cells based on the stencil
+                for S in Stencil
+                    SCellIndex = CellIndex + S
+                    NeighborCellRange = searchsorted(UniqueCells, SCellIndex)
+                    if length(NeighborCellRange) != 0
+                        StartIndex_ = ParticleRanges[NeighborCellRange[1]]
+                        EndIndex_ = ParticleRanges[NeighborCellRange[1] + 1] - 1
+                        for j = StartIndex_:EndIndex_
+                            push!(NeighborListVector, j)
+                        end
+                    end
+                end
+                
+                push!(NeighborListVector, 0)  # Separator after listing all neighbors for particle i
+            end
+        end
 
-        return IndexCounter 
+        println(NeighborListVector)
+        
+        return IndexCounter, NeighborListVector
     end
+    
 
 # Neither Polyester.@batch per core or thread is faster
 ###=== Function to process each cell and its neighbors
@@ -307,12 +348,12 @@ using Base.Threads
         # c₀ >= maximum(norm.(Velocity))
         # Remove if statement logic if you want to update each iteration
         if mod(SimMetaData.Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
-            @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, InverseCutOff, SortingScratchSpace,  ParticleRanges, UniqueCells)
+            @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter, NeighborListVector = UpdateNeighbors!(SimParticles, Stencil, InverseCutOff, SortingScratchSpace,  ParticleRanges, UniqueCells)
         else
             IndexCounter    = findfirst(isequal(0), ParticleRanges) - 2
         end
 
-        println(ParticleRanges)
+        # println(ParticleRanges)
 
         # UniqueCells       = view(UniqueCells, 1:IndexCounter)
         # EnumeratedIndices = enumerate(chunks(UniqueCells; n=nthreads()))
