@@ -107,7 +107,7 @@ using Base.Threads
 
         println(NeighborListVector)
         
-        return IndexCounter, NeighborListVector
+        return IndexCounter
     end
     
 
