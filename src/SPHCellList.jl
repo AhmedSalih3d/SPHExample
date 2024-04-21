@@ -111,55 +111,16 @@ using Base.Threads
                 current_index += 1
             end
         end
-    
-        # println(NeighborListVector)
 
         return IndexCounter
     end
 
-# Neither Polyester.@batch per core or thread is faster
-###=== Function to process each cell and its neighbors
-    # function NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, EnumeratedIndices)
-    #     @threads for (ichunk, inds) in @views EnumeratedIndices
-    #         for iter in inds
-    #             CellIndex = UniqueCells[iter]
-
-    #             StartIndex = ParticleRanges[iter] 
-    #             EndIndex   = ParticleRanges[iter+1] - 1
-
-    #             @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-    #                 @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
-    #             end
-
-    #             @inbounds for S ∈ Stencil
-    #                 SCellIndex = CellIndex + S
-
-    #                 # Returns a range, x:x for exact match and x:(x-1) for no match
-    #                 # utilizes that it is a sorted array and requires no isequal constructor,
-    #                 # so I prefer this for now
-    #                 NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
-
-    #                 if length(NeighborCellIndex) != 0
-    #                     StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
-    #                     EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
-
-    #                     @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-    #                         @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
-    #                     end
-    #                 end
-    #             end
-    #         end
-    #     end
-
-    #     return nothing
-    # end
-
-    function NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, NeighborListVector, IndexStarts, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI)
+    function NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, NeighborListVector, IndexStarts, Position, Kernel, KernelGradient, Density, Pressure, Velocity, MotionLimiter, dρdtI, dvdtI)
         @threads for i in eachindex(IndexStarts)
             start_idx = IndexStarts[i]
             end_idx   = findnext(==(0), NeighborListVector, start_idx + 1) - 1  # Finds the next zero after the current index start
     
-        ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, start_idx, end_idx, NeighborListVector)
+        ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, MotionLimiter, dρdtI, dvdtI, i, start_idx, end_idx, NeighborListVector)
         end
     
         return nothing
@@ -310,7 +271,7 @@ using Base.Threads
     #     return nothing
     # end
 
-    function ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, i, start_idx, end_idx, NeighborListVector)
+    function ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, MotionLimiter, dρdtI, dvdtI, i, start_idx, end_idx, NeighborListVector)
         @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues = SimMetaData
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
     
@@ -347,10 +308,12 @@ using Base.Threads
                         Pᵢⱼᴴ = ρ₀ * (-g) * -xᵢⱼ[end]
                         ρᵢⱼᴴ = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
                     end
+
+                    MLcond = MotionLimiter[i] * MotionLimiter[j]
         
                     ρⱼᵢ = ρⱼ - ρᵢ
                     Ψᵢⱼ = 2 * (ρⱼᵢ - ρᵢⱼᴴ) * (-xᵢⱼ) * invd²η²
-                    Dᵢ = δᵩ * h * c₀ * (m₀ / ρⱼ) * dot(Ψᵢⱼ, ∇ᵢWᵢⱼ)
+                    Dᵢ = δᵩ * h * c₀ * (m₀ / ρⱼ) * dot(Ψᵢⱼ, ∇ᵢWᵢⱼ) * MLcond
                     local_dρdtI += Dᵢ
                 end
         
@@ -460,7 +423,7 @@ using Base.Threads
         ###===
     
         @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-        @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, NeighborListVector, IndexStarts, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, Acceleration) #dvdtI == Acceleration for now
+        @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, NeighborListVector, IndexStarts, Position, Kernel, KernelGradient, Density, Pressure, Velocity, MotionLimiter, dρdtI, Acceleration) #dvdtI == Acceleration for now
     
         @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" @inbounds for i in eachindex(Position)
             Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
@@ -481,7 +444,7 @@ using Base.Threads
         @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
     
         @timeit SimMetaData.HourGlass "03 Pressure"                 Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-        @timeit SimMetaData.HourGlass "08 Second NeighborLoop"      NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, NeighborListVector, IndexStarts, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtI, Acceleration) #dvdtI == Acceleration for now
+        @timeit SimMetaData.HourGlass "08 Second NeighborLoop"      NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, NeighborListVector, IndexStarts, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, dρdtI, Acceleration) #dvdtI == Acceleration for now
     
     
         @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
