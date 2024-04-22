@@ -445,7 +445,7 @@ using Base.Threads
         end
     
         # Unpack the relevant simulation meta data
-        @unpack HourGlass, SimulationName, SilentOutput, ThreadsCPU = SimMetaData;
+        @unpack HourGlass = SimMetaData;
     
         # Load in particles
         SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺ = AllocateDataStructures(Dimensions,FloatType, SimGeometry)
@@ -478,7 +478,7 @@ using Base.Threads
         _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
     
         # Produce data saving functions
-        SaveLocation_ = SimMetaData.SaveLocation * "/" * SimulationName
+        SaveLocation_ = SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName
         SaveLocation  = (Iteration) -> SaveLocation_ * "_" * lpad(Iteration,6,"0") * ".vtkhdf"
     
         fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
@@ -525,11 +525,9 @@ using Base.Threads
     
                 SimMetaData.OutputIterationCounter += 1
             end
-    
-            if !SilentOutput
-                TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime)
-                @timeit HourGlass "13 Next TimeStep" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime, TimeLeftInSeconds))
-            end
+
+            TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime)
+            @timeit HourGlass "13 Next TimeStep" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime, TimeLeftInSeconds))
     
             if SimMetaData.TotalTime > SimMetaData.SimulationTime
                 
