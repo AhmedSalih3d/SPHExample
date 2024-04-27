@@ -128,20 +128,23 @@ module SimulationLoggerConfiguration
 
     function LogStep(SimLogger, SimMetaData, HourGlass)
         with_logger(SimLogger.Logger) do
-            PartNumber               = "Part_" * lpad(SimMetaData.OutputIterationCounter,4,"0")
+            PartNumber               = "Part_" * lpad(SimMetaData.OutputIterationCounter, 4, "0")
             PartTime                 = string(@sprintf("%-.6f", SimMetaData.TotalTime))
             PartTotalSteps           = string(SimMetaData.Iteration)
             CurrentSteps             = string(SimMetaData.Iteration - SimMetaData.StepsTakenForLastOutput)
-            TimeUptillNow            = string(@sprintf("%-.3f",TimerOutputs.tottime(HourGlass)/1e9))
-            TimePerPhysicalSecond    = string(@sprintf("%-.2f", TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime))
-
-            SecondsToFinish          = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime)
-            ExpectedFinishTime       = now() + Second(ceil(Int,SecondsToFinish))
+    
+            elapsed_time_            = TimerOutputs.tottime(HourGlass) / 1e9
+            TimeUptillNow            = string(@sprintf("%-.3f", elapsed_time_))
+            TimePerPhysicalSecond    = string(@sprintf("%-.2f", elapsed_time_ / SimMetaData.TotalTime))
+    
+            SecondsToFinish          = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (elapsed_time_ / SimMetaData.TotalTime)
+            ExpectedFinishTime       = now() + Second(ceil(Int, SecondsToFinish))
             ExpectedFinishTimeString = Dates.format(ExpectedFinishTime, "dd-mm-yyyy HH:MM:SS")
-
-            @info @. $join(cfmt(SimLogger.FormatStr, (PartNumber, PartTime, PartTotalSteps,  CurrentSteps, TimeUptillNow, TimePerPhysicalSecond, ExpectedFinishTimeString)))
+    
+            @info @. $join(cfmt(SimLogger.FormatStr, (PartNumber, PartTime, PartTotalSteps, CurrentSteps, TimeUptillNow, TimePerPhysicalSecond, ExpectedFinishTimeString)))
         end
     end
+    
 
     function LogFinal(SimLogger, HourGlass)
         with_logger(SimLogger.Logger) do
