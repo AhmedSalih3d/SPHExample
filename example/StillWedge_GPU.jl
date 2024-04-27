@@ -1,4 +1,6 @@
 using SPHExample
+using StructArrays
+using CUDA
 
 
 Dimensions = 2
@@ -35,6 +37,18 @@ SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
 
 SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
 
-SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺ = AllocateDataStructures(Dimensions,FloatType, SimGeometry)
+# Allocate data structures on the CPU
+SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺ = AllocateDataStructures(Dimensions, FloatType, SimGeometry)
 
+# Allow scalar operations temporarily
+CUDA.allowscalar(true)
 
+# Replace storage for each variable to use GPU memory
+SimParticles_GPU = replace_storage(CuVector, SimParticles)
+dρdtI_GPU        = replace_storage(CuVector, dρdtI)
+Velocityₙ⁺_GPU   = replace_storage(CuVector, Velocityₙ⁺)
+Positionₙ⁺_GPU   = replace_storage(CuVector, Positionₙ⁺)
+ρₙ⁺_GPU          = replace_storage(CuVector, ρₙ⁺)
+
+# Disable scalar operations for performance optimization in CUDA operations
+CUDA.allowscalar(false)
