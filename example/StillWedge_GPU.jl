@@ -97,6 +97,12 @@ end
 launch_ExtractCellsKernel!(SimParticles_GPU, CutOff)
 
 
+SortedIndices = CUDA.zeros(Int,NumberOfPoints)
+
+#CUDA.sortperm!(SortedIndices, SimParticles_GPU.Cells)
+
+# SimParticles_GPU[1:end] .= SimParticles_GPU[SortedIndices]
+
 # ###=== Function to update ordering
 # function UpdateNeighbors!(Particles, CutOff, SortingScratchSpace, ParticleRanges, UniqueCells)
 #     ExtractCells!(Particles, CutOff)
