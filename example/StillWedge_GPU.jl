@@ -35,7 +35,7 @@ SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
     FlagShifting=false,
 )
 
-SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
+SimLogger = SimulationLogger(SimMetaData.SaveLocation)
 
 # Allocate data structures on the CPU
 SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺ = AllocateDataStructures(Dimensions, FloatType, SimGeometry)
@@ -60,23 +60,42 @@ ParticleRanges         = CUDA.zeros(Int, NumberOfPoints + 1)
 UniqueCells            = CUDA.zeros(CartesianIndex{Dimensions}, NumberOfPoints)
 Stencil                = ConstructStencil(Val(Dimensions))
 
-InverseCutOff = Val(1/(SimConstants.H))
+CutOff = SimConstants.H
+# InverseCutOff = Val(1/(SimConstants.H))
 
+# CUDA kernel for extracting cells
+function gpu_ExtractCells!(Particles, CutOff)
+    index = (blockIdx().x - Int32(1)) * blockDim().x + threadIdx().x
+    stride = gridDim().x * blockDim().x
 
-# @inline function ExtractCells!(Particles, ::Val{InverseCutOff}) where InverseCutOff
-#     # Replace unsafe_trunc with trunc if this ever errors
-#     function map_floor(x)
-#         unsafe_trunc(Int, muladd(x,InverseCutOff,2))
-#     end
+    Cells = Particles.Cells
+    Points = Particles.Position
 
-#     Cells  = @views Particles.Cells
-#     Points = @views Particles.Position
-#     @threads for i ∈ eachindex(Particles)
-#         t = map(map_floor, Tuple(Points[i]))
-#         Cells[i] = CartesianIndex(t)
-#     end
-#     return nothing
-# end
+    i = index
+    while i <= length(Cells)
+
+        ci  = CartesianIndex((@. Int(fld(Points[i], CutOff)) + 2)... )
+        Cells[i] = ci #+ 2 * one(ci) 
+
+        i += stride
+    end
+    return
+end
+
+# Function to launch the CUDA kernel for extracting cells
+function launch_ExtractCellsKernel!(Particles, CutOff)
+    kernel = @cuda launch=false gpu_ExtractCells!(Particles, CutOff)
+    config = launch_configuration(kernel.fun)
+    
+    threads = min(length(Particles.Cells), config.threads)
+    blocks = cld(length(Particles.Cells), threads)
+
+    # Launching the CUDA kernel with the calculated configuration
+    CUDA.@sync kernel(Particles, CutOff; threads=threads, blocks=blocks)
+end
+
+launch_ExtractCellsKernel!(SimParticles_GPU, CutOff)
+
 
 # ###=== Function to update ordering
 # function UpdateNeighbors!(Particles, CutOff, SortingScratchSpace, ParticleRanges, UniqueCells)
