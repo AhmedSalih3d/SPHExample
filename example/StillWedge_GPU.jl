@@ -59,7 +59,7 @@ using Format
         end
     end
 
-    function UpdateNeighbours!(Particles, SortedIndices, CutOff)
+    function UpdateNeighbours!(Particles, SortedIndices, ParticleRanges, CutOff)
         launch_ExtractCellsKernel!(Particles, CutOff)
 
         sortperm!(SortedIndices, Particles.Cells)
@@ -340,13 +340,13 @@ function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  Parti
     # any ensure it is always updated in a reasonable manner. This only works well, assuming that
     # c₀ >= maximum(norm.(Velocity))
     # Remove if statement logic if you want to update each iteration
-    # if mod(SimMetaData.Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
-    #     @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbours!(SimParticles, SortedIndices, CutOff)
-    # else
-    #     IndexCounter    = findfirst(isequal(0), ParticleRanges) - 2
-    # end
+    if mod(SimMetaData.Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
+        @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbours!(SimParticles, SortedIndices, ParticleRanges, SimConstants.H) # CutOff = SimConstants.H
+    else
+        IndexCounter    = findfirst(isequal(0), ParticleRanges) - 2
+    end
 
-    # UniqueCells = Cells[collect(ParticleRanges[1:IndexCounter])]
+    UniqueCells = Cells[collect(ParticleRanges[1:IndexCounter])]
 
 
     # @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
@@ -522,10 +522,8 @@ function RunSimulationGPU(;SimGeometry::Dict, #Don't further specify type for no
     # Produce sorting related variables
     ParticleRanges         = CUDA.zeros(Int, NumberOfPoints + 1)
     UniqueCells            = CUDA.zeros(CartesianIndex{Dimensions}, NumberOfPoints)
-    Stencil                = ConstructStencil(Val(Dimensions))
+    Stencil                = CuVector(ConstructStencil(Val(Dimensions)))
     SortedIndices          = CUDA.zeros(Int, NumberOfPoints)
-
-    CutOff = SimConstants.H
 
     # Produce data saving functions
     SaveLocation_ = SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName
@@ -555,7 +553,7 @@ function RunSimulationGPU(;SimGeometry::Dict, #Don't further specify type for no
 
     @inbounds while true
 
-        SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, SortedIndices)
+        SimulationLoop(SimMetaData, SimConstants, SimParticles_GPU, Stencil,  ParticleRanges, SortedIndices)
 
         if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
 
@@ -628,7 +626,7 @@ let
     SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="StillWedge2", 
         SaveLocation="E:/SecondApproach/StillWedge_GPU",
-        SimulationTime=4,
+        SimulationTime=1,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
