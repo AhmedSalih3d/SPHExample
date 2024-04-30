@@ -130,32 +130,32 @@ using Format
             dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  density_symmetric_term
 
             # Density diffusion
-            if true #FlagDensityDiffusion
-                if SimConstants.g == 0
-                    ρᵢⱼᴴ  = 0.0
-                    ρⱼᵢᴴ  = 0.0
-                else
-                    Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
-                    ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
-                    Pⱼᵢᴴ  = -Pᵢⱼᴴ
-                    ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
-                end
+            # if true #FlagDensityDiffusion
+            #     if SimConstants.g == 0
+            #         ρᵢⱼᴴ  = 0.0
+            #         ρⱼᵢᴴ  = 0.0
+            #     else
+            #         Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
+            #         ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
+            #         Pⱼᵢᴴ  = -Pᵢⱼᴴ
+            #         ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
+            #     end
 
-                ρⱼᵢ   = ρⱼ - ρᵢ
+            #     ρⱼᵢ   = ρⱼ - ρᵢ
 
-                Ψᵢⱼ   = 2( ρⱼᵢ  - ρᵢⱼᴴ) * (-xᵢⱼ) * invd²η²
-                Ψⱼᵢ   = 2(-ρⱼᵢ  - ρⱼᵢᴴ) * ( xᵢⱼ) * invd²η²
+            #     Ψᵢⱼ   = 2( ρⱼᵢ  - ρᵢⱼᴴ) * (-xᵢⱼ) * invd²η²
+            #     Ψⱼᵢ   = 2(-ρⱼᵢ  - ρⱼᵢᴴ) * ( xᵢⱼ) * invd²η²
 
-                MLcond = Particles.MotionLimiter[i] * Particles.MotionLimiter[j]
-                Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
-                Dⱼ    =  δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
-            else
-                Dᵢ  = 0.0
-                Dⱼ  = 0.0
-            end
+            #     MLcond = Particles.MotionLimiter[i] * Particles.MotionLimiter[j]
+            #     Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
+            #     Dⱼ    =  δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
+            # else
+            #     Dᵢ  = 0.0
+            #     Dⱼ  = 0.0
+            # end
 
-            dρdtI[i] += dρdt⁺ + Dᵢ
-            dρdtI[j] += dρdt⁻ + Dⱼ
+            dρdtI[i] += dρdt⁺ #+ Dᵢ
+            dρdtI[j] += dρdt⁻ #+ Dⱼ
 
 
             Pᵢ      =  Particles.Pressure[i]
@@ -552,7 +552,7 @@ let
     SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="StillWedge2", 
         SaveLocation="E:/SecondApproach/StillWedge_GPU",
-        SimulationTime=0.1,
+        SimulationTime=1,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
