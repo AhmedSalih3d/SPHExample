@@ -31,7 +31,7 @@ SimGeometry[:Water] = Dict(
     "Motion"      => nothing
 )
 SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
-    SimulationName="StillWedge3", 
+    SimulationName="StillWedge", 
     SaveLocation="E:/SecondApproach/StillWedge_GPU",
     SimulationTime=4,
     OutputEach=0.01,
@@ -542,7 +542,136 @@ function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  Parti
     return nothing
 end
 
-SortedIndices = CUDA.zeros(Int,NumberOfPoints)
-SimulationLoop(SimMetaData, SimConstants, SimParticles_GPU, CuVector(Stencil),  ParticleRanges, SortedIndices)
+function RunSimulationGPU(;SimGeometry::Dict, #Don't further specify type for now
+    SimMetaData::SimulationMetaData{Dimensions, FloatType},
+    SimConstants::SimulationConstants,
+    SimLogger::SimulationLogger
+    ) where {Dimensions,FloatType}
 
-display(SimMetaData.HourGlass)
+    
+    # Delete previous result files
+    foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
+    # https://discourse.julialang.org/t/find-what-has-locked-held-a-file/23278
+    GC.gc()
+    try
+        foreach(rm, filter(endswith(".vtkhdf"), readdir(SimMetaData.SaveLocation,join=true)))
+    catch err
+        @warn("File could not be deleted, manually delete else program cannot conclude.")
+        display(err)
+    end
+
+    # Unpack the relevant simulation meta data
+    @unpack HourGlass = SimMetaData;
+
+    # # Load in particles
+    # SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺ = AllocateDataStructures(Dimensions,FloatType, SimGeometry)
+    
+    # if SimMetaData.FlagLog
+    #     InitializeLogger(SimLogger,SimConstants,SimMetaData, SimGeometry, SimParticles)
+    # end
+    
+    # NumberOfPoints = length(SimParticles)::Int #Have to type declare, else error?
+    # @inline Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
+
+    # # Shifting correction
+    # ∇Cᵢ               = zeros(SVector{Dimensions,FloatType},NumberOfPoints)            
+    # ∇◌rᵢ              = zeros(FloatType,NumberOfPoints)    
+
+    # @inline begin
+    #     n_copy = Base.Threads.nthreads()
+    #     KernelThreaded         = [copy(SimParticles.Kernel)         for _ in 1:n_copy]
+    #     KernelGradientThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
+    #     dρdtIThreaded          = [copy(dρdtI)                       for _ in 1:n_copy]
+    #     AccelerationThreaded   = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
+    #     ∇CᵢThreaded            = [copy(∇Cᵢ )                        for _ in 1:n_copy]
+    #     ∇◌rᵢThreaded           = [copy(∇◌rᵢ)                        for _ in 1:n_copy]   
+    # end
+
+    # # Produce sorting related variables
+    # ParticleRanges         = zeros(Int, NumberOfPoints + 1)
+    # UniqueCells            = zeros(CartesianIndex{Dimensions}, NumberOfPoints)
+    # Stencil                = ConstructStencil(Val(Dimensions))
+    # _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
+
+    # # Produce data saving functions
+    # SaveLocation_ = SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName
+    # SaveLocation  = (Iteration) -> SaveLocation_ * "_" * lpad(Iteration,6,"0") * ".vtkhdf"
+
+    # fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
+
+    # SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position),["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID", "Type", "GroupMarker"], SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
+    # SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
+    # @inline SaveFile(SimMetaData.OutputIterationCounter)
+    
+    # InverseCutOff = Val(1/(SimConstants.H))
+
+    # # Construct Motion Definition
+    # MotionDefinition = Dict{Int, Dict{String, Union{FloatType, SVector{Dimensions, FloatType}}}}()
+
+    # # Loop through SimulationGeometry to populate MotionDefinition
+    # for (_, details) in pairs(SimGeometry)
+    #     motion = get(details, "Motion", nothing)
+    #     if isa(motion, Dict)
+    #         group_marker = details["GroupMarker"]
+    #         MotionDefinition[group_marker] = motion
+    #     end
+    # end
+
+    # # Normal run and save data
+    # generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
+
+    # @inbounds while true
+
+    #     SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
+
+    #     if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
+
+
+    #     try 
+    #         @timeit HourGlass "12A Output Data" SaveFile(SimMetaData.OutputIterationCounter + 1)
+    #     catch err
+    #         @warn("File write failed.")
+    #         display(err)
+    #     end
+
+    #         if SimMetaData.FlagLog
+    #             LogStep(SimLogger, SimMetaData, HourGlass)
+    #             SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
+    #         end
+
+    #         SimMetaData.OutputIterationCounter += 1
+    #     end
+
+    #     TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime)
+    #     @timeit HourGlass "13 Next TimeStep" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime, TimeLeftInSeconds))
+
+    #     if SimMetaData.TotalTime > SimMetaData.SimulationTime
+            
+    #         if SimMetaData.FlagLog
+    #             LogFinal(SimLogger, HourGlass)
+    #             close(SimLogger.LoggerIo)
+    #         end
+
+            
+    #         # This should not be counted in actual run 
+    #         @timeit HourGlass "12B Close hdfvtk output files"  @threads for i in eachindex(fid_vector)
+    #             if isassigned(fid_vector, i)
+    #                 close(fid_vector[i])
+    #             end
+    #         end
+
+    #         finish!(SimMetaData.ProgressSpecification)
+    #         show(HourGlass,sortby=:name)
+    #         show(HourGlass)
+
+    #         break
+    #     end
+    # end
+end
+
+RunSimulationGPU(
+        SimGeometry        = SimGeometry,
+        SimMetaData        = SimMetaData,
+        SimConstants       = SimConstants,
+        SimLogger          = SimLogger
+    )
