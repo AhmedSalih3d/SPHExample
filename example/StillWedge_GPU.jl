@@ -32,7 +32,7 @@ using Format
 
     # Function to launch the CUDA kernel for extracting cells
     function launch_ExtractCellsKernel!(Particles, CutOff)
-        kernel = @cuda launch=false gpu_ExtractCells!(Particles, CutOff)
+        kernel = @cuda always_inline=true fastmath=true launch=false gpu_ExtractCells!(Particles, CutOff)
         config = launch_configuration(kernel.fun)
         
         threads = min(length(Particles.Cells), config.threads)
@@ -225,7 +225,7 @@ end
 
 # Function to launch the CUDA kernel for extracting cells
 function launch_NeighborLoopKernel!(Particles, SimConstants, UniqueCells, ParticleRanges, Stencil, dρdtI, IndexCounter)
-    kernel = @cuda launch=false gpu_NeighborLoop!(Particles, SimConstants, UniqueCells, ParticleRanges, Stencil, dρdtI, IndexCounter)
+    kernel = @cuda always_inline=true fastmath=true launch=false gpu_NeighborLoop!(Particles, SimConstants, UniqueCells, ParticleRanges, Stencil, dρdtI, IndexCounter)
     config = launch_configuration(kernel.fun)
     
     threads = min(length(Particles.Cells), config.threads)
@@ -238,14 +238,8 @@ end
 function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, SortedIndices, dρdtI, ρₙ⁺)
     Position       = SimParticles.Position
     Cells          = SimParticles.Cells
-    Density        = SimParticles.Density
-    Pressure       = SimParticles.Pressure
     Velocity       = SimParticles.Velocity
     Acceleration   = SimParticles.Acceleration
-    GravityFactor  = SimParticles.GravityFactor
-    MotionLimiter  = SimParticles.MotionLimiter
-    ParticleType   = SimParticles.Type
-    ParticleMarker = SimParticles.GroupMarker
     Kernel         = SimParticles.Kernel
     KernelGradient = SimParticles.KernelGradient
 
