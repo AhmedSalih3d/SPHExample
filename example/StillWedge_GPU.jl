@@ -1,6 +1,7 @@
 using SPHExample
 using StructArrays
 using CUDA
+using Parameters
 import LinearAlgebra: dot, norm
 
 
@@ -176,6 +177,16 @@ dt₂ = dt * 0.5
 Pressure!(SimParticles_GPU.Pressure,SimParticles_GPU.Density,SimConstants)
 
 UniqueCells = Cells[collect(ParticleRanges[1:IndexCounter])]
+
+# Test
+CUDA.allowscalar(true)
+    i = 1
+    while i <= IndexCounter
+
+        i += 1
+    end
+        
+CUDA.allowscalar(false)
 
 # function NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, EnumeratedIndices)
 #     @threads for (ichunk, inds) in @views EnumeratedIndices
