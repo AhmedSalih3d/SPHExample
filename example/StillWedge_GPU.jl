@@ -7,6 +7,8 @@ import LinearAlgebra: dot, norm
 using HDF5
 using TimerOutputs
 using StaticArrays
+using Base.Threads
+using ProgressMeter
 
 
 Dimensions = 2
@@ -31,7 +33,7 @@ SimGeometry[:Water] = Dict(
     "Motion"      => nothing
 )
 SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
-    SimulationName="StillWedge", 
+    SimulationName="StillWedge2", 
     SaveLocation="E:/SecondApproach/StillWedge_GPU",
     SimulationTime=4,
     OutputEach=0.01,
@@ -42,32 +44,6 @@ SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
 )
 
 SimLogger = SimulationLogger(SimMetaData.SaveLocation)
-
-# Allocate data structures on the CPU
-SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺ = AllocateDataStructures(Dimensions, FloatType, SimGeometry)
-
-# Allow scalar operations temporarily
-CUDA.allowscalar(true)
-
-# Replace storage for each variable to use GPU memory
-SimParticles_GPU = replace_storage(CuVector, SimParticles)
-dρdtI_GPU        = replace_storage(CuVector, dρdtI)
-Velocityₙ⁺_GPU   = replace_storage(CuVector, Velocityₙ⁺)
-Positionₙ⁺_GPU   = replace_storage(CuVector, Positionₙ⁺)
-ρₙ⁺_GPU          = replace_storage(CuVector, ρₙ⁺)
-
-# Disable scalar operations for performance optimization in CUDA operations
-CUDA.allowscalar(false)
-
-NumberOfPoints::Int = length(SimParticles)
-
-# Produce sorting related variables
-ParticleRanges         = CUDA.zeros(Int, NumberOfPoints + 1)
-UniqueCells            = CUDA.zeros(CartesianIndex{Dimensions}, NumberOfPoints)
-Stencil                = ConstructStencil(Val(Dimensions))
-
-CutOff = SimConstants.H
-# InverseCutOff = Val(1/(SimConstants.H))
 
     # CUDA kernel for extracting cells
     function gpu_ExtractCells!(Particles, CutOff)
@@ -360,32 +336,7 @@ function launch_NeighborLoopKernel!(Particles, SimConstants, UniqueCells, Partic
     CUDA.@sync kernel(Particles, SimConstants, UniqueCells, ParticleRanges, Stencil, dρdtI, IndexCounter; threads=threads, blocks=blocks)
 end
 
-
-
-# launch_NeighborLoopKernel!(SimParticles_GPU, SimConstants, UniqueCells, ParticleRanges, CuVector(Stencil), dρdtI_GPU, IndexCounter)
-
 # copyto!(SimParticles,SimParticles_GPU)
-
-# # Produce data saving functions
-# SaveLocation_ = SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName
-# SaveLocation  = (Iteration) -> SaveLocation_ * "_" * lpad(Iteration,6,"0") * ".vtkhdf"
-# fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
-# SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position),["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID", "Type", "GroupMarker"], SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
-# fid_vector[1] = SaveFile(1)
-# close.(fid_vector[map( x-> isassigned(fid_vector, x), 1:length(fid_vector))])
-
-#         # Construct Motion Definition
-#         MotionDefinition = Dict{Int, Dict{String, Union{FloatType, SVector{Dimensions, FloatType}}}}()
-
-#         # Loop through SimulationGeometry to populate MotionDefinition
-#         for (_, details) in pairs(SimGeometry)
-#             motion = get(details, "Motion", nothing)
-#             if isa(motion, Dict)
-#                 group_marker = details["GroupMarker"]
-#                 MotionDefinition[group_marker] = motion
-#             end
-#         end
-    
 
 function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, SortedIndices)
     Position       = SimParticles.Position
@@ -423,13 +374,13 @@ function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  Parti
     # any ensure it is always updated in a reasonable manner. This only works well, assuming that
     # c₀ >= maximum(norm.(Velocity))
     # Remove if statement logic if you want to update each iteration
-    if mod(SimMetaData.Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
-        @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbours!(SimParticles, SortedIndices, CutOff)
-    else
-        IndexCounter    = findfirst(isequal(0), ParticleRanges) - 2
-    end
+    # if mod(SimMetaData.Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
+    #     @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbours!(SimParticles, SortedIndices, CutOff)
+    # else
+    #     IndexCounter    = findfirst(isequal(0), ParticleRanges) - 2
+    # end
 
-    UniqueCells = Cells[collect(ParticleRanges[1:IndexCounter])]
+    # UniqueCells = Cells[collect(ParticleRanges[1:IndexCounter])]
 
 
     # @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
@@ -450,8 +401,8 @@ function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  Parti
     # ###===
 
 
-    @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                launch_NeighborLoopKernel!(SimParticles_GPU, SimConstants, UniqueCells, ParticleRanges, CuVector(Stencil), dρdtI_GPU, IndexCounter)
+    # @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
+    # @timeit SimMetaData.HourGlass "04 First NeighborLoop"                launch_NeighborLoopKernel!(SimParticles_GPU, SimConstants, UniqueCells, ParticleRanges, CuVector(Stencil), dρdtI_GPU, IndexCounter)
     # @timeit SimMetaData.HourGlass "Reduction"                            reduce_sum!(dρdtI, dρdtIThreaded)
     # @timeit SimMetaData.HourGlass "Reduction"                            reduce_sum!(Acceleration, AccelerationThreaded)
 
@@ -563,15 +514,30 @@ function RunSimulationGPU(;SimGeometry::Dict, #Don't further specify type for no
     # Unpack the relevant simulation meta data
     @unpack HourGlass = SimMetaData;
 
-    # # Load in particles
-    # SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺ = AllocateDataStructures(Dimensions,FloatType, SimGeometry)
+    # Allocate data structures on the CPU
+    SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺ = AllocateDataStructures(Dimensions, FloatType, SimGeometry)
+
+    # Allow scalar operations temporarily
+    CUDA.allowscalar(true)
+
+    # Replace storage for each variable to use GPU memory
+    SimParticles_GPU = replace_storage(CuVector, SimParticles)
+    dρdtI_GPU        = replace_storage(CuVector, dρdtI)
+    Velocityₙ⁺_GPU   = replace_storage(CuVector, Velocityₙ⁺)
+    Positionₙ⁺_GPU   = replace_storage(CuVector, Positionₙ⁺)
+    ρₙ⁺_GPU          = replace_storage(CuVector, ρₙ⁺)
+
+    # Disable scalar operations for performance optimization in CUDA operations
+    CUDA.allowscalar(false)
+
+    NumberOfPoints = length(SimParticles)::Int #Have to type declare, else error?
+
+    if SimMetaData.FlagLog
+        InitializeLogger(SimLogger,SimConstants,SimMetaData, SimGeometry, SimParticles)
+    end
     
-    # if SimMetaData.FlagLog
-    #     InitializeLogger(SimLogger,SimConstants,SimMetaData, SimGeometry, SimParticles)
-    # end
-    
-    # NumberOfPoints = length(SimParticles)::Int #Have to type declare, else error?
-    # @inline Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
+
+    Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
 
     # # Shifting correction
     # ∇Cᵢ               = zeros(SVector{Dimensions,FloatType},NumberOfPoints)            
@@ -587,42 +553,43 @@ function RunSimulationGPU(;SimGeometry::Dict, #Don't further specify type for no
     #     ∇◌rᵢThreaded           = [copy(∇◌rᵢ)                        for _ in 1:n_copy]   
     # end
 
-    # # Produce sorting related variables
-    # ParticleRanges         = zeros(Int, NumberOfPoints + 1)
-    # UniqueCells            = zeros(CartesianIndex{Dimensions}, NumberOfPoints)
-    # Stencil                = ConstructStencil(Val(Dimensions))
-    # _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
+    # Produce sorting related variables
+    ParticleRanges         = CUDA.zeros(Int, NumberOfPoints + 1)
+    UniqueCells            = CUDA.zeros(CartesianIndex{Dimensions}, NumberOfPoints)
+    Stencil                = ConstructStencil(Val(Dimensions))
+    SortedIndices          = CUDA.zeros(Int, NumberOfPoints)
 
-    # # Produce data saving functions
-    # SaveLocation_ = SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName
-    # SaveLocation  = (Iteration) -> SaveLocation_ * "_" * lpad(Iteration,6,"0") * ".vtkhdf"
+    CutOff = SimConstants.H
 
-    # fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
+    # Produce data saving functions
+    SaveLocation_ = SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName
+    SaveLocation  = (Iteration) -> SaveLocation_ * "_" * lpad(Iteration,6,"0") * ".vtkhdf"
 
-    # SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position),["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID", "Type", "GroupMarker"], SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
-    # SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
-    # @inline SaveFile(SimMetaData.OutputIterationCounter)
+    fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
+
+    SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position),["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID", "Type", "GroupMarker"], SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
+    SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
+    SaveFile(SimMetaData.OutputIterationCounter)
     
-    # InverseCutOff = Val(1/(SimConstants.H))
 
-    # # Construct Motion Definition
-    # MotionDefinition = Dict{Int, Dict{String, Union{FloatType, SVector{Dimensions, FloatType}}}}()
+    # Construct Motion Definition
+    MotionDefinition = Dict{Int, Dict{String, Union{FloatType, SVector{Dimensions, FloatType}}}}()
 
-    # # Loop through SimulationGeometry to populate MotionDefinition
-    # for (_, details) in pairs(SimGeometry)
-    #     motion = get(details, "Motion", nothing)
-    #     if isa(motion, Dict)
-    #         group_marker = details["GroupMarker"]
-    #         MotionDefinition[group_marker] = motion
-    #     end
-    # end
+    # Loop through SimulationGeometry to populate MotionDefinition
+    for (_, details) in pairs(SimGeometry)
+        motion = get(details, "Motion", nothing)
+        if isa(motion, Dict)
+            group_marker = details["GroupMarker"]
+            MotionDefinition[group_marker] = motion
+        end
+    end
 
-    # # Normal run and save data
-    # generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
+    # Normal run and save data
+    generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
 
-    # @inbounds while true
+    @inbounds while true
 
-    #     SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
+        SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, SortedIndices)
 
     #     if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
 
@@ -645,28 +612,28 @@ function RunSimulationGPU(;SimGeometry::Dict, #Don't further specify type for no
     #     TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime)
     #     @timeit HourGlass "13 Next TimeStep" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime, TimeLeftInSeconds))
 
-    #     if SimMetaData.TotalTime > SimMetaData.SimulationTime
+        if SimMetaData.TotalTime > SimMetaData.SimulationTime
             
-    #         if SimMetaData.FlagLog
-    #             LogFinal(SimLogger, HourGlass)
-    #             close(SimLogger.LoggerIo)
-    #         end
+            if SimMetaData.FlagLog
+                LogFinal(SimLogger, HourGlass)
+                close(SimLogger.LoggerIo)
+            end
 
             
-    #         # This should not be counted in actual run 
-    #         @timeit HourGlass "12B Close hdfvtk output files"  @threads for i in eachindex(fid_vector)
-    #             if isassigned(fid_vector, i)
-    #                 close(fid_vector[i])
-    #             end
-    #         end
+            # This should not be counted in actual run 
+            @timeit HourGlass "12B Close hdfvtk output files"  @threads for i in eachindex(fid_vector)
+                if isassigned(fid_vector, i)
+                    close(fid_vector[i])
+                end
+            end
 
-    #         finish!(SimMetaData.ProgressSpecification)
-    #         show(HourGlass,sortby=:name)
-    #         show(HourGlass)
+            finish!(SimMetaData.ProgressSpecification)
+            show(HourGlass,sortby=:name)
+            show(HourGlass)
 
-    #         break
-    #     end
-    # end
+            break
+        end
+    end
 end
 
 RunSimulationGPU(
