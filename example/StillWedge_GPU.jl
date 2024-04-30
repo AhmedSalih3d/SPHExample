@@ -179,17 +179,21 @@ Pressure!(SimParticles_GPU.Pressure,SimParticles_GPU.Density,SimConstants)
 
 #
 # ComputeInteractions
-    function ComputeInteractionsGPU!(Particles, SimMetaData, SimConstants, i, j)
-        #@unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues = SimMetaData
-        #@unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
+    function ComputeInteractionsGPU!(Particles, i, j)
+        # @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues = SimMetaData
+        # @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
-        # xᵢⱼ  = Particles.Position[i] - Particles.Position[j]
-        # xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)              
-        # if  xᵢⱼ² <= H²
-        #     #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/2
-        #     dᵢⱼ  = sqrt(abs(xᵢⱼ²))
+        H²  = 0.1
+        h⁻¹ = 0.1
+        αD  = 472
 
-        #     q         = min(dᵢⱼ * h⁻¹, 2.0)
+        xᵢⱼ  = Particles.Position[i] - Particles.Position[j]
+        xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)              
+        if  xᵢⱼ² <= 0.1 #H²
+            #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/2
+            dᵢⱼ  = sqrt(abs(xᵢⱼ²))
+
+            q         = min(dᵢⱼ * h⁻¹, 2.0)
         #     # invd²η²   =  1.0 / (dᵢⱼ*dᵢⱼ+η²)
         #     # ∇ᵢWᵢⱼ     = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
         #     # ρᵢ        = Density[i]
@@ -295,7 +299,8 @@ Pressure!(SimParticles_GPU.Pressure,SimParticles_GPU.Density,SimConstants)
 
             
         #     # if FlagOutputKernelValues
-        #         Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
+                Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
+                @cuprintln Wᵢⱼ
         #     #     KernelThreaded[ichunk][i]         += Wᵢⱼ
         #     #     KernelThreaded[ichunk][j]         += Wᵢⱼ
         #     #     KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
@@ -304,7 +309,7 @@ Pressure!(SimParticles_GPU.Pressure,SimParticles_GPU.Density,SimConstants)
 
 
         #     # if SimMetaData.FlagShifting
-        #     #     Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
+                # Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
         
         #     #     MLcond = MotionLimiter[i] * MotionLimiter[j]
 
@@ -316,7 +321,7 @@ Pressure!(SimParticles_GPU.Pressure,SimParticles_GPU.Density,SimConstants)
         #     #     ∇◌rᵢThreaded[ichunk][i]  += (m₀/ρⱼ) * dot(-xᵢⱼ , ∇ᵢWᵢⱼ)  * MLcond
         #     #     ∇◌rᵢThreaded[ichunk][j]  += (m₀/ρᵢ) * dot( xᵢⱼ ,-∇ᵢWᵢⱼ)  * MLcond
         #     # end
-        # end
+        end
 
         return nothing
     end
@@ -337,7 +342,7 @@ function gpu_NeighborLoop!(Particles, UniqueCells, ParticleRanges, Stencil, Inde
         EndIndex   = ParticleRanges[i+1] - 1
 
         @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-            ComputeInteractionsGPU!(Particles, SimMetaData, SimConstants, i, j)
+            ComputeInteractionsGPU!(Particles, i, j)
         end
 
         for S ∈ Stencil
@@ -352,7 +357,7 @@ function gpu_NeighborLoop!(Particles, UniqueCells, ParticleRanges, Stencil, Inde
                 EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
 
                 @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                    ComputeInteractionsGPU!(Particles, SimMetaData, SimConstants, i, j)
+                    ComputeInteractionsGPU!(Particles, i, j)
                 end
             end
         end
