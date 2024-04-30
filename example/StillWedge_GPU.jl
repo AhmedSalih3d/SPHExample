@@ -153,8 +153,8 @@ using Format
                 Dᵢ  = 0.0
                 Dⱼ  = 0.0
             end
-            CUDA.@atomic dρdtI[i] += dρdt⁺ + Dᵢ
-            CUDA.@atomic dρdtI[j] += dρdt⁻ + Dⱼ
+            dρdtI[i] += dρdt⁺ + Dᵢ
+            dρdtI[j] += dρdt⁻ + Dⱼ
 
 
             Pᵢ      =  Particles.Pressure[i]
@@ -225,8 +225,8 @@ using Format
         #     # if FlagOutputKernelValues
                 Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
 
-                CUDA.@atomic Particles.Kernel[i] += Wᵢⱼ
-                CUDA.@atomic Particles.Kernel[j] += Wᵢⱼ
+                Particles.Kernel[i] += Wᵢⱼ
+                Particles.Kernel[j] += Wᵢⱼ
         #     #     KernelThreaded[ichunk][i]         += Wᵢⱼ
         #     #     KernelThreaded[ichunk][j]         += Wᵢⱼ
         #     #     KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
@@ -304,7 +304,7 @@ end
 
 # copyto!(SimParticles,SimParticles_GPU)
 
-function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, SortedIndices)
+function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, SortedIndices, dρdtI)
     Position       = SimParticles.Position
     Cells          = SimParticles.Cells
     Density        = SimParticles.Density
@@ -367,8 +367,8 @@ function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  Parti
     # ###===
 
 
-    # @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-    # @timeit SimMetaData.HourGlass "04 First NeighborLoop"                launch_NeighborLoopKernel!(SimParticles_GPU, SimConstants, UniqueCells, ParticleRanges, CuVector(Stencil), dρdtI_GPU, IndexCounter)
+    @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
+    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                launch_NeighborLoopKernel!(SimParticles, SimConstants, UniqueCells, ParticleRanges, Stencil, dρdtI, IndexCounter)
     # @timeit SimMetaData.HourGlass "Reduction"                            reduce_sum!(dρdtI, dρdtIThreaded)
     # @timeit SimMetaData.HourGlass "Reduction"                            reduce_sum!(Acceleration, AccelerationThreaded)
 
@@ -553,7 +553,7 @@ function RunSimulationGPU(;SimGeometry::Dict, #Don't further specify type for no
 
     @inbounds while true
 
-        SimulationLoop(SimMetaData, SimConstants, SimParticles_GPU, Stencil,  ParticleRanges, SortedIndices)
+        SimulationLoop(SimMetaData, SimConstants, SimParticles_GPU, Stencil,  ParticleRanges, SortedIndices, dρdtI_GPU)
 
         if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
 
