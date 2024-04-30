@@ -4,6 +4,7 @@ using CUDA
 using Parameters
 using FastPow
 import LinearAlgebra: dot, norm
+using HDF5
 
 
 Dimensions = 2
@@ -28,8 +29,8 @@ SimGeometry[:Water] = Dict(
     "Motion"      => nothing
 )
 SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
-    SimulationName="StillWedge", 
-    SaveLocation="E:/SecondApproach/TESTING_CPU_StillWedge",
+    SimulationName="StillWedge3", 
+    SaveLocation="E:/SecondApproach/StillWedge_GPU",
     SimulationTime=4,
     OutputEach=0.01,
     FlagDensityDiffusion=true,
@@ -295,6 +296,9 @@ Pressure!(SimParticles_GPU.Pressure,SimParticles_GPU.Density,SimConstants)
             
         #     # if FlagOutputKernelValues
                 Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
+
+                Particles.Kernel[i] += Wᵢⱼ
+                Particles.Kernel[j] += Wᵢⱼ
         #     #     KernelThreaded[ichunk][i]         += Wᵢⱼ
         #     #     KernelThreaded[ichunk][j]         += Wᵢⱼ
         #     #     KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
@@ -374,3 +378,13 @@ function launch_NeighborLoopKernel!(Particles, SimConstants, UniqueCells, Partic
 end
 
 launch_NeighborLoopKernel!(SimParticles_GPU, SimConstants, UniqueCells, ParticleRanges, CuVector(Stencil), IndexCounter)
+
+copyto!(SimParticles,SimParticles_GPU)
+
+# Produce data saving functions
+SaveLocation_ = SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName
+SaveLocation  = (Iteration) -> SaveLocation_ * "_" * lpad(Iteration,6,"0") * ".vtkhdf"
+fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
+SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position),["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID", "Type", "GroupMarker"], SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
+fid_vector[1] = SaveFile(1)
+close.(fid_vector[map( x-> isassigned(fid_vector, x), 1:length(fid_vector))])
