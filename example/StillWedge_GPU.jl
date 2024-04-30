@@ -5,6 +5,7 @@ using Parameters
 using FastPow
 import LinearAlgebra: dot, norm
 using HDF5
+using TimerOutputs
 
 
 Dimensions = 2
@@ -389,3 +390,160 @@ fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaD
 SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position),["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID", "Type", "GroupMarker"], SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
 fid_vector[1] = SaveFile(1)
 close.(fid_vector[map( x-> isassigned(fid_vector, x), 1:length(fid_vector))])
+
+
+function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells)
+    Position       = SimParticles.Position
+    Density        = SimParticles.Density
+    Pressure       = SimParticles.Pressure
+    Velocity       = SimParticles.Velocity
+    Acceleration   = SimParticles.Acceleration
+    GravityFactor  = SimParticles.GravityFactor
+    MotionLimiter  = SimParticles.MotionLimiter
+    ParticleType   = SimParticles.Type
+    ParticleMarker = SimParticles.GroupMarker
+    Kernel         = SimParticles.Kernel
+    KernelGradient = SimParticles.KernelGradient
+
+    ### Some functions to simplify code inside of this function
+    function ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
+        @inbounds for i in eachindex(Position)
+            if ParticleType[i] == Moving
+                ShouldMove      = MotionDefinition[ParticleMarker[i]]["StartTime"] <= SimMetaData.TotalTime <= (MotionDefinition[ParticleMarker[i]]["StartTime"] + MotionDefinition[ParticleMarker[i]]["Duration"])
+                MotionVel       = MotionDefinition[ParticleMarker[i]]["Velocity"]  
+                MotionDir       = MotionDefinition[ParticleMarker[i]]["Direction"]
+                Velocity[i]     = MotionVel   * MotionDir * ShouldMove
+                Position[i]    += Velocity[i] * dt₂
+            end
+        end
+    end
+
+    ###
+
+    @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
+    dt₂ = dt * 0.5
+
+    # In theory, the maximal speed is the speed of sound, this should give a safe guard
+    # any ensure it is always updated in a reasonable manner. This only works well, assuming that
+    # c₀ >= maximum(norm.(Velocity))
+    # Remove if statement logic if you want to update each iteration
+    if mod(SimMetaData.Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
+        @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, InverseCutOff, SortingScratchSpace,  ParticleRanges, UniqueCells)
+    else
+        IndexCounter    = findfirst(isequal(0), ParticleRanges) - 2
+    end
+
+    # UniqueCells       = view(UniqueCells, 1:IndexCounter)
+    # EnumeratedIndices = enumerate(chunks(UniqueCells; n=nthreads()))
+
+    # @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
+
+    # ###=== First step of resetting arrays
+    # @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ)
+    # @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(dρdtIThreaded, AccelerationThreaded)
+
+    # if SimMetaData.FlagOutputKernelValues
+    #     @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(Kernel, KernelGradient)
+    #     @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(KernelThreaded, KernelGradientThreaded)
+    # end
+
+    # if SimMetaData.FlagShifting
+    #     @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(∇Cᵢ, ∇◌rᵢ)
+    #     @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(∇CᵢThreaded, ∇◌rᵢThreaded)
+    # end
+    # ###===
+
+
+    # @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
+    # @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtIThreaded, AccelerationThreaded,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, EnumeratedIndices)
+    # @timeit SimMetaData.HourGlass "Reduction"                            reduce_sum!(dρdtI, dρdtIThreaded)
+    # @timeit SimMetaData.HourGlass "Reduction"                            reduce_sum!(Acceleration, AccelerationThreaded)
+
+    # if SimMetaData.FlagShifting
+    #     @timeit SimMetaData.HourGlass "Reduction"                        reduce_sum!(∇Cᵢ, ∇CᵢThreaded)
+    #     @timeit SimMetaData.HourGlass "Reduction"                        reduce_sum!(∇◌rᵢ, ∇◌rᵢThreaded)
+    # end
+
+
+    # @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" @inbounds for i in eachindex(Position)
+    #     Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+    #     Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
+    #     Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
+    #     ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
+    # end
+
+    # @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"  LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+
+    # ###=== Second step of resetting arrays
+    # @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ)
+    # @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(dρdtIThreaded, AccelerationThreaded)
+
+    # if SimMetaData.FlagOutputKernelValues
+    #     @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(Kernel, KernelGradient)
+    #     @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(KernelThreaded, KernelGradientThreaded)
+    # end
+
+    # if SimMetaData.FlagShifting
+    #     @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(∇Cᵢ, ∇◌rᵢ)
+    #     @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(∇CᵢThreaded, ∇◌rᵢThreaded)
+    # end
+    # ###===
+
+    # @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
+
+    # @timeit SimMetaData.HourGlass "03 Pressure"                 Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
+    # @timeit SimMetaData.HourGlass "08 Second NeighborLoop"      NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Positionₙ⁺, KernelThreaded, KernelGradientThreaded, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtIThreaded, AccelerationThreaded, ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, EnumeratedIndices)
+    # @timeit SimMetaData.HourGlass "Reduction"                   reduce_sum!(dρdtI, dρdtIThreaded)
+    # @timeit SimMetaData.HourGlass "Reduction"                   reduce_sum!(Acceleration, AccelerationThreaded)
+
+        
+    # if SimMetaData.FlagOutputKernelValues
+    #     @timeit SimMetaData.HourGlass "Reduction"               reduce_sum!(Kernel, KernelThreaded)
+    #     @timeit SimMetaData.HourGlass "Reduction"               reduce_sum!(KernelGradient, KernelGradientThreaded)
+    # end
+
+    # if SimMetaData.FlagShifting
+    #     @timeit SimMetaData.HourGlass "Reduction"               reduce_sum!(∇Cᵢ, ∇CᵢThreaded)
+    #     @timeit SimMetaData.HourGlass "Reduction"               reduce_sum!(∇◌rᵢ, ∇◌rᵢThreaded)
+    # end
+
+
+    # @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
+
+    # @timeit SimMetaData.HourGlass "10 Final Density"                DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
+
+
+    # if !SimMetaData.FlagShifting
+    #     @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"  @inbounds for i in eachindex(Position)
+    #         Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+    #         Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
+    #         Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
+    #     end
+    # else
+    #     A     = 2# Value between 1 to 6 advised
+    #     A_FST = 0; # zero for internal flows
+    #     A_FSM = length(first(Position)); #2d, 3d val different
+    #     @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"  @inbounds for i in eachindex(Position)
+    #         Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+    #         Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
+    
+    #         A_FSC                  = (∇◌rᵢ[i] - A_FST)/(A_FSM - A_FST)
+    #         if A_FSC < 0
+    #             δxᵢ = zero(eltype(Position))
+    #         else
+    #             δxᵢ = -A_FSC * A * SimConstants.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
+    #         end
+    
+    #         Position[i]           += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
+    #     end
+    # end
+
+    SimMetaData.Iteration      += 1
+    SimMetaData.CurrentTimeStep = dt
+    SimMetaData.TotalTime      += dt
+
+    
+    return nothing
+end
+
+SimulationLoop(ComputeInteractionsGPU!, SimMetaData, SimConstants, SimParticles_GPU, CuVector(Stencil),  ParticleRanges, UniqueCells)
