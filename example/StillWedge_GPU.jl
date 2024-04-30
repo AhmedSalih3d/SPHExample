@@ -9,41 +9,7 @@ using TimerOutputs
 using StaticArrays
 using Base.Threads
 using ProgressMeter
-
-
-Dimensions = 2
-FloatType  = Float64
-
-SimConstants = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
-
-# Define the dictionary with specific types for keys and values to avoid any type ambiguity
-SimGeometry = Dict{Symbol, Dict{String, Union{String, Int, ParticleType, Nothing}}}()
-
-# Populate the dictionary
-SimGeometry[:FixedBoundary] = Dict(
-    "CSVFile"     => "./input/still_wedge/StillWedge_Dp$(SimConstants.dx)_Bound.csv",
-    "GroupMarker" => 1,
-    "Type"        => Fixed,
-    "Motion"      => nothing
-)
-SimGeometry[:Water] = Dict(
-    "CSVFile"     => "./input/still_wedge/StillWedge_Dp$(SimConstants.dx)_Fluid.csv",
-    "GroupMarker" => 2,
-    "Type"        => Fluid,
-    "Motion"      => nothing
-)
-SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
-    SimulationName="StillWedge2", 
-    SaveLocation="E:/SecondApproach/StillWedge_GPU",
-    SimulationTime=4,
-    OutputEach=0.01,
-    FlagDensityDiffusion=true,
-    FlagOutputKernelValues=false,
-    FlagLog=true,
-    FlagShifting=false,
-)
-
-SimLogger = SimulationLogger(SimMetaData.SaveLocation)
+using Format
 
     # CUDA kernel for extracting cells
     function gpu_ExtractCells!(Particles, CutOff)
@@ -591,26 +557,26 @@ function RunSimulationGPU(;SimGeometry::Dict, #Don't further specify type for no
 
         SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, SortedIndices)
 
-    #     if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
+        if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
 
 
-    #     try 
-    #         @timeit HourGlass "12A Output Data" SaveFile(SimMetaData.OutputIterationCounter + 1)
-    #     catch err
-    #         @warn("File write failed.")
-    #         display(err)
-    #     end
+        try 
+            @timeit HourGlass "12A Output Data" SaveFile(SimMetaData.OutputIterationCounter + 1)
+        catch err
+            @warn("File write failed.")
+            display(err)
+        end
 
-    #         if SimMetaData.FlagLog
-    #             LogStep(SimLogger, SimMetaData, HourGlass)
-    #             SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
-    #         end
+            if SimMetaData.FlagLog
+                LogStep(SimLogger, SimMetaData, HourGlass)
+                SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
+            end
 
-    #         SimMetaData.OutputIterationCounter += 1
-    #     end
+            SimMetaData.OutputIterationCounter += 1
+        end
 
-    #     TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime)
-    #     @timeit HourGlass "13 Next TimeStep" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime, TimeLeftInSeconds))
+        TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime)
+        @timeit HourGlass "13 Next TimeStep" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime, TimeLeftInSeconds))
 
         if SimMetaData.TotalTime > SimMetaData.SimulationTime
             
@@ -636,9 +602,46 @@ function RunSimulationGPU(;SimGeometry::Dict, #Don't further specify type for no
     end
 end
 
-RunSimulationGPU(
-        SimGeometry        = SimGeometry,
-        SimMetaData        = SimMetaData,
-        SimConstants       = SimConstants,
-        SimLogger          = SimLogger
+let        
+    Dimensions = 2
+    FloatType  = Float64
+
+    SimConstants = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
+
+    # Define the dictionary with specific types for keys and values to avoid any type ambiguity
+    SimGeometry = Dict{Symbol, Dict{String, Union{String, Int, ParticleType, Nothing}}}()
+
+    # Populate the dictionary
+    SimGeometry[:FixedBoundary] = Dict(
+        "CSVFile"     => "./input/still_wedge/StillWedge_Dp$(SimConstants.dx)_Bound.csv",
+        "GroupMarker" => 1,
+        "Type"        => Fixed,
+        "Motion"      => nothing
     )
+    SimGeometry[:Water] = Dict(
+        "CSVFile"     => "./input/still_wedge/StillWedge_Dp$(SimConstants.dx)_Fluid.csv",
+        "GroupMarker" => 2,
+        "Type"        => Fluid,
+        "Motion"      => nothing
+    )
+
+    SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
+        SimulationName="StillWedge2", 
+        SaveLocation="E:/SecondApproach/StillWedge_GPU",
+        SimulationTime=4,
+        OutputEach=0.01,
+        FlagDensityDiffusion=true,
+        FlagOutputKernelValues=false,
+        FlagLog=true,
+        FlagShifting=false,
+    )
+
+    SimLogger = SimulationLogger(SimMetaData.SaveLocation)
+
+    RunSimulationGPU(
+            SimGeometry        = SimGeometry,
+            SimMetaData        = SimMetaData,
+            SimConstants       = SimConstants,
+            SimLogger          = SimLogger
+        )
+end
