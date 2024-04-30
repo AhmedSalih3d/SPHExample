@@ -99,24 +99,8 @@ function launch_ExtractCellsKernel!(Particles, CutOff)
     CUDA.@sync kernel(Particles, CutOff; threads=threads, blocks=blocks)
 end
 
-launch_ExtractCellsKernel!(SimParticles_GPU, CutOff)
-
 
 SortedIndices = CUDA.zeros(Int,NumberOfPoints)
-
-sortperm!(SortedIndices, SimParticles_GPU.Cells)
-
-for prop in propertynames(SimParticles_GPU)
-    getproperty(SimParticles_GPU,prop) .= getproperty(SimParticles_GPU, prop)[SortedIndices]
-end
-
-ParticleRanges .= 0
-
-ParticleRangesIndices = findall(diff(SimParticles_GPU.Cells) .!= CartesianIndex(0,0))
-
-ParticleRanges[1:1] = 1
-ParticleRanges[2:(length(ParticleRangesIndices)+1)] .= ParticleRangesIndices .+ 1
-ParticleRanges[end:end] = length(ParticleRanges)
 
 function zero_last_comparator(x, y)
     # If both are zeros, they are considered equal
@@ -134,10 +118,32 @@ function zero_last_comparator(x, y)
     end
 end
 
-sort!(ParticleRanges, lt=zero_last_comparator)
+function UpdateNeighbours!(Particles, SortedIndices, CutOff)
+    launch_ExtractCellsKernel!(Particles, CutOff)
+
+    sortperm!(SortedIndices, Particles.Cells)
+
+    for prop in propertynames(Particles)
+        getproperty(Particles,prop) .= getproperty(Particles, prop)[SortedIndices]
+    end
 
 
-IndexCounter = findfirst(isequal(0), ParticleRanges) - 2
+    ParticleRanges .= 0
+
+    ParticleRangesIndices = findall(diff(Particles.Cells) .!= CartesianIndex(0,0))
+    
+    ParticleRanges[1:1] = 1
+    ParticleRanges[2:(length(ParticleRangesIndices)+1)] .= ParticleRangesIndices .+ 1
+    ParticleRanges[end:end] = length(ParticleRanges)
+    sort!(ParticleRanges, lt=zero_last_comparator)
+
+    IndexCounter = findfirst(isequal(0), ParticleRanges) - 2
+
+    return IndexCounter
+end
+
+
+IndexCounter = UpdateNeighbours!(SimParticles_GPU, SortedIndices, CutOff)
 
 Position       = SimParticles_GPU.Position
 Cells          = SimParticles_GPU.Cells
@@ -427,11 +433,11 @@ function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimPart
     # any ensure it is always updated in a reasonable manner. This only works well, assuming that
     # c₀ >= maximum(norm.(Velocity))
     # Remove if statement logic if you want to update each iteration
-    if mod(SimMetaData.Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
-        @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, InverseCutOff, SortingScratchSpace,  ParticleRanges, UniqueCells)
-    else
-        IndexCounter    = findfirst(isequal(0), ParticleRanges) - 2
-    end
+    # if mod(SimMetaData.Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
+    #     @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, InverseCutOff, SortingScratchSpace,  ParticleRanges, UniqueCells)
+    # else
+    #     IndexCounter    = findfirst(isequal(0), ParticleRanges) - 2
+    # end
 
     # UniqueCells       = view(UniqueCells, 1:IndexCounter)
     # EnumeratedIndices = enumerate(chunks(UniqueCells; n=nthreads()))
