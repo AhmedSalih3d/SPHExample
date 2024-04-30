@@ -69,82 +69,77 @@ Stencil                = ConstructStencil(Val(Dimensions))
 CutOff = SimConstants.H
 # InverseCutOff = Val(1/(SimConstants.H))
 
-# CUDA kernel for extracting cells
-function gpu_ExtractCells!(Particles, CutOff)
-    index = (blockIdx().x - Int32(1)) * blockDim().x + threadIdx().x
-    stride = gridDim().x * blockDim().x
+    # CUDA kernel for extracting cells
+    function gpu_ExtractCells!(Particles, CutOff)
+        index = (blockIdx().x - Int32(1)) * blockDim().x + threadIdx().x
+        stride = gridDim().x * blockDim().x
 
-    Cells = Particles.Cells
-    Points = Particles.Position
+        Cells = Particles.Cells
+        Points = Particles.Position
 
-    i = index
-    while i <= length(Cells)
+        i = index
+        while i <= length(Cells)
 
-        ci  = CartesianIndex((@. Int(fld(Points[i], CutOff)) + 2)... )
-        Cells[i] = ci #+ 2 * one(ci) 
+            ci  = CartesianIndex((@. Int(fld(Points[i], CutOff)) + 2)... )
+            Cells[i] = ci #+ 2 * one(ci) 
 
-        i += stride
+            i += stride
+        end
+        return
     end
-    return
-end
 
-# Function to launch the CUDA kernel for extracting cells
-function launch_ExtractCellsKernel!(Particles, CutOff)
-    kernel = @cuda launch=false gpu_ExtractCells!(Particles, CutOff)
-    config = launch_configuration(kernel.fun)
-    
-    threads = min(length(Particles.Cells), config.threads)
-    blocks = cld(length(Particles.Cells), threads)
+    # Function to launch the CUDA kernel for extracting cells
+    function launch_ExtractCellsKernel!(Particles, CutOff)
+        kernel = @cuda launch=false gpu_ExtractCells!(Particles, CutOff)
+        config = launch_configuration(kernel.fun)
+        
+        threads = min(length(Particles.Cells), config.threads)
+        blocks = cld(length(Particles.Cells), threads)
 
-    # Launching the CUDA kernel with the calculated configuration
-    CUDA.@sync kernel(Particles, CutOff; threads=threads, blocks=blocks)
-end
-
-
-SortedIndices = CUDA.zeros(Int,NumberOfPoints)
-
-function zero_last_comparator(x, y)
-    # If both are zeros, they are considered equal
-    if x == 0 && y == 0
-        return false
-    # If only x is zero, y should come first
-    elseif x == 0
-        return false
-    # If only y is zero, x should come first
-    elseif y == 0
-        return true
-    else
-        # Otherwise, compare them numerically
-        return x < y
-    end
-end
-
-function UpdateNeighbours!(Particles, SortedIndices, CutOff)
-    launch_ExtractCellsKernel!(Particles, CutOff)
-
-    sortperm!(SortedIndices, Particles.Cells)
-
-    for prop in propertynames(Particles)
-        getproperty(Particles,prop) .= getproperty(Particles, prop)[SortedIndices]
+        # Launching the CUDA kernel with the calculated configuration
+        CUDA.@sync kernel(Particles, CutOff; threads=threads, blocks=blocks)
     end
 
 
-    ParticleRanges .= 0
+    function zero_last_comparator(x, y)
+        # If both are zeros, they are considered equal
+        if x == 0 && y == 0
+            return false
+        # If only x is zero, y should come first
+        elseif x == 0
+            return false
+        # If only y is zero, x should come first
+        elseif y == 0
+            return true
+        else
+            # Otherwise, compare them numerically
+            return x < y
+        end
+    end
 
-    ParticleRangesIndices = findall(diff(Particles.Cells) .!= CartesianIndex(0,0))
-    
-    ParticleRanges[1:1] = 1
-    ParticleRanges[2:(length(ParticleRangesIndices)+1)] .= ParticleRangesIndices .+ 1
-    ParticleRanges[end:end] = length(ParticleRanges)
-    sort!(ParticleRanges, lt=zero_last_comparator)
+    function UpdateNeighbours!(Particles, SortedIndices, CutOff)
+        launch_ExtractCellsKernel!(Particles, CutOff)
 
-    IndexCounter = findfirst(isequal(0), ParticleRanges) - 2
+        sortperm!(SortedIndices, Particles.Cells)
 
-    return IndexCounter
-end
+        for prop in propertynames(Particles)
+            getproperty(Particles,prop) .= getproperty(Particles, prop)[SortedIndices]
+        end
 
 
-IndexCounter = UpdateNeighbours!(SimParticles_GPU, SortedIndices, CutOff)
+        ParticleRanges .= 0
+
+        ParticleRangesIndices = findall(diff(Particles.Cells) .!= CartesianIndex(0,0))
+        
+        ParticleRanges[1:1] = 1
+        ParticleRanges[2:(length(ParticleRangesIndices)+1)] .= ParticleRangesIndices .+ 1
+        ParticleRanges[end:end] = length(ParticleRanges)
+        sort!(ParticleRanges, lt=zero_last_comparator)
+
+        IndexCounter = findfirst(isequal(0), ParticleRanges) - 2
+
+        return IndexCounter
+    end
 
 
     # A few time stepping controls implemented to allow for an adaptive time step
@@ -392,7 +387,7 @@ end
 #         end
     
 
-function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells)
+function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, SortedIndices)
     Position       = SimParticles.Position
     Cells          = SimParticles.Cells
     Density        = SimParticles.Density
@@ -547,6 +542,7 @@ function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimPart
     return nothing
 end
 
-SimulationLoop(ComputeInteractionsGPU!, SimMetaData, SimConstants, SimParticles_GPU, CuVector(Stencil),  ParticleRanges, UniqueCells)
+SortedIndices = CUDA.zeros(Int,NumberOfPoints)
+SimulationLoop(SimMetaData, SimConstants, SimParticles_GPU, CuVector(Stencil),  ParticleRanges, SortedIndices)
 
 display(SimMetaData.HourGlass)
