@@ -190,17 +190,17 @@ Pressure!(SimParticles_GPU.Pressure,SimParticles_GPU.Density,SimConstants)
             dᵢⱼ  = sqrt(abs(xᵢⱼ²))
 
             q    = min(dᵢⱼ * h⁻¹, 2.0)
-        #     # invd²η²   =  1.0 / (dᵢⱼ*dᵢⱼ+η²)
-        #     # ∇ᵢWᵢⱼ     = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
-        #     # ρᵢ        = Density[i]
-        #     # ρⱼ        = Density[j]
+            invd²η²   =  1.0 / (dᵢⱼ*dᵢⱼ+η²)
+            ∇ᵢWᵢⱼ     = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
+            ρᵢ        = Particles.Density[i]
+            ρⱼ        = Particles.Density[j]
         
-        #     # vᵢ        = Velocity[i]
-        #     # vⱼ        = Velocity[j]
-        #     # vᵢⱼ       = vᵢ - vⱼ
-        #     # density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
-        #     # dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  density_symmetric_term
-        #     # dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  density_symmetric_term
+            vᵢ        = Particles.Velocity[i]
+            vⱼ        = Particles.Velocity[j]
+            vᵢⱼ       = vᵢ - vⱼ
+            density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
+            dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  density_symmetric_term
+            dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  density_symmetric_term
 
         #     # # Density diffusion
         #     # if FlagDensityDiffusion
