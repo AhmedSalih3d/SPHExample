@@ -230,23 +230,23 @@ Pressure!(SimParticles_GPU.Pressure,SimParticles_GPU.Density,SimConstants)
             CUDA.@atomic dρdtI[j] += dρdt⁻ + Dⱼ
 
 
-        #     # Pᵢ      =  Pressure[i]
-        #     # Pⱼ      =  Pressure[j]
-        #     # Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
-        #     # dvdt⁺   = - m₀ * Pfac *  ∇ᵢWᵢⱼ
-        #     # dvdt⁻   = - dvdt⁺
+            Pᵢ      =  Particles.Pressure[i]
+            Pⱼ      =  Particles.Pressure[j]
+            Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
+            dvdt⁺   = - m₀ * Pfac *  ∇ᵢWᵢⱼ
+            dvdt⁻   = - dvdt⁺
 
-        #     # if FlagViscosityTreatment == :ArtificialViscosity
-        #     #     ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
-        #     #     cond      = dot(vᵢⱼ, xᵢⱼ)
-        #     #     cond_bool = cond < 0.0
-        #     #     μᵢⱼ       = h*cond * invd²η²
-        #     #     Πᵢ        = - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
-        #     #     Πⱼ        = - Πᵢ
-        #     # else
-        #     #     Πᵢ        = zero(xᵢⱼ)
-        #     #     Πⱼ        = Πᵢ
-        #     # end
+            # if FlagViscosityTreatment == :ArtificialViscosity
+                ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
+                cond      = dot(vᵢⱼ, xᵢⱼ)
+                cond_bool = cond < 0.0
+                μᵢⱼ       = h*cond * invd²η²
+                Πᵢ        = - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
+                Πⱼ        = - Πᵢ
+            # else
+            #     Πᵢ        = zero(xᵢⱼ)
+            #     Πⱼ        = Πᵢ
+            # end
         
         #     # if FlagViscosityTreatment == :Laminar || FlagViscosityTreatment == :LaminarSPS
         #     #     # 4 comes from 2 divided by 0.5 from average density
@@ -290,8 +290,9 @@ Pressure!(SimParticles_GPU.Pressure,SimParticles_GPU.Density,SimConstants)
         #     #     dτdtⱼ  = dτdtᵢ
         #     # end
         
-        #     # dvdtI[ichunk][i] += dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ
-        #     # dvdtI[ichunk][j] += dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
+        # Cannot use CUDA.@atomic here, be careful! You will get some weird spikes at places
+        Particles.Acceleration[i] += dvdt⁺ + Πᵢ #+ ν₀∇²uᵢ + dτdtᵢ
+        Particles.Acceleration[j] += dvdt⁻ + Πⱼ #+ ν₀∇²uⱼ + dτdtⱼ
 
             
         #     # if FlagOutputKernelValues
