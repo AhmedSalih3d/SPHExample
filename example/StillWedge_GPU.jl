@@ -1,6 +1,7 @@
 using SPHExample
 using StructArrays
 using CUDA
+import LinearAlgebra: dot, norm
 
 
 Dimensions = 2
@@ -109,31 +110,39 @@ ParticleRanges .= 0
 
 ParticleRangesIndices = findall(diff(SimParticles_GPU.Cells) .!= CartesianIndex(0,0))
 
+ParticleRanges[1:1] = 1
+ParticleRanges[2:(length(ParticleRangesIndices)+1)] .= ParticleRangesIndices .+ 1
+ParticleRanges[end:end] = length(ParticleRanges)
 
-#CUDA.sortperm!(SortedIndices, SimParticles_GPU.Cells)
+sort!(ParticleRanges, lt=(x, y) -> x > y)
 
-# SimParticles_GPU[1:end] .= SimParticles_GPU[SortedIndices]
+IndexCounter = findfirst(isequal(0), ParticleRanges) - 1
 
-# ###=== Function to update ordering
-# function UpdateNeighbors!(Particles, CutOff, SortingScratchSpace, ParticleRanges, UniqueCells)
-#     ExtractCells!(Particles, CutOff)
+Position       = SimParticles_GPU.Position
+Density        = SimParticles_GPU.Density
+Pressure       = SimParticles_GPU.Pressure
+Velocity       = SimParticles_GPU.Velocity
+Acceleration   = SimParticles_GPU.Acceleration
+GravityFactor  = SimParticles_GPU.GravityFactor
+MotionLimiter  = SimParticles_GPU.MotionLimiter
+# ParticleType   = SimParticles_GPU.Type
+ParticleMarker = SimParticles_GPU.GroupMarker
+Kernel         = SimParticles_GPU.Kernel
+KernelGradient = SimParticles_GPU.KernelGradient
 
-#     sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
+    # A few time stepping controls implemented to allow for an adaptive time step
+    function SPHExample.Δt(Position, Velocity, Acceleration, SimulationConstants)
+        @unpack c₀, h, CFL, η² = SimulationConstants
+        
+        visc = maximum(@. abs(h * dot(Velocity,Position) / (dot(Position,Position) + η²)))
+        dt1  = minimum(@. sqrt(h / norm(Acceleration)))
 
-#     Cells = @views Particles.Cells
-#     @. ParticleRanges             = zero(eltype(ParticleRanges))
-#     IndexCounter                  = 1
-#     ParticleRanges[IndexCounter]  = 1
-#     UniqueCells[IndexCounter]     = Cells[1]
+        dt2   = h / (c₀+visc)
 
-#     for i in 2:length(Cells)
-#         if Cells[i] != Cells[i-1] # Equivalent to diff(Cells) != 0
-#             IndexCounter                += 1
-#             ParticleRanges[IndexCounter] = i
-#             UniqueCells[IndexCounter]    = Cells[i]
-#         end
-#     end
-#     ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
+        dt    = CFL*min(dt1,dt2)
 
-#     return IndexCounter 
-# end
+        return dt
+    end
+
+dt  = Δt(Position, Velocity, Acceleration, SimConstants)
+dt₂ = dt * 0.5
