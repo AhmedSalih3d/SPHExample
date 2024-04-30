@@ -297,8 +297,8 @@ Pressure!(SimParticles_GPU.Pressure,SimParticles_GPU.Density,SimConstants)
         #     # if FlagOutputKernelValues
                 Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
 
-                Particles.Kernel[i] += Wᵢⱼ
-                Particles.Kernel[j] += Wᵢⱼ
+                CUDA.@atomic Particles.Kernel[i] += Wᵢⱼ
+                CUDA.@atomic Particles.Kernel[j] += Wᵢⱼ
         #     #     KernelThreaded[ichunk][i]         += Wᵢⱼ
         #     #     KernelThreaded[ichunk][j]         += Wᵢⱼ
         #     #     KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
