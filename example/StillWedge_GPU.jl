@@ -179,7 +179,7 @@ dt₂ = dt * 0.5
 Pressure!(SimParticles_GPU.Pressure,SimParticles_GPU.Density,SimConstants)
 
 # ComputeInteractions
-    function ComputeInteractionsGPU!(Particles, SimConstants, i, j)
+    function ComputeInteractionsGPU!(Particles, SimConstants, dρdtI, i, j)
         # @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues = SimMetaData
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
@@ -202,32 +202,32 @@ Pressure!(SimParticles_GPU.Pressure,SimParticles_GPU.Density,SimConstants)
             dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  density_symmetric_term
             dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  density_symmetric_term
 
-        #     # # Density diffusion
-        #     # if FlagDensityDiffusion
-        #     #     if SimConstants.g == 0
-        #     #         ρᵢⱼᴴ  = 0.0
-        #     #         ρⱼᵢᴴ  = 0.0
-        #     #     else
-        #     #         Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
-        #     #         ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
-        #     #         Pⱼᵢᴴ  = -Pᵢⱼᴴ
-        #     #         ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
-        #     #     end
+            # Density diffusion
+            if true #FlagDensityDiffusion
+                if SimConstants.g == 0
+                    ρᵢⱼᴴ  = 0.0
+                    ρⱼᵢᴴ  = 0.0
+                else
+                    Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
+                    ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
+                    Pⱼᵢᴴ  = -Pᵢⱼᴴ
+                    ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
+                end
 
-        #     #     ρⱼᵢ   = ρⱼ - ρᵢ
+                ρⱼᵢ   = ρⱼ - ρᵢ
 
-        #     #     Ψᵢⱼ   = 2( ρⱼᵢ  - ρᵢⱼᴴ) * (-xᵢⱼ) * invd²η²
-        #     #     Ψⱼᵢ   = 2(-ρⱼᵢ  - ρⱼᵢᴴ) * ( xᵢⱼ) * invd²η²
+                Ψᵢⱼ   = 2( ρⱼᵢ  - ρᵢⱼᴴ) * (-xᵢⱼ) * invd²η²
+                Ψⱼᵢ   = 2(-ρⱼᵢ  - ρⱼᵢᴴ) * ( xᵢⱼ) * invd²η²
 
-        #     #     MLcond = MotionLimiter[i] * MotionLimiter[j]
-        #     #     Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
-        #     #     Dⱼ    =  δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
-        #     # else
-        #     #     Dᵢ  = 0.0
-        #     #     Dⱼ  = 0.0
-        #     # end
-        #     # dρdtI[ichunk][i] += dρdt⁺ + Dᵢ
-        #     # dρdtI[ichunk][j] += dρdt⁻ + Dⱼ
+                MLcond = Particles.MotionLimiter[i] * Particles.MotionLimiter[j]
+                Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
+                Dⱼ    =  δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
+            else
+                Dᵢ  = 0.0
+                Dⱼ  = 0.0
+            end
+            CUDA.@atomic dρdtI[i] += dρdt⁺ + Dᵢ
+            CUDA.@atomic dρdtI[j] += dρdt⁻ + Dⱼ
 
 
         #     # Pᵢ      =  Pressure[i]
@@ -327,7 +327,7 @@ Pressure!(SimParticles_GPU.Pressure,SimParticles_GPU.Density,SimConstants)
 
 UniqueCells = Cells[collect(ParticleRanges[1:IndexCounter])]
 
-function gpu_NeighborLoop!(Particles, SimConstants, UniqueCells, ParticleRanges, Stencil, IndexCounter)
+function gpu_NeighborLoop!(Particles, SimConstants, UniqueCells, ParticleRanges, Stencil, dρdtI, IndexCounter)
     index  = (blockIdx().x - Int32(1)) * blockDim().x + threadIdx().x
     stride = gridDim().x * blockDim().x
 
@@ -340,7 +340,7 @@ function gpu_NeighborLoop!(Particles, SimConstants, UniqueCells, ParticleRanges,
         EndIndex   = ParticleRanges[i+1] - 1
 
         @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-            ComputeInteractionsGPU!(Particles, SimConstants, i, j)
+            ComputeInteractionsGPU!(Particles, SimConstants, dρdtI, i, j)
         end
 
         for S ∈ Stencil
@@ -355,7 +355,7 @@ function gpu_NeighborLoop!(Particles, SimConstants, UniqueCells, ParticleRanges,
                 EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
 
                 @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                    ComputeInteractionsGPU!(Particles, SimConstants, i, j)
+                    ComputeInteractionsGPU!(Particles, SimConstants, dρdtI, i, j)
                 end
             end
         end
@@ -366,18 +366,18 @@ function gpu_NeighborLoop!(Particles, SimConstants, UniqueCells, ParticleRanges,
 end
 
 # Function to launch the CUDA kernel for extracting cells
-function launch_NeighborLoopKernel!(Particles, SimConstants, UniqueCells, ParticleRanges, Stencil, IndexCounter)
-    kernel = @cuda launch=false gpu_NeighborLoop!(Particles, SimConstants, UniqueCells, ParticleRanges, Stencil, IndexCounter)
+function launch_NeighborLoopKernel!(Particles, SimConstants, UniqueCells, ParticleRanges, Stencil, dρdtI, IndexCounter)
+    kernel = @cuda launch=false gpu_NeighborLoop!(Particles, SimConstants, UniqueCells, ParticleRanges, Stencil, dρdtI, IndexCounter)
     config = launch_configuration(kernel.fun)
     
     threads = min(length(Particles.Cells), config.threads)
     blocks = cld(length(Particles.Cells), threads)
 
     # Launching the CUDA kernel with the calculated configuration
-    CUDA.@sync kernel(Particles, SimConstants, UniqueCells, ParticleRanges, Stencil, IndexCounter; threads=threads, blocks=blocks)
+    CUDA.@sync kernel(Particles, SimConstants, UniqueCells, ParticleRanges, Stencil, dρdtI, IndexCounter; threads=threads, blocks=blocks)
 end
 
-launch_NeighborLoopKernel!(SimParticles_GPU, SimConstants, UniqueCells, ParticleRanges, CuVector(Stencil), IndexCounter)
+launch_NeighborLoopKernel!(SimParticles_GPU, SimConstants, UniqueCells, ParticleRanges, CuVector(Stencil), dρdtI_GPU, IndexCounter)
 
 copyto!(SimParticles,SimParticles_GPU)
 
