@@ -114,11 +114,29 @@ ParticleRanges[1:1] = 1
 ParticleRanges[2:(length(ParticleRangesIndices)+1)] .= ParticleRangesIndices .+ 1
 ParticleRanges[end:end] = length(ParticleRanges)
 
-sort!(ParticleRanges, lt=(x, y) -> x > y)
+function zero_last_comparator(x, y)
+    # If both are zeros, they are considered equal
+    if x == 0 && y == 0
+        return false
+    # If only x is zero, y should come first
+    elseif x == 0
+        return false
+    # If only y is zero, x should come first
+    elseif y == 0
+        return true
+    else
+        # Otherwise, compare them numerically
+        return x < y
+    end
+end
 
-IndexCounter = findfirst(isequal(0), ParticleRanges) - 1
+sort!(ParticleRanges, lt=zero_last_comparator)
+
+
+IndexCounter = findfirst(isequal(0), ParticleRanges) - 2
 
 Position       = SimParticles_GPU.Position
+Cells          = SimParticles_GPU.Cells
 Density        = SimParticles_GPU.Density
 Pressure       = SimParticles_GPU.Pressure
 Velocity       = SimParticles_GPU.Velocity
@@ -148,4 +166,48 @@ dt  = Δt(Position, Velocity, Acceleration, SimConstants)
 dt₂ = dt * 0.5
 
 
+    function SPHExample.Pressure!(Press, Density, SimulationConstants)
+        @unpack c₀,γ,ρ₀ = SimulationConstants
+
+        Press .= @. EquationOfStateGamma7(Density,c₀,ρ₀)
+    end
+
+
 Pressure!(SimParticles_GPU.Pressure,SimParticles_GPU.Density,SimConstants)
+
+UniqueCells = Cells[collect(ParticleRanges[1:IndexCounter])]
+
+# function NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, EnumeratedIndices)
+#     @threads for (ichunk, inds) in @views EnumeratedIndices
+#         for iter in inds
+#             CellIndex = UniqueCells[iter]
+
+#             StartIndex = ParticleRanges[iter] 
+#             EndIndex   = ParticleRanges[iter+1] - 1
+
+#             @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
+#                 @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
+#             end
+
+#             @inbounds for S ∈ Stencil
+#                 SCellIndex = CellIndex + S
+
+#                 # Returns a range, x:x for exact match and x:(x-1) for no match
+#                 # utilizes that it is a sorted array and requires no isequal constructor,
+#                 # so I prefer this for now
+#                 NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
+
+#                 if length(NeighborCellIndex) != 0
+#                     StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
+#                     EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
+
+#                     @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
+#                         @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
+#                     end
+#                 end
+#             end
+#         end
+#     end
+
+#     return nothing
+# end
