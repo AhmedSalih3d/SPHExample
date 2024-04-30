@@ -177,23 +177,18 @@ dt₂ = dt * 0.5
 
 Pressure!(SimParticles_GPU.Pressure,SimParticles_GPU.Density,SimConstants)
 
-#
 # ComputeInteractions
-    function ComputeInteractionsGPU!(Particles, i, j)
+    function ComputeInteractionsGPU!(Particles, SimConstants, i, j)
         # @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues = SimMetaData
-        # @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
-
-        H²  = 0.1
-        h⁻¹ = 0.1
-        αD  = 472
+        @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
         xᵢⱼ  = Particles.Position[i] - Particles.Position[j]
         xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)              
-        if  xᵢⱼ² <= 0.1 #H²
+        if  xᵢⱼ² <= H²
             #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/2
             dᵢⱼ  = sqrt(abs(xᵢⱼ²))
 
-            q         = min(dᵢⱼ * h⁻¹, 2.0)
+            q    = min(dᵢⱼ * h⁻¹, 2.0)
         #     # invd²η²   =  1.0 / (dᵢⱼ*dᵢⱼ+η²)
         #     # ∇ᵢWᵢⱼ     = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
         #     # ρᵢ        = Density[i]
@@ -300,7 +295,6 @@ Pressure!(SimParticles_GPU.Pressure,SimParticles_GPU.Density,SimConstants)
             
         #     # if FlagOutputKernelValues
                 Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
-                @cuprintln Wᵢⱼ
         #     #     KernelThreaded[ichunk][i]         += Wᵢⱼ
         #     #     KernelThreaded[ichunk][j]         += Wᵢⱼ
         #     #     KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
@@ -329,7 +323,7 @@ Pressure!(SimParticles_GPU.Pressure,SimParticles_GPU.Density,SimConstants)
 
 UniqueCells = Cells[collect(ParticleRanges[1:IndexCounter])]
 
-function gpu_NeighborLoop!(Particles, UniqueCells, ParticleRanges, Stencil, IndexCounter)
+function gpu_NeighborLoop!(Particles, SimConstants, UniqueCells, ParticleRanges, Stencil, IndexCounter)
     index  = (blockIdx().x - Int32(1)) * blockDim().x + threadIdx().x
     stride = gridDim().x * blockDim().x
 
@@ -342,7 +336,7 @@ function gpu_NeighborLoop!(Particles, UniqueCells, ParticleRanges, Stencil, Inde
         EndIndex   = ParticleRanges[i+1] - 1
 
         @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-            ComputeInteractionsGPU!(Particles, i, j)
+            ComputeInteractionsGPU!(Particles, SimConstants, i, j)
         end
 
         for S ∈ Stencil
@@ -357,7 +351,7 @@ function gpu_NeighborLoop!(Particles, UniqueCells, ParticleRanges, Stencil, Inde
                 EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
 
                 @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                    ComputeInteractionsGPU!(Particles, i, j)
+                    ComputeInteractionsGPU!(Particles, SimConstants, i, j)
                 end
             end
         end
@@ -368,15 +362,15 @@ function gpu_NeighborLoop!(Particles, UniqueCells, ParticleRanges, Stencil, Inde
 end
 
 # Function to launch the CUDA kernel for extracting cells
-function launch_NeighborLoopKernel!(Particles, UniqueCells, ParticleRanges, Stencil, IndexCounter)
-    kernel = @cuda launch=false gpu_NeighborLoop!(Particles, UniqueCells, ParticleRanges, Stencil, IndexCounter)
+function launch_NeighborLoopKernel!(Particles, SimConstants, UniqueCells, ParticleRanges, Stencil, IndexCounter)
+    kernel = @cuda launch=false gpu_NeighborLoop!(Particles, SimConstants, UniqueCells, ParticleRanges, Stencil, IndexCounter)
     config = launch_configuration(kernel.fun)
     
     threads = min(length(Particles.Cells), config.threads)
     blocks = cld(length(Particles.Cells), threads)
 
     # Launching the CUDA kernel with the calculated configuration
-    CUDA.@sync kernel(Particles, UniqueCells, ParticleRanges, Stencil, IndexCounter; threads=threads, blocks=blocks)
+    CUDA.@sync kernel(Particles, SimConstants, UniqueCells, ParticleRanges, Stencil, IndexCounter; threads=threads, blocks=blocks)
 end
 
-launch_NeighborLoopKernel!(SimParticles_GPU, UniqueCells, ParticleRanges, CuVector(Stencil), IndexCounter)
+launch_NeighborLoopKernel!(SimParticles_GPU, SimConstants, UniqueCells, ParticleRanges, CuVector(Stencil), IndexCounter)
