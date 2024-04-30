@@ -146,18 +146,6 @@ end
 
 IndexCounter = UpdateNeighbours!(SimParticles_GPU, SortedIndices, CutOff)
 
-Position       = SimParticles_GPU.Position
-Cells          = SimParticles_GPU.Cells
-Density        = SimParticles_GPU.Density
-Pressure       = SimParticles_GPU.Pressure
-Velocity       = SimParticles_GPU.Velocity
-Acceleration   = SimParticles_GPU.Acceleration
-GravityFactor  = SimParticles_GPU.GravityFactor
-MotionLimiter  = SimParticles_GPU.MotionLimiter
-# ParticleType   = SimParticles_GPU.Type
-ParticleMarker = SimParticles_GPU.GroupMarker
-Kernel         = SimParticles_GPU.Kernel
-KernelGradient = SimParticles_GPU.KernelGradient
 
     # A few time stepping controls implemented to allow for an adaptive time step
     function SPHExample.Δt(Position, Velocity, Acceleration, SimulationConstants)
@@ -173,18 +161,12 @@ KernelGradient = SimParticles_GPU.KernelGradient
         return dt
     end
 
-dt  = Δt(Position, Velocity, Acceleration, SimConstants)
-dt₂ = dt * 0.5
-
 
     function SPHExample.Pressure!(Press, Density, SimulationConstants)
         @unpack c₀,γ,ρ₀ = SimulationConstants
 
         Press .= @. EquationOfStateGamma7(Density,c₀,ρ₀)
     end
-
-
-Pressure!(SimParticles_GPU.Pressure,SimParticles_GPU.Density,SimConstants)
 
 # ComputeInteractions
     function ComputeInteractionsGPU!(Particles, SimConstants, dρdtI, i, j)
@@ -333,9 +315,6 @@ Pressure!(SimParticles_GPU.Pressure,SimParticles_GPU.Density,SimConstants)
         return nothing
     end
 
-
-UniqueCells = Cells[collect(ParticleRanges[1:IndexCounter])]
-
 function gpu_NeighborLoop!(Particles, SimConstants, UniqueCells, ParticleRanges, Stencil, dρdtI, IndexCounter)
     index  = (blockIdx().x - Int32(1)) * blockDim().x + threadIdx().x
     stride = gridDim().x * blockDim().x
@@ -386,33 +365,36 @@ function launch_NeighborLoopKernel!(Particles, SimConstants, UniqueCells, Partic
     CUDA.@sync kernel(Particles, SimConstants, UniqueCells, ParticleRanges, Stencil, dρdtI, IndexCounter; threads=threads, blocks=blocks)
 end
 
-launch_NeighborLoopKernel!(SimParticles_GPU, SimConstants, UniqueCells, ParticleRanges, CuVector(Stencil), dρdtI_GPU, IndexCounter)
 
-copyto!(SimParticles,SimParticles_GPU)
 
-# Produce data saving functions
-SaveLocation_ = SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName
-SaveLocation  = (Iteration) -> SaveLocation_ * "_" * lpad(Iteration,6,"0") * ".vtkhdf"
-fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
-SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position),["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID", "Type", "GroupMarker"], SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
-fid_vector[1] = SaveFile(1)
-close.(fid_vector[map( x-> isassigned(fid_vector, x), 1:length(fid_vector))])
+# launch_NeighborLoopKernel!(SimParticles_GPU, SimConstants, UniqueCells, ParticleRanges, CuVector(Stencil), dρdtI_GPU, IndexCounter)
 
-        # Construct Motion Definition
-        MotionDefinition = Dict{Int, Dict{String, Union{FloatType, SVector{Dimensions, FloatType}}}}()
+# copyto!(SimParticles,SimParticles_GPU)
 
-        # Loop through SimulationGeometry to populate MotionDefinition
-        for (_, details) in pairs(SimGeometry)
-            motion = get(details, "Motion", nothing)
-            if isa(motion, Dict)
-                group_marker = details["GroupMarker"]
-                MotionDefinition[group_marker] = motion
-            end
-        end
+# # Produce data saving functions
+# SaveLocation_ = SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName
+# SaveLocation  = (Iteration) -> SaveLocation_ * "_" * lpad(Iteration,6,"0") * ".vtkhdf"
+# fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
+# SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position),["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID", "Type", "GroupMarker"], SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
+# fid_vector[1] = SaveFile(1)
+# close.(fid_vector[map( x-> isassigned(fid_vector, x), 1:length(fid_vector))])
+
+#         # Construct Motion Definition
+#         MotionDefinition = Dict{Int, Dict{String, Union{FloatType, SVector{Dimensions, FloatType}}}}()
+
+#         # Loop through SimulationGeometry to populate MotionDefinition
+#         for (_, details) in pairs(SimGeometry)
+#             motion = get(details, "Motion", nothing)
+#             if isa(motion, Dict)
+#                 group_marker = details["GroupMarker"]
+#                 MotionDefinition[group_marker] = motion
+#             end
+#         end
     
 
 function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells)
     Position       = SimParticles.Position
+    Cells          = SimParticles.Cells
     Density        = SimParticles.Density
     Pressure       = SimParticles.Pressure
     Velocity       = SimParticles.Velocity
@@ -451,6 +433,9 @@ function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimPart
     else
         IndexCounter    = findfirst(isequal(0), ParticleRanges) - 2
     end
+
+    UniqueCells = Cells[collect(ParticleRanges[1:IndexCounter])]
+
 
     # @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
 
@@ -563,3 +548,5 @@ function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimPart
 end
 
 SimulationLoop(ComputeInteractionsGPU!, SimMetaData, SimConstants, SimParticles_GPU, CuVector(Stencil),  ParticleRanges, UniqueCells)
+
+display(SimMetaData.HourGlass)
