@@ -105,6 +105,10 @@ for prop in propertynames(SimParticles_GPU)
     getproperty(SimParticles_GPU,prop) .= getproperty(SimParticles_GPU, prop)[SortedIndices]
 end
 
+ParticleRanges .= 0
+
+ParticleRangesIndices = findall(diff(SimParticles_GPU.Cells) .!= CartesianIndex(0,0))
+
 
 #CUDA.sortperm!(SortedIndices, SimParticles_GPU.Cells)
 
