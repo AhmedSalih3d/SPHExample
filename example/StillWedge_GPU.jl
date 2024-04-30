@@ -146,3 +146,6 @@ KernelGradient = SimParticles_GPU.KernelGradient
 
 dt  = Δt(Position, Velocity, Acceleration, SimConstants)
 dt₂ = dt * 0.5
+
+
+Pressure!(SimParticles_GPU.Pressure,SimParticles_GPU.Density,SimConstants)
