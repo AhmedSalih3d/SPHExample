@@ -183,6 +183,32 @@ CUDA.allowscalar(true)
     i = 1
     while i <= IndexCounter
 
+        CellIndex  = UniqueCells[i]
+
+        StartIndex = ParticleRanges[i] 
+        EndIndex   = ParticleRanges[i+1] - 1
+
+        @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
+
+        end
+
+        for S ∈ Stencil
+            SCellIndex = CellIndex + S
+            # Returns a range, x:x for exact match and x:(x-1) for no match
+            # utilizes that it is a sorted array and requires no isequal constructor,
+            # so I prefer this for now
+            NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
+            if length(NeighborCellIndex) != 0
+                StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
+                EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
+
+                @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
+                    
+                end
+            end
+        end
+
+        
         i += 1
     end
         
