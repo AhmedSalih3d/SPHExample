@@ -6,6 +6,7 @@ using FastPow
 import LinearAlgebra: dot, norm
 using HDF5
 using TimerOutputs
+using StaticArrays
 
 
 Dimensions = 2
@@ -397,6 +398,18 @@ SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(
 fid_vector[1] = SaveFile(1)
 close.(fid_vector[map( x-> isassigned(fid_vector, x), 1:length(fid_vector))])
 
+        # Construct Motion Definition
+        MotionDefinition = Dict{Int, Dict{String, Union{FloatType, SVector{Dimensions, FloatType}}}}()
+
+        # Loop through SimulationGeometry to populate MotionDefinition
+        for (_, details) in pairs(SimGeometry)
+            motion = get(details, "Motion", nothing)
+            if isa(motion, Dict)
+                group_marker = details["GroupMarker"]
+                MotionDefinition[group_marker] = motion
+            end
+        end
+    
 
 function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells)
     Position       = SimParticles.Position
@@ -412,17 +425,17 @@ function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimPart
     KernelGradient = SimParticles.KernelGradient
 
     ### Some functions to simplify code inside of this function
-    function ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
-        @inbounds for i in eachindex(Position)
-            if ParticleType[i] == Moving
-                ShouldMove      = MotionDefinition[ParticleMarker[i]]["StartTime"] <= SimMetaData.TotalTime <= (MotionDefinition[ParticleMarker[i]]["StartTime"] + MotionDefinition[ParticleMarker[i]]["Duration"])
-                MotionVel       = MotionDefinition[ParticleMarker[i]]["Velocity"]  
-                MotionDir       = MotionDefinition[ParticleMarker[i]]["Direction"]
-                Velocity[i]     = MotionVel   * MotionDir * ShouldMove
-                Position[i]    += Velocity[i] * dt₂
-            end
-        end
-    end
+    # function ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
+    #     @inbounds for i in eachindex(Position)
+    #         if ParticleType[i] == Moving
+    #             ShouldMove      = MotionDefinition[ParticleMarker[i]]["StartTime"] <= SimMetaData.TotalTime <= (MotionDefinition[ParticleMarker[i]]["StartTime"] + MotionDefinition[ParticleMarker[i]]["Duration"])
+    #             MotionVel       = MotionDefinition[ParticleMarker[i]]["Velocity"]  
+    #             MotionDir       = MotionDefinition[ParticleMarker[i]]["Direction"]
+    #             Velocity[i]     = MotionVel   * MotionDir * ShouldMove
+    #             Position[i]    += Velocity[i] * dt₂
+    #         end
+    #     end
+    # end
 
     ###
 
@@ -433,14 +446,11 @@ function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimPart
     # any ensure it is always updated in a reasonable manner. This only works well, assuming that
     # c₀ >= maximum(norm.(Velocity))
     # Remove if statement logic if you want to update each iteration
-    # if mod(SimMetaData.Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
-    #     @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, InverseCutOff, SortingScratchSpace,  ParticleRanges, UniqueCells)
-    # else
-    #     IndexCounter    = findfirst(isequal(0), ParticleRanges) - 2
-    # end
-
-    # UniqueCells       = view(UniqueCells, 1:IndexCounter)
-    # EnumeratedIndices = enumerate(chunks(UniqueCells; n=nthreads()))
+    if mod(SimMetaData.Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
+        @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbours!(SimParticles, SortedIndices, CutOff)
+    else
+        IndexCounter    = findfirst(isequal(0), ParticleRanges) - 2
+    end
 
     # @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
 
@@ -460,8 +470,8 @@ function SimulationLoop(ComputeInteractions!, SimMetaData, SimConstants, SimPart
     # ###===
 
 
-    # @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-    # @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtIThreaded, AccelerationThreaded,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, EnumeratedIndices)
+    @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
+    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                launch_NeighborLoopKernel!(SimParticles_GPU, SimConstants, UniqueCells, ParticleRanges, CuVector(Stencil), dρdtI_GPU, IndexCounter)
     # @timeit SimMetaData.HourGlass "Reduction"                            reduce_sum!(dρdtI, dρdtIThreaded)
     # @timeit SimMetaData.HourGlass "Reduction"                            reduce_sum!(Acceleration, AccelerationThreaded)
 
