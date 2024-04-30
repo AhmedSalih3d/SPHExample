@@ -153,6 +153,7 @@ using Format
                 Dᵢ  = 0.0
                 Dⱼ  = 0.0
             end
+
             dρdtI[i] += dρdt⁺ + Dᵢ
             dρdtI[j] += dρdt⁻ + Dⱼ
 
@@ -163,90 +164,22 @@ using Format
             dvdt⁺   = - m₀ * Pfac *  ∇ᵢWᵢⱼ
             dvdt⁻   = - dvdt⁺
 
-            # if FlagViscosityTreatment == :ArtificialViscosity
-                ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
-                cond      = dot(vᵢⱼ, xᵢⱼ)
-                cond_bool = cond < 0.0
-                μᵢⱼ       = h*cond * invd²η²
-                Πᵢ        = - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
-                Πⱼ        = - Πᵢ
-            # else
-            #     Πᵢ        = zero(xᵢⱼ)
-            #     Πⱼ        = Πᵢ
-            # end
-        
-        #     # if FlagViscosityTreatment == :Laminar || FlagViscosityTreatment == :LaminarSPS
-        #     #     # 4 comes from 2 divided by 0.5 from average density
-        #     #     # should divide by ρᵢ eq 6 DPC
-        #     #     # ν₀∇²uᵢ = (1/ρᵢ) * ( (4 * m₀ * (ρᵢ * ν₀) * dot( xᵢⱼ, ∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²) ) ) *  vᵢⱼ
-        #     #     # ν₀∇²uⱼ = (1/ρⱼ) * ( (4 * m₀ * (ρⱼ * ν₀) * dot(-xᵢⱼ,-∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²) ) ) * -vᵢⱼ
-        #     #     visc_symmetric_term = (4 * m₀ * ν₀ * dot( xᵢⱼ, ∇ᵢWᵢⱼ)) / ((ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²))
-        #     #     # ν₀∇²uᵢ = (1/ρᵢ) * visc_symmetric_term *  vᵢⱼ * ρᵢ
-        #     #     # ν₀∇²uⱼ = (1/ρⱼ) * visc_symmetric_term * -vᵢⱼ * ρⱼ
-        #     #     ν₀∇²uᵢ =  visc_symmetric_term *  vᵢⱼ
-        #     #     ν₀∇²uⱼ = -ν₀∇²uᵢ #visc_symmetric_term * -vᵢⱼ
-        #     # else
-        #     #     ν₀∇²uᵢ = zero(xᵢⱼ)
-        #     #     ν₀∇²uⱼ = ν₀∇²uᵢ
-        #     # end
-        
-        #     # if FlagViscosityTreatment == :LaminarSPS 
-        #     #     Iᴹ       = diagm(one.(xᵢⱼ))
-        #     #     #julia> a .- a'
-        #     #     # 3×3 SMatrix{3, 3, Float64, 9} with indices SOneTo(3)×SOneTo(3):
-        #     #     # 0.0  0.0  0.0
-        #     #     # 0.0  0.0  0.0
-        #     #     # 0.0  0.0  0.0
-        #     #     # Strain *rate* tensor is the gradient of velocity
-        #     #     Sᵢ = ∇vᵢ =  (m₀/ρⱼ) * (vⱼ - vᵢ) * ∇ᵢWᵢⱼ'
-        #     #     norm_Sᵢ  = sqrt(2 * sum(Sᵢ .^ 2))
-        #     #     νtᵢ      = (SmagorinskyConstant * dx)^2 * norm_Sᵢ
-        #     #     trace_Sᵢ = sum(diag(Sᵢ))
-        #     #     τᶿᵢ      = 2*νtᵢ*ρᵢ * (Sᵢ - (1/3) * trace_Sᵢ * Iᴹ) - (2/3) * ρᵢ * BlinConstant * dx^2 * norm_Sᵢ^2 * Iᴹ
-        #     #     Sⱼ = ∇vⱼ =  (m₀/ρᵢ) * (vᵢ - vⱼ) * -∇ᵢWᵢⱼ'
-        #     #     norm_Sⱼ  = sqrt(2 * sum(Sⱼ .^ 2))
-        #     #     νtⱼ      = (SmagorinskyConstant * dx)^2 * norm_Sⱼ
-        #     #     trace_Sⱼ = sum(diag(Sⱼ))
-        #     #     τᶿⱼ      = 2*νtⱼ*ρⱼ * (Sⱼ - (1/3) * trace_Sⱼ * Iᴹ) - (2/3) * ρⱼ * BlinConstant * dx^2 * norm_Sⱼ^2 * Iᴹ
-        
-        #     #     # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA TO REPRESENT IT
-        #     #     dτdtᵢ = (m₀/(ρⱼ * ρᵢ)) * (τᶿᵢ + τᶿⱼ) *  ∇ᵢWᵢⱼ 
-        #     #     dτdtⱼ = (m₀/(ρᵢ * ρⱼ)) * (τᶿᵢ + τᶿⱼ) * -∇ᵢWᵢⱼ 
-        #     # else
-        #     #     dτdtᵢ  = zero(xᵢⱼ)
-        #     #     dτdtⱼ  = dτdtᵢ
-        #     # end
-        
-        # Cannot use CUDA.@atomic here, be careful! You will get some weird spikes at places
-        Particles.Acceleration[i] += dvdt⁺ + Πᵢ #+ ν₀∇²uᵢ + dτdtᵢ
-        Particles.Acceleration[j] += dvdt⁻ + Πⱼ #+ ν₀∇²uⱼ + dτdtⱼ
+            ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
+            cond      = dot(vᵢⱼ, xᵢⱼ)
+            cond_bool = cond < 0.0
+            μᵢⱼ       = h*cond * invd²η²
+            Πᵢ        = - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
+            Πⱼ        = - Πᵢ
+   
+            Particles.Acceleration[i] += dvdt⁺ + Πᵢ
+            Particles.Acceleration[j] += dvdt⁻ + Πⱼ
 
-            
-        #     # if FlagOutputKernelValues
-                Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
+            Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
 
-                Particles.Kernel[i] += Wᵢⱼ
-                Particles.Kernel[j] += Wᵢⱼ
-        #     #     KernelThreaded[ichunk][i]         += Wᵢⱼ
-        #     #     KernelThreaded[ichunk][j]         += Wᵢⱼ
-        #     #     KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
-        #     #     KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
-        #     # end
-
-
-        #     # if SimMetaData.FlagShifting
-                # Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
-        
-        #     #     MLcond = MotionLimiter[i] * MotionLimiter[j]
-
-        #     #     ∇CᵢThreaded[ichunk][i]   += (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
-        #     #     ∇CᵢThreaded[ichunk][j]   += (m₀/ρⱼ) * -∇ᵢWᵢⱼ
-        
-        #     #     # Switch signs compared to DSPH, else free surface detection does not make sense
-        #     #     # Agrees, https://arxiv.org/abs/2110.10076, it should have been r_ji
-        #     #     ∇◌rᵢThreaded[ichunk][i]  += (m₀/ρⱼ) * dot(-xᵢⱼ , ∇ᵢWᵢⱼ)  * MLcond
-        #     #     ∇◌rᵢThreaded[ichunk][j]  += (m₀/ρᵢ) * dot( xᵢⱼ ,-∇ᵢWᵢⱼ)  * MLcond
-        #     # end
+            Particles.Kernel[i] += Wᵢⱼ
+            Particles.Kernel[j] += Wᵢⱼ
+            Particles.KernelGradient[i]   +=  ∇ᵢWᵢⱼ
+            Particles.KernelGradient[j]   += -∇ᵢWᵢⱼ
         end
 
         return nothing
@@ -302,9 +235,7 @@ function launch_NeighborLoopKernel!(Particles, SimConstants, UniqueCells, Partic
     CUDA.@sync kernel(Particles, SimConstants, UniqueCells, ParticleRanges, Stencil, dρdtI, IndexCounter; threads=threads, blocks=blocks)
 end
 
-# copyto!(SimParticles,SimParticles_GPU)
-
-function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, SortedIndices, dρdtI)
+function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, SortedIndices, dρdtI, ρₙ⁺)
     Position       = SimParticles.Position
     Cells          = SimParticles.Cells
     Density        = SimParticles.Density
@@ -352,11 +283,11 @@ function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  Parti
     # @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
 
     # ###=== First step of resetting arrays
-    # @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ)
+    @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(dρdtI, Acceleration)
     # @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(dρdtIThreaded, AccelerationThreaded)
 
     # if SimMetaData.FlagOutputKernelValues
-    #     @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(Kernel, KernelGradient)
+        @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(Kernel, KernelGradient)
     #     @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(KernelThreaded, KernelGradientThreaded)
     # end
 
@@ -388,11 +319,11 @@ function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  Parti
     # @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"  LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
 
     # ###=== Second step of resetting arrays
-    # @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ)
+    @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(dρdtI, Acceleration)
     # @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(dρdtIThreaded, AccelerationThreaded)
 
     # if SimMetaData.FlagOutputKernelValues
-    #     @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(Kernel, KernelGradient)
+        @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(Kernel, KernelGradient)
     #     @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(KernelThreaded, KernelGradientThreaded)
     # end
 
@@ -404,8 +335,8 @@ function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  Parti
 
     # @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
 
-    # @timeit SimMetaData.HourGlass "03 Pressure"                 Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-    # @timeit SimMetaData.HourGlass "08 Second NeighborLoop"      NeighborLoop!(ComputeInteractions!, SimMetaData, SimConstants, ParticleRanges, Stencil, Positionₙ⁺, KernelThreaded, KernelGradientThreaded, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtIThreaded, AccelerationThreaded, ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, EnumeratedIndices)
+    @timeit SimMetaData.HourGlass "03 Pressure"                 Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
+    @timeit SimMetaData.HourGlass "08 Second NeighborLoop"      launch_NeighborLoopKernel!(SimParticles, SimConstants, UniqueCells, ParticleRanges, Stencil, dρdtI, IndexCounter)
     # @timeit SimMetaData.HourGlass "Reduction"                   reduce_sum!(dρdtI, dρdtIThreaded)
     # @timeit SimMetaData.HourGlass "Reduction"                   reduce_sum!(Acceleration, AccelerationThreaded)
 
@@ -553,12 +484,13 @@ function RunSimulationGPU(;SimGeometry::Dict, #Don't further specify type for no
 
     @inbounds while true
 
-        SimulationLoop(SimMetaData, SimConstants, SimParticles_GPU, Stencil,  ParticleRanges, SortedIndices, dρdtI_GPU)
+        SimulationLoop(SimMetaData, SimConstants, SimParticles_GPU, Stencil,  ParticleRanges, SortedIndices, dρdtI_GPU, ρₙ⁺_GPU)
 
         if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
 
 
         try 
+            copyto!(SimParticles,SimParticles_GPU)
             @timeit HourGlass "12A Output Data" SaveFile(SimMetaData.OutputIterationCounter + 1)
         catch err
             @warn("File write failed.")
@@ -626,7 +558,7 @@ let
     SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="StillWedge2", 
         SaveLocation="E:/SecondApproach/StillWedge_GPU",
-        SimulationTime=1,
+        SimulationTime=0.1,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
@@ -636,7 +568,7 @@ let
 
     SimLogger = SimulationLogger(SimMetaData.SaveLocation)
 
-    RunSimulationGPU(
+    @profview RunSimulationGPU(
             SimGeometry        = SimGeometry,
             SimMetaData        = SimMetaData,
             SimConstants       = SimConstants,
