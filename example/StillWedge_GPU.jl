@@ -99,6 +99,13 @@ launch_ExtractCellsKernel!(SimParticles_GPU, CutOff)
 
 SortedIndices = CUDA.zeros(Int,NumberOfPoints)
 
+sortperm!(SortedIndices, SimParticles_GPU.Cells)
+
+for prop in propertynames(SimParticles_GPU)
+    getproperty(SimParticles_GPU,prop) .= getproperty(SimParticles_GPU, prop)[SortedIndices]
+end
+
+
 #CUDA.sortperm!(SortedIndices, SimParticles_GPU.Cells)
 
 # SimParticles_GPU[1:end] .= SimParticles_GPU[SortedIndices]
