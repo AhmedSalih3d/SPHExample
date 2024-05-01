@@ -240,6 +240,12 @@ function LimitDensityAtBoundaryGPU!(Density, ρ₀, MotionLimiter)
     Density[mask] .= ρ₀
 end
 
+function DensityEpsiGPU!(Density, dρdtIₙ⁺, ρₙ⁺, Δt)
+    epsi = - (dρdtIₙ⁺ ./ ρₙ⁺) .* Δt
+    Density .*= ((2 .- epsi) ./ (2 .+ epsi))
+end
+
+
 
 function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, SortedIndices, dρdtI, ρₙ⁺)
     Position       = SimParticles.Position
@@ -271,6 +277,7 @@ function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  Parti
     # any ensure it is always updated in a reasonable manner. This only works well, assuming that
     # c₀ >= maximum(norm.(Velocity))
     # Remove if statement logic if you want to update each iteration
+
     if mod(SimMetaData.Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
         @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbours!(SimParticles, SortedIndices, ParticleRanges, SimConstants.H) # CutOff = SimConstants.H
     else
@@ -352,9 +359,9 @@ function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  Parti
     # end
 
 
-    @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
+    @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundaryGPU!(SimParticles.Density, SimConstants.ρ₀, SimParticles.MotionLimiter)
 
-    # @timeit SimMetaData.HourGlass "10 Final Density"                DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
+    @timeit SimMetaData.HourGlass "10 Final Density"                DensityEpsiGPU!(SimParticles.Density, dρdtI, ρₙ⁺, dt)
 
 
     # if !SimMetaData.FlagShifting
