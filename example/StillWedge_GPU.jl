@@ -235,6 +235,12 @@ function launch_NeighborLoopKernel!(Particles, SimConstants, UniqueCells, Partic
     CUDA.@sync kernel(Particles, SimConstants, UniqueCells, ParticleRanges, Stencil, dρdtI, IndexCounter; threads=threads, blocks=blocks)
 end
 
+function LimitDensityAtBoundaryGPU!(Density, ρ₀, MotionLimiter)
+    mask = (Density .< ρ₀) .& (.!Bool.(MotionLimiter))
+    Density[mask] .= ρ₀
+end
+
+
 function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, SortedIndices, dρdtI, ρₙ⁺)
     Position       = SimParticles.Position
     Cells          = SimParticles.Cells
@@ -310,7 +316,7 @@ function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  Parti
     #     ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
     # end
 
-    # @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"  LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+    @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"  LimitDensityAtBoundaryGPU!(ρₙ⁺, SimConstants.ρ₀, SimParticles.MotionLimiter)
 
     # ###=== Second step of resetting arrays
     @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(dρdtI, Acceleration)
@@ -346,7 +352,7 @@ function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  Parti
     # end
 
 
-    # @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
+    @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
 
     # @timeit SimMetaData.HourGlass "10 Final Density"                DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
 
