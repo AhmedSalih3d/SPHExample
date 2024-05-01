@@ -247,13 +247,39 @@ end
 
 
 
-function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, SortedIndices, dρdtI, ρₙ⁺)
+function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, SortedIndices, dρdtI, ρₙ⁺, Positionₙ⁺, Velocityₙ⁺)
     Position       = SimParticles.Position
     Cells          = SimParticles.Cells
     Velocity       = SimParticles.Velocity
     Acceleration   = SimParticles.Acceleration
     Kernel         = SimParticles.Kernel
     KernelGradient = SimParticles.KernelGradient
+
+    function update_half_timestep!(Position, Velocity, Positionₙ⁺, Velocityₙ⁺, Acceleration, ρₙ⁺, Density, dρdtI, GravityFactor, MotionLimiter, SimConstants, dt₂)
+        # Update Acceleration vector by adding a gravity component
+        Acceleration .= Acceleration .+ CUDA.fill(SVector{2,Float64}(0,-SimConstants.g), length(Acceleration))
+    
+        # Update Positionₙ⁺ vector
+        Positionₙ⁺ .= Position .+ Velocity .* dt₂ .* MotionLimiter
+    
+        # Update Velocityₙ⁺ vector
+        Velocityₙ⁺ .= Velocity .+ Acceleration .* dt₂ .* MotionLimiter
+    
+        # Update ρₙ⁺ vector
+        ρₙ⁺ .= Density .+ dρdtI .* dt₂
+    end
+
+    function update_final_timestep!(Position, Velocity, Acceleration, GravityFactor, MotionLimiter, SimConstants, dt)
+        # Update Acceleration by adding a gravity component
+        Acceleration .= Acceleration .+ CUDA.fill(SVector{2,Float64}(0,-SimConstants.g), length(Acceleration))
+    
+        # Update Velocity
+        Velocity .= Velocity .+ Acceleration .* dt .* MotionLimiter
+    
+        # Update Position
+        delta_pos = ((Velocity .- Acceleration .* dt .* MotionLimiter) .+ Velocity) ./ 2 .* dt
+        Position .= Position .+ delta_pos .* MotionLimiter
+    end
 
     ### Some functions to simplify code inside of this function
     # function ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
@@ -316,12 +342,7 @@ function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  Parti
     # end
 
 
-    # @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" @inbounds for i in eachindex(Position)
-    #     Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
-    #     Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
-    #     Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
-    #     ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
-    # end
+    @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" update_half_timestep!(SimParticles.Position, SimParticles.Velocity, Positionₙ⁺, Velocityₙ⁺, Acceleration, ρₙ⁺, SimParticles.Density, dρdtI, SimParticles.GravityFactor,SimParticles. MotionLimiter, SimConstants, dt₂)
 
     @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"  LimitDensityAtBoundaryGPU!(ρₙ⁺, SimConstants.ρ₀, SimParticles.MotionLimiter)
 
@@ -370,6 +391,7 @@ function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  Parti
     #         Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
     #         Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
     #     end
+    @timeit SimMetaData.HourGlass "11 Update To Final TimeStep" update_final_timestep!(Position, Velocity, Acceleration, SimParticles.GravityFactor, SimParticles.MotionLimiter, SimConstants, dt)
     # else
     #     A     = 2# Value between 1 to 6 advised
     #     A_FST = 0; # zero for internal flows
@@ -491,7 +513,7 @@ function RunSimulationGPU(;SimGeometry::Dict, #Don't further specify type for no
 
     @inbounds while true
 
-        SimulationLoop(SimMetaData, SimConstants, SimParticles_GPU, Stencil,  ParticleRanges, SortedIndices, dρdtI_GPU, ρₙ⁺_GPU)
+        SimulationLoop(SimMetaData, SimConstants, SimParticles_GPU, Stencil,  ParticleRanges, SortedIndices, dρdtI_GPU, ρₙ⁺_GPU, Positionₙ⁺_GPU, Velocityₙ⁺_GPU)
 
         if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
 
@@ -543,7 +565,7 @@ let
     Dimensions = 2
     FloatType  = Float64
 
-    SimConstants = SimulationConstants{FloatType}(dx=0.01,c₀=43.48576250492629, δᵩ = 0.1, CFL=0.2)
+    SimConstants = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
 
     # Define the dictionary with specific types for keys and values to avoid any type ambiguity
     SimGeometry = Dict{Symbol, Dict{String, Union{String, Int, ParticleType, Nothing}}}()
@@ -565,7 +587,7 @@ let
     SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="StillWedge2", 
         SaveLocation="E:/SecondApproach/StillWedge_GPU",
-        SimulationTime=0.1,
+        SimulationTime=1,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
