@@ -605,30 +605,57 @@ end
 #         )
 # end
 
+function max_visc(Velocity,Position,h,η²)
+    maxval = -Inf
+    for i in eachindex(Position)
+         tmp = abs(h * dot(Velocity[i],Position[i]) / (dot(Position[i],Position[i]) + η²))
+         tmp > maxval && (maxval = tmp)
+    end
+    return maxval
+ end
 
 
 function gpu_OneKernel!(Iteration, Particles, SimConstants)
     index  = (blockIdx().x - Int32(1)) * blockDim().x + threadIdx().x
     stride = gridDim().x * blockDim().x
+    
+    @unpack c₀, h, CFL, η² = SimConstants
 
     current_time = 0.0
 
-    while current_time <= 1
+    while current_time <= 0.01
+        
+        # visc = max_visc(Particles.Velocity,Particles.Position,h,η²)
 
-        i = index
-        while i <= 10000 #IndexCounter
+        # dt1 = Inf
+        # for Acceleration_ in Particles.Acceleration
+        #     dt1_candidate = sqrt(h / norm(Acceleration_))
+        #     dt1 = min(dt1, dt1_candidate)
+        # end
 
-            i += stride
-        end
+        # dt2   = h / (c₀+visc)
 
+        # dt    = CFL*min(dt1,dt2)
 
+        # dt₂ = dt * 0.5
 
-        current_time += 0.1
+        dt  = 1e-4
+        dt₂ = dt * 0.5
+
+        # if mod(Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || Iteration == 1
+        #     #IndexCounter = UpdateNeighbours!(SimParticles, SortedIndices, ParticleRanges, SimConstants.H) # CutOff = SimConstants.H
+        # else
+        #     #IndexCounter    = findfirst(isequal(0), ParticleRanges) - 2
+        # end
+
+        # i = index
+        # while i <= 100 #IndexCounter
+
+        #     i += stride
+        # end
+
+       current_time += dt
     end
-    
-    sync_threads()
-
-    @cuprintln(current_time)
 
     return nothing
 end
@@ -691,6 +718,6 @@ let
     Positionₙ⁺_GPU   = replace_storage(CuVector, Positionₙ⁺)
     ρₙ⁺_GPU          = replace_storage(CuVector, ρₙ⁺)
 
-    launch_OneKernel!(Iteration, SimParticles_GPU, SimConstants)
+    CUDA.@profile launch_OneKernel!(Iteration, SimParticles_GPU, SimConstants)
 
 end
