@@ -96,8 +96,9 @@ using Base.Threads
                     NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
 
                     if length(NeighborCellIndex) != 0
-                        StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
-                        EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
+                        ToIndex           = only(NeighborCellIndex)
+                        StartIndex_       = ParticleRanges[ToIndex] 
+                        EndIndex_         = ParticleRanges[ToIndex+1] - 1
 
                         @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
                             @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
