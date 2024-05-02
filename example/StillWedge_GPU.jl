@@ -129,30 +129,25 @@ using Format
             dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  density_symmetric_term
             dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  density_symmetric_term
 
-            # Density diffusion
-            if true #FlagDensityDiffusion
-                if SimConstants.g == 0
-                    ρᵢⱼᴴ  = 0.0
-                    ρⱼᵢᴴ  = 0.0
-                else
-                    Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
-                    ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
-                    Pⱼᵢᴴ  = -Pᵢⱼᴴ
-                    ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
-                end
 
-                ρⱼᵢ   = ρⱼ - ρᵢ
-
-                Ψᵢⱼ   = 2( ρⱼᵢ  - ρᵢⱼᴴ) * (-xᵢⱼ) * invd²η²
-                Ψⱼᵢ   = 2(-ρⱼᵢ  - ρⱼᵢᴴ) * ( xᵢⱼ) * invd²η²
-
-                MLcond = Particles.MotionLimiter[i] * Particles.MotionLimiter[j]
-                Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
-                Dⱼ    =  δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
+            if SimConstants.g == 0
+                ρᵢⱼᴴ  = 0.0
+                ρⱼᵢᴴ  = 0.0
             else
-                Dᵢ  = 0.0
-                Dⱼ  = 0.0
+                Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
+                ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
+                Pⱼᵢᴴ  = -Pᵢⱼᴴ
+                ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
             end
+
+            ρⱼᵢ   = ρⱼ - ρᵢ
+            Ψᵢⱼ   = 2( ρⱼᵢ  - ρᵢⱼᴴ) * (-xᵢⱼ) * invd²η²
+            Ψⱼᵢ   = 2(-ρⱼᵢ  - ρⱼᵢᴴ) * ( xᵢⱼ) * invd²η²
+
+            MLcond = Particles.MotionLimiter[i] * Particles.MotionLimiter[j]
+            
+            Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
+            Dⱼ    =  δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
 
             dρdtI[i] += dρdt⁺ + Dᵢ
             dρdtI[j] += dρdt⁻ + Dⱼ
@@ -281,19 +276,6 @@ function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  Parti
         Position .= Position .+ delta_pos .* MotionLimiter
     end
 
-    ### Some functions to simplify code inside of this function
-    # function ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
-    #     @inbounds for i in eachindex(Position)
-    #         if ParticleType[i] == Moving
-    #             ShouldMove      = MotionDefinition[ParticleMarker[i]]["StartTime"] <= SimMetaData.TotalTime <= (MotionDefinition[ParticleMarker[i]]["StartTime"] + MotionDefinition[ParticleMarker[i]]["Duration"])
-    #             MotionVel       = MotionDefinition[ParticleMarker[i]]["Velocity"]  
-    #             MotionDir       = MotionDefinition[ParticleMarker[i]]["Direction"]
-    #             Velocity[i]     = MotionVel   * MotionDir * ShouldMove
-    #             Position[i]    += Velocity[i] * dt₂
-    #         end
-    #     end
-    # end
-
     ###
 
     @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
@@ -303,7 +285,6 @@ function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  Parti
     # any ensure it is always updated in a reasonable manner. This only works well, assuming that
     # c₀ >= maximum(norm.(Velocity))
     # Remove if statement logic if you want to update each iteration
-
     if mod(SimMetaData.Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
         @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbours!(SimParticles, SortedIndices, ParticleRanges, SimConstants.H) # CutOff = SimConstants.H
     else
@@ -312,35 +293,12 @@ function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  Parti
 
     UniqueCells = Cells[collect(ParticleRanges[1:IndexCounter])]
 
-
-    # @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
-
-    # ###=== First step of resetting arrays
     @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(dρdtI, Acceleration)
-    # @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(dρdtIThreaded, AccelerationThreaded)
 
-    # if SimMetaData.FlagOutputKernelValues
-        @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(Kernel, KernelGradient)
-    #     @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(KernelThreaded, KernelGradientThreaded)
-    # end
-
-    # if SimMetaData.FlagShifting
-    #     @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(∇Cᵢ, ∇◌rᵢ)
-    #     @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(∇CᵢThreaded, ∇◌rᵢThreaded)
-    # end
-    # ###===
-
-
+    @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(Kernel, KernelGradient)
+ 
     @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
     @timeit SimMetaData.HourGlass "04 First NeighborLoop"                launch_NeighborLoopKernel!(SimParticles, SimConstants, UniqueCells, ParticleRanges, Stencil, dρdtI, IndexCounter)
-    # @timeit SimMetaData.HourGlass "Reduction"                            reduce_sum!(dρdtI, dρdtIThreaded)
-    # @timeit SimMetaData.HourGlass "Reduction"                            reduce_sum!(Acceleration, AccelerationThreaded)
-
-    # if SimMetaData.FlagShifting
-    #     @timeit SimMetaData.HourGlass "Reduction"                        reduce_sum!(∇Cᵢ, ∇CᵢThreaded)
-    #     @timeit SimMetaData.HourGlass "Reduction"                        reduce_sum!(∇◌rᵢ, ∇◌rᵢThreaded)
-    # end
-
 
     @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" update_half_timestep!(SimParticles.Position, SimParticles.Velocity, Positionₙ⁺, Velocityₙ⁺, Acceleration, ρₙ⁺, SimParticles.Density, dρdtI, SimParticles.GravityFactor,SimParticles. MotionLimiter, SimConstants, dt₂)
 
@@ -348,68 +306,18 @@ function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  Parti
 
     # ###=== Second step of resetting arrays
     @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(dρdtI, Acceleration)
-    # @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(dρdtIThreaded, AccelerationThreaded)
 
-    # if SimMetaData.FlagOutputKernelValues
-        @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(Kernel, KernelGradient)
-    #     @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(KernelThreaded, KernelGradientThreaded)
-    # end
-
-    # if SimMetaData.FlagShifting
-    #     @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(∇Cᵢ, ∇◌rᵢ)
-    #     @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(∇CᵢThreaded, ∇◌rᵢThreaded)
-    # end
-    # ###===
-
-    # @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
+    @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(Kernel, KernelGradient)
 
     @timeit SimMetaData.HourGlass "03 Pressure"                 Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
     @timeit SimMetaData.HourGlass "08 Second NeighborLoop"      launch_NeighborLoopKernel!(SimParticles, SimConstants, UniqueCells, ParticleRanges, Stencil, dρdtI, IndexCounter)
-    # @timeit SimMetaData.HourGlass "Reduction"                   reduce_sum!(dρdtI, dρdtIThreaded)
-    # @timeit SimMetaData.HourGlass "Reduction"                   reduce_sum!(Acceleration, AccelerationThreaded)
-
-        
-    # if SimMetaData.FlagOutputKernelValues
-    #     @timeit SimMetaData.HourGlass "Reduction"               reduce_sum!(Kernel, KernelThreaded)
-    #     @timeit SimMetaData.HourGlass "Reduction"               reduce_sum!(KernelGradient, KernelGradientThreaded)
-    # end
-
-    # if SimMetaData.FlagShifting
-    #     @timeit SimMetaData.HourGlass "Reduction"               reduce_sum!(∇Cᵢ, ∇CᵢThreaded)
-    #     @timeit SimMetaData.HourGlass "Reduction"               reduce_sum!(∇◌rᵢ, ∇◌rᵢThreaded)
-    # end
 
 
     @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundaryGPU!(SimParticles.Density, SimConstants.ρ₀, SimParticles.MotionLimiter)
 
     @timeit SimMetaData.HourGlass "10 Final Density"                DensityEpsiGPU!(SimParticles.Density, dρdtI, ρₙ⁺, dt)
 
-
-    # if !SimMetaData.FlagShifting
-    #     @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"  @inbounds for i in eachindex(Position)
-    #         Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
-    #         Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
-    #         Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
-    #     end
     @timeit SimMetaData.HourGlass "11 Update To Final TimeStep" update_final_timestep!(Position, Velocity, Acceleration, SimParticles.GravityFactor, SimParticles.MotionLimiter, SimConstants, dt)
-    # else
-    #     A     = 2# Value between 1 to 6 advised
-    #     A_FST = 0; # zero for internal flows
-    #     A_FSM = length(first(Position)); #2d, 3d val different
-    #     @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"  @inbounds for i in eachindex(Position)
-    #         Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
-    #         Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
-    
-    #         A_FSC                  = (∇◌rᵢ[i] - A_FST)/(A_FSM - A_FST)
-    #         if A_FSC < 0
-    #             δxᵢ = zero(eltype(Position))
-    #         else
-    #             δxᵢ = -A_FSC * A * SimConstants.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
-    #         end
-    
-    #         Position[i]           += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
-    #     end
-    # end
 
     SimMetaData.Iteration      += 1
     SimMetaData.CurrentTimeStep = dt
@@ -464,20 +372,6 @@ function RunSimulationGPU(;SimGeometry::Dict, #Don't further specify type for no
     
 
     Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-
-    # # Shifting correction
-    # ∇Cᵢ               = zeros(SVector{Dimensions,FloatType},NumberOfPoints)            
-    # ∇◌rᵢ              = zeros(FloatType,NumberOfPoints)    
-
-    # @inline begin
-    #     n_copy = Base.Threads.nthreads()
-    #     KernelThreaded         = [copy(SimParticles.Kernel)         for _ in 1:n_copy]
-    #     KernelGradientThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
-    #     dρdtIThreaded          = [copy(dρdtI)                       for _ in 1:n_copy]
-    #     AccelerationThreaded   = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
-    #     ∇CᵢThreaded            = [copy(∇Cᵢ )                        for _ in 1:n_copy]
-    #     ∇◌rᵢThreaded           = [copy(∇◌rᵢ)                        for _ in 1:n_copy]   
-    # end
 
     # Produce sorting related variables
     ParticleRanges         = CUDA.zeros(Int, NumberOfPoints + 1)
@@ -587,7 +481,7 @@ let
     SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="StillWedge2", 
         SaveLocation="E:/SecondApproach/StillWedge_GPU",
-        SimulationTime=0.01,
+        SimulationTime=0.1,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
