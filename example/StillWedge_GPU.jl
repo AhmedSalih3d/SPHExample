@@ -565,7 +565,7 @@ let
     Dimensions = 2
     FloatType  = Float64
 
-    SimConstants = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
+    SimConstants = SimulationConstants{FloatType}(dx=0.005,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
 
     # Define the dictionary with specific types for keys and values to avoid any type ambiguity
     SimGeometry = Dict{Symbol, Dict{String, Union{String, Int, ParticleType, Nothing}}}()

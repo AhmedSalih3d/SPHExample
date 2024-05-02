@@ -5,7 +5,7 @@ let
     FloatType  = Float64
 
     
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.005,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
 
     # Define the dictionary with specific types for keys and values to avoid any type ambiguity
     SimulationGeometry = Dict{Symbol, Dict{String, Union{String, Int, ParticleType, Nothing}}}()
@@ -29,7 +29,7 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="StillWedge", 
         SaveLocation="E:/SecondApproach/TESTING_CPU_StillWedge",
-        SimulationTime=4,
+        SimulationTime=1,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
