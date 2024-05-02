@@ -607,7 +607,7 @@ end
 
 
 
-function gpu_OneKernel!()
+function gpu_OneKernel!(Iteration, Particles, SimConstants)
     index  = (blockIdx().x - Int32(1)) * blockDim().x + threadIdx().x
     stride = gridDim().x * blockDim().x
 
@@ -621,10 +621,12 @@ function gpu_OneKernel!()
             i += stride
         end
 
-        sync_threads()
+
 
         current_time += 0.1
     end
+    
+    sync_threads()
 
     @cuprintln(current_time)
 
@@ -632,15 +634,63 @@ function gpu_OneKernel!()
 end
 
 # Function to launch the CUDA kernel for extracting cells
-function launch_OneKernel!()
-    kernel = @cuda always_inline=true fastmath=true launch=false gpu_OneKernel!()
+function launch_OneKernel!(Iteration, Particles, SimConstants)
+    kernel = @cuda always_inline=true fastmath=true launch=false gpu_OneKernel!(Iteration, Particles, SimConstants)
     config = launch_configuration(kernel.fun)
     
-    threads = 256 #min(length(Particles.Cells), config.threads)
-    blocks  = 4 # cld(length(Particles.Cells), threads)
+    threads = min(length(Particles.Cells), config.threads)
+    blocks  = cld(length(Particles.Cells), threads)
 
     # Launching the CUDA kernel with the calculated configuration
-    CUDA.@sync kernel()
+    CUDA.@sync kernel(Iteration, Particles, SimConstants; threads=threads, blocks=blocks)
 end
 
-launch_OneKernel!()
+let
+    Dimensions = 2
+    FloatType  = Float64
+    SimConstants = SimulationConstants{FloatType}(dx=0.005,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
+    # Define the dictionary with specific types for keys and values to avoid any type ambiguity
+    SimGeometry = Dict{Symbol, Dict{String, Union{String, Int, ParticleType, Nothing}}}()
+    # Populate the dictionary
+    SimGeometry[:FixedBoundary] = Dict(
+        "CSVFile"     => "./input/still_wedge/StillWedge_Dp$(SimConstants.dx)_Bound.csv",
+        "GroupMarker" => 1,
+        "Type"        => Fixed,
+        "Motion"      => nothing
+    )
+    SimGeometry[:Water] = Dict(
+        "CSVFile"     => "./input/still_wedge/StillWedge_Dp$(SimConstants.dx)_Fluid.csv",
+        "GroupMarker" => 2,
+        "Type"        => Fluid,
+        "Motion"      => nothing
+    )
+    SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
+        SimulationName="StillWedge2", 
+        SaveLocation="E:/SecondApproach/StillWedge_GPU",
+        SimulationTime=1,
+        OutputEach=0.01,
+        FlagDensityDiffusion=true,
+        FlagOutputKernelValues=false,
+        FlagLog=true,
+        FlagShifting=false,
+    )
+    SimLogger = SimulationLogger(SimMetaData.SaveLocation)
+
+    Iteration = 1
+
+    # Allocate data structures on the CPU
+    SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺ = AllocateDataStructures(Dimensions, FloatType, SimGeometry)
+
+    # Allow scalar operations temporarily
+    CUDA.allowscalar(true)
+
+    # Replace storage for each variable to use GPU memory
+    SimParticles_GPU = replace_storage(CuVector, SimParticles)
+    dρdtI_GPU        = replace_storage(CuVector, dρdtI)
+    Velocityₙ⁺_GPU   = replace_storage(CuVector, Velocityₙ⁺)
+    Positionₙ⁺_GPU   = replace_storage(CuVector, Positionₙ⁺)
+    ρₙ⁺_GPU          = replace_storage(CuVector, ρₙ⁺)
+
+    launch_OneKernel!(Iteration, SimParticles_GPU, SimConstants)
+
+end
