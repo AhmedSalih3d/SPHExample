@@ -561,123 +561,15 @@ function RunSimulationGPU(;SimGeometry::Dict, #Don't further specify type for no
     end
 end
 
-# let        
-#     Dimensions = 2
-#     FloatType  = Float64
-
-#     SimConstants = SimulationConstants{FloatType}(dx=0.005,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
-
-#     # Define the dictionary with specific types for keys and values to avoid any type ambiguity
-#     SimGeometry = Dict{Symbol, Dict{String, Union{String, Int, ParticleType, Nothing}}}()
-
-#     # Populate the dictionary
-#     SimGeometry[:FixedBoundary] = Dict(
-#         "CSVFile"     => "./input/still_wedge/StillWedge_Dp$(SimConstants.dx)_Bound.csv",
-#         "GroupMarker" => 1,
-#         "Type"        => Fixed,
-#         "Motion"      => nothing
-#     )
-#     SimGeometry[:Water] = Dict(
-#         "CSVFile"     => "./input/still_wedge/StillWedge_Dp$(SimConstants.dx)_Fluid.csv",
-#         "GroupMarker" => 2,
-#         "Type"        => Fluid,
-#         "Motion"      => nothing
-#     )
-
-#     SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
-#         SimulationName="StillWedge2", 
-#         SaveLocation="E:/SecondApproach/StillWedge_GPU",
-#         SimulationTime=1,
-#         OutputEach=0.01,
-#         FlagDensityDiffusion=true,
-#         FlagOutputKernelValues=false,
-#         FlagLog=true,
-#         FlagShifting=false,
-#     )
-
-#     SimLogger = SimulationLogger(SimMetaData.SaveLocation)
-
-#     @profview RunSimulationGPU(
-#             SimGeometry        = SimGeometry,
-#             SimMetaData        = SimMetaData,
-#             SimConstants       = SimConstants,
-#             SimLogger          = SimLogger
-#         )
-# end
-
-function max_visc(Velocity,Position,h,η²)
-    maxval = -Inf
-    for i in eachindex(Position)
-         tmp = abs(h * dot(Velocity[i],Position[i]) / (dot(Position[i],Position[i]) + η²))
-         tmp > maxval && (maxval = tmp)
-    end
-    return maxval
- end
-
-
-function gpu_OneKernel!(Iteration, Particles, SimConstants, ParticleRanges)
-    index  = (blockIdx().x - Int32(1)) * blockDim().x + threadIdx().x
-    stride = gridDim().x * blockDim().x
-    
-    @unpack c₀, h, CFL, η² = SimConstants
-
-    current_time = 0.0
-
-    while current_time <= 0.01
-        
-        # visc = max_visc(Particles.Velocity,Particles.Position,h,η²)
-
-        # dt1 = Inf
-        # for Acceleration_ in Particles.Acceleration
-        #     dt1_candidate = sqrt(h / norm(Acceleration_))
-        #     dt1 = min(dt1, dt1_candidate)
-        # end
-
-        # dt2   = h / (c₀+visc)
-
-        # dt    = CFL*min(dt1,dt2)
-
-        # dt₂ = dt * 0.5
-
-        dt  = 1e-4
-        dt₂ = dt * 0.5
-
-        if mod(Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || Iteration == 1
-        #     #IndexCounter = UpdateNeighbours!(SimParticles, SortedIndices, ParticleRanges, SimConstants.H) # CutOff = SimConstants.H
-        else
-        #     #IndexCounter    = findfirst(isequal(0), ParticleRanges) - 2
-        end
-
-        # i = index
-        # while i <= 100 #IndexCounter
-
-        #     i += stride
-        # end
-
-       current_time += dt
-    end
-
-    return nothing
-end
-
-# Function to launch the CUDA kernel for extracting cells
-function launch_OneKernel!(Iteration, Particles, SimConstants, ParticleRanges)
-    kernel = @cuda always_inline=true fastmath=true launch=false gpu_OneKernel!(Iteration, Particles, SimConstants, ParticleRanges)
-    config = launch_configuration(kernel.fun)
-    
-    threads = min(length(Particles.Cells), config.threads)
-    blocks  = cld(length(Particles.Cells), threads)
-
-    # Launching the CUDA kernel with the calculated configuration
-    CUDA.@sync kernel(Iteration, Particles, SimConstants, ParticleRanges; threads=threads, blocks=blocks)
-end
-
-let
+let        
     Dimensions = 2
     FloatType  = Float64
-    SimConstants = SimulationConstants{FloatType}(dx=0.005,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
+
+    SimConstants = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
+
     # Define the dictionary with specific types for keys and values to avoid any type ambiguity
     SimGeometry = Dict{Symbol, Dict{String, Union{String, Int, ParticleType, Nothing}}}()
+
     # Populate the dictionary
     SimGeometry[:FixedBoundary] = Dict(
         "CSVFile"     => "./input/still_wedge/StillWedge_Dp$(SimConstants.dx)_Bound.csv",
@@ -691,40 +583,24 @@ let
         "Type"        => Fluid,
         "Motion"      => nothing
     )
+
     SimMetaData  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="StillWedge2", 
         SaveLocation="E:/SecondApproach/StillWedge_GPU",
-        SimulationTime=1,
+        SimulationTime=0.01,
         OutputEach=0.01,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
         FlagLog=true,
         FlagShifting=false,
     )
+
     SimLogger = SimulationLogger(SimMetaData.SaveLocation)
-
-    Iteration = 1
-
-    # Allocate data structures on the CPU
-    SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺ = AllocateDataStructures(Dimensions, FloatType, SimGeometry)
-
-    NumberOfPoints = length(SimParticles)
-    # Produce sorting related variables
-    ParticleRanges         = CUDA.zeros(Int, NumberOfPoints + 1)
-    UniqueCells            = CUDA.zeros(CartesianIndex{Dimensions}, NumberOfPoints)
-    Stencil                = CuVector(ConstructStencil(Val(Dimensions)))
-    SortedIndices          = CUDA.zeros(Int, NumberOfPoints)
-
-    # Allow scalar operations temporarily
-    CUDA.allowscalar(true)
-
-    # Replace storage for each variable to use GPU memory
-    SimParticles_GPU = replace_storage(CuVector, SimParticles)
-    dρdtI_GPU        = replace_storage(CuVector, dρdtI)
-    Velocityₙ⁺_GPU   = replace_storage(CuVector, Velocityₙ⁺)
-    Positionₙ⁺_GPU   = replace_storage(CuVector, Positionₙ⁺)
-    ρₙ⁺_GPU          = replace_storage(CuVector, ρₙ⁺)
-
-    CUDA.@profile launch_OneKernel!(Iteration, SimParticles_GPU, SimConstants, ParticleRanges)
-
+    
+    CUDA.@profile RunSimulationGPU(
+            SimGeometry        = SimGeometry,
+            SimMetaData        = SimMetaData,
+            SimConstants       = SimConstants,
+            SimLogger          = SimLogger
+        )
 end
