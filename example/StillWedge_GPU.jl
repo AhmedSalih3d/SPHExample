@@ -615,7 +615,7 @@ function max_visc(Velocity,Position,h,η²)
  end
 
 
-function gpu_OneKernel!(Iteration, Particles, SimConstants)
+function gpu_OneKernel!(Iteration, Particles, SimConstants, ParticleRanges)
     index  = (blockIdx().x - Int32(1)) * blockDim().x + threadIdx().x
     stride = gridDim().x * blockDim().x
     
@@ -642,11 +642,11 @@ function gpu_OneKernel!(Iteration, Particles, SimConstants)
         dt  = 1e-4
         dt₂ = dt * 0.5
 
-        # if mod(Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || Iteration == 1
+        if mod(Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || Iteration == 1
         #     #IndexCounter = UpdateNeighbours!(SimParticles, SortedIndices, ParticleRanges, SimConstants.H) # CutOff = SimConstants.H
-        # else
+        else
         #     #IndexCounter    = findfirst(isequal(0), ParticleRanges) - 2
-        # end
+        end
 
         # i = index
         # while i <= 100 #IndexCounter
@@ -661,15 +661,15 @@ function gpu_OneKernel!(Iteration, Particles, SimConstants)
 end
 
 # Function to launch the CUDA kernel for extracting cells
-function launch_OneKernel!(Iteration, Particles, SimConstants)
-    kernel = @cuda always_inline=true fastmath=true launch=false gpu_OneKernel!(Iteration, Particles, SimConstants)
+function launch_OneKernel!(Iteration, Particles, SimConstants, ParticleRanges)
+    kernel = @cuda always_inline=true fastmath=true launch=false gpu_OneKernel!(Iteration, Particles, SimConstants, ParticleRanges)
     config = launch_configuration(kernel.fun)
     
     threads = min(length(Particles.Cells), config.threads)
     blocks  = cld(length(Particles.Cells), threads)
 
     # Launching the CUDA kernel with the calculated configuration
-    CUDA.@sync kernel(Iteration, Particles, SimConstants; threads=threads, blocks=blocks)
+    CUDA.@sync kernel(Iteration, Particles, SimConstants, ParticleRanges; threads=threads, blocks=blocks)
 end
 
 let
@@ -708,6 +708,13 @@ let
     # Allocate data structures on the CPU
     SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺ = AllocateDataStructures(Dimensions, FloatType, SimGeometry)
 
+    NumberOfPoints = length(SimParticles)
+    # Produce sorting related variables
+    ParticleRanges         = CUDA.zeros(Int, NumberOfPoints + 1)
+    UniqueCells            = CUDA.zeros(CartesianIndex{Dimensions}, NumberOfPoints)
+    Stencil                = CuVector(ConstructStencil(Val(Dimensions)))
+    SortedIndices          = CUDA.zeros(Int, NumberOfPoints)
+
     # Allow scalar operations temporarily
     CUDA.allowscalar(true)
 
@@ -718,6 +725,6 @@ let
     Positionₙ⁺_GPU   = replace_storage(CuVector, Positionₙ⁺)
     ρₙ⁺_GPU          = replace_storage(CuVector, ρₙ⁺)
 
-    CUDA.@profile launch_OneKernel!(Iteration, SimParticles_GPU, SimConstants)
+    CUDA.@profile launch_OneKernel!(Iteration, SimParticles_GPU, SimConstants, ParticleRanges)
 
 end
