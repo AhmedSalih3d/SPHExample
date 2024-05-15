@@ -13,14 +13,14 @@ let
 
     # Populate the dictionary
     SimulationGeometry[:FixedBoundary] = Dict(
-        "CSVFile"     => "./input/floating_cylinder_2d/Wall_Dp$(SimConstantsWedge.dx).csv",
+        "CSVFile"     => "./input/floating_cylinder_2d/Wall_WithWalls_Dp$(SimConstantsWedge.dx).csv",
         "GroupMarker" => 1,
         "Type"        => Fixed,
         "Motion"      => nothing
     )
 
     # SimulationGeometry[:Water] = Dict(
-    #     "CSVFile"     => "./input/floating_cylinder_2d/Fluid_Dp$(SimConstantsWedge.dx).csv",
+    #     "CSVFile"     => "./input/floating_cylinder_2d/Fluid_WithWalls_Dp$(SimConstantsWedge.dx).csv",
     #     "GroupMarker" => 2,
     #     "Type"        => Fluid,
     #     "Motion"      => nothing
@@ -40,7 +40,7 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="FloatingCylinder", 
         SaveLocation="E:/SecondApproach/FloatingCylinder2d",
-        SimulationTime=1,
+        SimulationTime=0.02,
         OutputEach=0.02,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=true,
