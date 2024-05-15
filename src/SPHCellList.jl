@@ -271,7 +271,7 @@ using Base.Threads
         end
     end
     
-    @inbounds function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
+    @inbounds function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, FloatingDefinition, InverseCutOff)
         Position       = SimParticles.Position
         Density        = SimParticles.Density
         Pressure       = SimParticles.Pressure
@@ -296,6 +296,15 @@ using Base.Threads
                 end
             end
         end
+
+        function ProgressFloating(Position, Velocity, ParticleType, dt₂)
+            @inbounds for i in eachindex(Position)
+                if ParticleType[i] == Floating
+                    Position[i] += Velocity[i] * dt₂
+                end
+            end
+        end
+        
     
         ###
     
@@ -315,7 +324,8 @@ using Base.Threads
         UniqueCells       = view(UniqueCells, 1:IndexCounter)
         EnumeratedIndices = enumerate(chunks(UniqueCells; n=nthreads()))
 
-        @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
+        @timeit SimMetaData.HourGlass "Motion"   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
+        @timeit SimMetaData.HourGlass "Floating" ProgressFloating(Position, Velocity, ParticleType, dt₂)
     
         ###=== First step of resetting arrays
         @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ)
@@ -368,7 +378,8 @@ using Base.Threads
         end
         ###===
 
-        @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
+        @timeit SimMetaData.HourGlass "Motion"   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
+        @timeit SimMetaData.HourGlass "Floating" ProgressFloating(Position, Velocity, ParticleType, dt₂)
     
         @timeit SimMetaData.HourGlass "03 Pressure"                 Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
         @timeit SimMetaData.HourGlass "08 Second NeighborLoop"      NeighborLoop!(SimMetaData, SimConstants, ParticleRanges, Stencil, Positionₙ⁺, KernelThreaded, KernelGradientThreaded, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtIThreaded, AccelerationThreaded, ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, EnumeratedIndices)
@@ -500,13 +511,25 @@ using Base.Threads
                 MotionDefinition[group_marker] = motion
             end
         end
+
+        # Construct FloatingDefinition
+        FloatingDefinition = Dict{Int, Dict{String, Union{FloatType, SVector{Dimensions, FloatType}}}}()
+
+        # Loop through SimulationGeometry to populate FloatingDefinition
+        for (_, details) in pairs(SimGeometry)
+            floating = get(details, "Floating", nothing)
+            if isa(floating, Dict)
+                group_marker = details["GroupMarker"]
+                FloatingDefinition[group_marker] = floating
+            end
+        end
     
         # Normal run and save data
         generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
     
         @inbounds while true
     
-            SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
+            SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, FloatingDefinition, InverseCutOff)
     
             if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
     
