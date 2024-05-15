@@ -66,7 +66,7 @@ function AllocateDataStructures(Dimensions,FloatType, SimGeometry)
     GravityFactor = similar(Density)
     for i ∈ eachindex(GravityFactor)
         fac = 0
-        if     Types[i] == Fluid
+        if     Types[i] == Fluid || Types[i] == Floating
             fac = -1
         elseif Types[i] == Moving
             fac =  1
@@ -77,7 +77,7 @@ function AllocateDataStructures(Dimensions,FloatType, SimGeometry)
     MotionLimiter = similar(Density)
     for i ∈ eachindex(MotionLimiter)
         fac = 0
-        if   Types[i] == Fluid
+        if   Types[i] == Fluid || Types[i] == Floating
             fac =  1
         else Types[i] == Moving
             fac =  0
