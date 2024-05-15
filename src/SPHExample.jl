@@ -15,7 +15,7 @@ module SPHExample
     export ResetArrays!, to_3d
 
     using .PreProcess
-    export LoadParticlesFromCSV_StaticArrays, AllocateDataStructures, LoadBoundaryNormals, ParticleType, Fluid, Fixed, Moving
+    export LoadParticlesFromCSV_StaticArrays, AllocateDataStructures, LoadBoundaryNormals, ParticleType, Fluid, Fixed, Moving, Floating
 
     using .ProduceHDFVTK
     export SaveVTKHDF

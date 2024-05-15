@@ -1,6 +1,6 @@
 module PreProcess
 
-export LoadParticlesFromCSV_StaticArrays, LoadBoundaryNormals, AllocateDataStructures, ParticleType, Fluid, Fixed, Moving
+export LoadParticlesFromCSV_StaticArrays, LoadBoundaryNormals, AllocateDataStructures, ParticleType, Fluid, Fixed, Moving, Floating
 
 using CSV
 using DataFrames
@@ -8,9 +8,10 @@ using StaticArrays
 using StructArrays
 
 @enum ParticleType::UInt8 begin
-    Fluid  = UInt8(1)
-    Fixed  = UInt8(2)
-    Moving = UInt8(3)
+    Fluid    = UInt8(1)
+    Fixed    = UInt8(2)
+    Moving   = UInt8(3)
+    Floating = UInt8(4)
 end
 
 function LoadSpecificCSV(dims, float_type, particle_type, particle_group_marker, specific_csv)
