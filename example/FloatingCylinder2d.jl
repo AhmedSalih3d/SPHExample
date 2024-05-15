@@ -1,4 +1,5 @@
 using SPHExample
+using StaticArrays
 
 let
     Dimensions = 2
@@ -8,7 +9,7 @@ let
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.025,c₀=84.04284584365287, δᵩ = 0.1, CFL=0.2, k = 1.69706)
 
     # Define the dictionary with specific types for keys and values to avoid any type ambiguity
-    SimulationGeometry = Dict{Symbol, Dict{String, Union{String, Int, ParticleType, Nothing}}}()
+    SimulationGeometry = Dict{Symbol, Dict{String, Union{String, Int, ParticleType, SVector, SMatrix, Nothing}}}()
 
     # Populate the dictionary
     SimulationGeometry[:FixedBoundary] = Dict(
@@ -29,7 +30,9 @@ let
         "CSVFile"     => "./input/floating_cylinder_2d/Cylinder_Dp$(SimConstantsWedge.dx).csv",
         "GroupMarker" => 3,
         "Type"        => Floating,
-        "Motion"      => nothing
+        "Motion"      => nothing,
+        "COG"         => SVector{Dimensions, FloatType}(0.0, 14.0),
+        "Inertia"     => SMatrix{3, 3, FloatType}((999.714, 0, 0, 0, 1999.43, 0, 0, 0, 999.714))
     )
 
 
