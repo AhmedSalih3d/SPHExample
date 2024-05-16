@@ -20,12 +20,12 @@ let
         "Motion"      => nothing
     )
 
-    SimulationGeometry[:Water] = Dict(
-        "CSVFile"     => "./input/floating_cylinder_2d/Fluid_WithWalls_Dp$(SimConstantsWedge.dx).csv",
-        "GroupMarker" => 2,
-        "Type"        => Fluid,
-        "Motion"      => nothing
-    )
+    # SimulationGeometry[:Water] = Dict(
+    #     "CSVFile"     => "./input/floating_cylinder_2d/Fluid_WithWalls_Dp$(SimConstantsWedge.dx).csv",
+    #     "GroupMarker" => 2,
+    #     "Type"        => Fluid,
+    #     "Motion"      => nothing
+    # )
 
     SimulationGeometry[:Cylinder] = Dict(
         "CSVFile"     => "./input/floating_cylinder_2d/Cylinder_Dp$(SimConstantsWedge.dx).csv",
@@ -41,7 +41,7 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="FloatingCylinder", 
         SaveLocation="E:/SecondApproach/FloatingCylinder2d",
-        SimulationTime=0.5,
+        SimulationTime=2,
         OutputEach=0.02,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=true,

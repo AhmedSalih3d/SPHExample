@@ -33,9 +33,17 @@ end
 end
 
 # This version of the function using !Bool(MotionLimiter) instead of BoundaryBool
-@inline function LimitDensityAtBoundary!(Density,ρ₀, MotionLimiter)
+# @inline function LimitDensityAtBoundary!(Density,ρ₀, MotionLimiter)
+#     @inbounds for i in eachindex(Density)
+#         if (Density[i] < ρ₀) * !Bool(MotionLimiter[i])
+#             Density[i] = ρ₀
+#         end
+#     end
+# end
+
+@inline function LimitDensityAtBoundary!(Density,ρ₀, BoundaryBool)
     @inbounds for i in eachindex(Density)
-        if (Density[i] < ρ₀) * !Bool(MotionLimiter[i])
+        if (Density[i] < ρ₀) * Bool(BoundaryBool[i])
             Density[i] = ρ₀
         end
     end
