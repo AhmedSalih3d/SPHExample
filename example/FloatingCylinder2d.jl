@@ -6,7 +6,8 @@ let
     FloatType  = Float64
 
     
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.025,c₀=84.04284584365287, δᵩ = 0.1, CFL=0.2, k = 1.69706)
+    # SimConstantsWedge = SimulationConstants{FloatType}(dx=0.025,c₀=84.04284584365287, δᵩ = 0.1, CFL=0.2, k = 1.69706)
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.05,c₀=84.04284584365287, δᵩ = 0.1, CFL=0.2, k = 1.69706)
 
     # Define the dictionary with specific types for keys and values to avoid any type ambiguity
     SimulationGeometry = Dict{Symbol, Dict{String, Union{String, Int, FloatType, ParticleType, SVector, SMatrix, Nothing}}}()
