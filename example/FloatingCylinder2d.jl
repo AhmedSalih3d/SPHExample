@@ -6,29 +6,29 @@ let
     FloatType  = Float64
 
     
-    # SimConstantsWedge = SimulationConstants{FloatType}(dx=0.025,c₀=84.04284584365287, δᵩ = 0.1, CFL=0.2, k = 1.69706)
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.05,c₀=84.04284584365287, δᵩ = 0.1, CFL=0.2, k = 1.69706)
+    # SimConstantsFloatingCylinder = SimulationConstants{FloatType}(dx=0.025,c₀=84.04284584365287, δᵩ = 0.1, CFL=0.2, k = 1.69706)
+    SimConstantsFloatingCylinder = SimulationConstants{FloatType}(dx=0.05,c₀=84.04284584365287, δᵩ = 0.1, CFL=0.2, k = 1.69706)
 
     # Define the dictionary with specific types for keys and values to avoid any type ambiguity
     SimulationGeometry = Dict{Symbol, Dict{String, Union{String, Int, FloatType, ParticleType, SVector, SMatrix, Nothing}}}()
 
     # Populate the dictionary
     SimulationGeometry[:FixedBoundary] = Dict(
-        "CSVFile"     => "./input/floating_cylinder_2d/Wall_WithWalls_Dp$(SimConstantsWedge.dx).csv",
+        "CSVFile"     => "./input/floating_cylinder_2d/Wall_WithWalls_Dp$(SimConstantsFloatingCylinder.dx).csv",
         "GroupMarker" => 1,
         "Type"        => Fixed,
         "Motion"      => nothing
     )
 
     # SimulationGeometry[:Water] = Dict(
-    #     "CSVFile"     => "./input/floating_cylinder_2d/Fluid_WithWalls_Dp$(SimConstantsWedge.dx).csv",
+    #     "CSVFile"     => "./input/floating_cylinder_2d/Fluid_WithWalls_Dp$(SimConstantsFloatingCylinder.dx).csv",
     #     "GroupMarker" => 2,
     #     "Type"        => Fluid,
     #     "Motion"      => nothing
     # )
 
     SimulationGeometry[:Cylinder] = Dict(
-        "CSVFile"     => "./input/floating_cylinder_2d/Cylinder_Dp$(SimConstantsWedge.dx).csv",
+        "CSVFile"     => "./input/floating_cylinder_2d/Cylinder_Dp$(SimConstantsFloatingCylinder.dx).csv",
         "GroupMarker" => 3,
         "Type"        => Floating,
         "Motion"      => nothing,
@@ -38,7 +38,7 @@ let
     )
 
 
-    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
+    SimMetaDataFloatingCylinder  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="FloatingCylinder", 
         SaveLocation="E:/SecondApproach/FloatingCylinder2d",
         SimulationTime=2,
@@ -49,12 +49,12 @@ let
         FlagShifting=false,
     )
 
-    SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
+    SimLogger = SimulationLogger(SimMetaDataFloatingCylinder.SaveLocation)
 
     @profview RunSimulation(
         SimGeometry        = SimulationGeometry,
-        SimMetaData        = SimMetaDataWedge,
-        SimConstants       = SimConstantsWedge,
+        SimMetaData        = SimMetaDataFloatingCylinder,
+        SimConstants       = SimConstantsFloatingCylinder,
         SimLogger          = SimLogger
     )
 end
