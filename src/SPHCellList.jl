@@ -605,7 +605,7 @@ using Base.Threads
                                         
                                         Simulation_vtkhdf = VTKHDFReader(registrationName='$(SimMetaData.SimulationName).vtkhdf*', FileName=file_list)
 
-                                        Simulation_vtkhdf.PointArrayStatus = ['Kernel', 'Density', 'BoundaryBool', 'ID', 'Velocity', 'KernelGradient', 'Acceleration', 'Pressure']
+                                        Simulation_vtkhdf.PointArrayStatus = $("['" * join(OutputVariableNames, "', '") * "']")
                                         
                                         # ----------------------------------------------------------------
                                         # setup the visualization in view 'renderView1'
