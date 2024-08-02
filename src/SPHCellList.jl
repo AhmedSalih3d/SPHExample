@@ -551,6 +551,18 @@ using Base.Threads
                 ## Generate auto paraview py
 
                 ParaViewStateFile = open(SaveLocation_ * "_StateFile.py", "w")
+
+                ParaViewConfig    = 
+                                        """
+                                        # state file generated using paraview version 5.12.0
+                                        import paraview
+                                        paraview.compatibility.major = 5
+                                        paraview.compatibility.minor = 12
+                                        """
+
+                write(ParaViewStateFile, ParaViewConfig) 
+                
+                close(ParaViewStateFile)
     
                 break
             end
