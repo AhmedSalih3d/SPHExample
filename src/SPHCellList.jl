@@ -547,6 +547,10 @@ using Base.Threads
                 finish!(SimMetaData.ProgressSpecification)
                 show(HourGlass,sortby=:name)
                 show(HourGlass)
+
+                ## Generate auto paraview py
+
+                ParaViewStateFile = open(SaveLocation_ * "_StateFile.py", "w")
     
                 break
             end
