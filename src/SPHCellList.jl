@@ -616,6 +616,11 @@ using Base.Threads
 
                                         # show color bar/color legend
                                         Simulation_vtkhdfDisplay.SetScalarBarVisibility(renderView1, True)
+                                        
+                                        # Focus the camera on the dataset
+                                        renderView1.ResetCamera()
+
+                                        Render()
                                         """
 
                 write(ParaViewStateFile, ParaViewConfig) 
