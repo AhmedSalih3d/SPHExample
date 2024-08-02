@@ -85,7 +85,8 @@ Written by Ahmed Salih [@AhmedSalih3D](https://github.com/AhmedSalih3d)
 
 | Version | Description |
 |---------|-------------|
-| 0.6 (Current Version) | Changed code to solver setup, where inputs can be provided and functions overloaded as before if needed. Added support for moving objects and particle shifting, for internal flows only as of now. |
+| 0.6.2 | Added support for automatic visualization through Paraview. Enabled by default and can be turned of through SimMetaData settings in each example. Version of Paraview at minimum 5.12 to be used |
+| 0.6  | Changed code to solver setup, where inputs can be provided and functions overloaded as before if needed. Added support for moving objects and particle shifting, for internal flows only as of now. |
 | 0.5        | Introduced logging, `hdfvtk` output format, and other minor improvements.|
 | 0.4        | Complete rewrite, abandoning `LoopVectorization.jl` and `CellListMap.jl` to code exactly what is needed and improve performance. |
 | 0.3        | Highly optimized version for CPU with extremely few allocations after the initial array allocation. Recommends using this version. |

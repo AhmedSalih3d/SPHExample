@@ -483,7 +483,8 @@ using Base.Threads
     
         fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
     
-        SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position),["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID", "Type", "GroupMarker"], SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
+        OutputVariableNames = ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID", "Type", "GroupMarker"]
+        SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
         SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
         @inline SaveFile(SimMetaData.OutputIterationCounter)
         
@@ -547,6 +548,101 @@ using Base.Threads
                 finish!(SimMetaData.ProgressSpecification)
                 show(HourGlass,sortby=:name)
                 show(HourGlass)
+
+                ## Generate auto paraview py
+                ParaViewStateFileName = SaveLocation_ * "_StateFile.py"
+                ParaViewStateFile     = open(ParaViewStateFileName, "w")
+
+                ParaViewConfig    = 
+                                        """
+                                        # state file generated using paraview version 5.12.0
+                                        import paraview
+                                        paraview.compatibility.major = 5
+                                        paraview.compatibility.minor = 12
+                                        
+                                        # Directory containing the .vtkhdf files
+                                        directory = "$(SimMetaData.SaveLocation)"
+
+                                        # List all .vtkhdf files in the directory
+                                        import os
+                                        file_list = [os.path.join(directory, f) for f in os.listdir(directory) if f.endswith('.vtkhdf')]
+
+                                        #### import the simple module from the paraview
+                                        from paraview.simple import *
+                                        #### disable automatic camera reset on 'Show'
+                                        paraview.simple._DisableFirstRenderCameraReset()
+                                        
+                                        # ----------------------------------------------------------------
+                                        # setup views used in the visualization
+                                        # ----------------------------------------------------------------
+
+                                        # get the material library
+                                        materialLibrary1 = GetMaterialLibrary()
+
+                                        # Create a new 'Render View'
+                                        renderView1 = CreateView('RenderView')
+                                        
+                                        # init the 'Grid Axes 3D Actor' selected for 'AxesGrid'
+                                        renderView1.AxesGrid.Visibility = 1
+                                        
+                                        SetActiveView(None)
+
+                                        # create new layout object 'Layout #1'
+                                        layout1 = CreateLayout(name='Layout #1')
+                                        layout1.AssignView(0, renderView1)
+                                        #layout1.SetSize(2252, 794)
+                                        
+                                        # ----------------------------------------------------------------
+                                        # restore active view
+                                        SetActiveView(renderView1)
+                                        # ----------------------------------------------------------------
+
+                                        # ----------------------------------------------------------------
+                                        # setup the data processing pipelines
+                                        # ----------------------------------------------------------------
+
+                                        # create a new 'VTKHDF Reader'
+                                        
+                                        Simulation_vtkhdf = VTKHDFReader(registrationName='$(SimMetaData.SimulationName).vtkhdf*', FileName=file_list)
+
+                                        Simulation_vtkhdf.PointArrayStatus = $("['" * join(OutputVariableNames, "', '") * "']")
+                                        
+                                        # ----------------------------------------------------------------
+                                        # setup the visualization in view 'renderView1'
+                                        # ----------------------------------------------------------------
+
+                                        # show data from Simulation_vtkhdf
+                                        Simulation_vtkhdfDisplay = Show(Simulation_vtkhdf, renderView1, 'GeometryRepresentation')
+
+                                        Simulation_vtkhdfDisplay.SetRepresentationType('Point Gaussian')
+
+                                        # set scalar coloring
+                                        ColorBy(Simulation_vtkhdfDisplay, ('POINTS', 'Density'))
+
+                                        # rescale color and/or opacity maps used to include current data range
+                                        Simulation_vtkhdfDisplay.RescaleTransferFunctionToDataRange(True, False)
+
+                                        # show color bar/color legend
+                                        Simulation_vtkhdfDisplay.SetScalarBarVisibility(renderView1, True)
+                                        
+                                        # Focus the camera on the dataset
+                                        renderView1.ResetCamera()
+
+                                        Render()
+                                        """
+
+                write(ParaViewStateFile, ParaViewConfig) 
+                
+                close(ParaViewStateFile)
+
+                if SimMetaData.VisualizeInParaview
+                    try
+                        OpenInParaview = `paraview --state="$(ParaViewStateFileName)"`
+                        run(OpenInParaview)
+                    catch
+                        @error("You must add Paraview to path as `paraview` and use at minimum version 5.12")
+                    end
+                end
     
                 break
             end
