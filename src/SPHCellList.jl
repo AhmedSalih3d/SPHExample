@@ -558,6 +558,32 @@ using Base.Threads
                                         import paraview
                                         paraview.compatibility.major = 5
                                         paraview.compatibility.minor = 12
+                                        
+                                        #### import the simple module from the paraview
+                                        from paraview.simple import *
+                                        #### disable automatic camera reset on 'Show'
+                                        paraview.simple._DisableFirstRenderCameraReset()
+                                        
+                                        # ----------------------------------------------------------------
+                                        # setup views used in the visualization
+                                        # ----------------------------------------------------------------
+
+                                        # get the material library
+                                        materialLibrary1 = GetMaterialLibrary()
+
+                                        # Create a new 'Render View'
+                                        renderView1 = CreateView('RenderView')
+                                        
+                                        # init the 'Grid Axes 3D Actor' selected for 'AxesGrid'
+                                        renderView1.AxesGrid.Visibility = 1
+                                        
+                                        SetActiveView(None)
+
+                                        # create new layout object 'Layout #1'
+                                        layout1 = CreateLayout(name='Layout #1')
+                                        layout1.AssignView(0, renderView1)
+                                        #layout1.SetSize(2252, 794)
+                                        
                                         """
 
                 write(ParaViewStateFile, ParaViewConfig) 
