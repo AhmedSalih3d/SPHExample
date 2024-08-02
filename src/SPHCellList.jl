@@ -559,6 +559,13 @@ using Base.Threads
                                         paraview.compatibility.major = 5
                                         paraview.compatibility.minor = 12
                                         
+                                        # Directory containing the .vtkhdf files
+                                        directory = "$(SimMetaData.SaveLocation)"
+
+                                        # List all .vtkhdf files in the directory
+                                        import os
+                                        file_list = [os.path.join(directory, f) for f in os.listdir(directory) if f.endswith('.vtkhdf')]
+
                                         #### import the simple module from the paraview
                                         from paraview.simple import *
                                         #### disable automatic camera reset on 'Show'
@@ -595,7 +602,7 @@ using Base.Threads
 
                                         # create a new 'VTKHDF Reader'
                                         
-                                        Simulation_vtkhdf = VTKHDFReader(registrationName='StillWedge_000001.vtkhdf*', FileName=['E:\\SecondApproach\\TESTING_CPU_StillWedge\\StillWedge_000001.vtkhdf'])
+                                        Simulation_vtkhdf = VTKHDFReader(registrationName='$(SimMetaData.SimulationName).vtkhdf*', FileName=file_list)
 
                                         Simulation_vtkhdf.PointArrayStatus = ['Kernel', 'Density', 'BoundaryBool', 'ID', 'Velocity', 'KernelGradient', 'Acceleration', 'Pressure']
                                         
