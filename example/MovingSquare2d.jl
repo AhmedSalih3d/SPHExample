@@ -21,6 +21,7 @@ let
         SaveLocation="E:/SecondApproach/MovingSquare2D",
         SimulationTime=2.5,
         OutputEach=0.01,
+        VisualizeInParaview=true,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
         FlagLog=true,
