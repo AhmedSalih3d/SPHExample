@@ -584,6 +584,38 @@ using Base.Threads
                                         layout1.AssignView(0, renderView1)
                                         #layout1.SetSize(2252, 794)
                                         
+                                        # ----------------------------------------------------------------
+                                        # restore active view
+                                        SetActiveView(renderView1)
+                                        # ----------------------------------------------------------------
+
+                                        # ----------------------------------------------------------------
+                                        # setup the data processing pipelines
+                                        # ----------------------------------------------------------------
+
+                                        # create a new 'VTKHDF Reader'
+                                        
+                                        Simulation_vtkhdf = VTKHDFReader(registrationName='StillWedge_000001.vtkhdf*', FileName=['E:\\SecondApproach\\TESTING_CPU_StillWedge\\StillWedge_000001.vtkhdf'])
+
+                                        Simulation_vtkhdf.PointArrayStatus = ['Kernel', 'Density', 'BoundaryBool', 'ID', 'Velocity', 'KernelGradient', 'Acceleration', 'Pressure']
+                                        
+                                        # ----------------------------------------------------------------
+                                        # setup the visualization in view 'renderView1'
+                                        # ----------------------------------------------------------------
+
+                                        # show data from Simulation_vtkhdf
+                                        Simulation_vtkhdfDisplay = Show(Simulation_vtkhdf, renderView1, 'GeometryRepresentation')
+
+                                        Simulation_vtkhdfDisplay.SetRepresentationType('Point Gaussian')
+
+                                        # set scalar coloring
+                                        ColorBy(Simulation_vtkhdfDisplay, ('POINTS', 'Density'))
+
+                                        # rescale color and/or opacity maps used to include current data range
+                                        Simulation_vtkhdfDisplay.RescaleTransferFunctionToDataRange(True, False)
+
+                                        # show color bar/color legend
+                                        Simulation_vtkhdfDisplay.SetScalarBarVisibility(renderView1, True)
                                         """
 
                 write(ParaViewStateFile, ParaViewConfig) 
