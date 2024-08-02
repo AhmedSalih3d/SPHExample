@@ -550,8 +550,8 @@ using Base.Threads
                 show(HourGlass)
 
                 ## Generate auto paraview py
-
-                ParaViewStateFile = open(SaveLocation_ * "_StateFile.py", "w")
+                ParaViewStateFileName = SaveLocation_ * "_StateFile.py"
+                ParaViewStateFile     = open(ParaViewStateFileName, "w")
 
                 ParaViewConfig    = 
                                         """
@@ -634,6 +634,10 @@ using Base.Threads
                 write(ParaViewStateFile, ParaViewConfig) 
                 
                 close(ParaViewStateFile)
+
+                OpenInParaview = `paraview --state="$(ParaViewStateFileName)"`
+
+                run(OpenInParaview)
     
                 break
             end
