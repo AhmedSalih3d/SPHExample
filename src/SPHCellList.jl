@@ -638,7 +638,7 @@ using Base.Threads
                 if SimMetaData.VisualizeInParaview
                     try
                         OpenInParaview = `paraview --state="$(ParaViewStateFileName)"`
-                        run(OpenInParaview)
+                        run(OpenInParaview; wait = false)
                     catch
                         @error("You must add Paraview to path as `paraview` and use at minimum version 5.12")
                     end
