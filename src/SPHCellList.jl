@@ -83,10 +83,12 @@ using Base.Threads
         
             for i = StartIndex:EndIndex
 
-                push!(PerParticleNeighbors, i) # Add the particle index itself
+                push!(PerParticleNeighbors, i) # Add the particle index it self
+
+                # Add all the particles in the same cell, other than the particle it self
                 for k = StartIndex:EndIndex
                    if k != i
-                    push!(PerParticleNeighbors, k)
+                        push!(PerParticleNeighbors, k)
                    end
                 end
                 
@@ -98,10 +100,8 @@ using Base.Threads
                     if length(NeighborCellRange) != 0
                         StartIndex_ = ParticleRanges[NeighborCellRange[1]]
                         EndIndex_   = ParticleRanges[NeighborCellRange[1] + 1] - 1
-                        @inbounds j = StartIndex_:EndIndex_
-                            # if i != j
-                                push!(PerParticleNeighbors, j)
-                            # end
+                        @inbounds for j = StartIndex_:EndIndex_
+                            push!(PerParticleNeighbors, j)
                         end
                     end
                 end
