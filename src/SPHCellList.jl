@@ -116,36 +116,62 @@ using Base.Threads
 # Neither Polyester.@batch per core or thread is faster
 ###=== Function to process each cell and its neighbors
     function NeighborLoop!(SimMetaData, SimConstants, ParticleRanges, PerParticleNeighbors, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, EnumeratedIndices)
-        @threads for (ichunk, inds) in @views EnumeratedIndices
-            for iter in inds
-                CellIndex = UniqueCells[iter]
+        
+        RoughChunks = chunks(PerParticleNeighbors; n=nthreads())
+        FinalChunks = Vector{StepRange{Int,Int}}()
 
-                StartIndex = ParticleRanges[iter] 
-                EndIndex   = ParticleRanges[iter+1] - 1
+        old_zero_splitter = 0
+        for it = 1:length(RoughChunks)
 
-                @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-                    @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
-                end
 
-                @inbounds for S ∈ Stencil
-                    SCellIndex = CellIndex + S
+            zero_splitter = findnext(x->x==0,PerParticleNeighbors,RoughChunks[it][end])
 
-                    # Returns a range, x:x for exact match and x:(x-1) for no match
-                    # utilizes that it is a sorted array and requires no isequal constructor,
-                    # so I prefer this for now
-                    NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
+            current_chunk = (old_zero_splitter+1):zero_splitter
 
-                    if length(NeighborCellIndex) != 0
-                        StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
-                        EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
+            old_zero_splitter = zero_splitter
 
-                        @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                            @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
-                        end
-                    end
-                end
-            end
+            push!(FinalChunks, current_chunk)
         end
+
+        @threads for inds ∈ FinalChunks
+            println(inds)
+        end
+        
+        # #@threads for (ichunk, inds)
+        # for iter = 1:length(PerParticleNeighbors)
+        #     @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
+        # end
+        
+        # @threads for (ichunk, inds) in @views EnumeratedIndices
+        #     for iter in inds
+        #         CellIndex = UniqueCells[iter]
+
+        #         StartIndex = ParticleRanges[iter] 
+        #         EndIndex   = ParticleRanges[iter+1] - 1
+
+        #         @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
+        #             @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
+        #         end
+
+        #         @inbounds for S ∈ Stencil
+        #             SCellIndex = CellIndex + S
+
+        #             # Returns a range, x:x for exact match and x:(x-1) for no match
+        #             # utilizes that it is a sorted array and requires no isequal constructor,
+        #             # so I prefer this for now
+        #             NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
+
+        #             if length(NeighborCellIndex) != 0
+        #                 StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
+        #                 EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
+
+        #                 @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
+        #                     @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
+        #                 end
+        #             end
+        #         end
+        #     end
+        # end
 
         return nothing
     end
