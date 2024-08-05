@@ -133,14 +133,44 @@ using Base.Threads
             push!(FinalChunks, current_chunk)
         end
 
-        @threads for inds ∈ FinalChunks
-            println(inds)
+        ichunk = 1
+        # @threads for ThreadIndices ∈ FinalChunks
+        @threads for ThreadIndices ∈ FinalChunks
+            Indices = PerParticleNeighbors[ThreadIndices]
+
+            k = 1
+            loop_counter = 0
+            while k < length(Indices)
+                loop_counter += 1
+
+                i = Indices[k]
+                j = Indices[k+loop_counter]
+                
+                if j != 0
+                    @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
+                else
+                    # Think something wrong tbh
+                    k = k + loop_counter + 1
+
+                    loop_counter = 0
+                end 
+            end
+
+            # k = 1
+            
+            # i = Indices[k]
+            # while iterate(Indices,k+1)[1] != 0
+
+            # end
+            # for k ∈ 
+            #     i = k
+
+            # for iter ∈ inds
+            #     i = PerParticleNeighbors[iter]
+            # end
+            #@inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
+            # end
         end
-        
-        # #@threads for (ichunk, inds)
-        # for iter = 1:length(PerParticleNeighbors)
-        #     @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
-        # end
         
         # @threads for (ichunk, inds) in @views EnumeratedIndices
         #     for iter in inds
