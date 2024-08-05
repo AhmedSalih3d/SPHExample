@@ -83,8 +83,15 @@ using Base.Threads
                 StartIndex = ParticleRanges[iter] 
                 EndIndex   = ParticleRanges[iter+1] - 1
 
-                @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-                    @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
+
+                @inbounds for i = StartIndex:EndIndex
+                    dρdtI_i_sum = 0.0
+                    for j = (i+1):EndIndex
+                        @inline d1, d2 = ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
+                        dρdtI_i_sum += d1
+                        # dρdtI[j, ichunk] += d2
+                    end
+                    # dρdtI[i, ichunk] = dρdtI_i_sum 
                 end
 
                 @inbounds for S ∈ Stencil
@@ -99,11 +106,19 @@ using Base.Threads
                         StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
                         EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
 
-                        @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                            @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
+                        @inbounds for i = StartIndex:EndIndex
+                            dρdtI_i_sum = 0.0
+                            for j = StartIndex_:EndIndex_
+                                @inline d1,d2 = ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
+                                dρdtI_i_sum += d1
+                                # dρdtI[j, ichunk] += d2
+                            end
+                            # dρdtI[i, ichunk] = dρdtI_i_sum 
                         end
                     end
                 end
+
+                dρdtI[rand(1:3027), ichunk] = rand()
             end
         end
 
@@ -115,6 +130,9 @@ using Base.Threads
     function ComputeInteractions!(SimMetaData, SimConstants, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
         @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues = SimMetaData
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
+
+        dρdtI_i_sum = 0.0
+        dρdtI_j_sum = 0.0
 
         xᵢⱼ  = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)              
@@ -159,8 +177,8 @@ using Base.Threads
                 Dᵢ  = 0.0
                 Dⱼ  = 0.0
             end
-            dρdtI[i, ichunk] += dρdt⁺ + Dᵢ
-            dρdtI[j, ichunk] += dρdt⁻ + Dⱼ
+            dρdtI_i_sum = dρdt⁺ + Dᵢ
+            dρdtI_j_sum = dρdt⁻ + Dⱼ
 
 
             # Pᵢ      =  Pressure[i]
@@ -251,7 +269,7 @@ using Base.Threads
             # end
         end
 
-        return nothing
+        return dρdtI_i_sum, dρdtI_j_sum
     end
 
 
