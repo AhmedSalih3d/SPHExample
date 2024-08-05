@@ -122,8 +122,6 @@ using Base.Threads
 
         old_zero_splitter = 0
         for it = 1:length(RoughChunks)
-
-
             zero_splitter = findnext(x->x==0,PerParticleNeighbors,RoughChunks[it][end])
 
             current_chunk = (old_zero_splitter+1):zero_splitter
@@ -133,9 +131,7 @@ using Base.Threads
             push!(FinalChunks, current_chunk)
         end
 
-        ichunk = 1
-        # @threads for ThreadIndices ∈ FinalChunks
-        @threads for ThreadIndices ∈ FinalChunks
+        @threads for (ichunk, ThreadIndices) ∈ collect(enumerate(FinalChunks))
             Indices = PerParticleNeighbors[ThreadIndices]
 
             k = 1
@@ -155,54 +151,8 @@ using Base.Threads
                     loop_counter = 0
                 end 
             end
-
-            # k = 1
-            
-            # i = Indices[k]
-            # while iterate(Indices,k+1)[1] != 0
-
-            # end
-            # for k ∈ 
-            #     i = k
-
-            # for iter ∈ inds
-            #     i = PerParticleNeighbors[iter]
-            # end
-            #@inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
-            # end
         end
-        
-        # @threads for (ichunk, inds) in @views EnumeratedIndices
-        #     for iter in inds
-        #         CellIndex = UniqueCells[iter]
-
-        #         StartIndex = ParticleRanges[iter] 
-        #         EndIndex   = ParticleRanges[iter+1] - 1
-
-        #         @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-        #             @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
-        #         end
-
-        #         @inbounds for S ∈ Stencil
-        #             SCellIndex = CellIndex + S
-
-        #             # Returns a range, x:x for exact match and x:(x-1) for no match
-        #             # utilizes that it is a sorted array and requires no isequal constructor,
-        #             # so I prefer this for now
-        #             NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
-
-        #             if length(NeighborCellIndex) != 0
-        #                 StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
-        #                 EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
-
-        #                 @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-        #                     @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
-        #                 end
-        #             end
-        #         end
-        #     end
-        # end
-
+       
         return nothing
     end
 
@@ -229,7 +179,7 @@ using Base.Threads
             vᵢⱼ       = vᵢ - vⱼ
             density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
             dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  density_symmetric_term
-            dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  density_symmetric_term
+            #dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  density_symmetric_term
 
             # Density diffusion
             if FlagDensityDiffusion
@@ -256,7 +206,7 @@ using Base.Threads
                 Dⱼ  = 0.0
             end
             dρdtI[ichunk][i] += dρdt⁺ + Dᵢ
-            dρdtI[ichunk][j] += dρdt⁻ + Dⱼ
+            #dρdtI[ichunk][j] += dρdt⁻ + Dⱼ
 
 
             Pᵢ      =  Pressure[i]
@@ -274,7 +224,7 @@ using Base.Threads
                 Πⱼ        = - Πᵢ
             else
                 Πᵢ        = zero(xᵢⱼ)
-                Πⱼ        = Πᵢ
+                #Πⱼ        = Πᵢ
             end
         
             if FlagViscosityTreatment == :Laminar || FlagViscosityTreatment == :LaminarSPS
@@ -286,10 +236,10 @@ using Base.Threads
                 # ν₀∇²uᵢ = (1/ρᵢ) * visc_symmetric_term *  vᵢⱼ * ρᵢ
                 # ν₀∇²uⱼ = (1/ρⱼ) * visc_symmetric_term * -vᵢⱼ * ρⱼ
                 ν₀∇²uᵢ =  visc_symmetric_term *  vᵢⱼ
-                ν₀∇²uⱼ = -ν₀∇²uᵢ #visc_symmetric_term * -vᵢⱼ
+                #ν₀∇²uⱼ = -ν₀∇²uᵢ #visc_symmetric_term * -vᵢⱼ
             else
                 ν₀∇²uᵢ = zero(xᵢⱼ)
-                ν₀∇²uⱼ = ν₀∇²uᵢ
+                #ν₀∇²uⱼ = ν₀∇²uᵢ
             end
         
             if FlagViscosityTreatment == :LaminarSPS 
@@ -313,22 +263,22 @@ using Base.Threads
         
                 # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA TO REPRESENT IT
                 dτdtᵢ = (m₀/(ρⱼ * ρᵢ)) * (τᶿᵢ + τᶿⱼ) *  ∇ᵢWᵢⱼ 
-                dτdtⱼ = (m₀/(ρᵢ * ρⱼ)) * (τᶿᵢ + τᶿⱼ) * -∇ᵢWᵢⱼ 
+                #dτdtⱼ = (m₀/(ρᵢ * ρⱼ)) * (τᶿᵢ + τᶿⱼ) * -∇ᵢWᵢⱼ 
             else
                 dτdtᵢ  = zero(xᵢⱼ)
-                dτdtⱼ  = dτdtᵢ
+                #dτdtⱼ  = dτdtᵢ
             end
         
             dvdtI[ichunk][i] += dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ
-            dvdtI[ichunk][j] += dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
+            #dvdtI[ichunk][j] += dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
 
             
             if FlagOutputKernelValues
                 Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
                 KernelThreaded[ichunk][i]         += Wᵢⱼ
-                KernelThreaded[ichunk][j]         += Wᵢⱼ
+                #KernelThreaded[ichunk][j]         += Wᵢⱼ
                 KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
-                KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
+                #KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
             end
 
 
@@ -338,12 +288,12 @@ using Base.Threads
                 MLcond = MotionLimiter[i] * MotionLimiter[j]
 
                 ∇CᵢThreaded[ichunk][i]   += (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
-                ∇CᵢThreaded[ichunk][j]   += (m₀/ρⱼ) * -∇ᵢWᵢⱼ
+                #∇CᵢThreaded[ichunk][j]   += (m₀/ρⱼ) * -∇ᵢWᵢⱼ
         
                 # Switch signs compared to DSPH, else free surface detection does not make sense
                 # Agrees, https://arxiv.org/abs/2110.10076, it should have been r_ji
                 ∇◌rᵢThreaded[ichunk][i]  += (m₀/ρⱼ) * dot(-xᵢⱼ , ∇ᵢWᵢⱼ)  * MLcond
-                ∇◌rᵢThreaded[ichunk][j]  += (m₀/ρᵢ) * dot( xᵢⱼ ,-∇ᵢWᵢⱼ)  * MLcond
+                #∇◌rᵢThreaded[ichunk][j]  += (m₀/ρᵢ) * dot( xᵢⱼ ,-∇ᵢWᵢⱼ)  * MLcond
             end
         end
 
