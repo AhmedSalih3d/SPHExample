@@ -185,25 +185,25 @@ using Base.Threads
             if FlagDensityDiffusion
                 if SimConstants.g == 0
                     ρᵢⱼᴴ  = 0.0
-                    ρⱼᵢᴴ  = 0.0
+                    # ρⱼᵢᴴ  = 0.0
                 else
                     Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
                     ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
-                    Pⱼᵢᴴ  = -Pᵢⱼᴴ
-                    ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
+                    # Pⱼᵢᴴ  = -Pᵢⱼᴴ
+                    # ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
                 end
 
                 ρⱼᵢ   = ρⱼ - ρᵢ
 
                 Ψᵢⱼ   = 2( ρⱼᵢ  - ρᵢⱼᴴ) * (-xᵢⱼ) * invd²η²
-                Ψⱼᵢ   = 2(-ρⱼᵢ  - ρⱼᵢᴴ) * ( xᵢⱼ) * invd²η²
+                # Ψⱼᵢ   = 2(-ρⱼᵢ  - ρⱼᵢᴴ) * ( xᵢⱼ) * invd²η²
 
                 MLcond = MotionLimiter[i] * MotionLimiter[j]
                 Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
-                Dⱼ    =  δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
+                # Dⱼ    =  δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
             else
                 Dᵢ  = 0.0
-                Dⱼ  = 0.0
+                # Dⱼ  = 0.0
             end
             dρdtI[ichunk][i] += dρdt⁺ + Dᵢ
             #dρdtI[ichunk][j] += dρdt⁻ + Dⱼ
@@ -213,7 +213,7 @@ using Base.Threads
             Pⱼ      =  Pressure[j]
             Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
             dvdt⁺   = - m₀ * Pfac *  ∇ᵢWᵢⱼ
-            dvdt⁻   = - dvdt⁺
+            # dvdt⁻   = - dvdt⁺
 
             if FlagViscosityTreatment == :ArtificialViscosity
                 ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
@@ -221,7 +221,7 @@ using Base.Threads
                 cond_bool = cond < 0.0
                 μᵢⱼ       = h*cond * invd²η²
                 Πᵢ        = - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
-                Πⱼ        = - Πᵢ
+                # Πⱼ        = - Πᵢ
             else
                 Πᵢ        = zero(xᵢⱼ)
                 #Πⱼ        = Πᵢ
