@@ -348,7 +348,6 @@ using Base.Threads
         # Remove if statement logic if you want to update each iteration
         if mod(SimMetaData.Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
             @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, Stencil, InverseCutOff, SortingScratchSpace,  ParticleRanges, PerParticleNeighbors, UniqueCells)
-            println(PerParticleNeighbors)
         else
             IndexCounter    = findfirst(isequal(0), ParticleRanges) - 2
         end
