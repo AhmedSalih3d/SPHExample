@@ -456,8 +456,6 @@ using Base.Threads
     
         @inline begin
             n_copy = Base.Threads.nthreads() 
-            dρdtIThreaded          = [copy(dρdtI)                       for _ in 1:n_copy]
-            AccelerationThreaded   = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
             ∇CᵢThreaded            = [copy(∇Cᵢ )                        for _ in 1:n_copy]
             ∇◌rᵢThreaded           = [copy(∇◌rᵢ)                        for _ in 1:n_copy]   
         end
