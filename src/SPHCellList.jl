@@ -88,8 +88,9 @@ using Base.Threads
                 for S in Stencil
                     SCellIndex = CellIndex + S
 
-                    if in(SCellIndex, UniqueCells)
-                        id = findfirst(isequal(SCellIndex), UniqueCells)
+                    id = findfirst(isequal(SCellIndex), UniqueCells)
+                    
+                    if !isnothing(id)
                         StartIndex_ = ParticleRanges[id]
                         EndIndex_   = ParticleRanges[id + 1] - 1
                         @inbounds for j = StartIndex_:EndIndex_
