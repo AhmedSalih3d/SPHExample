@@ -129,7 +129,7 @@ using Base.Threads
 
     # Really important to overload default function, gives 10x speed up?
     # Overload the default function to do what you pleas
-    function ComputeInteractions!(SimMetaData, SimConstants, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk, start_idx, end_idx, PerParticleNeighbors)
+    function ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk, start_idx, end_idx, PerParticleNeighbors)
         @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues = SimMetaData
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
@@ -259,8 +259,8 @@ using Base.Threads
             dvdtI[ichunk][i] = local_dvdtI
 
             if FlagOutputKernelValues
-                KernelThreaded[ichunk][i]         = local_Kernel
-                KernelGradientThreaded[ichunk][i] = local_KernelGradient
+                Kernel[i]         = local_Kernel
+                KernelGradient[i] = local_KernelGradient
             end
 
             if SimMetaData.FlagShifting
@@ -338,11 +338,6 @@ using Base.Threads
         @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ)
         @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(dρdtIThreaded, AccelerationThreaded)
 
-        if SimMetaData.FlagOutputKernelValues
-            @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(Kernel, KernelGradient)
-            @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(KernelThreaded, KernelGradientThreaded)
-        end
-
         if SimMetaData.FlagShifting
             @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(∇Cᵢ, ∇◌rᵢ)
             @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(∇CᵢThreaded, ∇◌rᵢThreaded)
@@ -351,7 +346,8 @@ using Base.Threads
 
     
         @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-        @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimMetaData, SimConstants, PerParticleNeighbors, IndexStarts, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtIThreaded, AccelerationThreaded,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter)
+        @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimMetaData, SimConstants, PerParticleNeighbors, IndexStarts, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtIThreaded, AccelerationThreaded,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter)
+
         @timeit SimMetaData.HourGlass "Reduction"                            reduce_sum!(dρdtI, dρdtIThreaded)
         @timeit SimMetaData.HourGlass "Reduction"                            reduce_sum!(Acceleration, AccelerationThreaded)
 
@@ -374,11 +370,6 @@ using Base.Threads
         @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ)
         @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(dρdtIThreaded, AccelerationThreaded)
 
-        if SimMetaData.FlagOutputKernelValues
-            @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(Kernel, KernelGradient)
-            @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(KernelThreaded, KernelGradientThreaded)
-        end
-
         if SimMetaData.FlagShifting
             @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(∇Cᵢ, ∇◌rᵢ)
             @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(∇CᵢThreaded, ∇◌rᵢThreaded)
@@ -391,12 +382,6 @@ using Base.Threads
         @timeit SimMetaData.HourGlass "08 Second NeighborLoop"      NeighborLoop!(SimMetaData, SimConstants, PerParticleNeighbors, IndexStarts, Positionₙ⁺, KernelThreaded, KernelGradientThreaded, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtIThreaded, AccelerationThreaded, ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter)
         @timeit SimMetaData.HourGlass "Reduction"                   reduce_sum!(dρdtI, dρdtIThreaded)
         @timeit SimMetaData.HourGlass "Reduction"                   reduce_sum!(Acceleration, AccelerationThreaded)
-
-            
-        if SimMetaData.FlagOutputKernelValues
-            @timeit SimMetaData.HourGlass "Reduction"               reduce_sum!(Kernel, KernelThreaded)
-            @timeit SimMetaData.HourGlass "Reduction"               reduce_sum!(KernelGradient, KernelGradientThreaded)
-        end
 
         if SimMetaData.FlagShifting
             @timeit SimMetaData.HourGlass "Reduction"               reduce_sum!(∇Cᵢ, ∇CᵢThreaded)
@@ -480,8 +465,8 @@ using Base.Threads
     
         @inline begin
             n_copy = Base.Threads.nthreads()
-            KernelThreaded         = [copy(SimParticles.Kernel)         for _ in 1:n_copy]
-            KernelGradientThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
+            KernelThreaded         = zeros(FloatType, NumberOfPoints)
+            KernelGradientThreaded = zeros(SVector{Dimensions,FloatType},NumberOfPoints)  
             dρdtIThreaded          = [copy(dρdtI)                       for _ in 1:n_copy]
             AccelerationThreaded   = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
             ∇CᵢThreaded            = [copy(∇Cᵢ )                        for _ in 1:n_copy]
