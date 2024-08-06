@@ -27,9 +27,9 @@ using HDF5
 using Base.Threads
 
     function ConstructStencil(v::Val{d}) where d
-        n_ = CartesianIndices(ntuple(_->-1:1,v))
-        half_length = length(n_) ÷ 2
-        n  = n_[1:half_length]
+        n = CartesianIndices(ntuple(_->-1:1,v))
+        # half_length = length(n_) ÷ 2
+        # n  = n_[1:half_length]
 
         return n
     end
@@ -165,7 +165,7 @@ using Base.Threads
         xᵢⱼ  = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)              
         if  xᵢⱼ² <= H²
-            # #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/2
+            #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/2
             dᵢⱼ  = sqrt(abs(xᵢⱼ²))
 
             q         = min(dᵢⱼ * h⁻¹, 2.0)
@@ -276,7 +276,7 @@ using Base.Threads
             if FlagOutputKernelValues
                 Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
                 KernelThreaded[ichunk][i]         += Wᵢⱼ
-                #KernelThreaded[ichunk][j]         += Wᵢⱼ
+                KernelThreaded[ichunk][j]         += Wᵢⱼ
                 KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
                 #KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
             end
