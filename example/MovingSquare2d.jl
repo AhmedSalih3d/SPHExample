@@ -60,7 +60,7 @@ let
 
     SimLogger = SimulationLogger(SimMetaDataMovingSquare.SaveLocation)
 
-    RunSimulation(
+    @profview RunSimulation(
         SimGeometry        = SimulationGeometry,
         SimMetaData        = SimMetaDataMovingSquare,
         SimConstants       = SimConstantsMovingSquare,
