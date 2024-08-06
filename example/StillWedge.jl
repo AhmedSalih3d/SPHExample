@@ -24,14 +24,14 @@ let
         "Type"        => Fluid,
         "Motion"      => nothing
     )
-
+# 
 
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="StillWedge", 
         SaveLocation="E:/SecondApproach/TESTING_CPU_StillWedge",
-        SimulationTime=0.1,
+        SimulationTime=0,
         OutputEach=0.01,
-        VisualizeInParaview=true,
+        VisualizeInParaview=false,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=true,
         FlagLog=true,

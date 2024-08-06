@@ -46,7 +46,7 @@ using Base.Threads
     end
 
     ###=== Function to update ordering
-    function UpdateNeighbors!(Particles, Stencil, CutOff, SortingScratchSpace, ParticleRanges, PerParticleNeighbors, IndexStarts, UniqueCells)
+    function UpdateNeighbors!(Particles, Stencil, CutOff, SortingScratchSpace, ParticleRanges, SplitPerParticleNeighbors, PerParticleNeighbors, SplitIndexStarts, IndexStarts, UniqueCells)
         ExtractCells!(Particles, CutOff)
 
         sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
@@ -69,6 +69,58 @@ using Base.Threads
         ## Generate PerParticleNeighbors list
 
         resize!(PerParticleNeighbors, 0)
+
+        @. empty!(SplitIndexStarts)
+        @. empty!(SplitPerParticleNeighbors)
+
+        
+        # @inbounds @threads for (ichunk, iter_) in enumerate(chunks(1:8; n = nthreads()))
+        @inbounds for (ichunk, iter_) in enumerate(chunks(1:IndexCounter; n = nthreads()))
+            current_index = 1
+
+            for iter ∈ iter_
+                CellIndex = UniqueCells[iter]
+
+                StartIndex = ParticleRanges[iter] 
+                EndIndex   = ParticleRanges[iter+1] - 1
+
+                for i = StartIndex:EndIndex
+        
+                    push!(SplitPerParticleNeighbors[ichunk], i) # Add the particle index it self
+                    push!(SplitIndexStarts[ichunk],current_index)  # Mark the start of this particle's neighbors in NeighborListVector
+                    current_index += 1
+        
+                    # Add neighbors from the cell it self and neighboring cells based on the stencil
+                    for S in Stencil
+                        SCellIndex = CellIndex + S
+        
+                        id = findfirst(isequal(SCellIndex), UniqueCells)
+                        
+                        if !isnothing(id)
+                            StartIndex_ = ParticleRanges[id]
+                            EndIndex_   = ParticleRanges[id + 1] - 1
+                            @inbounds for j = StartIndex_:EndIndex_
+                                if i != j
+                                    push!(SplitPerParticleNeighbors[ichunk], j)
+                                    current_index += 1
+                                end
+                            end
+                        end
+                    end
+                    
+                    push!(SplitPerParticleNeighbors[ichunk], 0)  # Separator after listing all neighbors for particle i
+                    current_index += 1
+                end
+            end
+        end
+
+        # We get nthreads-1 zeros too many
+        for inner_iter = 1:(nthreads()-1)
+            pop!(SplitPerParticleNeighbors[inner_iter])
+        end
+
+        TestIS = reduce((a, b) -> vcat(a, b)   , SplitIndexStarts)
+        TestPR = reduce((a, b) -> vcat(a, 0, b), SplitPerParticleNeighbors)
 
         current_index = 1
         for iter = 1:IndexCounter
@@ -106,6 +158,17 @@ using Base.Threads
                 current_index += 1
             end
         end
+
+        # println(length(TestPR) , " ", length(PerParticleNeighbors))
+        # println(TestPR == PerParticleNeighbors)
+
+        
+        println(length(TestIS) , " ", length(IndexStarts))
+        println(IndexStarts[1:10])
+        println(TestIS[1:10])
+
+        # IndexStarts          .= TestIS
+        # PerParticleNeighbors .= TestPR
 
         return IndexCounter 
     end
@@ -289,7 +352,7 @@ using Base.Threads
         end
     end
     
-    @inbounds function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, PerParticleNeighbors, IndexStarts, UniqueCells, SortingScratchSpace, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, InverseCutOff)
+    @inbounds function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, SplitPerParticleNeighbors, PerParticleNeighbors, SplitIndexStarts, IndexStarts, UniqueCells, SortingScratchSpace, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, InverseCutOff)
         Position       = SimParticles.Position
         Density        = SimParticles.Density
         Pressure       = SimParticles.Pressure
@@ -325,7 +388,7 @@ using Base.Threads
         # c₀ >= maximum(norm.(Velocity))
         # Remove if statement logic if you want to update each iteration
         if mod(SimMetaData.Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
-            @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, Stencil, InverseCutOff, SortingScratchSpace,  ParticleRanges, PerParticleNeighbors, IndexStarts, UniqueCells)
+            @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, Stencil, InverseCutOff, SortingScratchSpace,  ParticleRanges, SplitPerParticleNeighbors, PerParticleNeighbors, SplitIndexStarts, IndexStarts, UniqueCells)
         else
             IndexCounter    = findfirst(isequal(0), ParticleRanges) - 2
         end
@@ -434,6 +497,13 @@ using Base.Threads
         _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
 
         PerParticleNeighbors   = Vector{Int}()
+
+        @inline begin
+            n_copy = Base.Threads.nthreads()
+            SplitPerParticleNeighbors  = [Vector{Int}() for _ in 1:n_copy] 
+            SplitIndexStarts           = [Vector{Int}() for _ in 1:n_copy]
+        end
+
         IndexStarts            = zeros(Int,NumberOfPoints)
     
         # Produce data saving functions
@@ -466,7 +536,7 @@ using Base.Threads
     
         @inbounds while true
     
-            SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, PerParticleNeighbors, IndexStarts, UniqueCells, SortingScratchSpace, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, InverseCutOff)
+            SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, SplitPerParticleNeighbors, PerParticleNeighbors, SplitIndexStarts, IndexStarts, UniqueCells, SortingScratchSpace, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, InverseCutOff)
     
             if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
     
