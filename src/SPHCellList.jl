@@ -67,9 +67,6 @@ using Base.Threads
         ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
 
         ## Generate PerParticleNeighbors list
-
-        resize!(PerParticleNeighbors, 0)
-
         @. empty!(SplitIndexStarts)
         @. empty!(SplitPerParticleNeighbors)
 
@@ -121,55 +118,9 @@ using Base.Threads
         TestIS = reduce((a, b) -> vcat(a, b)   , SplitIndexStarts)
         TestPR = reduce((a, b) -> vcat(a, 0, b), SplitPerParticleNeighbors)
 
-        current_index = 1
-        for iter = 1:IndexCounter
-            
-            CellIndex = UniqueCells[iter]
-        
-            StartIndex = ParticleRanges[iter] 
-            EndIndex   = ParticleRanges[iter+1] - 1
-
-            for i = StartIndex:EndIndex
-
-                push!(PerParticleNeighbors, i) # Add the particle index it self
-                IndexStarts[i] = current_index  # Mark the start of this particle's neighbors in NeighborListVector
-                current_index += 1
-
-                # Add neighbors from the cell it self and neighboring cells based on the stencil
-                for S in Stencil
-                    SCellIndex = CellIndex + S
-
-                    id = findfirst(isequal(SCellIndex), UniqueCells)
-                    
-                    if !isnothing(id)
-                        StartIndex_ = ParticleRanges[id]
-                        EndIndex_   = ParticleRanges[id + 1] - 1
-                        @inbounds for j = StartIndex_:EndIndex_
-                            if i != j
-                                push!(PerParticleNeighbors, j)
-                                current_index += 1
-                            end
-                        end
-                    end
-                end
-                
-                push!(PerParticleNeighbors, 0)  # Separator after listing all neighbors for particle i
-                current_index += 1
-            end
-        end
-
-        # println(length(TestPR) , " ", length(PerParticleNeighbors))
-        # println(TestPR == PerParticleNeighbors)
-
-        
-        # println(length(TestIS) , " ", length(IndexStarts))
-        println(IndexStarts[250:280])
-        println(TestIS[250:280])
-
-        println(IndexStarts == TestIS)
-
-        # IndexStarts          .= TestIS
-        # PerParticleNeighbors .= TestPR
+        IndexStarts          .= TestIS
+        resize!(PerParticleNeighbors, length(TestPR))
+        PerParticleNeighbors .= TestPR
 
         return IndexCounter 
     end
