@@ -27,11 +27,7 @@ using HDF5
 using Base.Threads
 
     function ConstructStencil(v::Val{d}) where d
-        n = CartesianIndices(ntuple(_->-1:1,v))
-        # half_length = length(n_) ÷ 2
-        # n  = n_[1:half_length]
-
-        return n
+        return CartesianIndices(ntuple(_->-1:1,v))
     end
 
     @inline function ExtractCells!(Particles, ::Val{InverseCutOff}) where InverseCutOff
