@@ -113,7 +113,6 @@ using Base.Threads
 ###=== Function to process each cell and its neighbors
     function NeighborLoop!(SimMetaData, SimConstants, PerParticleNeighbors, IndexStarts, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  ∇Cᵢ, ∇◌rᵢ, MotionLimiter)
 
-        ichunk = 1
         @inbounds @threads for i in eachindex(IndexStarts)
             start_idx = IndexStarts[i]
             end_idx   = findnext(==(0), PerParticleNeighbors, start_idx + 1) - 1  # Finds the next zero after the current index start
@@ -121,7 +120,7 @@ using Base.Threads
             # println("Start: ", start_idx, " | ", "End: ", end_idx)
             # println("Start: ", PerParticleNeighbors[start_idx], " | ", "End: ", PerParticleNeighbors[end_idx])
 
-            @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇Cᵢ, ∇◌rᵢ, PerParticleNeighbors[start_idx], 0, MotionLimiter, ichunk, start_idx, end_idx, PerParticleNeighbors)
+            @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇Cᵢ, ∇◌rᵢ, MotionLimiter, PerParticleNeighbors[start_idx], start_idx, end_idx, PerParticleNeighbors)
         end
        
         return nothing
@@ -129,7 +128,7 @@ using Base.Threads
 
     # Really important to overload default function, gives 10x speed up?
     # Overload the default function to do what you pleas
-    function ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇Cᵢ, ∇◌rᵢ, i, j, MotionLimiter, ichunk, start_idx, end_idx, PerParticleNeighbors)
+    function ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇Cᵢ, ∇◌rᵢ, MotionLimiter, i, start_idx, end_idx, PerParticleNeighbors)
         @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues = SimMetaData
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
