@@ -81,7 +81,7 @@ using Base.Threads
 
                 push!(PerParticleNeighbors, i) # Add the particle index it self
 
-                # Add neighbors from neighboring cells based on the stencil
+                # Add neighbors from the cell it self and neighboring cells based on the stencil
                 for S in Stencil
                     SCellIndex = CellIndex + S
 
