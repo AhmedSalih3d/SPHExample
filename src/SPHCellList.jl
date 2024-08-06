@@ -113,19 +113,19 @@ using Base.Threads
 ###=== Function to process each cell and its neighbors
     function NeighborLoop!(SimMetaData, SimConstants, PerParticleNeighbors, IndexStarts, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter)
         
-        RoughChunks = chunks(PerParticleNeighbors; n=nthreads())
-        FinalChunks = Vector{StepRange{Int,Int}}()
+        # RoughChunks = chunks(PerParticleNeighbors; n=nthreads())
+        # FinalChunks = Vector{StepRange{Int,Int}}()
 
-        old_zero_splitter = 0
-        for it = 1:length(RoughChunks)
-            zero_splitter = findnext(x->x==0,PerParticleNeighbors,RoughChunks[it][end])
+        # old_zero_splitter = 0
+        # for it = 1:length(RoughChunks)
+        #     zero_splitter = findnext(x->x==0,PerParticleNeighbors,RoughChunks[it][end])
 
-            current_chunk = (old_zero_splitter+1):zero_splitter
+        #     current_chunk = (old_zero_splitter+1):zero_splitter
 
-            old_zero_splitter = zero_splitter
+        #     old_zero_splitter = zero_splitter
 
-            push!(FinalChunks, current_chunk)
-        end
+        #     push!(FinalChunks, current_chunk)
+        # end
 
         ichunk = 1
         @inbounds @threads for i in eachindex(IndexStarts)
