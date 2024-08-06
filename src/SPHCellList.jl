@@ -74,48 +74,64 @@ using Base.Threads
 
         resize!(PerParticleNeighbors, 0)
 
-        for iter = 120#:IndexCounter
+        #println(UniqueCells)
+
+        for iter = 1:IndexCounter
             
             CellIndex = UniqueCells[iter]
         
             StartIndex = ParticleRanges[iter] 
             EndIndex   = ParticleRanges[iter+1] - 1
 
-            println("CellIndex: ", CellIndex)
+            # println("CellIndex: ", CellIndex)
             for i = StartIndex:EndIndex
 
-                println("Particle in box: ", i)
+                # println("Particle in box: ", i)
 
                 push!(PerParticleNeighbors, i) # Add the particle index it self
 
                 # Add all the particles in the same cell, other than the particle it self
-                print("In box neighbors: ")
-                for k = StartIndex:EndIndex
-                   if k != i
-                        push!(PerParticleNeighbors, k)
-                        print(k,",")
-                   end
-                end
-                println("")
+                # print("In box neighbors: ")
+                # for k = StartIndex:EndIndex
+                #    if k != i
+                #         push!(PerParticleNeighbors, k)
+                #         print(k,",")
+                #    end
+                # end
+                # println("")
                 
                 # Add neighbors from neighboring cells based on the stencil
                 for S in Stencil
                     SCellIndex = CellIndex + S
 
-                    println("Neighbor CellIndex: ", SCellIndex)
+                    #NeighborCellRange = searchsorted(UniqueCells, SCellIndex)
 
-                    NeighborCellRange = searchsorted(UniqueCells, SCellIndex)
+                    # println(in(SCellIndex, UniqueCells))
+                    # println(findfirst(isequal(SCellIndex), UniqueCells))
+                    # println(NeighborCellRange)
 
-                    if length(NeighborCellRange) != 0
-                        StartIndex_ = ParticleRanges[NeighborCellRange[1]]
-                        EndIndex_   = ParticleRanges[NeighborCellRange[1] + 1] - 1
-                        print("In this box: ")
+                    if in(SCellIndex, UniqueCells)
+                        # println("Neighbor CellIndex: ", SCellIndex)
+                        id = findfirst(isequal(SCellIndex), UniqueCells)
+                        StartIndex_ = ParticleRanges[id]
+                        EndIndex_   = ParticleRanges[id + 1] - 1
+                        # print("In this box: ")
                         @inbounds for j = StartIndex_:EndIndex_
                             push!(PerParticleNeighbors, j)
-                            print(j,",")
+                            # print(j,",")
                         end
                     end
-                    println("")
+
+                    # if length(NeighborCellRange) != 0
+                    #     StartIndex_ = ParticleRanges[NeighborCellRange[1]]
+                    #     EndIndex_   = ParticleRanges[NeighborCellRange[1] + 1] - 1
+                    #     print("In this box: ")
+                    #     @inbounds for j = StartIndex_:EndIndex_
+                    #         push!(PerParticleNeighbors, j)
+                    #         print(j,",")
+                    #     end
+                    # end
+                    # println("")
                 end
                 
                 push!(PerParticleNeighbors, 0)  # Separator after listing all neighbors for particle i
