@@ -118,6 +118,7 @@ using Base.Threads
         TestIS = reduce((a, b) -> vcat(a, b)   , SplitIndexStarts)
         TestPR = reduce((a, b) -> vcat(a, 0, b), SplitPerParticleNeighbors)
 
+        resize!(IndexStarts, length(TestIS))
         IndexStarts          .= TestIS
         resize!(PerParticleNeighbors, length(TestPR))
         PerParticleNeighbors .= TestPR
