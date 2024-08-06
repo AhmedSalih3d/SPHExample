@@ -46,7 +46,7 @@ using Base.Threads
     end
 
     ###=== Function to update ordering
-    function UpdateNeighbors!(Particles, Stencil, CutOff, SortingScratchSpace, ParticleRanges, PerParticleNeighbors, UniqueCells)
+    function UpdateNeighbors!(Particles, Stencil, CutOff, SortingScratchSpace, ParticleRanges, PerParticleNeighbors, IndexStarts, UniqueCells)
         ExtractCells!(Particles, CutOff)
 
         sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
@@ -70,6 +70,7 @@ using Base.Threads
 
         resize!(PerParticleNeighbors, 0)
 
+        current_index = 1
         for iter = 1:IndexCounter
             
             CellIndex = UniqueCells[iter]
@@ -80,6 +81,8 @@ using Base.Threads
             for i = StartIndex:EndIndex
 
                 push!(PerParticleNeighbors, i) # Add the particle index it self
+                IndexStarts[i] = current_index  # Mark the start of this particle's neighbors in NeighborListVector
+                current_index += 1
 
                 # Add neighbors from the cell it self and neighboring cells based on the stencil
                 for S in Stencil
@@ -90,12 +93,16 @@ using Base.Threads
                         StartIndex_ = ParticleRanges[id]
                         EndIndex_   = ParticleRanges[id + 1] - 1
                         @inbounds for j = StartIndex_:EndIndex_
-                            push!(PerParticleNeighbors, j)
+                            if i != j
+                                push!(PerParticleNeighbors, j)
+                                current_index += 1
+                            end
                         end
                     end
                 end
                 
                 push!(PerParticleNeighbors, 0)  # Separator after listing all neighbors for particle i
+                current_index += 1
             end
         end
 
@@ -104,7 +111,7 @@ using Base.Threads
 
 # Neither Polyester.@batch per core or thread is faster
 ###=== Function to process each cell and its neighbors
-    function NeighborLoop!(SimMetaData, SimConstants, PerParticleNeighbors, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter)
+    function NeighborLoop!(SimMetaData, SimConstants, PerParticleNeighbors, IndexStarts, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter)
         
         RoughChunks = chunks(PerParticleNeighbors; n=nthreads())
         FinalChunks = Vector{StepRange{Int,Int}}()
@@ -121,25 +128,14 @@ using Base.Threads
         end
 
         ichunk = 1
-        @threads for ThreadIndices ∈ FinalChunks
-            Indices = @views PerParticleNeighbors[ThreadIndices]
-
-            k = 1
-            loop_counter = 0
-            while k < length(Indices)
-                loop_counter += 1
-
-                i = Indices[k]
-                j = Indices[k+loop_counter]
-                
-                if j != 0
-                    @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
-                else
-                    # Think something wrong tbh
-                    k = k + loop_counter + 1
-
-                    loop_counter = 0
-                end 
+        @inbounds @threads for i in eachindex(IndexStarts)
+            start_idx = IndexStarts[i]
+            end_idx   = findnext(==(0), PerParticleNeighbors, start_idx + 1) - 1  # Finds the next zero after the current index start
+            
+            # println("Start: ", start_idx, " | ", "End: ", end_idx)
+            # println("Start: ", PerParticleNeighbors[start_idx], " | ", "End: ", PerParticleNeighbors[end_idx])
+            @inbounds for j = (start_idx+1):end_idx
+                @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, PerParticleNeighbors[start_idx], PerParticleNeighbors[j], MotionLimiter, ichunk)
             end
         end
        
@@ -283,7 +279,7 @@ using Base.Threads
         end
     end
     
-    @inbounds function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, PerParticleNeighbors, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
+    @inbounds function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, PerParticleNeighbors, IndexStarts, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
         Position       = SimParticles.Position
         Density        = SimParticles.Density
         Pressure       = SimParticles.Pressure
@@ -319,7 +315,7 @@ using Base.Threads
         # c₀ >= maximum(norm.(Velocity))
         # Remove if statement logic if you want to update each iteration
         if mod(SimMetaData.Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
-            @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, Stencil, InverseCutOff, SortingScratchSpace,  ParticleRanges, PerParticleNeighbors, UniqueCells)
+            @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, Stencil, InverseCutOff, SortingScratchSpace,  ParticleRanges, PerParticleNeighbors, IndexStarts, UniqueCells)
         else
             IndexCounter    = findfirst(isequal(0), ParticleRanges) - 2
         end
@@ -345,7 +341,7 @@ using Base.Threads
 
     
         @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-        @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimMetaData, SimConstants, PerParticleNeighbors, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtIThreaded, AccelerationThreaded,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter)
+        @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimMetaData, SimConstants, PerParticleNeighbors, IndexStarts, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtIThreaded, AccelerationThreaded,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter)
         @timeit SimMetaData.HourGlass "Reduction"                            reduce_sum!(dρdtI, dρdtIThreaded)
         @timeit SimMetaData.HourGlass "Reduction"                            reduce_sum!(Acceleration, AccelerationThreaded)
 
@@ -382,7 +378,7 @@ using Base.Threads
         @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
     
         @timeit SimMetaData.HourGlass "03 Pressure"                 Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-        @timeit SimMetaData.HourGlass "08 Second NeighborLoop"      NeighborLoop!(SimMetaData, SimConstants, PerParticleNeighbors, Positionₙ⁺, KernelThreaded, KernelGradientThreaded, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtIThreaded, AccelerationThreaded, ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter)
+        @timeit SimMetaData.HourGlass "08 Second NeighborLoop"      NeighborLoop!(SimMetaData, SimConstants, PerParticleNeighbors, IndexStarts, Positionₙ⁺, KernelThreaded, KernelGradientThreaded, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtIThreaded, AccelerationThreaded, ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter)
         @timeit SimMetaData.HourGlass "Reduction"                   reduce_sum!(dρdtI, dρdtIThreaded)
         @timeit SimMetaData.HourGlass "Reduction"                   reduce_sum!(Acceleration, AccelerationThreaded)
 
@@ -489,6 +485,7 @@ using Base.Threads
         _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
 
         PerParticleNeighbors   = Vector{Int}()
+        IndexStarts            = zeros(Int,NumberOfPoints)
     
         # Produce data saving functions
         SaveLocation_ = SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName
@@ -520,7 +517,7 @@ using Base.Threads
     
         @inbounds while true
     
-            SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, PerParticleNeighbors, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
+            SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, PerParticleNeighbors, IndexStarts, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
     
             if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
     
