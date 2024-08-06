@@ -111,7 +111,7 @@ using Base.Threads
 
 # Neither Polyester.@batch per core or thread is faster
 ###=== Function to process each cell and its neighbors
-    function NeighborLoop!(SimMetaData, SimConstants, PerParticleNeighbors, IndexStarts, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter)
+    function NeighborLoop!(SimMetaData, SimConstants, PerParticleNeighbors, IndexStarts, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  ∇Cᵢ, ∇◌rᵢ, MotionLimiter)
 
         ichunk = 1
         @inbounds @threads for i in eachindex(IndexStarts)
@@ -121,7 +121,7 @@ using Base.Threads
             # println("Start: ", start_idx, " | ", "End: ", end_idx)
             # println("Start: ", PerParticleNeighbors[start_idx], " | ", "End: ", PerParticleNeighbors[end_idx])
 
-            @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, PerParticleNeighbors[start_idx], 0, MotionLimiter, ichunk, start_idx, end_idx, PerParticleNeighbors)
+            @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇Cᵢ, ∇◌rᵢ, PerParticleNeighbors[start_idx], 0, MotionLimiter, ichunk, start_idx, end_idx, PerParticleNeighbors)
         end
        
         return nothing
@@ -129,7 +129,7 @@ using Base.Threads
 
     # Really important to overload default function, gives 10x speed up?
     # Overload the default function to do what you pleas
-    function ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk, start_idx, end_idx, PerParticleNeighbors)
+    function ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇Cᵢ, ∇◌rᵢ, i, j, MotionLimiter, ichunk, start_idx, end_idx, PerParticleNeighbors)
         @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues = SimMetaData
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
@@ -264,8 +264,8 @@ using Base.Threads
             end
 
             if SimMetaData.FlagShifting
-                ∇◌rᵢThreaded[ichunk][i] = local_∇◌rᵢ
-                ∇CᵢThreaded[ichunk][i]  = local_∇Cᵢ
+                ∇◌rᵢ[i] = local_∇◌rᵢ
+                ∇Cᵢ[i]  = local_∇Cᵢ
             end
         end
 
@@ -289,7 +289,7 @@ using Base.Threads
         end
     end
     
-    @inbounds function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, PerParticleNeighbors, IndexStarts, UniqueCells, SortingScratchSpace, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
+    @inbounds function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, PerParticleNeighbors, IndexStarts, UniqueCells, SortingScratchSpace, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, InverseCutOff)
         Position       = SimParticles.Position
         Density        = SimParticles.Density
         Pressure       = SimParticles.Pressure
@@ -334,22 +334,8 @@ using Base.Threads
 
         @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
     
-        ###=== First step of resetting arrays
-        @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ)
-        if SimMetaData.FlagShifting
-            @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(∇Cᵢ, ∇◌rᵢ)
-            @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(∇CᵢThreaded, ∇◌rᵢThreaded)
-        end
-        ###===
-
-    
         @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-        @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimMetaData, SimConstants, PerParticleNeighbors, IndexStarts, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, Acceleration,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter)
-        
-        if SimMetaData.FlagShifting
-            @timeit SimMetaData.HourGlass "Reduction"                        reduce_sum!(∇Cᵢ, ∇CᵢThreaded)
-            @timeit SimMetaData.HourGlass "Reduction"                        reduce_sum!(∇◌rᵢ, ∇◌rᵢThreaded)
-        end
+        @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimMetaData, SimConstants, PerParticleNeighbors, IndexStarts, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, Acceleration,  ∇Cᵢ, ∇◌rᵢ, MotionLimiter)
     
     
         @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" @inbounds for i in eachindex(Position)
@@ -361,29 +347,16 @@ using Base.Threads
     
         @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"  LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
     
-        ###=== Second step of resetting arrays
-        @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ)
-        if SimMetaData.FlagShifting
-            @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(∇Cᵢ, ∇◌rᵢ)
-            @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(∇CᵢThreaded, ∇◌rᵢThreaded)
-        end
-        ###===
 
         @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
     
         @timeit SimMetaData.HourGlass "03 Pressure"                 Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-        @timeit SimMetaData.HourGlass "08 Second NeighborLoop"      NeighborLoop!(SimMetaData, SimConstants, PerParticleNeighbors, IndexStarts, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtI, Acceleration, ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter)
+        @timeit SimMetaData.HourGlass "08 Second NeighborLoop"      NeighborLoop!(SimMetaData, SimConstants, PerParticleNeighbors, IndexStarts, Positionₙ⁺, Kernel, KernelGradient, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ, MotionLimiter)
 
-        if SimMetaData.FlagShifting
-            @timeit SimMetaData.HourGlass "Reduction"               reduce_sum!(∇Cᵢ, ∇CᵢThreaded)
-            @timeit SimMetaData.HourGlass "Reduction"               reduce_sum!(∇◌rᵢ, ∇◌rᵢThreaded)
-        end
-    
     
         @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
     
         @timeit SimMetaData.HourGlass "10 Final Density"                DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
-    
     
         if !SimMetaData.FlagShifting
             @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"  @inbounds for i in eachindex(Position)
@@ -454,12 +427,6 @@ using Base.Threads
         ∇Cᵢ               = zeros(SVector{Dimensions,FloatType},NumberOfPoints)            
         ∇◌rᵢ              = zeros(FloatType,NumberOfPoints)    
     
-        @inline begin
-            n_copy = Base.Threads.nthreads() 
-            ∇CᵢThreaded            = [copy(∇Cᵢ )                        for _ in 1:n_copy]
-            ∇◌rᵢThreaded           = [copy(∇◌rᵢ)                        for _ in 1:n_copy]   
-        end
-    
         # Produce sorting related variables
         ParticleRanges         = zeros(Int, NumberOfPoints + 1)
         UniqueCells            = zeros(CartesianIndex{Dimensions}, NumberOfPoints)
@@ -499,7 +466,7 @@ using Base.Threads
     
         @inbounds while true
     
-            SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, PerParticleNeighbors, IndexStarts, UniqueCells, SortingScratchSpace, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
+            SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, PerParticleNeighbors, IndexStarts, UniqueCells, SortingScratchSpace, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, InverseCutOff)
     
             if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
     
