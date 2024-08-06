@@ -74,10 +74,9 @@ using Base.Threads
         @. empty!(SplitPerParticleNeighbors)
 
         
-        # @inbounds @threads for (ichunk, iter_) in enumerate(chunks(1:8; n = nthreads()))
-        @inbounds for (ichunk, iter_) in enumerate(chunks(1:IndexCounter; n = nthreads()))
-            current_index = 1
+        current_index = Threads.Atomic{Int}(1)
 
+        @inbounds for (ichunk, iter_) in enumerate(chunks(1:IndexCounter; n = nthreads()))
             for iter ∈ iter_
                 CellIndex = UniqueCells[iter]
 
@@ -87,8 +86,8 @@ using Base.Threads
                 for i = StartIndex:EndIndex
         
                     push!(SplitPerParticleNeighbors[ichunk], i) # Add the particle index it self
-                    push!(SplitIndexStarts[ichunk],current_index)  # Mark the start of this particle's neighbors in NeighborListVector
-                    current_index += 1
+                    push!(SplitIndexStarts[ichunk],current_index[])  # Mark the start of this particle's neighbors in NeighborListVector
+                    Threads.atomic_add!(current_index, 1)
         
                     # Add neighbors from the cell it self and neighboring cells based on the stencil
                     for S in Stencil
@@ -102,14 +101,14 @@ using Base.Threads
                             @inbounds for j = StartIndex_:EndIndex_
                                 if i != j
                                     push!(SplitPerParticleNeighbors[ichunk], j)
-                                    current_index += 1
+                                    Threads.atomic_add!(current_index, 1)
                                 end
                             end
                         end
                     end
                     
                     push!(SplitPerParticleNeighbors[ichunk], 0)  # Separator after listing all neighbors for particle i
-                    current_index += 1
+                    Threads.atomic_add!(current_index, 1)
                 end
             end
         end
@@ -163,9 +162,11 @@ using Base.Threads
         # println(TestPR == PerParticleNeighbors)
 
         
-        println(length(TestIS) , " ", length(IndexStarts))
-        println(IndexStarts[1:10])
-        println(TestIS[1:10])
+        # println(length(TestIS) , " ", length(IndexStarts))
+        println(IndexStarts[250:280])
+        println(TestIS[250:280])
+
+        println(IndexStarts == TestIS)
 
         # IndexStarts          .= TestIS
         # PerParticleNeighbors .= TestPR
