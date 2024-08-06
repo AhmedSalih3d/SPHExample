@@ -122,7 +122,8 @@ using Base.Threads
             #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/2
             dᵢⱼ  = sqrt(abs(xᵢⱼ²))
 
-            q         = min(dᵢⱼ * h⁻¹, 2.0)
+            # clamp seems faster than min, no util
+            q         = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0) #min(dᵢⱼ * h⁻¹, 2.0) - 8% util no DDT
             invd²η²   =  1.0 / (dᵢⱼ*dᵢⱼ+η²)
             ∇ᵢWᵢⱼ     = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
             ρᵢ        = Density[i]
