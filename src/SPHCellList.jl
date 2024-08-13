@@ -319,7 +319,7 @@ using Base.Threads
         @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
     
         ###=== First step of resetting arrays
-        @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ)
+        @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(dρdtI, Acceleration)
         @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(dρdtIThreaded, AccelerationThreaded)
 
         if SimMetaData.FlagOutputKernelValues
@@ -355,7 +355,7 @@ using Base.Threads
         @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"  LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
     
         ###=== Second step of resetting arrays
-        @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ)
+        @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(dρdtI, Acceleration)
         @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(dρdtIThreaded, AccelerationThreaded)
 
         if SimMetaData.FlagOutputKernelValues
