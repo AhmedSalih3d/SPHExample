@@ -21,6 +21,7 @@ export SimulationMetaData
     ProgressSpecification::ProgressUnknown  =  ProgressUnknown(desc="Burning the midnight oil:", spinner=true, showspeed=true) 
     FlagViscosityTreatment::Symbol          = :ArtificialViscosity; @assert in(FlagViscosityTreatment, Set((:None, :ArtificialViscosity, :Laminar, :LaminarSPS))) == true "ViscosityTreatment must be either :None, :ArtificialViscosity, :Laminar, :LaminarSPS"
     VisualizeInParaview::Bool               = true    
+    OpenLogFile::Bool                       = true
     FlagDensityDiffusion::Bool              = false
     FlagOutputKernelValues::Bool            = false     
     FlagLog::Bool                           = false

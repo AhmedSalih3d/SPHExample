@@ -32,6 +32,7 @@ let
         SimulationTime=4,
         OutputEach=0.01,
         VisualizeInParaview=true,
+        OpenLogFile=true,
         FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
         FlagLog=true,
