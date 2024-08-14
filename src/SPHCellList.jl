@@ -25,7 +25,6 @@ using TimerOutputs
 using Logging, LoggingExtras
 using HDF5
 using Base.Threads
-using InteractiveUtils
 
     function ConstructStencil(v::Val{d}) where d
         n_ = CartesianIndices(ntuple(_->-1:1,v))
