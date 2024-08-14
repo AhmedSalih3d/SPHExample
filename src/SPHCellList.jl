@@ -271,6 +271,40 @@ using Base.Threads
             end
         end
     end
+
+    function ResetStep!(SimMetaData, dρdtI, Acceleration, dρdtIThreaded, AccelerationThreaded, Kernel, KernelGradient, KernelThreaded, KernelGradientThreaded, ∇Cᵢ, ∇◌rᵢ, ∇CᵢThreaded, ∇◌rᵢThreaded)
+        ResetArrays!(dρdtI, Acceleration)
+        @. ResetArrays!(dρdtIThreaded, AccelerationThreaded)
+
+        if SimMetaData.FlagOutputKernelValues
+            ResetArrays!(Kernel, KernelGradient)
+            @. ResetArrays!(KernelThreaded, KernelGradientThreaded)
+        end
+
+        if SimMetaData.FlagShifting
+            ResetArrays!(∇Cᵢ, ∇◌rᵢ)
+            @. ResetArrays!(∇CᵢThreaded, ∇◌rᵢThreaded)
+        end
+
+        return nothing
+    end
+
+    function ReductionStep!(SimMetaData, dρdtI, dρdtIThreaded, Acceleration, AccelerationThreaded, Kernel, KernelThreaded, KernelGradient, KernelGradientThreaded, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded)
+        reduce_sum!(dρdtI, dρdtIThreaded)
+        reduce_sum!(Acceleration, AccelerationThreaded)
+  
+        if SimMetaData.FlagOutputKernelValues
+            reduce_sum!(Kernel, KernelThreaded)
+            reduce_sum!(KernelGradient, KernelGradientThreaded)
+        end
+
+        if SimMetaData.FlagShifting
+            reduce_sum!(∇Cᵢ, ∇CᵢThreaded)
+            reduce_sum!(∇◌rᵢ, ∇◌rᵢThreaded)
+        end
+    
+        return nothing
+    end
     
     @inbounds function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
         Position       = SimParticles.Position
@@ -319,31 +353,12 @@ using Base.Threads
         @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
     
         ###=== First step of resetting arrays
-        @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(dρdtI, Acceleration)
-        @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(dρdtIThreaded, AccelerationThreaded)
-
-        if SimMetaData.FlagOutputKernelValues
-            @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(Kernel, KernelGradient)
-            @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(KernelThreaded, KernelGradientThreaded)
-        end
-
-        if SimMetaData.FlagShifting
-            @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(∇Cᵢ, ∇◌rᵢ)
-            @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(∇CᵢThreaded, ∇◌rᵢThreaded)
-        end
+        @timeit SimMetaData.HourGlass "ResetArrays" ResetStep!(SimMetaData, dρdtI, Acceleration, dρdtIThreaded, AccelerationThreaded, Kernel, KernelGradient, KernelThreaded, KernelGradientThreaded, ∇Cᵢ, ∇◌rᵢ, ∇CᵢThreaded, ∇◌rᵢThreaded)
         ###===
-
     
         @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
         @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimMetaData, SimConstants, ParticleRanges, Stencil, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtIThreaded, AccelerationThreaded,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, EnumeratedIndices)
-        @timeit SimMetaData.HourGlass "Reduction"                            reduce_sum!(dρdtI, dρdtIThreaded)
-        @timeit SimMetaData.HourGlass "Reduction"                            reduce_sum!(Acceleration, AccelerationThreaded)
-
-        if SimMetaData.FlagShifting
-            @timeit SimMetaData.HourGlass "Reduction"                        reduce_sum!(∇Cᵢ, ∇CᵢThreaded)
-            @timeit SimMetaData.HourGlass "Reduction"                        reduce_sum!(∇◌rᵢ, ∇◌rᵢThreaded)
-        end
-    
+        @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, dρdtI, dρdtIThreaded, Acceleration, AccelerationThreaded, Kernel, KernelThreaded, KernelGradient, KernelGradientThreaded, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded)
     
         @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" @inbounds for i in eachindex(Position)
             Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
@@ -355,38 +370,15 @@ using Base.Threads
         @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"  LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
     
         ###=== Second step of resetting arrays
-        @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(dρdtI, Acceleration)
-        @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(dρdtIThreaded, AccelerationThreaded)
-
-        if SimMetaData.FlagOutputKernelValues
-            @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(Kernel, KernelGradient)
-            @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(KernelThreaded, KernelGradientThreaded)
-        end
-
-        if SimMetaData.FlagShifting
-            @timeit SimMetaData.HourGlass "ResetArrays" ResetArrays!(∇Cᵢ, ∇◌rᵢ)
-            @timeit SimMetaData.HourGlass "ResetArrays" @. ResetArrays!(∇CᵢThreaded, ∇◌rᵢThreaded)
-        end
+        ResetStep!(SimMetaData, dρdtI, Acceleration, dρdtIThreaded, AccelerationThreaded, Kernel, KernelGradient, KernelThreaded, KernelGradientThreaded, ∇Cᵢ, ∇◌rᵢ, ∇CᵢThreaded, ∇◌rᵢThreaded)
         ###===
 
         @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
     
         @timeit SimMetaData.HourGlass "03 Pressure"                 Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
         @timeit SimMetaData.HourGlass "08 Second NeighborLoop"      NeighborLoop!(SimMetaData, SimConstants, ParticleRanges, Stencil, Positionₙ⁺, KernelThreaded, KernelGradientThreaded, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtIThreaded, AccelerationThreaded, ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, EnumeratedIndices)
-        @timeit SimMetaData.HourGlass "Reduction"                   reduce_sum!(dρdtI, dρdtIThreaded)
-        @timeit SimMetaData.HourGlass "Reduction"                   reduce_sum!(Acceleration, AccelerationThreaded)
+        @timeit SimMetaData.HourGlass "Reduction"                   ReductionStep!(SimMetaData, dρdtI, dρdtIThreaded, Acceleration, AccelerationThreaded, Kernel, KernelThreaded, KernelGradient, KernelGradientThreaded, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded)
 
-            
-        if SimMetaData.FlagOutputKernelValues
-            @timeit SimMetaData.HourGlass "Reduction"               reduce_sum!(Kernel, KernelThreaded)
-            @timeit SimMetaData.HourGlass "Reduction"               reduce_sum!(KernelGradient, KernelGradientThreaded)
-        end
-
-        if SimMetaData.FlagShifting
-            @timeit SimMetaData.HourGlass "Reduction"               reduce_sum!(∇Cᵢ, ∇CᵢThreaded)
-            @timeit SimMetaData.HourGlass "Reduction"               reduce_sum!(∇◌rᵢ, ∇◌rᵢThreaded)
-        end
-    
     
         @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
     
