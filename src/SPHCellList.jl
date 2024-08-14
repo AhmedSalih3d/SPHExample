@@ -508,13 +508,12 @@ using Base.Threads
     
             if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
     
-
-            try 
-                @timeit HourGlass "12A Output Data" SaveFile(SimMetaData.OutputIterationCounter + 1)
-            catch err
-                @warn("File write failed.")
-                display(err)
-            end
+                try 
+                    @timeit HourGlass "12A Output Data" SaveFile(SimMetaData.OutputIterationCounter + 1)
+                catch err
+                    @warn("File write failed.")
+                    display(err)
+                end
     
                 if SimMetaData.FlagLog
                     LogStep(SimLogger, SimMetaData, HourGlass)
