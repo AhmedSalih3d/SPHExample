@@ -62,11 +62,11 @@ using Base.Threads
         ParticleRanges[IndexCounter]  = 1
         UniqueCells[IndexCounter]     = Cells[1]
 
-        for i in 2:length(Cells)
+        for i in eachindex(Cells)[2:end]
             if Cells[i] != Cells[i-1] # Equivalent to diff(Cells) != 0
-                IndexCounter                += 1
-                ParticleRanges[IndexCounter] = i
-                UniqueCells[IndexCounter]    = Cells[i]
+                IndexCounter                 += 1
+                ParticleRanges[IndexCounter]  = i
+                UniqueCells[IndexCounter]     = Cells[i]
             end
         end
         ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
