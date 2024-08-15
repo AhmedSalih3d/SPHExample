@@ -3,7 +3,7 @@ using StaticArrays
 using Base.Threads
 using HDF5
 
-export ResetArrays!, to_3d, CloseHDFVTKManually
+export ResetArrays!, to_3d, CloseHDFVTKManually, CleanUpSimulationFolder
 
 ResetArrays!(arrays...) = foreach(a -> fill!(a, zero(eltype(a))), arrays)
 
@@ -25,6 +25,20 @@ function CloseHDFVTKManually(directory_path::String)
             @warn(e)
         end
     end
+end
+
+function CleanUpSimulationFolder(FilePath)
+    # Delete previous result files
+    # https://discourse.julialang.org/t/find-what-has-locked-held-a-file/23278
+    GC.gc()
+    try
+        foreach(rm, filter(endswith(".vtkhdf"), readdir(FilePath,join=true)))
+    catch err
+        @warn("File could not be deleted, manually delete else program cannot conclude.")
+        display(err)
+    end
+
+    return nothing
 end
 
 end

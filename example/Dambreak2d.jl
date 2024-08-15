@@ -40,6 +40,8 @@ let
 
     SimLogger = SimulationLogger(SimMetaDataDambreak.SaveLocation)
 
+    CleanUpSimulationFolder(SimMetaDataDambreak.SaveLocation)
+
     RunSimulation(
         SimGeometry        = SimulationGeometry,
         SimMetaData        = SimMetaDataDambreak,

@@ -12,7 +12,7 @@ module SPHExample
     
     # Re-export desired functions from each submodule
     using .AuxillaryFunctions
-    export ResetArrays!, to_3d, CloseHDFVTKManually
+    export ResetArrays!, to_3d, CloseHDFVTKManually, CleanUpSimulationFolder
 
     using .PreProcess
     export LoadParticlesFromCSV_StaticArrays, AllocateDataStructures, LoadBoundaryNormals, ParticleType, Fluid, Fixed, Moving

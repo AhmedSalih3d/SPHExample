@@ -35,7 +35,7 @@ let
 
     SimMetaDataDambreak3D  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
-        SaveLocation="E:/SecondApproach/TESTING_CPU",
+        SaveLocation="E:/SecondApproach/TESTING_CPU_3DDambreak",
         SimulationTime=1.6,
         OutputEach=0.01,
         VisualizeInParaview=true,
@@ -51,6 +51,7 @@ let
     With only one particle layer for boundary, it seems that fluid particles
     can wiggle through when the initial water column is dissolved")
 
+    CleanUpSimulationFolder(SimMetaDataDambreak3D.SaveLocation)
 
     RunSimulation(
         SimGeometry        = SimulationGeometry,

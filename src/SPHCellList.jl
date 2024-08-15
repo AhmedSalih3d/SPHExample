@@ -427,17 +427,6 @@ using Base.Threads
         SimLogger::SimulationLogger
         ) where {Dimensions,FloatType}
     
-        
-        # Delete previous result files
-        # https://discourse.julialang.org/t/find-what-has-locked-held-a-file/23278
-        try
-            foreach(rm, filter(endswith(".vtkhdf"), readdir(SimMetaData.SaveLocation,join=true)))
-            GC.gc()
-        catch err
-            @warn("File could not be deleted, manually delete else program cannot conclude.")
-            display(err)
-        end
-    
         # Unpack the relevant simulation meta data
         @unpack HourGlass = SimMetaData;
     
