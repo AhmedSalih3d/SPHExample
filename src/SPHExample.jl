@@ -8,8 +8,9 @@ module SPHExample
     include("SimulationConstantsConfiguration.jl");
     include("SimulationLoggerConfiguration.jl");
     include("PreProcess.jl");
-    include("SPHCellList.jl")
-    
+    include("OpenExternalPrograms.jl")
+    include("SPHCellList.jl") #Must be last
+
     # Re-export desired functions from each submodule
     using .AuxillaryFunctions
     export ResetArrays!, to_3d, CloseHDFVTKManually, CleanUpSimulationFolder
@@ -37,6 +38,9 @@ module SPHExample
 
     using .SPHCellList
     export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!, RunSimulation
+
+    # using .OpenExternalPrograms
+    # export AutoOpenLogFile
 
 end
 
