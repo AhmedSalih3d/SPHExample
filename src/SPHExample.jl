@@ -39,8 +39,8 @@ module SPHExample
     using .SPHCellList
     export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!, RunSimulation
 
-    # using .OpenExternalPrograms
-    # export AutoOpenLogFile
+    using .OpenExternalPrograms
+    export AutoOpenLogFile, AutoOpenParaview
 
 end
 
