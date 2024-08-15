@@ -429,11 +429,10 @@ using Base.Threads
     
         
         # Delete previous result files
-        foreach(rm, filter(endswith(".vtp"), readdir(SimMetaData.SaveLocation,join=true)))
         # https://discourse.julialang.org/t/find-what-has-locked-held-a-file/23278
-        GC.gc()
         try
             foreach(rm, filter(endswith(".vtkhdf"), readdir(SimMetaData.SaveLocation,join=true)))
+            GC.gc()
         catch err
             @warn("File could not be deleted, manually delete else program cannot conclude.")
             display(err)
