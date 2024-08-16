@@ -1,6 +1,6 @@
 module PreProcess
 
-export LoadParticlesFromCSV_StaticArrays, LoadBoundaryNormals, AllocateDataStructures, ParticleType, Fluid, Fixed, Moving
+export LoadBoundaryNormals, AllocateDataStructures, ParticleType, Fluid, Fixed, Moving
 
 using CSV
 using DataFrames
