@@ -9,7 +9,6 @@ module SPHExample
     include("SimulationLoggerConfiguration.jl");
     include("PreProcess.jl");
     include("OpenExternalPrograms.jl")
-    include("ResolveAqua.jl") #Not a module
     include("SPHCellList.jl") #Must be last
 
     # Re-export desired functions from each submodule
