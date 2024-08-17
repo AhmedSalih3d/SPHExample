@@ -113,9 +113,11 @@ using Base.Threads
 
     # Really important to overload default function, gives 10x speed up?
     # Overload the default function to do what you pleas
-    function ComputeInteractions!(SimMetaData, SimConstants, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
+    function ComputeInteractions!(SimMetaData::SimulationMetaData{Dimensions, FloatType}, SimConstants, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk) where {Dimensions, FloatType}
         @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues = SimMetaData
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
+
+
 
         xᵢⱼ  = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)              
@@ -124,9 +126,9 @@ using Base.Threads
             dᵢⱼ  = sqrt(abs(xᵢⱼ²))
 
             # clamp seems faster than min, no util
-            q         = clamp(dᵢⱼ * h⁻¹, eltype(xᵢⱼ)(0.0), eltype(xᵢⱼ)(2.0)) #min(dᵢⱼ * h⁻¹, 2.0) - 8% util no DDT
-            invd²η²   =  eltype(xᵢⱼ)(1.0) / (dᵢⱼ*dᵢⱼ+η²)
-            ∇ᵢWᵢⱼ     = @fastpow (αD*eltype(xᵢⱼ)(5)*(q-eltype(xᵢⱼ)(2))^eltype(xᵢⱼ)(3)*q / (eltype(xᵢⱼ)(8)h*(q*h+η²)) ) * xᵢⱼ 
+            q::FloatType                         = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0) #min(dᵢⱼ * h⁻¹, 2.0) - 8% util no DDT
+            invd²η²::FloatType                   =  1.0 / (dᵢⱼ*dᵢⱼ+η²)
+            ∇ᵢWᵢⱼ::SVector{Dimensions,FloatType} = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ  #Integers do not need this type decl
             ρᵢ        = Density[i]
             ρⱼ        = Density[j]
         
@@ -140,8 +142,8 @@ using Base.Threads
             # Density diffusion
             if FlagDensityDiffusion
                 if SimConstants.g == 0
-                    ρᵢⱼᴴ  = 0.0
-                    ρⱼᵢᴴ  = 0.0
+                    ρᵢⱼᴴ  = zero(FloatType)
+                    ρⱼᵢᴴ  = zero(FloatType)
                 else
                     Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
                     ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
@@ -158,8 +160,8 @@ using Base.Threads
                 Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
                 Dⱼ    =  δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
             else
-                Dᵢ  = zero(ρᵢ)
-                Dⱼ  = 0.0
+                Dᵢ  = zero(FloatType)
+                Dⱼ  = Dᵢ
             end
             dρdtI[ichunk][i] += dρdt⁺ + Dᵢ
             dρdtI[ichunk][j] += dρdt⁻ + Dⱼ
@@ -172,13 +174,12 @@ using Base.Threads
             dvdt⁻   = - dvdt⁺
 
             if FlagViscosityTreatment == :ArtificialViscosity
-                ρ̄ᵢⱼ       = (ρᵢ+ρⱼ) * eltype(ρᵢ)(0.5)
-                cond      = dot(vᵢⱼ, xᵢⱼ)
-                cond_bool = cond < eltype(eltype(ρᵢ))(0.0)
-                μᵢⱼ       = h*cond * invd²η²
-                Πᵢ        = - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
-                # Πᵢ        = zero(SVector{2,Float32}) * - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) #* ∇ᵢWᵢⱼ
-                Πⱼ        = - Πᵢ
+                ρ̄ᵢⱼ::FloatType       = (ρᵢ+ρⱼ) * 0.5
+                cond                 = dot(vᵢⱼ, xᵢⱼ)
+                cond_bool            = cond < 0.0
+                μᵢⱼ                  = h*cond * invd²η²
+                Πᵢ                   = - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
+                Πⱼ                   = - Πᵢ
             else
                 Πᵢ        = zero(xᵢⱼ)
                 Πⱼ        = Πᵢ
@@ -226,25 +227,22 @@ using Base.Threads
                 dτdtⱼ  = dτdtᵢ
             end
 
-            # if i == 1
-            #     println(typeof(dvdtI[ichunk][i]), typeof(dvdt⁺), typeof(Πᵢ), typeof(ν₀∇²uᵢ), typeof(dτdtᵢ))
-            # end
             dvdtI[ichunk][i] += dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ
             dvdtI[ichunk][j] += dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
 
             
+            if FlagOutputKernelValues || SimMetaData.FlagShifting
+                Wᵢⱼ::FloatType  = @fastpow αD*(1-q/2)^4*(2*q + 1)
+            end
+
             if FlagOutputKernelValues
-                Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
                 KernelThreaded[ichunk][i]         += Wᵢⱼ
                 KernelThreaded[ichunk][j]         += Wᵢⱼ
                 KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
                 KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
             end
 
-
             if SimMetaData.FlagShifting
-                Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
-        
                 MLcond = MotionLimiter[i] * MotionLimiter[j]
 
                 ∇CᵢThreaded[ichunk][i]   += (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
