@@ -422,6 +422,19 @@ using CUDA
         return nothing
     end
     
+    
+    function GPUKernel!(y, x)
+        index = (blockIdx().x - Int32(1)) * blockDim().x + threadIdx().x
+        stride = gridDim().x * blockDim().x
+    
+        i = index
+        while i <= length(y)
+            @inbounds y[i] += x[i]
+            i += stride
+        end
+        return
+    end
+
     ###===
     function RunSimulation(;SimGeometry::Dict, #Don't further specify type for now
         SimMetaData::SimulationMetaData{Dimensions, FloatType},
@@ -490,6 +503,10 @@ using CUDA
                 MotionDefinition[group_marker] = motion
             end
         end
+
+        println("test")
+
+        println( CUDA.@profile @cuda threads=256 blocks=16 GPUKernel!(CUDA.zeros(5),CUDA.ones(5)) )
     
         # # Normal run and save data
         # generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
