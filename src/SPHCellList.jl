@@ -490,60 +490,60 @@ using Base.Threads
             end
         end
     
-        # Normal run and save data
-        generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
+        # # Normal run and save data
+        # generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
     
-        @inbounds while true
+        # @inbounds while true
     
-            SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
+        #     SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
     
 
-            if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
+        #     if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
     
-                try 
-                    @timeit HourGlass "12A Output Data" SaveFile(SimMetaData.OutputIterationCounter + 1)
-                catch err
-                    @warn("File write failed.")
-                    display(err)
-                end
+        #         try 
+        #             @timeit HourGlass "12A Output Data" SaveFile(SimMetaData.OutputIterationCounter + 1)
+        #         catch err
+        #             @warn("File write failed.")
+        #             display(err)
+        #         end
     
-                if SimMetaData.FlagLog
-                    LogStep(SimLogger, SimMetaData, HourGlass)
-                    SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
-                end
+        #         if SimMetaData.FlagLog
+        #             LogStep(SimLogger, SimMetaData, HourGlass)
+        #             SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
+        #         end
     
-                SimMetaData.OutputIterationCounter += 1
-            end
+        #         SimMetaData.OutputIterationCounter += 1
+        #     end
 
-            TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime)
-            @timeit HourGlass "13 Next TimeStep" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime, TimeLeftInSeconds))
+        #     TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime)
+        #     @timeit HourGlass "13 Next TimeStep" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime, TimeLeftInSeconds))
     
-            if SimMetaData.TotalTime > SimMetaData.SimulationTime
+        #     if SimMetaData.TotalTime > SimMetaData.SimulationTime
                 
-                if SimMetaData.FlagLog
-                    LogFinal(SimLogger, HourGlass)
-                    close(SimLogger.LoggerIo)
+        #         if SimMetaData.FlagLog
+        #             LogFinal(SimLogger, HourGlass)
+        #             close(SimLogger.LoggerIo)
              
-                    AutoOpenLogFile(SimLogger, SimMetaData)
-                end
+        #             AutoOpenLogFile(SimLogger, SimMetaData)
+        #         end
     
                 
-                # This should not be counted in actual run 
-                @timeit HourGlass "12B Close hdfvtk output files"  @threads for i in eachindex(fid_vector)
-                    if isassigned(fid_vector, i)
-                        close(fid_vector[i])
-                    end
-                end
+        #         # This should not be counted in actual run 
+        #         @timeit HourGlass "12B Close hdfvtk output files"  @threads for i in eachindex(fid_vector)
+        #             if isassigned(fid_vector, i)
+        #                 close(fid_vector[i])
+        #             end
+        #         end
     
-                finish!(SimMetaData.ProgressSpecification)
-                show(HourGlass,sortby=:name)
-                show(HourGlass)
+        #         finish!(SimMetaData.ProgressSpecification)
+        #         show(HourGlass,sortby=:name)
+        #         show(HourGlass)
 
-                AutoOpenParaview(SaveLocation_, SimMetaData, OutputVariableNames)
+        #         AutoOpenParaview(SaveLocation_, SimMetaData, OutputVariableNames)
                 
-                break
-            end
-        end
+        #         break
+        #     end
+        # end
     end
     
 
