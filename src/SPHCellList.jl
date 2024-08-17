@@ -425,10 +425,13 @@ using StructArrays
     
     
     function GPUKernel!(SimParticlesGPU, SimConstants)
+        @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
+
         index = (blockIdx().x - Int32(1)) * blockDim().x + threadIdx().x
         stride = gridDim().x * blockDim().x
     
         i = index
+
 
         # while i <= length(y)
         #     @inbounds y[i] += x[i]
