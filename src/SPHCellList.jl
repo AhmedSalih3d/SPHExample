@@ -27,6 +27,7 @@ using Logging, LoggingExtras
 using HDF5
 using Base.Threads
 using CUDA
+using StructArrays
 
     function ConstructStencil(v::Val{d}) where d
         n_ = CartesianIndices(ntuple(_->-1:1,v))
@@ -423,15 +424,15 @@ using CUDA
     end
     
     
-    function GPUKernel!(y, x)
+    function GPUKernel!(SimParticlesGPU)
         index = (blockIdx().x - Int32(1)) * blockDim().x + threadIdx().x
         stride = gridDim().x * blockDim().x
     
         i = index
-        while i <= length(y)
-            @inbounds y[i] += x[i]
-            i += stride
-        end
+        # while i <= length(y)
+        #     @inbounds y[i] += x[i]
+        #     i += stride
+        # end
         return
     end
 
@@ -504,9 +505,11 @@ using CUDA
             end
         end
 
-        println("test")
+        
 
-        println( CUDA.@profile @cuda threads=256 blocks=16 GPUKernel!(CUDA.zeros(5),CUDA.ones(5)) )
+        SimParticlesGPU = replace_storage(CuArray, SimParticles)
+
+        println( CUDA.@profile @cuda threads=256 blocks=16 GPUKernel!(SimParticlesGPU))
     
         # # Normal run and save data
         # generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
