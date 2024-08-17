@@ -424,11 +424,12 @@ using StructArrays
     end
     
     
-    function GPUKernel!(SimParticlesGPU)
+    function GPUKernel!(SimParticlesGPU, SimConstants)
         index = (blockIdx().x - Int32(1)) * blockDim().x + threadIdx().x
         stride = gridDim().x * blockDim().x
     
         i = index
+
         # while i <= length(y)
         #     @inbounds y[i] += x[i]
         #     i += stride
@@ -509,7 +510,7 @@ using StructArrays
 
         SimParticlesGPU = replace_storage(CuArray, SimParticles)
 
-        println( CUDA.@profile @cuda threads=256 blocks=16 GPUKernel!(SimParticlesGPU))
+        println( CUDA.@profile @cuda threads=256 blocks=16 GPUKernel!(SimParticlesGPU, SimConstants))
     
         # # Normal run and save data
         # generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
