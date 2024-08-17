@@ -432,11 +432,22 @@ using StructArrays
     
         i = index
 
+        # Replace unsafe_trunc with trunc if this ever errors
+        function map_floor(x)
+            unsafe_trunc(Int, muladd(x,1/h,2)) #InverseCutOff
+        end
 
-        # while i <= length(y)
-        #     @inbounds y[i] += x[i]
-        #     i += stride
-        # end
+        Cells  = SimParticlesGPU.Cells
+        Points = SimParticlesGPU.Position
+
+        while i <= length(SimParticlesGPU)
+            t = map(map_floor, Tuple(Points[i]))
+            @inbounds Cells[i] = CartesianIndex(t)
+
+            @cuprintln((Cells[i][1],",",Cells[i][2]))
+
+            i += stride
+        end
         return
     end
 
