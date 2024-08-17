@@ -444,10 +444,21 @@ using StructArrays
             t = map(map_floor, Tuple(Points[i]))
             @inbounds Cells[i] = CartesianIndex(t)
 
-            @cuprintln((Cells[i][1],",",Cells[i][2]))
+            #@cuprintln((Cells[i][1],",",Cells[i][2]))
 
             i += stride
         end
+
+        #Sort cells
+        for j in 1:length(SimParticlesGPU)
+            for k in 1:(length(SimParticlesGPU) - j)
+                if Cells[k] > Cells[k+1]
+                    Cells[k], Cells[k+1] = Cells[k+1], Cells[k]
+                end
+            end
+        end
+
+
         return
     end
 
@@ -525,7 +536,9 @@ using StructArrays
         SimParticlesGPU = replace_storage(CuArray, SimParticles)
 
         println( CUDA.@profile @cuda threads=256 blocks=16 GPUKernel!(SimParticlesGPU, SimConstants))
-    
+
+        #CUDA.@allowscalar println(issorted(SimParticlesGPU.Cells))
+
         # # Normal run and save data
         # generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
     
