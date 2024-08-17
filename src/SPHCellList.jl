@@ -124,9 +124,9 @@ using Base.Threads
             dᵢⱼ  = sqrt(abs(xᵢⱼ²))
 
             # clamp seems faster than min, no util
-            q         = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0) #min(dᵢⱼ * h⁻¹, 2.0) - 8% util no DDT
-            invd²η²   =  1.0 / (dᵢⱼ*dᵢⱼ+η²)
-            ∇ᵢWᵢⱼ     = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
+            q         = clamp(dᵢⱼ * h⁻¹, eltype(xᵢⱼ)(0.0), eltype(xᵢⱼ)(2.0)) #min(dᵢⱼ * h⁻¹, 2.0) - 8% util no DDT
+            invd²η²   =  eltype(xᵢⱼ)(1.0) / (dᵢⱼ*dᵢⱼ+η²)
+            ∇ᵢWᵢⱼ     = @fastpow (αD*eltype(xᵢⱼ)(5)*(q-eltype(xᵢⱼ)(2))^eltype(xᵢⱼ)(3)*q / (eltype(xᵢⱼ)(8)h*(q*h+η²)) ) * xᵢⱼ 
             ρᵢ        = Density[i]
             ρⱼ        = Density[j]
         
@@ -158,7 +158,7 @@ using Base.Threads
                 Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
                 Dⱼ    =  δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
             else
-                Dᵢ  = 0.0
+                Dᵢ  = zero(ρᵢ)
                 Dⱼ  = 0.0
             end
             dρdtI[ichunk][i] += dρdt⁺ + Dᵢ
@@ -172,11 +172,12 @@ using Base.Threads
             dvdt⁻   = - dvdt⁺
 
             if FlagViscosityTreatment == :ArtificialViscosity
-                ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
+                ρ̄ᵢⱼ       = (ρᵢ+ρⱼ) * eltype(ρᵢ)(0.5)
                 cond      = dot(vᵢⱼ, xᵢⱼ)
-                cond_bool = cond < 0.0
+                cond_bool = cond < eltype(eltype(ρᵢ))(0.0)
                 μᵢⱼ       = h*cond * invd²η²
                 Πᵢ        = - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
+                # Πᵢ        = zero(SVector{2,Float32}) * - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) #* ∇ᵢWᵢⱼ
                 Πⱼ        = - Πᵢ
             else
                 Πᵢ        = zero(xᵢⱼ)
@@ -224,7 +225,10 @@ using Base.Threads
                 dτdtᵢ  = zero(xᵢⱼ)
                 dτdtⱼ  = dτdtᵢ
             end
-        
+
+            # if i == 1
+            #     println(typeof(dvdtI[ichunk][i]), typeof(dvdt⁺), typeof(Πᵢ), typeof(ν₀∇²uᵢ), typeof(dτdtᵢ))
+            # end
             dvdtI[ichunk][i] += dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ
             dvdtI[ichunk][j] += dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
 
