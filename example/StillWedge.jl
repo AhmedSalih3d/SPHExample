@@ -2,7 +2,7 @@ using SPHExample
 
 let
     Dimensions = 2
-    FloatType  = Float64
+    FloatType  = Float32
 
     
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
@@ -31,10 +31,10 @@ let
         SaveLocation="E:/SecondApproach/TESTING_CPU_StillWedge",
         SimulationTime=4,
         OutputEach=0.01,
-        VisualizeInParaview=false,
-        OpenLogFile=false,
-        FlagDensityDiffusion=false,
-        FlagOutputKernelValues=false,
+        VisualizeInParaview=true,
+        OpenLogFile=true,
+        FlagDensityDiffusion=true,
+        FlagOutputKernelValues=true,
         FlagLog=true,
         FlagShifting=false,
     )

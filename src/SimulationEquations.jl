@@ -60,6 +60,22 @@ end
     end
     t
 end
+
+
+@inline function Estimate7thRoot(x::Float32)
+    # Magic constant adjusted for Float32 (32-bit)
+    t = copysign(reinterpret(Float32, 0x36cd0000 + reinterpret(UInt32, abs(x)) ÷ Int32(7)), x)
+    @fastmath for _ in 1:5
+        # Newton's method for t^3 - x/t^4 = 0
+        t2 = t * t
+        t3 = t2 * t
+        t4 = t2 * t2
+        xot4 = x / t4
+        t = t - t * (t3 - xot4) / (4 * t3 + 3 * xot4)
+    end
+    t
+end
+
 @inline InverseHydrostaticEquationOfState(ρ₀, P, invCb) = ρ₀ * ( Estimate7thRoot( 1 + (P * invCb)) - 1)
 
 end
