@@ -435,7 +435,7 @@ using Base.Threads
         SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺ = AllocateDataStructures(Dimensions,FloatType, SimGeometry)
         
         # Hardcode loading of mdbc particles for now
-        Points, GhostPoints, GhostNormals = LoadBoundaryNormals(Dimensions, FloatType, SimGeometry[:FixedBoundary]["GhostNodes"])
+        _, GhostPoints, GhostNormals = LoadBoundaryNormals(Dimensions, FloatType, SimGeometry[:FixedBoundary]["GhostNodes"])
 
         if SimMetaData.FlagLog
             InitializeLogger(SimLogger,SimConstants,SimMetaData, SimGeometry, SimParticles)
@@ -465,10 +465,12 @@ using Base.Threads
         _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
     
         # Produce data saving functions
-        SaveLocation_ = SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName
-        SaveLocation  = (Iteration) -> SaveLocation_ * "_" * lpad(Iteration,6,"0") * ".vtkhdf"
+        SaveLocation_   = SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName
+        SaveLocation    = (Iteration) -> SaveLocation_ * "_" * lpad(Iteration,6,"0") * ".vtkhdf"
+        SaveLocation_g  = (Iteration) -> SaveLocation_ * "_GhostNodes_" * lpad(Iteration,6,"0") * ".vtkhdf"
     
         fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
+        fid_vector_g  = Vector{HDF5.File}(undef, 1)
     
         OutputVariableNames = ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID", "Type", "GroupMarker"]
         if Dimensions == 2
@@ -476,6 +478,10 @@ using Base.Threads
         else
             SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),SimParticles.Position, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
         end
+
+        SaveVTKHDF(fid_vector_g, 1, SaveLocation_g(1), to_3d(GhostPoints), ["Normals"], GhostNormals)
+        @. close(fid_vector_g)
+
         SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
         @inline SaveFile(SimMetaData.OutputIterationCounter)
         
