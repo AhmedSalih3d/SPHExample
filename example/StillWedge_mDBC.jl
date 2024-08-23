@@ -13,6 +13,7 @@ let
     # Populate the dictionary
     SimulationGeometry[:FixedBoundary] = Dict(
         "CSVFile"     => "./input/still_wedge_mdbc/StillWedge_Dp$(SimConstantsWedge.dx)_Bound.csv",
+        "GhostNodes"  => "./input/still_wedge_mdbc/StillWedge_Dp$(SimConstantsWedge.dx)_GhostNodes.csv",
         "GroupMarker" => 1,
         "Type"        => Fixed,
         "Motion"      => nothing

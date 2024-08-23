@@ -115,14 +115,14 @@ function LoadBoundaryNormals(dims, float_type, path_mdbc)
     ghost_points  = Vector{SVector{dims,float_type}}()
 
     # Loop over each row of the DataFrame
-    for i in eachindex(df)
+    for DF ∈ eachrow(df)
         # Extract the "Normal" fields into an SVector
         if dims == 3
-            normal = SVector{dims,float_type}(df[i, "Normal:0"], df[i, "Normal:1"], df[i, "Normal:2"])
-            point  = SVector{dims,float_type}(df[i, "Points:0"], df[i, "Points:1"], df[i, "Points:2"])
+            normal = SVector{dims,float_type}(DF["Normal:0"], DF["Normal:1"], DF["Normal:2"])
+            point  = SVector{dims,float_type}(DF["Points:0"], DF["Points:1"], DF["Points:2"])
         elseif dims == 2
-            normal = SVector{dims,float_type}(df[i, "Normal:0"], df[i, "Normal:2"])
-            point  = SVector{dims,float_type}(df[i, "Points:0"], df[i, "Points:2"])
+            normal = SVector{dims,float_type}(DF["Normal:0"], DF["Normal:2"])
+            point  = SVector{dims,float_type}(DF["Points:0"], DF["Points:2"])
         end
 
         push!(normals, normal)

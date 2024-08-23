@@ -434,6 +434,9 @@ using Base.Threads
         # Load in particles
         SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺ = AllocateDataStructures(Dimensions,FloatType, SimGeometry)
         
+        # Hardcode loading of mdbc particles for now
+        Points, GhostPoints, GhostNormals = LoadBoundaryNormals(Dimensions, FloatType, SimGeometry[:FixedBoundary]["GhostNodes"])
+
         if SimMetaData.FlagLog
             InitializeLogger(SimLogger,SimConstants,SimMetaData, SimGeometry, SimParticles)
         end
