@@ -1,17 +1,13 @@
 module PreProcess
 
-export LoadBoundaryNormals, AllocateDataStructures, ParticleType, Fluid, Fixed, Moving
+export LoadBoundaryNormals, AllocateDataStructures
 
 using CSV
 using DataFrames
 using StaticArrays
 using StructArrays
 
-@enum ParticleType::UInt8 begin
-    Fluid  = UInt8(1)
-    Fixed  = UInt8(2)
-    Moving = UInt8(3)
-end
+using ..SimulationGeometry
 
 function LoadSpecificCSV(dims, float_type, particle_type, particle_group_marker, specific_csv)
     DF_SPECIFIC = CSV.read(specific_csv, DataFrame)

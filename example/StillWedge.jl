@@ -25,6 +25,22 @@ let
         "Motion"      => nothing
     )
 
+        
+    # Create a Geometry instance using the @enum ParticleType
+    FixedBoundary = Geometry(
+        "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Bound.csv",
+        1,
+        Fixed,   # Using the enum value Fixed
+        nothing
+    )
+
+    Water = Geometry(
+        "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Fluid.csv",
+        2,
+        Fluid,   # Using the enum value Fluid
+        nothing
+    )
+
 
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="StillWedge", 
@@ -43,11 +59,11 @@ let
 
     CleanUpSimulationFolder(SimMetaDataWedge.SaveLocation)
 
-    @profview RunSimulation(
-        SimGeometry        = SimulationGeometry,
-        SimMetaData        = SimMetaDataWedge,
-        SimConstants       = SimConstantsWedge,
-        SimLogger          = SimLogger
-    )
+    # @profview RunSimulation(
+    #     SimGeometry        = SimulationGeometry,
+    #     SimMetaData        = SimMetaDataWedge,
+    #     SimConstants       = SimConstantsWedge,
+    #     SimLogger          = SimLogger
+    # )
 end
 

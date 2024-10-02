@@ -6,6 +6,7 @@ using Parameters, FastPow, StaticArrays, Base.Threads, ChunkSplitters
 import LinearAlgebra: dot
 
 using ..SimulationEquations
+using ..SimulationGeometry
 using ..AuxillaryFunctions
 using ..SimulationMetaDataConfiguration
 using ..SimulationConstantsConfiguration

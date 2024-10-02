@@ -4,6 +4,7 @@ module SPHExample
     include("ProduceHDFVTK.jl")    
     include("TimeStepping.jl");       
     include("SimulationEquations.jl");
+    include("SimulationGeometry.jl")
     include("SimulationMetaDataConfiguration.jl");
     include("SimulationConstantsConfiguration.jl");
     include("SimulationLoggerConfiguration.jl");
@@ -15,8 +16,11 @@ module SPHExample
     using .AuxillaryFunctions
     export ResetArrays!, to_3d, CloseHDFVTKManually, CleanUpSimulationFolder
 
+    using .SimulationGeometry
+    export ParticleType, Fixed, Fluid, Moving, Geometry
+
     using .PreProcess
-    export AllocateDataStructures, LoadBoundaryNormals, ParticleType, Fluid, Fixed, Moving
+    export AllocateDataStructures, LoadBoundaryNormals
 
     using .ProduceHDFVTK
     export SaveVTKHDF
