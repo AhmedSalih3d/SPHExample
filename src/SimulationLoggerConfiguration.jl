@@ -6,6 +6,8 @@ module SimulationLoggerConfiguration
     using Dates
     using InteractiveUtils
 
+    using ..SimulationGeometry
+
     export SimulationLogger, generate_format_string, InitializeLogger, LogSimulationDetails, LogStep, LogFinal
 
     # Function to dynamically generate a format string based on values
@@ -59,28 +61,26 @@ module SimulationLoggerConfiguration
         end
     end
 
-    function LogSimulationDetails(SimLogger::SimulationLogger, SimGeometry, SimParticles; sort_by=:GroupMarker)
+    function LogSimulationDetails(SimLogger::SimulationLogger, SimGeometry::Vector{Geometry}, SimParticles; sort_by=:GroupMarker)
         with_logger(SimLogger.Logger) do
             # Calculate the maximum lengths for alignment
-            max_key_len = maximum(length(string(key)) for key in keys(SimGeometry)) + 2  # Added space for visual separation
-            max_csv_len = maximum(length(value["CSVFile"]) for value in values(SimGeometry)) + 2
-            max_group_marker_len = maximum(length(string(value["GroupMarker"])) for value in values(SimGeometry)) + 2
-            max_type_len = maximum(length(string(value["Type"])) for value in values(SimGeometry)) + 2
+            max_csv_len = maximum(length(geom.CSVFile) for geom in SimGeometry) + 2
+            max_group_marker_len = maximum(length(string(geom.GroupMarker)) for geom in SimGeometry) + 2
+            max_type_len = maximum(length(string(geom.Type)) for geom in SimGeometry) + 2
     
             @info "Simulation Geometry Details:"
-            for (key, value) in pairs(SimGeometry)
-                csv_file = value["CSVFile"]
-                group_marker = value["GroupMarker"]
-                particle_type = value["Type"]
-                motion = if value["Motion"] === nothing "None" else string(value["Motion"]) end
+            for geom in SimGeometry
+                csv_file = geom.CSVFile
+                group_marker = geom.GroupMarker
+                particle_type = geom.Type
+                motion = if geom.Motion === nothing "None" else string(geom.Motion) end
     
-                formatted_key = rpad(string(key), max_key_len)
                 formatted_csv_file = rpad(csv_file, max_csv_len)
                 formatted_group_marker = rpad(string(group_marker), max_group_marker_len)
                 formatted_type = rpad(string(particle_type), max_type_len)
                 formatted_motion = motion  # No padding necessary if motion detail is to start immediately after type
     
-                @info "$formatted_key: CSV File -> $formatted_csv_file, Group Marker -> $formatted_group_marker, Type -> $formatted_type, Motion -> $formatted_motion"
+                @info "CSV File -> $formatted_csv_file, Group Marker -> $formatted_group_marker, Type -> $formatted_type, Motion -> $formatted_motion"
             end
     
             # Handling particle types and counts
@@ -107,7 +107,8 @@ module SimulationLoggerConfiguration
             end
             @info ""
         end
-    end    
+    end
+    
     
     function InitializeLogger(SimLogger,SimConstants,SimMetaData, SimGeometry, SimParticles)
         with_logger(SimLogger.Logger) do

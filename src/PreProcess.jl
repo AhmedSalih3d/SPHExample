@@ -39,15 +39,15 @@ function AllocateDataStructures(Dimensions,FloatType, SimGeometry)
     Types       = Vector{ParticleType}()
     GroupMarker = Vector{UInt}()
     
-    for key in keys(SimGeometry)
-        CurrentDict = SimGeometry[key]
-
-        particle_type         = CurrentDict["Type"]
-        particle_group_marker = CurrentDict["GroupMarker"]
-        specific_csv          = CurrentDict["CSVFile"]
-
-        points, density, types, group_marker = LoadSpecificCSV(Dimensions,FloatType, particle_type, particle_group_marker, specific_csv)
-
+    for geom in SimGeometry
+        particle_type         = geom.Type
+        particle_group_marker = geom.GroupMarker
+        specific_csv          = geom.CSVFile
+    
+        # Assuming LoadSpecificCSV is already defined and works with these arguments
+        points, density, types, group_marker = LoadSpecificCSV(Dimensions, FloatType, particle_type, particle_group_marker, specific_csv)
+    
+        # Concatenate the results to the respective arrays
         Position    = vcat(Position    , points)
         Density     = vcat(Density     , density)
         Types       = vcat(Types       , types)

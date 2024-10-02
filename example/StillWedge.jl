@@ -11,19 +11,19 @@ let
     SimulationGeometry = Dict{Symbol, Dict{String, Union{String, Int, ParticleType, Nothing}}}()
 
     # Populate the dictionary
-    SimulationGeometry[:FixedBoundary] = Dict(
-        "CSVFile"     => "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Bound.csv",
-        "GroupMarker" => 1,
-        "Type"        => Fixed,
-        "Motion"      => nothing
-    )
+    # SimulationGeometry[:FixedBoundary] = Dict(
+    #     "CSVFile"     => "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Bound.csv",
+    #     "GroupMarker" => 1,
+    #     "Type"        => Fixed,
+    #     "Motion"      => nothing
+    # )
 
-    SimulationGeometry[:Water] = Dict(
-        "CSVFile"     => "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Fluid.csv",
-        "GroupMarker" => 2,
-        "Type"        => Fluid,
-        "Motion"      => nothing
-    )
+    # SimulationGeometry[:Water] = Dict(
+    #     "CSVFile"     => "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Fluid.csv",
+    #     "GroupMarker" => 2,
+    #     "Type"        => Fluid,
+    #     "Motion"      => nothing
+    # )
 
         
     # Create a Geometry instance using the @enum ParticleType
@@ -40,6 +40,8 @@ let
         Fluid,   # Using the enum value Fluid
         nothing
     )
+
+    SimulationGeometry = [FixedBoundary;Water]
 
 
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
@@ -59,11 +61,11 @@ let
 
     CleanUpSimulationFolder(SimMetaDataWedge.SaveLocation)
 
-    # @profview RunSimulation(
-    #     SimGeometry        = SimulationGeometry,
-    #     SimMetaData        = SimMetaDataWedge,
-    #     SimConstants       = SimConstantsWedge,
-    #     SimLogger          = SimLogger
-    # )
+    @profview RunSimulation(
+        SimGeometry        = SimulationGeometry,
+        SimMetaData        = SimMetaDataWedge,
+        SimConstants       = SimConstantsWedge,
+        SimLogger          = SimLogger
+    )
 end
 

@@ -423,7 +423,7 @@ using Base.Threads
     end
     
     ###===
-    function RunSimulation(;SimGeometry::Dict, #Don't further specify type for now
+    function RunSimulation(;SimGeometry::Vector{Geometry}, #Don't further specify type for now
         SimMetaData::SimulationMetaData{Dimensions, FloatType},
         SimConstants::SimulationConstants,
         SimLogger::SimulationLogger
@@ -483,14 +483,14 @@ using Base.Threads
         MotionDefinition = Dict{Int, Dict{String, Union{FloatType, SVector{Dimensions, FloatType}}}}()
 
         # Loop through SimulationGeometry to populate MotionDefinition
-        for (_, details) in pairs(SimGeometry)
-            motion = get(details, "Motion", nothing)
+        for geom in SimGeometry
+            motion = geom.Motion
             if isa(motion, Dict)
-                group_marker = details["GroupMarker"]
+                group_marker = geom.GroupMarker
                 MotionDefinition[group_marker] = motion
             end
         end
-    
+        
         # Normal run and save data
         generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
     
