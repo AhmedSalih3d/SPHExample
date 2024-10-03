@@ -7,9 +7,6 @@ let
     
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
 
-    # Define the dictionary with specific types for keys and values to avoid any type ambiguity
-    SimulationGeometry = Dict{Symbol, Dict{String, Union{String, Int, ParticleType, Nothing}}}()
-        
     # Assuming SimConstantsWedge is defined somewhere else with the field `dx`
     FixedBoundary = Geometry(
         CSVFile     = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Bound.csv",
@@ -24,7 +21,6 @@ let
         Type        = Fluid,   # Using the enum value Fluid
         Motion      = nothing
     )
-
 
     SimulationGeometry = [FixedBoundary;Water]
 

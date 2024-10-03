@@ -6,24 +6,23 @@ let
 
     SimConstantsDambreak = SimulationConstants{FloatType}(dx=0.02,c₀=88.14487860902641, δᵩ = 0.1, CFL=0.2, α = 0.02)
 
-    # Define the dictionary with specific types for keys and values to avoid any type ambiguity
-    SimulationGeometry = Dict{Symbol, Dict{String, Union{String, Int, ParticleType, Nothing}}}()
-
-    # Populate the dictionary
-    SimulationGeometry[:FixedBoundary] = Dict(
-        "CSVFile"     => "./input/dam_break_2d/DamBreak2d_Dp0.02_Bound_ThreeLayers.csv",
-        "GroupMarker" => 1,
-        "Type"        => Fixed,
-        "Motion"      => nothing
+    # Create Geometry instances
+    FixedBoundary = Geometry(
+        CSVFile     = "./input/dam_break_2d/DamBreak2d_Dp0.02_Bound_ThreeLayers.csv",
+        GroupMarker = 1,
+        Type        = Fixed,   # Using the enum value Fixed
+        Motion      = nothing
     )
 
-    SimulationGeometry[:Water] = Dict(
-        "CSVFile"     => "./input/dam_break_2d/DamBreak2d_Dp0.02_Fluid_OneLayer.csv",
-        "GroupMarker" => 2,
-        "Type"        => Fluid,
-        "Motion"      => nothing
+    Water = Geometry(
+        CSVFile     = "./input/dam_break_2d/DamBreak2d_Dp0.02_Fluid_OneLayer.csv",
+        GroupMarker = 2,
+        Type        = Fluid,   # Using the enum value Fluid
+        Motion      = nothing
     )
 
+    # Collect the Geometry instances into a vector
+    SimulationGeometry = [FixedBoundary; Water]
 
     SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
