@@ -1,5 +1,7 @@
 module SimulationGeometry
 
+using Parameters  # Import Parameters.jl for easier struct definition
+
 # Export relevant types and structs
 export ParticleType, Geometry, Fluid, Fixed, Moving
 
@@ -10,12 +12,12 @@ export ParticleType, Geometry, Fluid, Fixed, Moving
     Moving = UInt8(3)
 end
 
-# Define the Geometry struct to store the ParticleType enum
-struct Geometry
+# Define the Geometry struct with named fields using @with_kw
+@with_kw struct Geometry
     CSVFile::String
     GroupMarker::Int
     Type::ParticleType  # This uses the @enum ParticleType
-    Motion::Union{Nothing, ParticleType}  # Motion can be represented using ParticleType (like Moving)
+    Motion::Union{Nothing, ParticleType} = nothing  # Motion can be represented using ParticleType (like Moving), default is nothing
 end
 
 end # module SimulationGeometry

@@ -10,23 +10,23 @@ let
     # Define the dictionary with specific types for keys and values to avoid any type ambiguity
     SimulationGeometry = Dict{Symbol, Dict{String, Union{String, Int, ParticleType, Nothing}}}()
         
-    # Create a Geometry instance using the @enum ParticleType
+    # Assuming SimConstantsWedge is defined somewhere else with the field `dx`
     FixedBoundary = Geometry(
-        "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Bound.csv",
-        1,
-        Fixed,   # Using the enum value Fixed
-        nothing
+        CSVFile     = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Bound.csv",
+        GroupMarker = 1,
+        Type        = Fixed,   # Using the enum value Fixed
+        Motion      = nothing
     )
 
     Water = Geometry(
-        "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Fluid.csv",
-        2,
-        Fluid,   # Using the enum value Fluid
-        nothing
+        CSVFile     = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Fluid.csv",
+        GroupMarker = 2,
+        Type        = Fluid,   # Using the enum value Fluid
+        Motion      = nothing
     )
 
-    SimulationGeometry = [FixedBoundary;Water]
 
+    SimulationGeometry = [FixedBoundary;Water]
 
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="StillWedge", 
