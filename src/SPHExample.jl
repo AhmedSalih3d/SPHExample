@@ -17,7 +17,7 @@ module SPHExample
     export ResetArrays!, to_3d, CloseHDFVTKManually, CleanUpSimulationFolder
 
     using .SimulationGeometry
-    export ParticleType, Fixed, Fluid, Moving, Geometry
+    export ParticleType, Fixed, Fluid, Moving, Geometry, MotionDetails
 
     using .PreProcess
     export AllocateDataStructures, LoadBoundaryNormals

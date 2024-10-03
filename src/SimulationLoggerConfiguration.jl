@@ -61,7 +61,7 @@ module SimulationLoggerConfiguration
         end
     end
 
-    function LogSimulationDetails(SimLogger::SimulationLogger, SimGeometry::Vector{Geometry}, SimParticles; sort_by=:GroupMarker)
+    function LogSimulationDetails(SimLogger::SimulationLogger, SimGeometry::Vector{Geometry{Dimensions, FloatType}}, SimParticles; sort_by=:GroupMarker) where {Dimensions, FloatType}
         with_logger(SimLogger.Logger) do
             # Calculate the maximum lengths for alignment
             max_csv_len = maximum(length(geom.CSVFile) for geom in SimGeometry) + 2

@@ -1,9 +1,10 @@
 module SimulationGeometry
 
-using Parameters  # Import Parameters.jl for easier struct definition
+using StaticArrays
+using Parameters
 
 # Export relevant types and structs
-export ParticleType, Geometry, Fluid, Fixed, Moving
+export ParticleType, Geometry, Fluid, Fixed, Moving, MotionDetails
 
 # Use the existing @enum for ParticleType
 @enum ParticleType::UInt8 begin
@@ -12,12 +13,20 @@ export ParticleType, Geometry, Fluid, Fixed, Moving
     Moving = UInt8(3)
 end
 
-# Define the Geometry struct with named fields using @with_kw
-@with_kw struct Geometry
+# Define a struct to store motion details, with parametric dimensions and floating point type
+@with_kw struct MotionDetails{D, T}
+    Velocity::T
+    StartTime::T
+    Duration::T
+    Direction::SVector{D, T}  # Direction vector is now parametric based on dimensions D and FloatType T
+end
+
+# Define the Geometry struct to store the ParticleType enum and Motion details
+@with_kw struct Geometry{D, T}
     CSVFile::String
     GroupMarker::Int
-    Type::ParticleType  # This uses the @enum ParticleType
-    Motion::Union{Nothing, ParticleType} = nothing  # Motion can be represented using ParticleType (like Moving), default is nothing
+    Type::ParticleType
+    Motion::Union{Nothing, MotionDetails{D, T}} = nothing  # Motion depends on dimension D and FloatType T
 end
 
 end # module SimulationGeometry

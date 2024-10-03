@@ -322,18 +322,26 @@ using Base.Threads
         KernelGradient = SimParticles.KernelGradient
 
         ### Some functions to simplify code inside of this function
-        function ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
+        function ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinitions, SimMetaData)
             @inbounds for i in eachindex(Position)
                 if ParticleType[i] == Moving
-                    ShouldMove      = MotionDefinition[ParticleMarker[i]]["StartTime"] <= SimMetaData.TotalTime <= (MotionDefinition[ParticleMarker[i]]["StartTime"] + MotionDefinition[ParticleMarker[i]]["Duration"])
-                    MotionVel       = MotionDefinition[ParticleMarker[i]]["Velocity"]  
-                    MotionDir       = MotionDefinition[ParticleMarker[i]]["Direction"]
-                    Velocity[i]     = MotionVel   * MotionDir * ShouldMove
-                    Position[i]    += Velocity[i] * dt₂
+                    # Find the corresponding Geometry instance from MotionDefinitions based on ParticleMarker[i]
+                    motion = MotionDefinitions[ParticleMarker[i]]
+                    
+                    # Check if the current time falls within the motion's active period
+                    ShouldMove = (motion.StartTime <= SimMetaData.TotalTime <= (motion.StartTime + motion.Duration))
+                    
+                    # Retrieve motion parameters
+                    MotionVel = motion.Velocity
+                    MotionDir = motion.Direction
+
+                    # Update Velocity and Position
+                    Velocity[i] = MotionVel * MotionDir * ShouldMove
+                    Position[i] += Velocity[i] * dt₂
                 end
             end
         end
-    
+
         ###
     
         @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
@@ -423,7 +431,7 @@ using Base.Threads
     end
     
     ###===
-    function RunSimulation(;SimGeometry::Vector{Geometry}, #Don't further specify type for now
+    function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}, #Don't further specify type for now
         SimMetaData::SimulationMetaData{Dimensions, FloatType},
         SimConstants::SimulationConstants,
         SimLogger::SimulationLogger
@@ -479,15 +487,17 @@ using Base.Threads
         
         InverseCutOff = Val(1/(SimConstants.H))
 
-        # Construct Motion Definition
-        MotionDefinition = Dict{Int, Dict{String, Union{FloatType, SVector{Dimensions, FloatType}}}}()
+        # Construct MotionDefinition as a dictionary where keys are group markers
+        # and values are MotionDetails instances, or nothing if there is no motion
+        MotionDefinition = Dict{Int, Union{Nothing, MotionDetails}}()
 
         # Loop through SimulationGeometry to populate MotionDefinition
         for geom in SimGeometry
-            motion = geom.Motion
-            if isa(motion, Dict)
-                group_marker = geom.GroupMarker
-                MotionDefinition[group_marker] = motion
+            group_marker = geom.GroupMarker
+            if geom.Motion !== nothing
+                MotionDefinition[group_marker] = geom.Motion
+            else
+                MotionDefinition[group_marker] = nothing
             end
         end
         

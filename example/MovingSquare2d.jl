@@ -29,31 +29,34 @@ let
         FlagShifting=true,
         FlagViscosityTreatment=:LaminarSPS
     )
-
-    SimulationGeometry = Dict{Symbol, Dict{String, Any}}()
-
-    # Populate the dictionary
-    SimulationGeometry[:FixedBoundary] = Dict(
-        "CSVFile"     => "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Fixed.csv",
-        "GroupMarker" => 1,
-        "Type"        => Fixed,
-        "Motion"      => nothing
+    FixedBoundary = Geometry{Dimensions, FloatType}(
+        CSVFile     = "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Fixed.csv",
+        GroupMarker = 1,
+        Type        = Fixed,
+        Motion      = nothing
     )
-
-    SimulationGeometry[:Water] = Dict(
-        "CSVFile"     => "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Fluid.csv",
-        "GroupMarker" => 2,
-        "Type"        => Fluid,
-        "Motion"      => nothing
+    
+    Water = Geometry{Dimensions, FloatType}(
+        CSVFile     = "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Fluid.csv",
+        GroupMarker = 2,
+        Type        = Fluid,
+        Motion      = nothing
     )
-
-    SimulationGeometry[:MovingSquare] = Dict(
-        "CSVFile"     => "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Square.csv",
-        "GroupMarker" => 3,
-        "Type"        => Moving,
-        "Motion"      => Dict("Velocity" => 2.8, "StartTime" => 0.0, "Duration" => 3.0, "Direction" => SVector{Dimensions,FloatType}(1,0))
+    
+    MovingSquare = Geometry{Dimensions, FloatType}(
+        CSVFile     = "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Square.csv",
+        GroupMarker = 3,
+        Type        = Moving,
+        Motion      = MotionDetails{Dimensions, FloatType}(
+            Velocity  = 2.8,
+            StartTime = 0.0,
+            Duration  = 3.0,
+            Direction = SVector{Dimensions, FloatType}(1.0, 0.0)  # 2D direction vector with Float64 type
+        )
     )
-
+    
+    # Collect Geometry instances into a vector
+    SimulationGeometry = [FixedBoundary, Water, MovingSquare]
     # If save directory is not already made, make it
     if !isdir(SimMetaDataMovingSquare.SaveLocation)
         mkdir(SimMetaDataMovingSquare.SaveLocation)
