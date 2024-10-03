@@ -15,14 +15,14 @@ let
         CFL = 0.2)
 
         # Create Geometry instances using given file paths and variable `dx`
-        FixedBoundary = Geometry(
+        FixedBoundary = Geometry{Dimensions, FloatType}(
             CSVFile     = "./input/dam_break_3d/DamBreak3d_Dp$(dx)_Bound.csv",
             GroupMarker = 1,
             Type        = Fixed,   # Using the enum value Fixed
             Motion      = nothing
         )
 
-        Water = Geometry(
+        Water = Geometry{Dimensions, FloatType}(
             CSVFile     = "./input/dam_break_3d/DamBreak3d_Dp$(dx)_Fluid.csv",
             GroupMarker = 2,
             Type        = Fluid,   # Using the enum value Fluid

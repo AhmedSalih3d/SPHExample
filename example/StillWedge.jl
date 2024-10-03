@@ -8,14 +8,14 @@ let
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
 
     # Assuming SimConstantsWedge is defined somewhere else with the field `dx`
-    FixedBoundary = Geometry(
+    FixedBoundary = Geometry{Dimensions, FloatType}(
         CSVFile     = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Bound.csv",
         GroupMarker = 1,
         Type        = Fixed,   # Using the enum value Fixed
         Motion      = nothing
     )
 
-    Water = Geometry(
+    Water = Geometry{Dimensions, FloatType}(
         CSVFile     = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Fluid.csv",
         GroupMarker = 2,
         Type        = Fluid,   # Using the enum value Fluid
