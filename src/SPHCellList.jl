@@ -322,25 +322,27 @@ using Base.Threads
         KernelGradient = SimParticles.KernelGradient
 
         ### Some functions to simplify code inside of this function
-        function ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinitions, SimMetaData)
-            @inbounds for i in eachindex(Position)
+        function ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionsDefinition, SimMetaData)
+            @inbounds @threads for i in eachindex(Position)
                 if ParticleType[i] == Moving
-                    # Find the corresponding Geometry instance from MotionDefinitions based on ParticleMarker[i]
-                    motion = MotionDefinitions[ParticleMarker[i]]
-                    
-                    # Check if the current time falls within the motion's active period
-                    ShouldMove = (motion.StartTime <= SimMetaData.TotalTime <= (motion.StartTime + motion.Duration))
-                    
-                    # Retrieve motion parameters
-                    MotionVel = motion.Velocity
-                    MotionDir = motion.Direction
-
-                    # Update Velocity and Position
-                    Velocity[i] = MotionVel * MotionDir * ShouldMove
-                    Position[i] += Velocity[i] * dt₂
+                    motion = MotionsDefinition[ParticleMarker[i]]
+        
+                    if motion !== nothing
+                        ShouldMove = (motion.StartTime <= SimMetaData.TotalTime) &&
+                                     (SimMetaData.TotalTime <= (motion.StartTime + motion.Duration))
+        
+                        # Retrieve motion parameters
+                        MotionVel = motion.Velocity
+                        MotionDir = motion.Direction
+        
+                        # Update Velocity and Position
+                        Velocity[i] = MotionVel * MotionDir * ShouldMove
+                        Position[i] += Velocity[i] * dt₂
+                    end
                 end
             end
         end
+        
 
         ###
     
@@ -501,6 +503,19 @@ using Base.Threads
             end
         end
         
+
+        # Assuming group markers are sequential
+        MotionDefinition = Vector{Union{Nothing, MotionDetails{Dimensions, FloatType}}}(undef, maximum(SimParticles.GroupMarker))
+
+        for geom in SimGeometry
+            group_marker = geom.GroupMarker
+            if geom.Motion !== nothing
+                MotionDefinition[group_marker] = geom.Motion
+            else
+                MotionDefinition[group_marker] = nothing
+            end
+        end
+
         # Normal run and save data
         generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
     
