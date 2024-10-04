@@ -489,21 +489,6 @@ using Base.Threads
         
         InverseCutOff = Val(1/(SimConstants.H))
 
-        # Construct MotionDefinition as a dictionary where keys are group markers
-        # and values are MotionDetails instances, or nothing if there is no motion
-        MotionDefinition = Dict{Int, Union{Nothing, MotionDetails}}()
-
-        # Loop through SimulationGeometry to populate MotionDefinition
-        for geom in SimGeometry
-            group_marker = geom.GroupMarker
-            if geom.Motion !== nothing
-                MotionDefinition[group_marker] = geom.Motion
-            else
-                MotionDefinition[group_marker] = nothing
-            end
-        end
-        
-
         # Assuming group markers are sequential
         MotionDefinition = Vector{Union{Nothing, MotionDetails{Dimensions, FloatType}}}(undef, maximum(SimParticles.GroupMarker))
 
