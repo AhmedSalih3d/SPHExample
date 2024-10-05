@@ -87,7 +87,7 @@ Written by Ahmed Salih [@AhmedSalih3D](https://github.com/AhmedSalih3d)
 
 | Version | Description |
 |---------|-------------|
-| 0.6.4 | Solidified the interface for specifying geometry grouping and details. The dict approach in earlier versions was good, but limited the expandability of the software
+| 0.6.4 | Solidified the interface for specifying geometry grouping and details. The dict approach in earlier versions was good, but limited the expandability of the software. Also added the extra plot of the time steps and iterations taken at the end
 | 0.6.3 | Added support for automatic visualization through log opening using Notepad, enabled by default. Can be controlled through SimMetaData settings. Also added `CloseHDFVTKManually` which can be used in cases where a simulation is stopped by user or crashes to fix "faulty" hdfvtk files (i.e. hdfvtk files which were not closed during simulation run).
 | 0.6.2 | Added support for automatic visualization through Paraview. Enabled by default and can be turned of through SimMetaData settings in each example. Version of Paraview at minimum 5.12 to be used |
 | 0.6  | Changed code to solver setup, where inputs can be provided and functions overloaded as before if needed. Added support for moving objects and particle shifting, for internal flows only as of now. |
