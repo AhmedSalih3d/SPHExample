@@ -323,7 +323,7 @@ using Base.Threads
 
         ### Some functions to simplify code inside of this function
         function ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionsDefinition, SimMetaData)
-            @inbounds @threads for i in eachindex(Position)
+            @inbounds for i in eachindex(Position)
                 if ParticleType[i] == Moving
                     motion = MotionsDefinition[ParticleMarker[i]]
         
