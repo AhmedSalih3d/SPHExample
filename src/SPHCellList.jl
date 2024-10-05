@@ -259,21 +259,33 @@ using UnicodePlots
     end
 
 
+    using Polyester
+
     function reduce_sum!(target_array, arrays)
         n = length(target_array)
         num_threads = nthreads()
         chunk_size = ceil(Int, n / num_threads)
-        @inbounds @threads for t in 1:num_threads
-            local start_idx = 1 + (t-1) * chunk_size
-            local end_idx = min(t * chunk_size, n)
-            for j in eachindex(arrays)
-                local array = arrays[j]  # Access array only once per thread
-                @simd for i in start_idx:end_idx
-                    @inbounds target_array[i] += array[i]
+    
+        # Define a helper function to avoid closure capturing
+        function reduce_sum_chunk!(start_idx, end_idx)
+            @inbounds begin
+                for j in eachindex(arrays)
+                    array = arrays[j]  # Access array only once per thread
+                    @simd for i in start_idx:end_idx
+                        target_array[i] += array[i]
+                    end
                 end
             end
         end
+    
+        # Use @batch to parallelize over threads
+        @batch for t in 1:num_threads
+            start_idx = 1 + (t - 1) * chunk_size
+            end_idx = min(t * chunk_size, n)
+            reduce_sum_chunk!(start_idx, end_idx)
+        end
     end
+    
 
     function ResetStep!(SimMetaData, dρdtI, Acceleration, dρdtIThreaded, AccelerationThreaded, Kernel, KernelGradient, KernelThreaded, KernelGradientThreaded, ∇Cᵢ, ∇◌rᵢ, ∇CᵢThreaded, ∇◌rᵢThreaded)
         ResetArrays!(dρdtI, Acceleration)
