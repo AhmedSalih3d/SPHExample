@@ -27,6 +27,7 @@ using TimerOutputs
 using Logging, LoggingExtras
 using HDF5
 using Base.Threads
+using UnicodePlots
 
     function ConstructStencil(v::Val{d}) where d
         n_ = CartesianIndices(ntuple(_->-1:1,v))
@@ -555,6 +556,11 @@ using Base.Threads
                 show(HourGlass)
 
                 AutoOpenParaview(SaveLocation_, SimMetaData, OutputVariableNames)
+
+                # Time steps line plot
+                println()
+                p = lineplot(1:length(TimeSteps), TimeSteps, title="Time Steps [s] as a function of iteration", name="Time Steps", xlabel="Iterations [-]", ylabel="Time Step Size [s]")
+                display(p)
 
                 break
             end
