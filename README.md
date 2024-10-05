@@ -27,7 +27,7 @@ Key-elements of the code are:
 - Weakly Compressible SPH
   - Density varies about ~1% in time, for numerical reasons and the pressure equation is based on the density. This ensured by enforcing a Mach Number of 0.1, by artificially setting the speed of sound of the fluid (c₀) to ten times the highest velocity in the flow (manual input) 
 - Multi-threaded approach
-  - Multi-threading has been added. It is achieved using `ChunkSplitters.jl` and code can easily be run in sequential form by removing the `@threads` in the `NeighborLoop` function in `src/SPHCellList.jl`.
+  - Multi-threading has been added. Code can easily be run in sequential form by removing the `@threads` in the `NeighborLoop` function in `src/SPHCellList.jl`.
 - Dynamic Boundary Condition (as in DualSPHysics)
   - DualSPHysics is one of the most well-known SPH packages. This is one of the simplest and most elegant boundary conditions.
 - Density Diffusion
@@ -47,9 +47,9 @@ The "src" package contains all the code files used in this process. An overview 
 * PreProcess
   * Function for loading in the files in "input". 
 * ProduceHDFVTK
-  * Function to output the simulation data in the efficient `HDF5` format, directly readable in Paraview 5.12. Files can be opened after a simulation has concluded, since they must be closed at the end of a simulation for performance reasons. 
+  * Function to output the simulation data in the efficient `HDF5` format, directly readable in Paraview 5.12. Files can be opened after a simulation has concluded, since they must be closed at the end of a simulation for performance reasons. A helper function, `CloseHDFVTKManually`, has been added if you have a longer simulation which fails, use this function on your result folder.
 * AuxillaryFunctions
-  * To store some small, repeatedly used smaller functions
+  * To store some small, repeatedly used smaller functions or other good-to-have functionality
 * TimeStepping
   * Some simple time stepping controls
 * SimulationConstantsConfigurations
@@ -58,6 +58,8 @@ The "src" package contains all the code files used in this process. An overview 
   * The interface for the meta data associated with a simulation, such as total time, save location etc.
 * SimulationLoggerConfiguration
   * Functions for logging data of execution
+* SimulationGeometry
+  * Defines the different type of simulation geometries available at this moment
 * SimulationEquations
   * SPH physics functions
 * SPHCellList
