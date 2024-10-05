@@ -438,9 +438,12 @@ using Base.Threads
         SimConstants::SimulationConstants,
         SimLogger::SimulationLogger
         ) where {Dimensions,FloatType}
-    
+
         # Unpack the relevant simulation meta data
         @unpack HourGlass = SimMetaData;
+
+        # Vector of time steps
+        TimeSteps = Vector{FloatType}()
     
         # Load in particles
         SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺ = AllocateDataStructures(Dimensions,FloatType, SimGeometry)
@@ -507,7 +510,8 @@ using Base.Threads
         @inbounds while true
     
             SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
-    
+            push!(TimeSteps, SimMetaData.CurrentTimeStep)
+
 
             if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
     
@@ -551,7 +555,7 @@ using Base.Threads
                 show(HourGlass)
 
                 AutoOpenParaview(SaveLocation_, SimMetaData, OutputVariableNames)
-                
+
                 break
             end
         end
