@@ -536,14 +536,7 @@ using UnicodePlots
     
             if SimMetaData.TotalTime > SimMetaData.SimulationTime
                 
-                if SimMetaData.FlagLog
-                    LogFinal(SimLogger, HourGlass)
-                    close(SimLogger.LoggerIo)
-             
-                    AutoOpenLogFile(SimLogger, SimMetaData)
-                end
-    
-                
+
                 # This should not be counted in actual run 
                 @timeit HourGlass "12B Close hdfvtk output files"  @threads for i in eachindex(fid_vector)
                     if isassigned(fid_vector, i)
@@ -558,9 +551,19 @@ using UnicodePlots
                 AutoOpenParaview(SaveLocation_, SimMetaData, OutputVariableNames)
 
                 # Time steps line plot
-                println()
-                p = lineplot(1:length(TimeSteps), TimeSteps, title="Time Steps [s] as a function of iteration", name="Time Steps", xlabel="Iterations [-]", ylabel="Time Step Size [s]")
-                display(p)
+                UnicodeTimeStepsGraph = lineplot(1:length(TimeSteps), TimeSteps, title="Time Steps [s] as a function of iteration", name="Time Steps", xlabel="Iterations [-]", ylabel="Time Step Size [s]")
+
+                if SimMetaData.FlagLog
+                    LogFinal(SimLogger, HourGlass)
+             
+                    with_logger(SimLogger.Logger) do
+                        @info ""
+                        show(SimLogger.LoggerIo, UnicodeTimeStepsGraph)
+                    end
+
+                    close(SimLogger.LoggerIo)
+                    AutoOpenLogFile(SimLogger, SimMetaData)
+                end
 
                 break
             end
