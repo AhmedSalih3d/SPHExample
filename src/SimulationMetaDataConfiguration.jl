@@ -25,7 +25,8 @@ export SimulationMetaData
     FlagDensityDiffusion::Bool              = false
     FlagOutputKernelValues::Bool            = false     
     FlagLog::Bool                           = false
-    FlagShifting::Bool                      = false 
+    FlagShifting::Bool                      = false
+    FlagPeriodicity::Bool                   = false 
 end
 
 end
