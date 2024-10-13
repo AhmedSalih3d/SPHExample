@@ -6,7 +6,7 @@ let
     FloatType  = Float64
 
     
-    SimConstantsPeriodicity = SimulationConstants{FloatType}(dx=0.002,c₀=15.53467127810402, δᵩ = 0.1, CFL=0.2)
+    SimConstantsPeriodicity = SimulationConstants{FloatType}(α=0.2, h=0.002449, dx=0.002,c₀=15.53467127810402, δᵩ = 0.1, CFL=0.2)
 
     # Assuming SimConstantsPeriodicity is defined somewhere else with the field `dx`
     FixedBoundary = Geometry{Dimensions, FloatType}(
@@ -35,14 +35,15 @@ let
     SimMetaDataPeriodicity  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Periodicity2d", 
         SaveLocation="E:/SecondApproach/Periodicity2d",
-        SimulationTime=0.06,
+        SimulationTime=6,
         OutputEach=0.01 ,
         VisualizeInParaview=true,
         OpenLogFile=true,
         FlagDensityDiffusion=true, 
         FlagOutputKernelValues=false,
         FlagLog=true,
-        FlagShifting=false
+        FlagShifting=false,
+        FlagViscosityTreatment=:ArtificialViscosity,
     )
 
     SimLogger = SimulationLogger(SimMetaDataPeriodicity.SaveLocation)
