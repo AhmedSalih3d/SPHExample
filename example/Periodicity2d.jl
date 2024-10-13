@@ -35,6 +35,7 @@ let
         FlagOutputKernelValues=false,
         FlagLog=true,
         FlagShifting=false,
+        FlagPeriodicity=true,
     )
 
     SimLogger = SimulationLogger(SimMetaDataPeriodicity.SaveLocation)
