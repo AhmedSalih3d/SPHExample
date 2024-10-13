@@ -1,3 +1,4 @@
+import StaticArrays: SVector
 using SPHExample
 
 let
@@ -21,6 +22,15 @@ let
         Type        = Fluid,   # Using the enum value Fluid
         Motion      = nothing
     )
+
+    Perio = PeriodicityConditions{Dimensions, FloatType}(
+        IsPeriodic     = SVector( true,  false),  # Only x is periodic
+        MinBounds      = SVector(-0.01,  0.0),    # x_min = -0.01, y_min = 0.0, z_min = 0.0
+        MaxBounds      = SVector( 0.8,   0.0),    # x_max = 0.8,   y_max = 0.0, z_max = 0.0
+        HeightIncrease = 0.3                      # Scalar value for increase in height (z) when reentering
+    )
+
+    println(Perio)
 
     SimulationGeometry = [FixedBoundary;Water]
 

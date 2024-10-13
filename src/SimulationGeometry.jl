@@ -4,7 +4,7 @@ using StaticArrays
 using Parameters
 
 # Export relevant types and structs
-export ParticleType, Geometry, Fluid, Fixed, Moving, MotionDetails
+export ParticleType, Geometry, Fluid, Fixed, Moving, MotionDetails, PeriodicityConditions
 
 # Use the existing @enum for ParticleType
 @enum ParticleType::UInt8 begin
@@ -28,5 +28,13 @@ end
     Type::ParticleType
     Motion::Union{Nothing, MotionDetails{D, T}} = nothing  # Motion depends on dimension D and FloatType T
 end
+
+@with_kw struct PeriodicityConditions{D, T}
+    IsPeriodic::SVector{D, Bool}    # A vector indicating periodicity in each dimension (true for periodic, false otherwise)
+    MinBounds::SVector{D, T}        # Minimum boundary for each dimension (e.g., x_min, y_min, z_min)
+    MaxBounds::SVector{D, T}        # Maximum boundary for each dimension (e.g., x_max, y_max, z_max)
+    HeightIncrease::T               # Scalar value for increase in height (applies when reentering the domain)
+end
+
 
 end # module SimulationGeometry
