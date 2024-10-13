@@ -41,7 +41,7 @@ let
 
     CleanUpSimulationFolder(SimMetaDataWedge.SaveLocation)
 
-    @profview RunSimulation(
+    RunSimulation(
         SimGeometry        = SimulationGeometry,
         SimMetaData        = SimMetaDataWedge,
         SimConstants       = SimConstantsWedge,
