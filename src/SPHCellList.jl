@@ -113,6 +113,47 @@ using UnicodePlots
         return nothing
     end
 
+    function ApplyPeriodicity!(Position, SimPeriodicity, ParticleTypes)
+        @unpack IsPeriodic, MinBounds, MaxBounds, HeightIncrease = SimPeriodicity
+    
+        for i in eachindex(Position)
+            pos = Position[i]  # Get the current position (immutable SVector)
+            new_pos = pos       # Start with the same position and modify as needed
+    
+            for d in eachindex(pos)
+                if IsPeriodic[d]
+                    d_periodic = MaxBounds[d] - MinBounds[d]
+    
+                    # Check if position is beyond the upper bound
+                    if pos[d] > MaxBounds[d]
+                        new_pos = setindex(new_pos, pos[d] - d_periodic, d)
+
+                        # Apply HeightIncrease only if the particle is Fluid
+                        if ParticleTypes[i] == Fluid
+                            new_pos = setindex(new_pos, new_pos[end] + HeightIncrease, length(new_pos))
+                        end
+                    # Check if position is below the lower bound
+                    elseif pos[d] < MinBounds[d]
+                        new_pos = setindex(new_pos, pos[d] + d_periodic, d)
+
+                        # Apply HeightIncrease only if the particle is Fluid
+                        if ParticleTypes[i] == Fluid
+                            new_pos = setindex(new_pos, new_pos[end] + HeightIncrease, length(new_pos))
+                        end
+                    end
+                end
+            end
+    
+            
+    
+            # Replace the original position with the new adjusted position
+            Position[i] = new_pos
+        end
+    end
+    
+    
+    
+
     # Really important to overload default function, gives 10x speed up?
     # Overload the default function to do what you pleas
     function ComputeInteractions!(SimMetaData, SimConstants, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
@@ -422,6 +463,10 @@ using UnicodePlots
         
                 Position[i]           += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
             end
+        end
+
+        if SimMetaData.FlagPeriodicity
+            @timeit SimMetaData.HourGlass "12 Applying periodicity" ApplyPeriodicity!(Position, SimPeriodicity, ParticleType)
         end
     
         SimMetaData.Iteration      += 1

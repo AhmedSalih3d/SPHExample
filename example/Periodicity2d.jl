@@ -35,8 +35,8 @@ let
     SimMetaDataPeriodicity  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Periodicity2d", 
         SaveLocation="E:/SecondApproach/Periodicity2d",
-        SimulationTime=6,
-        OutputEach=0.06 ,
+        SimulationTime=0.06,
+        OutputEach=0.01 ,
         VisualizeInParaview=true,
         OpenLogFile=true,
         FlagDensityDiffusion=true, 
