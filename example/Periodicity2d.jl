@@ -23,7 +23,7 @@ let
         Motion      = nothing
     )
 
-    Perio = PeriodicityConditions{Dimensions, FloatType}(
+    SimulationPeriodicity = PeriodicityConditions{Dimensions, FloatType}(
         IsPeriodic     = SVector( true,  false),  # Only x is periodic
         MinBounds      = SVector(-0.01,  0.0),    # x_min = -0.01, y_min = 0.0, z_min = 0.0
         MaxBounds      = SVector( 0.8,   0.0),    # x_max = 0.8,   y_max = 0.0, z_max = 0.0
@@ -42,8 +42,7 @@ let
         FlagDensityDiffusion=true, 
         FlagOutputKernelValues=false,
         FlagLog=true,
-        FlagShifting=false,
-        FlagPeriodicity=true,
+        FlagShifting=false
     )
 
     SimLogger = SimulationLogger(SimMetaDataPeriodicity.SaveLocation)
@@ -52,6 +51,7 @@ let
 
     @profview RunSimulation(
         SimGeometry        = SimulationGeometry,
+        SimPeriodicity     = SimulationPeriodicity,
         SimMetaData        = SimMetaDataPeriodicity,
         SimConstants       = SimConstantsPeriodicity,
         SimLogger          = SimLogger

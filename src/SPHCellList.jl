@@ -308,7 +308,7 @@ using UnicodePlots
         return nothing
     end
     
-    @inbounds function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
+    @inbounds function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff; SimPeriodicity)
         Position       = SimParticles.Position
         Density        = SimParticles.Density
         Pressure       = SimParticles.Pressure
@@ -433,12 +433,17 @@ using UnicodePlots
     end
     
     ###===
-    function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}, #Don't further specify type for now
-        SimMetaData::SimulationMetaData{Dimensions, FloatType},
-        SimConstants::SimulationConstants,
-        SimLogger::SimulationLogger
-        ) where {Dimensions,FloatType}
-
+    function RunSimulation(
+        ; SimGeometry     :: Vector{Geometry{Dimensions, FloatType}},
+          SimPeriodicity  :: Union{Nothing, PeriodicityConditions{Dimensions, FloatType}} = nothing,
+          SimMetaData     :: SimulationMetaData{Dimensions, FloatType},
+          SimConstants    :: SimulationConstants,
+          SimLogger       :: SimulationLogger
+        ) where {Dimensions, FloatType}
+        
+        # Determine if periodicity is enabled
+        SimMetaData.FlagPeriodicity = SimPeriodicity !== nothing
+        
         # Unpack the relevant simulation meta data
         @unpack HourGlass = SimMetaData;
 
@@ -509,7 +514,7 @@ using UnicodePlots
     
         @inbounds while true
     
-            SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
+            SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff; SimPeriodicity)
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
 
 
