@@ -127,32 +127,23 @@ using UnicodePlots
                     # Check if position is beyond the upper bound
                     if pos[d] > MaxBounds[d]
                         new_pos = setindex(new_pos, pos[d] - d_periodic, d)
-
-                        # Apply HeightIncrease only if the particle is Fluid
-                        if ParticleTypes[i] == Fluid
-                            new_pos = setindex(new_pos, new_pos[end] + HeightIncrease, length(new_pos))
-                        end
                     # Check if position is below the lower bound
                     elseif pos[d] < MinBounds[d]
                         new_pos = setindex(new_pos, pos[d] + d_periodic, d)
-
-                        # Apply HeightIncrease only if the particle is Fluid
-                        if ParticleTypes[i] == Fluid
-                            new_pos = setindex(new_pos, new_pos[end] + HeightIncrease, length(new_pos))
-                        end
                     end
                 end
             end
     
-            
+            # Apply HeightIncrease only if the particle is Fluid and periodicity was applied
+            if ParticleTypes[i] == Fluid && new_pos != pos
+                new_pos = setindex(new_pos, new_pos[end] + HeightIncrease, length(new_pos))
+            end
     
             # Replace the original position with the new adjusted position
             Position[i] = new_pos
         end
     end
-    
-    
-    
+
 
     # Really important to overload default function, gives 10x speed up?
     # Overload the default function to do what you pleas
