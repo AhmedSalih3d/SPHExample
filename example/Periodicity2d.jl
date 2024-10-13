@@ -30,8 +30,6 @@ let
         HeightIncrease = 0.3                      # Scalar value for increase in height (z) when reentering
     )
 
-    println(Perio)
-
     SimulationGeometry = [FixedBoundary;Water]
 
     SimMetaDataPeriodicity  = SimulationMetaData{Dimensions,FloatType}(
