@@ -457,7 +457,7 @@ using UnicodePlots
         end
 
         if SimMetaData.FlagPeriodicity
-            @timeit SimMetaData.HourGlass "12 Applying periodicity" ApplyPeriodicity!(Position, SimPeriodicity, ParticleType)
+            #@timeit SimMetaData.HourGlass "12 Applying periodicity" ApplyPeriodicity!(Position, SimPeriodicity, ParticleType)
         end
     
         SimMetaData.Iteration      += 1
