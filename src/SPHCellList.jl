@@ -487,52 +487,65 @@ using WriteVTK
 
             
             println("Relevant cells near periodic x-boundary: ", relevant_cells)
-
-            # Assuming `dx` and `dy` represent cell dimensions in `SimConstants`
+            
+        
+            # Cell dimensions
             dx = SimConstants.H
             dy = SimConstants.H
 
             # Initialize lists for storing points and connectivity
-            points = Vector{SVector{3, Float64}}()         # To store SVector point coordinates
-            cells = Int32[]                                # To store cell connectivity
-            offsets = Int32[]                              # To store offsets in the cells array
-            cell_types = Int8[]                            # To store cell types (VTK_QUAD for squares)
+            points = Vector{SVector{3, Float64}}()    # List to store unique SVector points
+            cells = Int32[]                           # List for connectivity of each cell
+            offsets = Int32[]                         # List for offset positions
+            cell_types = Int8[]                       # VTK cell type array
 
-            for cell in UniqueCells
-                # Get the CartesianIndex position and convert to physical coordinates for cell center
+            # Helper function to determine if a cell is interior
+            function is_interior(cell::CartesianIndex, cells)
+                # Extract cell coordinates
+                xi, yi = cell.I
+                # Determine min and max bounds for x and y coordinates
+                min_x = minimum(c.I[1] for c in cells)
+                max_x = maximum(c.I[1] for c in cells)
+                min_y = minimum(c.I[2] for c in cells)
+                max_y = maximum(c.I[2] for c in cells)
+                # Check if cell is within the interior bounds
+                return (xi > min_x && xi < max_x) && (yi > min_y && yi < max_y)
+            end
+
+            # Loop through each CartesianIndex cell
+            for cell in UniqueCells  
+                # Get x and y from the CartesianIndex and calculate cell center
                 xi, yi = cell.I
                 x_center = (xi - 0.5) * dx
                 y_center = (yi - 0.5) * dy
 
-                # Define the four corner coordinates of the cell in counterclockwise order
+                # Define corners in counterclockwise order
                 x0, y0 = x_center - dx / 2, y_center - dy / 2
                 x1, y1 = x_center + dx / 2, y_center - dy / 2
                 x2, y2 = x_center + dx / 2, y_center + dy / 2
                 x3, y3 = x_center - dx / 2, y_center + dy / 2
 
-                # Add each corner as a separate point
+                # Add corners as individual points
                 corner_indices = Int32[]
-                push!(points, SVector(x0, y0, 0.0))
-                push!(corner_indices, length(points) - 1)
-                push!(points, SVector(x1, y0, 0.0))
-                push!(corner_indices, length(points) - 1)
-                push!(points, SVector(x2, y2, 0.0))
-                push!(corner_indices, length(points) - 1)
-                push!(points, SVector(x3, y3, 0.0))
-                push!(corner_indices, length(points) - 1)
+                push!(points, SVector(x0, y0, 0.0)); push!(corner_indices, length(points))
+                push!(points, SVector(x1, y1, 0.0)); push!(corner_indices, length(points))
+                push!(points, SVector(x2, y2, 0.0)); push!(corner_indices, length(points))
+                push!(points, SVector(x3, y3, 0.0)); push!(corner_indices, length(points))
+                #push!(points, SVector(x0, y0, 0.0)); push!(corner_indices, length(points))
 
-                # Define cell connectivity and update offsets and types
-                push!(cells, 4, corner_indices...)
-                push!(offsets, length(cells))
-                push!(cell_types, 9)  # VTK_QUAD type
+                # Ensure correct connectivity for each cell
+                push!(cells, 5, corner_indices...)    # Each cell has exactly 4 corners
+                push!(offsets, length(cells))         # Track the end of the cell in the `cells` array
+                push!(cell_types, 9)                  # VTK_QUAD type for square cells
             end
 
-            # Write to VTK file as unstructured grid
+            # Write to VTK as unstructured grid
             vtk_grid("ExtractedCells", points) do vtk
                 vtk["cells"] = cells
                 vtk["offsets"] = offsets
                 vtk["celltypes"] = cell_types
             end
+
                     
         end
     
