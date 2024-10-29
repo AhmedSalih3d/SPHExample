@@ -480,7 +480,7 @@ using UnicodePlots
             # Identify cells in UniqueCells within 2 steps of the periodic boundary in the x direction
             relevant_cells = unique(filter(cell -> 
                 (IsPeriodic[1] && (cell[1] <= MinBoundsCellIndex[1] + periodic_offset ||
-                                cell[1] >= MaxBoundsCellIndex[1] - periodic_offset)),
+                                   cell[1] >= MaxBoundsCellIndex[1] - periodic_offset)),
                 UniqueCells
             ))
 
@@ -601,6 +601,9 @@ using UnicodePlots
             TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime)
             @timeit HourGlass "13 Next TimeStep" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime, TimeLeftInSeconds))
     
+            #tmp
+            break
+
             if SimMetaData.TotalTime > SimMetaData.SimulationTime
                 
 
