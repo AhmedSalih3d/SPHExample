@@ -470,7 +470,21 @@ using UnicodePlots
             t2 = map(x -> map_floor(x, InverseCutOff), Tuple(MaxBounds))
             MaxBoundsCellIndex = CartesianIndex(t2)
 
+            println("Periodicty Directions: ", IsPeriodic)
+            println("MinBounds: ", MinBounds, " | ", "MaxBounds: ", MaxBounds)
             println("MinBoundsCellIndex: ", MinBoundsCellIndex, " | ", "MaxBoundsCellIndex: ", MaxBoundsCellIndex)
+
+            # Define periodic offset
+            periodic_offset = 2
+
+            # Identify cells in UniqueCells within 2 steps of the periodic boundary in the x direction
+            relevant_cells = unique(filter(cell -> 
+                (IsPeriodic[1] && (cell[1] <= MinBoundsCellIndex[1] + periodic_offset ||
+                                cell[1] >= MaxBoundsCellIndex[1] - periodic_offset)),
+                UniqueCells
+            ))
+
+            println("Relevant cells near periodic x-boundary: ", relevant_cells)
         end
     
         SimMetaData.Iteration      += 1
