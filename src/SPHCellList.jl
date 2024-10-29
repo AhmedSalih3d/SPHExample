@@ -458,6 +458,19 @@ using UnicodePlots
 
         if SimMetaData.FlagPeriodicity
             #@timeit SimMetaData.HourGlass "12 Applying periodicity" ApplyPeriodicity!(Position, SimPeriodicity, ParticleType)
+            @unpack IsPeriodic, MinBounds, MaxBounds, HeightIncrease = SimPeriodicity
+
+            function map_floor(x, ::Val{InverseCutOff}) where InverseCutOff
+                unsafe_trunc(Int, muladd(x, InverseCutOff, 2))
+            end
+
+            t1 = map(x -> map_floor(x, InverseCutOff), Tuple(MinBounds))
+            MinBoundsCellIndex = CartesianIndex(t1)
+
+            t2 = map(x -> map_floor(x, InverseCutOff), Tuple(MaxBounds))
+            MaxBoundsCellIndex = CartesianIndex(t2)
+
+            println("MinBoundsCellIndex: ", MinBoundsCellIndex, " | ", "MaxBoundsCellIndex: ", MaxBoundsCellIndex)
         end
     
         SimMetaData.Iteration      += 1
