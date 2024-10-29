@@ -492,13 +492,11 @@ using WriteVTK
             dx = SimConstants.H
             dy = SimConstants.H
 
-            # Initialize lists for storing unique points and connectivity
-            points = Vector{SVector{3,Float64}}()                  # To store SVector point coordinates
-            cells = Int32[]              # To store cell connectivity
-            offsets = Int32[]            # To store offsets in the cells array
-            cell_types = Int8[]          # To store cell types (VTK_QUAD for squares)
-            point_dict = Dict{Tuple{Float64, Float64}, Int32}()  # Map point coordinates to indices
-            point_counter = 0            # To assign unique indices to points
+            # Initialize lists for storing points and connectivity
+            points = Vector{SVector{3, Float64}}()         # To store SVector point coordinates
+            cells = Int32[]                                # To store cell connectivity
+            offsets = Int32[]                              # To store offsets in the cells array
+            cell_types = Int8[]                            # To store cell types (VTK_QUAD for squares)
 
             for cell in UniqueCells
                 # Get the CartesianIndex position and convert to physical coordinates for cell center
@@ -506,34 +504,25 @@ using WriteVTK
                 x_center = (xi - 0.5) * dx
                 y_center = (yi - 0.5) * dy
 
-                # Define the four corner coordinates of the cell
+                # Define the four corner coordinates of the cell in counterclockwise order
                 x0, y0 = x_center - dx / 2, y_center - dy / 2
-                x1, y1 = x_center + dx / 2, y_center + dy / 2
+                x1, y1 = x_center + dx / 2, y_center - dy / 2
+                x2, y2 = x_center + dx / 2, y_center + dy / 2
+                x3, y3 = x_center - dx / 2, y_center + dy / 2
 
-                # Each cell has four corners
-                corners = [
-                    (x0, y0),
-                    (x1, y0),
-                    (x1, y1),
-                    (x0, y1)
-                ]
-
-                # List to store the indices of each corner
-                point_indices = Int32[]
-
-                # Add points if they haven’t been added already
-                for corner in corners
-                    if !haskey(point_dict, corner)
-                        point_dict[corner] = point_counter
-                        # Add point as an SVector to satisfy WriteVTK expectations
-                        push!(points, SVector(corner[1], corner[2], 0.0))  # z = 0 for 2D
-                        point_counter += 1
-                    end
-                    push!(point_indices, point_dict[corner])
-                end
+                # Add each corner as a separate point
+                corner_indices = Int32[]
+                push!(points, SVector(x0, y0, 0.0))
+                push!(corner_indices, length(points) - 1)
+                push!(points, SVector(x1, y0, 0.0))
+                push!(corner_indices, length(points) - 1)
+                push!(points, SVector(x2, y2, 0.0))
+                push!(corner_indices, length(points) - 1)
+                push!(points, SVector(x3, y3, 0.0))
+                push!(corner_indices, length(points) - 1)
 
                 # Define cell connectivity and update offsets and types
-                push!(cells, length(point_indices), point_indices...)
+                push!(cells, 4, corner_indices...)
                 push!(offsets, length(cells))
                 push!(cell_types, 9)  # VTK_QUAD type
             end
