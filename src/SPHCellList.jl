@@ -499,19 +499,6 @@ using WriteVTK
             offsets = Int32[]                         # List for offset positions
             cell_types = Int8[]                       # VTK cell type array
 
-            # Helper function to determine if a cell is interior
-            function is_interior(cell::CartesianIndex, cells)
-                # Extract cell coordinates
-                xi, yi = cell.I
-                # Determine min and max bounds for x and y coordinates
-                min_x = minimum(c.I[1] for c in cells)
-                max_x = maximum(c.I[1] for c in cells)
-                min_y = minimum(c.I[2] for c in cells)
-                max_y = maximum(c.I[2] for c in cells)
-                # Check if cell is within the interior bounds
-                return (xi > min_x && xi < max_x) && (yi > min_y && yi < max_y)
-            end
-
             # Loop through each CartesianIndex cell
             for cell in UniqueCells  
                 # Get x and y from the CartesianIndex and calculate cell center
@@ -531,10 +518,10 @@ using WriteVTK
                 push!(points, SVector(x1, y1, 0.0)); push!(corner_indices, length(points))
                 push!(points, SVector(x2, y2, 0.0)); push!(corner_indices, length(points))
                 push!(points, SVector(x3, y3, 0.0)); push!(corner_indices, length(points))
-                #push!(points, SVector(x0, y0, 0.0)); push!(corner_indices, length(points))
+                push!(points, SVector(x0, y0, 0.0)); push!(corner_indices, length(points))
 
                 # Ensure correct connectivity for each cell
-                push!(cells, 5, corner_indices...)    # Each cell has exactly 4 corners
+                push!(cells, 4, corner_indices...)    # Each cell has exactly 4 corners
                 push!(offsets, length(cells))         # Track the end of the cell in the `cells` array
                 push!(cell_types, 9)                  # VTK_QUAD type for square cells
             end
