@@ -487,47 +487,6 @@ using WriteVTK
 
             
             println("Relevant cells near periodic x-boundary: ", relevant_cells)
-            
-        
-            # Cell dimensions
-            dx = SimConstants.H
-            dy = SimConstants.H
-
-            # Initialise lists for storing points and cells
-            points = Vector{SVector{3, Float64}}()    # List to store unique SVector points
-            cells = empty!([MeshCell(VTKCellTypes.VTK_QUAD, 1:4)])  # empty vector of cells (with the right element type)
-            cells_id = Int[]  # not needed, but useful for visualisation purposes
-
-            # Loop through each CartesianIndex cell
-            for (id, cell) in enumerate(UniqueCells)
-                # Get x and y from the CartesianIndex and calculate cell center
-                xi, yi = cell.I
-                x_center = (xi - 0.5) * dx
-                y_center = (yi - 0.5) * dy
-
-                # Define corners in counterclockwise order
-                x0, y0 = x_center - dx / 2, y_center - dy / 2
-                x1, y1 = x_center + dx / 2, y_center - dy / 2
-                x2, y2 = x_center + dx / 2, y_center + dy / 2
-                x3, y3 = x_center - dx / 2, y_center + dy / 2
-
-                # Create quad cell connecting the 4 new points
-                n = length(points)
-                cell = MeshCell(VTKCellTypes.VTK_QUAD, (n + 1):(n + 4))
-                push!(cells, cell)
-                push!(cells_id, id)
-
-                # Add corners as individual points
-                push!(points, SVector(x0, y0, 0.0))
-                push!(points, SVector(x1, y1, 0.0))
-                push!(points, SVector(x2, y2, 0.0))
-                push!(points, SVector(x3, y3, 0.0))
-            end
-
-            # Write to VTK as unstructured grid
-            vtk_grid("ExtractedCells", points, cells) do vtk
-                vtk["cell_id"] = cells_id
-            end
         end
     
         SimMetaData.Iteration      += 1
@@ -589,6 +548,8 @@ using WriteVTK
         # Produce data saving functions
         SaveLocation_ = SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName
         SaveLocation  = (Iteration) -> SaveLocation_ * "_" * lpad(Iteration,6,"0") * ".vtkhdf"
+
+        SaveCellGridLocation = (Iteration) -> SaveLocation_ * "_CellGrid" * lpad(Iteration,6,"0") * ".vtu"
     
         fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
     
@@ -627,7 +588,8 @@ using WriteVTK
             if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
     
                 try 
-                    @timeit HourGlass "12A Output Data" SaveFile(SimMetaData.OutputIterationCounter + 1)
+                    @timeit HourGlass "12A Output Data"     SaveFile(SimMetaData.OutputIterationCounter + 1)
+                    @timeit HourGlass "12B Output CellGrid" SaveCellGrid(SaveCellGridLocation(SimMetaData.OutputIterationCounter + 1),SimConstants, UniqueCells)
                 catch err
                     @warn("File write failed.")
                     display(err)
@@ -644,9 +606,6 @@ using WriteVTK
             TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime)
             @timeit HourGlass "13 Next TimeStep" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime, TimeLeftInSeconds))
     
-            #tmp
-            CloseHDFVTKManually("E:/SecondApproach/Periodicity2d")
-            break
 
             if SimMetaData.TotalTime > SimMetaData.SimulationTime
                 
