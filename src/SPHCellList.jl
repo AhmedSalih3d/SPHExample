@@ -493,14 +493,13 @@ using WriteVTK
             dx = SimConstants.H
             dy = SimConstants.H
 
-            # Initialize lists for storing points and connectivity
+            # Initialise lists for storing points and cells
             points = Vector{SVector{3, Float64}}()    # List to store unique SVector points
-            cells = Int32[]                           # List for connectivity of each cell
-            offsets = Int32[]                         # List for offset positions
-            cell_types = Int8[]                       # VTK cell type array
+            cells = empty!([MeshCell(VTKCellTypes.VTK_QUAD, 1:4)])  # empty vector of cells (with the right element type)
+            cells_id = Int[]  # not needed, but useful for visualisation purposes
 
             # Loop through each CartesianIndex cell
-            for cell in UniqueCells  
+            for (id, cell) in enumerate(UniqueCells)
                 # Get x and y from the CartesianIndex and calculate cell center
                 xi, yi = cell.I
                 x_center = (xi - 0.5) * dx
@@ -512,28 +511,23 @@ using WriteVTK
                 x2, y2 = x_center + dx / 2, y_center + dy / 2
                 x3, y3 = x_center - dx / 2, y_center + dy / 2
 
-                # Add corners as individual points
-                corner_indices = Int32[]
-                push!(points, SVector(x0, y0, 0.0)); push!(corner_indices, length(points))
-                push!(points, SVector(x1, y1, 0.0)); push!(corner_indices, length(points))
-                push!(points, SVector(x2, y2, 0.0)); push!(corner_indices, length(points))
-                push!(points, SVector(x3, y3, 0.0)); push!(corner_indices, length(points))
-                push!(points, SVector(x0, y0, 0.0)); push!(corner_indices, length(points))
+                # Create quad cell connecting the 4 new points
+                n = length(points)
+                cell = MeshCell(VTKCellTypes.VTK_QUAD, (n + 1):(n + 4))
+                push!(cells, cell)
+                push!(cells_id, id)
 
-                # Ensure correct connectivity for each cell
-                push!(cells, 4, corner_indices...)    # Each cell has exactly 4 corners
-                push!(offsets, length(cells))         # Track the end of the cell in the `cells` array
-                push!(cell_types, 9)                  # VTK_QUAD type for square cells
+                # Add corners as individual points
+                push!(points, SVector(x0, y0, 0.0))
+                push!(points, SVector(x1, y1, 0.0))
+                push!(points, SVector(x2, y2, 0.0))
+                push!(points, SVector(x3, y3, 0.0))
             end
 
             # Write to VTK as unstructured grid
-            vtk_grid("ExtractedCells", points) do vtk
-                vtk["cells"] = cells
-                vtk["offsets"] = offsets
-                vtk["celltypes"] = cell_types
+            vtk_grid("ExtractedCells", points, cells) do vtk
+                vtk["cell_id"] = cells_id
             end
-
-                    
         end
     
         SimMetaData.Iteration      += 1
