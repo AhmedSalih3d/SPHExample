@@ -23,7 +23,7 @@ module SPHExample
     export AllocateDataStructures, LoadBoundaryNormals
 
     using .ProduceHDFVTK
-    export SaveVTKHDF, SaveCellGrid
+    export SaveVTKHDF, SaveCellGrid, SaveCellGridVTKHDF
 
     using .TimeStepping: Δt
     export Δt
