@@ -549,7 +549,8 @@ using WriteVTK
         SaveLocation_ = SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName
         SaveLocation  = (Iteration) -> SaveLocation_ * "_" * lpad(Iteration,6,"0") * ".vtkhdf"
 
-        SaveCellGridLocation = (Iteration) -> SaveLocation_ * "_CellGrid" * lpad(Iteration,6,"0") * ".vtkhdf"
+        SaveCellGridLocation  = (Iteration) -> SaveLocation_ * "_CellGrid" * lpad(Iteration,6,"0") * ".vtkhdf"
+        SaveCellGridLocation2 = (Iteration) -> SaveLocation_ * "_CellGrid_VTKHDF" * lpad(Iteration,6,"0") * ".vtkhdf"
     
         fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
     
@@ -589,8 +590,8 @@ using WriteVTK
     
                 try 
                     @timeit HourGlass "12A Output Data"     SaveFile(SimMetaData.OutputIterationCounter + 1)
-                    #@timeit HourGlass "12B Output CellGrid" SaveCellGrid(SaveCellGridLocation(SimMetaData.OutputIterationCounter + 1),SimConstants, UniqueCells)
-                    @timeit HourGlass "12B Output CellGrid" SaveCellGridVTKHDF(SaveCellGridLocation(SimMetaData.OutputIterationCounter + 1),SimConstants, UniqueCells)
+                    @timeit HourGlass "12B-WriteVTK Output CellGrid" SaveCellGrid(SaveCellGridLocation(SimMetaData.OutputIterationCounter + 1),SimConstants, UniqueCells)
+                    @timeit HourGlass "12B-VTKHDF   Output CellGrid" SaveCellGridVTKHDF(SaveCellGridLocation2(SimMetaData.OutputIterationCounter + 1),SimConstants, UniqueCells)
                 catch err
                     @warn("File write failed.")
                     display(err)
