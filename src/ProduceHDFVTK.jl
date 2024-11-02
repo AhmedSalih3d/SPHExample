@@ -79,11 +79,18 @@ module ProduceHDFVTK
         push!(offsets, 0)
         # Loop through each CartesianIndex cell
         for (id, cell) in enumerate(UniqueCells)
+            if cell == zero(CartesianIndex{2})
+                break
+            end
             # Get x and y from the CartesianIndex and calculate cell center
             xi, yi = cell.I
-            x_center = (xi - 0.5) * dx
-            y_center = (yi - 0.5) * dy
-    
+            # Define the minimum corner
+            x_min, y_min = -0.05, -0.05  # Set these values to your domain's minimum x and y
+
+            # Adjust the cell center calculation to "pin" the grid to this corner
+            x_center = x_min + (xi - 1) * dx
+            y_center = y_min + (yi - 1) * dy
+
             # Define corners individually
             x0, y0 = x_center - dx / 2, y_center - dy / 2
             x1, y1 = x_center + dx / 2, y_center - dy / 2
