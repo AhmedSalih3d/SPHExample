@@ -549,7 +549,7 @@ using WriteVTK
         SaveLocation_ = SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName
         SaveLocation  = (Iteration) -> SaveLocation_ * "_" * lpad(Iteration,6,"0") * ".vtkhdf"
 
-        SaveCellGridLocation = (Iteration) -> SaveLocation_ * "_CellGrid_VTKHDF" * lpad(Iteration,6,"0") * ".vtkhdf"
+        SaveCellGridLocation = (Iteration) -> SaveLocation_ * "_CellGrid_" * lpad(Iteration,6,"0") * ".vtkhdf"
     
         fid_vector          = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
         fid_vector_cells    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
