@@ -592,8 +592,8 @@ using WriteVTK
             if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
     
                 try 
-                    @timeit HourGlass "12A Output Data"              SaveFile(SimMetaData.OutputIterationCounter + 1)
-                    @timeit HourGlass "12B-VTKHDF   Output CellGrid" SaveCellGridFile(SimMetaData.OutputIterationCounter + 1)
+                    @timeit HourGlass "12A Output Data"     SaveFile(SimMetaData.OutputIterationCounter + 1)
+                    @timeit HourGlass "12B Output CellGrid" SaveCellGridFile(SimMetaData.OutputIterationCounter + 1)
                 catch err
                     @warn("File write failed.")
                     display(err)
