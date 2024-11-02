@@ -106,7 +106,7 @@ module ProduceHDFVTK
         end
     end
 
-    function SaveCellGridVTKHDF(FilePath, SimConstants, UniqueCells)
+    function SaveCellGridVTKHDF(FilePathVector, Index, FilePath, SimConstants, UniqueCells)
         # Cell dimensions
         dx = SimConstants.H
         dy = SimConstants.H
@@ -114,9 +114,9 @@ module ProduceHDFVTK
         # Initialize lists for storing points and cells
         points = Vector{SVector{3, Float64}}()  # List to store unique SVector points
         connectivity = Int[]                    # Connectivity for each cell
-        offsets = Int[]                         # Offsets for each cell
-        cell_types = Int[]                      # Cell types (for VTK_QUAD)
-        cell_data  = Int[]
+        offsets      = Int[]                    # Offsets for each cell
+        cell_types   = Int[]                    # Cell types (for VTK_QUAD)
+        cell_data    = Int[]
     
         push!(offsets, 0)
         # Loop through each CartesianIndex cell
@@ -205,7 +205,7 @@ module ProduceHDFVTK
         create_group(gtop, "FieldData")
         
         # Close file
-        close(io)
+        FilePathVector[Index] = io
     end
     
     

@@ -552,7 +552,8 @@ using WriteVTK
         SaveCellGridLocation  = (Iteration) -> SaveLocation_ * "_CellGrid" * lpad(Iteration,6,"0") * ".vtu"
         SaveCellGridLocation2 = (Iteration) -> SaveLocation_ * "_CellGrid_VTKHDF" * lpad(Iteration,6,"0") * ".vtkhdf"
     
-        fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
+        fid_vector          = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
+        fid_vector_cells    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
     
         OutputVariableNames = ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID", "Type", "GroupMarker"]
         if Dimensions == 2
@@ -560,6 +561,9 @@ using WriteVTK
         else
             SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),SimParticles.Position, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
         end
+
+        SaveCellGridFile   = (Index) -> SaveCellGridVTKHDF(fid_vector_cells, Index, SaveCellGridLocation2(Index), SimConstants, UniqueCells)
+
         SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
         @inline SaveFile(SimMetaData.OutputIterationCounter)
         
@@ -591,7 +595,7 @@ using WriteVTK
                 try 
                     @timeit HourGlass "12A Output Data"     SaveFile(SimMetaData.OutputIterationCounter + 1)
                     @timeit HourGlass "12B-WriteVTK Output CellGrid" SaveCellGrid(SaveCellGridLocation(SimMetaData.OutputIterationCounter + 1),SimConstants, UniqueCells)
-                    @timeit HourGlass "12B-VTKHDF   Output CellGrid" SaveCellGridVTKHDF(SaveCellGridLocation2(SimMetaData.OutputIterationCounter + 1),SimConstants, UniqueCells)
+                    @timeit HourGlass "12B-VTKHDF   Output CellGrid" SaveCellGridFile(SimMetaData.OutputIterationCounter + 1)
                 catch err
                     @warn("File write failed.")
                     display(err)
@@ -616,6 +620,9 @@ using WriteVTK
                 @timeit HourGlass "12B Close hdfvtk output files"  @threads for i in eachindex(fid_vector)
                     if isassigned(fid_vector, i)
                         close(fid_vector[i])
+                    end
+                    if isassigned(fid_vector_cells, i)
+                        close(fid_vector_cells[i])
                     end
                 end
     
