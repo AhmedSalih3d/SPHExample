@@ -494,7 +494,7 @@ using WriteVTK
         SimMetaData.TotalTime      += dt
 
         
-        return nothing
+        return UniqueCellsView
     end
     
     ###===
@@ -561,7 +561,7 @@ using WriteVTK
             SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),SimParticles.Position, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
         end
 
-        SaveCellGridFile   = (Index) -> SaveCellGridVTKHDF(fid_vector_cells, Index, SaveCellGridLocation(Index), SimConstants, UniqueCells, SimParticles)
+        SaveCellGridFile   = (Index, UniqueCellsHasToBeView) -> SaveCellGridVTKHDF(fid_vector_cells, Index, SaveCellGridLocation(Index), SimConstants, UniqueCellsHasToBeView, SimParticles)
 
         # SimMetaData.OutputIterationCounter += 1 #Since a file will be saved
         # @inline SaveFile(SimMetaData.OutputIterationCounter)
@@ -585,7 +585,7 @@ using WriteVTK
     
         @inbounds while true
     
-            SimulationLoop(SimMetaData, SimConstants, SimParticles, SimPeriodicity, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
+            UniqueCellsView = SimulationLoop(SimMetaData, SimConstants, SimParticles, SimPeriodicity, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
 
 
@@ -593,7 +593,7 @@ using WriteVTK
     
                 try 
                     @timeit HourGlass "12A Output Data"     SaveFile(SimMetaData.OutputIterationCounter + 1)
-                    @timeit HourGlass "12B Output CellGrid" SaveCellGridFile(SimMetaData.OutputIterationCounter + 1)
+                    @timeit HourGlass "12B Output CellGrid" SaveCellGridFile(SimMetaData.OutputIterationCounter + 1, UniqueCellsView)
                 catch err
                     @warn("File write failed.")
                     display(err)
