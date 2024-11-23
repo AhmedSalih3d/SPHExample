@@ -561,7 +561,7 @@ using WriteVTK
             SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),SimParticles.Position, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
         end
 
-        SaveCellGridFile   = (Index) -> SaveCellGridVTKHDF(fid_vector_cells, Index, SaveCellGridLocation(Index), SimConstants, UniqueCells)
+        SaveCellGridFile   = (Index) -> SaveCellGridVTKHDF(fid_vector_cells, Index, SaveCellGridLocation(Index), SimConstants, UniqueCells, SimParticles)
 
         SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
         @inline SaveFile(SimMetaData.OutputIterationCounter)

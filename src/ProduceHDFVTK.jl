@@ -64,7 +64,7 @@ module ProduceHDFVTK
             fid_vector[index] = io
     end
 
-    function SaveCellGridVTKHDF(FilePathVector, Index, FilePath, SimConstants, UniqueCells)
+    function SaveCellGridVTKHDF(FilePathVector, Index, FilePath, SimConstants, UniqueCells, SimParticles)
         # Cell dimensions
         dx = SimConstants.H
         dy = SimConstants.H
@@ -75,17 +75,23 @@ module ProduceHDFVTK
         offsets      = Int[]                    # Offsets for each cell
         cell_types   = Int[]                    # Cell types (for VTK_QUAD)
         cell_data    = Int[]
+
+        ElementLength = length(first(UniqueCells))
+
+        if ElementLength == 2
+            x_min, y_min        = foldl((a, b) -> min.(a, b), SimParticles.Position)
+        else
+            x_min, y_min, z_min = foldl((a, b) -> min.(a, b), SimParticles.Position)
+        end
     
         push!(offsets, 0)
         # Loop through each CartesianIndex cell
         for (id, cell) in enumerate(UniqueCells)
-            if cell == zero(CartesianIndex{length(first(UniqueCells))})
+            if cell == zero(CartesianIndex{ElementLength})
                 break
             end
             # Get x and y from the CartesianIndex and calculate cell center
             xi, yi = cell.I
-            # Define the minimum corner
-            x_min, y_min = -0.05, -0.05  # Set these values to your domain's minimum x and y
 
             # Adjust the cell center calculation to "pin" the grid to this corner
             x_center = x_min + (xi - 1) * dx
