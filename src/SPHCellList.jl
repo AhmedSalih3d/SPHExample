@@ -563,8 +563,8 @@ using WriteVTK
 
         SaveCellGridFile   = (Index) -> SaveCellGridVTKHDF(fid_vector_cells, Index, SaveCellGridLocation(Index), SimConstants, UniqueCells, SimParticles)
 
-        SimMetaData.OutputIterationCounter += 1 #Since a file will be saved
-        @inline SaveFile(SimMetaData.OutputIterationCounter)
+        # SimMetaData.OutputIterationCounter += 1 #Since a file will be saved
+        # @inline SaveFile(SimMetaData.OutputIterationCounter)
         
         InverseCutOff = Val(1/(SimConstants.H))
 
@@ -593,7 +593,7 @@ using WriteVTK
     
                 try 
                     @timeit HourGlass "12A Output Data"     SaveFile(SimMetaData.OutputIterationCounter + 1)
-                    @timeit HourGlass "12B Output CellGrid" SaveCellGridFile(SimMetaData.OutputIterationCounter + 1 - 1)
+                    @timeit HourGlass "12B Output CellGrid" SaveCellGridFile(SimMetaData.OutputIterationCounter + 1)
                 catch err
                     @warn("File write failed.")
                     display(err)
