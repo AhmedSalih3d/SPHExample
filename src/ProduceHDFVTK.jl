@@ -68,6 +68,7 @@ module ProduceHDFVTK
         # Cell dimensions
         dx = SimConstants.H
         dy = SimConstants.H
+        dz = SimConstants.H
     
         # Initialize lists for storing points and cells
         points = Vector{SVector{3, Float64}}()  # List to store unique SVector points
@@ -90,39 +91,51 @@ module ProduceHDFVTK
             if cell == zero(CartesianIndex{ElementLength})
                 break
             end
-            # Get x and y from the CartesianIndex and calculate cell center
-            xi, yi = cell.I
 
-            # Adjust the cell center calculation to "pin" the grid to this corner
+            # Get Cartesian indices
+            if ElementLength == 2
+                xi, yi = cell.I
+            else
+                xi, yi, zi = cell.I
+            end
+
+            # Calculate cell center
             x_center = x_min + (xi - 1) * dx
             y_center = y_min + (yi - 1) * dy
+            z_center = ElementLength == 2 ? 0.0 : z_min + (zi - 1) * dz  # Use z_min only in 3D
 
-            # Define corners individually
-            x0, y0 = x_center - dx / 2, y_center - dy / 2
-            x1, y1 = x_center + dx / 2, y_center - dy / 2
-            x2, y2 = x_center + dx / 2, y_center + dy / 2
-            x3, y3 = x_center - dx / 2, y_center + dy / 2
-    
-            # Add each corner point individually and update connectivity
+            # Define corners
+            if ElementLength == 2
+                corners = [
+                    SVector(x_center - dx / 2, y_center - dy / 2, 0.0),
+                    SVector(x_center + dx / 2, y_center - dy / 2, 0.0),
+                    SVector(x_center + dx / 2, y_center + dy / 2, 0.0),
+                    SVector(x_center - dx / 2, y_center + dy / 2, 0.0)
+                ]
+            else
+                corners = [
+                    SVector(x_center - dx / 2, y_center - dy / 2, z_center - dz / 2),
+                    SVector(x_center + dx / 2, y_center - dy / 2, z_center - dz / 2),
+                    SVector(x_center + dx / 2, y_center + dy / 2, z_center - dz / 2),
+                    SVector(x_center - dx / 2, y_center + dy / 2, z_center - dz / 2),
+                    SVector(x_center - dx / 2, y_center - dy / 2, z_center + dz / 2),
+                    SVector(x_center + dx / 2, y_center - dy / 2, z_center + dz / 2),
+                    SVector(x_center + dx / 2, y_center + dy / 2, z_center + dz / 2),
+                    SVector(x_center - dx / 2, y_center + dy / 2, z_center + dz / 2)
+                ]
+            end
+        
+            # Add each corner point and update connectivity
             n = length(points)
-            push!(points, SVector(x0, y0, 0.0))
-            push!(connectivity, n)
-            n += 1
-    
-            push!(points, SVector(x1, y1, 0.0))
-            push!(connectivity, n)
-            n += 1
-    
-            push!(points, SVector(x2, y2, 0.0))
-            push!(connectivity, n)
-            n += 1
-    
-            push!(points, SVector(x3, y3, 0.0))
-            push!(connectivity, n)
-    
+            for corner in corners
+                push!(points, corner)
+                push!(connectivity, n)
+                n += 1
+            end
+        
             # Define cell type and offsets
             push!(offsets, length(connectivity))
-            push!(cell_types, VTKCellTypes.VTK_QUAD.vtk_id)  # Convert to Int
+            push!(cell_types, ElementLength == 2 ? VTKCellTypes.VTK_QUAD.vtk_id : VTKCellTypes.VTK_HEXAHEDRON.vtk_id)
 
             push!(cell_data, id)
         end
