@@ -79,7 +79,7 @@ module ProduceHDFVTK
         push!(offsets, 0)
         # Loop through each CartesianIndex cell
         for (id, cell) in enumerate(UniqueCells)
-            if cell == zero(CartesianIndex{2})
+            if cell == zero(CartesianIndex{length(first(UniqueCells))})
                 break
             end
             # Get x and y from the CartesianIndex and calculate cell center
