@@ -64,7 +64,7 @@ module ProduceHDFVTK
             fid_vector[index] = io
     end
 
-    function SaveCellGridVTKHDF(FilePathVector, Index, FilePath, SimConstants, UniqueCells, SimParticles)
+    function SaveCellGridVTKHDF(FilePathVector, Index, FilePath, SimConstants, UniqueCells::SubArray{CartesianIndex{2}, 1, Vector{CartesianIndex{2}}, Tuple{UnitRange{Int64}}, true}, SimParticles)
         # Cell dimensions
         dx = SimConstants.H
         dy = SimConstants.H
@@ -190,6 +190,60 @@ module ProduceHDFVTK
         
         # Close file
         FilePathVector[Index] = io
+    end
+
+    function SaveCellGridVTKHDF(FilePathVector, Index, FilePath, SimConstants, UniqueCells::SubArray{CartesianIndex{3}, 1, Vector{CartesianIndex{3}}, Tuple{UnitRange{Int64}}, true}, SimParticles)
+        # Parameters for the grid
+        dx = dy = dz = SimConstants.H  # Spacing between cells
+
+        x_min, y_min, z_min = foldl((a, b) -> min.(a, b), SimParticles.Position)
+
+        origin = SVector(x_min, y_min, z_min)  # Origin of the grid
+
+
+        # Initialize arrays for points and cells
+        points = Vector{SVector{3, Float64}}()
+        point_map = Dict{SVector{3, Float64}, Int}()
+        cells = Vector{MeshCell}()
+
+        # Iterate over UniqueCells and create hexahedrons
+        for cell in UniqueCells
+            # Get CartesianIndex coordinates
+            i, j, k = Tuple(cell) .- 1
+
+            # Calculate the coordinates of the 8 corners of the cell
+            corners = [
+                origin + SVector((i - 1) * dx, (j - 1) * dy, (k - 1) * dz),  # Bottom-front-left
+                origin + SVector(i * dx, (j - 1) * dy, (k - 1) * dz),        # Bottom-front-right
+                origin + SVector(i * dx, j * dy, (k - 1) * dz),              # Bottom-back-right
+                origin + SVector((i - 1) * dx, j * dy, (k - 1) * dz),        # Bottom-back-left
+                origin + SVector((i - 1) * dx, (j - 1) * dy, k * dz),        # Top-front-left
+                origin + SVector(i * dx, (j - 1) * dy, k * dz),              # Top-front-right
+                origin + SVector(i * dx, j * dy, k * dz),                    # Top-back-right
+                origin + SVector((i - 1) * dx, j * dy, k * dz)               # Top-back-left
+            ]
+
+            # Map corners to global point indices
+            connectivity = Int[]
+            for corner in corners
+                if haskey(point_map, corner)
+                    push!(connectivity, point_map[corner])
+                else
+                    push!(points, corner)
+                    index = length(points)  # 1-based indexing
+                    point_map[corner] = index
+                    push!(connectivity, index)
+                end
+            end
+
+            # Add the hexahedron cell
+            push!(cells, MeshCell(VTKCellTypes.VTK_HEXAHEDRON, connectivity))
+        end
+
+        # Create the VTK grid
+        vtk_model = vtk_grid(first(splitext(FilePath)) * ".vtu", points, cells)
+
+        vtk_file = vtk_save(vtk_model)
     end
     
     
