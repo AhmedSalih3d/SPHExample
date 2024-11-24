@@ -35,7 +35,7 @@ let
     SimMetaDataDambreak3D  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU_3DDambreak",
-        SimulationTime=0.1,
+        SimulationTime=2.5,
         OutputEach=0.01,
         VisualizeInParaview=true,
         OpenLogFile=true,
