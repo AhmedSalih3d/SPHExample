@@ -27,7 +27,7 @@ let
     SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/VIS_GRID",
-        SimulationTime=0.1,
+        SimulationTime=2.5,
         OutputEach=0.01,
         VisualizeInParaview=true,
         OpenLogFile=false,

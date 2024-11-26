@@ -68,7 +68,6 @@ module ProduceHDFVTK
         # Cell dimensions
         dx = SimConstants.H
         dy = SimConstants.H
-        dz = SimConstants.H
     
         # Initialize lists for storing points and cells
         points = Vector{SVector{3, Float64}}()  # List to store unique SVector points
@@ -76,54 +75,27 @@ module ProduceHDFVTK
         offsets      = Int[]                    # Offsets for each cell
         cell_types   = Int[]                    # Cell types (for VTK_QUAD)
         cell_data    = Int[]
-
-        ElementLength = length(first(UniqueCells))
-
-        if ElementLength == 2
-            x_min, y_min        = foldl((a, b) -> min.(a, b), SimParticles.Position)
-        else
-            x_min, y_min, z_min = foldl((a, b) -> min.(a, b), SimParticles.Position)
-        end
     
         push!(offsets, 0)
         # Loop through each CartesianIndex cell
         for (id, cell) in enumerate(UniqueCells)
-            if cell == zero(CartesianIndex{ElementLength})
+            if cell == zero(eltype(UniqueCells))
                 break
             end
 
-            # Get Cartesian indices
-            if ElementLength == 2
-                xi, yi = cell.I
-            else
-                xi, yi, zi = cell.I
-            end
+            xi, yi = cell.I
+
 
             # Calculate cell center
-            x_center = x_min + (xi - 1) * dx
-            y_center = y_min + (yi - 1) * dy
-            z_center = ElementLength == 2 ? 0.0 : z_min + (zi - 1) * dz  # Use z_min only in 3D
-
-            # Define corners
-            if ElementLength == 2
-                corners = [
-                    SVector(x_center - dx / 2, y_center - dy / 2, 0.0),
-                    SVector(x_center + dx / 2, y_center - dy / 2, 0.0),
-                    SVector(x_center + dx / 2, y_center + dy / 2, 0.0),
-                    SVector(x_center - dx / 2, y_center + dy / 2, 0.0)
-                ]
-            else
-                corners = [
-                    SVector(x_center - dx / 2, y_center - dy / 2, z_center - dz / 2),
-                    SVector(x_center + dx / 2, y_center - dy / 2, z_center - dz / 2),
-                    SVector(x_center + dx / 2, y_center + dy / 2, z_center - dz / 2),
-                    SVector(x_center - dx / 2, y_center + dy / 2, z_center - dz / 2),
-                    SVector(x_center - dx / 2, y_center - dy / 2, z_center + dz / 2),
-                    SVector(x_center + dx / 2, y_center - dy / 2, z_center + dz / 2),
-                    SVector(x_center + dx / 2, y_center + dy / 2, z_center + dz / 2),
-                    SVector(x_center - dx / 2, y_center + dy / 2, z_center + dz / 2)
-                ]
-            end
+            x_center = (xi - 1.5) * dx
+            y_center = (yi - 1.5) * dy
+ 
+            corners = [
+                SVector(x_center - dx / 2, y_center - dy / 2, 0.0),
+                SVector(x_center + dx / 2, y_center - dy / 2, 0.0),
+                SVector(x_center + dx / 2, y_center + dy / 2, 0.0),
+                SVector(x_center - dx / 2, y_center + dy / 2, 0.0)
+            ]
         
             # Add each corner point and update connectivity
             n = length(points)
@@ -135,7 +107,7 @@ module ProduceHDFVTK
         
             # Define cell type and offsets
             push!(offsets, length(connectivity))
-            push!(cell_types, ElementLength == 2 ? VTKCellTypes.VTK_QUAD.vtk_id : VTKCellTypes.VTK_HEXAHEDRON.vtk_id)
+            push!(cell_types, VTKCellTypes.VTK_QUAD.vtk_id)
 
             push!(cell_data, id)
         end
@@ -196,11 +168,6 @@ module ProduceHDFVTK
         # Parameters for the grid
         dx = dy = dz = SimConstants.H  # Spacing between cells
 
-        x_min, y_min, z_min = foldl((a, b) -> min.(a, b), SimParticles.Position)
-
-        origin = SVector(x_min, y_min, z_min)  # Origin of the grid
-
-
         # Initialize arrays for points and cells
         points = Vector{SVector{3, Float64}}()
         point_map = Dict{SVector{3, Float64}, Int}()
@@ -209,18 +176,18 @@ module ProduceHDFVTK
         # Iterate over UniqueCells and create hexahedrons
         for cell in UniqueCells
             # Get CartesianIndex coordinates
-            i, j, k = Tuple(cell) .- 1
+            i, j, k = Tuple(cell) .- 1.5
 
             # Calculate the coordinates of the 8 corners of the cell
             corners = [
-                origin + SVector((i - 1) * dx, (j - 1) * dy, (k - 1) * dz),  # Bottom-front-left
-                origin + SVector(i * dx, (j - 1) * dy, (k - 1) * dz),        # Bottom-front-right
-                origin + SVector(i * dx, j * dy, (k - 1) * dz),              # Bottom-back-right
-                origin + SVector((i - 1) * dx, j * dy, (k - 1) * dz),        # Bottom-back-left
-                origin + SVector((i - 1) * dx, (j - 1) * dy, k * dz),        # Top-front-left
-                origin + SVector(i * dx, (j - 1) * dy, k * dz),              # Top-front-right
-                origin + SVector(i * dx, j * dy, k * dz),                    # Top-back-right
-                origin + SVector((i - 1) * dx, j * dy, k * dz)               # Top-back-left
+                SVector((i - 1) * dx, (j - 1) * dy, (k - 1) * dz),  # Bottom-front-left
+                SVector(i * dx, (j - 1) * dy, (k - 1) * dz),        # Bottom-front-right
+                SVector(i * dx, j * dy, (k - 1) * dz),              # Bottom-back-right
+                SVector((i - 1) * dx, j * dy, (k - 1) * dz),        # Bottom-back-left
+                SVector((i - 1) * dx, (j - 1) * dy, k * dz),        # Top-front-left
+                SVector(i * dx, (j - 1) * dy, k * dz),              # Top-front-right
+                SVector(i * dx, j * dy, k * dz),                    # Top-back-right
+                SVector((i - 1) * dx, j * dy, k * dz)               # Top-back-left
             ]
 
             # Map corners to global point indices
