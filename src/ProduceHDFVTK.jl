@@ -164,6 +164,7 @@ module ProduceHDFVTK
         FilePathVector[Index] = io
     end
 
+    # Has slight bug
     function SaveCellGridVTKHDF(FilePathVector, Index, FilePath, SimConstants, UniqueCells::SubArray{CartesianIndex{3}, 1, Vector{CartesianIndex{3}}, Tuple{UnitRange{Int64}}, true}, SimParticles)
         # Parameters for the grid
         dx = dy = dz = SimConstants.H  # Spacing between cells
@@ -175,19 +176,23 @@ module ProduceHDFVTK
 
         # Iterate over UniqueCells and create hexahedrons
         for cell in UniqueCells
-            # Get CartesianIndex coordinates
-            i, j, k = Tuple(cell) .- 1.5
-
-            # Calculate the coordinates of the 8 corners of the cell
+            i, j, k = Tuple(cell)
+        
+            # Calculate cell center
+            x_center = (i - 1.5) * dx
+            y_center = (j - 1.5) * dy
+            z_center = (k - 1.5) * dz
+        
+            # Calculate the 8 corners of the cell relative to the center
             corners = [
-                SVector((i - 1) * dx, (j - 1) * dy, (k - 1) * dz),  # Bottom-front-left
-                SVector(i * dx, (j - 1) * dy, (k - 1) * dz),        # Bottom-front-right
-                SVector(i * dx, j * dy, (k - 1) * dz),              # Bottom-back-right
-                SVector((i - 1) * dx, j * dy, (k - 1) * dz),        # Bottom-back-left
-                SVector((i - 1) * dx, (j - 1) * dy, k * dz),        # Top-front-left
-                SVector(i * dx, (j - 1) * dy, k * dz),              # Top-front-right
-                SVector(i * dx, j * dy, k * dz),                    # Top-back-right
-                SVector((i - 1) * dx, j * dy, k * dz)               # Top-back-left
+                SVector(x_center - dx / 2, y_center - dy / 2, z_center - dz / 2),  # Bottom-front-left
+                SVector(x_center + dx / 2, y_center - dy / 2, z_center - dz / 2),  # Bottom-front-right
+                SVector(x_center + dx / 2, y_center + dy / 2, z_center - dz / 2),  # Bottom-back-right
+                SVector(x_center - dx / 2, y_center + dy / 2, z_center - dz / 2),  # Bottom-back-left
+                SVector(x_center - dx / 2, y_center - dy / 2, z_center + dz / 2),  # Top-front-left
+                SVector(x_center + dx / 2, y_center - dy / 2, z_center + dz / 2),  # Top-front-right
+                SVector(x_center + dx / 2, y_center + dy / 2, z_center + dz / 2),  # Top-back-right
+                SVector(x_center - dx / 2, y_center + dy / 2, z_center + dz / 2)   # Top-back-left
             ]
 
             # Map corners to global point indices
@@ -210,7 +215,7 @@ module ProduceHDFVTK
         # Create the VTK grid
         vtk_model = vtk_grid(first(splitext(FilePath)) * ".vtu", points, cells)
 
-        vtk_file = vtk_save(vtk_model)
+        vtk_save(vtk_model)
     end
     
     
