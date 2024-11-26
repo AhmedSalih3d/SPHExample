@@ -164,25 +164,35 @@ module ProduceHDFVTK
         FilePathVector[Index] = io
     end
 
-    # Has slight bug
     function SaveCellGridVTKHDF(FilePathVector, Index, FilePath, SimConstants, UniqueCells::SubArray{CartesianIndex{3}, 1, Vector{CartesianIndex{3}}, Tuple{UnitRange{Int64}}, true}, SimParticles)
-        # Parameters for the grid
-        dx = dy = dz = SimConstants.H  # Spacing between cells
-
-        # Initialize arrays for points and cells
-        points = Vector{SVector{3, Float64}}()
-        point_map = Dict{SVector{3, Float64}, Int}()
-        cells = Vector{MeshCell}()
-
-        # Iterate over UniqueCells and create hexahedrons
-        for cell in UniqueCells
-            i, j, k = Tuple(cell)
-        
+        # Cell dimensions
+        dx = SimConstants.H
+        dy = SimConstants.H
+        dz = SimConstants.H
+    
+        # Initialize arrays for storing points and cells
+        points = Vector{SVector{3, Float64}}()  # List of unique SVector points
+        connectivity = Int[]                    # Connectivity for each cell
+        offsets      = Int[]                    # Offsets for each cell
+        cell_types   = Int[]                    # Cell types (for VTK_HEXAHEDRON)
+        cell_data    = Int[]                    # Cell-level data
+    
+        push!(offsets, 0)
+    
+        # Iterate over UniqueCells to create hexahedrons
+        for (id, cell) in enumerate(UniqueCells)
+            if cell == zero(eltype(UniqueCells))
+                break
+            end
+    
+            # Get cell indices
+            xi, yi, zi = cell.I
+    
             # Calculate cell center
-            x_center = (i - 1.5) * dx
-            y_center = (j - 1.5) * dy
-            z_center = (k - 1.5) * dz
-        
+            x_center = (xi - 1.5) * dx
+            y_center = (yi - 1.5) * dy
+            z_center = (zi - 1.5) * dz
+    
             # Calculate the 8 corners of the cell relative to the center
             corners = [
                 SVector(x_center - dx / 2, y_center - dy / 2, z_center - dz / 2),  # Bottom-front-left
@@ -194,29 +204,65 @@ module ProduceHDFVTK
                 SVector(x_center + dx / 2, y_center + dy / 2, z_center + dz / 2),  # Top-back-right
                 SVector(x_center - dx / 2, y_center + dy / 2, z_center + dz / 2)   # Top-back-left
             ]
-
-            # Map corners to global point indices
-            connectivity = Int[]
+    
+            # Add each corner point and update connectivity
+            n = length(points)
             for corner in corners
-                if haskey(point_map, corner)
-                    push!(connectivity, point_map[corner])
-                else
-                    push!(points, corner)
-                    index = length(points)  # 1-based indexing
-                    point_map[corner] = index
-                    push!(connectivity, index)
-                end
+                push!(points, corner)
+                push!(connectivity, n)
+                n += 1
             end
-
-            # Add the hexahedron cell
-            push!(cells, MeshCell(VTKCellTypes.VTK_HEXAHEDRON, connectivity))
+    
+            # Define cell type and offsets
+            push!(offsets, length(connectivity))
+            push!(cell_types, VTKCellTypes.VTK_HEXAHEDRON.vtk_id)
+    
+            push!(cell_data, id)
         end
-
-        # Create the VTK grid
-        vtk_model = vtk_grid(first(splitext(FilePath)) * ".vtu", points, cells)
-
-        vtk_save(vtk_model)
-    end
+    
+        # Open HDF5 file for writing
+        io = h5open(FilePath, "w")
+    
+        # Create top-level group "VTKHDF"
+        gtop = HDF5.create_group(io, "VTKHDF")
+    
+        # Set the Version attribute
+        HDF5.attrs(gtop)["Version"] = [2, 3]
+    
+        # Write Type attribute as ASCII string
+        let s = "UnstructuredGrid"
+            dtype = HDF5.datatype(s)
+            HDF5.API.h5t_set_cset(dtype.id, HDF5.API.H5T_CSET_ASCII)
+            dspace = HDF5.dataspace(s)
+            attr = HDF5.create_attribute(gtop, "Type", dtype, dspace)
+            HDF5.write_attribute(attr, dtype, s)
+        end
+    
+        # Write Number of Points, Number of Cells, and Number of Connectivity IDs
+        gtop["NumberOfPoints"]          = [length(points)]
+        gtop["NumberOfCells"]           = [length(cell_types)]
+        gtop["NumberOfConnectivityIds"] = [length(connectivity)]
+    
+        # Write Points
+        gtop["Points"] = reinterpret(reshape, eltype(eltype(points)), points)
+    
+        # Write Connectivity, Offsets, and Types
+        gtop["Connectivity"] = connectivity
+        gtop["Offsets"] = offsets
+        gtop["Types"] = [VTKCellTypes.VTK_HEXAHEDRON.vtk_id for _ in cell_types]  # Use VTK_HEXAHEDRON type for all
+    
+        # Write CellData (cell-level variables)
+        let cell_group = HDF5.create_group(gtop, "CellData")
+            cell_group["CellData"] = cell_data
+            close(cell_group)
+        end
+    
+        # Write an empty FieldData group (placeholder for additional data)
+        create_group(gtop, "FieldData")
+    
+        # Close file
+        FilePathVector[Index] = io
+    end    
     
     
 
