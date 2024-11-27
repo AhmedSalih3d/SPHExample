@@ -76,15 +76,20 @@ module ProduceHDFVTK
         cell_types   = Int[]                    # Cell types (for VTK_QUAD)
         cell_data    = Int[]
     
+        x_min, _ = foldl((a, b) -> min.(a, b), SimParticles.Position)
+        x_max, _ = foldl((a, b) -> max.(a, b), SimParticles.Position)
+        Nx = ceil(Int, (x_max - x_min)/dx)
+
         push!(offsets, 0)
         # Loop through each CartesianIndex cell
-        for (id, cell) in enumerate(UniqueCells)
-            if cell == zero(eltype(UniqueCells))
-                break
-            end
+        for (_, cell) in enumerate(UniqueCells)
+            # if cell == zero(eltype(UniqueCells))
+            #     break
+            # end
 
             xi, yi = cell.I
 
+            cell_id = xi + Nx * yi
 
             # Calculate cell center
             x_center = (xi - 1.5) * dx
@@ -109,7 +114,7 @@ module ProduceHDFVTK
             push!(offsets, length(connectivity))
             push!(cell_types, VTKCellTypes.VTK_QUAD.vtk_id)
 
-            push!(cell_data, id)
+            push!(cell_data, cell_id)
         end
     
         # Open HDF5 file for writing
@@ -179,11 +184,13 @@ module ProduceHDFVTK
     
         push!(offsets, 0)
     
+            
+
         # Iterate over UniqueCells to create hexahedrons
         for (id, cell) in enumerate(UniqueCells)
-            if cell == zero(eltype(UniqueCells))
-                break
-            end
+            # if cell == zero(eltype(UniqueCells))
+            #     break
+            # end
     
             # Get cell indices
             xi, yi, zi = cell.I

@@ -45,10 +45,20 @@ using WriteVTK
         end
 
         Cells  = @views Particles.Cells
+        CellsID  = @views Particles.CellsID
         Points = @views Particles.Position
         for i ∈ eachindex(Particles)
             t = map(map_floor, Tuple(Points[i]))
             Cells[i] = CartesianIndex(t)
+        end
+
+        x_min, _ = foldl((a, b) -> min.(a, b), Particles.Position)
+        x_max, _ = foldl((a, b) -> max.(a, b), Particles.Position)
+        Nx = ceil(Int, (x_max - x_min)/(1/InverseCutOff))
+
+        for i ∈ eachindex(Cells)
+            xi, yi = Cells[i].I
+            CellsID[i] = xi + Nx * yi
         end
         return nothing
     end
@@ -386,12 +396,12 @@ using WriteVTK
         # any ensure it is always updated in a reasonable manner. This only works well, assuming that
         # c₀ >= maximum(norm.(Velocity))
         # Remove if statement logic if you want to update each iteration
-        if mod(SimMetaData.Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
+        # if mod(SimMetaData.Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
             @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, InverseCutOff, SortingScratchSpace,  ParticleRanges, UniqueCells)
-        else
-            findfirst_int(predicate, collection) = (idx = findfirst(predicate, collection); idx === nothing ? -1 : idx)
-            IndexCounter    = findfirst_int(isequal(0), ParticleRanges) - 2
-        end
+        # else
+        #     findfirst_int(predicate, collection) = (idx = findfirst(predicate, collection); idx === nothing ? -1 : idx)
+        #     IndexCounter    = findfirst_int(isequal(0), ParticleRanges) - 2
+        # end
 
         UniqueCellsView   = view(UniqueCells, 1:IndexCounter)
         EnumeratedIndices = enumerate(chunks(UniqueCellsView; n=nthreads()))
@@ -554,11 +564,11 @@ using WriteVTK
         fid_vector          = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
         fid_vector_cells    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
     
-        OutputVariableNames = ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID", "Type", "GroupMarker"]
+        OutputVariableNames = ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID", "Type", "GroupMarker", "CellID"]
         if Dimensions == 2
-            SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
+            SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker, SimParticles.CellsID)
         else
-            SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),SimParticles.Position, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
+            SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),SimParticles.Position, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker, SimParticles.CellsID)
         end
 
         SaveCellGridFile   = (Index, UniqueCellsHasToBeView) -> SaveCellGridVTKHDF(fid_vector_cells, Index, SaveCellGridLocation(Index), SimConstants, UniqueCellsHasToBeView, SimParticles)

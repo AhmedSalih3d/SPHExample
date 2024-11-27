@@ -18,9 +18,9 @@ function LoadSpecificCSV(dims, float_type, particle_type, particle_group_marker,
     group_marker = Vector{Int}()
 
     for DF ∈ eachrow(DF_SPECIFIC)
-        P1   = DF["Points:0"]+ 100
-        P2   = DF["Points:1"]+ 100
-        P3   = DF["Points:2"]+ 100
+        P1   = DF["Points:0"] + 100
+        P2   = DF["Points:1"] + 100
+        P3   = DF["Points:2"] + 100
         Rhop = DF["Rhop"]
 
         point = dims == 3 ? SVector{dims,float_type}(P1, P2, P3) : SVector{dims,float_type}(P1, P3)
@@ -96,8 +96,9 @@ function AllocateDataStructures(Dimensions,FloatType, SimGeometry)
     Pressureᵢ      = zeros(PositionUnderlyingType, NumberOfPoints)
     
     Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
+    CellsID        = zeros(Int, NumberOfPoints)
 
-    SimParticles = StructArray((Cells = Cells, Kernel = Kernel, KernelGradient = KernelGradient, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = collect(1:NumberOfPoints) , Type = Types, GroupMarker = GroupMarker))
+    SimParticles = StructArray((Cells = Cells, Kernel = Kernel, KernelGradient = KernelGradient, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = collect(1:NumberOfPoints) , Type = Types, GroupMarker = GroupMarker, CellsID = CellsID))
 
     return SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺
 end
