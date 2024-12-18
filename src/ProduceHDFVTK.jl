@@ -83,9 +83,6 @@ module ProduceHDFVTK
         push!(offsets, 0)
         # Loop through each CartesianIndex cell
         for (_, cell) in enumerate(UniqueCells)
-            # if cell == zero(eltype(UniqueCells))
-            #     break
-            # end
 
             xi, yi = cell.I
 
@@ -188,10 +185,7 @@ module ProduceHDFVTK
 
         # Iterate over UniqueCells to create hexahedrons
         for (id, cell) in enumerate(UniqueCells)
-            # if cell == zero(eltype(UniqueCells))
-            #     break
-            # end
-    
+
             # Get cell indices
             xi, yi, zi = cell.I
     
