@@ -471,32 +471,32 @@ using WriteVTK
             #@timeit SimMetaData.HourGlass "12 Applying periodicity" ApplyPeriodicity!(Position, SimPeriodicity, ParticleType)
             @unpack IsPeriodic, MinBounds, MaxBounds, HeightIncrease = SimPeriodicity
 
-            function map_floor(x, ::Val{InverseCutOff}) where InverseCutOff
-                unsafe_trunc(Int, muladd(x, InverseCutOff, 2))
-            end
+            # function map_floor(x, ::Val{InverseCutOff}) where InverseCutOff
+            #     unsafe_trunc(Int, muladd(x, InverseCutOff, 2))
+            # end
 
-            t1 = map(x -> map_floor(x, InverseCutOff), Tuple(MinBounds))
-            MinBoundsCellIndex = CartesianIndex(t1)
+            # t1 = map(x -> map_floor(x, InverseCutOff), Tuple(MinBounds))
+            # MinBoundsCellIndex = CartesianIndex(t1)
 
-            t2 = map(x -> map_floor(x, InverseCutOff), Tuple(MaxBounds))
-            MaxBoundsCellIndex = CartesianIndex(t2)
+            # t2 = map(x -> map_floor(x, InverseCutOff), Tuple(MaxBounds))
+            # MaxBoundsCellIndex = CartesianIndex(t2)
 
-            println("Periodicty Directions: ", IsPeriodic)
-            println("MinBounds: ", MinBounds, " | ", "MaxBounds: ", MaxBounds)
-            println("MinBoundsCellIndex: ", MinBoundsCellIndex, " | ", "MaxBoundsCellIndex: ", MaxBoundsCellIndex)
+            # println("Periodicty Directions: ", IsPeriodic)
+            # println("MinBounds: ", MinBounds, " | ", "MaxBounds: ", MaxBounds)
+            # println("MinBoundsCellIndex: ", MinBoundsCellIndex, " | ", "MaxBoundsCellIndex: ", MaxBoundsCellIndex)
 
-            # Define periodic offset
-            periodic_offset = 2
+            # # Define periodic offset
+            # periodic_offset = 2
 
-            # Identify cells in UniqueCells within 2 steps of the periodic boundary in the x direction
-            relevant_cells = unique(filter(cell -> 
-                (IsPeriodic[1] && (cell[1] <= MinBoundsCellIndex[1] + periodic_offset ||
-                                   cell[1] >= MaxBoundsCellIndex[1] - periodic_offset)),
-                UniqueCells
-            ))
+            # # Identify cells in UniqueCells within 2 steps of the periodic boundary in the x direction
+            # relevant_cells = unique(filter(cell -> 
+            #     (IsPeriodic[1] && (cell[1] <= MinBoundsCellIndex[1] + periodic_offset ||
+            #                        cell[1] >= MaxBoundsCellIndex[1] - periodic_offset)),
+            #     UniqueCells
+            # ))
 
             
-            println("Relevant cells near periodic x-boundary: ", relevant_cells)
+            # println("Relevant cells near periodic x-boundary: ", relevant_cells)
         end
     
         SimMetaData.Iteration      += 1
@@ -600,10 +600,10 @@ using WriteVTK
 
 
             if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
-    
+                SimMetaData.OutputIterationCounter += 1
                 try 
-                    @timeit HourGlass "12A Output Data"     SaveFile(SimMetaData.OutputIterationCounter + 1)
-                    @timeit HourGlass "12B Output CellGrid" SaveCellGridFile(SimMetaData.OutputIterationCounter + 1, UniqueCellsView)
+                    @timeit HourGlass "12A Output Data"     SaveFile(SimMetaData.OutputIterationCounter)
+                    @timeit HourGlass "12B Output CellGrid" SaveCellGridFile(SimMetaData.OutputIterationCounter, UniqueCellsView)
                 catch err
                     @warn("File write failed.")
                     display(err)
@@ -614,7 +614,6 @@ using WriteVTK
                     SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
                 end
     
-                SimMetaData.OutputIterationCounter += 1
             end
 
             TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime)
