@@ -32,6 +32,7 @@ let
         VisualizeInParaview=true,
         OpenLogFile=true,
         FlagDensityDiffusion=true,
+        FlagLinearizedDDT=true,
         FlagOutputKernelValues=false,
         FlagLog=true
     )
