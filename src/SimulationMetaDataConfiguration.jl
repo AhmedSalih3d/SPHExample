@@ -23,6 +23,7 @@ export SimulationMetaData
     VisualizeInParaview::Bool               = true    
     OpenLogFile::Bool                       = true
     FlagDensityDiffusion::Bool              = false
+    FlagLinearizedDDT::Bool                 = false
     FlagOutputKernelValues::Bool            = false     
     FlagLog::Bool                           = false
     FlagShifting::Bool                      = false 

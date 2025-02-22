@@ -116,7 +116,7 @@ using UnicodePlots
     # Really important to overload default function, gives 10x speed up?
     # Overload the default function to do what you pleas
     function ComputeInteractions!(SimMetaData, SimConstants, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
-        @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues = SimMetaData
+        @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues, FlagLinearizedDDT = SimMetaData
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, γ, g, c₀, δᵩ, η², H², Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
         xᵢⱼ  = Position[i] - Position[j]
@@ -143,22 +143,29 @@ using UnicodePlots
             if FlagDensityDiffusion
                 if SimConstants.g == 0
                     ρᵢⱼᴴ  = 0.0
-                    # ρⱼᵢᴴ  = 0.0
+                    ρⱼᵢᴴ  = 0.0
                 else
-                    Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
-                    ρᵢⱼᴴ  = ((Pᵢⱼᴴ/(Cb * γ)) * ρ₀)
-                    # Pⱼᵢᴴ  = -Pᵢⱼᴴ
-                    # ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
+                    if FlagLinearizedDDT
+                        Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
+                        Pⱼᵢᴴ  = -Pᵢⱼᴴ
+                        ρᵢⱼᴴ  = ((Pᵢⱼᴴ/(Cb * γ)) * ρ₀)
+                        ρⱼᵢᴴ  = ((Pⱼᵢᴴ/(Cb * γ)) * ρ₀)
+                    else
+                        Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
+                        ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
+                        Pⱼᵢᴴ  = -Pᵢⱼᴴ
+                        ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
+                    end
                 end
 
                 ρⱼᵢ   = ρⱼ - ρᵢ
 
-                Ψᵢⱼ   = 2( ρⱼᵢ  - ρᵢⱼᴴ) * (-xᵢⱼ) * invd²η²
-                Ψⱼᵢ   = -Ψᵢⱼ #2(-ρⱼᵢ  - ρⱼᵢᴴ) * ( xᵢⱼ) * invd²η²
+                Ψᵢⱼ   = 2( ρⱼᵢ - ρᵢⱼᴴ) * (-xᵢⱼ) * invd²η²
+                Ψⱼᵢ   = 2(-ρⱼᵢ - ρⱼᵢᴴ) * ( xᵢⱼ) * invd²η²
 
                 MLcond = MotionLimiter[i] * MotionLimiter[j]
                 Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
-                Dⱼ    =  -Dᵢ #δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
+                Dⱼ    =  δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
             else
                 Dᵢ  = 0.0
                 Dⱼ  = 0.0
@@ -213,15 +220,15 @@ using UnicodePlots
                 νtᵢ      = (SmagorinskyConstant * dx)^2 * norm_Sᵢ
                 trace_Sᵢ = sum(diag(Sᵢ))
                 τᶿᵢ      = 2*νtᵢ*ρᵢ * (Sᵢ - (1/3) * trace_Sᵢ * Iᴹ) - (2/3) * ρᵢ * BlinConstant * dx^2 * norm_Sᵢ^2 * Iᴹ
-                # Sⱼ = ∇vⱼ =  (m₀/ρᵢ) * (vᵢ - vⱼ) * -∇ᵢWᵢⱼ'
-                # norm_Sⱼ  = sqrt(2 * sum(Sⱼ .^ 2))
-                # νtⱼ      = (SmagorinskyConstant * dx)^2 * norm_Sⱼ
-                # trace_Sⱼ = sum(diag(Sⱼ))
-                τᶿⱼ      = -τᶿᵢ #2*νtⱼ*ρⱼ * (Sⱼ - (1/3) * trace_Sⱼ * Iᴹ) - (2/3) * ρⱼ * BlinConstant * dx^2 * norm_Sⱼ^2 * Iᴹ
+                Sⱼ = ∇vⱼ =  (m₀/ρᵢ) * (vᵢ - vⱼ) * -∇ᵢWᵢⱼ'
+                norm_Sⱼ  = sqrt(2 * sum(Sⱼ .^ 2))
+                νtⱼ      = (SmagorinskyConstant * dx)^2 * norm_Sⱼ
+                trace_Sⱼ = sum(diag(Sⱼ))
+                τᶿⱼ      = 2*νtⱼ*ρⱼ * (Sⱼ - (1/3) * trace_Sⱼ * Iᴹ) - (2/3) * ρⱼ * BlinConstant * dx^2 * norm_Sⱼ^2 * Iᴹ
         
                 # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA TO REPRESENT IT
                 dτdtᵢ = (m₀/(ρⱼ * ρᵢ)) * (τᶿᵢ + τᶿⱼ) *  ∇ᵢWᵢⱼ 
-                dτdtⱼ = -dτdtᵢ #(m₀/(ρᵢ * ρⱼ)) * (τᶿᵢ + τᶿⱼ) * -∇ᵢWᵢⱼ 
+                dτdtⱼ = (m₀/(ρᵢ * ρⱼ)) * (τᶿᵢ + τᶿⱼ) * -∇ᵢWᵢⱼ 
             else
                 dτdtᵢ  = zero(xᵢⱼ)
                 dτdtⱼ  = dτdtᵢ
