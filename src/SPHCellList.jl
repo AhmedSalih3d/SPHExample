@@ -119,6 +119,8 @@ using UnicodePlots
         @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues, FlagLinearizedDDT = SimMetaData
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, γ, g, c₀, δᵩ, η², H², Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
+        Linear_ρ_factor = (1/(Cb*γ))*ρ₀
+
         xᵢⱼ  = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)              
         if  xᵢⱼ² <= H²
@@ -145,15 +147,14 @@ using UnicodePlots
                     ρᵢⱼᴴ  = 0.0
                     ρⱼᵢᴴ  = 0.0
                 else
+                    Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
+                    Pⱼᵢᴴ  = -Pᵢⱼᴴ
+                    
                     if FlagLinearizedDDT
-                        Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
-                        Pⱼᵢᴴ  = -Pᵢⱼᴴ
-                        ρᵢⱼᴴ  = ((Pᵢⱼᴴ/(Cb * γ)) * ρ₀)
-                        ρⱼᵢᴴ  = ((Pⱼᵢᴴ/(Cb * γ)) * ρ₀)
+                        ρᵢⱼᴴ  = Pᵢⱼᴴ * Linear_ρ_factor
+                        ρⱼᵢᴴ  = -ρᵢⱼᴴ
                     else
-                        Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
                         ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
-                        Pⱼᵢᴴ  = -Pᵢⱼᴴ
                         ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
                     end
                 end
