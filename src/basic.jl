@@ -28,14 +28,11 @@ h5open("particles.vtkhdf", "w") do io
     # Note that we need to reinterpret the vector of SVector onto a 3×Np matrix.
     Np = length(points)
     gtop["NumberOfPoints"] = [Np]
-
-    NumberOfPoints, _ = HDF5.create_attribute(gtop, "NumberOfPoints", -1)
-
-    write(NumberOfPoints, Np)
-
-    close(NumberOfPoints)
+    write(gtop["NumberOfPoints"], Np);
 
     gtop["Points"] = reinterpret(reshape, eltype(eltype(points)), points)
+
+    write(gtop["Points"], reinterpret(reshape, eltype(eltype(points)), points))
 
     # Write velocities as point data.
     let g = HDF5.create_group(gtop, "PointData")
