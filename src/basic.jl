@@ -28,16 +28,28 @@ h5open("particles.vtkhdf", "w") do io
     # Note that we need to reinterpret the vector of SVector onto a 3×Np matrix.
     Np = length(points)
     gtop["NumberOfPoints"] = [Np]
-    write(gtop["NumberOfPoints"], Np);
+    
 
-    gtop["Points"] = reinterpret(reshape, eltype(eltype(points)), points)
+    Points = HDF5.create_dataset(gtop, "Points", eltype(eltype(points)), ((3, 0),(3,-1)), chunk=(3, Np)) #-1 is equivalent to typemax(hsize_t)
 
-    write(gtop["Points"], reinterpret(reshape, eltype(eltype(points)), points))
+    HDF5.set_extent_dims(Points, (3, 2*Np))
+    pv = reinterpret(reshape, eltype(eltype(points)), points[1:Np])
+    Points[:, 1:(2*Np)] = hcat(pv,pv)
+
+    write(gtop["NumberOfPoints"], 2*Np);
+
+    # steps = HDF5.create_group(gtop, "Steps")
+
+    # HDF5.attributes(steps)["NSteps"] = 0
+    # HDF5.create_dataset(steps, "Values"        , Float64 , ((0,),(-1,)), chunk=(100,)) #-1 is equivalent to typemax(hsize_t)
+    # HDF5.create_dataset(steps, "PartOffsets"   , Int     , ((0,),(-1,)), chunk=(100,)) #-1 is equivalent to typemax(hsize_t)
+    # HDF5.create_dataset(steps, "NumberOfParts" , Int     , ((0,),(-1,)), chunk=(100,)) #-1 is equivalent to typemax(hsize_t)
+    # HDF5.create_dataset(steps, "PointOffsets"  , Int     , ((0,),(-1,)), chunk=(100,)) #-1 is equivalent to typemax(hsize_t)
 
     # Write velocities as point data.
-    let g = HDF5.create_group(gtop, "PointData")
-        g["Velocity"] = reinterpret(reshape, eltype(eltype(velocities)), velocities)
-    end
+    # let g = HDF5.create_group(gtop, "PointData")
+    #     g["Velocity"] = reinterpret(reshape, eltype(eltype(velocities)), velocities)
+    # end
 
     # Create and fill Vertices group.
     let g = HDF5.create_group(gtop, "Vertices")
