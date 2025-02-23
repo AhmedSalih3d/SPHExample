@@ -40,13 +40,20 @@ h5open("particles.vtkhdf", "w") do io
 
     steps = HDF5.create_group(gtop, "Steps")
 
-    NSteps        = HDF5.attributes(steps)["NSteps"] = 0
+    # NSteps        = HDF5.attributes(steps)["NSteps"] = 0
+
+    # gtop["Steps"]["NSteps"] = 0
+    NSteps, _ = HDF5.create_attribute(steps, "NSteps", Int)
+
     Values        = HDF5.create_dataset(steps, "Values"        , Float64 , ((0,),(-1,)), chunk=(100,)) #-1 is equivalent to typemax(hsize_t)
     PartOffsets   = HDF5.create_dataset(steps, "PartOffsets"   , Int     , ((0,),(-1,)), chunk=(100,)) #-1 is equivalent to typemax(hsize_t)
     NumberOfParts = HDF5.create_dataset(steps, "NumberOfParts" , Int     , ((0,),(-1,)), chunk=(100,)) #-1 is equivalent to typemax(hsize_t)
     PointOffsets  = HDF5.create_dataset(steps, "PointOffsets"  , Int     , ((0,),(-1,)), chunk=(100,)) #-1 is equivalent to typemax(hsize_t)
 
-    
+    display(io)
+
+    write(NSteps, 1)
+
 
     # Write velocities as point data.
     # let g = HDF5.create_group(gtop, "PointData")
