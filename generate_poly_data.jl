@@ -27,9 +27,9 @@ function generate_geometry_structure(root)
         group = HDF5.create_group(root, connect)
 
         NumberOfConnectivityIds = HDF5.create_dataset(group, "NumberOfConnectivityIds", idType, ((0,),(-1,)), chunk=(100,) )
-        NumberOfCells           = HDF5.create_dataset(group, "NumberOfCells          ", idType, ((0,),(-1,)), chunk=(100,) )
-        Offsets                 = HDF5.create_dataset(group, "Offsets                ", idType, ((0,),(-1,)), chunk=(100,) )
-        Connectivity            = HDF5.create_dataset(group, "Connectivity           ", idType, ((0,),(-1,)), chunk=(100,) )
+        NumberOfCells           = HDF5.create_dataset(group, "NumberOfCells", idType, ((0,),(-1,)), chunk=(100,) )
+        Offsets                 = HDF5.create_dataset(group, "Offsets", idType, ((0,),(-1,)), chunk=(100,) )
+        Connectivity            = HDF5.create_dataset(group, "Connectivity", idType, ((0,),(-1,)), chunk=(100,) )
     end
 
     pData = HDF5.create_group(root, "PointData")
@@ -70,10 +70,29 @@ end
 
 function append_data(root, poly_data, newStep=nothing, geometryOffset=nothing)
 
-    if true #!isnothing(newStep)
+    if !isnothing(newStep)
         steps = root["Steps"]
-        print(HDF5.read_attribute(steps, "NSteps"))
-        steps["NSteps"] = 2
+
+        old_NSteps = HDF5.read_attribute(steps, "NSteps")
+
+        steps_attr_dict = attributes(steps)
+        NSteps = steps_attr_dict["NSteps"]
+        write_attribute(NSteps,HDF5.datatype(idType), old_NSteps + 1)
+
+        geomOffs = []
+        if isnothing(geometryOffset)
+            append!(geomOffs, size(root["NumberOfPoints"])[1])
+            append!(geomOffs, 1)
+            append!(geomOffs, size(root["Points"][1]))
+
+            for connect in connectivities
+                append!(geomOffs, size(root[connect]["Offsets"])[1] - geomOffs[1])
+            end
+
+            for connect in connectivities
+                append!(geomOffs, size(root[connect]["Connectivity"][1]))
+            end
+        end
     end
 
 end
@@ -94,15 +113,5 @@ f = h5open("test.vtkhdf", "w")
 root = HDF5.create_group(f, "VTKHDF")
 generate_data(root)
 display(f)
-
-attributes(steps)
-steps = root["Steps"]
-steps_attr_dict = attributes(steps)
-NSteps = steps_attr_dict["NSteps"]
-println(HDF5.read_attribute(steps, "NSteps"))
-write_attribute(NSteps,HDF5.datatype(idType), 4)
-
-print(HDF5.read_attribute(steps, "NSteps"))
-
 
 close(f)
