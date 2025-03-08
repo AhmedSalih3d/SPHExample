@@ -89,12 +89,23 @@ function append_data(root, newStep, Positions)
         HDF5.set_extent_dims(steps["Values"], (length(steps["Values"]) + 1,))
         steps["Values"][end] = newStep
 
-        PointsStartIndex = length(root["Points"]) + 1
+        PointsStartIndex = size(root["Points"])[2] + 1
         PositionLength   = length(Positions)
-        HDF5.set_extent_dims(root["Points"], (length(first(Positions)), PositionLength))
+
+        HDF5.set_extent_dims(root["Points"], (length(first(Positions)), size(root["Points"])[2] + PositionLength))
         root["Points"][:, PointsStartIndex:(PointsStartIndex+PositionLength-1)] = stack(Positions)
 
-        # old_NSteps = HDF5.read_attribute(steps, "NSteps")
+        HDF5.set_extent_dims(steps["PointOffsets"], (length(steps["PointOffsets"]) + 1,))
+        steps["PointOffsets"][end] = PointsStartIndex - 1
+
+        NumberOfPartsStartIndex = length(steps["NumberOfParts"]) + 1
+        HDF5.set_extent_dims(steps["NumberOfParts"], (length(steps["NumberOfParts"]) + 1,))
+        steps["NumberOfParts"][NumberOfPartsStartIndex] = 1
+
+        PartOffsetsStartIndex = length(steps["PartOffsets"]) + 1
+        PartOffsetsLength     = length(steps["PartOffsets"]) + 1
+        HDF5.set_extent_dims(steps["PartOffsets"], (PartOffsetsLength,))
+        steps["PartOffsets"][PartOffsetsStartIndex] = PartOffsetsLength - 1
 
         # steps_attr_dict = attributes(steps)
         # NSteps = steps_attr_dict["NSteps"]
@@ -129,14 +140,14 @@ function append_data(root, newStep, Positions)
 
 end
 
-function generate_data(root, positions)
+function generate_data(root, Positions)
     generate_geometry_structure(root)
     generate_step_structure(root)
 
-    ts = 0 #range(0,0.5,1)
+    ts = range(0,0.5,2)
 
     for (iT, t) in enumerate(ts)
-        append_data(root, t, positions)
+        append_data(root, t, Positions)
     end
 end
 
@@ -144,6 +155,6 @@ end
 f = h5open("test.vtkhdf", "w")
 root = HDF5.create_group(f, "VTKHDF")
 generate_data(root, Positions)
-display(f)
+# display(f)
 
 close(f)
