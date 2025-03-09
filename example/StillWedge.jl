@@ -25,7 +25,7 @@ let
     SimulationGeometry = [FixedBoundary;Water]
 
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
-        SimulationName="StillWedge", 
+        SimulationName="StillWedge2", 
         SaveLocation="E:/SecondApproach/TESTING_CPU_StillWedge",
         SimulationTime=4,
         OutputEach=0.01,

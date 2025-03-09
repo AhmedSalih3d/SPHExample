@@ -4,6 +4,9 @@ module ProduceHDFVTK
 
     using HDF5
 
+    const idType = Int64
+    const fType = Float64
+
     function SaveVTKHDF(fid_vector, index, filepath,points, variable_names, args...)
         @assert length(variable_names) == length(args) "Same number of variable_names as args is necessary"
             io = h5open(filepath, "w")
@@ -64,6 +67,7 @@ module ProduceHDFVTK
 
 
     function GenerateGeometryStructure(root, variable_names, args...; chunk_size = 100, idType = Int64, fType = Float64)
+        @assert length(variable_names) == length(args) "Same number of variable_names as args is necessary"
         # Write version of VTKHDF format as an attribute
         HDF5.attrs(root)["Version"] = Int32.([2, 3])
         
@@ -92,36 +96,55 @@ module ProduceHDFVTK
         end
 
         pData = HDF5.create_group(root, "PointData")
-        # Warping = HDF5.create_dataset(pData, "Warping", fType, ((3,0),(3,-1)), chunk=(3,chunk_size))
-        # Normals = HDF5.create_dataset(pData, "Normals", fType, ((3,0),(3,-1)), chunk=(3,chunk_size))
+
+        for i ∈ eachindex(variable_names)
+            var_name = variable_names[i]
+            arg      = args[i]
+            arg_val_type   = eltype(eltype(arg))
+            arg_val_length = length(first(arg)) > 1 ? 3 : 1
+
+            if arg_val_length == 3
+                HDF5.create_dataset(pData, var_name, arg_val_type, ((3,0),(3,-1)), chunk=(3,chunk_size))
+            else
+                HDF5.create_dataset(pData, var_name, arg_val_type, ((0,),(-1,)), chunk=(chunk_size,))
+            end
+        end
 
         return nothing
     end
 
-    function GenerateStepStructure(root, idType = Int64, fType = Float64)
+    function GenerateStepStructure(root,  variable_names, args...; chunk_size = 1000)
         steps = HDF5.create_group(root, "Steps")
     
         NSteps, _ = HDF5.create_attribute(steps, "NSteps", Int32)
     
-        Values = HDF5.create_dataset(steps, "Values", fType , ((0,),(-1,)), chunk=(100,))
+        Values = HDF5.create_dataset(steps, "Values", fType , ((0,),(-1,)), chunk=(chunk_size,))
     
         singleDSs = ["PartOffsets", "NumberOfParts", "PointOffsets"]
         for name in singleDSs
-            HDF5.create_dataset(steps, name, idType, ((0,),(-1,)), chunk=(100,))
+            HDF5.create_dataset(steps, name, idType, ((0,),(-1,)), chunk=(chunk_size,))
         end
     
         nTopoDSs = ["CellOffsets", "ConnectivityIdOffsets"]
         for name in nTopoDSs
-            HDF5.create_dataset(steps, name, idType, ((4,0),(4, -1)), chunk=(4, 100))
+            HDF5.create_dataset(steps, name, idType, ((4,0),(4, -1)), chunk=(4, chunk_size))
         end
         
         pData = HDF5.create_group(steps, "PointDataOffsets")
         # Warping = HDF5.create_dataset(pData, "Warping", idType, ((0,),(-1,)), chunk=(100,))
         # Normals = HDF5.create_dataset(pData, "Normals", idType, ((0,),(-1,)), chunk=(100,))
+
+        for i ∈ eachindex(variable_names)
+            var_name = variable_names[i]
+            arg      = args[i]
+            arg_val_type   = eltype(eltype(arg))
+
+            HDF5.create_dataset(pData, var_name, arg_val_type, ((0,),(-1,)), chunk=(chunk_size,))
+        end
     
     end
 
-    function AppendVTKHDFData(root, newStep, Positions, idType = Int64, fType = Float64)
+    function AppendVTKHDFData(root, newStep, Positions, variable_names, args...)
         steps = root["Steps"]
 
         # To update attributes, this is the best way I've found so far
@@ -176,6 +199,21 @@ module ProduceHDFVTK
 
         # HDF5.set_extent_dims(root["PointData"]["Warping"], (length(first(Warping)), size(root["PointData"]["Warping"])[2] + length(Warping)))
         # root["PointData"]["Warping"][:, PointsStartIndex:(PointsStartIndex+PositionLength-1)] = stack(Warping) * rand()
+
+        for (var_name, arg) in zip(variable_names, args)
+            HDF5.set_extent_dims(
+            root["PointData"][var_name],
+            (isa(first(arg), AbstractVector) ? length(first(arg)) : 1, 
+            size(root["PointData"][var_name], 2) + length(arg))
+        )
+
+            try
+                root["PointData"][var_name][:, PointsStartIndex:(PointsStartIndex + PositionLength - 1)] = stack(arg)
+            catch
+                root["PointData"][var_name][PointsStartIndex:(PointsStartIndex + PositionLength - 1)] = arg
+            end
+        end
+        
 
         connectivities = ["Vertices", "Lines", "Polygons", "Strips"]
         for connect in connectivities
