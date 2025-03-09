@@ -68,7 +68,7 @@ function generate_step_structure(root)
 
     nTopoDSs = ["CellOffsets", "ConnectivityIdOffsets"]
     for name in nTopoDSs
-        HDF5.create_dataset(steps, name, idType, ((0,4),(-1,4)), chunk=(100,4))
+        HDF5.create_dataset(steps, name, idType, ((4,0),(4, -1)), chunk=(4, 100))
     end
     
     pData = HDF5.create_group(steps, "PointDataOffsets")
@@ -84,7 +84,13 @@ end
 function append_data(root, newStep, Positions)
 
         steps = root["Steps"]
-        attrs(steps)["NSteps"] = Int32(attrs(steps)["NSteps"] + 1)
+
+
+        # To update attributes, this is the best way I've found so far
+        old_NSteps = HDF5.read_attribute(steps, "NSteps")
+        steps_attr_dict = attributes(steps)
+        NSteps = steps_attr_dict["NSteps"]
+        write_attribute(NSteps,HDF5.datatype(idType), old_NSteps + 1)
 
         HDF5.set_extent_dims(steps["Values"], (length(steps["Values"]) + 1,))
         steps["Values"][end] = newStep
@@ -98,6 +104,9 @@ function append_data(root, newStep, Positions)
         HDF5.set_extent_dims(steps["PointOffsets"], (length(steps["PointOffsets"]) + 1,))
         steps["PointOffsets"][end] = PointsStartIndex - 1
 
+        HDF5.set_extent_dims(root["NumberOfPoints"], (length(root["NumberOfPoints"]) + 1,))
+        root["NumberOfPoints"][end] = PositionLength
+
         NumberOfPartsStartIndex = length(steps["NumberOfParts"]) + 1
         HDF5.set_extent_dims(steps["NumberOfParts"], (length(steps["NumberOfParts"]) + 1,))
         steps["NumberOfParts"][NumberOfPartsStartIndex] = 1
@@ -107,9 +116,14 @@ function append_data(root, newStep, Positions)
         HDF5.set_extent_dims(steps["PartOffsets"], (PartOffsetsLength,))
         steps["PartOffsets"][PartOffsetsStartIndex] = PartOffsetsLength - 1
 
-        # steps_attr_dict = attributes(steps)
-        # NSteps = steps_attr_dict["NSteps"]
-        # write_attribute(NSteps,HDF5.datatype(idType), old_NSteps + 1)
+        CellOffsetsStartIndex = size(steps["CellOffsets"])[2] + 1
+        HDF5.set_extent_dims(steps["CellOffsets"], (4, CellOffsetsStartIndex))
+        steps["CellOffsets"][:, CellOffsetsStartIndex] = zeros(4)
+
+        ConnectivityIdOffsetsStartIndex = size(steps["ConnectivityIdOffsets"])[2] + 1
+        HDF5.set_extent_dims(steps["ConnectivityIdOffsets"], (4, ConnectivityIdOffsetsStartIndex))
+        steps["ConnectivityIdOffsets"][:, ConnectivityIdOffsetsStartIndex] = zeros(4)
+
 
         # geomOffs = []
         # if isnothing(geometryOffset)
