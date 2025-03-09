@@ -491,18 +491,29 @@ using UnicodePlots
     
         OutputVariableNames = ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID", "GroupMarker"]
         if Dimensions == 2
-            SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, SimParticles.GroupMarker)
+            if !SimMetaData.ExportSingleVTKHDF
+                SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, SimParticles.GroupMarker)
+            else
+                SaveFileVTKHDF = () -> AppendVTKHDFData(root, SimMetaData.TotalTime, to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, to_3d(SimParticles.KernelGradient), SimParticles.Density, SimParticles.Pressure, to_3d(SimParticles.Velocity), to_3d(SimParticles.Acceleration), SimParticles.BoundaryBool, SimParticles.ID, SimParticles.GroupMarker)
+            end
         else
-            SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),SimParticles.Position, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, SimParticles.GroupMarker)
+            if !SimMetaData.ExportSingleVTKHDF
+                SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),SimParticles.Position, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, SimParticles.GroupMarker)
+            else
+                SaveFileVTKHDF = () -> AppendVTKHDFData(root, SimMetaData.TotalTime, SimParticles.Position, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, SimParticles.GroupMarker)
+            end
         end
-        SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
-        @inline SaveFile(SimMetaData.OutputIterationCounter)
 
-        OutputVTKHDF = h5open(SaveLocation_ * ".vtkhdf", "w")
-        root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
-        GenerateGeometryStructure(root, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, SimParticles.GroupMarker; chunk_size = 1000)
-        GenerateStepStructure(root, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, SimParticles.GroupMarker)
-        AppendVTKHDFData(root, SimMetaData.TotalTime, to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, to_3d(SimParticles.KernelGradient), SimParticles.Density, SimParticles.Pressure, to_3d(SimParticles.Velocity), to_3d(SimParticles.Acceleration), SimParticles.BoundaryBool, SimParticles.ID, SimParticles.GroupMarker)
+        SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
+        if !SimMetaData.ExportSingleVTKHDF
+            @inline SaveFile(SimMetaData.OutputIterationCounter)    
+        else
+            OutputVTKHDF = h5open(SaveLocation_ * ".vtkhdf", "w")
+            root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
+            GenerateGeometryStructure(root, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, SimParticles.GroupMarker; chunk_size = 1000)
+            GenerateStepStructure(root, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, SimParticles.GroupMarker)
+            SaveFileVTKHDF()    
+        end
 
         InverseCutOff = Val(1/(SimConstants.H))
 
@@ -530,8 +541,11 @@ using UnicodePlots
             if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
     
                 try 
-                    @timeit HourGlass "12A Output Data" SaveFile(SimMetaData.OutputIterationCounter + 1)
-                    @timeit HourGlass "13A Output Data" AppendVTKHDFData(root, SimMetaData.TotalTime, to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, to_3d(SimParticles.KernelGradient), SimParticles.Density, SimParticles.Pressure, to_3d(SimParticles.Velocity), to_3d(SimParticles.Acceleration), SimParticles.BoundaryBool, SimParticles.ID, SimParticles.GroupMarker)
+                    if !SimMetaData.ExportSingleVTKHDF 
+                        @timeit HourGlass "12A Output Data" SaveFile(SimMetaData.OutputIterationCounter + 1)
+                    else
+                        @timeit HourGlass "12A Output Data" SaveFileVTKHDF()
+                    end
                 catch err
                     @warn("File write failed.")
                     display(err)
@@ -552,14 +566,16 @@ using UnicodePlots
                 
 
                 # This should not be counted in actual run 
-                @timeit HourGlass "12B Close hdfvtk output files"  @threads for i in eachindex(fid_vector)
-                    if isassigned(fid_vector, i)
-                        close(fid_vector[i])
+                if !SimMetaData.ExportSingleVTKHDF
+                    @timeit HourGlass "12B Close hdfvtk output files"  @threads for i in eachindex(fid_vector)
+                        if isassigned(fid_vector, i)
+                            close(fid_vector[i])
+                        end
                     end
+                else
+                    @timeit HourGlass "12B Close transient hdfvtk" close(OutputVTKHDF)
                 end
 
-                @timeit HourGlass "13B Close transient hdfvtk" close(OutputVTKHDF)
-    
                 finish!(SimMetaData.ProgressSpecification)
                 show(HourGlass,sortby=:name)
                 show(HourGlass)
