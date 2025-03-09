@@ -162,11 +162,11 @@ using UnicodePlots
                 ρⱼᵢ   = ρⱼ - ρᵢ
 
                 Ψᵢⱼ   = 2( ρⱼᵢ - ρᵢⱼᴴ) * (-xᵢⱼ) * invd²η²
-                Ψⱼᵢ   = 2(-ρⱼᵢ - ρⱼᵢᴴ) * ( xᵢⱼ) * invd²η²
+                #Ψⱼᵢ   = -Ψᵢⱼ #2(-ρⱼᵢ - ρⱼᵢᴴ) * ( xᵢⱼ) * invd²η²
 
                 MLcond = MotionLimiter[i] * MotionLimiter[j]
                 Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
-                Dⱼ    =  δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
+                Dⱼ    =  -Dᵢ #δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
             else
                 Dᵢ  = 0.0
                 Dⱼ  = 0.0
@@ -179,7 +179,7 @@ using UnicodePlots
             Pⱼ      =  Pressure[j]
             Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
             dvdt⁺   = - m₀ * Pfac *  ∇ᵢWᵢⱼ
-            dvdt⁻   = - dvdt⁺
+            #dvdt⁻   = - dvdt⁺
 
             if FlagViscosityTreatment == :ArtificialViscosity
                 ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
@@ -229,14 +229,15 @@ using UnicodePlots
         
                 # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA TO REPRESENT IT
                 dτdtᵢ = (m₀/(ρⱼ * ρᵢ)) * (τᶿᵢ + τᶿⱼ) *  ∇ᵢWᵢⱼ 
-                dτdtⱼ = (m₀/(ρᵢ * ρⱼ)) * (τᶿᵢ + τᶿⱼ) * -∇ᵢWᵢⱼ 
+                dτdtⱼ = dτdtᵢ #(m₀/(ρᵢ * ρⱼ)) * (τᶿᵢ + τᶿⱼ) * -∇ᵢWᵢⱼ 
             else
                 dτdtᵢ  = zero(xᵢⱼ)
                 dτdtⱼ  = dτdtᵢ
             end
         
-            dvdtI[ichunk][i] += dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ
-            dvdtI[ichunk][j] += dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
+            uₘ = dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ
+            dvdtI[ichunk][i] += uₘ
+            dvdtI[ichunk][j] -= uₘ #dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
 
             
             if FlagOutputKernelValues
