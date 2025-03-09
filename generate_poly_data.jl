@@ -2,7 +2,7 @@ using HDF5
 using StaticArrays
 
 fType  = Float64
-idType = Int8
+idType = Int64
 
 connectivities = ["Vertices", "Lines", "Polygons", "Strips"]
 
@@ -15,10 +15,26 @@ Positions = SVector{3, Float64}[
     [-0.25, -0.4330127, 3.061617e-17]
 ]
 
+Normals = SVector{3, Float64}[
+    [0.0, 0.0, 1.0],
+    [0.0, 0.0, -1.0],
+    [1.0, 0.0, 6.123234e-17],
+    [-0.5, 0.8660254, 6.123234e-17],
+    [-0.5, -0.8660254, 6.123234e-17]
+]
+
+Warping = SVector{3, Float64}[
+    [0.0, 0.0, 0.0],
+    [0.0, -0.0, 0.0],
+    [0.0, -0.5, 0.0],
+    [0.4330127, 0.25, -0.0],
+    [-0.4330127, 0.25, 0.0]
+]
+
 
 function generate_geometry_structure(root)
     # Write version of VTKHDF format as an attribute
-    HDF5.attrs(root)["Version"] = Int32.([2, 0])
+    HDF5.attrs(root)["Version"] = Int32.([2, 3])
     
     # Write type of dataset ("PolyData") as an ASCII string to a "Type" attribute.
     # This is a bit tricky because VTK/ParaView don't support UTF-8 strings here, which is
@@ -44,18 +60,14 @@ function generate_geometry_structure(root)
     end
 
     pData = HDF5.create_group(root, "PointData")
-    Warping = HDF5.create_dataset(pData, "Warping", fType, ((0,3),(-1,3)), chunk=(100,3))
-    Normals = HDF5.create_dataset(pData, "Normals", fType, ((0,3),(-1,3)), chunk=(100,3))
-
-    cData     = HDF5.create_group(root, "CellData")
-    Materials = HDF5.create_dataset(cData, "Materials", idType, ((0,),(-1,)), chunk=(100,))
+    Warping = HDF5.create_dataset(pData, "Warping", fType, ((3,0),(3,-1)), chunk=(3,100))
+    Normals = HDF5.create_dataset(pData, "Normals", fType, ((3,0),(3,-1)), chunk=(3,100))
 
     return nothing
 end
 
 function generate_step_structure(root)
     steps = HDF5.create_group(root, "Steps")
-    # HDF5.attrs(steps)["NSteps"] = 0
 
     NSteps, _ = HDF5.create_attribute(steps, "NSteps", Int32)
 
@@ -75,16 +87,12 @@ function generate_step_structure(root)
     Warping = HDF5.create_dataset(pData, "Warping", idType, ((0,),(-1,)), chunk=(100,))
     Normals = HDF5.create_dataset(pData, "Normals", idType, ((0,),(-1,)), chunk=(100,))
 
-    cData     = HDF5.create_group(steps, "CellDataOffsets")
-    Materials = HDF5.create_dataset(cData, "Materials", idType, ((0,),(-1,)), chunk=(100,))
 end
 
 
 
 function append_data(root, newStep, Positions)
-
         steps = root["Steps"]
-
 
         # To update attributes, this is the best way I've found so far
         old_NSteps = HDF5.read_attribute(steps, "NSteps")
@@ -99,7 +107,7 @@ function append_data(root, newStep, Positions)
         PositionLength   = length(Positions)
 
         HDF5.set_extent_dims(root["Points"], (length(first(Positions)), size(root["Points"])[2] + PositionLength))
-        root["Points"][:, PointsStartIndex:(PointsStartIndex+PositionLength-1)] = stack(Positions)
+        root["Points"][:, PointsStartIndex:(PointsStartIndex+PositionLength-1)] = stack(Positions) * rand()
 
         HDF5.set_extent_dims(steps["PointOffsets"], (length(steps["PointOffsets"]) + 1,))
         steps["PointOffsets"][end] = PointsStartIndex - 1
@@ -124,41 +132,34 @@ function append_data(root, newStep, Positions)
         HDF5.set_extent_dims(steps["ConnectivityIdOffsets"], (4, ConnectivityIdOffsetsStartIndex))
         steps["ConnectivityIdOffsets"][:, ConnectivityIdOffsetsStartIndex] = zeros(4)
 
+        NumberOfPartsStartIndex = length(steps["NumberOfParts"]) + 1
+        HDF5.set_extent_dims(steps["NumberOfParts"], (length(steps["NumberOfParts"]) + 1,))
+        steps["NumberOfParts"][NumberOfPartsStartIndex] = 1
 
-        # geomOffs = []
-        # if isnothing(geometryOffset)
-        #     append!(geomOffs, size(root["NumberOfPoints"])[1])
-        #     append!(geomOffs, 1)
-        #     append!(geomOffs, size(root["Points"][1]))
+        for point_data_name in keys(steps["PointDataOffsets"])
+            HDF5.set_extent_dims(steps["PointDataOffsets"][point_data_name], (length(steps["PointDataOffsets"][point_data_name]) + 1,))
+            steps["PointDataOffsets"][point_data_name][end] = PointsStartIndex - 1
+        end
+  
+        HDF5.set_extent_dims(root["PointData"]["Normals"], (length(first(Normals)), size(root["PointData"]["Normals"])[2] + length(Normals)))
+        root["PointData"]["Normals"][:, PointsStartIndex:(PointsStartIndex+PositionLength-1)] = stack(Normals) * rand()
 
-        #     for connect in connectivities
-        #         append!(geomOffs, size(root[connect]["Offsets"])[1] - geomOffs[1])
-        #     end
+        HDF5.set_extent_dims(root["PointData"]["Warping"], (length(first(Warping)), size(root["PointData"]["Warping"])[2] + length(Warping)))
+        root["PointData"]["Warping"][:, PointsStartIndex:(PointsStartIndex+PositionLength-1)] = stack(Warping) * rand()
 
-        #     for connect in connectivities
-        #         append!(geomOffs, size(root[connect]["Connectivity"][1]))
-        #     end
-        # else
-        #     append!(geomOffs, steps["PartOffsets"][geometryOffset])
-        #     append!(geomOffs, 1)
-        #     append!(geomOffs, steps["PointOffsets"][geometryOffset])
-
-        #     for (iC,_) in enumerate(connectivities)
-        #         append!(geomOffs, steps["CellOffsets"][geometryOffset, iC])
-        #     end
-
-        #     for connect in connectivities
-        #         append!(geomOffs, steps["ConnectivityIdOffsets"][geometryOffset, iC])
-        #     end
-        # end
-
+        for connect in connectivities
+            for dataset in ["NumberOfCells", "NumberOfConnectivityIds", "Offsets", "Connectivity"]
+                HDF5.set_extent_dims(root[connect][dataset], (length(root[connect][dataset]) + 1,))
+                root[connect][dataset][end] = idType(0)
+            end
+        end
 end
 
 function generate_data(root, Positions)
     generate_geometry_structure(root)
     generate_step_structure(root)
 
-    ts = range(0,0.5,2)
+    ts = range(0,0.5,100)
 
     for (iT, t) in enumerate(ts)
         append_data(root, t, Positions)
