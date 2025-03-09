@@ -497,6 +497,12 @@ using UnicodePlots
         end
         SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
         @inline SaveFile(SimMetaData.OutputIterationCounter)
+
+        OutputVTKHDF = h5open(SaveLocation_ * ".vtkhdf", "w")
+        root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
+        GenerateGeometryStructure(root, OutputVariableNames, SimParticles.Kernel; chunk_size = 1000)
+        GenerateStepStructure(root)
+        AppendVTKHDFData(root, 0, to_3d(SimParticles.Position))
         
         InverseCutOff = Val(1/(SimConstants.H))
 
@@ -525,6 +531,7 @@ using UnicodePlots
     
                 try 
                     @timeit HourGlass "12A Output Data" SaveFile(SimMetaData.OutputIterationCounter + 1)
+                    @timeit HourGlass "13A Output Data" AppendVTKHDFData(root, SimMetaData.TotalTime, to_3d(SimParticles.Position))
                 catch err
                     @warn("File write failed.")
                     display(err)
@@ -550,6 +557,8 @@ using UnicodePlots
                         close(fid_vector[i])
                     end
                 end
+
+                @timeit HourGlass "13B Close transient hdfvtk" close(OutputVTKHDF)
     
                 finish!(SimMetaData.ProgressSpecification)
                 show(HourGlass,sortby=:name)
