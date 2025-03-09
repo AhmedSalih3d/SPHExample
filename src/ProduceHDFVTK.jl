@@ -131,15 +131,12 @@ module ProduceHDFVTK
         end
         
         pData = HDF5.create_group(steps, "PointDataOffsets")
-        # Warping = HDF5.create_dataset(pData, "Warping", idType, ((0,),(-1,)), chunk=(100,))
-        # Normals = HDF5.create_dataset(pData, "Normals", idType, ((0,),(-1,)), chunk=(100,))
+
 
         for i ∈ eachindex(variable_names)
             var_name = variable_names[i]
-            arg      = args[i]
-            arg_val_type   = eltype(eltype(arg))
 
-            HDF5.create_dataset(pData, var_name, arg_val_type, ((0,),(-1,)), chunk=(chunk_size,))
+            HDF5.create_dataset(pData, var_name, idType, ((0,),(-1,)), chunk=(chunk_size,))
         end
     
     end
@@ -191,25 +188,21 @@ module ProduceHDFVTK
 
         for point_data_name in keys(steps["PointDataOffsets"])
             HDF5.set_extent_dims(steps["PointDataOffsets"][point_data_name], (length(steps["PointDataOffsets"][point_data_name]) + 1,))
-            steps["PointDataOffsets"][point_data_name][end] = PointsStartIndex - 1
+            steps["PointDataOffsets"][point_data_name][end] = Int(PointsStartIndex - 1)
         end
-  
-        # HDF5.set_extent_dims(root["PointData"]["Normals"], (length(first(Normals)), size(root["PointData"]["Normals"])[2] + length(Normals)))
-        # root["PointData"]["Normals"][:, PointsStartIndex:(PointsStartIndex+PositionLength-1)] = stack(Normals) * rand()
 
-        # HDF5.set_extent_dims(root["PointData"]["Warping"], (length(first(Warping)), size(root["PointData"]["Warping"])[2] + length(Warping)))
-        # root["PointData"]["Warping"][:, PointsStartIndex:(PointsStartIndex+PositionLength-1)] = stack(Warping) * rand()
+        for i ∈ eachindex(variable_names)
+            var_name = variable_names[i]
+            arg      = args[i]
+            arg_val_type   = eltype(eltype(arg))
+            arg_val_length = length(first(arg)) > 1 ? 3 : 1
 
-        for (var_name, arg) in zip(variable_names, args)
-            HDF5.set_extent_dims(
-            root["PointData"][var_name],
-            (isa(first(arg), AbstractVector) ? length(first(arg)) : 1, 
-            size(root["PointData"][var_name], 2) + length(arg))
-        )
 
-            try
+            if arg_val_length == 3
+                HDF5.set_extent_dims(root["PointData"][var_name], (arg_val_length, size(root["PointData"][var_name], 2) + PositionLength))
                 root["PointData"][var_name][:, PointsStartIndex:(PointsStartIndex + PositionLength - 1)] = stack(arg)
-            catch
+            else
+                HDF5.set_extent_dims(root["PointData"][var_name], (length(root["PointData"][var_name]) + PositionLength,))
                 root["PointData"][var_name][PointsStartIndex:(PointsStartIndex + PositionLength - 1)] = arg
             end
         end
