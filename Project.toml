@@ -1,6 +1,6 @@
 name = "SPHExample"
 uuid = "49649ea8-6f54-4931-9342-0ba915f114f7"
-version = "0.6.4"
+version = "0.6.5"
 
 [deps]
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
