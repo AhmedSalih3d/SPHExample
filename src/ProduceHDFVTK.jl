@@ -176,11 +176,11 @@ module ProduceHDFVTK
 
         CellOffsetsStartIndex = size(steps["CellOffsets"])[2] + 1
         HDF5.set_extent_dims(steps["CellOffsets"], (4, CellOffsetsStartIndex))
-        steps["CellOffsets"][:, CellOffsetsStartIndex] = zeros(4)
+        # steps["CellOffsets"][:, CellOffsetsStartIndex] = zeros(4) # When you extent dimensions, it autofills with zero values
 
         ConnectivityIdOffsetsStartIndex = size(steps["ConnectivityIdOffsets"])[2] + 1
         HDF5.set_extent_dims(steps["ConnectivityIdOffsets"], (4, ConnectivityIdOffsetsStartIndex))
-        steps["ConnectivityIdOffsets"][:, ConnectivityIdOffsetsStartIndex] = zeros(4)
+        # steps["ConnectivityIdOffsets"][:, ConnectivityIdOffsetsStartIndex] = zeros(4) # When you extent dimensions, it autofills with zero values
 
         NumberOfPartsStartIndex = length(steps["NumberOfParts"]) + 1
         HDF5.set_extent_dims(steps["NumberOfParts"], (length(steps["NumberOfParts"]) + 1,))
@@ -212,7 +212,7 @@ module ProduceHDFVTK
         for connect in connectivities
             for dataset in ["NumberOfCells", "NumberOfConnectivityIds", "Offsets", "Connectivity"]
                 HDF5.set_extent_dims(root[connect][dataset], (length(root[connect][dataset]) + 1,))
-                root[connect][dataset][end] = idType(0)
+                # root[connect][dataset][end] = idType(0) # When you extent dimensions, it autofills with zero values
             end
         end
     end
