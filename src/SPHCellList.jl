@@ -490,18 +490,18 @@ using UnicodePlots
     
         fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
     
-        OutputVariableNames = ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID", "GroupMarker"]
+        OutputVariableNames = ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID", "Type", "GroupMarker"]
         if Dimensions == 2
             if !SimMetaData.ExportSingleVTKHDF
-                SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, SimParticles.GroupMarker)
+                SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
             else
-                SaveFileVTKHDF = () -> AppendVTKHDFData(root, SimMetaData.TotalTime, to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, to_3d(SimParticles.KernelGradient), SimParticles.Density, SimParticles.Pressure, to_3d(SimParticles.Velocity), to_3d(SimParticles.Acceleration), SimParticles.BoundaryBool, SimParticles.ID, SimParticles.GroupMarker)
+                SaveFileVTKHDF = () -> AppendVTKHDFData(root, SimMetaData.TotalTime, to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, to_3d(SimParticles.KernelGradient), SimParticles.Density, SimParticles.Pressure, to_3d(SimParticles.Velocity), to_3d(SimParticles.Acceleration), SimParticles.BoundaryBool, SimParticles.ID,  UInt8.(SimParticles.Type), SimParticles.GroupMarker)
             end
         else
             if !SimMetaData.ExportSingleVTKHDF
-                SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),SimParticles.Position, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, SimParticles.GroupMarker)
+                SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),SimParticles.Position, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
             else
-                SaveFileVTKHDF = () -> AppendVTKHDFData(root, SimMetaData.TotalTime, SimParticles.Position, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, SimParticles.GroupMarker)
+                SaveFileVTKHDF = () -> AppendVTKHDFData(root, SimMetaData.TotalTime, SimParticles.Position, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
             end
         end
 
@@ -511,8 +511,8 @@ using UnicodePlots
         else
             OutputVTKHDF = h5open(SaveLocation_ * ".vtkhdf", "w")
             root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
-            GenerateGeometryStructure(root, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, SimParticles.GroupMarker; chunk_size = 1000)
-            GenerateStepStructure(root, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, SimParticles.GroupMarker)
+            GenerateGeometryStructure(root, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker; chunk_size = 1000)
+            GenerateStepStructure(root, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
             SaveFileVTKHDF()    
         end
 
