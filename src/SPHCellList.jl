@@ -184,7 +184,7 @@ using UnicodePlots
             if FlagViscosityTreatment == :ArtificialViscosity
                 ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
                 cond      = dot(vᵢⱼ, xᵢⱼ)
-                cond_bool = cond < 0.0
+                cond_bool = eltype(cond)(cond < 0.0)
                 μᵢⱼ       = h*cond * invd²η²
                 Πᵢ        = - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
                 Πⱼ        = - Πᵢ
