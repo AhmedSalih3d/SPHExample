@@ -79,11 +79,12 @@ using UnicodePlots
 # Neither Polyester.@batch per core or thread is faster
 ###=== Function to process each cell and its neighbors
     function NeighborLoop!(SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, EnumeratedIndices)
-        @threads for (ichunk, inds) in @views EnumeratedIndices
-            for iter in inds
+        @threads for (ichunk, inds) ∈ EnumeratedIndices
+            for iter ∈ inds
+
                 CellIndex = UniqueCells[iter]
 
-                StartIndex = ParticleRanges[iter] 
+                StartIndex = ParticleRanges[iter]
                 EndIndex   = ParticleRanges[iter+1] - 1
 
                 @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
@@ -116,8 +117,10 @@ using UnicodePlots
     # Really important to overload default function, gives 10x speed up?
     # Overload the default function to do what you pleas
     function ComputeInteractions!(SimMetaData, SimConstants, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
-        @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues = SimMetaData
-        @unpack ρ₀, h, h⁻¹, m₀, αD, α, g, c₀, δᵩ, η², H², Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
+        @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues, FlagLinearizedDDT = SimMetaData
+        @unpack ρ₀, h, h⁻¹, m₀, αD, α, γ, g, c₀, δᵩ, η², H², Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
+
+        Linear_ρ_factor = (1/(Cb*γ))*ρ₀
 
         xᵢⱼ  = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)              
@@ -146,19 +149,25 @@ using UnicodePlots
                     ρⱼᵢᴴ  = 0.0
                 else
                     Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
-                    ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
                     Pⱼᵢᴴ  = -Pᵢⱼᴴ
-                    ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
+                    
+                    if FlagLinearizedDDT
+                        ρᵢⱼᴴ  = Pᵢⱼᴴ * Linear_ρ_factor
+                        ρⱼᵢᴴ  = -ρᵢⱼᴴ
+                    else
+                        ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
+                        ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
+                    end
                 end
 
                 ρⱼᵢ   = ρⱼ - ρᵢ
 
-                Ψᵢⱼ   = 2( ρⱼᵢ  - ρᵢⱼᴴ) * (-xᵢⱼ) * invd²η²
-                Ψⱼᵢ   = 2(-ρⱼᵢ  - ρⱼᵢᴴ) * ( xᵢⱼ) * invd²η²
+                Ψᵢⱼ   = 2( ρⱼᵢ - ρᵢⱼᴴ) * (-xᵢⱼ) * invd²η²
+                #Ψⱼᵢ   = -Ψᵢⱼ #2(-ρⱼᵢ - ρⱼᵢᴴ) * ( xᵢⱼ) * invd²η²
 
                 MLcond = MotionLimiter[i] * MotionLimiter[j]
                 Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
-                Dⱼ    =  δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
+                Dⱼ    =  -Dᵢ #δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
             else
                 Dᵢ  = 0.0
                 Dⱼ  = 0.0
@@ -171,12 +180,12 @@ using UnicodePlots
             Pⱼ      =  Pressure[j]
             Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
             dvdt⁺   = - m₀ * Pfac *  ∇ᵢWᵢⱼ
-            dvdt⁻   = - dvdt⁺
+            #dvdt⁻   = - dvdt⁺
 
             if FlagViscosityTreatment == :ArtificialViscosity
                 ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
                 cond      = dot(vᵢⱼ, xᵢⱼ)
-                cond_bool = cond < 0.0
+                cond_bool = eltype(cond)(cond < 0.0)
                 μᵢⱼ       = h*cond * invd²η²
                 Πᵢ        = - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
                 Πⱼ        = - Πᵢ
@@ -221,14 +230,15 @@ using UnicodePlots
         
                 # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA TO REPRESENT IT
                 dτdtᵢ = (m₀/(ρⱼ * ρᵢ)) * (τᶿᵢ + τᶿⱼ) *  ∇ᵢWᵢⱼ 
-                dτdtⱼ = (m₀/(ρᵢ * ρⱼ)) * (τᶿᵢ + τᶿⱼ) * -∇ᵢWᵢⱼ 
+                dτdtⱼ = dτdtᵢ #(m₀/(ρᵢ * ρⱼ)) * (τᶿᵢ + τᶿⱼ) * -∇ᵢWᵢⱼ 
             else
                 dτdtᵢ  = zero(xᵢⱼ)
                 dτdtⱼ  = dτdtᵢ
             end
         
-            dvdtI[ichunk][i] += dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ
-            dvdtI[ichunk][j] += dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
+            uₘ = dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ
+            dvdtI[ichunk][i] += uₘ
+            dvdtI[ichunk][j] -= uₘ #dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
 
             
             if FlagOutputKernelValues
@@ -361,7 +371,7 @@ using UnicodePlots
         end
 
         UniqueCellsView   = view(UniqueCells, 1:IndexCounter)
-        EnumeratedIndices = enumerate(chunks(UniqueCellsView; n=nthreads()))
+        EnumeratedIndices = enumerate(index_chunks(UniqueCellsView; n=nthreads()))
 
 
         @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
@@ -483,13 +493,30 @@ using UnicodePlots
     
         OutputVariableNames = ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID", "Type", "GroupMarker"]
         if Dimensions == 2
-            SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
+            if !SimMetaData.ExportSingleVTKHDF
+                SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
+            else
+                SaveFileVTKHDF = () -> AppendVTKHDFData(root, SimMetaData.TotalTime, to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, to_3d(SimParticles.KernelGradient), SimParticles.Density, SimParticles.Pressure, to_3d(SimParticles.Velocity), to_3d(SimParticles.Acceleration), SimParticles.BoundaryBool, SimParticles.ID,  UInt8.(SimParticles.Type), SimParticles.GroupMarker)
+            end
         else
-            SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),SimParticles.Position, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
+            if !SimMetaData.ExportSingleVTKHDF
+                SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),SimParticles.Position, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
+            else
+                SaveFileVTKHDF = () -> AppendVTKHDFData(root, SimMetaData.TotalTime, SimParticles.Position, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
+            end
         end
+
         SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
-        @inline SaveFile(SimMetaData.OutputIterationCounter)
-        
+        if !SimMetaData.ExportSingleVTKHDF
+            @inline SaveFile(SimMetaData.OutputIterationCounter)    
+        else
+            OutputVTKHDF = h5open(SaveLocation_ * ".vtkhdf", "w")
+            root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
+            GenerateGeometryStructure(root, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker; chunk_size = 1000)
+            GenerateStepStructure(root, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
+            SaveFileVTKHDF()    
+        end
+
         InverseCutOff = Val(1/(SimConstants.H))
 
         # Assuming group markers are sequential
@@ -516,7 +543,11 @@ using UnicodePlots
             if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
     
                 try 
-                    @timeit HourGlass "12A Output Data" SaveFile(SimMetaData.OutputIterationCounter + 1)
+                    if !SimMetaData.ExportSingleVTKHDF 
+                        @timeit HourGlass "12A Output Data" SaveFile(SimMetaData.OutputIterationCounter + 1)
+                    else
+                        @timeit HourGlass "12A Output Data" SaveFileVTKHDF()
+                    end
                 catch err
                     @warn("File write failed.")
                     display(err)
@@ -537,12 +568,16 @@ using UnicodePlots
                 
 
                 # This should not be counted in actual run 
-                @timeit HourGlass "12B Close hdfvtk output files"  @threads for i in eachindex(fid_vector)
-                    if isassigned(fid_vector, i)
-                        close(fid_vector[i])
+                if !SimMetaData.ExportSingleVTKHDF
+                    @timeit HourGlass "12B Close hdfvtk output files"  @threads for i in eachindex(fid_vector)
+                        if isassigned(fid_vector, i)
+                            close(fid_vector[i])
+                        end
                     end
+                else
+                    @timeit HourGlass "12B Close transient hdfvtk" close(OutputVTKHDF)
                 end
-    
+
                 finish!(SimMetaData.ProgressSpecification)
                 show(HourGlass,sortby=:name)
                 show(HourGlass)

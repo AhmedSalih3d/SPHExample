@@ -30,8 +30,10 @@ let
         SimulationTime=2,
         OutputEach=0.01,
         VisualizeInParaview=true,
+        ExportSingleVTKHDF=true,
         OpenLogFile=true,
         FlagDensityDiffusion=true,
+        FlagLinearizedDDT=true,
         FlagOutputKernelValues=false,
         FlagLog=true
     )
