@@ -79,11 +79,12 @@ using UnicodePlots
 # Neither Polyester.@batch per core or thread is faster
 ###=== Function to process each cell and its neighbors
     function NeighborLoop!(SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, EnumeratedIndices)
-        @threads for (ichunk, inds) in @views EnumeratedIndices
-            for iter in inds
+        @threads for (ichunk, inds) ∈ EnumeratedIndices
+            for iter ∈ inds
+
                 CellIndex = UniqueCells[iter]
 
-                StartIndex = ParticleRanges[iter] 
+                StartIndex = ParticleRanges[iter]
                 EndIndex   = ParticleRanges[iter+1] - 1
 
                 @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
@@ -370,7 +371,7 @@ using UnicodePlots
         end
 
         UniqueCellsView   = view(UniqueCells, 1:IndexCounter)
-        EnumeratedIndices = enumerate(chunks(UniqueCellsView; n=nthreads()))
+        EnumeratedIndices = enumerate(index_chunks(UniqueCellsView; n=nthreads()))
 
 
         @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
