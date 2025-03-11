@@ -26,7 +26,7 @@ end
     CSVFile::String
     GroupMarker::Int
     Type::ParticleType
-    Motion::Union{Nothing, MotionDetails{D, T}} = nothing  # Motion depends on dimension D and FloatType T
+    Motion::Union{Nothing, MotionDetails} = nothing  # Motion depends on dimension D and FloatType T
 end
 
 end # module SimulationGeometry
