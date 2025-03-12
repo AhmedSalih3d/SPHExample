@@ -1,6 +1,6 @@
 module ProduceHDFVTK     
 
-    export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure, AppendVTKHDFData
+    export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure, AppendVTKHDFData, SaveCellGridVTKHDF
 
     using HDF5
 
@@ -14,7 +14,7 @@ module ProduceHDFVTK
             gtop = HDF5.create_group(io, "VTKHDF")
 
             # Write version of VTKHDF format as an attribute
-            HDF5.attrs(gtop)["Version"] = [2, 1]
+            HDF5.attrs(gtop)["Version"] = [2, 3]
 
             # Write type of dataset ("PolyData") as an ASCII string to a "Type" attribute.
             # This is a bit tricky because VTK/ParaView don't support UTF-8 strings here, which is
@@ -215,5 +215,109 @@ module ProduceHDFVTK
                 # root[connect][dataset][end] = idType(0) # When you extent dimensions, it autofills with zero values
             end
         end
+    end
+
+    function SaveCellGridVTKHDF(FilePath, SimConstants, UniqueCells)
+        # Cell dimensions
+        dx = SimConstants.H
+        dy = SimConstants.H
+    
+        # Initialize lists for storing points and cells
+        points = Vector{SVector{3, Float64}}()  # List to store unique SVector points
+        connectivity = Int[]                    # Connectivity for each cell
+        offsets    = Int[]                         # Offsets for each cell
+        cell_types = Int[]                      # Cell types (for VTK_QUAD)
+        cell_data  = Int[]
+    
+        push!(offsets, 0)
+        # Loop through each CartesianIndex cell
+        for (id, cell) in enumerate(UniqueCells)
+            # Get x and y from the CartesianIndex and calculate cell center
+            xi, yi = cell.I
+            x_center = (xi - 0.5) * dx
+            y_center = (yi - 0.5) * dy
+    
+            # Define corners individually
+            x0, y0 = x_center - dx / 2, y_center - dy / 2
+            x1, y1 = x_center + dx / 2, y_center - dy / 2
+            x2, y2 = x_center + dx / 2, y_center + dy / 2
+            x3, y3 = x_center - dx / 2, y_center + dy / 2
+    
+            # Add each corner point individually and update connectivity
+            n = length(points)
+            push!(points, SVector(x0, y0, 0.0))
+            push!(connectivity, n)
+            n += 1
+    
+            push!(points, SVector(x1, y1, 0.0))
+            push!(connectivity, n)
+            n += 1
+    
+            push!(points, SVector(x2, y2, 0.0))
+            push!(connectivity, n)
+            n += 1
+    
+            push!(points, SVector(x3, y3, 0.0))
+            push!(connectivity, n)
+    
+            # Define cell type and offsets
+            push!(offsets, length(connectivity))
+            # push!(cell_types, VTKCellTypes.VTK_QUAD.vtk_id)  # Convert to Int
+            push!(cell_types, UInt8(9))  # Convert to Int
+
+            push!(cell_data, id)
+        end
+    
+        # Open HDF5 file for writing
+        io = h5open(FilePath, "w")
+
+        # Create top-level group "VTKHDF"
+        gtop = HDF5.create_group(io, "VTKHDF")
+
+        # Set the Version attribute
+        HDF5.attrs(gtop)["Version"] = [2, 1]
+
+        # Write Type attribute as ASCII string
+        let s = "UnstructuredGrid"
+            dtype = HDF5.datatype(s)
+            HDF5.API.h5t_set_cset(dtype.id, HDF5.API.H5T_CSET_ASCII)
+            dspace = HDF5.dataspace(s)
+            attr = HDF5.create_attribute(gtop, "Type", dtype, dspace)
+            HDF5.write_attribute(attr, dtype, s)
+        end
+
+        # Write Number of Points, Number of Cells, and Number of Connectivity IDs
+        gtop["NumberOfPoints"]          = [length(points)]
+        gtop["NumberOfCells"]           = [length(cell_types)]
+        gtop["NumberOfConnectivityIds"] = [length(connectivity)]
+
+        # Write Points
+        gtop["Points"] = reinterpret(reshape, eltype(eltype(points)), points)
+
+        # Write Connectivity, Offsets, and Types
+        gtop["Connectivity"] = connectivity
+        gtop["Offsets"] = offsets
+        # gtop["Types"] = [VTKCellTypes.VTK_QUAD.vtk_id for _ in cell_types]  # Use VTKCellTypes Quad vtk_id for all types
+        gtop["Types"] = [UInt8(9) for _ in cell_types]  # Use VTKCellTypes Quad vtk_id for all types
+
+        # Write CellData (cell-level variables)
+        let cell_group = HDF5.create_group(gtop, "CellData")
+            cell_group["CellData"] = cell_data
+            close(cell_group)
+        end
+
+        # Write PointData (point-level variables)
+        # let point_group = HDF5.create_group(gtop, "PointData")
+        #     for (name, data) in point_data
+        #         point_group[name] = data
+        #     end
+        #     close(point_group)
+        # end
+
+        # Write an empty FieldData group (placeholder for additional data)
+        create_group(gtop, "FieldData")
+        
+        # Close file
+        close(io)
     end
 end
