@@ -439,7 +439,8 @@ using UnicodePlots
         SimMetaData.TotalTime      += dt
 
         
-        return nothing
+        # return nothing
+        return UniqueCellsView
     end
     
     ###===
@@ -509,7 +510,7 @@ using UnicodePlots
             end
         end
 
-        SaveCellGridVTKHDFSimulationStep = (FP) ->SaveCellGridVTKHDF(FP, SimConstants, UniqueCells)
+        SaveCellGridVTKHDFSimulationStep = (FP, UN) ->SaveCellGridVTKHDF(FP, SimConstants, UN)
 
         SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
         if !SimMetaData.ExportSingleVTKHDF
@@ -521,7 +522,7 @@ using UnicodePlots
             GenerateStepStructure(root, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
             SaveFileVTKHDF()    
         end
-        SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter))
+        SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter), UniqueCells)
 
         InverseCutOff = Val(1/(SimConstants.H))
 
@@ -542,7 +543,7 @@ using UnicodePlots
     
         @inbounds while true
     
-            SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
+            UniqueCellsView = SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
 
 
@@ -554,7 +555,7 @@ using UnicodePlots
                     else
                         @timeit HourGlass "12A Output Data" SaveFileVTKHDF()
                     end
-                    SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter + 1))
+                    SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter + 1), UniqueCellsView)
                 catch err
                     @warn("File write failed.")
                     display(err)
