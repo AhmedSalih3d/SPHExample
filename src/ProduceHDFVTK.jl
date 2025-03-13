@@ -218,7 +218,7 @@ module ProduceHDFVTK
         end
     end
 
-    function SaveCellGridVTKHDF(FilePath, SimConstants, UniqueCells; Positions = nothing)
+    function SaveCellGridVTKHDF(FilePath, SimConstants, UniqueCells)
         # Cell dimensions
         dx = SimConstants.H
         dy = SimConstants.H
@@ -305,12 +305,6 @@ module ProduceHDFVTK
         let cell_group = HDF5.create_group(gtop, "CellData")
             cell_group["CellData"] = cell_data
             close(cell_group)
-        end
-
-        if Positions != nothing
-            Np = length(Positions)
-            gtop["NumberOfPoints"] = [Np]
-            gtop["Points"] = reinterpret(reshape, eltype(eltype(Positions)), Positions)
         end
 
         # Write PointData (point-level variables)
