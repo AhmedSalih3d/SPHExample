@@ -40,7 +40,7 @@ using UnicodePlots
     @inline function ExtractCells!(Particles, ::Val{InverseCutOff}) where InverseCutOff
         # Replace unsafe_trunc with trunc if this ever errors
         function map_floor(x)
-            unsafe_trunc(Int, muladd(x,InverseCutOff,2))
+            unsafe_trunc(Int, muladd(x,InverseCutOff,1))
         end
 
         Cells  = @views Particles.Cells
@@ -488,8 +488,10 @@ using UnicodePlots
         # Produce data saving functions
         SaveLocation_ = SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName
         SaveLocation  = (Iteration) -> SaveLocation_ * "_" * lpad(Iteration,6,"0") * ".vtkhdf"
-        SaveLocationCellGrid  = (Iteration) -> SaveLocation_ * "_CellGrid_" * lpad(Iteration,6,"0") * ".vtkhdf"
-    
+  
+        SaveLocation2_ = SimMetaData.SaveLocation * "/CellGrid_" * SimMetaData.SimulationName
+        SaveLocationCellGrid  = (Iteration) -> SaveLocation2_ * lpad(Iteration,6,"0") * ".vtkhdf"
+
         fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
     
         OutputVariableNames = ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID", "Type", "GroupMarker"]
@@ -519,6 +521,7 @@ using UnicodePlots
             GenerateStepStructure(root, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
             SaveFileVTKHDF()    
         end
+        SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter))
 
         InverseCutOff = Val(1/(SimConstants.H))
 
