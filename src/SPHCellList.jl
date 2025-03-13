@@ -488,6 +488,7 @@ using UnicodePlots
         # Produce data saving functions
         SaveLocation_ = SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName
         SaveLocation  = (Iteration) -> SaveLocation_ * "_" * lpad(Iteration,6,"0") * ".vtkhdf"
+        SaveLocationCellGrid  = (Iteration) -> SaveLocation_ * "_CellGrid_" * lpad(Iteration,6,"0") * ".vtkhdf"
     
         fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
     
@@ -505,6 +506,8 @@ using UnicodePlots
                 SaveFileVTKHDF = () -> AppendVTKHDFData(root, SimMetaData.TotalTime, SimParticles.Position, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
             end
         end
+
+        SaveCellGridVTKHDFSimulationStep = (FP) ->SaveCellGridVTKHDF(FP, SimConstants, UniqueCells)
 
         SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
         if !SimMetaData.ExportSingleVTKHDF
@@ -548,6 +551,7 @@ using UnicodePlots
                     else
                         @timeit HourGlass "12A Output Data" SaveFileVTKHDF()
                     end
+                    SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter + 1))
                 catch err
                     @warn("File write failed.")
                     display(err)
