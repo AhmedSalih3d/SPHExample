@@ -555,11 +555,12 @@ using UnicodePlots
                     else
                         @timeit HourGlass "12A Output Data" SaveFileVTKHDF()
                     end
-                    SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter + 1), UniqueCellsView)
                 catch err
                     @warn("File write failed.")
                     display(err)
                 end
+
+                SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter + 1), UniqueCellsView)
     
                 if SimMetaData.FlagLog
                     LogStep(SimLogger, SimMetaData, HourGlass)

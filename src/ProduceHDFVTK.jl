@@ -219,6 +219,11 @@ module ProduceHDFVTK
     end
 
     function SaveCellGridVTKHDF(FilePath, SimConstants, UniqueCells)
+        # Must be AbstractVector, since UniqueCells is passed in as a 'view' of a CartesianIndex array
+        ExtractDimensionality(::AbstractVector{CartesianIndex{N}}) where N = N
+
+        CartesianIndexN = ExtractDimensionality(UniqueCells)
+
         # Cell dimensions
         dx = dy = SimConstants.H
     
@@ -229,24 +234,45 @@ module ProduceHDFVTK
         cell_types   = Int[]                    # Cell types (for VTK_QUAD)
         cell_data    = Int[]
     
-        vtk_type = UInt8(9)  # QUAD VTK TYPE
+        vtk_type = CartesianIndexN == 2 ? UInt8(9) : CartesianIndexN == 3 ? UInt8(12)  : error("Dimensionality of UniqueCells is wrong")   # QUAD VTK TYPE
 
         push!(offsets, 0)
         # Loop through each CartesianIndex cell
         for (id, cell) in enumerate(UniqueCells)
-            # Get x and y from the CartesianIndex and calculate cell center
-            xi, yi = cell.I
-            x_center = (xi - 0.5) * dx
-            y_center = (yi - 0.5) * dy
-    
-            # Define corners individually
-            corners = [
-                SVector(x_center - dx / 2, y_center - dy / 2, 0.0),
-                SVector(x_center + dx / 2, y_center - dy / 2, 0.0),
-                SVector(x_center + dx / 2, y_center + dy / 2, 0.0),
-                SVector(x_center - dx / 2, y_center + dy / 2, 0.0)
-            ]
-    
+            if CartesianIndexN == 2
+                # Get x and y from the CartesianIndex and calculate cell center
+                xi, yi = cell.I
+                x_center = (xi - 0.5) * dx
+                y_center = (yi - 0.5) * dy
+        
+                # Define corners individually
+                corners = [
+                    SVector(x_center - dx / 2, y_center - dy / 2, 0.0),
+                    SVector(x_center + dx / 2, y_center - dy / 2, 0.0),
+                    SVector(x_center + dx / 2, y_center + dy / 2, 0.0),
+                    SVector(x_center - dx / 2, y_center + dy / 2, 0.0)
+                ]
+        
+            elseif CartesianIndexN == 3
+                # Get x, y, and z from the CartesianIndex and calculate cell center
+                xi, yi, zi = cell.I 
+                x_center = (xi - 0.5) * dx
+                y_center = (yi - 0.5) * dy
+                z_center = (zi - 0.5) * dx
+                
+                # Calculate the 8 corners of the cell relative to the center
+                corners = [
+                    SVector(x_center - dx / 2, y_center - dy / 2, z_center - dz / 2),  # Bottom-front-left
+                    SVector(x_center + dx / 2, y_center - dy / 2, z_center - dz / 2),  # Bottom-front-right
+                    SVector(x_center + dx / 2, y_center + dy / 2, z_center - dz / 2),  # Bottom-back-right
+                    SVector(x_center - dx / 2, y_center + dy / 2, z_center - dz / 2),  # Bottom-back-left
+                    SVector(x_center - dx / 2, y_center - dy / 2, z_center + dz / 2),  # Top-front-left
+                    SVector(x_center + dx / 2, y_center - dy / 2, z_center + dz / 2),  # Top-front-right
+                    SVector(x_center + dx / 2, y_center + dy / 2, z_center + dz / 2),  # Top-back-right
+                    SVector(x_center - dx / 2, y_center + dy / 2, z_center + dz / 2)   # Top-back-left
+                ]
+            end
+
             # Add each corner point and update connectivity
             n = length(points) #It is on purpose that length of points is zero, to match HDF5 0-based indexing!
             for corner in corners
@@ -254,7 +280,7 @@ module ProduceHDFVTK
                 push!(connectivity, n)
                 n += 1
             end
-    
+
             # Define cell type and offsets
             push!(offsets, length(connectivity))
 
