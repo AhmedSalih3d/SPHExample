@@ -225,7 +225,7 @@ module ProduceHDFVTK
         CartesianIndexN = ExtractDimensionality(UniqueCells)
 
         # Cell dimensions
-        dx = dy = SimConstants.H
+        dx = dy = dz = SimConstants.H
     
         # Initialize lists for storing points and cells
         points = Vector{SVector{3, Float64}}()  # List to store unique SVector points
