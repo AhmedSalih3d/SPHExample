@@ -248,7 +248,7 @@ module ProduceHDFVTK
             ]
     
             # Add each corner point and update connectivity
-            n = length(points)
+            n = length(points) #It is on purpose that length of points is zero, to match HDF5 0-based indexing!
             for corner in corners
                 push!(points, corner)
                 push!(connectivity, n)
