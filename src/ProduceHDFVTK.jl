@@ -258,7 +258,7 @@ module ProduceHDFVTK
                 xi, yi, zi = cell.I 
                 x_center = (xi - 0.5) * dx
                 y_center = (yi - 0.5) * dy
-                z_center = (zi - 0.5) * dx
+                z_center = (zi - 0.5) * dz
                 
                 # Calculate the 8 corners of the cell relative to the center
                 corners = [
