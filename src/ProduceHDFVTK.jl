@@ -229,6 +229,8 @@ module ProduceHDFVTK
         cell_types   = Int[]                    # Cell types (for VTK_QUAD)
         cell_data    = Int[]
     
+        vtk_type = UInt8(9)  # QUAD VTK TYPE
+
         push!(offsets, 0)
         # Loop through each CartesianIndex cell
         for (id, cell) in enumerate(UniqueCells)
@@ -238,32 +240,25 @@ module ProduceHDFVTK
             y_center = (yi - 0.5) * dy
     
             # Define corners individually
-            x0, y0 = x_center - dx / 2, y_center - dy / 2
-            x1, y1 = x_center + dx / 2, y_center - dy / 2
-            x2, y2 = x_center + dx / 2, y_center + dy / 2
-            x3, y3 = x_center - dx / 2, y_center + dy / 2
+            corners = [
+                SVector(x_center - dx / 2, y_center - dy / 2, 0.0),
+                SVector(x_center + dx / 2, y_center - dy / 2, 0.0),
+                SVector(x_center + dx / 2, y_center + dy / 2, 0.0),
+                SVector(x_center - dx / 2, y_center + dy / 2, 0.0)
+            ]
     
-            # Add each corner point individually and update connectivity
+            # Add each corner point and update connectivity
             n = length(points)
-            push!(points, SVector(x0, y0, 0.0))
-            push!(connectivity, n)
-            n += 1
-    
-            push!(points, SVector(x1, y1, 0.0))
-            push!(connectivity, n)
-            n += 1
-    
-            push!(points, SVector(x2, y2, 0.0))
-            push!(connectivity, n)
-            n += 1
-    
-            push!(points, SVector(x3, y3, 0.0))
-            push!(connectivity, n)
+            for corner in corners
+                push!(points, corner)
+                push!(connectivity, n)
+                n += 1
+            end
     
             # Define cell type and offsets
             push!(offsets, length(connectivity))
 
-            push!(cell_types, UInt8(9))  # # QUAD VTK TYPE
+            push!(cell_types, vtk_type) 
 
             push!(cell_data, id)
         end
@@ -297,7 +292,7 @@ module ProduceHDFVTK
         # Write Connectivity, Offsets, and Types
         gtop["Connectivity"] = connectivity
         gtop["Offsets"] = offsets
-        gtop["Types"] = [UInt8(9) for _ in cell_types]  # QUAD VTK TYPE
+        gtop["Types"] = [vtk_type for _ in cell_types]  # QUAD VTK TYPE
 
         # Write CellData (cell-level variables)
         let cell_group = HDF5.create_group(gtop, "CellData")
