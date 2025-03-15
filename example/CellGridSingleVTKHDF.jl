@@ -1,5 +1,6 @@
 using SPHExample
 using HDF5
+using StaticArrays
 
 UniqueCells = [
     CartesianIndex(2, 1)
@@ -28,4 +29,7 @@ OutputCellGridVTKHDF = h5open("single_test1" * ".vtkhdf", "w")
 root         = HDF5.create_group(OutputCellGridVTKHDF, "VTKHDF")
 GenerateGeometryStructure(root; vtk_file_type = "UnstructuredGrid")
 GenerateStepStructure(root)
+
+AppendVTKHDFData(root, 0, rand(SVector{2,Float64}, length(UniqueCells)), [], []; vtk_file_type = "UnstructuredGrid")
+AppendVTKHDFData(root, 1, rand(SVector{2,Float64}, length(UniqueCells)), [], []; vtk_file_type = "UnstructuredGrid")
 close(OutputCellGridVTKHDF)
