@@ -8,7 +8,7 @@ module ProduceHDFVTK
     const idType = Int64
     const fType = Float64
 
-    function SaveVTKHDF(fid_vector, index, filepath,points, variable_names, args...)
+    function SaveVTKHDF(fid_vector, index, filepath,points, variable_names = String[], args...)
         @assert length(variable_names) == length(args) "Same number of variable_names as args is necessary"
             io = h5open(filepath, "w")
             # Create toplevel group /VTKHDF
@@ -67,7 +67,7 @@ module ProduceHDFVTK
     end
 
 
-    function GenerateGeometryStructure(root, variable_names, args...; chunk_size = 100, idType = Int64, fType = Float64)
+    function GenerateGeometryStructure(root, variable_names = String[], args...; chunk_size = 100, vtk_file_type = "PolyData", idType = Int64, fType = Float64)
         @assert length(variable_names) == length(args) "Same number of variable_names as args is necessary"
         # Write version of VTKHDF format as an attribute
         HDF5.attrs(root)["Version"] = Int32.([2, 3])
@@ -75,7 +75,7 @@ module ProduceHDFVTK
         # Write type of dataset ("PolyData") as an ASCII string to a "Type" attribute.
         # This is a bit tricky because VTK/ParaView don't support UTF-8 strings here, which is
         # the default in HDF5.jl.
-        let s = "PolyData"
+        let s = vtk_file_type
             dtype = HDF5.datatype(s)
             HDF5.API.h5t_set_cset(dtype.id, HDF5.API.H5T_CSET_ASCII)
             dspace = HDF5.dataspace(s)
@@ -86,35 +86,48 @@ module ProduceHDFVTK
         NumberOfPoints = HDF5.create_dataset(root, "NumberOfPoints" , idType , ((0,),(-1,)), chunk=(chunk_size,))
         Points         = HDF5.create_dataset(root, "Points"         , fType  , ((3,0), (3,-1)), chunk=(3,chunk_size))
 
-        connectivities = ["Vertices", "Lines", "Polygons", "Strips"]
-        for connect in connectivities
-            group = HDF5.create_group(root, connect)
+        if vtk_file_type == "PolyData"
+            connectivities = ["Vertices", "Lines", "Polygons", "Strips"]
+            for connect in connectivities
+                group = HDF5.create_group(root, connect)
 
-            NumberOfConnectivityIds = HDF5.create_dataset(group, "NumberOfConnectivityIds", idType, ((0,),(-1,)), chunk=(chunk_size,) )
-            NumberOfCells           = HDF5.create_dataset(group, "NumberOfCells", idType, ((0,),(-1,)), chunk=(chunk_size,) )
-            Offsets                 = HDF5.create_dataset(group, "Offsets", idType, ((0,),(-1,)), chunk=(chunk_size,) )
-            Connectivity            = HDF5.create_dataset(group, "Connectivity", idType, ((0,),(-1,)), chunk=(chunk_size,) )
-        end
-
-        pData = HDF5.create_group(root, "PointData")
-
-        for i ∈ eachindex(variable_names)
-            var_name = variable_names[i]
-            arg      = args[i]
-            arg_val_type   = eltype(eltype(arg))
-            arg_val_length = length(first(arg)) > 1 ? 3 : 1
-
-            if arg_val_length == 3
-                HDF5.create_dataset(pData, var_name, arg_val_type, ((3,0),(3,-1)), chunk=(3,chunk_size))
-            else
-                HDF5.create_dataset(pData, var_name, arg_val_type, ((0,),(-1,)), chunk=(chunk_size,))
+                NumberOfConnectivityIds = HDF5.create_dataset(group, "NumberOfConnectivityIds", idType, ((0,),(-1,)), chunk=(chunk_size,) )
+                NumberOfCells           = HDF5.create_dataset(group, "NumberOfCells", idType, ((0,),(-1,)), chunk=(chunk_size,) )
+                Offsets                 = HDF5.create_dataset(group, "Offsets", idType, ((0,),(-1,)), chunk=(chunk_size,) )
+                Connectivity            = HDF5.create_dataset(group, "Connectivity", idType, ((0,),(-1,)), chunk=(chunk_size,) )
             end
+
+            pData = HDF5.create_group(root, "PointData")
+
+            for i ∈ eachindex(variable_names)
+                var_name = variable_names[i]
+                arg      = args[i]
+                arg_val_type   = eltype(eltype(arg))
+                arg_val_length = length(first(arg)) > 1 ? 3 : 1
+
+                if arg_val_length == 3
+                    HDF5.create_dataset(pData, var_name, arg_val_type, ((3,0),(3,-1)), chunk=(3,chunk_size))
+                else
+                    HDF5.create_dataset(pData, var_name, arg_val_type, ((0,),(-1,)), chunk=(chunk_size,))
+                end
+            end
+        elseif vtk_file_type == "UnstructuredGrid"
+            HDF5.create_dataset(root, "Connectivity" , idType , ((0,),(-1,)), chunk=(chunk_size,))
+            HDF5.create_dataset(root, "NumberOfCells" , idType , ((0,),(-1,)), chunk=(chunk_size,))
+            HDF5.create_dataset(root, "NumberOfConnectivityIds" , idType , ((0,),(-1,)), chunk=(chunk_size,))
+            HDF5.create_dataset(root, "Offsets" , idType , ((0,),(-1,)), chunk=(chunk_size,))
+            HDF5.create_dataset(root, "Types" , UInt8 , ((0,),(-1,)), chunk=(chunk_size,)) #Must be UInt8
+            
+            FieldData = HDF5.create_group(root, "FieldData") #Currently just empty group
+
+            CellData = HDF5.create_group(root, "CellData")
+            HDF5.create_dataset(CellData, "CellData" , idType , ((0,),(-1,)), chunk=(chunk_size,))
         end
 
         return nothing
     end
 
-    function GenerateStepStructure(root,  variable_names, args...; chunk_size = 1000)
+    function GenerateStepStructure(root,  variable_names = String[], args...; chunk_size = 1000)
         steps = HDF5.create_group(root, "Steps")
     
         NSteps, _ = HDF5.create_attribute(steps, "NSteps", Int32)
