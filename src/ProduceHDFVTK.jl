@@ -236,14 +236,19 @@ module ProduceHDFVTK
     
         vtk_type = CartesianIndexN == 2 ? UInt8(9) : CartesianIndexN == 3 ? UInt8(12)  : error("Dimensionality of UniqueCells is wrong")   # QUAD VTK TYPE
 
+        function custom_sign(x)
+            x < 0 ? -1 : 0
+        end
+
         push!(offsets, 0)
         # Loop through each CartesianIndex cell
         for (id, cell) in enumerate(UniqueCells)
+            cell_sign = custom_sign.(cell.I) .* 0
             if CartesianIndexN == 2
                 # Get x and y from the CartesianIndex and calculate cell center
                 xi, yi = cell.I
-                x_center = (xi - 0.5) * dx
-                y_center = (yi - 0.5) * dy
+                x_center = (xi - 0.5 + cell_sign[1]) * dx
+                y_center = (yi - 0.5 + cell_sign[2]) * dy
         
                 # Define corners individually
                 corners = [
@@ -256,9 +261,9 @@ module ProduceHDFVTK
             elseif CartesianIndexN == 3
                 # Get x, y, and z from the CartesianIndex and calculate cell center
                 xi, yi, zi = cell.I 
-                x_center = (xi - 0.5) * dx
-                y_center = (yi - 0.5) * dy
-                z_center = (zi - 0.5) * dz
+                x_center = (xi - 0.5 + cell_sign[1]) * dx
+                y_center = (yi - 0.5 + cell_sign[2]) * dy
+                z_center = (zi - 0.5 + cell_sign[3]) * dz
                 
                 # Calculate the 8 corners of the cell relative to the center
                 corners = [
