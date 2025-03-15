@@ -41,7 +41,7 @@ let
         ExportSingleVTKHDF=false,
         OpenLogFile=true,
         FlagDensityDiffusion=true,
-        FlagLinearizedDDT=false,
+        FlagLinearizedDDT=true,
         FlagOutputKernelValues=false,
         FlagLog=true
     )
