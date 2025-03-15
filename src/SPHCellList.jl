@@ -362,11 +362,12 @@ using UnicodePlots
         @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
         dt₂ = dt * 0.5
 
+        # Note: If particles are not inside of the neighbor list visualiation, try setting this if statement to always true, since UniqueCells will be updated always then
         # In theory, the maximal speed is the speed of sound, this should give a safe guard
         # any ensure it is always updated in a reasonable manner. This only works well, assuming that
         # c₀ >= maximum(norm.(Velocity))
         # Remove if statement logic if you want to update each iteration
-        if true #mod(SimMetaData.Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
+        if mod(SimMetaData.Iteration, ceil(Int, SimConstants.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
             @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, InverseCutOff, SortingScratchSpace,  ParticleRanges, UniqueCells)
         else
             findfirst_int(predicate, collection) = (idx = findfirst(predicate, collection); idx === nothing ? -1 : idx)
