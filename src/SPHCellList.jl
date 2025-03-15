@@ -40,7 +40,8 @@ using UnicodePlots
     @inline function ExtractCells!(Particles, ::Val{InverseCutOff}) where InverseCutOff
         # Replace unsafe_trunc with trunc if this ever errors
         function map_floor(x)
-            unsafe_trunc(Int, muladd(x,InverseCutOff,1))
+            # unsafe_trunc(Int, muladd(x,InverseCutOff,0))
+            Int(sign(x)) * unsafe_trunc(Int, muladd(abs(x),InverseCutOff,0.5))
         end
 
         Cells  = @views Particles.Cells

@@ -18,9 +18,9 @@ function LoadSpecificCSV(dims, float_type, particle_type, particle_group_marker,
     group_marker = Vector{Int}()
 
     for DF ∈ eachrow(DF_SPECIFIC)
-        P1   = DF["Points:0"] + 100.0
-        P2   = DF["Points:1"] + 100.0
-        P3   = DF["Points:2"] + 100.0
+        P1   = DF["Points:0"]
+        P2   = DF["Points:1"]
+        P3   = DF["Points:2"]
         Rhop = DF["Rhop"]
 
         point = dims == 3 ? SVector{dims,float_type}(P1, P2, P3) : SVector{dims,float_type}(P1, P3)

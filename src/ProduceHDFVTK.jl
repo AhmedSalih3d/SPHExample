@@ -247,8 +247,8 @@ module ProduceHDFVTK
             if CartesianIndexN == 2
                 # Get x and y from the CartesianIndex and calculate cell center
                 xi, yi = cell.I
-                x_center = (xi - 0.5 + cell_sign[1]) * dx
-                y_center = (yi - 0.5 + cell_sign[2]) * dy
+                x_center = (xi + cell_sign[1]) * dx
+                y_center = (yi + cell_sign[2]) * dy
         
                 # Define corners individually
                 corners = [
@@ -261,9 +261,9 @@ module ProduceHDFVTK
             elseif CartesianIndexN == 3
                 # Get x, y, and z from the CartesianIndex and calculate cell center
                 xi, yi, zi = cell.I 
-                x_center = (xi - 0.5 + cell_sign[1]) * dx
-                y_center = (yi - 0.5 + cell_sign[2]) * dy
-                z_center = (zi - 0.5 + cell_sign[3]) * dz
+                x_center = (xi + cell_sign[1]) * dx
+                y_center = (yi + cell_sign[2]) * dy
+                z_center = (zi + cell_sign[3]) * dz
                 
                 # Calculate the 8 corners of the cell relative to the center
                 corners = [
