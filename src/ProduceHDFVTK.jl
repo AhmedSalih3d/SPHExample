@@ -254,7 +254,7 @@ module ProduceHDFVTK
         cell_types   = Int[]                    # Cell types (for VTK_QUAD)
         cell_data    = Int[]
     
-        vtk_type::UInt8 = CartesianIndexN == 2 ? UInt8(9) : CartesianIndexN == 3 ? UInt8(12)  : error("Dimensionality of UniqueCells is wrong")   # QUAD VTK TYPE
+        vtk_type::UInt8 = CartesianIndexN == 2 ? UInt8(9) : CartesianIndexN == 3 ? UInt8(12)  : error("Dimensionality of UniqueCells is wrong")   # QUAD  OR HEXADRON VTK TYPE
 
 
         push!(offsets, 0)

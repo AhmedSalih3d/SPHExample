@@ -37,6 +37,16 @@ using UnicodePlots
         return n
     end
 
+    """
+    Extracts the cells for each particle based on their positions and the inverse cutoff value.
+
+    # Arguments
+    - `Particles`: The particles whose cells are to be extracted.
+    - `::Val{InverseCutOff}`: The inverse cutoff value used for cell extraction.
+
+    # Returns
+    - `nothing`: This function modifies the `Particles` in place.
+    """
     @inline function ExtractCells!(Particles, ::Val{InverseCutOff}) where InverseCutOff
         # Replace unsafe_trunc with trunc if this ever errors
         function map_floor(x)
@@ -46,16 +56,27 @@ using UnicodePlots
             Int(sign(x)) * unsafe_trunc(Int, muladd(abs(x),InverseCutOff,0.5))
         end
 
-        Cells  = @views Particles.Cells
-        Points = @views Particles.Position
-        for i ∈ eachindex(Particles)
-            t = map(map_floor, Tuple(Points[i]))
-            Cells[i] = CartesianIndex(t)
+        for i ∈ eachindex(Particles.Cells)
+            t = map(map_floor, Tuple(Particles.Position[i]))
+            Particles.Cells[i] = CartesianIndex(t)
         end
+
         return nothing
     end
 
-    ###=== Function to update ordering
+    """
+    Updates the neighbor list and sorts particles by their cell indices.
+
+    # Arguments
+    - `Particles`: The particles whose neighbors are to be updated.
+    - `CutOff`: The cutoff value used for cell extraction.
+    - `SortingScratchSpace`: Scratch space for sorting.
+    - `ParticleRanges`: Array to store the ranges of particles in each cell.
+    - `UniqueCells`: Array to store the unique cells.
+
+    # Returns
+    - `IndexCounter`: The number of unique cells identified.
+    """
     function UpdateNeighbors!(Particles, CutOff, SortingScratchSpace, ParticleRanges, UniqueCells)
         ExtractCells!(Particles, CutOff)
 
