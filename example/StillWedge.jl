@@ -31,7 +31,7 @@ let
         OutputEach=0.01,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
-        OpenLogFile=false,
+        OpenLogFile=true,
         FlagDensityDiffusion=true,
         FlagLinearizedDDT=true,
         FlagOutputKernelValues=false,
