@@ -27,10 +27,10 @@ let
     SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=0.2,
+        SimulationTime=2,
         OutputEach=0.01,
         VisualizeInParaview=true,
-        ExportSingleVTKHDF=false,
+        ExportSingleVTKHDF=true,
         OpenLogFile=true,
         FlagDensityDiffusion=true,
         FlagLinearizedDDT=true,
