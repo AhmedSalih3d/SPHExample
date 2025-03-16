@@ -369,7 +369,7 @@ module ProduceHDFVTK
         if length(steps["CellOffsets"]) == 1
             LastCellOffset = 0
         else
-            LastCellOffset = root["NumberOfCells"][end-1]
+            LastCellOffset = sum(root["NumberOfCells"][:]) - length(UniqueCells)
         end
 
         steps["CellOffsets"][end] = LastCellOffset

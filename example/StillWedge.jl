@@ -27,14 +27,14 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="StillWedge", 
         SaveLocation="E:/SecondApproach/TESTING_CPU_StillWedge",
-        SimulationTime=0.02,
+        SimulationTime=0.2,
         OutputEach=0.01,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
         OpenLogFile=false,
         FlagDensityDiffusion=true,
         FlagLinearizedDDT=true,
-        FlagOutputKernelValues=true,
+        FlagOutputKernelValues=false,
         FlagLog=true,
         FlagShifting=false,
     )

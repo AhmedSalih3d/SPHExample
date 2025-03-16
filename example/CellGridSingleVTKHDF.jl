@@ -4,20 +4,6 @@ using StaticArrays
 
 UniqueCells = [
     CartesianIndex(2, 1)
-    CartesianIndex(3, 1)
-    CartesianIndex(4, 1)
-    CartesianIndex(5, 1)
-    CartesianIndex(6, 1)
-    CartesianIndex(7, 1)
-    CartesianIndex(8, 1)
-    CartesianIndex(9, 1)
-    CartesianIndex(10, 1)
-    CartesianIndex(11, 1)
-    CartesianIndex(12, 1)
-    CartesianIndex(13, 1)
-    CartesianIndex(22, 1)
-    CartesianIndex(23, 1)
-    CartesianIndex(24, 1)
 ]
 
 
@@ -36,7 +22,25 @@ AppendVTKHDFGridData(root, 0, SimConstants, UniqueCells)
 
 UniqueCells = [
     CartesianIndex(2, 1)
+    CartesianIndex(4, 1)
+    CartesianIndex(11, 1)
+    CartesianIndex(12, 1)
+    CartesianIndex(13, 1)
+    CartesianIndex(22, 1)
+    CartesianIndex(19, 3)
+    CartesianIndex(22, 5)
 ]
 
 AppendVTKHDFGridData(root, 1, SimConstants, UniqueCells)
+
+UniqueCells = [
+    CartesianIndex(2, 1)
+    CartesianIndex(11, 1)
+    CartesianIndex(12, 1)
+    CartesianIndex(13, 1)
+    CartesianIndex(22, 1)
+]
+
+AppendVTKHDFGridData(root, 2, SimConstants, UniqueCells)
+
 close(OutputCellGridVTKHDF)
