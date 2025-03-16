@@ -28,8 +28,8 @@ SimConstants = SimulationConstants{Float64}(dx=0.02,c₀=42.48576250492629, δ�
 OutputCellGridVTKHDF = h5open("single_test1" * ".vtkhdf", "w")
 root         = HDF5.create_group(OutputCellGridVTKHDF, "VTKHDF")
 GenerateGeometryStructure(root; vtk_file_type = "UnstructuredGrid")
-GenerateStepStructure(root)
+GenerateStepStructure(root; vtk_file_type = "UnstructuredGrid")
 
-AppendVTKHDFData(root, 0, rand(SVector{2,Float64}, length(UniqueCells)), [], []; vtk_file_type = "UnstructuredGrid")
-AppendVTKHDFData(root, 1, rand(SVector{2,Float64}, length(UniqueCells)), [], []; vtk_file_type = "UnstructuredGrid")
+AppendVTKHDFGridData(root, 0, SimConstants, UniqueCells)
+AppendVTKHDFGridData(root, 1, SimConstants, UniqueCells)
 close(OutputCellGridVTKHDF)

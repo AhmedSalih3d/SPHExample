@@ -23,7 +23,7 @@ module SPHExample
     export AllocateDataStructures, LoadBoundaryNormals
 
     using .ProduceHDFVTK
-    export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure, AppendVTKHDFData, SaveCellGridVTKHDF
+    export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure, AppendVTKHDFData, SaveCellGridVTKHDF, AppendVTKHDFGridData
 
     using .TimeStepping: Δt
     export Δt

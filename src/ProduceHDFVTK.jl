@@ -1,6 +1,6 @@
 module ProduceHDFVTK     
 
-    export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure, AppendVTKHDFData, SaveCellGridVTKHDF
+    export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure, AppendVTKHDFData, SaveCellGridVTKHDF, AppendVTKHDFGridData
 
     using HDF5
     using StaticArrays
@@ -127,7 +127,7 @@ module ProduceHDFVTK
         return nothing
     end
 
-    function GenerateStepStructure(root,  variable_names = String[], args...; chunk_size = 1000)
+    function GenerateStepStructure(root,  variable_names = String[], args...; vtk_file_type = "PolyData", chunk_size = 1000)
         steps = HDF5.create_group(root, "Steps")
     
         NSteps, _ = HDF5.create_attribute(steps, "NSteps", Int32)
@@ -139,11 +139,18 @@ module ProduceHDFVTK
             HDF5.create_dataset(steps, name, idType, ((0,),(-1,)), chunk=(chunk_size,))
         end
     
-        nTopoDSs = ["CellOffsets", "ConnectivityIdOffsets"]
-        for name in nTopoDSs
-            HDF5.create_dataset(steps, name, idType, ((4,0),(4, -1)), chunk=(4, chunk_size))
+        if vtk_file_type == "PolyData"
+            nTopoDSs = ["CellOffsets", "ConnectivityIdOffsets"]
+            for name in nTopoDSs
+                HDF5.create_dataset(steps, name, idType, ((4,0),(4, -1)), chunk=(4, chunk_size))
+            end
+        elseif vtk_file_type == "UnstructuredGrid"
+            nTopoDSs = ["CellOffsets", "ConnectivityIdOffsets"]
+            for name in nTopoDSs
+                HDF5.create_dataset(steps, name, idType, ((0,),(-1,)), chunk=(chunk_size,))
+            end
         end
-        
+            
         pData = HDF5.create_group(steps, "PointDataOffsets")
 
 
@@ -155,117 +162,219 @@ module ProduceHDFVTK
     
     end
 
-    function AppendVTKHDFData(root, newStep, Positions, variable_names, args...; vtk_file_type = "PolyData")
+    function AppendVTKHDFData(root, newStep, Positions, variable_names, args...)
         steps = root["Steps"]
 
-        if vtk_file_type == "PolyData"
-            # To update attributes, this is the best way I've found so far
-            old_NSteps = HDF5.read_attribute(steps, "NSteps")
-            steps_attr_dict = attributes(steps)
-            NSteps = steps_attr_dict["NSteps"]
-            write_attribute(NSteps,HDF5.datatype(idType), old_NSteps + 1)
+        # To update attributes, this is the best way I've found so far
+        old_NSteps = HDF5.read_attribute(steps, "NSteps")
+        steps_attr_dict = attributes(steps)
+        NSteps = steps_attr_dict["NSteps"]
+        write_attribute(NSteps,HDF5.datatype(idType), old_NSteps + 1)
 
-            HDF5.set_extent_dims(steps["Values"], (length(steps["Values"]) + 1,))
-            steps["Values"][end] = newStep
+        HDF5.set_extent_dims(steps["Values"], (length(steps["Values"]) + 1,))
+        steps["Values"][end] = newStep
 
-            PointsStartIndex = size(root["Points"])[2] + 1
-            PositionLength   = length(Positions)
+        PointsStartIndex = size(root["Points"])[2] + 1
+        PositionLength   = length(Positions)
 
-            HDF5.set_extent_dims(root["Points"], (length(first(Positions)), size(root["Points"])[2] + PositionLength))
-            root["Points"][:, PointsStartIndex:(PointsStartIndex+PositionLength-1)] = stack(Positions)
+        HDF5.set_extent_dims(root["Points"], (length(first(Positions)), size(root["Points"])[2] + PositionLength))
+        root["Points"][:, PointsStartIndex:(PointsStartIndex+PositionLength-1)] = stack(Positions)
 
-            HDF5.set_extent_dims(steps["PointOffsets"], (length(steps["PointOffsets"]) + 1,))
-            steps["PointOffsets"][end] = PointsStartIndex - 1
+        HDF5.set_extent_dims(steps["PointOffsets"], (length(steps["PointOffsets"]) + 1,))
+        steps["PointOffsets"][end] = PointsStartIndex - 1
 
-            HDF5.set_extent_dims(root["NumberOfPoints"], (length(root["NumberOfPoints"]) + 1,))
-            root["NumberOfPoints"][end] = PositionLength
+        HDF5.set_extent_dims(root["NumberOfPoints"], (length(root["NumberOfPoints"]) + 1,))
+        root["NumberOfPoints"][end] = PositionLength
 
-            NumberOfPartsStartIndex = length(steps["NumberOfParts"]) + 1
-            HDF5.set_extent_dims(steps["NumberOfParts"], (length(steps["NumberOfParts"]) + 1,))
-            steps["NumberOfParts"][NumberOfPartsStartIndex] = 1
+        NumberOfPartsStartIndex = length(steps["NumberOfParts"]) + 1
+        HDF5.set_extent_dims(steps["NumberOfParts"], (length(steps["NumberOfParts"]) + 1,))
+        steps["NumberOfParts"][NumberOfPartsStartIndex] = 1
 
-            PartOffsetsStartIndex = length(steps["PartOffsets"]) + 1
-            PartOffsetsLength     = length(steps["PartOffsets"]) + 1
-            HDF5.set_extent_dims(steps["PartOffsets"], (PartOffsetsLength,))
-            steps["PartOffsets"][PartOffsetsStartIndex] = PartOffsetsLength - 1
+        PartOffsetsStartIndex = length(steps["PartOffsets"]) + 1
+        PartOffsetsLength     = length(steps["PartOffsets"]) + 1
+        HDF5.set_extent_dims(steps["PartOffsets"], (PartOffsetsLength,))
+        steps["PartOffsets"][PartOffsetsStartIndex] = PartOffsetsLength - 1
 
-            CellOffsetsStartIndex = size(steps["CellOffsets"])[2] + 1
-            HDF5.set_extent_dims(steps["CellOffsets"], (4, CellOffsetsStartIndex))
-            # steps["CellOffsets"][:, CellOffsetsStartIndex] = zeros(4) # When you extent dimensions, it autofills with zero values
+        CellOffsetsStartIndex = size(steps["CellOffsets"])[2] + 1
+        HDF5.set_extent_dims(steps["CellOffsets"], (4, CellOffsetsStartIndex))
+        # steps["CellOffsets"][:, CellOffsetsStartIndex] = zeros(4) # When you extent dimensions, it autofills with zero values
 
-            ConnectivityIdOffsetsStartIndex = size(steps["ConnectivityIdOffsets"])[2] + 1
-            HDF5.set_extent_dims(steps["ConnectivityIdOffsets"], (4, ConnectivityIdOffsetsStartIndex))
-            # steps["ConnectivityIdOffsets"][:, ConnectivityIdOffsetsStartIndex] = zeros(4) # When you extent dimensions, it autofills with zero values
+        ConnectivityIdOffsetsStartIndex = size(steps["ConnectivityIdOffsets"])[2] + 1
+        HDF5.set_extent_dims(steps["ConnectivityIdOffsets"], (4, ConnectivityIdOffsetsStartIndex))
+        # steps["ConnectivityIdOffsets"][:, ConnectivityIdOffsetsStartIndex] = zeros(4) # When you extent dimensions, it autofills with zero values
 
-            NumberOfPartsStartIndex = length(steps["NumberOfParts"]) + 1
-            HDF5.set_extent_dims(steps["NumberOfParts"], (length(steps["NumberOfParts"]) + 1,))
-            steps["NumberOfParts"][NumberOfPartsStartIndex] = 1
+        NumberOfPartsStartIndex = length(steps["NumberOfParts"]) + 1
+        HDF5.set_extent_dims(steps["NumberOfParts"], (length(steps["NumberOfParts"]) + 1,))
+        steps["NumberOfParts"][NumberOfPartsStartIndex] = 1
 
-            for point_data_name in keys(steps["PointDataOffsets"])
-                HDF5.set_extent_dims(steps["PointDataOffsets"][point_data_name], (length(steps["PointDataOffsets"][point_data_name]) + 1,))
-                steps["PointDataOffsets"][point_data_name][end] = Int(PointsStartIndex - 1)
-            end
-
-            for i ∈ eachindex(variable_names)
-                var_name = variable_names[i]
-                arg      = args[i]
-                arg_val_type   = eltype(eltype(arg))
-                arg_val_length = length(first(arg)) > 1 ? 3 : 1
-
-
-                if arg_val_length == 3
-                    HDF5.set_extent_dims(root["PointData"][var_name], (arg_val_length, size(root["PointData"][var_name], 2) + PositionLength))
-                    root["PointData"][var_name][:, PointsStartIndex:(PointsStartIndex + PositionLength - 1)] = stack(arg)
-                else
-                    HDF5.set_extent_dims(root["PointData"][var_name], (length(root["PointData"][var_name]) + PositionLength,))
-                    root["PointData"][var_name][PointsStartIndex:(PointsStartIndex + PositionLength - 1)] = arg
-                end
-            end
-            
-
-            connectivities = ["Vertices", "Lines", "Polygons", "Strips"]
-            for connect in connectivities
-                for dataset in ["NumberOfCells", "NumberOfConnectivityIds", "Offsets", "Connectivity"]
-                    HDF5.set_extent_dims(root[connect][dataset], (length(root[connect][dataset]) + 1,))
-                    # root[connect][dataset][end] = idType(0) # When you extent dimensions, it autofills with zero values
-                end
-            end
-        elseif vtk_file_type == "UnstructuredGrid"
-            # To update attributes, this is the best way I've found so far
-            old_NSteps = HDF5.read_attribute(steps, "NSteps")
-            steps_attr_dict = attributes(steps)
-            NSteps = steps_attr_dict["NSteps"]
-            write_attribute(NSteps,HDF5.datatype(idType), old_NSteps + 1)
-
-            HDF5.set_extent_dims(steps["Values"], (length(steps["Values"]) + 1,))
-            steps["Values"][end] = newStep
-
-            PointsStartIndex = size(root["Points"])[2] + 1
-            PositionLength   = length(Positions)
-
-            HDF5.set_extent_dims(root["Points"], (length(first(Positions)), size(root["Points"])[2] + PositionLength))
-            root["Points"][:, PointsStartIndex:(PointsStartIndex+PositionLength-1)] = stack(Positions)
-
-            HDF5.set_extent_dims(steps["PointOffsets"], (length(steps["PointOffsets"]) + 1,))
-            steps["PointOffsets"][end] = PointsStartIndex - 1
-
-            NumberOfPartsStartIndex = length(steps["NumberOfParts"]) + 1
-            HDF5.set_extent_dims(steps["NumberOfParts"], (length(steps["NumberOfParts"]) + 1,))
-            steps["NumberOfParts"][NumberOfPartsStartIndex] = 1
-
-            PartOffsetsStartIndex = length(steps["PartOffsets"]) + 1
-            PartOffsetsLength     = length(steps["PartOffsets"]) + 1
-            HDF5.set_extent_dims(steps["PartOffsets"], (PartOffsetsLength,))
-            steps["PartOffsets"][PartOffsetsStartIndex] = PartOffsetsLength - 1
-
-            CellOffsetsStartIndex = size(steps["CellOffsets"])[2] + 1
-            HDF5.set_extent_dims(steps["CellOffsets"], (4, CellOffsetsStartIndex))
-            # steps["CellOffsets"][:, CellOffsetsStartIndex] = zeros(4) # When you extent dimensions, it autofills with zero values
-
-            ##             
-            HDF5.set_extent_dims(root["NumberOfPoints"], (length(root["NumberOfPoints"]) + 1,))
-            root["NumberOfPoints"][end] = PositionLength
+        for point_data_name in keys(steps["PointDataOffsets"])
+            HDF5.set_extent_dims(steps["PointDataOffsets"][point_data_name], (length(steps["PointDataOffsets"][point_data_name]) + 1,))
+            steps["PointDataOffsets"][point_data_name][end] = Int(PointsStartIndex - 1)
         end
+
+        for i ∈ eachindex(variable_names)
+            var_name = variable_names[i]
+            arg      = args[i]
+            arg_val_type   = eltype(eltype(arg))
+            arg_val_length = length(first(arg)) > 1 ? 3 : 1
+
+
+            if arg_val_length == 3
+                HDF5.set_extent_dims(root["PointData"][var_name], (arg_val_length, size(root["PointData"][var_name], 2) + PositionLength))
+                root["PointData"][var_name][:, PointsStartIndex:(PointsStartIndex + PositionLength - 1)] = stack(arg)
+            else
+                HDF5.set_extent_dims(root["PointData"][var_name], (length(root["PointData"][var_name]) + PositionLength,))
+                root["PointData"][var_name][PointsStartIndex:(PointsStartIndex + PositionLength - 1)] = arg
+            end
+        end
+        
+
+        connectivities = ["Vertices", "Lines", "Polygons", "Strips"]
+        for connect in connectivities
+            for dataset in ["NumberOfCells", "NumberOfConnectivityIds", "Offsets", "Connectivity"]
+                HDF5.set_extent_dims(root[connect][dataset], (length(root[connect][dataset]) + 1,))
+                # root[connect][dataset][end] = idType(0) # When you extent dimensions, it autofills with zero values
+            end
+        end
+    end
+
+    function AppendVTKHDFGridData(root, newStep, SimConstants, UniqueCells)
+        # Must be AbstractVector, since UniqueCells is passed in as a 'view' of a CartesianIndex array
+        ExtractDimensionality(::AbstractVector{CartesianIndex{N}}) where N = N
+
+        CartesianIndexN = ExtractDimensionality(UniqueCells)
+
+        # Cell dimensions
+        dx = dy = dz = SimConstants.H
+    
+        # Initialize lists for storing points and cells
+        points = Vector{SVector{3, Float64}}()  # List to store unique SVector points
+        connectivity = Int[]                    # Connectivity for each cell
+        offsets      = Int[]                    # Offsets for each cell
+        cell_types   = Int[]                    # Cell types (for VTK_QUAD)
+        cell_data    = Int[]
+    
+        vtk_type::UInt8 = CartesianIndexN == 2 ? UInt8(9) : CartesianIndexN == 3 ? UInt8(12)  : error("Dimensionality of UniqueCells is wrong")   # QUAD VTK TYPE
+
+
+        # push!(offsets, 0)
+        # Loop through each CartesianIndex cell
+        for (id, cell) in enumerate(UniqueCells)
+            if CartesianIndexN == 2
+                # Get x and y from the CartesianIndex and calculate cell center
+                xi, yi = cell.I
+                x_center = xi * dx
+                y_center = yi * dy
+        
+                # Define corners individually
+                corners = [
+                    SVector(x_center - dx / 2, y_center - dy / 2, 0.0),
+                    SVector(x_center + dx / 2, y_center - dy / 2, 0.0),
+                    SVector(x_center + dx / 2, y_center + dy / 2, 0.0),
+                    SVector(x_center - dx / 2, y_center + dy / 2, 0.0)
+                ]
+        
+            elseif CartesianIndexN == 3
+                # Get x, y, and z from the CartesianIndex and calculate cell center
+                xi, yi, zi = cell.I 
+                x_center = xi * dx
+                y_center = yi * dy
+                z_center = zi * dz
+                
+                # Calculate the 8 corners of the cell relative to the center
+                corners = [
+                    SVector(x_center - dx / 2, y_center - dy / 2, z_center - dz / 2),  # Bottom-front-left
+                    SVector(x_center + dx / 2, y_center - dy / 2, z_center - dz / 2),  # Bottom-front-right
+                    SVector(x_center + dx / 2, y_center + dy / 2, z_center - dz / 2),  # Bottom-back-right
+                    SVector(x_center - dx / 2, y_center + dy / 2, z_center - dz / 2),  # Bottom-back-left
+                    SVector(x_center - dx / 2, y_center - dy / 2, z_center + dz / 2),  # Top-front-left
+                    SVector(x_center + dx / 2, y_center - dy / 2, z_center + dz / 2),  # Top-front-right
+                    SVector(x_center + dx / 2, y_center + dy / 2, z_center + dz / 2),  # Top-back-right
+                    SVector(x_center - dx / 2, y_center + dy / 2, z_center + dz / 2)   # Top-back-left
+                ]
+            end
+
+            # Add each corner point and update connectivity
+            n = length(points) #It is on purpose that length of points is zero, to match HDF5 0-based indexing!
+            for corner in corners
+                push!(points, corner)
+                push!(connectivity, n)
+                n += 1
+            end
+
+            # Define cell type and offsets
+            push!(offsets, length(connectivity))
+
+            push!(cell_types, vtk_type) 
+
+            push!(cell_data, id)
+        end
+
+        Positions = points
+
+        steps = root["Steps"]
+
+        # To update attributes, this is the best way I've found so far
+        old_NSteps = HDF5.read_attribute(steps, "NSteps")
+        steps_attr_dict = attributes(steps)
+        NSteps = steps_attr_dict["NSteps"]
+        write_attribute(NSteps,HDF5.datatype(idType), old_NSteps + 1)
+
+        HDF5.set_extent_dims(steps["Values"], (length(steps["Values"]) + 1,))
+        steps["Values"][end] = newStep
+
+        PointsStartIndex = size(root["Points"])[2] + 1
+        PositionLength   = length(Positions)
+
+        ExtendedPositionLength = size(root["Points"])[2] + PositionLength
+        HDF5.set_extent_dims(root["Points"], (length(first(Positions)), ExtendedPositionLength))
+        root["Points"][:, PointsStartIndex:(PointsStartIndex+PositionLength-1)] = stack(Positions)
+
+        HDF5.set_extent_dims(steps["PointOffsets"], (length(steps["PointOffsets"]) + 1,))
+        steps["PointOffsets"][end] = PointsStartIndex - 1
+
+        NumberOfPartsStartIndex = length(steps["NumberOfParts"]) + 1
+        HDF5.set_extent_dims(steps["NumberOfParts"], (length(steps["NumberOfParts"]) + 1,))
+        steps["NumberOfParts"][end] = 1
+
+        PartOffsetsStartIndex = length(steps["PartOffsets"]) + 1
+        PartOffsetsLength     = length(steps["PartOffsets"]) + 1
+        HDF5.set_extent_dims(steps["PartOffsets"], (PartOffsetsLength,))
+        steps["PartOffsets"][PartOffsetsStartIndex] = PartOffsetsLength - 1
+
+
+
+        HDF5.set_extent_dims(steps["ConnectivityIdOffsets"], (length(steps["ConnectivityIdOffsets"]) + 1,))
+        steps["ConnectivityIdOffsets"][end] = PointsStartIndex - 1
+
+        ##             
+        HDF5.set_extent_dims(root["NumberOfPoints"], (length(root["NumberOfPoints"]) + 1,))
+        root["NumberOfPoints"][end] = PositionLength
+
+        HDF5.set_extent_dims(root["NumberOfCells"], (length(root["NumberOfCells"]) + 1,))
+        root["NumberOfCells"][end] = length(UniqueCells)
+
+        ## Update data
+        HDF5.set_extent_dims(root["Connectivity"], (ExtendedPositionLength,))
+        root["Connectivity"][PointsStartIndex:end] = (PointsStartIndex:ExtendedPositionLength) .- 1
+
+        HDF5.set_extent_dims(root["NumberOfConnectivityIds"], (length(root["NumberOfConnectivityIds"]) + 1,))
+        root["NumberOfConnectivityIds"][end] = PositionLength
+
+        HDF5.set_extent_dims(steps["CellOffsets"], (length(steps["CellOffsets"]) + 1,))
+        steps["CellOffsets"][end] = length(root["Offsets"]) 
+
+        OffsetStartIndex = length(root["Offsets"])  + 1
+        temp_val         = length(root["Offsets"]) == 0 ? 1 : 0
+        OffsetsLength    = length(root["Offsets"]) + length(UniqueCells) + temp_val
+
+        HDF5.set_extent_dims(root["Offsets"], (OffsetsLength,))
+        root["Offsets"][(OffsetStartIndex+temp_val):OffsetsLength] = offsets
+
+        HDF5.set_extent_dims(root["Types"], (ExtendedPositionLength,))
+        root["Types"][PointsStartIndex:end] = vtk_type
+
+        return nothing
     end
 
     function SaveCellGridVTKHDF(FilePath, SimConstants, UniqueCells)
