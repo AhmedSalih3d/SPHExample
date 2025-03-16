@@ -357,7 +357,7 @@ module ProduceHDFVTK
 
         ## Update data
         HDF5.set_extent_dims(root["Connectivity"], (ExtendedPositionLength,))
-        root["Connectivity"][PointsStartIndex:end] = (PointsStartIndex:ExtendedPositionLength) .- 1
+        root["Connectivity"][PointsStartIndex:end] = (PointsStartIndex:ExtendedPositionLength) .- PointsStartIndex
 
         HDF5.set_extent_dims(root["NumberOfConnectivityIds"], (length(root["NumberOfConnectivityIds"]) + 1,))
         root["NumberOfConnectivityIds"][end] = PositionLength
@@ -366,11 +366,10 @@ module ProduceHDFVTK
 
         HDF5.set_extent_dims(steps["CellOffsets"], (length(steps["CellOffsets"]) + 1,)) #For first value, it becomes 0
 
-        println(length(steps["CellOffsets"]))
         if length(steps["CellOffsets"]) == 1
             LastCellOffset = 0
         else
-            LastCellOffset = steps["CellOffsets"][end-1] + length(UniqueCells)
+            LastCellOffset = root["NumberOfCells"][end-1]
         end
 
         steps["CellOffsets"][end] = LastCellOffset

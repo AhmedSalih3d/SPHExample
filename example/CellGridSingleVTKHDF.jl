@@ -30,10 +30,13 @@ root         = HDF5.create_group(OutputCellGridVTKHDF, "VTKHDF")
 GenerateGeometryStructure(root; vtk_file_type = "UnstructuredGrid")
 GenerateStepStructure(root; vtk_file_type = "UnstructuredGrid")
 
+
+
+AppendVTKHDFGridData(root, 0, SimConstants, UniqueCells)
+
 UniqueCells = [
     CartesianIndex(2, 1)
 ]
 
-AppendVTKHDFGridData(root, 0, SimConstants, UniqueCells)
 AppendVTKHDFGridData(root, 1, SimConstants, UniqueCells)
 close(OutputCellGridVTKHDF)
