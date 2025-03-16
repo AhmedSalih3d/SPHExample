@@ -333,7 +333,6 @@ module ProduceHDFVTK
         HDF5.set_extent_dims(steps["PointOffsets"], (length(steps["PointOffsets"]) + 1,))
         steps["PointOffsets"][end] = PointsStartIndex - 1
 
-        NumberOfPartsStartIndex = length(steps["NumberOfParts"]) + 1
         HDF5.set_extent_dims(steps["NumberOfParts"], (length(steps["NumberOfParts"]) + 1,))
         steps["NumberOfParts"][end] = 1
 
@@ -373,6 +372,10 @@ module ProduceHDFVTK
 
         HDF5.set_extent_dims(root["Types"], (ExtendedPositionLength,))
         root["Types"][PointsStartIndex:end] = vtk_type
+
+        CellDataStartIndex = length(root["CellData"]["CellData"]) + 1
+        HDF5.set_extent_dims(root["CellData"]["CellData"], (length(root["CellData"]["CellData"]) + length(UniqueCells),))
+        root["CellData"]["CellData"][CellDataStartIndex:end] = cell_data
 
         return nothing
     end
