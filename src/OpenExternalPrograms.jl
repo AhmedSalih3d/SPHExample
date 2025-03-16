@@ -101,6 +101,9 @@ function AutoOpenParaview(SaveLocation_, SimMetaData::SimulationMetaData, Output
 
                             Simulation_vtkhdfDisplay.SetRepresentationType('Point Gaussian')
 
+                            # To always load in at correct position
+                            Simulation_vtkhdfDisplay.Position = [0.0, 0.0, 0.0]
+
                             # set scalar coloring
                             ColorBy(Simulation_vtkhdfDisplay, ('POINTS', 'Density'))
 
