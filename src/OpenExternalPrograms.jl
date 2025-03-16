@@ -22,7 +22,6 @@ end
 
 function AutoOpenParaview(SaveLocation_, SimMetaData::SimulationMetaData, OutputVariableNames)
     ## Generate auto paraview py
-    
 
     if SimMetaData.ExportSingleVTKHDF
         ParaViewStateFileName = SaveLocation_ * "_SingleVTKHDFStateFile.py"
@@ -31,6 +30,9 @@ function AutoOpenParaview(SaveLocation_, SimMetaData::SimulationMetaData, Output
         ParaViewStateFileName = SaveLocation_ * "_StateFile.py"
         py_regex = "$(SimMetaData.SimulationName)_(\\d+).vtk"
     end
+
+    ExtractDimensionalityMetaData(::SimulationMetaData{N, FloatType}) where {N, FloatType} = N
+    ViewDimension = ExtractDimensionalityMetaData(SimMetaData) == 2 ? "2D" : "3D"
 
     ParaViewStateFile     = open(ParaViewStateFileName, "w")
 
@@ -69,6 +71,9 @@ function AutoOpenParaview(SaveLocation_, SimMetaData::SimulationMetaData, Output
                             
                             # init the 'Grid Axes 3D Actor' selected for 'AxesGrid'
                             renderView1.AxesGrid.Visibility = 1
+
+                            # set dimensionality of rendered view
+                            renderView1.InteractionMode = "$(ViewDimension)"
                             
                             SetActiveView(None)
 
