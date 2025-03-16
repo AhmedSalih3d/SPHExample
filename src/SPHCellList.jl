@@ -562,11 +562,11 @@ using UnicodePlots
     
                 try 
                     if !SimMetaData.ExportSingleVTKHDF 
-                        @timeit HourGlass "12A Output Data" SaveFile(SimMetaData.OutputIterationCounter + 1)
-                        SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter + 1), UniqueCellsView)
+                        @timeit HourGlass "12A Output Data"      SaveFile(SimMetaData.OutputIterationCounter + 1)
+                        @timeit HourGlass "12A Output Grid Data" SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter + 1), UniqueCellsView)
                     else
-                        @timeit HourGlass "12A Output Data" SaveFileVTKHDF()
-                        SaveFileVTKHDFGrid(UniqueCellsView)
+                        @timeit HourGlass "12A Output Data"      SaveFileVTKHDF()
+                        @timeit HourGlass "12A Output Grid Data" SaveFileVTKHDFGrid(UniqueCellsView)
                     end
                 catch err
                     @warn("File write failed.")
@@ -596,8 +596,8 @@ using UnicodePlots
                         end
                     end
                 else
-                    @timeit HourGlass "12B Close transient hdfvtk" close(OutputVTKHDF)
-                    close(OutputVTKHDFGrid)
+                    @timeit HourGlass "12B Close transient hdfvtk"      close(OutputVTKHDF)
+                    @timeit HourGlass "12B Close transient hdfvtk grid" close(OutputVTKHDFGrid)
                 end
 
                 finish!(SimMetaData.ProgressSpecification)
