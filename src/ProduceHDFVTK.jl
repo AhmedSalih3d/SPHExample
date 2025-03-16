@@ -120,8 +120,8 @@ module ProduceHDFVTK
             
             FieldData = HDF5.create_group(root, "FieldData") #Currently just empty group
 
-            CellData = HDF5.create_group(root, "CellData")
-            HDF5.create_dataset(CellData, "CellData" , idType , ((0,),(-1,)), chunk=(chunk_size,))
+            #CellData = HDF5.create_group(root, "CellData")
+            #HDF5.create_dataset(CellData, "CellData" , idType , ((0,),(-1,)), chunk=(chunk_size,))
         end
 
         return nothing
@@ -257,7 +257,7 @@ module ProduceHDFVTK
         vtk_type::UInt8 = CartesianIndexN == 2 ? UInt8(9) : CartesianIndexN == 3 ? UInt8(12)  : error("Dimensionality of UniqueCells is wrong")   # QUAD VTK TYPE
 
 
-        # push!(offsets, 0)
+        push!(offsets, 0)
         # Loop through each CartesianIndex cell
         for (id, cell) in enumerate(UniqueCells)
             if CartesianIndexN == 2
@@ -302,13 +302,15 @@ module ProduceHDFVTK
                 n += 1
             end
 
-            # Define cell type and offsets
+            # Define cell type and offsets 
             push!(offsets, length(connectivity))
 
             push!(cell_types, vtk_type) 
 
             push!(cell_data, id)
         end
+
+        
 
         Positions = points
 
@@ -360,22 +362,31 @@ module ProduceHDFVTK
         HDF5.set_extent_dims(root["NumberOfConnectivityIds"], (length(root["NumberOfConnectivityIds"]) + 1,))
         root["NumberOfConnectivityIds"][end] = PositionLength
 
-        HDF5.set_extent_dims(steps["CellOffsets"], (length(steps["CellOffsets"]) + 1,))
-        steps["CellOffsets"][end] = length(root["Offsets"]) 
+
+
+        HDF5.set_extent_dims(steps["CellOffsets"], (length(steps["CellOffsets"]) + 1,)) #For first value, it becomes 0
+
+        println(length(steps["CellOffsets"]))
+        if length(steps["CellOffsets"]) == 1
+            LastCellOffset = 0
+        else
+            LastCellOffset = steps["CellOffsets"][end-1] + length(UniqueCells)
+        end
+
+        steps["CellOffsets"][end] = LastCellOffset
 
         OffsetStartIndex = length(root["Offsets"])  + 1
-        temp_val         = length(root["Offsets"]) == 0 ? 1 : 0
-        OffsetsLength    = length(root["Offsets"]) + length(UniqueCells) + temp_val
-
+        OffsetsLength    = length(root["Offsets"]) + length(UniqueCells) + 1
         HDF5.set_extent_dims(root["Offsets"], (OffsetsLength,))
-        root["Offsets"][(OffsetStartIndex+temp_val):OffsetsLength] = offsets
+        root["Offsets"][OffsetStartIndex:end] = offsets
 
-        HDF5.set_extent_dims(root["Types"], (ExtendedPositionLength,))
-        root["Types"][PointsStartIndex:end] = vtk_type
+        TypesStartIndex = length(root["Types"]) + 1
+        HDF5.set_extent_dims(root["Types"], (length(root["Types"]) + length(UniqueCells),))
+        root["Types"][TypesStartIndex:end] = vtk_type
 
-        CellDataStartIndex = length(root["CellData"]["CellData"]) + 1
-        HDF5.set_extent_dims(root["CellData"]["CellData"], (length(root["CellData"]["CellData"]) + length(UniqueCells),))
-        root["CellData"]["CellData"][CellDataStartIndex:end] = cell_data
+        # CellDataStartIndex = length(root["CellData"]["CellData"]) + 1
+        # HDF5.set_extent_dims(root["CellData"]["CellData"], (length(root["CellData"]["CellData"]) + length(UniqueCells),))
+        # root["CellData"]["CellData"][CellDataStartIndex:end] = cell_data
 
         return nothing
     end

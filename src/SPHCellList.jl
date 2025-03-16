@@ -504,7 +504,7 @@ using UnicodePlots
             if !SimMetaData.ExportSingleVTKHDF
                 SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
             else
-                SaveFileVTKHDF = () -> AppendVTKHDFData(root, SimMetaData.TotalTime, to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, to_3d(SimParticles.KernelGradient), SimParticles.Density, SimParticles.Pressure, to_3d(SimParticles.Velocity), to_3d(SimParticles.Acceleration), SimParticles.BoundaryBool, SimParticles.ID,  UInt8.(SimParticles.Type), SimParticles.GroupMarker)
+                SaveFileVTKHDF     = () -> AppendVTKHDFData(root, SimMetaData.TotalTime, to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, to_3d(SimParticles.KernelGradient), SimParticles.Density, SimParticles.Pressure, to_3d(SimParticles.Velocity), to_3d(SimParticles.Acceleration), SimParticles.BoundaryBool, SimParticles.ID,  UInt8.(SimParticles.Type), SimParticles.GroupMarker)
             end
         else
             if !SimMetaData.ExportSingleVTKHDF
@@ -513,20 +513,27 @@ using UnicodePlots
                 SaveFileVTKHDF = () -> AppendVTKHDFData(root, SimMetaData.TotalTime, SimParticles.Position, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
             end
         end
+        SaveFileVTKHDFGrid = (UN) -> AppendVTKHDFGridData(root_grid, SimMetaData.TotalTime, SimConstants, UN)
 
-        SaveCellGridVTKHDFSimulationStep = (FP, UN) ->SaveCellGridVTKHDF(FP, SimConstants, UN)
+        SaveCellGridVTKHDFSimulationStep = (FP, UN) -> SaveCellGridVTKHDF(FP, SimConstants, UN)
 
         SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
         if !SimMetaData.ExportSingleVTKHDF
-            @inline SaveFile(SimMetaData.OutputIterationCounter)    
+            @inline SaveFile(SimMetaData.OutputIterationCounter)
+            SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter), UniqueCells)  
         else
             OutputVTKHDF = h5open(SaveLocation_ * ".vtkhdf", "w")
             root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
             GenerateGeometryStructure(root, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker; chunk_size = 1000)
             GenerateStepStructure(root, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
-            SaveFileVTKHDF()    
+            SaveFileVTKHDF()
+            
+            OutputVTKHDFGrid = h5open(SaveLocation_ * "_GridCells" * ".vtkhdf", "w")
+            root_grid = HDF5.create_group(OutputVTKHDFGrid, "VTKHDF")
+            GenerateGeometryStructure(root_grid ; vtk_file_type = "UnstructuredGrid")
+            GenerateStepStructure(root_grid     ; vtk_file_type = "UnstructuredGrid")
+            SaveFileVTKHDFGrid(UniqueCells)
         end
-        SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter), UniqueCells)
 
         InverseCutOff = Val(1/(SimConstants.H))
 
@@ -556,15 +563,16 @@ using UnicodePlots
                 try 
                     if !SimMetaData.ExportSingleVTKHDF 
                         @timeit HourGlass "12A Output Data" SaveFile(SimMetaData.OutputIterationCounter + 1)
+                        SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter + 1), UniqueCellsView)
                     else
                         @timeit HourGlass "12A Output Data" SaveFileVTKHDF()
+                        SaveFileVTKHDFGrid(UniqueCellsView)
                     end
                 catch err
                     @warn("File write failed.")
                     display(err)
                 end
 
-                SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter + 1), UniqueCellsView)
     
                 if SimMetaData.FlagLog
                     LogStep(SimLogger, SimMetaData, HourGlass)
@@ -589,6 +597,7 @@ using UnicodePlots
                     end
                 else
                     @timeit HourGlass "12B Close transient hdfvtk" close(OutputVTKHDF)
+                    close(OutputVTKHDFGrid)
                 end
 
                 finish!(SimMetaData.ProgressSpecification)
