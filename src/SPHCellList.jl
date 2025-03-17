@@ -548,11 +548,13 @@ using UnicodePlots
             GenerateStepStructure(root, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
             SaveFileVTKHDF()
             
-            OutputVTKHDFGrid = h5open(SaveLocation_ * "_GridCells" * ".vtkhdf", "w")
-            root_grid = HDF5.create_group(OutputVTKHDFGrid, "VTKHDF")
-            GenerateGeometryStructure(root_grid ; vtk_file_type = "UnstructuredGrid")
-            GenerateStepStructure(root_grid     ; vtk_file_type = "UnstructuredGrid")
-            SaveFileVTKHDFGrid(UniqueCells)
+            if SimMetaData.ExportGridCells
+                OutputVTKHDFGrid = h5open(SaveLocation_ * "_GridCells" * ".vtkhdf", "w")
+                root_grid = HDF5.create_group(OutputVTKHDFGrid, "VTKHDF")
+                GenerateGeometryStructure(root_grid ; vtk_file_type = "UnstructuredGrid")
+                GenerateStepStructure(root_grid     ; vtk_file_type = "UnstructuredGrid")
+                SaveFileVTKHDFGrid(UniqueCells)
+            end
         end
 
         InverseCutOff = Val(1/(SimConstants.H))
@@ -577,20 +579,27 @@ using UnicodePlots
             SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
 
-            findfirst_int(predicate, collection) = (idx = findfirst(predicate, collection); idx === nothing ? -1 : idx)
-            IndexCounter_    = findfirst_int(isequal(0), ParticleRanges) - 2
-
-            UniqueCellsView = view(UniqueCells, 1:IndexCounter_)
+            if SimMetaData.ExportSingleVTKHDF || SimMetaData.ExportGridCells
+                findfirst_int(predicate, collection) = (idx = findfirst(predicate, collection); idx === nothing ? -1 : idx)
+                IndexCounter_    = findfirst_int(isequal(0), ParticleRanges) - 2
+                UniqueCellsView = view(UniqueCells, 1:IndexCounter_)
+            end
 
             if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
     
                 try 
                     if !SimMetaData.ExportSingleVTKHDF 
                         @timeit HourGlass "12A Output Data"      SaveFile(SimMetaData.OutputIterationCounter + 1)
-                        @timeit HourGlass "12A Output Grid Data" SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter + 1), UniqueCellsView)
                     else
                         @timeit HourGlass "12A Output Data"      SaveFileVTKHDF()
-                        @timeit HourGlass "12A Output Grid Data" SaveFileVTKHDFGrid(UniqueCellsView)
+                    end
+
+                    if SimMetaData.ExportGridCells
+                        if !SimMetaData.ExportSingleVTKHDF
+                            @timeit HourGlass "12A Output Grid Data" SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter + 1), UniqueCellsView)
+                        else
+                            @timeit HourGlass "12A Output Grid Data" SaveFileVTKHDFGrid(UniqueCellsView)
+                        end
                     end
                 catch err
                     @warn("File write failed.")
@@ -621,7 +630,9 @@ using UnicodePlots
                     end
                 else
                     @timeit HourGlass "12B Close transient hdfvtk"      close(OutputVTKHDF)
-                    @timeit HourGlass "12B Close transient hdfvtk grid" close(OutputVTKHDFGrid)
+                    if SimMetaData.ExportGridCells
+                        @timeit HourGlass "12B Close transient hdfvtk grid" close(OutputVTKHDFGrid)
+                    end
                 end
 
                 finish!(SimMetaData.ProgressSpecification)
