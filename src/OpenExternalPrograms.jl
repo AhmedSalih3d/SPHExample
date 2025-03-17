@@ -22,11 +22,25 @@ end
 
 function AutoOpenParaview(SaveLocation_, SimMetaData::SimulationMetaData, OutputVariableNames)
     ## Generate auto paraview py
-    ParaViewStateFileName = SaveLocation_ * "_StateFile.py"
+
+    if SimMetaData.ExportSingleVTKHDF
+        ParaViewStateFileName = SaveLocation_ * "_SingleVTKHDFStateFile.py"
+        py_regex = "$(SimMetaData.SimulationName).vtkhdf"
+    else
+        ParaViewStateFileName = SaveLocation_ * "_StateFile.py"
+        py_regex = "$(SimMetaData.SimulationName)_(\\d+).vtk"
+    end
+
+    ExtractDimensionalityMetaData(::SimulationMetaData{N, FloatType}) where {N, FloatType} = N
+    ViewDimension = ExtractDimensionalityMetaData(SimMetaData) == 2 ? "2D" : "3D"
+
     ParaViewStateFile     = open(ParaViewStateFileName, "w")
 
     ParaViewConfig    = 
                             """
+                            # import regex library
+                            import re
+
                             # state file generated using paraview version 5.12.0
                             import paraview
                             paraview.compatibility.major = 5
@@ -37,7 +51,8 @@ function AutoOpenParaview(SaveLocation_, SimMetaData::SimulationMetaData, Output
 
                             # List all .vtkhdf files in the directory
                             import os
-                            file_list = [os.path.join(directory, f) for f in os.listdir(directory) if f.endswith('.vtkhdf')]
+                            regex = r"$(py_regex)" # Regular expression to match the .vtkhdf files
+                            file_list = [os.path.join(directory, f) for f in os.listdir(directory) if re.search(regex,f)]
 
                             #### import the simple module from the paraview
                             from paraview.simple import *
@@ -56,6 +71,9 @@ function AutoOpenParaview(SaveLocation_, SimMetaData::SimulationMetaData, Output
                             
                             # init the 'Grid Axes 3D Actor' selected for 'AxesGrid'
                             renderView1.AxesGrid.Visibility = 1
+
+                            # set dimensionality of rendered view
+                            renderView1.InteractionMode = "$(ViewDimension)"
                             
                             SetActiveView(None)
 
@@ -87,6 +105,9 @@ function AutoOpenParaview(SaveLocation_, SimMetaData::SimulationMetaData, Output
                             Simulation_vtkhdfDisplay = Show(Simulation_vtkhdf, renderView1, 'GeometryRepresentation')
 
                             Simulation_vtkhdfDisplay.SetRepresentationType('Point Gaussian')
+
+                            # To always load in at correct position
+                            Simulation_vtkhdfDisplay.Position = [0.0, 0.0, 0.0]
 
                             # set scalar coloring
                             ColorBy(Simulation_vtkhdfDisplay, ('POINTS', 'Density'))

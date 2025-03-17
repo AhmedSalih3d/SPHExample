@@ -11,3 +11,5 @@ Manifest.toml
 *.log
 # Ignore test files
 test/
+# Ignore vtkhdf files
+*.vtkhdf

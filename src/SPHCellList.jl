@@ -37,22 +37,46 @@ using UnicodePlots
         return n
     end
 
+    """
+    Extracts the cells for each particle based on their positions and the inverse cutoff value.
+
+    # Arguments
+    - `Particles`: The particles whose cells are to be extracted.
+    - `::Val{InverseCutOff}`: The inverse cutoff value used for cell extraction.
+
+    # Returns
+    - `nothing`: This function modifies the `Particles` in place.
+    """
     @inline function ExtractCells!(Particles, ::Val{InverseCutOff}) where InverseCutOff
         # Replace unsafe_trunc with trunc if this ever errors
         function map_floor(x)
-            unsafe_trunc(Int, muladd(x,InverseCutOff,2))
+            # This is different than just doing muladd(x,InverseCutOff,0.5) because it rounds towards zero.
+            # Consider -1.7 + 0.5, this would give -1.2 and then trunced 1, but we want -2, therefore absolute addition before hand
+            # We add 0.5 instead of 1, to ensure proper rounding behavior when restoring the sign for negative numbers.
+            Int(sign(x)) * unsafe_trunc(Int, muladd(abs(x),InverseCutOff,0.5))
         end
 
-        Cells  = @views Particles.Cells
-        Points = @views Particles.Position
-        for i ∈ eachindex(Particles)
-            t = map(map_floor, Tuple(Points[i]))
-            Cells[i] = CartesianIndex(t)
+        for i ∈ eachindex(Particles.Cells)
+            t = map(map_floor, Tuple(Particles.Position[i]))
+            Particles.Cells[i] = CartesianIndex(t)
         end
+
         return nothing
     end
 
-    ###=== Function to update ordering
+    """
+    Updates the neighbor list and sorts particles by their cell indices.
+
+    # Arguments
+    - `Particles`: The particles whose neighbors are to be updated.
+    - `CutOff`: The cutoff value used for cell extraction.
+    - `SortingScratchSpace`: Scratch space for sorting.
+    - `ParticleRanges`: Array to store the ranges of particles in each cell.
+    - `UniqueCells`: Array to store the unique cells.
+
+    # Returns
+    - `IndexCounter`: The number of unique cells identified.
+    """
     function UpdateNeighbors!(Particles, CutOff, SortingScratchSpace, ParticleRanges, UniqueCells)
         ExtractCells!(Particles, CutOff)
 
@@ -359,11 +383,12 @@ using UnicodePlots
         @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
         dt₂ = dt * 0.5
 
+        # Note: If particles are not inside of the neighbor list visualiation, try setting this if statement to always true, since UniqueCells will be updated always then
         # In theory, the maximal speed is the speed of sound, this should give a safe guard
         # any ensure it is always updated in a reasonable manner. This only works well, assuming that
         # c₀ >= maximum(norm.(Velocity))
         # Remove if statement logic if you want to update each iteration
-        if mod(SimMetaData.Iteration, ceil(Int, 1 / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
+        if mod(SimMetaData.Iteration, ceil(Int, SimConstants.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
             @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, InverseCutOff, SortingScratchSpace,  ParticleRanges, UniqueCells)
         else
             findfirst_int(predicate, collection) = (idx = findfirst(predicate, collection); idx === nothing ? -1 : idx)
@@ -488,7 +513,10 @@ using UnicodePlots
         # Produce data saving functions
         SaveLocation_ = SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName
         SaveLocation  = (Iteration) -> SaveLocation_ * "_" * lpad(Iteration,6,"0") * ".vtkhdf"
-    
+  
+        SaveLocation2_ = SimMetaData.SaveLocation * "/CellGrid_" * SimMetaData.SimulationName
+        SaveLocationCellGrid  = (Iteration) -> SaveLocation2_ * lpad(Iteration,6,"0") * ".vtkhdf"
+
         fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
     
         OutputVariableNames = ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID", "Type", "GroupMarker"]
@@ -496,7 +524,7 @@ using UnicodePlots
             if !SimMetaData.ExportSingleVTKHDF
                 SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
             else
-                SaveFileVTKHDF = () -> AppendVTKHDFData(root, SimMetaData.TotalTime, to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, to_3d(SimParticles.KernelGradient), SimParticles.Density, SimParticles.Pressure, to_3d(SimParticles.Velocity), to_3d(SimParticles.Acceleration), SimParticles.BoundaryBool, SimParticles.ID,  UInt8.(SimParticles.Type), SimParticles.GroupMarker)
+                SaveFileVTKHDF     = () -> AppendVTKHDFData(root, SimMetaData.TotalTime, to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, to_3d(SimParticles.KernelGradient), SimParticles.Density, SimParticles.Pressure, to_3d(SimParticles.Velocity), to_3d(SimParticles.Acceleration), SimParticles.BoundaryBool, SimParticles.ID,  UInt8.(SimParticles.Type), SimParticles.GroupMarker)
             end
         else
             if !SimMetaData.ExportSingleVTKHDF
@@ -505,16 +533,28 @@ using UnicodePlots
                 SaveFileVTKHDF = () -> AppendVTKHDFData(root, SimMetaData.TotalTime, SimParticles.Position, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
             end
         end
+        SaveFileVTKHDFGrid = (UN) -> AppendVTKHDFGridData(root_grid, SimMetaData.TotalTime, SimConstants, UN)
+
+        SaveCellGridVTKHDFSimulationStep = (FP, UN) -> SaveCellGridVTKHDF(FP, SimConstants, UN)
 
         SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
         if !SimMetaData.ExportSingleVTKHDF
-            @inline SaveFile(SimMetaData.OutputIterationCounter)    
+            @inline SaveFile(SimMetaData.OutputIterationCounter)
+            SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter), UniqueCells)  
         else
             OutputVTKHDF = h5open(SaveLocation_ * ".vtkhdf", "w")
             root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
             GenerateGeometryStructure(root, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker; chunk_size = 1000)
             GenerateStepStructure(root, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
-            SaveFileVTKHDF()    
+            SaveFileVTKHDF()
+            
+            if SimMetaData.ExportGridCells
+                OutputVTKHDFGrid = h5open(SaveLocation_ * "_GridCells" * ".vtkhdf", "w")
+                root_grid = HDF5.create_group(OutputVTKHDFGrid, "VTKHDF")
+                GenerateGeometryStructure(root_grid ; vtk_file_type = "UnstructuredGrid")
+                GenerateStepStructure(root_grid     ; vtk_file_type = "UnstructuredGrid")
+                SaveFileVTKHDFGrid(UniqueCells)
+            end
         end
 
         InverseCutOff = Val(1/(SimConstants.H))
@@ -539,19 +579,33 @@ using UnicodePlots
             SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
 
+            if SimMetaData.ExportSingleVTKHDF || SimMetaData.ExportGridCells
+                findfirst_int(predicate, collection) = (idx = findfirst(predicate, collection); idx === nothing ? -1 : idx)
+                IndexCounter_    = findfirst_int(isequal(0), ParticleRanges) - 2
+                UniqueCellsView = view(UniqueCells, 1:IndexCounter_)
+            end
 
             if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
     
                 try 
                     if !SimMetaData.ExportSingleVTKHDF 
-                        @timeit HourGlass "12A Output Data" SaveFile(SimMetaData.OutputIterationCounter + 1)
+                        @timeit HourGlass "12A Output Data"      SaveFile(SimMetaData.OutputIterationCounter + 1)
                     else
-                        @timeit HourGlass "12A Output Data" SaveFileVTKHDF()
+                        @timeit HourGlass "12A Output Data"      SaveFileVTKHDF()
+                    end
+
+                    if SimMetaData.ExportGridCells
+                        if !SimMetaData.ExportSingleVTKHDF
+                            @timeit HourGlass "12A Output Grid Data" SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter + 1), UniqueCellsView)
+                        else
+                            @timeit HourGlass "12A Output Grid Data" SaveFileVTKHDFGrid(UniqueCellsView)
+                        end
                     end
                 catch err
                     @warn("File write failed.")
                     display(err)
                 end
+
     
                 if SimMetaData.FlagLog
                     LogStep(SimLogger, SimMetaData, HourGlass)
@@ -575,7 +629,10 @@ using UnicodePlots
                         end
                     end
                 else
-                    @timeit HourGlass "12B Close transient hdfvtk" close(OutputVTKHDF)
+                    @timeit HourGlass "12B Close transient hdfvtk"      close(OutputVTKHDF)
+                    if SimMetaData.ExportGridCells
+                        @timeit HourGlass "12B Close transient hdfvtk grid" close(OutputVTKHDFGrid)
+                    end
                 end
 
                 finish!(SimMetaData.ProgressSpecification)

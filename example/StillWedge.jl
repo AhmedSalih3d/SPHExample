@@ -31,6 +31,7 @@ let
         OutputEach=0.01,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
+        ExportGridCells=true,
         OpenLogFile=true,
         FlagDensityDiffusion=true,
         FlagLinearizedDDT=true,
