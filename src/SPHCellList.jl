@@ -464,8 +464,7 @@ using UnicodePlots
         SimMetaData.TotalTime      += dt
 
         
-        # return nothing
-        return UniqueCellsView
+        return nothing
     end
     
     ###===
@@ -575,9 +574,13 @@ using UnicodePlots
     
         @inbounds while true
     
-            UniqueCellsView = SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
+            SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
 
+            findfirst_int(predicate, collection) = (idx = findfirst(predicate, collection); idx === nothing ? -1 : idx)
+            IndexCounter_    = findfirst_int(isequal(0), ParticleRanges) - 2
+
+            UniqueCellsView = view(UniqueCells, 1:IndexCounter_)
 
             if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
     
