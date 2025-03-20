@@ -103,8 +103,8 @@ using UnicodePlots
 # Neither Polyester.@batch per core or thread is faster
 ###=== Function to process each cell and its neighbors
     function NeighborLoop!(SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, EnumeratedIndices)
-        @threads for (ichunk, inds) ∈ EnumeratedIndices
-            for iter ∈ inds
+        @sync tasks = map(EnumeratedIndices) do (ichunk, inds)
+            @spawn for iter ∈ inds
 
                 CellIndex = UniqueCells[iter]
 
@@ -134,7 +134,7 @@ using UnicodePlots
                 end
             end
         end
-
+        
         return nothing
     end
 
