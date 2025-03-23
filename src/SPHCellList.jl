@@ -17,7 +17,7 @@ using ..TimeStepping
 using ..OpenExternalPrograms
 
 using StaticArrays
-import StructArrays: StructArray
+import StructArrays: StructArray, foreachfield
 import LinearAlgebra: dot, norm, diagm, diag, cond, det
 import Parameters: @unpack
 import FastPow: @fastpow
@@ -322,6 +322,9 @@ using UnicodePlots
             ResetArrays!(∇Cᵢ, ∇◌rᵢ)
             @. ResetArrays!(SimThreadedArrays.∇CᵢThreaded, SimThreadedArrays.∇◌rᵢThreaded)
         end
+
+        # Specifying which arrays to reset is still faster zzz
+        # foreachfield(f -> map(v -> fill!(v, zero(eltype(v))), f), SimThreadedArrays)
 
         return nothing
     end
