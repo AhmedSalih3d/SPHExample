@@ -267,10 +267,10 @@ using UnicodePlots
             
             if FlagOutputKernelValues
                 Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
-                KernelThreaded[ichunk][i]         += Wᵢⱼ
-                KernelThreaded[ichunk][j]         += Wᵢⱼ
-                KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
-                KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
+                SimThreadedArrays.KernelThreaded[ichunk][i]         += Wᵢⱼ
+                SimThreadedArrays.KernelThreaded[ichunk][j]         += Wᵢⱼ
+                SimThreadedArrays.KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
+                SimThreadedArrays.KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
             end
 
 
@@ -279,13 +279,13 @@ using UnicodePlots
         
                 MLcond = MotionLimiter[i] * MotionLimiter[j]
 
-                ∇CᵢThreaded[ichunk][i]   += (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
-                ∇CᵢThreaded[ichunk][j]   += (m₀/ρⱼ) * -∇ᵢWᵢⱼ
+                SimThreadedArrays.∇CᵢThreaded[ichunk][i]   += (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
+                SimThreadedArrays.∇CᵢThreaded[ichunk][j]   += (m₀/ρⱼ) * -∇ᵢWᵢⱼ
         
                 # Switch signs compared to DSPH, else free surface detection does not make sense
                 # Agrees, https://arxiv.org/abs/2110.10076, it should have been r_ji
-                ∇◌rᵢThreaded[ichunk][i]  += (m₀/ρⱼ) * dot(-xᵢⱼ , ∇ᵢWᵢⱼ)  * MLcond
-                ∇◌rᵢThreaded[ichunk][j]  += (m₀/ρᵢ) * dot( xᵢⱼ ,-∇ᵢWᵢⱼ)  * MLcond
+                SimThreadedArrays.∇◌rᵢThreaded[ichunk][i]  += (m₀/ρⱼ) * dot(-xᵢⱼ , ∇ᵢWᵢⱼ)  * MLcond
+                SimThreadedArrays.∇◌rᵢThreaded[ichunk][j]  += (m₀/ρᵢ) * dot( xᵢⱼ ,-∇ᵢWᵢⱼ)  * MLcond
             end
         end
 
