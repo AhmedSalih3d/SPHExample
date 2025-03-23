@@ -1,6 +1,6 @@
 module PreProcess
 
-export LoadBoundaryNormals, AllocateDataStructures
+export LoadBoundaryNormals, AllocateDataStructures, AllocateSupportDataStructures
 
 using CSV
 using DataFrames
@@ -87,11 +87,7 @@ function AllocateDataStructures(Dimensions,FloatType, SimGeometry)
     Kernel          = zeros(PositionUnderlyingType, NumberOfPoints)
     KernelGradient  = zeros(PositionType, NumberOfPoints)
 
-    dρdtI           = zeros(PositionUnderlyingType, NumberOfPoints)
 
-    Velocityₙ⁺      = zeros(PositionType, NumberOfPoints)
-    Positionₙ⁺      = zeros(PositionType, NumberOfPoints)
-    ρₙ⁺             = zeros(PositionUnderlyingType, NumberOfPoints)
 
     Pressureᵢ      = zeros(PositionUnderlyingType, NumberOfPoints)
     
@@ -99,7 +95,21 @@ function AllocateDataStructures(Dimensions,FloatType, SimGeometry)
 
     SimParticles = StructArray((Cells = Cells, Kernel = Kernel, KernelGradient = KernelGradient, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = collect(1:NumberOfPoints) , Type = Types, GroupMarker = GroupMarker))
 
-    return SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺
+    return SimParticles
+end
+
+function AllocateSupportDataStructures(Position)
+
+    NumberOfPoints           = length(Position)
+    PositionType             = eltype(Position)
+    PositionUnderlyingType   = eltype(PositionType)
+
+    dρdtI           = zeros(PositionUnderlyingType, NumberOfPoints)
+    Velocityₙ⁺      = zeros(PositionType, NumberOfPoints)
+    Positionₙ⁺      = zeros(PositionType, NumberOfPoints)
+    ρₙ⁺             = zeros(PositionUnderlyingType, NumberOfPoints)
+
+    return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺
 end
 
 function LoadBoundaryNormals(dims, float_type, path_mdbc)

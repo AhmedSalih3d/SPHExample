@@ -471,7 +471,8 @@ using UnicodePlots
     function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}, #Don't further specify type for now
         SimMetaData::SimulationMetaData{Dimensions, FloatType},
         SimConstants::SimulationConstants,
-        SimLogger::SimulationLogger
+        SimLogger::SimulationLogger,
+        SimParticles::StructArray
         ) where {Dimensions,FloatType}
 
         # Unpack the relevant simulation meta data
@@ -479,10 +480,9 @@ using UnicodePlots
 
         # Vector of time steps
         TimeSteps = Vector{FloatType}()
-    
-        # Load in particles
-        SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺ = AllocateDataStructures(Dimensions,FloatType, SimGeometry)
         
+        dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺ = AllocateSupportDataStructures(SimParticles.Position)
+
         if SimMetaData.FlagLog
             InitializeLogger(SimLogger,SimConstants,SimMetaData, SimGeometry, SimParticles)
         end
