@@ -102,7 +102,7 @@ using UnicodePlots
 
 # Neither Polyester.@batch per core or thread is faster
 ###=== Function to process each cell and its neighbors
-    function NeighborLoop!(SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, EnumeratedIndices)
+    function NeighborLoop!(SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCells, EnumeratedIndices)
         @sync tasks = map(EnumeratedIndices) do (ichunk, inds)
             @spawn for iter ∈ inds
 
@@ -112,7 +112,7 @@ using UnicodePlots
                 EndIndex   = ParticleRanges[iter+1] - 1
 
                 @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-                    @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
+                    @inline ComputeInteractions!(SimMetaData, SimConstants, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
                 end
 
                 @inbounds for S ∈ Stencil
@@ -128,7 +128,7 @@ using UnicodePlots
                         EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
 
                         @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                            @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
+                            @inline ComputeInteractions!(SimMetaData, SimConstants, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
                         end
                     end
                 end
@@ -140,7 +140,7 @@ using UnicodePlots
 
     # Really important to overload default function, gives 10x speed up?
     # Overload the default function to do what you pleas
-    function ComputeInteractions!(SimMetaData, SimConstants, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
+    function ComputeInteractions!(SimMetaData, SimConstants, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
         @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues, FlagLinearizedDDT = SimMetaData
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, γ, g, c₀, δᵩ, η², H², Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
@@ -196,8 +196,8 @@ using UnicodePlots
                 Dᵢ  = 0.0
                 Dⱼ  = 0.0
             end
-            dρdtI[ichunk][i] += dρdt⁺ + Dᵢ
-            dρdtI[ichunk][j] += dρdt⁻ + Dⱼ
+            SimThreadedArrays.dρdtIThreaded[ichunk][i] += dρdt⁺ + Dᵢ
+            SimThreadedArrays.dρdtIThreaded[ichunk][j] += dρdt⁻ + Dⱼ
 
 
             Pᵢ      =  Pressure[i]
@@ -261,8 +261,8 @@ using UnicodePlots
             end
         
             uₘ = dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ
-            dvdtI[ichunk][i] += uₘ
-            dvdtI[ichunk][j] -= uₘ #dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
+            SimThreadedArrays.AccelerationThreaded[ichunk][i] += uₘ
+            SimThreadedArrays.AccelerationThreaded[ichunk][j] -= uₘ #dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
 
             
             if FlagOutputKernelValues
@@ -308,41 +308,42 @@ using UnicodePlots
         end
     end
 
-    function ResetStep!(SimMetaData, dρdtI, Acceleration, dρdtIThreaded, AccelerationThreaded, Kernel, KernelGradient, KernelThreaded, KernelGradientThreaded, ∇Cᵢ, ∇◌rᵢ, ∇CᵢThreaded, ∇◌rᵢThreaded)
+    function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+        
         ResetArrays!(dρdtI, Acceleration)
-        @. ResetArrays!(dρdtIThreaded, AccelerationThreaded)
+        @. ResetArrays!(SimThreadedArrays.dρdtIThreaded, SimThreadedArrays.AccelerationThreaded)
 
         if SimMetaData.FlagOutputKernelValues
             ResetArrays!(Kernel, KernelGradient)
-            @. ResetArrays!(KernelThreaded, KernelGradientThreaded)
+            @. ResetArrays!(SimThreadedArrays.KernelThreaded, SimThreadedArrays.KernelGradientThreaded)
         end
 
         if SimMetaData.FlagShifting
             ResetArrays!(∇Cᵢ, ∇◌rᵢ)
-            @. ResetArrays!(∇CᵢThreaded, ∇◌rᵢThreaded)
+            @. ResetArrays!(SimThreadedArrays.∇CᵢThreaded, SimThreadedArrays.∇◌rᵢThreaded)
         end
 
         return nothing
     end
 
-    function ReductionStep!(SimMetaData, dρdtI, dρdtIThreaded, Acceleration, AccelerationThreaded, Kernel, KernelThreaded, KernelGradient, KernelGradientThreaded, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded)
-        reduce_sum!(dρdtI, dρdtIThreaded)
-        reduce_sum!(Acceleration, AccelerationThreaded)
+    function ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+        reduce_sum!(dρdtI, SimThreadedArrays.dρdtIThreaded)
+        reduce_sum!(Acceleration, SimThreadedArrays.AccelerationThreaded)
   
         if SimMetaData.FlagOutputKernelValues
-            reduce_sum!(Kernel, KernelThreaded)
-            reduce_sum!(KernelGradient, KernelGradientThreaded)
+            reduce_sum!(Kernel, SimThreadedArrays.KernelThreaded)
+            reduce_sum!(KernelGradient, SimThreadedArrays.KernelGradientThreaded)
         end
 
         if SimMetaData.FlagShifting
-            reduce_sum!(∇Cᵢ, ∇CᵢThreaded)
-            reduce_sum!(∇◌rᵢ, ∇◌rᵢThreaded)
+            reduce_sum!(∇Cᵢ, SimThreadedArrays.∇CᵢThreaded)
+            reduce_sum!(∇◌rᵢ, SimThreadedArrays.∇◌rᵢThreaded)
         end
     
         return nothing
     end
     
-    @inbounds function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
+    @inbounds function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, InverseCutOff)
         Position       = SimParticles.Position
         Density        = SimParticles.Density
         Pressure       = SimParticles.Pressure
@@ -402,12 +403,12 @@ using UnicodePlots
         @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
     
         ###=== First step of resetting arrays
-        @timeit SimMetaData.HourGlass "ResetArrays" ResetStep!(SimMetaData, dρdtI, Acceleration, dρdtIThreaded, AccelerationThreaded, Kernel, KernelGradient, KernelThreaded, KernelGradientThreaded, ∇Cᵢ, ∇◌rᵢ, ∇CᵢThreaded, ∇◌rᵢThreaded)
+        @timeit SimMetaData.HourGlass "ResetArrays" ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
         ###===
     
         @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-        @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimMetaData, SimConstants, ParticleRanges, Stencil, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtIThreaded, AccelerationThreaded,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCellsView, EnumeratedIndices)
-        @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, dρdtI, dρdtIThreaded, Acceleration, AccelerationThreaded, Kernel, KernelThreaded, KernelGradient, KernelGradientThreaded, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded)
+        @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
+        @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
     
         @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" @inbounds for i in eachindex(Position)
             Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
@@ -419,14 +420,14 @@ using UnicodePlots
         @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"  LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
     
         ###=== Second step of resetting arrays
-        ResetStep!(SimMetaData, dρdtI, Acceleration, dρdtIThreaded, AccelerationThreaded, Kernel, KernelGradient, KernelThreaded, KernelGradientThreaded, ∇Cᵢ, ∇◌rᵢ, ∇CᵢThreaded, ∇◌rᵢThreaded)
+        ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
         ###===
 
         @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
     
         @timeit SimMetaData.HourGlass "03 Pressure"                 Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-        @timeit SimMetaData.HourGlass "08 Second NeighborLoop"      NeighborLoop!(SimMetaData, SimConstants, ParticleRanges, Stencil, Positionₙ⁺, KernelThreaded, KernelGradientThreaded, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtIThreaded, AccelerationThreaded, ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCellsView, EnumeratedIndices)
-        @timeit SimMetaData.HourGlass "Reduction"                   ReductionStep!(SimMetaData, dρdtI, dρdtIThreaded, Acceleration, AccelerationThreaded, Kernel, KernelThreaded, KernelGradient, KernelGradientThreaded, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded)
+        @timeit SimMetaData.HourGlass "08 Second NeighborLoop"      NeighborLoop!(SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, UniqueCellsView, EnumeratedIndices)
+        @timeit SimMetaData.HourGlass "Reduction"                   ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
 
     
         @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
@@ -501,7 +502,9 @@ using UnicodePlots
             dρdtIThreaded          = [copy(dρdtI)                       for _ in 1:n_copy]
             AccelerationThreaded   = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
             ∇CᵢThreaded            = [copy(∇Cᵢ )                        for _ in 1:n_copy]
-            ∇◌rᵢThreaded           = [copy(∇◌rᵢ)                        for _ in 1:n_copy]   
+            ∇◌rᵢThreaded           = [copy(∇◌rᵢ)                        for _ in 1:n_copy] 
+            
+            SimThreadedArrays      = StructArray((KernelThreaded=KernelThreaded, KernelGradientThreaded=KernelGradientThreaded, dρdtIThreaded=dρdtIThreaded, AccelerationThreaded=AccelerationThreaded, ∇CᵢThreaded=∇CᵢThreaded, ∇◌rᵢThreaded=∇◌rᵢThreaded))
         end
     
         # Produce sorting related variables
@@ -576,7 +579,7 @@ using UnicodePlots
     
         @inbounds while true
     
-            SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
+            SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, InverseCutOff)
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
 
             if SimMetaData.ExportSingleVTKHDF || SimMetaData.ExportGridCells
