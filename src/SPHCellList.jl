@@ -498,16 +498,36 @@ using UnicodePlots
         ∇Cᵢ               = zeros(SVector{Dimensions,FloatType},NumberOfPoints)            
         ∇◌rᵢ              = zeros(FloatType,NumberOfPoints)    
     
-        @inline begin
+        begin
             n_copy = Base.Threads.nthreads()
-            KernelThreaded         = [copy(SimParticles.Kernel)         for _ in 1:n_copy]
-            KernelGradientThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
-            dρdtIThreaded          = [copy(dρdtI)                       for _ in 1:n_copy]
-            AccelerationThreaded   = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
-            ∇CᵢThreaded            = [copy(∇Cᵢ )                        for _ in 1:n_copy]
-            ∇◌rᵢThreaded           = [copy(∇◌rᵢ)                        for _ in 1:n_copy] 
-            
-            SimThreadedArrays      = StructArray((KernelThreaded=KernelThreaded, KernelGradientThreaded=KernelGradientThreaded, dρdtIThreaded=dρdtIThreaded, AccelerationThreaded=AccelerationThreaded, ∇CᵢThreaded=∇CᵢThreaded, ∇◌rᵢThreaded=∇◌rᵢThreaded))
+        
+            dρdtIThreaded        = [copy(dρdtI) for _ in 1:n_copy]
+            AccelerationThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
+        
+            nt = (
+                dρdtIThreaded = dρdtIThreaded,
+                AccelerationThreaded = AccelerationThreaded,
+            )
+        
+            if SimMetaData.FlagOutputKernelValues
+                KernelThreaded         = [copy(SimParticles.Kernel) for _ in 1:n_copy]
+                KernelGradientThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
+                nt = merge(nt, (
+                    KernelThreaded = KernelThreaded,
+                    KernelGradientThreaded = KernelGradientThreaded,
+                ))
+            end
+        
+            if SimMetaData.FlagShifting
+                ∇CᵢThreaded  = [copy(∇Cᵢ) for _ in 1:n_copy]
+                ∇◌rᵢThreaded = [copy(∇◌rᵢ) for _ in 1:n_copy]
+                nt = merge(nt, (
+                    ∇CᵢThreaded = ∇CᵢThreaded,
+                    ∇◌rᵢThreaded = ∇◌rᵢThreaded,
+                ))
+            end
+        
+            SimThreadedArrays = StructArray(nt)
         end
     
         # Produce sorting related variables
