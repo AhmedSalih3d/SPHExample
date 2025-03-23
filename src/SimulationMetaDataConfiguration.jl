@@ -29,6 +29,7 @@ export SimulationMetaData
     FlagOutputKernelValues::Bool            = false     
     FlagLog::Bool                           = false
     FlagShifting::Bool                      = false 
+    UpdateNeighborList::Bool                = true
 end
 
 end
