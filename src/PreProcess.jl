@@ -1,6 +1,6 @@
 module PreProcess
 
-export LoadBoundaryNormals, AllocateDataStructures, AllocateSupportDataStructures
+export LoadBoundaryNormals, AllocateDataStructures, AllocateSupportDataStructures, AllocateThreadedArrays
 
 using CSV
 using DataFrames
@@ -110,6 +110,40 @@ function AllocateSupportDataStructures(Position)
     ρₙ⁺             = zeros(PositionUnderlyingType, NumberOfPoints)
 
     return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺
+end
+
+function AllocateThreadedArrays(SimMetaData, SimParticles, dρdtI, ∇Cᵢ, ∇◌rᵢ   ; n_copy = Base.Threads.nthreads())
+    
+        
+    dρdtIThreaded        = [copy(dρdtI) for _ in 1:n_copy]
+    AccelerationThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
+
+    nt = (
+        dρdtIThreaded = dρdtIThreaded,
+        AccelerationThreaded = AccelerationThreaded,
+    )
+
+    if SimMetaData.FlagOutputKernelValues
+        KernelThreaded         = [copy(SimParticles.Kernel) for _ in 1:n_copy]
+        KernelGradientThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
+        nt = merge(nt, (
+            KernelThreaded = KernelThreaded,
+            KernelGradientThreaded = KernelGradientThreaded,
+        ))
+    end
+
+    if SimMetaData.FlagShifting
+        ∇CᵢThreaded  = [copy(∇Cᵢ) for _ in 1:n_copy]
+        ∇◌rᵢThreaded = [copy(∇◌rᵢ) for _ in 1:n_copy]
+        nt = merge(nt, (
+            ∇CᵢThreaded = ∇CᵢThreaded,
+            ∇◌rᵢThreaded = ∇◌rᵢThreaded,
+        ))
+    end
+
+    SimThreadedArrays = StructArray(nt)
+
+    return SimThreadedArrays
 end
 
 function LoadBoundaryNormals(dims, float_type, path_mdbc)

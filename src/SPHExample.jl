@@ -20,7 +20,7 @@ module SPHExample
     export ParticleType, Fixed, Fluid, Moving, Geometry, MotionDetails
 
     using .PreProcess
-    export AllocateDataStructures, AllocateSupportDataStructures, LoadBoundaryNormals
+    export AllocateDataStructures, AllocateSupportDataStructures, AllocateThreadedArrays, LoadBoundaryNormals
 
     using .ProduceHDFVTK
     export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure, AppendVTKHDFData, SaveCellGridVTKHDF, AppendVTKHDFGridData
