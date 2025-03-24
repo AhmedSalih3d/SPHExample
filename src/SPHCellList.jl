@@ -491,8 +491,8 @@ using UnicodePlots
             InitializeLogger(SimLogger,SimConstants,SimMetaData, SimGeometry, SimParticles)
         end
         
-        NumberOfPoints = length(SimParticles)::Int #Have to type declare, else error?
-        @inline Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
+        NumberOfPoints = length(SimParticles)::Int
+        Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
     
         # Shifting correction
         ∇Cᵢ               = zeros(SVector{Dimensions,FloatType},NumberOfPoints)            
@@ -583,16 +583,18 @@ using UnicodePlots
 
             if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
     
+                SimMetaData.OutputIterationCounter += 1
+
                 try 
                     if !SimMetaData.ExportSingleVTKHDF 
-                        @timeit HourGlass "12A Output Data"      SaveFile(SimMetaData.OutputIterationCounter + 1)
+                        @timeit HourGlass "12A Output Data"      SaveFile(SimMetaData.OutputIterationCounter)
                     else
                         @timeit HourGlass "12A Output Data"      SaveFileVTKHDF()
                     end
 
                     if SimMetaData.ExportGridCells
                         if !SimMetaData.ExportSingleVTKHDF
-                            @timeit HourGlass "12A Output Grid Data" SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter + 1), UniqueCellsView)
+                            @timeit HourGlass "12A Output Grid Data" SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter), UniqueCellsView)
                         else
                             @timeit HourGlass "12A Output Grid Data" SaveFileVTKHDFGrid(UniqueCellsView)
                         end
@@ -608,7 +610,6 @@ using UnicodePlots
                     SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
                 end
     
-                SimMetaData.OutputIterationCounter += 1
             end
 
             TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime)
