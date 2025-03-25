@@ -24,6 +24,9 @@ let
     # Collect the Geometry instances into a vector
     SimulationGeometry = [FixedBoundary; Water]
 
+    # Load in particles
+    SimParticles = AllocateDataStructures(Dimensions,FloatType, SimulationGeometry)
+
     SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
@@ -47,6 +50,7 @@ let
         SimGeometry        = SimulationGeometry,
         SimMetaData        = SimMetaDataDambreak,
         SimConstants       = SimConstantsDambreak,
-        SimLogger          = SimLogger
+        SimLogger          = SimLogger,
+        SimParticles       = SimParticles 
     )
 end
