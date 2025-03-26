@@ -455,13 +455,10 @@ using UnicodePlots
         # c₀ >= maximum(norm.(Velocity))
         # Remove if statement logic if you want to update each iteration
         if mod(SimMetaData.Iteration, ceil(Int, SimConstants.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
-            @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, InverseCutOff, SortingScratchSpace,  ParticleRanges, UniqueCells)
-        else
-            findfirst_int(predicate, collection) = (idx = findfirst(predicate, collection); idx === nothing ? -1 : idx)
-            IndexCounter    = findfirst_int(isequal(0), ParticleRanges) - 2
+            @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, InverseCutOff, SortingScratchSpace,  ParticleRanges, UniqueCells)
         end
 
-        UniqueCellsView   = view(UniqueCells, 1:IndexCounter)
+        UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
         EnumeratedIndices = enumerate(index_chunks(UniqueCellsView; n=nthreads()))
 
 
@@ -602,9 +599,7 @@ using UnicodePlots
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
 
             if SimMetaData.ExportSingleVTKHDF || SimMetaData.ExportGridCells
-                findfirst_int(predicate, collection) = (idx = findfirst(predicate, collection); idx === nothing ? -1 : idx)
-                IndexCounter_    = findfirst_int(isequal(0), ParticleRanges) - 2
-                UniqueCellsView = view(UniqueCells, 1:IndexCounter_)
+                UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
             end
 
             if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
