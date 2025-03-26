@@ -346,6 +346,44 @@ using UnicodePlots
         return nothing
     end
     
+    ### Some functions to simplify code inside of this function
+    function ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionsDefinition, SimMetaData)
+        @inbounds for i in eachindex(Position)
+            if ParticleType[i] == Moving
+                motion = MotionsDefinition[ParticleMarker[i]]
+    
+                if motion !== nothing
+                    ShouldMove = (motion.StartTime <= SimMetaData.TotalTime) &&
+                                 (SimMetaData.TotalTime <= (motion.StartTime + motion.Duration))
+    
+                    # Retrieve motion parameters
+                    MotionVel = motion.Velocity
+                    MotionDir = motion.Direction
+    
+                    # Update Velocity and Position
+                    Velocity[i] = MotionVel * MotionDir * ShouldMove
+                    Position[i] += Velocity[i] * dt₂
+                end
+            end
+        end
+    end
+
+    function HalfTimeStep(SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
+        Position       = SimParticles.Position
+        Density        = SimParticles.Density
+        Velocity       = SimParticles.Velocity
+        Acceleration   = SimParticles.Acceleration
+        GravityFactor  = SimParticles.GravityFactor
+        MotionLimiter  = SimParticles.MotionLimiter
+
+        @inbounds for i in eachindex(Position)
+            Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+            Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
+            Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
+            ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
+        end
+    end
+    
     @inbounds function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, InverseCutOff)
         Position       = SimParticles.Position
         Density        = SimParticles.Density
@@ -358,29 +396,6 @@ using UnicodePlots
         ParticleMarker = SimParticles.GroupMarker
         Kernel         = SimParticles.Kernel
         KernelGradient = SimParticles.KernelGradient
-
-        ### Some functions to simplify code inside of this function
-        function ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionsDefinition, SimMetaData)
-            @inbounds for i in eachindex(Position)
-                if ParticleType[i] == Moving
-                    motion = MotionsDefinition[ParticleMarker[i]]
-        
-                    if motion !== nothing
-                        ShouldMove = (motion.StartTime <= SimMetaData.TotalTime) &&
-                                     (SimMetaData.TotalTime <= (motion.StartTime + motion.Duration))
-        
-                        # Retrieve motion parameters
-                        MotionVel = motion.Velocity
-                        MotionDir = motion.Direction
-        
-                        # Update Velocity and Position
-                        Velocity[i] = MotionVel * MotionDir * ShouldMove
-                        Position[i] += Velocity[i] * dt₂
-                    end
-                end
-            end
-        end
-        
 
         ###
     
@@ -413,12 +428,7 @@ using UnicodePlots
         @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
         @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
     
-        @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" @inbounds for i in eachindex(Position)
-            Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
-            Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
-            Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
-            ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
-        end
+        @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"      HalfTimeStep(SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
     
         @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"  LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
     
