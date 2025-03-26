@@ -485,7 +485,7 @@ using UnicodePlots
         # Vector of time steps
         TimeSteps = Vector{FloatType}()
         
-        dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺ = AllocateSupportDataStructures(SimParticles.Position)
+        dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimParticles.Position)
 
         if SimMetaData.FlagLog
             InitializeLogger(SimLogger,SimConstants,SimMetaData, SimGeometry, SimParticles)
@@ -493,10 +493,6 @@ using UnicodePlots
         
         NumberOfPoints = length(SimParticles)::Int
         Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-    
-        # Shifting correction
-        ∇Cᵢ               = zeros(SVector{Dimensions,FloatType},NumberOfPoints)            
-        ∇◌rᵢ              = zeros(FloatType,NumberOfPoints)    
     
         SimThreadedArrays = AllocateThreadedArrays(SimMetaData, SimParticles, dρdtI, ∇Cᵢ, ∇◌rᵢ)
     

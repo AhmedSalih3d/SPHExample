@@ -109,7 +109,10 @@ function AllocateSupportDataStructures(Position)
     Positionₙ⁺      = zeros(PositionType, NumberOfPoints)
     ρₙ⁺             = zeros(PositionUnderlyingType, NumberOfPoints)
 
-    return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺
+    ∇Cᵢ            = zeros(PositionType, NumberOfPoints)
+    ∇◌rᵢ           = zeros(PositionUnderlyingType, NumberOfPoints)
+
+    return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ
 end
 
 function AllocateThreadedArrays(SimMetaData, SimParticles, dρdtI, ∇Cᵢ, ∇◌rᵢ   ; n_copy = Base.Threads.nthreads())
@@ -136,7 +139,7 @@ function AllocateThreadedArrays(SimMetaData, SimParticles, dρdtI, ∇Cᵢ, ∇�
         ∇CᵢThreaded  = [copy(∇Cᵢ) for _ in 1:n_copy]
         ∇◌rᵢThreaded = [copy(∇◌rᵢ) for _ in 1:n_copy]
         nt = merge(nt, (
-            ∇CᵢThreaded = ∇CᵢThreaded,
+            ∇CᵢThreaded  = ∇CᵢThreaded,
             ∇◌rᵢThreaded = ∇◌rᵢThreaded,
         ))
     end

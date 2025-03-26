@@ -58,6 +58,10 @@ let
     
     # Collect Geometry instances into a vector
     SimulationGeometry = [FixedBoundary, Water, MovingSquare]
+    
+    # Load in particles
+    SimParticles = AllocateDataStructures(Dimensions,FloatType, SimulationGeometry)
+
     # If save directory is not already made, make it
     if !isdir(SimMetaDataMovingSquare.SaveLocation)
         mkdir(SimMetaDataMovingSquare.SaveLocation)
@@ -71,6 +75,7 @@ let
         SimGeometry        = SimulationGeometry,
         SimMetaData        = SimMetaDataMovingSquare,
         SimConstants       = SimConstantsMovingSquare,
-        SimLogger          = SimLogger
+        SimLogger          = SimLogger,
+        SimParticles       = SimParticles
     )
 end
