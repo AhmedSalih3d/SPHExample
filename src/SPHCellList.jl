@@ -366,6 +366,8 @@ using UnicodePlots
                 end
             end
         end
+
+        return nothing
     end
 
     function HalfTimeStep(SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
@@ -382,6 +384,8 @@ using UnicodePlots
             Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
             ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
         end
+
+        return nothing
     end
 
     function FullTimeStep(SimMetaData, SimConstants, SimParticles, dt)
@@ -415,6 +419,16 @@ using UnicodePlots
                 Position[i]           += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
             end
         end
+
+        return nothing
+    end
+
+    function UpdateMetaData!(SimMetaData, dt)
+        SimMetaData.Iteration      += 1
+        SimMetaData.CurrentTimeStep = dt
+        SimMetaData.TotalTime      += dt
+
+        return nothing
     end
     
     @inbounds function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, InverseCutOff)
@@ -482,10 +496,7 @@ using UnicodePlots
     
         @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"          FullTimeStep(SimMetaData, SimConstants, SimParticles, dt)
     
-        SimMetaData.Iteration      += 1
-        SimMetaData.CurrentTimeStep = dt
-        SimMetaData.TotalTime      += dt
-
+        @timeit SimMetaData.HourGlass "12 Update MetaData"                   UpdateMetaData!(SimMetaData, dt)
         
         return nothing
     end
@@ -602,16 +613,16 @@ using UnicodePlots
 
                 try 
                     if !SimMetaData.ExportSingleVTKHDF 
-                        @timeit HourGlass "12A Output Data"      SaveFile(SimMetaData.OutputIterationCounter)
+                        @timeit HourGlass "13A Output Data"      SaveFile(SimMetaData.OutputIterationCounter)
                     else
-                        @timeit HourGlass "12A Output Data"      SaveFileVTKHDF()
+                        @timeit HourGlass "13A Output Data"      SaveFileVTKHDF()
                     end
 
                     if SimMetaData.ExportGridCells
                         if !SimMetaData.ExportSingleVTKHDF
-                            @timeit HourGlass "12A Output Grid Data" SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter), UniqueCellsView)
+                            @timeit HourGlass "13A Output Grid Data" SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter), UniqueCellsView)
                         else
-                            @timeit HourGlass "12A Output Grid Data" SaveFileVTKHDFGrid(UniqueCellsView)
+                            @timeit HourGlass "13A Output Grid Data" SaveFileVTKHDFGrid(UniqueCellsView)
                         end
                     end
                 catch err
@@ -628,22 +639,22 @@ using UnicodePlots
             end
 
             TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime)
-            @timeit HourGlass "13 Next TimeStep" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime, TimeLeftInSeconds))
+            @timeit HourGlass "14 Next TimeStep" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime, TimeLeftInSeconds))
     
             if SimMetaData.TotalTime > SimMetaData.SimulationTime
                 
 
                 # This should not be counted in actual run 
                 if !SimMetaData.ExportSingleVTKHDF
-                    @timeit HourGlass "12B Close hdfvtk output files"  @threads for i in eachindex(fid_vector)
+                    @timeit HourGlass "13B Close hdfvtk output files"  @threads for i in eachindex(fid_vector)
                         if isassigned(fid_vector, i)
                             close(fid_vector[i])
                         end
                     end
                 else
-                    @timeit HourGlass "12B Close transient hdfvtk"      close(OutputVTKHDF)
+                    @timeit HourGlass "13B Close transient hdfvtk"      close(OutputVTKHDF)
                     if SimMetaData.ExportGridCells
-                        @timeit HourGlass "12B Close transient hdfvtk grid" close(OutputVTKHDFGrid)
+                        @timeit HourGlass "13B Close transient hdfvtk grid" close(OutputVTKHDFGrid)
                     end
                 end
 
