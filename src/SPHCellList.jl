@@ -445,57 +445,60 @@ using UnicodePlots
         KernelGradient = SimParticles.KernelGradient
 
         ###
-    
-        @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
-        dt₂ = dt * 0.5
+        
+        while SimMetaData.TotalTime <= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
+            @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
+            dt₂ = dt * 0.5
 
-        @timeit SimMetaData.HourGlass "02 Calculate IndexCounter"  begin
-            # Note: If particles are not inside of the neighbor list visualiation, try setting this if statement to always true, since UniqueCells will be updated always then
-            # In theory, the maximal speed is the speed of sound, this should give a safe guard
-            # any ensure it is always updated in a reasonable manner. This only works well, assuming that
-            # c₀ >= maximum(norm.(Velocity))
-            # Remove if statement logic if you want to update each iteration
-            if mod(SimMetaData.Iteration, ceil(Int, SimConstants.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
-                SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, InverseCutOff, SortingScratchSpace,  ParticleRanges, UniqueCells)
+            @timeit SimMetaData.HourGlass "02 Calculate IndexCounter"  begin
+                # Note: If particles are not inside of the neighbor list visualiation, try setting this if statement to always true, since UniqueCells will be updated always then
+                # In theory, the maximal speed is the speed of sound, this should give a safe guard
+                # any ensure it is always updated in a reasonable manner. This only works well, assuming that
+                # c₀ >= maximum(norm.(Velocity))
+                # Remove if statement logic if you want to update each iteration
+                if mod(SimMetaData.Iteration, ceil(Int, SimConstants.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
+                    SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, InverseCutOff, SortingScratchSpace,  ParticleRanges, UniqueCells)
+                end
+
+                UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
+                EnumeratedIndices = enumerate(index_chunks(UniqueCellsView; n=nthreads()))
             end
 
-            UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
-            EnumeratedIndices = enumerate(index_chunks(UniqueCellsView; n=nthreads()))
+
+            @timeit SimMetaData.HourGlass "Motion"                               ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
+        
+            ###=== First step of resetting arrays
+            @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+            ###===
+        
+            @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
+            @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
+            @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+        
+            @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"           HalfTimeStep(SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
+            
+            @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"       LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+        
+            ###=== Second step of resetting arrays
+            @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+            ###===
+
+            @timeit SimMetaData.HourGlass "Motion"                               ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
+        
+            @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
+            @timeit SimMetaData.HourGlass "08 Second NeighborLoop"               NeighborLoop!(SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, UniqueCellsView, EnumeratedIndices)
+            @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+
+        
+            @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary"      LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
+        
+            @timeit SimMetaData.HourGlass "10 Final Density"                     DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
+        
+            @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"          FullTimeStep(SimMetaData, SimConstants, SimParticles, dt)
+        
+            @timeit SimMetaData.HourGlass "12 Update MetaData"                   UpdateMetaData!(SimMetaData, dt)
+
         end
-
-
-        @timeit SimMetaData.HourGlass "Motion"                               ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
-    
-        ###=== First step of resetting arrays
-        @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
-        ###===
-    
-        @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-        @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
-        @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
-    
-        @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"           HalfTimeStep(SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
-         
-        @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"       LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
-    
-        ###=== Second step of resetting arrays
-        @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
-        ###===
-
-        @timeit SimMetaData.HourGlass "Motion"                               ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
-    
-        @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-        @timeit SimMetaData.HourGlass "08 Second NeighborLoop"               NeighborLoop!(SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, UniqueCellsView, EnumeratedIndices)
-        @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
-
-    
-        @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary"      LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
-    
-        @timeit SimMetaData.HourGlass "10 Final Density"                     DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
-    
-        @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"          FullTimeStep(SimMetaData, SimConstants, SimParticles, dt)
-    
-        @timeit SimMetaData.HourGlass "12 Update MetaData"                   UpdateMetaData!(SimMetaData, dt)
         
         return nothing
     end
@@ -557,37 +560,33 @@ using UnicodePlots
     
         @inbounds while true
     
-            SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, InverseCutOff)
+            @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, InverseCutOff)
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
-
-            if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
     
-                SimMetaData.OutputIterationCounter += 1
+            SimMetaData.OutputIterationCounter += 1
 
-                try 
-                    UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-                    output.save_particles(SimMetaData.OutputIterationCounter)
-                    output.save_grid(SimMetaData.OutputIterationCounter, UniqueCellsView)
-                catch err
-                    @warn("File write failed.")
-                    display(err)
-                end
-
-    
-                if SimMetaData.FlagLog
-                    LogStep(SimLogger, SimMetaData, HourGlass)
-                    SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
-                end
-    
+            try 
+                UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
+                @timeit SimMetaData.HourGlass "13A Save Particle Data" output.save_particles(SimMetaData.OutputIterationCounter)
+                @timeit SimMetaData.HourGlass "13A Save CellGrid Data" output.save_grid(SimMetaData.OutputIterationCounter, UniqueCellsView)
+            catch err
+                @warn("File write failed.")
+                display(err)
             end
 
+    
+            if SimMetaData.FlagLog
+                LogStep(SimLogger, SimMetaData, HourGlass)
+                SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
+            end
+    
             TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime)
             @timeit HourGlass "14 Next TimeStep" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime, TimeLeftInSeconds))
     
             if SimMetaData.TotalTime > SimMetaData.SimulationTime
                 
                 # At end of simulation
-                output.close_files()
+                @timeit SimMetaData.HourGlass "13B Close Data Streams" output.close_files()
 
                 finish!(SimMetaData.ProgressSpecification)
                 show(HourGlass,sortby=:name)

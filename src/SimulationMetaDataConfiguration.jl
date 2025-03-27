@@ -19,7 +19,7 @@ export SimulationMetaData
     TotalTime::FloatType                    = 0
     SimulationTime::FloatType               = 0
     IndexCounter::Int                       = 0
-    ProgressSpecification::ProgressUnknown  =  ProgressUnknown(desc="Burning the midnight oil:", spinner=true, showspeed=true) 
+    ProgressSpecification::ProgressUnknown  =  ProgressUnknown(desc="Simulation time per output each:", spinner=true, showspeed=true) 
     FlagViscosityTreatment::Symbol          = :ArtificialViscosity; @assert in(FlagViscosityTreatment, Set((:None, :ArtificialViscosity, :Laminar, :LaminarSPS))) == true "ViscosityTreatment must be either :None, :ArtificialViscosity, :Laminar, :LaminarSPS"
     VisualizeInParaview::Bool               = true
     ExportSingleVTKHDF::Bool                = true
