@@ -28,7 +28,7 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData, OutputVariableNames)
         py_regex = "$(SimMetaData.SimulationName).vtkhdf"
     else
         ParaViewStateFileName = SimMetaData.SaveLocation * "_StateFile.py"
-        py_regex = "$(SimMetaData.SimulationName)_(\\d+).vtk"
+        py_regex = "^$(SimMetaData.SimulationName)_(\\d+).vtk" #^ means to anchor the regex to the start of the string
     end
 
     ExtractDimensionalityMetaData(::SimulationMetaData{N, FloatType}) where {N, FloatType} = N

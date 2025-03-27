@@ -499,6 +499,7 @@ using UnicodePlots
         
         return nothing
     end
+
     function setup_vtk_output(SimMetaData, SimParticles, SimConstants, Dimensions)
         # Generate save locations
         particle_savepath = joinpath(SimMetaData.SaveLocation, SimMetaData.SimulationName)
@@ -643,6 +644,11 @@ using UnicodePlots
         _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
 
         output = setup_vtk_output(SimMetaData, SimParticles, SimConstants, Dimensions)
+
+        # Save initial state
+        SimMetaData.OutputIterationCounter = 1
+        output.save_particles(SimMetaData.OutputIterationCounter)
+        output.save_grid(SimMetaData.OutputIterationCounter, UniqueCells)
 
         InverseCutOff = Val(1/(SimConstants.H))
 
