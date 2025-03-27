@@ -1,9 +1,13 @@
+
 module ProduceHDFVTK     
 
-    export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure, AppendVTKHDFData, SaveCellGridVTKHDF, AppendVTKHDFGridData
+    export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure, AppendVTKHDFData, SaveCellGridVTKHDF, AppendVTKHDFGridData, SetupVTKOutput
 
     using HDF5
     using StaticArrays
+
+    include("AuxillaryFunctions.jl"); using .AuxillaryFunctions: to_3d 
+
 
     const idType = Int64
     const fType = Float64
@@ -505,4 +509,117 @@ module ProduceHDFVTK
         # Close file
         close(io)
     end
+
+    function SetupVTKOutput(SimMetaData, SimParticles, SimConstants, Dimensions)
+        # Generate save locations
+        particle_savepath = joinpath(SimMetaData.SaveLocation, SimMetaData.SimulationName)
+        grid_savepath = joinpath(SimMetaData.SaveLocation, "CellGrid_$(SimMetaData.SimulationName)")
+    
+        # File naming functions
+        particle_filename = (iter) -> "$(particle_savepath)_$(lpad(iter,6,"0")).vtkhdf"
+        grid_filename = (iter) -> "$(grid_savepath)_$(lpad(iter,6,"0")).vtkhdf"
+        
+        # Output variable names
+        output_vars = ["Kernel", "KernelGradient", "Density", "Pressure", "Velocity", 
+                      "Acceleration", "BoundaryBool", "ID", "Type", "GroupMarker"]
+    
+        # Initialize storage for file handles
+        file_handles = if !SimMetaData.ExportSingleVTKHDF
+            # Multi-file mode: vector for particle files
+            (particle_files = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1)),
+             grid_files = nothing)
+        else
+            # Single-file mode: handles for both files
+            OutputVTKHDF = h5open("$(particle_savepath).vtkhdf", "w")
+            root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
+            
+            # Initialize particle data structure
+            GenerateGeometryStructure(root, output_vars, SimParticles.Kernel, 
+                                    SimParticles.KernelGradient, SimParticles.Density,
+                                    SimParticles.Pressure, SimParticles.Velocity,
+                                    SimParticles.Acceleration, SimParticles.BoundaryBool,
+                                    SimParticles.ID, UInt8.(SimParticles.Type), 
+                                    SimParticles.GroupMarker; chunk_size=1000)
+            GenerateStepStructure(root, output_vars, SimParticles.Kernel,
+                                SimParticles.KernelGradient, SimParticles.Density,
+                                SimParticles.Pressure, SimParticles.Velocity,
+                                SimParticles.Acceleration, SimParticles.BoundaryBool,
+                                SimParticles.ID, UInt8.(SimParticles.Type),
+                                SimParticles.GroupMarker)
+    
+            # Initialize grid file if needed
+            if SimMetaData.ExportGridCells
+                OutputVTKHDFGrid = h5open("$(particle_savepath)_GridCells.vtkhdf", "w")
+                root_grid = HDF5.create_group(OutputVTKHDFGrid, "VTKHDF")
+                GenerateGeometryStructure(root_grid; vtk_file_type="UnstructuredGrid")
+                GenerateStepStructure(root_grid; vtk_file_type="UnstructuredGrid")
+                
+                (particle_files = OutputVTKHDF, grid_files = OutputVTKHDFGrid)
+            else
+                (particle_files = OutputVTKHDF, grid_files = nothing)
+            end
+        end
+    
+        # Main saving functions
+        function save_particle_data(iteration)
+            if Dimensions == 2
+                pos = to_3d(SimParticles.Position)
+                kgrad = to_3d(SimParticles.KernelGradient)
+                vel = to_3d(SimParticles.Velocity)
+                acc = to_3d(SimParticles.Acceleration)
+            else
+                pos = SimParticles.Position
+                kgrad = SimParticles.KernelGradient
+                vel = SimParticles.Velocity
+                acc = SimParticles.Acceleration
+            end
+    
+            if !SimMetaData.ExportSingleVTKHDF
+                SaveVTKHDF(file_handles.particle_files, iteration, particle_filename(iteration), pos, output_vars,
+                          SimParticles.Kernel, kgrad, SimParticles.Density, SimParticles.Pressure,
+                          vel, acc, SimParticles.BoundaryBool, SimParticles.ID,
+                          UInt8.(SimParticles.Type), SimParticles.GroupMarker)
+            else
+                AppendVTKHDFData(root, SimMetaData.TotalTime, pos, output_vars,
+                                SimParticles.Kernel, kgrad, SimParticles.Density,
+                                SimParticles.Pressure, vel, acc, SimParticles.BoundaryBool,
+                                SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
+            end
+        end
+    
+        function save_cell_grid(iteration, cells)
+            if SimMetaData.ExportGridCells
+                if !SimMetaData.ExportSingleVTKHDF
+                    SaveCellGridVTKHDF(grid_filename(iteration), SimConstants, cells)
+                else 
+                    AppendVTKHDFGridData(root_grid, SimMetaData.TotalTime, SimConstants, cells)
+                end
+            end
+        end
+    
+        function close_files()
+            if !SimMetaData.ExportSingleVTKHDF
+                # Close all particle files in multi-file mode
+                for f in file_handles.particle_files
+                    isopen(f) && close(f)
+                end
+            else
+                # Close single-file handles
+                isopen(file_handles.particle_files) && close(file_handles.particle_files)
+                if file_handles.grid_files !== nothing
+                    isopen(file_handles.grid_files) && close(file_handles.grid_files)
+                end
+            end
+        end
+    
+        # Return interface functions and handles
+        return (
+            save_particles = save_particle_data,
+            save_grid = save_cell_grid,
+            close_files = close_files,
+            file_handles = file_handles,  # For advanced access if needed
+            variable_names = output_vars
+        )
+    end
+
 end
