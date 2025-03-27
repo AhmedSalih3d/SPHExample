@@ -565,15 +565,9 @@ using UnicodePlots
     
             SimMetaData.OutputIterationCounter += 1
 
-            try 
-                UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-                @timeit SimMetaData.HourGlass "13A Save Particle Data" output.save_particles(SimMetaData.OutputIterationCounter)
-                @timeit SimMetaData.HourGlass "13A Save CellGrid Data" output.save_grid(SimMetaData.OutputIterationCounter, UniqueCellsView)
-            catch err
-                @warn("File write failed.")
-                display(err)
-            end
-
+            UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
+            @timeit SimMetaData.HourGlass "13A Save Particle Data" output.save_particles(SimMetaData.OutputIterationCounter)
+            @timeit SimMetaData.HourGlass "13A Save CellGrid Data" output.save_grid(SimMetaData.OutputIterationCounter, UniqueCellsView)
     
             if SimMetaData.FlagLog
                 LogStep(SimLogger, SimMetaData, HourGlass)
