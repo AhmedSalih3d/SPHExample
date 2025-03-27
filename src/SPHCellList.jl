@@ -499,6 +499,117 @@ using UnicodePlots
         
         return nothing
     end
+    function setup_vtk_output(SimMetaData, SimParticles, SimConstants, Dimensions)
+        # Generate save locations
+        particle_savepath = joinpath(SimMetaData.SaveLocation, SimMetaData.SimulationName)
+        grid_savepath = joinpath(SimMetaData.SaveLocation, "CellGrid_$(SimMetaData.SimulationName)")
+    
+        # File naming functions
+        particle_filename = (iter) -> "$(particle_savepath)_$(lpad(iter,6,"0")).vtkhdf"
+        grid_filename = (iter) -> "$(grid_savepath)_$(lpad(iter,6,"0")).vtkhdf"
+        
+        # Output variable names
+        output_vars = ["Kernel", "KernelGradient", "Density", "Pressure", "Velocity", 
+                      "Acceleration", "BoundaryBool", "ID", "Type", "GroupMarker"]
+    
+        # Initialize storage for file handles
+        file_handles = if !SimMetaData.ExportSingleVTKHDF
+            # Multi-file mode: vector for particle files
+            (particle_files = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1)),
+             grid_files = nothing)
+        else
+            # Single-file mode: handles for both files
+            OutputVTKHDF = h5open("$(particle_savepath).vtkhdf", "w")
+            root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
+            
+            # Initialize particle data structure
+            GenerateGeometryStructure(root, output_vars, SimParticles.Kernel, 
+                                    SimParticles.KernelGradient, SimParticles.Density,
+                                    SimParticles.Pressure, SimParticles.Velocity,
+                                    SimParticles.Acceleration, SimParticles.BoundaryBool,
+                                    SimParticles.ID, UInt8.(SimParticles.Type), 
+                                    SimParticles.GroupMarker; chunk_size=1000)
+            GenerateStepStructure(root, output_vars, SimParticles.Kernel,
+                                SimParticles.KernelGradient, SimParticles.Density,
+                                SimParticles.Pressure, SimParticles.Velocity,
+                                SimParticles.Acceleration, SimParticles.BoundaryBool,
+                                SimParticles.ID, UInt8.(SimParticles.Type),
+                                SimParticles.GroupMarker)
+    
+            # Initialize grid file if needed
+            if SimMetaData.ExportGridCells
+                OutputVTKHDFGrid = h5open("$(particle_savepath)_GridCells.vtkhdf", "w")
+                root_grid = HDF5.create_group(OutputVTKHDFGrid, "VTKHDF")
+                GenerateGeometryStructure(root_grid; vtk_file_type="UnstructuredGrid")
+                GenerateStepStructure(root_grid; vtk_file_type="UnstructuredGrid")
+                
+                (particle_files = OutputVTKHDF, grid_files = OutputVTKHDFGrid)
+            else
+                (particle_files = OutputVTKHDF, grid_files = nothing)
+            end
+        end
+    
+        # Main saving functions
+        function save_particle_data(iteration)
+            if Dimensions == 2
+                pos = to_3d(SimParticles.Position)
+                kgrad = to_3d(SimParticles.KernelGradient)
+                vel = to_3d(SimParticles.Velocity)
+                acc = to_3d(SimParticles.Acceleration)
+            else
+                pos = SimParticles.Position
+                kgrad = SimParticles.KernelGradient
+                vel = SimParticles.Velocity
+                acc = SimParticles.Acceleration
+            end
+    
+            if !SimMetaData.ExportSingleVTKHDF
+                SaveVTKHDF(file_handles.particle_files, iteration, particle_filename(iteration), pos, output_vars,
+                          SimParticles.Kernel, kgrad, SimParticles.Density, SimParticles.Pressure,
+                          vel, acc, SimParticles.BoundaryBool, SimParticles.ID,
+                          UInt8.(SimParticles.Type), SimParticles.GroupMarker)
+            else
+                AppendVTKHDFData(root, SimMetaData.TotalTime, pos, output_vars,
+                                SimParticles.Kernel, kgrad, SimParticles.Density,
+                                SimParticles.Pressure, vel, acc, SimParticles.BoundaryBool,
+                                SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
+            end
+        end
+    
+        function save_cell_grid(iteration, cells)
+            if SimMetaData.ExportGridCells
+                if !SimMetaData.ExportSingleVTKHDF
+                    SaveCellGridVTKHDF(grid_filename(iteration), SimConstants, cells)
+                else 
+                    AppendVTKHDFGridData(root_grid, SimMetaData.TotalTime, SimConstants, cells)
+                end
+            end
+        end
+    
+        function close_files()
+            if !SimMetaData.ExportSingleVTKHDF
+                # Close all particle files in multi-file mode
+                for f in file_handles.particle_files
+                    isopen(f) && close(f)
+                end
+            else
+                # Close single-file handles
+                isopen(file_handles.particle_files) && close(file_handles.particle_files)
+                if file_handles.grid_files !== nothing
+                    isopen(file_handles.grid_files) && close(file_handles.grid_files)
+                end
+            end
+        end
+    
+        # Return interface functions and handles
+        return (
+            save_particles = save_particle_data,
+            save_grid = save_cell_grid,
+            close_files = close_files,
+            file_handles = file_handles,  # For advanced access if needed
+            variable_names = output_vars
+        )
+    end
     
     ###===
     function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}, #Don't further specify type for now
@@ -530,53 +641,8 @@ using UnicodePlots
         UniqueCells            = zeros(CartesianIndex{Dimensions}, NumberOfPoints)
         Stencil                = ConstructStencil(Val(Dimensions))
         _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
-    
-        # Produce data saving functions
-        SaveLocation_ = SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName
-        SaveLocation  = (Iteration) -> SaveLocation_ * "_" * lpad(Iteration,6,"0") * ".vtkhdf"
-  
-        SaveLocation2_ = SimMetaData.SaveLocation * "/CellGrid_" * SimMetaData.SimulationName
-        SaveLocationCellGrid  = (Iteration) -> SaveLocation2_ * lpad(Iteration,6,"0") * ".vtkhdf"
 
-        fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
-    
-        OutputVariableNames = ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID", "Type", "GroupMarker"]
-        if Dimensions == 2
-            if !SimMetaData.ExportSingleVTKHDF
-                SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
-            else
-                SaveFileVTKHDF     = () -> AppendVTKHDFData(root, SimMetaData.TotalTime, to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, to_3d(SimParticles.KernelGradient), SimParticles.Density, SimParticles.Pressure, to_3d(SimParticles.Velocity), to_3d(SimParticles.Acceleration), SimParticles.BoundaryBool, SimParticles.ID,  UInt8.(SimParticles.Type), SimParticles.GroupMarker)
-            end
-        else
-            if !SimMetaData.ExportSingleVTKHDF
-                SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),SimParticles.Position, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
-            else
-                SaveFileVTKHDF = () -> AppendVTKHDFData(root, SimMetaData.TotalTime, SimParticles.Position, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
-            end
-        end
-        SaveFileVTKHDFGrid = (UN) -> AppendVTKHDFGridData(root_grid, SimMetaData.TotalTime, SimConstants, UN)
-
-        SaveCellGridVTKHDFSimulationStep = (FP, UN) -> SaveCellGridVTKHDF(FP, SimConstants, UN)
-
-        SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
-        if !SimMetaData.ExportSingleVTKHDF
-            @inline SaveFile(SimMetaData.OutputIterationCounter)
-            SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter), UniqueCells)  
-        else
-            OutputVTKHDF = h5open(SaveLocation_ * ".vtkhdf", "w")
-            root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
-            GenerateGeometryStructure(root, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker; chunk_size = 1000)
-            GenerateStepStructure(root, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
-            SaveFileVTKHDF()
-            
-            if SimMetaData.ExportGridCells
-                OutputVTKHDFGrid = h5open(SaveLocation_ * "_GridCells" * ".vtkhdf", "w")
-                root_grid = HDF5.create_group(OutputVTKHDFGrid, "VTKHDF")
-                GenerateGeometryStructure(root_grid ; vtk_file_type = "UnstructuredGrid")
-                GenerateStepStructure(root_grid     ; vtk_file_type = "UnstructuredGrid")
-                SaveFileVTKHDFGrid(UniqueCells)
-            end
-        end
+        output = setup_vtk_output(SimMetaData, SimParticles, SimConstants, Dimensions)
 
         InverseCutOff = Val(1/(SimConstants.H))
 
@@ -600,28 +666,14 @@ using UnicodePlots
             SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, InverseCutOff)
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
 
-            if SimMetaData.ExportSingleVTKHDF || SimMetaData.ExportGridCells
-                UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-            end
-
             if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
     
                 SimMetaData.OutputIterationCounter += 1
 
                 try 
-                    if !SimMetaData.ExportSingleVTKHDF 
-                        @timeit HourGlass "13A Output Data"      SaveFile(SimMetaData.OutputIterationCounter)
-                    else
-                        @timeit HourGlass "13A Output Data"      SaveFileVTKHDF()
-                    end
-
-                    if SimMetaData.ExportGridCells
-                        if !SimMetaData.ExportSingleVTKHDF
-                            @timeit HourGlass "13A Output Grid Data" SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter), UniqueCellsView)
-                        else
-                            @timeit HourGlass "13A Output Grid Data" SaveFileVTKHDFGrid(UniqueCellsView)
-                        end
-                    end
+                    UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
+                    output.save_particles(SimMetaData.OutputIterationCounter)
+                    output.save_grid(SimMetaData.OutputIterationCounter, UniqueCellsView)
                 catch err
                     @warn("File write failed.")
                     display(err)
@@ -640,26 +692,14 @@ using UnicodePlots
     
             if SimMetaData.TotalTime > SimMetaData.SimulationTime
                 
-
-                # This should not be counted in actual run 
-                if !SimMetaData.ExportSingleVTKHDF
-                    @timeit HourGlass "13B Close hdfvtk output files"  @threads for i in eachindex(fid_vector)
-                        if isassigned(fid_vector, i)
-                            close(fid_vector[i])
-                        end
-                    end
-                else
-                    @timeit HourGlass "13B Close transient hdfvtk"      close(OutputVTKHDF)
-                    if SimMetaData.ExportGridCells
-                        @timeit HourGlass "13B Close transient hdfvtk grid" close(OutputVTKHDFGrid)
-                    end
-                end
+                # At end of simulation
+                output.close_files()
 
                 finish!(SimMetaData.ProgressSpecification)
                 show(HourGlass,sortby=:name)
                 show(HourGlass)
 
-                AutoOpenParaview(SaveLocation_, SimMetaData, OutputVariableNames)
+                AutoOpenParaview(SimMetaData, output.variable_names)
 
                 # Time steps line plot
                 UnicodeTimeStepsGraph = lineplot(1:length(TimeSteps), TimeSteps, title="Time Steps [s] as a function of iteration", name="Time Steps", xlabel="Iterations [-]", ylabel="Time Step Size [s]")

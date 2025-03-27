@@ -20,14 +20,14 @@ function AutoOpenLogFile(SimLogger::SimulationLogger, SimMetaData::SimulationMet
     return nothing
 end
 
-function AutoOpenParaview(SaveLocation_, SimMetaData::SimulationMetaData, OutputVariableNames)
+function AutoOpenParaview(SimMetaData::SimulationMetaData, OutputVariableNames)
     ## Generate auto paraview py
 
     if SimMetaData.ExportSingleVTKHDF
-        ParaViewStateFileName = SaveLocation_ * "_SingleVTKHDFStateFile.py"
+        ParaViewStateFileName = SimMetaData.SaveLocation * "_SingleVTKHDFStateFile.py"
         py_regex = "$(SimMetaData.SimulationName).vtkhdf"
     else
-        ParaViewStateFileName = SaveLocation_ * "_StateFile.py"
+        ParaViewStateFileName = SimMetaData.SaveLocation * "_StateFile.py"
         py_regex = "$(SimMetaData.SimulationName)_(\\d+).vtk"
     end
 
