@@ -6,31 +6,34 @@ let
 
     dx = 0.02
     SimConstantsDambreak3D = SimulationConstants{FloatType}(
-        dx  = dx,
-        c₀  = 33.14,
-        h   = 1 * sqrt(3 * dx^2),
-        α   = 0.1,
-        αD  = 21/(16*π*(1.2 * sqrt(3) * dx)^3),
-        m₀  = 1000 * dx^3,
-        CFL = 0.2)
+    dx  = dx,
+    c₀  = 33.14,
+    h   = 1 * sqrt(3 * dx^2),
+    α   = 0.1,
+    αD  = 21/(16*π*(1.2 * sqrt(3) * dx)^3),
+    m₀  = 1000 * dx^3,
+    CFL = 0.2)
 
-        # Create Geometry instances using given file paths and variable `dx`
-        FixedBoundary = Geometry{Dimensions, FloatType}(
-            CSVFile     = "./input/dam_break_3d/DamBreak3d_Dp$(dx)_Bound.csv",
-            GroupMarker = 1,
-            Type        = Fixed,   # Using the enum value Fixed
-            Motion      = nothing
-        )
+    # Create Geometry instances using given file paths and variable `dx`
+    FixedBoundary = Geometry{Dimensions, FloatType}(
+        CSVFile     = "./input/dam_break_3d/DamBreak3d_Dp$(dx)_Bound.csv",
+        GroupMarker = 1,
+        Type        = Fixed,   # Using the enum value Fixed
+        Motion      = nothing
+    )
 
-        Water = Geometry{Dimensions, FloatType}(
-            CSVFile     = "./input/dam_break_3d/DamBreak3d_Dp$(dx)_Fluid.csv",
-            GroupMarker = 2,
-            Type        = Fluid,   # Using the enum value Fluid
-            Motion      = nothing
-        )
+    Water = Geometry{Dimensions, FloatType}(
+        CSVFile     = "./input/dam_break_3d/DamBreak3d_Dp$(dx)_Fluid.csv",
+        GroupMarker = 2,
+        Type        = Fluid,   # Using the enum value Fluid
+        Motion      = nothing
+    )
 
-        # Collect Geometry instances into a vector
-        SimulationGeometry = [FixedBoundary; Water]
+    # Collect Geometry instances into a vector
+    SimulationGeometry = [FixedBoundary; Water]
+
+    # Load in particles
+    SimParticles = AllocateDataStructures(Dimensions,FloatType, SimulationGeometry)
 
     SimMetaDataDambreak3D  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
@@ -39,6 +42,7 @@ let
         OutputEach=0.01,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
+        ExportGridCells=true,
         OpenLogFile=true,
         FlagDensityDiffusion=true,
         FlagLinearizedDDT=true,
@@ -58,6 +62,7 @@ let
         SimGeometry        = SimulationGeometry,
         SimMetaData        = SimMetaDataDambreak3D,
         SimConstants       = SimConstantsDambreak3D,
-        SimLogger          = SimLogger
+        SimLogger          = SimLogger,
+        SimParticles       = SimParticles
     )
 end

@@ -388,7 +388,7 @@ using UnicodePlots
         return nothing
     end
 
-    function FullTimeStep(SimMetaData, SimConstants, SimParticles, dt)
+    function FullTimeStep(SimMetaData, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
         Position       = SimParticles.Position
         Velocity       = SimParticles.Velocity
         Acceleration   = SimParticles.Acceleration
@@ -494,7 +494,7 @@ using UnicodePlots
         
             @timeit SimMetaData.HourGlass "10 Final Density"                     DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
         
-            @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"          FullTimeStep(SimMetaData, SimConstants, SimParticles, dt)
+            @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"          FullTimeStep(SimMetaData, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
         
             @timeit SimMetaData.HourGlass "12 Update MetaData"                   UpdateMetaData!(SimMetaData, dt)
 
