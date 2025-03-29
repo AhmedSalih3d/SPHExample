@@ -170,17 +170,17 @@ using UnicodePlots
             if FlagDensityDiffusion
                 if SimConstants.g == 0
                     ρᵢⱼᴴ  = 0.0
-                    ρⱼᵢᴴ  = 0.0
+                    # ρⱼᵢᴴ  = 0.0
                 else
                     Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
-                    Pⱼᵢᴴ  = -Pᵢⱼᴴ
+                    # Pⱼᵢᴴ  = -Pᵢⱼᴴ
                     
                     if FlagLinearizedDDT
                         ρᵢⱼᴴ  = Pᵢⱼᴴ * Linear_ρ_factor
-                        ρⱼᵢᴴ  = -ρᵢⱼᴴ
+                        # ρⱼᵢᴴ  = -ρᵢⱼᴴ
                     else
                         ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
-                        ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
+                        # ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
                     end
                 end
 
