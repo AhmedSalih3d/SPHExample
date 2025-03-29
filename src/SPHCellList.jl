@@ -474,7 +474,7 @@ using UnicodePlots
 
             @timeit SimMetaData.HourGlass "Motion"                               ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
         
-            if SimMetaData.FlagSingleStepTimeStepping
+            if !SimMetaData.FlagSingleStepTimeStepping
                 ###=== First step of resetting arrays
                 @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
                 ###===
@@ -483,7 +483,7 @@ using UnicodePlots
                 @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
                 @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
             end
-            
+
             @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"           HalfTimeStep(SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
             
             @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"       LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
