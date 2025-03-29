@@ -9,11 +9,11 @@ using StructArrays
 
 using ..SimulationGeometry
 
-function LoadSpecificCSV(dims, float_type, particle_type, particle_group_marker, specific_csv)
+function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, particle_group_marker::Int, specific_csv::String) where {D, T}
     DF_SPECIFIC = CSV.read(specific_csv, DataFrame)
 
-    points       = Vector{SVector{dims,float_type}}()
-    density      = Vector{float_type}()
+    points       = Vector{SVector{D,T}}()
+    density      = Vector{T}()
     types        = Vector{ParticleType}()
     group_marker = Vector{Int}()
 
@@ -23,17 +23,27 @@ function LoadSpecificCSV(dims, float_type, particle_type, particle_group_marker,
         P3   = DF["Points:2"]
         Rhop = DF["Rhop"]
 
-        point = dims == 3 ? SVector{dims,float_type}(P1, P2, P3) : SVector{dims,float_type}(P1, P3)
+        point = if D == 3
+            SVector{3,T}(P1, P2, P3)
+        else
+            SVector{2,T}(P1, P3)
+        end
+
         push!(points,  point)
         push!(density, Rhop)
-        push!(types, particle_type)
+        push!(types,   particle_type)
         push!(group_marker, particle_group_marker)
     end
 
     return points, density, types, group_marker
 end
 
-function AllocateDataStructures(Dimensions,FloatType, SimGeometry)
+
+
+# function AllocateDataStructures(Dimensions,FloatType, SimGeometry) where {Dimensions <: Int, FloatType <: AbstractFloat, SimGeometry <: Vector{Geometry{Dimensions, FloatType}}}
+function AllocateDataStructures(
+    SimGeometry::Vector{<:Geometry{Dimensions, FloatType}}
+) where {Dimensions, FloatType}
     Position    = Vector{SVector{Dimensions, FloatType}}()
     Density     = Vector{FloatType}()
     Types       = Vector{ParticleType}()
@@ -45,7 +55,7 @@ function AllocateDataStructures(Dimensions,FloatType, SimGeometry)
         specific_csv          = geom.CSVFile
     
         # Assuming LoadSpecificCSV is already defined and works with these arguments
-        points, density, types, group_marker = LoadSpecificCSV(Dimensions, FloatType, particle_type, particle_group_marker, specific_csv)
+        points, density, types, group_marker = LoadSpecificCSV(Val(Dimensions), FloatType, particle_type, particle_group_marker, specific_csv)
     
         # Concatenate the results to the respective arrays
         Position    = vcat(Position    , points)
