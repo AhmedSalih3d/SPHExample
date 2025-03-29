@@ -29,7 +29,8 @@ export SimulationMetaData
     FlagLinearizedDDT::Bool                 = false
     FlagOutputKernelValues::Bool            = false     
     FlagLog::Bool                           = false
-    FlagShifting::Bool                      = false 
+    FlagShifting::Bool                      = false
+    FlagSingleStepTimeStepping::Bool        = false
 end
 
 end
