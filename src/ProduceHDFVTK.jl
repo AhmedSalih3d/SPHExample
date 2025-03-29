@@ -538,13 +538,13 @@ module ProduceHDFVTK
                                     SimParticles.KernelGradient, SimParticles.Density,
                                     SimParticles.Pressure, SimParticles.Velocity,
                                     SimParticles.Acceleration, SimParticles.BoundaryBool,
-                                    SimParticles.ID, UInt8.(SimParticles.Type), 
-                                    SimParticles.GroupMarker; chunk_size=1000)
+                                    SimParticles.ID, Int8.(SimParticles.Type), 
+                                    SimParticles.GroupMarker; chunk_size=1024)
             GenerateStepStructure(root, output_vars, SimParticles.Kernel,
                                 SimParticles.KernelGradient, SimParticles.Density,
                                 SimParticles.Pressure, SimParticles.Velocity,
                                 SimParticles.Acceleration, SimParticles.BoundaryBool,
-                                SimParticles.ID, UInt8.(SimParticles.Type),
+                                SimParticles.ID, Int8.(SimParticles.Type),
                                 SimParticles.GroupMarker)
     
             # Initialize grid file if needed

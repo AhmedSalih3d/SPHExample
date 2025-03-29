@@ -39,7 +39,7 @@ let
         OpenLogFile=true,
         FlagDensityDiffusion=true,
         FlagLinearizedDDT=true,
-        FlagOutputKernelValues=true,
+        FlagOutputKernelValues=false,
         FlagLog=true,
         FlagShifting=false,
     )
