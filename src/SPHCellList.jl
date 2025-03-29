@@ -311,16 +311,23 @@ using UnicodePlots
     function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
         
         ResetArrays!(dρdtI, Acceleration)
-        @. ResetArrays!(SimThreadedArrays.dρdtIThreaded, SimThreadedArrays.AccelerationThreaded)
+
+        map!(x -> fill!(x, zero(eltype(x))), SimThreadedArrays.dρdtIThreaded, SimThreadedArrays.dρdtIThreaded)
+        map!(x -> fill!(x, zero(eltype(x))), SimThreadedArrays.AccelerationThreaded, SimThreadedArrays.AccelerationThreaded)
+
 
         if SimMetaData.FlagOutputKernelValues
             ResetArrays!(Kernel, KernelGradient)
-            @. ResetArrays!(SimThreadedArrays.KernelThreaded, SimThreadedArrays.KernelGradientThreaded)
+                
+            map!(x -> fill!(x, zero(eltype(x))), SimThreadedArrays.KernelThreaded, SimThreadedArrays.KernelThreaded)
+            map!(x -> fill!(x, zero(eltype(x))), SimThreadedArrays.KernelGradientThreaded, SimThreadedArrays.KernelGradientThreaded)
         end
 
         if SimMetaData.FlagShifting
             ResetArrays!(∇Cᵢ, ∇◌rᵢ)
-            @. ResetArrays!(SimThreadedArrays.∇CᵢThreaded, SimThreadedArrays.∇◌rᵢThreaded)
+
+            map!(x -> fill!(x, zero(eltype(x))), SimThreadedArrays.∇CᵢThreaded,  SimThreadedArrays.∇CᵢThreaded)
+            map!(x -> fill!(x, zero(eltype(x))), SimThreadedArrays.∇◌rᵢThreaded, SimThreadedArrays.∇◌rᵢThreaded)
         end
 
         # Specifying which arrays to reset is still faster zzz
