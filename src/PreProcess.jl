@@ -38,12 +38,7 @@ function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, parti
     return points, density, types, group_marker
 end
 
-
-
-# function AllocateDataStructures(Dimensions,FloatType, SimGeometry) where {Dimensions <: Int, FloatType <: AbstractFloat, SimGeometry <: Vector{Geometry{Dimensions, FloatType}}}
-function AllocateDataStructures(
-    SimGeometry::Vector{<:Geometry{Dimensions, FloatType}}
-) where {Dimensions, FloatType}
+function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, FloatType}}) where {Dimensions, FloatType}
     Position    = Vector{SVector{Dimensions, FloatType}}()
     Density     = Vector{FloatType}()
     Types       = Vector{ParticleType}()

@@ -25,7 +25,7 @@ let
     SimulationGeometry = [FixedBoundary; Water]
 
     # Load in particles
-    SimParticles = AllocateDataStructures(Dimensions,FloatType, SimulationGeometry)
+    SimParticles = AllocateDataStructures(SimulationGeometry)
 
     SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
