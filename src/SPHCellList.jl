@@ -312,26 +312,26 @@ using UnicodePlots
         
         ResetArrays!(dρdtI, Acceleration)
 
-        map!(x -> fill!(x, zero(eltype(x))), SimThreadedArrays.dρdtIThreaded, SimThreadedArrays.dρdtIThreaded)
-        map!(x -> fill!(x, zero(eltype(x))), SimThreadedArrays.AccelerationThreaded, SimThreadedArrays.AccelerationThreaded)
+        # map!(x -> fill!(x, zero(eltype(x))), SimThreadedArrays.dρdtIThreaded, SimThreadedArrays.dρdtIThreaded)
+        # map!(x -> fill!(x, zero(eltype(x))), SimThreadedArrays.AccelerationThreaded, SimThreadedArrays.AccelerationThreaded)
 
 
         if SimMetaData.FlagOutputKernelValues
             ResetArrays!(Kernel, KernelGradient)
                 
-            map!(x -> fill!(x, zero(eltype(x))), SimThreadedArrays.KernelThreaded, SimThreadedArrays.KernelThreaded)
-            map!(x -> fill!(x, zero(eltype(x))), SimThreadedArrays.KernelGradientThreaded, SimThreadedArrays.KernelGradientThreaded)
+            # map!(x -> fill!(x, zero(eltype(x))), SimThreadedArrays.KernelThreaded, SimThreadedArrays.KernelThreaded)
+            # map!(x -> fill!(x, zero(eltype(x))), SimThreadedArrays.KernelGradientThreaded, SimThreadedArrays.KernelGradientThreaded)
         end
 
         if SimMetaData.FlagShifting
             ResetArrays!(∇Cᵢ, ∇◌rᵢ)
 
-            map!(x -> fill!(x, zero(eltype(x))), SimThreadedArrays.∇CᵢThreaded,  SimThreadedArrays.∇CᵢThreaded)
-            map!(x -> fill!(x, zero(eltype(x))), SimThreadedArrays.∇◌rᵢThreaded, SimThreadedArrays.∇◌rᵢThreaded)
+            # map!(x -> fill!(x, zero(eltype(x))), SimThreadedArrays.∇CᵢThreaded,  SimThreadedArrays.∇CᵢThreaded)
+            # map!(x -> fill!(x, zero(eltype(x))), SimThreadedArrays.∇◌rᵢThreaded, SimThreadedArrays.∇◌rᵢThreaded)
         end
 
         # Specifying which arrays to reset is still faster zzz
-        # foreachfield(f -> map(v -> fill!(v, zero(eltype(v))), f), SimThreadedArrays)
+        foreachfield(f -> map!(v -> fill!(v, zero(eltype(v))), f, f), SimThreadedArrays)
 
         return nothing
     end
