@@ -102,8 +102,8 @@ using UnicodePlots
 
 # Neither Polyester.@batch per core or thread is faster
 ###=== Function to process each cell and its neighbors
-    function NeighborLoop!(OutputKernelValues, CalculateParticleShifting, SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCells, EnumeratedIndices)
-        @sync map(EnumeratedIndices) do (ichunk, inds)
+    function NeighborLoop!(SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCells, EnumeratedIndices)
+        @sync tasks = map(EnumeratedIndices) do (ichunk, inds)
             @spawn for iter ∈ inds
 
                 CellIndex = UniqueCells[iter]
@@ -112,7 +112,7 @@ using UnicodePlots
                 EndIndex   = ParticleRanges[iter+1] - 1
 
                 @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-                    @inline ComputeInteractions!(OutputKernelValues, CalculateParticleShifting, SimMetaData, SimConstants, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
+                    @inline ComputeInteractions!(SimMetaData, SimConstants, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
                 end
 
                 @inbounds for S ∈ Stencil
@@ -128,7 +128,7 @@ using UnicodePlots
                         EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
 
                         @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                            @inline ComputeInteractions!(OutputKernelValues, CalculateParticleShifting, SimMetaData, SimConstants, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
+                            @inline ComputeInteractions!(SimMetaData, SimConstants, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
                         end
                     end
                 end
@@ -138,58 +138,9 @@ using UnicodePlots
         return nothing
     end
 
-    function GenerateCalculateParticleShifting(SimMetaData)
-        flag = SimMetaData.FlagShifting
-        
-        if flag
-            # Return a function that performs shifting calculations
-            return function(αD, q, ∇ᵢWᵢⱼ, xᵢⱼ, m₀, ρᵢ, ρⱼ, MotionLimiter, ichunk, SimThreadedArrays, i, j)
-                Wᵢⱼ = @fastpow αD*(1-q/2)^4*(2*q + 1)
-                MLcond = MotionLimiter[i] * MotionLimiter[j]
-    
-                SimThreadedArrays.∇CᵢThreaded[ichunk][i] += (m₀/ρᵢ) * ∇ᵢWᵢⱼ
-                SimThreadedArrays.∇CᵢThreaded[ichunk][j] += (m₀/ρⱼ) * -∇ᵢWᵢⱼ
-                
-                # Switch signs compared to DSPH (matches arxiv.org/abs/2110.10076)
-                SimThreadedArrays.∇◌rᵢThreaded[ichunk][i] += (m₀/ρⱼ) * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MLcond
-                SimThreadedArrays.∇◌rᵢThreaded[ichunk][j] += (m₀/ρᵢ) * dot(xᵢⱼ, -∇ᵢWᵢⱼ) * MLcond
-                
-                return Wᵢⱼ
-            end
-        else
-            # Return a function that does nothing
-            return function(αD, q, ∇ᵢWᵢⱼ, xᵢⱼ, m₀, ρᵢ, ρⱼ, MotionLimiter, ichunk, SimThreadedArrays, i, j)
-                return nothing
-            end
-        end
-    end
-
-    function GenerateOutputKernelValues(SimMetaData)
-        @nospecialize
-        flag = SimMetaData.FlagOutputKernelValues
-        
-        if flag
-            # Return a function that performs the calculations
-            return function(αD, q, ∇ᵢWᵢⱼ, ichunk, SimThreadedArrays, i, j)
-                Wᵢⱼ = @fastpow αD*(1-q/2)^4*(2*q + 1)
-                SimThreadedArrays.KernelThreaded[ichunk][i] += Wᵢⱼ
-                SimThreadedArrays.KernelThreaded[ichunk][j] += Wᵢⱼ
-                SimThreadedArrays.KernelGradientThreaded[ichunk][i] += ∇ᵢWᵢⱼ
-                SimThreadedArrays.KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
-                return Wᵢⱼ
-            end
-        else
-            # Return a function that does nothing
-            return function(αD, q, ∇ᵢWᵢⱼ, ichunk, SimThreadedArrays, i, j)
-                return nothing
-            end
-        end
-    end
-
     # Really important to overload default function, gives 10x speed up?
     # Overload the default function to do what you pleas
-    # function ComputeInteractions!(OutputKernelValues::F1, CalculateParticleShifting::F2, SimMetaData, SimConstants, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk) where {F1, F2}
-    function ComputeInteractions!(OutputKernelValues, CalculateParticleShifting, SimMetaData, SimConstants, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
+    function ComputeInteractions!(SimMetaData, SimConstants, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
         @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues, FlagLinearizedDDT = SimMetaData
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, γ, g, c₀, δᵩ, η², H², Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
@@ -314,9 +265,28 @@ using UnicodePlots
             SimThreadedArrays.AccelerationThreaded[ichunk][j] -= uₘ #dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
 
             
-            OutputKernelValues(αD, q, ∇ᵢWᵢⱼ, ichunk, SimThreadedArrays, i, j)
+            if FlagOutputKernelValues
+                Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
+                SimThreadedArrays.KernelThreaded[ichunk][i]         += Wᵢⱼ
+                SimThreadedArrays.KernelThreaded[ichunk][j]         += Wᵢⱼ
+                SimThreadedArrays.KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
+                SimThreadedArrays.KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
+            end
 
-            CalculateParticleShifting(αD, q, ∇ᵢWᵢⱼ, xᵢⱼ, m₀, ρᵢ, ρⱼ, MotionLimiter, ichunk, SimThreadedArrays, i, j)
+
+            if SimMetaData.FlagShifting
+                Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
+        
+                MLcond = MotionLimiter[i] * MotionLimiter[j]
+
+                SimThreadedArrays.∇CᵢThreaded[ichunk][i]   += (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
+                SimThreadedArrays.∇CᵢThreaded[ichunk][j]   += (m₀/ρⱼ) * -∇ᵢWᵢⱼ
+        
+                # Switch signs compared to DSPH, else free surface detection does not make sense
+                # Agrees, https://arxiv.org/abs/2110.10076, it should have been r_ji
+                SimThreadedArrays.∇◌rᵢThreaded[ichunk][i]  += (m₀/ρⱼ) * dot(-xᵢⱼ , ∇ᵢWᵢⱼ)  * MLcond
+                SimThreadedArrays.∇◌rᵢThreaded[ichunk][j]  += (m₀/ρᵢ) * dot( xᵢⱼ ,-∇ᵢWᵢⱼ)  * MLcond
+            end
         end
 
         return nothing
@@ -468,7 +438,7 @@ using UnicodePlots
         return nothing
     end
     
-    @inbounds function SimulationLoop(OutputKernelValues::F1, CalculateParticleShifting::F2, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, InverseCutOff) where {F1, F2}
+    @inbounds function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, InverseCutOff)
         Position       = SimParticles.Position
         Density        = SimParticles.Density
         Pressure       = SimParticles.Pressure
@@ -510,7 +480,7 @@ using UnicodePlots
                 ###===
             
                 @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-                @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(OutputKernelValues, CalculateParticleShifting, SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
+                @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
                 @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
             end
 
@@ -525,7 +495,7 @@ using UnicodePlots
             @timeit SimMetaData.HourGlass "Motion"                               ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
         
             @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-            @timeit SimMetaData.HourGlass "08 Second NeighborLoop"               NeighborLoop!(OutputKernelValues, CalculateParticleShifting, SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, UniqueCellsView, EnumeratedIndices)
+            @timeit SimMetaData.HourGlass "08 Second NeighborLoop"               NeighborLoop!(SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, UniqueCellsView, EnumeratedIndices)
             @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
 
         
@@ -594,16 +564,12 @@ using UnicodePlots
             end
         end
 
-        ## Generate the functions to use, assuming SimMetaData is constant
-        OutputKernelValues        = GenerateOutputKernelValues(SimMetaData)
-        CalculateParticleShifting = GenerateCalculateParticleShifting(SimMetaData)
-
         # Normal run and save data
         generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
     
         @inbounds while true
     
-            @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(OutputKernelValues, CalculateParticleShifting, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, InverseCutOff)
+            @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, InverseCutOff)
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
     
             SimMetaData.OutputIterationCounter += 1
