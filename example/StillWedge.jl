@@ -36,7 +36,7 @@ let
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true ,
         ExportGridCells=true,
-        OpenLogFile=true,
+        OpenLogFile=false,
         FlagDensityDiffusion=true,
         FlagLinearizedDDT=true,
         FlagOutputKernelValues=false,

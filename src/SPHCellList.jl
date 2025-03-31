@@ -103,7 +103,7 @@ using UnicodePlots
 # Neither Polyester.@batch per core or thread is faster
 ###=== Function to process each cell and its neighbors
     function NeighborLoop!(OutputKernelValues, CalculateParticleShifting, SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCells, EnumeratedIndices)
-        @sync tasks = map(EnumeratedIndices) do (ichunk, inds)
+        @sync map(EnumeratedIndices) do (ichunk, inds)
             @spawn for iter ∈ inds
 
                 CellIndex = UniqueCells[iter]
@@ -165,6 +165,7 @@ using UnicodePlots
     end
 
     function GenerateOutputKernelValues(SimMetaData)
+        @nospecialize
         flag = SimMetaData.FlagOutputKernelValues
         
         if flag
@@ -187,6 +188,7 @@ using UnicodePlots
 
     # Really important to overload default function, gives 10x speed up?
     # Overload the default function to do what you pleas
+    # function ComputeInteractions!(OutputKernelValues::F1, CalculateParticleShifting::F2, SimMetaData, SimConstants, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk) where {F1, F2}
     function ComputeInteractions!(OutputKernelValues, CalculateParticleShifting, SimMetaData, SimConstants, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
         @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues, FlagLinearizedDDT = SimMetaData
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, γ, g, c₀, δᵩ, η², H², Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
@@ -466,7 +468,7 @@ using UnicodePlots
         return nothing
     end
     
-    @inbounds function SimulationLoop(OutputKernelValues, CalculateParticleShifting, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, InverseCutOff)
+    @inbounds function SimulationLoop(OutputKernelValues::F1, CalculateParticleShifting::F2, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, InverseCutOff) where {F1, F2}
         Position       = SimParticles.Position
         Density        = SimParticles.Density
         Pressure       = SimParticles.Pressure
