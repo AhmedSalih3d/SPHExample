@@ -19,7 +19,7 @@ let
     SimMetaDataMovingSquare  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="MovingSquare2D", 
         SaveLocation="E:/SecondApproach/MovingSquare2D",
-        SimulationTime=2.5,
+        SimulationTime=0.5,
         OutputEach=0.01,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
@@ -60,7 +60,7 @@ let
     SimulationGeometry = [FixedBoundary, Water, MovingSquare]
     
     # Load in particles
-    SimParticles = AllocateDataStructures(Dimensions,FloatType, SimulationGeometry)
+    SimParticles = AllocateDataStructures(SimulationGeometry)
 
     # If save directory is not already made, make it
     if !isdir(SimMetaDataMovingSquare.SaveLocation)
