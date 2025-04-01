@@ -27,7 +27,7 @@ Key-elements of the code are:
 - Weakly Compressible SPH
   - Density varies about ~1% in time, for numerical reasons and the pressure equation is based on the density. This ensured by enforcing a Mach Number of 0.1, by artificially setting the speed of sound of the fluid (c₀) to ten times the highest velocity in the flow (manual input) 
 - Multi-threaded approach
-  - Multi-threading has been added. Code can easily be run in sequential form by removing the `@threads` in the `NeighborLoop` function in `src/SPHCellList.jl`.
+  - Multi-threading has been added. Code can easily be run in sequential form by removing the `@sync` and `@spawn` in the `NeighborLoop` function in `src/SPHCellList.jl`.
 - Dynamic Boundary Condition (as in DualSPHysics)
   - DualSPHysics is one of the most well-known SPH packages. This is one of the simplest and most elegant boundary conditions.
 - Density Diffusion
@@ -36,6 +36,47 @@ Key-elements of the code are:
   - One of the simpler kernels which does not require tensile correction to be applied.
 
 *Please* remember that the main aim of this code is not to be performant. It is made to teach and showcase one way to code a relatively simple SPH code. *Unofficially*  I have benchmarked this code up against DualSPHysics similar cases and found that for 2D simulations this code is on par with DualSPHysics in regards to execution speed on CPU.
+
+## Folder Structure
+
+📁 SPHExample-cell_list-make_query/
+├── 📄 .gitignore    📄 LICENSE.md     📄 Project.toml     📄 README.md
+
+├── 📁 example/
+│   ├── 📄 Dambreak2d.jl     📄 Dambreak3d.jl
+│   ├── 📄 MovingSquare2d.jl 📄 StillWedge.jl
+
+├── 📁 images/
+│   ├── 🖼️ 2d_dambreak.png   🖼️ 3d_dambreak.png
+
+├── 📁 input/
+│   ├── 📁 dam_break_2d/
+│   │   ├── 📄 Bound.csv       📄 Bound_OneLayer.csv
+│   │   ├── 📄 Bound_ThreeLayers.csv
+│   │   ├── 📄 Fluid.csv       📄 Fluid_OneLayer.csv
+
+│   ├── 📁 dam_break_3d/
+│   │   ├── 📄 Dp0.0085_Bound.csv  📄 Dp0.0085_Fluid.csv
+│   │   ├── 📄 Dp0.02_Bound.csv    📄 Dp0.02_Fluid.csv
+
+│   ├── 📁 moving_square_2d/
+│   │   ├── 📄 Dp0.02_Fixed.csv  📄 Dp0.02_Fluid.csv  📄 Dp0.02_Square.csv
+│   │   ├── 📄 Dp0.04_Fixed.csv  📄 Dp0.04_Fluid.csv  📄 Dp0.04_Square.csv
+
+│   └── 📁 still_wedge/
+│       ├── 📄 Dp0.01_Bound.csv  📄 Dp0.01_Fluid.csv
+│       ├── 📄 Dp0.02_Bound.csv  📄 Dp0.02_Fluid.csv
+
+├── 📁 src/
+│   ├── 📄 SPHExample.jl       📄 SPHCellList.jl        📄 TimeStepping.jl
+│   ├── 📄 SimulationEquations.jl  📄 SimulationGeometry.jl
+│   ├── 📄 SimulationConstantsConfiguration.jl
+│   ├── 📄 SimulationLoggerConfiguration.jl
+│   ├── 📄 SimulationMetaDataConfiguration.jl
+│   ├── 📄 ProduceHDFVTK.jl    📄 PreProcess.jl
+│   ├── 📄 OpenExternalPrograms.jl
+│   └── 📄 AuxillaryFunctions.jl
+
 
 ## Getting Started
 
