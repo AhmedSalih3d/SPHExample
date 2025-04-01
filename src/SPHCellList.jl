@@ -131,7 +131,7 @@ using UnicodePlots
                             StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
                             EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
 
-                            NeighborCellIndices[(iter-1)*4 + k] = NeighborCellIndex[1]
+                            NeighborCellIndices[(iter-1)*length(Stencil) + k] = NeighborCellIndex[1]
                             # NeighborCellIndices[iter, k] = NeighborCellIndex[1]
 
                             @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
@@ -140,21 +140,21 @@ using UnicodePlots
                         end
                     end
                 else
-                    @inbounds for k = 1:4
+                    @inbounds for k = 1:length(Stencil)
                         # println(NeighborCellIndices[iter, :])
                         # @inbounds for NeighborCellIndex ∈ NeighborCellIndices[iter, :]
 
                         
 
-                        NeighborCellIndex = NeighborCellIndices[(iter-1)*4 + k]
-                        if NeighborCellIndex != 0
-                            StartIndex_       = ParticleRanges[NeighborCellIndex] 
-                            EndIndex_         = ParticleRanges[NeighborCellIndex+1] - 1
+                        NeighborCellIndex = NeighborCellIndices[(iter-1)*length(Stencil) + k]
+                        # if NeighborCellIndex != 0
+                            StartIndex_       = max(ParticleRanges[NeighborCellIndex] ,1)
+                            EndIndex_         = max(ParticleRanges[NeighborCellIndex+1] - 1,1)
 
                             @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
                                 @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
                             end
-                        end
+                        # end
                     end
                 end
             end
