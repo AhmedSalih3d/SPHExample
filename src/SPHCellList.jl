@@ -517,6 +517,11 @@ using UnicodePlots
         
         dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimParticles.Position)
 
+        if !SimMetaData.FlagShifting
+            resize!(∇Cᵢ , 0)
+            resize!(∇◌rᵢ, 0)
+        end
+
         if SimMetaData.FlagLog
             InitializeLogger(SimLogger,SimConstants,SimMetaData, SimGeometry, SimParticles)
         end
