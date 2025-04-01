@@ -102,7 +102,7 @@ using UnicodePlots
 
 # Neither Polyester.@batch per core or thread is faster
 ###=== Function to process each cell and its neighbors
-    function NeighborLoop!(SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCells, EnumeratedIndices)
+    function NeighborLoop!(SimMetaData::SimulationMetaData{FlagDensityDiffusion, FlagLinearizedDDT, FlagOutputKernelValues, FlagLog, FlagShifting, FlagSingleStepTimeStepping, Dimensions,FloatType}, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCells, EnumeratedIndices) where {FlagDensityDiffusion, FlagLinearizedDDT, FlagOutputKernelValues, FlagLog, FlagShifting, FlagSingleStepTimeStepping, Dimensions,FloatType}
         @sync tasks = map(EnumeratedIndices) do (ichunk, inds)
             @spawn for iter ∈ inds
 
@@ -140,8 +140,7 @@ using UnicodePlots
 
     # Really important to overload default function, gives 10x speed up?
     # Overload the default function to do what you pleas
-    function ComputeInteractions!(SimMetaData, SimConstants, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
-        @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues, FlagLinearizedDDT = SimMetaData
+    function ComputeInteractions!(SimMetaData::SimulationMetaData{FlagDensityDiffusion, FlagLinearizedDDT, FlagOutputKernelValues, FlagLog, FlagShifting, FlagSingleStepTimeStepping, Dimensions,FloatType}, SimConstants, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk) where {FlagDensityDiffusion, FlagLinearizedDDT, FlagOutputKernelValues, FlagLog, FlagShifting, FlagSingleStepTimeStepping, Dimensions,FloatType}
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, γ, g, c₀, δᵩ, η², H², Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
         Linear_ρ_factor = (1/(Cb*γ))*ρ₀
@@ -167,7 +166,7 @@ using UnicodePlots
             dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  density_symmetric_term
 
             # Density diffusion
-            if FlagDensityDiffusion
+            if FlagDensityDiffusion == Val(true)
                 if SimConstants.g == 0
                     ρᵢⱼᴴ  = 0.0
                     # ρⱼᵢᴴ  = 0.0
@@ -175,7 +174,7 @@ using UnicodePlots
                     Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
                     # Pⱼᵢᴴ  = -Pᵢⱼᴴ
                     
-                    if FlagLinearizedDDT
+                    if FlagLinearizedDDT == Val(true)
                         ρᵢⱼᴴ  = Pᵢⱼᴴ * Linear_ρ_factor
                         # ρⱼᵢᴴ  = -ρᵢⱼᴴ
                     else
@@ -206,7 +205,7 @@ using UnicodePlots
             dvdt⁺   = - m₀ * Pfac *  ∇ᵢWᵢⱼ
             #dvdt⁻   = - dvdt⁺
 
-            if FlagViscosityTreatment == :ArtificialViscosity
+            if SimMetaData.FlagViscosityTreatment == :ArtificialViscosity
                 ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
                 cond      = dot(vᵢⱼ, xᵢⱼ)
                 cond_bool = eltype(cond)(cond < 0.0)
@@ -218,7 +217,7 @@ using UnicodePlots
                 Πⱼ        = Πᵢ
             end
         
-            if FlagViscosityTreatment == :Laminar || FlagViscosityTreatment == :LaminarSPS
+            if SimMetaData.FlagViscosityTreatment == :Laminar || SimMetaData.FlagViscosityTreatment == :LaminarSPS
                 # 4 comes from 2 divided by 0.5 from average density
                 # should divide by ρᵢ eq 6 DPC
                 # ν₀∇²uᵢ = (1/ρᵢ) * ( (4 * m₀ * (ρᵢ * ν₀) * dot( xᵢⱼ, ∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²) ) ) *  vᵢⱼ
@@ -233,7 +232,7 @@ using UnicodePlots
                 ν₀∇²uⱼ = ν₀∇²uᵢ
             end
         
-            if FlagViscosityTreatment == :LaminarSPS 
+            if SimMetaData.FlagViscosityTreatment == :LaminarSPS 
                 Iᴹ       = diagm(one.(xᵢⱼ))
                 #julia> a .- a'
                 # 3×3 SMatrix{3, 3, Float64, 9} with indices SOneTo(3)×SOneTo(3):
@@ -265,7 +264,7 @@ using UnicodePlots
             SimThreadedArrays.AccelerationThreaded[ichunk][j] -= uₘ #dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
 
             
-            if FlagOutputKernelValues
+            if FlagOutputKernelValues == Val(true) 
                 Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
                 SimThreadedArrays.KernelThreaded[ichunk][i]         += Wᵢⱼ
                 SimThreadedArrays.KernelThreaded[ichunk][j]         += Wᵢⱼ
@@ -274,7 +273,7 @@ using UnicodePlots
             end
 
 
-            if SimMetaData.FlagShifting
+            if FlagShifting == Val(true)
                 Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
         
                 MLcond = MotionLimiter[i] * MotionLimiter[j]
@@ -308,7 +307,7 @@ using UnicodePlots
         end
     end
 
-    function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+    function ResetStep!(SimMetaData::SimulationMetaData{FlagDensityDiffusion, FlagLinearizedDDT, FlagOutputKernelValues, FlagLog, FlagShifting, FlagSingleStepTimeStepping, Dimensions, FloatType}, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ) where {FlagDensityDiffusion, FlagLinearizedDDT, FlagOutputKernelValues, FlagLog, FlagShifting, FlagSingleStepTimeStepping, Dimensions,FloatType}
         
         ResetArrays!(dρdtI, Acceleration)
 
@@ -316,36 +315,35 @@ using UnicodePlots
         # map!(x -> fill!(x, zero(eltype(x))), SimThreadedArrays.AccelerationThreaded, SimThreadedArrays.AccelerationThreaded)
 
 
-        if SimMetaData.FlagOutputKernelValues
+        if FlagOutputKernelValues == Val(true)
             ResetArrays!(Kernel, KernelGradient)
                 
             # map!(x -> fill!(x, zero(eltype(x))), SimThreadedArrays.KernelThreaded, SimThreadedArrays.KernelThreaded)
             # map!(x -> fill!(x, zero(eltype(x))), SimThreadedArrays.KernelGradientThreaded, SimThreadedArrays.KernelGradientThreaded)
         end
 
-        if SimMetaData.FlagShifting
+        if FlagShifting == Val(true)
             ResetArrays!(∇Cᵢ, ∇◌rᵢ)
 
             # map!(x -> fill!(x, zero(eltype(x))), SimThreadedArrays.∇CᵢThreaded,  SimThreadedArrays.∇CᵢThreaded)
             # map!(x -> fill!(x, zero(eltype(x))), SimThreadedArrays.∇◌rᵢThreaded, SimThreadedArrays.∇◌rᵢThreaded)
         end
 
-        # Specifying which arrays to reset is still faster zzz
         foreachfield(f -> map!(v -> fill!(v, zero(eltype(v))), f, f), SimThreadedArrays)
 
         return nothing
     end
 
-    function ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+    function ReductionStep!(SimMetaData::SimulationMetaData{FlagDensityDiffusion, FlagLinearizedDDT, FlagOutputKernelValues, FlagLog, FlagShifting, FlagSingleStepTimeStepping, Dimensions, FloatType}, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ) where {FlagDensityDiffusion, FlagLinearizedDDT, FlagOutputKernelValues, FlagLog, FlagShifting, FlagSingleStepTimeStepping, Dimensions, FloatType}
         reduce_sum!(dρdtI, SimThreadedArrays.dρdtIThreaded)
         reduce_sum!(Acceleration, SimThreadedArrays.AccelerationThreaded)
   
-        if SimMetaData.FlagOutputKernelValues
+        if FlagOutputKernelValues == Val(true)
             reduce_sum!(Kernel, SimThreadedArrays.KernelThreaded)
             reduce_sum!(KernelGradient, SimThreadedArrays.KernelGradientThreaded)
         end
 
-        if SimMetaData.FlagShifting
+        if FlagShifting == Val(true)
             reduce_sum!(∇Cᵢ, SimThreadedArrays.∇CᵢThreaded)
             reduce_sum!(∇◌rᵢ, SimThreadedArrays.∇◌rᵢThreaded)
         end
@@ -395,14 +393,14 @@ using UnicodePlots
         return nothing
     end
 
-    function FullTimeStep(SimMetaData, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+    function FullTimeStep(SimMetaData::SimulationMetaData{FlagDensityDiffusion, FlagLinearizedDDT, FlagOutputKernelValues, FlagLog, FlagShifting, FlagSingleStepTimeStepping, Dimensions, FloatType}, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt) where {FlagDensityDiffusion, FlagLinearizedDDT, FlagOutputKernelValues, FlagLog, FlagShifting, FlagSingleStepTimeStepping, Dimensions, FloatType}
         Position       = SimParticles.Position
         Velocity       = SimParticles.Velocity
         Acceleration   = SimParticles.Acceleration
         GravityFactor  = SimParticles.GravityFactor
         MotionLimiter  = SimParticles.MotionLimiter
   
-        if !SimMetaData.FlagShifting
+        if !(FlagShifting == Val(true))
             @inbounds for i in eachindex(Position)
                 Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
                 Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
@@ -438,7 +436,7 @@ using UnicodePlots
         return nothing
     end
     
-    @inbounds function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, InverseCutOff)
+    @inbounds function SimulationLoop(SimMetaData::SimulationMetaData{FlagDensityDiffusion, FlagLinearizedDDT, FlagOutputKernelValues, FlagLog, FlagShifting, FlagSingleStepTimeStepping, Dimensions, FloatType}, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, InverseCutOff)  where {FlagDensityDiffusion, FlagLinearizedDDT, FlagOutputKernelValues, FlagLog, FlagShifting, FlagSingleStepTimeStepping, Dimensions,FloatType}
         Position       = SimParticles.Position
         Density        = SimParticles.Density
         Pressure       = SimParticles.Pressure
@@ -474,7 +472,7 @@ using UnicodePlots
 
             @timeit SimMetaData.HourGlass "Motion"                               ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
         
-            if !SimMetaData.FlagSingleStepTimeStepping
+            if !(FlagSingleStepTimeStepping == Val(true))
                 ###=== First step of resetting arrays
                 @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
                 ###===
@@ -514,11 +512,11 @@ using UnicodePlots
     
     ###===
     function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}, #Don't further specify type for now
-        SimMetaData::SimulationMetaData{Dimensions, FloatType},
+        SimMetaData::SimulationMetaData{FlagDensityDiffusion, FlagLinearizedDDT, FlagOutputKernelValues, FlagLog, FlagShifting, FlagSingleStepTimeStepping, Dimensions, FloatType},
         SimConstants::SimulationConstants,
         SimLogger::SimulationLogger,
         SimParticles::StructArray
-        ) where {Dimensions,FloatType}
+        ) where {FlagDensityDiffusion, FlagLinearizedDDT, FlagOutputKernelValues, FlagLog, FlagShifting, FlagSingleStepTimeStepping, Dimensions,FloatType}
 
         # Unpack the relevant simulation meta data
         @unpack HourGlass = SimMetaData;
@@ -528,7 +526,7 @@ using UnicodePlots
         
         dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimParticles.Position)
 
-        if SimMetaData.FlagLog
+        if FlagLog == Val(true)
             InitializeLogger(SimLogger,SimConstants,SimMetaData, SimGeometry, SimParticles)
         end
         
@@ -580,7 +578,7 @@ using UnicodePlots
                 @timeit SimMetaData.HourGlass "13A Save CellGrid Data" output.save_grid(SimMetaData.OutputIterationCounter, UniqueCellsView)
             end
     
-            if SimMetaData.FlagLog
+            if FlagLog == Val(true)
                 LogStep(SimLogger, SimMetaData, HourGlass)
                 SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
             end
@@ -602,7 +600,7 @@ using UnicodePlots
                 # Time steps line plot
                 UnicodeTimeStepsGraph = lineplot(1:length(TimeSteps), TimeSteps, title="Time Steps [s] as a function of iteration", name="Time Steps", xlabel="Iterations [-]", ylabel="Time Step Size [s]")
 
-                if SimMetaData.FlagLog
+                if FlagLog == Val(true)
                     LogFinal(SimLogger, HourGlass)
              
                     with_logger(SimLogger.Logger) do

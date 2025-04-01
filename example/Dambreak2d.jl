@@ -27,7 +27,13 @@ let
     # Load in particles
     SimParticles = AllocateDataStructures(SimulationGeometry)
 
-    SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType}(
+    FlagDensityDiffusion = Val(true)
+    FlagLinearizedDDT = Val(true)
+    FlagOutputKernelValues = Val(false)
+    FlagLog = Val(true)
+    FlagShifting = Val(false)
+    FlagSingleStepTimeStepping = Val(false)
+    SimMetaDataDambreak  = SimulationMetaData{FlagDensityDiffusion, FlagLinearizedDDT, FlagOutputKernelValues, FlagLog, FlagShifting, FlagSingleStepTimeStepping,Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
         SimulationTime=2,
@@ -35,10 +41,6 @@ let
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
         OpenLogFile=true,
-        FlagDensityDiffusion=true,
-        FlagLinearizedDDT=true,
-        FlagOutputKernelValues=false,
-        FlagLog=true
     )
 
 

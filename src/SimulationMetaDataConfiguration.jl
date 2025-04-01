@@ -7,7 +7,7 @@ using ProgressMeter
 export SimulationMetaData
 
 
-@with_kw mutable struct SimulationMetaData{Dimensions, FloatType <: AbstractFloat}
+@with_kw mutable struct SimulationMetaData{FlagDensityDiffusion, FlagLinearizedDDT, FlagOutputKernelValues, FlagLog, FlagShifting, FlagSingleStepTimeStepping, Dimensions, FloatType <: AbstractFloat}
     SimulationName::String
     SaveLocation::String
     HourGlass::TimerOutput                  = TimerOutput()
@@ -25,12 +25,6 @@ export SimulationMetaData
     ExportSingleVTKHDF::Bool                = true
     ExportGridCells::Bool                   = false    
     OpenLogFile::Bool                       = true
-    FlagDensityDiffusion::Bool              = false
-    FlagLinearizedDDT::Bool                 = false
-    FlagOutputKernelValues::Bool            = false     
-    FlagLog::Bool                           = false
-    FlagShifting::Bool                      = false
-    FlagSingleStepTimeStepping::Bool        = false
 end
 
 end

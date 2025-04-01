@@ -28,20 +28,21 @@ let
     # Load in particles
     SimParticles = AllocateDataStructures(SimulationGeometry)
 
-    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
+    FlagDensityDiffusion = Val(true)
+    FlagLinearizedDDT = Val(true)
+    FlagOutputKernelValues = Val(false)
+    FlagLog = Val(true)
+    FlagShifting = Val(false)
+    FlagSingleStepTimeStepping = Val(false)
+    SimMetaDataWedge  = SimulationMetaData{FlagDensityDiffusion, FlagLinearizedDDT, FlagOutputKernelValues, FlagLog, FlagShifting, FlagSingleStepTimeStepping, Dimensions, FloatType}(
         SimulationName="StillWedge", 
         SaveLocation="E:/SecondApproach/TESTING_CPU_StillWedge",
-        SimulationTime=1,
+        SimulationTime=4,
         OutputEach=0.01,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true ,
         ExportGridCells=true,
         OpenLogFile=false,
-        FlagDensityDiffusion=true,
-        FlagLinearizedDDT=true,
-        FlagOutputKernelValues=false,
-        FlagLog=true,
-        FlagShifting=false,
     )
 
     SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)

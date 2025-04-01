@@ -8,6 +8,7 @@ using StaticArrays
 using StructArrays
 
 using ..SimulationGeometry
+using ..SimulationMetaDataConfiguration
 
 function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, particle_group_marker::Int, specific_csv::String) where {D, T}
     DF_SPECIFIC = CSV.read(specific_csv, DataFrame)
@@ -120,7 +121,7 @@ function AllocateSupportDataStructures(Position)
     return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ
 end
 
-function AllocateThreadedArrays(SimMetaData, SimParticles, dρdtI, ∇Cᵢ, ∇◌rᵢ   ; n_copy = Base.Threads.nthreads())
+function AllocateThreadedArrays(SimMetaData::SimulationMetaData{FlagDensityDiffusion, FlagLinearizedDDT, FlagOutputKernelValues, FlagLog, FlagShifting, FlagSingleStepTimeStepping, Dimensions, FloatType}, SimParticles, dρdtI, ∇Cᵢ, ∇◌rᵢ   ; n_copy = Base.Threads.nthreads())  where {FlagDensityDiffusion, FlagLinearizedDDT, FlagOutputKernelValues, FlagLog, FlagShifting, FlagSingleStepTimeStepping, Dimensions,FloatType} 
     
         
     dρdtIThreaded        = [copy(dρdtI) for _ in 1:n_copy]
@@ -131,7 +132,7 @@ function AllocateThreadedArrays(SimMetaData, SimParticles, dρdtI, ∇Cᵢ, ∇�
         AccelerationThreaded = AccelerationThreaded,
     )
 
-    if SimMetaData.FlagOutputKernelValues
+    if FlagOutputKernelValues == Val(true)
         KernelThreaded         = [copy(SimParticles.Kernel) for _ in 1:n_copy]
         KernelGradientThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
         nt = merge(nt, (
@@ -140,7 +141,7 @@ function AllocateThreadedArrays(SimMetaData, SimParticles, dρdtI, ∇Cᵢ, ∇�
         ))
     end
 
-    if SimMetaData.FlagShifting
+    if FlagShifting == Val(true)
         ∇CᵢThreaded  = [copy(∇Cᵢ) for _ in 1:n_copy]
         ∇◌rᵢThreaded = [copy(∇◌rᵢ) for _ in 1:n_copy]
         nt = merge(nt, (
