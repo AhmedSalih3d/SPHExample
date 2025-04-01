@@ -39,7 +39,7 @@ Key-elements of the code are:
 
 ## Folder Structure
 
-📁 SPHExample-cell_list-make_query/
+📁 SPHExample/
 ├── 📄 .gitignore    📄 LICENSE.md     📄 Project.toml     📄 README.md
 
 ├── 📁 example/
