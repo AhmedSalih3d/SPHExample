@@ -100,6 +100,7 @@ using UnicodePlots
         return IndexCounter 
     end
 
+    
 # Neither Polyester.@batch per core or thread is faster
 ###=== Function to process each cell and its neighbors
     function NeighborLoop!(SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCells, EnumeratedIndices)
@@ -129,6 +130,51 @@ using UnicodePlots
 
                         @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
                             @inline ComputeInteractions!(SimMetaData, SimConstants, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
+                        end
+                    end
+                end
+            end
+        end
+        
+        return nothing
+    end
+
+    function NeighborLoopMDBC!(SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCells, GhostPoints, GhostNormals, ::Val{InverseCutOff}) where InverseCutOff
+        
+        function map_floor(x)
+            # This is different than just doing muladd(x,InverseCutOff,0.5) because it rounds towards zero.
+            # Consider -1.7 + 0.5, this would give -1.2 and then trunced 1, but we want -2, therefore absolute addition before hand
+            # We add 0.5 instead of 1, to ensure proper rounding behavior when restoring the sign for negative numbers.
+            Int(sign(x)) * unsafe_trunc(Int, muladd(abs(x),InverseCutOff,0.5))
+        end
+
+        @threads for iter ∈ eachindex(GhostPoints)
+
+            GhostCellIndex = CartesianIndex(map(map_floor, Tuple(GhostPoints[iter])))
+
+            CellIndex = searchsorted(UniqueCells, GhostCellIndex)
+
+            UniqueCellsIter = first(CellIndex)
+
+            if length(CellIndex) != 0
+                StartIndex = ParticleRanges[UniqueCellsIter]
+                EndIndex   = ParticleRanges[UniqueCellsIter+1] - 1
+
+                @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
+                    # @inline ComputeInteractions!(SimMetaData, SimConstants, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
+                end
+
+                @inbounds for S ∈ Stencil
+                    SCellIndex = GhostCellIndex + S
+                    # Returns a range, x:x for exact match and x:(x-1) for no match
+                    # utilizes that it is a sorted array and requires no isequal constructor,
+                    # so I prefer this for now
+                    NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
+                    if length(NeighborCellIndex) != 0
+                        StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
+                        EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
+                        @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
+                            # @inline ComputeInteractions!(SimMetaData, SimConstants, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
                         end
                     end
                 end
@@ -439,6 +485,8 @@ using UnicodePlots
         ParticleMarker = SimParticles.GroupMarker
         Kernel         = SimParticles.Kernel
         KernelGradient = SimParticles.KernelGradient
+        GhostPoints    = SimParticles.GhostPoints
+        GhostNormals   = SimParticles.GhostNormals
 
         ###
         
@@ -469,6 +517,7 @@ using UnicodePlots
                 ###===
             
                 @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
+                @timeit SimMetaData.HourGlass "04 First NeighborLoopMDBC"                NeighborLoopMDBC!(SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCells, GhostPoints, GhostNormals, InverseCutOff)
                 @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
                 @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
             end
