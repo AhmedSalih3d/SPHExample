@@ -161,8 +161,8 @@ using UnicodePlots
                 StartIndex = ParticleRanges[UniqueCellsIter]
                 EndIndex   = ParticleRanges[UniqueCellsIter+1] - 1
 
-                @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-                    # @inline ComputeInteractions!(SimMetaData, SimConstants, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
+                @inbounds for j = StartIndex:EndIndex
+                    @inline ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, iter, j)
                 end
 
                 @inbounds for S ∈ Stencil
@@ -174,8 +174,8 @@ using UnicodePlots
                     if length(NeighborCellIndex) != 0
                         StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
                         EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
-                        @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                            # @inline ComputeInteractions!(SimMetaData, SimConstants, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
+                        @inbounds for j = StartIndex_:EndIndex_
+                            @inline ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, iter, j)
                         end
                     end
                 end
@@ -334,6 +334,30 @@ using UnicodePlots
                 SimThreadedArrays.∇◌rᵢThreaded[ichunk][i]  += (m₀/ρⱼ) * dot(-xᵢⱼ , ∇ᵢWᵢⱼ)  * MLcond
                 SimThreadedArrays.∇◌rᵢThreaded[ichunk][j]  += (m₀/ρᵢ) * dot( xᵢⱼ ,-∇ᵢWᵢⱼ)  * MLcond
             end
+        end
+
+        return nothing
+    end
+
+    function ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, i, j)
+        @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues, FlagLinearizedDDT = SimMetaData
+        @unpack ρ₀, h, h⁻¹, m₀, αD, α, γ, g, c₀, δᵩ, η², H², Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
+
+        Linear_ρ_factor = (1/(Cb*γ))*ρ₀
+
+        xᵢⱼ  = Position[i] - Position[j]
+        xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)              
+        if  xᵢⱼ² <= H²
+            #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/2
+            dᵢⱼ  = sqrt(abs(xᵢⱼ²))
+
+            # clamp seems faster than min, no util
+            q         = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0) #min(dᵢⱼ * h⁻¹, 2.0) - 8% util no DDT
+            invd²η²   =  1.0 / (dᵢⱼ*dᵢⱼ+η²)
+            ∇ᵢWᵢⱼ     = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
+            ρᵢ        = Density[i]
+            ρⱼ        = Density[j]
+        
         end
 
         return nothing
@@ -518,7 +542,7 @@ using UnicodePlots
                 ###===
             
                 @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-                @timeit SimMetaData.HourGlass "04 First NeighborLoopMDBC"                NeighborLoopMDBC!(SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCells, GhostPoints, GhostNormals, InverseCutOff)
+                @timeit SimMetaData.HourGlass "04 First NeighborLoopMDBC"            NeighborLoopMDBC!(SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCells, GhostPoints, GhostNormals, InverseCutOff)
                 @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
                 @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
             end
