@@ -149,8 +149,9 @@ using UnicodePlots
         end
 
         @threads for iter ∈ eachindex(GhostPoints)
+            GhostPoint = GhostPoints[iter]
 
-            GhostCellIndex = CartesianIndex(map(map_floor, Tuple(GhostPoints[iter])))
+            GhostCellIndex = CartesianIndex(map(map_floor, Tuple(GhostPoint)))
 
             CellIndex = searchsorted(UniqueCells, GhostCellIndex)
 
