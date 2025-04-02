@@ -148,7 +148,9 @@ using UnicodePlots
             Int(sign(x)) * unsafe_trunc(Int, muladd(abs(x),InverseCutOff,0.5))
         end
 
-        @threads for iter ∈ eachindex(GhostPoints)
+        # No @threads initially, just to check that algorithm used is correct
+        # @threads for iter ∈ eachindex(GhostPoints)
+        for iter ∈ eachindex(GhostPoints)
             GhostPoint = GhostPoints[iter]
 
             GhostCellIndex = CartesianIndex(map(map_floor, Tuple(GhostPoint)))
@@ -343,21 +345,25 @@ using UnicodePlots
         @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues, FlagLinearizedDDT = SimMetaData
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, γ, g, c₀, δᵩ, η², H², Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
-        Linear_ρ_factor = (1/(Cb*γ))*ρ₀
+        # ᵢ is ghost node! j is fluid node
 
         xᵢⱼ  = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)              
         if  xᵢⱼ² <= H²
             #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/2
-            dᵢⱼ  = sqrt(abs(xᵢⱼ²))
+            dᵢⱼ       = sqrt(abs(xᵢⱼ²))
+            q         = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0) 
 
-            # clamp seems faster than min, no util
-            q         = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0) #min(dᵢⱼ * h⁻¹, 2.0) - 8% util no DDT
-            invd²η²   =  1.0 / (dᵢⱼ*dᵢⱼ+η²)
-            ∇ᵢWᵢⱼ     = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
             ρᵢ        = Density[i]
             ρⱼ        = Density[j]
-        
+
+            Wᵢⱼ       = @fastpow αD*(1-q/2)^4*(2*q + 1)
+            ∇ᵢWᵢⱼ     = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ
+            
+            Vⱼ          = m₀ / ρⱼ
+
+            VⱼWᵢⱼ       = Vⱼ * Wᵢⱼ
+            Vⱼ∇ᵢWᵢⱼ     = Vⱼ * ∇ᵢWᵢⱼ        
         end
 
         return nothing
