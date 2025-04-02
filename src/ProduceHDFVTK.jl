@@ -521,7 +521,7 @@ module ProduceHDFVTK
         
         # Output variable names
         output_vars = ["Kernel", "KernelGradient", "Density", "Pressure", "Velocity", 
-                      "Acceleration", "BoundaryBool", "ID", "Type", "GroupMarker"]
+                      "Acceleration", "BoundaryBool", "ID", "Type", "GroupMarker", "GhostPoints", "GhostNormals"]
     
         # Initialize storage for file handles
         file_handles = if !SimMetaData.ExportSingleVTKHDF
@@ -539,13 +539,13 @@ module ProduceHDFVTK
                                     SimParticles.Pressure, SimParticles.Velocity,
                                     SimParticles.Acceleration, SimParticles.BoundaryBool,
                                     SimParticles.ID, Int8.(SimParticles.Type), 
-                                    SimParticles.GroupMarker; chunk_size=1024)
+                                    SimParticles.GroupMarker, SimParticles.GhostPoints, SimParticles.GhostNormals ; chunk_size=1024)
             GenerateStepStructure(root, output_vars, SimParticles.Kernel,
                                 SimParticles.KernelGradient, SimParticles.Density,
                                 SimParticles.Pressure, SimParticles.Velocity,
                                 SimParticles.Acceleration, SimParticles.BoundaryBool,
                                 SimParticles.ID, Int8.(SimParticles.Type),
-                                SimParticles.GroupMarker)
+                                SimParticles.GroupMarker, SimParticles.GhostPoints, SimParticles.GhostNormals)
     
             # Initialize grid file if needed
             if SimMetaData.ExportGridCells
@@ -567,23 +567,27 @@ module ProduceHDFVTK
                 kgrad = to_3d(SimParticles.KernelGradient)
                 vel = to_3d(SimParticles.Velocity)
                 acc = to_3d(SimParticles.Acceleration)
+                gp  = to_3d(SimParticles.GhostPoints)
+                gn  = to_3d(SimParticles.GhostNormals)
             else
                 pos = SimParticles.Position
                 kgrad = SimParticles.KernelGradient
                 vel = SimParticles.Velocity
                 acc = SimParticles.Acceleration
+                gp  = SimParticles.GhostPoints
+                gn  = SimParticles.GhostNormals
             end
     
             if !SimMetaData.ExportSingleVTKHDF
                 SaveVTKHDF(file_handles.particle_files, iteration, particle_filename(iteration), pos, output_vars,
                           SimParticles.Kernel, kgrad, SimParticles.Density, SimParticles.Pressure,
                           vel, acc, SimParticles.BoundaryBool, SimParticles.ID,
-                          UInt8.(SimParticles.Type), SimParticles.GroupMarker)
+                          UInt8.(SimParticles.Type), SimParticles.GroupMarker, gp, gn)
             else
                 AppendVTKHDFData(root, SimMetaData.TotalTime, pos, output_vars,
                                 SimParticles.Kernel, kgrad, SimParticles.Density,
                                 SimParticles.Pressure, vel, acc, SimParticles.BoundaryBool,
-                                SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
+                                SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker, gp, gn)
             end
         end
     

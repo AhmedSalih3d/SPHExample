@@ -91,6 +91,8 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
     Velocity        = zeros(PositionType, NumberOfPoints)
     Kernel          = zeros(PositionUnderlyingType, NumberOfPoints)
     KernelGradient  = zeros(PositionType, NumberOfPoints)
+    GhostPoints     = zeros(PositionType, NumberOfPoints)
+    GhostNormals    = zeros(PositionType, NumberOfPoints)
 
 
 
@@ -98,7 +100,7 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
     
     Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
 
-    SimParticles = StructArray((Cells = Cells, Kernel = Kernel, KernelGradient = KernelGradient, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = collect(1:NumberOfPoints) , Type = Types, GroupMarker = GroupMarker))
+    SimParticles = StructArray((Cells = Cells, Kernel = Kernel, KernelGradient = KernelGradient, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = collect(1:NumberOfPoints) , Type = Types, GroupMarker = GroupMarker, GhostPoints = GhostPoints, GhostNormals=GhostNormals))
 
     return SimParticles
 end
@@ -154,23 +156,23 @@ function AllocateThreadedArrays(SimMetaData, SimParticles, dρdtI, ∇Cᵢ, ∇�
     return SimThreadedArrays
 end
 
-function LoadBoundaryNormals(dims, float_type, path_mdbc)
+function LoadBoundaryNormals(::Val{D}, ::Type{T}, path_mdbc) where {D, T}
     # Read the CSV file into a DataFrame
     df = CSV.read(path_mdbc, DataFrame)
 
-    normals       = Vector{SVector{dims,float_type}}()
-    points        = Vector{SVector{dims,float_type}}()
-    ghost_points  = Vector{SVector{dims,float_type}}()
+    normals       = Vector{SVector{D,T}}()
+    points        = Vector{SVector{D,T}}()
+    ghost_points  = Vector{SVector{D,T}}()
 
     # Loop over each row of the DataFrame
-    for i in eachindex(df)
+    for df_ in eachrow(df)
         # Extract the "Normal" fields into an SVector
-        if dims == 3
-            normal = SVector{dims,float_type}(df[i, "Normal:0"], df[i, "Normal:1"], df[i, "Normal:2"])
-            point  = SVector{dims,float_type}(df[i, "Points:0"], df[i, "Points:1"], df[i, "Points:2"])
-        elseif dims == 2
-            normal = SVector{dims,float_type}(df[i, "Normal:0"], df[i, "Normal:2"])
-            point  = SVector{dims,float_type}(df[i, "Points:0"], df[i, "Points:2"])
+        if D == 3
+            normal = SVector{D,T}(df_["Normal:0"], df_["Normal:1"], df["Normal:2"])
+            point  = SVector{D,T}(df_["Points:0"], df_["Points:1"], df["Points:2"])
+        elseif D == 2
+            normal = SVector{D,T}(df_["Normal:0"], df_["Normal:2"])
+            point  = SVector{D,T}(df_["Points:0"], df_["Points:2"])
         end
 
         push!(normals, normal)

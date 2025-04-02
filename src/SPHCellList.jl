@@ -506,7 +506,8 @@ using UnicodePlots
         SimMetaData::SimulationMetaData{Dimensions, FloatType},
         SimConstants::SimulationConstants,
         SimLogger::SimulationLogger,
-        SimParticles::StructArray
+        SimParticles::StructArray,
+        path_mdbc::Union{Nothing,String} = nothing
         ) where {Dimensions,FloatType}
 
         # Unpack the relevant simulation meta data
@@ -516,6 +517,16 @@ using UnicodePlots
         TimeSteps = Vector{FloatType}()
         
         dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimParticles.Position)
+
+        if !isnothing(path_mdbc)
+            _, GhostPoints, GhostNormals = LoadBoundaryNormals(Val(Dimensions), FloatType, path_mdbc)
+
+            #TODO: In the future decide on one of the two in shaa Allah
+            for gi ∈ eachindex(GhostPoints)
+                SimParticles.GhostPoints[gi]  = GhostPoints[gi]
+                SimParticles.GhostNormals[gi] = GhostNormals[gi]
+            end
+        end
 
         if !SimMetaData.FlagShifting
             resize!(∇Cᵢ , 0)

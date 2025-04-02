@@ -10,14 +10,14 @@ let
 
     # Assuming SimConstantsWedge is defined somewhere else with the field `dx`
     FixedBoundary = Geometry{Dimensions, FloatType}(
-        CSVFile     = "./input/still_wedge_mdbc/StillWedge_Dp$(SimConstantsWedge.dx)_Bound.csv",
+        CSVFile     = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Bound.csv",
         GroupMarker = 1,
         Type        = Fixed,   # Using the enum value Fixed
         Motion      = nothing
     )
 
     Water = Geometry{Dimensions, FloatType}(
-        CSVFile     = "./input/still_wedge_mdbc/StillWedge_Dp$(SimConstantsWedge.dx)_Fluid.csv",
+        CSVFile     = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Fluid.csv",
         GroupMarker = 2,
         Type        = Fluid,   # Using the enum value Fluid
         Motion      = nothing
@@ -31,10 +31,10 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="StillWedge", 
         SaveLocation="E:/SecondApproach/TESTING_CPU_StillWedge",
-        SimulationTime=0,
+        SimulationTime=1,
         OutputEach=0.01,
         VisualizeInParaview=true,
-        ExportSingleVTKHDF=true ,
+        ExportSingleVTKHDF=true,
         ExportGridCells=true,
         OpenLogFile=false,
         FlagDensityDiffusion=true,
@@ -53,7 +53,8 @@ let
         SimMetaData        = SimMetaDataWedge,
         SimConstants       = SimConstantsWedge,
         SimLogger          = SimLogger,
-        SimParticles       = SimParticles
+        SimParticles       = SimParticles,
+        path_mdbc          = "./input/still_wedge_mdbc/StillWedge_Dp$(SimConstantsWedge.dx)_GhostNodes.csv"
     )
 
     return SimParticles
