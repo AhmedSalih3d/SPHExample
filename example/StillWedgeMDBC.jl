@@ -31,13 +31,13 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="StillWedge", 
         SaveLocation="E:/SecondApproach/TESTING_CPU_StillWedge",
-        SimulationTime=0,
+        SimulationTime=4,
         OutputEach=0.01,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
         ExportGridCells=true,
         OpenLogFile=false,
-        FlagDensityDiffusion=true,
+        # FlagDensityDiffusion=true,
         FlagLinearizedDDT=true,
         FlagOutputKernelValues=false,
         FlagLog=true,
@@ -48,7 +48,7 @@ let
 
     CleanUpSimulationFolder(SimMetaDataWedge.SaveLocation)
 
-    @profview RunSimulation(
+    RunSimulation(
         SimGeometry        = SimulationGeometry,
         SimMetaData        = SimMetaDataWedge,
         SimConstants       = SimConstantsWedge,
@@ -59,5 +59,6 @@ let
 
     return SimParticles
 end
+
 
 

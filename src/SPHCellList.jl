@@ -139,7 +139,7 @@ using UnicodePlots
         return nothing
     end
 
-    function NeighborLoopMDBC!(SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCells, GhostPoints, GhostNormals, ::Val{InverseCutOff}) where InverseCutOff
+    function NeighborLoopMDBC!(SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCells, GhostPoints, GhostNormals,  ParticleType, bᵧ, Aᵧ, ::Val{InverseCutOff}) where InverseCutOff
         
         function map_floor(x)
             # This is different than just doing muladd(x,InverseCutOff,0.5) because it rounds towards zero.
@@ -151,7 +151,12 @@ using UnicodePlots
         # No @threads initially, just to check that algorithm used is correct
         # @threads for iter ∈ eachindex(GhostPoints)
         for iter ∈ eachindex(GhostPoints)
+
             GhostPoint = GhostPoints[iter]
+
+            if iszero(GhostPoint)
+                break
+            end
 
             GhostCellIndex = CartesianIndex(map(map_floor, Tuple(GhostPoint)))
 
@@ -164,7 +169,7 @@ using UnicodePlots
                 EndIndex   = ParticleRanges[UniqueCellsIter+1] - 1
 
                 @inbounds for j = StartIndex:EndIndex
-                    @inline ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, iter, j)
+                    @inline ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, ParticleType, bᵧ, Aᵧ, iter, j)
                 end
 
                 @inbounds for S ∈ Stencil
@@ -177,12 +182,15 @@ using UnicodePlots
                         StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
                         EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
                         @inbounds for j = StartIndex_:EndIndex_
-                            @inline ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, iter, j)
+                            @inline ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, ParticleType, bᵧ, Aᵧ, iter, j)
                         end
                     end
                 end
             end
         end
+
+        # println(bᵧ)
+        # println(Aᵧ)
         
         return nothing
     end
@@ -341,33 +349,56 @@ using UnicodePlots
         return nothing
     end
 
-    function ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, i, j)
+    function ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, ParticleType, bᵧ, Aᵧ, i, j)
         @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues, FlagLinearizedDDT = SimMetaData
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, γ, g, c₀, δᵩ, η², H², Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
-
+    
         # ᵢ is ghost node! j is fluid node
 
-        xᵢⱼ  = Position[i] - Position[j]
-        xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)              
-        if  xᵢⱼ² <= H²
-            #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/2
-            dᵢⱼ       = sqrt(abs(xᵢⱼ²))
-            q         = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0) 
-
-            ρᵢ        = Density[i]
-            ρⱼ        = Density[j]
-
-            xⱼᵢ       = Position[j] - Position[i]
-
-            Wᵢⱼ       = @fastpow αD*(1-q/2)^4*(2*q + 1)
-            ∇ᵢWᵢⱼ     = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ
-            
-            Vⱼ          = m₀ / ρⱼ
-
-            VⱼWᵢⱼ       = Vⱼ * Wᵢⱼ
-            Vⱼ∇ᵢWᵢⱼ     = Vⱼ * ∇ᵢWᵢⱼ        
+        if ParticleType[j] !== Fluid
+            return nothing
         end
-
+    
+        xᵢⱼ  = Position[i] - Position[j]
+        xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
+        if xᵢⱼ² <= H²
+            dᵢⱼ = sqrt(abs(xᵢⱼ²))
+            q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
+    
+            # ρᵢ = Density[i]
+            ρⱼ = Density[j]
+    
+            xⱼᵢ = Position[j] - Position[i]
+    
+            Wᵢⱼ = @fastpow αD * (1 - q / 2)^4 * (2 * q + 1)
+            ∇ᵢWᵢⱼ = @fastpow (αD * 5 * (q - 2)^3 * q / (8h * (q * h + η²))) * xᵢⱼ
+    
+            Vⱼ = m₀ / ρⱼ
+    
+            VⱼWᵢⱼ = Vⱼ * Wᵢⱼ
+            # Vⱼ∇ᵢWᵢⱼ = Vⱼ * ∇ᵢWᵢⱼ
+    
+            bᵧ_ = SVector{3, Float64}(ρⱼ * VⱼWᵢⱼ,
+                                      ρⱼ * Vⱼ * ∇ᵢWᵢⱼ[1],
+                                      ρⱼ * Vⱼ * ∇ᵢWᵢⱼ[2])
+            bᵧ[i] += bᵧ_
+    
+            x = xⱼᵢ[1]
+            y = xⱼᵢ[2]
+            # z = xⱼᵢ[3]
+            ∂Wx = ∇ᵢWᵢⱼ[1]
+            ∂Wy = ∇ᵢWᵢⱼ[2]
+            # ∂Wz = ∇ᵢWᵢⱼ[3]
+    
+            Aγ_ = @SMatrix [
+                VⱼWᵢⱼ           x * VⱼWᵢⱼ           y * VⱼWᵢⱼ    
+                Vⱼ * ∂Wx        x * Vⱼ * ∂Wx        y * Vⱼ * ∂Wx 
+                Vⱼ * ∂Wy        x * Vⱼ * ∂Wy        y * Vⱼ * ∂Wy 
+            ]
+            Aᵧ[i] += Aγ_
+        end
+        
+    
         return nothing
     end
 
@@ -445,7 +476,9 @@ using UnicodePlots
         return nothing
     end
 
-    function HalfTimeStep(SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
+    using LinearAlgebra
+    isinvertible(x) = issuccess(lu(x, check=false))
+    function HalfTimeStep(SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, GhostPoints, GhostNormals, bᵧ, Aᵧ, dt₂)
         Position       = SimParticles.Position
         Density        = SimParticles.Density
         Velocity       = SimParticles.Velocity
@@ -458,6 +491,26 @@ using UnicodePlots
             Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
             Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
             ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
+        end
+
+        @inbounds for i in eachindex(GhostPoints)
+
+            if !iszero(bᵧ[i]) & isinvertible(Aᵧ[i]')
+                GhostPointDensity = bᵧ[i]' * inv(Aᵧ[i]')
+
+                ρ_g = first(GhostPointDensity)
+                # println(bᵧ[i])
+                # println(Aᵧ[i])
+
+                if isnan(ρ_g) || isnan(GhostPointDensity[2]) || isnan(GhostPointDensity[3]) || ρ_g >= 700 ||  ρ_g <= 1300
+                    break
+                else
+                    println(GhostPointDensity)
+                    ρₙ⁺[i]            = ρ_g + dot(GhostNormals[i], GhostPointDensity[2:end])
+                end
+                
+            end
+
         end
 
         return nothing
@@ -550,14 +603,16 @@ using UnicodePlots
                 ###===
             
                 @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-                @timeit SimMetaData.HourGlass "04 First NeighborLoopMDBC"            NeighborLoopMDBC!(SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCells, GhostPoints, GhostNormals, InverseCutOff)
+                @timeit SimMetaData.HourGlass "04 First NeighborLoopMDBC"            NeighborLoopMDBC!(SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCells, GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ, InverseCutOff)
                 @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
                 @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
             end
 
-            @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"           HalfTimeStep(SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
+            @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"           HalfTimeStep(SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, GhostPoints, GhostNormals, bᵧ, Aᵧ, dt₂)
             
-            @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"       LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+            bᵧ .*= 0.0; Aᵧ .*= 0.0; 
+
+            # @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"       LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
         
             ###=== Second step of resetting arrays
             @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
