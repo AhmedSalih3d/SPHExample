@@ -357,6 +357,8 @@ using UnicodePlots
             ρᵢ        = Density[i]
             ρⱼ        = Density[j]
 
+            xⱼᵢ       = Position[j] - Position[i]
+
             Wᵢⱼ       = @fastpow αD*(1-q/2)^4*(2*q + 1)
             ∇ᵢWᵢⱼ     = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ
             
@@ -504,7 +506,7 @@ using UnicodePlots
         return nothing
     end
     
-    @inbounds function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, InverseCutOff)
+    @inbounds function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ,  bᵧ, Aᵧ, MotionDefinition, InverseCutOff)
         Position       = SimParticles.Position
         Density        = SimParticles.Density
         Pressure       = SimParticles.Pressure
@@ -598,6 +600,9 @@ using UnicodePlots
         
         dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimParticles.Position)
 
+        bᵧ = zeros(SVector{Dimensions + 1,FloatType}, length(SimParticles.Position))
+        Aᵧ = zeros(SMatrix{Dimensions + 1, Dimensions + 1, FloatType}, length(SimParticles.Position))
+
         if !isnothing(path_mdbc)
             _, GhostPoints, GhostNormals = LoadBoundaryNormals(Val(Dimensions), FloatType, path_mdbc)
 
@@ -654,7 +659,7 @@ using UnicodePlots
     
         @inbounds while true
     
-            @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, InverseCutOff)
+            @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, bᵧ, Aᵧ, MotionDefinition, InverseCutOff)
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
     
             SimMetaData.OutputIterationCounter += 1
