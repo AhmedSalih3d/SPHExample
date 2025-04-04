@@ -37,7 +37,7 @@ let
         ExportSingleVTKHDF=true,
         ExportGridCells=true,
         OpenLogFile=false,
-        # FlagDensityDiffusion=true,
+        FlagDensityDiffusion=true,
         FlagLinearizedDDT=true,
         FlagOutputKernelValues=false,
         FlagLog=true,
@@ -48,7 +48,7 @@ let
 
     CleanUpSimulationFolder(SimMetaDataWedge.SaveLocation)
 
-    RunSimulation(
+    @profview RunSimulation(
         SimGeometry        = SimulationGeometry,
         SimMetaData        = SimMetaDataWedge,
         SimConstants       = SimConstantsWedge,

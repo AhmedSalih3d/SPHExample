@@ -150,42 +150,58 @@ using UnicodePlots
 
         # No @threads initially, just to check that algorithm used is correct
         # @threads for iter ∈ eachindex(GhostPoints)
-        for iter ∈ eachindex(GhostPoints)
+        for iter ∈ eachindex(Position)
 
             GhostPoint = GhostPoints[iter]
 
-            if iszero(GhostPoint)
-                break
-            end
+            # println("iter:", iter, "| GhostPoint:", GhostPoint)
 
-            GhostCellIndex = CartesianIndex(map(map_floor, Tuple(GhostPoint)))
+            
+            if !iszero(GhostPoint)
+    
+                
 
-            CellIndex = searchsorted(UniqueCells, GhostCellIndex)
+                GhostCellIndex = CartesianIndex(map(map_floor, Tuple(GhostPoint)))
 
-            UniqueCellsIter = first(CellIndex)
+                # println("GhostPoint:" , GhostPoint, "| GhostCellIndex:", GhostCellIndex)
 
-            if length(CellIndex) != 0
-                StartIndex = ParticleRanges[UniqueCellsIter]
-                EndIndex   = ParticleRanges[UniqueCellsIter+1] - 1
+                CellIndex = searchsorted(UniqueCells, GhostCellIndex)
 
-                @inbounds for j = StartIndex:EndIndex
-                    @inline ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, ParticleType, bᵧ, Aᵧ, iter, j)
-                end
 
-                @inbounds for S ∈ Stencil
-                    SCellIndex = GhostCellIndex + S
-                    # Returns a range, x:x for exact match and x:(x-1) for no match
-                    # utilizes that it is a sorted array and requires no isequal constructor,
-                    # so I prefer this for now
-                    NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
-                    if length(NeighborCellIndex) != 0
-                        StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
-                        EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
-                        @inbounds for j = StartIndex_:EndIndex_
-                            @inline ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, ParticleType, bᵧ, Aᵧ, iter, j)
+                if length(CellIndex) != 0
+                    UniqueCellsIter = first(CellIndex)
+                    StartIndex = ParticleRanges[UniqueCellsIter]
+                    EndIndex   = ParticleRanges[UniqueCellsIter+1] - 1
+
+                    # println("CellIndex:", CellIndex, "StartIndex:", StartIndex, "| EndIndex:", EndIndex, "| UniqueCellsIter:", UniqueCellsIter)
+
+                    @inbounds for j = StartIndex:EndIndex
+                        @inline ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, ParticleType, bᵧ, Aᵧ, iter, j)
+                    end
+
+                    
+
+                    @inbounds for S ∈ Stencil
+                        SCellIndex = GhostCellIndex + S
+                        # Returns a range, x:x for exact match and x:(x-1) for no match
+                        # utilizes that it is a sorted array and requires no isequal constructor,
+                        # so I prefer this for now
+                        NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
+
+                        # println("NeighborCellIndex:", NeighborCellIndex, "| SCellIndex:", SCellIndex)
+
+                        if length(NeighborCellIndex) != 0
+                            StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
+                            EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
+                            @inbounds for j = StartIndex_:EndIndex_
+                                @inline ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, ParticleType, bᵧ, Aᵧ, iter, j)
+                            end
+
+                            
                         end
                     end
                 end
+
             end
         end
 
@@ -355,47 +371,52 @@ using UnicodePlots
     
         # ᵢ is ghost node! j is fluid node
 
-        if ParticleType[j] !== Fluid
-            return nothing
-        end
+        if ParticleType[j] == Fluid
+
+            # println(Position[j])
     
-        xᵢⱼ  = Position[i] - Position[j]
-        xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
-        if xᵢⱼ² <= H²
-            dᵢⱼ = sqrt(abs(xᵢⱼ²))
-            q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
-    
-            # ρᵢ = Density[i]
-            ρⱼ = Density[j]
-    
-            xⱼᵢ = Position[j] - Position[i]
-    
-            Wᵢⱼ = @fastpow αD * (1 - q / 2)^4 * (2 * q + 1)
-            ∇ᵢWᵢⱼ = @fastpow (αD * 5 * (q - 2)^3 * q / (8h * (q * h + η²))) * xᵢⱼ
-    
-            Vⱼ = m₀ / ρⱼ
-    
-            VⱼWᵢⱼ = Vⱼ * Wᵢⱼ
-            # Vⱼ∇ᵢWᵢⱼ = Vⱼ * ∇ᵢWᵢⱼ
-    
-            bᵧ_ = SVector{3, Float64}(ρⱼ * VⱼWᵢⱼ,
-                                      ρⱼ * Vⱼ * ∇ᵢWᵢⱼ[1],
-                                      ρⱼ * Vⱼ * ∇ᵢWᵢⱼ[2])
-            bᵧ[i] += bᵧ_
-    
-            x = xⱼᵢ[1]
-            y = xⱼᵢ[2]
-            # z = xⱼᵢ[3]
-            ∂Wx = ∇ᵢWᵢⱼ[1]
-            ∂Wy = ∇ᵢWᵢⱼ[2]
-            # ∂Wz = ∇ᵢWᵢⱼ[3]
-    
-            Aγ_ = @SMatrix [
-                VⱼWᵢⱼ           x * VⱼWᵢⱼ           y * VⱼWᵢⱼ    
-                Vⱼ * ∂Wx        x * Vⱼ * ∂Wx        y * Vⱼ * ∂Wx 
-                Vⱼ * ∂Wy        x * Vⱼ * ∂Wy        y * Vⱼ * ∂Wy 
-            ]
-            Aᵧ[i] += Aγ_
+            xᵢⱼ  = Position[i] - Position[j]
+            xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
+            if xᵢⱼ² <= H²
+                dᵢⱼ = sqrt(abs(xᵢⱼ²))
+                q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
+        
+                # ρᵢ = Density[i]
+                ρⱼ = Density[j]
+
+                
+        
+        
+                Wᵢⱼ = @fastpow αD * (1 - q / 2)^4 * (2 * q + 1)
+                ∇ᵢWᵢⱼ = @fastpow (αD * 5 * (q - 2)^3 * q / (8h * (q * h + η²))) * -xᵢⱼ
+
+                # rhop1 = m₀*Wᵢⱼ
+                # gradrhop1 = m₀*∇ᵢWᵢⱼ
+        
+                Vⱼ = m₀ / ρⱼ
+        
+                VⱼWᵢⱼ = Vⱼ * Wᵢⱼ
+                # Vⱼ∇ᵢWᵢⱼ = Vⱼ * ∇ᵢWᵢⱼ
+        
+                bᵧ_ = SVector{3, Float64}(ρⱼ * VⱼWᵢⱼ,
+                                        ρⱼ * Vⱼ * ∇ᵢWᵢⱼ[1],
+                                        ρⱼ * Vⱼ * ∇ᵢWᵢⱼ[2])
+                bᵧ[i] += bᵧ_
+        
+                x = -xᵢⱼ[1]
+                y = -xᵢⱼ[2]
+                # z = xⱼᵢ[3]
+                ∂Wx = ∇ᵢWᵢⱼ[1]
+                ∂Wy = ∇ᵢWᵢⱼ[2]
+                # ∂Wz = ∇ᵢWᵢⱼ[3]
+        
+                Aγ_ = @SMatrix [
+                    VⱼWᵢⱼ           x * VⱼWᵢⱼ           y * VⱼWᵢⱼ    
+                    Vⱼ * ∂Wx        x * Vⱼ * ∂Wx        y * Vⱼ * ∂Wx 
+                    Vⱼ * ∂Wy        x * Vⱼ * ∂Wy        y * Vⱼ * ∂Wy 
+                ]
+                Aᵧ[i] += Aγ_
+            end
         end
         
     
@@ -492,23 +513,30 @@ using UnicodePlots
             Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
             ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
         end
+        
 
-        @inbounds for i in eachindex(GhostPoints)
+        @inbounds for i in eachindex(Position)
+            InvA = inv(Aᵧ[i]')
 
-            if !iszero(bᵧ[i]) & isinvertible(Aᵧ[i]')
-                GhostPointDensity = bᵧ[i]' * inv(Aᵧ[i]')
+            if abs(det(Aᵧ[i])) >= 1e-3
+                continue
+            end
 
-                ρ_g = first(GhostPointDensity)
-                # println(bᵧ[i])
-                # println(Aᵧ[i])
+            InfNormA    = opnorm(Aᵧ[i], Inf)
+            InfNormInvA = opnorm(InvA, Inf)
+            condinf     = SimConstants.dx^2 * InfNormA * InfNormInvA
 
-                if isnan(ρ_g) || isnan(GhostPointDensity[2]) || isnan(GhostPointDensity[3]) || ρ_g >= 700 ||  ρ_g <= 1300
-                    break
-                else
-                    println(GhostPointDensity)
-                    ρₙ⁺[i]            = ρ_g + dot(GhostNormals[i], GhostPointDensity[2:end])
+            if condinf <= 50
+                GhostPointDensity = bᵧ[i]' * InvA
+                val = GhostPointDensity[1] + dot(GhostNormals[i], GhostPointDensity[2:end])  #InvA[1,1] * bᵧ[i][1] + InvA[1,2] * bᵧ[i][2] + InvA[1,3] * bᵧ[i][3] # + dot(GhostNormals[i], GhostPointDensity[2:end])
+            else
+                val = first(bᵧ[i]) / first(Aᵧ[i])
+            end
+
+            if !isnan(val)
+                if 700 <= val <= 1300
+                    ρₙ⁺[i] = val
                 end
-                
             end
 
         end
@@ -603,7 +631,7 @@ using UnicodePlots
                 ###===
             
                 @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-                @timeit SimMetaData.HourGlass "04 First NeighborLoopMDBC"            NeighborLoopMDBC!(SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCells, GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ, InverseCutOff)
+                @timeit SimMetaData.HourGlass "04 First NeighborLoopMDBC"            NeighborLoopMDBC!(SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCellsView, GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ, InverseCutOff)
                 @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
                 @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
             end
