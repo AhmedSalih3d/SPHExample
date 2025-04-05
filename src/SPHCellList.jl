@@ -507,19 +507,7 @@ using UnicodePlots
         GravityFactor  = SimParticles.GravityFactor
         MotionLimiter  = SimParticles.MotionLimiter
 
-        # println(sum(GhostKernel))
-
         @inbounds for i in eachindex(Position)
-            Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
-            Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
-            Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
-            ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
-        end
-        
-
-        @inbounds for i in eachindex(Position)
-            ρⱼ   = ρₙ⁺[i]
-
             if GhostKernel[i] >= 0.1
                 if abs(det(Aᵧ[i])) >= 1e-3
                     InvA = inv(Aᵧ[i]')
@@ -529,7 +517,7 @@ using UnicodePlots
 
                     if condinf <= 50
                         GhostPointDensity = bᵧ[i]' * InvA
-                        val = GhostPointDensity[1] + dot(Positionₙ⁺[i] - GhostPoints[i], GhostPointDensity[2:end])  #InvA[1,1] * bᵧ[i][1] + InvA[1,2] * bᵧ[i][2] + InvA[1,3] * bᵧ[i][3] # + dot(GhostNormals[i], GhostPointDensity[2:end])
+                        val = GhostPointDensity[1] + dot(Positionₙ⁺[i] - GhostPoints[i], GhostPointDensity[2:end]) 
                         # println("GhostKernel True: ", val)
                         ρₙ⁺[i] = val
                     else
@@ -537,20 +525,19 @@ using UnicodePlots
                         # println("GhostKernel False: ", val)
                         ρₙ⁺[i] = val
                     end
-
-                    # println("| val:", val, "| ρₙ⁺[i]:", ρₙ⁺[i], "| GhostKernel[i]:", GhostKernel[i])
-                   
+                else
+                    ρₙ⁺[i] = first(bᵧ[i]) / first(Aᵧ[i])
                 end
-                
             else
-                val = max(SimConstants.ρ₀, ρⱼ / first(Aᵧ[i]))
-                if !isnan(val) || !isinf(val)
-                    val = ρₙ⁺[i]
-                end
-                # ρₙ⁺[i] = val
-
-                # println("Else: ", val)
+                ρₙ⁺[i] = max(SimConstants.ρ₀, first(bᵧ[i]) / first(Aᵧ[i]))
             end
+        end
+
+        @inbounds for i in eachindex(Position)
+            Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+            Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
+            Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
+            ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
         end
 
         return nothing
@@ -652,7 +639,7 @@ using UnicodePlots
             
             bᵧ .*= 0.0; Aᵧ .*= 0.0; GhostKernel .= 0.0;
 
-            @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"       LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+            # @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"       LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
         
             ###=== Second step of resetting arrays
             @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
