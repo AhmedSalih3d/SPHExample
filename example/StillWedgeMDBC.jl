@@ -31,13 +31,13 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="StillWedge", 
         SaveLocation="E:/SecondApproach/TESTING_CPU_StillWedge",
-        SimulationTime=4,
+        SimulationTime=0.5,
         OutputEach=0.01,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
         ExportGridCells=true,
         OpenLogFile=false,
-        # FlagDensityDiffusion=true,
+        FlagDensityDiffusion=true,
         FlagLinearizedDDT=true,
         FlagOutputKernelValues=false,
         FlagLog=true,
@@ -55,7 +55,7 @@ let
         SimConstants       = SimConstantsWedge,
         SimLogger          = SimLogger,
         SimParticles       = SimParticles,
-        path_mdbc          = "./input/still_wedge_mdbc/StillWedge_Dp$(SimConstantsWedge.dx)_GhostNodes.csv"
+        path_mdbc          = "./input/still_wedge_mdbc/StillWedge_Dp$(SimConstantsWedge.dx)_GhostNodes_Correct.csv"
     )
 
     return SimParticles

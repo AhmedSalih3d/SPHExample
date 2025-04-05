@@ -497,8 +497,6 @@ using UnicodePlots
         return nothing
     end
 
-    using LinearAlgebra
-    isinvertible(x) = issuccess(lu(x, check=false))
     function HalfTimeStep(SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, GhostPoints, GhostNormals, GhostKernel, bᵧ, Aᵧ, dt₂)
         Position       = SimParticles.Position
         Density        = SimParticles.Density
@@ -600,6 +598,10 @@ using UnicodePlots
         GhostNormals   = SimParticles.GhostNormals
 
         ###
+
+        if SimMetaData.FlagMDBCSimple
+            bᵧ .*= 0.0; Aᵧ .*= 0.0; GhostKernel .= 0.0;
+        end
         
         while SimMetaData.TotalTime <= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
             @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
@@ -636,12 +638,8 @@ using UnicodePlots
             end
 
             @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"           HalfTimeStep(SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, GhostPoints, GhostNormals, GhostKernel, bᵧ, Aᵧ, dt₂)
-            
-            if SimMetaData.FlagMDBCSimple
-                bᵧ .*= 0.0; Aᵧ .*= 0.0; GhostKernel .= 0.0;
-            end
 
-            # @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"       LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+            @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"       LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
         
             ###=== Second step of resetting arrays
             @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
@@ -686,7 +684,9 @@ using UnicodePlots
 
         bᵧ = zeros(SVector{Dimensions + 1,FloatType}, length(SimParticles.Position))
         Aᵧ = zeros(SMatrix{Dimensions + 1, Dimensions + 1, FloatType}, length(SimParticles.Position))
-        GhostKernel = zeros(FloatType, length(SimParticles.Position))
+        # GhostKernel = zeros(FloatType, length(SimParticles.Position))
+
+        GhostKernel = SimParticles.GhostKernel
 
         if !isnothing(path_mdbc)
             _, GhostPoints, GhostNormals = LoadBoundaryNormals(Val(Dimensions), FloatType, path_mdbc)

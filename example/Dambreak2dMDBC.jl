@@ -30,7 +30,7 @@ let
     SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=2,
+        SimulationTime=0.5,
         OutputEach=0.01,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
@@ -38,7 +38,7 @@ let
         FlagDensityDiffusion=true,
         FlagLinearizedDDT=true,
         FlagOutputKernelValues=false,
-        FlagMDBCSimple=true,
+        FlagMDBCSimple=false,
         FlagLog=true
     )
 
@@ -47,12 +47,12 @@ let
 
     CleanUpSimulationFolder(SimMetaDataDambreak.SaveLocation)
 
-    RunSimulation(
+    @profview RunSimulation(
         SimGeometry        = SimulationGeometry,
         SimMetaData        = SimMetaDataDambreak,
         SimConstants       = SimConstantsDambreak,
         SimLogger          = SimLogger,
         SimParticles       = SimParticles,
-        path_mdbc          = "./input/dam_break_2d/DamBreak2d_Dp0.02_MDBC_GhostNodes_ThreeLayers.csv" 
+        path_mdbc          = "./input/dam_break_2d/DamBreak2d_Dp0.02_MDBC_GhostNodes_ThreeLayers_Correct.csv" 
     )
 end
