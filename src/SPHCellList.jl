@@ -141,6 +141,8 @@ using UnicodePlots
 
     function NeighborLoopMDBC!(SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCells, GhostPoints, GhostNormals,  ParticleType, bᵧ, Aᵧ, GhostKernel, ::Val{InverseCutOff}) where InverseCutOff
         
+        FullStencil = CartesianIndices(ntuple(_->-1:1, 2))
+
         function map_floor(x)
             # This is different than just doing muladd(x,InverseCutOff,0.5) because it rounds towards zero.
             # Consider -1.7 + 0.5, this would give -1.2 and then trunced 1, but we want -2, therefore absolute addition before hand
@@ -178,7 +180,7 @@ using UnicodePlots
                         @inline ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, ParticleType,  GhostPoints, GhostKernel, bᵧ, Aᵧ, iter, j)
                     end
 
-                    @inbounds for S ∈ Stencil
+                    @inbounds for S ∈ FullStencil
                         SCellIndex = UniqueCells[UniqueCellsIter] + S
                         # Returns a range, x:x for exact match and x:(x-1) for no match
                         # utilizes that it is a sorted array and requires no isequal constructor,
