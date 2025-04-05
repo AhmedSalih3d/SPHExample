@@ -16,12 +16,14 @@ function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, parti
     density      = Vector{T}()
     types        = Vector{ParticleType}()
     group_marker = Vector{Int}()
+    idp          = Vector{Int}()
 
     for DF ∈ eachrow(DF_SPECIFIC)
         P1   = DF["Points:0"]
         P2   = DF["Points:1"]
         P3   = DF["Points:2"]
         Rhop = DF["Rhop"]
+        Idp  = DF["Idp"] + 1
 
         point = if D == 3
             SVector{3,T}(P1, P2, P3)
@@ -33,9 +35,10 @@ function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, parti
         push!(density, Rhop)
         push!(types,   particle_type)
         push!(group_marker, particle_group_marker)
+        push!(idp, Idp)
     end
 
-    return points, density, types, group_marker
+    return points, density, types, group_marker, idp
 end
 
 function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, FloatType}}) where {Dimensions, FloatType}
@@ -43,6 +46,7 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
     Density     = Vector{FloatType}()
     Types       = Vector{ParticleType}()
     GroupMarker = Vector{UInt}()
+    Idp         = Vector{Int}()
     
     for geom in SimGeometry
         particle_type         = geom.Type
@@ -50,13 +54,14 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
         specific_csv          = geom.CSVFile
     
         # Assuming LoadSpecificCSV is already defined and works with these arguments
-        points, density, types, group_marker = LoadSpecificCSV(Val(Dimensions), FloatType, particle_type, particle_group_marker, specific_csv)
+        points, density, types, group_marker, idp = LoadSpecificCSV(Val(Dimensions), FloatType, particle_type, particle_group_marker, specific_csv)
     
         # Concatenate the results to the respective arrays
         Position    = vcat(Position    , points)
         Density     = vcat(Density     , density)
         Types       = vcat(Types       , types)
         GroupMarker = vcat(GroupMarker , group_marker)
+        Idp         = vcat(Idp         , idp)
     end
 
     NumberOfPoints           = length(Position)
@@ -101,7 +106,10 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
     
     Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
 
-    SimParticles = StructArray((Cells = Cells, Kernel = Kernel, KernelGradient = KernelGradient, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = collect(1:NumberOfPoints) , Type = Types, GroupMarker = GroupMarker, GhostPoints = GhostPoints, GhostNormals=GhostNormals, GhostKernel=GhostKernel))
+    # SimParticles = StructArray((Cells = Cells, Kernel = Kernel, KernelGradient = KernelGradient, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = collect(1:NumberOfPoints) , Type = Types, GroupMarker = GroupMarker, GhostPoints = GhostPoints, GhostNormals=GhostNormals, GhostKernel=GhostKernel))
+    SimParticles = StructArray((Cells = Cells, Kernel = Kernel, KernelGradient = KernelGradient, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = Idp , Type = Types, GroupMarker = GroupMarker, GhostPoints = GhostPoints, GhostNormals=GhostNormals, GhostKernel=GhostKernel))
+
+    sort!(SimParticles, by = p -> p.ID)
 
     return SimParticles
 end

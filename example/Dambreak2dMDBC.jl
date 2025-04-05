@@ -53,6 +53,7 @@ let
         SimConstants       = SimConstantsDambreak,
         SimLogger          = SimLogger,
         SimParticles       = SimParticles,
-        path_mdbc          = "./input/dam_break_2d/DamBreak2d_Dp0.02_MDBC_GhostNodes_ThreeLayers_Correct.csv" 
+        # path_mdbc          = "./input/dam_break_2d/DamBreak2d_Dp0.02_MDBC_GhostNodes_ThreeLayers.csv" 
+        path_mdbc          = "./input/dam_break_2d/test.csv"
     )
 end
