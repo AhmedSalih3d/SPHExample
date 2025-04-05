@@ -38,7 +38,7 @@ let
         FlagDensityDiffusion=true,
         FlagLinearizedDDT=true,
         FlagOutputKernelValues=false,
-        FlagMDBCSimple=false,
+        FlagMDBCSimple=true,
         FlagLog=true
     )
 

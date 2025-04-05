@@ -150,7 +150,7 @@ using UnicodePlots
 
         # No @threads initially, just to check that algorithm used is correct
         # @threads for iter ∈ eachindex(GhostPoints)
-        for iter ∈ eachindex(Position)
+        for iter ∈ eachindex(GhostPoints)
 
             GhostPoint = GhostPoints[iter]
 
@@ -160,7 +160,6 @@ using UnicodePlots
             if !iszero(GhostPoint)
     
                 
-
                 GhostCellIndex = CartesianIndex(map(map_floor, Tuple(GhostPoint)))
 
                 # println("GhostPoint:" , GhostPoint, "| GhostCellIndex:", GhostCellIndex)
@@ -176,13 +175,11 @@ using UnicodePlots
                     # println("CellIndex:", CellIndex, "StartIndex:", StartIndex, "| EndIndex:", EndIndex, "| UniqueCellsIter:", UniqueCellsIter)
 
                     @inbounds for j = StartIndex:EndIndex
-                        @inline ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, ParticleType, GhostKernel, bᵧ, Aᵧ, iter, j)
+                        @inline ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, ParticleType,  GhostPoints, GhostKernel, bᵧ, Aᵧ, iter, j)
                     end
 
-                    
-
                     @inbounds for S ∈ Stencil
-                        SCellIndex = GhostCellIndex + S
+                        SCellIndex = UniqueCells[UniqueCellsIter] + S
                         # Returns a range, x:x for exact match and x:(x-1) for no match
                         # utilizes that it is a sorted array and requires no isequal constructor,
                         # so I prefer this for now
@@ -194,9 +191,8 @@ using UnicodePlots
                             StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
                             EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
                             @inbounds for j = StartIndex_:EndIndex_
-                                @inline ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, ParticleType, GhostKernel, bᵧ, Aᵧ, iter, j)
+                                @inline ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, ParticleType,  GhostPoints, GhostKernel, bᵧ, Aᵧ, iter, j)
                             end
-
                             
                         end
                     end
@@ -365,7 +361,7 @@ using UnicodePlots
         return nothing
     end
 
-    function ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, ParticleType, GhostKernel, bᵧ, Aᵧ, i, j)
+    function ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, ParticleType, GhostPoints, GhostKernel, bᵧ, Aᵧ, i, j)
         @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues, FlagLinearizedDDT = SimMetaData
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, γ, g, c₀, δᵩ, η², H², Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
     
@@ -375,7 +371,8 @@ using UnicodePlots
 
             # println(Position[j])
     
-            xᵢⱼ  = Position[i] - Position[j]
+            xᵢⱼ  = GhostPoints[i] - Position[j]
+
             xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
             if xᵢⱼ² <= H²
                 dᵢⱼ = sqrt(abs(xᵢⱼ²))
