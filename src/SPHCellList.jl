@@ -652,7 +652,7 @@ using UnicodePlots
             
             bᵧ .*= 0.0; Aᵧ .*= 0.0; GhostKernel .= 0.0;
 
-            # @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"       LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+            @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"       LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
         
             ###=== Second step of resetting arrays
             @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
