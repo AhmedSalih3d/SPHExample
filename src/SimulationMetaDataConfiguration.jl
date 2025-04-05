@@ -31,6 +31,7 @@ export SimulationMetaData
     FlagLog::Bool                           = false
     FlagShifting::Bool                      = false
     FlagSingleStepTimeStepping::Bool        = false
+    FlagMDBCSimple::Bool                    = false
 end
 
 end

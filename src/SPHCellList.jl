@@ -518,11 +518,9 @@ using UnicodePlots
                     if condinf <= 50
                         GhostPointDensity = bᵧ[i]' * InvA
                         val = GhostPointDensity[1] + dot(Positionₙ⁺[i] - GhostPoints[i], GhostPointDensity[2:end]) 
-                        # println("GhostKernel True: ", val)
                         ρₙ⁺[i] = val
                     else
                         val = first(bᵧ[i]) / first(Aᵧ[i])
-                        # println("GhostKernel False: ", val)
                         ρₙ⁺[i] = val
                     end
                 else
@@ -630,14 +628,18 @@ using UnicodePlots
                 ###===
             
                 @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-                @timeit SimMetaData.HourGlass "04 First NeighborLoopMDBC"            NeighborLoopMDBC!(SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCellsView, GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ, GhostKernel, InverseCutOff)
+                if SimMetaData.FlagMDBCSimple
+                    @timeit SimMetaData.HourGlass "04 First NeighborLoopMDBC"            NeighborLoopMDBC!(SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCellsView, GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ, GhostKernel, InverseCutOff)
+                end
                 @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
                 @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
             end
 
             @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"           HalfTimeStep(SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, GhostPoints, GhostNormals, GhostKernel, bᵧ, Aᵧ, dt₂)
             
-            bᵧ .*= 0.0; Aᵧ .*= 0.0; GhostKernel .= 0.0;
+            if SimMetaData.FlagMDBCSimple
+                bᵧ .*= 0.0; Aᵧ .*= 0.0; GhostKernel .= 0.0;
+            end
 
             # @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"       LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
         
