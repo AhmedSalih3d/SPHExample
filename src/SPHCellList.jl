@@ -518,11 +518,11 @@ using UnicodePlots
         
 
         @inbounds for i in eachindex(Position)
-            InvA = inv(Aᵧ[i]')
             ρⱼ   = ρₙ⁺[i]
 
             if GhostKernel[i] >= 0.1
                 if abs(det(Aᵧ[i])) >= 1e-3
+                    InvA = inv(Aᵧ[i]')
                     InfNormA    = opnorm(Aᵧ[i], Inf)
                     InfNormInvA = opnorm(InvA, Inf)
                     condinf     = SimConstants.dx^2 * InfNormA * InfNormInvA
@@ -531,9 +531,11 @@ using UnicodePlots
                         GhostPointDensity = bᵧ[i]' * InvA
                         val = GhostPointDensity[1] + dot(Positionₙ⁺[i] - GhostPoints[i], GhostPointDensity[2:end])  #InvA[1,1] * bᵧ[i][1] + InvA[1,2] * bᵧ[i][2] + InvA[1,3] * bᵧ[i][3] # + dot(GhostNormals[i], GhostPointDensity[2:end])
                         # println("GhostKernel True: ", val)
+                        ρₙ⁺[i] = val
                     else
                         val = first(bᵧ[i]) / first(Aᵧ[i])
                         # println("GhostKernel False: ", val)
+                        ρₙ⁺[i] = val
                     end
 
                     # println("| val:", val, "| ρₙ⁺[i]:", ρₙ⁺[i], "| GhostKernel[i]:", GhostKernel[i])
@@ -541,20 +543,14 @@ using UnicodePlots
                 end
                 
             else
-                val = SimConstants.ρ₀ #max(SimConstants.ρ₀, ρⱼ / first(Aᵧ[i]))
+                val = max(SimConstants.ρ₀, ρⱼ / first(Aᵧ[i]))
+                if !isnan(val) || !isinf(val)
+                    val = ρₙ⁺[i]
+                end
+                # ρₙ⁺[i] = val
 
                 # println("Else: ", val)
             end
-
-           
-            # ρₙ⁺[i] = val
-
-            # if !isnan(val)
-            #     if 700 <= val <= 1300
-            #         ρₙ⁺[i] = val
-            #     end
-            # end
-
         end
 
         return nothing
