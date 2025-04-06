@@ -412,7 +412,7 @@ using LinearAlgebra
         end
     end
 
-    function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+    function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ, bᵧ, Aᵧ1, Aᵧ2, Aᵧ3)
         
         ResetArrays!(dρdtI, Acceleration)
 
@@ -422,6 +422,10 @@ using LinearAlgebra
 
         if SimMetaData.FlagShifting
             ResetArrays!(∇Cᵢ, ∇◌rᵢ)
+        end
+
+        if SimMetaData.FlagMDBCSimple 
+            ResetArrays!(bᵧ, Aᵧ1, Aᵧ2, Aᵧ3)
         end
 
         foreachfield(f -> map!(v -> fill!(v, zero(eltype(v))), f, f), SimThreadedArrays)
@@ -485,7 +489,6 @@ using LinearAlgebra
             A = SMatrix{3, 3, Float64}(Aᵧ1[i][1], Aᵧ1[i][2], Aᵧ1[i][3],
                                        Aᵧ2[i][1], Aᵧ2[i][2], Aᵧ2[i][3],
                                        Aᵧ3[i][1], Aᵧ3[i][2], Aᵧ3[i][3])
-            # A = Aᵧ[i]
             if abs(det(A)) >= 1e-3
                     GhostPointDensity = A \ bᵧ[i]
                     v1 = first(GhostPointDensity) + dot(SimParticles.Position[i] - GhostPoints[i], GhostPointDensity[2:end])
@@ -570,12 +573,6 @@ using LinearAlgebra
         
         while SimMetaData.TotalTime <= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
 
-
-            if SimMetaData.FlagMDBCSimple
-                bᵧ .*= 0.0; Aᵧ .*= 0.0; GhostKernel .= 0.0; 
-                ResetArrays!(Aᵧ1, Aᵧ2, Aᵧ3)
-            end
-
             @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
             dt₂ = dt * 0.5
 
@@ -598,7 +595,7 @@ using LinearAlgebra
         
             if !SimMetaData.FlagSingleStepTimeStepping
                 ###=== First step of resetting arrays
-                @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+                @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ, bᵧ, Aᵧ1, Aᵧ2, Aᵧ3)
                 ###===
             
                 @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
@@ -614,7 +611,7 @@ using LinearAlgebra
             @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"       LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
         
             ###=== Second step of resetting arrays
-            @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+            @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ, bᵧ, Aᵧ1, Aᵧ2, Aᵧ3)
             ###===
 
             @timeit SimMetaData.HourGlass "Motion"                               ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
