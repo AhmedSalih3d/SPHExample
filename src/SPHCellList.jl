@@ -402,9 +402,9 @@ using LinearAlgebra
                 GhostKernel[i] += VⱼWᵢⱼ
                 # Vⱼ∇ᵢWᵢⱼ = Vⱼ * ∇ᵢWᵢⱼ
         
-                bᵧ_ = SVector{3, Float64}(ρⱼ * VⱼWᵢⱼ,
-                                        ρⱼ * Vⱼ * ∇ᵢWᵢⱼ[1],
-                                        ρⱼ * Vⱼ * ∇ᵢWᵢⱼ[2])
+                bᵧ_ = SVector{3, Float64}(m₀ * Wᵢⱼ,
+                                        m₀ * ∇ᵢWᵢⱼ[1],
+                                        m₀ * ∇ᵢWᵢⱼ[2])
                 bᵧ[i] += bᵧ_
         
                 x = -xᵢⱼ[1]
