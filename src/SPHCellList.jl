@@ -517,6 +517,16 @@ using LinearAlgebra
 
         ρ₀ = SimConstants.ρ₀
 
+        @inbounds for i in eachindex(Position)
+            Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+            Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
+            Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
+            # if SimParticles.Type[i] == Fluid
+                ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
+            # end
+        end
+
+
         #https://github.com/DualSPHysics/DualSPHysics/blob/f4fa76ad5083873fa1c6dd3b26cdce89c55a9aeb/src/source/JSphCpu_mdbc.cpp#L347
         @inbounds for i in eachindex(Position)
             # if GhostKernel[i] >= 0.1
@@ -544,7 +554,7 @@ using LinearAlgebra
                     #     ρₙ⁺[i] = first(bᵧ[i]) / Aᵧ[i][1,1]
                     # end
 
-                else
+                elseif Aᵧ[i][1,1] > 0.0
                     v = first(bᵧ[i]) / first(Aᵧ[i])
                     if !isnan(v)
                         ρₙ⁺[i] = v
@@ -559,14 +569,6 @@ using LinearAlgebra
             # end
         end
 
-        @inbounds for i in eachindex(Position)
-            Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
-            Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
-            Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
-            if SimParticles.Type[i] == Fluid
-                ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
-            end
-        end
 
 
         return nothing
@@ -675,7 +677,7 @@ using LinearAlgebra
 
             @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"           HalfTimeStep(SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, GhostPoints, GhostNormals, GhostKernel, bᵧ, Aᵧ, dt₂)
 
-            @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"       LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+            # @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"       LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
         
             ###=== Second step of resetting arrays
             @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
