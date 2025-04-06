@@ -392,9 +392,6 @@ using LinearAlgebra
 
                 ∇ᵢWᵢⱼ = @fastpow (αD * 5 * (q - 2)^3 * q / (8h * (q * h + η²))) * -xᵢⱼ
 
-                # rhop1 = m₀*Wᵢⱼ
-                # gradrhop1 = m₀*∇ᵢWᵢⱼ
-        
                 Vⱼ = m₀ / ρⱼ
         
                 VⱼWᵢⱼ = Vⱼ * Wᵢⱼ
@@ -530,31 +527,39 @@ using LinearAlgebra
         #https://github.com/DualSPHysics/DualSPHysics/blob/f4fa76ad5083873fa1c6dd3b26cdce89c55a9aeb/src/source/JSphCpu_mdbc.cpp#L347
         @inbounds for i in eachindex(Position)
             # if GhostKernel[i] >= 0.1
+                val = 0.0
                 if abs(det(Aᵧ[i])) >= 1e-3
-                    # InvA = inv(Aᵧ[i])
+                    InvA = inv(Aᵧ[i])
                     # InfNormA    = opnorm(Aᵧ[i], Inf)
                     # InfNormInvA = opnorm(InvA, Inf)
                     # condinf     = SimConstants.dx^2 * InfNormA * InfNormInvA
 
                     # if condinf <= 50
-                        GhostPointDensity = Aᵧ[i] \ bᵧ[i]
-                        v1 = first(GhostPointDensity) + dot(Positionₙ⁺[i] - GhostPoints[i], GhostPointDensity[2:end])
+                        # GhostPointDensity = Aᵧ[i] \ bᵧ[i]
+                        # v1 = first(GhostPointDensity) + dot(Positionₙ⁺[i] - GhostPoints[i], GhostPointDensity[2:end])
 
+                        rhoghost = InvA[1,1] * bᵧ[i][1] + InvA[1,2] * bᵧ[i][2] + InvA[1,3] * bᵧ[i][3]
+                        grx      = -(InvA[2,1] * bᵧ[i][1] + InvA[2,2] * bᵧ[i][2] + InvA[2,3] * bᵧ[i][3])
+                        gry      = -(InvA[3,1] * bᵧ[i][1] + InvA[3,2] * bᵧ[i][2] + InvA[3,3] * bᵧ[i][3])
+
+                        x = Positionₙ⁺[i] - GhostPoints[i]
+
+                        v1 = rhoghost + grx*x[1] + gry*x[2]
                         # Almost equal, properly some matrix math
                         # v2 = InvA[1,1] * bᵧ[i][1] + InvA[1,2] * bᵧ[i][2] + InvA[1,3] * bᵧ[i][3]
 
                         # println("v1:", v1, "| v2:", v2)
 
                         if !isnan(v1)
-                            ρₙ⁺[i] = v1
+                            val = v1
                         else
-                            ρₙ⁺[i] = ρ₀
+                            val = ρ₀
                         end
                     # else
                     #     ρₙ⁺[i] = first(bᵧ[i]) / Aᵧ[i][1,1]
                     # end
 
-                elseif Aᵧ[i][1,1] > 0.0
+                elseif first(Aᵧ[i]) > 0.0
                     v = first(bᵧ[i]) / first(Aᵧ[i])
                     if !isnan(v)
                         ρₙ⁺[i] = v
