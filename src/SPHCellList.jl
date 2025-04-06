@@ -28,6 +28,7 @@ using Logging, LoggingExtras
 using HDF5
 using Base.Threads
 using UnicodePlots
+using LinearAlgebra
 
     function ConstructStencil(v::Val{d}) where d
         n_ = CartesianIndices(ntuple(_->-1:1,v))
@@ -166,37 +167,38 @@ using UnicodePlots
 
                 # println("GhostPoint:" , GhostPoint, "| GhostCellIndex:", GhostCellIndex)
 
-                CellIndex = searchsorted(UniqueCells, GhostCellIndex)
+                # CellIndex = searchsorted(UniqueCells, GhostCellIndex)
 
 
-                if length(CellIndex) != 0
-                    UniqueCellsIter = first(CellIndex)
-                    StartIndex = ParticleRanges[UniqueCellsIter]
-                    EndIndex   = ParticleRanges[UniqueCellsIter+1] - 1
+                # if length(CellIndex) != 0
+                #     UniqueCellsIter = first(CellIndex)
+                #     StartIndex = ParticleRanges[UniqueCellsIter]
+                #     EndIndex   = ParticleRanges[UniqueCellsIter+1] - 1
 
-                    # println("CellIndex:", CellIndex, "StartIndex:", StartIndex, "| EndIndex:", EndIndex, "| UniqueCellsIter:", UniqueCellsIter)
+                #     # println("CellIndex:", CellIndex, "StartIndex:", StartIndex, "| EndIndex:", EndIndex, "| UniqueCellsIter:", UniqueCellsIter)
 
-                    @inbounds for j = StartIndex:EndIndex
-                        @inline ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, ParticleType,  GhostPoints, GhostKernel, bᵧ, Aᵧ, iter, j)
-                    end
+                #     @inbounds for j = StartIndex:EndIndex
+                #         @inline ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, ParticleType,  GhostPoints, GhostKernel, bᵧ, Aᵧ, iter, j)
+                #     end
+                # end
 
-                    @inbounds for S ∈ FullStencil
-                        SCellIndex = UniqueCells[UniqueCellsIter] + S
-                        # Returns a range, x:x for exact match and x:(x-1) for no match
-                        # utilizes that it is a sorted array and requires no isequal constructor,
-                        # so I prefer this for now
-                        NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
+                # Some neighbours can potentially be in the neighbouring cells
+                @inbounds for S ∈ FullStencil
+                    SCellIndex = GhostCellIndex + S
+                    # Returns a range, x:x for exact match and x:(x-1) for no match
+                    # utilizes that it is a sorted array and requires no isequal constructor,
+                    # so I prefer this for now
+                    NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
 
-                        # println("NeighborCellIndex:", NeighborCellIndex, "| SCellIndex:", SCellIndex)
+                    # println("NeighborCellIndex:", NeighborCellIndex, "| SCellIndex:", SCellIndex)
 
-                        if length(NeighborCellIndex) != 0
-                            StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
-                            EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
-                            @inbounds for j = StartIndex_:EndIndex_
-                                @inline ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, ParticleType,  GhostPoints, GhostKernel, bᵧ, Aᵧ, iter, j)
-                            end
-                            
+                    if length(NeighborCellIndex) != 0
+                        StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
+                        EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
+                        @inbounds for j = StartIndex_:EndIndex_
+                            @inline ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, ParticleType,  GhostPoints, GhostKernel, bᵧ, Aᵧ, iter, j)
                         end
+                        
                     end
                 end
 
@@ -261,7 +263,7 @@ using UnicodePlots
                 #Ψⱼᵢ   = -Ψᵢⱼ #2(-ρⱼᵢ - ρⱼᵢᴴ) * ( xᵢⱼ) * invd²η²
 
                 MLcond = MotionLimiter[i] * MotionLimiter[j]
-                Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ)# * MLcond
+                Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
                 Dⱼ    =  -Dᵢ #δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
             else
                 Dᵢ  = 0.0
@@ -385,7 +387,8 @@ using UnicodePlots
 
         
                 Wᵢⱼ = @fastpow αD * (1 - q / 2)^4 * (2 * q + 1)
-                GhostKernel[i] += Wᵢⱼ
+
+                # println(Wᵢⱼ)
 
                 ∇ᵢWᵢⱼ = @fastpow (αD * 5 * (q - 2)^3 * q / (8h * (q * h + η²))) * -xᵢⱼ
 
@@ -395,6 +398,8 @@ using UnicodePlots
                 Vⱼ = m₀ / ρⱼ
         
                 VⱼWᵢⱼ = Vⱼ * Wᵢⱼ
+
+                GhostKernel[i] += VⱼWᵢⱼ
                 # Vⱼ∇ᵢWᵢⱼ = Vⱼ * ∇ᵢWᵢⱼ
         
                 bᵧ_ = SVector{3, Float64}(ρⱼ * VⱼWᵢⱼ,
@@ -408,13 +413,10 @@ using UnicodePlots
                 ∂Wx = ∇ᵢWᵢⱼ[1]
                 ∂Wy = ∇ᵢWᵢⱼ[2]
                 # ∂Wz = ∇ᵢWᵢⱼ[3]
-        
-                Aγ_ = @SMatrix [
-                    VⱼWᵢⱼ           x * VⱼWᵢⱼ           y * VⱼWᵢⱼ    
-                    Vⱼ * ∂Wx        x * Vⱼ * ∂Wx        y * Vⱼ * ∂Wx 
-                    Vⱼ * ∂Wy        x * Vⱼ * ∂Wy        y * Vⱼ * ∂Wy 
-                ]
-                Aᵧ[i] += Aγ_
+
+                Aᵧ[i] += SMatrix{3, 3, Float64}(VⱼWᵢⱼ, Vⱼ * ∂Wx, Vⱼ * ∂Wy,
+                x * VⱼWᵢⱼ, x * Vⱼ * ∂Wx, x * Vⱼ * ∂Wy,
+                y * VⱼWᵢⱼ, y * Vⱼ * ∂Wx, y * Vⱼ * ∂Wy)
             end
         end
         
@@ -496,6 +498,15 @@ using UnicodePlots
         return nothing
     end
 
+    # same as opnorm
+    # function mdbc2_inf_norm_3x3(mat)
+    #     row1 = abs(mat[1,1]) + abs(mat[1,2]) + abs(mat[1,3])
+    #     row2 = abs(mat[2,1]) + abs(mat[2,2]) + abs(mat[2,3])
+    #     row3 = abs(mat[3,1]) + abs(mat[3,2]) + abs(mat[3,3])
+    #     return max(row1, max(row2, row3))
+    # end
+    
+
     function HalfTimeStep(SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, GhostPoints, GhostNormals, GhostKernel, bᵧ, Aᵧ, dt₂)
         Position       = SimParticles.Position
         Density        = SimParticles.Density
@@ -507,24 +518,31 @@ using UnicodePlots
         @inbounds for i in eachindex(Position)
             if GhostKernel[i] >= 0.1
                 if abs(det(Aᵧ[i])) >= 1e-3
-                    InvA = inv(Aᵧ[i]')
+                    InvA = inv(Aᵧ[i])
                     InfNormA    = opnorm(Aᵧ[i], Inf)
                     InfNormInvA = opnorm(InvA, Inf)
                     condinf     = SimConstants.dx^2 * InfNormA * InfNormInvA
 
                     if condinf <= 50
-                        GhostPointDensity = bᵧ[i]' * InvA
-                        val = GhostPointDensity[1] + dot(Positionₙ⁺[i] - GhostPoints[i], GhostPointDensity[2:end]) 
-                        ρₙ⁺[i] = val
+                        GhostPointDensity = Aᵧ[i] \ bᵧ[i]
+                        v1 = GhostPointDensity[1] + dot(Positionₙ⁺[i] - GhostPoints[i], GhostPointDensity[2:end])
+
+                        # Almost equal, properly some matrix math
+                        # v2 = InvA[1,1] * bᵧ[i][1] + InvA[1,2] * bᵧ[i][2] + InvA[1,3] * bᵧ[i][3]
+
+                        # println("v1:", v1, "| v2:", v2)
+
+                        ρₙ⁺[i] = v1
                     else
-                        val = first(bᵧ[i]) / first(Aᵧ[i])
-                        ρₙ⁺[i] = val
+                        ρₙ⁺[i] = first(bᵧ[i]) / Aᵧ[i][1,1]
                     end
+
                 else
-                    ρₙ⁺[i] = first(bᵧ[i]) / first(Aᵧ[i])
+                    ρₙ⁺[i] = first(bᵧ[i]) / Aᵧ[i][1,1]
                 end
             else
-                ρₙ⁺[i] = max(SimConstants.ρ₀, first(bᵧ[i]) / first(Aᵧ[i]))
+                # This does not work
+                # ρₙ⁺[i] =  max(SimConstants.ρ₀, first(bᵧ[i]) / first(Aᵧ[i]))
             end
         end
 
@@ -532,8 +550,11 @@ using UnicodePlots
             Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
             Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
             Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
-            ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
+            if SimParticles.Type[i] == Fluid
+                ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
+            end
         end
+
 
         return nothing
     end
@@ -598,11 +619,14 @@ using UnicodePlots
 
         ###
 
-        if SimMetaData.FlagMDBCSimple
-            bᵧ .*= 0.0; Aᵧ .*= 0.0; GhostKernel .= 0.0;
-        end
         
         while SimMetaData.TotalTime <= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
+
+
+            if SimMetaData.FlagMDBCSimple
+                bᵧ .*= 0.0; Aᵧ .*= 0.0; GhostKernel .= 0.0;
+            end
+
             @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
             dt₂ = dt * 0.5
 
@@ -630,7 +654,7 @@ using UnicodePlots
             
                 @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
                 if SimMetaData.FlagMDBCSimple
-                    @timeit SimMetaData.HourGlass "04 First NeighborLoopMDBC"            NeighborLoopMDBC!(SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCellsView, GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ, GhostKernel, InverseCutOff)
+                    @timeit SimMetaData.HourGlass "04 First NeighborLoopMDBC"        NeighborLoopMDBC!(SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCellsView, GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ, GhostKernel, InverseCutOff)
                 end
                 @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
                 @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)

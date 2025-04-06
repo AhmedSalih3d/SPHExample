@@ -25,13 +25,13 @@ let
 
     SimulationGeometry = [FixedBoundary;Water]
     
-    # Load in particles
+    # Load in particles+
     SimParticles = AllocateDataStructures(SimulationGeometry)
 
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="StillWedge", 
         SaveLocation="E:/SecondApproach/TESTING_CPU_StillWedge",
-        SimulationTime=1,
+        SimulationTime=0.5,
         OutputEach=0.01,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
@@ -39,7 +39,7 @@ let
         OpenLogFile=false,
         FlagDensityDiffusion=true,
         FlagLinearizedDDT=true,
-        FlagOutputKernelValues=false,
+        FlagOutputKernelValues=true,
         FlagLog=true,
         FlagShifting=false,
         FlagMDBCSimple=true,
