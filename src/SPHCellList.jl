@@ -263,7 +263,7 @@ using LinearAlgebra
                 #Ψⱼᵢ   = -Ψᵢⱼ #2(-ρⱼᵢ - ρⱼᵢᴴ) * ( xᵢⱼ) * invd²η²
 
                 MLcond = MotionLimiter[i] * MotionLimiter[j]
-                Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) #* MLcond
+                Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
                 Dⱼ    =  -Dᵢ #δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
             else
                 Dᵢ  = 0.0
