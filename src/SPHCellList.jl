@@ -341,7 +341,7 @@ using LinearAlgebra
         return nothing
     end
 
-    function ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, ParticleType, GhostPoints, GhostKernel, bᵧ, Aᵧ, Aᵧ1, Aᵧ2, Aᵧ3, i, j)
+    function ComputeInteractionsMDBC!(SimMetaData::SimulationMetaData{Dimensions, FloatType}, SimConstants, Position, Density, ParticleType, GhostPoints, GhostKernel, bᵧ, Aᵧ, Aᵧ1, Aᵧ2, Aᵧ3, i, j) where {Dimensions, FloatType}
         @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues, FlagLinearizedDDT = SimMetaData
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, γ, g, c₀, δᵩ, η², H², Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
     
@@ -370,9 +370,7 @@ using LinearAlgebra
 
                 GhostKernel[i] += VⱼWᵢⱼ
         
-                bᵧ_ = SVector{3, Float64}(m₀ * Wᵢⱼ,
-                                        m₀ * ∇ᵢWᵢⱼ[1],
-                                        m₀ * ∇ᵢWᵢⱼ[2])
+                bᵧ_ = SVector{Dimensions + 1, FloatType}(m₀ * Wᵢⱼ, (m₀ * ∇ᵢWᵢⱼ)...)
                 bᵧ[i] += bᵧ_
         
                 x = -xᵢⱼ[1]
@@ -386,9 +384,9 @@ using LinearAlgebra
                 # x * VⱼWᵢⱼ, x * Vⱼ * ∂Wx, x * Vⱼ * ∂Wy,
                 # y * VⱼWᵢⱼ, y * Vⱼ * ∂Wx, y * Vⱼ * ∂Wy)
 
-                Aᵧ1[i] += SVector{3, Float64}(VⱼWᵢⱼ, Vⱼ * ∂Wx, Vⱼ * ∂Wy)
-                Aᵧ2[i] += SVector{3, Float64}(x * VⱼWᵢⱼ, x * Vⱼ * ∂Wx, x * Vⱼ * ∂Wy)
-                Aᵧ3[i] += SVector{3, Float64}(y * VⱼWᵢⱼ, y * Vⱼ * ∂Wx, y * Vⱼ * ∂Wy)
+                Aᵧ1[i] += SVector{Dimensions + 1, FloatType}(VⱼWᵢⱼ, Vⱼ * ∂Wx, Vⱼ * ∂Wy)
+                Aᵧ2[i] += SVector{Dimensions + 1, FloatType}(x * VⱼWᵢⱼ, x * Vⱼ * ∂Wx, x * Vⱼ * ∂Wy)
+                Aᵧ3[i] += SVector{Dimensions + 1, FloatType}(y * VⱼWᵢⱼ, y * Vⱼ * ∂Wx, y * Vⱼ * ∂Wy)
             end
         end
         
@@ -486,9 +484,7 @@ using LinearAlgebra
 
         #https://github.com/DualSPHysics/DualSPHysics/blob/f4fa76ad5083873fa1c6dd3b26cdce89c55a9aeb/src/source/JSphCpu_mdbc.cpp#L347
         @inbounds for i in eachindex(Position)
-            A = SMatrix{3, 3, Float64}(Aᵧ1[i][1], Aᵧ1[i][2], Aᵧ1[i][3],
-                                       Aᵧ2[i][1], Aᵧ2[i][2], Aᵧ2[i][3],
-                                       Aᵧ3[i][1], Aᵧ3[i][2], Aᵧ3[i][3])
+            A = SMatrix{3, 3, Float64}(Aᵧ1[i]..., Aᵧ2[i]..., Aᵧ3[i]...)
             if abs(det(A)) >= 1e-3
                     GhostPointDensity = A \ bᵧ[i]
                     v1 = first(GhostPointDensity) + dot(SimParticles.Position[i] - GhostPoints[i], GhostPointDensity[2:end])
