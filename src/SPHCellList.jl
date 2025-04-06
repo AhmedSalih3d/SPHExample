@@ -526,7 +526,7 @@ using LinearAlgebra
 
                     # if condinf <= 50
                         GhostPointDensity = Aᵧ[i] \ bᵧ[i]
-                        v1 = first(GhostPointDensity) + dot(Positionₙ⁺[i] - GhostPoints[i], GhostPointDensity[2:end])
+                        v1 = first(GhostPointDensity) + dot(SimParticles.Position[i] - GhostPoints[i], GhostPointDensity[2:end])
 
                         # rhoghost = InvA[1,1] * bᵧ[i][1] + InvA[1,2] * bᵧ[i][2] + InvA[1,3] * bᵧ[i][3]
                         # grx      = -(InvA[2,1] * bᵧ[i][1] + InvA[2,2] * bᵧ[i][2] + InvA[2,3] * bᵧ[i][3])
@@ -678,7 +678,7 @@ using LinearAlgebra
 
             @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"           HalfTimeStep(SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, GhostPoints, GhostNormals, GhostKernel, bᵧ, Aᵧ, dt₂)
 
-            # @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"       LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+            @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"       LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
         
             ###=== Second step of resetting arrays
             @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
