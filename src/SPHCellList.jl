@@ -156,33 +156,12 @@ using LinearAlgebra
         for iter ∈ eachindex(GhostPoints)
 
             GhostPoint = GhostPoints[iter]
-
-            # println("iter:", iter, "| GhostPoint:", GhostPoint)
-
             
             if !iszero(GhostPoint)
-    
                 
                 GhostCellIndex = CartesianIndex(map(map_floor, Tuple(GhostPoint)))
 
-                # println("GhostPoint:" , GhostPoint, "| GhostCellIndex:", GhostCellIndex)
-
-                # CellIndex = searchsorted(UniqueCells, GhostCellIndex)
-
-
-                # if length(CellIndex) != 0
-                #     UniqueCellsIter = first(CellIndex)
-                #     StartIndex = ParticleRanges[UniqueCellsIter]
-                #     EndIndex   = ParticleRanges[UniqueCellsIter+1] - 1
-
-                #     # println("CellIndex:", CellIndex, "StartIndex:", StartIndex, "| EndIndex:", EndIndex, "| UniqueCellsIter:", UniqueCellsIter)
-
-                #     @inbounds for j = StartIndex:EndIndex
-                #         @inline ComputeInteractionsMDBC!(SimMetaData, SimConstants, Position, Density, ParticleType,  GhostPoints, GhostKernel, bᵧ, Aᵧ, iter, j)
-                #     end
-                # end
-
-                # Some neighbours can potentially be in the neighbouring cells
+                # FullStencil includes Cell I - Some neighbours can potentially be in the neighbouring cells
                 @inbounds for S ∈ FullStencil
                     SCellIndex = GhostCellIndex + S
                     # Returns a range, x:x for exact match and x:(x-1) for no match
@@ -205,9 +184,6 @@ using LinearAlgebra
             end
         end
 
-        # println(bᵧ)
-        # println(Aᵧ)
-        
         return nothing
     end
 
@@ -372,8 +348,6 @@ using LinearAlgebra
         # ᵢ is ghost node! j is fluid node
 
         if ParticleType[j] == Fluid
-
-            # println(Position[j])
     
             xᵢⱼ  = GhostPoints[i] - Position[j]
 
@@ -382,13 +356,11 @@ using LinearAlgebra
                 dᵢⱼ = sqrt(abs(xᵢⱼ²))
                 q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
         
-                # ρᵢ = Density[i]
                 ρⱼ = Density[j]
 
         
                 Wᵢⱼ = @fastpow αD * (1 - q / 2)^4 * (2 * q + 1)
 
-                # println(Wᵢⱼ)
 
                 ∇ᵢWᵢⱼ = @fastpow (αD * 5 * (q - 2)^3 * q / (8h * (q * h + η²))) * -xᵢⱼ
 
@@ -397,7 +369,6 @@ using LinearAlgebra
                 VⱼWᵢⱼ = Vⱼ * Wᵢⱼ
 
                 GhostKernel[i] += VⱼWᵢⱼ
-                # Vⱼ∇ᵢWᵢⱼ = Vⱼ * ∇ᵢWᵢⱼ
         
                 bᵧ_ = SVector{3, Float64}(m₀ * Wᵢⱼ,
                                         m₀ * ∇ᵢWᵢⱼ[1],
@@ -494,16 +465,7 @@ using LinearAlgebra
 
         return nothing
     end
-
-    # same as opnorm
-    # function mdbc2_inf_norm_3x3(mat)
-    #     row1 = abs(mat[1,1]) + abs(mat[1,2]) + abs(mat[1,3])
-    #     row2 = abs(mat[2,1]) + abs(mat[2,2]) + abs(mat[2,3])
-    #     row3 = abs(mat[3,1]) + abs(mat[3,2]) + abs(mat[3,3])
-    #     return max(row1, max(row2, row3))
-    # end
     
-
     function HalfTimeStep(SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, GhostPoints, GhostNormals, GhostKernel, bᵧ, Aᵧ, dt₂)
         Position       = SimParticles.Position
         Density        = SimParticles.Density
@@ -516,59 +478,21 @@ using LinearAlgebra
 
         #https://github.com/DualSPHysics/DualSPHysics/blob/f4fa76ad5083873fa1c6dd3b26cdce89c55a9aeb/src/source/JSphCpu_mdbc.cpp#L347
         @inbounds for i in eachindex(Position)
-            # if GhostKernel[i] >= 0.1
-                val = 0.0
-                if abs(det(Aᵧ[i])) >= 1e-3
-                    InvA = inv(Aᵧ[i])
-                    # InfNormA    = opnorm(Aᵧ[i], Inf)
-                    # InfNormInvA = opnorm(InvA, Inf)
-                    # condinf     = SimConstants.dx^2 * InfNormA * InfNormInvA
-
-                    # if condinf <= 50
-                        GhostPointDensity = Aᵧ[i] \ bᵧ[i]
-                        v1 = first(GhostPointDensity) + dot(SimParticles.Position[i] - GhostPoints[i], GhostPointDensity[2:end])
-
-                        # rhoghost = InvA[1,1] * bᵧ[i][1] + InvA[1,2] * bᵧ[i][2] + InvA[1,3] * bᵧ[i][3]
-                        # grx      = -(InvA[2,1] * bᵧ[i][1] + InvA[2,2] * bᵧ[i][2] + InvA[2,3] * bᵧ[i][3])
-                        # gry      = -(InvA[3,1] * bᵧ[i][1] + InvA[3,2] * bᵧ[i][2] + InvA[3,3] * bᵧ[i][3])
-
-                        # x = Positionₙ⁺[i] - GhostPoints[i]
-
-                        # v1 = rhoghost + grx*x[1] + gry*x[2]
-                        # Almost equal, properly some matrix math
-                        # v2 = InvA[1,1] * bᵧ[i][1] + InvA[1,2] * bᵧ[i][2] + InvA[1,3] * bᵧ[i][3]
-
-                        # println("v1:", v1, "| v2:", v2)
-
-                        if !isnan(v1)
-                            val = v1
-                        else
-                            val = ρ₀
-                        end
-
-                        Density[i] = val
-                elseif first(Aᵧ[i]) > 0.0
+            if abs(det(Aᵧ[i])) >= 1e-3
+                    GhostPointDensity = Aᵧ[i] \ bᵧ[i]
+                    v1 = first(GhostPointDensity) + dot(SimParticles.Position[i] - GhostPoints[i], GhostPointDensity[2:end])
+                    Density[i] = isnan(v1) ? ρ₀ : v1
+            elseif first(Aᵧ[i]) > 0.0
                     v = first(bᵧ[i]) / first(Aᵧ[i])
-                    if !isnan(v)
-                        Density[i] = v
-                    else
-                        Density[i] = ρ₀
-                    end
-                end
-            # end
-            # else
-            #     # This does not work
-            #     ρₙ⁺[i] =  max(SimConstants.ρ₀, first(bᵧ[i]) / first(Aᵧ[i]))
-            # end
+                    Density[i] = isnan(v) ? ρ₀ : v
+            end
         end
 
         @inbounds for i in eachindex(Position)
             Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
             Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
             Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
-            # if SimParticles.Type[i] == Fluid
-                ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
-            # end
+            ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
         end
 
 
