@@ -263,7 +263,7 @@ using LinearAlgebra
                 #Ψⱼᵢ   = -Ψᵢⱼ #2(-ρⱼᵢ - ρⱼᵢᴴ) * ( xᵢⱼ) * invd²η²
 
                 MLcond = MotionLimiter[i] * MotionLimiter[j]
-                Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
+                Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) #* MLcond
                 Dⱼ    =  -Dᵢ #δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
             else
                 Dᵢ  = 0.0
@@ -514,16 +514,6 @@ using LinearAlgebra
 
         ρ₀ = SimConstants.ρ₀
 
-        @inbounds for i in eachindex(Position)
-            Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
-            Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
-            Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
-            # if SimParticles.Type[i] == Fluid
-                ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
-            # end
-        end
-
-
         #https://github.com/DualSPHysics/DualSPHysics/blob/f4fa76ad5083873fa1c6dd3b26cdce89c55a9aeb/src/source/JSphCpu_mdbc.cpp#L347
         @inbounds for i in eachindex(Position)
             # if GhostKernel[i] >= 0.1
@@ -535,16 +525,16 @@ using LinearAlgebra
                     # condinf     = SimConstants.dx^2 * InfNormA * InfNormInvA
 
                     # if condinf <= 50
-                        # GhostPointDensity = Aᵧ[i] \ bᵧ[i]
-                        # v1 = first(GhostPointDensity) + dot(Positionₙ⁺[i] - GhostPoints[i], GhostPointDensity[2:end])
+                        GhostPointDensity = Aᵧ[i] \ bᵧ[i]
+                        v1 = first(GhostPointDensity) + dot(Positionₙ⁺[i] - GhostPoints[i], GhostPointDensity[2:end])
 
-                        rhoghost = InvA[1,1] * bᵧ[i][1] + InvA[1,2] * bᵧ[i][2] + InvA[1,3] * bᵧ[i][3]
-                        grx      = -(InvA[2,1] * bᵧ[i][1] + InvA[2,2] * bᵧ[i][2] + InvA[2,3] * bᵧ[i][3])
-                        gry      = -(InvA[3,1] * bᵧ[i][1] + InvA[3,2] * bᵧ[i][2] + InvA[3,3] * bᵧ[i][3])
+                        # rhoghost = InvA[1,1] * bᵧ[i][1] + InvA[1,2] * bᵧ[i][2] + InvA[1,3] * bᵧ[i][3]
+                        # grx      = -(InvA[2,1] * bᵧ[i][1] + InvA[2,2] * bᵧ[i][2] + InvA[2,3] * bᵧ[i][3])
+                        # gry      = -(InvA[3,1] * bᵧ[i][1] + InvA[3,2] * bᵧ[i][2] + InvA[3,3] * bᵧ[i][3])
 
-                        x = Positionₙ⁺[i] - GhostPoints[i]
+                        # x = Positionₙ⁺[i] - GhostPoints[i]
 
-                        v1 = rhoghost + grx*x[1] + gry*x[2]
+                        # v1 = rhoghost + grx*x[1] + gry*x[2]
                         # Almost equal, properly some matrix math
                         # v2 = InvA[1,1] * bᵧ[i][1] + InvA[1,2] * bᵧ[i][2] + InvA[1,3] * bᵧ[i][3]
 
@@ -555,16 +545,14 @@ using LinearAlgebra
                         else
                             val = ρ₀
                         end
-                    # else
-                    #     ρₙ⁺[i] = first(bᵧ[i]) / Aᵧ[i][1,1]
-                    # end
 
+                        Density[i] = val
                 elseif first(Aᵧ[i]) > 0.0
                     v = first(bᵧ[i]) / first(Aᵧ[i])
                     if !isnan(v)
-                        ρₙ⁺[i] = v
+                        Density[i] = v
                     else
-                        ρₙ⁺[i] = ρ₀
+                        Density[i] = ρ₀
                     end
                 end
             # end
@@ -574,6 +562,14 @@ using LinearAlgebra
             # end
         end
 
+        @inbounds for i in eachindex(Position)
+            Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+            Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
+            Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
+            # if SimParticles.Type[i] == Fluid
+                ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
+            # end
+        end
 
 
         return nothing
