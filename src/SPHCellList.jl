@@ -672,11 +672,11 @@ using LinearAlgebra
         
         dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimParticles.Position)
 
-        bᵧ = zeros(SVector{Dimensions + 1,FloatType}, length(SimParticles.Position))
-        DimensionsPlus = Dimensions + 1
-        Aᵧ = zeros(SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus * DimensionsPlus}, length(SimParticles.Position))
-
         if !isnothing(path_mdbc)
+            bᵧ = zeros(SVector{Dimensions + 1,FloatType}, length(SimParticles.Position))
+            DimensionsPlus = Dimensions + 1
+            Aᵧ = zeros(SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus * DimensionsPlus}, length(SimParticles.Position))
+            
             _, GhostPoints, GhostNormals = LoadBoundaryNormals(Val(Dimensions), FloatType, path_mdbc)
 
             #TODO: In the future decide on one of the two in shaa Allah
