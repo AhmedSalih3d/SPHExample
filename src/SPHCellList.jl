@@ -169,8 +169,6 @@ using LinearAlgebra
                     # so I prefer this for now
                     NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
 
-                    # println("NeighborCellIndex:", NeighborCellIndex, "| SCellIndex:", SCellIndex)
-
                     if length(NeighborCellIndex) != 0
                         StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
                         EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
@@ -187,8 +185,6 @@ using LinearAlgebra
         return nothing
     end
 
-    # Really important to overload default function, gives 10x speed up?
-    # Overload the default function to do what you pleas
     function ComputeInteractions!(SimMetaData, SimConstants, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
         @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues, FlagLinearizedDDT = SimMetaData
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, γ, g, c₀, δᵩ, η², H², Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
