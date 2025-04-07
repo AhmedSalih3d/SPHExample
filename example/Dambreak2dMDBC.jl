@@ -4,7 +4,7 @@ let
     Dimensions = 2
     FloatType  = Float64
 
-    SimConstantsDambreak = SimulationConstants{FloatType}(dx=0.01,c₀=88.14487860902641, δᵩ = 0.1, CFL=0.2, α = 0.01)
+    SimConstantsDambreak = SimulationConstants{FloatType}(dx=0.02,c₀=88.14487860902641, δᵩ = 0.1, CFL=0.2, α = 0.01)
 
     # Create Geometry instances
     FixedBoundary = Geometry{Dimensions, FloatType}(
@@ -30,7 +30,7 @@ let
     SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="Test", 
         SaveLocation="E:/SecondApproach/TESTING_CPU",
-        SimulationTime=0.5,
+        SimulationTime=2,
         OutputEach=0.01,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
@@ -38,7 +38,7 @@ let
         FlagDensityDiffusion=true,
         FlagLinearizedDDT=true,
         FlagOutputKernelValues=false,
-        FlagMDBCSimple=true,
+        FlagMDBCSimple=false,
         FlagLog=true
     )
 

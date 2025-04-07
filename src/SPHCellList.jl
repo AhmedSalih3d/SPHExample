@@ -153,7 +153,7 @@ using LinearAlgebra
 
         # No @threads initially, just to check that algorithm used is correct
         # @threads for iter ∈ eachindex(GhostPoints)
-        for iter ∈ eachindex(GhostPoints)
+        @threads for iter ∈ eachindex(GhostPoints)
 
             GhostPoint = GhostPoints[iter]
             
@@ -514,7 +514,7 @@ using LinearAlgebra
         ρ₀ = SimConstants.ρ₀
 
         #https://github.com/DualSPHysics/DualSPHysics/blob/f4fa76ad5083873fa1c6dd3b26cdce89c55a9aeb/src/source/JSphCpu_mdbc.cpp#L347
-        @inbounds for i in eachindex(Position)
+        @inbounds @threads for i in eachindex(Position)
             A = Aᵧ[i]
 
             if abs(det(A)) >= 1e-3
