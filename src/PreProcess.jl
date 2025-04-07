@@ -98,16 +98,12 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
     KernelGradient  = zeros(PositionType, NumberOfPoints)
     GhostPoints     = zeros(PositionType, NumberOfPoints)
     GhostNormals    = zeros(PositionType, NumberOfPoints)
-    GhostKernel     = zeros(PositionUnderlyingType, NumberOfPoints)
-
-
 
     Pressureᵢ      = zeros(PositionUnderlyingType, NumberOfPoints)
     
     Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
 
-    # SimParticles = StructArray((Cells = Cells, Kernel = Kernel, KernelGradient = KernelGradient, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = collect(1:NumberOfPoints) , Type = Types, GroupMarker = GroupMarker, GhostPoints = GhostPoints, GhostNormals=GhostNormals, GhostKernel=GhostKernel))
-    SimParticles = StructArray((Cells = Cells, Kernel = Kernel, KernelGradient = KernelGradient, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = Idp , Type = Types, GroupMarker = GroupMarker, GhostPoints = GhostPoints, GhostNormals=GhostNormals, GhostKernel=GhostKernel))
+    SimParticles = StructArray((Cells = Cells, Kernel = Kernel, KernelGradient = KernelGradient, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = Idp , Type = Types, GroupMarker = GroupMarker, GhostPoints = GhostPoints, GhostNormals=GhostNormals))
 
     sort!(SimParticles, by = p -> p.ID)
 
