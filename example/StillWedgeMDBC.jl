@@ -25,7 +25,7 @@ let
 
     SimulationGeometry = [FixedBoundary;Water]
     
-    # Load in particles+
+    # Load in particles
     SimParticles = AllocateDataStructures(SimulationGeometry)
 
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(

@@ -341,6 +341,23 @@ using LinearAlgebra
         return nothing
     end
 
+
+    @generated function UpdateAMatrix!(::Dimensions, ::FloatType) where {Dimensions, FloatType}
+        DimensionsPlus = Dimensions + 1
+        quote
+            Aᵧ[i] += SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus*DimensionsPlus}(
+                #     # First row
+                    VⱼWᵢⱼ, (Vⱼ * ∇ᵢWᵢⱼ)...,
+                #     # # Second row
+                    # xⱼᵢ[1] * VⱼWᵢⱼ, (xⱼᵢ[1] * Vⱼ * ∇ᵢWᵢⱼ)...,
+                #     # # # Third row
+                    # xⱼᵢ[2] * VⱼWᵢⱼ, (xⱼᵢ[2] * Vⱼ * ∇ᵢWᵢⱼ)...,
+                    
+                    Base.Cartesian.@nexprs $Dimensions d -> (xⱼᵢ[d] * VⱼWᵢⱼ, (xⱼᵢ[d] * Vⱼ * ∇ᵢWᵢⱼ))...
+                )
+        end
+    end
+
     function ComputeInteractionsMDBC!(SimMetaData::SimulationMetaData{Dimensions, FloatType}, SimConstants, Position, Density, ParticleType, GhostPoints, GhostKernel, bᵧ, Aᵧ, i, j) where {Dimensions, FloatType}
         @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues, FlagLinearizedDDT = SimMetaData
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, γ, g, c₀, δᵩ, η², H², Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
@@ -376,31 +393,30 @@ using LinearAlgebra
                 bᵧ_ = SVector{DimensionsPlus, FloatType}(m₀ * Wᵢⱼ, (m₀ * ∇ᵢWᵢⱼ)...)
                 bᵧ[i] += bᵧ_
 
+
+                # Filling the Aᵧ matrix is done in column-major order
+                xⱼᵢ = -xᵢⱼ
+
                 if Dimensions == 2
-            
-                    x = -xᵢⱼ[1]
-                    y = -xᵢⱼ[2]
-
-                    ∂Wx = ∇ᵢWᵢⱼ[1]
-                    ∂Wy = ∇ᵢWᵢⱼ[2]
-    
-                    Aᵧ[i] += SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus*DimensionsPlus}(VⱼWᵢⱼ, Vⱼ * ∂Wx, Vⱼ * ∂Wy,
-                    x * VⱼWᵢⱼ, x * Vⱼ * ∂Wx, x * Vⱼ * ∂Wy,
-                    y * VⱼWᵢⱼ, y * Vⱼ * ∂Wx, y * Vⱼ * ∂Wy)
-
-
+                    Aᵧ[i] += SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus*DimensionsPlus}(
+                        # First row
+                        VⱼWᵢⱼ, (Vⱼ * ∇ᵢWᵢⱼ)...,
+                        # Second row
+                        xⱼᵢ[1] * VⱼWᵢⱼ, (xⱼᵢ[1] * Vⱼ * ∇ᵢWᵢⱼ)...,
+                        # Third row
+                        xⱼᵢ[2] * VⱼWᵢⱼ, (xⱼᵢ[2] * Vⱼ * ∇ᵢWᵢⱼ)...,
+                    )
                 elseif Dimensions == 3
-                    x = -xᵢⱼ[1]
-                    y = -xᵢⱼ[2]
-                    z = -xᵢⱼ[3]
-                    ∂Wx = ∇ᵢWᵢⱼ[1]
-                    ∂Wy = ∇ᵢWᵢⱼ[2]
-                    ∂Wz = ∇ᵢWᵢⱼ[3]
-
-                    Aᵧ1[i] += SVector{Dimensions + 1, FloatType}(VⱼWᵢⱼ, Vⱼ * ∂Wx, Vⱼ * ∂Wy, Vⱼ * ∂Wz)
-                    Aᵧ2[i] += SVector{Dimensions + 1, FloatType}(x * VⱼWᵢⱼ, x * Vⱼ * ∂Wx, x * Vⱼ * ∂Wy, x * Vⱼ * ∂Wz)
-                    Aᵧ3[i] += SVector{Dimensions + 1, FloatType}(y * VⱼWᵢⱼ, y * Vⱼ * ∂Wx, y * Vⱼ * ∂Wy, y * Vⱼ * ∂Wz)
-                    Aᵧ4[i] += SVector{Dimensions + 1, FloatType}(z * VⱼWᵢⱼ, z * Vⱼ * ∂Wx, z * Vⱼ * ∂Wy, z * Vⱼ * ∂Wz)
+                    Aᵧ[i] += SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus*DimensionsPlus}(
+                        # First row
+                        VⱼWᵢⱼ, (Vⱼ * ∇ᵢWᵢⱼ)...,
+                        # Second row
+                        xⱼᵢ[1] * VⱼWᵢⱼ, (xⱼᵢ[1] * Vⱼ * ∇ᵢWᵢⱼ)...,
+                        # Third row
+                        xⱼᵢ[2] * VⱼWᵢⱼ, (xⱼᵢ[2] * Vⱼ * ∇ᵢWᵢⱼ)...,
+                        # Fourth row
+                        xⱼᵢ[3] * VⱼWᵢⱼ, (xⱼᵢ[3] * Vⱼ * ∇ᵢWᵢⱼ)...,
+                    )
                 end
             end
         end
