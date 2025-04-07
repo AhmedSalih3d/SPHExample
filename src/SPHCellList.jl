@@ -382,9 +382,9 @@ using LinearAlgebra
                     ∂Wx = ∇ᵢWᵢⱼ[1]
                     ∂Wy = ∇ᵢWᵢⱼ[2]
     
-                    # Aᵧ[i] += SMatrix{3, 3, Float64}(VⱼWᵢⱼ, Vⱼ * ∂Wx, Vⱼ * ∂Wy,
-                    # x * VⱼWᵢⱼ, x * Vⱼ * ∂Wx, x * Vⱼ * ∂Wy,
-                    # y * VⱼWᵢⱼ, y * Vⱼ * ∂Wx, y * Vⱼ * ∂Wy)
+                    Aᵧ[i] += SMatrix{3, 3, Float64, 3*3}(VⱼWᵢⱼ, Vⱼ * ∂Wx, Vⱼ * ∂Wy,
+                    x * VⱼWᵢⱼ, x * Vⱼ * ∂Wx, x * Vⱼ * ∂Wy,
+                    y * VⱼWᵢⱼ, y * Vⱼ * ∂Wx, y * Vⱼ * ∂Wy)
 
                     Aᵧ1[i] += SVector{Dimensions + 1, FloatType}(VⱼWᵢⱼ, Vⱼ * ∂Wx, Vⱼ * ∂Wy)
                     Aᵧ2[i] += SVector{Dimensions + 1, FloatType}(x * VⱼWᵢⱼ, x * Vⱼ * ∂Wx, x * Vⱼ * ∂Wy)
@@ -425,7 +425,7 @@ using LinearAlgebra
         end
     end
 
-    function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ, bᵧ, Aᵧ1, Aᵧ2, Aᵧ3, Aᵧ4)
+    function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ, bᵧ, Aᵧ, Aᵧ1, Aᵧ2, Aᵧ3, Aᵧ4)
         
         ResetArrays!(dρdtI, Acceleration)
 
@@ -438,7 +438,7 @@ using LinearAlgebra
         end
 
         if SimMetaData.FlagMDBCSimple 
-            ResetArrays!(bᵧ, Aᵧ1, Aᵧ2, Aᵧ3, Aᵧ4)
+            ResetArrays!(bᵧ, Aᵧ, Aᵧ1, Aᵧ2, Aᵧ3, Aᵧ4)
         end
 
         foreachfield(f -> map!(v -> fill!(v, zero(eltype(v))), f, f), SimThreadedArrays)
@@ -499,11 +499,12 @@ using LinearAlgebra
 
         #https://github.com/DualSPHysics/DualSPHysics/blob/f4fa76ad5083873fa1c6dd3b26cdce89c55a9aeb/src/source/JSphCpu_mdbc.cpp#L347
         @inbounds for i in eachindex(Position)
-            if Dimensions == 2
-                A = SMatrix{Dimensions + 1, Dimensions + 1, FloatType}(Aᵧ1[i]..., Aᵧ2[i]..., Aᵧ3[i]...)
-            elseif Dimensions == 3
-                A = SMatrix{Dimensions + 1, Dimensions + 1, FloatType}(Aᵧ1[i]..., Aᵧ2[i]..., Aᵧ3[i]..., Aᵧ4[i]...)
-            end
+            # if Dimensions == 2
+                A = Aᵧ[i]
+                # A = SMatrix{Dimensions + 1, Dimensions + 1, FloatType}(Aᵧ1[i]..., Aᵧ2[i]..., Aᵧ3[i]...)
+            # elseif Dimensions == 3
+            #     # A = SMatrix{Dimensions + 1, Dimensions + 1, FloatType}(Aᵧ1[i]..., Aᵧ2[i]..., Aᵧ3[i]..., Aᵧ4[i]...)
+            # end
             
             if abs(det(A)) >= 1e-3
                     GhostPointDensity = A \ bᵧ[i]
@@ -611,7 +612,7 @@ using LinearAlgebra
         
             if !SimMetaData.FlagSingleStepTimeStepping
                 ###=== First step of resetting arrays
-                @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ, bᵧ, Aᵧ1, Aᵧ2, Aᵧ3, Aᵧ4)
+                @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ, bᵧ, Aᵧ, Aᵧ1, Aᵧ2, Aᵧ3, Aᵧ4)
                 ###===
             
                 @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
@@ -627,7 +628,7 @@ using LinearAlgebra
             @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"       LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
         
             ###=== Second step of resetting arrays
-            @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ, bᵧ, Aᵧ1, Aᵧ2, Aᵧ3, Aᵧ4)
+            @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ, bᵧ, Aᵧ, Aᵧ1, Aᵧ2, Aᵧ3, Aᵧ4)
             ###===
 
             @timeit SimMetaData.HourGlass "Motion"                               ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
@@ -668,7 +669,7 @@ using LinearAlgebra
         dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimParticles.Position)
 
         bᵧ = zeros(SVector{Dimensions + 1,FloatType}, length(SimParticles.Position))
-        Aᵧ = zeros(SMatrix{Dimensions + 1, Dimensions + 1, FloatType}, length(SimParticles.Position))
+        Aᵧ = zeros(SMatrix{Dimensions + 1, Dimensions + 1, FloatType, (Dimensions + 1) * (Dimensions + 1)}, length(SimParticles.Position))
 
         Aᵧ1 = zeros(SVector{Dimensions + 1,FloatType}, length(SimParticles.Position))
         Aᵧ2 = zeros(SVector{Dimensions + 1,FloatType}, length(SimParticles.Position))
