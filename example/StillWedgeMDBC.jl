@@ -35,14 +35,14 @@ let
         OutputEach=0.01,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
-        ExportGridCells=true,
-        OpenLogFile=false,
+        ExportGridCells=false,
+        OpenLogFile=true,
         FlagDensityDiffusion=true,
         FlagLinearizedDDT=true,
-        FlagOutputKernelValues=true,
+        FlagOutputKernelValues=false,
         FlagLog=true,
         FlagShifting=false,
-        FlagMDBCSimple=false,
+        FlagMDBCSimple=true,
     )
 
     SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
@@ -55,7 +55,7 @@ let
         SimConstants        = SimConstantsWedge,
         SimLogger           = SimLogger,
         SimParticles        = SimParticles,
-        # ParticleNormalsPath = "./input/still_wedge_mdbc/StillWedge_Dp$(SimConstantsWedge.dx)_GhostNodes_Correct.csv"
+        ParticleNormalsPath = "./input/still_wedge_mdbc/StillWedge_Dp$(SimConstantsWedge.dx)_GhostNodes_Correct.csv"
     )
 
     return SimParticles
