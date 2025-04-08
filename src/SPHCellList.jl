@@ -140,9 +140,9 @@ using LinearAlgebra
         return nothing
     end
 
-    function NeighborLoopMDBC!(SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCells, GhostPoints, GhostNormals,  ParticleType, bᵧ, Aᵧ, ::Val{InverseCutOff}) where InverseCutOff
+    function NeighborLoopMDBC!(SimMetaData::SimulationMetaData{Dimensions, }, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCells, GhostPoints, GhostNormals,  ParticleType, bᵧ, Aᵧ, ::Val{InverseCutOff}) where {Dimensions, InverseCutOff}
         
-        FullStencil = CartesianIndices(ntuple(_->-1:1, 2))
+        FullStencil = CartesianIndices(ntuple(_->-1:1, Dimensions))
 
         function map_floor(x)
             # This is different than just doing muladd(x,InverseCutOff,0.5) because it rounds towards zero.
@@ -591,7 +591,6 @@ using LinearAlgebra
         GhostNormals   = SimParticles.GhostNormals
 
         ###
-
         
         while SimMetaData.TotalTime <= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
 
@@ -735,6 +734,8 @@ using LinearAlgebra
         # Normal run and save data
         generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
     
+        @timeit HourGlass "14 Next TimeStep" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime, 1e6))
+
         @inbounds while true
     
             @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, bᵧ, Aᵧ, MotionDefinition, InverseCutOff)
