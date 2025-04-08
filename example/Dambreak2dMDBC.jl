@@ -4,7 +4,7 @@ let
     Dimensions = 2
     FloatType  = Float64
 
-    SimConstantsDambreak = SimulationConstants{FloatType}(dx=0.01,c₀=88.14487860902641, δᵩ = 0.1, CFL=0.2, α = 0.01)
+    SimConstantsDambreak = SimulationConstants{FloatType}(dx=0.01,c₀=88.14487860902641, δᵩ = 0.1, CFL=0.5, α = 0.01)
 
     # Create Geometry instances
     FixedBoundary = Geometry{Dimensions, FloatType}(
