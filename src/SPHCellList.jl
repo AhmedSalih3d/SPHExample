@@ -662,7 +662,7 @@ using LinearAlgebra
         SimConstants::SimulationConstants,
         SimLogger::SimulationLogger,
         SimParticles::StructArray,
-        path_mdbc::Union{Nothing,String} = nothing
+        ParticleNormalsPath::Union{Nothing,String} = nothing
         ) where {Dimensions,FloatType}
 
         # Unpack the relevant simulation meta data
@@ -673,19 +673,23 @@ using LinearAlgebra
         
         dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimParticles.Position)
 
-        if !isnothing(path_mdbc)
+        # Implement this properly later in shaa Allah
+        # if !isnothing(ParticleNormalsPath)
             bᵧ = zeros(SVector{Dimensions + 1,FloatType}, length(SimParticles.Position))
             DimensionsPlus = Dimensions + 1
             Aᵧ = zeros(SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus * DimensionsPlus}, length(SimParticles.Position))
 
-            _, GhostPoints, GhostNormals = LoadBoundaryNormals(Val(Dimensions), FloatType, path_mdbc)
+            if SimMetaData.FlagMDBCSimple
+                _, GhostPoints, GhostNormals = LoadBoundaryNormals(Val(Dimensions), FloatType, ParticleNormalsPath)
+            
 
-            #TODO: In the future decide on one of the two in shaa Allah
-            for gi ∈ eachindex(GhostPoints)
-                SimParticles.GhostPoints[gi]  = GhostPoints[gi]
-                SimParticles.GhostNormals[gi] = GhostNormals[gi]
+                #TODO: In the future decide on one of the two in shaa Allah
+                for gi ∈ eachindex(GhostPoints)
+                    SimParticles.GhostPoints[gi]  = GhostPoints[gi]
+                    SimParticles.GhostNormals[gi] = GhostNormals[gi]
+                end
             end
-        end
+        # end
 
         if !SimMetaData.FlagShifting
             resize!(∇Cᵢ , 0)
