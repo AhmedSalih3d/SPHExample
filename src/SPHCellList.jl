@@ -151,9 +151,7 @@ using LinearAlgebra
             Int(sign(x)) * unsafe_trunc(Int, muladd(abs(x),InverseCutOff,0.5))
         end
 
-        # No @threads initially, just to check that algorithm used is correct
-        # @threads for iter ∈ eachindex(GhostPoints)
-        @threads for iter ∈ eachindex(GhostPoints)
+        @inbounds @threads for iter ∈ eachindex(GhostPoints)
 
             GhostPoint = GhostPoints[iter]
             
@@ -507,12 +505,15 @@ using LinearAlgebra
         ρ₀ = SimConstants.ρ₀
 
         #https://github.com/DualSPHysics/DualSPHysics/blob/f4fa76ad5083873fa1c6dd3b26cdce89c55a9aeb/src/source/JSphCpu_mdbc.cpp#L347
-        @inbounds @threads for i in eachindex(Position)
+        @inbounds for i in eachindex(Position)
             A = Aᵧ[i]
 
             if abs(det(A)) >= 1e-3
                     GhostPointDensity = A \ bᵧ[i]
-                    v1 = first(GhostPointDensity) + dot(SimParticles.Position[i] - GhostPoints[i], GhostPointDensity[2:end])
+                    # This allocates, loop does not
+                    # v1 = first(GhostPointDensity) + dot(SimParticles.Position[i] - GhostPoints[i], GhostPointDensity[2:end])
+                    diff = Position[i] - GhostPoints[i]
+                    v1   = first(GhostPointDensity) + sum(GhostPointDensity[j+1] * diff[j] for j in eachindex(diff))
                     Density[i] = isnan(v1) ? ρ₀ : v1
             elseif first(A) > 0.0
                     v = first(bᵧ[i]) / first(A)
@@ -676,7 +677,7 @@ using LinearAlgebra
             bᵧ = zeros(SVector{Dimensions + 1,FloatType}, length(SimParticles.Position))
             DimensionsPlus = Dimensions + 1
             Aᵧ = zeros(SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus * DimensionsPlus}, length(SimParticles.Position))
-            
+
             _, GhostPoints, GhostNormals = LoadBoundaryNormals(Val(Dimensions), FloatType, path_mdbc)
 
             #TODO: In the future decide on one of the two in shaa Allah
