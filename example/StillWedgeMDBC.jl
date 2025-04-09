@@ -5,7 +5,7 @@ let
     FloatType  = Float64
 
     
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.2)
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.5)
     # SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=43.4, δᵩ = 0.1, CFL=0.2)
 
     # Assuming SimConstantsWedge is defined somewhere else with the field `dx`
@@ -30,8 +30,8 @@ let
 
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="StillWedge", 
-        SaveLocation="E:/SecondApproach/TESTING_CPU_StillWedge",
-        SimulationTime=4,
+        SaveLocation="C:/Users/ahmed/Documents/SPHSimulations/StillWedgeCPU",
+        SimulationTime=0.5,
         OutputEach=0.01,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
@@ -60,6 +60,7 @@ let
 
     return SimParticles
 end
+
 
 
 

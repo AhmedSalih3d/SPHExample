@@ -698,6 +698,12 @@ using LinearAlgebra
         if SimMetaData.FlagLog
             InitializeLogger(SimLogger,SimConstants,SimMetaData, SimGeometry, SimParticles)
         end
+
+        # To generate first line
+        if SimMetaData.FlagLog
+            LogStep(SimLogger, SimMetaData, HourGlass)
+            SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
+        end
         
         NumberOfPoints = length(SimParticles)::Int
         Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
@@ -712,7 +718,7 @@ using LinearAlgebra
 
         output = SetupVTKOutput(SimMetaData, SimParticles, SimConstants, Dimensions)
 
-        # Save initial state
+        # Save initial state, use 1 else this cannot be used to index fid vector
         SimMetaData.OutputIterationCounter = 1
         output.save_particles(SimMetaData.OutputIterationCounter)
         output.save_grid(SimMetaData.OutputIterationCounter, UniqueCells)
@@ -734,12 +740,18 @@ using LinearAlgebra
         # Normal run and save data
         generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
     
+
         @timeit HourGlass "14 Next TimeStep" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime, 1e6))
 
         @inbounds while true
     
             @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, bᵧ, Aᵧ, MotionDefinition, InverseCutOff)
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
+
+            if SimMetaData.FlagLog
+                LogStep(SimLogger, SimMetaData, HourGlass)
+                SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
+            end
     
             SimMetaData.OutputIterationCounter += 1
 
@@ -747,11 +759,6 @@ using LinearAlgebra
             @sync Threads.@spawn begin
                 @timeit SimMetaData.HourGlass "13A Save Particle Data" output.save_particles(SimMetaData.OutputIterationCounter)
                 @timeit SimMetaData.HourGlass "13A Save CellGrid Data" output.save_grid(SimMetaData.OutputIterationCounter, UniqueCellsView)
-            end
-    
-            if SimMetaData.FlagLog
-                LogStep(SimLogger, SimMetaData, HourGlass)
-                SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
             end
     
             TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime)
