@@ -28,8 +28,8 @@ let
     SimParticles = AllocateDataStructures(SimulationGeometry)
 
     SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType}(
-        SimulationName="Test", 
-        SaveLocation="E:/SecondApproach/TESTING_CPU",
+        SimulationName="DamBreak2D", 
+        SaveLocation="C:/Users/ahmed/Documents/SPHSimulations/DamBreak2D_CPU",
         SimulationTime=2,
         OutputEach=0.01,
         VisualizeInParaview=true,
@@ -54,7 +54,6 @@ let
         SimConstants       = SimConstantsDambreak,
         SimLogger          = SimLogger,
         SimParticles       = SimParticles,
-        # path_mdbc          = "./input/dam_break_2d/DamBreak2d_Dp0.02_MDBC_GhostNodes_ThreeLayers.csv" 
-        path_mdbc          = "./input/dam_break_2d/test.csv"
+        ParticleNormalsPath  = "./input/dam_break_2d/DamBreak2d_Dp0.02_MDBC_GhostNodes_ThreeLayers.csv"
     )
 end
