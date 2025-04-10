@@ -612,7 +612,7 @@ using LinearAlgebra
             end
 
 
-            @timeit SimMetaData.HourGlass "Motion"                               ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
+            @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
         
             if !SimMetaData.FlagSingleStepTimeStepping
                 ###=== First step of resetting arrays
@@ -627,28 +627,28 @@ using LinearAlgebra
                 @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
             end
 
-            @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"           HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, GhostPoints, GhostNormals, bᵧ, Aᵧ, dt₂)
+            @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, GhostPoints, GhostNormals, bᵧ, Aᵧ, dt₂)
 
-            @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"       LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+            @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
         
             ###=== Second step of resetting arrays
-            @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ, bᵧ, Aᵧ)
+            @timeit SimMetaData.HourGlass "ResetArrays"                              ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ, bᵧ, Aᵧ)
             ###===
 
-            @timeit SimMetaData.HourGlass "Motion"                               ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
+            @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
         
-            @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-            @timeit SimMetaData.HourGlass "08 Second NeighborLoop"               NeighborLoop!(SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, UniqueCellsView, EnumeratedIndices)
-            @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+            @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
+            @timeit SimMetaData.HourGlass "08 Second NeighborLoop"                   NeighborLoop!(SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, UniqueCellsView, EnumeratedIndices)
+            @timeit SimMetaData.HourGlass "Reduction"                                ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
 
         
-            @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary"      LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
+            @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
         
-            @timeit SimMetaData.HourGlass "10 Final Density"                     DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
+            @timeit SimMetaData.HourGlass "10 Final Density"                         DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
         
-            @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"          FullTimeStep(SimMetaData, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+            @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
         
-            @timeit SimMetaData.HourGlass "12 Update MetaData"                   UpdateMetaData!(SimMetaData, dt)
+            @timeit SimMetaData.HourGlass "12 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
 
         end
         
