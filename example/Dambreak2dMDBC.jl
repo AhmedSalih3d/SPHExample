@@ -29,7 +29,7 @@ let
 
     SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="DamBreak2D", 
-        SaveLocation="C:/Users/ahmed/Documents/SPHSimulations/DamBreak2D_CPU",
+        SaveLocation="E:/SecondApproach/DamBreak2D_MDBC/",
         SimulationTime=2,
         OutputEach=0.01,
         VisualizeInParaview=true,
@@ -43,6 +43,10 @@ let
         FlagLog=true
     )
 
+    # If save directory is not already made, make it
+    if !isdir(SimMetaDataDambreak.SaveLocation)
+        mkdir(SimMetaDataDambreak.SaveLocation)
+    end
 
     SimLogger = SimulationLogger(SimMetaDataDambreak.SaveLocation)
 
