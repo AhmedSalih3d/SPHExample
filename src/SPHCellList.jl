@@ -140,8 +140,9 @@ using LinearAlgebra
         return nothing
     end
 
-    function NeighborLoopMDBC!(SimMetaData::SimulationMetaData{Dimensions, }, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCells, GhostPoints, GhostNormals,  ParticleType, bᵧ, Aᵧ, ::Val{InverseCutOff}) where {Dimensions, InverseCutOff}
+    function NeighborLoopMDBC!(SimMetaData::SimulationMetaData{Dimensions, _}, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCells, GhostPoints, GhostNormals,  ParticleType, bᵧ, Aᵧ, ::Val{InverseCutOff}) where {Dimensions, _, InverseCutOff}
         
+
         FullStencil = CartesianIndices(ntuple(_->-1:1, Dimensions))
 
         function map_floor(x)
