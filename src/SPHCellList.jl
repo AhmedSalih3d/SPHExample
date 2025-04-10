@@ -336,23 +336,6 @@ using LinearAlgebra
         return nothing
     end
 
-
-    @generated function UpdateAMatrix!(::Dimensions, ::FloatType) where {Dimensions, FloatType}
-        DimensionsPlus = Dimensions + 1
-        quote
-            Aᵧ[i] += SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus*DimensionsPlus}(
-                #     # First row
-                    VⱼWᵢⱼ, (Vⱼ * ∇ᵢWᵢⱼ)...,
-                #     # # Second row
-                    # xⱼᵢ[1] * VⱼWᵢⱼ, (xⱼᵢ[1] * Vⱼ * ∇ᵢWᵢⱼ)...,
-                #     # # # Third row
-                    # xⱼᵢ[2] * VⱼWᵢⱼ, (xⱼᵢ[2] * Vⱼ * ∇ᵢWᵢⱼ)...,
-                    
-                    Base.Cartesian.@nexprs $Dimensions d -> (xⱼᵢ[d] * VⱼWᵢⱼ, (xⱼᵢ[d] * Vⱼ * ∇ᵢWᵢⱼ))...
-                )
-        end
-    end
-
     function ComputeInteractionsMDBC!(SimMetaData::SimulationMetaData{Dimensions, FloatType}, SimConstants, Position, Density, ParticleType, GhostPoints, bᵧ, Aᵧ, i, j) where {Dimensions, FloatType}
         @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues, FlagLinearizedDDT = SimMetaData
         @unpack ρ₀, h, h⁻¹, m₀, αD, α, γ, g, c₀, δᵩ, η², H², Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
