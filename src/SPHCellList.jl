@@ -371,28 +371,11 @@ using LinearAlgebra
 
                 # Filling the Aᵧ matrix is done in column-major order
                 xⱼᵢ = -xᵢⱼ
-
-                if Dimensions == 2
-                    Aᵧ[i] += SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus*DimensionsPlus}(
-                        # First row
-                        VⱼWᵢⱼ, (Vⱼ * ∇ᵢWᵢⱼ)...,
-                        # Second row
-                        xⱼᵢ[1] * VⱼWᵢⱼ, (xⱼᵢ[1] * Vⱼ * ∇ᵢWᵢⱼ)...,
-                        # Third row
-                        xⱼᵢ[2] * VⱼWᵢⱼ, (xⱼᵢ[2] * Vⱼ * ∇ᵢWᵢⱼ)...,
-                    )
-                elseif Dimensions == 3
-                    Aᵧ[i] += SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus*DimensionsPlus}(
-                        # First row
-                        VⱼWᵢⱼ, (Vⱼ * ∇ᵢWᵢⱼ)...,
-                        # Second row
-                        xⱼᵢ[1] * VⱼWᵢⱼ, (xⱼᵢ[1] * Vⱼ * ∇ᵢWᵢⱼ)...,
-                        # Third row
-                        xⱼᵢ[2] * VⱼWᵢⱼ, (xⱼᵢ[2] * Vⱼ * ∇ᵢWᵢⱼ)...,
-                        # Fourth row
-                        xⱼᵢ[3] * VⱼWᵢⱼ, (xⱼᵢ[3] * Vⱼ * ∇ᵢWᵢⱼ)...,
-                    )
-                end
+                first_column = [VⱼWᵢⱼ; Vⱼ * ∇ᵢWᵢⱼ]
+                Aᵧ[i] += SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus*DimensionsPlus}(
+                    first_column...,
+                    ((xⱼᵢ * first_column')')...
+                )
             end
         end
         
