@@ -1,6 +1,7 @@
 module SimulationConstantsConfiguration
 
 using Parameters
+using ..SPHKernels
 
 export SimulationConstants
 
@@ -55,6 +56,7 @@ constants = SimulationConstants(ρ₀=1017, dx=0.03, α=0.02)
     ν₀::T    = 1e-6               ; @assert ν₀  >= 0 "Kinematic viscosity must be positive"
     BlinConstant::T                              = 0.0066
     SmagorinskyConstant::T                       = 0.12
+    Kernel::AbstractSPHKernel  = WendlandC2Kernel{2, T}(dx)  
 end
 
 end
