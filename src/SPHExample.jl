@@ -1,6 +1,7 @@
 module SPHExample
 
-    include("AuxillaryFunctions.jl");          
+    include("AuxillaryFunctions.jl");
+    include("SPHKernels.jl")          
     include("ProduceHDFVTK.jl")    
     include("TimeStepping.jl");       
     include("SimulationEquations.jl");
@@ -15,6 +16,9 @@ module SPHExample
     # Re-export desired functions from each submodule
     using .AuxillaryFunctions
     export ResetArrays!, to_3d, CloseHDFVTKManually, CleanUpSimulationFolder
+
+    using .SPHKernels
+    export AbstractSPHKernel, KernelParameters, WendlandC2Kernel, CubicSplineKernel, GaussianKernel, Wᵢⱼ, ∇Wᵢⱼ
 
     using .SimulationGeometry
     export ParticleType, Fixed, Fluid, Moving, Geometry, MotionDetails
