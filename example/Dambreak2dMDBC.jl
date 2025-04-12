@@ -56,7 +56,7 @@ let
         SimGeometry        = SimulationGeometry,
         SimMetaData        = SimMetaDataDambreak,
         SimConstants       = SimConstantsDambreak,
-        SimKernel           = SPHKernelInstance{WendlandC2, Dimensions, FloatType}(SimConstantsDambreak.dx),
+        SimKernel          = SPHKernelInstance{WendlandC2, Dimensions, FloatType}(SimConstantsDambreak.dx),
         SimLogger          = SimLogger,
         SimParticles       = SimParticles,
         ParticleNormalsPath  = "./input/dam_break_2d/DamBreak2d_Dp0.02_MDBC_GhostNodes_ThreeLayers.csv"

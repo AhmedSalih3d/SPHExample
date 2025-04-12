@@ -56,21 +56,24 @@ end
 
 @inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{WendlandC2,D,T}, q::T, xᵢⱼ) where {D,T}
     @unpack h, αD, η² = kernel
-    denom = (q * h + η²)
-    factor = αD * 5 * (q - 2)^3 * q / (8 * h * denom)
+    # Subhan Allah, if this math is correct, then η² can be avoided
+    # denom = (q * h + η²)
+    # factor = αD * 5 * (q - 2)^3 * q / (8 * h * denom)
+    factor = αD * 5 * (q - 2)^3 / (8 * h * h)
     return factor * xᵢⱼ
 end
 
 @inline function Wᵢⱼ(kernel::SPHKernelInstance{CubicSpline,D,T}, q::T) where {D,T}
     @unpack αD = kernel
-    return αD * (1 - 1.5q^2 + 0.75q^3)
+    return αD * (((1 - (3/2)*q^2 + (3/4)*q^3) * (0 <= q <= 1)) + ((1/4)*(2 - q)^3 * (1 < q <= 2)))
 end
 
 @inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{CubicSpline,D,T}, q::T, xᵢⱼ) where {D,T}
-    @unpack h, h⁻¹, αD = kernel
-    factor = (q > 0) * ((-3q + 2.25q^2) * αD * h⁻¹)
-    return factor * xᵢⱼ / (q * h + (q == 0.0))
+    @unpack h, h⁻¹, αD, η² = kernel
+    factor = αD * (((-3*q + (9/4)*q^2) / (h * (q + η²))) * (0 <= q <= 1) + -((3/4)*(2 - q)^2 / (h * (q + η²))) * (1 < q <= 2))
+    return factor * xᵢⱼ
 end
+
 
 @inline function Wᵢⱼ(kernel::SPHKernelInstance{Gaussian,D,T}, q::T) where {D,T}
     @unpack αD = kernel
