@@ -58,7 +58,7 @@ end
     @unpack h, αD, η² = kernel
     denom = (q * h + η²)
     factor = αD * 5 * (q - 2)^3 * q / (8 * h * denom)
-    return factor * (-xᵢⱼ)
+    return factor * xᵢⱼ
 end
 
 @inline function Wᵢⱼ(kernel::SPHKernelInstance{CubicSpline,D,T}, q::T) where {D,T}
@@ -69,7 +69,7 @@ end
 @inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{CubicSpline,D,T}, q::T, xᵢⱼ) where {D,T}
     @unpack h, h⁻¹, αD = kernel
     factor = (q > 0) * ((-3q + 2.25q^2) * αD * h⁻¹)
-    return factor * (-xᵢⱼ / (q * h + (q == 0.0)))
+    return factor * xᵢⱼ / (q * h + (q == 0.0))
 end
 
 @inline function Wᵢⱼ(kernel::SPHKernelInstance{Gaussian,D,T}, q::T) where {D,T}
@@ -80,7 +80,7 @@ end
 @inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{Gaussian,D,T}, q::T, xᵢⱼ) where {D,T}
     @unpack h, h⁻¹, αD = kernel
     factor = -2 * αD * q * h⁻¹ * exp(-q^2)
-    return factor * (-xᵢⱼ / (q * h + (q == 0.0)))
+    return factor * xᵢⱼ / (q * h + (q == 0.0))
 end
 
 end # module

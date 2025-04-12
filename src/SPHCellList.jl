@@ -185,11 +185,11 @@ using LinearAlgebra
         return nothing
     end
 
-    function ComputeInteractions!(Kernel, SimMetaData, SimConstants, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
+    function ComputeInteractions!(SimKernel, SimMetaData, SimConstants, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
         @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues, FlagLinearizedDDT = SimMetaData
         @unpack ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
-        @unpack h⁻¹, h, η², H², αD = Kernel 
+        @unpack h⁻¹, h, η², H², αD = SimKernel 
 
         Linear_ρ_factor = (1/(Cb*γ))*ρ₀
 
@@ -202,7 +202,11 @@ using LinearAlgebra
             # clamp seems faster than min, no util
             q         = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0) #min(dᵢⱼ * h⁻¹, 2.0) - 8% util no DDT
             invd²η²   =  1.0 / (dᵢⱼ*dᵢⱼ+η²)
-            ∇ᵢWᵢⱼ     = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
+            ∇ᵢWᵢⱼ     = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
+            
+            # println("Gradient Value: ", ∇ᵢWᵢⱼ)
+            # println("Gradient Value SPHKernels", ∇Wᵢⱼ(SimKernel, q, xᵢⱼ))
+
             ρᵢ        = Density[i]
             ρⱼ        = Density[j]
         
@@ -339,11 +343,11 @@ using LinearAlgebra
         return nothing
     end
 
-    function ComputeInteractionsMDBC!(Kernel, SimMetaData::SimulationMetaData{Dimensions, FloatType}, SimConstants, Position, Density, ParticleType, GhostPoints, bᵧ, Aᵧ, i, j) where {Dimensions, FloatType}
+    function ComputeInteractionsMDBC!(SimKernel, SimMetaData::SimulationMetaData{Dimensions, FloatType}, SimConstants, Position, Density, ParticleType, GhostPoints, bᵧ, Aᵧ, i, j) where {Dimensions, FloatType}
         @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues, FlagLinearizedDDT = SimMetaData
         @unpack ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
         
-        @unpack h⁻¹, h, η², H², αD = Kernel 
+        @unpack h⁻¹, h, η², H², αD = SimKernel 
 
         # ᵢ is ghost node! j is fluid node
 
@@ -362,10 +366,10 @@ using LinearAlgebra
                 ρⱼ = Density[j]
 
         
-                Wᵢⱼ = @fastpow αD * (1 - q / 2)^4 * (2 * q + 1)
+                Wᵢⱼ = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
 
 
-                ∇ᵢWᵢⱼ = @fastpow (αD * 5 * (q - 2)^3 * q / (8h * (q * h + η²))) * -xᵢⱼ
+                ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
 
                 Vⱼ = m₀ / ρⱼ
         
