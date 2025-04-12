@@ -242,14 +242,14 @@ module ProduceHDFVTK
         end
     end
 
-    function AppendVTKHDFGridData(root, newStep, SimConstants, UniqueCells)
+    function AppendVTKHDFGridData(root, newStep, SimKernel, UniqueCells)
         # Must be AbstractVector, since UniqueCells is passed in as a 'view' of a CartesianIndex array
         ExtractDimensionality(::AbstractVector{CartesianIndex{N}}) where N = N
 
         CartesianIndexN = ExtractDimensionality(UniqueCells)
 
         # Cell dimensions
-        dx = dy = dz = SimConstants.H
+        dx = dy = dz = SimKernel.H
     
         # Initialize lists for storing points and cells
         points = Vector{SVector{3, Float64}}()  # List to store unique SVector points
@@ -394,14 +394,14 @@ module ProduceHDFVTK
         return nothing
     end
 
-    function SaveCellGridVTKHDF(FilePath, SimConstants, UniqueCells)
+    function SaveCellGridVTKHDF(FilePath, SimKernel, UniqueCells)
         # Must be AbstractVector, since UniqueCells is passed in as a 'view' of a CartesianIndex array
         ExtractDimensionality(::AbstractVector{CartesianIndex{N}}) where N = N
 
         CartesianIndexN = ExtractDimensionality(UniqueCells)
 
         # Cell dimensions
-        dx = dy = dz = SimConstants.H
+        dx = dy = dz = SimKernel.H
     
         # Initialize lists for storing points and cells
         points = Vector{SVector{3, Float64}}()  # List to store unique SVector points
@@ -510,7 +510,7 @@ module ProduceHDFVTK
         close(io)
     end
 
-    function SetupVTKOutput(SimMetaData, SimParticles, SimConstants, Dimensions)
+    function SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
         # Generate save locations
         particle_savepath = joinpath(SimMetaData.SaveLocation, SimMetaData.SimulationName)
         grid_savepath = joinpath(SimMetaData.SaveLocation, "CellGrid_$(SimMetaData.SimulationName)")
@@ -594,9 +594,9 @@ module ProduceHDFVTK
         function save_cell_grid(iteration, cells)
             if SimMetaData.ExportGridCells
                 if !SimMetaData.ExportSingleVTKHDF
-                    SaveCellGridVTKHDF(grid_filename(iteration), SimConstants, cells)
+                    SaveCellGridVTKHDF(grid_filename(iteration), SimKernel, cells)
                 else 
-                    AppendVTKHDFGridData(root_grid, SimMetaData.TotalTime, SimConstants, cells)
+                    AppendVTKHDFGridData(root_grid, SimMetaData.TotalTime, SimKernel, cells)
                 end
             end
         end
