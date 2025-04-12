@@ -4,7 +4,7 @@ let
     Dimensions = 2
     FloatType  = Float64
 
-    
+    # Kernel = WendlandC2Kernel{Dimensions, FloatType}(0.02)
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.5)
     # SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=43.4, δᵩ = 0.1, CFL=0.2)
 
@@ -22,7 +22,7 @@ let
         Type        = Fluid,   # Using the enum value Fluid
         Motion      = nothing
     )
-
+# 
     SimulationGeometry = [FixedBoundary;Water]
     
     # Load in particles
@@ -31,12 +31,12 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="StillWedge", 
         SaveLocation="E:/SecondApproach/StillWedge2D_MDBC",
-        SimulationTime=1,
+        SimulationTime=4,
         OutputEach=0.01,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
         ExportGridCells=false,
-        OpenLogFile=true,
+        OpenLogFile=false,
         FlagDensityDiffusion=true,
         FlagLinearizedDDT=true,
         FlagOutputKernelValues=false,
@@ -53,12 +53,13 @@ let
         SimGeometry         = SimulationGeometry,
         SimMetaData         = SimMetaDataWedge,
         SimConstants        = SimConstantsWedge,
+        SimKernel           = SPHKernelInstance{WendlandC2, Dimensions, FloatType}(SimConstantsWedge.dx),
         SimLogger           = SimLogger,
         SimParticles        = SimParticles,
         ParticleNormalsPath = "./input/still_wedge_mdbc/StillWedge_Dp$(SimConstantsWedge.dx)_GhostNodes_Correct.csv"
     )
 
-    return SimParticles
+    # return SimParticles
 end
 
 
