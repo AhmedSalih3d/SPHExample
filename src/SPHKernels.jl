@@ -1,6 +1,7 @@
 module SPHKernels
 
 using Parameters
+using LinearAlgebra
 
 export SPHKernel, SPHKernelInstance, WendlandC2, CubicSpline, Gaussian, Wᵢⱼ, ∇Wᵢⱼ
 
@@ -70,10 +71,21 @@ end
 
 @inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{CubicSpline,D,T}, q::T, xᵢⱼ) where {D,T}
     @unpack h, h⁻¹, αD, η² = kernel
-    factor = αD * (((-3*q + (9/4)*q^2) / (h * (q + η²))) * (0 <= q <= 1) + -((3/4)*(2 - q)^2 / (h * (q + η²))) * (1 < q <= 2))
-    return factor * xᵢⱼ
+    # r = norm(xᵢⱼ)
+    # inv_r_h = 1/(r + η²)  # η² is a small regularization to avoid division by zero
+    
+    if 0 <= q <= 1
+        dWdq = αD * (-3*q + (9/4)*q^2)
+    elseif 1 < q <= 2
+        dWdq = αD * (-3/4)*(2 - q)^2
+    else
+        dWdq = zero(T)
+    end
+    
+    # Chain rule: ∇W = (dW/dq) * (∇q)
+    # Where ∇q = xᵢⱼ/(r*h)
+    return -dWdq * h⁻¹ * xᵢⱼ / (norm(xᵢⱼ) + η²)
 end
-
 
 @inline function Wᵢⱼ(kernel::SPHKernelInstance{Gaussian,D,T}, q::T) where {D,T}
     @unpack αD = kernel
