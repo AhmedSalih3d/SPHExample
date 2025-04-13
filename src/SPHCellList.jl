@@ -197,9 +197,6 @@ using LinearAlgebra
             q         = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0) #min(dᵢⱼ * h⁻¹, 2.0) - 8% util no DDT
             invd²η²   =  1.0 / (dᵢⱼ*dᵢⱼ+η²)
             ∇ᵢWᵢⱼ     = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
-            
-            # println("Gradient Value: ", ∇ᵢWᵢⱼ)
-            # println("Gradient Value SPHKernels", ∇Wᵢⱼ(SimKernel, q, xᵢⱼ))
 
             ρᵢ        = Density[i]
             ρⱼ        = Density[j]
@@ -343,9 +340,8 @@ using LinearAlgebra
         
         @unpack h⁻¹, h, η², H², αD = SimKernel 
 
-        # ᵢ is ghost node! j is fluid node
+        # ᵢ is ghost node! ⱼ is fluid node
 
-        
         if ParticleType[j] == Fluid
 
             DimensionsPlus = Dimensions + 1
@@ -361,7 +357,6 @@ using LinearAlgebra
 
         
                 Wᵢⱼ = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
-
 
                 ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
 
@@ -480,8 +475,6 @@ using LinearAlgebra
 
             if abs(det(A)) >= 1e-3
                     GhostPointDensity = A \ bᵧ[i]
-                    # This allocates, loop does not
-                    # v1 = first(GhostPointDensity) + dot(SimParticles.Position[i] - GhostPoints[i], GhostPointDensity[2:end])
                     diff = Position[i] - GhostPoints[i]
                     v1   = first(GhostPointDensity) + sum(GhostPointDensity[j+1] * diff[j] for j in eachindex(diff))
                     Density[i] = isnan(v1) ? ρ₀ : v1
