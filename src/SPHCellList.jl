@@ -49,17 +49,18 @@ using LinearAlgebra
     # Returns
     - `nothing`: This function modifies the `Particles` in place.
     """
-    @inline function ExtractCells!(Particles, ::Val{InverseCutOff}) where InverseCutOff
-        # Replace unsafe_trunc with trunc if this ever errors
-        function map_floor(x)
-            # This is different than just doing muladd(x,InverseCutOff,0.5) because it rounds towards zero.
-            # Consider -1.7 + 0.5, this would give -1.2 and then trunced 1, but we want -2, therefore absolute addition before hand
-            # We add 0.5 instead of 1, to ensure proper rounding behavior when restoring the sign for negative numbers.
-            Int(sign(x)) * unsafe_trunc(Int, muladd(abs(x),InverseCutOff,0.5))
-        end
-
+    # Replace unsafe_trunc with trunc if this ever errors
+    @inline function map_floor(x, InverseCutOff)
+        # This is different than just doing muladd(x,InverseCutOff,0.5) because it rounds towards zero.
+        # Consider -1.7 + 0.5, this would give -1.2 and then trunced 1, but we want -2, therefore absolute addition before hand
+        # We add 0.5 instead of 1, to ensure proper rounding behavior when restoring the sign for negative numbers.
+        Int(sign(x)) * unsafe_trunc(Int, muladd(abs(x),InverseCutOff,0.5))
+    end
+   
+    @inline function ExtractCells!(Particles, InverseCutOff)
         for i ∈ eachindex(Particles.Cells)
-            t = map(map_floor, Tuple(Particles.Position[i]))
+            # t = map(map_floor, Tuple(Particles.Position[i]))
+            t = CartesianIndex(map(x -> map_floor(x, InverseCutOff), Tuple(Particles.Position[i])))
             Particles.Cells[i] = CartesianIndex(t)
         end
 
@@ -79,8 +80,8 @@ using LinearAlgebra
     # Returns
     - `IndexCounter`: The number of unique cells identified.
     """
-    function UpdateNeighbors!(Particles, CutOff, SortingScratchSpace, ParticleRanges, UniqueCells)
-        ExtractCells!(Particles, CutOff)
+    function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace, ParticleRanges, UniqueCells)
+        ExtractCells!(Particles, InverseCutOff)
 
         sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
 
@@ -141,17 +142,9 @@ using LinearAlgebra
         return nothing
     end
 
-    function NeighborLoopMDBC!(Kernel, SimMetaData::SimulationMetaData{Dimensions, _}, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCells, GhostPoints, GhostNormals,  ParticleType, bᵧ, Aᵧ, ::Val{InverseCutOff}) where {Dimensions, _, InverseCutOff}
+    function NeighborLoopMDBC!(SimKernel, SimMetaData::SimulationMetaData{Dimensions, _}, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCells, GhostPoints, GhostNormals,  ParticleType, bᵧ, Aᵧ) where {Dimensions, _}
         
-
         FullStencil = CartesianIndices(ntuple(_->-1:1, Dimensions))
-
-        function map_floor(x)
-            # This is different than just doing muladd(x,InverseCutOff,0.5) because it rounds towards zero.
-            # Consider -1.7 + 0.5, this would give -1.2 and then trunced 1, but we want -2, therefore absolute addition before hand
-            # We add 0.5 instead of 1, to ensure proper rounding behavior when restoring the sign for negative numbers.
-            Int(sign(x)) * unsafe_trunc(Int, muladd(abs(x),InverseCutOff,0.5))
-        end
 
         @inbounds @threads for iter ∈ eachindex(GhostPoints)
 
@@ -159,7 +152,8 @@ using LinearAlgebra
             
             if !iszero(GhostPoint)
                 
-                GhostCellIndex = CartesianIndex(map(map_floor, Tuple(GhostPoint)))
+                # GhostCellIndex = CartesianIndex(map(map_floor, Tuple(GhostPoint)))
+                GhostCellIndex = CartesianIndex(map(x -> map_floor(x, SimKernel.H⁻¹), Tuple(GhostPoint)))
 
                 # FullStencil includes Cell I - Some neighbours can potentially be in the neighbouring cells
                 @inbounds for S ∈ FullStencil
@@ -173,7 +167,7 @@ using LinearAlgebra
                         StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
                         EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
                         @inbounds for j = StartIndex_:EndIndex_
-                            @inline ComputeInteractionsMDBC!(Kernel, SimMetaData, SimConstants, Position, Density, ParticleType,  GhostPoints, bᵧ, Aᵧ, iter, j)
+                            @inline ComputeInteractionsMDBC!(SimKernel, SimMetaData, SimConstants, Position, Density, ParticleType,  GhostPoints, bᵧ, Aᵧ, iter, j)
                         end
                         
                     end
@@ -551,7 +545,7 @@ using LinearAlgebra
         return nothing
     end
     
-    @inbounds function SimulationLoop(SPHKernel, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ,  bᵧ, Aᵧ, MotionDefinition, InverseCutOff)
+    @inbounds function SimulationLoop(SimKernel, SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ,  bᵧ, Aᵧ, MotionDefinition)
         Position       = SimParticles.Position
         Density        = SimParticles.Density
         Pressure       = SimParticles.Pressure
@@ -570,7 +564,7 @@ using LinearAlgebra
         
         while SimMetaData.TotalTime <= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
 
-            @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants, SPHKernel)
+            @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel)
             dt₂ = dt * 0.5
 
             @timeit SimMetaData.HourGlass "02 Calculate IndexCounter"  begin
@@ -579,8 +573,8 @@ using LinearAlgebra
                 # any ensure it is always updated in a reasonable manner. This only works well, assuming that
                 # c₀ >= maximum(norm.(Velocity))
                 # Remove if statement logic if you want to update each iteration
-                if mod(SimMetaData.Iteration, ceil(Int, SPHKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
-                    SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, InverseCutOff, SortingScratchSpace,  ParticleRanges, UniqueCells)
+                if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
+                    SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells)
                 end
 
                 UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
@@ -597,9 +591,9 @@ using LinearAlgebra
             
                 @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
                 if SimMetaData.FlagMDBCSimple
-                    @timeit SimMetaData.HourGlass "04 First NeighborLoopMDBC"        NeighborLoopMDBC!(SPHKernel, SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCellsView, GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ, InverseCutOff)
+                    @timeit SimMetaData.HourGlass "04 First NeighborLoopMDBC"        NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCellsView, GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ)
                 end
-                @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SPHKernel, SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
+                @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimKernel, SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
                 @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
             end
 
@@ -614,7 +608,7 @@ using LinearAlgebra
             @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
         
             @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-            @timeit SimMetaData.HourGlass "08 Second NeighborLoop"                   NeighborLoop!(SPHKernel, SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, UniqueCellsView, EnumeratedIndices)
+            @timeit SimMetaData.HourGlass "08 Second NeighborLoop"                   NeighborLoop!(SimKernel, SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, UniqueCellsView, EnumeratedIndices)
             @timeit SimMetaData.HourGlass "Reduction"                                ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
 
         
@@ -715,15 +709,13 @@ using LinearAlgebra
 
         # Normal run and save data
         generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
-    
-
-        InverseCutOff = Val(1/(SimKernel.H))
+        
 
         @timeit HourGlass "14 Next TimeStep" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime, 1e6))
 
         @inbounds while true
     
-            @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(SimKernel, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, bᵧ, Aᵧ, MotionDefinition, InverseCutOff)
+            @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(SimKernel, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, bᵧ, Aᵧ, MotionDefinition)
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
 
             if SimMetaData.FlagLog
