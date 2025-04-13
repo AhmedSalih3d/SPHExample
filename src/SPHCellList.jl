@@ -143,7 +143,7 @@ using Bumper
         return nothing
     end
 
-    function NeighborLoopMDBC!(SimKernel, SimMetaData::SimulationMetaData{Dimensions, _}, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCells, GhostPoints, GhostNormals,  ParticleType, bᵧ, Aᵧ) where {Dimensions, _}
+    function NeighborLoopMDBC!(SimKernel, SimMetaData::SimulationMetaData{Dimensions, _}, SimConstants, ParticleRanges, Position, Density, UniqueCells, GhostPoints, GhostNormals,  ParticleType, bᵧ, Aᵧ) where {Dimensions, _}
         
         FullStencil = CartesianIndices(ntuple(_->-1:1, Dimensions))
 
@@ -585,7 +585,7 @@ using Bumper
                         bᵧ = @alloc(SVector{DimensionsPlus, FloatType}, length(Position))
                         Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus * DimensionsPlus}, length(Position))
                         ResetArrays!(bᵧ, Aᵧ)
-                        @timeit SimMetaData.HourGlass "04 First NeighborLoopMDBC"        NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCellsView, GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ)
+                        @timeit SimMetaData.HourGlass "04 First NeighborLoopMDBC"        NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, Position, Density, UniqueCellsView, GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ)
                     end
                     @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimKernel, SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
                     @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
