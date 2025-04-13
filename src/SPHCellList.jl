@@ -667,7 +667,7 @@ using LinearAlgebra
         end
 
         if SimMetaData.FlagLog
-            InitializeLogger(SimLogger,SimConstants,SimMetaData, SimGeometry, SimParticles)
+            InitializeLogger(SimLogger, SimConstants, SimMetaData, SimKernel, SimGeometry, SimParticles)
         end
 
         # To generate first line

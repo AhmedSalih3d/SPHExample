@@ -39,15 +39,15 @@ end
 @inline _αD(::Type{Gaussian}, ::Val{3}, h) = 1 / (π^(3/2) * h^3)
 
 # Constructor for SPHKernelInstance
-function SPHKernelInstance{KernelType, D, T}(dx::T) where {KernelType<:SPHKernel, D, T}
-    k = 2.0
+function SPHKernelInstance{KernelType, D, T}(dx::T, k::T=2.0) where {KernelType<:SPHKernel, D, T}
     h = k * dx
     h⁻¹ = 1 / h
     H = k * h
+    H⁻¹ = 1/H
     H² = H * H
     αD = _αD(KernelType, Val(D), h)
     η² = (0.01 * h)^2
-    return SPHKernelInstance{KernelType, D, T}(k=k, h=h, h⁻¹=h⁻¹, H=H, H²=H², αD=αD, η²=η²)
+    return SPHKernelInstance{KernelType, D, T}(k=k, h=h, h⁻¹=h⁻¹, H=H, H⁻¹ = H⁻¹, H²=H², αD=αD, η²=η²)
 end
 
 # Kernel Evaluation Functions
