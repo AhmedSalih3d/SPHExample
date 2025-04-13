@@ -398,7 +398,7 @@ using Bumper
         end
     end
 
-    function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ, bᵧ, Aᵧ)
+    function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
         
         ResetArrays!(dρdtI, Acceleration)
 
@@ -408,10 +408,6 @@ using Bumper
 
         if SimMetaData.FlagShifting
             ResetArrays!(∇Cᵢ, ∇◌rᵢ)
-        end
-
-        if SimMetaData.FlagMDBCSimple 
-            ResetArrays!(bᵧ, Aᵧ)
         end
 
         foreachfield(f -> map!(v -> fill!(v, zero(eltype(v))), f, f), SimThreadedArrays)
@@ -556,12 +552,8 @@ using Bumper
 
         ###
         DimensionsPlus = Dimensions + 1
-        while SimMetaData.TotalTime <= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
-
-            @no_escape begin
-                bᵧ = @alloc(SVector{DimensionsPlus, FloatType}, length(Position))
-                Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus * DimensionsPlus}, length(Position))
-
+        @no_escape begin
+            while SimMetaData.TotalTime <= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
 
                 @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel)
                 dt₂ = dt * 0.5
@@ -585,11 +577,14 @@ using Bumper
             
                 if !SimMetaData.FlagSingleStepTimeStepping
                     ###=== First step of resetting arrays
-                    @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ, bᵧ, Aᵧ)
+                    @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
                     ###===
                 
                     @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
                     if SimMetaData.FlagMDBCSimple
+                        bᵧ = @alloc(SVector{DimensionsPlus, FloatType}, length(Position))
+                        Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus * DimensionsPlus}, length(Position))
+                        ResetArrays!(bᵧ, Aᵧ)
                         @timeit SimMetaData.HourGlass "04 First NeighborLoopMDBC"        NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Density, UniqueCellsView, GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ)
                     end
                     @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimKernel, SimMetaData, SimConstants, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
@@ -601,7 +596,7 @@ using Bumper
                 @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
             
                 ###=== Second step of resetting arrays
-                @timeit SimMetaData.HourGlass "ResetArrays"                              ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ, bᵧ, Aᵧ)
+                @timeit SimMetaData.HourGlass "ResetArrays"                              ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
                 ###===
 
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
