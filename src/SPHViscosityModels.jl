@@ -13,12 +13,17 @@ struct Laminar     <: SPHViscosity end
 struct LaminarSPS  <: SPHViscosity end
 
 # No viscosity: return zero contributions.
-@inline function compute_viscosity(::NoViscosity, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ)
+@inline function compute_viscosity(::NoViscosity, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, i, j)
     return zero(xᵢⱼ), zero(xᵢⱼ)
 end
 
 # Artificial viscosity formulation.
-@inline function compute_viscosity(::Artificial, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ)
+@inline function compute_viscosity(::Artificial, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, i, j)
+    @unpack ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
+
+    ρᵢ = SimParticles.Density[i]
+    ρⱼ = SimParticles.Density[j]
+
     ρ̄ = (ρᵢ + ρⱼ) * 0.5
     cond = dot(vᵢⱼ, xᵢⱼ)
     flag = cond < 0 ? one(eltype(cond)) : zero(eltype(cond))
@@ -28,14 +33,14 @@ end
 end
 
 # Laminar viscosity formulation.
-@inline function compute_viscosity(::Laminar, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ)
+@inline function compute_viscosity(::Laminar, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, i, j)
     term = (4 * m₀ * ν₀ * dot(xᵢⱼ, ∇ᵢWᵢⱼ)) / ((ρᵢ + ρⱼ) + (dᵢⱼ^2 + η2))
     return term * vᵢⱼ, -term * vᵢⱼ
 end
 
 # LaminarSPS: with sub-grid scale stresses.
-@inline function compute_viscosity(::LaminarSPS, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ)
-    t1,t2 = compute_viscosity(Laminar(), SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ)
+@inline function compute_viscosity(::LaminarSPS, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, i, j)
+    t1,t2 = compute_viscosity(Laminar(), SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, i, j)
     
     Iᴹ       = diagm(one.(xᵢⱼ))
     #julia> a .- a'
