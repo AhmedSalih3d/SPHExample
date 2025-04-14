@@ -48,6 +48,27 @@ let
         mkdir(SimMetaDataDambreak.SaveLocation)
     end
 
+    # Artificial viscosity formulation.
+    using Parameters
+    using LinearAlgebra
+    struct MyTurbulenceModel <: SPHViscosity end
+    @inline function SPHExample.compute_viscosity(::MyTurbulenceModel, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, i, j)
+        @unpack ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
+        @unpack h, η² = SimKernel
+
+        dᵢⱼ =  sqrt(abs(dot(xᵢⱼ,xᵢⱼ)))
+        ρᵢ  = SimParticles.Density[i]
+        ρⱼ  = SimParticles.Density[j]
+
+        invd²η²   =  1.0 / (dᵢⱼ*dᵢⱼ+η²)
+        ρ̄ = (ρᵢ + ρⱼ) * 0.5
+        cond = dot(vᵢⱼ, xᵢⱼ)
+        flag = cond < 0 ? one(eltype(cond)) : zero(eltype(cond))
+        μ = h * cond * invd²η²
+        Π = -m₀ * (flag * (-α * c₀ * μ) / ρ̄) * ∇ᵢWᵢⱼ
+        return 0*Π, -Π*0
+    end
+
     SimLogger = SimulationLogger(SimMetaDataDambreak.SaveLocation)
 
     CleanUpSimulationFolder(SimMetaDataDambreak.SaveLocation)
@@ -56,10 +77,10 @@ let
         SimGeometry          = SimulationGeometry,
         SimMetaData          = SimMetaDataDambreak,
         SimConstants         = SimConstantsDambreak,
-        SimKernel            = SPHKernelInstance{CubicSpline, Dimensions, FloatType}(SimConstantsDambreak.dx),
+        SimKernel            = SPHKernelInstance{WendlandC2, Dimensions, FloatType}(SimConstantsDambreak.dx),
         SimLogger            = SimLogger,
         SimParticles         = SimParticles,
-        SimViscosity         = LaminarSPS(),
+        SimViscosity         = ArtificialViscosity(),
         ParticleNormalsPath  = "./input/dam_break_2d/DamBreak2d_Dp0.02_MDBC_GhostNodes_ThreeLayers.csv"
     )
 end
