@@ -16,6 +16,7 @@ using ..ProduceHDFVTK
 using ..TimeStepping
 using ..OpenExternalPrograms
 using ..SPHKernels
+using ..SPHViscosityModels
 
 using StaticArrays
 import StructArrays: StructArray, foreachfield
@@ -626,6 +627,7 @@ using Bumper
         SimKernel::SPHKernelInstance,
         SimLogger::SimulationLogger,
         SimParticles::StructArray,
+        SimViscosity::SPHViscosity,
         ParticleNormalsPath::Union{Nothing,String} = nothing
         ) where {Dimensions,FloatType}
 

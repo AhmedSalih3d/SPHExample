@@ -1,7 +1,8 @@
 module SPHExample
 
     include("AuxillaryFunctions.jl");
-    include("SPHKernels.jl")          
+    include("SPHKernels.jl")
+    include("SPHViscosityModels.jl")          
     include("ProduceHDFVTK.jl")    
     include("TimeStepping.jl");       
     include("SimulationEquations.jl");
@@ -19,6 +20,9 @@ module SPHExample
 
     using .SPHKernels
     export SPHKernel, SPHKernelInstance, WendlandC2, CubicSpline, Gaussian, Wᵢⱼ, ∇Wᵢⱼ
+
+    using .SPHViscosityModels
+    export SPHViscosity, NoViscosity, Artificial, Laminar, LaminarSPS, compute_viscosity
 
     using .SimulationGeometry
     export ParticleType, Fixed, Fluid, Moving, Geometry, MotionDetails

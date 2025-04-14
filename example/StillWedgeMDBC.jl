@@ -56,6 +56,7 @@ let
         SimKernel           = SPHKernelInstance{WendlandC2, Dimensions, FloatType}(SimConstantsWedge.dx),
         SimLogger           = SimLogger,
         SimParticles        = SimParticles,
+        SimViscosity        = Artificial(),
         ParticleNormalsPath = "./input/still_wedge_mdbc/StillWedge_Dp$(SimConstantsWedge.dx)_GhostNodes_Correct.csv"
     )
 
