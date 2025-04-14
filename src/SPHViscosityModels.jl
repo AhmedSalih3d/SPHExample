@@ -13,34 +13,37 @@ struct Laminar     <: SPHViscosity end
 struct LaminarSPS  <: SPHViscosity end
 
 # No viscosity: return zero contributions.
-@inline function compute_viscosity(::NoViscosity, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, i, j)
+@inline function compute_viscosity(::NoViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, i, j)
     return zero(xᵢⱼ), zero(xᵢⱼ)
 end
 
 # Artificial viscosity formulation.
-@inline function compute_viscosity(::Artificial, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, i, j)
+@inline function compute_viscosity(::Artificial, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, i, j)
     @unpack ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
+    @unpack h, η² = SimKernel
 
-    ρᵢ = SimParticles.Density[i]
-    ρⱼ = SimParticles.Density[j]
+    dᵢⱼ =  sqrt(abs(dot(xᵢⱼ,xᵢⱼ)))
+    ρᵢ  = SimParticles.Density[i]
+    ρⱼ  = SimParticles.Density[j]
 
+    invd²η²   =  1.0 / (dᵢⱼ*dᵢⱼ+η²)
     ρ̄ = (ρᵢ + ρⱼ) * 0.5
     cond = dot(vᵢⱼ, xᵢⱼ)
     flag = cond < 0 ? one(eltype(cond)) : zero(eltype(cond))
-    μ = h * cond * invd2η2
+    μ = h * cond * invd²η²
     Π = -m₀ * (flag * (-α * c₀ * μ) / ρ̄) * ∇ᵢWᵢⱼ
     return Π, -Π
 end
 
 # Laminar viscosity formulation.
-@inline function compute_viscosity(::Laminar, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, i, j)
+@inline function compute_viscosity(::Laminar, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, i, j)
     term = (4 * m₀ * ν₀ * dot(xᵢⱼ, ∇ᵢWᵢⱼ)) / ((ρᵢ + ρⱼ) + (dᵢⱼ^2 + η2))
     return term * vᵢⱼ, -term * vᵢⱼ
 end
 
 # LaminarSPS: with sub-grid scale stresses.
-@inline function compute_viscosity(::LaminarSPS, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, i, j)
-    t1,t2 = compute_viscosity(Laminar(), SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, i, j)
+@inline function compute_viscosity(::LaminarSPS, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, i, j)
+    t1,t2 = compute_viscosity(Laminar(), SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, i, j)
     
     Iᴹ       = diagm(one.(xᵢⱼ))
     #julia> a .- a'
