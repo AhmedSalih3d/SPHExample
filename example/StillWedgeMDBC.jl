@@ -53,7 +53,7 @@ let
         SimGeometry         = SimulationGeometry,
         SimMetaData         = SimMetaDataWedge,
         SimConstants        = SimConstantsWedge,
-        SimKernel           = SPHKernelInstance{WendlandC2, Dimensions, FloatType}(SimConstantsWedge.dx),
+        SimKernel           = SPHKernelInstance{CubicSpline, Dimensions, FloatType}(SimConstantsWedge.dx),
         SimLogger           = SimLogger,
         SimParticles        = SimParticles,
         SimViscosity        = ArtificialViscosity(),
