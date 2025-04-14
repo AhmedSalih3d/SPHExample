@@ -109,32 +109,34 @@ using Bumper
 # Neither Polyester.@batch per core or thread is faster
 ###=== Function to process each cell and its neighbors
     function NeighborLoop!(SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCells, EnumeratedIndices)
-        @sync tasks = map(EnumeratedIndices) do (ichunk, inds)
-            @spawn for iter ∈ inds
+        @sync begin
+            map(EnumeratedIndices) do (ichunk, inds)
+                @spawn for iter ∈ inds
 
-                CellIndex = UniqueCells[iter]
+                    CellIndex = UniqueCells[iter]
 
-                StartIndex = ParticleRanges[iter]
-                EndIndex   = ParticleRanges[iter+1] - 1
+                    StartIndex = ParticleRanges[iter]
+                    EndIndex   = ParticleRanges[iter+1] - 1
 
-                @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-                    @inline ComputeInteractions!(SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
-                end
+                    @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
+                        @inline ComputeInteractions!(SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
+                    end
 
-                @inbounds for S ∈ Stencil
-                    SCellIndex = CellIndex + S
+                    @inbounds for S ∈ Stencil
+                        SCellIndex = CellIndex + S
 
-                    # Returns a range, x:x for exact match and x:(x-1) for no match
-                    # utilizes that it is a sorted array and requires no isequal constructor,
-                    # so I prefer this for now
-                    NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
+                        # Returns a range, x:x for exact match and x:(x-1) for no match
+                        # utilizes that it is a sorted array and requires no isequal constructor,
+                        # so I prefer this for now
+                        NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
 
-                    if length(NeighborCellIndex) != 0
-                        StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
-                        EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
+                        if length(NeighborCellIndex) != 0
+                            StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
+                            EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
 
-                        @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                            @inline ComputeInteractions!(SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
+                            @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
+                                @inline ComputeInteractions!(SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
+                            end
                         end
                     end
                 end
@@ -257,7 +259,7 @@ using Bumper
 
             
             if FlagOutputKernelValues
-                Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
+                Wᵢⱼ  = @fastpow @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
                 SimThreadedArrays.KernelThreaded[ichunk][i]         += Wᵢⱼ
                 SimThreadedArrays.KernelThreaded[ichunk][j]         += Wᵢⱼ
                 SimThreadedArrays.KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
@@ -266,7 +268,7 @@ using Bumper
 
 
             if SimMetaData.FlagShifting
-                Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
+                Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
         
                 MLcond = MotionLimiter[i] * MotionLimiter[j]
 
