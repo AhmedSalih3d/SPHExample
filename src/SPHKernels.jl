@@ -85,7 +85,7 @@ end
     
     # Chain rule: ∇W = (dW/dq) * (∇q)
     # Where ∇q = xᵢⱼ/(r*h)
-    return -dWdq * h⁻¹ * xᵢⱼ / (norm(xᵢⱼ) + η²)
+    return dWdq * h⁻¹ * xᵢⱼ / (norm(xᵢⱼ) + η²)
 end
 
 @inline function Wᵢⱼ(kernel::SPHKernelInstance{Gaussian,D,T}, q::T) where {D,T}
