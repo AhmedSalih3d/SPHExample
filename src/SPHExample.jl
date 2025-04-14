@@ -22,7 +22,7 @@ module SPHExample
     export SPHKernel, SPHKernelInstance, WendlandC2, CubicSpline, Gaussian, Wᵢⱼ, ∇Wᵢⱼ
 
     using .SPHViscosityModels
-    export SPHViscosity, NoViscosity, Artificial, Laminar, LaminarSPS, compute_viscosity
+    export SPHViscosity, ZeroViscosity, ArtificialViscosity, Laminar, LaminarSPS, compute_viscosity
 
     using .SimulationGeometry
     export ParticleType, Fixed, Fluid, Moving, Geometry, MotionDetails
