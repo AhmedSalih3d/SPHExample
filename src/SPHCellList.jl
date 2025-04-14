@@ -297,7 +297,7 @@ using Bumper
         
                 # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA TO REPRESENT IT
                 dτdtᵢ = (m₀/(ρⱼ * ρᵢ)) * (τᶿᵢ + τᶿⱼ) *  ∇ᵢWᵢⱼ 
-                dτdtⱼ = dτdtᵢ #(m₀/(ρᵢ * ρⱼ)) * (τᶿᵢ + τᶿⱼ) * -∇ᵢWᵢⱼ 
+                dτdtⱼ = -dτdtᵢ #(m₀/(ρᵢ * ρⱼ)) * (τᶿᵢ + τᶿⱼ) * -∇ᵢWᵢⱼ 
             else
                 dτdtᵢ  = zero(xᵢⱼ)
                 dτdtⱼ  = dτdtᵢ
