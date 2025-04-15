@@ -31,7 +31,7 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="StillWedge", 
         SaveLocation="E:/SecondApproach/StillWedge2D_MDBC",
-        SimulationTime=1,
+        SimulationTime=4,
         OutputEach=0.01,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
@@ -41,7 +41,6 @@ let
         FlagLinearizedDDT=true,
         FlagOutputKernelValues=false,
         FlagLog=true,
-        FlagShifting=false,
         FlagMDBCSimple=true,
     )
 
@@ -53,7 +52,7 @@ let
         SimGeometry         = SimulationGeometry,
         SimMetaData         = SimMetaDataWedge,
         SimConstants        = SimConstantsWedge,
-        SimKernel           = SPHKernelInstance{CubicSpline, Dimensions, FloatType}(SimConstantsWedge.dx),
+        SimKernel           = SPHKernelInstance{WendlandC2, Dimensions, FloatType}(SimConstantsWedge.dx),
         SimLogger           = SimLogger,
         SimParticles        = SimParticles,
         SimViscosity        = ArtificialViscosity(),

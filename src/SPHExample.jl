@@ -2,7 +2,8 @@ module SPHExample
 
     include("AuxillaryFunctions.jl");
     include("SPHKernels.jl")
-    include("SPHViscosityModels.jl")          
+    include("SPHViscosityModels.jl")
+    include("SPHDensityDiffusionModels.jl")        
     include("ProduceHDFVTK.jl")    
     include("TimeStepping.jl");       
     include("SimulationEquations.jl");
@@ -24,6 +25,9 @@ module SPHExample
     using .SPHViscosityModels
     export SPHViscosity, ZeroViscosity, ArtificialViscosity, Laminar, LaminarSPS, compute_viscosity
 
+    using .SPHDensityDiffusionModels
+    export SPHDensityDiffusion, ZeroDensityDiffusion, ZeroGravityLinearDensityDiffusion, LinearDensityDiffusion, ZeroGravityComplexDensityDiffusion, ComplexDensityDiffusion, compute_density_diffusion
+ 
     using .SimulationGeometry
     export ParticleType, Fixed, Fluid, Moving, Geometry, MotionDetails
 

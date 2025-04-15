@@ -17,6 +17,7 @@ using ..TimeStepping
 using ..OpenExternalPrograms
 using ..SPHKernels
 using ..SPHViscosityModels
+using ..SPHDensityDiffusionModels
 
 using StaticArrays
 import StructArrays: StructArray, foreachfield
@@ -212,36 +213,39 @@ using Bumper
             dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  density_symmetric_term
             dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  density_symmetric_term
 
-            # Density diffusion
-            if FlagDensityDiffusion
-                if SimConstants.g == 0
-                    ρᵢⱼᴴ  = 0.0
-                    # ρⱼᵢᴴ  = 0.0
-                else
-                    Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
-                    # Pⱼᵢᴴ  = -Pᵢⱼᴴ
+            # # Density diffusion
+            # if FlagDensityDiffusion
+            #     if SimConstants.g == 0
+            #         ρᵢⱼᴴ  = 0.0
+            #         # ρⱼᵢᴴ  = 0.0
+            #     else
+            #         Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
+            #         # Pⱼᵢᴴ  = -Pᵢⱼᴴ
                     
-                    if FlagLinearizedDDT
-                        ρᵢⱼᴴ  = Pᵢⱼᴴ * Linear_ρ_factor
-                        # ρⱼᵢᴴ  = -ρᵢⱼᴴ
-                    else
-                        ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
-                        # ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
-                    end
-                end
+            #         if FlagLinearizedDDT
+            #             ρᵢⱼᴴ  = Pᵢⱼᴴ * Linear_ρ_factor
+            #             # ρⱼᵢᴴ  = -ρᵢⱼᴴ
+            #         else
+            #             ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
+            #             # ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
+            #         end
+            #     end
 
-                ρⱼᵢ   = ρⱼ - ρᵢ
+            #     ρⱼᵢ   = ρⱼ - ρᵢ
 
-                Ψᵢⱼ   = 2( ρⱼᵢ - ρᵢⱼᴴ) * (-xᵢⱼ) * invd²η²
-                #Ψⱼᵢ   = -Ψᵢⱼ #2(-ρⱼᵢ - ρⱼᵢᴴ) * ( xᵢⱼ) * invd²η²
+            #     Ψᵢⱼ   = 2( ρⱼᵢ - ρᵢⱼᴴ) * (-xᵢⱼ) * invd²η²
+            #     #Ψⱼᵢ   = -Ψᵢⱼ #2(-ρⱼᵢ - ρⱼᵢᴴ) * ( xᵢⱼ) * invd²η²
 
-                MLcond = MotionLimiter[i] * MotionLimiter[j]
-                Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
-                Dⱼ    =  -Dᵢ #δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
-            else
-                Dᵢ  = 0.0
-                Dⱼ  = 0.0
-            end
+            #     MLcond = MotionLimiter[i] * MotionLimiter[j]
+            #     Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
+            #     Dⱼ    =  -Dᵢ #δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
+            # else
+            #     Dᵢ  = 0.0
+            #     Dⱼ  = 0.0
+            # end
+
+            Dᵢ, Dⱼ = compute_density_diffusion(LinearDensityDiffusion(),SimKernel,SimConstants,SimParticles,xᵢⱼ,∇ᵢWᵢⱼ,i,j,MotionLimiter)
+
             SimThreadedArrays.dρdtIThreaded[ichunk][i] += dρdt⁺ + Dᵢ
             SimThreadedArrays.dρdtIThreaded[ichunk][j] += dρdt⁻ + Dⱼ
 
@@ -249,7 +253,7 @@ using Bumper
             Pᵢ      =  Pressure[i]
             Pⱼ      =  Pressure[j]
             Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
-            f_ab    = ((Pᵢ/ρᵢ^2) + (Pⱼ/ρⱼ^2)) * (SPHKernels.Wᵢⱼ(SimKernel, q) / SPHKernels.Wᵢⱼ(SimKernel, SimConstants.dx))^4
+            f_ab    = 0.0 #((Pᵢ/ρᵢ^2) + (Pⱼ/ρⱼ^2)) * (SPHKernels.Wᵢⱼ(SimKernel, q) / SPHKernels.Wᵢⱼ(SimKernel, SimConstants.dx))^4
             dvdt⁺   = - m₀ * (Pfac + f_ab) *  ∇ᵢWᵢⱼ
 
             
