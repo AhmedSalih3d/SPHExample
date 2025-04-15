@@ -56,6 +56,7 @@ let
         SimLogger           = SimLogger,
         SimParticles        = SimParticles,
         SimViscosity        = ArtificialViscosity(),
+        SimDensityDiffusion = LinearDensityDiffusion(),
         ParticleNormalsPath = "./input/still_wedge_mdbc/StillWedge_Dp$(SimConstantsWedge.dx)_GhostNodes_Correct.csv"
     )
 
