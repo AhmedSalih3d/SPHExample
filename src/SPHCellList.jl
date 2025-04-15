@@ -190,8 +190,6 @@ using Bumper
 
         @unpack h⁻¹, h, η², H², αD = SimKernel 
 
-        Linear_ρ_factor = (1/(Cb*γ))*ρ₀
-
         xᵢⱼ  = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)              
         if  xᵢⱼ² <= H²
@@ -200,7 +198,6 @@ using Bumper
 
             # clamp seems faster than min, no util
             q         = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0) #min(dᵢⱼ * h⁻¹, 2.0) - 8% util no DDT
-            invd²η²   =  1.0 / (dᵢⱼ*dᵢⱼ+η²)
             ∇ᵢWᵢⱼ     = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
 
             ρᵢ        = Density[i]
@@ -213,37 +210,6 @@ using Bumper
             dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  density_symmetric_term
             dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  density_symmetric_term
 
-            # # Density diffusion
-            # if FlagDensityDiffusion
-            #     if SimConstants.g == 0
-            #         ρᵢⱼᴴ  = 0.0
-            #         # ρⱼᵢᴴ  = 0.0
-            #     else
-            #         Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
-            #         # Pⱼᵢᴴ  = -Pᵢⱼᴴ
-                    
-            #         if FlagLinearizedDDT
-            #             ρᵢⱼᴴ  = Pᵢⱼᴴ * Linear_ρ_factor
-            #             # ρⱼᵢᴴ  = -ρᵢⱼᴴ
-            #         else
-            #             ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
-            #             # ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
-            #         end
-            #     end
-
-            #     ρⱼᵢ   = ρⱼ - ρᵢ
-
-            #     Ψᵢⱼ   = 2( ρⱼᵢ - ρᵢⱼᴴ) * (-xᵢⱼ) * invd²η²
-            #     #Ψⱼᵢ   = -Ψᵢⱼ #2(-ρⱼᵢ - ρⱼᵢᴴ) * ( xᵢⱼ) * invd²η²
-
-            #     MLcond = MotionLimiter[i] * MotionLimiter[j]
-            #     Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
-            #     Dⱼ    =  -Dᵢ #δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
-            # else
-            #     Dᵢ  = 0.0
-            #     Dⱼ  = 0.0
-            # end
-
             Dᵢ, Dⱼ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, i, j, MotionLimiter)
 
             SimThreadedArrays.dρdtIThreaded[ichunk][i] += dρdt⁺ + Dᵢ
@@ -255,8 +221,6 @@ using Bumper
             Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
             f_ab    = 0.0 #((Pᵢ/ρᵢ^2) + (Pⱼ/ρⱼ^2)) * (SPHKernels.Wᵢⱼ(SimKernel, q) / SPHKernels.Wᵢⱼ(SimKernel, SimConstants.dx))^4
             dvdt⁺   = - m₀ * (Pfac + f_ab) *  ∇ᵢWᵢⱼ
-
-            
 
             visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, i, j)
 
@@ -272,7 +236,6 @@ using Bumper
                 SimThreadedArrays.KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
                 SimThreadedArrays.KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
             end
-
 
             if SimMetaData.FlagShifting
                 Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
@@ -481,7 +444,6 @@ using Bumper
         Pressure       = SimParticles.Pressure
         Velocity       = SimParticles.Velocity
         Acceleration   = SimParticles.Acceleration
-        GravityFactor  = SimParticles.GravityFactor
         MotionLimiter  = SimParticles.MotionLimiter
         ParticleType   = SimParticles.Type
         ParticleMarker = SimParticles.GroupMarker
