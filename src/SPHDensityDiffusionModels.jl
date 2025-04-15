@@ -1,7 +1,7 @@
 module SPHDensityDiffusionModels
 
 using StaticArrays, LinearAlgebra, Parameters
-using .SimulationEquations
+using ..SimulationEquations
 #---------------------------------------------------------------
 # Exported
 #---------------------------------------------------------------

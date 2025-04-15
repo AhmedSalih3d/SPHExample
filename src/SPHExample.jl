@@ -2,8 +2,7 @@ module SPHExample
 
     include("AuxillaryFunctions.jl");
     include("SPHKernels.jl")
-    include("SPHViscosityModels.jl")
-    include("SPHDensityDiffusionModels.jl")        
+    include("SPHViscosityModels.jl")      
     include("ProduceHDFVTK.jl")    
     include("TimeStepping.jl");       
     include("SimulationEquations.jl");
@@ -13,7 +12,9 @@ module SPHExample
     include("SimulationLoggerConfiguration.jl");
     include("PreProcess.jl");
     include("OpenExternalPrograms.jl")
+    include("SPHDensityDiffusionModels.jl")  
     include("SPHCellList.jl") #Must be last
+    
 
     # Re-export desired functions from each submodule
     using .AuxillaryFunctions
