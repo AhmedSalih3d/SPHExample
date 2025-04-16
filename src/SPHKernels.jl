@@ -10,11 +10,16 @@ abstract type SPHKernel end
 
 # Specific kernel types
 struct WendlandC2  <: SPHKernel end
-struct CubicSpline <: SPHKernel end
 struct Gaussian    <: SPHKernel  end
+
+struct CubicSpline{T<:AbstractFloat} <: SPHKernel 
+    eps::T
+end
+CubicSpline{T}() where {T} = CubicSpline{T}(one(T))
 
 # General SPH Kernel Type
 @with_kw struct SPHKernelInstance{KernelType<:SPHKernel, Dimensions, FloatType}
+    kernel::KernelType
     k::FloatType  = 2.0                                ; @assert k > 0 "Scaling factor k must be positive"
     h::FloatType  = k * 0.01                           ; @assert h > 0 "Smoothing length h must be positive"
     h⁻¹::FloatType = 1 / h                             ; @assert h⁻¹ > 0 "Inverse smoothing length h⁻¹ must be positive"
@@ -98,5 +103,12 @@ end
     factor = -2 * αD * q * h⁻¹ * exp(-q^2)
     return factor * xᵢⱼ / (q * h + (q == 0.0))
 end
+
+
+#---------------------------------------------------------------
+# Tensile Corrections for specific kernels
+#---------------------------------------------------------------
+
+
 
 end # module
