@@ -226,7 +226,7 @@ using Bumper
 
             uₘ = dvdt⁺ + visc_term
             SimThreadedArrays.AccelerationThreaded[ichunk][i] += uₘ
-            SimThreadedArrays.AccelerationThreaded[ichunk][j] -= uₘ #dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
+            SimThreadedArrays.AccelerationThreaded[ichunk][j] -= uₘ 
 
             
             if FlagOutputKernelValues

@@ -56,12 +56,12 @@ function SPHKernelInstance{D, T}(kernel::KernelType, dx::T, k::T=2.0) where {Ker
 end
 
 # Kernel Evaluation Functions
-@inline function Wᵢⱼ(kernel::SPHKernelInstance{WendlandC2,D,T}, q::T) where {D,T}
+@inline function Wᵢⱼ(kernel::SPHKernelInstance{<:WendlandC2}, q::T) where {T}
     @unpack αD = kernel
     return αD * (1 - q/2)^4 * (2q + 1)
 end
 
-@inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{WendlandC2,D,T}, q::T, xᵢⱼ) where {D,T}
+@inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{<:WendlandC2}, q::T, xᵢⱼ) where {T}
     @unpack h, αD, η² = kernel
     # Subhan Allah, if this math is correct, then η² can be avoided
     # denom = (q * h + η²)
@@ -70,12 +70,12 @@ end
     return factor * xᵢⱼ
 end
 
-@inline function Wᵢⱼ(kernel::SPHKernelInstance{<:CubicSpline}, q::T) where {D,T}
+@inline function Wᵢⱼ(kernel::SPHKernelInstance{<:CubicSpline}, q::T) where {T}
     @unpack αD = kernel
     return αD * (((1 - (3/2)*q^2 + (3/4)*q^3) * (0 <= q <= 1)) + ((1/4)*(2 - q)^3 * (1 < q <= 2)))
 end
 
-@inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{CubicSpline{T},D,T}, q::T, xᵢⱼ) where {D,T}
+@inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{<:CubicSpline}, q::T, xᵢⱼ) where {T}
     @unpack h, h⁻¹, αD, η² = kernel
     # r = norm(xᵢⱼ)
     # inv_r_h = 1/(r + η²)  # η² is a small regularization to avoid division by zero
@@ -93,17 +93,16 @@ end
     return dWdq * h⁻¹ * xᵢⱼ / (norm(xᵢⱼ) + η²)
 end
 
-@inline function Wᵢⱼ(kernel::SPHKernelInstance{Gaussian,D,T}, q::T) where {D,T}
+@inline function Wᵢⱼ(kernel::SPHKernelInstance{<:Gaussian}, q::T) where {T}
     @unpack αD = kernel
     return αD * exp(-q^2)
 end
 
-@inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{Gaussian,D,T}, q::T, xᵢⱼ) where {D,T}
+@inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{<:Gaussian}, q::T, xᵢⱼ) where {T}
     @unpack h, h⁻¹, αD = kernel
     factor = -2 * αD * q * h⁻¹ * exp(-q^2)
     return factor * xᵢⱼ / (q * h + (q == 0.0))
 end
-
 
 #---------------------------------------------------------------
 # Tensile Corrections for specific kernels
@@ -119,10 +118,12 @@ end
 @inline function tensile_correction(instance::SPHKernelInstance{<:CubicSpline}, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx; n = 4)
     eps_val = instance.kernel.eps
 
-    Wij_q  = instance.αD * (((1 - (3/2)*q^2 + (3/4)*q^3) * (0 <= q <= 1)) + ((1/4)*(2 - q)^3 * (1 < q <= 2)))
-    Wij_dx = instance.αD * (((1 - (3/2)*dx^2 + (3/4)*dx^3) * (0 <= dx <= 1)) + ((1/4)*(2 - dx)^3 * (1 < dx <= 2)))
+    Wᵢⱼ(instance, q)
 
-    return @fastpow eps_val * ( ((Pᵢ/ρᵢ^2) + (Pⱼ/ρⱼ^2)) * (Wij_q / Wij_dx)^n )
+    Wij_q  = Wᵢⱼ(instance, q)
+    Wij_dx = Wᵢⱼ(instance, dx)
+
+    return eps_val * ( ((Pᵢ/ρᵢ^2) + (Pⱼ/ρⱼ^2)) * (Wij_q / Wij_dx)^n )
 end
 
 
