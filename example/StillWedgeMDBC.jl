@@ -48,7 +48,7 @@ let
 
     CleanUpSimulationFolder(SimMetaDataWedge.SaveLocation)
 
-    SimKernel = SPHKernelInstance{WendlandC2, Dimensions, FloatType}(WendlandC2(), SimConstantsWedge.dx)
+    SimKernel = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(), SimConstantsWedge.dx)
 
     @profview RunSimulation(
         SimGeometry         = SimulationGeometry,

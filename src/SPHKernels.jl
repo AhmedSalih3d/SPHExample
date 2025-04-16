@@ -18,7 +18,7 @@ end
 CubicSpline{T}() where {T} = CubicSpline{T}(one(T))
 
 # General SPH Kernel Type
-@with_kw struct SPHKernelInstance{KernelType<:SPHKernel, Dimensions, FloatType}
+@with_kw struct SPHKernelInstance{KernelType, Dimensions, FloatType}
     kernel::KernelType
     k::FloatType  = 2.0                                ; @assert k > 0 "Scaling factor k must be positive"
     h::FloatType  = k * 0.01                           ; @assert h > 0 "Smoothing length h must be positive"
@@ -44,7 +44,18 @@ end
 @inline _αD(::Type{Gaussian}, ::Val{3}, h) = 1 / (π^(3/2) * h^3)
 
 # Constructor for SPHKernelInstance
-function SPHKernelInstance{KernelType, D, T}(kernel::KernelType, dx::T, k::T=2.0) where {KernelType<:SPHKernel, D, T}
+# function SPHKernelInstance{KernelType, D, T}(kernel::KernelType, dx::T, k::T=2.0) where {KernelType<:SPHKernel, D, T}
+#     h = k * dx
+#     h⁻¹ = 1 / h
+#     H = k * h
+#     H⁻¹ = 1/H
+#     H² = H * H
+#     αD = _αD(KernelType, Val(D), h)
+#     η² = (0.01 * h)^2
+#     return SPHKernelInstance{KernelType, D, T}(kernel=kernel, k=k, h=h, h⁻¹=h⁻¹, H=H, H⁻¹ = H⁻¹, H²=H², αD=αD, η²=η²)
+# end
+
+function SPHKernelInstance{D, T}(kernel::KernelType, dx::T, k::T=2.0) where {KernelType<:SPHKernel, D, T}
     h = k * dx
     h⁻¹ = 1 / h
     H = k * h
