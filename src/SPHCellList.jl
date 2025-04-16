@@ -219,7 +219,7 @@ using Bumper
             Pᵢ      =  Pressure[i]
             Pⱼ      =  Pressure[j]
             Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
-            f_ab    = 0.0 #((Pᵢ/ρᵢ^2) + (Pⱼ/ρⱼ^2)) * (SPHKernels.Wᵢⱼ(SimKernel, q) / SPHKernels.Wᵢⱼ(SimKernel, SimConstants.dx))^4
+            f_ab    = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
             dvdt⁺   = - m₀ * (Pfac + f_ab) *  ∇ᵢWᵢⱼ
 
             visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, i, j)

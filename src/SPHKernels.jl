@@ -2,8 +2,9 @@ module SPHKernels
 
 using Parameters
 using LinearAlgebra
+using FastPow
 
-export SPHKernel, SPHKernelInstance, WendlandC2, CubicSpline, Gaussian, Wᵢⱼ, ∇Wᵢⱼ
+export SPHKernel, SPHKernelInstance, WendlandC2, CubicSpline, Gaussian, Wᵢⱼ, ∇Wᵢⱼ, tensile_correction
 
 # Abstract type for SPH Kernels
 abstract type SPHKernel end
@@ -17,6 +18,19 @@ struct CubicSpline{T<:AbstractFloat} <: SPHKernel
 end
 CubicSpline{T}() where {T} = CubicSpline{T}(one(T))
 
+# Internal normalization constant functions
+@inline _αD(::Type{WendlandC2}, ::Val{1}, h) = 5 / (8 * h)
+@inline _αD(::Type{WendlandC2}, ::Val{2}, h) = 7 / (4 * π * h^2)
+@inline _αD(::Type{WendlandC2}, ::Val{3}, h) = 21 / (16 * π * h^3)
+
+@inline _αD(::Type{CubicSpline{T}}, ::Val{1}, h) where {T} = 2 / (3 * h)
+@inline _αD(::Type{CubicSpline{T}}, ::Val{2}, h) where {T} = 10 / (7 * π * h^2)
+@inline _αD(::Type{CubicSpline{T}}, ::Val{3}, h) where {T} = 1 / (π * h^3)
+
+@inline _αD(::Type{Gaussian}, ::Val{1}, h) = 1 / (sqrt(π) * h)
+@inline _αD(::Type{Gaussian}, ::Val{2}, h) = 1 / (π * h^2)
+@inline _αD(::Type{Gaussian}, ::Val{3}, h) = 1 / (π^(3/2) * h^3)
+
 # General SPH Kernel Type
 @with_kw struct SPHKernelInstance{KernelType, Dimensions, FloatType}
     kernel::KernelType
@@ -29,31 +43,6 @@ CubicSpline{T}() where {T} = CubicSpline{T}(one(T))
     αD::FloatType                                      ; @assert αD > 0 "Normalization constant αD must be positive"
     η²::FloatType = (0.01 * h)^2                       ; @assert η² ≥ 0 "η² must be non-negative"
 end
-
-# Internal normalization constant functions
-@inline _αD(::Type{WendlandC2}, ::Val{1}, h) = 5 / (8 * h)
-@inline _αD(::Type{WendlandC2}, ::Val{2}, h) = 7 / (4 * π * h^2)
-@inline _αD(::Type{WendlandC2}, ::Val{3}, h) = 21 / (16 * π * h^3)
-
-@inline _αD(::Type{CubicSpline}, ::Val{1}, h) = 2 / (3 * h)
-@inline _αD(::Type{CubicSpline}, ::Val{2}, h) = 10 / (7 * π * h^2)
-@inline _αD(::Type{CubicSpline}, ::Val{3}, h) = 1 / (π * h^3)
-
-@inline _αD(::Type{Gaussian}, ::Val{1}, h) = 1 / (sqrt(π) * h)
-@inline _αD(::Type{Gaussian}, ::Val{2}, h) = 1 / (π * h^2)
-@inline _αD(::Type{Gaussian}, ::Val{3}, h) = 1 / (π^(3/2) * h^3)
-
-# Constructor for SPHKernelInstance
-# function SPHKernelInstance{KernelType, D, T}(kernel::KernelType, dx::T, k::T=2.0) where {KernelType<:SPHKernel, D, T}
-#     h = k * dx
-#     h⁻¹ = 1 / h
-#     H = k * h
-#     H⁻¹ = 1/H
-#     H² = H * H
-#     αD = _αD(KernelType, Val(D), h)
-#     η² = (0.01 * h)^2
-#     return SPHKernelInstance{KernelType, D, T}(kernel=kernel, k=k, h=h, h⁻¹=h⁻¹, H=H, H⁻¹ = H⁻¹, H²=H², αD=αD, η²=η²)
-# end
 
 function SPHKernelInstance{D, T}(kernel::KernelType, dx::T, k::T=2.0) where {KernelType<:SPHKernel, D, T}
     h = k * dx
@@ -81,12 +70,12 @@ end
     return factor * xᵢⱼ
 end
 
-@inline function Wᵢⱼ(kernel::SPHKernelInstance{CubicSpline,D,T}, q::T) where {D,T}
+@inline function Wᵢⱼ(kernel::SPHKernelInstance{<:CubicSpline}, q::T) where {D,T}
     @unpack αD = kernel
     return αD * (((1 - (3/2)*q^2 + (3/4)*q^3) * (0 <= q <= 1)) + ((1/4)*(2 - q)^3 * (1 < q <= 2)))
 end
 
-@inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{CubicSpline,D,T}, q::T, xᵢⱼ) where {D,T}
+@inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{CubicSpline{T},D,T}, q::T, xᵢⱼ) where {D,T}
     @unpack h, h⁻¹, αD, η² = kernel
     # r = norm(xᵢⱼ)
     # inv_r_h = 1/(r + η²)  # η² is a small regularization to avoid division by zero
@@ -119,7 +108,22 @@ end
 #---------------------------------------------------------------
 # Tensile Corrections for specific kernels
 #---------------------------------------------------------------
+@inline function tensile_correction(instance::SPHKernelInstance{<:WendlandC2}, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
+     return zero(eltype(q))
+end
 
+@inline function tensile_correction(instance::SPHKernelInstance{<:Gaussian}, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
+    return zero(eltype(q))
+end
+
+@inline function tensile_correction(instance::SPHKernelInstance{<:CubicSpline}, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx; n = 4)
+    eps_val = instance.kernel.eps
+
+    Wij_q  = instance.αD * (((1 - (3/2)*q^2 + (3/4)*q^3) * (0 <= q <= 1)) + ((1/4)*(2 - q)^3 * (1 < q <= 2)))
+    Wij_dx = instance.αD * (((1 - (3/2)*dx^2 + (3/4)*dx^3) * (0 <= dx <= 1)) + ((1/4)*(2 - dx)^3 * (1 < dx <= 2)))
+
+    return @fastpow eps_val * ( ((Pᵢ/ρᵢ^2) + (Pⱼ/ρⱼ^2)) * (Wij_q / Wij_dx)^n )
+end
 
 
 end # module
