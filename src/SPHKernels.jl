@@ -19,7 +19,7 @@ end
 CubicSpline{T}() where {T} = CubicSpline{T}(one(T))
 
 # Internal normalization constant functions
-@inline _αD(::Type{WendlandC2}, ::Val{1}, h) = 5 / (8 * h)
+# For this Wendland C2 function, there is not a 1D constant
 @inline _αD(::Type{WendlandC2}, ::Val{2}, h) = 7 / (4 * π * h^2)
 @inline _αD(::Type{WendlandC2}, ::Val{3}, h) = 21 / (16 * π * h^3)
 

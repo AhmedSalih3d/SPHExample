@@ -375,6 +375,29 @@ using Bumper
 
         return nothing
     end
+
+    function ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
+
+        Position    = SimParticles.Position
+        Density     = SimParticles.Density
+        GhostPoints = SimParticles.GhostPoints
+
+        ρ₀ = SimConstants.ρ₀
+        #https://github.com/DualSPHysics/DualSPHysics/blob/f4fa76ad5083873fa1c6dd3b26cdce89c55a9aeb/src/source/JSphCpu_mdbc.cpp#L347
+        @inbounds for i in eachindex(Position)
+            A = Aᵧ[i]
+
+            if abs(det(A)) >= 1e-3
+                    GhostPointDensity = A \ bᵧ[i]
+                    diff = Position[i] - GhostPoints[i]
+                    v1   = first(GhostPointDensity) + sum(GhostPointDensity[j+1] * diff[j] for j in eachindex(diff))
+                    Density[i] = isnan(v1) ? ρ₀ : v1
+            elseif first(A) > 0.0
+                    v = first(bᵧ[i]) / first(A)
+                    Density[i] = isnan(v) ? ρ₀ : v
+            end
+        end
+    end
     
     function HalfTimeStep(::SimulationMetaData{Dimensions, FloatType}, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂) where {Dimensions, FloatType}
         Position       = SimParticles.Position
@@ -493,25 +516,9 @@ using Bumper
                     @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
                 end
 
-                if SimMetaData.FlagMDBCSimple
-                    ρ₀ = SimConstants.ρ₀
-                    #https://github.com/DualSPHysics/DualSPHysics/blob/f4fa76ad5083873fa1c6dd3b26cdce89c55a9aeb/src/source/JSphCpu_mdbc.cpp#L347
-                    @inbounds for i in eachindex(Position)
-                        A = Aᵧ[i]
-        
-                        if abs(det(A)) >= 1e-3
-                                GhostPointDensity = A \ bᵧ[i]
-                                diff = Position[i] - GhostPoints[i]
-                                v1   = first(GhostPointDensity) + sum(GhostPointDensity[j+1] * diff[j] for j in eachindex(diff))
-                                Density[i] = isnan(v1) ? ρ₀ : v1
-                        elseif first(A) > 0.0
-                                v = first(bᵧ[i]) / first(A)
-                                Density[i] = isnan(v) ? ρ₀ : v
-                        end
-                    end
-                end
 
-                @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
+                @timeit SimMetaData.HourGlass "05a Apply MDBC before Half TimeStep"      ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
+                @timeit SimMetaData.HourGlass "05b Update To Half TimeStep"              HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
 
                 @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
             
