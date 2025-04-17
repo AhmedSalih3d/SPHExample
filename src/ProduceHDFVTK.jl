@@ -124,8 +124,8 @@ module ProduceHDFVTK
             
             FieldData = HDF5.create_group(root, "FieldData") #Currently just empty group
 
-            #CellData = HDF5.create_group(root, "CellData")
-            #HDF5.create_dataset(CellData, "CellData" , idType , ((0,),(-1,)), chunk=(chunk_size,))
+            CellData = HDF5.create_group(root, "CellData")
+            HDF5.create_dataset(CellData, "CellData" , idType , ((0,),(-1,)), chunk=(chunk_size,))
         end
 
         return nothing
@@ -250,6 +250,23 @@ module ProduceHDFVTK
 
         # Cell dimensions
         dx = dy = dz = SimKernel.H
+
+        # Compute per-dimension minima and maxima
+        if CartesianIndexN == 2
+            minx, maxx = minimum(ci->ci[1], UniqueCells), maximum(ci->ci[1], UniqueCells)
+            miny, maxy = minimum(ci->ci[2], UniqueCells), maximum(ci->ci[2], UniqueCells)
+            # number of cells in x
+            nx = maxx - minx + 1
+        elseif CartesianIndexN == 3
+            minx, maxx = minimum(ci->ci[1], UniqueCells), maximum(ci->ci[1], UniqueCells)
+            miny, maxy = minimum(ci->ci[2], UniqueCells), maximum(ci->ci[2], UniqueCells)
+            minz, maxz = minimum(ci->ci[3], UniqueCells), maximum(ci->ci[3], UniqueCells)
+            # number of cells per axis
+            nx = maxx - minx + 1
+            ny = maxy - miny + 1
+        else
+            error("Dimensionality of UniqueCells must be 2 or 3, got $CartesianIndexN")
+        end
     
         # Initialize lists for storing points and cells
         points = Vector{SVector{3, Float64}}()  # List to store unique SVector points
@@ -263,7 +280,16 @@ module ProduceHDFVTK
 
         push!(offsets, 0)
         # Loop through each CartesianIndex cell
-        for (id, cell) in enumerate(UniqueCells)
+        for cell in UniqueCells
+            # Compute linear ID 
+            id = if CartesianIndexN == 2
+                # (ci2 - miny)*nx + (ci1 - minx) + 1
+                (cell[2] - miny) * nx + (cell[1] - minx) + 1
+            else
+                # (ci3 - minz)*nx*ny + (ci2 - miny)*nx + (ci1 - minx) + 1
+                (cell[3] - minz) * (nx * ny) + (cell[2] - miny) * nx + (cell[1] - minx) + 1
+            end
+            
             if CartesianIndexN == 2
                 # Get x and y from the CartesianIndex and calculate cell center
                 xi, yi = cell.I
@@ -387,9 +413,9 @@ module ProduceHDFVTK
         HDF5.set_extent_dims(root["Types"], (length(root["Types"]) + length(UniqueCells),))
         root["Types"][TypesStartIndex:end] = vtk_type
 
-        # CellDataStartIndex = length(root["CellData"]["CellData"]) + 1
-        # HDF5.set_extent_dims(root["CellData"]["CellData"], (length(root["CellData"]["CellData"]) + length(UniqueCells),))
-        # root["CellData"]["CellData"][CellDataStartIndex:end] = cell_data
+        CellDataStartIndex = length(root["CellData"]["CellData"]) + 1
+        HDF5.set_extent_dims(root["CellData"]["CellData"], (length(root["CellData"]["CellData"]) + length(UniqueCells),))
+        root["CellData"]["CellData"][CellDataStartIndex:end] = cell_data
 
         return nothing
     end
@@ -402,6 +428,23 @@ module ProduceHDFVTK
 
         # Cell dimensions
         dx = dy = dz = SimKernel.H
+
+        # Compute per-dimension minima and maxima
+        if CartesianIndexN == 2
+            minx, maxx = minimum(ci->ci[1], UniqueCells), maximum(ci->ci[1], UniqueCells)
+            miny, maxy = minimum(ci->ci[2], UniqueCells), maximum(ci->ci[2], UniqueCells)
+            # number of cells in x
+            nx = maxx - minx + 1
+        elseif CartesianIndexN == 3
+            minx, maxx = minimum(ci->ci[1], UniqueCells), maximum(ci->ci[1], UniqueCells)
+            miny, maxy = minimum(ci->ci[2], UniqueCells), maximum(ci->ci[2], UniqueCells)
+            minz, maxz = minimum(ci->ci[3], UniqueCells), maximum(ci->ci[3], UniqueCells)
+            # number of cells per axis
+            nx = maxx - minx + 1
+            ny = maxy - miny + 1
+        else
+            error("Dimensionality of UniqueCells must be 2 or 3, got $CartesianIndexN")
+        end    
     
         # Initialize lists for storing points and cells
         points = Vector{SVector{3, Float64}}()  # List to store unique SVector points
@@ -415,8 +458,16 @@ module ProduceHDFVTK
 
         push!(offsets, 0)
         # Loop through each CartesianIndex cell
-        for (id, cell) in enumerate(UniqueCells)
-            if CartesianIndexN == 2
+        for cell in UniqueCells
+        # Compute linear ID 
+                id = if CartesianIndexN == 2
+                    # (ci2 - miny)*nx + (ci1 - minx) + 1
+                    (cell[2] - miny) * nx + (cell[1] - minx) + 1
+                else
+                    # (ci3 - minz)*nx*ny + (ci2 - miny)*nx + (ci1 - minx) + 1
+                    (cell[3] - minz) * (nx * ny) + (cell[2] - miny) * nx + (cell[1] - minx) + 1
+                end
+                if CartesianIndexN == 2
                 # Get x and y from the CartesianIndex and calculate cell center
                 xi, yi = cell.I
                 x_center = xi * dx
