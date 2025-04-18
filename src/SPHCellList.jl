@@ -515,8 +515,10 @@ using Bumper
                     @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
                 end
 
-
-                @timeit SimMetaData.HourGlass "05a Apply MDBC before Half TimeStep"      ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
+                if SimMetaData.FlagMDBCSimple
+                    @timeit SimMetaData.HourGlass "05a Apply MDBC before Half TimeStep"      ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
+                end
+                
                 @timeit SimMetaData.HourGlass "05b Update To Half TimeStep"              HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
 
                 @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
