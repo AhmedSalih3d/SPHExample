@@ -21,7 +21,7 @@ module SPHExample
     export ResetArrays!, to_3d, CloseHDFVTKManually, CleanUpSimulationFolder
 
     using .SPHKernels
-    export SPHKernel, SPHKernelInstance, WendlandC2, CubicSpline, Gaussian, Wᵢⱼ, ∇Wᵢⱼ, tensile_correction
+    export SPHKernel, SPHKernelInstance, WendlandC2, CubicSpline, Wᵢⱼ, ∇Wᵢⱼ, tensile_correction
 
     using .SPHViscosityModels
     export SPHViscosity, ZeroViscosity, ArtificialViscosity, Laminar, LaminarSPS, compute_viscosity

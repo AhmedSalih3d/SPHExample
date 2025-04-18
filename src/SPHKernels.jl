@@ -4,14 +4,13 @@ using Parameters
 using LinearAlgebra
 using FastPow
 
-export SPHKernel, SPHKernelInstance, WendlandC2, CubicSpline, Gaussian, Wᵢⱼ, ∇Wᵢⱼ, tensile_correction
+export SPHKernel, SPHKernelInstance, WendlandC2, CubicSpline, Wᵢⱼ, ∇Wᵢⱼ, tensile_correction
 
 # Abstract type for SPH Kernels
 abstract type SPHKernel end
 
 # Specific kernel types
 struct WendlandC2  <: SPHKernel end
-struct Gaussian    <: SPHKernel  end
 
 struct CubicSpline{T<:AbstractFloat} <: SPHKernel 
     eps::T
@@ -26,10 +25,6 @@ CubicSpline{T}() where {T} = CubicSpline{T}(one(T))
 @inline _αD(::Type{CubicSpline{T}}, ::Val{1}, h) where {T} = 2 / (3 * h)
 @inline _αD(::Type{CubicSpline{T}}, ::Val{2}, h) where {T} = 10 / (7 * π * h^2)
 @inline _αD(::Type{CubicSpline{T}}, ::Val{3}, h) where {T} = 1 / (π * h^3)
-
-@inline _αD(::Type{Gaussian}, ::Val{1}, h) = 1 / (sqrt(π) * h)
-@inline _αD(::Type{Gaussian}, ::Val{2}, h) = 1 / (π * h^2)
-@inline _αD(::Type{Gaussian}, ::Val{3}, h) = 1 / (π^(3/2) * h^3)
 
 # General SPH Kernel Type
 @with_kw struct SPHKernelInstance{KernelType, Dimensions, FloatType}
@@ -93,26 +88,11 @@ end
     return dWdq * h⁻¹ * xᵢⱼ / (norm(xᵢⱼ) + η²)
 end
 
-@inline function Wᵢⱼ(kernel::SPHKernelInstance{<:Gaussian}, q::T) where {T}
-    @unpack αD = kernel
-    return αD * exp(-q^2)
-end
-
-@inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{<:Gaussian}, q::T, xᵢⱼ) where {T}
-    @unpack h, h⁻¹, αD = kernel
-    factor = -2 * αD * q * h⁻¹ * exp(-q^2)
-    return factor * xᵢⱼ / (q * h + (q == 0.0))
-end
-
 #---------------------------------------------------------------
 # Tensile Corrections for specific kernels
 #---------------------------------------------------------------
 @inline function tensile_correction(instance::SPHKernelInstance{<:WendlandC2}, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
      return zero(eltype(q))
-end
-
-@inline function tensile_correction(instance::SPHKernelInstance{<:Gaussian}, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
-    return zero(eltype(q))
 end
 
 @inline function tensile_correction(instance::SPHKernelInstance{<:CubicSpline}, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx; n = 4)
