@@ -36,8 +36,6 @@ let
         ExportSingleVTKHDF=true,
         ExportGridCells=true,
         OpenLogFile=true,
-        FlagDensityDiffusion=true,
-        FlagLinearizedDDT=true,
         FlagOutputKernelValues=false,
         FlagMDBCSimple=true,
         FlagLog=true

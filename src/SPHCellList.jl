@@ -185,7 +185,7 @@ using Bumper
     end
 
     Base.@propagate_inbounds function ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
-        @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues, FlagLinearizedDDT = SimMetaData
+        @unpack FlagOutputKernelValues = SimMetaData
         @unpack ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
         @unpack h⁻¹, h, η², H², αD = SimKernel 
@@ -256,7 +256,6 @@ using Bumper
     end
 
     Base.@propagate_inbounds function ComputeInteractionsMDBC!(SimKernel, SimMetaData::SimulationMetaData{Dimensions, FloatType}, SimConstants, Position, Density, ParticleType, GhostPoints, bᵧ, Aᵧ, i, j) where {Dimensions, FloatType}
-        @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues, FlagLinearizedDDT = SimMetaData
         @unpack ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
         
         @unpack h⁻¹, h, η², H², αD = SimKernel 
@@ -586,7 +585,7 @@ using Bumper
         end
 
         if SimMetaData.FlagLog
-            InitializeLogger(SimLogger, SimConstants, SimMetaData, SimKernel, SimGeometry, SimParticles)
+            InitializeLogger(SimLogger, SimConstants, SimMetaData, SimKernel, SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
         end
 
         # To generate first line

@@ -37,8 +37,6 @@ let
         ExportSingleVTKHDF=true,
         ExportGridCells=true,
         OpenLogFile=true,
-        FlagDensityDiffusion=true,
-        FlagLinearizedDDT=true,
         FlagOutputKernelValues=false,
         FlagLog=true,
         FlagMDBCSimple=true,
@@ -48,7 +46,7 @@ let
 
     CleanUpSimulationFolder(SimMetaDataWedge.SaveLocation)
 
-    SimKernel = SPHKernelInstance{Dimensions, FloatType}(Gaussian(), SimConstantsWedge.dx)
+    SimKernel = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(), SimConstantsWedge.dx)
 
     @profview RunSimulation(
         SimGeometry         = SimulationGeometry,

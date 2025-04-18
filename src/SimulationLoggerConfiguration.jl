@@ -110,12 +110,14 @@ module SimulationLoggerConfiguration
     end
     
     
-    function InitializeLogger(SimLogger,SimConstants,SimMetaData, SimKernel, SimGeometry, SimParticles)
+    function InitializeLogger(SimLogger,SimConstants,SimMetaData, SimKernel, SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
         with_logger(SimLogger.Logger) do
             @info sprint(InteractiveUtils.versioninfo)
             @info SimConstants
             @info SimMetaData
             @info SimKernel
+            @info SimViscosity
+            @info SimDensityDiffusion
             
             # Print the formatted date and time
             @info "Logger Start Time: " * SimLogger.CurrentDataStr
