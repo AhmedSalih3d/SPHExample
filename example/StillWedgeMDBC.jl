@@ -59,39 +59,40 @@ let
         ParticleNormalsPath = "./input/still_wedge_mdbc/StillWedge_Dp$(SimConstantsWedge.dx)_GhostNodes_Correct.csv"
     )
 
-    using Plots
-    using StaticArrays
+    # This can be used to plot pressure profile results after simulation
+    # using Plots
+    # using StaticArrays
     
-    # Assuming 'data' is a vector of the named tuples containing the data
+    # # Assuming 'data' is a vector of the named tuples containing the data
     
-    # Constants
-    max_height = 0.5             # maximum height in meters
-    rho = SimConstantsWedge.ρ₀   # density in kg/m^3 (adjust if needed)
-    g   = SimConstantsWedge.g    # gravitational acceleration in m/s^2
+    # # Constants
+    # max_height = 0.5             # maximum height in meters
+    # rho = SimConstantsWedge.ρ₀   # density in kg/m^3 (adjust if needed)
+    # g   = SimConstantsWedge.g    # gravitational acceleration in m/s^2
     
-    # Filter only fluid particles
-    fluid_data = filter(d -> d.Type == Fluid, SimParticles)
+    # # Filter only fluid particles
+    # fluid_data = filter(d -> d.Type == Fluid, SimParticles)
     
-    # Extract positions and pressures for fluid particles
-    positions = [d.Position[2] for d in fluid_data]  # Extract the height (y-component)
-    pressures = [d.Pressure    for d in fluid_data]  # Extract the pressure
+    # # Extract positions and pressures for fluid particles
+    # positions = [d.Position[2] for d in fluid_data]  # Extract the height (y-component)
+    # pressures = [d.Pressure    for d in fluid_data]  # Extract the pressure
     
-    # Normalize positions and pressures
-    normalized_positions = [p / max_height for p in positions]  # Normalize height
-    hydrostatic_pressure = [rho * g * (max_height - h) for h in positions]     # Theoretical hydrostatic pressure
-    normalized_pressures = [p / maximum(hydrostatic_pressure) for p in pressures]  # Normalize pressure
+    # # Normalize positions and pressures
+    # normalized_positions = [p / max_height for p in positions]  # Normalize height
+    # hydrostatic_pressure = [rho * g * (max_height - h) for h in positions]     # Theoretical hydrostatic pressure
+    # normalized_pressures = [p / maximum(hydrostatic_pressure) for p in pressures]  # Normalize pressure
     
-    # Create the plot
-    plt = scatter(normalized_pressures, normalized_positions, label="Fluid Pressure", xlabel="Normalized Height", ylabel="Normalized Pressure", linestyle=:auto, marker=:circle, legend=:topright)
+    # # Create the plot
+    # plt = scatter(normalized_pressures, normalized_positions, label="Fluid Pressure", xlabel="Normalized Height", ylabel="Normalized Pressure", linestyle=:auto, marker=:circle, legend=:topright)
     
-    # Plot the theoretical hydrostatic pressure line (with correct flipped axes)
-    plot!(hydrostatic_pressure ./ maximum(hydrostatic_pressure), normalized_positions, label="Theoretical Hydrostatic Pressure", linestyle=:dash)
+    # # Plot the theoretical hydrostatic pressure line (with correct flipped axes)
+    # plot!(hydrostatic_pressure ./ maximum(hydrostatic_pressure), normalized_positions, label="Theoretical Hydrostatic Pressure", linestyle=:dash)
     
-    # Set fixed axis limits for better comparison
-    xlims!((0, 1))
-    ylims!((0, 1))
+    # # Set fixed axis limits for better comparison
+    # xlims!((0, 1))
+    # ylims!((0, 1))
     
-    display(plt)
+    # display(plt)
 end
 
 
