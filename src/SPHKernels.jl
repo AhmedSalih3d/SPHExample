@@ -34,20 +34,20 @@ CubicSpline{T}() where {T} = CubicSpline{T}(one(T))
 # General SPH Kernel Type
 @with_kw struct SPHKernelInstance{KernelType, Dimensions, FloatType}
     kernel::KernelType
-    k::FloatType  = 2.0                                ; @assert k > 0 "Scaling factor k must be positive"
-    h::FloatType  = k * 0.01                           ; @assert h > 0 "Smoothing length h must be positive"
-    h⁻¹::FloatType = 1 / h                             ; @assert h⁻¹ > 0 "Inverse smoothing length h⁻¹ must be positive"
-    H::FloatType  = k * h                              ; @assert H > 0 "Support radius H must be positive"
-    H⁻¹::FloatType = 1/H                               ; @assert H⁻¹ > 0 "InverseCutOff must be greater than zero"
-    H²::FloatType = H * H                              ; @assert H² > 0 "Support radius squared H² must be positive"
-    αD::FloatType                                      ; @assert αD > 0 "Normalization constant αD must be positive"
-    η²::FloatType = (0.01 * h)^2                       ; @assert η² ≥ 0 "η² must be non-negative"
+    k::FloatType   = 2.0          ; @assert k   > 0 "Scaling factor k must be positive"
+    h::FloatType                  ; @assert h   > 0 "Smoothing length h must be positive"
+    h⁻¹::FloatType = 1 / h        ; @assert h⁻¹ > 0 "Inverse smoothing length h⁻¹ must be positive"
+    H::FloatType   = 2 * h        ; @assert H   > 0 "Support radius H must be positive"
+    H⁻¹::FloatType = 1/H          ; @assert H⁻¹ > 0 "InverseCutOff must be greater than zero"
+    H²::FloatType  = H * H        ; @assert H²  > 0 "Support radius squared H² must be positive"
+    αD::FloatType                 ; @assert αD  > 0 "Normalization constant αD must be positive"
+    η²::FloatType  = (0.01 * h)^2 ; @assert η²  ≥ 0 "η² must be non-negative"
 end
 
 function SPHKernelInstance{D, T}(kernel::KernelType, dx::T, k::T=2.0) where {KernelType<:SPHKernel, D, T}
     h = k * dx
     h⁻¹ = 1 / h
-    H = k * h
+    H = 2 * h
     H⁻¹ = 1/H
     H² = H * H
     αD = _αD(KernelType, Val(D), h)
