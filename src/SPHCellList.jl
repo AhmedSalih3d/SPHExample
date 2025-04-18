@@ -485,17 +485,16 @@ using Bumper
                 @timeit SimMetaData.HourGlass "02 Calculate IndexCounter"  begin
                     # Note: If particles are not inside of the neighbor list visualiation, try setting this if statement to always true, since UniqueCells will be updated always then
                     # In theory, the maximal speed is the speed of sound, this should give a safe guard
-                    # any ensure it is always updated in a reasonable manner. This only works well, assuming that
+                    # and ensure it is always updated in a reasonable manner. This only works well, assuming that
                     # c₀ >= maximum(norm.(Velocity))
                     # Remove if statement logic if you want to update each iteration
                     if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
-                        SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells)
+                        @timeit SimMetaData.HourGlass "02a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells)
                     end
 
                     UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                     EnumeratedIndices = enumerate(index_chunks(UniqueCellsView; n=nthreads()))
                 end
-
 
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
             
@@ -516,7 +515,7 @@ using Bumper
                 end
 
                 if SimMetaData.FlagMDBCSimple
-                    @timeit SimMetaData.HourGlass "05a Apply MDBC before Half TimeStep"      ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
+                    @timeit SimMetaData.HourGlass "05a Apply MDBC before Half TimeStep"  ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
                 end
                 
                 @timeit SimMetaData.HourGlass "05b Update To Half TimeStep"              HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
