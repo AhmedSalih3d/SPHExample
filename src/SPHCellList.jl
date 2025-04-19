@@ -115,6 +115,7 @@ using Bumper
                 @spawn for iter ∈ inds
 
                     CellIndex = UniqueCells[iter]
+                    SimParticles.ChunkID[iter] = ichunk
 
                     StartIndex = ParticleRanges[iter]
                     EndIndex   = ParticleRanges[iter+1] - 1
@@ -611,7 +612,7 @@ using Bumper
         # Save initial state, use 1 else this cannot be used to index fid vector
         SimMetaData.OutputIterationCounter = 1
         output.save_particles(SimMetaData.OutputIterationCounter)
-        output.save_grid(SimMetaData.OutputIterationCounter, UniqueCells)
+        output.save_grid(SimMetaData.OutputIterationCounter, UniqueCells, SimParticles)
 
 
         # Assuming group markers are sequential
@@ -647,7 +648,7 @@ using Bumper
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
             @sync Threads.@spawn begin
                 @timeit SimMetaData.HourGlass "13A Save Particle Data" output.save_particles(SimMetaData.OutputIterationCounter)
-                @timeit SimMetaData.HourGlass "13A Save CellGrid Data" output.save_grid(SimMetaData.OutputIterationCounter, UniqueCellsView)
+                @timeit SimMetaData.HourGlass "13A Save CellGrid Data" output.save_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, SimParticles)
             end
     
             TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime)

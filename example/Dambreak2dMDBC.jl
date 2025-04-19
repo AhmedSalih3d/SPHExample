@@ -30,7 +30,7 @@ let
     SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="DamBreak2D", 
         SaveLocation="E:/SecondApproach/DamBreak2D_MDBC/",
-        SimulationTime=2,
+        SimulationTime=4,
         OutputEach=0.01,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
