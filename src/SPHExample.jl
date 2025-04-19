@@ -14,6 +14,7 @@ module SPHExample
     include("OpenExternalPrograms.jl")
     include("SPHDensityDiffusionModels.jl")  
     include("SPHCellList.jl") #Must be last
+    include("SPHCellListGPU.jl") #Must be last
     
 
     # Re-export desired functions from each submodule
@@ -55,6 +56,9 @@ module SPHExample
 
     using .SPHCellList
     export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!, RunSimulation
+
+    using .SPHCellListGPU
+    export RunSimulationGPU
 
     using .OpenExternalPrograms
     export AutoOpenLogFile, AutoOpenParaview
