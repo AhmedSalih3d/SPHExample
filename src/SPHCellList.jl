@@ -148,20 +148,51 @@ using Bumper
         return nothing
     end
 
+    using Polyester
     function NeighborLoopMDBC!(SimKernel, SimMetaData::SimulationMetaData{Dimensions, _}, SimConstants, ParticleRanges, Position, Density, UniqueCells, GhostPoints, GhostNormals,  ParticleType, bᵧ, Aᵧ) where {Dimensions, _}
         
         FullStencil = CartesianIndices(ntuple(_->-1:1, Dimensions))
 
-        @inbounds @threads for iter ∈ eachindex(GhostPoints)
+        # @inbounds @threads for iter ∈ eachindex(GhostPoints)
 
-            GhostPoint = GhostPoints[iter]
+        #     GhostPoint = GhostPoints[iter]
             
-            if !iszero(GhostPoint)
+        #     if !iszero(GhostPoint)
                 
-                # GhostCellIndex = CartesianIndex(map(map_floor, Tuple(GhostPoint)))
-                GhostCellIndex = CartesianIndex(map(x -> map_floor(x, SimKernel.H⁻¹), Tuple(GhostPoint)))
+        #         # GhostCellIndex = CartesianIndex(map(map_floor, Tuple(GhostPoint)))
+        #         GhostCellIndex = CartesianIndex(map(x -> map_floor(x, SimKernel.H⁻¹), Tuple(GhostPoint)))
 
-                # FullStencil includes Cell I - Some neighbours can potentially be in the neighbouring cells
+        #         # FullStencil includes Cell I - Some neighbours can potentially be in the neighbouring cells
+        #         @inbounds for S ∈ FullStencil
+        #             SCellIndex = GhostCellIndex + S
+        #             # Returns a range, x:x for exact match and x:(x-1) for no match
+        #             # utilizes that it is a sorted array and requires no isequal constructor,
+        #             # so I prefer this for now
+        #             NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
+
+        #             if length(NeighborCellIndex) != 0
+        #                 StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
+        #                 EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
+        #                 @inbounds for j = StartIndex_:EndIndex_
+        #                     @inline ComputeInteractionsMDBC!(SimKernel, SimMetaData, SimConstants, Position, Density, ParticleType,  GhostPoints, bᵧ, Aᵧ, iter, j)
+        #                 end
+                        
+        #             end
+        #         end
+
+        #     end
+        # end
+
+        @inbounds @threads for iter in eachindex(GhostPoints)
+            GhostPoint = GhostPoints[iter]
+
+            if !iszero(GhostPoint)
+                # zero‐initialize per‐ghost accumulators
+                b_acc = zero(bᵧ[iter])            # an SVector{D+1,FloatType}
+                A_acc = zero(Aᵧ[iter])            # an SMatrix{D+1,D+1,FloatType}
+            
+                # compute and accumulate into the locals
+                GhostCellIndex = CartesianIndex(map(x->map_floor(x,SimKernel.H⁻¹), Tuple(GhostPoints[iter])))
                 @inbounds for S ∈ FullStencil
                     SCellIndex = GhostCellIndex + S
                     # Returns a range, x:x for exact match and x:(x-1) for no match
@@ -172,14 +203,22 @@ using Bumper
                     if length(NeighborCellIndex) != 0
                         StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
                         EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
-                        @inbounds for j = StartIndex_:EndIndex_
-                            @inline ComputeInteractionsMDBC!(SimKernel, SimMetaData, SimConstants, Position, Density, ParticleType,  GhostPoints, bᵧ, Aᵧ, iter, j)
+
+                        for j in StartIndex_:EndIndex_
+                            # change ComputeInteractions to take & return contributions, e.g.:
+                            bΔ, AΔ = ComputeInteractionsMDBC!(SimKernel, SimMetaData, SimConstants,
+                                                            Position, Density, ParticleType,
+                                                            GhostPoints, iter, j)
+                            b_acc += bΔ
+                            A_acc += AΔ
                         end
-                        
                     end
                 end
-
-            end
+            
+                # write out once
+                bᵧ[iter] = b_acc
+                Aᵧ[iter] = A_acc
+            end    
         end
 
         return nothing
@@ -256,17 +295,20 @@ using Bumper
         return nothing
     end
 
-    Base.@propagate_inbounds function ComputeInteractionsMDBC!(SimKernel, SimMetaData::SimulationMetaData{Dimensions, FloatType}, SimConstants, Position, Density, ParticleType, GhostPoints, bᵧ, Aᵧ, i, j) where {Dimensions, FloatType}
+    Base.@propagate_inbounds function ComputeInteractionsMDBC!(SimKernel, SimMetaData::SimulationMetaData{Dimensions, FloatType}, SimConstants, Position, Density, ParticleType, GhostPoints, i, j) where {Dimensions, FloatType}
         @unpack ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
         
         @unpack h⁻¹, h, η², H², αD = SimKernel 
+
+        DimensionsPlus = Dimensions + 1
+        # always zero‐initialize
+        bΔ = zero(SVector{DimensionsPlus,FloatType})
+        AΔ = zero(SMatrix{DimensionsPlus, DimensionsPlus,FloatType})
 
         # ᵢ is ghost node! ⱼ is fluid node
 
         if ParticleType[j] == Fluid
 
-            DimensionsPlus = Dimensions + 1
-    
             xᵢⱼ  = GhostPoints[i] - Position[j]
 
             xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
@@ -286,12 +328,12 @@ using Bumper
                 VⱼWᵢⱼ = Vⱼ * Wᵢⱼ
         
                 bᵧ_ = SVector{DimensionsPlus, FloatType}(m₀ * Wᵢⱼ, (m₀ * ∇ᵢWᵢⱼ)...)
-                bᵧ[i] += bᵧ_
+                bΔ = bᵧ_
 
                 # Filling the Aᵧ matrix is done in column-major order
                 xⱼᵢ = -xᵢⱼ
                 first_column = [VⱼWᵢⱼ; Vⱼ * ∇ᵢWᵢⱼ]
-                Aᵧ[i] += SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus*DimensionsPlus}(
+                AΔ = SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus*DimensionsPlus}(
                     first_column...,
                     ((xⱼᵢ * first_column')')...
                 )
@@ -299,7 +341,7 @@ using Bumper
         end
         
     
-        return nothing
+        return bΔ, AΔ
     end
 
     function reduce_sum!(target_array, arrays)
@@ -508,7 +550,7 @@ using Bumper
                     if SimMetaData.FlagMDBCSimple
                         bᵧ = @alloc(SVector{DimensionsPlus, FloatType}, length(Position))
                         Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus * DimensionsPlus}, length(Position))
-                        ResetArrays!(bᵧ, Aᵧ)
+                        # ResetArrays!(bᵧ, Aᵧ)
                         @timeit SimMetaData.HourGlass "04 First NeighborLoopMDBC"        NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, Position, Density, UniqueCellsView, GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ)
                     end
                     @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
