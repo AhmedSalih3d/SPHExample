@@ -61,7 +61,7 @@ using Bumper
     end
    
     @inline function ExtractCells!(Particles, InverseCutOff)
-        @inbounds @simd for i ∈ eachindex(Particles.Cells)
+        @inbounds @simd ivdep for i ∈ eachindex(Particles.Cells)
             # t = map(map_floor, Tuple(Particles.Position[i]))
             t = CartesianIndex(map(x -> map_floor(x, InverseCutOff), Tuple(Particles.Position[i])))
             Particles.Cells[i] = CartesianIndex(t)
@@ -94,7 +94,7 @@ using Bumper
         ParticleRanges[IndexCounter]  = 1
         UniqueCells[IndexCounter]     = Cells[1]
 
-        @inbounds @simd for i in eachindex(Cells)[2:end]
+        @inbounds @simd ivdep for i in eachindex(Cells)[2:end]
             if Cells[i] != Cells[i-1] # Equivalent to diff(Cells) != 0
                 IndexCounter                 += 1
                 ParticleRanges[IndexCounter]  = i
@@ -321,7 +321,7 @@ using Bumper
             local end_idx = min(t * chunk_size, n)
             for j in eachindex(arrays)
                 local array = arrays[j]  # Access array only once per thread
-                @simd for i in start_idx:end_idx
+                @simd ivdep for i in start_idx:end_idx
                     @inbounds target_array[i] += array[i]
                 end
             end
@@ -364,7 +364,7 @@ using Bumper
     
     ### Some functions to simplify code inside of this function
     function ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionsDefinition, SimMetaData)
-        @inbounds @simd for i in eachindex(Position)
+        @inbounds @simd ivdep for i in eachindex(Position)
             if ParticleType[i] == Moving
                 motion = MotionsDefinition[ParticleMarker[i]]
     
@@ -394,7 +394,7 @@ using Bumper
 
         ρ₀ = SimConstants.ρ₀
         #https://github.com/DualSPHysics/DualSPHysics/blob/f4fa76ad5083873fa1c6dd3b26cdce89c55a9aeb/src/source/JSphCpu_mdbc.cpp#L347
-        @inbounds @simd for i in eachindex(Position)
+        @inbounds @simd ivdep for i in eachindex(Position)
             A = Aᵧ[i]
 
             # Since Aᵧ is not reset anymore, we need to check if it is zero
@@ -420,7 +420,7 @@ using Bumper
         GravityFactor  = SimParticles.GravityFactor
         MotionLimiter  = SimParticles.MotionLimiter
 
-        @inbounds @simd for i in eachindex(Position)
+        @inbounds @simd ivdep for i in eachindex(Position)
             Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
             Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
             Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
@@ -439,7 +439,7 @@ using Bumper
         MotionLimiter  = SimParticles.MotionLimiter
   
         if !SimMetaData.FlagShifting
-            @inbounds @simd for i in eachindex(Position)
+            @inbounds @simd ivdep for i in eachindex(Position)
                 Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
                 Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
                 Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
@@ -448,7 +448,7 @@ using Bumper
             A     = 2# Value between 1 to 6 advised
             A_FST = 0; # zero for internal flows
             A_FSM = length(first(Position)); #2d, 3d val different
-            @inbounds @simd for i in eachindex(Position)
+            @inbounds @simd ivdep for i in eachindex(Position)
                 Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
                 Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
         
