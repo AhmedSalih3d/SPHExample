@@ -111,7 +111,7 @@ using Bumper
 ###=== Function to process each cell and its neighbors
     function NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCells, EnumeratedIndices)
         @sync begin
-            for (ichunk, inds) ∈ EnumeratedIndices
+            for (ichunk, inds) ∈ EnumeratedIndices 
                 @spawn for iter ∈ inds
 
                     CellIndex = UniqueCells[iter]
@@ -148,40 +148,9 @@ using Bumper
         return nothing
     end
 
-    using Polyester
     function NeighborLoopMDBC!(SimKernel, SimMetaData::SimulationMetaData{Dimensions, _}, SimConstants, ParticleRanges, Position, Density, UniqueCells, GhostPoints, GhostNormals,  ParticleType, bᵧ, Aᵧ) where {Dimensions, _}
         
         FullStencil = CartesianIndices(ntuple(_->-1:1, Dimensions))
-
-        # @inbounds @threads for iter ∈ eachindex(GhostPoints)
-
-        #     GhostPoint = GhostPoints[iter]
-            
-        #     if !iszero(GhostPoint)
-                
-        #         # GhostCellIndex = CartesianIndex(map(map_floor, Tuple(GhostPoint)))
-        #         GhostCellIndex = CartesianIndex(map(x -> map_floor(x, SimKernel.H⁻¹), Tuple(GhostPoint)))
-
-        #         # FullStencil includes Cell I - Some neighbours can potentially be in the neighbouring cells
-        #         @inbounds for S ∈ FullStencil
-        #             SCellIndex = GhostCellIndex + S
-        #             # Returns a range, x:x for exact match and x:(x-1) for no match
-        #             # utilizes that it is a sorted array and requires no isequal constructor,
-        #             # so I prefer this for now
-        #             NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
-
-        #             if length(NeighborCellIndex) != 0
-        #                 StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
-        #                 EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
-        #                 @inbounds for j = StartIndex_:EndIndex_
-        #                     @inline ComputeInteractionsMDBC!(SimKernel, SimMetaData, SimConstants, Position, Density, ParticleType,  GhostPoints, bᵧ, Aᵧ, iter, j)
-        #                 end
-                        
-        #             end
-        #         end
-
-        #     end
-        # end
 
         @inbounds @threads for iter in eachindex(GhostPoints)
             GhostPoint = GhostPoints[iter]
@@ -327,8 +296,7 @@ using Bumper
         
                 VⱼWᵢⱼ = Vⱼ * Wᵢⱼ
         
-                bᵧ_ = SVector{DimensionsPlus, FloatType}(m₀ * Wᵢⱼ, (m₀ * ∇ᵢWᵢⱼ)...)
-                bΔ = bᵧ_
+                bΔ  = SVector{DimensionsPlus, FloatType}(m₀ * Wᵢⱼ, (m₀ * ∇ᵢWᵢⱼ)...)
 
                 # Filling the Aᵧ matrix is done in column-major order
                 xⱼᵢ = -xᵢⱼ
@@ -429,14 +397,17 @@ using Bumper
         @inbounds @simd for i in eachindex(Position)
             A = Aᵧ[i]
 
-            if abs(det(A)) >= 1e-3
-                    GhostPointDensity = A \ bᵧ[i]
-                    diff = Position[i] - GhostPoints[i]
-                    v1   = first(GhostPointDensity) + sum(GhostPointDensity[j+1] * diff[j] for j in eachindex(diff))
-                    Density[i] = isnan(v1) ? ρ₀ : v1
-            elseif first(A) > 0.0
-                    v = first(bᵧ[i]) / first(A)
-                    Density[i] = isnan(v) ? ρ₀ : v
+            # Since Aᵧ is not reset anymore, we need to check if it is zero
+            if !iszero(GhostPoints[i])
+                if abs(det(A)) >= 1e-3
+                        GhostPointDensity = A \ bᵧ[i]
+                        diff = Position[i] - GhostPoints[i]
+                        v1   = first(GhostPointDensity) + sum(GhostPointDensity[j+1] * diff[j] for j in eachindex(diff))
+                        Density[i] = isnan(v1) ? ρ₀ : v1
+                elseif first(A) > 0.0
+                        v = first(bᵧ[i]) / first(A)
+                        Density[i] = isnan(v) ? ρ₀ : v
+                end
             end
         end
     end
