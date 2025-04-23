@@ -32,7 +32,7 @@ CubicSpline{T}() where {T} = CubicSpline{T}(one(T))
     k::FloatType   = 2.0          ; @assert k   > 0 "Scaling factor k must be positive"
     h::FloatType                  ; @assert h   > 0 "Smoothing length h must be positive"
     h⁻¹::FloatType = 1 / h        ; @assert h⁻¹ > 0 "Inverse smoothing length h⁻¹ must be positive"
-    H::FloatType   = 2 * h        ; @assert H   > 0 "Support radius H must be positive"
+    H::FloatType   = k * h        ; @assert H   > 0 "Support radius H must be positive"
     H⁻¹::FloatType = 1/H          ; @assert H⁻¹ > 0 "InverseCutOff must be greater than zero"
     H²::FloatType  = H * H        ; @assert H²  > 0 "Support radius squared H² must be positive"
     αD::FloatType                 ; @assert αD  > 0 "Normalization constant αD must be positive"
