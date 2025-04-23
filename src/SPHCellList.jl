@@ -516,7 +516,7 @@ using Bumper
 
         ###
         DimensionsPlus = Dimensions + 1
-        Δx = one(eltype(Density))
+        Δx = one(eltype(Density)) + SimKernel.h
         @no_escape begin
             while SimMetaData.TotalTime <= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
 
@@ -542,7 +542,6 @@ using Bumper
                     UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                     EnumeratedIndices = enumerate(index_chunks(UniqueCellsView; n=nthreads()))
                 end
-
 
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
             
