@@ -7,28 +7,26 @@ let
 
     # ViscoBoundFactor should be 1, but need to understand how to implement it
     SimConstantsMovingSquare = SimulationConstants{FloatType}(dx=0.02,
-        c₀=28, 
+        c₀ = 28, 
         δᵩ = 0.1,
         g  = 0,
         Cb = 112000,
-        α  = 1e-6,
-        k  = sqrt(2),
+        ν₀ = 1e-6,
         CFL=0.2
     )
 
     SimMetaDataMovingSquare  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="MovingSquare2D", 
         SaveLocation="E:/SecondApproach/MovingSquare2D",
-        SimulationTime=0.5,
+        SimulationTime=2.5,
         OutputEach=0.01,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
+        ExportGridCells=true,
         OpenLogFile=true,
-        FlagDensityDiffusion=true,
         FlagOutputKernelValues=false,
         FlagLog=true,
         FlagShifting=true,
-        FlagViscosityTreatment=:LaminarSPS
     )
     FixedBoundary = Geometry{Dimensions, FloatType}(
         CSVFile     = "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Fixed.csv",
@@ -67,15 +65,20 @@ let
         mkdir(SimMetaDataMovingSquare.SaveLocation)
     end
 
+    SimKernel = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(), SimConstantsMovingSquare.dx, sqrt(2))
+
     SimLogger = SimulationLogger(SimMetaDataMovingSquare.SaveLocation)
 
     CleanUpSimulationFolder(SimMetaDataMovingSquare.SaveLocation)
 
     RunSimulation(
-        SimGeometry        = SimulationGeometry,
-        SimMetaData        = SimMetaDataMovingSquare,
-        SimConstants       = SimConstantsMovingSquare,
-        SimLogger          = SimLogger,
-        SimParticles       = SimParticles
+        SimGeometry         = SimulationGeometry,
+        SimMetaData         = SimMetaDataMovingSquare,
+        SimConstants        = SimConstantsMovingSquare,
+        SimLogger           = SimLogger,
+        SimParticles        = SimParticles,
+        SimKernel           = SimKernel,
+        SimViscosity        = LaminarSPS(),
+        SimDensityDiffusion = LinearDensityDiffusion(),
     )
 end

@@ -430,7 +430,7 @@ using Bumper
         return nothing
     end
 
-    function FullTimeStep(SimMetaData, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+    function FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
         Position       = SimParticles.Position
         Velocity       = SimParticles.Velocity
         Acceleration   = SimParticles.Acceleration
@@ -455,7 +455,7 @@ using Bumper
                 if A_FSC < 0
                     δxᵢ = zero(eltype(Position))
                 else
-                    δxᵢ = -A_FSC * A * SimConstants.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
+                    δxᵢ = -A_FSC * A * SimKernel.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
                 end
         
                 Position[i]           += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
@@ -472,6 +472,33 @@ using Bumper
 
         return nothing
     end
+
+    """
+        update_delta_x!(Δx, posₙ⁺, pos)
+
+    Increment Δx by twice the maximum ‖posₙ⁺[i] – pos[i]‖, without ever allocating.
+    Returns the new Δx.
+    """
+    @inline function update_delta_x!(Δx::T,
+                                    posₙ⁺::AbstractVector{SVector{D, T}},
+                                    pos   ::AbstractVector{SVector{D, T}}) where {D, T<:Real}
+        maxd = zero(T)
+        @inbounds for i in eachindex(posₙ⁺, pos)
+            # compute squared norm manually
+            sumsq = zero(T)
+            @inbounds for j in 1:D
+                d = posₙ⁺[i][j] - pos[i][j]
+                sumsq += d*d
+            end
+            # sqrt/T is allocation-free on scalars
+            nrm = sqrt(sumsq)
+            if nrm > maxd
+                maxd = nrm
+            end
+        end
+        return Δx + 2*maxd
+    end
+
     
     @inbounds function SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData::SimulationMetaData{Dimensions, FloatType}, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition) where {Dimensions, FloatType}
         Position       = SimParticles.Position
@@ -489,13 +516,13 @@ using Bumper
 
         ###
         DimensionsPlus = Dimensions + 1
-        Δx = zero(eltype(Position))
+        Δx = one(eltype(Density))
         @no_escape begin
             while SimMetaData.TotalTime <= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
 
-                Δx = 2 * maximum(@. norm(Positionₙ⁺ - SimParticles.Position))
+                Δx = update_delta_x!(Δx, Positionₙ⁺, SimParticles.Position)
 
-                # println("Δx: ", Δx, " dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
+                # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
 
                 @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel)
                 dt₂ = dt * 0.5
@@ -507,8 +534,9 @@ using Bumper
                     # c₀ >= maximum(norm.(Velocity))
                     # Remove if statement logic if you want to update each iteration
                     # if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
-                    if Δx >= SimKernel.h  || SimMetaData.Iteration == 1
+                    if Δx >= SimKernel.h
                         @timeit SimMetaData.HourGlass "02a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells)
+                        Δx = zero(eltype(Density))
                     end
 
                     UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
@@ -557,7 +585,7 @@ using Bumper
             
                 @timeit SimMetaData.HourGlass "10 Final Density"                         DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
             
-                @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+                @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
             
                 @timeit SimMetaData.HourGlass "12 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
 
