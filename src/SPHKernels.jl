@@ -42,7 +42,7 @@ end
 function SPHKernelInstance{D, T}(kernel::KernelType, dx::T, k::T=T(2.0)) where {KernelType<:SPHKernel, D, T}
     h = k * dx
     h⁻¹ = 1 / h
-    H = 2 * h
+    H = k * h
     H⁻¹ = 1/H
     H² = H * H
     αD = _αD(KernelType, Val(D), h)

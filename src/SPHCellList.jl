@@ -489,8 +489,13 @@ using Bumper
 
         ###
         DimensionsPlus = Dimensions + 1
+        Δx = zero(eltype(Position))
         @no_escape begin
             while SimMetaData.TotalTime <= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
+
+                Δx = 2 * maximum(@. norm(Positionₙ⁺ - SimParticles.Position))
+
+                # println("Δx: ", Δx, " dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
 
                 @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel)
                 dt₂ = dt * 0.5
@@ -501,13 +506,15 @@ using Bumper
                     # and ensure it is always updated in a reasonable manner. This only works well, assuming that
                     # c₀ >= maximum(norm.(Velocity))
                     # Remove if statement logic if you want to update each iteration
-                    if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
+                    # if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
+                    if Δx >= SimKernel.h  || SimMetaData.Iteration == 1
                         @timeit SimMetaData.HourGlass "02a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells)
                     end
 
                     UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                     EnumeratedIndices = enumerate(index_chunks(UniqueCellsView; n=nthreads()))
                 end
+
 
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
             
@@ -532,6 +539,7 @@ using Bumper
                 
                 @timeit SimMetaData.HourGlass "05b Update To Half TimeStep"              HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
 
+
                 @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
             
                 ###=== Second step of resetting arrays
@@ -552,6 +560,7 @@ using Bumper
                 @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
             
                 @timeit SimMetaData.HourGlass "12 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
+
             end
         end
         
