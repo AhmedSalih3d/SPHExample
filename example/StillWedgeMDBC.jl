@@ -4,9 +4,9 @@ let
     Dimensions = 2
     FloatType  = Float64
 
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.5)
-    # SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=43.4, δᵩ = 0.1, CFL=0.2)
-
+    # SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.5)
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=43.4, δᵩ = 0.1, CFL=0.2)
+# 
     # Assuming SimConstantsWedge is defined somewhere else with the field `dx`
     FixedBoundary = Geometry{Dimensions, FloatType}(
         CSVFile     = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Bound.csv",
@@ -21,7 +21,7 @@ let
         Type        = Fluid,   # Using the enum value Fluid
         Motion      = nothing
     )
-# 
+
     SimulationGeometry = [FixedBoundary;Water]
     
     # Load in particles
@@ -38,7 +38,7 @@ let
         OpenLogFile=true,
         FlagOutputKernelValues=false,
         FlagLog=true,
-        FlagMDBCSimple=true
+        # FlagMDBCSimple=true
     )
 
     SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)

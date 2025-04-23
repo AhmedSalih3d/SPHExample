@@ -39,7 +39,7 @@ CubicSpline{T}() where {T} = CubicSpline{T}(one(T))
     η²::FloatType  = (0.01 * h)^2 ; @assert η²  ≥ 0 "η² must be non-negative"
 end
 
-function SPHKernelInstance{D, T}(kernel::KernelType, dx::T, k::T=2.0) where {KernelType<:SPHKernel, D, T}
+function SPHKernelInstance{D, T}(kernel::KernelType, dx::T, k::T=T(2.0)) where {KernelType<:SPHKernel, D, T}
     h = k * dx
     h⁻¹ = 1 / h
     H = 2 * h
