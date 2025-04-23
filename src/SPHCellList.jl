@@ -87,7 +87,6 @@ using Bumper
         ExtractCells!(Particles, InverseCutOff)
 
         sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
-
         Cells = @views Particles.Cells
         @. ParticleRanges             = zero(eltype(ParticleRanges))
         IndexCounter                  = 1
@@ -521,7 +520,6 @@ using Bumper
                     if SimMetaData.FlagMDBCSimple
                         bᵧ = @alloc(SVector{DimensionsPlus, FloatType}, length(Position))
                         Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus * DimensionsPlus}, length(Position))
-                        # ResetArrays!(bᵧ, Aᵧ)
                         @timeit SimMetaData.HourGlass "04 First NeighborLoopMDBC"        NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, Position, Density, UniqueCellsView, GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ)
                     end
                     @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
