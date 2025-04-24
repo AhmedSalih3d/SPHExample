@@ -39,15 +39,36 @@ CubicSpline{T}() where {T} = CubicSpline{T}(one(T))
     η²::FloatType  = (0.01 * h)^2 ; @assert η²  ≥ 0 "η² must be non-negative"
 end
 
-function SPHKernelInstance{D, T}(kernel::KernelType, dx::T, k::T=T(2.0)) where {KernelType<:SPHKernel, D, T}
-    h = k * dx
-    h⁻¹ = 1 / h
-    H = k * h
-    H⁻¹ = 1/H
-    H² = H * H
-    αD = _αD(KernelType, Val(D), h)
-    η² = (0.01 * h)^2
-    return SPHKernelInstance{KernelType, D, T}(kernel=kernel, k=k, h=h, h⁻¹=h⁻¹, H=H, H⁻¹ = H⁻¹, H²=H², αD=αD, η²=η²)
+function SPHKernelInstance{KernelType<:SPHKernel,D,T}(
+    kernel::KernelType;
+    dx::Union{T,Nothing}=nothing,
+    h::Union{T,Nothing}=nothing,
+    k::T = T(2.0)
+) where {D,T}
+
+    # pick h
+    h₀ = if dx !== nothing && h === nothing
+        k * dx
+    elseif h !== nothing && dx === nothing
+        h
+    else
+        error("Must provide exactly one of `dx` or `h`")
+    end
+
+    # precompute
+    h₀⁻¹ = inv(h₀)
+    H    = k * h₀
+    H⁻¹  = inv(H)
+    H²   = H * H
+    αD   = _αD(KernelType, Val(D), h₀)
+    η²   = (0.01*h₀)^2
+
+    return SPHKernelInstance{KernelType,D,T}(
+        kernel=kernel, k=k,
+        h=h₀, h⁻¹=h₀⁻¹,
+        H=H, H⁻¹=H⁻¹, H²=H²,
+        αD=αD, η²=η²
+    )
 end
 
 # Kernel Evaluation Functions
@@ -97,8 +118,6 @@ end
 
 @inline function tensile_correction(instance::SPHKernelInstance{<:CubicSpline}, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx; n = 4)
     eps_val = instance.kernel.eps
-
-    Wᵢⱼ(instance, q)
 
     Wij_q  = Wᵢⱼ(instance, q)
     Wij_dx = Wᵢⱼ(instance, dx)
