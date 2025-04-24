@@ -1,5 +1,4 @@
 using SPHExample
-using SimulationMetaDataConfiguration  # now provides SimulationMetaData
 
 let
     Dimensions = 3
@@ -10,9 +9,7 @@ let
     SimConstantsDambreak3D = SimulationConstants{FloatType}(
         dx  = dx,
         c₀  = 33.14,
-        h   = 1 * sqrt(3 * dx^2),
         α   = 0.1,
-        αD  = 21/(16*π*(1.2 * sqrt(3) * dx)^3),
         m₀  = 1000 * dx^3,
         CFL = 0.2
     )
@@ -33,7 +30,7 @@ let
     SimulationGeometry = [FixedBoundary; Water]
 
     # --- Allocate particles ---
-    SimParticles = AllocateDataStructures(Dimensions, FloatType, SimulationGeometry)
+    SimParticles = AllocateDataStructures(SimulationGeometry)
 
     # --- Simulation metadata & logging ---
     SimMetaDataDambreak3D = SimulationMetaData{Dimensions,FloatType}(
@@ -45,8 +42,6 @@ let
         ExportSingleVTKHDF     = true,
         ExportGridCells        = true,
         OpenLogFile            = true,
-        FlagDensityDiffusion   = true,
-        FlagLinearizedDDT      = true,
         FlagOutputKernelValues = false,
         FlagLog                = true
     )
@@ -60,7 +55,7 @@ let
     CleanUpSimulationFolder(SimMetaDataDambreak3D.SaveLocation)
 
     # --- Kernel, viscosity & diffusion ---
-    SimKernel           = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(), dx)
+    SimKernel = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); h   = 1 * sqrt(3 * dx^2))
     SimViscosity        = ArtificialViscosity()
     SimDensityDiffusion = LinearDensityDiffusion()
 
