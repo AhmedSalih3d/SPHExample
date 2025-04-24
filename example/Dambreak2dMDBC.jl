@@ -75,7 +75,7 @@ let
         SimGeometry          = SimulationGeometry,
         SimMetaData          = SimMetaDataDambreak,
         SimConstants         = SimConstantsDambreak,
-        SimKernel            = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(), SimConstantsDambreak.dx),
+        SimKernel            = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); dx = SimConstantsDambreak.dx),
         SimLogger            = SimLogger,
         SimParticles         = SimParticles,
         SimViscosity         = ArtificialViscosity(),

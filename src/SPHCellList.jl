@@ -473,31 +473,31 @@ using Bumper
         return nothing
     end
 
-    """
-        update_delta_x!(Δx, posₙ⁺, pos)
+    # """
+    #     update_delta_x!(Δx, posₙ⁺, pos)
 
-    Increment Δx by twice the maximum ‖posₙ⁺[i] – pos[i]‖, without ever allocating.
-    Returns the new Δx.
-    """
-    @inline function update_delta_x!(Δx::T,
-                                    posₙ⁺::AbstractVector{SVector{D, T}},
-                                    pos   ::AbstractVector{SVector{D, T}}) where {D, T<:Real}
-        maxd = zero(T)
-        @inbounds for i in eachindex(posₙ⁺, pos)
-            # compute squared norm manually
-            sumsq = zero(T)
-            @inbounds for j in 1:D
-                d = posₙ⁺[i][j] - pos[i][j]
-                sumsq += d*d
-            end
-            # sqrt/T is allocation-free on scalars
-            nrm = sqrt(sumsq)
-            if nrm > maxd
-                maxd = nrm
-            end
-        end
-        return Δx + 2*maxd
-    end
+    # Increment Δx by twice the maximum ‖posₙ⁺[i] – pos[i]‖, without ever allocating.
+    # Returns the new Δx.
+    # """
+    # @inline function update_delta_x!(Δx::T,
+    #                                 posₙ⁺::AbstractVector{SVector{D, T}},
+    #                                 pos   ::AbstractVector{SVector{D, T}}) where {D, T<:Real}
+    #     maxd = zero(T)
+    #     @inbounds for i in eachindex(posₙ⁺, pos)
+    #         # compute squared norm manually
+    #         sumsq = zero(T)
+    #         @inbounds for j in 1:D
+    #             d = posₙ⁺[i][j] - pos[i][j]
+    #             sumsq += d*d
+    #         end
+    #         # sqrt/T is allocation-free on scalars
+    #         nrm = sqrt(sumsq)
+    #         if nrm > maxd
+    #             maxd = nrm
+    #         end
+    #     end
+    #     return Δx + 2*maxd
+    # end
 
     
     @inbounds function SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData::SimulationMetaData{Dimensions, FloatType}, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition) where {Dimensions, FloatType}
@@ -520,7 +520,7 @@ using Bumper
         @no_escape begin
             while SimMetaData.TotalTime <= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
 
-                Δx = update_delta_x!(Δx, Positionₙ⁺, SimParticles.Position)
+                # Δx = update_delta_x!(Δx, Positionₙ⁺, SimParticles.Position)
 
                 # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
 
@@ -533,8 +533,8 @@ using Bumper
                     # and ensure it is always updated in a reasonable manner. This only works well, assuming that
                     # c₀ >= maximum(norm.(Velocity))
                     # Remove if statement logic if you want to update each iteration
-                    # if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
-                    if Δx >= SimKernel.h
+                    if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
+                    # if 1.25 * Δx >= SimKernel.h
                         @timeit SimMetaData.HourGlass "02a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells)
                         Δx = zero(eltype(Density))
                     end
