@@ -27,7 +27,7 @@ Key-elements of the code are:
 - Weakly Compressible SPH
   - Density varies about ~1% in time, for numerical reasons and the pressure equation is based on the density. This ensured by enforcing a Mach Number of 0.1, by artificially setting the speed of sound of the fluid (c₀) to ten times the highest velocity in the flow (manual input) 
 - Multi-threaded approach
-  - Multi-threading has been added. Code can easily be run in sequential form by removing the `@threads` in the `NeighborLoop` function in `src/SPHCellList.jl`.
+  - Multi-threading has been added. Code can easily be run in sequential form by removing the `@sync` and `@spawn` in the `NeighborLoop` function in `src/SPHCellList.jl`.
 - Dynamic Boundary Condition (as in DualSPHysics)
   - DualSPHysics is one of the most well-known SPH packages. This is one of the simplest and most elegant boundary conditions.
 - Density Diffusion
@@ -54,20 +54,30 @@ The "src" package contains all the code files used in this process. An overview 
   * Some simple time stepping controls
 * SimulationConstantsConfigurations
   * The interface for stating the most relevant simulation constants is found here
-* SimulationMetaDataConfiguration
-  * The interface for the meta data associated with a simulation, such as total time, save location etc.
-* SimulationLoggerConfiguration
-  * Functions for logging data of execution
-* SimulationGeometry
-  * Defines the different type of simulation geometries available at this moment
 * SimulationEquations
   * SPH physics functions
+* SimulationGeometry
+  * Defines the different type of simulation geometries available at this moment
+* SimulationLoggerConfiguration
+  * Functions for logging data of execution
+* SimulationMetaDataConfiguration
+  * The interface for the meta data associated with a simulation, such as total time, save location etc.
 * SPHCellList
   * Holds the main code for the custom neighbor finding algorithm which I've made for this project
+* SPHDensityDiffusionModels
+  * The different density diffusion models available in the package
+* SPHKernels
+  * The different kernels available in the package, currently Wendland and Cubic Spline
+* SPHViscosityModels
+  * The different viscosity models available in the package, currently artificial viscosity, laminar and LaminarSPS (SPS-LES)
+* Time Stepping Controls
+  * The time stepping controls for the simulation, such as the CFL condition and the time step size
 * SPHExample
   * The "glue" package file exporting all the functions, to allow for `using SPHExample`.  
 
 ### Installation
+
+For testing the package, installing through Julia package manager is recommended. Have a look at some of the run files. 
 
 It is recommended to fork the project and then  `git clone ..` into a folder and following the instructions in `Executing program`. The `using Pkg; Pkg.add(url="https://github.com/AhmedSalih3d/SPHExample")` should also work if one is simply interesting in installing and using some package functionality. 
 
@@ -87,6 +97,7 @@ Written by Ahmed Salih [@AhmedSalih3D](https://github.com/AhmedSalih3d)
 
 | Version | Description |
 |---------|-------------|
+| 0.6.7 | This update introduces mainly mDBC boundary condition and multiple other improvements. This allows for fluid particles to "touch" the boundaries.
 | 0.6.6 | This update introdces the ability to correctly save the neighbour search grid and visualize it in Paraview. This is mostly a cool feature, but useful for debugging and understanding physics. If some particles are outside of the neighbour search grid, consider increasing the amount of times the neighbor hood grid is updated.
 | 0.6.5 | This update introduces three main changes. 1) A linearized density diffusion term is available, which is faster than the original diffusion term, 2) it is now possible to save simulation data into one single file, instead of multiples, thereby saving simulation time, 3) the code has been optimized for performance, with a 10-20% speedup in execution time.
 | 0.6.4 | Solidified the interface for specifying geometry grouping and details. The dict approach in earlier versions was good, but limited the expandability of the software. Also added the extra plot of the time steps and iterations taken at the end

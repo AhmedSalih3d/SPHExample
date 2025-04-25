@@ -110,11 +110,14 @@ module SimulationLoggerConfiguration
     end
     
     
-    function InitializeLogger(SimLogger,SimConstants,SimMetaData, SimGeometry, SimParticles)
+    function InitializeLogger(SimLogger,SimConstants,SimMetaData, SimKernel, SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
         with_logger(SimLogger.Logger) do
             @info sprint(InteractiveUtils.versioninfo)
             @info SimConstants
             @info SimMetaData
+            @info SimKernel
+            @info SimViscosity
+            @info SimDensityDiffusion
             
             # Print the formatted date and time
             @info "Logger Start Time: " * SimLogger.CurrentDataStr
@@ -139,8 +142,15 @@ module SimulationLoggerConfiguration
             TimePerPhysicalSecond    = string(@sprintf("%-.2f", elapsed_time_ / SimMetaData.TotalTime))
     
             SecondsToFinish          = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (elapsed_time_ / SimMetaData.TotalTime)
-            ExpectedFinishTime       = now() + Second(ceil(Int, SecondsToFinish))
-            ExpectedFinishTimeString = Dates.format(ExpectedFinishTime, "dd-mm-yyyy HH:MM:SS")
+            if isnan(SecondsToFinish)
+                SecondsToFinish = 0.0
+                ExpectedFinishTime       = now() + Second(ceil(Int, SecondsToFinish))
+                ExpectedFinishTimeString = missing
+            else
+                ExpectedFinishTime       = now() + Second(ceil(Int, SecondsToFinish))
+                ExpectedFinishTimeString = Dates.format(ExpectedFinishTime, "dd-mm-yyyy HH:MM:SS")
+            end
+            
     
             @info @. $join(cfmt(SimLogger.FormatStr, (PartNumber, PartTime, PartTotalSteps, CurrentSteps, TimeUptillNow, TimePerPhysicalSecond, ExpectedFinishTimeString)))
         end

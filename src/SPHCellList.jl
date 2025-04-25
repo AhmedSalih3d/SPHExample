@@ -15,9 +15,12 @@ using ..PreProcess
 using ..ProduceHDFVTK
 using ..TimeStepping
 using ..OpenExternalPrograms
+using ..SPHKernels
+using ..SPHViscosityModels
+using ..SPHDensityDiffusionModels
 
 using StaticArrays
-import StructArrays: StructArray
+import StructArrays: StructArray, foreachfield
 import LinearAlgebra: dot, norm, diagm, diag, cond, det
 import Parameters: @unpack
 import FastPow: @fastpow
@@ -28,6 +31,8 @@ using Logging, LoggingExtras
 using HDF5
 using Base.Threads
 using UnicodePlots
+using LinearAlgebra
+using Bumper
 
     function ConstructStencil(v::Val{d}) where d
         n_ = CartesianIndices(ntuple(_->-1:1,v))
@@ -47,17 +52,18 @@ using UnicodePlots
     # Returns
     - `nothing`: This function modifies the `Particles` in place.
     """
-    @inline function ExtractCells!(Particles, ::Val{InverseCutOff}) where InverseCutOff
-        # Replace unsafe_trunc with trunc if this ever errors
-        function map_floor(x)
-            # This is different than just doing muladd(x,InverseCutOff,0.5) because it rounds towards zero.
-            # Consider -1.7 + 0.5, this would give -1.2 and then trunced 1, but we want -2, therefore absolute addition before hand
-            # We add 0.5 instead of 1, to ensure proper rounding behavior when restoring the sign for negative numbers.
-            Int(sign(x)) * unsafe_trunc(Int, muladd(abs(x),InverseCutOff,0.5))
-        end
-
-        for i ∈ eachindex(Particles.Cells)
-            t = map(map_floor, Tuple(Particles.Position[i]))
+    # Replace unsafe_trunc with trunc if this ever errors
+    @inline function map_floor(x, InverseCutOff)
+        # This is different than just doing muladd(x,InverseCutOff,0.5) because it rounds towards zero.
+        # Consider -1.7 + 0.5, this would give -1.2 and then trunced 1, but we want -2, therefore absolute addition before hand
+        # We add 0.5 instead of 1, to ensure proper rounding behavior when restoring the sign for negative numbers.
+        Int(sign(x)) * unsafe_trunc(Int, muladd(abs(x),InverseCutOff,0.5))
+    end
+   
+    @inline function ExtractCells!(Particles, InverseCutOff)
+        @inbounds @simd ivdep for i ∈ eachindex(Particles.Cells)
+            # t = map(map_floor, Tuple(Particles.Position[i]))
+            t = CartesianIndex(map(x -> map_floor(x, InverseCutOff), Tuple(Particles.Position[i])))
             Particles.Cells[i] = CartesianIndex(t)
         end
 
@@ -77,18 +83,17 @@ using UnicodePlots
     # Returns
     - `IndexCounter`: The number of unique cells identified.
     """
-    function UpdateNeighbors!(Particles, CutOff, SortingScratchSpace, ParticleRanges, UniqueCells)
-        ExtractCells!(Particles, CutOff)
+    function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace, ParticleRanges, UniqueCells)
+        ExtractCells!(Particles, InverseCutOff)
 
         sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
-
         Cells = @views Particles.Cells
         @. ParticleRanges             = zero(eltype(ParticleRanges))
         IndexCounter                  = 1
         ParticleRanges[IndexCounter]  = 1
         UniqueCells[IndexCounter]     = Cells[1]
 
-        for i in eachindex(Cells)[2:end]
+        @inbounds @simd ivdep for i in eachindex(Cells)[2:end]
             if Cells[i] != Cells[i-1] # Equivalent to diff(Cells) != 0
                 IndexCounter                 += 1
                 ParticleRanges[IndexCounter]  = i
@@ -100,35 +105,39 @@ using UnicodePlots
         return IndexCounter 
     end
 
+    
 # Neither Polyester.@batch per core or thread is faster
 ###=== Function to process each cell and its neighbors
-    function NeighborLoop!(SimMetaData, SimConstants, ParticleRanges, Stencil, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCells, EnumeratedIndices)
-        @sync tasks = map(EnumeratedIndices) do (ichunk, inds)
-            @spawn for iter ∈ inds
+    function NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCells, EnumeratedIndices)
+        @sync begin
+            for (ichunk, inds) ∈ EnumeratedIndices 
+                @spawn for iter ∈ inds
 
-                CellIndex = UniqueCells[iter]
+                    CellIndex = UniqueCells[iter]
+                    SimParticles.ChunkID[iter] = ichunk
 
-                StartIndex = ParticleRanges[iter]
-                EndIndex   = ParticleRanges[iter+1] - 1
+                    StartIndex = ParticleRanges[iter]
+                    EndIndex   = ParticleRanges[iter+1] - 1
 
-                @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-                    @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
-                end
+                    @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
+                        @inline ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
+                    end
 
-                @inbounds for S ∈ Stencil
-                    SCellIndex = CellIndex + S
+                    @inbounds for S ∈ Stencil
+                        SCellIndex = CellIndex + S
 
-                    # Returns a range, x:x for exact match and x:(x-1) for no match
-                    # utilizes that it is a sorted array and requires no isequal constructor,
-                    # so I prefer this for now
-                    NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
+                        # Returns a range, x:x for exact match and x:(x-1) for no match
+                        # utilizes that it is a sorted array and requires no isequal constructor,
+                        # so I prefer this for now
+                        NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
 
-                    if length(NeighborCellIndex) != 0
-                        StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
-                        EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
+                        if length(NeighborCellIndex) != 0
+                            StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
+                            EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
 
-                        @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                            @inline ComputeInteractions!(SimMetaData, SimConstants, Position, Kernel, KernelGradient, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
+                            @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
+                                @inline ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
+                            end
                         end
                     end
                 end
@@ -138,13 +147,56 @@ using UnicodePlots
         return nothing
     end
 
-    # Really important to overload default function, gives 10x speed up?
-    # Overload the default function to do what you pleas
-    function ComputeInteractions!(SimMetaData, SimConstants, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtI, dvdtI, ∇CᵢThreaded, ∇◌rᵢThreaded, i, j, MotionLimiter, ichunk)
-        @unpack FlagViscosityTreatment, FlagDensityDiffusion, FlagOutputKernelValues, FlagLinearizedDDT = SimMetaData
-        @unpack ρ₀, h, h⁻¹, m₀, αD, α, γ, g, c₀, δᵩ, η², H², Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
+    function NeighborLoopMDBC!(SimKernel, SimMetaData::SimulationMetaData{Dimensions, _}, SimConstants, ParticleRanges, Position, Density, UniqueCells, GhostPoints, GhostNormals,  ParticleType, bᵧ, Aᵧ) where {Dimensions, _}
+        
+        FullStencil = CartesianIndices(ntuple(_->-1:1, Dimensions))
 
-        Linear_ρ_factor = (1/(Cb*γ))*ρ₀
+        @inbounds @threads for iter in eachindex(GhostPoints)
+            GhostPoint = GhostPoints[iter]
+
+            if !iszero(GhostPoint)
+                # zero‐initialize per‐ghost accumulators
+                b_acc = zero(bᵧ[iter])            # an SVector{D+1,FloatType}
+                A_acc = zero(Aᵧ[iter])            # an SMatrix{D+1,D+1,FloatType}
+            
+                # compute and accumulate into the locals
+                GhostCellIndex = CartesianIndex(map(x->map_floor(x,SimKernel.H⁻¹), Tuple(GhostPoints[iter])))
+                @inbounds for S ∈ FullStencil
+                    SCellIndex = GhostCellIndex + S
+                    # Returns a range, x:x for exact match and x:(x-1) for no match
+                    # utilizes that it is a sorted array and requires no isequal constructor,
+                    # so I prefer this for now
+                    NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
+
+                    if length(NeighborCellIndex) != 0
+                        StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
+                        EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
+
+                        for j in StartIndex_:EndIndex_
+                            # change ComputeInteractions to take & return contributions, e.g.:
+                            bΔ, AΔ = ComputeInteractionsMDBC!(SimKernel, SimMetaData, SimConstants,
+                                                            Position, Density, ParticleType,
+                                                            GhostPoints, iter, j)
+                            b_acc += bΔ
+                            A_acc += AΔ
+                        end
+                    end
+                end
+            
+                # write out once
+                bᵧ[iter] = b_acc
+                Aᵧ[iter] = A_acc
+            end    
+        end
+
+        return nothing
+    end
+
+    Base.@propagate_inbounds function ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
+        @unpack FlagOutputKernelValues = SimMetaData
+        @unpack ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
+
+        @unpack h⁻¹, h, η², H², αD = SimKernel 
 
         xᵢⱼ  = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)              
@@ -154,8 +206,8 @@ using UnicodePlots
 
             # clamp seems faster than min, no util
             q         = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0) #min(dᵢⱼ * h⁻¹, 2.0) - 8% util no DDT
-            invd²η²   =  1.0 / (dᵢⱼ*dᵢⱼ+η²)
-            ∇ᵢWᵢⱼ     = @fastpow (αD*5*(q-2)^3*q / (8h*(q*h+η²)) ) * xᵢⱼ 
+            ∇ᵢWᵢⱼ     = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
+
             ρᵢ        = Density[i]
             ρⱼ        = Density[j]
         
@@ -166,130 +218,97 @@ using UnicodePlots
             dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  density_symmetric_term
             dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  density_symmetric_term
 
-            # Density diffusion
-            if FlagDensityDiffusion
-                if SimConstants.g == 0
-                    ρᵢⱼᴴ  = 0.0
-                    ρⱼᵢᴴ  = 0.0
-                else
-                    Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
-                    Pⱼᵢᴴ  = -Pᵢⱼᴴ
-                    
-                    if FlagLinearizedDDT
-                        ρᵢⱼᴴ  = Pᵢⱼᴴ * Linear_ρ_factor
-                        ρⱼᵢᴴ  = -ρᵢⱼᴴ
-                    else
-                        ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
-                        ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
-                    end
-                end
+            Dᵢ, Dⱼ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, i, j, MotionLimiter)
 
-                ρⱼᵢ   = ρⱼ - ρᵢ
-
-                Ψᵢⱼ   = 2( ρⱼᵢ - ρᵢⱼᴴ) * (-xᵢⱼ) * invd²η²
-                #Ψⱼᵢ   = -Ψᵢⱼ #2(-ρⱼᵢ - ρⱼᵢᴴ) * ( xᵢⱼ) * invd²η²
-
-                MLcond = MotionLimiter[i] * MotionLimiter[j]
-                Dᵢ    =  δᵩ * h * c₀ * (m₀/ρⱼ) * dot(Ψᵢⱼ ,  ∇ᵢWᵢⱼ) * MLcond
-                Dⱼ    =  -Dᵢ #δᵩ * h * c₀ * (m₀/ρᵢ) * dot(Ψⱼᵢ , -∇ᵢWᵢⱼ) * MLcond
-            else
-                Dᵢ  = 0.0
-                Dⱼ  = 0.0
-            end
-            dρdtI[ichunk][i] += dρdt⁺ + Dᵢ
-            dρdtI[ichunk][j] += dρdt⁻ + Dⱼ
+            SimThreadedArrays.dρdtIThreaded[ichunk][i] += dρdt⁺ + Dᵢ
+            SimThreadedArrays.dρdtIThreaded[ichunk][j] += dρdt⁻ + Dⱼ
 
 
             Pᵢ      =  Pressure[i]
             Pⱼ      =  Pressure[j]
             Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
-            dvdt⁺   = - m₀ * Pfac *  ∇ᵢWᵢⱼ
-            #dvdt⁻   = - dvdt⁺
+            f_ab    = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
+            dvdt⁺   = - m₀ * (Pfac + f_ab) *  ∇ᵢWᵢⱼ
 
-            if FlagViscosityTreatment == :ArtificialViscosity
-                ρ̄ᵢⱼ       = (ρᵢ+ρⱼ)*0.5
-                cond      = dot(vᵢⱼ, xᵢⱼ)
-                cond_bool = eltype(cond)(cond < 0.0)
-                μᵢⱼ       = h*cond * invd²η²
-                Πᵢ        = - m₀ * (cond_bool*(-α*c₀*μᵢⱼ)/ρ̄ᵢⱼ) * ∇ᵢWᵢⱼ
-                Πⱼ        = - Πᵢ
-            else
-                Πᵢ        = zero(xᵢⱼ)
-                Πⱼ        = Πᵢ
-            end
-        
-            if FlagViscosityTreatment == :Laminar || FlagViscosityTreatment == :LaminarSPS
-                # 4 comes from 2 divided by 0.5 from average density
-                # should divide by ρᵢ eq 6 DPC
-                # ν₀∇²uᵢ = (1/ρᵢ) * ( (4 * m₀ * (ρᵢ * ν₀) * dot( xᵢⱼ, ∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²) ) ) *  vᵢⱼ
-                # ν₀∇²uⱼ = (1/ρⱼ) * ( (4 * m₀ * (ρⱼ * ν₀) * dot(-xᵢⱼ,-∇ᵢWᵢⱼ)  ) / ( (ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²) ) ) * -vᵢⱼ
-                visc_symmetric_term = (4 * m₀ * ν₀ * dot( xᵢⱼ, ∇ᵢWᵢⱼ)) / ((ρᵢ + ρⱼ) + (dᵢⱼ * dᵢⱼ + η²))
-                # ν₀∇²uᵢ = (1/ρᵢ) * visc_symmetric_term *  vᵢⱼ * ρᵢ
-                # ν₀∇²uⱼ = (1/ρⱼ) * visc_symmetric_term * -vᵢⱼ * ρⱼ
-                ν₀∇²uᵢ =  visc_symmetric_term *  vᵢⱼ
-                ν₀∇²uⱼ = -ν₀∇²uᵢ #visc_symmetric_term * -vᵢⱼ
-            else
-                ν₀∇²uᵢ = zero(xᵢⱼ)
-                ν₀∇²uⱼ = ν₀∇²uᵢ
-            end
-        
-            if FlagViscosityTreatment == :LaminarSPS 
-                Iᴹ       = diagm(one.(xᵢⱼ))
-                #julia> a .- a'
-                # 3×3 SMatrix{3, 3, Float64, 9} with indices SOneTo(3)×SOneTo(3):
-                # 0.0  0.0  0.0
-                # 0.0  0.0  0.0
-                # 0.0  0.0  0.0
-                # Strain *rate* tensor is the gradient of velocity
-                Sᵢ = ∇vᵢ =  (m₀/ρⱼ) * (vⱼ - vᵢ) * ∇ᵢWᵢⱼ'
-                norm_Sᵢ  = sqrt(2 * sum(Sᵢ .^ 2))
-                νtᵢ      = (SmagorinskyConstant * dx)^2 * norm_Sᵢ
-                trace_Sᵢ = sum(diag(Sᵢ))
-                τᶿᵢ      = 2*νtᵢ*ρᵢ * (Sᵢ - (1/3) * trace_Sᵢ * Iᴹ) - (2/3) * ρᵢ * BlinConstant * dx^2 * norm_Sᵢ^2 * Iᴹ
-                Sⱼ = ∇vⱼ =  (m₀/ρᵢ) * (vᵢ - vⱼ) * -∇ᵢWᵢⱼ'
-                norm_Sⱼ  = sqrt(2 * sum(Sⱼ .^ 2))
-                νtⱼ      = (SmagorinskyConstant * dx)^2 * norm_Sⱼ
-                trace_Sⱼ = sum(diag(Sⱼ))
-                τᶿⱼ      = 2*νtⱼ*ρⱼ * (Sⱼ - (1/3) * trace_Sⱼ * Iᴹ) - (2/3) * ρⱼ * BlinConstant * dx^2 * norm_Sⱼ^2 * Iᴹ
-        
-                # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA TO REPRESENT IT
-                dτdtᵢ = (m₀/(ρⱼ * ρᵢ)) * (τᶿᵢ + τᶿⱼ) *  ∇ᵢWᵢⱼ 
-                dτdtⱼ = dτdtᵢ #(m₀/(ρᵢ * ρⱼ)) * (τᶿᵢ + τᶿⱼ) * -∇ᵢWᵢⱼ 
-            else
-                dτdtᵢ  = zero(xᵢⱼ)
-                dτdtⱼ  = dτdtᵢ
-            end
-        
-            uₘ = dvdt⁺ + Πᵢ + ν₀∇²uᵢ + dτdtᵢ
-            dvdtI[ichunk][i] += uₘ
-            dvdtI[ichunk][j] -= uₘ #dvdt⁻ + Πⱼ + ν₀∇²uⱼ + dτdtⱼ
+            visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, i, j)
+
+            uₘ = dvdt⁺ + visc_term
+            SimThreadedArrays.AccelerationThreaded[ichunk][i] += uₘ
+            SimThreadedArrays.AccelerationThreaded[ichunk][j] -= uₘ 
 
             
             if FlagOutputKernelValues
-                Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
-                KernelThreaded[ichunk][i]         += Wᵢⱼ
-                KernelThreaded[ichunk][j]         += Wᵢⱼ
-                KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
-                KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
+                Wᵢⱼ  = @fastpow @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
+                SimThreadedArrays.KernelThreaded[ichunk][i]         += Wᵢⱼ
+                SimThreadedArrays.KernelThreaded[ichunk][j]         += Wᵢⱼ
+                SimThreadedArrays.KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
+                SimThreadedArrays.KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
             end
 
-
             if SimMetaData.FlagShifting
-                Wᵢⱼ  = @fastpow αD*(1-q/2)^4*(2*q + 1)
+                Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
         
                 MLcond = MotionLimiter[i] * MotionLimiter[j]
 
-                ∇CᵢThreaded[ichunk][i]   += (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
-                ∇CᵢThreaded[ichunk][j]   += (m₀/ρⱼ) * -∇ᵢWᵢⱼ
+                SimThreadedArrays.∇CᵢThreaded[ichunk][i]   += (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
+                SimThreadedArrays.∇CᵢThreaded[ichunk][j]   += (m₀/ρⱼ) * -∇ᵢWᵢⱼ
         
                 # Switch signs compared to DSPH, else free surface detection does not make sense
                 # Agrees, https://arxiv.org/abs/2110.10076, it should have been r_ji
-                ∇◌rᵢThreaded[ichunk][i]  += (m₀/ρⱼ) * dot(-xᵢⱼ , ∇ᵢWᵢⱼ)  * MLcond
-                ∇◌rᵢThreaded[ichunk][j]  += (m₀/ρᵢ) * dot( xᵢⱼ ,-∇ᵢWᵢⱼ)  * MLcond
+                SimThreadedArrays.∇◌rᵢThreaded[ichunk][i]  += (m₀/ρⱼ) * dot(-xᵢⱼ , ∇ᵢWᵢⱼ)  * MLcond
+                SimThreadedArrays.∇◌rᵢThreaded[ichunk][j]  += (m₀/ρᵢ) * dot( xᵢⱼ ,-∇ᵢWᵢⱼ)  * MLcond
             end
         end
 
         return nothing
+    end
+
+    Base.@propagate_inbounds function ComputeInteractionsMDBC!(SimKernel, SimMetaData::SimulationMetaData{Dimensions, FloatType}, SimConstants, Position, Density, ParticleType, GhostPoints, i, j) where {Dimensions, FloatType}
+        @unpack ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
+        
+        @unpack h⁻¹, h, η², H², αD = SimKernel 
+
+        DimensionsPlus = Dimensions + 1
+        # always zero‐initialize
+        bΔ = zero(SVector{DimensionsPlus,FloatType})
+        AΔ = zero(SMatrix{DimensionsPlus, DimensionsPlus,FloatType})
+
+        # ᵢ is ghost node! ⱼ is fluid node
+
+        if ParticleType[j] == Fluid
+
+            xᵢⱼ  = GhostPoints[i] - Position[j]
+
+            xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
+            if xᵢⱼ² <= H²
+                dᵢⱼ = sqrt(abs(xᵢⱼ²))
+                q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
+        
+                ρⱼ = Density[j]
+
+        
+                Wᵢⱼ = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
+
+                ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
+
+                Vⱼ = m₀ / ρⱼ
+        
+                VⱼWᵢⱼ = Vⱼ * Wᵢⱼ
+        
+                bΔ  = SVector{DimensionsPlus, FloatType}(m₀ * Wᵢⱼ, (m₀ * ∇ᵢWᵢⱼ)...)
+
+                # Filling the Aᵧ matrix is done in column-major order
+                xⱼᵢ = -xᵢⱼ
+                first_column = [VⱼWᵢⱼ; Vⱼ * ∇ᵢWᵢⱼ]
+                AΔ = SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus*DimensionsPlus}(
+                    first_column...,
+                    ((xⱼᵢ * first_column')')...
+                )
+            end
+        end
+        
+    
+        return bΔ, AΔ
     end
 
     function reduce_sum!(target_array, arrays)
@@ -301,141 +320,125 @@ using UnicodePlots
             local end_idx = min(t * chunk_size, n)
             for j in eachindex(arrays)
                 local array = arrays[j]  # Access array only once per thread
-                @simd for i in start_idx:end_idx
+                @simd ivdep for i in start_idx:end_idx
                     @inbounds target_array[i] += array[i]
                 end
             end
         end
     end
 
-    function ResetStep!(SimMetaData, dρdtI, Acceleration, dρdtIThreaded, AccelerationThreaded, Kernel, KernelGradient, KernelThreaded, KernelGradientThreaded, ∇Cᵢ, ∇◌rᵢ, ∇CᵢThreaded, ∇◌rᵢThreaded)
+    function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+        
         ResetArrays!(dρdtI, Acceleration)
-        @. ResetArrays!(dρdtIThreaded, AccelerationThreaded)
 
         if SimMetaData.FlagOutputKernelValues
             ResetArrays!(Kernel, KernelGradient)
-            @. ResetArrays!(KernelThreaded, KernelGradientThreaded)
         end
 
         if SimMetaData.FlagShifting
             ResetArrays!(∇Cᵢ, ∇◌rᵢ)
-            @. ResetArrays!(∇CᵢThreaded, ∇◌rᵢThreaded)
         end
+
+        foreachfield(f -> map!(v -> fill!(v, zero(eltype(v))), f, f), SimThreadedArrays)
 
         return nothing
     end
 
-    function ReductionStep!(SimMetaData, dρdtI, dρdtIThreaded, Acceleration, AccelerationThreaded, Kernel, KernelThreaded, KernelGradient, KernelGradientThreaded, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded)
-        reduce_sum!(dρdtI, dρdtIThreaded)
-        reduce_sum!(Acceleration, AccelerationThreaded)
+    function ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+        reduce_sum!(dρdtI, SimThreadedArrays.dρdtIThreaded)
+        reduce_sum!(Acceleration, SimThreadedArrays.AccelerationThreaded)
   
         if SimMetaData.FlagOutputKernelValues
-            reduce_sum!(Kernel, KernelThreaded)
-            reduce_sum!(KernelGradient, KernelGradientThreaded)
+            reduce_sum!(Kernel, SimThreadedArrays.KernelThreaded)
+            reduce_sum!(KernelGradient, SimThreadedArrays.KernelGradientThreaded)
         end
 
         if SimMetaData.FlagShifting
-            reduce_sum!(∇Cᵢ, ∇CᵢThreaded)
-            reduce_sum!(∇◌rᵢ, ∇◌rᵢThreaded)
+            reduce_sum!(∇Cᵢ, SimThreadedArrays.∇CᵢThreaded)
+            reduce_sum!(∇◌rᵢ, SimThreadedArrays.∇◌rᵢThreaded)
         end
     
         return nothing
     end
     
-    @inbounds function SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
+    ### Some functions to simplify code inside of this function
+    function ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionsDefinition, SimMetaData)
+        @inbounds @simd ivdep for i in eachindex(Position)
+            if ParticleType[i] == Moving
+                motion = MotionsDefinition[ParticleMarker[i]]
+    
+                if motion !== nothing
+                    ShouldMove = (motion.StartTime <= SimMetaData.TotalTime) &&
+                                 (SimMetaData.TotalTime <= (motion.StartTime + motion.Duration))
+    
+                    # Retrieve motion parameters
+                    MotionVel = motion.Velocity
+                    MotionDir = motion.Direction
+    
+                    # Update Velocity and Position
+                    Velocity[i] = MotionVel * MotionDir * ShouldMove
+                    Position[i] += Velocity[i] * dt₂
+                end
+            end
+        end
+
+        return nothing
+    end
+
+    function ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
+
+        Position    = SimParticles.Position
+        Density     = SimParticles.Density
+        GhostPoints = SimParticles.GhostPoints
+
+        ρ₀ = SimConstants.ρ₀
+        #https://github.com/DualSPHysics/DualSPHysics/blob/f4fa76ad5083873fa1c6dd3b26cdce89c55a9aeb/src/source/JSphCpu_mdbc.cpp#L347
+        @inbounds @simd ivdep for i in eachindex(Position)
+            A = Aᵧ[i]
+
+            # Since Aᵧ is not reset anymore, we need to check if it is zero
+            if !iszero(GhostPoints[i])
+                if abs(det(A)) >= 1e-3
+                        GhostPointDensity = A \ bᵧ[i]
+                        diff = Position[i] - GhostPoints[i]
+                        v1   = first(GhostPointDensity) + sum(GhostPointDensity[j+1] * diff[j] for j in eachindex(diff))
+                        Density[i] = isnan(v1) ? ρ₀ : v1
+                elseif first(A) > 0.0
+                        v = first(bᵧ[i]) / first(A)
+                        Density[i] = isnan(v) ? ρ₀ : v
+                end
+            end
+        end
+    end
+    
+    function HalfTimeStep(::SimulationMetaData{Dimensions, FloatType}, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂) where {Dimensions, FloatType}
         Position       = SimParticles.Position
         Density        = SimParticles.Density
-        Pressure       = SimParticles.Pressure
         Velocity       = SimParticles.Velocity
         Acceleration   = SimParticles.Acceleration
         GravityFactor  = SimParticles.GravityFactor
         MotionLimiter  = SimParticles.MotionLimiter
-        ParticleType   = SimParticles.Type
-        ParticleMarker = SimParticles.GroupMarker
-        Kernel         = SimParticles.Kernel
-        KernelGradient = SimParticles.KernelGradient
 
-        ### Some functions to simplify code inside of this function
-        function ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionsDefinition, SimMetaData)
-            @inbounds for i in eachindex(Position)
-                if ParticleType[i] == Moving
-                    motion = MotionsDefinition[ParticleMarker[i]]
-        
-                    if motion !== nothing
-                        ShouldMove = (motion.StartTime <= SimMetaData.TotalTime) &&
-                                     (SimMetaData.TotalTime <= (motion.StartTime + motion.Duration))
-        
-                        # Retrieve motion parameters
-                        MotionVel = motion.Velocity
-                        MotionDir = motion.Direction
-        
-                        # Update Velocity and Position
-                        Velocity[i] = MotionVel * MotionDir * ShouldMove
-                        Position[i] += Velocity[i] * dt₂
-                    end
-                end
-            end
-        end
-        
-
-        ###
-    
-        @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants)
-        dt₂ = dt * 0.5
-
-        # Note: If particles are not inside of the neighbor list visualiation, try setting this if statement to always true, since UniqueCells will be updated always then
-        # In theory, the maximal speed is the speed of sound, this should give a safe guard
-        # any ensure it is always updated in a reasonable manner. This only works well, assuming that
-        # c₀ >= maximum(norm.(Velocity))
-        # Remove if statement logic if you want to update each iteration
-        if mod(SimMetaData.Iteration, ceil(Int, SimConstants.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
-            @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" IndexCounter = UpdateNeighbors!(SimParticles, InverseCutOff, SortingScratchSpace,  ParticleRanges, UniqueCells)
-        else
-            findfirst_int(predicate, collection) = (idx = findfirst(predicate, collection); idx === nothing ? -1 : idx)
-            IndexCounter    = findfirst_int(isequal(0), ParticleRanges) - 2
-        end
-
-        UniqueCellsView   = view(UniqueCells, 1:IndexCounter)
-        EnumeratedIndices = enumerate(index_chunks(UniqueCellsView; n=nthreads()))
-
-
-        @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
-    
-        ###=== First step of resetting arrays
-        @timeit SimMetaData.HourGlass "ResetArrays" ResetStep!(SimMetaData, dρdtI, Acceleration, dρdtIThreaded, AccelerationThreaded, Kernel, KernelGradient, KernelThreaded, KernelGradientThreaded, ∇Cᵢ, ∇◌rᵢ, ∇CᵢThreaded, ∇◌rᵢThreaded)
-        ###===
-    
-        @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-        @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimMetaData, SimConstants, ParticleRanges, Stencil, Position, KernelThreaded, KernelGradientThreaded, Density, Pressure, Velocity, dρdtIThreaded, AccelerationThreaded,  ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCellsView, EnumeratedIndices)
-        @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, dρdtI, dρdtIThreaded, Acceleration, AccelerationThreaded, Kernel, KernelThreaded, KernelGradient, KernelGradientThreaded, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded)
-    
-        @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" @inbounds for i in eachindex(Position)
+        @inbounds @simd ivdep for i in eachindex(Position)
             Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
             Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
             Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
             ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
         end
-    
-        @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"  LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
-    
-        ###=== Second step of resetting arrays
-        ResetStep!(SimMetaData, dρdtI, Acceleration, dρdtIThreaded, AccelerationThreaded, Kernel, KernelGradient, KernelThreaded, KernelGradientThreaded, ∇Cᵢ, ∇◌rᵢ, ∇CᵢThreaded, ∇◌rᵢThreaded)
-        ###===
 
-        @timeit SimMetaData.HourGlass "Motion" ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
-    
-        @timeit SimMetaData.HourGlass "03 Pressure"                 Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-        @timeit SimMetaData.HourGlass "08 Second NeighborLoop"      NeighborLoop!(SimMetaData, SimConstants, ParticleRanges, Stencil, Positionₙ⁺, KernelThreaded, KernelGradientThreaded, ρₙ⁺, Pressure, Velocityₙ⁺, dρdtIThreaded, AccelerationThreaded, ∇CᵢThreaded, ∇◌rᵢThreaded, MotionLimiter, UniqueCellsView, EnumeratedIndices)
-        @timeit SimMetaData.HourGlass "Reduction"                   ReductionStep!(SimMetaData, dρdtI, dρdtIThreaded, Acceleration, AccelerationThreaded, Kernel, KernelThreaded, KernelGradient, KernelGradientThreaded, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded)
 
-    
-        @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
-    
-        @timeit SimMetaData.HourGlass "10 Final Density"                DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
-    
-    
+        return nothing
+    end
+
+    function FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+        Position       = SimParticles.Position
+        Velocity       = SimParticles.Velocity
+        Acceleration   = SimParticles.Acceleration
+        GravityFactor  = SimParticles.GravityFactor
+        MotionLimiter  = SimParticles.MotionLimiter
+  
         if !SimMetaData.FlagShifting
-            @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"  @inbounds for i in eachindex(Position)
+            @inbounds @simd ivdep for i in eachindex(Position)
                 Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
                 Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
                 Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
@@ -444,7 +447,7 @@ using UnicodePlots
             A     = 2# Value between 1 to 6 advised
             A_FST = 0; # zero for internal flows
             A_FSM = length(first(Position)); #2d, 3d val different
-            @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"  @inbounds for i in eachindex(Position)
+            @inbounds @simd ivdep for i in eachindex(Position)
                 Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
                 Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
         
@@ -452,17 +455,141 @@ using UnicodePlots
                 if A_FSC < 0
                     δxᵢ = zero(eltype(Position))
                 else
-                    δxᵢ = -A_FSC * A * SimConstants.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
+                    δxᵢ = -A_FSC * A * SimKernel.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
                 end
         
                 Position[i]           += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
             end
         end
-    
+
+        return nothing
+    end
+
+    function UpdateMetaData!(SimMetaData, dt)
         SimMetaData.Iteration      += 1
         SimMetaData.CurrentTimeStep = dt
         SimMetaData.TotalTime      += dt
 
+        return nothing
+    end
+
+    # """
+    #     update_delta_x!(Δx, posₙ⁺, pos)
+
+    # Increment Δx by twice the maximum ‖posₙ⁺[i] – pos[i]‖, without ever allocating.
+    # Returns the new Δx.
+    # """
+    # @inline function update_delta_x!(Δx::T,
+    #                                 posₙ⁺::AbstractVector{SVector{D, T}},
+    #                                 pos   ::AbstractVector{SVector{D, T}}) where {D, T<:Real}
+    #     maxd = zero(T)
+    #     @inbounds for i in eachindex(posₙ⁺, pos)
+    #         # compute squared norm manually
+    #         sumsq = zero(T)
+    #         @inbounds for j in 1:D
+    #             d = posₙ⁺[i][j] - pos[i][j]
+    #             sumsq += d*d
+    #         end
+    #         # sqrt/T is allocation-free on scalars
+    #         nrm = sqrt(sumsq)
+    #         if nrm > maxd
+    #             maxd = nrm
+    #         end
+    #     end
+    #     return Δx + 2*maxd
+    # end
+
+    
+    @inbounds function SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData::SimulationMetaData{Dimensions, FloatType}, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition) where {Dimensions, FloatType}
+        Position       = SimParticles.Position
+        Density        = SimParticles.Density
+        Pressure       = SimParticles.Pressure
+        Velocity       = SimParticles.Velocity
+        Acceleration   = SimParticles.Acceleration
+        MotionLimiter  = SimParticles.MotionLimiter
+        ParticleType   = SimParticles.Type
+        ParticleMarker = SimParticles.GroupMarker
+        Kernel         = SimParticles.Kernel
+        KernelGradient = SimParticles.KernelGradient
+        GhostPoints    = SimParticles.GhostPoints
+        GhostNormals   = SimParticles.GhostNormals
+
+        ###
+        DimensionsPlus = Dimensions + 1
+        Δx = one(eltype(Density)) + SimKernel.h
+        @no_escape begin
+            while SimMetaData.TotalTime <= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
+
+                # Δx = update_delta_x!(Δx, Positionₙ⁺, SimParticles.Position)
+
+                # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
+
+                @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel)
+                dt₂ = dt * 0.5
+
+                @timeit SimMetaData.HourGlass "02 Calculate IndexCounter"  begin
+                    # Note: If particles are not inside of the neighbor list visualiation, try setting this if statement to always true, since UniqueCells will be updated always then
+                    # In theory, the maximal speed is the speed of sound, this should give a safe guard
+                    # and ensure it is always updated in a reasonable manner. This only works well, assuming that
+                    # c₀ >= maximum(norm.(Velocity))
+                    # Remove if statement logic if you want to update each iteration
+                    if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
+                    # if 1.25 * Δx >= SimKernel.h
+                        @timeit SimMetaData.HourGlass "02a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells)
+                        Δx = zero(eltype(Density))
+                    end
+
+                    UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
+                    EnumeratedIndices = enumerate(index_chunks(UniqueCellsView; n=nthreads()))
+                end
+
+                @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
+            
+                if !SimMetaData.FlagSingleStepTimeStepping
+                    ###=== First step of resetting arrays
+                    @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+                    ###===
+                
+                    @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
+                    if SimMetaData.FlagMDBCSimple
+                        bᵧ = @alloc(SVector{DimensionsPlus, FloatType}, length(Position))
+                        Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus * DimensionsPlus}, length(Position))
+                        @timeit SimMetaData.HourGlass "04 First NeighborLoopMDBC"        NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, Position, Density, UniqueCellsView, GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ)
+                    end
+                    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
+                    @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+                end
+
+                if SimMetaData.FlagMDBCSimple
+                    @timeit SimMetaData.HourGlass "05a Apply MDBC before Half TimeStep"  ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
+                end
+                
+                @timeit SimMetaData.HourGlass "05b Update To Half TimeStep"              HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
+
+
+                @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+            
+                ###=== Second step of resetting arrays
+                @timeit SimMetaData.HourGlass "ResetArrays"                              ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+                ###===
+
+                @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
+            
+                @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
+                @timeit SimMetaData.HourGlass "08 Second NeighborLoop"                   NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, Stencil, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, UniqueCellsView, EnumeratedIndices)
+                @timeit SimMetaData.HourGlass "Reduction"                                ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+
+            
+                @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
+            
+                @timeit SimMetaData.HourGlass "10 Final Density"                         DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
+            
+                @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+            
+                @timeit SimMetaData.HourGlass "12 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
+
+            end
+        end
         
         return nothing
     end
@@ -471,7 +598,12 @@ using UnicodePlots
     function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}, #Don't further specify type for now
         SimMetaData::SimulationMetaData{Dimensions, FloatType},
         SimConstants::SimulationConstants,
-        SimLogger::SimulationLogger
+        SimKernel::SPHKernelInstance,
+        SimLogger::SimulationLogger,
+        SimParticles::StructArray,
+        SimViscosity::SPHViscosity,
+        SimDensityDiffusion::SPHDensityDiffusion,
+        ParticleNormalsPath::Union{Nothing,String} = nothing
         ) where {Dimensions,FloatType}
 
         # Unpack the relevant simulation meta data
@@ -479,85 +611,56 @@ using UnicodePlots
 
         # Vector of time steps
         TimeSteps = Vector{FloatType}()
-    
-        # Load in particles
-        SimParticles, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺ = AllocateDataStructures(Dimensions,FloatType, SimGeometry)
         
+        dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimParticles.Position)
+
+        # Implement this properly later in shaa Allah
+        # if !isnothing(ParticleNormalsPath)
+            if SimMetaData.FlagMDBCSimple
+                _, GhostPoints, GhostNormals = LoadBoundaryNormals(Val(Dimensions), FloatType, ParticleNormalsPath)
+            
+
+                #TODO: In the future decide on one of the two in shaa Allah
+                for gi ∈ eachindex(GhostPoints)
+                    SimParticles.GhostPoints[gi]  = GhostPoints[gi]
+                    SimParticles.GhostNormals[gi] = GhostNormals[gi]
+                end
+            end
+        # end
+
+        if !SimMetaData.FlagShifting
+            resize!(∇Cᵢ , 0)
+            resize!(∇◌rᵢ, 0)
+        end
+
         if SimMetaData.FlagLog
-            InitializeLogger(SimLogger,SimConstants,SimMetaData, SimGeometry, SimParticles)
+            InitializeLogger(SimLogger, SimConstants, SimMetaData, SimKernel, SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
+        end
+
+        # To generate first line
+        if SimMetaData.FlagLog
+            LogStep(SimLogger, SimMetaData, HourGlass)
+            SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
         end
         
-        NumberOfPoints = length(SimParticles)::Int #Have to type declare, else error?
-        @inline Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
+        NumberOfPoints = length(SimParticles)::Int
+        Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
     
-        # Shifting correction
-        ∇Cᵢ               = zeros(SVector{Dimensions,FloatType},NumberOfPoints)            
-        ∇◌rᵢ              = zeros(FloatType,NumberOfPoints)    
-    
-        @inline begin
-            n_copy = Base.Threads.nthreads()
-            KernelThreaded         = [copy(SimParticles.Kernel)         for _ in 1:n_copy]
-            KernelGradientThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
-            dρdtIThreaded          = [copy(dρdtI)                       for _ in 1:n_copy]
-            AccelerationThreaded   = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
-            ∇CᵢThreaded            = [copy(∇Cᵢ )                        for _ in 1:n_copy]
-            ∇◌rᵢThreaded           = [copy(∇◌rᵢ)                        for _ in 1:n_copy]   
-        end
+        SimThreadedArrays = AllocateThreadedArrays(SimMetaData, SimParticles, dρdtI, ∇Cᵢ, ∇◌rᵢ)
     
         # Produce sorting related variables
         ParticleRanges         = zeros(Int, NumberOfPoints + 1)
         UniqueCells            = zeros(CartesianIndex{Dimensions}, NumberOfPoints)
         Stencil                = ConstructStencil(Val(Dimensions))
         _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
-    
-        # Produce data saving functions
-        SaveLocation_ = SimMetaData.SaveLocation * "/" * SimMetaData.SimulationName
-        SaveLocation  = (Iteration) -> SaveLocation_ * "_" * lpad(Iteration,6,"0") * ".vtkhdf"
-  
-        SaveLocation2_ = SimMetaData.SaveLocation * "/CellGrid_" * SimMetaData.SimulationName
-        SaveLocationCellGrid  = (Iteration) -> SaveLocation2_ * lpad(Iteration,6,"0") * ".vtkhdf"
 
-        fid_vector    = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1))
-    
-        OutputVariableNames = ["Kernel", "KernelGradient", "Density", "Pressure","Velocity", "Acceleration", "BoundaryBool" , "ID", "Type", "GroupMarker"]
-        if Dimensions == 2
-            if !SimMetaData.ExportSingleVTKHDF
-                SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
-            else
-                SaveFileVTKHDF     = () -> AppendVTKHDFData(root, SimMetaData.TotalTime, to_3d(SimParticles.Position), OutputVariableNames, SimParticles.Kernel, to_3d(SimParticles.KernelGradient), SimParticles.Density, SimParticles.Pressure, to_3d(SimParticles.Velocity), to_3d(SimParticles.Acceleration), SimParticles.BoundaryBool, SimParticles.ID,  UInt8.(SimParticles.Type), SimParticles.GroupMarker)
-            end
-        else
-            if !SimMetaData.ExportSingleVTKHDF
-                SaveFile   = (Index) -> SaveVTKHDF(fid_vector, Index, SaveLocation(Index),SimParticles.Position, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
-            else
-                SaveFileVTKHDF = () -> AppendVTKHDFData(root, SimMetaData.TotalTime, SimParticles.Position, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
-            end
-        end
-        SaveFileVTKHDFGrid = (UN) -> AppendVTKHDFGridData(root_grid, SimMetaData.TotalTime, SimConstants, UN)
+        output = SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
 
-        SaveCellGridVTKHDFSimulationStep = (FP, UN) -> SaveCellGridVTKHDF(FP, SimConstants, UN)
+        # Save initial state, use 1 else this cannot be used to index fid vector
+        SimMetaData.OutputIterationCounter = 1
+        output.save_particles(SimMetaData.OutputIterationCounter)
+        output.save_grid(SimMetaData.OutputIterationCounter, UniqueCells, SimParticles)
 
-        SimMetaData.OutputIterationCounter += 1 #Since a file has been saved
-        if !SimMetaData.ExportSingleVTKHDF
-            @inline SaveFile(SimMetaData.OutputIterationCounter)
-            SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter), UniqueCells)  
-        else
-            OutputVTKHDF = h5open(SaveLocation_ * ".vtkhdf", "w")
-            root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
-            GenerateGeometryStructure(root, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker; chunk_size = 1000)
-            GenerateStepStructure(root, OutputVariableNames, SimParticles.Kernel, SimParticles.KernelGradient, SimParticles.Density, SimParticles.Pressure, SimParticles.Velocity, SimParticles.Acceleration, SimParticles.BoundaryBool, SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker)
-            SaveFileVTKHDF()
-            
-            if SimMetaData.ExportGridCells
-                OutputVTKHDFGrid = h5open(SaveLocation_ * "_GridCells" * ".vtkhdf", "w")
-                root_grid = HDF5.create_group(OutputVTKHDFGrid, "VTKHDF")
-                GenerateGeometryStructure(root_grid ; vtk_file_type = "UnstructuredGrid")
-                GenerateStepStructure(root_grid     ; vtk_file_type = "UnstructuredGrid")
-                SaveFileVTKHDFGrid(UniqueCells)
-            end
-        end
-
-        InverseCutOff = Val(1/(SimConstants.H))
 
         # Assuming group markers are sequential
         MotionDefinition = Vector{Union{Nothing, MotionDetails{Dimensions, FloatType}}}(undef, maximum(SimParticles.GroupMarker))
@@ -573,73 +676,41 @@ using UnicodePlots
 
         # Normal run and save data
         generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
-    
+        
+
+        @timeit HourGlass "14 Next TimeStep" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime, 1e6))
+
         @inbounds while true
     
-            SimulationLoop(SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, KernelThreaded, KernelGradientThreaded, dρdtI, dρdtIThreaded, AccelerationThreaded, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇CᵢThreaded, ∇◌rᵢ, ∇◌rᵢThreaded, MotionDefinition, InverseCutOff)
+            @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition)
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
 
-            if SimMetaData.ExportSingleVTKHDF || SimMetaData.ExportGridCells
-                findfirst_int(predicate, collection) = (idx = findfirst(predicate, collection); idx === nothing ? -1 : idx)
-                IndexCounter_    = findfirst_int(isequal(0), ParticleRanges) - 2
-                UniqueCellsView = view(UniqueCells, 1:IndexCounter_)
+            if SimMetaData.FlagLog
+                LogStep(SimLogger, SimMetaData, HourGlass)
+                SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
             end
-
-            if SimMetaData.TotalTime >= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
     
-                try 
-                    if !SimMetaData.ExportSingleVTKHDF 
-                        @timeit HourGlass "12A Output Data"      SaveFile(SimMetaData.OutputIterationCounter + 1)
-                    else
-                        @timeit HourGlass "12A Output Data"      SaveFileVTKHDF()
-                    end
+            SimMetaData.OutputIterationCounter += 1
 
-                    if SimMetaData.ExportGridCells
-                        if !SimMetaData.ExportSingleVTKHDF
-                            @timeit HourGlass "12A Output Grid Data" SaveCellGridVTKHDFSimulationStep(SaveLocationCellGrid(SimMetaData.OutputIterationCounter + 1), UniqueCellsView)
-                        else
-                            @timeit HourGlass "12A Output Grid Data" SaveFileVTKHDFGrid(UniqueCellsView)
-                        end
-                    end
-                catch err
-                    @warn("File write failed.")
-                    display(err)
-                end
-
-    
-                if SimMetaData.FlagLog
-                    LogStep(SimLogger, SimMetaData, HourGlass)
-                    SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
-                end
-    
-                SimMetaData.OutputIterationCounter += 1
+            UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
+            @sync Threads.@spawn begin
+                @timeit SimMetaData.HourGlass "13A Save Particle Data" output.save_particles(SimMetaData.OutputIterationCounter)
+                @timeit SimMetaData.HourGlass "13A Save CellGrid Data" output.save_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, SimParticles)
             end
-
+    
             TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime)
-            @timeit HourGlass "13 Next TimeStep" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime, TimeLeftInSeconds))
+            @timeit HourGlass "14 Next TimeStep" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime, TimeLeftInSeconds))
     
             if SimMetaData.TotalTime > SimMetaData.SimulationTime
                 
-
-                # This should not be counted in actual run 
-                if !SimMetaData.ExportSingleVTKHDF
-                    @timeit HourGlass "12B Close hdfvtk output files"  @threads for i in eachindex(fid_vector)
-                        if isassigned(fid_vector, i)
-                            close(fid_vector[i])
-                        end
-                    end
-                else
-                    @timeit HourGlass "12B Close transient hdfvtk"      close(OutputVTKHDF)
-                    if SimMetaData.ExportGridCells
-                        @timeit HourGlass "12B Close transient hdfvtk grid" close(OutputVTKHDFGrid)
-                    end
-                end
+                # At end of simulation
+                @timeit SimMetaData.HourGlass "13B Close Data Streams" output.close_files()
 
                 finish!(SimMetaData.ProgressSpecification)
                 show(HourGlass,sortby=:name)
                 show(HourGlass)
 
-                AutoOpenParaview(SaveLocation_, SimMetaData, OutputVariableNames)
+                AutoOpenParaview(SimMetaData, output.variable_names)
 
                 # Time steps line plot
                 UnicodeTimeStepsGraph = lineplot(1:length(TimeSteps), TimeSteps, title="Time Steps [s] as a function of iteration", name="Time Steps", xlabel="Iterations [-]", ylabel="Time Step Size [s]")

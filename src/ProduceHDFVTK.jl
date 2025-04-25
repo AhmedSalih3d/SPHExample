@@ -1,9 +1,13 @@
+
 module ProduceHDFVTK     
 
-    export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure, AppendVTKHDFData, SaveCellGridVTKHDF, AppendVTKHDFGridData
+    export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure, AppendVTKHDFData, SaveCellGridVTKHDF, AppendVTKHDFGridData, SetupVTKOutput
 
     using HDF5
     using StaticArrays
+
+    using ..AuxillaryFunctions: to_3d 
+
 
     const idType = Int64
     const fType = Float64
@@ -120,8 +124,10 @@ module ProduceHDFVTK
             
             FieldData = HDF5.create_group(root, "FieldData") #Currently just empty group
 
-            #CellData = HDF5.create_group(root, "CellData")
-            #HDF5.create_dataset(CellData, "CellData" , idType , ((0,),(-1,)), chunk=(chunk_size,))
+            CellData = HDF5.create_group(root, "CellData")
+            HDF5.create_dataset(CellData, "CellData" , idType , ((0,),(-1,)), chunk=(chunk_size,))
+
+            HDF5.create_dataset(CellData, "ChunkID" , idType , ((0,),(-1,)), chunk=(chunk_size,))
         end
 
         return nothing
@@ -238,14 +244,31 @@ module ProduceHDFVTK
         end
     end
 
-    function AppendVTKHDFGridData(root, newStep, SimConstants, UniqueCells)
+    function AppendVTKHDFGridData(root, newStep, SimKernel, UniqueCells, SimParticles)
         # Must be AbstractVector, since UniqueCells is passed in as a 'view' of a CartesianIndex array
         ExtractDimensionality(::AbstractVector{CartesianIndex{N}}) where N = N
 
         CartesianIndexN = ExtractDimensionality(UniqueCells)
 
         # Cell dimensions
-        dx = dy = dz = SimConstants.H
+        dx = dy = dz = SimKernel.H
+
+        # Compute per-dimension minima and maxima
+        if CartesianIndexN == 2
+            minx, maxx = minimum(ci->ci[1], UniqueCells), maximum(ci->ci[1], UniqueCells)
+            miny, maxy = minimum(ci->ci[2], UniqueCells), maximum(ci->ci[2], UniqueCells)
+            # number of cells in x
+            nx = maxx - minx + 1
+        elseif CartesianIndexN == 3
+            minx, maxx = minimum(ci->ci[1], UniqueCells), maximum(ci->ci[1], UniqueCells)
+            miny, maxy = minimum(ci->ci[2], UniqueCells), maximum(ci->ci[2], UniqueCells)
+            minz, maxz = minimum(ci->ci[3], UniqueCells), maximum(ci->ci[3], UniqueCells)
+            # number of cells per axis
+            nx = maxx - minx + 1
+            ny = maxy - miny + 1
+        else
+            error("Dimensionality of UniqueCells must be 2 or 3, got $CartesianIndexN")
+        end
     
         # Initialize lists for storing points and cells
         points = Vector{SVector{3, Float64}}()  # List to store unique SVector points
@@ -259,7 +282,16 @@ module ProduceHDFVTK
 
         push!(offsets, 0)
         # Loop through each CartesianIndex cell
-        for (id, cell) in enumerate(UniqueCells)
+        for cell in UniqueCells
+            # Compute linear ID 
+            id = if CartesianIndexN == 2
+                # (ci2 - miny)*nx + (ci1 - minx) + 1
+                (cell[2] - miny) * nx + (cell[1] - minx) + 1
+            else
+                # (ci3 - minz)*nx*ny + (ci2 - miny)*nx + (ci1 - minx) + 1
+                (cell[3] - minz) * (nx * ny) + (cell[2] - miny) * nx + (cell[1] - minx) + 1
+            end
+            
             if CartesianIndexN == 2
                 # Get x and y from the CartesianIndex and calculate cell center
                 xi, yi = cell.I
@@ -383,21 +415,43 @@ module ProduceHDFVTK
         HDF5.set_extent_dims(root["Types"], (length(root["Types"]) + length(UniqueCells),))
         root["Types"][TypesStartIndex:end] = vtk_type
 
-        # CellDataStartIndex = length(root["CellData"]["CellData"]) + 1
-        # HDF5.set_extent_dims(root["CellData"]["CellData"], (length(root["CellData"]["CellData"]) + length(UniqueCells),))
-        # root["CellData"]["CellData"][CellDataStartIndex:end] = cell_data
+        CellDataStartIndex = length(root["CellData"]["CellData"]) + 1
+        HDF5.set_extent_dims(root["CellData"]["CellData"], (length(root["CellData"]["CellData"]) + length(UniqueCells),))
+        root["CellData"]["CellData"][CellDataStartIndex:end] = cell_data
+
+        
+        CellChunkIDIndex = length(root["CellData"]["ChunkID"]) + 1
+        HDF5.set_extent_dims(root["CellData"]["ChunkID"], (length(root["CellData"]["ChunkID"]) + length(UniqueCells),))
+        root["CellData"]["ChunkID"][CellChunkIDIndex:end] = SimParticles.ChunkID[1:length(cell_data)]
 
         return nothing
     end
 
-    function SaveCellGridVTKHDF(FilePath, SimConstants, UniqueCells)
+    function SaveCellGridVTKHDF(FilePath, SimKernel, UniqueCells)
         # Must be AbstractVector, since UniqueCells is passed in as a 'view' of a CartesianIndex array
         ExtractDimensionality(::AbstractVector{CartesianIndex{N}}) where N = N
 
         CartesianIndexN = ExtractDimensionality(UniqueCells)
 
         # Cell dimensions
-        dx = dy = dz = SimConstants.H
+        dx = dy = dz = SimKernel.H
+
+        # Compute per-dimension minima and maxima
+        if CartesianIndexN == 2
+            minx, maxx = minimum(ci->ci[1], UniqueCells), maximum(ci->ci[1], UniqueCells)
+            miny, maxy = minimum(ci->ci[2], UniqueCells), maximum(ci->ci[2], UniqueCells)
+            # number of cells in x
+            nx = maxx - minx + 1
+        elseif CartesianIndexN == 3
+            minx, maxx = minimum(ci->ci[1], UniqueCells), maximum(ci->ci[1], UniqueCells)
+            miny, maxy = minimum(ci->ci[2], UniqueCells), maximum(ci->ci[2], UniqueCells)
+            minz, maxz = minimum(ci->ci[3], UniqueCells), maximum(ci->ci[3], UniqueCells)
+            # number of cells per axis
+            nx = maxx - minx + 1
+            ny = maxy - miny + 1
+        else
+            error("Dimensionality of UniqueCells must be 2 or 3, got $CartesianIndexN")
+        end    
     
         # Initialize lists for storing points and cells
         points = Vector{SVector{3, Float64}}()  # List to store unique SVector points
@@ -411,8 +465,16 @@ module ProduceHDFVTK
 
         push!(offsets, 0)
         # Loop through each CartesianIndex cell
-        for (id, cell) in enumerate(UniqueCells)
-            if CartesianIndexN == 2
+        for cell in UniqueCells
+        # Compute linear ID 
+                id = if CartesianIndexN == 2
+                    # (ci2 - miny)*nx + (ci1 - minx) + 1
+                    (cell[2] - miny) * nx + (cell[1] - minx) + 1
+                else
+                    # (ci3 - minz)*nx*ny + (ci2 - miny)*nx + (ci1 - minx) + 1
+                    (cell[3] - minz) * (nx * ny) + (cell[2] - miny) * nx + (cell[1] - minx) + 1
+                end
+                if CartesianIndexN == 2
                 # Get x and y from the CartesianIndex and calculate cell center
                 xi, yi = cell.I
                 x_center = xi * dx
@@ -505,4 +567,121 @@ module ProduceHDFVTK
         # Close file
         close(io)
     end
+
+    function SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
+        # Generate save locations
+        particle_savepath = joinpath(SimMetaData.SaveLocation, SimMetaData.SimulationName)
+        grid_savepath = joinpath(SimMetaData.SaveLocation, "CellGrid_$(SimMetaData.SimulationName)")
+    
+        # File naming functions
+        particle_filename = (iter) -> "$(particle_savepath)_$(lpad(iter,6,"0")).vtkhdf"
+        grid_filename = (iter) -> "$(grid_savepath)_$(lpad(iter,6,"0")).vtkhdf"
+        
+        # Output variable names
+        output_vars = ["ChunkID", "Kernel", "KernelGradient", "Density", "Pressure", "Velocity", 
+                      "Acceleration", "BoundaryBool", "ID", "Type", "GroupMarker", "GhostPoints", "GhostNormals"]
+    
+        # Initialize storage for file handles
+        file_handles = if !SimMetaData.ExportSingleVTKHDF
+            # Multi-file mode: vector for particle files
+            (particle_files = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1)),
+             grid_files = nothing)
+        else
+            # Single-file mode: handles for both files
+            OutputVTKHDF = h5open("$(particle_savepath).vtkhdf", "w")
+            root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
+            
+            # Initialize particle data structure
+            GenerateGeometryStructure(root, output_vars, SimParticles.ChunkID, SimParticles.Kernel, 
+                                    SimParticles.KernelGradient, SimParticles.Density,
+                                    SimParticles.Pressure, SimParticles.Velocity,
+                                    SimParticles.Acceleration, SimParticles.BoundaryBool,
+                                    SimParticles.ID, Int8.(SimParticles.Type), 
+                                    SimParticles.GroupMarker, SimParticles.GhostPoints, SimParticles.GhostNormals; chunk_size=1024)
+            GenerateStepStructure(root, output_vars, SimParticles.ChunkID, SimParticles.Kernel,
+                                SimParticles.KernelGradient, SimParticles.Density,
+                                SimParticles.Pressure, SimParticles.Velocity,
+                                SimParticles.Acceleration, SimParticles.BoundaryBool,
+                                SimParticles.ID, Int8.(SimParticles.Type),
+                                SimParticles.GroupMarker, SimParticles.GhostPoints, SimParticles.GhostNormals)
+    
+            # Initialize grid file if needed
+            if SimMetaData.ExportGridCells
+                OutputVTKHDFGrid = h5open("$(particle_savepath)_GridCells.vtkhdf", "w")
+                root_grid = HDF5.create_group(OutputVTKHDFGrid, "VTKHDF")
+                GenerateGeometryStructure(root_grid; vtk_file_type="UnstructuredGrid")
+                GenerateStepStructure(root_grid; vtk_file_type="UnstructuredGrid")
+                
+                (particle_files = OutputVTKHDF, grid_files = OutputVTKHDFGrid)
+            else
+                (particle_files = OutputVTKHDF, grid_files = nothing)
+            end
+        end
+    
+        # Main saving functions
+        function save_particle_data(iteration)
+            if Dimensions == 2
+                pos = to_3d(SimParticles.Position)
+                kgrad = to_3d(SimParticles.KernelGradient)
+                vel = to_3d(SimParticles.Velocity)
+                acc = to_3d(SimParticles.Acceleration)
+                gp  = to_3d(SimParticles.GhostPoints)
+                gn  = to_3d(SimParticles.GhostNormals)
+            else
+                pos = SimParticles.Position
+                kgrad = SimParticles.KernelGradient
+                vel = SimParticles.Velocity
+                acc = SimParticles.Acceleration
+                gp  = SimParticles.GhostPoints
+                gn  = SimParticles.GhostNormals
+            end
+    
+            if !SimMetaData.ExportSingleVTKHDF
+                SaveVTKHDF(file_handles.particle_files, iteration, particle_filename(iteration), pos, output_vars,
+                          SimParticles.ChunkID, SimParticles.Kernel, kgrad, SimParticles.Density, SimParticles.Pressure,
+                          vel, acc, SimParticles.BoundaryBool, SimParticles.ID,
+                          UInt8.(SimParticles.Type), SimParticles.GroupMarker, gp, gn)
+            else
+                AppendVTKHDFData(root, SimMetaData.TotalTime, pos, output_vars,
+                                SimParticles.ChunkID, SimParticles.Kernel, kgrad, SimParticles.Density,
+                                SimParticles.Pressure, vel, acc, SimParticles.BoundaryBool,
+                                SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker, gp, gn)
+            end
+        end
+    
+        function save_cell_grid(iteration, cells, SimParticles)
+            if SimMetaData.ExportGridCells
+                if !SimMetaData.ExportSingleVTKHDF
+                    SaveCellGridVTKHDF(grid_filename(iteration), SimKernel, cells)
+                else 
+                    AppendVTKHDFGridData(root_grid, SimMetaData.TotalTime, SimKernel, cells, SimParticles)
+                end
+            end
+        end
+    
+        function close_files()
+            if !SimMetaData.ExportSingleVTKHDF
+                # Close all particle files in multi-file mode
+                for f in file_handles.particle_files
+                    isopen(f) && close(f)
+                end
+            else
+                # Close single-file handles
+                isopen(file_handles.particle_files) && close(file_handles.particle_files)
+                if file_handles.grid_files !== nothing
+                    isopen(file_handles.grid_files) && close(file_handles.grid_files)
+                end
+            end
+        end
+    
+        # Return interface functions and handles
+        return (
+            save_particles = save_particle_data,
+            save_grid = save_cell_grid,
+            close_files = close_files,
+            file_handles = file_handles,  # For advanced access if needed
+            variable_names = output_vars
+        )
+    end
+
 end

@@ -1,6 +1,8 @@
 module SPHExample
 
-    include("AuxillaryFunctions.jl");          
+    include("AuxillaryFunctions.jl");
+    include("SPHKernels.jl")
+    include("SPHViscosityModels.jl")      
     include("ProduceHDFVTK.jl")    
     include("TimeStepping.jl");       
     include("SimulationEquations.jl");
@@ -10,20 +12,30 @@ module SPHExample
     include("SimulationLoggerConfiguration.jl");
     include("PreProcess.jl");
     include("OpenExternalPrograms.jl")
-    include("SPHCellList.jl") #Must be last
+    include("SPHDensityDiffusionModels.jl")  
+    include("SPHCellList.jl") #Must be last    
 
     # Re-export desired functions from each submodule
     using .AuxillaryFunctions
     export ResetArrays!, to_3d, CloseHDFVTKManually, CleanUpSimulationFolder
 
+    using .SPHKernels
+    export SPHKernel, SPHKernelInstance, WendlandC2, CubicSpline, Wᵢⱼ, ∇Wᵢⱼ, tensile_correction
+
+    using .SPHViscosityModels
+    export SPHViscosity, ZeroViscosity, ArtificialViscosity, Laminar, LaminarSPS, compute_viscosity
+
+    using .SPHDensityDiffusionModels
+    export SPHDensityDiffusion, ZeroDensityDiffusion, ZeroGravityLinearDensityDiffusion, LinearDensityDiffusion, ZeroGravityComplexDensityDiffusion, ComplexDensityDiffusion, compute_density_diffusion
+ 
     using .SimulationGeometry
     export ParticleType, Fixed, Fluid, Moving, Geometry, MotionDetails
 
     using .PreProcess
-    export AllocateDataStructures, LoadBoundaryNormals
+    export AllocateDataStructures, AllocateSupportDataStructures, AllocateThreadedArrays, LoadBoundaryNormals
 
     using .ProduceHDFVTK
-    export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure, AppendVTKHDFData, SaveCellGridVTKHDF, AppendVTKHDFGridData
+    export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure, AppendVTKHDFData, SaveCellGridVTKHDF, AppendVTKHDFGridData, SetupVTKOutput
 
     using .TimeStepping: Δt
     export Δt
