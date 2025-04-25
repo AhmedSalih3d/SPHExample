@@ -37,47 +37,6 @@ Key-elements of the code are:
 
 *Please* remember that the main aim of this code is not to be performant. It is made to teach and showcase one way to code a relatively simple SPH code. *Unofficially*  I have benchmarked this code up against DualSPHysics similar cases and found that for 2D simulations this code is on par with DualSPHysics in regards to execution speed on CPU.
 
-## Folder Structure
-
-📁 SPHExample/
-├── 📄 .gitignore    📄 LICENSE.md     📄 Project.toml     📄 README.md
-
-├── 📁 example/
-│   ├── 📄 Dambreak2d.jl     📄 Dambreak3d.jl
-│   ├── 📄 MovingSquare2d.jl 📄 StillWedge.jl
-
-├── 📁 images/
-│   ├── 🖼️ 2d_dambreak.png   🖼️ 3d_dambreak.png
-
-├── 📁 input/
-│   ├── 📁 dam_break_2d/
-│   │   ├── 📄 Bound.csv       📄 Bound_OneLayer.csv
-│   │   ├── 📄 Bound_ThreeLayers.csv
-│   │   ├── 📄 Fluid.csv       📄 Fluid_OneLayer.csv
-
-│   ├── 📁 dam_break_3d/
-│   │   ├── 📄 Dp0.0085_Bound.csv  📄 Dp0.0085_Fluid.csv
-│   │   ├── 📄 Dp0.02_Bound.csv    📄 Dp0.02_Fluid.csv
-
-│   ├── 📁 moving_square_2d/
-│   │   ├── 📄 Dp0.02_Fixed.csv  📄 Dp0.02_Fluid.csv  📄 Dp0.02_Square.csv
-│   │   ├── 📄 Dp0.04_Fixed.csv  📄 Dp0.04_Fluid.csv  📄 Dp0.04_Square.csv
-
-│   └── 📁 still_wedge/
-│       ├── 📄 Dp0.01_Bound.csv  📄 Dp0.01_Fluid.csv
-│       ├── 📄 Dp0.02_Bound.csv  📄 Dp0.02_Fluid.csv
-
-├── 📁 src/
-│   ├── 📄 SPHExample.jl       📄 SPHCellList.jl        📄 TimeStepping.jl
-│   ├── 📄 SimulationEquations.jl  📄 SimulationGeometry.jl
-│   ├── 📄 SimulationConstantsConfiguration.jl
-│   ├── 📄 SimulationLoggerConfiguration.jl
-│   ├── 📄 SimulationMetaDataConfiguration.jl
-│   ├── 📄 ProduceHDFVTK.jl    📄 PreProcess.jl
-│   ├── 📄 OpenExternalPrograms.jl
-│   └── 📄 AuxillaryFunctions.jl
-
-
 ## Getting Started
 
 ### Introduction
@@ -95,20 +54,30 @@ The "src" package contains all the code files used in this process. An overview 
   * Some simple time stepping controls
 * SimulationConstantsConfigurations
   * The interface for stating the most relevant simulation constants is found here
-* SimulationMetaDataConfiguration
-  * The interface for the meta data associated with a simulation, such as total time, save location etc.
-* SimulationLoggerConfiguration
-  * Functions for logging data of execution
-* SimulationGeometry
-  * Defines the different type of simulation geometries available at this moment
 * SimulationEquations
   * SPH physics functions
+* SimulationGeometry
+  * Defines the different type of simulation geometries available at this moment
+* SimulationLoggerConfiguration
+  * Functions for logging data of execution
+* SimulationMetaDataConfiguration
+  * The interface for the meta data associated with a simulation, such as total time, save location etc.
 * SPHCellList
   * Holds the main code for the custom neighbor finding algorithm which I've made for this project
+* SPHDensityDiffusionModels
+  * The different density diffusion models available in the package
+* SPHKernels
+  * The different kernels available in the package, currently Wendland and Cubic Spline
+* SPHViscosityModels
+  * The different viscosity models available in the package, currently artificial viscosity, laminar and LaminarSPS (SPS-LES)
+* Time Stepping Controls
+  * The time stepping controls for the simulation, such as the CFL condition and the time step size
 * SPHExample
   * The "glue" package file exporting all the functions, to allow for `using SPHExample`.  
 
 ### Installation
+
+For testing the package, installing through Julia package manager is recommended. Have a look at some of the run files. 
 
 It is recommended to fork the project and then  `git clone ..` into a folder and following the instructions in `Executing program`. The `using Pkg; Pkg.add(url="https://github.com/AhmedSalih3d/SPHExample")` should also work if one is simply interesting in installing and using some package functionality. 
 
@@ -128,6 +97,7 @@ Written by Ahmed Salih [@AhmedSalih3D](https://github.com/AhmedSalih3d)
 
 | Version | Description |
 |---------|-------------|
+| 0.6.7 | This update introduces mainly mDBC boundary condition and multiple other improvements. This allows for fluid particles to "touch" the boundaries.
 | 0.6.6 | This update introdces the ability to correctly save the neighbour search grid and visualize it in Paraview. This is mostly a cool feature, but useful for debugging and understanding physics. If some particles are outside of the neighbour search grid, consider increasing the amount of times the neighbor hood grid is updated.
 | 0.6.5 | This update introduces three main changes. 1) A linearized density diffusion term is available, which is faster than the original diffusion term, 2) it is now possible to save simulation data into one single file, instead of multiples, thereby saving simulation time, 3) the code has been optimized for performance, with a 10-20% speedup in execution time.
 | 0.6.4 | Solidified the interface for specifying geometry grouping and details. The dict approach in earlier versions was good, but limited the expandability of the software. Also added the extra plot of the time steps and iterations taken at the end

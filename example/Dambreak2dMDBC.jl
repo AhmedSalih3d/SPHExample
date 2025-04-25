@@ -46,9 +46,10 @@ let
         mkdir(SimMetaDataDambreak.SaveLocation)
     end
 
+    # How to overload and define your own viscosity model:
     # Artificial viscosity formulation.
-    using Parameters
-    using LinearAlgebra
+    # using Parameters
+    # using LinearAlgebra
     # struct MyTurbulenceModel <: SPHViscosity end
     # @inline function SPHExample.compute_viscosity(::MyTurbulenceModel, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, i, j)
     #     @unpack ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
