@@ -5,7 +5,7 @@ let
     FloatType  = Float64
 
     # --- SPH constants ---
-    dx = 0.02
+    dx = 0.0085
     SimConstantsDambreak3D = SimulationConstants{FloatType}(
         dx  = dx,
         c₀  = 33.14,
@@ -45,6 +45,7 @@ let
         FlagOutputKernelValues = false,
         FlagLog                = true
     )
+
     SimLogger = SimulationLogger(SimMetaDataDambreak3D.SaveLocation)
 
     @warn("""
