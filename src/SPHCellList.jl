@@ -198,6 +198,7 @@ using Bumper
 
         @unpack h⁻¹, h, η², H², αD = SimKernel 
 
+        κ = 10.0
         xᵢⱼ  = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)              
         if  xᵢⱼ² <= H²
@@ -232,13 +233,22 @@ using Bumper
 
             visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, i, j)
 
-            uₘ = dvdt⁺ + visc_term
+            ∇Ψᵢ = - (SimParticles.Ψᵢ[i] - SimParticles.Ψᵢ[j]) * SimParticles.MotionLimiter[i] * ∇ᵢWᵢⱼ * (m₀ /  ρⱼ)
+
+            uₘ = dvdt⁺ + visc_term - ∇Ψᵢ 
             SimThreadedArrays.AccelerationThreaded[ichunk][i] += uₘ
             SimThreadedArrays.AccelerationThreaded[ichunk][j] -= uₘ 
 
+            cᵢ = κ * sqrt(abs(Pᵢ) / ρᵢ)
+            
+            τ = h/cᵢ
+
+            SimThreadedArrays.ΨᵢThreaded[ichunk][i] += -     c₀ * c₀ * dot(vᵢⱼ, ∇ᵢWᵢⱼ) * (m₀ /  ρⱼ) + SimParticles.Ψᵢ[i]/τ 
+            SimThreadedArrays.ΨᵢThreaded[ichunk][j] += - ( - c₀ * c₀ * dot(vᵢⱼ, ∇ᵢWᵢⱼ) * (m₀ /  ρᵢ) + SimParticles.Ψᵢ[j]/τ )
+
             
             if FlagOutputKernelValues
-                Wᵢⱼ  = @fastpow @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
+                Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
                 SimThreadedArrays.KernelThreaded[ichunk][i]         += Wᵢⱼ
                 SimThreadedArrays.KernelThreaded[ichunk][j]         += Wᵢⱼ
                 SimThreadedArrays.KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
@@ -327,9 +337,9 @@ using Bumper
         end
     end
 
-    function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+    function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ, Ψᵢ)
         
-        ResetArrays!(dρdtI, Acceleration)
+        ResetArrays!(dρdtI, Acceleration, Ψᵢ)
 
         if SimMetaData.FlagOutputKernelValues
             ResetArrays!(Kernel, KernelGradient)
@@ -344,9 +354,10 @@ using Bumper
         return nothing
     end
 
-    function ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+    function ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ, Ψᵢ)
         reduce_sum!(dρdtI, SimThreadedArrays.dρdtIThreaded)
         reduce_sum!(Acceleration, SimThreadedArrays.AccelerationThreaded)
+        reduce_sum!(Ψᵢ, SimThreadedArrays.ΨᵢThreaded)
   
         if SimMetaData.FlagOutputKernelValues
             reduce_sum!(Kernel, SimThreadedArrays.KernelThreaded)
@@ -418,12 +429,15 @@ using Bumper
         Acceleration   = SimParticles.Acceleration
         GravityFactor  = SimParticles.GravityFactor
         MotionLimiter  = SimParticles.MotionLimiter
+        Ψ              = SimParticles.Ψᵢ
 
         @inbounds @simd ivdep for i in eachindex(Position)
             Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
             Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
             Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
+            Ψ[i]              =  Ψ[i] * dt₂ * MotionLimiter[i]
             ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
+            
         end
 
 
@@ -436,11 +450,13 @@ using Bumper
         Acceleration   = SimParticles.Acceleration
         GravityFactor  = SimParticles.GravityFactor
         MotionLimiter  = SimParticles.MotionLimiter
+        Ψ              = SimParticles.Ψᵢ
   
         if !SimMetaData.FlagShifting
             @inbounds @simd ivdep for i in eachindex(Position)
                 Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
                 Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
+                Ψ[i]              +=  Ψ[i] * dt * MotionLimiter[i]
                 Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
             end
         else
@@ -459,6 +475,23 @@ using Bumper
                 end
         
                 Position[i]           += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
+            end
+        end
+
+        return nothing
+    end
+
+    function SetFixedTopVelocity!(::SimulationMetaData{Dimensions, FloatType}, SimParticles) where {Dimensions, FloatType}
+
+        Position       = SimParticles.Position
+        Velocity       = SimParticles.Velocity
+
+        @inbounds @simd ivdep for i in eachindex(Position)
+            if SimParticles.Type[i] == Fixed
+                if last(Position[i]) > 1.0
+                    # Set the velocity to zero in the y direction
+                    Velocity[i] = SVector{Dimensions, FloatType}(1.0, 0.0)
+                end
             end
         end
 
@@ -524,7 +557,7 @@ using Bumper
 
                 # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
 
-                @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel)
+                @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, Density, Pressure, SimConstants, SimKernel)
                 dt₂ = dt * 0.5
 
                 @timeit SimMetaData.HourGlass "02 Calculate IndexCounter"  begin
@@ -542,13 +575,13 @@ using Bumper
                     UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                     EnumeratedIndices = enumerate(index_chunks(UniqueCellsView; n=nthreads()))
                 end
-
-                @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
-            
                 if !SimMetaData.FlagSingleStepTimeStepping
                     ###=== First step of resetting arrays
-                    @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+                    @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ, SimParticles.Ψᵢ)
                     ###===
+                
+                    @timeit SimMetaData.HourGlass "Motion"                               ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
+                    # @timeit SimMetaData.HourGlass "SetFixedTopVelocity"                  SetFixedTopVelocity!(SimMetaData, SimParticles)    
                 
                     @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
                     if SimMetaData.FlagMDBCSimple
@@ -557,7 +590,7 @@ using Bumper
                         @timeit SimMetaData.HourGlass "04 First NeighborLoopMDBC"        NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, Position, Density, UniqueCellsView, GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ)
                     end
                     @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
-                    @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+                    @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ, SimParticles.Ψᵢ)
                 end
 
                 if SimMetaData.FlagMDBCSimple
@@ -570,14 +603,15 @@ using Bumper
                 @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
             
                 ###=== Second step of resetting arrays
-                @timeit SimMetaData.HourGlass "ResetArrays"                              ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+                @timeit SimMetaData.HourGlass "ResetArrays"                              ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ, SimParticles.Ψᵢ)
                 ###===
 
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
-            
+                # @timeit SimMetaData.HourGlass "SetFixedTopVelocity"                      SetFixedTopVelocity!(SimMetaData, SimParticles)
+
                 @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
                 @timeit SimMetaData.HourGlass "08 Second NeighborLoop"                   NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, Stencil, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, UniqueCellsView, EnumeratedIndices)
-                @timeit SimMetaData.HourGlass "Reduction"                                ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+                @timeit SimMetaData.HourGlass "Reduction"                                ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ, SimParticles.Ψᵢ)
 
             
                 @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)

@@ -100,11 +100,12 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
     GhostNormals    = zeros(PositionType, NumberOfPoints)
 
     Pressureᵢ      = zeros(PositionUnderlyingType, NumberOfPoints)
+    Ψᵢ             = zeros(PositionUnderlyingType, NumberOfPoints)
     
     Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
     ChunkID        = zeros(Int, NumberOfPoints)
 
-    SimParticles = StructArray((Cells = Cells, ChunkID = ChunkID, Kernel = Kernel, KernelGradient = KernelGradient, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = Idp , Type = Types, GroupMarker = GroupMarker, GhostPoints = GhostPoints, GhostNormals=GhostNormals))
+    SimParticles = StructArray((Cells = Cells, ChunkID = ChunkID, Kernel = Kernel, KernelGradient = KernelGradient, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = Idp , Type = Types, GroupMarker = GroupMarker, GhostPoints = GhostPoints, GhostNormals=GhostNormals, Ψᵢ = Ψᵢ))
 
     sort!(SimParticles, by = p -> p.ID)
 
@@ -129,14 +130,17 @@ function AllocateSupportDataStructures(Position)
 end
 
 function AllocateThreadedArrays(SimMetaData, SimParticles, dρdtI, ∇Cᵢ, ∇◌rᵢ   ; n_copy = Base.Threads.nthreads())
-    
+
         
     dρdtIThreaded        = [copy(dρdtI) for _ in 1:n_copy]
     AccelerationThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
 
+    ΨᵢThreaded = [copy(SimParticles.Ψᵢ) for _ in 1:n_copy]
+
     nt = (
         dρdtIThreaded = dρdtIThreaded,
         AccelerationThreaded = AccelerationThreaded,
+        ΨᵢThreaded = ΨᵢThreaded,
     )
 
     if SimMetaData.FlagOutputKernelValues
