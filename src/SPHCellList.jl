@@ -231,20 +231,24 @@ using Bumper
             f_ab    = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
             dvdt⁺   = - m₀ * (Pfac + f_ab) *  ∇ᵢWᵢⱼ
 
-            visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, i, j)
+            visc_termᵢ, visc_termⱼ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, i, j)
 
-            ∇Ψᵢ = - (SimParticles.Ψᵢ[i] - SimParticles.Ψᵢ[j]) * SimParticles.MotionLimiter[i] * ∇ᵢWᵢⱼ * (m₀ /  ρⱼ)
+            ∇Ψᵢ = - (SimParticles.Ψᵢ[i] - SimParticles.Ψᵢ[j]) * SimParticles.MotionLimiter[i] *  ∇ᵢWᵢⱼ * (m₀ /  ρⱼ)
+            ∇Ψⱼ = - (SimParticles.Ψᵢ[j] - SimParticles.Ψᵢ[i]) * SimParticles.MotionLimiter[j] * -∇ᵢWᵢⱼ * (m₀ /  ρᵢ)
 
-            uₘ = dvdt⁺ + visc_term - ∇Ψᵢ 
-            SimThreadedArrays.AccelerationThreaded[ichunk][i] += uₘ
-            SimThreadedArrays.AccelerationThreaded[ichunk][j] -= uₘ 
+            # uₘ = dvdt⁺ + visc_termᵢ - ∇Ψᵢ 
+            SimThreadedArrays.AccelerationThreaded[ichunk][i] +=  dvdt⁺ + visc_termᵢ - ∇Ψᵢ #uₘ
+            SimThreadedArrays.AccelerationThreaded[ichunk][j] += -dvdt⁺ + visc_termⱼ - ∇Ψⱼ #uₘ 
 
             cᵢ = κ * sqrt(abs(Pᵢ) / ρᵢ)
+            cⱼ = κ * sqrt(abs(Pⱼ) / ρⱼ )
             
-            τ = h/cᵢ
+            τᵢ = h/cᵢ
+            τⱼ = h/cⱼ
+            
 
-            SimThreadedArrays.ΨᵢThreaded[ichunk][i] += -     c₀ * c₀ * dot(vᵢⱼ, ∇ᵢWᵢⱼ) * (m₀ /  ρⱼ) + SimParticles.Ψᵢ[i]/τ 
-            SimThreadedArrays.ΨᵢThreaded[ichunk][j] += - ( - c₀ * c₀ * dot(vᵢⱼ, ∇ᵢWᵢⱼ) * (m₀ /  ρᵢ) + SimParticles.Ψᵢ[j]/τ )
+            SimThreadedArrays.ΨᵢThreaded[ichunk][i] +=      c₀ * c₀ * dot(vᵢⱼ, ∇ᵢWᵢⱼ)   * (m₀ /  ρⱼ) + SimParticles.Ψᵢ[i]/τᵢ 
+            SimThreadedArrays.ΨᵢThreaded[ichunk][j] += - (  c₀ * c₀ * dot(-vᵢⱼ, -∇ᵢWᵢⱼ) * (m₀ /  ρᵢ) + SimParticles.Ψᵢ[j]/τⱼ )
 
             
             if FlagOutputKernelValues
@@ -435,7 +439,7 @@ using Bumper
             Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
             Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
             Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
-            Ψ[i]              =  Ψ[i] * dt₂ * MotionLimiter[i]
+            Ψ[i]             *= dt₂ * MotionLimiter[i]
             ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
             
         end
@@ -456,7 +460,7 @@ using Bumper
             @inbounds @simd ivdep for i in eachindex(Position)
                 Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
                 Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
-                Ψ[i]              +=  Ψ[i] * dt * MotionLimiter[i]
+                Ψ[i]              *=  dt * MotionLimiter[i]
                 Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
             end
         else
