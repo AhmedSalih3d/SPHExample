@@ -57,7 +57,7 @@ end
                      representation="Point Gaussian",
                      color_variable="Density")
 
-Create a temporary ParaView state file for the given simulation and optionally
+Write a ParaView state file for the given simulation and optionally
 launch ParaView to visualise the results. `variable_names` should contain the
 point arrays stored in the output files. Pass `paraview_cmd = nothing` to skip
 launching ParaView automatically.
