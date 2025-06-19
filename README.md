@@ -4,10 +4,6 @@ A Julia implementation of a basic Smoothed Particle Hydrodynamics (SPH) solver. 
 
 Please consider giving the project a :star: if it is useful in your work. Citation is appreciated for academic use and feel free to reach out with feedback or questions.
 
-[![Star History](https://api.star-history.com/svg?repos=AhmedSalih3d/SPHExample)](https://star-history.com/#AhmedSalih3d/SPHExample)
-
-Below are a few images of the example cases:
-
 The code can produce a 2D dam break ([@DamBreak2D-Video](https://www.youtube.com/watch?v=7kDVjZkc_TI)):
 
 ![2D dam break](./images/2d_dambreak.png)
@@ -18,7 +14,7 @@ Or, if you are really patient (1+ day to calculate), a 3D case ([@DamBreak3D-Vid
 
 ## Description
 
-The project demonstrates how to assemble a small SPH solver with Julia. While it is not optimized for performance, it is written to clearly show the individual parts of a typical solver. Key features include:
+The project demonstrates how to assemble a small SPH solver with Julia. It focuses on clarity rather than ultimate performance. Unofficial benchmarks suggest that for 2D cases the CPU runtime is comparable to DualSPHysics. Key features include:
 
 - **Weakly compressible formulation** – density varies ~1 % and pressure is a function of density.
 - **Multi-threaded execution** – achieved by spawning the neighbour loop.
@@ -97,4 +93,6 @@ This project is licensed under the MIT License – see [LICENSE.md](LICENSE.md) 
 - [DualSPHysics](https://dual.sphysics.org/) for inspiration.
 - Many thanks to the Julia community and especially [Leandro Martínez](https://github.com/lmiq) for guidance on neighbour-list algorithms.
 - Thanks to [PharmCat](https://github.com/PharmCat) for suggestions and code contributions.
+
+[![Star History](https://api.star-history.com/svg?repos=AhmedSalih3d/SPHExample)](https://star-history.com/#AhmedSalih3d/SPHExample)
 

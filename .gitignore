@@ -12,4 +12,6 @@ Manifest.toml
 # Ignore test files
 test/
 # Ignore vtkhdf files
-*.vtkhdfjulia-*.tar.gz
+*.vtkhdf
+# Ignore local Julia archives
+julia-*.tar.gz
