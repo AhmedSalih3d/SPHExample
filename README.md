@@ -38,7 +38,7 @@ Example scripts live in `example/` and read geometry from `input/`. The solver c
 
 ```
 src/
-├── AuxillaryFunctions.jl            # Small helper utilities
+├── AuxiliaryFunctions.jl            # Small helper utilities
 ├── OpenExternalPrograms.jl          # Convenience wrappers for logs and ParaView
 ├── PreProcess.jl                    # Load inputs and allocate arrays
 ├── ProduceHDFVTK.jl                 # Write simulation data in HDF5/VTK format
