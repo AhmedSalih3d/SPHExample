@@ -1,124 +1,100 @@
 # SPH Example
 
-This package serves as an example of how to write a relatively simple SPH (Smoothed Particle Hydrodynamics) simulation in Julia. A few examples are provided out of the box; still wedge and dam break. Custom particle distributions can be loaded in as well. 
+A Julia implementation of a basic Smoothed Particle Hydrodynamics (SPH) solver. The code is primarily written for educational purposes and contains several ready to run examples such as 2D and 3D dam breaks or wedge impacts. Custom particle setups can also be loaded from the `input/` folder.
 
-Please consider 🌟 the package if it has been useful for you. I would love to know if you have used it to learn SPH, for your teaching and more, it really motivates me!
+Please consider giving the project a :star: if it is useful in your work. Citation is appreciated for academic use and feel free to reach out with feedback or questions.
 
-If you are using this package for an academic project or a scientific paper, please do cite the project - and feel free to reach out too!
+[![Star History](https://api.star-history.com/svg?repos=AhmedSalih3d/SPHExample)](https://star-history.com/#AhmedSalih3d/SPHExample)
 
-Below are some examples of what the code can run: 
+Below are a few images of the example cases:
 
-The code can produce a 2D dam-break ([@DamBreak2D-Video](https://www.youtube.com/watch?v=7kDVjZkc_TI)):
+The code can produce a 2D dam break ([@DamBreak2D-Video](https://www.youtube.com/watch?v=7kDVjZkc_TI)):
 
-![plot](./images/2d_dambreak.png)
+![2D dam break](./images/2d_dambreak.png)
 
-Or if you are really patient (1+ day to calculate) a 3D case ([@DamBreak3D-Video](https://www.youtube.com/watch?v=_2e6LopvIe8))::
+Or, if you are really patient (1+ day to calculate), a 3D case ([@DamBreak3D-Video](https://www.youtube.com/watch?v=_2e6LopvIe8)):
 
-![plot](./images/3d_dambreak.png)
+![3D dam break](./images/3d_dambreak.png)
 
 ## Description
 
-The purpose of this code is to serve as an introduction to the SPH (Smoothed Particle Hydrodynamics) method. I have been working in SPH for quite a few years now and noticed that although great software packages exist in this field, it was difficult to find a "simple" example of setting up an SPH solver.
+The project demonstrates how to assemble a small SPH solver with Julia. While it is not optimized for performance, it is written to clearly show the individual parts of a typical solver. Key features include:
 
-To fill this "void" I decided to go about writing one and learning the necessary steps to do so. The choice of language was Julia, since I've been part of this community for some years and really believe in the concept behind Julia. It is a language with a syntax complexity level of around Python/Matlab. I think it can serve as an inspiration even if you are not exactly familiar with the Julia language in the beginning.
+- **Weakly compressible formulation** – density varies ~1 % and pressure is a function of density.
+- **Multi-threaded execution** – achieved by spawning the neighbour loop.
+- **Dynamic boundary condition** – inspired by DualSPHysics.
+- **Density diffusion** – based on Fourtakas et al. 2019 to reduce pressure noise.
+- **Wendland quintic kernel** – simple and stable without tensile corrections.
 
-Key-elements of the code are:
+## Folder Structure
 
-- Weakly Compressible SPH
-  - Density varies about ~1% in time, for numerical reasons and the pressure equation is based on the density. This ensured by enforcing a Mach Number of 0.1, by artificially setting the speed of sound of the fluid (c₀) to ten times the highest velocity in the flow (manual input) 
-- Multi-threaded approach
-  - Multi-threading has been added. Code can easily be run in sequential form by removing the `@sync` and `@spawn` in the `NeighborLoop` function in `src/SPHCellList.jl`.
-- Dynamic Boundary Condition (as in DualSPHysics)
-  - DualSPHysics is one of the most well-known SPH packages. This is one of the simplest and most elegant boundary conditions.
-- Density Diffusion
-  - Necessary to produce a non-noise density field, which is important for the momentum equation, since pressure is a function of density in weakly compressible SPH. The formulation of Fourtakas et. al. 2019 is utilized right now.
-- Wendland Quintic Kernel (as in DualSPHysics)
-  - One of the simpler kernels which does not require tensile correction to be applied.
+```
+.
+├── example/          # Ready to run simulations
+├── input/            # Pre-generated particle layouts (.csv)
+├── src/              # Package source code
+├── images/           # Images used in this README
+├── Project.toml      # Package dependencies
+└── Manifest.toml     # Exact dependency versions
+```
 
-*Please* remember that the main aim of this code is not to be performant. It is made to teach and showcase one way to code a relatively simple SPH code. *Unofficially*  I have benchmarked this code up against DualSPHysics similar cases and found that for 2D simulations this code is on par with DualSPHysics in regards to execution speed on CPU.
+The `src/` folder contains modules such as `SPHCellList.jl` for neighbour searches and `SimulationConstantsConfiguration.jl` for defining solver parameters. Example scripts reside in `example/` and read data from `input/`.
 
 ## Getting Started
 
-### Introduction
-The package is structured into "input", "example" and "src". "input" contains some pre-generated particle layouts from DualSPHysics in .csv format. 
-
-The "src" package contains all the code files used in this process. An overview of these is shown;
-
-* PreProcess
-  * Function for loading in the files in "input". 
-* ProduceHDFVTK
-  * Function to output the simulation data in the efficient `HDF5` format, directly readable in Paraview 5.12. Files can be opened after a simulation has concluded, since they must be closed at the end of a simulation for performance reasons. A helper function, `CloseHDFVTKManually`, has been added if you have a longer simulation which fails, use this function on your result folder.
-* AuxillaryFunctions
-  * To store some small, repeatedly used smaller functions or other good-to-have functionality
-* TimeStepping
-  * Some simple time stepping controls
-* SimulationConstantsConfigurations
-  * The interface for stating the most relevant simulation constants is found here
-* SimulationEquations
-  * SPH physics functions
-* SimulationGeometry
-  * Defines the different type of simulation geometries available at this moment
-* SimulationLoggerConfiguration
-  * Functions for logging data of execution
-* SimulationMetaDataConfiguration
-  * The interface for the meta data associated with a simulation, such as total time, save location etc.
-* SPHCellList
-  * Holds the main code for the custom neighbor finding algorithm which I've made for this project
-* SPHDensityDiffusionModels
-  * The different density diffusion models available in the package
-* SPHKernels
-  * The different kernels available in the package, currently Wendland and Cubic Spline
-* SPHViscosityModels
-  * The different viscosity models available in the package, currently artificial viscosity, laminar and LaminarSPS (SPS-LES)
-* Time Stepping Controls
-  * The time stepping controls for the simulation, such as the CFL condition and the time step size
-* SPHExample
-  * The "glue" package file exporting all the functions, to allow for `using SPHExample`.  
-
 ### Installation
 
-For testing the package, installing through Julia package manager is recommended. Have a look at some of the run files. 
+The easiest way to experiment with the code is to clone the repository and activate it in Julia:
 
-It is recommended to fork the project and then  `git clone ..` into a folder and following the instructions in `Executing program`. The `using Pkg; Pkg.add(url="https://github.com/AhmedSalih3d/SPHExample")` should also work if one is simply interesting in installing and using some package functionality. 
+```julia
+using Pkg
+Pkg.activate("/path/to/SPHExample")
+Pkg.instantiate()
+```
 
-Then you can open one of the files in `example` such as `example\still_wedge.jl` and modify the `ComputerInteractions!` function which determines particle interaction to your liking or `SimulationLoop` which controls the time-stepping. You also have access to the whole `RunSimulation` functionality and can adapt that to your needs. 
+Alternatively, install it directly:
 
-Since this is the preferred workflow and the way to gain most out of this package, please use the fork and `git clone ..` approach. 
+```julia
+using Pkg
+Pkg.add(url="https://github.com/AhmedSalih3d/SPHExample")
+```
+
+### Running an Example
+
+Open one of the files in `example/`, for instance `example/StillWedgeMDBC.jl`, and adjust the simulation parameters or the `ComputerInteractions!` function. Run the script to start the simulation. Results are written in `hdfvtk` format which can be loaded with ParaView 5.12 or newer.
 
 ## Help
 
-Any questions about the code feel free to post an issue on this repository. Please do understand it might take some time for me to respond back.
+Questions or issues can be posted on the GitHub issue tracker. Response times may vary but all feedback is welcome.
 
 ## Authors
 
-Written by Ahmed Salih [@AhmedSalih3D](https://github.com/AhmedSalih3d)
+Created by Ahmed Salih ([AhmedSalih3d](https://github.com/AhmedSalih3d)).
 
 ## Version History
 
 | Version | Description |
 |---------|-------------|
-| 0.6.7 | This update introduces mainly mDBC boundary condition and multiple other improvements. This allows for fluid particles to "touch" the boundaries.
-| 0.6.6 | This update introdces the ability to correctly save the neighbour search grid and visualize it in Paraview. This is mostly a cool feature, but useful for debugging and understanding physics. If some particles are outside of the neighbour search grid, consider increasing the amount of times the neighbor hood grid is updated.
-| 0.6.5 | This update introduces three main changes. 1) A linearized density diffusion term is available, which is faster than the original diffusion term, 2) it is now possible to save simulation data into one single file, instead of multiples, thereby saving simulation time, 3) the code has been optimized for performance, with a 10-20% speedup in execution time.
-| 0.6.4 | Solidified the interface for specifying geometry grouping and details. The dict approach in earlier versions was good, but limited the expandability of the software. Also added the extra plot of the time steps and iterations taken at the end
-| 0.6.3 | Added support for automatic visualization through log opening using Notepad, enabled by default. Can be controlled through SimMetaData settings. Also added `CloseHDFVTKManually` which can be used in cases where a simulation is stopped by user or crashes to fix "faulty" hdfvtk files (i.e. hdfvtk files which were not closed during simulation run).
-| 0.6.2 | Added support for automatic visualization through Paraview. Enabled by default and can be turned of through SimMetaData settings in each example. Version of Paraview at minimum 5.12 to be used |
-| 0.6  | Changed code to solver setup, where inputs can be provided and functions overloaded as before if needed. Added support for moving objects and particle shifting, for internal flows only as of now. |
-| 0.5        | Introduced logging, `hdfvtk` output format, and other minor improvements.|
-| 0.4        | Complete rewrite, abandoning `LoopVectorization.jl` and `CellListMap.jl` to code exactly what is needed and improve performance. |
-| 0.3        | Highly optimized version for CPU with extremely few allocations after the initial array allocation. Recommends using this version. |
-| 0.2        | A cleaned up version of the original release.|
-| 0.1        | Initial release version |
-
+| 0.6.7 | Introduced mDBC boundary conditions and other improvements allowing particles to interact with boundaries. |
+| 0.6.6 | Added neighbour grid visualisation in ParaView for debugging. |
+| 0.6.5 | Linearised density diffusion, optional single-file output and performance improvements. |
+| 0.6.4 | Revised geometry configuration interface and added time-step plot. |
+| 0.6.3 | Added automatic log visualisation and `CloseHDFVTKManually` helper. |
+| 0.6.2 | Added automatic ParaView visualisation support. |
+| 0.6   | Major rewrite with solver setup changes and moving object support. |
+| 0.5   | Logging and `hdfvtk` output added. |
+| 0.4   | Complete rewrite focusing on custom cell lists. |
+| 0.3   | Highly optimised CPU version with minimal allocations. |
+| 0.2   | Cleanup of initial release. |
+| 0.1   | Initial release. |
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE.md file for details
+This project is licensed under the MIT License – see [LICENSE.md](LICENSE.md) for details.
 
 ## Acknowledgments
 
-DualSPHysics (https://dual.sphysics.org/) was a great inspiration for this code.
+- [DualSPHysics](https://dual.sphysics.org/) for inspiration.
+- Many thanks to the Julia community and especially [Leandro Martínez](https://github.com/lmiq) for guidance on neighbour-list algorithms.
+- Thanks to [PharmCat](https://github.com/PharmCat) for suggestions and code contributions.
 
-Thank you to the general Julia eco-system and especially Leandro Martínez (https://github.com/lmiq) who is also the author of CellListMap.jl. He was a great help in understanding how to best use the neighbour-list algorithm. Leandro was also a big part of reviewing the whole code base and suggesting/showing potential optimizations. 
-
-Thank you for PharmCat (https://github.com/PharmCat) for his suggestions in pull requests and providing of code, which I later implemented into the library. Much appreciated. 

@@ -12,4 +12,4 @@ Manifest.toml
 # Ignore test files
 test/
 # Ignore vtkhdf files
-*.vtkhdf
+*.vtkhdfjulia-*.tar.gz
