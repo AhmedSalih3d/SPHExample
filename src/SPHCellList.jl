@@ -7,7 +7,7 @@ import LinearAlgebra: dot
 
 using ..SimulationEquations
 using ..SimulationGeometry
-using ..AuxillaryFunctions
+using ..AuxiliaryFunctions
 using ..SimulationMetaDataConfiguration
 using ..SimulationConstantsConfiguration
 using ..SimulationLoggerConfiguration

@@ -6,7 +6,7 @@ module ProduceHDFVTK
     using HDF5
     using StaticArrays
 
-    using ..AuxillaryFunctions: to_3d 
+    using ..AuxiliaryFunctions: to_3d
 
 
     const idType = Int64

@@ -12,12 +12,15 @@ using ..SimulationGeometry
 function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, particle_group_marker::Int, specific_csv::String) where {D, T}
     DF_SPECIFIC = CSV.read(specific_csv, DataFrame)
 
-    points       = Vector{SVector{D,T}}()
-    density      = Vector{T}()
-    types        = Vector{ParticleType}()
-    group_marker = Vector{Int}()
-    idp          = Vector{Int}()
+    nrows = nrow(DF_SPECIFIC)
 
+    points       = Vector{SVector{D,T}}(undef, nrows)
+    density      = Vector{T}(undef, nrows)
+    types        = Vector{ParticleType}(undef, nrows)
+    group_marker = Vector{Int}(undef, nrows)
+    idp          = Vector{Int}(undef, nrows)
+
+    i = 1
     for DF ∈ eachrow(DF_SPECIFIC)
         P1   = DF["Points:0"]
         P2   = DF["Points:1"]
@@ -25,17 +28,17 @@ function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, parti
         Rhop = DF["Rhop"]
         Idp  = DF["Idp"] + 1
 
-        point = if D == 3
+        points[i] = if D == 3
             SVector{3,T}(P1, P2, P3)
         else
             SVector{2,T}(P1, P3)
         end
 
-        push!(points,  point)
-        push!(density, Rhop)
-        push!(types,   particle_type)
-        push!(group_marker, particle_group_marker)
-        push!(idp, Idp)
+        density[i]      = Rhop
+        types[i]        = particle_type
+        group_marker[i] = particle_group_marker
+        idp[i]          = Idp
+        i += 1
     end
 
     return points, density, types, group_marker, idp
@@ -52,16 +55,22 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
         particle_type         = geom.Type
         particle_group_marker = geom.GroupMarker
         specific_csv          = geom.CSVFile
-    
-        # Assuming LoadSpecificCSV is already defined and works with these arguments
-        points, density, types, group_marker, idp = LoadSpecificCSV(Val(Dimensions), FloatType, particle_type, particle_group_marker, specific_csv)
-    
-        # Concatenate the results to the respective arrays
-        Position    = vcat(Position    , points)
-        Density     = vcat(Density     , density)
-        Types       = vcat(Types       , types)
-        GroupMarker = vcat(GroupMarker , group_marker)
-        Idp         = vcat(Idp         , idp)
+
+        points, density, types, group_marker, idp =
+            LoadSpecificCSV(Val(Dimensions), FloatType, particle_type,
+                           particle_group_marker, specific_csv)
+
+        sizehint!(Position,    length(Position)    + length(points))
+        sizehint!(Density,     length(Density)     + length(density))
+        sizehint!(Types,       length(Types)       + length(types))
+        sizehint!(GroupMarker, length(GroupMarker) + length(group_marker))
+        sizehint!(Idp,         length(Idp)         + length(idp))
+
+        append!(Position,    points)
+        append!(Density,     density)
+        append!(Types,       types)
+        append!(GroupMarker, group_marker)
+        append!(Idp,         idp)
     end
 
     NumberOfPoints           = length(Position)

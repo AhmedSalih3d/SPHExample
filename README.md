@@ -48,7 +48,7 @@ The "src" package contains all the code files used in this process. An overview 
   * Function for loading in the files in "input". 
 * ProduceHDFVTK
   * Function to output the simulation data in the efficient `HDF5` format, directly readable in Paraview 5.12. Files can be opened after a simulation has concluded, since they must be closed at the end of a simulation for performance reasons. A helper function, `CloseHDFVTKManually`, has been added if you have a longer simulation which fails, use this function on your result folder.
-* AuxillaryFunctions
+* AuxiliaryFunctions
   * To store some small, repeatedly used smaller functions or other good-to-have functionality
 * TimeStepping
   * Some simple time stepping controls

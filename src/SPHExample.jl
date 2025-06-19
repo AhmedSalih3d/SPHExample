@@ -1,6 +1,6 @@
 module SPHExample
 
-    include("AuxillaryFunctions.jl");
+    include("AuxiliaryFunctions.jl");
     include("SPHKernels.jl")
     include("SPHViscosityModels.jl")      
     include("ProduceHDFVTK.jl")    
@@ -16,7 +16,7 @@ module SPHExample
     include("SPHCellList.jl") #Must be last    
 
     # Re-export desired functions from each submodule
-    using .AuxillaryFunctions
+    using .AuxiliaryFunctions
     export ResetArrays!, to_3d, CloseHDFVTKManually, CleanUpSimulationFolder
 
     using .SPHKernels
