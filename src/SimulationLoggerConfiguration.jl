@@ -1,3 +1,6 @@
+"""
+Utility helpers for logging simulation progress and timings.
+"""
 module SimulationLoggerConfiguration
     using Format
     using TimerOutputs
@@ -5,45 +8,55 @@ module SimulationLoggerConfiguration
     using Printf
     using Dates
     using InteractiveUtils
+    using Base.Threads
 
     using ..SimulationGeometry
 
     export SimulationLogger, generate_format_string, InitializeLogger, LogSimulationDetails, LogStep, LogFinal
 
-    # Function to dynamically generate a format string based on values
-    function generate_format_string(values)
-        # Calculate the display length for each value
-        lengths = [length(string(value)) for value in values]
-        
-        # Optionally, add extra padding
-        padding = 10 #maximum(lengths)  # Adjust padding as needed
-        lengths = [len + padding for len in lengths]
-        
-        # Build format specifiers for each length
+    """
+        generate_format_string(values; padding=10)
+
+    Generate a printf compatible format string where each column is padded to
+    the length of the corresponding entry in `values` plus `padding` spaces.
+    This is used to print nicely aligned progress information.
+    """
+    function generate_format_string(values; padding=10)
+        lengths = [length(string(value)) + padding for value in values]
         format_specifiers = ["%-$(len)s" for len in lengths]
-        
-        # Combine into a single format string
-        format_str = join(format_specifiers, " ")
-        
-        return format_str
+        return join(format_specifiers, " ")
     end
 
+    """
+    `SimulationLogger(save_location; filename="SimulationOutput.log", to_console=false)`
+
+    Container holding the loggers and formatting information used during a
+    simulation run. By default logging output is written to
+    `joinpath(save_location, filename)`. If `to_console` is `true`, log messages
+    are also echoed to the Julia REPL via a [`TeeLogger`](https://github.com/JuliaLogging/LoggingExtras.jl).
+    """
     struct SimulationLogger
-        LoggerIo::IOStream
-        Logger::FormatLogger
-        FormatStr::String
-        ValuesToPrint::String
-        ValuesToPrintC::String
-        CurrentDate::DateTime
-        CurrentDataStr::String
+        LoggerIo::IOStream           # handle to the log file
+        Logger::AbstractLogger       # may be a TeeLogger or FormatLogger
+        FormatStr::String            # format used for progress lines
+        ValuesToPrint::String        # header line describing logged values
+        ValuesToPrintC::String       # separator line below the header
+        CurrentDate::DateTime        # start time of the simulation
+        CurrentDataStr::String       # preformatted start time string
 
 
-        function SimulationLogger(SaveLocation::String)
-            io_logger = open(SaveLocation * "/" * "SimulationOutput.log", "w")
-            logger    = FormatLogger(io_logger::IOStream) do io, args
-                # Write the module, level and message only
-                # println(io, args._module, " | ", "[", args.level, "] ", args.message)
+        function SimulationLogger(SaveLocation::String; filename="SimulationOutput.log", to_console::Bool=false)
+            io_logger = open(joinpath(SaveLocation, filename), "w")
+            file_logger = FormatLogger(io_logger) do io, args
                 println(io, args.message)
+            end
+            logger = if to_console
+                console_logger = FormatLogger(stdout) do io, args
+                    println(io, args.message)
+                end
+                TeeLogger(file_logger, console_logger)
+            else
+                file_logger
             end
 
             values        = ("PART [-]", "PartTime [s]", "TotalSteps [-] ", "Steps  [-] ", "Run Time [s]", "Time/Sec [-]", "Remaining Time [Date]")
@@ -61,6 +74,13 @@ module SimulationLoggerConfiguration
         end
     end
 
+    """
+        LogSimulationDetails(logger, geometries, particles; sort_by=:GroupMarker)
+
+    Print information about all geometries involved in the simulation and a
+    summary of particle counts per type. The optional `sort_by` argument controls
+    how the group marker statistics are ordered.
+    """
     function LogSimulationDetails(SimLogger::SimulationLogger, SimGeometry::Vector{Geometry{Dimensions, FloatType}}, SimParticles; sort_by=:GroupMarker) where {Dimensions, FloatType}
         with_logger(SimLogger.Logger) do
             # Calculate the maximum lengths for alignment
@@ -110,9 +130,18 @@ module SimulationLoggerConfiguration
     end
     
     
+    """
+        InitializeLogger(logger, constants, metadata, kernel, viscosity,
+                         densitydiffusion, geometry, particles)
+
+    Write a short summary of the simulation configuration to the log file and
+    store the start time. This is typically called once before the time stepping
+    loop begins.
+    """
     function InitializeLogger(SimLogger,SimConstants,SimMetaData, SimKernel, SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
         with_logger(SimLogger.Logger) do
             @info sprint(InteractiveUtils.versioninfo)
+            @info "Julia threads: $(Threads.nthreads())"
             @info SimConstants
             @info SimMetaData
             @info SimKernel
@@ -130,6 +159,12 @@ module SimulationLoggerConfiguration
     end
 
 
+    """
+        LogStep(logger, metadata, timer)
+
+    Record information about the current iteration such as physical time,
+    wall-clock time and an estimate of the remaining run time.
+    """
     function LogStep(SimLogger, SimMetaData, HourGlass)
         with_logger(SimLogger.Logger) do
             PartNumber               = "Part_" * lpad(SimMetaData.OutputIterationCounter, 4, "0")
@@ -157,15 +192,21 @@ module SimulationLoggerConfiguration
     end
     
 
+    """
+        LogFinal(logger, timer)
+
+    Called once the simulation loop ends. Prints total run time and a summary of
+    the collected [`TimerOutput`] information.
+    """
     function LogFinal(SimLogger, HourGlass)
         with_logger(SimLogger.Logger) do
             # Get the current date and time
             current_time = now()
             # Format the current date and time
-            formatted_time = "Simulation finished at: " * Dates.format(current_time, "dd-mm-yyyy HH:MM:SS")
+            formatted_time = "\n Simulation finished at: " * Dates.format(current_time, "dd-mm-yyyy HH:MM:SS")
 
             @info formatted_time
-            @info "Simulation took " * @sprintf("%-.2f", TimerOutputs.tottime(HourGlass)/1e9) * "[s]"
+            @info "\n Simulation took " * @sprintf("%-.2f", TimerOutputs.tottime(HourGlass)/1e9) * "[s]"
             show(SimLogger.LoggerIo, HourGlass,sortby=:name)
             @info "\n Sorted by time \n"
             show(SimLogger.LoggerIo, HourGlass)
