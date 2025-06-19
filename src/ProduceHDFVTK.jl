@@ -1,7 +1,22 @@
 
-module ProduceHDFVTK     
+module ProduceHDFVTK
 
-    export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure, AppendVTKHDFData, SaveCellGridVTKHDF, AppendVTKHDFGridData, SetupVTKOutput
+"""
+Utility functions for exporting simulation data to the VTKHDF file format.
+
+Two modes are supported:
+
+* **Static** – every simulation step is written to a new file.
+* **Transient** – a single file is kept open and new steps are appended.
+
+The functions in this module are fairly low level.  `SetupVTKOutput` is
+the main entry point and returns closures for saving particle and grid
+data during a simulation run.
+"""
+
+export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
+       AppendVTKHDFData, SaveCellGridVTKHDF, AppendVTKHDFGridData,
+       SetupVTKOutput
 
     using HDF5
     using StaticArrays
@@ -12,62 +27,136 @@ module ProduceHDFVTK
     const idType = Int64
     const fType = Float64
 
-    function SaveVTKHDF(fid_vector, index, filepath,points, variable_names = String[], args...)
+    """Write an ASCII attribute `name => value` to `grp`."""
+    function write_ascii_attribute(grp, name, value)
+        dtype = HDF5.datatype(value)
+        HDF5.API.h5t_set_cset(dtype.id, HDF5.API.H5T_CSET_ASCII)
+        dspace = HDF5.dataspace(value)
+        attr = HDF5.create_attribute(grp, name, dtype, dspace)
+        HDF5.write_attribute(attr, dtype, value)
+    end
+
+    """
+    Compute points and connectivity information for an unstructured grid given
+    `UniqueCells` from the SPH cell list.  Returns `(points, connectivity,
+    offsets, cell_types, cell_data, dims)` where `dims` is 2 or 3.
+    """
+    function compute_grid_geometry(SimKernel, UniqueCells)
+        ExtractDimensionality(::AbstractVector{CartesianIndex{N}}) where N = N
+
+        dims = ExtractDimensionality(UniqueCells)
+
+        dx = dy = dz = SimKernel.H
+
+        if dims == 2
+            minx, maxx = minimum(ci -> ci[1], UniqueCells), maximum(ci -> ci[1], UniqueCells)
+            miny, maxy = minimum(ci -> ci[2], UniqueCells), maximum(ci -> ci[2], UniqueCells)
+            nx = maxx - minx + 1
+        elseif dims == 3
+            minx, maxx = minimum(ci -> ci[1], UniqueCells), maximum(ci -> ci[1], UniqueCells)
+            miny, maxy = minimum(ci -> ci[2], UniqueCells), maximum(ci -> ci[2], UniqueCells)
+            minz, maxz = minimum(ci -> ci[3], UniqueCells), maximum(ci -> ci[3], UniqueCells)
+            nx = maxx - minx + 1
+            ny = maxy - miny + 1
+        else
+            error("Dimensionality of UniqueCells must be 2 or 3, got $dims")
+        end
+
+        points       = Vector{SVector{3, Float64}}()
+        connectivity = Int[]
+        offsets      = Int[0]
+        cell_types   = UInt8[]
+        cell_data    = Int[]
+
+        vtk_type = dims == 2 ? UInt8(9) : UInt8(12)  # QUAD or HEXADRON
+
+        for cell in UniqueCells
+            id = if dims == 2
+                (cell[2] - miny) * nx + (cell[1] - minx) + 1
+            else
+                (cell[3] - minz) * (nx * ny) + (cell[2] - miny) * nx + (cell[1] - minx) + 1
+            end
+
+            corners = if dims == 2
+                xi, yi = cell.I
+                x_c = xi * dx
+                y_c = yi * dy
+                [
+                    SVector(x_c - dx/2, y_c - dy/2, 0.0),
+                    SVector(x_c + dx/2, y_c - dy/2, 0.0),
+                    SVector(x_c + dx/2, y_c + dy/2, 0.0),
+                    SVector(x_c - dx/2, y_c + dy/2, 0.0),
+                ]
+            else
+                xi, yi, zi = cell.I
+                x_c = xi * dx
+                y_c = yi * dy
+                z_c = zi * dz
+                [
+                    SVector(x_c - dx/2, y_c - dy/2, z_c - dz/2),
+                    SVector(x_c + dx/2, y_c - dy/2, z_c - dz/2),
+                    SVector(x_c + dx/2, y_c + dy/2, z_c - dz/2),
+                    SVector(x_c - dx/2, y_c + dy/2, z_c - dz/2),
+                    SVector(x_c - dx/2, y_c - dy/2, z_c + dz/2),
+                    SVector(x_c + dx/2, y_c - dy/2, z_c + dz/2),
+                    SVector(x_c + dx/2, y_c + dy/2, z_c + dz/2),
+                    SVector(x_c - dx/2, y_c + dy/2, z_c + dz/2),
+                ]
+            end
+
+            n = length(points)
+            append!(points, corners)
+            for j = 0:length(corners)-1
+                push!(connectivity, n + j)
+            end
+            push!(offsets, length(connectivity))
+            push!(cell_types, vtk_type)
+            push!(cell_data, id)
+        end
+
+        return points, connectivity, offsets, cell_types, cell_data, dims
+    end
+
+    function SaveVTKHDF(fid_vector, index, filepath, points, variable_names = String[], args...)
         @assert length(variable_names) == length(args) "Same number of variable_names as args is necessary"
-            io = h5open(filepath, "w")
-            # Create toplevel group /VTKHDF
-            gtop = HDF5.create_group(io, "VTKHDF")
+        io = h5open(filepath, "w")
+        gtop = HDF5.create_group(io, "VTKHDF")
 
-            # Write version of VTKHDF format as an attribute
-            HDF5.attrs(gtop)["Version"] = [2, 3]
+        HDF5.attrs(gtop)["Version"] = [2, 3]
+        write_ascii_attribute(gtop, "Type", "PolyData")
 
-            # Write type of dataset ("PolyData") as an ASCII string to a "Type" attribute.
-            # This is a bit tricky because VTK/ParaView don't support UTF-8 strings here, which is
-            # the default in HDF5.jl.
-            let s = "PolyData"
-                dtype = HDF5.datatype(s)
-                HDF5.API.h5t_set_cset(dtype.id, HDF5.API.H5T_CSET_ASCII)
-                dspace = HDF5.dataspace(s)
-                attr = HDF5.create_attribute(gtop, "Type", dtype, dspace)
-                HDF5.write_attribute(attr, dtype, s)
+        # Points
+        np = length(points)
+        gtop["NumberOfPoints"] = [np]
+        gtop["Points"] = reinterpret(reshape, eltype(eltype(points)), points)
+
+        # Point data
+        let g = HDF5.create_group(gtop, "PointData")
+            for i ∈ eachindex(variable_names)
+                g[variable_names[i]] = reinterpret(reshape, eltype(eltype(args[i])), args[i])
             end
+        end
 
-            # Write points + number of points.
-            # Note that we need to reinterpret the vector of SVector onto a 3×Np matrix.
-            Np = length(points)
-            gtop["NumberOfPoints"] = [Np]
-            gtop["Points"] = reinterpret(reshape, eltype(eltype(points)), points)
+        # Vertices: 1 point per cell
+        let g = HDF5.create_group(gtop, "Vertices")
+            g["NumberOfCells"] = [np]
+            g["NumberOfConnectivityIds"] = [np]
+            g["Connectivity"] = collect(0:(np - 1))
+            g["Offsets"] = collect(0:np)
+            close(g)
+        end
 
-            # Write velocities as point data.
-            let g = HDF5.create_group(gtop, "PointData")
-                for i ∈ eachindex(variable_names)
-                    var_name = variable_names[i]
-                    arg      = args[i]
-                    g[var_name] = reinterpret(reshape, eltype(eltype(arg)), arg)
-                end
-            end
+        # Empty groups for unused cell types
+        for type ∈ ("Lines", "Polygons", "Strips")
+            gempty = HDF5.create_group(gtop, type)
+            gempty["NumberOfCells"] = [0]
+            gempty["NumberOfConnectivityIds"] = [0]
+            gempty["Connectivity"] = Int[]
+            gempty["Offsets"] = [0]
+            close(gempty)
+        end
 
-            # Create and fill Vertices group.
-            let g = HDF5.create_group(gtop, "Vertices")
-                # In our case 1 point == 1 cell.
-                g["NumberOfCells"] = [Np]
-                g["NumberOfConnectivityIds"] = [Np]
-                g["Connectivity"] = collect(0:(Np - 1))
-                g["Offsets"] = collect(0:Np)
-                close(g)
-            end
-
-            # Add unused PolyData types. ParaView expects this, even if they're empty.
-            for type ∈ ("Lines", "Polygons", "Strips")
-                gempty = HDF5.create_group(gtop, type)
-                gempty["NumberOfCells"] = [0]
-                gempty["NumberOfConnectivityIds"] = [0]
-                gempty["Connectivity"] = Int[]
-                gempty["Offsets"] = [0]
-                close(gempty)
-            end
-
-            fid_vector[index] = io
+        fid_vector[index] = io
     end
 
 
@@ -76,16 +165,7 @@ module ProduceHDFVTK
         # Write version of VTKHDF format as an attribute
         HDF5.attrs(root)["Version"] = Int32.([2, 3])
         
-        # Write type of dataset ("PolyData") as an ASCII string to a "Type" attribute.
-        # This is a bit tricky because VTK/ParaView don't support UTF-8 strings here, which is
-        # the default in HDF5.jl.
-        let s = vtk_file_type
-            dtype = HDF5.datatype(s)
-            HDF5.API.h5t_set_cset(dtype.id, HDF5.API.H5T_CSET_ASCII)
-            dspace = HDF5.dataspace(s)
-            attr = HDF5.create_attribute(root, "Type", dtype, dspace)
-            HDF5.write_attribute(attr, dtype, s)
-        end
+        write_ascii_attribute(root, "Type", vtk_file_type)
         
         NumberOfPoints = HDF5.create_dataset(root, "NumberOfPoints" , idType , ((0,),(-1,)), chunk=(chunk_size,))
         Points         = HDF5.create_dataset(root, "Points"         , fType  , ((3,0), (3,-1)), chunk=(3,chunk_size))
@@ -245,102 +325,8 @@ module ProduceHDFVTK
     end
 
     function AppendVTKHDFGridData(root, newStep, SimKernel, UniqueCells, SimParticles)
-        # Must be AbstractVector, since UniqueCells is passed in as a 'view' of a CartesianIndex array
-        ExtractDimensionality(::AbstractVector{CartesianIndex{N}}) where N = N
-
-        CartesianIndexN = ExtractDimensionality(UniqueCells)
-
-        # Cell dimensions
-        dx = dy = dz = SimKernel.H
-
-        # Compute per-dimension minima and maxima
-        if CartesianIndexN == 2
-            minx, maxx = minimum(ci->ci[1], UniqueCells), maximum(ci->ci[1], UniqueCells)
-            miny, maxy = minimum(ci->ci[2], UniqueCells), maximum(ci->ci[2], UniqueCells)
-            # number of cells in x
-            nx = maxx - minx + 1
-        elseif CartesianIndexN == 3
-            minx, maxx = minimum(ci->ci[1], UniqueCells), maximum(ci->ci[1], UniqueCells)
-            miny, maxy = minimum(ci->ci[2], UniqueCells), maximum(ci->ci[2], UniqueCells)
-            minz, maxz = minimum(ci->ci[3], UniqueCells), maximum(ci->ci[3], UniqueCells)
-            # number of cells per axis
-            nx = maxx - minx + 1
-            ny = maxy - miny + 1
-        else
-            error("Dimensionality of UniqueCells must be 2 or 3, got $CartesianIndexN")
-        end
-    
-        # Initialize lists for storing points and cells
-        points = Vector{SVector{3, Float64}}()  # List to store unique SVector points
-        connectivity = Int[]                    # Connectivity for each cell
-        offsets      = Int[]                    # Offsets for each cell
-        cell_types   = Int[]                    # Cell types (for VTK_QUAD)
-        cell_data    = Int[]
-    
-        vtk_type::UInt8 = CartesianIndexN == 2 ? UInt8(9) : CartesianIndexN == 3 ? UInt8(12)  : error("Dimensionality of UniqueCells is wrong")   # QUAD  OR HEXADRON VTK TYPE
-
-
-        push!(offsets, 0)
-        # Loop through each CartesianIndex cell
-        for cell in UniqueCells
-            # Compute linear ID 
-            id = if CartesianIndexN == 2
-                # (ci2 - miny)*nx + (ci1 - minx) + 1
-                (cell[2] - miny) * nx + (cell[1] - minx) + 1
-            else
-                # (ci3 - minz)*nx*ny + (ci2 - miny)*nx + (ci1 - minx) + 1
-                (cell[3] - minz) * (nx * ny) + (cell[2] - miny) * nx + (cell[1] - minx) + 1
-            end
-            
-            if CartesianIndexN == 2
-                # Get x and y from the CartesianIndex and calculate cell center
-                xi, yi = cell.I
-                x_center = xi * dx
-                y_center = yi * dy
-        
-                # Define corners individually
-                corners = [
-                    SVector(x_center - dx / 2, y_center - dy / 2, 0.0),
-                    SVector(x_center + dx / 2, y_center - dy / 2, 0.0),
-                    SVector(x_center + dx / 2, y_center + dy / 2, 0.0),
-                    SVector(x_center - dx / 2, y_center + dy / 2, 0.0)
-                ]
-        
-            elseif CartesianIndexN == 3
-                # Get x, y, and z from the CartesianIndex and calculate cell center
-                xi, yi, zi = cell.I 
-                x_center = xi * dx
-                y_center = yi * dy
-                z_center = zi * dz
-                
-                # Calculate the 8 corners of the cell relative to the center
-                corners = [
-                    SVector(x_center - dx / 2, y_center - dy / 2, z_center - dz / 2),  # Bottom-front-left
-                    SVector(x_center + dx / 2, y_center - dy / 2, z_center - dz / 2),  # Bottom-front-right
-                    SVector(x_center + dx / 2, y_center + dy / 2, z_center - dz / 2),  # Bottom-back-right
-                    SVector(x_center - dx / 2, y_center + dy / 2, z_center - dz / 2),  # Bottom-back-left
-                    SVector(x_center - dx / 2, y_center - dy / 2, z_center + dz / 2),  # Top-front-left
-                    SVector(x_center + dx / 2, y_center - dy / 2, z_center + dz / 2),  # Top-front-right
-                    SVector(x_center + dx / 2, y_center + dy / 2, z_center + dz / 2),  # Top-back-right
-                    SVector(x_center - dx / 2, y_center + dy / 2, z_center + dz / 2)   # Top-back-left
-                ]
-            end
-
-            # Add each corner point and update connectivity
-            n = length(points) #It is on purpose that length of points is zero, to match HDF5 0-based indexing!
-            for corner in corners
-                push!(points, corner)
-                push!(connectivity, n)
-                n += 1
-            end
-
-            # Define cell type and offsets 
-            push!(offsets, length(connectivity))
-
-            push!(cell_types, vtk_type) 
-
-            push!(cell_data, id)
-        end
+        points, connectivity, offsets, cell_types, cell_data, _ = compute_grid_geometry(SimKernel, UniqueCells)
+        vtk_type = first(cell_types)
 
         
 
@@ -428,119 +414,16 @@ module ProduceHDFVTK
     end
 
     function SaveCellGridVTKHDF(FilePath, SimKernel, UniqueCells)
-        # Must be AbstractVector, since UniqueCells is passed in as a 'view' of a CartesianIndex array
-        ExtractDimensionality(::AbstractVector{CartesianIndex{N}}) where N = N
+        points, connectivity, offsets, cell_types, cell_data, _ = compute_grid_geometry(SimKernel, UniqueCells)
 
-        CartesianIndexN = ExtractDimensionality(UniqueCells)
-
-        # Cell dimensions
-        dx = dy = dz = SimKernel.H
-
-        # Compute per-dimension minima and maxima
-        if CartesianIndexN == 2
-            minx, maxx = minimum(ci->ci[1], UniqueCells), maximum(ci->ci[1], UniqueCells)
-            miny, maxy = minimum(ci->ci[2], UniqueCells), maximum(ci->ci[2], UniqueCells)
-            # number of cells in x
-            nx = maxx - minx + 1
-        elseif CartesianIndexN == 3
-            minx, maxx = minimum(ci->ci[1], UniqueCells), maximum(ci->ci[1], UniqueCells)
-            miny, maxy = minimum(ci->ci[2], UniqueCells), maximum(ci->ci[2], UniqueCells)
-            minz, maxz = minimum(ci->ci[3], UniqueCells), maximum(ci->ci[3], UniqueCells)
-            # number of cells per axis
-            nx = maxx - minx + 1
-            ny = maxy - miny + 1
-        else
-            error("Dimensionality of UniqueCells must be 2 or 3, got $CartesianIndexN")
-        end    
-    
-        # Initialize lists for storing points and cells
-        points = Vector{SVector{3, Float64}}()  # List to store unique SVector points
-        connectivity = Int[]                    # Connectivity for each cell
-        offsets      = Int[]                    # Offsets for each cell
-        cell_types   = Int[]                    # Cell types (for VTK_QUAD)
-        cell_data    = Int[]
-    
-        vtk_type = CartesianIndexN == 2 ? UInt8(9) : CartesianIndexN == 3 ? UInt8(12)  : error("Dimensionality of UniqueCells is wrong")   # QUAD VTK TYPE
-
-
-        push!(offsets, 0)
-        # Loop through each CartesianIndex cell
-        for cell in UniqueCells
-        # Compute linear ID 
-                id = if CartesianIndexN == 2
-                    # (ci2 - miny)*nx + (ci1 - minx) + 1
-                    (cell[2] - miny) * nx + (cell[1] - minx) + 1
-                else
-                    # (ci3 - minz)*nx*ny + (ci2 - miny)*nx + (ci1 - minx) + 1
-                    (cell[3] - minz) * (nx * ny) + (cell[2] - miny) * nx + (cell[1] - minx) + 1
-                end
-                if CartesianIndexN == 2
-                # Get x and y from the CartesianIndex and calculate cell center
-                xi, yi = cell.I
-                x_center = xi * dx
-                y_center = yi * dy
-        
-                # Define corners individually
-                corners = [
-                    SVector(x_center - dx / 2, y_center - dy / 2, 0.0),
-                    SVector(x_center + dx / 2, y_center - dy / 2, 0.0),
-                    SVector(x_center + dx / 2, y_center + dy / 2, 0.0),
-                    SVector(x_center - dx / 2, y_center + dy / 2, 0.0)
-                ]
-        
-            elseif CartesianIndexN == 3
-                # Get x, y, and z from the CartesianIndex and calculate cell center
-                xi, yi, zi = cell.I 
-                x_center = xi * dx
-                y_center = yi * dy
-                z_center = zi * dz
-                
-                # Calculate the 8 corners of the cell relative to the center
-                corners = [
-                    SVector(x_center - dx / 2, y_center - dy / 2, z_center - dz / 2),  # Bottom-front-left
-                    SVector(x_center + dx / 2, y_center - dy / 2, z_center - dz / 2),  # Bottom-front-right
-                    SVector(x_center + dx / 2, y_center + dy / 2, z_center - dz / 2),  # Bottom-back-right
-                    SVector(x_center - dx / 2, y_center + dy / 2, z_center - dz / 2),  # Bottom-back-left
-                    SVector(x_center - dx / 2, y_center - dy / 2, z_center + dz / 2),  # Top-front-left
-                    SVector(x_center + dx / 2, y_center - dy / 2, z_center + dz / 2),  # Top-front-right
-                    SVector(x_center + dx / 2, y_center + dy / 2, z_center + dz / 2),  # Top-back-right
-                    SVector(x_center - dx / 2, y_center + dy / 2, z_center + dz / 2)   # Top-back-left
-                ]
-            end
-
-            # Add each corner point and update connectivity
-            n = length(points) #It is on purpose that length of points is zero, to match HDF5 0-based indexing!
-            for corner in corners
-                push!(points, corner)
-                push!(connectivity, n)
-                n += 1
-            end
-
-            # Define cell type and offsets
-            push!(offsets, length(connectivity))
-
-            push!(cell_types, vtk_type) 
-
-            push!(cell_data, id)
-        end
-    
         # Open HDF5 file for writing
         io = h5open(FilePath, "w")
 
         # Create top-level group "VTKHDF"
         gtop = HDF5.create_group(io, "VTKHDF")
 
-        # Set the Version attribute
         HDF5.attrs(gtop)["Version"] = [2, 3]
-
-        # Write Type attribute as ASCII string
-        let s = "UnstructuredGrid"
-            dtype = HDF5.datatype(s)
-            HDF5.API.h5t_set_cset(dtype.id, HDF5.API.H5T_CSET_ASCII)
-            dspace = HDF5.dataspace(s)
-            attr = HDF5.create_attribute(gtop, "Type", dtype, dspace)
-            HDF5.write_attribute(attr, dtype, s)
-        end
+        write_ascii_attribute(gtop, "Type", "UnstructuredGrid")
 
         # Write Number of Points, Number of Cells, and Number of Connectivity IDs
         gtop["NumberOfPoints"]          = [length(points)]
@@ -553,7 +436,7 @@ module ProduceHDFVTK
         # Write Connectivity, Offsets, and Types
         gtop["Connectivity"] = connectivity
         gtop["Offsets"] = offsets
-        gtop["Types"] = [vtk_type for _ in cell_types]  # QUAD VTK TYPE
+        gtop["Types"] = fill(first(cell_types), length(cell_types))
 
         # Write CellData (cell-level variables)
         let cell_group = HDF5.create_group(gtop, "CellData")
