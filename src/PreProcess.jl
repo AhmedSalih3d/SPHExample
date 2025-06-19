@@ -56,12 +56,12 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
         # Assuming LoadSpecificCSV is already defined and works with these arguments
         points, density, types, group_marker, idp = LoadSpecificCSV(Val(Dimensions), FloatType, particle_type, particle_group_marker, specific_csv)
     
-        # Concatenate the results to the respective arrays
-        Position    = vcat(Position    , points)
-        Density     = vcat(Density     , density)
-        Types       = vcat(Types       , types)
-        GroupMarker = vcat(GroupMarker , group_marker)
-        Idp         = vcat(Idp         , idp)
+        # Append the results to the respective arrays without reallocating on every iteration
+        append!(Position,    points)
+        append!(Density,     density)
+        append!(Types,       types)
+        append!(GroupMarker, group_marker)
+        append!(Idp,         idp)
     end
 
     NumberOfPoints           = length(Position)
