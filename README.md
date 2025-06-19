@@ -34,7 +34,26 @@ The project demonstrates how to assemble a small SPH solver with Julia. It focus
 └── Manifest.toml     # Exact dependency versions
 ```
 
-The `src/` folder contains modules such as `SPHCellList.jl` for neighbour searches and `SimulationConstantsConfiguration.jl` for defining solver parameters. Example scripts reside in `example/` and read data from `input/`.
+Example scripts live in `example/` and read geometry from `input/`. The solver code itself is in `src/`:
+
+```
+src/
+├── AuxillaryFunctions.jl            # Small helper utilities
+├── OpenExternalPrograms.jl          # Convenience wrappers for logs and ParaView
+├── PreProcess.jl                    # Load inputs and allocate arrays
+├── ProduceHDFVTK.jl                 # Write simulation data in HDF5/VTK format
+├── SPHCellList.jl                   # Custom neighbour search and time stepping
+├── SPHDensityDiffusionModels.jl     # Density diffusion implementations
+├── SPHExample.jl                    # Glue module re-exporting all functions
+├── SPHKernels.jl                    # SPH kernel definitions
+├── SPHViscosityModels.jl            # Viscosity models such as Laminar or SPS
+├── SimulationConstantsConfiguration.jl  # User-facing solver parameters
+├── SimulationEquations.jl           # Core SPH physics equations
+├── SimulationGeometry.jl            # Domain and geometry definitions
+├── SimulationLoggerConfiguration.jl # Logging helpers for timer outputs
+├── SimulationMetaDataConfiguration.jl  # Metadata such as run time and output path
+└── TimeStepping.jl                  # Controls for Δt and CFL condition
+```
 
 ## Getting Started
 
