@@ -203,10 +203,10 @@ module SimulationLoggerConfiguration
             # Get the current date and time
             current_time = now()
             # Format the current date and time
-            formatted_time = "Simulation finished at: " * Dates.format(current_time, "dd-mm-yyyy HH:MM:SS")
+            formatted_time = "\n Simulation finished at: " * Dates.format(current_time, "dd-mm-yyyy HH:MM:SS")
 
             @info formatted_time
-            @info "Simulation took " * @sprintf("%-.2f", TimerOutputs.tottime(HourGlass)/1e9) * "[s]"
+            @info "\n Simulation took " * @sprintf("%-.2f", TimerOutputs.tottime(HourGlass)/1e9) * "[s]"
             show(SimLogger.LoggerIo, HourGlass,sortby=:name)
             @info "\n Sorted by time \n"
             show(SimLogger.LoggerIo, HourGlass)
