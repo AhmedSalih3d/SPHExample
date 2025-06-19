@@ -84,7 +84,7 @@ Questions or issues can be posted on the GitHub issue tracker. Response times ma
 
 ## Authors
 
-Created by Ahmed Salih ([AhmedSalih3d](https://github.com/AhmedSalih3d)).
+Written by Ahmed Salih ([AhmedSalih3d](https://github.com/AhmedSalih3d)).
 
 ## Version History
 
