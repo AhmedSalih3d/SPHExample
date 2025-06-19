@@ -41,7 +41,7 @@ let
         FlagMDBCSimple=true
     )
 
-    SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
+    SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation; to_console=true)
 
     CleanUpSimulationFolder(SimMetaDataWedge.SaveLocation)
 

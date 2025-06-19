@@ -68,7 +68,7 @@ let
     #     return 0*Π, -Π*0
     # end
 
-    SimLogger = SimulationLogger(SimMetaDataDambreak.SaveLocation)
+    SimLogger = SimulationLogger(SimMetaDataDambreak.SaveLocation; to_console=true)
 
     CleanUpSimulationFolder(SimMetaDataDambreak.SaveLocation)
 
