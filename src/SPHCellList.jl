@@ -33,6 +33,7 @@ using Base.Threads
 using UnicodePlots
 using LinearAlgebra
 using Bumper
+using Polyester
 
     function ConstructStencil(v::Val{d}) where d
         n_ = CartesianIndices(ntuple(_->-1:1,v))
@@ -106,44 +107,52 @@ using Bumper
     end
 
     
-# Neither Polyester.@batch per core or thread is faster
-###=== Function to process each cell and its neighbors
-    function NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCells, EnumeratedIndices)
-        @sync begin
-            for (ichunk, inds) ∈ EnumeratedIndices 
-                @spawn for iter ∈ inds
+"""
+    Process each cell and its neighbors in parallel.
 
-                    CellIndex = UniqueCells[iter]
-                    SimParticles.ChunkID[iter] = ichunk
+    Work is distributed using `Polyester.@batch` to reduce allocations.
+"""
+    function NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel,
+                           SimMetaData, SimConstants, SimParticles,
+                           SimThreadedArrays, ParticleRanges, Stencil,
+                           Position, Density, Pressure, Velocity, MotionLimiter,
+                           UniqueCells, EnumeratedIndices)
+        @batch per=thread for (ichunk, inds) in EnumeratedIndices
+            for iter in inds
+                CellIndex = UniqueCells[iter]
+                SimParticles.ChunkID[iter] = ichunk
 
-                    StartIndex = ParticleRanges[iter]
-                    EndIndex   = ParticleRanges[iter+1] - 1
+                StartIndex = ParticleRanges[iter]
+                EndIndex   = ParticleRanges[iter + 1] - 1
 
-                    @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-                        @inline ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
-                    end
+                @inbounds for i = StartIndex:EndIndex, j = (i + 1):EndIndex
+                    @inline ComputeInteractions!(SimDensityDiffusion,
+                        SimViscosity, SimKernel, SimMetaData, SimConstants,
+                        SimParticles, SimThreadedArrays, Position, Density,
+                        Pressure, Velocity, i, j, MotionLimiter, ichunk)
+                end
 
-                    @inbounds for S ∈ Stencil
-                        SCellIndex = CellIndex + S
+                @inbounds for S in Stencil
+                    SCellIndex = CellIndex + S
+                    NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
 
-                        # Returns a range, x:x for exact match and x:(x-1) for no match
-                        # utilizes that it is a sorted array and requires no isequal constructor,
-                        # so I prefer this for now
-                        NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
+                    if length(NeighborCellIndex) != 0
+                        StartIndex_ = ParticleRanges[NeighborCellIndex[1]]
+                        EndIndex_ = ParticleRanges[NeighborCellIndex[1] + 1] - 1
 
-                        if length(NeighborCellIndex) != 0
-                            StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
-                            EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
-
-                            @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                                @inline ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
-                            end
+                        @inbounds for i = StartIndex:EndIndex,
+                                            j = StartIndex_:EndIndex_
+                            @inline ComputeInteractions!(SimDensityDiffusion,
+                                SimViscosity, SimKernel, SimMetaData,
+                                SimConstants, SimParticles, SimThreadedArrays,
+                                Position, Density, Pressure, Velocity, i, j,
+                                MotionLimiter, ichunk)
                         end
                     end
                 end
             end
         end
-        
+
         return nothing
     end
 
