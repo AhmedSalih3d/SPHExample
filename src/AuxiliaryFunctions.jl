@@ -1,6 +1,7 @@
 module AuxiliaryFunctions
 using StaticArrays
 using Base.Threads
+using Polyester
 using HDF5
 
 export ResetArrays!, to_3d, CloseHDFVTKManually, CleanUpSimulationFolder
@@ -43,7 +44,7 @@ function CloseHDFVTKManually(directory_path::String)
     all_files = readdir(directory_path, join=true)
     vtkhdf_files = filter(file -> endswith(file, ".vtkhdf"), all_files)
 
-    @threads for file_path in vtkhdf_files
+    Polyester.@batch per=thread for file_path in vtkhdf_files
         file = h5open(file_path, "r")
         try
             close(file)
