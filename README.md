@@ -8,15 +8,16 @@ The code can produce a 2D dam break ([@DamBreak2D-Video](https://www.youtube.com
 
 ![2D dam break](./images/2d_dambreak.png)
 
-<video src="./videos/2D%20Dam-break%20based%20on%20SPH%20Simulation.mp4" controls width="640"></video>
+https://github.com/user-attachments/assets/a0070389-e2a5-4bf8-9eda-e40364eea7ce
 
 Or, if you are really patient (1+ day to calculate), a 3D case ([@DamBreak3D-Video](https://www.youtube.com/watch?v=_2e6LopvIe8)):
 
 ![3D dam break](./images/3d_dambreak.png)
 
-<video src="./videos/3D%20Dam-break%20based%20on%20SPH%20Simulation.mp4" controls width="640"></video>
+https://github.com/user-attachments/assets/a38aaf39-3cf3-4041-b983-03f6107de8b9
 
 ## Description
+
 
 The project demonstrates how to assemble a small SPH solver with Julia. It focuses on clarity rather than ultimate performance. Unofficial benchmarks suggest that for 2D cases the CPU runtime is comparable to DualSPHysics. Key features include:
 
