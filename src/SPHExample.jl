@@ -12,8 +12,12 @@ module SPHExample
     include("SimulationLoggerConfiguration.jl");
     include("PreProcess.jl");
     include("OpenExternalPrograms.jl")
-    include("SPHDensityDiffusionModels.jl")  
-    include("SPHCellList.jl") #Must be last    
+    include("SPHDensityDiffusionModels.jl")
+    include("SPHCellListNeighborSearch.jl")
+    include("SPHCellListHelperFunctions.jl")
+    include("SPHCellListComputation.jl")
+    include("SPHCellListSimulationRun.jl")
+    include("SPHCellList.jl") #Must be last
 
     # Re-export desired functions from each submodule
     using .AuxiliaryFunctions

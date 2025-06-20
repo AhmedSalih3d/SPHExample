@@ -34,9 +34,9 @@ using UnicodePlots
 using LinearAlgebra
 using Bumper
 
-include("SPHCellListNeighborSearch.jl")
-include("SPHCellListHelperFunctions.jl")
-include("SPHCellListComputation.jl")
-include("SPHCellListSimulationRun.jl")
+using ..SPHCellListNeighborSearch
+using ..SPHCellListHelperFunctions
+using ..SPHCellListComputation
+using ..SPHCellListSimulationRun
 
 end

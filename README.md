@@ -43,7 +43,11 @@ src/
 ├── OpenExternalPrograms.jl          # Convenience wrappers for logs and ParaView
 ├── PreProcess.jl                    # Load inputs and allocate arrays
 ├── ProduceHDFVTK.jl                 # Write simulation data in HDF5/VTK format
-├── SPHCellList.jl                   # Custom neighbour search and time stepping
+├── SPHCellList.jl                   # Cell list orchestrator
+├── SPHCellListNeighborSearch.jl     # Neighbor search utilities
+├── SPHCellListHelperFunctions.jl    # Helper functions for the solver
+├── SPHCellListComputation.jl        # Interaction computations
+├── SPHCellListSimulationRun.jl      # Simulation loop implementation
 ├── SPHDensityDiffusionModels.jl     # Density diffusion implementations
 ├── SPHExample.jl                    # Glue module re-exporting all functions
 ├── SPHKernels.jl                    # SPH kernel definitions
