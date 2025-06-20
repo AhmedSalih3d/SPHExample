@@ -22,6 +22,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     using StaticArrays
 
     using ..AuxiliaryFunctions: to_3d, to_3d!
+    using Bumper: @alloc, @no_escape
 
 
     const idType = Int64
@@ -457,6 +458,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     Prepare VTK/HDF5 output. Returns a named tuple with `save_particles`,
     `save_grid` and `close_files` functions. Uses single or multi-file mode
     depending on `SimMetaData.ExportSingleVTKHDF`.
+
+    For 2D simulations, particle data is temporarily converted to 3D using
+    `Bumper.@alloc` buffers inside `save_particles` so no permanent memory is
+    required for the z-component padding.
     """
     function SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
         # Generate save locations
@@ -523,45 +528,48 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             end
         end
 
-        # Buffers used when converting 2D particle data to 3D
-        pos_buf = kgrad_buf = vel_buf = acc_buf = gp_buf = gn_buf = nothing
-        if Dimensions == 2
-            T = eltype(eltype(SimParticles.Position))
-            n = length(SimParticles.Position)
-            pos_buf   = Vector{SVector{3,T}}(undef, n)
-            kgrad_buf = Vector{SVector{3,T}}(undef, n)
-            vel_buf   = Vector{SVector{3,T}}(undef, n)
-            acc_buf   = Vector{SVector{3,T}}(undef, n)
-            gp_buf    = Vector{SVector{3,T}}(undef, n)
-            gn_buf    = Vector{SVector{3,T}}(undef, n)
-            fill_buffers!() = begin
-                to_3d!(pos_buf,   SimParticles.Position)
-                to_3d!(kgrad_buf, SimParticles.KernelGradient)
-                to_3d!(vel_buf,   SimParticles.Velocity)
-                to_3d!(acc_buf,   SimParticles.Acceleration)
-                to_3d!(gp_buf,    SimParticles.GhostPoints)
-                to_3d!(gn_buf,    SimParticles.GhostNormals)
-            end
-        end
+        T = eltype(eltype(SimParticles.Position))
+        Np = length(SimParticles.Position)
 
         # Main saving functions
         function save_particle_data(iteration)
             if Dimensions == 2
-                fill_buffers!()
-                pos   = pos_buf
-                kgrad = kgrad_buf
-                vel   = vel_buf
-                acc   = acc_buf
-                gp    = gp_buf
-                gn    = gn_buf
-            else
-                pos = SimParticles.Position
-                kgrad = SimParticles.KernelGradient
-                vel = SimParticles.Velocity
-                acc = SimParticles.Acceleration
-                gp  = SimParticles.GhostPoints
-                gn  = SimParticles.GhostNormals
+                @no_escape begin
+                    pos   = @alloc(SVector{3,T}, Np)
+                    kgrad = @alloc(SVector{3,T}, Np)
+                    vel   = @alloc(SVector{3,T}, Np)
+                    acc   = @alloc(SVector{3,T}, Np)
+                    gp    = @alloc(SVector{3,T}, Np)
+                    gn    = @alloc(SVector{3,T}, Np)
+
+                    to_3d!(pos,   SimParticles.Position)
+                    to_3d!(kgrad, SimParticles.KernelGradient)
+                    to_3d!(vel,   SimParticles.Velocity)
+                    to_3d!(acc,   SimParticles.Acceleration)
+                    to_3d!(gp,    SimParticles.GhostPoints)
+                    to_3d!(gn,    SimParticles.GhostNormals)
+
+                    if !SimMetaData.ExportSingleVTKHDF
+                        SaveVTKHDF(file_handles.particle_files, iteration, particle_filename(iteration), pos, output_vars,
+                                  SimParticles.ChunkID, SimParticles.Kernel, kgrad, SimParticles.Density, SimParticles.Pressure,
+                                  vel, acc, SimParticles.BoundaryBool, SimParticles.ID,
+                                  UInt8.(SimParticles.Type), SimParticles.GroupMarker, gp, gn)
+                    else
+                        AppendVTKHDFData(root, SimMetaData.TotalTime, pos, output_vars,
+                                        SimParticles.ChunkID, SimParticles.Kernel, kgrad, SimParticles.Density,
+                                        SimParticles.Pressure, vel, acc, SimParticles.BoundaryBool,
+                                        SimParticles.ID, UInt8.(SimParticles.Type), SimParticles.GroupMarker, gp, gn)
+                    end
+                end
+                return
             end
+
+            pos = SimParticles.Position
+            kgrad = SimParticles.KernelGradient
+            vel = SimParticles.Velocity
+            acc = SimParticles.Acceleration
+            gp  = SimParticles.GhostPoints
+            gn  = SimParticles.GhostNormals
     
             if !SimMetaData.ExportSingleVTKHDF
                 SaveVTKHDF(file_handles.particle_files, iteration, particle_filename(iteration), pos, output_vars,
