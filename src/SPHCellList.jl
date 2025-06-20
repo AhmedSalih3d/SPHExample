@@ -678,7 +678,16 @@ using Bumper
         generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
         
 
-        @timeit HourGlass "14 Next TimeStep" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime, 1e6))
+        if !SimLogger.ToConsole
+            @timeit HourGlass "14 Next TimeStep" next!(
+                SimMetaData.ProgressSpecification;
+                showvalues = generate_showvalues(
+                    SimMetaData.Iteration,
+                    SimMetaData.TotalTime,
+                    1e6,
+                ),
+            )
+        end
 
         @inbounds while true
     
@@ -698,15 +707,27 @@ using Bumper
                 @timeit SimMetaData.HourGlass "13A Save CellGrid Data" output.save_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, SimParticles)
             end
     
-            # TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (TimerOutputs.tottime(HourGlass)/1e9 / SimMetaData.TotalTime)
-            # @timeit HourGlass "14 Next TimeStep" next!(SimMetaData.ProgressSpecification; showvalues = generate_showvalues(SimMetaData.Iteration , SimMetaData.TotalTime, TimeLeftInSeconds))
+            if !SimLogger.ToConsole
+                TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) *
+                                    (TimerOutputs.tottime(HourGlass) / 1e9 / SimMetaData.TotalTime)
+                @timeit HourGlass "14 Next TimeStep" next!(
+                    SimMetaData.ProgressSpecification;
+                    showvalues = generate_showvalues(
+                        SimMetaData.Iteration,
+                        SimMetaData.TotalTime,
+                        TimeLeftInSeconds,
+                    ),
+                )
+            end
     
             if SimMetaData.TotalTime > SimMetaData.SimulationTime
                 
                 # At end of simulation
                 @timeit SimMetaData.HourGlass "13B Close Data Streams" output.close_files()
 
-                finish!(SimMetaData.ProgressSpecification)
+                if !SimLogger.ToConsole
+                    finish!(SimMetaData.ProgressSpecification)
+                end
                 show(HourGlass,sortby=:name)
                 show(HourGlass)
 
