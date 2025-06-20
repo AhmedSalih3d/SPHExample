@@ -22,9 +22,24 @@ export SimulationMetaData
     ProgressSpecification::ProgressUnknown  =  ProgressUnknown(desc="Simulation time per output each:", spinner=true, showspeed=true) 
     VisualizeInParaview::Bool               = true
     ExportSingleVTKHDF::Bool                = true
-    ExportGridCells::Bool                   = false    
+    ExportGridCells::Bool                   = false
+    OutputVariables::Vector{String}         = [
+        "ChunkID",
+        "Kernel",
+        "KernelGradient",
+        "Density",
+        "Pressure",
+        "Velocity",
+        "Acceleration",
+        "BoundaryBool",
+        "ID",
+        "Type",
+        "GroupMarker",
+        "GhostPoints",
+        "GhostNormals",
+    ]
     OpenLogFile::Bool                       = true
-    FlagOutputKernelValues::Bool            = false     
+    FlagOutputKernelValues::Bool            = false
     FlagLog::Bool                           = false
     FlagShifting::Bool                      = false
     FlagSingleStepTimeStepping::Bool        = false
