@@ -8,9 +8,13 @@ The code can produce a 2D dam break ([@DamBreak2D-Video](https://www.youtube.com
 
 ![2D dam break](./images/2d_dambreak.png)
 
+<video src="./videos/2D%20Dam-break%20based%20on%20SPH%20Simulation.mp4" controls width="640"></video>
+
 Or, if you are really patient (1+ day to calculate), a 3D case ([@DamBreak3D-Video](https://www.youtube.com/watch?v=_2e6LopvIe8)):
 
 ![3D dam break](./images/3d_dambreak.png)
+
+<video src="./videos/3D%20Dam-break%20based%20on%20SPH%20Simulation.mp4" controls width="640"></video>
 
 ## Description
 
