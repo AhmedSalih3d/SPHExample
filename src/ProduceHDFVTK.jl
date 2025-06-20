@@ -21,7 +21,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     using HDF5
     using StaticArrays
 
-    using ..AuxiliaryFunctions: to_3d
+    using ..AuxiliaryFunctions: to_3d, to_3d!
 
 
     const idType = Int64
@@ -451,6 +451,13 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         close(io)
     end
 
+    """
+        SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
+
+    Prepare VTK/HDF5 output. Returns a named tuple with `save_particles`,
+    `save_grid` and `close_files` functions. Uses single or multi-file mode
+    depending on `SimMetaData.ExportSingleVTKHDF`.
+    """
     function SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
         # Generate save locations
         particle_savepath = joinpath(SimMetaData.SaveLocation, SimMetaData.SimulationName)
@@ -461,14 +468,29 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         grid_filename = (iter) -> "$(grid_savepath)_$(lpad(iter,6,"0")).vtkhdf"
         
         # Output variable names
-        output_vars = ["ChunkID", "Kernel", "KernelGradient", "Density", "Pressure", "Velocity", 
-                      "Acceleration", "BoundaryBool", "ID", "Type", "GroupMarker", "GhostPoints", "GhostNormals"]
+        output_vars = [
+            "ChunkID",
+            "Kernel",
+            "KernelGradient",
+            "Density",
+            "Pressure",
+            "Velocity",
+            "Acceleration",
+            "BoundaryBool",
+            "ID",
+            "Type",
+            "GroupMarker",
+            "GhostPoints",
+            "GhostNormals",
+        ]
     
         # Initialize storage for file handles
         file_handles = if !SimMetaData.ExportSingleVTKHDF
             # Multi-file mode: vector for particle files
-            (particle_files = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1)),
-             grid_files = nothing)
+            (
+                particle_files = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1)),
+                grid_files = nothing,
+            )
         else
             # Single-file mode: handles for both files
             OutputVTKHDF = h5open("$(particle_savepath).vtkhdf", "w")
@@ -500,16 +522,38 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 (particle_files = OutputVTKHDF, grid_files = nothing)
             end
         end
-    
+
+        # Buffers used when converting 2D particle data to 3D
+        pos_buf = kgrad_buf = vel_buf = acc_buf = gp_buf = gn_buf = nothing
+        if Dimensions == 2
+            T = eltype(eltype(SimParticles.Position))
+            n = length(SimParticles.Position)
+            pos_buf   = Vector{SVector{3,T}}(undef, n)
+            kgrad_buf = Vector{SVector{3,T}}(undef, n)
+            vel_buf   = Vector{SVector{3,T}}(undef, n)
+            acc_buf   = Vector{SVector{3,T}}(undef, n)
+            gp_buf    = Vector{SVector{3,T}}(undef, n)
+            gn_buf    = Vector{SVector{3,T}}(undef, n)
+            fill_buffers!() = begin
+                to_3d!(pos_buf,   SimParticles.Position)
+                to_3d!(kgrad_buf, SimParticles.KernelGradient)
+                to_3d!(vel_buf,   SimParticles.Velocity)
+                to_3d!(acc_buf,   SimParticles.Acceleration)
+                to_3d!(gp_buf,    SimParticles.GhostPoints)
+                to_3d!(gn_buf,    SimParticles.GhostNormals)
+            end
+        end
+
         # Main saving functions
         function save_particle_data(iteration)
             if Dimensions == 2
-                pos = to_3d(SimParticles.Position)
-                kgrad = to_3d(SimParticles.KernelGradient)
-                vel = to_3d(SimParticles.Velocity)
-                acc = to_3d(SimParticles.Acceleration)
-                gp  = to_3d(SimParticles.GhostPoints)
-                gn  = to_3d(SimParticles.GhostNormals)
+                fill_buffers!()
+                pos   = pos_buf
+                kgrad = kgrad_buf
+                vel   = vel_buf
+                acc   = acc_buf
+                gp    = gp_buf
+                gn    = gn_buf
             else
                 pos = SimParticles.Position
                 kgrad = SimParticles.KernelGradient
