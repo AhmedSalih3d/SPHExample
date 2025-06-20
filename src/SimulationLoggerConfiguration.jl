@@ -34,6 +34,8 @@ module SimulationLoggerConfiguration
     simulation run. By default logging output is written to
     `joinpath(save_location, filename)`. If `to_console` is `true`, log messages
     are also echoed to the Julia REPL via a [`TeeLogger`](https://github.com/JuliaLogging/LoggingExtras.jl).
+    When `to_console` is `false`, the code can instead display a terminal
+    progress bar.
     """
     struct SimulationLogger
         LoggerIo::IOStream           # handle to the log file
@@ -43,6 +45,7 @@ module SimulationLoggerConfiguration
         ValuesToPrintC::String       # separator line below the header
         CurrentDate::DateTime        # start time of the simulation
         CurrentDataStr::String       # preformatted start time string
+        ToConsole::Bool              # whether log output is echoed to REPL
 
 
         function SimulationLogger(SaveLocation::String; filename="SimulationOutput.log", to_console::Bool=false)
@@ -70,7 +73,7 @@ module SimulationLoggerConfiguration
             CurrentDate    = now()
             CurrentDataStr = Dates.format(CurrentDate, "dd-mm-yyyy HH:MM:SS")
 
-            new(io_logger, logger, format_string, ValuesToPrint, ValuesToPrintC, CurrentDate, CurrentDataStr)
+            new(io_logger, logger, format_string, ValuesToPrint, ValuesToPrintC, CurrentDate, CurrentDataStr, to_console)
         end
     end
 
