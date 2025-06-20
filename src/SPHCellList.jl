@@ -517,6 +517,8 @@ using Bumper
         ###
         DimensionsPlus = Dimensions + 1
         Δx = one(eltype(Density)) + SimKernel.h
+        UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
+        EnumeratedIndices = enumerate(index_chunks(UniqueCellsView; n=nthreads()))
         @no_escape begin
             while SimMetaData.TotalTime <= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
 
@@ -537,10 +539,9 @@ using Bumper
                     # if 1.25 * Δx >= SimKernel.h
                         @timeit SimMetaData.HourGlass "02a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells)
                         Δx = zero(eltype(Density))
+                        UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
+                        EnumeratedIndices = enumerate(index_chunks(UniqueCellsView; n=nthreads()))
                     end
-
-                    UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
-                    EnumeratedIndices = enumerate(index_chunks(UniqueCellsView; n=nthreads()))
                 end
 
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
