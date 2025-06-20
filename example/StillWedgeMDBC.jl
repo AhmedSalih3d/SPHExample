@@ -39,21 +39,21 @@ let
         FlagOutputKernelValues=false,
         FlagLog=true,
         FlagMDBCSimple=true,
-        OutputVariables = [
-            # "ChunkID",
-            # "Kernel",
-            # "KernelGradient",
-            "Density",
-            "Pressure",
-            "Velocity",
-            "Acceleration",
-            # "BoundaryBool",
-            # "ID",
-            # "Type",
-            # "GroupMarker",
-            # "GhostPoints",
-            # "GhostNormals",
-        ]
+        # OutputVariables = [
+        #     # "ChunkID",
+        #     # "Kernel",
+        #     # "KernelGradient",
+        #     "Density",
+        #     "Pressure",
+        #     "Velocity",
+        #     "Acceleration",
+        #     # "BoundaryBool",
+        #     # "ID",
+        #     # "Type",
+        #     # "GroupMarker",
+        #     # "GhostPoints",
+        #     # "GhostNormals",
+        # ]
     )
 
     SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation; to_console=true)
