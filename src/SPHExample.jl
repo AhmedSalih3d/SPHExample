@@ -13,9 +13,9 @@ module SPHExample
     include("PreProcess.jl");
     include("OpenExternalPrograms.jl")
     include("SPHDensityDiffusionModels.jl")
-    include("SPHCellListNeighborSearch.jl")
     include("SPHCellListHelperFunctions.jl")
     include("SPHCellListComputation.jl")
+    include("SPHCellListNeighborSearch.jl")
     include("SPHCellListSimulationRun.jl")
     include("SPHCellList.jl") #Must be last
 

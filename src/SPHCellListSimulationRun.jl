@@ -1,5 +1,7 @@
 module SPHCellListSimulationRun
 
+export RunSimulation
+
 using Parameters, FastPow, StaticArrays, Base.Threads, ChunkSplitters
 using ..SimulationEquations
 using ..SimulationGeometry

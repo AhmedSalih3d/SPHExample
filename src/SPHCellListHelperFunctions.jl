@@ -1,5 +1,7 @@
 module SPHCellListHelperFunctions
 
+export reduce_sum!, ResetStep!, ReductionStep!, ProgressMotion
+
 using Parameters, FastPow, StaticArrays, Base.Threads, ChunkSplitters
 using ..SimulationEquations
 using ..SimulationGeometry

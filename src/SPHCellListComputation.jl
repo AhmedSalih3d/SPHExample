@@ -1,5 +1,8 @@
 module SPHCellListComputation
 
+export ComputeInteractions!, ApplyMDBCCorrection, HalfTimeStep,
+       FullTimeStep, UpdateMetaData!
+
 using Parameters, FastPow, StaticArrays, Base.Threads, ChunkSplitters
 using ..SimulationEquations
 using ..SimulationGeometry
@@ -148,39 +151,6 @@ Base.@propagate_inbounds function ComputeInteractionsMDBC!(SimKernel, SimMetaDat
 end
 
 
-function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
-    
-    ResetArrays!(dρdtI, Acceleration)
-
-    if SimMetaData.FlagOutputKernelValues
-        ResetArrays!(Kernel, KernelGradient)
-    end
-
-    if SimMetaData.FlagShifting
-        ResetArrays!(∇Cᵢ, ∇◌rᵢ)
-    end
-
-    foreachfield(f -> map!(v -> fill!(v, zero(eltype(v))), f, f), SimThreadedArrays)
-
-    return nothing
-end
-
-function ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
-    reduce_sum!(dρdtI, SimThreadedArrays.dρdtIThreaded)
-    reduce_sum!(Acceleration, SimThreadedArrays.AccelerationThreaded)
-  
-    if SimMetaData.FlagOutputKernelValues
-        reduce_sum!(Kernel, SimThreadedArrays.KernelThreaded)
-        reduce_sum!(KernelGradient, SimThreadedArrays.KernelGradientThreaded)
-    end
-
-    if SimMetaData.FlagShifting
-        reduce_sum!(∇Cᵢ, SimThreadedArrays.∇CᵢThreaded)
-        reduce_sum!(∇◌rᵢ, SimThreadedArrays.∇◌rᵢThreaded)
-    end
-
-    return nothing
-end
 
 
 function ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
