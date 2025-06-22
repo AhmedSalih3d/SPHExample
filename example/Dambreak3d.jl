@@ -46,7 +46,7 @@ let
         FlagLog                = true
     )
 
-    SimLogger = SimulationLogger(SimMetaDataDambreak3D.SaveLocation)
+    SimLogger = SimulationLogger(SimMetaDataDambreak3D.SaveLocation; to_console=true)
 
     @warn("""
     3D mode enabled but lightly tested.
