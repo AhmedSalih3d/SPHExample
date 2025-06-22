@@ -596,6 +596,15 @@ using Bumper
     end
     
     ###===
+    """
+        RunSimulation(; SimGeometry, SimMetaData, SimConstants, SimKernel,
+                       SimLogger, SimParticles, SimViscosity,
+                       SimDensityDiffusion, ParticleNormalsPath=nothing)
+
+    Run the SPH solver until the target simulation time is reached. Output data
+    is written asynchronously using spawned tasks so the main loop does not
+    block during file I/O.
+    """
     function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}, #Don't further specify type for now
         SimMetaData::SimulationMetaData{Dimensions, FloatType},
         SimConstants::SimulationConstants,
@@ -690,6 +699,8 @@ using Bumper
             )
         end
 
+        save_tasks = Task[]
+
         @inbounds while true
     
             @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition)
@@ -703,10 +714,19 @@ using Bumper
             SimMetaData.OutputIterationCounter += 1
 
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-            @sync Threads.@spawn begin
-                @timeit SimMetaData.HourGlass "13A Save Particle Data" output.save_particles(SimMetaData.OutputIterationCounter)
-                @timeit SimMetaData.HourGlass "13A Save CellGrid Data" output.save_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, SimParticles)
+            task = Threads.@spawn begin
+                @timeit SimMetaData.HourGlass "13A Save Particle Data" begin
+                    output.save_particles(SimMetaData.OutputIterationCounter)
+                end
+                @timeit SimMetaData.HourGlass "13A Save CellGrid Data" begin
+                    output.save_grid(
+                        SimMetaData.OutputIterationCounter,
+                        UniqueCellsView,
+                        SimParticles,
+                    )
+                end
             end
+            push!(save_tasks, task)
     
             if !SimLogger.ToConsole
                 TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) *
@@ -724,6 +744,7 @@ using Bumper
             if SimMetaData.TotalTime > SimMetaData.SimulationTime
                 
                 # At end of simulation
+                foreach(wait, save_tasks)
                 @timeit SimMetaData.HourGlass "13B Close Data Streams" output.close_files()
 
                 if !SimLogger.ToConsole
