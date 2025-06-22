@@ -603,7 +603,8 @@ using Bumper
 
     Run the SPH solver until the target simulation time is reached. Output data
     is written asynchronously using spawned tasks so the main loop does not
-    block during file I/O.
+    block during file I/O. Particle arrays are copied for each save task to
+    ensure consistent snapshots.
     """
     function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}, #Don't further specify type for now
         SimMetaData::SimulationMetaData{Dimensions, FloatType},
@@ -714,15 +715,20 @@ using Bumper
             SimMetaData.OutputIterationCounter += 1
 
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
+            particles_copy = copy(SimParticles)
+            cells_copy = copy(UniqueCellsView)
             task = Threads.@spawn begin
                 @timeit SimMetaData.HourGlass "13A Save Particle Data" begin
-                    output.save_particles(SimMetaData.OutputIterationCounter)
+                    output.save_particles(
+                        SimMetaData.OutputIterationCounter,
+                        particles_copy,
+                    )
                 end
                 @timeit SimMetaData.HourGlass "13A Save CellGrid Data" begin
                     output.save_grid(
                         SimMetaData.OutputIterationCounter,
-                        UniqueCellsView,
-                        SimParticles,
+                        cells_copy,
+                        particles_copy,
                     )
                 end
             end
