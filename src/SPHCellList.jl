@@ -518,7 +518,7 @@ using Bumper
                                       ParticleRanges, UniqueCells, CellDict,
                                       SortingScratchSpace, SimThreadedArrays,
                                       dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
-                                      ∇Cᵢ, ∇◌rᵢ, MotionDefinition, EnumeratedIndices) where {Dimensions, FloatType}
+                                      ∇Cᵢ, ∇◌rᵢ, MotionDefinition) where {Dimensions, FloatType}
         Position       = SimParticles.Position
         Density        = SimParticles.Density
         Pressure       = SimParticles.Pressure
@@ -535,10 +535,8 @@ using Bumper
         ###
         DimensionsPlus = Dimensions + 1
         Δx = one(eltype(Density)) + SimKernel.h
-        UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
-        if EnumeratedIndices === nothing
-            EnumeratedIndices = enumerate(index_chunks(UniqueCellsView; n=nthreads()))
-        end
+        UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
+        EnumeratedIndices = enumerate(index_chunks(UniqueCellsView; n=nthreads()))
         @no_escape begin
             while SimMetaData.TotalTime <= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
 
@@ -612,7 +610,7 @@ using Bumper
             end
         end
         
-        return EnumeratedIndices
+        return nothing
     end
     
     ###===
@@ -711,10 +709,9 @@ using Bumper
             )
         end
 
-        EnumeratedIndices = nothing
         @inbounds while true
 
-            @timeit SimMetaData.HourGlass "00 SimulationLoop" EnumeratedIndices = SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, CellDict, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, EnumeratedIndices)
+            @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, CellDict, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition)
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
 
             if SimMetaData.FlagLog
