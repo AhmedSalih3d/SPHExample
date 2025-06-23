@@ -19,7 +19,8 @@ export SimulationMetaData
     TotalTime::FloatType                    = 0
     SimulationTime::FloatType               = 0
     IndexCounter::Int                       = 0
-    ProgressSpecification::ProgressUnknown  =  ProgressUnknown(desc="Simulation time per output each:", spinner=true, showspeed=true) 
+    Δx::FloatType                           = zero(FloatType)
+    ProgressSpecification::ProgressUnknown  =  ProgressUnknown(desc="Simulation time per output each:", spinner=true, showspeed=true)
     VisualizeInParaview::Bool               = true
     ExportSingleVTKHDF::Bool                = true
     ExportGridCells::Bool                   = false
