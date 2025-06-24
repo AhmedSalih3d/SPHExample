@@ -17,7 +17,7 @@ module SPHExample
 
     # Re-export desired functions from each submodule
     using .AuxiliaryFunctions
-    export ResetArrays!, to_3d, CloseHDFVTKManually, CleanUpSimulationFolder
+    export ResetArrays!, to_3d, CloseHDFVTKManually, CleanUpSimulationFolder, pairs_to_per_particle
 
     using .SPHKernels
     export SPHKernel, SPHKernelInstance, WendlandC2, CubicSpline, Wᵢⱼ, ∇Wᵢⱼ, tensile_correction
