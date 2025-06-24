@@ -509,7 +509,7 @@ using Bumper
                 maxd = nrm
             end
         end
-        return Δx + 2*maxd
+        return Δx + 4*maxd
     end
 
     
