@@ -424,37 +424,20 @@ using Bumper
         end
     end
     
-        FloatT = eltype(eltype(Position))
-        max_disp = zero(FloatT)
+    function HalfTimeStep(::SimulationMetaData{Dimensions, FloatType}, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂) where {Dimensions, FloatType}
+        Position       = SimParticles.Position
+        Density        = SimParticles.Density
+        Velocity       = SimParticles.Velocity
+        Acceleration   = SimParticles.Acceleration
+        GravityFactor  = SimParticles.GravityFactor
+        MotionLimiter  = SimParticles.MotionLimiter
 
-                Acceleration[i] += ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
-                Velocity[i]     += Acceleration[i] * dt * MotionLimiter[i]
-                old_pos = Position[i]
-                new_pos = old_pos + ((Velocity[i] + (Velocity[i] - Acceleration[i] * dt *
-                                    MotionLimiter[i])) / 2) * dt * MotionLimiter[i]
-                disp = norm(new_pos - old_pos)
-                if disp > max_disp
-                    max_disp = disp
-                end
-                Position[i] = new_pos
-                Acceleration[i] += ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
-                Velocity[i]     += Acceleration[i] * dt * MotionLimiter[i]
-
-                A_FSC = (∇◌rᵢ[i] - A_FST) / (A_FSM - A_FST)
-                δxᵢ = A_FSC < 0 ? zero(eltype(Position)) :
-                        -A_FSC * A * SimKernel.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
-
-                old_pos = Position[i]
-                new_pos = old_pos + ((Velocity[i] + (Velocity[i] - Acceleration[i] * dt *
-                                    MotionLimiter[i])) / 2) * dt * MotionLimiter[i] +
-                                  δxᵢ * MotionLimiter[i]
-                disp = norm(new_pos - old_pos)
-                if disp > max_disp
-                    max_disp = disp
-                Position[i] = new_pos
+        @inbounds @simd ivdep for i in eachindex(Position)
+            Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+            Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
+            Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
+            ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
         end
-
-        SimMetaData.Δx += 2 * max_disp
 
 
         return nothing
@@ -526,10 +509,11 @@ using Bumper
                 maxd = nrm
             end
         end
-                # SimMetaData.Δx = update_delta_x!(SimMetaData.Δx, Positionₙ⁺, SimParticles.Position)
+        return Δx + 2*maxd
+    end
 
-                # println("Δx: ", SimMetaData.Δx, "h: ", SimKernel.h, " dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
-                        SimMetaData.Δx = zero(eltype(Density))
+    
+    @inbounds function SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel,
                                       SimMetaData::SimulationMetaData{Dimensions, FloatType},
                                       SimConstants, SimParticles, Stencil,
                                       ParticleRanges, UniqueCells, CellDict,
@@ -665,8 +649,6 @@ using Bumper
         # end
 
         if !SimMetaData.FlagShifting
-        SimMetaData.Δx = one(FloatType) + SimKernel.h
-
             resize!(∇Cᵢ , 0)
             resize!(∇◌rᵢ, 0)
         end
