@@ -525,20 +525,20 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             acc_buf   = Vector{SVector{3,T}}(undef, n)
             gp_buf    = Vector{SVector{3,T}}(undef, n)
             gn_buf    = Vector{SVector{3,T}}(undef, n)
-            fill_buffers!() = begin
-                to_3d!(pos_buf,   SimParticles.Position)
-                to_3d!(kgrad_buf, SimParticles.KernelGradient)
-                to_3d!(vel_buf,   SimParticles.Velocity)
-                to_3d!(acc_buf,   SimParticles.Acceleration)
-                to_3d!(gp_buf,    SimParticles.GhostPoints)
-                to_3d!(gn_buf,    SimParticles.GhostNormals)
+            fill_buffers!(parts) = begin
+                to_3d!(pos_buf,   parts.Position)
+                to_3d!(kgrad_buf, parts.KernelGradient)
+                to_3d!(vel_buf,   parts.Velocity)
+                to_3d!(acc_buf,   parts.Acceleration)
+                to_3d!(gp_buf,    parts.GhostPoints)
+                to_3d!(gn_buf,    parts.GhostNormals)
             end
         end
 
         # Main saving functions
-        function save_particle_data(iteration)
+        function save_particle_data(iteration, parts = SimParticles)
             if Dimensions == 2
-                fill_buffers!()
+                fill_buffers!(parts)
                 pos   = pos_buf
                 kgrad = kgrad_buf
                 vel   = vel_buf
@@ -546,26 +546,26 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 gp    = gp_buf
                 gn    = gn_buf
             else
-                pos = SimParticles.Position
-                kgrad = SimParticles.KernelGradient
-                vel = SimParticles.Velocity
-                acc = SimParticles.Acceleration
-                gp  = SimParticles.GhostPoints
-                gn  = SimParticles.GhostNormals
+                pos = parts.Position
+                kgrad = parts.KernelGradient
+                vel = parts.Velocity
+                acc = parts.Acceleration
+                gp  = parts.GhostPoints
+                gn  = parts.GhostNormals
             end
 
             available = Dict(
-                "ChunkID" => SimParticles.ChunkID,
-                "Kernel" => SimParticles.Kernel,
+                "ChunkID" => parts.ChunkID,
+                "Kernel" => parts.Kernel,
                 "KernelGradient" => kgrad,
-                "Density" => SimParticles.Density,
-                "Pressure" => SimParticles.Pressure,
+                "Density" => parts.Density,
+                "Pressure" => parts.Pressure,
                 "Velocity" => vel,
                 "Acceleration" => acc,
-                "BoundaryBool" => SimParticles.BoundaryBool,
-                "ID" => SimParticles.ID,
-                "Type" => Int8.(SimParticles.Type),
-                "GroupMarker" => SimParticles.GroupMarker,
+                "BoundaryBool" => parts.BoundaryBool,
+                "ID" => parts.ID,
+                "Type" => Int8.(parts.Type),
+                "GroupMarker" => parts.GroupMarker,
                 "GhostPoints" => gp,
                 "GhostNormals" => gn,
             )
