@@ -83,7 +83,8 @@ using Bumper
     # Returns
     - `IndexCounter`: The number of unique cells identified.
     """
-    function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace, ParticleRanges, UniqueCells)
+    function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
+                              ParticleRanges, UniqueCells, CellDict)
         ExtractCells!(Particles, InverseCutOff)
 
         sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
@@ -92,12 +93,15 @@ using Bumper
         IndexCounter                  = 1
         ParticleRanges[IndexCounter]  = 1
         UniqueCells[IndexCounter]     = Cells[1]
+        empty!(CellDict)
+        CellDict[Cells[1]] = IndexCounter
 
         @inbounds @simd ivdep for i in eachindex(Cells)[2:end]
             if Cells[i] != Cells[i-1] # Equivalent to diff(Cells) != 0
                 IndexCounter                 += 1
                 ParticleRanges[IndexCounter]  = i
                 UniqueCells[IndexCounter]     = Cells[i]
+                CellDict[Cells[i]]           = IndexCounter
             end
         end
         ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
@@ -108,7 +112,11 @@ using Bumper
     
 # Neither Polyester.@batch per core or thread is faster
 ###=== Function to process each cell and its neighbors
-    function NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCells, EnumeratedIndices)
+    function NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel,
+                           SimMetaData, SimConstants, SimParticles,
+                           SimThreadedArrays, ParticleRanges, CellDict, Stencil,
+                           Position, Density, Pressure, Velocity, MotionLimiter,
+                           UniqueCells, EnumeratedIndices)
         @sync begin
             for (ichunk, inds) ∈ EnumeratedIndices 
                 @spawn for iter ∈ inds
@@ -129,11 +137,11 @@ using Bumper
                         # Returns a range, x:x for exact match and x:(x-1) for no match
                         # utilizes that it is a sorted array and requires no isequal constructor,
                         # so I prefer this for now
-                        NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
+                        NeighborIdx = get(CellDict, SCellIndex, 0)
 
-                        if length(NeighborCellIndex) != 0
-                            StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
-                            EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
+                        if NeighborIdx != 0
+                            StartIndex_       = ParticleRanges[NeighborIdx]
+                            EndIndex_         = ParticleRanges[NeighborIdx + 1] - 1
 
                             @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
                                 @inline ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
@@ -147,7 +155,12 @@ using Bumper
         return nothing
     end
 
-    function NeighborLoopMDBC!(SimKernel, SimMetaData::SimulationMetaData{Dimensions, _}, SimConstants, ParticleRanges, Position, Density, UniqueCells, GhostPoints, GhostNormals,  ParticleType, bᵧ, Aᵧ) where {Dimensions, _}
+    f(SimKernel, GhostPoint) = CartesianIndex(map(x->map_floor(x,SimKernel.H⁻¹), Tuple(GhostPoint)))
+    function NeighborLoopMDBC!(SimKernel,
+                               SimMetaData::SimulationMetaData{Dimensions, _},
+                               SimConstants, ParticleRanges, CellDict, Position,
+                               Density, GhostPoints, GhostNormals, ParticleType,
+                               bᵧ, Aᵧ) where {Dimensions, _}
         
         FullStencil = CartesianIndices(ntuple(_->-1:1, Dimensions))
 
@@ -160,17 +173,17 @@ using Bumper
                 A_acc = zero(Aᵧ[iter])            # an SMatrix{D+1,D+1,FloatType}
             
                 # compute and accumulate into the locals
-                GhostCellIndex = CartesianIndex(map(x->map_floor(x,SimKernel.H⁻¹), Tuple(GhostPoints[iter])))
+                GhostCellIndex = f(SimKernel, GhostPoints[iter])
                 @inbounds for S ∈ FullStencil
                     SCellIndex = GhostCellIndex + S
                     # Returns a range, x:x for exact match and x:(x-1) for no match
                     # utilizes that it is a sorted array and requires no isequal constructor,
                     # so I prefer this for now
-                    NeighborCellIndex = searchsorted(UniqueCells, SCellIndex)
+                    NeighborIdx = get(CellDict, SCellIndex, 0)
 
-                    if length(NeighborCellIndex) != 0
-                        StartIndex_       = ParticleRanges[NeighborCellIndex[1]] 
-                        EndIndex_         = ParticleRanges[NeighborCellIndex[1]+1] - 1
+                    if NeighborIdx != 0
+                        StartIndex_       = ParticleRanges[NeighborIdx] 
+                        EndIndex_         = ParticleRanges[NeighborIdx + 1] - 1
 
                         for j in StartIndex_:EndIndex_
                             # change ComputeInteractions to take & return contributions, e.g.:
@@ -473,34 +486,40 @@ using Bumper
         return nothing
     end
 
-    # """
-    #     update_delta_x!(Δx, posₙ⁺, pos)
+    """
+        update_delta_x!(Δx, posₙ⁺, pos)
 
-    # Increment Δx by twice the maximum ‖posₙ⁺[i] – pos[i]‖, without ever allocating.
-    # Returns the new Δx.
-    # """
-    # @inline function update_delta_x!(Δx::T,
-    #                                 posₙ⁺::AbstractVector{SVector{D, T}},
-    #                                 pos   ::AbstractVector{SVector{D, T}}) where {D, T<:Real}
-    #     maxd = zero(T)
-    #     @inbounds for i in eachindex(posₙ⁺, pos)
-    #         # compute squared norm manually
-    #         sumsq = zero(T)
-    #         @inbounds for j in 1:D
-    #             d = posₙ⁺[i][j] - pos[i][j]
-    #             sumsq += d*d
-    #         end
-    #         # sqrt/T is allocation-free on scalars
-    #         nrm = sqrt(sumsq)
-    #         if nrm > maxd
-    #             maxd = nrm
-    #         end
-    #     end
-    #     return Δx + 2*maxd
-    # end
+    Increment Δx by twice the maximum ‖posₙ⁺[i] – pos[i]‖, without ever allocating.
+    Returns the new Δx.
+    """
+    @inline function update_delta_x!(Δx::T,
+                                    posₙ⁺::AbstractVector{SVector{D, T}},
+                                    pos   ::AbstractVector{SVector{D, T}}) where {D, T<:Real}
+        maxd = zero(T)
+        @inbounds for i in eachindex(posₙ⁺, pos)
+            # compute squared norm manually
+            sumsq = zero(T)
+            @inbounds for j in 1:D
+                d = posₙ⁺[i][j] - pos[i][j]
+                sumsq += d*d
+            end
+            # sqrt/T is allocation-free on scalars
+            nrm = sqrt(sumsq)
+            if nrm > maxd
+                maxd = nrm
+            end
+        end
+        return Δx + 4*maxd
+    end
 
     
-    @inbounds function SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData::SimulationMetaData{Dimensions, FloatType}, SimConstants, SimParticles, Stencil,  ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition) where {Dimensions, FloatType}
+    @inbounds function SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel,
+                                      SimMetaData::SimulationMetaData{Dimensions, FloatType},
+                                      SimConstants, SimParticles, Stencil,
+                                      ParticleRanges, UniqueCells, CellDict,
+                                      SortingScratchSpace, SimThreadedArrays,
+                                      dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
+                                      ∇Cᵢ, ∇◌rᵢ, MotionDefinition) where {Dimensions, FloatType}
         Position       = SimParticles.Position
         Density        = SimParticles.Density
         Pressure       = SimParticles.Pressure
@@ -517,12 +536,12 @@ using Bumper
         ###
         DimensionsPlus = Dimensions + 1
         Δx = one(eltype(Density)) + SimKernel.h
-        UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
+        UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
         EnumeratedIndices = enumerate(index_chunks(UniqueCellsView; n=nthreads()))
         @no_escape begin
             while SimMetaData.TotalTime <= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
 
-                # Δx = update_delta_x!(Δx, Positionₙ⁺, SimParticles.Position)
+                Δx = update_delta_x!(Δx, Positionₙ⁺, SimParticles.Position)
 
                 # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
 
@@ -535,9 +554,9 @@ using Bumper
                     # and ensure it is always updated in a reasonable manner. This only works well, assuming that
                     # c₀ >= maximum(norm.(Velocity))
                     # Remove if statement logic if you want to update each iteration
-                    if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
-                    # if 1.25 * Δx >= SimKernel.h
-                        @timeit SimMetaData.HourGlass "02a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells)
+                    # if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
+                    if Δx >= SimKernel.h
+                        @timeit SimMetaData.HourGlass "02a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells, CellDict)
                         Δx = zero(eltype(Density))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                         EnumeratedIndices = enumerate(index_chunks(UniqueCellsView; n=nthreads()))
@@ -555,9 +574,9 @@ using Bumper
                     if SimMetaData.FlagMDBCSimple
                         bᵧ = @alloc(SVector{DimensionsPlus, FloatType}, length(Position))
                         Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus * DimensionsPlus}, length(Position))
-                        @timeit SimMetaData.HourGlass "04 First NeighborLoopMDBC"        NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, Position, Density, UniqueCellsView, GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ)
+                        @timeit SimMetaData.HourGlass "04 First NeighborLoopMDBC"        NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ)
                     end
-                    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
+                    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
                     @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
                 end
 
@@ -577,7 +596,7 @@ using Bumper
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
             
                 @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-                @timeit SimMetaData.HourGlass "08 Second NeighborLoop"                   NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, Stencil, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, UniqueCellsView, EnumeratedIndices)
+                @timeit SimMetaData.HourGlass "08 Second NeighborLoop"                   NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, UniqueCellsView, EnumeratedIndices)
                 @timeit SimMetaData.HourGlass "Reduction"                                ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
 
             
@@ -652,6 +671,7 @@ using Bumper
         # Produce sorting related variables
         ParticleRanges         = zeros(Int, NumberOfPoints + 1)
         UniqueCells            = zeros(CartesianIndex{Dimensions}, NumberOfPoints)
+        CellDict               = Dict{CartesianIndex{Dimensions}, Int}()
         Stencil                = ConstructStencil(Val(Dimensions))
         _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
 
@@ -691,8 +711,8 @@ using Bumper
         end
 
         @inbounds while true
-    
-            @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition)
+
+            @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, CellDict, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition)
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
 
             if SimMetaData.FlagLog
