@@ -141,11 +141,11 @@ end
 function AllocateThreadedArrays(SimMetaData, SimParticles, dρdtI, ∇Cᵢ, ∇◌rᵢ   ; n_copy = Base.Threads.nthreads())
     
         
-    dρdtIThreaded        = [dρdtI for _ in 1:n_copy]
+    # dρdtIThreaded        = [dρdtI for _ in 1:n_copy]
     AccelerationThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
 
     nt = (
-        dρdtIThreaded = dρdtIThreaded,
+        # dρdtIThreaded = dρdtIThreaded,
         AccelerationThreaded = AccelerationThreaded,
     )
 
