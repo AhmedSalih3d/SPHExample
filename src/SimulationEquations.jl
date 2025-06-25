@@ -27,7 +27,7 @@ end
 # using symplectic time stepping
 @inline function DensityEpsi!(Density, dρdtIₙ⁺,ρₙ⁺,Δt)
     @inbounds for i in eachindex(Density)
-        epsi = - (dρdtIₙ⁺[i] / ρₙ⁺[i]) * Δt
+        epsi = - (dρdtIₙ⁺[i][] / ρₙ⁺[i]) * Δt
         Density[i] *= (2 - epsi) / (2 + epsi)
     end
 end
