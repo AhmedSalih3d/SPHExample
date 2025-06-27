@@ -29,7 +29,7 @@ module SPHExample
     export SPHDensityDiffusion, ZeroDensityDiffusion, ZeroGravityLinearDensityDiffusion, LinearDensityDiffusion, ZeroGravityComplexDensityDiffusion, ComplexDensityDiffusion, compute_density_diffusion
  
     using .SimulationGeometry
-    export ParticleType, Fixed, Fluid, Moving, Geometry, MotionDetails
+    export ParticleType, Fixed, Fluid, Moving, Floating, Geometry, MotionDetails
 
     using .PreProcess
     export AllocateDataStructures, AllocateSupportDataStructures, AllocateThreadedArrays, LoadBoundaryNormals
