@@ -80,7 +80,7 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
     GravityFactor = similar(Density)
     for i ∈ eachindex(GravityFactor)
         fac = 0
-        if     Types[i] == Fluid
+        if     Types[i] == Fluid || Types[i] == Floating
             fac = -1
         elseif Types[i] == Moving
             fac =  1
@@ -91,9 +91,9 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
     MotionLimiter = similar(Density)
     for i ∈ eachindex(MotionLimiter)
         fac = 0
-        if   Types[i] == Fluid
+        if   Types[i] == Fluid || Types[i] == Floating
             fac =  1
-        else Types[i] == Moving
+        else
             fac =  0
         end
         MotionLimiter[i] = fac
