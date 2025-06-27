@@ -31,7 +31,7 @@ let
         SimulationName="StillWedge", 
         SaveLocation="E:/SecondApproach/StillWedge2D_MDBC",
         SimulationTime=4,
-        OutputEach=0.01,
+        OutputTimes=0.01,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
         ExportGridCells=true,
