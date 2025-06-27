@@ -6,6 +6,7 @@ using CSV
 using DataFrames
 using StaticArrays
 using StructArrays
+using Base.Threads
 
 using ..SimulationGeometry
 
@@ -126,7 +127,7 @@ function AllocateSupportDataStructures(Position)
     PositionType             = eltype(Position)
     PositionUnderlyingType   = eltype(PositionType)
 
-    dρdtI           = zeros(PositionUnderlyingType, NumberOfPoints)
+    dρdtI           = [Atomic{PositionUnderlyingType}(zero(PositionUnderlyingType)) for _ in 1:NumberOfPoints]
     Velocityₙ⁺      = zeros(PositionType, NumberOfPoints)
     Positionₙ⁺      = zeros(PositionType, NumberOfPoints)
     ρₙ⁺             = zeros(PositionUnderlyingType, NumberOfPoints)
@@ -140,11 +141,11 @@ end
 function AllocateThreadedArrays(SimMetaData, SimParticles, dρdtI, ∇Cᵢ, ∇◌rᵢ   ; n_copy = Base.Threads.nthreads())
     
         
-    dρdtIThreaded        = [copy(dρdtI) for _ in 1:n_copy]
+    # dρdtIThreaded        = [dρdtI for _ in 1:n_copy]
     AccelerationThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
 
     nt = (
-        dρdtIThreaded = dρdtIThreaded,
+        # dρdtIThreaded = dρdtIThreaded,
         AccelerationThreaded = AccelerationThreaded,
     )
 

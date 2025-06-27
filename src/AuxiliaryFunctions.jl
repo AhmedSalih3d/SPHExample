@@ -10,7 +10,18 @@ export ResetArrays!, to_3d, CloseHDFVTKManually, CleanUpSimulationFolder
 
 Fill each array in `arrays` with zeros in place.
 """
-@inline ResetArrays!(arrays...) = foreach(a -> fill!(a, zero(eltype(a))), arrays)
+function _reset_array!(a)
+    if eltype(a) <: Atomic
+        T = eltype(a).parameters[1]
+        for x in a
+            atomic_xchg!(x, zero(T))
+        end
+    else
+        fill!(a, zero(eltype(a)))
+    end
+end
+
+@inline ResetArrays!(arrays...) = foreach(_reset_array!, arrays)
 
 """
     to_3d(vec_2d)

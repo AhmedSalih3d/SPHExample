@@ -114,7 +114,7 @@ using Bumper
 ###=== Function to process each cell and its neighbors
     function NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel,
                            SimMetaData, SimConstants, SimParticles,
-                           SimThreadedArrays, ParticleRanges, CellDict, Stencil,
+                           SimThreadedArrays, ParticleRanges, CellDict, Stencil, dρdtI,
                            Position, Density, Pressure, Velocity, MotionLimiter,
                            UniqueCells, EnumeratedIndices)
         @sync begin
@@ -128,7 +128,7 @@ using Bumper
                     EndIndex   = ParticleRanges[iter+1] - 1
 
                     @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-                        @inline ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
+                        @inline ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, dρdtI, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
                     end
 
                     @inbounds for S ∈ Stencil
@@ -144,7 +144,7 @@ using Bumper
                             EndIndex_         = ParticleRanges[NeighborIdx + 1] - 1
 
                             @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                                @inline ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
+                                @inline ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, dρdtI, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
                             end
                         end
                     end
@@ -205,7 +205,7 @@ using Bumper
         return nothing
     end
 
-    Base.@propagate_inbounds function ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
+    Base.@propagate_inbounds function ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, dρdtI, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
         @unpack FlagOutputKernelValues = SimMetaData
         @unpack ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
@@ -233,8 +233,8 @@ using Bumper
 
             Dᵢ, Dⱼ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, i, j, MotionLimiter)
 
-            SimThreadedArrays.dρdtIThreaded[ichunk][i] += dρdt⁺ + Dᵢ
-            SimThreadedArrays.dρdtIThreaded[ichunk][j] += dρdt⁻ + Dⱼ
+            atomic_add!(dρdtI[i], dρdt⁺ + Dᵢ)
+            atomic_add!(dρdtI[j], dρdt⁻ + Dⱼ)
 
 
             Pᵢ      =  Pressure[i]
@@ -358,9 +358,9 @@ using Bumper
     end
 
     function ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
-        reduce_sum!(dρdtI, SimThreadedArrays.dρdtIThreaded)
+        # No reduction needed when using atomic updates for dρdtI
         reduce_sum!(Acceleration, SimThreadedArrays.AccelerationThreaded)
-  
+
         if SimMetaData.FlagOutputKernelValues
             reduce_sum!(Kernel, SimThreadedArrays.KernelThreaded)
             reduce_sum!(KernelGradient, SimThreadedArrays.KernelGradientThreaded)
@@ -436,7 +436,7 @@ using Bumper
             Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
             Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
             Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
-            ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
+            ρₙ⁺[i]            =  Density[i]    + dρdtI[i][]       *  dt₂
         end
 
 
@@ -591,7 +591,7 @@ using Bumper
                         Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus * DimensionsPlus}, length(Position))
                         @timeit SimMetaData.HourGlass "04 First NeighborLoopMDBC"        NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ)
                     end
-                    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
+                    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, dρdtI, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
                     @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
                 end
 
@@ -611,7 +611,7 @@ using Bumper
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
             
                 @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-                @timeit SimMetaData.HourGlass "08 Second NeighborLoop"                   NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, UniqueCellsView, EnumeratedIndices)
+                @timeit SimMetaData.HourGlass "08 Second NeighborLoop"                   NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, dρdtI, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, UniqueCellsView, EnumeratedIndices)
                 @timeit SimMetaData.HourGlass "Reduction"                                ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
 
             
