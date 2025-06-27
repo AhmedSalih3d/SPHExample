@@ -5,23 +5,22 @@ let
     Dimensions = 2
     FloatType  = Float64
 
-    SimConstantsFloatingCylinder = SimulationConstants{FloatType}(
+    SimConstantsCylinder = SimulationConstants{FloatType}(
         dx=0.05,
         c₀=84.04284584365287,
         δᵩ = 0.1,
         CFL=0.2,
-        k = 1.69706,
     )
 
     FixedBoundary = Geometry{Dimensions, FloatType}(
-        CSVFile     = "./input/floating_cylinder_2d/Wall_WithWalls_Dp$(SimConstantsFloatingCylinder.dx).csv",
+        CSVFile     = "./input/floating_cylinder_2d/Wall_WithWalls_Dp$(SimConstantsCylinder.dx).csv",
         GroupMarker = 1,
         Type        = Fixed,
         Motion      = nothing,
     )
 
     Cylinder = Geometry{Dimensions, FloatType}(
-        CSVFile     = "./input/floating_cylinder_2d/Cylinder_Dp$(SimConstantsFloatingCylinder.dx).csv",
+        CSVFile     = "./input/floating_cylinder_2d/Cylinder_Dp$(SimConstantsCylinder.dx).csv",
         GroupMarker = 3,
         Type        = Floating,
         Motion      = nothing,
@@ -34,29 +33,34 @@ let
 
     SimParticles = AllocateDataStructures(SimulationGeometry)
 
-    SimMetaDataFloatingCylinder = SimulationMetaData{Dimensions, FloatType}(
+    SimMetaDataCylinder = SimulationMetaData{Dimensions, FloatType}(
         SimulationName="FloatingCylinder",
-        SaveLocation="./output/FloatingCylinder2d",
+        SaveLocation="E:/SecondApproach/FloatingCylinder2d",
         SimulationTime=2.0,
-        OutputEach=0.02,
-        FlagDensityDiffusion=true,
+        OutputTimes=0.02,
+        VisualizeInParaview=true,
+        ExportSingleVTKHDF=true,
+        ExportGridCells=true,
+        OpenLogFile=true,
         FlagOutputKernelValues=true,
         FlagLog=true,
-        FlagShifting=false,
+        FlagMDBCSimple=false,
     )
 
-    SimLogger = SimulationLogger(SimMetaDataFloatingCylinder.SaveLocation)
-    CleanUpSimulationFolder(SimMetaDataFloatingCylinder.SaveLocation)
+    SimLogger = SimulationLogger(SimMetaDataCylinder.SaveLocation; to_console=true)
+    CleanUpSimulationFolder(SimMetaDataCylinder.SaveLocation)
 
-    SimKernel = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); dx = SimConstantsFloatingCylinder.dx)
+    SimKernel = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); dx = SimConstantsCylinder.dx)
 
     RunSimulation(
         SimGeometry         = SimulationGeometry,
-        SimMetaData         = SimMetaDataFloatingCylinder,
-        SimConstants        = SimConstantsFloatingCylinder,
+        SimMetaData         = SimMetaDataCylinder,
+        SimConstants        = SimConstantsCylinder,
         SimKernel           = SimKernel,
         SimLogger           = SimLogger,
         SimParticles        = SimParticles,
-        SimDensityDiffusion = LinearDensityDiffusion(),
+        SimViscosity        = ArtificialViscosity(),
+        SimDensityDiffusion = LinearDensityDiffusion()
     )
+
 end
