@@ -3,7 +3,7 @@ using StaticArrays
 using Base.Threads
 using HDF5
 
-export ResetArrays!, to_3d, CloseHDFVTKManually, CleanUpSimulationFolder
+export ResetArrays!, to_3d, CloseHDFVTKManually, CleanUpSimulationFolder, pairs_to_per_particle
 
 """
     ResetArrays!(arrays...)
@@ -68,6 +68,53 @@ function CleanUpSimulationFolder(FilePath)
     end
 
     return nothing
+end
+
+"""
+    pairs_to_per_particle(neighbor_pairs, num_particles)
+
+Convert a vector of neighbour pairs to a flattened per-particle neighbour list.
+
+Each particle id is followed by its neighbours and terminated by a zero. The
+input pairs should use 1-based particle indices.
+
+# Arguments
+- `neighbor_pairs::AbstractVector{<:Tuple{Int,Int}}`: List of `(i, j)` pairs.
+- `num_particles::Integer`: Total number of particles.
+
+# Returns
+- `Vector{Int}`: Flattened neighbour list `[p, n1, n2, 0, p2, ...]`.
+"""
+function pairs_to_per_particle(neighbor_pairs::AbstractVector{<:Tuple{Int,Int}},
+                               num_particles::Integer)
+    counts = zeros(Int, num_particles)
+    for (i, j) in neighbor_pairs
+        counts[i] += 1
+        counts[j] += 1
+    end
+
+    lists = [Vector{Int}(undef, counts[i]) for i in 1:num_particles]
+    fill!(counts, 0)
+
+    for (i, j) in neighbor_pairs
+        ci = counts[i] + 1
+        lists[i][ci] = j
+        counts[i] = ci
+
+        cj = counts[j] + 1
+        lists[j][cj] = i
+        counts[j] = cj
+    end
+
+    nb_list = Int[]
+    sizehint!(nb_list, length(neighbor_pairs) * 2 + num_particles)
+    for p in 1:num_particles
+        push!(nb_list, p)
+        append!(nb_list, lists[p])
+        push!(nb_list, 0)
+    end
+
+    return nb_list
 end
 
 end
