@@ -18,6 +18,7 @@ using ..OpenExternalPrograms
 using ..SPHKernels
 using ..SPHViscosityModels
 using ..SPHDensityDiffusionModels
+using ..FloatingRigidBodies
 
 using StaticArrays
 import StructArrays: StructArray, foreachfield
@@ -443,7 +444,7 @@ using Bumper
         return nothing
     end
 
-    function FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+function FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt, FloatingBodies)
         Position       = SimParticles.Position
         Velocity       = SimParticles.Velocity
         Acceleration   = SimParticles.Acceleration
@@ -471,9 +472,11 @@ using Bumper
                     δxᵢ = -A_FSC * A * SimKernel.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
                 end
         
-                Position[i]           += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
+        Position[i]           += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
             end
         end
+
+        update_floating_bodies!(FloatingBodies, SimParticles, dt)
 
         return nothing
     end
@@ -619,7 +622,7 @@ using Bumper
             
                 @timeit SimMetaData.HourGlass "10 Final Density"                         DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
             
-                @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+                @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt, FloatingBodies)
             
                 @timeit SimMetaData.HourGlass "12 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
 
@@ -700,6 +703,7 @@ using Bumper
 
         # Assuming group markers are sequential
         MotionDefinition = Vector{Union{Nothing, MotionDetails{Dimensions, FloatType}}}(undef, maximum(SimParticles.GroupMarker))
+        FloatingBodies   = construct_floating_bodies(SimGeometry, SimParticles)
 
         for geom in SimGeometry
             group_marker = geom.GroupMarker
@@ -727,7 +731,7 @@ using Bumper
 
         @inbounds while true
 
-            @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, CellDict, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition)
+            @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, CellDict, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, FloatingBodies)
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
 
             if SimMetaData.FlagLog

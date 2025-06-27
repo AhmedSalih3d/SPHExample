@@ -12,8 +12,9 @@ module SPHExample
     include("SimulationLoggerConfiguration.jl");
     include("PreProcess.jl");
     include("OpenExternalPrograms.jl")
-    include("SPHDensityDiffusionModels.jl")  
-    include("SPHCellList.jl") #Must be last    
+    include("FloatingRigidBodies.jl")
+    include("SPHDensityDiffusionModels.jl")
+    include("SPHCellList.jl") #Must be last
 
     # Re-export desired functions from each submodule
     using .AuxiliaryFunctions
@@ -57,6 +58,9 @@ module SPHExample
 
     using .OpenExternalPrograms
     export AutoOpenLogFile, AutoOpenParaview
+
+    using .FloatingRigidBodies
+    export FloatingBody, construct_floating_bodies, update_floating_bodies!
 
 end
 
