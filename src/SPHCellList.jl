@@ -494,7 +494,7 @@ using Bumper
 
     @inline function next_output_time(times::AbstractVector, SimMetaData)
         idx = SimMetaData.OutputIterationCounter
-        if idx <= length(times)
+        if idx < length(times)
             return times[idx]
         else
             return SimMetaData.SimulationTime
