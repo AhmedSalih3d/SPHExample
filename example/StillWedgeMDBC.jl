@@ -30,8 +30,8 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="StillWedge", 
         SaveLocation="E:/SecondApproach/StillWedge2D_MDBC",
-        SimulationTime=4,
-        OutputEach=0.01,
+        SimulationTime=4.0,
+        OutputTimes=0.01,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
         ExportGridCells=true,

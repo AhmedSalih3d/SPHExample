@@ -19,7 +19,7 @@ let
         SimulationName="MovingSquare2D", 
         SaveLocation="E:/SecondApproach/MovingSquare2D",
         SimulationTime=2.5,
-        OutputEach=0.01,
+        OutputTimes=[0.035, 0.07, 0.105, 0.14, 0.175, 0.21, 0.245, 0.28, 0.315, 0.35, 0.385, 0.42, 0.455, 0.49, 0.525, 0.56, 0.595, 0.63, 0.665, 0.7, 1.0, 1.5, 2.0, 2.5],
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
         OpenLogFile=true,

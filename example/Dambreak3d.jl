@@ -37,7 +37,7 @@ let
         SimulationName         = "DamBreak3D_Test",
         SaveLocation           = "E:/SecondApproach/TESTING_CPU_3DDambreak",
         SimulationTime         = 1.6,
-        OutputEach             = 0.01,
+        OutputTimes            = 0.01,
         VisualizeInParaview    = true,
         ExportSingleVTKHDF     = true,
         ExportGridCells        = true,

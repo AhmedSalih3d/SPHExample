@@ -486,6 +486,21 @@ using Bumper
         return nothing
     end
 
+    @inline next_output_time(SimMetaData) =
+        next_output_time(SimMetaData.OutputTimes, SimMetaData)
+
+    @inline next_output_time(interval::Real, SimMetaData) =
+        interval * SimMetaData.OutputIterationCounter
+
+    @inline function next_output_time(times::AbstractVector, SimMetaData)
+        idx = SimMetaData.OutputIterationCounter
+        if idx < length(times)
+            return times[idx]
+        else
+            return SimMetaData.SimulationTime
+        end
+    end
+
     """
         update_delta_x!(Δx, posₙ⁺, pos)
 
@@ -539,7 +554,7 @@ using Bumper
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
         EnumeratedIndices = enumerate(index_chunks(UniqueCellsView; n=nthreads()))
         @no_escape begin
-            while SimMetaData.TotalTime <= SimMetaData.OutputEach * SimMetaData.OutputIterationCounter
+            while SimMetaData.TotalTime <= next_output_time(SimMetaData)
 
                 Δx = update_delta_x!(Δx, Positionₙ⁺, SimParticles.Position)
 

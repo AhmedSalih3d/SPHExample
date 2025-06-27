@@ -13,6 +13,7 @@ export SimulationMetaData
     HourGlass::TimerOutput                  = TimerOutput()
     Iteration::Int                          = 0
     OutputEach::FloatType                   = 0.02 #seconds
+    OutputTimes::Union{FloatType,Vector{FloatType}} = OutputEach
     OutputIterationCounter::Int             = 0
     StepsTakenForLastOutput::Int            = 0
     CurrentTimeStep::FloatType              = 0

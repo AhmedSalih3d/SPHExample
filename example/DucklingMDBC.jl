@@ -30,7 +30,7 @@ let
         SimulationName="CaseDuckling", 
         SaveLocation="E:/SecondApproach/TESTING_CPU_Duckling",
         SimulationTime=1,
-        OutputEach=0.02,
+        OutputTimes=0.02,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
         ExportGridCells= true,

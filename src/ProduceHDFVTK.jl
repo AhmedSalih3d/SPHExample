@@ -472,8 +472,13 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         # Initialize storage for file handles
         file_handles = if !SimMetaData.ExportSingleVTKHDF
             # Multi-file mode: vector for particle files
+            n_outputs = if SimMetaData.OutputTimes isa AbstractVector
+                length(SimMetaData.OutputTimes) + 1
+            else
+                Int(SimMetaData.SimulationTime/SimMetaData.OutputTimes + 1)
+            end
             (
-                particle_files = Vector{HDF5.File}(undef, Int(SimMetaData.SimulationTime/SimMetaData.OutputEach + 1)),
+                particle_files = Vector{HDF5.File}(undef, n_outputs),
                 grid_files = nothing,
             )
         else

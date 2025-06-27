@@ -31,7 +31,7 @@ let
         SimulationName="DamBreak2D", 
         SaveLocation="E:/SecondApproach/DamBreak2D_MDBC/",
         SimulationTime=2,
-        OutputEach=0.01,
+        OutputTimes=collect(0.01:0.01:2),
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
         ExportGridCells=true,
