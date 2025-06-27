@@ -91,6 +91,7 @@ Written by Ahmed Salih ([AhmedSalih3d](https://github.com/AhmedSalih3d)).
 
 | Version | Description |
 |---------|-------------|
+| 0.6.9 | Specify output times via `OutputTimes` (float or vector). |
 | 0.6.8 | Select which variables are written to `vtkhdf` files. |
 | 0.6.7 | Introduced mDBC boundary conditions and other improvements allowing particles to interact with boundaries. |
 | 0.6.6 | Added neighbour grid visualisation in ParaView for debugging. |
