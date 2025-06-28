@@ -37,7 +37,7 @@ let
         ExportGridCells=true,
         OpenLogFile=true,
         FlagOutputKernelValues=false,
-        FlagMDBCSimple=true,
+        # FlagMDBCSimple=true,
         FlagLog=true
     )
 
