@@ -91,20 +91,21 @@ Written by Ahmed Salih ([AhmedSalih3d](https://github.com/AhmedSalih3d)).
 
 | Version | Description |
 |---------|-------------|
-| 0.6.9 | Specify output times via `OutputTimes` (float or vector). |
-| 0.6.8 | Select which variables are written to `vtkhdf` files. |
-| 0.6.7 | Introduced mDBC boundary conditions and other improvements allowing particles to interact with boundaries. |
-| 0.6.6 | Added neighbour grid visualisation in ParaView for debugging. |
-| 0.6.5 | Linearised density diffusion, optional single-file output and performance improvements. |
-| 0.6.4 | Revised geometry configuration interface and added time-step plot. |
-| 0.6.3 | Added automatic log visualisation and `CloseHDFVTKManually` helper. |
-| 0.6.2 | Added automatic ParaView visualisation support. |
-| 0.6   | Major rewrite with solver setup changes and moving object support. |
-| 0.5   | Logging and `hdfvtk` output added. |
-| 0.4   | Complete rewrite focusing on custom cell lists. |
-| 0.3   | Highly optimised CPU version with minimal allocations. |
-| 0.2   | Cleanup of initial release. |
-| 0.1   | Initial release. |
+| 0.6.10 | Implemented concepts of tests, aim is to understand allocations and run time |
+| 0.6.9  | Specify output times via `OutputTimes` (float or vector). |
+| 0.6.8  | Select which variables are written to `vtkhdf` files. |
+| 0.6.7  | Introduced mDBC boundary conditions and other improvements allowing particles to interact with boundaries. |
+| 0.6.6  | Added neighbour grid visualisation in ParaView for debugging. |
+| 0.6.5  | Linearised density diffusion, optional single-file output and performance improvements. |
+| 0.6.4  | Revised geometry configuration interface and added time-step plot. |
+| 0.6.3  | Added automatic log visualisation and `CloseHDFVTKManually` helper. |
+| 0.6.2  | Added automatic ParaView visualisation support. |
+| 0.6    | Major rewrite with solver setup changes and moving object support. |
+| 0.5    | Logging and `hdfvtk` output added. |
+| 0.4    | Complete rewrite focusing on custom cell lists. |
+| 0.3    | Highly optimised CPU version with minimal allocations. |
+| 0.2    | Cleanup of initial release. |
+| 0.1    | Initial release. |
 
 ## License
 
