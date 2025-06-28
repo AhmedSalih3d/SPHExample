@@ -443,35 +443,46 @@ using Bumper
         return nothing
     end
 
-    function FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+    """
+        FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles,
+                    Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt)
+
+    Complete the symplectic time step using midpoint accelerations. `Velocityₙ⁺`
+    contains the half-step velocities from `HalfTimeStep`.
+    """
+    function FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles,
+                          Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt)
         Position       = SimParticles.Position
         Velocity       = SimParticles.Velocity
         Acceleration   = SimParticles.Acceleration
         GravityFactor  = SimParticles.GravityFactor
         MotionLimiter  = SimParticles.MotionLimiter
   
+        dt₂ = dt * 0.5
         if !SimMetaData.FlagShifting
             @inbounds @simd ivdep for i in eachindex(Position)
-                Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
-                Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
-                Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
+                Acceleration[i] += ConstructGravitySVector(Acceleration[i],
+                                                         SimConstants.g * GravityFactor[i])
+                Velocity[i] = Velocityₙ⁺[i] + Acceleration[i] * dt₂ * MotionLimiter[i]
+                Position[i] += Velocityₙ⁺[i] * dt * MotionLimiter[i]
             end
         else
-            A     = 2# Value between 1 to 6 advised
-            A_FST = 0; # zero for internal flows
-            A_FSM = length(first(Position)); #2d, 3d val different
+            A     = 2 # Value between 1 to 6 advised
+            A_FST = 0  # zero for internal flows
+            A_FSM = length(first(Position)) # 2d, 3d val different
             @inbounds @simd ivdep for i in eachindex(Position)
-                Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
-                Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
-        
-                A_FSC                  = (∇◌rᵢ[i] - A_FST)/(A_FSM - A_FST)
+                Acceleration[i] += ConstructGravitySVector(Acceleration[i],
+                                                         SimConstants.g * GravityFactor[i])
+                Velocity[i] = Velocityₙ⁺[i] + Acceleration[i] * dt₂ * MotionLimiter[i]
+
+                A_FSC = (∇◌rᵢ[i] - A_FST) / (A_FSM - A_FST)
                 if A_FSC < 0
                     δxᵢ = zero(eltype(Position))
                 else
                     δxᵢ = -A_FSC * A * SimKernel.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
                 end
-        
-                Position[i]           += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
+
+                Position[i] += (Velocityₙ⁺[i] * dt + δxᵢ) * MotionLimiter[i]
             end
         end
 
@@ -580,46 +591,39 @@ using Bumper
 
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
             
-                if !SimMetaData.FlagSingleStepTimeStepping
-                    ###=== First step of resetting arrays
-                    @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
-                    ###===
-                
-                    @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-                    if SimMetaData.FlagMDBCSimple
-                        bᵧ = @alloc(SVector{DimensionsPlus, FloatType}, length(Position))
-                        Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus * DimensionsPlus}, length(Position))
-                        @timeit SimMetaData.HourGlass "04 First NeighborLoopMDBC"        NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ)
-                    end
-                    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
-                    @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+                if SimMetaData.FlagMDBCSimple
+                    bᵧ = @alloc(SVector{DimensionsPlus, FloatType}, length(Position))
+                    Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus * DimensionsPlus}, length(Position))
                 end
 
-                if SimMetaData.FlagMDBCSimple
-                    @timeit SimMetaData.HourGlass "05a Apply MDBC before Half TimeStep"  ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
-                end
-                
                 @timeit SimMetaData.HourGlass "05b Update To Half TimeStep"              HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
 
 
                 @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
-            
+
                 ###=== Second step of resetting arrays
                 @timeit SimMetaData.HourGlass "ResetArrays"                              ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
                 ###===
 
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
-            
+
                 @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
+                if SimMetaData.FlagMDBCSimple
+                    @timeit SimMetaData.HourGlass "07 NeighborLoopMDBC"                   NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, CellDict, Positionₙ⁺, ρₙ⁺, GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ)
+                end
                 @timeit SimMetaData.HourGlass "08 Second NeighborLoop"                   NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, UniqueCellsView, EnumeratedIndices)
                 @timeit SimMetaData.HourGlass "Reduction"                                ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+
+                if SimMetaData.FlagMDBCSimple
+                    @timeit SimMetaData.HourGlass "08a Apply MDBC after Forces"           ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
+                end
 
             
                 @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
             
                 @timeit SimMetaData.HourGlass "10 Final Density"                         DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
             
-                @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+                @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt)
             
                 @timeit SimMetaData.HourGlass "12 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
 

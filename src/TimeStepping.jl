@@ -1,6 +1,6 @@
 module TimeStepping
 
-export Δt
+export Δt, symplectic_step!
 
 using LinearAlgebra
 using Parameters
@@ -44,5 +44,31 @@ function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
 
     return dt
 end
+
+# Symplectic time step following DualSPHysics
+# This performs a half-step kick-drift, calls `force_func!` to update
+# accelerations at the midpoint, and then completes the step with another
+# kick-drift.
+"""
+    symplectic_step!(position, velocity, acceleration, dt, force_func!)
+
+Advance positions and velocities by one time step `dt` using the
+DualSPHysics symplectic integrator. `force_func!` must update the
+`acceleration` vector based on the current `position` and `velocity`.
+"""
+function symplectic_step!(position, velocity, acceleration, dt, force_func!)
+    dt_half = dt * 0.5
+    @inbounds @simd for i in eachindex(position)
+        velocity[i] += dt_half * acceleration[i]
+        position[i] += dt_half * velocity[i]
+    end
+    force_func!(position, velocity, acceleration)
+    @inbounds @simd for i in eachindex(position)
+        velocity[i] += dt_half * acceleration[i]
+        position[i] += dt_half * velocity[i]
+    end
+    return nothing
+end
+
 
 end
