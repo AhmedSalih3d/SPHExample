@@ -443,35 +443,46 @@ using Bumper
         return nothing
     end
 
-    function FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+    """
+        FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles,
+                    Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt)
+
+    Complete the symplectic time step using midpoint accelerations. `Velocityₙ⁺`
+    contains the half-step velocities from `HalfTimeStep`.
+    """
+    function FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles,
+                          Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt)
         Position       = SimParticles.Position
         Velocity       = SimParticles.Velocity
         Acceleration   = SimParticles.Acceleration
         GravityFactor  = SimParticles.GravityFactor
         MotionLimiter  = SimParticles.MotionLimiter
   
+        dt₂ = dt * 0.5
         if !SimMetaData.FlagShifting
             @inbounds @simd ivdep for i in eachindex(Position)
-                Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
-                Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
-                Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
+                Acceleration[i] += ConstructGravitySVector(Acceleration[i],
+                                                         SimConstants.g * GravityFactor[i])
+                Velocity[i] = Velocityₙ⁺[i] + Acceleration[i] * dt₂ * MotionLimiter[i]
+                Position[i] += Velocityₙ⁺[i] * dt * MotionLimiter[i]
             end
         else
-            A     = 2# Value between 1 to 6 advised
-            A_FST = 0; # zero for internal flows
-            A_FSM = length(first(Position)); #2d, 3d val different
+            A     = 2 # Value between 1 to 6 advised
+            A_FST = 0  # zero for internal flows
+            A_FSM = length(first(Position)) # 2d, 3d val different
             @inbounds @simd ivdep for i in eachindex(Position)
-                Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
-                Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
-        
-                A_FSC                  = (∇◌rᵢ[i] - A_FST)/(A_FSM - A_FST)
+                Acceleration[i] += ConstructGravitySVector(Acceleration[i],
+                                                         SimConstants.g * GravityFactor[i])
+                Velocity[i] = Velocityₙ⁺[i] + Acceleration[i] * dt₂ * MotionLimiter[i]
+
+                A_FSC = (∇◌rᵢ[i] - A_FST) / (A_FSM - A_FST)
                 if A_FSC < 0
                     δxᵢ = zero(eltype(Position))
                 else
                     δxᵢ = -A_FSC * A * SimKernel.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
                 end
-        
-                Position[i]           += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
+
+                Position[i] += (Velocityₙ⁺[i] * dt + δxᵢ) * MotionLimiter[i]
             end
         end
 
@@ -612,7 +623,7 @@ using Bumper
             
                 @timeit SimMetaData.HourGlass "10 Final Density"                         DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
             
-                @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+                @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt)
             
                 @timeit SimMetaData.HourGlass "12 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
 
