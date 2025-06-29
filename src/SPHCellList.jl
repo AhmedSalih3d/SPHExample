@@ -489,39 +489,55 @@ using Bumper
         return nothing
     end
 
-    function FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+    # FullTimeStep without shifting
+    function FullTimeStep(::Val{false}, SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
         Position       = SimParticles.Position
         Velocity       = SimParticles.Velocity
         Acceleration   = SimParticles.Acceleration
         GravityFactor  = SimParticles.GravityFactor
         MotionLimiter  = SimParticles.MotionLimiter
-  
-        if !SimMetaData.FlagShifting
-            @inbounds @simd ivdep for i in eachindex(Position)
-                Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
-                Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
-                Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
-            end
-        else
-            A     = 2# Value between 1 to 6 advised
-            A_FST = 0; # zero for internal flows
-            A_FSM = length(first(Position)); #2d, 3d val different
-            @inbounds @simd ivdep for i in eachindex(Position)
-                Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
-                Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
-        
-                A_FSC                  = (∇◌rᵢ[i] - A_FST)/(A_FSM - A_FST)
-                if A_FSC < 0
-                    δxᵢ = zero(eltype(Position))
-                else
-                    δxᵢ = -A_FSC * A * SimKernel.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
-                end
-        
-                Position[i]           += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
-            end
+
+        @inbounds @simd ivdep for i in eachindex(Position)
+            Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+            Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
+            Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
         end
 
         return nothing
+    end
+
+    # FullTimeStep with shifting
+    function FullTimeStep(::Val{true}, SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+        Position       = SimParticles.Position
+        Velocity       = SimParticles.Velocity
+        Acceleration   = SimParticles.Acceleration
+        GravityFactor  = SimParticles.GravityFactor
+        MotionLimiter  = SimParticles.MotionLimiter
+
+        A     = 2 # Value between 1 to 6 advised
+        A_FST = 0 # zero for internal flows
+        A_FSM = length(first(Position)) #2d, 3d val different
+
+        @inbounds @simd ivdep for i in eachindex(Position)
+            Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+            Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
+
+            A_FSC = (∇◌rᵢ[i] - A_FST) / (A_FSM - A_FST)
+            if A_FSC < 0
+                δxᵢ = zero(eltype(Position))
+            else
+                δxᵢ = -A_FSC * A * SimKernel.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
+            end
+
+            Position[i] += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
+        end
+
+        return nothing
+    end
+
+    # Convenience wrapper
+    function FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+        FullTimeStep(Val(SimMetaData.FlagShifting), SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
     end
 
     function UpdateMetaData!(SimMetaData, dt)
