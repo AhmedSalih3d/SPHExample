@@ -9,8 +9,6 @@ second_approach/
 Manifest.toml
 # Ignore log files
 *.log
-# Ignore test files
-test/
 # Ignore vtkhdf files
 *.vtkhdf
 # Ignore local Julia archives

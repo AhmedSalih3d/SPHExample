@@ -1,6 +1,6 @@
 name = "SPHExample"
 uuid = "49649ea8-6f54-4931-9342-0ba915f114f7"
-version = "0.6.9"
+version = "0.6.10"
 
 [deps]
 Bumper = "8ce10254-0962-460f-a3d8-1f77fea1446e"
@@ -44,3 +44,9 @@ StructArrays = "0.7.0"
 TimerOutputs = "0.5.23"
 UnicodePlots = "3.7.2"
 julia = "1.10"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
