@@ -340,38 +340,84 @@ using Bumper
         end
     end
 
-    function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
-        
+    # Base method: neither kernel values nor shifting
+    function ResetStep!(::Val{false}, ::Val{false}, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
         ResetArrays!(dρdtI, Acceleration)
-
-        if SimMetaData.FlagOutputKernelValues
-            ResetArrays!(Kernel, KernelGradient)
-        end
-
-        if SimMetaData.FlagShifting
-            ResetArrays!(∇Cᵢ, ∇◌rᵢ)
-        end
-
         foreachfield(f -> map!(v -> fill!(v, zero(eltype(v))), f, f), SimThreadedArrays)
-
         return nothing
     end
 
-    function ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+    # Only kernel values
+    function ResetStep!(::Val{true}, ::Val{false}, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+        ResetArrays!(dρdtI, Acceleration)
+        ResetArrays!(Kernel, KernelGradient)
+        foreachfield(f -> map!(v -> fill!(v, zero(eltype(v))), f, f), SimThreadedArrays)
+        return nothing
+    end
+
+    # Only shifting
+    function ResetStep!(::Val{false}, ::Val{true}, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+        ResetArrays!(dρdtI, Acceleration)
+        ResetArrays!(∇Cᵢ, ∇◌rᵢ)
+        foreachfield(f -> map!(v -> fill!(v, zero(eltype(v))), f, f), SimThreadedArrays)
+        return nothing
+    end
+
+    # Both kernel values and shifting
+    function ResetStep!(::Val{true}, ::Val{true}, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+        ResetArrays!(dρdtI, Acceleration)
+        ResetArrays!(Kernel, KernelGradient)
+        ResetArrays!(∇Cᵢ, ∇◌rᵢ)
+        foreachfield(f -> map!(v -> fill!(v, zero(eltype(v))), f, f), SimThreadedArrays)
+        return nothing
+    end
+
+    # Convenience wrapper for calling with SimMetaData
+    function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+        ResetStep!(Val(SimMetaData.FlagOutputKernelValues), Val(SimMetaData.FlagShifting),
+                   SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+    end
+
+    # Base method: no kernel values, no shifting
+    function ReductionStep!(::Val{false}, ::Val{false}, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
         reduce_sum!(dρdtI, SimThreadedArrays.dρdtIThreaded)
         reduce_sum!(Acceleration, SimThreadedArrays.AccelerationThreaded)
-  
-        if SimMetaData.FlagOutputKernelValues
-            reduce_sum!(Kernel, SimThreadedArrays.KernelThreaded)
-            reduce_sum!(KernelGradient, SimThreadedArrays.KernelGradientThreaded)
-        end
-
-        if SimMetaData.FlagShifting
-            reduce_sum!(∇Cᵢ, SimThreadedArrays.∇CᵢThreaded)
-            reduce_sum!(∇◌rᵢ, SimThreadedArrays.∇◌rᵢThreaded)
-        end
-    
         return nothing
+    end
+
+    # Only kernel values
+    function ReductionStep!(::Val{true}, ::Val{false}, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+        reduce_sum!(dρdtI, SimThreadedArrays.dρdtIThreaded)
+        reduce_sum!(Acceleration, SimThreadedArrays.AccelerationThreaded)
+        reduce_sum!(Kernel, SimThreadedArrays.KernelThreaded)
+        reduce_sum!(KernelGradient, SimThreadedArrays.KernelGradientThreaded)
+        return nothing
+    end
+
+    # Only shifting
+    function ReductionStep!(::Val{false}, ::Val{true}, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+        reduce_sum!(dρdtI, SimThreadedArrays.dρdtIThreaded)
+        reduce_sum!(Acceleration, SimThreadedArrays.AccelerationThreaded)
+        reduce_sum!(∇Cᵢ, SimThreadedArrays.∇CᵢThreaded)
+        reduce_sum!(∇◌rᵢ, SimThreadedArrays.∇◌rᵢThreaded)
+        return nothing
+    end
+
+    # Both kernel values and shifting
+    function ReductionStep!(::Val{true}, ::Val{true}, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+        reduce_sum!(dρdtI, SimThreadedArrays.dρdtIThreaded)
+        reduce_sum!(Acceleration, SimThreadedArrays.AccelerationThreaded)
+        reduce_sum!(Kernel, SimThreadedArrays.KernelThreaded)
+        reduce_sum!(KernelGradient, SimThreadedArrays.KernelGradientThreaded)
+        reduce_sum!(∇Cᵢ, SimThreadedArrays.∇CᵢThreaded)
+        reduce_sum!(∇◌rᵢ, SimThreadedArrays.∇◌rᵢThreaded)
+        return nothing
+    end
+
+    # Convenience wrapper for calling with SimMetaData
+    function ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+        ReductionStep!(Val(SimMetaData.FlagOutputKernelValues), Val(SimMetaData.FlagShifting),
+                       SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
     end
     
     ### Some functions to simplify code inside of this function
