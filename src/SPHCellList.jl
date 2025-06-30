@@ -398,7 +398,9 @@ using Bumper
         return nothing
     end
 
-    function UpdateGhostPoints!(Position, GhostNormals, GhostPoints)
+    UpdateGhostPoints!(::Val{false}, Position, GhostNormals, GhostPoints) = nothing
+
+    function UpdateGhostPoints!(::Val{true}, Position, GhostNormals, GhostPoints)
         @inbounds @simd ivdep for i in eachindex(GhostPoints)
             n = GhostNormals[i]
             if !iszero(n)
@@ -545,7 +547,8 @@ using Bumper
                                       ParticleRanges, UniqueCells, CellDict,
                                       SortingScratchSpace, SimThreadedArrays,
                                       dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
-                                      ∇Cᵢ, ∇◌rᵢ, MotionDefinition) where {Dimensions, FloatType}
+                                      ∇Cᵢ, ∇◌rᵢ, MotionDefinition,
+                                      ::Val{HasMoving}) where {Dimensions, FloatType, HasMoving}
         Position       = SimParticles.Position
         Density        = SimParticles.Density
         Pressure       = SimParticles.Pressure
@@ -590,7 +593,7 @@ using Bumper
                 end
 
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
-                UpdateGhostPoints!(Position, GhostNormals, GhostPoints)
+                UpdateGhostPoints!(Val{HasMoving}(), Position, GhostNormals, GhostPoints)
                 if !SimMetaData.FlagSingleStepTimeStepping
                     ###=== First step of resetting arrays
                     @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
@@ -619,7 +622,7 @@ using Bumper
                 ###===
 
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
-                UpdateGhostPoints!(Position, GhostNormals, GhostPoints)
+                UpdateGhostPoints!(Val{HasMoving}(), Position, GhostNormals, GhostPoints)
             
                 @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
                 @timeit SimMetaData.HourGlass "08 Second NeighborLoop"                   NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, UniqueCellsView, EnumeratedIndices)
@@ -709,6 +712,7 @@ using Bumper
 
         # Assuming group markers are sequential
         MotionDefinition = Vector{Union{Nothing, MotionDetails{Dimensions, FloatType}}}(undef, maximum(SimParticles.GroupMarker))
+        HasMoving = any(g -> g.Type == Moving, SimGeometry)
 
         for geom in SimGeometry
             group_marker = geom.GroupMarker
@@ -736,7 +740,7 @@ using Bumper
 
         @inbounds while true
 
-            @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, CellDict, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition)
+            @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, CellDict, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition, Val(HasMoving))
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
 
             if SimMetaData.FlagLog
