@@ -398,6 +398,17 @@ using Bumper
         return nothing
     end
 
+    function UpdateGhostPoints!(Position, GhostNormals, GhostPoints)
+        @inbounds @simd ivdep for i in eachindex(GhostPoints)
+            n = GhostNormals[i]
+            if !iszero(n)
+                GhostPoints[i] = Position[i] + n
+            end
+        end
+
+        return nothing
+    end
+
     function ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
 
         Position    = SimParticles.Position
@@ -579,7 +590,7 @@ using Bumper
                 end
 
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
-            
+                UpdateGhostPoints!(Position, GhostNormals, GhostPoints)
                 if !SimMetaData.FlagSingleStepTimeStepping
                     ###=== First step of resetting arrays
                     @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
@@ -608,6 +619,7 @@ using Bumper
                 ###===
 
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
+                UpdateGhostPoints!(Position, GhostNormals, GhostPoints)
             
                 @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
                 @timeit SimMetaData.HourGlass "08 Second NeighborLoop"                   NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, UniqueCellsView, EnumeratedIndices)
@@ -651,13 +663,11 @@ using Bumper
         # Implement this properly later in shaa Allah
         # if !isnothing(ParticleNormalsPath)
             if SimMetaData.FlagMDBCSimple
-                _, GhostPoints, GhostNormals = LoadBoundaryNormals(Val(Dimensions), FloatType, ParticleNormalsPath)
-            
+                _, _, GhostNormals = LoadBoundaryNormals(Val(Dimensions), FloatType, ParticleNormalsPath)
 
-                #TODO: In the future decide on one of the two in shaa Allah
-                for gi ∈ eachindex(GhostPoints)
-                    SimParticles.GhostPoints[gi]  = GhostPoints[gi]
+                for gi ∈ eachindex(GhostNormals)
                     SimParticles.GhostNormals[gi] = GhostNormals[gi]
+                    SimParticles.GhostPoints[gi]  = SimParticles.Position[gi] + GhostNormals[gi]
                 end
             end
         # end
