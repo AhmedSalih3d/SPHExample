@@ -344,13 +344,13 @@ using Bumper
         
         ResetArrays!(dρdtI, Acceleration)
 
-        if SimMetaData.FlagOutputKernelValues
-            ResetArrays!(Kernel, KernelGradient)
-        end
+        # if SimMetaData.FlagOutputKernelValues
+        #     ResetArrays!(Kernel, KernelGradient)
+        # end
 
-        if SimMetaData.FlagShifting
-            ResetArrays!(∇Cᵢ, ∇◌rᵢ)
-        end
+        # if SimMetaData.FlagShifting
+        #     ResetArrays!(∇Cᵢ, ∇◌rᵢ)
+        # end
 
         foreachfield(f -> map!(v -> fill!(v, zero(eltype(v))), f, f), SimThreadedArrays)
 
@@ -361,15 +361,15 @@ using Bumper
         reduce_sum!(dρdtI, SimThreadedArrays.dρdtIThreaded)
         reduce_sum!(Acceleration, SimThreadedArrays.AccelerationThreaded)
   
-        if SimMetaData.FlagOutputKernelValues
-            reduce_sum!(Kernel, SimThreadedArrays.KernelThreaded)
-            reduce_sum!(KernelGradient, SimThreadedArrays.KernelGradientThreaded)
-        end
+        # if SimMetaData.FlagOutputKernelValues
+        #     reduce_sum!(Kernel, SimThreadedArrays.KernelThreaded)
+        #     reduce_sum!(KernelGradient, SimThreadedArrays.KernelGradientThreaded)
+        # end
 
-        if SimMetaData.FlagShifting
-            reduce_sum!(∇Cᵢ, SimThreadedArrays.∇CᵢThreaded)
-            reduce_sum!(∇◌rᵢ, SimThreadedArrays.∇◌rᵢThreaded)
-        end
+        # if SimMetaData.FlagShifting
+        #     reduce_sum!(∇Cᵢ, SimThreadedArrays.∇CᵢThreaded)
+        #     reduce_sum!(∇◌rᵢ, SimThreadedArrays.∇◌rᵢThreaded)
+        # end
     
         return nothing
     end
