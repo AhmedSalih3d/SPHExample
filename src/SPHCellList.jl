@@ -436,12 +436,7 @@ using Bumper
     end
     
     function HalfTimeStep(::SimulationMetaData{Dimensions, FloatType}, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂) where {Dimensions, FloatType}
-        Position       = SimParticles.Position
-        Density        = SimParticles.Density
-        Velocity       = SimParticles.Velocity
-        Acceleration   = SimParticles.Acceleration
-        GravityFactor  = SimParticles.GravityFactor
-        MotionLimiter  = SimParticles.MotionLimiter
+        @unpack Position, Density, Velocity, Acceleration, GravityFactor, MotionLimiter = SimParticles
 
         @inbounds @simd ivdep for i in eachindex(Position)
             Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
@@ -455,11 +450,7 @@ using Bumper
     end
 
     function FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
-        Position       = SimParticles.Position
-        Velocity       = SimParticles.Velocity
-        Acceleration   = SimParticles.Acceleration
-        GravityFactor  = SimParticles.GravityFactor
-        MotionLimiter  = SimParticles.MotionLimiter
+        @unpack Position, Velocity, Acceleration, GravityFactor, MotionLimiter = SimParticles
   
         if !SimMetaData.FlagShifting
             @inbounds @simd ivdep for i in eachindex(Position)
