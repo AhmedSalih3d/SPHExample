@@ -328,7 +328,7 @@ using Bumper
         n = length(target_array)
         num_threads = nthreads()
         chunk_size = ceil(Int, n / num_threads)
-        @inbounds for t in 1:num_threads
+        @inbounds @threads for t in 1:num_threads
             local start_idx = 1 + (t-1) * chunk_size
             local end_idx = min(t * chunk_size, n)
             for j in eachindex(arrays)
@@ -341,18 +341,29 @@ using Bumper
     end
 
     function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
-        
-        ResetArrays!(dρdtI, Acceleration)
+        # Threaded zeroing for main arrays
+        @threads for arr in (dρdtI, Acceleration)
+            fill!(arr, zero(eltype(arr)))
+        end
 
         if SimMetaData.FlagOutputKernelValues
-            ResetArrays!(Kernel, KernelGradient)
+            @threads for arr in (Kernel, KernelGradient)
+                fill!(arr, zero(eltype(arr)))
+            end
         end
 
         if SimMetaData.FlagShifting
-            ResetArrays!(∇Cᵢ, ∇◌rᵢ)
+            @threads for arr in (∇Cᵢ, ∇◌rᵢ)
+                fill!(arr, zero(eltype(arr)))
+            end
         end
 
-        foreachfield(f -> map!(v -> fill!(v, zero(eltype(v))), f, f), SimThreadedArrays)
+        # Threaded zeroing for fields in SimThreadedArrays
+        foreachfield(f -> begin
+            Threads.@threads for v in f
+                fill!(v, zero(eltype(v)))
+            end
+        end, SimThreadedArrays)
 
         return nothing
     end
