@@ -90,7 +90,8 @@ using Bumper
         sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
         Cells = @views Particles.Cells
         @. ParticleRanges             = zero(eltype(ParticleRanges))
-        IndexCounter                  = 1
+        ParticleRanges[1] = 1
+        IndexCounter                  = 2
         ParticleRanges[IndexCounter]  = 1
         UniqueCells[IndexCounter]     = Cells[1]
         empty!(CellDict)
@@ -134,18 +135,16 @@ using Bumper
                     @inbounds for S ∈ Stencil
                         SCellIndex = CellIndex + S
 
-                        # Returns a range, x:x for exact match and x:(x-1) for no match
+                        # Returns a range, x>:x for exact match and x=:x for no match
                         # utilizes that it is a sorted array and requires no isequal constructor,
                         # so I prefer this for now
-                        NeighborIdx = get(CellDict, SCellIndex, 0)
+                        NeighborIdx = get(CellDict, SCellIndex, 1)
 
-                        if NeighborIdx != 0
-                            StartIndex_       = ParticleRanges[NeighborIdx]
-                            EndIndex_         = ParticleRanges[NeighborIdx + 1] - 1
+                        StartIndex_       = ParticleRanges[NeighborIdx]
+                        EndIndex_         = ParticleRanges[NeighborIdx + 1] - 1
 
-                            @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                                @inline ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
-                            end
+                        @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
+                            @inline ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
                         end
                     end
                 end
@@ -176,23 +175,22 @@ using Bumper
                 GhostCellIndex = f(SimKernel, GhostPoints[iter])
                 @inbounds for S ∈ FullStencil
                     SCellIndex = GhostCellIndex + S
-                    # Returns a range, x:x for exact match and x:(x-1) for no match
+
+                    # Returns a range, x>:x for exact match and x=:x for no match
                     # utilizes that it is a sorted array and requires no isequal constructor,
                     # so I prefer this for now
-                    NeighborIdx = get(CellDict, SCellIndex, 0)
+                    NeighborIdx = get(CellDict, SCellIndex, 1)
 
-                    if NeighborIdx != 0
-                        StartIndex_       = ParticleRanges[NeighborIdx] 
-                        EndIndex_         = ParticleRanges[NeighborIdx + 1] - 1
+                    StartIndex_       = ParticleRanges[NeighborIdx] 
+                    EndIndex_         = ParticleRanges[NeighborIdx + 1] - 1
 
-                        for j in StartIndex_:EndIndex_
-                            # change ComputeInteractions to take & return contributions, e.g.:
-                            bΔ, AΔ = ComputeInteractionsMDBC!(SimKernel, SimMetaData, SimConstants,
-                                                            Position, Density, ParticleType,
-                                                            GhostPoints, iter, j)
-                            b_acc += bΔ
-                            A_acc += AΔ
-                        end
+                    for j in StartIndex_:EndIndex_
+                        # change ComputeInteractions to take & return contributions, e.g.:
+                        bΔ, AΔ = ComputeInteractionsMDBC!(SimKernel, SimMetaData, SimConstants,
+                                                        Position, Density, ParticleType,
+                                                        GhostPoints, iter, j)
+                        b_acc += bΔ
+                        A_acc += AΔ
                     end
                 end
             
@@ -683,7 +681,7 @@ using Bumper
         SimThreadedArrays = AllocateThreadedArrays(SimMetaData, SimParticles, dρdtI, ∇Cᵢ, ∇◌rᵢ)
     
         # Produce sorting related variables
-        ParticleRanges         = zeros(Int, NumberOfPoints + 1)
+        ParticleRanges         = zeros(Int, NumberOfPoints + 1 + 1) # +1 for the last particle, +1 for dummy entry
         UniqueCells            = zeros(CartesianIndex{Dimensions}, NumberOfPoints)
         CellDict               = Dict{CartesianIndex{Dimensions}, Int}()
         Stencil                = ConstructStencil(Val(Dimensions))
