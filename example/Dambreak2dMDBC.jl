@@ -29,7 +29,7 @@ let
 
     SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="DamBreak2D", 
-        SaveLocation="E:/SecondApproach/DamBreak2D_MDBC/",
+        SaveLocation="C:/TestSimulations/DamBreak2D_MDBC/",
         SimulationTime=2,
         OutputTimes=collect(0.01:0.01:2),
         VisualizeInParaview=true,
@@ -37,7 +37,7 @@ let
         ExportGridCells=true,
         OpenLogFile=true,
         FlagOutputKernelValues=false,
-        # FlagMDBCSimple=true,
+        FlagMDBCSimple=true,
         FlagLog=true
     )
 

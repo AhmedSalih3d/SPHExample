@@ -17,7 +17,7 @@ let
 
     SimMetaDataMovingSquare  = SimulationMetaData{Dimensions,FloatType}(
         SimulationName="MovingSquare2D", 
-        SaveLocation="E:/SecondApproach/MovingSquare2D",
+        SaveLocation="C:/TestSimulations/MovingSquare2D",
         SimulationTime=2.5,
         OutputTimes=0.01,
         VisualizeInParaview=true,
@@ -79,6 +79,6 @@ let
         SimParticles        = SimParticles,
         SimKernel           = SimKernel,
         SimViscosity        = LaminarSPS(),
-        SimDensityDiffusion = LinearDensityDiffusion()
+        SimDensityDiffusion = ZeroGravityLinearDensityDiffusion()
     )
 end
