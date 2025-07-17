@@ -2,7 +2,7 @@ module SPHCellList
 
 export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!, RunSimulation
 
-using Parameters, FastPow, StaticArrays, Base.Threads, ChunkSplitters
+using Parameters, FastPow, StaticArrays, Base.Threads
 import LinearAlgebra: dot
 
 using ..SimulationEquations
