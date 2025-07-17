@@ -44,6 +44,7 @@ export SimulationMetaData
     FlagLog::Bool                           = false
     FlagShifting::Bool                      = false
     FlagSingleStepTimeStepping::Bool        = false
+    ChunkMultiplier::Int                    = 1
     FlagMDBCSimple::Bool                    = false
 end
 
