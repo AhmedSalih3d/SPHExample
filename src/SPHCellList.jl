@@ -110,47 +110,56 @@ using Bumper
         return IndexCounter 
     end
 
-    
+
 # Neither Polyester.@batch per core or thread is faster
 ###=== Function to process each cell and its neighbors
     function NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel,
                            SimMetaData, SimConstants, SimParticles,
                            SimThreadedArrays, ParticleRanges, CellDict, Stencil,
                            Position, Density, Pressure, Velocity, MotionLimiter,
-                           UniqueCells, EnumeratedIndices)
-        @sync begin
-            for (ichunk, inds) ∈ EnumeratedIndices 
-                @spawn for iter ∈ inds
+                           UniqueCellsView)
+        # ceil(length(CellDict)/nthreads()) then bump to even:
+        base = (length(CellDict) + nthreads() - 1) ÷ nthreads()
+        chunk_size = base + (base & 1)    # add 1 if base is odd
+        Threads.@sync begin
+            # Iterate over UniqueCells in increments of `chunk_size`
+            for chunk_start in 1:chunk_size:length(UniqueCellsView)
+                # Define the range of cell indices for this chunk
+                chunk_end = min(chunk_start + chunk_size - 1, length(UniqueCellsView))
+                Threads.@spawn begin
+                    # Process each cell in this chunk
+                    for iter in chunk_start:chunk_end
+                        CellIndex = UniqueCellsView[iter]
+                        SimParticles.ChunkID[iter] = Threads.threadid()   # mark which thread handles this cell
+                        StartIndex = ParticleRanges[iter]
+                        EndIndex   = ParticleRanges[iter+1] - 1
 
-                    CellIndex = UniqueCells[iter]
-                    SimParticles.ChunkID[iter] = ichunk
+                        # (1) Interactions among particles within the same cell `iter`
+                        @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
+                            ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                                                SimConstants, SimParticles, SimThreadedArrays,
+                                                Position, Density, Pressure, Velocity,
+                                                i, j, MotionLimiter, Threads.threadid())
+                        end
 
-                    StartIndex = ParticleRanges[iter]
-                    EndIndex   = ParticleRanges[iter+1] - 1
-
-                    @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
-                        @inline ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
-                    end
-
-                    @inbounds for S ∈ Stencil
-                        SCellIndex = CellIndex + S
-
-                        # Returns a range, x>:x for exact match and x=:x for no match
-                        # utilizes that it is a sorted array and requires no isequal constructor,
-                        # so I prefer this for now
-                        NeighborIdx = get(CellDict, SCellIndex, 1)
-
-                        StartIndex_       = ParticleRanges[NeighborIdx]
-                        EndIndex_         = ParticleRanges[NeighborIdx + 1] - 1
-
-                        @inbounds for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                            @inline ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
+                        # (2) Interactions between this cell and each neighboring cell in the stencil
+                        @inbounds for S in Stencil
+                            SCellIndex   = CellIndex + S
+                            NeighborIdx  = get(CellDict, SCellIndex, 1)            # lookup neighbor cell index (or 1 if not present)
+                            StartIndex_  = ParticleRanges[NeighborIdx]
+                            EndIndex_    = ParticleRanges[NeighborIdx + 1] - 1
+                            for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
+                                ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                                                    SimConstants, SimParticles, SimThreadedArrays,
+                                                    Position, Density, Pressure, Velocity,
+                                                    i, j, MotionLimiter, Threads.threadid())
+                            end
                         end
                     end
-                end
+                end  # end @spawn
             end
-        end
-        
+        end  # end @sync
+                
         return nothing
     end
 
@@ -550,9 +559,7 @@ using Bumper
         DimensionsPlus = Dimensions + 1
         Δx = one(eltype(Density)) + SimKernel.h
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-        n_chunks = min(length(UniqueCellsView),
-                       SimMetaData.ChunkMultiplier * nthreads())
-        EnumeratedIndices = enumerate(index_chunks(UniqueCellsView; n=n_chunks))
+
         @no_escape begin
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
 
@@ -574,9 +581,6 @@ using Bumper
                         @timeit SimMetaData.HourGlass "02a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells, CellDict)
                         Δx = zero(eltype(Density))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
-                        n_chunks = min(length(UniqueCellsView),
-                                       SimMetaData.ChunkMultiplier * nthreads())
-                        EnumeratedIndices = enumerate(index_chunks(UniqueCellsView; n=n_chunks))
                     end
                 end
 
@@ -595,7 +599,7 @@ using Bumper
                         @timeit SimMetaData.HourGlass "04b Apply MDBC before Half TimeStep"  ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
                     end
 
-                    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView, EnumeratedIndices)
+                    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView)
                     @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
                 end
 
@@ -612,7 +616,7 @@ using Bumper
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
             
                 @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-                @timeit SimMetaData.HourGlass "08 Second NeighborLoop"                   NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, UniqueCellsView, EnumeratedIndices)
+                @timeit SimMetaData.HourGlass "08 Second NeighborLoop"                   NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, UniqueCellsView)
                 @timeit SimMetaData.HourGlass "Reduction"                                ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
 
             
