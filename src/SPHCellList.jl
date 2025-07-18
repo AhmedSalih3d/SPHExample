@@ -117,7 +117,8 @@ using Bumper
                            SimMetaData, SimConstants, SimParticles,
                            SimThreadedArrays, ParticleRanges, CellDict, Stencil,
                            Position, Density, Pressure, Velocity, MotionLimiter,
-                           UniqueCellsView)
+                           UniqueCellsView) where {SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
+
         # ceil(length(CellDict)/nthreads()) then bump to even:
         base = (length(CellDict) + nthreads() - 1) ÷ nthreads()
         chunk_size = base + (base & 1)    # add 1 if base is odd
@@ -250,7 +251,7 @@ using Bumper
             f_ab    = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
             dvdt⁺   = - m₀ * (Pfac + f_ab) *  ∇ᵢWᵢⱼ
 
-            visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ, i, j)
+            visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ², i, j)
 
             uₘ = dvdt⁺ + visc_term
             SimThreadedArrays.AccelerationThreaded[ichunk][i] += uₘ
