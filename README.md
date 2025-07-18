@@ -19,6 +19,7 @@ The project demonstrates how to assemble a small SPH solver with Julia. It focus
 
 - **Weakly compressible formulation** – density varies ~1 % and pressure is a function of density.
 - **Multi-threaded execution** – achieved by spawning the neighbour loop.
+- **Configurable task granularity** – `ChunkMultiplier` controls load balancing across threads.
 - **Dynamic boundary condition** – inspired by DualSPHysics.
 - **Density diffusion** – based on Fourtakas et al. 2019 to reduce pressure noise.
 - **Wendland quintic kernel** – simple and stable without tensile corrections.
@@ -91,6 +92,7 @@ Written by Ahmed Salih ([AhmedSalih3d](https://github.com/AhmedSalih3d)).
 
 | Version | Description |
 |---------|-------------|
+| 0.6.11 | Added `ChunkMultiplier` for improved thread load balance |
 | 0.6.10 | Implemented concepts of tests, aim is to understand allocations and run time |
 | 0.6.9  | Specify output times via `OutputTimes` (float or vector). |
 | 0.6.8  | Select which variables are written to `vtkhdf` files. |
