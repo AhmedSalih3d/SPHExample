@@ -35,6 +35,7 @@ let
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
         ExportGridCells=true,
+        ChunkMultiplier=4,
         OpenLogFile=true,
         FlagOutputKernelValues=false,
         FlagMDBCSimple=true,
