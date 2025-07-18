@@ -113,11 +113,11 @@ using Bumper
     
 # Neither Polyester.@batch per core or thread is faster
 ###=== Function to process each cell and its neighbors
-    function NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel,
+    function NeighborLoop!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                            SimMetaData, SimConstants, SimParticles,
                            SimThreadedArrays, ParticleRanges, CellDict, Stencil,
                            Position, Density, Pressure, Velocity, MotionLimiter,
-                           UniqueCells, EnumeratedIndices)
+                           UniqueCells, EnumeratedIndices) where {SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
         @sync begin
             for (ichunk, inds) ∈ EnumeratedIndices 
                 @spawn for iter ∈ inds
@@ -203,7 +203,7 @@ using Bumper
         return nothing
     end
 
-    Base.@propagate_inbounds function ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk)
+    Base.@propagate_inbounds function ComputeInteractions!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk) where {SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
         @unpack FlagOutputKernelValues = SimMetaData
         @unpack ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
@@ -218,7 +218,7 @@ using Bumper
             # clamp seems faster than min, no util
             q         = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0) #min(dᵢⱼ * h⁻¹, 2.0) - 8% util no DDT
             ∇ᵢWᵢⱼ     = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
-
+            
             ρᵢ        = Density[i]
             ρⱼ        = Density[j]
         
@@ -229,7 +229,7 @@ using Bumper
             dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  density_symmetric_term
             dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  density_symmetric_term
 
-            Dᵢ, Dⱼ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, i, j, MotionLimiter)
+            Dᵢ, Dⱼ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ², i, j, MotionLimiter)
 
             SimThreadedArrays.dρdtIThreaded[ichunk][i] += dρdt⁺ + Dᵢ
             SimThreadedArrays.dρdtIThreaded[ichunk][j] += dρdt⁻ + Dⱼ
@@ -241,7 +241,7 @@ using Bumper
             f_ab    = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
             dvdt⁺   = - m₀ * (Pfac + f_ab) *  ∇ᵢWᵢⱼ
 
-            visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, i, j)
+            visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ², i, j)
 
             uₘ = dvdt⁺ + visc_term
             SimThreadedArrays.AccelerationThreaded[ichunk][i] += uₘ
@@ -249,7 +249,7 @@ using Bumper
 
             
             if FlagOutputKernelValues
-                Wᵢⱼ  = @fastpow @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
+                Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
                 SimThreadedArrays.KernelThreaded[ichunk][i]         += Wᵢⱼ
                 SimThreadedArrays.KernelThreaded[ichunk][j]         += Wᵢⱼ
                 SimThreadedArrays.KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
@@ -257,8 +257,7 @@ using Bumper
             end
 
             if SimMetaData.FlagShifting
-                Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
-        
+                
                 MLcond = MotionLimiter[i] * MotionLimiter[j]
 
                 SimThreadedArrays.∇CᵢThreaded[ichunk][i]   += (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
@@ -526,13 +525,13 @@ using Bumper
     end
 
     
-    @inbounds function SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel,
+    @inbounds function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{Dimensions, FloatType},
                                       SimConstants, SimParticles, Stencil,
                                       ParticleRanges, UniqueCells, CellDict,
                                       SortingScratchSpace, SimThreadedArrays,
                                       dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
-                                      ∇Cᵢ, ∇◌rᵢ, MotionDefinition) where {Dimensions, FloatType}
+                                      ∇Cᵢ, ∇◌rᵢ, MotionDefinition) where {Dimensions, FloatType, SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
         Position       = SimParticles.Position
         Density        = SimParticles.Density
         Pressure       = SimParticles.Pressure
@@ -633,10 +632,10 @@ using Bumper
         SimKernel::SPHKernelInstance,
         SimLogger::SimulationLogger,
         SimParticles::StructArray,
-        SimViscosity::SPHViscosity,
-        SimDensityDiffusion::SPHDensityDiffusion,
+        SimViscosity::SV,
+        SimDensityDiffusion::SDD,
         ParticleNormalsPath::Union{Nothing,String} = nothing
-        ) where {Dimensions,FloatType}
+        ) where {Dimensions,FloatType,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
 
         # Unpack the relevant simulation meta data
         @unpack HourGlass = SimMetaData;
