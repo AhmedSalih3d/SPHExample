@@ -59,16 +59,15 @@ using Bumper
         # We add 0.5 instead of 1, to ensure proper rounding behavior when restoring the sign for negative numbers.
         Int(sign(x)) * unsafe_trunc(Int, muladd(abs(x),InverseCutOff,0.5))
     end
-   
-    @inline function ExtractCells!(Particles, InverseCutOff)
-        @inbounds @simd ivdep for i ∈ eachindex(Particles.Cells)
-            # t = map(map_floor, Tuple(Particles.Position[i]))
-            t = CartesianIndex(map(x -> map_floor(x, InverseCutOff), Tuple(Particles.Position[i])))
-            Particles.Cells[i] = CartesianIndex(t)
-        end
-
-        return nothing
+@inline function ExtractCells!(Particles, InverseCutOff)
+    @inbounds @simd ivdep for i in eachindex(Particles.Cells)
+        pos = Particles.Position[i]
+        # Compute cell index for each coordinate efficiently
+        cell_idx = ntuple(j -> map_floor(pos[j], InverseCutOff), length(pos))
+        Particles.Cells[i] = CartesianIndex(cell_idx)
     end
+    return nothing
+end
 
     """
     Updates the neighbor list and sorts particles by their cell indices.
