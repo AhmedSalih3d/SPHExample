@@ -36,11 +36,12 @@ struct ZeroDensityDiffusion <: SPHDensityDiffusion end
         SimParticles,
         xᵢⱼ,
         ∇ᵢWᵢⱼ,
+        d²,
         i,
         j,
         MotionLimiter
 )
-        return zero(xᵢⱼ)
+        return zero(xᵢⱼ), zero(xᵢⱼ)
 end
 
 #---------------------------------------------------------------
@@ -59,6 +60,7 @@ struct ZeroGravityLinearDensityDiffusion <: SPHDensityDiffusion end
         SimParticles,
         xᵢⱼ,
         ∇ᵢWᵢⱼ,
+        d²,
         i,
         j,
         MotionLimiter
@@ -72,9 +74,7 @@ struct ZeroGravityLinearDensityDiffusion <: SPHDensityDiffusion end
 
         # g == 0 => skip any hydrostatic parts
         
-        dᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
-
-        invdᵢⱼ²η² = one(eltype(ρᵢ)) / (dᵢⱼ² + η²)
+        invdᵢⱼ²η² = one(eltype(ρᵢ)) / (d² + η²)
 
         ρⱼᵢ = ρⱼ - ρᵢ
         ψᵢⱼ = 2 * ρⱼᵢ * (-xᵢⱼ) * invdᵢⱼ²η²
@@ -104,6 +104,7 @@ struct LinearDensityDiffusion <: SPHDensityDiffusion end
         SimParticles,
         xᵢⱼ,
         ∇ᵢWᵢⱼ,
+        d²,
         i,
         j,
         MotionLimiter
@@ -121,9 +122,7 @@ struct LinearDensityDiffusion <: SPHDensityDiffusion end
         ρᵢⱼᴴ  = Pᵢⱼᴴ * Linear_ρ_factor
 
         
-        dᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
-
-        invdᵢⱼ²η² = one(eltype(ρᵢ)) / (dᵢⱼ² + η²)
+        invdᵢⱼ²η² = one(eltype(ρᵢ)) / (d² + η²)
 
         ρⱼᵢ = ρⱼ - ρᵢ
         ψᵢⱼ = 2 * (ρⱼᵢ - ρᵢⱼᴴ)  * (-xᵢⱼ) * invdᵢⱼ²η²
@@ -155,6 +154,7 @@ struct ComplexDensityDiffusion <: SPHDensityDiffusion end
         SimParticles,
         xᵢⱼ,
         ∇ᵢWᵢⱼ,
+        d²,
         i,
         j,
         MotionLimiter
@@ -174,9 +174,7 @@ struct ComplexDensityDiffusion <: SPHDensityDiffusion end
         # ρᵢⱼᴴ = ρ₀ * ( Estimate7thRoot( 1 + (Pᵢⱼᴴ * Cb⁻¹)) - 1)
         # ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
         
-        dᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
-
-        invdᵢⱼ²η² = one(eltype(ρᵢ)) / (dᵢⱼ² + η²)
+        invdᵢⱼ²η² = one(eltype(ρᵢ)) / (d² + η²)
 
         ρⱼᵢ = ρⱼ - ρᵢ
         ψᵢⱼ = 2 * (ρⱼᵢ - ρᵢⱼᴴ)  * (-xᵢⱼ) * invdᵢⱼ²η²
