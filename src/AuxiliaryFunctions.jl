@@ -44,9 +44,10 @@ function CloseHDFVTKManually(directory_path::String)
     vtkhdf_files = filter(file -> endswith(file, ".vtkhdf"), all_files)
 
     @threads for file_path in vtkhdf_files
-        file = h5open(file_path, "r")
         try
-            close(file)
+            h5open(file_path, "r") do _
+                nothing
+            end
         catch e
             @warn(e)
         end

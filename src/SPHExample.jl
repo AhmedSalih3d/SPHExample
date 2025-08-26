@@ -1,19 +1,23 @@
 module SPHExample
 
-    include("AuxiliaryFunctions.jl");
-    include("SPHKernels.jl")
-    include("SPHViscosityModels.jl")      
-    include("ProduceHDFVTK.jl")    
-    include("TimeStepping.jl");       
-    include("SimulationEquations.jl");
-    include("SimulationGeometry.jl")
-    include("SimulationMetaDataConfiguration.jl");
-    include("SimulationConstantsConfiguration.jl");
-    include("SimulationLoggerConfiguration.jl");
-    include("PreProcess.jl");
-    include("OpenExternalPrograms.jl")
-    include("SPHDensityDiffusionModels.jl")  
-    include("SPHCellList.jl") #Must be last    
+    # Include submodules in dependency order
+    submodules = [
+        "AuxiliaryFunctions.jl",
+        "SPHKernels.jl",
+        "SPHViscosityModels.jl",
+        "ProduceHDFVTK.jl",
+        "TimeStepping.jl",
+        "SimulationEquations.jl",
+        "SimulationGeometry.jl",
+        "SimulationMetaDataConfiguration.jl",
+        "SimulationConstantsConfiguration.jl",
+        "SimulationLoggerConfiguration.jl",
+        "PreProcess.jl",
+        "OpenExternalPrograms.jl",
+        "SPHDensityDiffusionModels.jl",
+        "SPHCellList.jl",
+    ]
+    foreach(include, submodules)
 
     # Re-export desired functions from each submodule
     using .AuxiliaryFunctions
