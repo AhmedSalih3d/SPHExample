@@ -95,11 +95,15 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData, OutputVariableNames;
     end
 
     if SimMetaData.VisualizeInParaview && paraview_cmd !== nothing
-        try
-            OpenInParaview = `$(paraview_cmd) --state="$(ParaViewStateFileName)"`
-            run(OpenInParaview; wait=false)
-        catch e
-            @error("You must add Paraview to path as $(paraview_cmd) and use at minimum version 5.12", e)
+        if isnothing(Sys.which(paraview_cmd))
+            @warn("ParaView command $(paraview_cmd) not found; skipping visualisation")
+        else
+            try
+                OpenInParaview = `$(paraview_cmd) --state="$(ParaViewStateFileName)"`
+                run(OpenInParaview; wait=false)
+            catch e
+                @error("You must add Paraview to path as $(paraview_cmd) and use at minimum version 5.12", e)
+            end
         end
     end
 
