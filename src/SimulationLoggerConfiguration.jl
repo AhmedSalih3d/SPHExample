@@ -214,6 +214,7 @@ module SimulationLoggerConfiguration
             @info "\n Sorted by time \n"
             show(SimLogger.LoggerIo, HourGlass)
         end
+        close(SimLogger.LoggerIo)
     end
 
 end
