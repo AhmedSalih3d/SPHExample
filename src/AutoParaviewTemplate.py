@@ -71,10 +71,7 @@ Simulation_vtkhdfDisplay.Position = [0.0, 0.0, 0.0]
 ColorBy(Simulation_vtkhdfDisplay, ('POINTS', '__COLOR_VAR__'))
 
 # rescale color and/or opacity maps used to include current data range
-RescaleTransferFunctionToDataRange(GetColorTransferFunction('__COLOR_VAR__'),
-                                   Simulation_vtkhdfDisplay)
-RescaleTransferFunctionToDataRange(GetOpacityTransferFunction('__COLOR_VAR__'),
-                                   Simulation_vtkhdfDisplay)
+Simulation_vtkhdfDisplay.RescaleTransferFunctionToDataRange(True, False)
 
 # show color bar/color legend
 Simulation_vtkhdfDisplay.SetScalarBarVisibility(renderView1, True)
