@@ -20,7 +20,7 @@ function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType,
     idp          = Vector{Int}(undef, nrows)
 
     i = 1
-    for row ∈ CSV.File(specific_csv; reusebuffer=true)
+    for row ∈ CSV.File(specific_csv)
         P1   = row[Symbol("Points:0")]
         P2   = row[Symbol("Points:1")]
         P3   = row[Symbol("Points:2")]
@@ -175,7 +175,7 @@ function LoadBoundaryNormals(::Val{D}, ::Type{T}, path_mdbc) where {D, T}
     points       = Vector{SVector{D,T}}()
     ghost_points = Vector{SVector{D,T}}()
 
-    for row ∈ CSV.File(path_mdbc; reusebuffer=true)
+    for row ∈ CSV.File(path_mdbc)
         if D == 3
             normal = SVector{D,T}(row[Symbol("Normal:0")],
                                    row[Symbol("Normal:1")],
