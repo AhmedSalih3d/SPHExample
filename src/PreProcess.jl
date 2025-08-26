@@ -3,16 +3,15 @@ module PreProcess
 export LoadBoundaryNormals, AllocateDataStructures, AllocateSupportDataStructures, AllocateThreadedArrays
 
 using CSV
-using DataFrames
 using StaticArrays
 using StructArrays
 
 using ..SimulationGeometry
 
-function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, particle_group_marker::Int, specific_csv::String) where {D, T}
-    DF_SPECIFIC = CSV.read(specific_csv, DataFrame)
-
-    nrows = nrow(DF_SPECIFIC)
+function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType,
+                         particle_group_marker::Int,
+                         specific_csv::String) where {D, T}
+    nrows = countlines(specific_csv) - 1
 
     points       = Vector{SVector{D,T}}(undef, nrows)
     density      = Vector{T}(undef, nrows)
@@ -21,12 +20,12 @@ function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, parti
     idp          = Vector{Int}(undef, nrows)
 
     i = 1
-    for DF ∈ eachrow(DF_SPECIFIC)
-        P1   = DF["Points:0"]
-        P2   = DF["Points:1"]
-        P3   = DF["Points:2"]
-        Rhop = DF["Rhop"]
-        Idp  = DF["Idp"] + 1
+    for row ∈ CSV.File(specific_csv)
+        P1   = row[Symbol("Points:0")]
+        P2   = row[Symbol("Points:1")]
+        P3   = row[Symbol("Points:2")]
+        Rhop = row[Symbol("Rhop")]
+        Idp  = row[Symbol("Idp")] + 1
 
         points[i] = if D == 3
             SVector{3,T}(P1, P2, P3)
@@ -172,29 +171,28 @@ function AllocateThreadedArrays(SimMetaData, SimParticles, dρdtI, ∇Cᵢ, ∇�
 end
 
 function LoadBoundaryNormals(::Val{D}, ::Type{T}, path_mdbc) where {D, T}
-    # Read the CSV file into a DataFrame
-    df = CSV.read(path_mdbc, DataFrame)
+    normals      = Vector{SVector{D,T}}()
+    points       = Vector{SVector{D,T}}()
+    ghost_points = Vector{SVector{D,T}}()
 
-    normals       = Vector{SVector{D,T}}()
-    points        = Vector{SVector{D,T}}()
-    ghost_points  = Vector{SVector{D,T}}()
-
-    # Loop over each row of the DataFrame
-    
-    for df_ in eachrow(df)
-        # Extract the "Normal" fields into an SVector
+    for row ∈ CSV.File(path_mdbc)
         if D == 3
-            normal = SVector{D,T}(df_["Normal:0"], df_["Normal:1"], df_["Normal:2"])
-            point  = SVector{D,T}(df_["Points:0"], df_["Points:1"], df_["Points:2"])
+            normal = SVector{D,T}(row[Symbol("Normal:0")],
+                                   row[Symbol("Normal:1")],
+                                   row[Symbol("Normal:2")])
+            point  = SVector{D,T}(row[Symbol("Points:0")],
+                                   row[Symbol("Points:1")],
+                                   row[Symbol("Points:2")])
         elseif D == 2
-            normal = SVector{D,T}(df_["Normal:0"], df_["Normal:2"])
-            point  = SVector{D,T}(df_["Points:0"], df_["Points:2"])
+            normal = SVector{D,T}(row[Symbol("Normal:0")],
+                                   row[Symbol("Normal:2")])
+            point  = SVector{D,T}(row[Symbol("Points:0")],
+                                   row[Symbol("Points:2")])
         end
 
         push!(normals, normal)
-        push!(points,  point)
-        push!(ghost_points,  point+normal)
-
+        push!(points, point)
+        push!(ghost_points, point + normal)
     end
 
     return points, ghost_points, normals
