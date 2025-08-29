@@ -22,14 +22,12 @@ import StructArrays: StructArray, foreachfield
 import LinearAlgebra: dot, norm, diagm, diag, cond, det
 import FastPow: @fastpow
 import ProgressMeter: next!, finish!
-using Format
 using TimerOutputs
 using Logging, LoggingExtras
 using HDF5
-using Base.Threads
 using UnicodePlots
 using LinearAlgebra
-using Bumper
+using Printf
 
     function ConstructStencil(v::Val{d}) where d
         n_ = CartesianIndices(ntuple(_->-1:1,v))
@@ -557,7 +555,7 @@ using Bumper
         Δx = one(eltype(Density)) + SimKernel.h
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
 
-        @no_escape begin
+        begin
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
 
                 Δx = update_delta_x!(Δx, Positionₙ⁺, SimParticles.Position)
@@ -590,8 +588,11 @@ using Bumper
                 
                     @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
                     if SimMetaData.FlagMDBCSimple
-                        bᵧ = @alloc(SVector{DimensionsPlus, FloatType}, length(Position))
-                        Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus * DimensionsPlus}, length(Position))
+                        bᵧ = Vector{SVector{DimensionsPlus, FloatType}}(undef, length(Position))
+                        Aᵧ = Vector{SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus * DimensionsPlus}}(
+                            undef,
+                            length(Position),
+                        )
                         @timeit SimMetaData.HourGlass "04a First NeighborLoopMDBC"           NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ)
                         @timeit SimMetaData.HourGlass "04b Apply MDBC before Half TimeStep"  ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
                     end
@@ -713,7 +714,11 @@ using Bumper
         end
 
         # Normal run and save data
-        generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
+        generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [
+            (:(Iteration), string(Iteration)),
+            (:(TotalTime), @sprintf("%3.3f", TotalTime)),
+            (:(TimeLeftInSeconds), @sprintf("%3.1f [s]", TimeLeftInSeconds)),
+        ]
         
 
         if !SimLogger.ToConsole
