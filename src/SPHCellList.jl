@@ -57,10 +57,8 @@ using Bumper
     end
    
     @inline function ExtractCells!(Particles, InverseCutOff)
-        @inbounds @simd ivdep for i ∈ eachindex(Particles.Cells)
-            # t = map(map_floor, Tuple(Particles.Position[i]))
-            t = CartesianIndex(map(x -> map_floor(x, InverseCutOff), Tuple(Particles.Position[i])))
-            Particles.Cells[i] = CartesianIndex(t)
+        @inbounds @threads for i ∈ eachindex(Particles.Cells)
+            Particles.Cells[i] = CartesianIndex(map(x -> map_floor(x, InverseCutOff), Tuple(Particles.Position[i])))
         end
 
         return nothing
