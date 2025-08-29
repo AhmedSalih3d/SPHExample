@@ -11,16 +11,17 @@ using ..SimulationGeometry
 function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType,
                          particle_group_marker::Int,
                          specific_csv::String) where {D, T}
-    nrows = countlines(specific_csv) - 1
+    file  = CSV.File(specific_csv)
+    nrows = length(file)
 
-    points       = Vector{SVector{D,T}}(undef, nrows)
+    points       = Vector{SVector{D, T}}(undef, nrows)
     density      = Vector{T}(undef, nrows)
     types        = Vector{ParticleType}(undef, nrows)
     group_marker = Vector{Int}(undef, nrows)
     idp          = Vector{Int}(undef, nrows)
 
     i = 1
-    for row ∈ CSV.File(specific_csv)
+    for row ∈ file
         P1   = row[Symbol("Points:0")]
         P2   = row[Symbol("Points:1")]
         P3   = row[Symbol("Points:2")]
