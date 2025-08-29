@@ -39,6 +39,21 @@ CubicSpline{T}() where {T} = CubicSpline{T}(one(T))
     η²::FloatType  = (0.01 * h)^2
 end
 
+import Base: show
+
+"""Return a string representation of ``val`` for pretty printing."""
+_val_repr(val) = string(val)
+
+function Base.show(io::IO, ker::SPHKernelInstance{K, D, T}) where {K, D, T}
+    println(io, "SPHKernelInstance{$K, $D, $T}")
+    for field in fieldnames(typeof(ker))
+        val = getfield(ker, field)
+        repr = _val_repr(val)
+        suffix = isempty(repr) ? "" : " $(repr)"
+        println(io, "  $(field): $(typeof(val))$(suffix)")
+    end
+end
+
 function SPHKernelInstance{D,T}(
     kernel::KernelType;
     dx::Union{T,Nothing}=nothing,

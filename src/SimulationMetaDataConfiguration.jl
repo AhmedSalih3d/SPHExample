@@ -48,4 +48,24 @@ export SimulationMetaData
     FlagMDBCSimple::Bool                    = false
 end
 
+import Base: show
+
+"""Return a concise representation of a value for pretty printing."""
+_val_repr(val) = string(val)
+
+_val_repr(val::AbstractString) = string('"', val, '"')
+_val_repr(val::AbstractArray) = string("Array{", eltype(val), "}(", size(val), ")")
+_val_repr(::TimerOutput) = ""
+_val_repr(::ProgressMeter.AbstractProgress) = ""
+
+function Base.show(io::IO, meta::SimulationMetaData{D, T}) where {D, T}
+    println(io, "SimulationMetaData{$D, $T}")
+    for field in fieldnames(typeof(meta))
+        val = getfield(meta, field)
+        repr = _val_repr(val)
+        suffix = isempty(repr) ? "" : " $(repr)"
+        println(io, "  $(field): $(typeof(val))$(suffix)")
+    end
+end
+
 end

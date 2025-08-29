@@ -51,4 +51,22 @@ constants = SimulationConstants(ρ₀=1017, dx=0.03, α=0.02)
     SmagorinskyConstant::T     = 0.12
 end
 
+import Base: show
+
+"""Return a string representation of ``val`` without printing the full contents of
+large structures."""
+_val_repr(val) = string(val)
+
+_val_repr(val::AbstractString) = string('"', val, '"')
+
+function Base.show(io::IO, sc::SimulationConstants{T}) where {T}
+    println(io, "SimulationConstants{$T}")
+    for field in fieldnames(typeof(sc))
+        val = getfield(sc, field)
+        repr = _val_repr(val)
+        suffix = isempty(repr) ? "" : " $(repr)"
+        println(io, "  $(field): $(typeof(val))$(suffix)")
+    end
+end
+
 end
