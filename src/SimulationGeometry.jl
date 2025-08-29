@@ -1,7 +1,7 @@
 module SimulationGeometry
 
 using StaticArrays
-using Parameters
+using Base: @kwdef
 
 # Export relevant types and structs
 export ParticleType, Geometry, Fluid, Fixed, Moving, MotionDetails
@@ -14,7 +14,7 @@ export ParticleType, Geometry, Fluid, Fixed, Moving, MotionDetails
 end
 
 # Define a struct to store motion details, with parametric dimensions and floating point type
-@with_kw struct MotionDetails{D, T}
+@kwdef struct MotionDetails{D, T}
     Velocity::T
     StartTime::T
     Duration::T
@@ -22,7 +22,7 @@ end
 end
 
 # Define the Geometry struct to store the ParticleType enum and Motion details
-@with_kw struct Geometry{D, T}
+@kwdef struct Geometry{D, T}
     CSVFile::String
     GroupMarker::Int
     Type::ParticleType

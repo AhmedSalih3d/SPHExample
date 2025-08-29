@@ -1,13 +1,13 @@
 module SimulationMetaDataConfiguration
 
-using Parameters
 using TimerOutputs
 using ProgressMeter
+using Base: @kwdef
 
 export SimulationMetaData
 
 
-@with_kw mutable struct SimulationMetaData{Dimensions, FloatType <: AbstractFloat}
+@kwdef mutable struct SimulationMetaData{Dimensions, FloatType <: AbstractFloat}
     SimulationName::String
     SaveLocation::String
     HourGlass::TimerOutput                  = TimerOutput()

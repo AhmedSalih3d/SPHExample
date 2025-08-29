@@ -1,8 +1,8 @@
 module SPHKernels
 
-using Parameters
 using LinearAlgebra
 using FastPow
+using Base: @kwdef
 
 export SPHKernel, SPHKernelInstance, WendlandC2, CubicSpline, Wᵢⱼ, ∇Wᵢⱼ, tensile_correction
 
@@ -27,16 +27,16 @@ CubicSpline{T}() where {T} = CubicSpline{T}(one(T))
 @inline _αD(::Type{CubicSpline{T}}, ::Val{3}, h) where {T} = 1 / (π * h^3)
 
 # General SPH Kernel Type
-@with_kw struct SPHKernelInstance{KernelType, Dimensions, FloatType}
+@kwdef struct SPHKernelInstance{KernelType, Dimensions, FloatType}
     kernel::KernelType
-    k::FloatType   = 2.0          ; @assert k   > 0 "Scaling factor k must be positive"
-    h::FloatType                  ; @assert h   > 0 "Smoothing length h must be positive"
-    h⁻¹::FloatType = 1 / h        ; @assert h⁻¹ > 0 "Inverse smoothing length h⁻¹ must be positive"
-    H::FloatType   = k * h        ; @assert H   > 0 "Support radius H must be positive"
-    H⁻¹::FloatType = 1/H          ; @assert H⁻¹ > 0 "InverseCutOff must be greater than zero"
-    H²::FloatType  = H * H        ; @assert H²  > 0 "Support radius squared H² must be positive"
-    αD::FloatType                 ; @assert αD  > 0 "Normalization constant αD must be positive"
-    η²::FloatType  = (0.01 * h)^2 ; @assert η²  ≥ 0 "η² must be non-negative"
+    k::FloatType   = 2.0
+    h::FloatType
+    h⁻¹::FloatType = 1 / h
+    H::FloatType   = k * h
+    H⁻¹::FloatType = 1 / H
+    H²::FloatType  = H * H
+    αD::FloatType
+    η²::FloatType  = (0.01 * h)^2
 end
 
 function SPHKernelInstance{D,T}(
@@ -73,12 +73,12 @@ end
 
 # Kernel Evaluation Functions
 @inline function Wᵢⱼ(kernel::SPHKernelInstance{<:WendlandC2}, q::T) where {T}
-    @unpack αD = kernel
+    (; αD) = kernel
     return αD * (1 - q/2)^4 * (2q + 1)
 end
 
 @inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{<:WendlandC2}, q::T, xᵢⱼ) where {T}
-    @unpack h, αD, η² = kernel
+    (; h, αD, η²) = kernel
     # Subhan Allah, if this math is correct, then η² can be avoided
     # denom = (q * h + η²)
     # factor = αD * 5 * (q - 2)^3 * q / (8 * h * denom)
@@ -87,12 +87,12 @@ end
 end
 
 @inline function Wᵢⱼ(kernel::SPHKernelInstance{<:CubicSpline}, q::T) where {T}
-    @unpack αD = kernel
+    (; αD) = kernel
     return αD * (((1 - (3/2)*q^2 + (3/4)*q^3) * (0 <= q <= 1)) + ((1/4)*(2 - q)^3 * (1 < q <= 2)))
 end
 
 @inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{<:CubicSpline}, q::T, xᵢⱼ) where {T}
-    @unpack h, h⁻¹, αD, η² = kernel
+    (; h, h⁻¹, αD, η²) = kernel
     # r = norm(xᵢⱼ)
     # inv_r_h = 1/(r + η²)  # η² is a small regularization to avoid division by zero
     
