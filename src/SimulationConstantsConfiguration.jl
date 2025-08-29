@@ -50,5 +50,4 @@ constants = SimulationConstants(ρ₀=1017, dx=0.03, α=0.02)
     BlinConstant::T            = 0.0066
     SmagorinskyConstant::T     = 0.12
 end
-
 end

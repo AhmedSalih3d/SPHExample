@@ -47,5 +47,4 @@ export SimulationMetaData
     ChunkMultiplier::Int                    = 1
     FlagMDBCSimple::Bool                    = false
 end
-
 end

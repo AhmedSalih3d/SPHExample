@@ -16,6 +16,7 @@ module SPHExample
         "OpenExternalPrograms.jl",
         "SPHDensityDiffusionModels.jl",
         "SPHCellList.jl",
+        "CustomPrettyPrinting.jl",
     ]
     foreach(include, submodules)
 
