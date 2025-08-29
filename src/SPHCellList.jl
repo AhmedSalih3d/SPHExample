@@ -2,8 +2,7 @@ module SPHCellList
 
 export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!, RunSimulation
 
-using Parameters, FastPow, StaticArrays, Base.Threads
-import LinearAlgebra: dot
+using FastPow, StaticArrays, Base.Threads
 
 using ..SimulationEquations
 using ..SimulationGeometry
@@ -19,19 +18,16 @@ using ..SPHKernels
 using ..SPHViscosityModels
 using ..SPHDensityDiffusionModels
 
-using StaticArrays
 import StructArrays: StructArray, foreachfield
 import LinearAlgebra: dot, norm, diagm, diag, cond, det
-import Parameters: @unpack
 import FastPow: @fastpow
 import ProgressMeter: next!, finish!
-using Format
 using TimerOutputs
 using Logging, LoggingExtras
 using HDF5
-using Base.Threads
 using UnicodePlots
 using LinearAlgebra
+using Printf
 using Bumper
 
     function ConstructStencil(v::Val{d}) where d
@@ -214,10 +210,10 @@ using Bumper
     end
 
     Base.@propagate_inbounds function ComputeInteractions!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk) where {SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
-        @unpack FlagOutputKernelValues = SimMetaData
-        @unpack ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
+        (; FlagOutputKernelValues) = SimMetaData
+        (; ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant) = SimConstants
 
-        @unpack h⁻¹, h, η², H², αD = SimKernel 
+        (; h⁻¹, h, η², H², αD) = SimKernel
 
         xᵢⱼ  = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)              
@@ -284,9 +280,9 @@ using Bumper
     end
 
     Base.@propagate_inbounds function ComputeInteractionsMDBC!(SimKernel, SimMetaData::SimulationMetaData{Dimensions, FloatType}, SimConstants, Position, Density, ParticleType, GhostPoints, i, j) where {Dimensions, FloatType}
-        @unpack ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
-        
-        @unpack h⁻¹, h, η², H², αD = SimKernel 
+        (; ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant) = SimConstants
+
+        (; h⁻¹, h, η², H², αD) = SimKernel
 
         DimensionsPlus = Dimensions + 1
         # always zero‐initialize
@@ -443,7 +439,7 @@ using Bumper
     end
     
     function HalfTimeStep(::SimulationMetaData{Dimensions, FloatType}, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂) where {Dimensions, FloatType}
-        @unpack Position, Density, Velocity, Acceleration, GravityFactor, MotionLimiter = SimParticles
+        (; Position, Density, Velocity, Acceleration, GravityFactor, MotionLimiter) = SimParticles
 
         @inbounds @simd ivdep for i in eachindex(Position)
             Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
@@ -457,7 +453,7 @@ using Bumper
     end
 
     function FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
-        @unpack Position, Velocity, Acceleration, GravityFactor, MotionLimiter = SimParticles
+        (; Position, Velocity, Acceleration, GravityFactor, MotionLimiter) = SimParticles
   
         if !SimMetaData.FlagShifting
             @inbounds @simd ivdep for i in eachindex(Position)
@@ -560,7 +556,7 @@ using Bumper
         Δx = one(eltype(Density)) + SimKernel.h
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
 
-        @no_escape begin
+    @no_escape begin
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
 
                 Δx = update_delta_x!(Δx, Positionₙ⁺, SimParticles.Position)
@@ -647,7 +643,7 @@ using Bumper
         ) where {Dimensions,FloatType,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
 
         # Unpack the relevant simulation meta data
-        @unpack HourGlass = SimMetaData;
+        (; HourGlass) = SimMetaData;
 
         # Vector of time steps
         TimeSteps = Vector{FloatType}()
@@ -716,7 +712,11 @@ using Bumper
         end
 
         # Normal run and save data
-        generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
+        generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [
+            (:(Iteration), string(Iteration)),
+            (:(TotalTime), @sprintf("%3.3f", TotalTime)),
+            (:(TimeLeftInSeconds), @sprintf("%3.1f [s]", TimeLeftInSeconds)),
+        ]
         
 
         if !SimLogger.ToConsole

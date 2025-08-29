@@ -2,7 +2,6 @@
 Utility helpers for logging simulation progress and timings.
 """
 module SimulationLoggerConfiguration
-    using Format
     using TimerOutputs
     using Logging, LoggingExtras
     using Printf
@@ -66,8 +65,9 @@ module SimulationLoggerConfiguration
             values_eq     = map(x -> repeat("=", length(x)), values)
             format_string = generate_format_string(values)
 
-            ValuesToPrint  = @. $join(cfmt(format_string, values))
-            ValuesToPrintC = @. $join(cfmt(format_string, values_eq))
+            fmt = Printf.Format(format_string)
+            ValuesToPrint  = Printf.format(fmt, values...)
+            ValuesToPrintC = Printf.format(fmt, values_eq...)
 
             # This should not be hardcoded here.
             CurrentDate    = now()
@@ -156,8 +156,8 @@ module SimulationLoggerConfiguration
 
             LogSimulationDetails(SimLogger, SimGeometry, SimParticles)
 
-            @info @. SimLogger.ValuesToPrint
-            @info @. SimLogger.ValuesToPrintC
+            @info SimLogger.ValuesToPrint
+            @info SimLogger.ValuesToPrintC
         end
     end
 
@@ -189,8 +189,17 @@ module SimulationLoggerConfiguration
                 ExpectedFinishTimeString = Dates.format(ExpectedFinishTime, "dd-mm-yyyy HH:MM:SS")
             end
             
-    
-            @info @. $join(cfmt(SimLogger.FormatStr, (PartNumber, PartTime, PartTotalSteps, CurrentSteps, TimeUptillNow, TimePerPhysicalSecond, ExpectedFinishTimeString)))
+            formatted_line = Printf.format(
+                Printf.Format(SimLogger.FormatStr),
+                PartNumber,
+                PartTime,
+                PartTotalSteps,
+                CurrentSteps,
+                TimeUptillNow,
+                TimePerPhysicalSecond,
+                ExpectedFinishTimeString,
+            )
+            @info formatted_line
         end
     end
     

@@ -3,7 +3,6 @@ module SimulationEquations
 export EquationOfState, EquationOfStateGamma7, Pressure!, DensityEpsi!, LimitDensityAtBoundary!, ConstructGravitySVector, InverseHydrostaticEquationOfState, Estimate7thRoot
 
 using StaticArrays
-using Parameters
 using FastPow
 
 @inline function EquationOfStateGamma7(ρ,c₀,ρ₀)
@@ -16,7 +15,7 @@ function EquationOfState(ρ,c₀,γ,ρ₀)
 end
 
 @inline function Pressure!(Press, Density, SimulationConstants)
-    @unpack c₀,γ,ρ₀ = SimulationConstants
+    (; c₀, γ, ρ₀) = SimulationConstants
     @inbounds for i ∈ eachindex(Press,Density)
         # Press[i] = EquationOfState(Density[i],c₀,γ,ρ₀)
         Press[i] = EquationOfStateGamma7(Density[i],c₀,ρ₀)

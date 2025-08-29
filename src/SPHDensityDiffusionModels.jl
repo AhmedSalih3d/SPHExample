@@ -1,6 +1,6 @@
 module SPHDensityDiffusionModels
 
-using StaticArrays, LinearAlgebra, Parameters
+using StaticArrays, LinearAlgebra
 using ..SimulationEquations
 #---------------------------------------------------------------
 # Exported
@@ -66,8 +66,8 @@ struct ZeroGravityLinearDensityDiffusion <: SPHDensityDiffusion end
         MotionLimiter
 )
 
-        @unpack ρ₀, m₀, c₀, δᵩ, Cb, Cb⁻¹, γ    = SimConstants
-        @unpack h, η²                          = SimKernel
+        (; ρ₀, m₀, c₀, δᵩ, Cb, Cb⁻¹, γ) = SimConstants
+        (; h, η²) = SimKernel
 
         ρᵢ  = SimParticles.Density[i]
         ρⱼ  = SimParticles.Density[j]
@@ -110,8 +110,8 @@ struct LinearDensityDiffusion <: SPHDensityDiffusion end
         MotionLimiter
 )
 
-        @unpack ρ₀, m₀, c₀, δᵩ, Cb, Cb⁻¹, γ, g = SimConstants
-        @unpack h, η²                          = SimKernel
+        (; ρ₀, m₀, c₀, δᵩ, Cb, Cb⁻¹, γ, g) = SimConstants
+        (; h, η²) = SimKernel
 
         Linear_ρ_factor = (1/(Cb*γ))*ρ₀
 
@@ -160,8 +160,8 @@ struct ComplexDensityDiffusion <: SPHDensityDiffusion end
         MotionLimiter
 )
 
-        @unpack ρ₀, m₀, c₀, δᵩ, Cb, Cb⁻¹, γ, g = SimConstants
-        @unpack h, η²                          = SimKernel
+        (; ρ₀, m₀, c₀, δᵩ, Cb, Cb⁻¹, γ, g) = SimConstants
+        (; h, η²) = SimKernel
 
         ρᵢ  = SimParticles.Density[i]
         ρⱼ  = SimParticles.Density[j]

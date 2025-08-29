@@ -3,7 +3,6 @@ module TimeStepping
 export Δt
 
 using LinearAlgebra
-using Parameters
 
 """
     Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
@@ -22,8 +21,8 @@ viscous, and force-based criteria.
 - The calculated time step `dt`.
 """
 function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
-    @unpack c₀, CFL = SimulationConstants
-    @unpack h, η²   = SPHKernel
+    (; c₀, CFL) = SimulationConstants
+    (; h, η²) = SPHKernel
 
     # Viscous timestep constraint
     # More idiomatic and potentially faster version of max_visc
