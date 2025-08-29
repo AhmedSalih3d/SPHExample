@@ -28,6 +28,7 @@ using HDF5
 using UnicodePlots
 using LinearAlgebra
 using Printf
+using Bumper
 
     function ConstructStencil(v::Val{d}) where d
         n_ = CartesianIndices(ntuple(_->-1:1,v))
@@ -555,7 +556,7 @@ using Printf
         Δx = one(eltype(Density)) + SimKernel.h
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
 
-        begin
+    @no_escape begin
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
 
                 Δx = update_delta_x!(Δx, Positionₙ⁺, SimParticles.Position)
@@ -588,11 +589,8 @@ using Printf
                 
                     @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
                     if SimMetaData.FlagMDBCSimple
-                        bᵧ = Vector{SVector{DimensionsPlus, FloatType}}(undef, length(Position))
-                        Aᵧ = Vector{SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus * DimensionsPlus}}(
-                            undef,
-                            length(Position),
-                        )
+                        bᵧ = @alloc(SVector{DimensionsPlus, FloatType}, length(Position))
+                        Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus * DimensionsPlus}, length(Position))
                         @timeit SimMetaData.HourGlass "04a First NeighborLoopMDBC"           NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ)
                         @timeit SimMetaData.HourGlass "04b Apply MDBC before Half TimeStep"  ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
                     end
