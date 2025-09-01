@@ -88,7 +88,13 @@ end
 
 @inline function Wᵢⱼ(kernel::SPHKernelInstance{<:CubicSpline}, q::T) where {T}
     (; αD) = kernel
-    return αD * (((1 - (3/2)*q^2 + (3/4)*q^3) * (0 <= q <= 1)) + ((1/4)*(2 - q)^3 * (1 < q <= 2)))
+    if q <= 1
+        return αD * (1 - (3/2) * q^2 + (3/4) * q^3)
+    elseif q <= 2
+        return αD * (1/4) * (2 - q)^3
+    else
+        return zero(T)
+    end
 end
 
 @inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{<:CubicSpline}, q::T, xᵢⱼ) where {T}
