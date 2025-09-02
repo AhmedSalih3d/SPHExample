@@ -137,33 +137,48 @@ function AllocateSupportDataStructures(Position)
     return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ
 end
 
-function AllocateThreadedArrays(SimMetaData, SimParticles, dρdtI, ∇Cᵢ, ∇◌rᵢ   ; n_copy = Base.Threads.nthreads())
-    
-        
-    dρdtIThreaded        = [copy(dρdtI) for _ in 1:n_copy]
-    AccelerationThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
+function AllocateThreadedArrays(
+    SimMetaData,
+    SimParticles,
+    dρdtI,
+    ∇Cᵢ,
+    ∇◌rᵢ;
+    n_copy = Base.Threads.nthreads(),
+)
+    n = length(dρdtI)
+    dρdtI_threaded = similar(dρdtI, n * n_copy)
+    Acceleration_threaded = similar(SimParticles.KernelGradient, n * n_copy)
 
     nt = (
-        dρdtIThreaded = dρdtIThreaded,
-        AccelerationThreaded = AccelerationThreaded,
+        dρdtIThreaded = dρdtI_threaded,
+        AccelerationThreaded = Acceleration_threaded,
     )
 
     if SimMetaData.FlagOutputKernelValues
-        KernelThreaded         = [copy(SimParticles.Kernel) for _ in 1:n_copy]
-        KernelGradientThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
-        nt = merge(nt, (
-            KernelThreaded = KernelThreaded,
-            KernelGradientThreaded = KernelGradientThreaded,
-        ))
+        kernel_len = length(SimParticles.Kernel)
+        Kernel_threaded = similar(SimParticles.Kernel, kernel_len * n_copy)
+        KernelGradient_threaded =
+            similar(SimParticles.KernelGradient, kernel_len * n_copy)
+        nt = merge(
+            nt,
+            (
+                KernelThreaded = Kernel_threaded,
+                KernelGradientThreaded = KernelGradient_threaded,
+            ),
+        )
     end
 
     if SimMetaData.FlagShifting
-        ∇CᵢThreaded  = [copy(∇Cᵢ) for _ in 1:n_copy]
-        ∇◌rᵢThreaded = [copy(∇◌rᵢ) for _ in 1:n_copy]
-        nt = merge(nt, (
-            ∇CᵢThreaded  = ∇CᵢThreaded,
-            ∇◌rᵢThreaded = ∇◌rᵢThreaded,
-        ))
+        len_grad = length(∇Cᵢ)
+        ∇Cᵢ_threaded = similar(∇Cᵢ, len_grad * n_copy)
+        ∇◌rᵢ_threaded = similar(∇◌rᵢ, len_grad * n_copy)
+        nt = merge(
+            nt,
+            (
+                ∇CᵢThreaded = ∇Cᵢ_threaded,
+                ∇◌rᵢThreaded = ∇◌rᵢ_threaded,
+            ),
+        )
     end
 
     SimThreadedArrays = StructArray(nt)
