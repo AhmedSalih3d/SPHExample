@@ -1,6 +1,7 @@
 module SPHCellList
 
-export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!, RunSimulation
+export ConstructStencil, ExtractCells!, UpdateNeighbors!, UpdateLocalCell!,
+       NeighborLoop!, ComputeInteractions!, RunSimulation
 
 using Parameters, FastPow, StaticArrays, Base.Threads
 import LinearAlgebra: dot
@@ -67,6 +68,34 @@ using Bumper
         return nothing
     end
 
+    @inline function swap_particles!(A::StructArray, i::Int, j::Int)
+        i == j && return nothing
+        foreachfield(A) do field
+            field[i], field[j] = field[j], field[i]
+        end
+        return nothing
+    end
+
+    function build_cell_dict!(Cells, ParticleRanges, UniqueCells, CellDict)
+        @. ParticleRanges = zero(eltype(ParticleRanges))
+        ParticleRanges[1] = 1
+        IndexCounter = 2
+        ParticleRanges[IndexCounter] = 1
+        UniqueCells[IndexCounter] = Cells[1]
+        empty!(CellDict)
+        CellDict[Cells[1]] = IndexCounter
+        @inbounds @simd ivdep for i in eachindex(Cells)[2:end]
+            if Cells[i] != Cells[i - 1]
+                IndexCounter += 1
+                ParticleRanges[IndexCounter] = i
+                UniqueCells[IndexCounter] = Cells[i]
+                CellDict[Cells[i]] = IndexCounter
+            end
+        end
+        ParticleRanges[IndexCounter + 1] = length(ParticleRanges)
+        return IndexCounter
+    end
+
     """
     Updates the neighbor list and sorts particles by their cell indices.
 
@@ -83,28 +112,44 @@ using Bumper
     function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
                               ParticleRanges, UniqueCells, CellDict)
         ExtractCells!(Particles, InverseCutOff)
-
-        sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
+        sort!(Particles, by = p -> p.Cells; scratch = SortingScratchSpace)
         Cells = @views Particles.Cells
-        @. ParticleRanges             = zero(eltype(ParticleRanges))
-        ParticleRanges[1] = 1
-        IndexCounter                  = 2
-        ParticleRanges[IndexCounter]  = 1
-        UniqueCells[IndexCounter]     = Cells[1]
-        empty!(CellDict)
-        CellDict[Cells[1]] = IndexCounter
+        return build_cell_dict!(Cells, ParticleRanges, UniqueCells, CellDict)
+    end
 
-        @inbounds @simd ivdep for i in eachindex(Cells)[2:end]
-            if Cells[i] != Cells[i-1] # Equivalent to diff(Cells) != 0
-                IndexCounter                 += 1
-                ParticleRanges[IndexCounter]  = i
-                UniqueCells[IndexCounter]     = Cells[i]
-                CellDict[Cells[i]]           = IndexCounter
-            end
+    """
+    Locally updates the cell of particle `idx` and reorders particles in-place.
+
+    This avoids resorting all particles and rebuilds the cell lookup structures
+    without additional allocations.
+
+    # Arguments
+    - `Particles`: StructArray of particle data.
+    - `idx`: Index of the particle to update.
+    - `InverseCutOff`: Inverse cutoff value for computing the cell index.
+    - `ParticleRanges`: Array of particle start indices for each cell.
+    - `UniqueCells`: Array storing the unique cell indices.
+    - `CellDict`: Dictionary mapping cell indices to positions in `UniqueCells`.
+    """
+    function UpdateLocalCell!(Particles, idx, InverseCutOff,
+                              ParticleRanges, UniqueCells, CellDict)
+        new_cell = CartesianIndex(map(x -> map_floor(x, InverseCutOff),
+                                      Tuple(Particles.Position[idx])))
+        old_cell = Particles.Cells[idx]
+        new_cell == old_cell && return nothing
+        Particles.Cells[idx] = new_cell
+        k = idx
+        while k > 1 && Particles.Cells[k - 1] > new_cell
+            swap_particles!(Particles, k, k - 1)
+            k -= 1
         end
-        ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
-
-        return IndexCounter 
+        while k < length(Particles.Cells) && Particles.Cells[k + 1] < new_cell
+            swap_particles!(Particles, k, k + 1)
+            k += 1
+        end
+        Cells = @views Particles.Cells
+        build_cell_dict!(Cells, ParticleRanges, UniqueCells, CellDict)
+        return nothing
     end
 
 
