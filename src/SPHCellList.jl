@@ -1,7 +1,7 @@
 module SPHCellList
 
 export ConstructStencil, ExtractCells!, UpdateNeighbors!, UpdateLocalCell!,
-       NeighborLoop!, ComputeInteractions!, RunSimulation
+       UpdateLocalCells!, NeighborLoop!, ComputeInteractions!, RunSimulation
 
 using Parameters, FastPow, StaticArrays, Base.Threads
 import LinearAlgebra: dot
@@ -120,8 +120,8 @@ using Bumper
     """
     Locally updates the cell of particle `idx` and reorders particles in-place.
 
-    This avoids resorting all particles and rebuilds the cell lookup structures
-    without additional allocations.
+    By default the cell lookup structures are rebuilt. When `rebuild=false` the
+    caller is responsible for invoking `build_cell_dict!` after all updates.
 
     # Arguments
     - `Particles`: StructArray of particle data.
@@ -130,13 +130,20 @@ using Bumper
     - `ParticleRanges`: Array of particle start indices for each cell.
     - `UniqueCells`: Array storing the unique cell indices.
     - `CellDict`: Dictionary mapping cell indices to positions in `UniqueCells`.
+    - `rebuild`: Rebuild lookup structures when `true`.
+
+    # Returns
+    - `Bool`: `true` if the particle changed cell.
     """
     function UpdateLocalCell!(Particles, idx, InverseCutOff,
-                              ParticleRanges, UniqueCells, CellDict)
+                              ParticleRanges, UniqueCells, CellDict;
+                              rebuild::Bool = true)
         new_cell = CartesianIndex(map(x -> map_floor(x, InverseCutOff),
                                       Tuple(Particles.Position[idx])))
         old_cell = Particles.Cells[idx]
-        new_cell == old_cell && return nothing
+        if new_cell == old_cell
+            return false
+        end
         Particles.Cells[idx] = new_cell
         k = idx
         while k > 1 && Particles.Cells[k - 1] > new_cell
@@ -147,9 +154,33 @@ using Bumper
             swap_particles!(Particles, k, k + 1)
             k += 1
         end
-        Cells = @views Particles.Cells
-        build_cell_dict!(Cells, ParticleRanges, UniqueCells, CellDict)
-        return nothing
+        if rebuild
+            Cells = @views Particles.Cells
+            build_cell_dict!(Cells, ParticleRanges, UniqueCells, CellDict)
+        end
+        return true
+    end
+
+    """
+    Update cells for all particles using `UpdateLocalCell!`.
+
+    Returns the updated number of unique cells without a full resort when only a
+    subset of particles changed cell.
+    """
+    function UpdateLocalCells!(Particles, InverseCutOff, ParticleRanges,
+                               UniqueCells, CellDict, IndexCounter)
+        moved = false
+        for idx in eachindex(Particles.Cells)
+            moved |= UpdateLocalCell!(Particles, idx, InverseCutOff,
+                                      ParticleRanges, UniqueCells, CellDict;
+                                      rebuild = false)
+        end
+        if moved
+            Cells = @views Particles.Cells
+            return build_cell_dict!(Cells, ParticleRanges, UniqueCells, CellDict)
+        else
+            return IndexCounter
+        end
     end
 
 
@@ -612,18 +643,18 @@ using Bumper
                 @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel)
                 dt₂ = dt * 0.5
 
-                @timeit SimMetaData.HourGlass "02 Calculate IndexCounter"  begin
-                    # Note: If particles are not inside of the neighbor list visualiation, try setting this if statement to always true, since UniqueCells will be updated always then
-                    # In theory, the maximal speed is the speed of sound, this should give a safe guard
-                    # and ensure it is always updated in a reasonable manner. This only works well, assuming that
-                    # c₀ >= maximum(norm.(Velocity))
-                    # Remove if statement logic if you want to update each iteration
-                    # if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
+                @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" begin
                     if Δx >= SimKernel.h
-                        @timeit SimMetaData.HourGlass "02a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells, CellDict)
+                        @timeit SimMetaData.HourGlass "02a Full Neighbor Update" SimMetaData.IndexCounter =
+                            UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,
+                                             ParticleRanges, UniqueCells, CellDict)
                         Δx = zero(eltype(Density))
-                        UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
+                    else
+                        @timeit SimMetaData.HourGlass "02b Local Cell Update" SimMetaData.IndexCounter =
+                            UpdateLocalCells!(SimParticles, SimKernel.H⁻¹, ParticleRanges,
+                                               UniqueCells, CellDict, SimMetaData.IndexCounter)
                     end
+                    UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
                 end
 
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
