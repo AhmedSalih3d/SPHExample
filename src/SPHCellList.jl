@@ -120,8 +120,8 @@ using Bumper
     """
     Locally updates the cell of particle `idx` and reorders particles in-place.
 
-    By default the cell lookup structures are rebuilt. When `rebuild=false` the
-    caller is responsible for invoking `build_cell_dict!` after all updates.
+    The lookup structures `ParticleRanges`, `UniqueCells` and `CellDict` are
+    updated only for the affected cells, avoiding a full rebuild.
 
     # Arguments
     - `Particles`: StructArray of particle data.
@@ -130,20 +130,22 @@ using Bumper
     - `ParticleRanges`: Array of particle start indices for each cell.
     - `UniqueCells`: Array storing the unique cell indices.
     - `CellDict`: Dictionary mapping cell indices to positions in `UniqueCells`.
-    - `rebuild`: Rebuild lookup structures when `true`.
+    - `IndexCounter`: Current size of `UniqueCells` (including dummy cell).
 
     # Returns
-    - `Bool`: `true` if the particle changed cell.
+    - `Tuple{Bool,Int}`: `(moved, IndexCounter)` where `moved` is true when the
+      particle changed cell and `IndexCounter` is the updated cell count.
     """
     function UpdateLocalCell!(Particles, idx, InverseCutOff,
-                              ParticleRanges, UniqueCells, CellDict;
-                              rebuild::Bool = true)
+                              ParticleRanges, UniqueCells, CellDict,
+                              IndexCounter)
         new_cell = CartesianIndex(map(x -> map_floor(x, InverseCutOff),
                                       Tuple(Particles.Position[idx])))
         old_cell = Particles.Cells[idx]
         if new_cell == old_cell
-            return false
+            return false, IndexCounter
         end
+        old_pos = get(CellDict, old_cell, 1)
         Particles.Cells[idx] = new_cell
         k = idx
         while k > 1 && Particles.Cells[k - 1] > new_cell
@@ -154,11 +156,48 @@ using Bumper
             swap_particles!(Particles, k, k + 1)
             k += 1
         end
-        if rebuild
-            Cells = @views Particles.Cells
-            build_cell_dict!(Cells, ParticleRanges, UniqueCells, CellDict)
+
+        for i = old_pos + 1:IndexCounter + 1
+            ParticleRanges[i] -= 1
         end
-        return true
+        empty_old = ParticleRanges[old_pos] == ParticleRanges[old_pos + 1]
+        if empty_old && old_pos != 1
+            delete!(CellDict, old_cell)
+            for i = old_pos:IndexCounter
+                UniqueCells[i] = UniqueCells[i + 1]
+                ParticleRanges[i] = ParticleRanges[i + 1]
+                if i <= IndexCounter - 1
+                    CellDict[UniqueCells[i]] = i
+                end
+            end
+            IndexCounter -= 1
+        end
+
+        if haskey(CellDict, new_cell)
+            new_pos = CellDict[new_cell]
+            for i = new_pos + 1:IndexCounter + 1
+                ParticleRanges[i] += 1
+            end
+        else
+            # determine insertion point among existing cells (skip dummy at 1)
+            insert_pos = searchsortedfirst(@view(UniqueCells[2:IndexCounter]), new_cell) + 1
+            for i = IndexCounter + 1:-1:insert_pos + 1
+                UniqueCells[i] = UniqueCells[i - 1]
+                ParticleRanges[i] = ParticleRanges[i - 1]
+                if i - 1 >= 2
+                    CellDict[UniqueCells[i]] = i
+                end
+            end
+            UniqueCells[insert_pos] = new_cell
+            ParticleRanges[insert_pos] = k
+            CellDict[new_cell] = insert_pos
+            IndexCounter += 1
+            for i = insert_pos + 1:IndexCounter + 1
+                ParticleRanges[i] += 1
+            end
+        end
+
+        return true, IndexCounter
     end
 
     """
@@ -169,18 +208,12 @@ using Bumper
     """
     function UpdateLocalCells!(Particles, InverseCutOff, ParticleRanges,
                                UniqueCells, CellDict, IndexCounter)
-        moved = false
         for idx in eachindex(Particles.Cells)
-            moved |= UpdateLocalCell!(Particles, idx, InverseCutOff,
-                                      ParticleRanges, UniqueCells, CellDict;
-                                      rebuild = false)
+            _, IndexCounter = UpdateLocalCell!(Particles, idx, InverseCutOff,
+                                               ParticleRanges, UniqueCells,
+                                               CellDict, IndexCounter)
         end
-        if moved
-            Cells = @views Particles.Cells
-            return build_cell_dict!(Cells, ParticleRanges, UniqueCells, CellDict)
-        else
-            return IndexCounter
-        end
+        return IndexCounter
     end
 
 
@@ -644,16 +677,16 @@ using Bumper
                 dt₂ = dt * 0.5
 
                 @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" begin
-                    if Δx >= SimKernel.h
-                        @timeit SimMetaData.HourGlass "02a Full Neighbor Update" SimMetaData.IndexCounter =
-                            UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,
-                                             ParticleRanges, UniqueCells, CellDict)
-                        Δx = zero(eltype(Density))
-                    else
+                    # if Δx >= SimKernel.h
+                    #     @timeit SimMetaData.HourGlass "02a Full Neighbor Update" SimMetaData.IndexCounter =
+                    #         UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,
+                    #                          ParticleRanges, UniqueCells, CellDict)
+                    #     Δx = zero(eltype(Density))
+                    # else
                         @timeit SimMetaData.HourGlass "02b Local Cell Update" SimMetaData.IndexCounter =
                             UpdateLocalCells!(SimParticles, SimKernel.H⁻¹, ParticleRanges,
                                                UniqueCells, CellDict, SimMetaData.IndexCounter)
-                    end
+                    # end
                     UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
                 end
 
