@@ -52,7 +52,6 @@ struct StoreKernelOutput <: KernelOutputMode end
     ]
     OpenLogFile::Bool                       = true
     FlagLog::Bool                           = false
-    FlagSingleStepTimeStepping::Bool        = false
     ChunkMultiplier::Int                    = 1
     FlagMDBCSimple::Bool                    = false
 end
