@@ -47,7 +47,7 @@ module SPHExample
     export SimulationLogger, generate_format_string, InitializeLogger, LogSimulationDetails, LogStep, LogFinal
 
     using .SimulationMetaDataConfiguration
-    export SimulationMetaData, ShiftingMode, NoShifting, PlanarShifting, is_shifting
+    export SimulationMetaData, ShiftingMode, NoShifting, PlanarShifting
 
     using .SimulationConstantsConfiguration
     export SimulationConstants

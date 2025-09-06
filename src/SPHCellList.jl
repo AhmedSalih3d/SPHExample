@@ -32,7 +32,7 @@ using HDF5
 using Base.Threads
 using UnicodePlots
 using LinearAlgebra
-using Bumper
+    using Bumper
 
     function ConstructStencil(v::Val{d}) where d
         n_ = CartesianIndices(ntuple(_->-1:1,v))
@@ -58,6 +58,27 @@ using Bumper
         # Consider -1.7 + 0.5, this would give -1.2 and then trunced 1, but we want -2, therefore absolute addition before hand
         # We add 0.5 instead of 1, to ensure proper rounding behavior when restoring the sign for negative numbers.
         Int(sign(x)) * unsafe_trunc(Int, muladd(abs(x),InverseCutOff,0.5))
+    end
+
+    # Add contributions related to particle shifting. Dispatch on `SimulationMetaData`
+    # so that no runtime checks are required.
+    function add_shifting_terms!(::SimulationMetaData{D,T,NoShifting}, SimThreadedArrays,
+                                MotionLimiter, xᵢⱼ, ∇ᵢWᵢⱼ, m₀, ρᵢ, ρⱼ, i, j, ichunk) where {D,T}
+        return nothing
+    end
+
+    function add_shifting_terms!(::SimulationMetaData{D,T,S}, SimThreadedArrays,
+                                MotionLimiter, xᵢⱼ, ∇ᵢWᵢⱼ, m₀, ρᵢ, ρⱼ, i, j, ichunk) where {D,T,S<:ShiftingMode}
+        MLcond = MotionLimiter[i] * MotionLimiter[j]
+
+        SimThreadedArrays.∇CᵢThreaded[ichunk][i]   += (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
+        SimThreadedArrays.∇CᵢThreaded[ichunk][j]   += (m₀/ρⱼ) * -∇ᵢWᵢⱼ
+
+        # Switch signs compared to DSPH, else free surface detection does not make sense
+        # Agrees, https://arxiv.org/abs/2110.10076, it should have been r_ji
+        SimThreadedArrays.∇◌rᵢThreaded[ichunk][i]  += (m₀/ρⱼ) * dot(-xᵢⱼ , ∇ᵢWᵢⱼ) * MLcond
+        SimThreadedArrays.∇◌rᵢThreaded[ichunk][j]  += (m₀/ρᵢ) * dot( xᵢⱼ ,-∇ᵢWᵢⱼ) * MLcond
+        return nothing
     end
    
     @inline function ExtractCells!(Particles, InverseCutOff)
@@ -263,18 +284,8 @@ using Bumper
                 SimThreadedArrays.KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
             end
 
-            if is_shifting(SimMetaData)
-                
-                MLcond = MotionLimiter[i] * MotionLimiter[j]
-
-                SimThreadedArrays.∇CᵢThreaded[ichunk][i]   += (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
-                SimThreadedArrays.∇CᵢThreaded[ichunk][j]   += (m₀/ρⱼ) * -∇ᵢWᵢⱼ
-        
-                # Switch signs compared to DSPH, else free surface detection does not make sense
-                # Agrees, https://arxiv.org/abs/2110.10076, it should have been r_ji
-                SimThreadedArrays.∇◌rᵢThreaded[ichunk][i]  += (m₀/ρⱼ) * dot(-xᵢⱼ , ∇ᵢWᵢⱼ)  * MLcond
-                SimThreadedArrays.∇◌rᵢThreaded[ichunk][j]  += (m₀/ρᵢ) * dot( xᵢⱼ ,-∇ᵢWᵢⱼ)  * MLcond
-            end
+            add_shifting_terms!(SimMetaData, SimThreadedArrays, MotionLimiter,
+                                 xᵢⱼ, ∇ᵢWᵢⱼ, m₀, ρᵢ, ρⱼ, i, j, ichunk)
         end
 
         return nothing
@@ -344,6 +355,17 @@ using Bumper
         end
     end
 
+    # Zero arrays related to shifting depending on the selected mode.
+    function zero_shifting_arrays!(::SimulationMetaData{D,T,NoShifting}, _...) where {D,T}
+        return nothing
+    end
+    function zero_shifting_arrays!(::SimulationMetaData{D,T,S}, arrays...) where {D,T,S<:ShiftingMode}
+        @threads for arr in arrays
+            fill!(arr, zero(eltype(arr)))
+        end
+        return nothing
+    end
+
     function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
         # Threaded zeroing for main arrays
         @threads for arr in (dρdtI, Acceleration)
@@ -356,11 +378,7 @@ using Bumper
             end
         end
 
-        if is_shifting(SimMetaData)
-            @threads for arr in (∇Cᵢ, ∇◌rᵢ)
-                fill!(arr, zero(eltype(arr)))
-            end
-        end
+        zero_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ)
 
         # Threaded zeroing for fields in SimThreadedArrays
         foreachfield(f -> begin
@@ -372,20 +390,33 @@ using Bumper
         return nothing
     end
 
+    function reduce_shifting_arrays!(::SimulationMetaData{D,T,NoShifting}, _...) where {D,T}
+        return nothing
+    end
+    function reduce_shifting_arrays!(::SimulationMetaData{D,T,S}, ∇Cᵢ, ∇◌rᵢ, SimThreadedArrays) where {D,T,S<:ShiftingMode}
+        reduce_sum!(∇Cᵢ, SimThreadedArrays.∇CᵢThreaded)
+        reduce_sum!(∇◌rᵢ, SimThreadedArrays.∇◌rᵢThreaded)
+        return nothing
+    end
+
+    function prepare_shifting_arrays!(::SimulationMetaData{D,T,NoShifting}, ∇Cᵢ, ∇◌rᵢ) where {D,T}
+        resize!(∇Cᵢ, 0)
+        resize!(∇◌rᵢ, 0)
+        return nothing
+    end
+    prepare_shifting_arrays!(::SimulationMetaData{D,T,S}, ∇Cᵢ, ∇◌rᵢ) where {D,T,S<:ShiftingMode} = nothing
+
     function ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
         reduce_sum!(dρdtI, SimThreadedArrays.dρdtIThreaded)
         reduce_sum!(Acceleration, SimThreadedArrays.AccelerationThreaded)
-  
+
         if SimMetaData.FlagOutputKernelValues
             reduce_sum!(Kernel, SimThreadedArrays.KernelThreaded)
             reduce_sum!(KernelGradient, SimThreadedArrays.KernelGradientThreaded)
         end
 
-        if is_shifting(SimMetaData)
-            reduce_sum!(∇Cᵢ, SimThreadedArrays.∇CᵢThreaded)
-            reduce_sum!(∇◌rᵢ, SimThreadedArrays.∇◌rᵢThreaded)
-        end
-    
+        reduce_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ, SimThreadedArrays)
+
         return nothing
     end
     
@@ -665,10 +696,7 @@ using Bumper
             end
         # end
 
-        if !is_shifting(SimMetaData)
-            resize!(∇Cᵢ , 0)
-            resize!(∇◌rᵢ, 0)
-        end
+        prepare_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ)
 
         if SimMetaData.FlagLog
             InitializeLogger(SimLogger, SimConstants, SimMetaData, SimKernel, SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)

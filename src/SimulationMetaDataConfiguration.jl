@@ -4,7 +4,7 @@ using Parameters
 using TimerOutputs
 using ProgressMeter
 
-export SimulationMetaData, ShiftingMode, NoShifting, PlanarShifting, is_shifting
+export SimulationMetaData, ShiftingMode, NoShifting, PlanarShifting
 
 abstract type ShiftingMode end
 struct NoShifting    <: ShiftingMode end
@@ -45,16 +45,12 @@ struct PlanarShifting <: ShiftingMode end
     OpenLogFile::Bool                       = true
     FlagOutputKernelValues::Bool            = false
     FlagLog::Bool                           = false
-    Shifting::SMode                         = SMode()
     FlagSingleStepTimeStepping::Bool        = false
     ChunkMultiplier::Int                    = 1
     FlagMDBCSimple::Bool                    = false
 end
 
 SimulationMetaData{D,T}(; kwargs...) where {D,T} = SimulationMetaData{D,T,NoShifting}(; kwargs...)
-
-@inline is_shifting(::SimulationMetaData{D,T,NoShifting}) where {D,T} = false
-@inline is_shifting(::SimulationMetaData{D,T,S}) where {D,T,S<:ShiftingMode} = true
 
 end
 
