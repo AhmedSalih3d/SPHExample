@@ -92,7 +92,7 @@ Written by Ahmed Salih ([AhmedSalih3d](https://github.com/AhmedSalih3d)).
 
 | Version | Description |
 |---------|-------------|
-| 0.6.11 | Added `ChunkMultiplier` for improved thread load balance |
+| 0.6.11 | Added `ChunkMultiplier` for improved thread load balance and focus on code dependencies |
 | 0.6.10 | Implemented concepts of tests, aim is to understand allocations and run time |
 | 0.6.9  | Specify output times via `OutputTimes` (float or vector). |
 | 0.6.8  | Select which variables are written to `vtkhdf` files. |
