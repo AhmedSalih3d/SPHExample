@@ -3,16 +3,15 @@ module PreProcess
 export LoadBoundaryNormals, AllocateDataStructures, AllocateSupportDataStructures, AllocateThreadedArrays
 
 using CSV
-using DataFrames
 using StaticArrays
 using StructArrays
 
 using ..SimulationGeometry
 
 function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, particle_group_marker::Int, specific_csv::String) where {D, T}
-    DF_SPECIFIC = CSV.read(specific_csv, DataFrame)
+    csv_file = CSV.File(specific_csv)
 
-    nrows = nrow(DF_SPECIFIC)
+    nrows = length(csv_file)
 
     points       = Vector{SVector{D,T}}(undef, nrows)
     density      = Vector{T}(undef, nrows)
@@ -20,13 +19,12 @@ function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, parti
     group_marker = Vector{Int}(undef, nrows)
     idp          = Vector{Int}(undef, nrows)
 
-    i = 1
-    for DF ∈ eachrow(DF_SPECIFIC)
-        P1   = DF["Points:0"]
-        P2   = DF["Points:1"]
-        P3   = DF["Points:2"]
-        Rhop = DF["Rhop"]
-        Idp  = DF["Idp"] + 1
+    for (i, row) ∈ enumerate(csv_file)
+        P1   = getproperty(row, Symbol("Points:0"))
+        P2   = getproperty(row, Symbol("Points:1"))
+        P3   = getproperty(row, Symbol("Points:2"))
+        Rhop = row.Rhop
+        Idp  = row.Idp + 1
 
         points[i] = if D == 3
             SVector{3,T}(P1, P2, P3)
@@ -38,7 +36,6 @@ function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, parti
         types[i]        = particle_type
         group_marker[i] = particle_group_marker
         idp[i]          = Idp
-        i += 1
     end
 
     return points, density, types, group_marker, idp
@@ -172,23 +169,22 @@ function AllocateThreadedArrays(SimMetaData, SimParticles, dρdtI, ∇Cᵢ, ∇�
 end
 
 function LoadBoundaryNormals(::Val{D}, ::Type{T}, path_mdbc) where {D, T}
-    # Read the CSV file into a DataFrame
-    df = CSV.read(path_mdbc, DataFrame)
+    # Read the CSV file
+    csv_file = CSV.File(path_mdbc)
 
     normals       = Vector{SVector{D,T}}()
     points        = Vector{SVector{D,T}}()
     ghost_points  = Vector{SVector{D,T}}()
 
-    # Loop over each row of the DataFrame
-    
-    for df_ in eachrow(df)
+    # Loop over each row of the file
+    for row in csv_file
         # Extract the "Normal" fields into an SVector
         if D == 3
-            normal = SVector{D,T}(df_["Normal:0"], df_["Normal:1"], df_["Normal:2"])
-            point  = SVector{D,T}(df_["Points:0"], df_["Points:1"], df_["Points:2"])
+            normal = SVector{D,T}(getproperty(row, Symbol("Normal:0")), getproperty(row, Symbol("Normal:1")), getproperty(row, Symbol("Normal:2")))
+            point  = SVector{D,T}(getproperty(row, Symbol("Points:0")), getproperty(row, Symbol("Points:1")), getproperty(row, Symbol("Points:2")))
         elseif D == 2
-            normal = SVector{D,T}(df_["Normal:0"], df_["Normal:2"])
-            point  = SVector{D,T}(df_["Points:0"], df_["Points:2"])
+            normal = SVector{D,T}(getproperty(row, Symbol("Normal:0")), getproperty(row, Symbol("Normal:2")))
+            point  = SVector{D,T}(getproperty(row, Symbol("Points:0")), getproperty(row, Symbol("Points:2")))
         end
 
         push!(normals, normal)
@@ -201,4 +197,3 @@ function LoadBoundaryNormals(::Val{D}, ::Type{T}, path_mdbc) where {D, T}
 end
 
 end
-
