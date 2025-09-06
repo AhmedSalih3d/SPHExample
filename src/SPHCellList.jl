@@ -216,15 +216,17 @@ using Bumper
 
         @unpack h⁻¹, h, η², H², αD = SimKernel 
 
-        xᵢⱼ  = Position[i] - Position[j]
-        xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)              
-        if  xᵢⱼ² <= H²
+        n = length(Position)
+        offset = (ichunk - 1) * n
+        xᵢⱼ = Position[i] - Position[j]
+        xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
+        if xᵢⱼ² <= H²
             #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/2
-            dᵢⱼ  = sqrt(abs(xᵢⱼ²))
+            dᵢⱼ = sqrt(abs(xᵢⱼ²))
 
             # clamp seems faster than min, no util
-            q         = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0) #min(dᵢⱼ * h⁻¹, 2.0) - 8% util no DDT
-            ∇ᵢWᵢⱼ     = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
+            q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0) #min(dᵢⱼ * h⁻¹, 2.0) - 8% util no DDT
+            ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
             
             ρᵢ        = Density[i]
             ρⱼ        = Density[j]
@@ -238,8 +240,9 @@ using Bumper
 
             Dᵢ, Dⱼ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ², i, j, MotionLimiter)
 
-            SimThreadedArrays.dρdtIThreaded[ichunk][i] += dρdt⁺ + Dᵢ
-            SimThreadedArrays.dρdtIThreaded[ichunk][j] += dρdt⁻ + Dⱼ
+            base = offset
+            SimThreadedArrays.dρdtIThreaded[base + i] += dρdt⁺ + Dᵢ
+            SimThreadedArrays.dρdtIThreaded[base + j] += dρdt⁻ + Dⱼ
 
 
             Pᵢ      =  Pressure[i]
@@ -251,29 +254,31 @@ using Bumper
             visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ², i, j)
 
             uₘ = dvdt⁺ + visc_term
-            SimThreadedArrays.AccelerationThreaded[ichunk][i] += uₘ
-            SimThreadedArrays.AccelerationThreaded[ichunk][j] -= uₘ 
+            SimThreadedArrays.AccelerationThreaded[base + i] += uₘ
+            SimThreadedArrays.AccelerationThreaded[base + j] -= uₘ
 
             
             if FlagOutputKernelValues
                 Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
-                SimThreadedArrays.KernelThreaded[ichunk][i]         += Wᵢⱼ
-                SimThreadedArrays.KernelThreaded[ichunk][j]         += Wᵢⱼ
-                SimThreadedArrays.KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
-                SimThreadedArrays.KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
+                SimThreadedArrays.KernelThreaded[base + i] += Wᵢⱼ
+                SimThreadedArrays.KernelThreaded[base + j] += Wᵢⱼ
+                SimThreadedArrays.KernelGradientThreaded[base + i] += ∇ᵢWᵢⱼ
+                SimThreadedArrays.KernelGradientThreaded[base + j] += -∇ᵢWᵢⱼ
             end
 
             if SimMetaData.FlagShifting
                 
                 MLcond = MotionLimiter[i] * MotionLimiter[j]
 
-                SimThreadedArrays.∇CᵢThreaded[ichunk][i]   += (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
-                SimThreadedArrays.∇CᵢThreaded[ichunk][j]   += (m₀/ρⱼ) * -∇ᵢWᵢⱼ
-        
+                SimThreadedArrays.∇CᵢThreaded[base + i] += (m₀/ρᵢ) * ∇ᵢWᵢⱼ
+                SimThreadedArrays.∇CᵢThreaded[base + j] += (m₀/ρⱼ) * -∇ᵢWᵢⱼ
+
                 # Switch signs compared to DSPH, else free surface detection does not make sense
                 # Agrees, https://arxiv.org/abs/2110.10076, it should have been r_ji
-                SimThreadedArrays.∇◌rᵢThreaded[ichunk][i]  += (m₀/ρⱼ) * dot(-xᵢⱼ , ∇ᵢWᵢⱼ)  * MLcond
-                SimThreadedArrays.∇◌rᵢThreaded[ichunk][j]  += (m₀/ρᵢ) * dot( xᵢⱼ ,-∇ᵢWᵢⱼ)  * MLcond
+                SimThreadedArrays.∇◌rᵢThreaded[base + i] +=
+                    (m₀/ρⱼ) * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MLcond
+                SimThreadedArrays.∇◌rᵢThreaded[base + j] +=
+                    (m₀/ρᵢ) * dot(xᵢⱼ, -∇ᵢWᵢⱼ) * MLcond
             end
         end
 
@@ -328,18 +333,20 @@ using Bumper
         return bΔ, AΔ
     end
 
-    function reduce_sum!(target_array, arrays)
+    function reduce_sum!(target_array, array)
         n = length(target_array)
         num_threads = nthreads()
         chunk_size = ceil(Int, n / num_threads)
         @inbounds @threads for t in 1:num_threads
-            local start_idx = 1 + (t-1) * chunk_size
-            local end_idx = min(t * chunk_size, n)
-            for j in eachindex(arrays)
-                local array = arrays[j]  # Access array only once per thread
-                @simd ivdep for i in start_idx:end_idx
-                    @inbounds target_array[i] += array[i]
+            start_idx = 1 + (t - 1) * chunk_size
+            end_idx = min(t * chunk_size, n)
+            for i in start_idx:end_idx
+                s = zero(eltype(target_array))
+                @simd for tid in 1:num_threads
+                    idx = (tid - 1) * n + i
+                    @inbounds s += array[idx]
                 end
+                @inbounds target_array[i] += s
             end
         end
     end
@@ -362,12 +369,7 @@ using Bumper
             end
         end
 
-        # Threaded zeroing for fields in SimThreadedArrays
-        foreachfield(f -> begin
-            Threads.@threads for v in f
-                fill!(v, zero(eltype(v)))
-            end
-        end, SimThreadedArrays)
+        foreachfield(v -> fill!(v, zero(eltype(v))), SimThreadedArrays)
 
         return nothing
     end
