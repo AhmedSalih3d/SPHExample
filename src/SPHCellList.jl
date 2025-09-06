@@ -92,7 +92,7 @@ using Bumper
                 CellDict[Cells[i]] = IndexCounter
             end
         end
-        ParticleRanges[IndexCounter + 1] = length(ParticleRanges)
+        ParticleRanges[IndexCounter + 1] = length(Cells) + 1
         return IndexCounter
     end
 
@@ -254,10 +254,13 @@ using Bumper
                         CellIndex = UniqueCellsView[iter]
                         SimParticles.ChunkID[iter] = Threads.threadid()   # mark which thread handles this cell
                         StartIndex = ParticleRanges[iter]
-                        EndIndex   = ParticleRanges[iter+1] - 1
+                        EndIndex   = ParticleRanges[iter + 1] - 1
+                        if StartIndex < 1 || StartIndex > EndIndex
+                            continue
+                        end
 
                         # (1) Interactions among particles within the same cell `iter`
-                        @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
+                        @inbounds for i = StartIndex:EndIndex, j = (i + 1):EndIndex
                             ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                                                 SimConstants, SimParticles, SimThreadedArrays,
                                                 Position, Density, Pressure, Velocity,
@@ -270,6 +273,9 @@ using Bumper
                             NeighborIdx  = get(CellDict, SCellIndex, 1)            # lookup neighbor cell index (or 1 if not present)
                             StartIndex_  = ParticleRanges[NeighborIdx]
                             EndIndex_    = ParticleRanges[NeighborIdx + 1] - 1
+                            if StartIndex_ < 1 || StartIndex_ > EndIndex_
+                                continue
+                            end
                             for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
                                 ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                                                     SimConstants, SimParticles, SimThreadedArrays,
