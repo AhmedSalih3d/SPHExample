@@ -135,15 +135,17 @@ function AllocateSupportDataStructures(Position)
     return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ
 end
 
-function allocate_kernel_arrays(::SimulationMetaData{D,T,S,NoKernelOutput,B},
+function allocate_kernel_arrays(::SimulationMetaData{D,T,S,NoKernelOutput,B,L},
                                 SimParticles, n_copy) where {D,T,S<:ShiftingMode,
-                                                             B<:MDBCMode}
+                                                             B<:MDBCMode,
+                                                             L<:LogMode}
     return NamedTuple()
 end
-function allocate_kernel_arrays(::SimulationMetaData{D,T,S,K,B},
+function allocate_kernel_arrays(::SimulationMetaData{D,T,S,K,B,L},
                                 SimParticles, n_copy) where {D,T,S<:ShiftingMode,
                                                              K<:KernelOutputMode,
-                                                             B<:MDBCMode}
+                                                             B<:MDBCMode,
+                                                             L<:LogMode}
     KernelThreaded         = [copy(SimParticles.Kernel) for _ in 1:n_copy]
     KernelGradientThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
     return (
@@ -152,15 +154,17 @@ function allocate_kernel_arrays(::SimulationMetaData{D,T,S,K,B},
     )
 end
 
-function allocate_shifting_arrays(::SimulationMetaData{D,T,NoShifting,K,B},
+function allocate_shifting_arrays(::SimulationMetaData{D,T,NoShifting,K,B,L},
                                   ∇Cᵢ, ∇◌rᵢ, n_copy) where {D,T,K<:KernelOutputMode,
-                                                            B<:MDBCMode}
+                                                            B<:MDBCMode,
+                                                            L<:LogMode}
     return NamedTuple()
 end
-function allocate_shifting_arrays(::SimulationMetaData{D,T,S,K,B},
+function allocate_shifting_arrays(::SimulationMetaData{D,T,S,K,B,L},
                                   ∇Cᵢ, ∇◌rᵢ, n_copy) where {D,T,S<:ShiftingMode,
                                                             K<:KernelOutputMode,
-                                                            B<:MDBCMode}
+                                                            B<:MDBCMode,
+                                                            L<:LogMode}
     ∇CᵢThreaded  = [copy(∇Cᵢ) for _ in 1:n_copy]
     ∇◌rᵢThreaded = [copy(∇◌rᵢ) for _ in 1:n_copy]
     return (
@@ -169,11 +173,12 @@ function allocate_shifting_arrays(::SimulationMetaData{D,T,S,K,B},
     )
 end
 
-function AllocateThreadedArrays(SimMetaData::SimulationMetaData{D,T,S,K,B},
+function AllocateThreadedArrays(SimMetaData::SimulationMetaData{D,T,S,K,B,L},
                                 SimParticles, dρdtI, ∇Cᵢ, ∇◌rᵢ;
                                 n_copy = Base.Threads.nthreads()) where {D,T,S<:ShiftingMode,
                                                                            K<:KernelOutputMode,
-                                                                           B<:MDBCMode}
+                                                                           B<:MDBCMode,
+                                                                           L<:LogMode}
     dρdtIThreaded        = [copy(dρdtI) for _ in 1:n_copy]
     AccelerationThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
     nt = (

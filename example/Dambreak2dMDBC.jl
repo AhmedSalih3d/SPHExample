@@ -27,7 +27,7 @@ let
     # Load in particles
     SimParticles = AllocateDataStructures(SimulationGeometry)
 
-    SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC}(
+    SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
         SimulationName="DamBreak2D",
         SaveLocation="E:/SecondApproach/DamBreak2D_MDBC/",
         SimulationTime=2,
@@ -35,8 +35,7 @@ let
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
         ExportGridCells=true,
-        OpenLogFile=true,
-        FlagLog=true
+        OpenLogFile=true
     )
 
     # If save directory is not already made, make it

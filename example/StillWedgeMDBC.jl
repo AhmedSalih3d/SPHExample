@@ -27,7 +27,7 @@ let
     # Load in particles
     SimParticles = AllocateDataStructures(SimulationGeometry)
 
-    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC}(
+    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
         SimulationName="StillWedge", 
         SaveLocation="E:/SecondApproach/StillWedge2D_MDBC",
         SimulationTime=4.0,
@@ -36,7 +36,6 @@ let
         ExportSingleVTKHDF=true,
         ExportGridCells=true,
         OpenLogFile=true,
-        FlagLog=true,
         # OutputVariables = [
         #     # "ChunkID",
         #     # "Kernel",

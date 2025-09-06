@@ -33,7 +33,7 @@ let
     SimParticles = AllocateDataStructures(SimulationGeometry)
 
     # --- Simulation metadata & logging ---
-    SimMetaDataDambreak3D = SimulationMetaData{Dimensions,FloatType}(
+    SimMetaDataDambreak3D = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,NoMDBC,StoreLog}(
         SimulationName         = "DamBreak3D_Test",
         SaveLocation           = "E:/SecondApproach/TESTING_CPU_3DDambreak",
         SimulationTime         = 1.6,
@@ -41,8 +41,7 @@ let
         VisualizeInParaview    = true,
         ExportSingleVTKHDF     = true,
         ExportGridCells        = true,
-        OpenLogFile            = true,
-        FlagLog                = true
+        OpenLogFile            = true
     )
 
     SimLogger = SimulationLogger(SimMetaDataDambreak3D.SaveLocation; to_console=true)

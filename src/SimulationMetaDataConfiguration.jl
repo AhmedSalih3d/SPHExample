@@ -6,7 +6,8 @@ using ProgressMeter
 
 export SimulationMetaData, ShiftingMode, NoShifting, PlanarShifting,
        KernelOutputMode, NoKernelOutput, StoreKernelOutput,
-       MDBCMode, NoMDBC, SimpleMDBC
+       MDBCMode, NoMDBC, SimpleMDBC,
+       LogMode, NoLog, StoreLog
 
 abstract type ShiftingMode end
 struct NoShifting    <: ShiftingMode end
@@ -20,11 +21,16 @@ abstract type MDBCMode end
 struct NoMDBC    <: MDBCMode end
 struct SimpleMDBC <: MDBCMode end
 
+abstract type LogMode end
+struct NoLog    <: LogMode end
+struct StoreLog <: LogMode end
+
 @with_kw mutable struct SimulationMetaData{Dimensions,
                                            FloatType <: AbstractFloat,
                                            SMode <: ShiftingMode,
                                            KMode <: KernelOutputMode,
-                                           BMode <: MDBCMode}
+                                           BMode <: MDBCMode,
+                                           LMode <: LogMode}
     SimulationName::String
     SaveLocation::String
     HourGlass::TimerOutput                  = TimerOutput()
@@ -57,15 +63,16 @@ struct SimpleMDBC <: MDBCMode end
         "GhostNormals",
     ]
     OpenLogFile::Bool                       = true
-    FlagLog::Bool                           = false
     ChunkMultiplier::Int                    = 1
 end
+SimulationMetaData{D,T,S,K,B}(; kwargs...) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode} =
+    SimulationMetaData{D,T,S,K,B,NoLog}(; kwargs...)
 SimulationMetaData{D,T,S,K}(; kwargs...) where {D,T,S<:ShiftingMode,K<:KernelOutputMode} =
-    SimulationMetaData{D,T,S,K,NoMDBC}(; kwargs...)
+    SimulationMetaData{D,T,S,K,NoMDBC,NoLog}(; kwargs...)
 SimulationMetaData{D,T,S}(; kwargs...) where {D,T,S<:ShiftingMode} =
-    SimulationMetaData{D,T,S,NoKernelOutput,NoMDBC}(; kwargs...)
+    SimulationMetaData{D,T,S,NoKernelOutput,NoMDBC,NoLog}(; kwargs...)
 SimulationMetaData{D,T}(; kwargs...) where {D,T} =
-    SimulationMetaData{D,T,NoShifting,NoKernelOutput,NoMDBC}(; kwargs...)
+    SimulationMetaData{D,T,NoShifting,NoKernelOutput,NoMDBC,NoLog}(; kwargs...)
 
 end
 
