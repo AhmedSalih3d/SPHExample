@@ -145,7 +145,7 @@ using Bumper
         if new_cell == old_cell
             return false, idx, IndexCounter
         end
-        old_pos = CellDict[old_cell]
+        old_pos = get(CellDict, old_cell, 0) # 0 when old cell was removed
         Particles.Cells[idx] = new_cell
         k = idx
         while k > 1 && Particles.Cells[k - 1] > new_cell
@@ -157,20 +157,22 @@ using Bumper
             k += 1
         end
 
-        for i = old_pos + 1:IndexCounter + 1
-            ParticleRanges[i] -= 1
-        end
-        empty_old = ParticleRanges[old_pos] == ParticleRanges[old_pos + 1]
-        if empty_old && old_pos != 1
-            delete!(CellDict, old_cell)
-            for i = old_pos:IndexCounter
-                UniqueCells[i] = UniqueCells[i + 1]
-                ParticleRanges[i] = ParticleRanges[i + 1]
-                if i <= IndexCounter - 1
-                    CellDict[UniqueCells[i]] = i
-                end
+        if old_pos != 0
+            for i = old_pos + 1:IndexCounter + 1
+                ParticleRanges[i] -= 1
             end
-            IndexCounter -= 1
+            empty_old = ParticleRanges[old_pos] == ParticleRanges[old_pos + 1]
+            if empty_old && old_pos != 1
+                delete!(CellDict, old_cell)
+                for i = old_pos:IndexCounter
+                    UniqueCells[i] = UniqueCells[i + 1]
+                    ParticleRanges[i] = ParticleRanges[i + 1]
+                    if i <= IndexCounter - 1
+                        CellDict[UniqueCells[i]] = i
+                    end
+                end
+                IndexCounter -= 1
+            end
         end
 
         if haskey(CellDict, new_cell)
@@ -215,7 +217,16 @@ using Bumper
                                                             UniqueCells,
                                                             CellDict,
                                                             IndexCounter)
-            idx = (moved && new_idx < idx) ? new_idx : idx + 1
+            if moved
+                if new_idx < idx
+                    idx = new_idx
+                elseif new_idx == idx
+                    idx += 1
+                end
+                # when new_idx > idx, a new particle occupies `idx`, so reprocess
+            else
+                idx += 1
+            end
         end
         return IndexCounter
     end
