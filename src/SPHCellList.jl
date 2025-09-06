@@ -143,9 +143,9 @@ using Bumper
                                       Tuple(Particles.Position[idx])))
         old_cell = Particles.Cells[idx]
         if new_cell == old_cell
-            return false, IndexCounter
+            return false, idx, IndexCounter
         end
-        old_pos = get(CellDict, old_cell, 1)
+        old_pos = CellDict[old_cell]
         Particles.Cells[idx] = new_cell
         k = idx
         while k > 1 && Particles.Cells[k - 1] > new_cell
@@ -179,7 +179,6 @@ using Bumper
                 ParticleRanges[i] += 1
             end
         else
-            # determine insertion point among existing cells (skip dummy at 1)
             insert_pos = searchsortedfirst(@view(UniqueCells[2:IndexCounter]), new_cell) + 1
             for i = IndexCounter + 1:-1:insert_pos + 1
                 UniqueCells[i] = UniqueCells[i - 1]
@@ -197,7 +196,7 @@ using Bumper
             end
         end
 
-        return true, IndexCounter
+        return true, k, IndexCounter
     end
 
     """
@@ -208,10 +207,15 @@ using Bumper
     """
     function UpdateLocalCells!(Particles, InverseCutOff, ParticleRanges,
                                UniqueCells, CellDict, IndexCounter)
-        for idx in eachindex(Particles.Cells)
-            _, IndexCounter = UpdateLocalCell!(Particles, idx, InverseCutOff,
-                                               ParticleRanges, UniqueCells,
-                                               CellDict, IndexCounter)
+        idx = 1
+        while idx <= length(Particles.Cells)
+            moved, new_idx, IndexCounter = UpdateLocalCell!(Particles, idx,
+                                                            InverseCutOff,
+                                                            ParticleRanges,
+                                                            UniqueCells,
+                                                            CellDict,
+                                                            IndexCounter)
+            idx = (moved && new_idx < idx) ? new_idx : idx + 1
         end
         return IndexCounter
     end
