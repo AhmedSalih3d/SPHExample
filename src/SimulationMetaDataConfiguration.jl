@@ -58,7 +58,6 @@ struct SimpleMDBC <: MDBCMode end
     ]
     OpenLogFile::Bool                       = true
     FlagLog::Bool                           = false
-    FlagSingleStepTimeStepping::Bool        = false
     ChunkMultiplier::Int                    = 1
 end
 SimulationMetaData{D,T,S,K}(; kwargs...) where {D,T,S<:ShiftingMode,K<:KernelOutputMode} =
