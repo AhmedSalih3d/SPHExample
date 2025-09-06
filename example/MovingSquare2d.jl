@@ -23,7 +23,6 @@ let
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
         OpenLogFile=true,
-        FlagOutputKernelValues=false,
         FlagLog=true
     )
     FixedBoundary = Geometry{Dimensions, FloatType}(

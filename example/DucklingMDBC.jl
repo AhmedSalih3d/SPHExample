@@ -35,7 +35,6 @@ let
         ExportSingleVTKHDF=true,
         ExportGridCells= true,
         OpenLogFile=true,
-        FlagOutputKernelValues=false,
         FlagLog=true,
         FlagMDBCSimple=true,
     )

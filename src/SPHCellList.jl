@@ -80,6 +80,23 @@ using LinearAlgebra
         SimThreadedArrays.∇◌rᵢThreaded[ichunk][j]  += (m₀/ρᵢ) * dot( xᵢⱼ ,-∇ᵢWᵢⱼ) * MLcond
         return nothing
     end
+
+    # Optionally record kernel values and gradients based on `SimulationMetaData`
+    function kernel_output!(::SimulationMetaData{D,T,S,NoKernelOutput}, SimKernel,
+                            SimThreadedArrays, q, ∇ᵢWᵢⱼ, i, j, ichunk) where {D,T,S<:ShiftingMode}
+        return nothing
+    end
+
+    function kernel_output!(::SimulationMetaData{D,T,S,K}, SimKernel,
+                            SimThreadedArrays, q, ∇ᵢWᵢⱼ, i, j, ichunk) where {D,T,S<:ShiftingMode,
+                                                                            K<:KernelOutputMode}
+        Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
+        SimThreadedArrays.KernelThreaded[ichunk][i]         += Wᵢⱼ
+        SimThreadedArrays.KernelThreaded[ichunk][j]         += Wᵢⱼ
+        SimThreadedArrays.KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
+        SimThreadedArrays.KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
+        return nothing
+    end
    
     @inline function ExtractCells!(Particles, InverseCutOff)
         @inbounds @simd ivdep for i ∈ eachindex(Particles.Cells)
@@ -184,10 +201,10 @@ using LinearAlgebra
 
     f(SimKernel, GhostPoint) = CartesianIndex(map(x->map_floor(x,SimKernel.H⁻¹), Tuple(GhostPoint)))
     function NeighborLoopMDBC!(SimKernel,
-                               SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode},
+                               SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode},
                                SimConstants, ParticleRanges, CellDict, Position,
                                Density, GhostPoints, GhostNormals, ParticleType,
-                               bᵧ, Aᵧ) where {Dimensions, FloatType, SMode}
+                               bᵧ, Aᵧ) where {Dimensions, FloatType, SMode, KMode}
         
         FullStencil = CartesianIndices(ntuple(_->-1:1, Dimensions))
 
@@ -232,7 +249,6 @@ using LinearAlgebra
     end
 
     Base.@propagate_inbounds function ComputeInteractions!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk) where {SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
-        @unpack FlagOutputKernelValues = SimMetaData
         @unpack ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
         @unpack h⁻¹, h, η², H², αD = SimKernel 
@@ -276,13 +292,7 @@ using LinearAlgebra
             SimThreadedArrays.AccelerationThreaded[ichunk][j] -= uₘ 
 
             
-            if FlagOutputKernelValues
-                Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
-                SimThreadedArrays.KernelThreaded[ichunk][i]         += Wᵢⱼ
-                SimThreadedArrays.KernelThreaded[ichunk][j]         += Wᵢⱼ
-                SimThreadedArrays.KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
-                SimThreadedArrays.KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
-            end
+            kernel_output!(SimMetaData, SimKernel, SimThreadedArrays, q, ∇ᵢWᵢⱼ, i, j, ichunk)
 
             add_shifting_terms!(SimMetaData, SimThreadedArrays, MotionLimiter,
                                  xᵢⱼ, ∇ᵢWᵢⱼ, m₀, ρᵢ, ρⱼ, i, j, ichunk)
@@ -291,7 +301,7 @@ using LinearAlgebra
         return nothing
     end
 
-    Base.@propagate_inbounds function ComputeInteractionsMDBC!(SimKernel, SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode}, SimConstants, Position, Density, ParticleType, GhostPoints, i, j) where {Dimensions, FloatType, SMode}
+    Base.@propagate_inbounds function ComputeInteractionsMDBC!(SimKernel, SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode}, SimConstants, Position, Density, ParticleType, GhostPoints, i, j) where {Dimensions, FloatType, SMode, KMode}
         @unpack ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
         
         @unpack h⁻¹, h, η², H², αD = SimKernel 
@@ -366,18 +376,24 @@ using LinearAlgebra
         return nothing
     end
 
+    # Zero arrays related to kernel output depending on the selected mode.
+    function zero_kernel_arrays!(::SimulationMetaData{D,T,S,NoKernelOutput}, _...) where {D,T,S<:ShiftingMode}
+        return nothing
+    end
+    function zero_kernel_arrays!(::SimulationMetaData{D,T,S,K}, arrays...) where {D,T,S<:ShiftingMode,
+                                                                                   K<:KernelOutputMode}
+        @threads for arr in arrays
+            fill!(arr, zero(eltype(arr)))
+        end
+        return nothing
+    end
+
     function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
         # Threaded zeroing for main arrays
         @threads for arr in (dρdtI, Acceleration)
             fill!(arr, zero(eltype(arr)))
         end
-
-        if SimMetaData.FlagOutputKernelValues
-            @threads for arr in (Kernel, KernelGradient)
-                fill!(arr, zero(eltype(arr)))
-            end
-        end
-
+        zero_kernel_arrays!(SimMetaData, Kernel, KernelGradient)
         zero_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ)
 
         # Threaded zeroing for fields in SimThreadedArrays
@@ -406,15 +422,21 @@ using LinearAlgebra
     end
     prepare_shifting_arrays!(::SimulationMetaData{D,T,S}, ∇Cᵢ, ∇◌rᵢ) where {D,T,S<:ShiftingMode} = nothing
 
+    function reduce_kernel_arrays!(::SimulationMetaData{D,T,S,NoKernelOutput}, _...) where {D,T,S<:ShiftingMode}
+        return nothing
+    end
+    function reduce_kernel_arrays!(::SimulationMetaData{D,T,S,K}, Kernel, KernelGradient, SimThreadedArrays) where {D,T,S<:ShiftingMode,
+                                                                                                                     K<:KernelOutputMode}
+        reduce_sum!(Kernel, SimThreadedArrays.KernelThreaded)
+        reduce_sum!(KernelGradient, SimThreadedArrays.KernelGradientThreaded)
+        return nothing
+    end
+
     function ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
         reduce_sum!(dρdtI, SimThreadedArrays.dρdtIThreaded)
         reduce_sum!(Acceleration, SimThreadedArrays.AccelerationThreaded)
 
-        if SimMetaData.FlagOutputKernelValues
-            reduce_sum!(Kernel, SimThreadedArrays.KernelThreaded)
-            reduce_sum!(KernelGradient, SimThreadedArrays.KernelGradientThreaded)
-        end
-
+        reduce_kernel_arrays!(SimMetaData, Kernel, KernelGradient, SimThreadedArrays)
         reduce_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ, SimThreadedArrays)
 
         return nothing
@@ -470,7 +492,7 @@ using LinearAlgebra
         end
     end
     
-    function HalfTimeStep(::SimulationMetaData{Dimensions, FloatType, SMode}, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂) where {Dimensions, FloatType, SMode}
+    function HalfTimeStep(::SimulationMetaData{Dimensions, FloatType, SMode, KMode}, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂) where {Dimensions, FloatType, SMode, KMode}
         @unpack Position, Density, Velocity, Acceleration, GravityFactor, MotionLimiter = SimParticles
 
         @inbounds @simd ivdep for i in eachindex(Position)
@@ -484,7 +506,7 @@ using LinearAlgebra
         return nothing
     end
 
-    function FullTimeStep(::SimulationMetaData{D,T,NoShifting}, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T}
+    function FullTimeStep(::SimulationMetaData{D,T,NoShifting,K}, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,K<:KernelOutputMode}
         @unpack Position, Velocity, Acceleration, GravityFactor, MotionLimiter = SimParticles
         @inbounds @simd ivdep for i in eachindex(Position)
             Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
@@ -494,7 +516,7 @@ using LinearAlgebra
         return nothing
     end
 
-    function FullTimeStep(::SimulationMetaData{D,T,S}, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,S<:ShiftingMode}
+    function FullTimeStep(::SimulationMetaData{D,T,S,K}, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,S<:ShiftingMode,K<:KernelOutputMode}
         @unpack Position, Velocity, Acceleration, GravityFactor, MotionLimiter = SimParticles
         A     = 2# Value between 1 to 6 advised
         A_FST = 0; # zero for internal flows
@@ -564,12 +586,12 @@ using LinearAlgebra
 
     
     @inbounds function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
-                                      SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode},
+                                      SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode},
                                       SimConstants, SimParticles, Stencil,
                                       ParticleRanges, UniqueCells, CellDict,
                                       SortingScratchSpace, SimThreadedArrays,
                                       dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
-                                      ∇Cᵢ, ∇◌rᵢ, MotionDefinition) where {Dimensions, FloatType, SMode, SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
+                                      ∇Cᵢ, ∇◌rᵢ, MotionDefinition) where {Dimensions, FloatType, SMode, KMode, SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
         Position       = SimParticles.Position
         Density        = SimParticles.Density
         Pressure       = SimParticles.Pressure
@@ -664,7 +686,7 @@ using LinearAlgebra
     
     ###===
     function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}, #Don't further specify type for now
-        SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode},
+        SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode},
         SimConstants::SimulationConstants,
         SimKernel::SPHKernelInstance,
         SimLogger::SimulationLogger,
@@ -672,7 +694,7 @@ using LinearAlgebra
         SimViscosity::SV,
         SimDensityDiffusion::SDD,
         ParticleNormalsPath::Union{Nothing,String} = nothing
-        ) where {Dimensions,FloatType,SMode,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
+        ) where {Dimensions,FloatType,SMode,KMode,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
 
         # Unpack the relevant simulation meta data
         @unpack HourGlass = SimMetaData;

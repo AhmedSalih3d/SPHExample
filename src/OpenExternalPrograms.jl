@@ -76,7 +76,7 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData, OutputVariableNames;
         py_regex = "^$(SimMetaData.SimulationName)_(\\d+).vtk" #^ means to anchor the regex to the start of the string
     end
 
-    ExtractDimensionalityMetaData(::SimulationMetaData{N, FloatType, SMode}) where {N, FloatType, SMode} = N
+    ExtractDimensionalityMetaData(::SimulationMetaData{N, FloatType, SMode, KMode}) where {N, FloatType, SMode, KMode} = N
     ViewDimension = ExtractDimensionalityMetaData(SimMetaData) == 2 ? "2D" : "3D"
 
     ParaViewStateFile     = open(ParaViewStateFileName, "w")
