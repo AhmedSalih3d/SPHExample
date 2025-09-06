@@ -27,8 +27,8 @@ let
     # Load in particles
     SimParticles = AllocateDataStructures(SimulationGeometry)
 
-    SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType}(
-        SimulationName="DamBreak2D", 
+    SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC}(
+        SimulationName="DamBreak2D",
         SaveLocation="E:/SecondApproach/DamBreak2D_MDBC/",
         SimulationTime=2,
         OutputTimes=collect(0.01:0.01:2),
@@ -36,8 +36,6 @@ let
         ExportSingleVTKHDF=true,
         ExportGridCells=true,
         OpenLogFile=true,
-        FlagOutputKernelValues=false,
-        FlagMDBCSimple=true,
         FlagLog=true
     )
 
