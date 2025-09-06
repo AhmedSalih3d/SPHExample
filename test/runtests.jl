@@ -48,7 +48,7 @@ end
     ))
 
     dρdtI, vel_n, pos_n, ρ_n, ∇C, ∇r =
-        AllocateSupportDataStructures(particles.Position)
+        AllocateSupportDataStructures(meta, particles.Position)
 
     for _ in 1:1000
         ResetArrays!(dρdtI, particles.Acceleration)

@@ -118,19 +118,41 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
     return SimParticles
 end
 
-function AllocateSupportDataStructures(Position)
+function AllocateSupportDataStructures(::SimulationMetaData{D,T,NoShifting,K,B,L}, Position) where {D,T,K<:KernelOutputMode,
+                                                                                                    B<:MDBCMode,
+                                                                                                    L<:LogMode}
 
-    NumberOfPoints           = length(Position)
-    PositionType             = eltype(Position)
-    PositionUnderlyingType   = eltype(PositionType)
+    NumberOfPoints         = length(Position)
+    PositionType           = eltype(Position)
+    PositionUnderlyingType = eltype(PositionType)
 
-    dρdtI           = zeros(PositionUnderlyingType, NumberOfPoints)
-    Velocityₙ⁺      = zeros(PositionType, NumberOfPoints)
-    Positionₙ⁺      = zeros(PositionType, NumberOfPoints)
-    ρₙ⁺             = zeros(PositionUnderlyingType, NumberOfPoints)
+    dρdtI      = zeros(PositionUnderlyingType, NumberOfPoints)
+    Velocityₙ⁺ = zeros(PositionType, NumberOfPoints)
+    Positionₙ⁺ = zeros(PositionType, NumberOfPoints)
+    ρₙ⁺        = zeros(PositionUnderlyingType, NumberOfPoints)
 
-    ∇Cᵢ            = zeros(PositionType, NumberOfPoints)
-    ∇◌rᵢ           = zeros(PositionUnderlyingType, NumberOfPoints)
+    ∇Cᵢ  = Vector{PositionType}(undef, 0)
+    ∇◌rᵢ = Vector{PositionUnderlyingType}(undef, 0)
+
+    return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ
+end
+
+function AllocateSupportDataStructures(::SimulationMetaData{D,T,S,K,B,L}, Position) where {D,T,S<:ShiftingMode,
+                                                                                           K<:KernelOutputMode,
+                                                                                           B<:MDBCMode,
+                                                                                           L<:LogMode}
+
+    NumberOfPoints         = length(Position)
+    PositionType           = eltype(Position)
+    PositionUnderlyingType = eltype(PositionType)
+
+    dρdtI      = zeros(PositionUnderlyingType, NumberOfPoints)
+    Velocityₙ⁺ = zeros(PositionType, NumberOfPoints)
+    Positionₙ⁺ = zeros(PositionType, NumberOfPoints)
+    ρₙ⁺        = zeros(PositionUnderlyingType, NumberOfPoints)
+
+    ∇Cᵢ  = zeros(PositionType, NumberOfPoints)
+    ∇◌rᵢ = zeros(PositionUnderlyingType, NumberOfPoints)
 
     return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ
 end

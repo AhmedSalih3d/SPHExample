@@ -833,7 +833,7 @@ using LinearAlgebra
         # Vector of time steps
         TimeSteps = Vector{FloatType}()
         
-        dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimParticles.Position)
+        dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimMetaData, SimParticles.Position)
 
         load_mdbc_normals!(SimMetaData, SimParticles, ParticleNormalsPath)
 
