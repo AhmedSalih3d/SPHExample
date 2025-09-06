@@ -163,10 +163,10 @@ using Bumper
 
     f(SimKernel, GhostPoint) = CartesianIndex(map(x->map_floor(x,SimKernel.H⁻¹), Tuple(GhostPoint)))
     function NeighborLoopMDBC!(SimKernel,
-                               SimMetaData::SimulationMetaData{Dimensions, _},
+                               SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode},
                                SimConstants, ParticleRanges, CellDict, Position,
                                Density, GhostPoints, GhostNormals, ParticleType,
-                               bᵧ, Aᵧ) where {Dimensions, _}
+                               bᵧ, Aᵧ) where {Dimensions, FloatType, SMode}
         
         FullStencil = CartesianIndices(ntuple(_->-1:1, Dimensions))
 
@@ -263,7 +263,7 @@ using Bumper
                 SimThreadedArrays.KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
             end
 
-            if SimMetaData.FlagShifting
+            if is_shifting(SimMetaData)
                 
                 MLcond = MotionLimiter[i] * MotionLimiter[j]
 
@@ -280,7 +280,7 @@ using Bumper
         return nothing
     end
 
-    Base.@propagate_inbounds function ComputeInteractionsMDBC!(SimKernel, SimMetaData::SimulationMetaData{Dimensions, FloatType}, SimConstants, Position, Density, ParticleType, GhostPoints, i, j) where {Dimensions, FloatType}
+    Base.@propagate_inbounds function ComputeInteractionsMDBC!(SimKernel, SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode}, SimConstants, Position, Density, ParticleType, GhostPoints, i, j) where {Dimensions, FloatType, SMode}
         @unpack ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
         
         @unpack h⁻¹, h, η², H², αD = SimKernel 
@@ -356,7 +356,7 @@ using Bumper
             end
         end
 
-        if SimMetaData.FlagShifting
+        if is_shifting(SimMetaData)
             @threads for arr in (∇Cᵢ, ∇◌rᵢ)
                 fill!(arr, zero(eltype(arr)))
             end
@@ -381,7 +381,7 @@ using Bumper
             reduce_sum!(KernelGradient, SimThreadedArrays.KernelGradientThreaded)
         end
 
-        if SimMetaData.FlagShifting
+        if is_shifting(SimMetaData)
             reduce_sum!(∇Cᵢ, SimThreadedArrays.∇CᵢThreaded)
             reduce_sum!(∇◌rᵢ, SimThreadedArrays.∇◌rᵢThreaded)
         end
@@ -439,7 +439,7 @@ using Bumper
         end
     end
     
-    function HalfTimeStep(::SimulationMetaData{Dimensions, FloatType}, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂) where {Dimensions, FloatType}
+    function HalfTimeStep(::SimulationMetaData{Dimensions, FloatType, SMode}, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂) where {Dimensions, FloatType, SMode}
         @unpack Position, Density, Velocity, Acceleration, GravityFactor, MotionLimiter = SimParticles
 
         @inbounds @simd ivdep for i in eachindex(Position)
@@ -453,34 +453,34 @@ using Bumper
         return nothing
     end
 
-    function FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+    function FullTimeStep(::SimulationMetaData{D,T,NoShifting}, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T}
         @unpack Position, Velocity, Acceleration, GravityFactor, MotionLimiter = SimParticles
-  
-        if !SimMetaData.FlagShifting
-            @inbounds @simd ivdep for i in eachindex(Position)
-                Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
-                Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
-                Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
-            end
-        else
-            A     = 2# Value between 1 to 6 advised
-            A_FST = 0; # zero for internal flows
-            A_FSM = length(first(Position)); #2d, 3d val different
-            @inbounds @simd ivdep for i in eachindex(Position)
-                Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
-                Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
-        
-                A_FSC                  = (∇◌rᵢ[i] - A_FST)/(A_FSM - A_FST)
-                if A_FSC < 0
-                    δxᵢ = zero(eltype(Position))
-                else
-                    δxᵢ = -A_FSC * A * SimKernel.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
-                end
-        
-                Position[i]           += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
-            end
+        @inbounds @simd ivdep for i in eachindex(Position)
+            Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+            Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
+            Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
         end
+        return nothing
+    end
 
+    function FullTimeStep(::SimulationMetaData{D,T,S}, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,S<:ShiftingMode}
+        @unpack Position, Velocity, Acceleration, GravityFactor, MotionLimiter = SimParticles
+        A     = 2# Value between 1 to 6 advised
+        A_FST = 0; # zero for internal flows
+        A_FSM = length(first(Position)); #2d, 3d val different
+        @inbounds @simd ivdep for i in eachindex(Position)
+            Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+            Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
+
+            A_FSC                  = (∇◌rᵢ[i] - A_FST)/(A_FSM - A_FST)
+            if A_FSC < 0
+                δxᵢ = zero(eltype(Position))
+            else
+                δxᵢ = -A_FSC * A * SimKernel.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
+            end
+
+            Position[i]           += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
+        end
         return nothing
     end
 
@@ -533,12 +533,12 @@ using Bumper
 
     
     @inbounds function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
-                                      SimMetaData::SimulationMetaData{Dimensions, FloatType},
+                                      SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode},
                                       SimConstants, SimParticles, Stencil,
                                       ParticleRanges, UniqueCells, CellDict,
                                       SortingScratchSpace, SimThreadedArrays,
                                       dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
-                                      ∇Cᵢ, ∇◌rᵢ, MotionDefinition) where {Dimensions, FloatType, SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
+                                      ∇Cᵢ, ∇◌rᵢ, MotionDefinition) where {Dimensions, FloatType, SMode, SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
         Position       = SimParticles.Position
         Density        = SimParticles.Density
         Pressure       = SimParticles.Pressure
@@ -633,7 +633,7 @@ using Bumper
     
     ###===
     function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}, #Don't further specify type for now
-        SimMetaData::SimulationMetaData{Dimensions, FloatType},
+        SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode},
         SimConstants::SimulationConstants,
         SimKernel::SPHKernelInstance,
         SimLogger::SimulationLogger,
@@ -641,7 +641,7 @@ using Bumper
         SimViscosity::SV,
         SimDensityDiffusion::SDD,
         ParticleNormalsPath::Union{Nothing,String} = nothing
-        ) where {Dimensions,FloatType,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
+        ) where {Dimensions,FloatType,SMode,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
 
         # Unpack the relevant simulation meta data
         @unpack HourGlass = SimMetaData;
@@ -665,7 +665,7 @@ using Bumper
             end
         # end
 
-        if !SimMetaData.FlagShifting
+        if !is_shifting(SimMetaData)
             resize!(∇Cᵢ , 0)
             resize!(∇◌rᵢ, 0)
         end

@@ -26,8 +26,8 @@ let
     # Load in particles
     SimParticles = AllocateDataStructures(SimulationGeometry)
 
-    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
-        SimulationName="CaseDuckling", 
+    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting}(
+        SimulationName="CaseDuckling",
         SaveLocation="E:/SecondApproach/TESTING_CPU_Duckling",
         SimulationTime=1,
         OutputTimes=0.02,
@@ -37,7 +37,6 @@ let
         OpenLogFile=true,
         FlagOutputKernelValues=false,
         FlagLog=true,
-        FlagShifting=false,
         FlagMDBCSimple=true,
     )
 
