@@ -478,26 +478,22 @@ using LinearAlgebra
         return nothing
     end
 
-    function apply_mdbc_before_half!(::SimulationMetaData{D,T,S,K,NoMDBC,L}, _args...) where {D,T,S<:ShiftingMode,
+    function ApplyMDBCBeforeHalf!(::SimulationMetaData{D,T,S,K,NoMDBC,L}, _args...) where {D,T,S<:ShiftingMode,
                                                                                            K<:KernelOutputMode,
                                                                                            L<:LogMode}
         return nothing
     end
-    function apply_mdbc_before_half!(SimMetaData::SimulationMetaData{D,T,S,K,SimpleMDBC,L},
-                                     SimKernel, SimConstants, SimParticles,
-                                     ParticleRanges, CellDict, Position, Density,
-                                     GhostPoints, GhostNormals, ParticleType) where {D,T,S<:ShiftingMode,
-                                                                                      K<:KernelOutputMode,
-                                                                                      L<:LogMode}
+    function ApplyMDBCBeforeHalf!(SimMetaData::SimulationMetaData{D,T,S,K,SimpleMDBC,L},
+                                  SimKernel, SimConstants, SimParticles,
+                                  ParticleRanges, CellDict, Position, Density,
+                                  GhostPoints, GhostNormals, ParticleType
+                                 ) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,L<:LogMode}
         @no_escape begin
             DimensionsPlus = D + 1
             bᵧ = @alloc(SVector{DimensionsPlus, T}, length(Position))
             Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, T, DimensionsPlus*DimensionsPlus}, length(Position))
-            @timeit SimMetaData.HourGlass "04a First NeighborLoopMDBC" NeighborLoopMDBC!(SimKernel, SimMetaData,
-                                                                                        SimConstants, ParticleRanges, CellDict,
-                                                                                        Position, Density, GhostPoints,
-                                                                                        GhostNormals, ParticleType, bᵧ, Aᵧ)
-            @timeit SimMetaData.HourGlass "04b Apply MDBC before Half TimeStep" ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
+            NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, CellDict, Position, Density, GhostPoints,GhostNormals, ParticleType, bᵧ, Aᵧ)
+            ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
         end
 
         return nothing
@@ -731,18 +727,9 @@ using LinearAlgebra
                                       SortingScratchSpace, SimThreadedArrays,
                                       dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
                                       ∇Cᵢ, ∇◌rᵢ, MotionDefinition) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
-        Position       = SimParticles.Position
-        Density        = SimParticles.Density
-        Pressure       = SimParticles.Pressure
-        Velocity       = SimParticles.Velocity
-        Acceleration   = SimParticles.Acceleration
-        MotionLimiter  = SimParticles.MotionLimiter
+        @unpack Position, Density, Pressure, Velocity, Acceleration, MotionLimiter, GroupMarker, Kernel, KernelGradient, GhostPoints, GhostNormals = SimParticles
         ParticleType   = SimParticles.Type
-        ParticleMarker = SimParticles.GroupMarker
-        Kernel         = SimParticles.Kernel
-        KernelGradient = SimParticles.KernelGradient
-        GhostPoints    = SimParticles.GhostPoints
-        GhostNormals   = SimParticles.GhostNormals
+        ParticleMarker = GroupMarker
 
         ###
         Δx = one(eltype(Density)) + SimKernel.h
@@ -774,16 +761,14 @@ using LinearAlgebra
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
             
                 ###=== First step of resetting arrays
-                @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+                @timeit SimMetaData.HourGlass "ResetArrays"                              ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
                 ###===
+                 
+                @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
+                @timeit SimMetaData.HourGlass "04 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType)
 
-                @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-                apply_mdbc_before_half!(SimMetaData, SimKernel, SimConstants, SimParticles,
-                                         ParticleRanges, CellDict, Position, Density,
-                                         GhostPoints, GhostNormals, ParticleType)
-
-                @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView)
-                @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+                @timeit SimMetaData.HourGlass "04 First NeighborLoop"                    NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView)
+                @timeit SimMetaData.HourGlass "Reduction"                                ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
 
 
                 @timeit SimMetaData.HourGlass "05b Update To Half TimeStep"              HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
