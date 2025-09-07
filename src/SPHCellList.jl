@@ -89,6 +89,7 @@ using Bumper
         ParticleRanges[IndexCounter]  = 1
         UniqueCells[IndexCounter]     = Cells[1]
         empty!(CellDict)
+        sizehint!(CellDict, length(Particles))  # preallocate to minimize rehashing
         CellDict[Cells[1]] = IndexCounter
 
         @inbounds @simd ivdep for i in eachindex(Cells)[2:end]
