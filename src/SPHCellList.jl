@@ -32,7 +32,7 @@ using HDF5
 using Base.Threads
 using UnicodePlots
 using LinearAlgebra
-using Bumper
+    using Bumper
 
     function ConstructStencil(v::Val{d}) where d
         n_ = CartesianIndices(ntuple(_->-1:1,v))
@@ -58,6 +58,53 @@ using Bumper
         # Consider -1.7 + 0.5, this would give -1.2 and then trunced 1, but we want -2, therefore absolute addition before hand
         # We add 0.5 instead of 1, to ensure proper rounding behavior when restoring the sign for negative numbers.
         Int(sign(x)) * unsafe_trunc(Int, muladd(abs(x),InverseCutOff,0.5))
+    end
+
+    # Add contributions related to particle shifting. Dispatch on `SimulationMetaData`
+    # so that no runtime checks are required.
+    function add_shifting_terms!(::SimulationMetaData{D,T,NoShifting,K,B,L}, SimThreadedArrays,
+                                MotionLimiter, xᵢⱼ, ∇ᵢWᵢⱼ, m₀, ρᵢ, ρⱼ, i, j, ichunk) where {D,T,
+                                                                                                K<:KernelOutputMode,
+                                                                                                B<:MDBCMode,
+                                                                                                L<:LogMode}
+        return nothing
+    end
+
+    function add_shifting_terms!(::SimulationMetaData{D,T,S,K,B,L}, SimThreadedArrays,
+                                MotionLimiter, xᵢⱼ, ∇ᵢWᵢⱼ, m₀, ρᵢ, ρⱼ, i, j, ichunk) where {D,T,S<:ShiftingMode,
+                                                                                                   K<:KernelOutputMode,
+                                                                                                   B<:MDBCMode,
+                                                                                                   L<:LogMode}
+        MLcond = MotionLimiter[i] * MotionLimiter[j]
+
+        SimThreadedArrays.∇CᵢThreaded[ichunk][i]   += (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
+        SimThreadedArrays.∇CᵢThreaded[ichunk][j]   += (m₀/ρⱼ) * -∇ᵢWᵢⱼ
+
+        # Switch signs compared to DSPH, else free surface detection does not make sense
+        # Agrees, https://arxiv.org/abs/2110.10076, it should have been r_ji
+        SimThreadedArrays.∇◌rᵢThreaded[ichunk][i]  += (m₀/ρⱼ) * dot(-xᵢⱼ , ∇ᵢWᵢⱼ) * MLcond
+        SimThreadedArrays.∇◌rᵢThreaded[ichunk][j]  += (m₀/ρᵢ) * dot( xᵢⱼ ,-∇ᵢWᵢⱼ) * MLcond
+        return nothing
+    end
+
+    # Optionally record kernel values and gradients based on `SimulationMetaData`
+    function KernelOutput!(::SimulationMetaData{D,T,S,NoKernelOutput,B,L}, SimKernel,
+                            SimThreadedArrays, q, ∇ᵢWᵢⱼ, i, j, ichunk) where {D,T,S<:ShiftingMode,
+                                                                               B<:MDBCMode,
+                                                                               L<:LogMode}
+        return nothing
+    end
+
+    function KernelOutput!(::SimulationMetaData{D,T,S,StoreKernelOutput,B,L}, SimKernel,
+                            SimThreadedArrays, q, ∇ᵢWᵢⱼ, i, j, ichunk) where {D,T,S<:ShiftingMode,
+                                                                            B<:MDBCMode,
+                                                                            L<:LogMode}
+        Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
+        SimThreadedArrays.KernelThreaded[ichunk][i]         += Wᵢⱼ
+        SimThreadedArrays.KernelThreaded[ichunk][j]         += Wᵢⱼ
+        SimThreadedArrays.KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
+        SimThreadedArrays.KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
+        return nothing
     end
    
     @inline function ExtractCells!(Particles, InverseCutOff)
@@ -163,10 +210,10 @@ using Bumper
 
     f(SimKernel, GhostPoint) = CartesianIndex(map(x->map_floor(x,SimKernel.H⁻¹), Tuple(GhostPoint)))
     function NeighborLoopMDBC!(SimKernel,
-                               SimMetaData::SimulationMetaData{Dimensions, _},
+                               SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
                                SimConstants, ParticleRanges, CellDict, Position,
                                Density, GhostPoints, GhostNormals, ParticleType,
-                               bᵧ, Aᵧ) where {Dimensions, _}
+                               bᵧ, Aᵧ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
         
         FullStencil = CartesianIndices(ntuple(_->-1:1, Dimensions))
 
@@ -211,7 +258,6 @@ using Bumper
     end
 
     Base.@propagate_inbounds function ComputeInteractions!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk) where {SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
-        @unpack FlagOutputKernelValues = SimMetaData
         @unpack ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
         @unpack h⁻¹, h, η², H², αD = SimKernel 
@@ -255,32 +301,15 @@ using Bumper
             SimThreadedArrays.AccelerationThreaded[ichunk][j] -= uₘ 
 
             
-            if FlagOutputKernelValues
-                Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
-                SimThreadedArrays.KernelThreaded[ichunk][i]         += Wᵢⱼ
-                SimThreadedArrays.KernelThreaded[ichunk][j]         += Wᵢⱼ
-                SimThreadedArrays.KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
-                SimThreadedArrays.KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
-            end
+            KernelOutput!(SimMetaData, SimKernel, SimThreadedArrays, q, ∇ᵢWᵢⱼ, i, j, ichunk)
 
-            if SimMetaData.FlagShifting
-                
-                MLcond = MotionLimiter[i] * MotionLimiter[j]
-
-                SimThreadedArrays.∇CᵢThreaded[ichunk][i]   += (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
-                SimThreadedArrays.∇CᵢThreaded[ichunk][j]   += (m₀/ρⱼ) * -∇ᵢWᵢⱼ
-        
-                # Switch signs compared to DSPH, else free surface detection does not make sense
-                # Agrees, https://arxiv.org/abs/2110.10076, it should have been r_ji
-                SimThreadedArrays.∇◌rᵢThreaded[ichunk][i]  += (m₀/ρⱼ) * dot(-xᵢⱼ , ∇ᵢWᵢⱼ)  * MLcond
-                SimThreadedArrays.∇◌rᵢThreaded[ichunk][j]  += (m₀/ρᵢ) * dot( xᵢⱼ ,-∇ᵢWᵢⱼ)  * MLcond
-            end
+            add_shifting_terms!(SimMetaData, SimThreadedArrays, MotionLimiter, xᵢⱼ, ∇ᵢWᵢⱼ, m₀, ρᵢ, ρⱼ, i, j, ichunk)
         end
 
         return nothing
     end
 
-    Base.@propagate_inbounds function ComputeInteractionsMDBC!(SimKernel, SimMetaData::SimulationMetaData{Dimensions, FloatType}, SimConstants, Position, Density, ParticleType, GhostPoints, i, j) where {Dimensions, FloatType}
+    Base.@propagate_inbounds function ComputeInteractionsMDBC!(SimKernel, SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}, SimConstants, Position, Density, ParticleType, GhostPoints, i, j) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
         @unpack ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
         
         @unpack h⁻¹, h, η², H², αD = SimKernel 
@@ -344,23 +373,46 @@ using Bumper
         end
     end
 
+    # Zero arrays related to shifting depending on the selected mode.
+    function zero_shifting_arrays!(::SimulationMetaData{D,T,NoShifting,K,B,L}, _...) where {D,T,
+                                                                                           K<:KernelOutputMode,
+                                                                                           B<:MDBCMode,
+                                                                                           L<:LogMode}
+        return nothing
+    end
+    function zero_shifting_arrays!(::SimulationMetaData{D,T,S,K,B,L}, arrays...) where {D,T,S<:ShiftingMode,
+                                                                                       K<:KernelOutputMode,
+                                                                                       B<:MDBCMode,
+                                                                                       L<:LogMode}
+        @threads for arr in arrays
+            fill!(arr, zero(eltype(arr)))
+        end
+        return nothing
+    end
+
+    # Zero arrays related to kernel output depending on the selected mode.
+    function zero_kernel_arrays!(::SimulationMetaData{D,T,S,NoKernelOutput,B,L}, _...) where {D,T,S<:ShiftingMode,
+                                                                                             B<:MDBCMode,
+                                                                                             L<:LogMode}
+        return nothing
+    end
+    function zero_kernel_arrays!(::SimulationMetaData{D,T,S,K,B,L}, arrays...) where {D,T,S<:ShiftingMode,
+                                                                                     K<:KernelOutputMode,
+                                                                                     B<:MDBCMode,
+                                                                                     L<:LogMode}
+        @threads for arr in arrays
+            fill!(arr, zero(eltype(arr)))
+        end
+        return nothing
+    end
+
     function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
         # Threaded zeroing for main arrays
         @threads for arr in (dρdtI, Acceleration)
             fill!(arr, zero(eltype(arr)))
         end
-
-        if SimMetaData.FlagOutputKernelValues
-            @threads for arr in (Kernel, KernelGradient)
-                fill!(arr, zero(eltype(arr)))
-            end
-        end
-
-        if SimMetaData.FlagShifting
-            @threads for arr in (∇Cᵢ, ∇◌rᵢ)
-                fill!(arr, zero(eltype(arr)))
-            end
-        end
+        zero_kernel_arrays!(SimMetaData, Kernel, KernelGradient)
+        zero_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ)
 
         # Threaded zeroing for fields in SimThreadedArrays
         foreachfield(f -> begin
@@ -372,24 +424,147 @@ using Bumper
         return nothing
     end
 
+    function reduce_shifting_arrays!(::SimulationMetaData{D,T,NoShifting,K,B,L}, _...) where {D,T,
+                                                                                           K<:KernelOutputMode,
+                                                                                           B<:MDBCMode,
+                                                                                           L<:LogMode}
+        return nothing
+    end
+    function reduce_shifting_arrays!(::SimulationMetaData{D,T,S,K,B,L}, ∇Cᵢ, ∇◌rᵢ, SimThreadedArrays) where {D,T,S<:ShiftingMode,
+                                                                                                           K<:KernelOutputMode,
+                                                                                                           B<:MDBCMode,
+                                                                                                           L<:LogMode}
+        reduce_sum!(∇Cᵢ, SimThreadedArrays.∇CᵢThreaded)
+        reduce_sum!(∇◌rᵢ, SimThreadedArrays.∇◌rᵢThreaded)
+        return nothing
+    end
+
+    function prepare_shifting_arrays!(::SimulationMetaData{D,T,NoShifting,K,B,L}, ∇Cᵢ, ∇◌rᵢ) where {D,T,
+                                                                                                K<:KernelOutputMode,
+                                                                                                B<:MDBCMode,
+                                                                                                L<:LogMode}
+        resize!(∇Cᵢ, 0)
+        resize!(∇◌rᵢ, 0)
+        return nothing
+    end
+    prepare_shifting_arrays!(::SimulationMetaData{D,T,S,K,B,L}, ∇Cᵢ, ∇◌rᵢ) where {D,T,S<:ShiftingMode,
+                                                                               K<:KernelOutputMode,
+                                                                               B<:MDBCMode,
+                                                                               L<:LogMode} = nothing
+
+    function reduce_kernel_arrays!(::SimulationMetaData{D,T,S,NoKernelOutput,B,L}, _...) where {D,T,S<:ShiftingMode,
+                                                                                             B<:MDBCMode,
+                                                                                             L<:LogMode}
+        return nothing
+    end
+    function reduce_kernel_arrays!(::SimulationMetaData{D,T,S,K,B,L}, Kernel, KernelGradient, SimThreadedArrays) where {D,T,S<:ShiftingMode,
+                                                                                                                     K<:KernelOutputMode,
+                                                                                                                     B<:MDBCMode,
+                                                                                                                     L<:LogMode}
+        reduce_sum!(Kernel, SimThreadedArrays.KernelThreaded)
+        reduce_sum!(KernelGradient, SimThreadedArrays.KernelGradientThreaded)
+        return nothing
+    end
+
     function ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
         reduce_sum!(dρdtI, SimThreadedArrays.dρdtIThreaded)
         reduce_sum!(Acceleration, SimThreadedArrays.AccelerationThreaded)
-  
-        if SimMetaData.FlagOutputKernelValues
-            reduce_sum!(Kernel, SimThreadedArrays.KernelThreaded)
-            reduce_sum!(KernelGradient, SimThreadedArrays.KernelGradientThreaded)
-        end
 
-        if SimMetaData.FlagShifting
-            reduce_sum!(∇Cᵢ, SimThreadedArrays.∇CᵢThreaded)
-            reduce_sum!(∇◌rᵢ, SimThreadedArrays.∇◌rᵢThreaded)
-        end
-    
+        reduce_kernel_arrays!(SimMetaData, Kernel, KernelGradient, SimThreadedArrays)
+        reduce_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ, SimThreadedArrays)
+
         return nothing
     end
-    
-    ### Some functions to simplify code inside of this function
+
+    function ApplyMDBCBeforeHalf!(::SimulationMetaData{D,T,S,K,NoMDBC,L}, _args...) where {D,T,S<:ShiftingMode,
+                                                                                           K<:KernelOutputMode,
+                                                                                           L<:LogMode}
+        return nothing
+    end
+    function ApplyMDBCBeforeHalf!(SimMetaData::SimulationMetaData{D,T,S,K,SimpleMDBC,L},
+                                  SimKernel, SimConstants, SimParticles,
+                                  ParticleRanges, CellDict, Position, Density,
+                                  GhostPoints, GhostNormals, ParticleType
+                                 ) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,L<:LogMode}
+        @no_escape begin
+            DimensionsPlus = D + 1
+            bᵧ = @alloc(SVector{DimensionsPlus, T}, length(Position))
+            Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, T, DimensionsPlus*DimensionsPlus}, length(Position))
+            NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, CellDict, Position, Density, GhostPoints,GhostNormals, ParticleType, bᵧ, Aᵧ)
+            ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
+        end
+
+        return nothing
+    end
+
+    function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,NoMDBC,L}, SimParticles, path) where {D,T,S<:ShiftingMode,
+                                                                                                K<:KernelOutputMode,
+                                                                                                L<:LogMode}
+        return nothing
+    end
+    function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,SimpleMDBC,L}, SimParticles, path) where {D,T,S<:ShiftingMode,
+                                                                                                   K<:KernelOutputMode,
+                                                                                                   L<:LogMode}
+        if isnothing(path)
+            return nothing
+        end
+        _, GhostPoints, GhostNormals = LoadBoundaryNormals(Val(D), T, path)
+        for gi ∈ eachindex(GhostPoints)
+            SimParticles.GhostPoints[gi]  = GhostPoints[gi]
+            SimParticles.GhostNormals[gi] = GhostNormals[gi]
+        end
+        return nothing
+    end
+
+    function initialize_log!(::SimulationMetaData{D,T,S,K,B,NoLog}, _args...) where {D,T,S<:ShiftingMode,
+                                                                                      K<:KernelOutputMode,
+                                                                                      B<:MDBCMode}
+        return nothing
+    end
+    function initialize_log!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger,
+                             SimConstants, SimKernel, SimViscosity, SimDensityDiffusion,
+                             SimGeometry, SimParticles) where {D,T,S<:ShiftingMode,
+                                                              K<:KernelOutputMode,
+                                                              B<:MDBCMode}
+        InitializeLogger(SimLogger, SimConstants, SimMetaData, SimKernel,
+                         SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
+        LogStep(SimLogger, SimMetaData, SimMetaData.HourGlass)
+        SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
+        return nothing
+    end
+
+    function log_step!(::SimulationMetaData{D,T,S,K,B,NoLog}, _...) where {D,T,S<:ShiftingMode,
+                                                                           K<:KernelOutputMode,
+                                                                           B<:MDBCMode}
+        return nothing
+    end
+    function log_step!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger) where {D,T,S<:ShiftingMode,
+                                                                                             K<:KernelOutputMode,
+                                                                                             B<:MDBCMode}
+        LogStep(SimLogger, SimMetaData, SimMetaData.HourGlass)
+        SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
+        return nothing
+    end
+
+    function finalize_log!(::SimulationMetaData{D,T,S,K,B,NoLog}, _...) where {D,T,S<:ShiftingMode,
+                                                                              K<:KernelOutputMode,
+                                                                              B<:MDBCMode}
+        return nothing
+    end
+    function finalize_log!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger,
+                           HourGlass, UnicodeTimeStepsGraph) where {D,T,S<:ShiftingMode,
+                                                                      K<:KernelOutputMode,
+                                                                      B<:MDBCMode}
+        LogFinal(SimLogger, HourGlass)
+        with_logger(SimLogger.Logger) do
+            @info ""
+            show(SimLogger.LoggerIo, UnicodeTimeStepsGraph)
+        end
+        close(SimLogger.LoggerIo)
+        AutoOpenLogFile(SimLogger, SimMetaData)
+        return nothing
+    end
+
     function ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionsDefinition, SimMetaData)
         @inbounds @simd ivdep for i in eachindex(Position)
             if ParticleType[i] == Moving
@@ -439,7 +614,9 @@ using Bumper
         end
     end
     
-    function HalfTimeStep(::SimulationMetaData{Dimensions, FloatType}, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂) where {Dimensions, FloatType}
+    function HalfTimeStep(::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
+                          SimConstants, SimParticles, Positionₙ⁺,
+                          Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
         @unpack Position, Density, Velocity, Acceleration, GravityFactor, MotionLimiter = SimParticles
 
         @inbounds @simd ivdep for i in eachindex(Position)
@@ -453,34 +630,42 @@ using Bumper
         return nothing
     end
 
-    function FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+    function FullTimeStep(::SimulationMetaData{D,T,NoShifting,K,B,L}, SimKernel,
+                          SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,
+                                                                             K<:KernelOutputMode,
+                                                                             B<:MDBCMode,
+                                                                             L<:LogMode}
         @unpack Position, Velocity, Acceleration, GravityFactor, MotionLimiter = SimParticles
-  
-        if !SimMetaData.FlagShifting
-            @inbounds @simd ivdep for i in eachindex(Position)
-                Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
-                Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
-                Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
-            end
-        else
-            A     = 2# Value between 1 to 6 advised
-            A_FST = 0; # zero for internal flows
-            A_FSM = length(first(Position)); #2d, 3d val different
-            @inbounds @simd ivdep for i in eachindex(Position)
-                Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
-                Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
-        
-                A_FSC                  = (∇◌rᵢ[i] - A_FST)/(A_FSM - A_FST)
-                if A_FSC < 0
-                    δxᵢ = zero(eltype(Position))
-                else
-                    δxᵢ = -A_FSC * A * SimKernel.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
-                end
-        
-                Position[i]           += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
-            end
+        @inbounds @simd ivdep for i in eachindex(Position)
+            Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+            Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
+            Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
         end
+        return nothing
+    end
 
+    function FullTimeStep(::SimulationMetaData{D,T,S,K,B,L}, SimKernel, SimConstants,
+                          SimParticles, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,S<:ShiftingMode,
+                                                             K<:KernelOutputMode,
+                                                             B<:MDBCMode,
+                                                             L<:LogMode}
+        @unpack Position, Velocity, Acceleration, GravityFactor, MotionLimiter = SimParticles
+        A     = 2# Value between 1 to 6 advised
+        A_FST = 0; # zero for internal flows
+        A_FSM = length(first(Position)); #2d, 3d val different
+        @inbounds @simd ivdep for i in eachindex(Position)
+            Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+            Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
+
+            A_FSC                  = (∇◌rᵢ[i] - A_FST)/(A_FSM - A_FST)
+            if A_FSC < 0
+                δxᵢ = zero(eltype(Position))
+            else
+                δxᵢ = -A_FSC * A * SimKernel.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
+            end
+
+            Position[i]           += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
+        end
         return nothing
     end
 
@@ -533,31 +718,20 @@ using Bumper
 
     
     @inbounds function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
-                                      SimMetaData::SimulationMetaData{Dimensions, FloatType},
+                                      SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
                                       SimConstants, SimParticles, Stencil,
                                       ParticleRanges, UniqueCells, CellDict,
                                       SortingScratchSpace, SimThreadedArrays,
                                       dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
-                                      ∇Cᵢ, ∇◌rᵢ, MotionDefinition) where {Dimensions, FloatType, SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
-        Position       = SimParticles.Position
-        Density        = SimParticles.Density
-        Pressure       = SimParticles.Pressure
-        Velocity       = SimParticles.Velocity
-        Acceleration   = SimParticles.Acceleration
-        MotionLimiter  = SimParticles.MotionLimiter
+                                      ∇Cᵢ, ∇◌rᵢ, MotionDefinition) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
+        @unpack Position, Density, Pressure, Velocity, Acceleration, MotionLimiter, GroupMarker, Kernel, KernelGradient, GhostPoints, GhostNormals = SimParticles
         ParticleType   = SimParticles.Type
-        ParticleMarker = SimParticles.GroupMarker
-        Kernel         = SimParticles.Kernel
-        KernelGradient = SimParticles.KernelGradient
-        GhostPoints    = SimParticles.GhostPoints
-        GhostNormals   = SimParticles.GhostNormals
+        ParticleMarker = GroupMarker
 
         ###
-        DimensionsPlus = Dimensions + 1
         Δx = one(eltype(Density)) + SimKernel.h
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
 
-        @no_escape begin
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
 
                 Δx = update_delta_x!(Δx, Positionₙ⁺, SimParticles.Position)
@@ -583,28 +757,21 @@ using Bumper
 
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
             
-                if !SimMetaData.FlagSingleStepTimeStepping
-                    ###=== First step of resetting arrays
-                    @timeit SimMetaData.HourGlass "ResetArrays"                          ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
-                    ###===
-                
-                    @timeit SimMetaData.HourGlass "03 Pressure"                          Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-                    if SimMetaData.FlagMDBCSimple
-                        bᵧ = @alloc(SVector{DimensionsPlus, FloatType}, length(Position))
-                        Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus * DimensionsPlus}, length(Position))
-                        @timeit SimMetaData.HourGlass "04a First NeighborLoopMDBC"           NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ)
-                        @timeit SimMetaData.HourGlass "04b Apply MDBC before Half TimeStep"  ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
-                    end
+                ###=== First step of resetting arrays
+                @timeit SimMetaData.HourGlass "ResetArrays"                              ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+                ###===
+                 
+                @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
+                @timeit SimMetaData.HourGlass "04 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType)
 
-                    @timeit SimMetaData.HourGlass "04 First NeighborLoop"                NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView)
-                    @timeit SimMetaData.HourGlass "Reduction"                            ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
-                end
+                @timeit SimMetaData.HourGlass "05 First NeighborLoop"                    NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView)
+                @timeit SimMetaData.HourGlass "Reduction"                                ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
 
 
-                @timeit SimMetaData.HourGlass "05b Update To Half TimeStep"              HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
+                @timeit SimMetaData.HourGlass "06 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
 
 
-                @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+                @timeit SimMetaData.HourGlass "07 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
             
                 ###=== Second step of resetting arrays
                 @timeit SimMetaData.HourGlass "ResetArrays"                              ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
@@ -626,14 +793,13 @@ using Bumper
                 @timeit SimMetaData.HourGlass "12 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
 
             end
-        end
         
         return nothing
     end
     
     ###===
     function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}, #Don't further specify type for now
-        SimMetaData::SimulationMetaData{Dimensions, FloatType},
+        SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
         SimConstants::SimulationConstants,
         SimKernel::SPHKernelInstance,
         SimLogger::SimulationLogger,
@@ -641,7 +807,7 @@ using Bumper
         SimViscosity::SV,
         SimDensityDiffusion::SDD,
         ParticleNormalsPath::Union{Nothing,String} = nothing
-        ) where {Dimensions,FloatType,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
+        ) where {Dimensions,FloatType,SMode,KMode,BMode,LMode,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
 
         # Unpack the relevant simulation meta data
         @unpack HourGlass = SimMetaData;
@@ -649,36 +815,14 @@ using Bumper
         # Vector of time steps
         TimeSteps = Vector{FloatType}()
         
-        dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimParticles.Position)
+        dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimMetaData, SimParticles.Position)
 
-        # Implement this properly later in shaa Allah
-        # if !isnothing(ParticleNormalsPath)
-            if SimMetaData.FlagMDBCSimple
-                _, GhostPoints, GhostNormals = LoadBoundaryNormals(Val(Dimensions), FloatType, ParticleNormalsPath)
-            
+        LoadMDBCNormals!(SimMetaData, SimParticles, ParticleNormalsPath)
 
-                #TODO: In the future decide on one of the two in shaa Allah
-                for gi ∈ eachindex(GhostPoints)
-                    SimParticles.GhostPoints[gi]  = GhostPoints[gi]
-                    SimParticles.GhostNormals[gi] = GhostNormals[gi]
-                end
-            end
-        # end
+        prepare_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ)
 
-        if !SimMetaData.FlagShifting
-            resize!(∇Cᵢ , 0)
-            resize!(∇◌rᵢ, 0)
-        end
-
-        if SimMetaData.FlagLog
-            InitializeLogger(SimLogger, SimConstants, SimMetaData, SimKernel, SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
-        end
-
-        # To generate first line
-        if SimMetaData.FlagLog
-            LogStep(SimLogger, SimMetaData, HourGlass)
-            SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
-        end
+        initialize_log!(SimMetaData, SimLogger, SimConstants, SimKernel,
+                        SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
         
         NumberOfPoints = length(SimParticles)::Int
         Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
@@ -732,17 +876,14 @@ using Bumper
             @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, CellDict, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition)
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
 
-            if SimMetaData.FlagLog
-                LogStep(SimLogger, SimMetaData, HourGlass)
-                SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
-            end
+            log_step!(SimMetaData, SimLogger)
     
             SimMetaData.OutputIterationCounter += 1
 
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-            @sync Threads.@spawn begin
-                @timeit SimMetaData.HourGlass "13A Save Particle Data" output.save_particles(SimMetaData.OutputIterationCounter)
-                @timeit SimMetaData.HourGlass "13A Save CellGrid Data" output.save_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, SimParticles)
+            @timeit SimMetaData.HourGlass "13 Save Particle Data"  begin
+                output.save_particles(SimMetaData.OutputIterationCounter)
+                output.save_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, SimParticles)
             end
     
             if !SimLogger.ToConsole
@@ -774,17 +915,7 @@ using Bumper
                 # Time steps line plot
                 UnicodeTimeStepsGraph = lineplot(1:length(TimeSteps), TimeSteps, title="Time Steps [s] as a function of iteration", name="Time Steps", xlabel="Iterations [-]", ylabel="Time Step Size [s]")
 
-                if SimMetaData.FlagLog
-                    LogFinal(SimLogger, HourGlass)
-             
-                    with_logger(SimLogger.Logger) do
-                        @info ""
-                        show(SimLogger.LoggerIo, UnicodeTimeStepsGraph)
-                    end
-
-                    close(SimLogger.LoggerIo)
-                    AutoOpenLogFile(SimLogger, SimMetaData)
-                end
+                finalize_log!(SimMetaData, SimLogger, HourGlass, UnicodeTimeStepsGraph)
 
                 break
             end

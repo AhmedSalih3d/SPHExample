@@ -7,6 +7,7 @@ using StaticArrays
 using StructArrays
 
 using ..SimulationGeometry
+using ..SimulationMetaDataConfiguration
 
 function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, particle_group_marker::Int, specific_csv::String) where {D, T}
     csv_file = CSV.File(specific_csv)
@@ -117,55 +118,100 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
     return SimParticles
 end
 
-function AllocateSupportDataStructures(Position)
+function AllocateSupportDataStructures(::SimulationMetaData{D,T,NoShifting,K,B,L}, Position) where {D,T,K<:KernelOutputMode,
+                                                                                                    B<:MDBCMode,
+                                                                                                    L<:LogMode}
 
-    NumberOfPoints           = length(Position)
-    PositionType             = eltype(Position)
-    PositionUnderlyingType   = eltype(PositionType)
+    NumberOfPoints         = length(Position)
+    PositionType           = eltype(Position)
+    PositionUnderlyingType = eltype(PositionType)
 
-    dρdtI           = zeros(PositionUnderlyingType, NumberOfPoints)
-    Velocityₙ⁺      = zeros(PositionType, NumberOfPoints)
-    Positionₙ⁺      = zeros(PositionType, NumberOfPoints)
-    ρₙ⁺             = zeros(PositionUnderlyingType, NumberOfPoints)
+    dρdtI      = zeros(PositionUnderlyingType, NumberOfPoints)
+    Velocityₙ⁺ = zeros(PositionType, NumberOfPoints)
+    Positionₙ⁺ = zeros(PositionType, NumberOfPoints)
+    ρₙ⁺        = zeros(PositionUnderlyingType, NumberOfPoints)
 
-    ∇Cᵢ            = zeros(PositionType, NumberOfPoints)
-    ∇◌rᵢ           = zeros(PositionUnderlyingType, NumberOfPoints)
+    ∇Cᵢ  = Vector{PositionType}(undef, 0)
+    ∇◌rᵢ = Vector{PositionUnderlyingType}(undef, 0)
 
     return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ
 end
 
-function AllocateThreadedArrays(SimMetaData, SimParticles, dρdtI, ∇Cᵢ, ∇◌rᵢ   ; n_copy = Base.Threads.nthreads())
-    
-        
+function AllocateSupportDataStructures(::SimulationMetaData{D,T,S,K,B,L}, Position) where {D,T,S<:ShiftingMode,
+                                                                                           K<:KernelOutputMode,
+                                                                                           B<:MDBCMode,
+                                                                                           L<:LogMode}
+
+    NumberOfPoints         = length(Position)
+    PositionType           = eltype(Position)
+    PositionUnderlyingType = eltype(PositionType)
+
+    dρdtI      = zeros(PositionUnderlyingType, NumberOfPoints)
+    Velocityₙ⁺ = zeros(PositionType, NumberOfPoints)
+    Positionₙ⁺ = zeros(PositionType, NumberOfPoints)
+    ρₙ⁺        = zeros(PositionUnderlyingType, NumberOfPoints)
+
+    ∇Cᵢ  = zeros(PositionType, NumberOfPoints)
+    ∇◌rᵢ = zeros(PositionUnderlyingType, NumberOfPoints)
+
+    return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ
+end
+
+function allocate_kernel_arrays(::SimulationMetaData{D,T,S,NoKernelOutput,B,L},
+                                SimParticles, n_copy) where {D,T,S<:ShiftingMode,
+                                                             B<:MDBCMode,
+                                                             L<:LogMode}
+    return NamedTuple()
+end
+function allocate_kernel_arrays(::SimulationMetaData{D,T,S,K,B,L},
+                                SimParticles, n_copy) where {D,T,S<:ShiftingMode,
+                                                             K<:KernelOutputMode,
+                                                             B<:MDBCMode,
+                                                             L<:LogMode}
+    KernelThreaded         = [copy(SimParticles.Kernel) for _ in 1:n_copy]
+    KernelGradientThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
+    return (
+        KernelThreaded = KernelThreaded,
+        KernelGradientThreaded = KernelGradientThreaded,
+    )
+end
+
+function allocate_shifting_arrays(::SimulationMetaData{D,T,NoShifting,K,B,L},
+                                  ∇Cᵢ, ∇◌rᵢ, n_copy) where {D,T,K<:KernelOutputMode,
+                                                            B<:MDBCMode,
+                                                            L<:LogMode}
+    return NamedTuple()
+end
+function allocate_shifting_arrays(::SimulationMetaData{D,T,S,K,B,L},
+                                  ∇Cᵢ, ∇◌rᵢ, n_copy) where {D,T,S<:ShiftingMode,
+                                                            K<:KernelOutputMode,
+                                                            B<:MDBCMode,
+                                                            L<:LogMode}
+    ∇CᵢThreaded  = [copy(∇Cᵢ) for _ in 1:n_copy]
+    ∇◌rᵢThreaded = [copy(∇◌rᵢ) for _ in 1:n_copy]
+    return (
+        ∇CᵢThreaded  = ∇CᵢThreaded,
+        ∇◌rᵢThreaded = ∇◌rᵢThreaded,
+    )
+end
+
+function AllocateThreadedArrays(SimMetaData::SimulationMetaData{D,T,S,K,B,L},
+                                SimParticles, dρdtI, ∇Cᵢ, ∇◌rᵢ;
+                                n_copy = Base.Threads.nthreads()) where {D,T,S<:ShiftingMode,
+                                                                           K<:KernelOutputMode,
+                                                                           B<:MDBCMode,
+                                                                           L<:LogMode}
     dρdtIThreaded        = [copy(dρdtI) for _ in 1:n_copy]
     AccelerationThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
-
     nt = (
         dρdtIThreaded = dρdtIThreaded,
         AccelerationThreaded = AccelerationThreaded,
     )
 
-    if SimMetaData.FlagOutputKernelValues
-        KernelThreaded         = [copy(SimParticles.Kernel) for _ in 1:n_copy]
-        KernelGradientThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
-        nt = merge(nt, (
-            KernelThreaded = KernelThreaded,
-            KernelGradientThreaded = KernelGradientThreaded,
-        ))
-    end
+    nt = merge(nt, allocate_kernel_arrays(SimMetaData, SimParticles, n_copy))
+    nt = merge(nt, allocate_shifting_arrays(SimMetaData, ∇Cᵢ, ∇◌rᵢ, n_copy))
 
-    if SimMetaData.FlagShifting
-        ∇CᵢThreaded  = [copy(∇Cᵢ) for _ in 1:n_copy]
-        ∇◌rᵢThreaded = [copy(∇◌rᵢ) for _ in 1:n_copy]
-        nt = merge(nt, (
-            ∇CᵢThreaded  = ∇CᵢThreaded,
-            ∇◌rᵢThreaded = ∇◌rᵢThreaded,
-        ))
-    end
-
-    SimThreadedArrays = StructArray(nt)
-
-    return SimThreadedArrays
+    return StructArray(nt)
 end
 
 function LoadBoundaryNormals(::Val{D}, ::Type{T}, path_mdbc) where {D, T}

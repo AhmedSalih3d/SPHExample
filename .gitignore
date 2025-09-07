@@ -13,3 +13,5 @@ Manifest.toml
 *.vtkhdf
 # Ignore local Julia archives
 julia-*.tar.gz
+# Ignore mem files
+*.mem

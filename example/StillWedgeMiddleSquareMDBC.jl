@@ -27,7 +27,7 @@ let
     # Load in particles
     SimParticles = AllocateDataStructures(SimulationGeometry)
 
-    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
+    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
         SimulationName="StillWedge", 
         SaveLocation="E:/SecondApproach/StillWedgeMiddleSquare2D_MDBC",
         SimulationTime=4,
@@ -35,10 +35,7 @@ let
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
         ExportGridCells=true,
-        OpenLogFile=true,
-        FlagOutputKernelValues=false,
-        FlagLog=true,
-        FlagMDBCSimple=true
+        OpenLogFile=true
     )
 
     # If save directory is not already made, make it

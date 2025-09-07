@@ -15,17 +15,14 @@ let
         CFL=0.2
     )
 
-    SimMetaDataMovingSquare  = SimulationMetaData{Dimensions,FloatType}(
-        SimulationName="MovingSquare2D", 
+    SimMetaDataMovingSquare  = SimulationMetaData{Dimensions,FloatType,PlanarShifting,NoKernelOutput,NoMDBC,StoreLog}(
+        SimulationName="MovingSquare2D",
         SaveLocation="E:/SecondApproach/MovingSquare2D",
         SimulationTime=2.5,
         OutputTimes=0.01,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
-        OpenLogFile=true,
-        FlagOutputKernelValues=false,
-        FlagLog=true,
-        FlagShifting=true
+        OpenLogFile=true
     )
     FixedBoundary = Geometry{Dimensions, FloatType}(
         CSVFile     = "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Fixed.csv",

@@ -26,19 +26,15 @@ let
     # Load in particles
     SimParticles = AllocateDataStructures(SimulationGeometry)
 
-    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType}(
-        SimulationName="CaseDuckling", 
+    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
+        SimulationName="CaseDuckling",
         SaveLocation="E:/SecondApproach/TESTING_CPU_Duckling",
         SimulationTime=1,
         OutputTimes=0.02,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
         ExportGridCells= true,
-        OpenLogFile=true,
-        FlagOutputKernelValues=false,
-        FlagLog=true,
-        FlagShifting=false,
-        FlagMDBCSimple=true,
+        OpenLogFile=true
     )
 
     SimKernel           = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); dx = SimConstantsWedge.dx, k = 1.5)
