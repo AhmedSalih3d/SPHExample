@@ -88,16 +88,15 @@ using LinearAlgebra
     end
 
     # Optionally record kernel values and gradients based on `SimulationMetaData`
-    function kernel_output!(::SimulationMetaData{D,T,S,NoKernelOutput,B,L}, SimKernel,
+    function KernelOutput!(::SimulationMetaData{D,T,S,NoKernelOutput,B,L}, SimKernel,
                             SimThreadedArrays, q, ∇ᵢWᵢⱼ, i, j, ichunk) where {D,T,S<:ShiftingMode,
                                                                                B<:MDBCMode,
                                                                                L<:LogMode}
         return nothing
     end
 
-    function kernel_output!(::SimulationMetaData{D,T,S,K,B,L}, SimKernel,
+    function KernelOutput!(::SimulationMetaData{D,T,S,StoreKernelOutput,B,L}, SimKernel,
                             SimThreadedArrays, q, ∇ᵢWᵢⱼ, i, j, ichunk) where {D,T,S<:ShiftingMode,
-                                                                            K<:KernelOutputMode,
                                                                             B<:MDBCMode,
                                                                             L<:LogMode}
         Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
@@ -302,10 +301,9 @@ using LinearAlgebra
             SimThreadedArrays.AccelerationThreaded[ichunk][j] -= uₘ 
 
             
-            kernel_output!(SimMetaData, SimKernel, SimThreadedArrays, q, ∇ᵢWᵢⱼ, i, j, ichunk)
+            KernelOutput!(SimMetaData, SimKernel, SimThreadedArrays, q, ∇ᵢWᵢⱼ, i, j, ichunk)
 
-            add_shifting_terms!(SimMetaData, SimThreadedArrays, MotionLimiter,
-                                 xᵢⱼ, ∇ᵢWᵢⱼ, m₀, ρᵢ, ρⱼ, i, j, ichunk)
+            add_shifting_terms!(SimMetaData, SimThreadedArrays, MotionLimiter, xᵢⱼ, ∇ᵢWᵢⱼ, m₀, ρᵢ, ρⱼ, i, j, ichunk)
         end
 
         return nothing
@@ -499,12 +497,12 @@ using LinearAlgebra
         return nothing
     end
 
-    function load_mdbc_normals!(::SimulationMetaData{D,T,S,K,NoMDBC,L}, SimParticles, path) where {D,T,S<:ShiftingMode,
+    function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,NoMDBC,L}, SimParticles, path) where {D,T,S<:ShiftingMode,
                                                                                                 K<:KernelOutputMode,
                                                                                                 L<:LogMode}
         return nothing
     end
-    function load_mdbc_normals!(::SimulationMetaData{D,T,S,K,SimpleMDBC,L}, SimParticles, path) where {D,T,S<:ShiftingMode,
+    function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,SimpleMDBC,L}, SimParticles, path) where {D,T,S<:ShiftingMode,
                                                                                                    K<:KernelOutputMode,
                                                                                                    L<:LogMode}
         if isnothing(path)
@@ -567,7 +565,6 @@ using LinearAlgebra
         return nothing
     end
 
-    ### Some functions to simplify code inside of this function
     function ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionsDefinition, SimMetaData)
         @inbounds @simd ivdep for i in eachindex(Position)
             if ParticleType[i] == Moving
@@ -767,14 +764,14 @@ using LinearAlgebra
                 @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
                 @timeit SimMetaData.HourGlass "04 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType)
 
-                @timeit SimMetaData.HourGlass "04 First NeighborLoop"                    NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView)
+                @timeit SimMetaData.HourGlass "05 First NeighborLoop"                    NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView)
                 @timeit SimMetaData.HourGlass "Reduction"                                ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
 
 
-                @timeit SimMetaData.HourGlass "05b Update To Half TimeStep"              HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
+                @timeit SimMetaData.HourGlass "06 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
 
 
-                @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+                @timeit SimMetaData.HourGlass "07 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
             
                 ###=== Second step of resetting arrays
                 @timeit SimMetaData.HourGlass "ResetArrays"                              ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
@@ -820,7 +817,7 @@ using LinearAlgebra
         
         dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimMetaData, SimParticles.Position)
 
-        load_mdbc_normals!(SimMetaData, SimParticles, ParticleNormalsPath)
+        LoadMDBCNormals!(SimMetaData, SimParticles, ParticleNormalsPath)
 
         prepare_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ)
 
@@ -884,9 +881,9 @@ using LinearAlgebra
             SimMetaData.OutputIterationCounter += 1
 
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-            @sync Threads.@spawn begin
-                @timeit SimMetaData.HourGlass "13A Save Particle Data" output.save_particles(SimMetaData.OutputIterationCounter)
-                @timeit SimMetaData.HourGlass "13A Save CellGrid Data" output.save_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, SimParticles)
+            @timeit SimMetaData.HourGlass "13 Save Particle Data"  begin
+                output.save_particles(SimMetaData.OutputIterationCounter)
+                output.save_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, SimParticles)
             end
     
             if !SimLogger.ToConsole
