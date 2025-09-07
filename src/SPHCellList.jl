@@ -489,15 +489,17 @@ using LinearAlgebra
                                      GhostPoints, GhostNormals, ParticleType) where {D,T,S<:ShiftingMode,
                                                                                       K<:KernelOutputMode,
                                                                                       L<:LogMode}
-        DimensionsPlus = D + 1
-        bᵧ = Vector{SVector{DimensionsPlus, T}}(undef, length(Position))
-        Aᵧ = Vector{SMatrix{DimensionsPlus, DimensionsPlus, T,
-                            DimensionsPlus * DimensionsPlus}}(undef, length(Position))
-        @timeit SimMetaData.HourGlass "04a First NeighborLoopMDBC" NeighborLoopMDBC!(SimKernel, SimMetaData,
-                                                                                       SimConstants, ParticleRanges, CellDict,
-                                                                                       Position, Density, GhostPoints,
-                                                                                       GhostNormals, ParticleType, bᵧ, Aᵧ)
-        @timeit SimMetaData.HourGlass "04b Apply MDBC before Half TimeStep" ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
+        @no_escape begin
+            DimensionsPlus = D + 1
+            bᵧ = @alloc(SVector{DimensionsPlus, T}, length(Position))
+            Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, T, DimensionsPlus*DimensionsPlus}, length(Position))
+            @timeit SimMetaData.HourGlass "04a First NeighborLoopMDBC" NeighborLoopMDBC!(SimKernel, SimMetaData,
+                                                                                        SimConstants, ParticleRanges, CellDict,
+                                                                                        Position, Density, GhostPoints,
+                                                                                        GhostNormals, ParticleType, bᵧ, Aᵧ)
+            @timeit SimMetaData.HourGlass "04b Apply MDBC before Half TimeStep" ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
+        end
+
         return nothing
     end
 
@@ -746,7 +748,6 @@ using LinearAlgebra
         Δx = one(eltype(Density)) + SimKernel.h
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
 
-        @no_escape begin
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
 
                 Δx = update_delta_x!(Δx, Positionₙ⁺, SimParticles.Position)
@@ -810,7 +811,6 @@ using LinearAlgebra
                 @timeit SimMetaData.HourGlass "12 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
 
             end
-        end
         
         return nothing
     end
