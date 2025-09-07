@@ -92,6 +92,7 @@ Written by Ahmed Salih ([AhmedSalih3d](https://github.com/AhmedSalih3d)).
 
 | Version | Description |
 |---------|-------------|
+| 0.6.12 | Simulation code uses now multiple dispatch procedure in main simulation code instead of `if` coding statements, to increase run time performance |
 | 0.6.11 | Added `ChunkMultiplier` for improved thread load balance and focus on code dependencies |
 | 0.6.10 | Implemented concepts of tests, aim is to understand allocations and run time |
 | 0.6.9  | Specify output times via `OutputTimes` (float or vector). |
