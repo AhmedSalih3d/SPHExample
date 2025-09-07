@@ -33,6 +33,7 @@ struct StoreLog <: LogMode end
                                            LMode <: LogMode}
     SimulationName::String
     SaveLocation::String
+    Shifting::SMode                         = SMode()
     HourGlass::TimerOutput                  = TimerOutput()
     Iteration::Int                          = 0
     OutputEach::FloatType                   = 0.02 #seconds
