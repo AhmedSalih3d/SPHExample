@@ -122,12 +122,39 @@ using LinearAlgebra
         return nothing
     end
 
+    @inline function cell_offsets(cells::AbstractVector{CartesianIndex{D}}) where D
+        first = Tuple(cells[1])
+        mins  = collect(first)
+        @inbounds for ci in cells[2:end]
+            t = Tuple(ci)
+            for d in 1:D
+                mins[d] = min(mins[d], t[d])
+            end
+        end
+        return Tuple(mins)
+    end
+
+    @inline function morton_key(ci::CartesianIndex{D}, offset::NTuple{D,Int}) where D
+        coords = ntuple(d -> UInt64(ci[d] - offset[d]), D)
+        key = UInt64(0)
+        maxbits = (sizeof(UInt64) * 8) ÷ D
+        for bit in 0:maxbits-1
+            for d in 1:D
+                key |= ((coords[d] >> bit) & 0x1) << (D * bit + (d - 1))
+            end
+        end
+        return key
+    end
+
     """
-    Updates the neighbor list and sorts particles by their cell indices.
+    Updates the neighbor list and orders particles by a Morton/Z-order key.
+
+    Spatially coherent ordering places particles from neighboring cells close in
+    memory, improving cache locality during subsequent neighbor searches.
 
     # Arguments
     - `Particles`: The particles whose neighbors are to be updated.
-    - `CutOff`: The cutoff value used for cell extraction.
+    - `InverseCutOff`: The inverse cutoff value used for cell extraction.
     - `SortingScratchSpace`: Scratch space for sorting.
     - `ParticleRanges`: Array to store the ranges of particles in each cell.
     - `UniqueCells`: Array to store the unique cells.
@@ -139,7 +166,8 @@ using LinearAlgebra
                               ParticleRanges, UniqueCells, CellDict)
         ExtractCells!(Particles, InverseCutOff)
 
-        sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
+        offset = cell_offsets(Particles.Cells)
+        sort!(Particles, by = p -> morton_key(p.Cells, offset); scratch=SortingScratchSpace)
         Cells = @views Particles.Cells
         @. ParticleRanges             = zero(eltype(ParticleRanges))
         ParticleRanges[1] = 1
