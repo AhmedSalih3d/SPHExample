@@ -266,13 +266,9 @@ using LinearAlgebra
     end
 
     Base.@propagate_inbounds function ComputeInteractions!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk) where {SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
-        # @unpack ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
+        @unpack m₀, dx = SimConstants
 
-        # @unpack h⁻¹, h, η², H², αD = SimKernel 
-
-        (; ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant) = SimConstants
-
-        (; h⁻¹, h, η², H², αD) = SimKernel
+        @unpack h⁻¹, H² = SimKernel 
 
         xᵢⱼ  = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)              
