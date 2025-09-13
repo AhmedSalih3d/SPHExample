@@ -179,31 +179,41 @@ using LinearAlgebra
         end
         ordered = sortperm(weights, rev = true)
 
-        Threads.@threads :dynamic for idx in 1:n_cells
-            iter = ordered[idx]
-            tid = Threads.threadid()
-            CellIndex = UniqueCellsView[iter]
-            SimParticles.ChunkID[iter] = tid
-            StartIndex = ParticleRanges[iter]
-            EndIndex   = ParticleRanges[iter + 1] - 1
+        next_cell = Threads.Atomic{Int}(0)
+        Threads.@sync begin
+            for _ in 1:Threads.nthreads()
+                Threads.@spawn begin
+                    tid = Threads.threadid()
+                    idx = Threads.atomic_add!(next_cell, 1)
+                    while idx <= n_cells
+                        iter = ordered[idx]
+                        CellIndex = UniqueCellsView[iter]
+                        SimParticles.ChunkID[iter] = tid
+                        StartIndex = ParticleRanges[iter]
+                        EndIndex   = ParticleRanges[iter + 1] - 1
 
-            @inbounds for i = StartIndex:EndIndex, j = (i + 1):EndIndex
-                ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                                    SimConstants, SimParticles, SimThreadedArrays,
-                                    Position, Density, Pressure, Velocity,
-                                    i, j, MotionLimiter, tid)
-            end
+                        @inbounds for i = StartIndex:EndIndex, j = (i + 1):EndIndex
+                            ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                                                SimConstants, SimParticles, SimThreadedArrays,
+                                                Position, Density, Pressure, Velocity,
+                                                i, j, MotionLimiter, tid)
+                        end
 
-            @inbounds for S in Stencil
-                SCellIndex = CellIndex + S
-                NeighborIdx = get(CellDict, SCellIndex, 1)
-                StartIndex_ = ParticleRanges[NeighborIdx]
-                EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
-                for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                    ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                                        SimConstants, SimParticles, SimThreadedArrays,
-                                        Position, Density, Pressure, Velocity,
-                                        i, j, MotionLimiter, tid)
+                        @inbounds for S in Stencil
+                            SCellIndex = CellIndex + S
+                            NeighborIdx = get(CellDict, SCellIndex, 1)
+                            StartIndex_ = ParticleRanges[NeighborIdx]
+                            EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
+                            for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
+                                ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                                                    SimConstants, SimParticles, SimThreadedArrays,
+                                                    Position, Density, Pressure, Velocity,
+                                                    i, j, MotionLimiter, tid)
+                            end
+                        end
+
+                        idx = Threads.atomic_add!(next_cell, 1)
+                    end
                 end
             end
         end
