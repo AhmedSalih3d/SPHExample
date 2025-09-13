@@ -60,61 +60,6 @@ using LinearAlgebra
         Int(sign(x)) * unsafe_trunc(Int, muladd(abs(x),InverseCutOff,0.5))
     end
 
-    # Add contributions related to particle shifting. Dispatch on `SimulationMetaData`
-    # so that no runtime checks are required.
-    @inline function add_shifting_terms!(::SimulationMetaData{D,T,NoShifting,K,B,L}, SimThreadedArrays,
-                                MotionLimiter, xᵢⱼ, ∇ᵢWᵢⱼ, m₀, ρᵢ, ρⱼ, i, j, ichunk) where {D,T,
-                                                                                                K<:KernelOutputMode,
-                                                                                                B<:MDBCMode,
-                                                                                                L<:LogMode}
-        return nothing
-    end
-
-    @inline function add_shifting_terms!(::SimulationMetaData{D,T,PlanarShifting,K,B,L}, SimThreadedArrays,
-                                MotionLimiter, xᵢⱼ, ∇ᵢWᵢⱼ, m₀, ρᵢ, ρⱼ, i, j, ichunk) where {D,T,
-                                                                                                   K<:KernelOutputMode,
-                                                                                                   B<:MDBCMode,
-                                                                                                   L<:LogMode}
-        MLcond = MotionLimiter[i] * MotionLimiter[j]
-
-        SimThreadedArrays.∇CᵢThreaded[ichunk][i]   += (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
-        SimThreadedArrays.∇CᵢThreaded[ichunk][j]   += (m₀/ρⱼ) * -∇ᵢWᵢⱼ
-
-        # Switch signs compared to DSPH, else free surface detection does not make sense
-        # Agrees, https://arxiv.org/abs/2110.10076, it should have been r_ji
-        SimThreadedArrays.∇◌rᵢThreaded[ichunk][i]  += (m₀/ρⱼ) * dot(-xᵢⱼ , ∇ᵢWᵢⱼ) * MLcond
-        SimThreadedArrays.∇◌rᵢThreaded[ichunk][j]  += (m₀/ρᵢ) * dot( xᵢⱼ ,-∇ᵢWᵢⱼ) * MLcond
-        return nothing
-    end
-
-    # Optionally record kernel values and gradients based on `SimulationMetaData`
-    # This function is designed to be a no-op when kernel output is not requested.
-    # The `@inline` annotation encourages the compiler to substitute the function call
-    # with its body, which in this case is `nothing`. When the `SimMetaData` type
-    # is concrete at the call site, the compiler can completely eliminate this call,
-    # resulting in zero runtime overhead.
-    @inline function KernelOutput!(::SimulationMetaData{D,T,S,NoKernelOutput,B,L}, SimKernel,
-                            SimThreadedArrays, q, ∇ᵢWᵢⱼ, i, j, ichunk) where {D,T,S<:ShiftingMode,
-                                                                               B<:MDBCMode,
-                                                                               L<:LogMode}
-        return nothing
-    end
-
-    # This version is called when kernel output is requested.
-    # The `@inline` annotation helps reduce function call overhead, especially
-    # since this is called inside a tight loop (`ComputeInteractions!`).
-    @inline function KernelOutput!(::SimulationMetaData{D,T,S,StoreKernelOutput,B,L}, SimKernel,
-                            SimThreadedArrays, q, ∇ᵢWᵢⱼ, i, j, ichunk) where {D,T,S<:ShiftingMode,
-                                                                            B<:MDBCMode,
-                                                                            L<:LogMode}
-        Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
-        SimThreadedArrays.KernelThreaded[ichunk][i]         += Wᵢⱼ
-        SimThreadedArrays.KernelThreaded[ichunk][j]         += Wᵢⱼ
-        SimThreadedArrays.KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
-        SimThreadedArrays.KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
-        return nothing
-    end
-   
     @inline function ExtractCells!(Particles, InverseCutOff)
         @inbounds @simd ivdep for i ∈ eachindex(Particles.Cells)
             Particles.Cells[i] = CartesianIndex(map(x -> map_floor(x, InverseCutOff), Tuple(Particles.Position[i])))
@@ -265,55 +210,96 @@ using LinearAlgebra
         return nothing
     end
 
-    Base.@propagate_inbounds function ComputeInteractions!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk) where {SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
-        @unpack m₀, dx = SimConstants
+    # Define the interaction body once and reuse for different feature combinations.
+    macro compute_interaction_body(do_kernel, do_shift)
+        do_kernel === :true || do_kernel === :false || error("do_kernel must be true or false")
+        do_shift === :true || do_shift === :false || error("do_shift must be true or false")
+        kernel_ex = do_kernel === :true ? quote
+                Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
+                SimThreadedArrays.KernelThreaded[ichunk][i]         += Wᵢⱼ
+                SimThreadedArrays.KernelThreaded[ichunk][j]         += Wᵢⱼ
+                SimThreadedArrays.KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
+                SimThreadedArrays.KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
+            end : nothing
+        shift_ex = do_shift === :true ? quote
+                MLcond = MotionLimiter[i] * MotionLimiter[j]
+                SimThreadedArrays.∇CᵢThreaded[ichunk][i]   += (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
+                SimThreadedArrays.∇CᵢThreaded[ichunk][j]   += (m₀/ρⱼ) * -∇ᵢWᵢⱼ
+                SimThreadedArrays.∇◌rᵢThreaded[ichunk][i]  += (m₀/ρⱼ) * dot(-xᵢⱼ , ∇ᵢWᵢⱼ) * MLcond
+                SimThreadedArrays.∇◌rᵢThreaded[ichunk][j]  += (m₀/ρᵢ) * dot( xᵢⱼ ,-∇ᵢWᵢⱼ) * MLcond
+            end : nothing
+        quote
+            @unpack m₀, dx = SimConstants
+            @unpack h⁻¹, H² = SimKernel
+            xᵢⱼ  = Position[i] - Position[j]
+            xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)
+            if  xᵢⱼ² <= H²
+                dᵢⱼ  = sqrt(abs(xᵢⱼ²))
+                q         = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
+                ∇ᵢWᵢⱼ     = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
+                ρᵢ        = Density[i]
+                ρⱼ        = Density[j]
+                vᵢ        = Velocity[i]
+                vⱼ        = Velocity[j]
+                vᵢⱼ       = vᵢ - vⱼ
+                density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
+                dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  density_symmetric_term
+                dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  density_symmetric_term
+                Dᵢ, Dⱼ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants,
+                                                  SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ², i, j, MotionLimiter)
+                SimThreadedArrays.dρdtIThreaded[ichunk][i] += dρdt⁺ + Dᵢ
+                SimThreadedArrays.dρdtIThreaded[ichunk][j] += dρdt⁻ + Dⱼ
+                Pᵢ      =  Pressure[i]
+                Pⱼ      =  Pressure[j]
+                Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
+                f_ab    = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
+                dvdt⁺   = - m₀ * (Pfac + f_ab) *  ∇ᵢWᵢⱼ
+                visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles,
+                                                xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ², i, j)
+                uₘ = dvdt⁺ + visc_term
+                SimThreadedArrays.AccelerationThreaded[ichunk][i] += uₘ
+                SimThreadedArrays.AccelerationThreaded[ichunk][j] -= uₘ
+                $(kernel_ex)
+                $(shift_ex)
+            end
+            return nothing
+        end |> esc
+    end
 
-        @unpack h⁻¹, H² = SimKernel 
+    Base.@propagate_inbounds function ComputeInteractions!(SimDensityDiffusion::SDD, SimViscosity::SV,
+            SimKernel, SimMetaData::SimulationMetaData{D,T,NoShifting,NoKernelOutput,B,L},
+            SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure,
+            Velocity, i, j, MotionLimiter, ichunk) where {SDD<:SPHDensityDiffusion,
+                                                           SV<:SPHViscosity,
+                                                           D,T,B<:MDBCMode,L<:LogMode}
+        @compute_interaction_body false false
+    end
 
-        xᵢⱼ  = Position[i] - Position[j]
-        xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)              
-        if  xᵢⱼ² <= H²
-            #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/2
-            dᵢⱼ  = sqrt(abs(xᵢⱼ²))
+    Base.@propagate_inbounds function ComputeInteractions!(SimDensityDiffusion::SDD, SimViscosity::SV,
+            SimKernel, SimMetaData::SimulationMetaData{D,T,NoShifting,StoreKernelOutput,B,L},
+            SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure,
+            Velocity, i, j, MotionLimiter, ichunk) where {SDD<:SPHDensityDiffusion,
+                                                           SV<:SPHViscosity,
+                                                           D,T,B<:MDBCMode,L<:LogMode}
+        @compute_interaction_body true false
+    end
 
-            # clamp seems faster than min, no util
-            q         = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0) #min(dᵢⱼ * h⁻¹, 2.0) - 8% util no DDT
-            ∇ᵢWᵢⱼ     = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
-            
-            ρᵢ        = Density[i]
-            ρⱼ        = Density[j]
-        
-            vᵢ        = Velocity[i]
-            vⱼ        = Velocity[j]
-            vᵢⱼ       = vᵢ - vⱼ
-            density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
-            dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  density_symmetric_term
-            dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  density_symmetric_term
+    Base.@propagate_inbounds function ComputeInteractions!(SimDensityDiffusion::SDD, SimViscosity::SV,
+            SimKernel, SimMetaData::SimulationMetaData{D,T,PlanarShifting,NoKernelOutput,B,L},
+            SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure,
+            Velocity, i, j, MotionLimiter, ichunk) where {SDD<:SPHDensityDiffusion,
+                                                           SV<:SPHViscosity,
+                                                           D,T,B<:MDBCMode,L<:LogMode}
+        @compute_interaction_body false true
+    end
 
-            Dᵢ, Dⱼ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ², i, j, MotionLimiter)
-
-            SimThreadedArrays.dρdtIThreaded[ichunk][i] += dρdt⁺ + Dᵢ
-            SimThreadedArrays.dρdtIThreaded[ichunk][j] += dρdt⁻ + Dⱼ
-
-
-            Pᵢ      =  Pressure[i]
-            Pⱼ      =  Pressure[j]
-            Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
-            f_ab    = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
-            dvdt⁺   = - m₀ * (Pfac + f_ab) *  ∇ᵢWᵢⱼ
-
-            visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ², i, j)
-
-            uₘ = dvdt⁺ + visc_term
-            SimThreadedArrays.AccelerationThreaded[ichunk][i] += uₘ
-            SimThreadedArrays.AccelerationThreaded[ichunk][j] -= uₘ 
-
-            
-            KernelOutput!(SimMetaData, SimKernel, SimThreadedArrays, q, ∇ᵢWᵢⱼ, i, j, ichunk)
-            add_shifting_terms!(SimMetaData, SimThreadedArrays, MotionLimiter, xᵢⱼ, ∇ᵢWᵢⱼ, m₀, ρᵢ, ρⱼ, i, j, ichunk)
-        end
-
-        return nothing
+    Base.@propagate_inbounds function ComputeInteractions!(SimDensityDiffusion::SDD, SimViscosity::SV,
+            SimKernel, SimMetaData::SimulationMetaData{D,T,PlanarShifting,StoreKernelOutput,B,L},
+            SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure,
+            Velocity, i, j, MotionLimiter, ichunk) where {SDD<:SPHDensityDiffusion,
+                                                           SV<:SPHViscosity,
+                                                           D,T,B<:MDBCMode,L<:LogMode}
+        @compute_interaction_body true true
     end
 
     Base.@propagate_inbounds function ComputeInteractionsMDBC!(SimKernel, SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}, SimConstants, Position, Density, ParticleType, GhostPoints, i, j) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
@@ -473,43 +459,6 @@ using LinearAlgebra
         return nothing
     end
 
-    function reduce_kernel_and_shifting_arrays!(Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ, SimThreadedArrays)
-        n = length(Kernel)
-        num_threads = nthreads()
-        chunk_size = ceil(Int, n / num_threads)
-        KT = SimThreadedArrays.KernelThreaded
-        KGT = SimThreadedArrays.KernelGradientThreaded
-        CT  = SimThreadedArrays.∇CᵢThreaded
-        rT  = SimThreadedArrays.∇◌rᵢThreaded
-        @inbounds @threads for t in 1:num_threads
-            start_idx = 1 + (t - 1) * chunk_size
-            end_idx = min(t * chunk_size, n)
-            for j in start_idx:end_idx
-                k  = Kernel[j]
-                kg = KernelGradient[j]
-                c  = ∇Cᵢ[j]
-                r  = ∇◌rᵢ[j]
-                for arr in KT
-                    k += arr[j]
-                end
-                for arr in KGT
-                    kg += arr[j]
-                end
-                for arr in CT
-                    c += arr[j]
-                end
-                for arr in rT
-                    r += arr[j]
-                end
-                Kernel[j] = k
-                KernelGradient[j] = kg
-                ∇Cᵢ[j] = c
-                ∇◌rᵢ[j] = r
-            end
-        end
-        return nothing
-    end
-
     function ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
         reduce_sum!(dρdtI, SimThreadedArrays.dρdtIThreaded)
         reduce_sum!(Acceleration, SimThreadedArrays.AccelerationThreaded)
@@ -517,16 +466,6 @@ using LinearAlgebra
         reduce_kernel_arrays!(SimMetaData, Kernel, KernelGradient, SimThreadedArrays)
         reduce_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ, SimThreadedArrays)
 
-        return nothing
-    end
-
-    function ReductionStep!(::SimulationMetaData{D,T,PlanarShifting,StoreKernelOutput,B,L},
-                            SimThreadedArrays, dρdtI, Acceleration, Kernel,
-                            KernelGradient, ∇Cᵢ, ∇◌rᵢ) where {D,T,B<:MDBCMode,L<:LogMode}
-        reduce_sum!(dρdtI, SimThreadedArrays.dρdtIThreaded)
-        reduce_sum!(Acceleration, SimThreadedArrays.AccelerationThreaded)
-        reduce_kernel_and_shifting_arrays!(Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
-                                           SimThreadedArrays)
         return nothing
     end
 
