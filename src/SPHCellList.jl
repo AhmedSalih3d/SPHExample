@@ -62,7 +62,7 @@ using LinearAlgebra
 
     # Add contributions related to particle shifting. Dispatch on `SimulationMetaData`
     # so that no runtime checks are required.
-    function add_shifting_terms!(::SimulationMetaData{D,T,NoShifting,K,B,L}, SimThreadedArrays,
+    @inline function add_shifting_terms!(::SimulationMetaData{D,T,NoShifting,K,B,L}, SimThreadedArrays,
                                 MotionLimiter, xᵢⱼ, ∇ᵢWᵢⱼ, m₀, ρᵢ, ρⱼ, i, j, ichunk) where {D,T,
                                                                                                 K<:KernelOutputMode,
                                                                                                 B<:MDBCMode,
@@ -70,8 +70,8 @@ using LinearAlgebra
         return nothing
     end
 
-    function add_shifting_terms!(::SimulationMetaData{D,T,S,K,B,L}, SimThreadedArrays,
-                                MotionLimiter, xᵢⱼ, ∇ᵢWᵢⱼ, m₀, ρᵢ, ρⱼ, i, j, ichunk) where {D,T,S<:ShiftingMode,
+    @inline function add_shifting_terms!(::SimulationMetaData{D,T,PlanarShifting,K,B,L}, SimThreadedArrays,
+                                MotionLimiter, xᵢⱼ, ∇ᵢWᵢⱼ, m₀, ρᵢ, ρⱼ, i, j, ichunk) where {D,T,
                                                                                                    K<:KernelOutputMode,
                                                                                                    B<:MDBCMode,
                                                                                                    L<:LogMode}
@@ -88,14 +88,22 @@ using LinearAlgebra
     end
 
     # Optionally record kernel values and gradients based on `SimulationMetaData`
-    function KernelOutput!(::SimulationMetaData{D,T,S,NoKernelOutput,B,L}, SimKernel,
+    # This function is designed to be a no-op when kernel output is not requested.
+    # The `@inline` annotation encourages the compiler to substitute the function call
+    # with its body, which in this case is `nothing`. When the `SimMetaData` type
+    # is concrete at the call site, the compiler can completely eliminate this call,
+    # resulting in zero runtime overhead.
+    @inline function KernelOutput!(::SimulationMetaData{D,T,S,NoKernelOutput,B,L}, SimKernel,
                             SimThreadedArrays, q, ∇ᵢWᵢⱼ, i, j, ichunk) where {D,T,S<:ShiftingMode,
                                                                                B<:MDBCMode,
                                                                                L<:LogMode}
         return nothing
     end
 
-    function KernelOutput!(::SimulationMetaData{D,T,S,StoreKernelOutput,B,L}, SimKernel,
+    # This version is called when kernel output is requested.
+    # The `@inline` annotation helps reduce function call overhead, especially
+    # since this is called inside a tight loop (`ComputeInteractions!`).
+    @inline function KernelOutput!(::SimulationMetaData{D,T,S,StoreKernelOutput,B,L}, SimKernel,
                             SimThreadedArrays, q, ∇ᵢWᵢⱼ, i, j, ichunk) where {D,T,S<:ShiftingMode,
                                                                             B<:MDBCMode,
                                                                             L<:LogMode}
@@ -258,9 +266,13 @@ using LinearAlgebra
     end
 
     Base.@propagate_inbounds function ComputeInteractions!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk) where {SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
-        @unpack ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
+        # @unpack ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
 
-        @unpack h⁻¹, h, η², H², αD = SimKernel 
+        # @unpack h⁻¹, h, η², H², αD = SimKernel 
+
+        (; ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant) = SimConstants
+
+        (; h⁻¹, h, η², H², αD) = SimKernel
 
         xᵢⱼ  = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)              
@@ -302,7 +314,6 @@ using LinearAlgebra
 
             
             KernelOutput!(SimMetaData, SimKernel, SimThreadedArrays, q, ∇ᵢWᵢⱼ, i, j, ichunk)
-
             add_shifting_terms!(SimMetaData, SimThreadedArrays, MotionLimiter, xᵢⱼ, ∇ᵢWᵢⱼ, m₀, ρᵢ, ρⱼ, i, j, ichunk)
         end
 
