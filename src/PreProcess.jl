@@ -9,6 +9,15 @@ using StructArrays
 using ..SimulationGeometry
 using ..SimulationMetaDataConfiguration
 
+const CACHE_LINE_BYTES = 64
+
+function cacheline_padded_copy(v::AbstractVector)
+    pad = Int(CACHE_LINE_BYTES ÷ sizeof(eltype(v)))
+    padded = similar(v, length(v) + pad)
+    @inbounds padded[1:length(v)] = v
+    return padded
+end
+
 function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, particle_group_marker::Int, specific_csv::String) where {D, T}
     csv_file = CSV.File(specific_csv)
 
@@ -168,8 +177,8 @@ function allocate_kernel_arrays(::SimulationMetaData{D,T,S,K,B,L},
                                                              K<:KernelOutputMode,
                                                              B<:MDBCMode,
                                                              L<:LogMode}
-    KernelThreaded         = [copy(SimParticles.Kernel) for _ in 1:n_copy]
-    KernelGradientThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
+    KernelThreaded = [cacheline_padded_copy(SimParticles.Kernel) for _ in 1:n_copy]
+    KernelGradientThreaded = [cacheline_padded_copy(SimParticles.KernelGradient) for _ in 1:n_copy]
     return (
         KernelThreaded = KernelThreaded,
         KernelGradientThreaded = KernelGradientThreaded,
@@ -187,8 +196,8 @@ function allocate_shifting_arrays(::SimulationMetaData{D,T,S,K,B,L},
                                                             K<:KernelOutputMode,
                                                             B<:MDBCMode,
                                                             L<:LogMode}
-    ∇CᵢThreaded  = [copy(∇Cᵢ) for _ in 1:n_copy]
-    ∇◌rᵢThreaded = [copy(∇◌rᵢ) for _ in 1:n_copy]
+    ∇CᵢThreaded  = [cacheline_padded_copy(∇Cᵢ) for _ in 1:n_copy]
+    ∇◌rᵢThreaded = [cacheline_padded_copy(∇◌rᵢ) for _ in 1:n_copy]
     return (
         ∇CᵢThreaded  = ∇CᵢThreaded,
         ∇◌rᵢThreaded = ∇◌rᵢThreaded,
@@ -201,8 +210,8 @@ function AllocateThreadedArrays(SimMetaData::SimulationMetaData{D,T,S,K,B,L},
                                                                            K<:KernelOutputMode,
                                                                            B<:MDBCMode,
                                                                            L<:LogMode}
-    dρdtIThreaded        = [copy(dρdtI) for _ in 1:n_copy]
-    AccelerationThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
+    dρdtIThreaded = [cacheline_padded_copy(dρdtI) for _ in 1:n_copy]
+    AccelerationThreaded = [cacheline_padded_copy(SimParticles.KernelGradient) for _ in 1:n_copy]
     nt = (
         dρdtIThreaded = dρdtIThreaded,
         AccelerationThreaded = AccelerationThreaded,
