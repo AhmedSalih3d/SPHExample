@@ -43,17 +43,17 @@ function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, parti
 end
 
 """
-    AllocateDataStructures(SimGeometry; store_kernel=false)
+    AllocateDataStructures(SimGeometry, SimMetaData)
 
 Load particle data from `SimGeometry` and return a struct array of particles.
-When `store_kernel` is true, per-particle kernel values and gradients are
-allocated and stored with the particle data. Otherwise these arrays are
-omitted to reduce memory usage.
+Kernel arrays are included or omitted based on the `KernelOutputMode` of
+`SimMetaData`. A convenience method without `SimMetaData` defaults to
+`NoKernelOutput`.
 """
 function AllocateDataStructures(
-    SimGeometry::Vector{<:Geometry{Dimensions, FloatType}};
-    store_kernel::Bool = false,
-) where {Dimensions, FloatType}
+    SimGeometry::Vector{<:Geometry{Dimensions, FloatType}},
+    ::Type{KMode},
+) where {Dimensions, FloatType, KMode<:KernelOutputMode}
     Position    = Vector{SVector{Dimensions, FloatType}}()
     Density     = Vector{FloatType}()
     Types       = Vector{ParticleType}()
@@ -115,54 +115,57 @@ function AllocateDataStructures(
     GhostPoints    = zeros(PositionType, NumberOfPoints)
     GhostNormals   = zeros(PositionType, NumberOfPoints)
     Pressureᵢ      = zeros(PositionUnderlyingType, NumberOfPoints)
-    Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
-    ChunkID        = zeros(Int, NumberOfPoints)
+    Cells   = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
+    ChunkID = zeros(Int, NumberOfPoints)
 
-    SimParticles = if store_kernel
-        Kernel         = zeros(PositionUnderlyingType, NumberOfPoints)
-        KernelGradient = zeros(PositionType, NumberOfPoints)
-        StructArray((
-            Cells          = Cells,
-            ChunkID        = ChunkID,
-            Kernel         = Kernel,
-            KernelGradient = KernelGradient,
-            Position       = Position,
-            Acceleration   = Acceleration,
-            Velocity       = Velocity,
-            Density        = Density,
-            Pressure       = Pressureᵢ,
-            GravityFactor  = GravityFactor,
-            MotionLimiter  = MotionLimiter,
-            BoundaryBool   = BoundaryBool,
-            ID             = Idp,
-            Type           = Types,
-            GroupMarker    = GroupMarker,
-            GhostPoints    = GhostPoints,
-            GhostNormals   = GhostNormals,
-        ))
-    else
-        StructArray((
-            Cells         = Cells,
-            ChunkID       = ChunkID,
-            Position      = Position,
-            Acceleration  = Acceleration,
-            Velocity      = Velocity,
-            Density       = Density,
-            Pressure      = Pressureᵢ,
-            GravityFactor = GravityFactor,
-            MotionLimiter = MotionLimiter,
-            BoundaryBool  = BoundaryBool,
-            ID            = Idp,
-            Type          = Types,
-            GroupMarker   = GroupMarker,
-            GhostPoints   = GhostPoints,
-            GhostNormals  = GhostNormals,
-        ))
-    end
+    base_nt = (
+        Cells         = Cells,
+        ChunkID       = ChunkID,
+        Position      = Position,
+        Acceleration  = Acceleration,
+        Velocity      = Velocity,
+        Density       = Density,
+        Pressure      = Pressureᵢ,
+        GravityFactor = GravityFactor,
+        MotionLimiter = MotionLimiter,
+        BoundaryBool  = BoundaryBool,
+        ID            = Idp,
+        Type          = Types,
+        GroupMarker   = GroupMarker,
+        GhostPoints   = GhostPoints,
+        GhostNormals  = GhostNormals,
+    )
+
+    kernel_nt = kernel_particle_fields(KMode, NumberOfPoints,
+                                       PositionType, PositionUnderlyingType)
+
+    SimParticles = StructArray(merge(base_nt, kernel_nt))
 
     sort!(SimParticles, by = p -> p.ID)
 
     return SimParticles
+end
+
+AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, FloatType}}) where {Dimensions, FloatType} =
+    AllocateDataStructures(SimGeometry, NoKernelOutput)
+
+function AllocateDataStructures(
+    SimGeometry::Vector{<:Geometry{Dimensions, FloatType}},
+    SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
+) where {Dimensions, FloatType, SMode<:ShiftingMode, KMode<:KernelOutputMode,
+         BMode<:MDBCMode, LMode<:LogMode}
+    AllocateDataStructures(SimGeometry, KMode)
+end
+
+function kernel_particle_fields(::Type{NoKernelOutput}, n, _, _)
+    NamedTuple()
+end
+
+function kernel_particle_fields(::Type{StoreKernelOutput}, n, position_type, underlying_type)
+    (
+        Kernel         = zeros(underlying_type, n),
+        KernelGradient = zeros(position_type, n),
+    )
 end
 
 function AllocateSupportDataStructures(::SimulationMetaData{D,T,NoShifting,K,B,L}, Position) where {D,T,K<:KernelOutputMode,
