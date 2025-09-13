@@ -197,6 +197,7 @@ using LinearAlgebra
 
                         # (2) Interactions between this cell and each neighboring cell in the stencil
                         len_stencil = length(Stencil)
+                        even_len = len_stencil - (len_stencil & 1)
                         process_neighbor(S) = begin
                             SCellIndex = CellIndex + S
                             NeighborIdx = get(CellDict, SCellIndex, 1)            # lookup neighbor cell index (or 1 if not present)
@@ -209,14 +210,12 @@ using LinearAlgebra
                                                     i, j, MotionLimiter, Threads.threadid())
                             end
                         end
-                        s = 1
-                        @inbounds while s <= len_stencil - 1
+                        @inbounds for s in 1:2:even_len
                             process_neighbor(Stencil[s])
                             process_neighbor(Stencil[s + 1])
-                            s += 2
                         end
                         if isodd(len_stencil)
-                            process_neighbor(Stencil[end])
+                            process_neighbor(Stencil[len_stencil])
                         end
                     end
                 end  # end @spawn
@@ -246,6 +245,7 @@ using LinearAlgebra
                 # compute and accumulate into the locals
                 GhostCellIndex = f(SimKernel, GhostPoints[iter])
                 len_stencil = length(FullStencil)
+                even_len = len_stencil - (len_stencil & 1)
                 process_neighbor(S) = begin
                     SCellIndex = GhostCellIndex + S
 
@@ -267,14 +267,12 @@ using LinearAlgebra
                     end
                 end
 
-                s = 1
-                @inbounds while s <= len_stencil - 1
+                @inbounds for s in 1:2:even_len
                     process_neighbor(FullStencil[s])
                     process_neighbor(FullStencil[s + 1])
-                    s += 2
                 end
                 if isodd(len_stencil)
-                    process_neighbor(FullStencil[end])
+                    process_neighbor(FullStencil[len_stencil])
                 end
             
                 # write out once
