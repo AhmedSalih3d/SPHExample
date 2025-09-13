@@ -473,6 +473,43 @@ using LinearAlgebra
         return nothing
     end
 
+    function reduce_kernel_and_shifting_arrays!(Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ, SimThreadedArrays)
+        n = length(Kernel)
+        num_threads = nthreads()
+        chunk_size = ceil(Int, n / num_threads)
+        KT = SimThreadedArrays.KernelThreaded
+        KGT = SimThreadedArrays.KernelGradientThreaded
+        CT  = SimThreadedArrays.∇CᵢThreaded
+        rT  = SimThreadedArrays.∇◌rᵢThreaded
+        @inbounds @threads for t in 1:num_threads
+            start_idx = 1 + (t - 1) * chunk_size
+            end_idx = min(t * chunk_size, n)
+            for j in start_idx:end_idx
+                k  = Kernel[j]
+                kg = KernelGradient[j]
+                c  = ∇Cᵢ[j]
+                r  = ∇◌rᵢ[j]
+                for arr in KT
+                    k += arr[j]
+                end
+                for arr in KGT
+                    kg += arr[j]
+                end
+                for arr in CT
+                    c += arr[j]
+                end
+                for arr in rT
+                    r += arr[j]
+                end
+                Kernel[j] = k
+                KernelGradient[j] = kg
+                ∇Cᵢ[j] = c
+                ∇◌rᵢ[j] = r
+            end
+        end
+        return nothing
+    end
+
     function ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
         reduce_sum!(dρdtI, SimThreadedArrays.dρdtIThreaded)
         reduce_sum!(Acceleration, SimThreadedArrays.AccelerationThreaded)
@@ -480,6 +517,16 @@ using LinearAlgebra
         reduce_kernel_arrays!(SimMetaData, Kernel, KernelGradient, SimThreadedArrays)
         reduce_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ, SimThreadedArrays)
 
+        return nothing
+    end
+
+    function ReductionStep!(::SimulationMetaData{D,T,PlanarShifting,StoreKernelOutput,B,L},
+                            SimThreadedArrays, dρdtI, Acceleration, Kernel,
+                            KernelGradient, ∇Cᵢ, ∇◌rᵢ) where {D,T,B<:MDBCMode,L<:LogMode}
+        reduce_sum!(dρdtI, SimThreadedArrays.dρdtIThreaded)
+        reduce_sum!(Acceleration, SimThreadedArrays.AccelerationThreaded)
+        reduce_kernel_and_shifting_arrays!(Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
+                                           SimThreadedArrays)
         return nothing
     end
 
