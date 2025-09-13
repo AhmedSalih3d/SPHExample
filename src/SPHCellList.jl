@@ -196,17 +196,27 @@ using LinearAlgebra
                         end
 
                         # (2) Interactions between this cell and each neighboring cell in the stencil
-                        @inbounds for S in Stencil
-                            SCellIndex   = CellIndex + S
-                            NeighborIdx  = get(CellDict, SCellIndex, 1)            # lookup neighbor cell index (or 1 if not present)
-                            StartIndex_  = ParticleRanges[NeighborIdx]
-                            EndIndex_    = ParticleRanges[NeighborIdx + 1] - 1
+                        len_stencil = length(Stencil)
+                        process_neighbor(S) = begin
+                            SCellIndex = CellIndex + S
+                            NeighborIdx = get(CellDict, SCellIndex, 1)            # lookup neighbor cell index (or 1 if not present)
+                            StartIndex_ = ParticleRanges[NeighborIdx]
+                            EndIndex_   = ParticleRanges[NeighborIdx + 1] - 1
                             for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
                                 ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                                                     SimConstants, SimParticles, SimThreadedArrays,
                                                     Position, Density, Pressure, Velocity,
                                                     i, j, MotionLimiter, Threads.threadid())
                             end
+                        end
+                        s = 1
+                        @inbounds while s <= len_stencil - 1
+                            process_neighbor(Stencil[s])
+                            process_neighbor(Stencil[s + 1])
+                            s += 2
+                        end
+                        if isodd(len_stencil)
+                            process_neighbor(Stencil[end])
                         end
                     end
                 end  # end @spawn
@@ -235,7 +245,8 @@ using LinearAlgebra
             
                 # compute and accumulate into the locals
                 GhostCellIndex = f(SimKernel, GhostPoints[iter])
-                @inbounds for S ∈ FullStencil
+                len_stencil = length(FullStencil)
+                process_neighbor(S) = begin
                     SCellIndex = GhostCellIndex + S
 
                     # Returns a range, x>:x for exact match and x=:x for no match
@@ -243,8 +254,8 @@ using LinearAlgebra
                     # so I prefer this for now
                     NeighborIdx = get(CellDict, SCellIndex, 1)
 
-                    StartIndex_       = ParticleRanges[NeighborIdx] 
-                    EndIndex_         = ParticleRanges[NeighborIdx + 1] - 1
+                    StartIndex_ = ParticleRanges[NeighborIdx]
+                    EndIndex_   = ParticleRanges[NeighborIdx + 1] - 1
 
                     for j in StartIndex_:EndIndex_
                         # change ComputeInteractions to take & return contributions, e.g.:
@@ -254,6 +265,16 @@ using LinearAlgebra
                         b_acc += bΔ
                         A_acc += AΔ
                     end
+                end
+
+                s = 1
+                @inbounds while s <= len_stencil - 1
+                    process_neighbor(FullStencil[s])
+                    process_neighbor(FullStencil[s + 1])
+                    s += 2
+                end
+                if isodd(len_stencil)
+                    process_neighbor(FullStencil[end])
                 end
             
                 # write out once
