@@ -1,6 +1,7 @@
 module SPHCellList
 
-export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!, RunSimulation
+export ConstructStencil, ExtractCells!, UpdateNeighbors!, UpdateLocalCell!,
+       UpdateLocalCells!, NeighborLoop!, ComputeInteractions!, RunSimulation
 
 using Parameters, FastPow, StaticArrays, Base.Threads
 import LinearAlgebra: dot
@@ -122,6 +123,34 @@ using LinearAlgebra
         return nothing
     end
 
+    @inline function swap_particles!(A::StructArray, i::Int, j::Int)
+        i == j && return nothing
+        foreachfield(A) do field
+            field[i], field[j] = field[j], field[i]
+        end
+        return nothing
+    end
+
+    function build_cell_dict!(Cells, ParticleRanges, UniqueCells, CellDict)
+        @. ParticleRanges = zero(eltype(ParticleRanges))
+        ParticleRanges[1] = 1
+        IndexCounter = 2
+        ParticleRanges[IndexCounter] = 1
+        UniqueCells[IndexCounter] = Cells[1]
+        empty!(CellDict)
+        CellDict[Cells[1]] = IndexCounter
+        @inbounds @simd ivdep for i in eachindex(Cells)[2:end]
+            if Cells[i] != Cells[i - 1]
+                IndexCounter += 1
+                ParticleRanges[IndexCounter] = i
+                UniqueCells[IndexCounter] = Cells[i]
+                CellDict[Cells[i]] = IndexCounter
+            end
+        end
+        ParticleRanges[IndexCounter + 1] = length(Cells) + 1
+        return IndexCounter
+    end
+
     """
     Updates the neighbor list and sorts particles by their cell indices.
 
@@ -138,28 +167,123 @@ using LinearAlgebra
     function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
                               ParticleRanges, UniqueCells, CellDict)
         ExtractCells!(Particles, InverseCutOff)
-
-        sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
+        sort!(Particles, by = p -> p.Cells; scratch = SortingScratchSpace)
         Cells = @views Particles.Cells
-        @. ParticleRanges             = zero(eltype(ParticleRanges))
-        ParticleRanges[1] = 1
-        IndexCounter                  = 2
-        ParticleRanges[IndexCounter]  = 1
-        UniqueCells[IndexCounter]     = Cells[1]
-        empty!(CellDict)
-        CellDict[Cells[1]] = IndexCounter
+        return build_cell_dict!(Cells, ParticleRanges, UniqueCells, CellDict)
+    end
 
-        @inbounds @simd ivdep for i in eachindex(Cells)[2:end]
-            if Cells[i] != Cells[i-1] # Equivalent to diff(Cells) != 0
-                IndexCounter                 += 1
-                ParticleRanges[IndexCounter]  = i
-                UniqueCells[IndexCounter]     = Cells[i]
-                CellDict[Cells[i]]           = IndexCounter
+    """
+    Locally updates the cell of particle `idx` and reorders particles in-place.
+
+    The lookup structures `ParticleRanges`, `UniqueCells` and `CellDict` are
+    updated only for the affected cells, avoiding a full rebuild.
+
+    # Arguments
+    - `Particles`: StructArray of particle data.
+    - `idx`: Index of the particle to update.
+    - `InverseCutOff`: Inverse cutoff value for computing the cell index.
+    - `ParticleRanges`: Array of particle start indices for each cell.
+    - `UniqueCells`: Array storing the unique cell indices.
+    - `CellDict`: Dictionary mapping cell indices to positions in `UniqueCells`.
+    - `IndexCounter`: Current size of `UniqueCells` (including dummy cell).
+
+    # Returns
+    - `Tuple{Bool,Int}`: `(moved, IndexCounter)` where `moved` is true when the
+      particle changed cell and `IndexCounter` is the updated cell count.
+    """
+    function UpdateLocalCell!(Particles, idx, InverseCutOff,
+                              ParticleRanges, UniqueCells, CellDict,
+                              IndexCounter)
+        new_cell = CartesianIndex(map(x -> map_floor(x, InverseCutOff),
+                                      Tuple(Particles.Position[idx])))
+        old_cell = Particles.Cells[idx]
+        if new_cell == old_cell
+            return false, idx, IndexCounter
+        end
+        old_pos = get(CellDict, old_cell, 0) # 0 when old cell was removed
+        Particles.Cells[idx] = new_cell
+        k = idx
+        while k > 1 && Particles.Cells[k - 1] > new_cell
+            swap_particles!(Particles, k, k - 1)
+            k -= 1
+        end
+        while k < length(Particles.Cells) && Particles.Cells[k + 1] < new_cell
+            swap_particles!(Particles, k, k + 1)
+            k += 1
+        end
+
+        if old_pos != 0
+            for i = old_pos + 1:IndexCounter + 1
+                ParticleRanges[i] -= 1
+            end
+            empty_old = ParticleRanges[old_pos] == ParticleRanges[old_pos + 1]
+            if empty_old && old_pos != 1
+                delete!(CellDict, old_cell)
+                for i = old_pos:IndexCounter
+                    UniqueCells[i] = UniqueCells[i + 1]
+                    ParticleRanges[i] = ParticleRanges[i + 1]
+                    if i <= IndexCounter - 1
+                        CellDict[UniqueCells[i]] = i
+                    end
+                end
+                IndexCounter -= 1
             end
         end
-        ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
 
-        return IndexCounter 
+        if haskey(CellDict, new_cell)
+            new_pos = CellDict[new_cell]
+            for i = new_pos + 1:IndexCounter + 1
+                ParticleRanges[i] += 1
+            end
+        else
+            insert_pos = searchsortedfirst(@view(UniqueCells[2:IndexCounter]), new_cell) + 1
+            for i = IndexCounter + 1:-1:insert_pos + 1
+                UniqueCells[i] = UniqueCells[i - 1]
+                ParticleRanges[i] = ParticleRanges[i - 1]
+                if i - 1 >= 2
+                    CellDict[UniqueCells[i]] = i
+                end
+            end
+            UniqueCells[insert_pos] = new_cell
+            ParticleRanges[insert_pos] = k
+            CellDict[new_cell] = insert_pos
+            IndexCounter += 1
+            for i = insert_pos + 1:IndexCounter + 1
+                ParticleRanges[i] += 1
+            end
+        end
+
+        return true, k, IndexCounter
+    end
+
+    """
+    Update cells for all particles using `UpdateLocalCell!`.
+
+    Returns the updated number of unique cells without a full resort when only a
+    subset of particles changed cell.
+    """
+    function UpdateLocalCells!(Particles, InverseCutOff, ParticleRanges,
+                               UniqueCells, CellDict, IndexCounter)
+        idx = 1
+        while idx <= length(Particles.Cells)
+            moved, new_idx, IndexCounter = UpdateLocalCell!(Particles, idx,
+                                                            InverseCutOff,
+                                                            ParticleRanges,
+                                                            UniqueCells,
+                                                            CellDict,
+                                                            IndexCounter)
+            if moved
+                if new_idx < idx
+                    idx = new_idx
+                elseif new_idx == idx
+                    idx += 1
+                end
+                # when new_idx > idx, a new particle occupies `idx`, so reprocess
+            else
+                idx += 1
+            end
+        end
+        return IndexCounter
     end
 
 
@@ -185,10 +309,13 @@ using LinearAlgebra
                         CellIndex = UniqueCellsView[iter]
                         SimParticles.ChunkID[iter] = Threads.threadid()   # mark which thread handles this cell
                         StartIndex = ParticleRanges[iter]
-                        EndIndex   = ParticleRanges[iter+1] - 1
+                        EndIndex   = ParticleRanges[iter + 1] - 1
+                        if StartIndex < 1 || StartIndex > EndIndex
+                            continue
+                        end
 
                         # (1) Interactions among particles within the same cell `iter`
-                        @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
+                        @inbounds for i = StartIndex:EndIndex, j = (i + 1):EndIndex
                             ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                                                 SimConstants, SimParticles, SimThreadedArrays,
                                                 Position, Density, Pressure, Velocity,
@@ -201,6 +328,9 @@ using LinearAlgebra
                             NeighborIdx  = get(CellDict, SCellIndex, 1)            # lookup neighbor cell index (or 1 if not present)
                             StartIndex_  = ParticleRanges[NeighborIdx]
                             EndIndex_    = ParticleRanges[NeighborIdx + 1] - 1
+                            if StartIndex_ < 1 || StartIndex_ > EndIndex_
+                                continue
+                            end
                             for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
                                 ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                                                     SimConstants, SimParticles, SimThreadedArrays,
@@ -748,18 +878,18 @@ using LinearAlgebra
                 @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel)
                 dt₂ = dt * 0.5
 
-                @timeit SimMetaData.HourGlass "02 Calculate IndexCounter"  begin
-                    # Note: If particles are not inside of the neighbor list visualiation, try setting this if statement to always true, since UniqueCells will be updated always then
-                    # In theory, the maximal speed is the speed of sound, this should give a safe guard
-                    # and ensure it is always updated in a reasonable manner. This only works well, assuming that
-                    # c₀ >= maximum(norm.(Velocity))
-                    # Remove if statement logic if you want to update each iteration
-                    # if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
-                    if Δx >= SimKernel.h
-                        @timeit SimMetaData.HourGlass "02a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells, CellDict)
-                        Δx = zero(eltype(Density))
-                        UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
-                    end
+                @timeit SimMetaData.HourGlass "02 Calculate IndexCounter" begin
+                    # if Δx >= SimKernel.h
+                    #     @timeit SimMetaData.HourGlass "02a Full Neighbor Update" SimMetaData.IndexCounter =
+                    #         UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,
+                    #                          ParticleRanges, UniqueCells, CellDict)
+                    #     Δx = zero(eltype(Density))
+                    # else
+                        @timeit SimMetaData.HourGlass "02b Local Cell Update" SimMetaData.IndexCounter =
+                            UpdateLocalCells!(SimParticles, SimKernel.H⁻¹, ParticleRanges,
+                                               UniqueCells, CellDict, SimMetaData.IndexCounter)
+                    # end
+                    UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
                 end
 
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
