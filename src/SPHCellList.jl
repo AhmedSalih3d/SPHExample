@@ -731,7 +731,17 @@ using LinearAlgebra
                                       SortingScratchSpace, SimThreadedArrays,
                                       dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
                                       ∇Cᵢ, ∇◌rᵢ, MotionDefinition) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
-        @unpack Position, Density, Pressure, Velocity, Acceleration, MotionLimiter, GroupMarker, Kernel, KernelGradient, GhostPoints, GhostNormals = SimParticles
+        if hasproperty(SimParticles, :Kernel)
+            @unpack Position, Density, Pressure, Velocity, Acceleration,
+                    MotionLimiter, GroupMarker, Kernel, KernelGradient,
+                    GhostPoints, GhostNormals = SimParticles
+        else
+            @unpack Position, Density, Pressure, Velocity, Acceleration,
+                    MotionLimiter, GroupMarker, GhostPoints,
+                    GhostNormals = SimParticles
+            Kernel = nothing
+            KernelGradient = nothing
+        end
         ParticleType   = SimParticles.Type
         ParticleMarker = GroupMarker
 

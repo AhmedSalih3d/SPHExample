@@ -42,7 +42,18 @@ function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, parti
     return points, density, types, group_marker, idp
 end
 
-function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, FloatType}}) where {Dimensions, FloatType}
+"""
+    AllocateDataStructures(SimGeometry; store_kernel=false)
+
+Load particle data from `SimGeometry` and return a struct array of particles.
+When `store_kernel` is true, per-particle kernel values and gradients are
+allocated and stored with the particle data. Otherwise these arrays are
+omitted to reduce memory usage.
+"""
+function AllocateDataStructures(
+    SimGeometry::Vector{<:Geometry{Dimensions, FloatType}};
+    store_kernel::Bool = false,
+) where {Dimensions, FloatType}
     Position    = Vector{SVector{Dimensions, FloatType}}()
     Density     = Vector{FloatType}()
     Types       = Vector{ParticleType}()
@@ -99,19 +110,55 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
 
     BoundaryBool  = UInt8.(.!Bool.(MotionLimiter))
 
-    Acceleration    = zeros(PositionType, NumberOfPoints)
-    Velocity        = zeros(PositionType, NumberOfPoints)
-    Kernel          = zeros(PositionUnderlyingType, NumberOfPoints)
-    KernelGradient  = zeros(PositionType, NumberOfPoints)
-    GhostPoints     = zeros(PositionType, NumberOfPoints)
-    GhostNormals    = zeros(PositionType, NumberOfPoints)
-
+    Acceleration   = zeros(PositionType, NumberOfPoints)
+    Velocity       = zeros(PositionType, NumberOfPoints)
+    GhostPoints    = zeros(PositionType, NumberOfPoints)
+    GhostNormals   = zeros(PositionType, NumberOfPoints)
     Pressureᵢ      = zeros(PositionUnderlyingType, NumberOfPoints)
-    
     Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
     ChunkID        = zeros(Int, NumberOfPoints)
 
-    SimParticles = StructArray((Cells = Cells, ChunkID = ChunkID, Kernel = Kernel, KernelGradient = KernelGradient, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = Idp , Type = Types, GroupMarker = GroupMarker, GhostPoints = GhostPoints, GhostNormals=GhostNormals))
+    SimParticles = if store_kernel
+        Kernel         = zeros(PositionUnderlyingType, NumberOfPoints)
+        KernelGradient = zeros(PositionType, NumberOfPoints)
+        StructArray((
+            Cells          = Cells,
+            ChunkID        = ChunkID,
+            Kernel         = Kernel,
+            KernelGradient = KernelGradient,
+            Position       = Position,
+            Acceleration   = Acceleration,
+            Velocity       = Velocity,
+            Density        = Density,
+            Pressure       = Pressureᵢ,
+            GravityFactor  = GravityFactor,
+            MotionLimiter  = MotionLimiter,
+            BoundaryBool   = BoundaryBool,
+            ID             = Idp,
+            Type           = Types,
+            GroupMarker    = GroupMarker,
+            GhostPoints    = GhostPoints,
+            GhostNormals   = GhostNormals,
+        ))
+    else
+        StructArray((
+            Cells         = Cells,
+            ChunkID       = ChunkID,
+            Position      = Position,
+            Acceleration  = Acceleration,
+            Velocity      = Velocity,
+            Density       = Density,
+            Pressure      = Pressureᵢ,
+            GravityFactor = GravityFactor,
+            MotionLimiter = MotionLimiter,
+            BoundaryBool  = BoundaryBool,
+            ID            = Idp,
+            Type          = Types,
+            GroupMarker   = GroupMarker,
+            GhostPoints   = GhostPoints,
+            GhostNormals  = GhostNormals,
+        ))
+    end
 
     sort!(SimParticles, by = p -> p.ID)
 
@@ -202,7 +249,7 @@ function AllocateThreadedArrays(SimMetaData::SimulationMetaData{D,T,S,K,B,L},
                                                                            B<:MDBCMode,
                                                                            L<:LogMode}
     dρdtIThreaded        = [copy(dρdtI) for _ in 1:n_copy]
-    AccelerationThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
+    AccelerationThreaded = [copy(SimParticles.Acceleration) for _ in 1:n_copy]
     nt = (
         dρdtIThreaded = dρdtIThreaded,
         AccelerationThreaded = AccelerationThreaded,

@@ -488,8 +488,6 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             
             available_init = Dict(
                 "ChunkID" => SimParticles.ChunkID,
-                "Kernel" => SimParticles.Kernel,
-                "KernelGradient" => SimParticles.KernelGradient,
                 "Density" => SimParticles.Density,
                 "Pressure" => SimParticles.Pressure,
                 "Velocity" => SimParticles.Velocity,
@@ -501,6 +499,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 "GhostPoints" => SimParticles.GhostPoints,
                 "GhostNormals" => SimParticles.GhostNormals,
             )
+            if hasproperty(SimParticles, :Kernel)
+                available_init["Kernel"] = SimParticles.Kernel
+                available_init["KernelGradient"] = SimParticles.KernelGradient
+            end
             output_data_init = [available_init[name] for name in output_vars]
 
             GenerateGeometryStructure(root, output_vars, output_data_init...; chunk_size=1024)
@@ -524,19 +526,23 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         if Dimensions == 2
             T = eltype(eltype(SimParticles.Position))
             n = length(SimParticles.Position)
-            pos_buf   = Vector{SVector{3,T}}(undef, n)
-            kgrad_buf = Vector{SVector{3,T}}(undef, n)
-            vel_buf   = Vector{SVector{3,T}}(undef, n)
-            acc_buf   = Vector{SVector{3,T}}(undef, n)
-            gp_buf    = Vector{SVector{3,T}}(undef, n)
-            gn_buf    = Vector{SVector{3,T}}(undef, n)
+            pos_buf = Vector{SVector{3,T}}(undef, n)
+            vel_buf = Vector{SVector{3,T}}(undef, n)
+            acc_buf = Vector{SVector{3,T}}(undef, n)
+            gp_buf  = Vector{SVector{3,T}}(undef, n)
+            gn_buf  = Vector{SVector{3,T}}(undef, n)
+            if hasproperty(SimParticles, :KernelGradient)
+                kgrad_buf = Vector{SVector{3,T}}(undef, n)
+            end
             fill_buffers!() = begin
-                to_3d!(pos_buf,   SimParticles.Position)
-                to_3d!(kgrad_buf, SimParticles.KernelGradient)
-                to_3d!(vel_buf,   SimParticles.Velocity)
-                to_3d!(acc_buf,   SimParticles.Acceleration)
-                to_3d!(gp_buf,    SimParticles.GhostPoints)
-                to_3d!(gn_buf,    SimParticles.GhostNormals)
+                to_3d!(pos_buf, SimParticles.Position)
+                if kgrad_buf !== nothing
+                    to_3d!(kgrad_buf, SimParticles.KernelGradient)
+                end
+                to_3d!(vel_buf, SimParticles.Velocity)
+                to_3d!(acc_buf, SimParticles.Acceleration)
+                to_3d!(gp_buf, SimParticles.GhostPoints)
+                to_3d!(gn_buf, SimParticles.GhostNormals)
             end
         end
 
@@ -544,15 +550,16 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         function save_particle_data(iteration)
             if Dimensions == 2
                 fill_buffers!()
-                pos   = pos_buf
+                pos = pos_buf
                 kgrad = kgrad_buf
-                vel   = vel_buf
-                acc   = acc_buf
-                gp    = gp_buf
-                gn    = gn_buf
+                vel = vel_buf
+                acc = acc_buf
+                gp = gp_buf
+                gn = gn_buf
             else
                 pos = SimParticles.Position
-                kgrad = SimParticles.KernelGradient
+                kgrad = hasproperty(SimParticles, :KernelGradient) ?
+                        SimParticles.KernelGradient : nothing
                 vel = SimParticles.Velocity
                 acc = SimParticles.Acceleration
                 gp  = SimParticles.GhostPoints
@@ -561,8 +568,6 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
             available = Dict(
                 "ChunkID" => SimParticles.ChunkID,
-                "Kernel" => SimParticles.Kernel,
-                "KernelGradient" => kgrad,
                 "Density" => SimParticles.Density,
                 "Pressure" => SimParticles.Pressure,
                 "Velocity" => vel,
@@ -574,6 +579,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 "GhostPoints" => gp,
                 "GhostNormals" => gn,
             )
+            if hasproperty(SimParticles, :Kernel)
+                available["Kernel"] = SimParticles.Kernel
+                available["KernelGradient"] = kgrad
+            end
             output_data = [available[name] for name in output_vars]
 
             if !SimMetaData.ExportSingleVTKHDF
