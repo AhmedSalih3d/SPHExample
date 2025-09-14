@@ -20,6 +20,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
     using HDF5
     using StaticArrays
+    using Base.Threads
 
     using ..AuxiliaryFunctions: to_3d, to_3d!
 
@@ -458,7 +459,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     `save_grid` and `close_files` functions. Uses single or multi-file mode
     depending on `SimMetaData.ExportSingleVTKHDF`.
     """
-    function SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
+    function SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions;
+                            async_output=false)
         # Generate save locations
         particle_savepath = joinpath(SimMetaData.SaveLocation, SimMetaData.SimulationName)
         grid_savepath = joinpath(SimMetaData.SaveLocation, "CellGrid_$(SimMetaData.SimulationName)")
@@ -540,6 +542,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             end
         end
 
+        # Task handle for asynchronous saving
+        last_task_ref = Ref{Task}(nothing)
+
         # Main saving functions
         function save_particle_data(iteration)
             if Dimensions == 2
@@ -576,12 +581,33 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             )
             output_data = [available[name] for name in output_vars]
 
-            if !SimMetaData.ExportSingleVTKHDF
-                SaveVTKHDF(file_handles.particle_files, iteration, particle_filename(iteration),
-                          pos, output_vars, output_data...)
+            t = SimMetaData.TotalTime
+            if async_output
+                pos_copy = copy(pos)
+                data_copies = [copy(d) for d in output_data]
+                last = last_task_ref[]
+                last_task_ref[] = Threads.@spawn begin
+                    if last !== nothing
+                        wait(last)
+                    end
+                    if !SimMetaData.ExportSingleVTKHDF
+                        SaveVTKHDF(file_handles.particle_files, iteration,
+                                   particle_filename(iteration), pos_copy,
+                                   output_vars, data_copies...)
+                    else
+                        AppendVTKHDFData(root, t, pos_copy, output_vars,
+                                         data_copies...)
+                    end
+                end
             else
-                AppendVTKHDFData(root, SimMetaData.TotalTime, pos, output_vars,
-                                output_data...)
+                if !SimMetaData.ExportSingleVTKHDF
+                    SaveVTKHDF(file_handles.particle_files, iteration,
+                               particle_filename(iteration), pos,
+                               output_vars, output_data...)
+                else
+                    AppendVTKHDFData(root, t, pos, output_vars,
+                                     output_data...)
+                end
             end
         end
     
@@ -596,6 +622,12 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         end
     
         function close_files()
+            if async_output
+                last = last_task_ref[]
+                if last !== nothing
+                    wait(last)
+                end
+            end
             if !SimMetaData.ExportSingleVTKHDF
                 # Close all particle files in multi-file mode
                 for f in file_handles.particle_files

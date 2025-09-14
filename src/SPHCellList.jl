@@ -843,7 +843,13 @@ using LinearAlgebra
         Stencil                = ConstructStencil(Val(Dimensions))
         _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
 
-        output = SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
+        output = SetupVTKOutput(
+            SimMetaData,
+            SimParticles,
+            SimKernel,
+            Dimensions;
+            async_output=SimMetaData.async_output,
+        )
 
         # Save initial state, use 1 else this cannot be used to index fid vector
         SimMetaData.OutputIterationCounter = 1

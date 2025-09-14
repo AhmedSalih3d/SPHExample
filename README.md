@@ -20,6 +20,8 @@ The project demonstrates how to assemble a small SPH solver with Julia. It focus
 - **Weakly compressible formulation** – density varies ~1 % and pressure is a function of density.
 - **Multi-threaded execution** – achieved by spawning the neighbour loop.
 - **Configurable task granularity** – `ChunkMultiplier` controls load balancing across threads.
+- **Optional asynchronous output** – set `async_output=true` to save on a
+  background thread.
 - **Dynamic boundary condition** – inspired by DualSPHysics.
 - **Density diffusion** – based on Fourtakas et al. 2019 to reduce pressure noise.
 - **Wendland quintic kernel** – simple and stable without tensile corrections.
@@ -79,6 +81,8 @@ Pkg.add(url="https://github.com/AhmedSalih3d/SPHExample")
 ### Running an Example
 
 Open one of the files in `example/`, for instance `example/StillWedgeMDBC.jl`, and adjust the simulation parameters or the `ComputerInteractions!` function. Run the script to start the simulation. Results are written in `hdfvtk` format which can be loaded with ParaView 5.12 or newer.
+To reduce the impact of frequent saves on simulation time, enable background
+writing by setting `async_output=true` in `SimulationMetaData`.
 
 ## Help
 

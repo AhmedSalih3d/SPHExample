@@ -47,6 +47,7 @@ struct StoreLog <: LogMode end
     VisualizeInParaview::Bool               = true
     ExportSingleVTKHDF::Bool                = true
     ExportGridCells::Bool                   = false
+    async_output::Bool                      = false
     OutputVariables::Vector{String}         = [
         "ChunkID",
         "Kernel",
