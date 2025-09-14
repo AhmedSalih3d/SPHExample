@@ -445,10 +445,143 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         end
 
         # Write an empty FieldData group (placeholder for additional data)
-        create_group(gtop, "FieldData")
-        
-        # Close file
-        close(io)
+    create_group(gtop, "FieldData")
+
+    # Close file
+    close(io)
+    end
+
+    abstract type SaveMode end
+
+    """Write each step to a separate file."""
+    struct TransientSave <: SaveMode end
+
+    """Append data to an open file handle."""
+    struct FileHandleSave <: SaveMode end
+
+    """
+        save_particles(::Val{D}, mode::SaveMode, args...)
+
+    Save particle data using multiple dispatch on spatial dimension `D`
+    and the saving strategy `mode`.
+    """
+    function save_particles end
+
+    function save_particles(::Val{2}, ::TransientSave, iteration, output_vars,
+                             SimParticles, file_handles, particle_filename,
+                             buffers)
+        pos_buf, kgrad_buf, vel_buf, acc_buf, gp_buf, gn_buf = buffers
+
+        to_3d!(pos_buf,   SimParticles.Position)
+        to_3d!(kgrad_buf, SimParticles.KernelGradient)
+        to_3d!(vel_buf,   SimParticles.Velocity)
+        to_3d!(acc_buf,   SimParticles.Acceleration)
+        to_3d!(gp_buf,    SimParticles.GhostPoints)
+        to_3d!(gn_buf,    SimParticles.GhostNormals)
+
+        available = Dict(
+            "ChunkID" => SimParticles.ChunkID,
+            "Kernel" => SimParticles.Kernel,
+            "KernelGradient" => kgrad_buf,
+            "Density" => SimParticles.Density,
+            "Pressure" => SimParticles.Pressure,
+            "Velocity" => vel_buf,
+            "Acceleration" => acc_buf,
+            "BoundaryBool" => SimParticles.BoundaryBool,
+            "ID" => SimParticles.ID,
+            "Type" => Int8.(SimParticles.Type),
+            "GroupMarker" => SimParticles.GroupMarker,
+            "GhostPoints" => gp_buf,
+            "GhostNormals" => gn_buf,
+        )
+
+        output_data = [available[name] for name in output_vars]
+
+        SaveVTKHDF(file_handles.particle_files, iteration,
+                   particle_filename(iteration), pos_buf,
+                   output_vars, output_data...)
+    end
+
+    function save_particles(::Val{3}, ::TransientSave, iteration, output_vars,
+                             SimParticles, file_handles, particle_filename,
+                             _)
+        available = Dict(
+            "ChunkID" => SimParticles.ChunkID,
+            "Kernel" => SimParticles.Kernel,
+            "KernelGradient" => SimParticles.KernelGradient,
+            "Density" => SimParticles.Density,
+            "Pressure" => SimParticles.Pressure,
+            "Velocity" => SimParticles.Velocity,
+            "Acceleration" => SimParticles.Acceleration,
+            "BoundaryBool" => SimParticles.BoundaryBool,
+            "ID" => SimParticles.ID,
+            "Type" => Int8.(SimParticles.Type),
+            "GroupMarker" => SimParticles.GroupMarker,
+            "GhostPoints" => SimParticles.GhostPoints,
+            "GhostNormals" => SimParticles.GhostNormals,
+        )
+
+        output_data = [available[name] for name in output_vars]
+
+        SaveVTKHDF(file_handles.particle_files, iteration,
+                   particle_filename(iteration), SimParticles.Position,
+                   output_vars, output_data...)
+    end
+
+    function save_particles(::Val{2}, ::FileHandleSave, time, output_vars,
+                             SimParticles, root, buffers)
+        pos_buf, kgrad_buf, vel_buf, acc_buf, gp_buf, gn_buf = buffers
+
+        to_3d!(pos_buf,   SimParticles.Position)
+        to_3d!(kgrad_buf, SimParticles.KernelGradient)
+        to_3d!(vel_buf,   SimParticles.Velocity)
+        to_3d!(acc_buf,   SimParticles.Acceleration)
+        to_3d!(gp_buf,    SimParticles.GhostPoints)
+        to_3d!(gn_buf,    SimParticles.GhostNormals)
+
+        available = Dict(
+            "ChunkID" => SimParticles.ChunkID,
+            "Kernel" => SimParticles.Kernel,
+            "KernelGradient" => kgrad_buf,
+            "Density" => SimParticles.Density,
+            "Pressure" => SimParticles.Pressure,
+            "Velocity" => vel_buf,
+            "Acceleration" => acc_buf,
+            "BoundaryBool" => SimParticles.BoundaryBool,
+            "ID" => SimParticles.ID,
+            "Type" => Int8.(SimParticles.Type),
+            "GroupMarker" => SimParticles.GroupMarker,
+            "GhostPoints" => gp_buf,
+            "GhostNormals" => gn_buf,
+        )
+
+        output_data = [available[name] for name in output_vars]
+
+        AppendVTKHDFData(root, time, pos_buf, output_vars, output_data...)
+    end
+
+    function save_particles(::Val{3}, ::FileHandleSave, time, output_vars,
+                             SimParticles, root, _)
+        available = Dict(
+            "ChunkID" => SimParticles.ChunkID,
+            "Kernel" => SimParticles.Kernel,
+            "KernelGradient" => SimParticles.KernelGradient,
+            "Density" => SimParticles.Density,
+            "Pressure" => SimParticles.Pressure,
+            "Velocity" => SimParticles.Velocity,
+            "Acceleration" => SimParticles.Acceleration,
+            "BoundaryBool" => SimParticles.BoundaryBool,
+            "ID" => SimParticles.ID,
+            "Type" => Int8.(SimParticles.Type),
+            "GroupMarker" => SimParticles.GroupMarker,
+            "GhostPoints" => SimParticles.GhostPoints,
+            "GhostNormals" => SimParticles.GhostNormals,
+        )
+
+        output_data = [available[name] for name in output_vars]
+
+        AppendVTKHDFData(root, time, SimParticles.Position,
+                         output_vars, output_data...)
     end
 
     """
@@ -468,7 +601,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         grid_filename = (iter) -> "$(grid_savepath)_$(lpad(iter,6,"0")).vtkhdf"
         
         output_vars = SimMetaData.OutputVariables
-    
+
+        root = nothing
+        root_grid = nothing
+
         # Initialize storage for file handles
         file_handles = if !SimMetaData.ExportSingleVTKHDF
             # Multi-file mode: vector for particle files
@@ -520,68 +656,33 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         end
 
         # Buffers used when converting 2D particle data to 3D
-        pos_buf = kgrad_buf = vel_buf = acc_buf = gp_buf = gn_buf = nothing
+        buffers = nothing
         if Dimensions == 2
             T = eltype(eltype(SimParticles.Position))
             n = length(SimParticles.Position)
-            pos_buf   = Vector{SVector{3,T}}(undef, n)
-            kgrad_buf = Vector{SVector{3,T}}(undef, n)
-            vel_buf   = Vector{SVector{3,T}}(undef, n)
-            acc_buf   = Vector{SVector{3,T}}(undef, n)
-            gp_buf    = Vector{SVector{3,T}}(undef, n)
-            gn_buf    = Vector{SVector{3,T}}(undef, n)
-            fill_buffers!() = begin
-                to_3d!(pos_buf,   SimParticles.Position)
-                to_3d!(kgrad_buf, SimParticles.KernelGradient)
-                to_3d!(vel_buf,   SimParticles.Velocity)
-                to_3d!(acc_buf,   SimParticles.Acceleration)
-                to_3d!(gp_buf,    SimParticles.GhostPoints)
-                to_3d!(gn_buf,    SimParticles.GhostNormals)
-            end
+            buffers = (
+                Vector{SVector{3,T}}(undef, n),
+                Vector{SVector{3,T}}(undef, n),
+                Vector{SVector{3,T}}(undef, n),
+                Vector{SVector{3,T}}(undef, n),
+                Vector{SVector{3,T}}(undef, n),
+                Vector{SVector{3,T}}(undef, n),
+            )
         end
 
-        # Main saving functions
-        function save_particle_data(iteration)
-            if Dimensions == 2
-                fill_buffers!()
-                pos   = pos_buf
-                kgrad = kgrad_buf
-                vel   = vel_buf
-                acc   = acc_buf
-                gp    = gp_buf
-                gn    = gn_buf
-            else
-                pos = SimParticles.Position
-                kgrad = SimParticles.KernelGradient
-                vel = SimParticles.Velocity
-                acc = SimParticles.Acceleration
-                gp  = SimParticles.GhostPoints
-                gn  = SimParticles.GhostNormals
+        save_mode = SimMetaData.ExportSingleVTKHDF ? FileHandleSave() : TransientSave()
+        dim_val = Val(Dimensions)
+
+        if save_mode isa TransientSave
+            save_particle_data = function(iteration)
+                save_particles(dim_val, save_mode, iteration, output_vars,
+                               SimParticles, file_handles, particle_filename,
+                               buffers)
             end
-
-            available = Dict(
-                "ChunkID" => SimParticles.ChunkID,
-                "Kernel" => SimParticles.Kernel,
-                "KernelGradient" => kgrad,
-                "Density" => SimParticles.Density,
-                "Pressure" => SimParticles.Pressure,
-                "Velocity" => vel,
-                "Acceleration" => acc,
-                "BoundaryBool" => SimParticles.BoundaryBool,
-                "ID" => SimParticles.ID,
-                "Type" => Int8.(SimParticles.Type),
-                "GroupMarker" => SimParticles.GroupMarker,
-                "GhostPoints" => gp,
-                "GhostNormals" => gn,
-            )
-            output_data = [available[name] for name in output_vars]
-
-            if !SimMetaData.ExportSingleVTKHDF
-                SaveVTKHDF(file_handles.particle_files, iteration, particle_filename(iteration),
-                          pos, output_vars, output_data...)
-            else
-                AppendVTKHDFData(root, SimMetaData.TotalTime, pos, output_vars,
-                                output_data...)
+        else
+            save_particle_data = function(iteration)
+                save_particles(dim_val, save_mode, SimMetaData.TotalTime,
+                               output_vars, SimParticles, root, buffers)
             end
         end
     
