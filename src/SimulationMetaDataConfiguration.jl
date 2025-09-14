@@ -25,7 +25,7 @@ abstract type LogMode end
 struct NoLog    <: LogMode end
 struct StoreLog <: LogMode end
 
-function default_output_variables(::Type{K}) where {K<:KernelOutputMode}
+function DefaultOutputVariables(::Type{NoKernelOutput})
     [
         "ChunkID",
         "Density",
@@ -41,7 +41,7 @@ function default_output_variables(::Type{K}) where {K<:KernelOutputMode}
     ]
 end
 
-function default_output_variables(::Type{StoreKernelOutput})
+function DefaultOutputVariables(::Type{StoreKernelOutput})
     [
         "ChunkID",
         "Kernel",
@@ -81,10 +81,11 @@ end
     VisualizeInParaview::Bool               = true
     ExportSingleVTKHDF::Bool                = true
     ExportGridCells::Bool                   = false
-    OutputVariables::Vector{String}         = default_output_variables(KMode)
+    OutputVariables::Vector{String}         = DefaultOutputVariables(KMode)
     OpenLogFile::Bool                       = true
     ChunkMultiplier::Int                    = 1
 end
+
 SimulationMetaData{D,T,S,K,B}(; kwargs...) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode} =
     SimulationMetaData{D,T,S,K,B,NoLog}(; kwargs...)
 SimulationMetaData{D,T,S,K}(; kwargs...) where {D,T,S<:ShiftingMode,K<:KernelOutputMode} =
