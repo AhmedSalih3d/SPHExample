@@ -53,7 +53,8 @@ Kernel arrays are included or omitted based on the `KernelOutputMode` of
 function AllocateDataStructures(
     SimGeometry::Vector{<:Geometry{Dimensions, FloatType}},
     ::Type{KMode},
-) where {Dimensions, FloatType, KMode<:KernelOutputMode}
+    ::Type{BMode},
+) where {Dimensions, FloatType, KMode<:KernelOutputMode, BMode<:MDBCMode}
     Position    = Vector{SVector{Dimensions, FloatType}}()
     Density     = Vector{FloatType}()
     Types       = Vector{ParticleType}()
@@ -112,8 +113,6 @@ function AllocateDataStructures(
 
     Acceleration   = zeros(PositionType, NumberOfPoints)
     Velocity       = zeros(PositionType, NumberOfPoints)
-    GhostPoints    = zeros(PositionType, NumberOfPoints)
-    GhostNormals   = zeros(PositionType, NumberOfPoints)
     Pressureᵢ      = zeros(PositionUnderlyingType, NumberOfPoints)
     Cells   = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
     ChunkID = zeros(Int, NumberOfPoints)
@@ -132,29 +131,36 @@ function AllocateDataStructures(
         ID            = Idp,
         Type          = Types,
         GroupMarker   = GroupMarker,
-        GhostPoints   = GhostPoints,
-        GhostNormals  = GhostNormals,
     )
 
     kernel_nt = kernel_particle_fields(KMode, NumberOfPoints,
                                        PositionType, PositionUnderlyingType)
 
-    SimParticles = StructArray(merge(base_nt, kernel_nt))
+    mdbc_nt = mdbc_particle_fields(BMode, NumberOfPoints, PositionType)
+
+    SimParticles = StructArray(merge(base_nt, kernel_nt, mdbc_nt))
 
     sort!(SimParticles, by = p -> p.ID)
 
     return SimParticles
 end
 
+function AllocateDataStructures(
+    SimGeometry::Vector{<:Geometry{Dimensions, FloatType}},
+    ::Type{KMode},
+) where {Dimensions, FloatType, KMode<:KernelOutputMode}
+    AllocateDataStructures(SimGeometry, KMode, NoMDBC)
+end
+
 AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, FloatType}}) where {Dimensions, FloatType} =
-    AllocateDataStructures(SimGeometry, NoKernelOutput)
+    AllocateDataStructures(SimGeometry, NoKernelOutput, NoMDBC)
 
 function AllocateDataStructures(
     SimGeometry::Vector{<:Geometry{Dimensions, FloatType}},
     SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
 ) where {Dimensions, FloatType, SMode<:ShiftingMode, KMode<:KernelOutputMode,
          BMode<:MDBCMode, LMode<:LogMode}
-    AllocateDataStructures(SimGeometry, KMode)
+    AllocateDataStructures(SimGeometry, KMode, BMode)
 end
 
 function kernel_particle_fields(::Type{NoKernelOutput}, n, _, _)
@@ -165,6 +171,17 @@ function kernel_particle_fields(::Type{StoreKernelOutput}, n, position_type, und
     (
         Kernel         = zeros(underlying_type, n),
         KernelGradient = zeros(position_type, n),
+    )
+end
+
+function mdbc_particle_fields(::Type{NoMDBC}, _, _)
+    NamedTuple()
+end
+
+function mdbc_particle_fields(::Type{BMode}, n, position_type) where {BMode<:MDBCMode}
+    (
+        GhostPoints  = zeros(position_type, n),
+        GhostNormals = zeros(position_type, n),
     )
 end
 
