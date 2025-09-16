@@ -24,7 +24,7 @@ let
     SimulationGeometry = [FixedBoundary;Water]
     
     # Load in particles
-    SimParticles = AllocateDataStructures(SimulationGeometry)
+    SimParticles = AllocateDataStructures(SimulationGeometry, NoKernelOutput, SimpleMDBC)
 
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
         SimulationName="CaseDuckling",

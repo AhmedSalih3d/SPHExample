@@ -25,7 +25,7 @@ let
     SimulationGeometry = [FixedBoundary; Water]
 
     # Load in particles
-    SimParticles = AllocateDataStructures(SimulationGeometry)
+    SimParticles = AllocateDataStructures(SimulationGeometry, NoKernelOutput, SimpleMDBC)
 
     SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
         SimulationName="DamBreak2D",
