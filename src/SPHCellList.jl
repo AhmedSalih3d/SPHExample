@@ -731,6 +731,7 @@ using LinearAlgebra
                                       SortingScratchSpace, SimThreadedArrays,
                                       dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
                                       ∇Cᵢ, ∇◌rᵢ, MotionDefinition) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
+
         Position      = SimParticles.Position
         Density       = SimParticles.Density
         Pressure      = SimParticles.Pressure
@@ -744,6 +745,7 @@ using LinearAlgebra
                           SimParticles.KernelGradient : nothing
         GhostPoints    = hasproperty(SimParticles, :GhostPoints) ? SimParticles.GhostPoints : nothing
         GhostNormals   = hasproperty(SimParticles, :GhostNormals) ? SimParticles.GhostNormals : nothing
+
         ParticleType   = SimParticles.Type
         ParticleMarker = GroupMarker
 

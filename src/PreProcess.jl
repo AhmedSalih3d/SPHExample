@@ -135,6 +135,7 @@ function AllocateDataStructures(
 
     kernel_nt = kernel_particle_fields(KMode, NumberOfPoints,
                                        PositionType, PositionUnderlyingType)
+
     mdbc_nt = mdbc_particle_fields(BMode, NumberOfPoints, PositionType)
 
     SimParticles = StructArray(merge(base_nt, kernel_nt, mdbc_nt))

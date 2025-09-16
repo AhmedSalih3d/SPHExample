@@ -94,6 +94,7 @@ end
     OpenLogFile::Bool                       = true
     ChunkMultiplier::Int                    = 1
 end
+
 SimulationMetaData{D,T,S,K,B}(; kwargs...) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode} =
     SimulationMetaData{D,T,S,K,B,NoLog}(; kwargs...)
 SimulationMetaData{D,T,S,K}(; kwargs...) where {D,T,S<:ShiftingMode,K<:KernelOutputMode} =
