@@ -585,6 +585,31 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     end
 
     """
+        make_particle_saver(dim, mode, output_vars, SimParticles,
+                            file_handles, particle_filename, root, buffers,
+                            time)
+
+    Generate a closure that saves particle data using `save_particles` for
+    the specified spatial dimension `dim` and saving strategy `mode`.
+    """
+    function make_particle_saver end
+
+    function make_particle_saver(dim::Val, ::TransientSave, output_vars,
+                                 SimParticles, file_handles,
+                                 particle_filename, _root, buffers, _time)
+        iteration -> save_particles(dim, TransientSave(), iteration,
+                                    output_vars, SimParticles,
+                                    file_handles, particle_filename, buffers)
+    end
+
+    function make_particle_saver(dim::Val, ::FileHandleSave, output_vars,
+                                 SimParticles, _file_handles,
+                                 _particle_filename, root, buffers, time)
+        iteration -> save_particles(dim, FileHandleSave(), time, output_vars,
+                                    SimParticles, root, buffers)
+    end
+
+    """
         SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
 
     Prepare VTK/HDF5 output. Returns a named tuple with `save_particles`,
@@ -673,18 +698,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         save_mode = SimMetaData.ExportSingleVTKHDF ? FileHandleSave() : TransientSave()
         dim_val = Val(Dimensions)
 
-        if save_mode isa TransientSave
-            save_particle_data = function(iteration)
-                save_particles(dim_val, save_mode, iteration, output_vars,
-                               SimParticles, file_handles, particle_filename,
-                               buffers)
-            end
-        else
-            save_particle_data = function(iteration)
-                save_particles(dim_val, save_mode, SimMetaData.TotalTime,
-                               output_vars, SimParticles, root, buffers)
-            end
-        end
+        save_particle_data = make_particle_saver(dim_val, save_mode, output_vars,
+                                                 SimParticles, file_handles,
+                                                 particle_filename, root,
+                                                 buffers, SimMetaData.TotalTime)
     
         function save_cell_grid(iteration, cells, SimParticles)
             if SimMetaData.ExportGridCells
