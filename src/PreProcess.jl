@@ -10,33 +10,34 @@ using ..SimulationGeometry
 using ..SimulationMetaDataConfiguration
 
 function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, particle_group_marker::Int, specific_csv::String) where {D, T}
-    csv_file = CSV.File(specific_csv)
+    # Helper function to extract point based on dimension `D`
+    # This will in an ideal world be specialized and inlined by the compiler, removing the check from the loop.
+    @inline function get_point(row)
+        P1 = getproperty(row, Symbol("Points:0"))
+        P3 = getproperty(row, Symbol("Points:2"))
+        if D == 2
+            return SVector{2,T}(P1, P3)
+        else # D == 3
+            P2 = getproperty(row, Symbol("Points:1"))
+            return SVector{3,T}(P1, P2, P3)
+        end
+    end
 
+    csv_file = CSV.File(specific_csv)
     nrows = length(csv_file)
 
+    # Pre-allocate arrays
     points       = Vector{SVector{D,T}}(undef, nrows)
     density      = Vector{T}(undef, nrows)
-    types        = Vector{ParticleType}(undef, nrows)
-    group_marker = Vector{Int}(undef, nrows)
+    types        = fill(particle_type, nrows)
+    group_marker = fill(particle_group_marker, nrows)
     idp          = Vector{Int}(undef, nrows)
 
-    for (i, row) ∈ enumerate(csv_file)
-        P1   = getproperty(row, Symbol("Points:0"))
-        P2   = getproperty(row, Symbol("Points:1"))
-        P3   = getproperty(row, Symbol("Points:2"))
-        Rhop = row.Rhop
-        Idp  = row.Idp + 1
-
-        points[i] = if D == 3
-            SVector{3,T}(P1, P2, P3)
-        else
-            SVector{2,T}(P1, P3)
-        end
-
-        density[i]      = Rhop
-        types[i]        = particle_type
-        group_marker[i] = particle_group_marker
-        idp[i]          = Idp
+    # Loop over rows and populate arrays
+    for (i, row) in enumerate(csv_file)
+        points[i]  = get_point(row)
+        density[i] = row.Rhop
+        idp[i]     = row.Idp + 1
     end
 
     return points, density, types, group_marker, idp
@@ -66,9 +67,7 @@ function AllocateDataStructures(
         particle_group_marker = geom.GroupMarker
         specific_csv          = geom.CSVFile
 
-        points, density, types, group_marker, idp =
-            LoadSpecificCSV(Val(Dimensions), FloatType, particle_type,
-                           particle_group_marker, specific_csv)
+        points, density, types, group_marker, idp = LoadSpecificCSV(Val(Dimensions), FloatType, particle_type, particle_group_marker, specific_csv)
 
         sizehint!(Position,    length(Position)    + length(points))
         sizehint!(Density,     length(Density)     + length(density))
@@ -87,35 +86,24 @@ function AllocateDataStructures(
     PositionType             = eltype(Position)
     PositionUnderlyingType   = eltype(PositionType)
 
-    GravityFactor = similar(Density)
-    for i ∈ eachindex(GravityFactor)
-        fac = 0
-        if     Types[i] == Fluid
-            fac = -1
-        elseif Types[i] == Moving
-            fac =  1
-        end
-        GravityFactor[i] = fac
-    end
+    # Helper functions to determine properties based on particle type using multiple dispatch
+    _gravity_factor(::Val{Fluid})  = -1
+    _gravity_factor(::Val{Moving}) =  1
+    _gravity_factor(::Val)         =  0 # Default for other types like Fixed
 
-    MotionLimiter = similar(Density)
-    for i ∈ eachindex(MotionLimiter)
-        fac = 0
-        if   Types[i] == Fluid
-            fac =  1
-        else Types[i] == Moving
-            fac =  0
-        end
-        MotionLimiter[i] = fac
-    end
+    _motion_limiter(::Val{Fluid})  =  1
+    _motion_limiter(::Val)         =  0 # Default for Moving, Fixed, etc.
+
+    GravityFactor = @. _gravity_factor(Val(Types))
+    MotionLimiter = @. _motion_limiter(Val(Types))
 
     BoundaryBool  = UInt8.(.!Bool.(MotionLimiter))
 
     Acceleration   = zeros(PositionType, NumberOfPoints)
     Velocity       = zeros(PositionType, NumberOfPoints)
     Pressureᵢ      = zeros(PositionUnderlyingType, NumberOfPoints)
-    Cells   = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
-    ChunkID = zeros(Int, NumberOfPoints)
+    Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
+    ChunkID        = zeros(Int, NumberOfPoints)
 
     base_nt = (
         Cells         = Cells,
@@ -133,10 +121,9 @@ function AllocateDataStructures(
         GroupMarker   = GroupMarker,
     )
 
-    kernel_nt = kernel_particle_fields(KMode, NumberOfPoints,
-                                       PositionType, PositionUnderlyingType)
+    kernel_nt    = kernel_particle_fields(KMode, NumberOfPoints, PositionType, PositionUnderlyingType)
 
-    mdbc_nt = mdbc_particle_fields(BMode, NumberOfPoints, PositionType)
+    mdbc_nt      = mdbc_particle_fields(BMode, NumberOfPoints, PositionType)
 
     SimParticles = StructArray(merge(base_nt, kernel_nt, mdbc_nt))
 
