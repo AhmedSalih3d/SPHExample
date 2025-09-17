@@ -29,7 +29,6 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     const fType = Float64
 
     clone_for_async(x::Nothing) = nothing
-    clone_for_async(x::AbstractArray) = copy(x)
     clone_for_async(x) = deepcopy(x)
 
     """Write an ASCII attribute `name => value` to `grp`."""
