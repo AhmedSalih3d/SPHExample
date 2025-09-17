@@ -132,23 +132,6 @@ function AllocateDataStructures(
     return SimParticles
 end
 
-function AllocateDataStructures(
-    SimGeometry::Vector{<:Geometry{Dimensions, FloatType}},
-    ::Type{KMode},
-) where {Dimensions, FloatType, KMode<:KernelOutputMode}
-    AllocateDataStructures(SimGeometry, KMode, NoMDBC)
-end
-
-AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, FloatType}}) where {Dimensions, FloatType} =
-    AllocateDataStructures(SimGeometry, NoKernelOutput, NoMDBC)
-
-function AllocateDataStructures(
-    SimGeometry::Vector{<:Geometry{Dimensions, FloatType}},
-    SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
-) where {Dimensions, FloatType, SMode<:ShiftingMode, KMode<:KernelOutputMode,
-         BMode<:MDBCMode, LMode<:LogMode}
-    AllocateDataStructures(SimGeometry, KMode, BMode)
-end
 
 function kernel_particle_fields(::Type{NoKernelOutput}, n, _, _)
     NamedTuple()
