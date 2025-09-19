@@ -27,7 +27,7 @@ struct StoreLog <: LogMode end
 
 function base_output_variables(::Type{NoKernelOutput})
     [
-        "ChunkID",
+        # "ChunkID",
         "Density",
         "Pressure",
         "Velocity",
@@ -41,7 +41,7 @@ end
 
 function base_output_variables(::Type{StoreKernelOutput})
     [
-        "ChunkID",
+        # "ChunkID",
         "Kernel",
         "KernelGradient",
         "Density",

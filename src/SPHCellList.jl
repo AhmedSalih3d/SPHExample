@@ -183,7 +183,7 @@ using LinearAlgebra
                     # Process each cell in this chunk
                     for iter in chunk_start:chunk_end
                         CellIndex = UniqueCellsView[iter]
-                        SimParticles.ChunkID[iter] = Threads.threadid()   # mark which thread handles this cell
+                        # SimParticles.ChunkID[iter] = Threads.threadid()   # mark which thread handles this cell
                         StartIndex = ParticleRanges[iter]
                         EndIndex   = ParticleRanges[iter+1] - 1
 

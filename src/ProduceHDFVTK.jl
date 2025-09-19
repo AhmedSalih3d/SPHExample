@@ -207,7 +207,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             CellData = HDF5.create_group(root, "CellData")
             HDF5.create_dataset(CellData, "CellData" , idType , ((0,),(-1,)), chunk=(chunk_size,))
 
-            HDF5.create_dataset(CellData, "ChunkID" , idType , ((0,),(-1,)), chunk=(chunk_size,))
+            # HDF5.create_dataset(CellData, "ChunkID" , idType , ((0,),(-1,)), chunk=(chunk_size,))
         end
 
         return nothing
@@ -328,8 +328,6 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         points, connectivity, offsets, cell_types, cell_data, _ = compute_grid_geometry(SimKernel, UniqueCells)
         vtk_type = first(cell_types)
 
-        
-
         Positions = points
 
         steps = root["Steps"]
@@ -406,9 +404,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         root["CellData"]["CellData"][CellDataStartIndex:end] = cell_data
 
         
-        CellChunkIDIndex = length(root["CellData"]["ChunkID"]) + 1
-        HDF5.set_extent_dims(root["CellData"]["ChunkID"], (length(root["CellData"]["ChunkID"]) + length(UniqueCells),))
-        root["CellData"]["ChunkID"][CellChunkIDIndex:end] = SimParticles.ChunkID[1:length(cell_data)]
+        # CellChunkIDIndex = length(root["CellData"]["ChunkID"]) + 1
+        # HDF5.set_extent_dims(root["CellData"]["ChunkID"], (length(root["CellData"]["ChunkID"]) + length(UniqueCells),))
+        # root["CellData"]["ChunkID"][CellChunkIDIndex:end] = SimParticles.ChunkID[1:length(cell_data)]
 
         return nothing
     end
@@ -488,7 +486,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
             
             available_init = Dict(
-                "ChunkID" => SimParticles.ChunkID,
+                # "ChunkID" => SimParticles.ChunkID,
                 "Density" => SimParticles.Density,
                 "Pressure" => SimParticles.Pressure,
                 "Velocity" => SimParticles.Velocity,
@@ -580,7 +578,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             end
 
             available = Dict(
-                "ChunkID" => SimParticles.ChunkID,
+                # "ChunkID" => SimParticles.ChunkID,
                 "Density" => SimParticles.Density,
                 "Pressure" => SimParticles.Pressure,
                 "Velocity" => vel,

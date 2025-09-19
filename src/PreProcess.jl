@@ -103,11 +103,11 @@ function AllocateDataStructures(
     Velocity       = zeros(PositionType, NumberOfPoints)
     Pressureᵢ      = zeros(PositionUnderlyingType, NumberOfPoints)
     Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
-    ChunkID        = zeros(Int, NumberOfPoints)
+    # ChunkID        = zeros(Int, NumberOfPoints)
 
     base_nt = (
         Cells         = Cells,
-        ChunkID       = ChunkID,
+        # ChunkID       = ChunkID,
         Position      = Position,
         Acceleration  = Acceleration,
         Velocity      = Velocity,
