@@ -187,10 +187,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 var_name = variable_names[i]
                 arg      = args[i]
                 arg_val_type   = eltype(eltype(arg))
-                arg_val_length = length(first(arg)) > 1 ? 3 : 1
+                arg_val_length = length(first(arg))
 
-                if arg_val_length == 3
-                    HDF5.create_dataset(pData, var_name, arg_val_type, ((3,0),(3,-1)), chunk=(3,chunk_size))
+                if !(arg_val_length == 1)
+                    HDF5.create_dataset(pData, var_name, arg_val_type, ((arg_val_length,0),(arg_val_length,-1)), chunk=(arg_val_length,chunk_size))
                 else
                     HDF5.create_dataset(pData, var_name, arg_val_type, ((0,),(-1,)), chunk=(chunk_size,))
                 end
@@ -302,10 +302,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             var_name = variable_names[i]
             arg      = args[i]
             arg_val_type   = eltype(eltype(arg))
-            arg_val_length = length(first(arg)) > 1 ? 3 : 1
+            arg_val_length = length(first(arg))
 
 
-            if arg_val_length == 3
+            if !(arg_val_length == 1)
                 HDF5.set_extent_dims(root["PointData"][var_name], (arg_val_length, size(root["PointData"][var_name], 2) + PositionLength))
                 root["PointData"][var_name][:, PointsStartIndex:(PointsStartIndex + PositionLength - 1)] = stack(arg)
             else
@@ -498,7 +498,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 end
             end
 
-            output_data_init = map(p -> promote_field(getproperty(SimParticles, Symbol(p))), output_vars)
+            output_data_init = map(p -> getproperty(SimParticles, Symbol(p)), output_vars)
             pos = promote_field(SimParticles.Position)
   
             GenerateGeometryStructure(root, output_vars, output_data_init...; chunk_size=1024)
