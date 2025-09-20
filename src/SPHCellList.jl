@@ -818,6 +818,15 @@ using LinearAlgebra
         return nothing
     end
     
+    @inline function promote_field(v)
+        if eltype(v) <: SVector{2}
+            # Convert 2D → 3D
+            return [SVector(x ..., 0.0) for x in v]
+        else
+            return v
+        end
+    end
+
     ###===
     function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}, #Don't further specify type for now
         SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
@@ -857,12 +866,28 @@ using LinearAlgebra
         Stencil                = ConstructStencil(Val(Dimensions))
         _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
 
-        output = SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
+        # output = SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
+        output_vars = vcat(String.(propertynames(SimParticles))...)
+        filter!(!=("Cells"), output_vars)
+        filter!(!=("Position"), output_vars)
+        filter!(!=("GravityFactor"), output_vars)
+        filter!(!=("MotionLimiter"), output_vars)
+
+        particle_savepath = joinpath(SimMetaData.SaveLocation, SimMetaData.SimulationName)
+        OutputVTKHDF = h5open("$(particle_savepath).vtkhdf", "w")
+        root          = HDF5.create_group(OutputVTKHDF, "VTKHDF")
+
+        output_data_init = map(p -> getproperty(SimParticles, Symbol(p)), output_vars)
+        pos              = promote_field(SimParticles.Position)
+  
+        GenerateGeometryStructure(root, output_vars, output_data_init...; chunk_size=1024)
+        GenerateStepStructure(root, output_vars, output_data_init...)
 
         # Save initial state, use 1 else this cannot be used to index fid vector
         SimMetaData.OutputIterationCounter = 1
-        output.save_particles(SimMetaData.OutputIterationCounter)
-        output.save_grid(SimMetaData.OutputIterationCounter, UniqueCells, SimParticles)
+        SaveTransientVTKOutput(root, SimMetaData, SimParticles)
+        # output.save_particles(SimMetaData.OutputIterationCounter)
+        # output.save_grid(SimMetaData.OutputIterationCounter, UniqueCells, SimParticles)
 
 
         # Assuming group markers are sequential
@@ -903,8 +928,9 @@ using LinearAlgebra
 
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
             @timeit SimMetaData.HourGlass "13 Save Particle Data"  begin
-                output.save_particles(SimMetaData.OutputIterationCounter)
-                output.save_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, SimParticles)
+                SaveTransientVTKOutput(root, SimMetaData, SimParticles)
+                # output.save_particles(SimMetaData.OutputIterationCounter)
+                # output.save_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, SimParticles)
             end
     
             if !SimLogger.ToConsole
@@ -923,7 +949,7 @@ using LinearAlgebra
             if SimMetaData.TotalTime > SimMetaData.SimulationTime
                 
                 # At end of simulation
-                @timeit SimMetaData.HourGlass "13B Close Data Streams" output.close_files()
+                @timeit SimMetaData.HourGlass "13B Close Data Streams" close(OutputVTKHDF)
 
                 if !SimLogger.ToConsole
                     finish!(SimMetaData.ProgressSpecification)
@@ -931,7 +957,7 @@ using LinearAlgebra
                 show(HourGlass,sortby=:name)
                 show(HourGlass)
 
-                AutoOpenParaview(SimMetaData, output.variable_names)
+                AutoOpenParaview(SimMetaData, output_vars)
 
                 # Time steps line plot
                 UnicodeTimeStepsGraph = lineplot(1:length(TimeSteps), TimeSteps, title="Time Steps [s] as a function of iteration", name="Time Steps", xlabel="Iterations [-]", ylabel="Time Step Size [s]")
