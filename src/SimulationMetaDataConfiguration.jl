@@ -25,48 +25,6 @@ abstract type LogMode end
 struct NoLog    <: LogMode end
 struct StoreLog <: LogMode end
 
-function base_output_variables(::Type{NoKernelOutput})
-    [
-        # "ChunkID",
-        "Density",
-        "Pressure",
-        "Velocity",
-        "Acceleration",
-        "BoundaryBool",
-        "ID",
-        "Type",
-        "GroupMarker",
-    ]
-end
-
-function base_output_variables(::Type{StoreKernelOutput})
-    [
-        # "ChunkID",
-        "Kernel",
-        "KernelGradient",
-        "Density",
-        "Pressure",
-        "Velocity",
-        "Acceleration",
-        "BoundaryBool",
-        "ID",
-        "Type",
-        "GroupMarker",
-    ]
-end
-
-function default_output_variables(::Type{K}, ::Type{B}) where {K<:KernelOutputMode, B<:MDBCMode}
-    vars = base_output_variables(K)
-    if !(B <: NoMDBC)
-        push!(vars, "GhostPoints")
-        push!(vars, "GhostNormals")
-    end
-    return vars
-end
-
-function default_output_variables(::Type{K}) where {K<:KernelOutputMode}
-    default_output_variables(K, NoMDBC)
-end
 
 @with_kw mutable struct SimulationMetaData{Dimensions,
                                            FloatType <: AbstractFloat,
@@ -90,7 +48,7 @@ end
     VisualizeInParaview::Bool               = true
     ExportSingleVTKHDF::Bool                = true
     ExportGridCells::Bool                   = false
-    OutputVariables::Vector{String}         = default_output_variables(KMode, BMode)
+    OutputVariables::Vector{String}         = String[]
     OpenLogFile::Bool                       = true
     ChunkMultiplier::Int                    = 1
 end

@@ -303,8 +303,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             arg      = args[i]
             arg_val_type   = eltype(eltype(arg))
             arg_val_length = length(first(arg))
-
-
+            
             if !(arg_val_length == 1)
                 HDF5.set_extent_dims(root["PointData"][var_name], (arg_val_length, size(root["PointData"][var_name], 2) + PositionLength))
                 root["PointData"][var_name][:, PointsStartIndex:(PointsStartIndex + PositionLength - 1)] = stack(arg)
@@ -474,53 +473,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         filter!(!=("GravityFactor"), output_vars)
         filter!(!=("MotionLimiter"), output_vars)
 
-        # Initialize grid file if needed
-        # if SimMetaData.ExportGridCells
-        #     OutputVTKHDFGrid = h5open("$(particle_savepath)_GridCells.vtkhdf", "w")
-        #     root_grid = HDF5.create_group(OutputVTKHDFGrid, "VTKHDF")
-        #     GenerateGeometryStructure(root_grid; vtk_file_type="UnstructuredGrid")
-        #     GenerateStepStructure(root_grid; vtk_file_type="UnstructuredGrid")
-            
-        #     (particle_files = OutputVTKHDF, grid_files = OutputVTKHDFGrid)
-        # else
-        #     (particle_files = OutputVTKHDF, grid_files = nothing)
-        # end
-        # # end
-
-       
-        # # Main saving functions
-        # function save_particle_data(iteration)
-        #     # if !SimMetaData.ExportSingleVTKHDF
-        #         # SaveVTKHDF(file_handles.particle_files, iteration, particle_filename(iteration), pos, output_vars, output_data_init...)
-        #     # else
         output_data_init = map(p -> getproperty(SimParticles, Symbol(p)), output_vars)
         pos = promote_field(SimParticles.Position)
         AppendVTKHDFData(root, SimMetaData.TotalTime, pos, output_vars, output_data_init...)
-        #     # end
-        # end
-    
-        # function save_cell_grid(iteration, cells, SimParticles)
-        #     # if SimMetaData.ExportGridCells
-        #     #     if !SimMetaData.ExportSingleVTKHDF
-        #     #         SaveCellGridVTKHDF(grid_filename(iteration), SimKernel, cells)
-        #     #     else 
-        #     #         AppendVTKHDFGridData(root_grid, SimMetaData.TotalTime, SimKernel, cells, SimParticles)
-        #     #     end
-        #     # end
-        # end
-    
-        # function close_files()
-        #     close(file_handles)
-        # end
-    
-        # # Return interface functions and handles
-        # return (
-        #     save_particles = save_particle_data,
-        #     save_grid = save_cell_grid,
-        #     close_files = close_files,
-        #     file_handles = file_handles,  # For advanced access if needed
-        #     variable_names = output_vars
-        # )
     end
 
 end

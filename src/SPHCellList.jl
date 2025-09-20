@@ -874,21 +874,17 @@ using LinearAlgebra
         filter!(!=("MotionLimiter"), output_vars)
 
         particle_savepath = joinpath(SimMetaData.SaveLocation, SimMetaData.SimulationName)
-        OutputVTKHDF = h5open("$(particle_savepath).vtkhdf", "w")
-        root          = HDF5.create_group(OutputVTKHDF, "VTKHDF")
+        OutputVTKHDF      = h5open("$(particle_savepath).vtkhdf", "w")
+        root              = HDF5.create_group(OutputVTKHDF, "VTKHDF")
 
         output_data_init = map(p -> getproperty(SimParticles, Symbol(p)), output_vars)
-        pos              = promote_field(SimParticles.Position)
-  
+
         GenerateGeometryStructure(root, output_vars, output_data_init...; chunk_size=1024)
         GenerateStepStructure(root, output_vars, output_data_init...)
 
         # Save initial state, use 1 else this cannot be used to index fid vector
         SimMetaData.OutputIterationCounter = 1
         SaveTransientVTKOutput(root, SimMetaData, SimParticles)
-        # output.save_particles(SimMetaData.OutputIterationCounter)
-        # output.save_grid(SimMetaData.OutputIterationCounter, UniqueCells, SimParticles)
-
 
         # Assuming group markers are sequential
         MotionDefinition = Vector{Union{Nothing, MotionDetails{Dimensions, FloatType}}}(undef, maximum(SimParticles.GroupMarker))
