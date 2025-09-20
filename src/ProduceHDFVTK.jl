@@ -523,6 +523,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             if !SimMetaData.ExportSingleVTKHDF
                 SaveVTKHDF(file_handles.particle_files, iteration, particle_filename(iteration), pos, output_vars, output_data_init...)
             else
+                output_data_init = map(p -> getproperty(SimParticles, Symbol(p)), output_vars)
+                pos = promote_field(SimParticles.Position)
                 AppendVTKHDFData(root, SimMetaData.TotalTime, pos, output_vars, output_data_init...)
             end
         end
