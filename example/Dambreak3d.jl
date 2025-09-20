@@ -5,7 +5,7 @@ let
     FloatType  = Float64
 
     # --- SPH constants ---
-    dx = 0.0085
+    dx = 0.02
     SimConstantsDambreak3D = SimulationConstants{FloatType}(
         dx  = dx,
         c₀  = 33.14,

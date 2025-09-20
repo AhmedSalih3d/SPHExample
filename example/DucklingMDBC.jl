@@ -29,7 +29,7 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
         SimulationName="CaseDuckling",
         SaveLocation="E:/SecondApproach/TESTING_CPU_Duckling",
-        SimulationTime=1,
+        SimulationTime=0.02,
         OutputTimes=0.02,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,

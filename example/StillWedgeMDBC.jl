@@ -30,11 +30,11 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
         SimulationName="StillWedge", 
         SaveLocation="E:/SecondApproach/StillWedge2D_MDBC",
-        SimulationTime=4.0,
+        SimulationTime=0.5,
         OutputTimes=0.01,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
-        ExportGridCells=true,
+        # ExportGridCells=true,
         OpenLogFile=true,
         # OutputVariables = [
         #     # "ChunkID",

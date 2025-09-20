@@ -13,6 +13,9 @@ export ParticleType, Geometry, Fluid, Fixed, Moving, MotionDetails
     Moving = UInt8(3)
 end
 
+Base.length(x::ParticleType) = length(UInt8(x))
+Base.eltype(::Type{ParticleType}) = UInt8
+
 # Define a struct to store motion details, with parametric dimensions and floating point type
 @with_kw struct MotionDetails{D, T}
     Velocity::T
