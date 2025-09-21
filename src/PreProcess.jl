@@ -133,14 +133,14 @@ function AllocateDataStructures(
 end
 
 
-function kernel_particle_fields(::Type{NoKernelOutput}, n, _, _)
+function kernel_particle_fields(::Type{NoKernelOutput}, _, _, _)
     NamedTuple()
 end
 
-function kernel_particle_fields(::Type{StoreKernelOutput}, n, position_type, underlying_type)
+function kernel_particle_fields(::Type{StoreKernelOutput}, N, PositionType, UnderlyingType)
     (
-        Kernel         = zeros(underlying_type, n),
-        KernelGradient = zeros(position_type, n),
+        Kernel         = zeros(UnderlyingType, N),
+        KernelGradient = zeros(PositionType, N),
     )
 end
 
@@ -148,10 +148,10 @@ function mdbc_particle_fields(::Type{NoMDBC}, _, _)
     NamedTuple()
 end
 
-function mdbc_particle_fields(::Type{BMode}, n, position_type) where {BMode<:MDBCMode}
+function mdbc_particle_fields(::Type{BMode}, N, PositionType) where {BMode<:MDBCMode}
     (
-        GhostPoints  = zeros(position_type, n),
-        GhostNormals = zeros(position_type, n),
+        GhostPoints  = zeros(PositionType, N),
+        GhostNormals = zeros(PositionType, N),
     )
 end
 
