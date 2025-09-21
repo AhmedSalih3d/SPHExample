@@ -413,13 +413,13 @@ using LinearAlgebra
         return nothing
     end
 
-    function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+    function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient)
         # Threaded zeroing for main arrays
         @threads for arr in (dρdtI, Acceleration)
             fill!(arr, zero(eltype(arr)))
         end
         zero_kernel_arrays!(SimMetaData, Kernel, KernelGradient)
-        zero_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ)
+        # zero_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ)
 
         # Threaded zeroing for fields in SimThreadedArrays
         foreachfield(f -> begin
@@ -473,12 +473,12 @@ using LinearAlgebra
         return nothing
     end
 
-    function ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+    function ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient)
         reduce_sum!(dρdtI, SimThreadedArrays.dρdtIThreaded)
         reduce_sum!(Acceleration, SimThreadedArrays.AccelerationThreaded)
 
         reduce_kernel_arrays!(SimMetaData, Kernel, KernelGradient, SimThreadedArrays)
-        reduce_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ, SimThreadedArrays)
+        # reduce_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ, SimThreadedArrays)
 
         return nothing
     end
@@ -638,7 +638,7 @@ using LinearAlgebra
     end
 
     function FullTimeStep(::SimulationMetaData{D,T,NoShifting,K,B,L}, SimKernel,
-                          SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,
+                          SimConstants, SimParticles, dt) where {D,T,
                                                                              K<:KernelOutputMode,
                                                                              B<:MDBCMode,
                                                                              L<:LogMode}
@@ -652,7 +652,7 @@ using LinearAlgebra
     end
 
     function FullTimeStep(::SimulationMetaData{D,T,S,K,B,L}, SimKernel, SimConstants,
-                          SimParticles, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,S<:ShiftingMode,
+                          SimParticles, dt) where {D,T,S<:ShiftingMode,
                                                              K<:KernelOutputMode,
                                                              B<:MDBCMode,
                                                              L<:LogMode}
@@ -730,7 +730,7 @@ using LinearAlgebra
                                       ParticleRanges, UniqueCells, CellDict,
                                       SortingScratchSpace, SimThreadedArrays,
                                       dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
-                                      ∇Cᵢ, ∇◌rᵢ, MotionDefinition) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
+                                      MotionDefinition) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
 
         Position      = SimParticles.Position
         Density       = SimParticles.Density
@@ -779,14 +779,14 @@ using LinearAlgebra
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
             
                 ###=== First step of resetting arrays
-                @timeit SimMetaData.HourGlass "ResetArrays"                              ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+                @timeit SimMetaData.HourGlass "ResetArrays"                              ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient)
                 ###===
                  
                 @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
                 @timeit SimMetaData.HourGlass "04 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType)
 
                 @timeit SimMetaData.HourGlass "05 First NeighborLoop"                    NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView)
-                @timeit SimMetaData.HourGlass "Reduction"                                ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+                @timeit SimMetaData.HourGlass "Reduction"                                ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient)
 
 
                 @timeit SimMetaData.HourGlass "06 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
@@ -795,21 +795,21 @@ using LinearAlgebra
                 @timeit SimMetaData.HourGlass "07 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
             
                 ###=== Second step of resetting arrays
-                @timeit SimMetaData.HourGlass "ResetArrays"                              ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+                @timeit SimMetaData.HourGlass "ResetArrays"                              ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient)
                 ###===
 
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
             
                 @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
                 @timeit SimMetaData.HourGlass "08 Second NeighborLoop"                   NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, UniqueCellsView)
-                @timeit SimMetaData.HourGlass "Reduction"                                ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+                @timeit SimMetaData.HourGlass "Reduction"                                ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient)
 
             
                 @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
             
                 @timeit SimMetaData.HourGlass "10 Final Density"                         DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
             
-                @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+                @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, dt)
             
                 @timeit SimMetaData.HourGlass "12 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
 
@@ -845,11 +845,11 @@ using LinearAlgebra
         # Vector of time steps
         TimeSteps = Vector{FloatType}()
         
-        dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimMetaData, SimParticles.Position)
+        SupportParticles = AllocateSupportDataStructures(SimMetaData, SimParticles.Position)
 
         LoadMDBCNormals!(SimMetaData, SimParticles, ParticleNormalsPath)
 
-        prepare_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ)
+        # prepare_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ)
 
         initialize_log!(SimMetaData, SimLogger, SimConstants, SimKernel,
                         SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
@@ -857,7 +857,7 @@ using LinearAlgebra
         NumberOfPoints = length(SimParticles)::Int
         Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
     
-        SimThreadedArrays = AllocateThreadedArrays(SimMetaData, SimParticles, dρdtI, ∇Cᵢ, ∇◌rᵢ)
+        SimThreadedArrays = AllocateThreadedArrays(SimMetaData, SimParticles, SupportParticles.dρdtI)
     
         # Produce sorting related variables
         ParticleRanges         = zeros(Int, NumberOfPoints + 1 + 1) # +1 for the last particle, +1 for dummy entry
@@ -914,8 +914,7 @@ using LinearAlgebra
         end
 
         @inbounds while true
-
-            @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, CellDict, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition)
+            @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, CellDict, SortingScratchSpace, SimThreadedArrays, SupportParticles.dρdtI, SupportParticles.Velocityₙ⁺, SupportParticles.Positionₙ⁺, SupportParticles.ρₙ⁺, MotionDefinition)
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
 
             log_step!(SimMetaData, SimLogger)

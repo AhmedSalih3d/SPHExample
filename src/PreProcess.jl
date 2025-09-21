@@ -155,43 +155,41 @@ function mdbc_particle_fields(::Type{BMode}, N, PositionType) where {BMode<:MDBC
     )
 end
 
-function AllocateSupportDataStructures(::SimulationMetaData{D,T,NoShifting,K,B,L}, Position) where {D,T,K<:KernelOutputMode,
-                                                                                                    B<:MDBCMode,
-                                                                                                    L<:LogMode}
-
-    NumberOfPoints         = length(Position)
-    PositionType           = eltype(Position)
-    PositionUnderlyingType = eltype(PositionType)
-
-    dρdtI      = zeros(PositionUnderlyingType, NumberOfPoints)
-    Velocityₙ⁺ = zeros(PositionType, NumberOfPoints)
-    Positionₙ⁺ = zeros(PositionType, NumberOfPoints)
-    ρₙ⁺        = zeros(PositionUnderlyingType, NumberOfPoints)
-
-    ∇Cᵢ  = Vector{PositionType}(undef, 0)
-    ∇◌rᵢ = Vector{PositionUnderlyingType}(undef, 0)
-
-    return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ
+# No shifting → no extra fields
+function shifting_particle_fields(::Type{NoShifting}, _, _, _)
+    NamedTuple()
 end
 
-function AllocateSupportDataStructures(::SimulationMetaData{D,T,S,K,B,L}, Position) where {D,T,S<:ShiftingMode,
-                                                                                           K<:KernelOutputMode,
-                                                                                           B<:MDBCMode,
-                                                                                           L<:LogMode}
+# Any shifting mode → allocate shifting support arrays
+function shifting_particle_fields(::Type{SMode}, N, PositionType, UnderlyingType) where {SMode<:ShiftingMode}
+    (
+        ∇Cᵢ  = zeros(PositionType,           N),
+        ∇◌rᵢ = zeros(UnderlyingType,         N),
+    )
+end
 
-    NumberOfPoints         = length(Position)
-    PositionType           = eltype(Position)
-    PositionUnderlyingType = eltype(PositionType)
 
-    dρdtI      = zeros(PositionUnderlyingType, NumberOfPoints)
-    Velocityₙ⁺ = zeros(PositionType, NumberOfPoints)
-    Positionₙ⁺ = zeros(PositionType, NumberOfPoints)
-    ρₙ⁺        = zeros(PositionUnderlyingType, NumberOfPoints)
+function AllocateSupportDataStructures(
+    ::SimulationMetaData{D,T,S,K,B,L},
+    Position,
+) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode,L<:LogMode}
 
-    ∇Cᵢ  = zeros(PositionType, NumberOfPoints)
-    ∇◌rᵢ = zeros(PositionUnderlyingType, NumberOfPoints)
+    N         = length(Position)
+    PosType   = eltype(Position)
+    UnderType = eltype(PosType)
 
-    return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ
+    base_nt = (
+        dρdtI      = zeros(UnderType, N),
+        Velocityₙ⁺ = zeros(PosType,   N),
+        Positionₙ⁺ = zeros(PosType,   N),
+        ρₙ⁺        = zeros(UnderType, N),
+    )
+
+    shift_nt  = shifting_particle_fields(S, N, PosType, UnderType)
+
+    support_nt = merge(base_nt, shift_nt)
+
+    return StructArray(support_nt)
 end
 
 function allocate_kernel_arrays(::SimulationMetaData{D,T,S,NoKernelOutput,B,L},
@@ -200,6 +198,7 @@ function allocate_kernel_arrays(::SimulationMetaData{D,T,S,NoKernelOutput,B,L},
                                                              L<:LogMode}
     return NamedTuple()
 end
+
 function allocate_kernel_arrays(::SimulationMetaData{D,T,S,K,B,L},
                                 SimParticles, n_copy) where {D,T,S<:ShiftingMode,
                                                              K<:KernelOutputMode,
@@ -233,7 +232,7 @@ function allocate_shifting_arrays(::SimulationMetaData{D,T,S,K,B,L},
 end
 
 function AllocateThreadedArrays(SimMetaData::SimulationMetaData{D,T,S,K,B,L},
-                                SimParticles, dρdtI, ∇Cᵢ, ∇◌rᵢ;
+                                SimParticles, dρdtI;
                                 n_copy = Base.Threads.nthreads()) where {D,T,S<:ShiftingMode,
                                                                            K<:KernelOutputMode,
                                                                            B<:MDBCMode,
@@ -246,7 +245,7 @@ function AllocateThreadedArrays(SimMetaData::SimulationMetaData{D,T,S,K,B,L},
     )
 
     nt = merge(nt, allocate_kernel_arrays(SimMetaData, SimParticles, n_copy))
-    nt = merge(nt, allocate_shifting_arrays(SimMetaData, ∇Cᵢ, ∇◌rᵢ, n_copy))
+    # nt = merge(nt, allocate_shifting_arrays(SimMetaData, ∇Cᵢ, ∇◌rᵢ, n_copy))
 
     return StructArray(nt)
 end
