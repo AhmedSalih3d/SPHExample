@@ -21,7 +21,8 @@ viscous, and force-based criteria.
 # Returns
 - The calculated time step `dt`.
 """
-function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
+function Δt(SimParticles, SimulationConstants, SPHKernel)
+    @unpack Position, Velocity, Acceleration = SimParticles
     @unpack c₀, CFL = SimulationConstants
     @unpack h, η²   = SPHKernel
 
