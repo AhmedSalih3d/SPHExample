@@ -403,11 +403,11 @@ using LinearAlgebra
                                                                                              L<:LogMode}
         return nothing
     end
-    function zero_kernel_arrays!(::SimulationMetaData{D,T,S,K,B,L}, arrays...) where {D,T,S<:ShiftingMode,
+    function zero_kernel_arrays!(::SimulationMetaData{D,T,S,K,B,L}, SimParticles) where {D,T,S<:ShiftingMode,
                                                                                      K<:KernelOutputMode,
                                                                                      B<:MDBCMode,
                                                                                      L<:LogMode}
-        @threads for arr in arrays
+        @threads for arr in (SimParticles.Kernel, SimParticles.KernelGradient)
             fill!(arr, zero(eltype(arr)))
         end
         return nothing
@@ -418,7 +418,7 @@ using LinearAlgebra
         @threads for arr in (SupportParticles.dρdtI, SimParticles.Acceleration)
             fill!(arr, zero(eltype(arr)))
         end
-        # zero_kernel_arrays!(SimMetaData, Kernel, KernelGradient)
+        zero_kernel_arrays!(SimMetaData, SimParticles)
         # zero_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ)
 
         # Threaded zeroing for fields in SimThreadedArrays
@@ -464,12 +464,12 @@ using LinearAlgebra
                                                                                              L<:LogMode}
         return nothing
     end
-    function reduce_kernel_arrays!(::SimulationMetaData{D,T,S,K,B,L}, Kernel, KernelGradient, SimThreadedArrays) where {D,T,S<:ShiftingMode,
+    function reduce_kernel_arrays!(::SimulationMetaData{D,T,S,K,B,L}, SimParticles, SimThreadedArrays) where {D,T,S<:ShiftingMode,
                                                                                                                      K<:KernelOutputMode,
                                                                                                                      B<:MDBCMode,
                                                                                                                      L<:LogMode}
-        reduce_sum!(Kernel, SimThreadedArrays.KernelThreaded)
-        reduce_sum!(KernelGradient, SimThreadedArrays.KernelGradientThreaded)
+        reduce_sum!(SimParticles.Kernel, SimThreadedArrays.KernelThreaded)
+        reduce_sum!(SimParticles.KernelGradient, SimThreadedArrays.KernelGradientThreaded)
         return nothing
     end
 
@@ -477,7 +477,7 @@ using LinearAlgebra
         reduce_sum!(SupportParticles.dρdtI, SimThreadedArrays.dρdtIThreaded)
         reduce_sum!(SimParticles.Acceleration, SimThreadedArrays.AccelerationThreaded)
 
-        # reduce_kernel_arrays!(SimMetaData, Kernel, KernelGradient, SimThreadedArrays)
+        reduce_kernel_arrays!(SimMetaData, SimParticles, SimThreadedArrays)
         # reduce_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ, SimThreadedArrays)
 
         return nothing
