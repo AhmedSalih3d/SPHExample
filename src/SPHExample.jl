@@ -15,51 +15,37 @@ module SPHExample
     include("SPHDensityDiffusionModels.jl")  
     include("SPHCellList.jl") #Must be last    
 
+    using Reexport
+
     # Re-export desired functions from each submodule
-    using .AuxiliaryFunctions
-    export ResetArrays!, to_3d, CloseHDFVTKManually, CleanUpSimulationFolder
+    @reexport using .AuxiliaryFunctions
 
-    using .SPHKernels
-    export SPHKernel, SPHKernelInstance, WendlandC2, CubicSpline, Wᵢⱼ, ∇Wᵢⱼ, tensile_correction
+    @reexport using .SPHKernels
 
-    using .SPHViscosityModels
-    export SPHViscosity, ZeroViscosity, ArtificialViscosity, Laminar, LaminarSPS, compute_viscosity
+    @reexport using .SPHViscosityModels
 
-    using .SPHDensityDiffusionModels
-    export SPHDensityDiffusion, ZeroDensityDiffusion, ZeroGravityLinearDensityDiffusion, LinearDensityDiffusion, ZeroGravityComplexDensityDiffusion, ComplexDensityDiffusion, compute_density_diffusion
- 
-    using .SimulationGeometry
-    export ParticleType, Fixed, Fluid, Moving, Geometry, MotionDetails
+    @reexport using .SPHDensityDiffusionModels
 
-    using .PreProcess
-    export AllocateDataStructures, AllocateSupportDataStructures, AllocateThreadedArrays, LoadBoundaryNormals
+    @reexport using .SimulationGeometry
 
-    using .ProduceHDFVTK
-    export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure, AppendVTKHDFData, SaveCellGridVTKHDF, AppendVTKHDFGridData, SaveTransientVTKOutput
+    @reexport using .PreProcess
 
-    using .TimeStepping: Δt
-    export Δt
+    @reexport using .ProduceHDFVTK
 
-    using .SimulationEquations
-    export EquationOfState, EquationOfStateGamma7, Pressure!, DensityEpsi!, LimitDensityAtBoundary!, ConstructGravitySVector, InverseHydrostaticEquationOfState, Estimate7thRoot
+    @reexport using .TimeStepping
 
-    using .SimulationLoggerConfiguration
-    export SimulationLogger, generate_format_string, InitializeLogger, LogSimulationDetails, LogStep, LogFinal
+    @reexport using .SimulationEquations
 
-    using .SimulationMetaDataConfiguration
-    export SimulationMetaData, ShiftingMode, NoShifting, PlanarShifting,
-           KernelOutputMode, NoKernelOutput, StoreKernelOutput,
-           MDBCMode, NoMDBC, SimpleMDBC,
-           LogMode, NoLog, StoreLog
+    @reexport using .SimulationLoggerConfiguration
 
-    using .SimulationConstantsConfiguration
-    export SimulationConstants
+    @reexport using .SimulationMetaDataConfiguration
 
-    using .SPHCellList
-    export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!, RunSimulation
+    @reexport using .SimulationConstantsConfiguration
 
-    using .OpenExternalPrograms
-    export AutoOpenLogFile, AutoOpenParaview
+    @reexport using .SPHCellList
+
+    @reexport using .OpenExternalPrograms
+
 
 end
 
