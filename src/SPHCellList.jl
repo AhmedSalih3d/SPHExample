@@ -171,48 +171,52 @@ using LinearAlgebra
                            Position, Density, Pressure, Velocity, MotionLimiter,
                            UniqueCellsView) where {SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
 
-        # ceil(length(CellDict)/nthreads()) then bump to even:
-        base = (length(CellDict) + nthreads() - 1) ÷ nthreads()
-        chunk_size = base + (base & 1)    # add 1 if base is odd
-        Threads.@sync begin
-            # Iterate over UniqueCells in increments of `chunk_size`
-            for chunk_start in 1:chunk_size:length(UniqueCellsView)
-                # Define the range of cell indices for this chunk
-                chunk_end = min(chunk_start + chunk_size - 1, length(UniqueCellsView))
-                Threads.@spawn begin
-                    # Process each cell in this chunk
-                    for iter in chunk_start:chunk_end
-                        CellIndex = UniqueCellsView[iter]
-                        SimParticles.ChunkID[iter] = Threads.threadid()   # mark which thread handles this cell
-                        StartIndex = ParticleRanges[iter]
-                        EndIndex   = ParticleRanges[iter+1] - 1
+        # Partition UniqueCellsView into contiguous chunks and use the loop index `t`
+        # as a stable per-thread buffer index instead of Threads.threadid(),
+        # avoiding issues when tasks yield and migrate between threads.
+        N = length(UniqueCellsView)
+        num_threads = Threads.nthreads()
+        chunk_size = ceil(Int, N / num_threads)
 
-                        # (1) Interactions among particles within the same cell `iter`
-                        @inbounds for i = StartIndex:EndIndex, j = (i+1):EndIndex
+        @inbounds Threads.@threads for t in 1:num_threads
+            ichunk = t   # stable per-thread buffer index
+            start_iter = (t-1) * chunk_size + 1
+            end_iter = min(t * chunk_size, N)
+
+            for iter = start_iter:end_iter
+                CellIndex = UniqueCellsView[iter]
+                StartIndex = ParticleRanges[iter]
+                EndIndex = ParticleRanges[iter+1] - 1
+
+                # (1) Interactions within same cell
+                @inbounds for i = StartIndex:EndIndex
+                    for j = (i+1):EndIndex
+                        ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                                             SimConstants, SimParticles, SimThreadedArrays,
+                                             Position, Density, Pressure, Velocity,
+                                             i, j, MotionLimiter, ichunk)
+                    end
+                end
+
+                # (2) Interactions with neighboring cells
+                @inbounds for S in Stencil
+                    SCellIndex = CellIndex + S
+                    NeighborIdx = get(CellDict, SCellIndex, 1)
+                    StartIndex_ = ParticleRanges[NeighborIdx]
+                    EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
+
+                    for i = StartIndex:EndIndex
+                        for j = StartIndex_:EndIndex_
                             ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                                                SimConstants, SimParticles, SimThreadedArrays,
-                                                Position, Density, Pressure, Velocity,
-                                                i, j, MotionLimiter, Threads.threadid())
-                        end
-
-                        # (2) Interactions between this cell and each neighboring cell in the stencil
-                        @inbounds for S in Stencil
-                            SCellIndex   = CellIndex + S
-                            NeighborIdx  = get(CellDict, SCellIndex, 1)            # lookup neighbor cell index (or 1 if not present)
-                            StartIndex_  = ParticleRanges[NeighborIdx]
-                            EndIndex_    = ParticleRanges[NeighborIdx + 1] - 1
-                            for i = StartIndex:EndIndex, j = StartIndex_:EndIndex_
-                                ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                                                    SimConstants, SimParticles, SimThreadedArrays,
-                                                    Position, Density, Pressure, Velocity,
-                                                    i, j, MotionLimiter, Threads.threadid())
-                            end
+                                                 SimConstants, SimParticles, SimThreadedArrays,
+                                                 Position, Density, Pressure, Velocity,
+                                                 i, j, MotionLimiter, ichunk)
                         end
                     end
-                end  # end @spawn
+                end
             end
-        end  # end @sync
-                
+        end
+
         return nothing
     end
 
