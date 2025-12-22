@@ -175,7 +175,7 @@ using LinearAlgebra
         N = length(UniqueCellsView)
         batches = Polyester.batch(N; threads=Threads.nthreads())
 
-        @inbounds foreach_batch(batches) do ichunk, iter_range
+        @inbounds foreach_batch(batches, (ichunk, iter_range) -> begin
             for iter in iter_range
                 CellIndex = UniqueCellsView[iter]
                 StartIndex = ParticleRanges[iter]
@@ -208,7 +208,7 @@ using LinearAlgebra
                     end
                 end
             end
-        end
+        end)
 
         return nothing
     end
@@ -364,14 +364,14 @@ using LinearAlgebra
     function reduce_sum!(target_array, arrays)
         batches = Polyester.batch(length(target_array); threads = nthreads())
 
-        @inbounds foreach_batch(batches) do _, range
+        @inbounds foreach_batch(batches, (_, range) -> begin
             for j in eachindex(arrays)
                 local array = arrays[j]
                 @simd ivdep for i in range
                     @inbounds target_array[i] += array[i]
                 end
             end
-        end
+        end)
     end
 
     # Zero arrays related to shifting depending on the selected mode.
