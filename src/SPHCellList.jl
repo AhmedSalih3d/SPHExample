@@ -225,19 +225,28 @@ using LinearAlgebra
             new_counter += 1
             new_bucket = new_counter + 1
 
-            count = counts[bucket]
-            ParticleRanges[new_bucket] = start_idx
-            UniqueCells[new_bucket]    = cell_buffer[bucket]
-            unique_codes[new_bucket]   = unique_codes[bucket]
-            counts[new_bucket]         = count
+            UniqueCells[new_bucket]  = cell_buffer[bucket]
+            unique_codes[new_bucket] = unique_codes[bucket]
             code_to_bucket[unique_codes[bucket]] = new_bucket
-
-            start_idx += count
         end
         IndexCounter = new_counter + 1
+
+        # Recompute counts in the sorted bucket order to avoid stale state.
+        fill!(counts, 0)
+        @inbounds for i in 1:n
+            bucket = code_to_bucket[cell_ids[i]]
+            counts[bucket] += 1
+        end
+
+        # Build ParticleRanges from the refreshed counts and ensure totals match.
+        @inbounds for bucket in 2:IndexCounter
+            ParticleRanges[bucket] = start_idx
+            start_idx += counts[bucket]
+        end
+        @assert start_idx == n + 1 "Accumulated particle count $(start_idx - 1) differs from particle total $n"
         ParticleRanges[IndexCounter + 1] = start_idx
 
-        for bucket in 2:IndexCounter
+        @inbounds for bucket in 2:IndexCounter
             write_ptrs[bucket] = ParticleRanges[bucket]
         end
 
