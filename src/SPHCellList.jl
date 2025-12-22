@@ -37,11 +37,11 @@ using LinearAlgebra
     struct NeighborScratch{CI}
         cell_ids::Vector{UInt64}
         unique_codes::Vector{UInt64}
-        cell_buffer::Vector{CI}
         counts::Vector{Int}
         write_ptrs::Vector{Int}
         permutation::Vector{Int}
         code_to_bucket::Dict{UInt64, Int}
+        code_to_cell::Dict{UInt64, CI}
     end
 
     function NeighborScratch(n::Integer, ::Type{CI}) where {CI}
@@ -53,11 +53,11 @@ using LinearAlgebra
         return NeighborScratch(
             Vector{UInt64}(undef, n),
             Vector{UInt64}(undef, with_sentinel),
-            Vector{CI}(undef, with_sentinel),
             Vector{Int}(undef, with_sentinel),
             Vector{Int}(undef, with_sentinel),
             Vector{Int}(undef, n),
             Dict{UInt64, Int}(),
+            Dict{UInt64, CI}(),
         )
     end
 
@@ -189,14 +189,15 @@ using LinearAlgebra
         write_ptrs     = NeighborScratchSpace.write_ptrs
         permutation    = NeighborScratchSpace.permutation
         unique_codes   = NeighborScratchSpace.unique_codes
-        cell_buffer    = NeighborScratchSpace.cell_buffer
         code_to_bucket = NeighborScratchSpace.code_to_bucket
+        code_to_cell   = NeighborScratchSpace.code_to_cell
 
         @inbounds for i in 1:n
             cell_ids[i] = morton_code(Cells[i])
         end
 
         empty!(code_to_bucket)
+        empty!(code_to_cell)
         fill!(counts, 0)
 
         ParticleRanges[1] = 1
@@ -210,7 +211,7 @@ using LinearAlgebra
                 IndexCounter += 1
                 code_to_bucket[code] = IndexCounter
                 unique_codes[IndexCounter] = code
-                cell_buffer[IndexCounter] = Cells[i]
+                code_to_cell[code] = Cells[i]
             end
             counts[code_to_bucket[code]] += 1
         end
@@ -225,9 +226,10 @@ using LinearAlgebra
             new_counter += 1
             new_bucket = new_counter + 1
 
-            UniqueCells[new_bucket]  = cell_buffer[bucket]
-            unique_codes[new_bucket] = unique_codes[bucket]
-            code_to_bucket[unique_codes[bucket]] = new_bucket
+            code = unique_codes[bucket]
+            unique_codes[new_bucket] = code
+            UniqueCells[new_bucket]  = code_to_cell[code]
+            code_to_bucket[code]     = new_bucket
         end
         IndexCounter = new_counter + 1
 
