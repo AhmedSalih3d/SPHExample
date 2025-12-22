@@ -42,6 +42,96 @@ using LinearAlgebra
         return n
     end
 
+    mutable struct GridDescription{D}
+        domain_min::NTuple{D,Int}
+        domain_max::NTuple{D,Int}
+        cells_per_axis::NTuple{D,Int}
+    end
+
+    GridDescription{D}() where D = GridDescription{D}(
+        ntuple(_ -> zero(Int), D),
+        ntuple(_ -> -one(Int), D),
+        ntuple(_ -> zero(Int), D),
+    )
+
+    @inline total_cell_count(grid::GridDescription) = prod(grid.cells_per_axis)
+
+    @inline function resize_and_fill!(array::Vector{T}, len::Int, value::T) where T
+        resize!(array, len)
+        fill!(array, value)
+        return array
+    end
+
+    @inline function update_grid_description!(grid::GridDescription{D},
+                                              cells::AbstractVector{CartesianIndex{D}}) where D
+        mins = ntuple(i -> minimum(ci -> ci[i], cells), D)
+        maxs = ntuple(i -> maximum(ci -> ci[i], cells), D)
+        grid.domain_min = mins
+        grid.domain_max = maxs
+        grid.cells_per_axis = ntuple(i -> maxs[i] - mins[i] + 1, D)
+        return grid
+    end
+
+    @inline function linear_cell_id(cell::CartesianIndex{D},
+                                    grid::GridDescription{D}) where D
+        linear = one(Int)
+        stride = one(Int)
+        @inbounds for dim in 1:D
+            offset = cell[dim] - grid.domain_min[dim]
+            if offset < 0 || offset >= grid.cells_per_axis[dim]
+                return zero(Int)
+            end
+            linear += offset * stride
+            stride *= grid.cells_per_axis[dim]
+        end
+        return linear
+    end
+
+    @inline function neighbor_range_index(cell::CartesianIndex{D},
+                                          grid::GridDescription{D},
+                                          cell_id_map::Vector{Int}) where D
+        linear_id = linear_cell_id(cell, grid)
+        return iszero(linear_id) ? 1 : cell_id_map[linear_id]
+    end
+
+    function threads_prefix_sum!(dest::Vector{Int}, src::Vector{Int})
+        n = length(src)
+        resize!(dest, n)
+        if n == 0
+            return dest
+        end
+
+        num_threads = Threads.nthreads()
+        chunk_size = cld(n, num_threads)
+        partials = zeros(Int, num_threads)
+
+        Threads.@threads for t in 1:num_threads
+            start_idx = (t - 1) * chunk_size + 1
+            end_idx = min(t * chunk_size, n)
+            local_sum = 0
+            @inbounds for i in start_idx:end_idx
+                local_sum += src[i]
+                dest[i] = local_sum
+            end
+            partials[t] = local_sum
+        end
+
+        @inbounds for t in 2:num_threads
+            partials[t] += partials[t - 1]
+        end
+
+        Threads.@threads for t in 2:num_threads
+            offset = partials[t - 1]
+            start_idx = (t - 1) * chunk_size + 1
+            end_idx = min(t * chunk_size, n)
+            @inbounds for i in start_idx:end_idx
+                dest[i] += offset
+            end
+        end
+
+        return dest
+    end
+
     """
     Extracts the cells for each particle based on their positions and the inverse cutoff value.
 
@@ -131,33 +221,52 @@ using LinearAlgebra
     - `SortingScratchSpace`: Scratch space for sorting.
     - `ParticleRanges`: Array to store the ranges of particles in each cell.
     - `UniqueCells`: Array to store the unique cells.
+    - `cell_id_map`: Mapping from linear cell ids to entries in `ParticleRanges`.
+    - `grid_description`: Precomputed domain bounds and cells per axis.
+    - `cell_counts`: Scratch array for counting particles per linear cell.
+    - `cell_prefix`: Scratch array used for prefix sums of `cell_counts`.
 
     # Returns
     - `IndexCounter`: The number of unique cells identified.
     """
     function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
-                              ParticleRanges, UniqueCells, CellDict)
+                              ParticleRanges, UniqueCells, cell_id_map,
+                              grid_description::GridDescription{D},
+                              cell_counts::Vector{Int},
+                              cell_prefix::Vector{Int}) where {D}
         ExtractCells!(Particles, InverseCutOff)
 
         sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
         Cells = @views Particles.Cells
         @. ParticleRanges             = zero(eltype(ParticleRanges))
         ParticleRanges[1] = 1
-        IndexCounter                  = 2
-        ParticleRanges[IndexCounter]  = 1
-        UniqueCells[IndexCounter]     = Cells[1]
-        empty!(CellDict)
-        CellDict[Cells[1]] = IndexCounter
 
-        @inbounds @simd ivdep for i in eachindex(Cells)[2:end]
-            if Cells[i] != Cells[i-1] # Equivalent to diff(Cells) != 0
-                IndexCounter                 += 1
-                ParticleRanges[IndexCounter]  = i
-                UniqueCells[IndexCounter]     = Cells[i]
-                CellDict[Cells[i]]           = IndexCounter
+        update_grid_description!(grid_description, Cells)
+        total_cells = total_cell_count(grid_description)
+
+        resize_and_fill!(cell_id_map, total_cells, 1)
+        resize_and_fill!(cell_counts, total_cells, 0)
+        resize!(cell_prefix, total_cells)
+
+        @inbounds @simd ivdep for cell in Cells
+            linear_id = linear_cell_id(cell, grid_description)
+            cell_counts[linear_id] += 1
+        end
+
+        threads_prefix_sum!(cell_prefix, cell_counts)
+
+        IndexCounter = 1
+        @inbounds for linear_id in eachindex(cell_counts)
+            count = cell_counts[linear_id]
+            if count != 0
+                IndexCounter += 1
+                start_index = cell_prefix[linear_id] - count + 1
+                ParticleRanges[IndexCounter] = start_index
+                UniqueCells[IndexCounter] = Cells[start_index]
+                cell_id_map[linear_id] = IndexCounter
             end
         end
-        ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
+        ParticleRanges[IndexCounter + 1]  = length(Cells) + 1
 
         return IndexCounter 
     end
@@ -167,9 +276,12 @@ using LinearAlgebra
 ###=== Function to process each cell and its neighbors
     function NeighborLoop!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                            SimMetaData, SimConstants, SimParticles,
-                           SimThreadedArrays, ParticleRanges, CellDict, Stencil,
-                           Position, Density, Pressure, Velocity, MotionLimiter,
-                           UniqueCellsView) where {SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
+                           SimThreadedArrays, ParticleRanges, cell_id_map,
+                           grid_description::GridDescription{Dimensions}, Stencil,
+                           Position, Density, Pressure, Velocity,
+                           MotionLimiter, UniqueCellsView) where {SDD<:SPHDensityDiffusion,
+                                                                   SV<:SPHViscosity,
+                                                                   Dimensions}
 
         # Partition UniqueCellsView into contiguous chunks and use the loop index `t`
         # as a stable per-thread buffer index instead of Threads.threadid(),
@@ -201,7 +313,8 @@ using LinearAlgebra
                 # (2) Interactions with neighboring cells
                 @inbounds for S in Stencil
                     SCellIndex = CellIndex + S
-                    NeighborIdx = get(CellDict, SCellIndex, 1)
+                    NeighborIdx = neighbor_range_index(SCellIndex, grid_description,
+                                                       cell_id_map)
                     StartIndex_ = ParticleRanges[NeighborIdx]
                     EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
 
@@ -223,7 +336,8 @@ using LinearAlgebra
     f(SimKernel, GhostPoint) = CartesianIndex(map(x->map_floor(x,SimKernel.H⁻¹), Tuple(GhostPoint)))
     function NeighborLoopMDBC!(SimKernel,
                                SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
-                               SimConstants, ParticleRanges, CellDict, Position,
+                               SimConstants, ParticleRanges, cell_id_map,
+                               grid_description::GridDescription{Dimensions}, Position,
                                Density, GhostPoints, GhostNormals, ParticleType,
                                bᵧ, Aᵧ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
         
@@ -245,7 +359,8 @@ using LinearAlgebra
                     # Returns a range, x>:x for exact match and x=:x for no match
                     # utilizes that it is a sorted array and requires no isequal constructor,
                     # so I prefer this for now
-                    NeighborIdx = get(CellDict, SCellIndex, 1)
+                    NeighborIdx = neighbor_range_index(SCellIndex, grid_description,
+                                                       cell_id_map)
 
                     StartIndex_       = ParticleRanges[NeighborIdx] 
                     EndIndex_         = ParticleRanges[NeighborIdx + 1] - 1
@@ -494,14 +609,17 @@ using LinearAlgebra
     end
     function ApplyMDBCBeforeHalf!(SimMetaData::SimulationMetaData{D,T,S,K,SimpleMDBC,L},
                                   SimKernel, SimConstants, SimParticles,
-                                  ParticleRanges, CellDict, Position, Density,
+                                  ParticleRanges, cell_id_map, grid_description,
+                                  Position, Density,
                                   GhostPoints, GhostNormals, ParticleType
                                  ) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,L<:LogMode}
         @no_escape begin
             DimensionsPlus = D + 1
             bᵧ = @alloc(SVector{DimensionsPlus, T}, length(Position))
             Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, T, DimensionsPlus*DimensionsPlus}, length(Position))
-            NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, CellDict, Position, Density, GhostPoints,GhostNormals, ParticleType, bᵧ, Aᵧ)
+            NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges,
+                              cell_id_map, grid_description, Position, Density,
+                              GhostPoints, GhostNormals, ParticleType, bᵧ, Aᵧ)
             ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
         end
 
@@ -731,7 +849,8 @@ using LinearAlgebra
     @inbounds function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
                                       SimConstants, SimParticles, Stencil,
-                                      ParticleRanges, UniqueCells, CellDict,
+                                      ParticleRanges, UniqueCells, grid_description,
+                                      cell_id_map, cell_counts, cell_prefix,
                                       SortingScratchSpace, SimThreadedArrays,
                                       dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
                                       ∇Cᵢ, ∇◌rᵢ, MotionDefinition) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
@@ -760,7 +879,13 @@ using LinearAlgebra
                     # Remove if statement logic if you want to update each iteration
                     # if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
                     if Δx >= SimKernel.h
-                        @timeit SimMetaData.HourGlass "02a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells, CellDict)
+                        @timeit SimMetaData.HourGlass "02a Actual Calculate IndexCounter" begin
+                            SimMetaData.IndexCounter = UpdateNeighbors!(
+                                SimParticles, SimKernel.H⁻¹, SortingScratchSpace,
+                                ParticleRanges, UniqueCells, cell_id_map,
+                                grid_description, cell_counts, cell_prefix,
+                            )
+                        end
                         Δx = zero(eltype(Density))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                     end
@@ -773,9 +898,22 @@ using LinearAlgebra
                 ###===
                  
                 @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-                @timeit SimMetaData.HourGlass "04 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType)
+                @timeit SimMetaData.HourGlass "04 Apply MDBC before Half TimeStep" begin
+                    ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants,
+                                         SimParticles, ParticleRanges,
+                                         cell_id_map, grid_description, Position,
+                                         Density, GhostPoints, GhostNormals,
+                                         ParticleType)
+                end
 
-                @timeit SimMetaData.HourGlass "05 First NeighborLoop"                    NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView)
+                @timeit SimMetaData.HourGlass "05 First NeighborLoop" begin
+                    NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel,
+                                  SimMetaData, SimConstants, SimParticles,
+                                  SimThreadedArrays, ParticleRanges, cell_id_map,
+                                  grid_description, Stencil, Position, Density,
+                                  Pressure, Velocity, MotionLimiter,
+                                  UniqueCellsView)
+                end
                 @timeit SimMetaData.HourGlass "Reduction"                                ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
 
 
@@ -791,7 +929,14 @@ using LinearAlgebra
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
             
                 @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-                @timeit SimMetaData.HourGlass "08 Second NeighborLoop"                   NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, UniqueCellsView)
+                @timeit SimMetaData.HourGlass "08 Second NeighborLoop" begin
+                    NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel,
+                                  SimMetaData, SimConstants, SimParticles,
+                                  SimThreadedArrays, ParticleRanges, cell_id_map,
+                                  grid_description, Stencil, Positionₙ⁺, ρₙ⁺,
+                                  Pressure, Velocityₙ⁺, MotionLimiter,
+                                  UniqueCellsView)
+                end
                 @timeit SimMetaData.HourGlass "Reduction"                                ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
 
             
@@ -843,7 +988,10 @@ using LinearAlgebra
         # Produce sorting related variables
         ParticleRanges         = zeros(Int, NumberOfPoints + 1 + 1) # +1 for the last particle, +1 for dummy entry
         UniqueCells            = zeros(CartesianIndex{Dimensions}, NumberOfPoints)
-        CellDict               = Dict{CartesianIndex{Dimensions}, Int}()
+        grid_description       = GridDescription{Dimensions}()
+        cell_id_map            = Int[]
+        cell_counts            = Int[]
+        cell_prefix            = Int[]
         Stencil                = ConstructStencil(Val(Dimensions))
         _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
 
@@ -884,7 +1032,15 @@ using LinearAlgebra
 
         @inbounds while true
 
-            @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, CellDict, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition)
+            @timeit SimMetaData.HourGlass "00 SimulationLoop" begin
+                SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel,
+                               SimMetaData, SimConstants, SimParticles, Stencil,
+                               ParticleRanges, UniqueCells, grid_description,
+                               cell_id_map, cell_counts, cell_prefix,
+                               SortingScratchSpace, SimThreadedArrays, dρdtI,
+                               Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ,
+                               MotionDefinition)
+            end
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
 
             log_step!(SimMetaData, SimLogger)
