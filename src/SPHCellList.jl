@@ -45,12 +45,17 @@ using LinearAlgebra
     end
 
     function NeighborScratch(n::Integer, ::Type{CI}) where {CI}
+        # The +1 accommodates the sentinel bucket used by `ParticleRanges`
+        # (mirroring its length of n + 2) so that we never write past the
+        # allocated scratch buffers even when every particle occupies a
+        # distinct cell.
+        with_sentinel = n + 1
         return NeighborScratch(
             Vector{UInt64}(undef, n),
-            Vector{UInt64}(undef, n),
-            Vector{CI}(undef, n),
-            Vector{Int}(undef, n),
-            Vector{Int}(undef, n),
+            Vector{UInt64}(undef, with_sentinel),
+            Vector{CI}(undef, with_sentinel),
+            Vector{Int}(undef, with_sentinel),
+            Vector{Int}(undef, with_sentinel),
             Vector{Int}(undef, n),
             Dict{UInt64, Int}(),
         )
@@ -933,7 +938,7 @@ using LinearAlgebra
     
         # Produce sorting related variables
         ParticleRanges         = zeros(Int, NumberOfPoints + 1 + 1) # +1 for the last particle, +1 for dummy entry
-        UniqueCells            = zeros(CartesianIndex{Dimensions}, NumberOfPoints)
+        UniqueCells            = zeros(CartesianIndex{Dimensions}, NumberOfPoints + 1) # mirror ParticleRanges sentinel
         CellDict               = Dict{CartesianIndex{Dimensions}, Int}()
         Stencil                = ConstructStencil(Val(Dimensions))
         NeighborScratchSpace   = NeighborScratch(NumberOfPoints, CartesianIndex{Dimensions})
