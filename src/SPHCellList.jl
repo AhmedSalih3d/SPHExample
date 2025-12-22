@@ -18,6 +18,7 @@ using ..OpenExternalPrograms
 using ..SPHKernels
 using ..SPHViscosityModels
 using ..SPHDensityDiffusionModels
+using ..PolyesterCompat: Polyester, foreach_batch
 
 using StaticArrays
 import StructArrays: StructArray, foreachfield
@@ -171,26 +172,18 @@ using LinearAlgebra
                            Position, Density, Pressure, Velocity, MotionLimiter,
                            UniqueCellsView) where {SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
 
-        # Partition UniqueCellsView into contiguous chunks and use the loop index `t`
-        # as a stable per-thread buffer index instead of Threads.threadid(),
-        # avoiding issues when tasks yield and migrate between threads.
         N = length(UniqueCellsView)
-        num_threads = Threads.nthreads()
-        chunk_size = ceil(Int, N / num_threads)
+        batches = Polyester.batch(N; threads=Threads.nthreads())
 
-        @inbounds Threads.@threads for t in 1:num_threads
-            ichunk = t   # stable per-thread buffer index
-            start_iter = (t-1) * chunk_size + 1
-            end_iter = min(t * chunk_size, N)
-
-            for iter = start_iter:end_iter
+        @inbounds foreach_batch(batches) do ichunk, iter_range
+            for iter in iter_range
                 CellIndex = UniqueCellsView[iter]
                 StartIndex = ParticleRanges[iter]
-                EndIndex = ParticleRanges[iter+1] - 1
+                EndIndex = ParticleRanges[iter + 1] - 1
 
                 # (1) Interactions within same cell
                 @inbounds for i = StartIndex:EndIndex
-                    for j = (i+1):EndIndex
+                    for j = (i + 1):EndIndex
                         ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                                              SimConstants, SimParticles, SimThreadedArrays,
                                              Position, Density, Pressure, Velocity,
@@ -369,15 +362,12 @@ using LinearAlgebra
     end
 
     function reduce_sum!(target_array, arrays)
-        n = length(target_array)
-        num_threads = nthreads()
-        chunk_size = ceil(Int, n / num_threads)
-        @inbounds @threads for t in 1:num_threads
-            local start_idx = 1 + (t-1) * chunk_size
-            local end_idx = min(t * chunk_size, n)
+        batches = Polyester.batch(length(target_array); threads = nthreads())
+
+        @inbounds foreach_batch(batches) do _, range
             for j in eachindex(arrays)
-                local array = arrays[j]  # Access array only once per thread
-                @simd ivdep for i in start_idx:end_idx
+                local array = arrays[j]
+                @simd ivdep for i in range
                     @inbounds target_array[i] += array[i]
                 end
             end
