@@ -75,23 +75,17 @@ using LinearAlgebra
     end
 
     @inline function morton_code(coords::NTuple{D,UInt64}) where D
-        max_bit = zero(UInt64)
-        @inbounds for coord in coords
-            max_bit = max(max_bit, UInt64(64 - leading_zeros(coord)))
-        end
-
-        if iszero(max_bit)
-            return zero(UInt64)
-        end
-
+        # Interleave bits of the coordinates. For D ∈ {2,3} this keeps up to 21 bits
+        # per coordinate inside a 64-bit Morton code. Higher bits are dropped to avoid
+        # overflow but spatial locality is preserved.
+        masked = ntuple(i -> coords[i] & 0x1f_ffff, D)
         code = zero(UInt64)
-        @inbounds for bit in 0:(max_bit - 1)
+        @inbounds for bit in 0:20
             shift = bit * D
             @inbounds for dim in 1:D
-                code |= ((coords[dim] >> bit) & 0x1) << (shift + (dim - 1))
+                code |= ((masked[dim] >> bit) & 0x1) << (shift + (dim - 1))
             end
         end
-
         return code
     end
 
@@ -183,23 +177,8 @@ using LinearAlgebra
 
         Cells = @views Particles.Cells
         offsets = compute_cell_offsets(Cells)
-        dimensions = length(offsets)
         sort_key = p -> (morton_sort_key(p.Cells, offsets), p.Cells)
-        max_bit = zero(UInt64)
-
-        @inbounds for cell in Cells
-            coords = Tuple(cell)
-            @inbounds for dim in 1:dimensions
-                shifted = UInt64(coords[dim] - offsets[dim])
-                max_bit = max(max_bit, UInt64(64 - leading_zeros(shifted)))
-            end
-        end
-
-        if Int(max_bit) * dimensions <= 64
-            sort!(Particles, by = sort_key; scratch=SortingScratchSpace)
-        else
-            sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
-        end
+        sort!(Particles, by = sort_key; scratch=SortingScratchSpace)
         Cells = @views Particles.Cells
         @. ParticleRanges             = zero(eltype(ParticleRanges))
         ParticleRanges[1] = 1
