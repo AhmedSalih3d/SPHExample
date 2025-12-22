@@ -12,6 +12,7 @@ module SPHExample
     include("SimulationLoggerConfiguration.jl");
     include("PreProcess.jl");
     include("OpenExternalPrograms.jl")
+    include("PolyesterCompat.jl")
     include("SPHDensityDiffusionModels.jl")  
     include("SPHCellList.jl") #Must be last    
 
@@ -62,4 +63,3 @@ module SPHExample
     export AutoOpenLogFile, AutoOpenParaview
 
 end
-
