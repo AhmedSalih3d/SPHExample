@@ -82,8 +82,10 @@ using LinearAlgebra
 
         # Switch signs compared to DSPH, else free surface detection does not make sense
         # Agrees, https://arxiv.org/abs/2110.10076, it should have been r_ji
+        mark_pair!(SimThreadedArrays.∇CᵢTouched[ichunk], SimThreadedArrays.∇CᵢMask[ichunk], i, j)
         SimThreadedArrays.∇◌rᵢThreaded[ichunk][i]  += (m₀/ρⱼ) * dot(-xᵢⱼ , ∇ᵢWᵢⱼ) * MLcond
         SimThreadedArrays.∇◌rᵢThreaded[ichunk][j]  += (m₀/ρᵢ) * dot( xᵢⱼ ,-∇ᵢWᵢⱼ) * MLcond
+        mark_pair!(SimThreadedArrays.∇◌rᵢTouched[ichunk], SimThreadedArrays.∇◌rᵢMask[ichunk], i, j)
         return nothing
     end
 
@@ -108,8 +110,10 @@ using LinearAlgebra
                                                                             B<:MDBCMode,
                                                                             L<:LogMode}
         Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
+        mark_pair!(SimThreadedArrays.KernelTouched[ichunk], SimThreadedArrays.KernelMask[ichunk], i, j)
         SimThreadedArrays.KernelThreaded[ichunk][i]         += Wᵢⱼ
         SimThreadedArrays.KernelThreaded[ichunk][j]         += Wᵢⱼ
+        mark_pair!(SimThreadedArrays.KernelGradientTouched[ichunk], SimThreadedArrays.KernelGradientMask[ichunk], i, j)
         SimThreadedArrays.KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
         SimThreadedArrays.KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
         return nothing
@@ -296,6 +300,7 @@ using LinearAlgebra
 
             Dᵢ, Dⱼ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ², i, j, MotionLimiter)
 
+            mark_pair!(SimThreadedArrays.dρdtITouched[ichunk], SimThreadedArrays.dρdtIMask[ichunk], i, j)
             SimThreadedArrays.dρdtIThreaded[ichunk][i] += dρdt⁺ + Dᵢ
             SimThreadedArrays.dρdtIThreaded[ichunk][j] += dρdt⁻ + Dⱼ
 
@@ -309,6 +314,7 @@ using LinearAlgebra
             visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ², i, j)
 
             uₘ = dvdt⁺ + visc_term
+            mark_pair!(SimThreadedArrays.AccelerationTouched[ichunk], SimThreadedArrays.AccelerationMask[ichunk], i, j)
             SimThreadedArrays.AccelerationThreaded[ichunk][i] += uₘ
             SimThreadedArrays.AccelerationThreaded[ichunk][j] -= uₘ 
 
@@ -368,20 +374,38 @@ using LinearAlgebra
         return bΔ, AΔ
     end
 
-    function reduce_sum!(target_array, arrays)
-        n = length(target_array)
-        num_threads = nthreads()
-        chunk_size = ceil(Int, n / num_threads)
-        @inbounds @threads for t in 1:num_threads
-            local start_idx = 1 + (t-1) * chunk_size
-            local end_idx = min(t * chunk_size, n)
-            for j in eachindex(arrays)
-                local array = arrays[j]  # Access array only once per thread
-                @simd ivdep for i in start_idx:end_idx
-                    @inbounds target_array[i] += array[i]
-                end
+    @inline function mark_touched!(touched::Vector{Int}, mask::BitVector, idx::Int)
+        if !@inbounds mask[idx]
+            @inbounds mask[idx] = true
+            push!(touched, idx)
+        end
+        return nothing
+    end
+
+    @inline function mark_pair!(touched::Vector{Int}, mask::BitVector, i::Int, j::Int)
+        mark_touched!(touched, mask, i)
+        mark_touched!(touched, mask, j)
+        return nothing
+    end
+
+    function reset_touched!(data::Vector{T}, touched::Vector{Int}, mask::BitVector) where T
+        @inbounds for idx in touched
+            data[idx] = zero(T)
+            mask[idx] = false
+        end
+        empty!(touched)
+        return nothing
+    end
+
+    function reduce_sum!(target_array, arrays, touched)
+        @inbounds for j in eachindex(arrays)
+            local array = arrays[j]
+            local touched_indices = touched[j]
+            for idx in touched_indices
+                target_array[idx] += array[idx]
             end
         end
+        return nothing
     end
 
     # Zero arrays related to shifting depending on the selected mode.
@@ -417,6 +441,64 @@ using LinearAlgebra
         return nothing
     end
 
+    function reset_threaded_kernel_arrays!(::SimulationMetaData{D,T,S,NoKernelOutput,B,L},
+                                           _) where {D,T,S<:ShiftingMode,
+                                                     B<:MDBCMode,
+                                                     L<:LogMode}
+        return nothing
+    end
+    function reset_threaded_kernel_arrays!(::SimulationMetaData{D,T,S,K,B,L}, SimThreadedArrays) where {D,T,S<:ShiftingMode,
+                                                                                                       K<:KernelOutputMode,
+                                                                                                       B<:MDBCMode,
+                                                                                                       L<:LogMode}
+        @threads for idx in eachindex(SimThreadedArrays.KernelThreaded)
+            reset_touched!(SimThreadedArrays.KernelThreaded[idx],
+                           SimThreadedArrays.KernelTouched[idx],
+                           SimThreadedArrays.KernelMask[idx])
+            reset_touched!(SimThreadedArrays.KernelGradientThreaded[idx],
+                           SimThreadedArrays.KernelGradientTouched[idx],
+                           SimThreadedArrays.KernelGradientMask[idx])
+        end
+        return nothing
+    end
+
+    function reset_threaded_shifting_arrays!(::SimulationMetaData{D,T,NoShifting,K,B,L},
+                                             _) where {D,T,
+                                                       K<:KernelOutputMode,
+                                                       B<:MDBCMode,
+                                                       L<:LogMode}
+        return nothing
+    end
+    function reset_threaded_shifting_arrays!(::SimulationMetaData{D,T,S,K,B,L},
+                                             SimThreadedArrays) where {D,T,S<:ShiftingMode,
+                                                                       K<:KernelOutputMode,
+                                                                       B<:MDBCMode,
+                                                                       L<:LogMode}
+        @threads for idx in eachindex(SimThreadedArrays.∇CᵢThreaded)
+            reset_touched!(SimThreadedArrays.∇CᵢThreaded[idx],
+                           SimThreadedArrays.∇CᵢTouched[idx],
+                           SimThreadedArrays.∇CᵢMask[idx])
+            reset_touched!(SimThreadedArrays.∇◌rᵢThreaded[idx],
+                           SimThreadedArrays.∇◌rᵢTouched[idx],
+                           SimThreadedArrays.∇◌rᵢMask[idx])
+        end
+        return nothing
+    end
+
+    function reset_threaded_arrays!(SimMetaData, SimThreadedArrays)
+        @threads for idx in eachindex(SimThreadedArrays.dρdtIThreaded)
+            reset_touched!(SimThreadedArrays.dρdtIThreaded[idx],
+                           SimThreadedArrays.dρdtITouched[idx],
+                           SimThreadedArrays.dρdtIMask[idx])
+            reset_touched!(SimThreadedArrays.AccelerationThreaded[idx],
+                           SimThreadedArrays.AccelerationTouched[idx],
+                           SimThreadedArrays.AccelerationMask[idx])
+        end
+        reset_threaded_kernel_arrays!(SimMetaData, SimThreadedArrays)
+        reset_threaded_shifting_arrays!(SimMetaData, SimThreadedArrays)
+        return nothing
+    end
+
     function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
         # Threaded zeroing for main arrays
         @threads for arr in (dρdtI, Acceleration)
@@ -424,13 +506,7 @@ using LinearAlgebra
         end
         zero_kernel_arrays!(SimMetaData, Kernel, KernelGradient)
         zero_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ)
-
-        # Threaded zeroing for fields in SimThreadedArrays
-        foreachfield(f -> begin
-            Threads.@threads for v in f
-                fill!(v, zero(eltype(v)))
-            end
-        end, SimThreadedArrays)
+        reset_threaded_arrays!(SimMetaData, SimThreadedArrays)
 
         return nothing
     end
@@ -442,11 +518,11 @@ using LinearAlgebra
         return nothing
     end
     function reduce_shifting_arrays!(::SimulationMetaData{D,T,S,K,B,L}, ∇Cᵢ, ∇◌rᵢ, SimThreadedArrays) where {D,T,S<:ShiftingMode,
-                                                                                                           K<:KernelOutputMode,
-                                                                                                           B<:MDBCMode,
-                                                                                                           L<:LogMode}
-        reduce_sum!(∇Cᵢ, SimThreadedArrays.∇CᵢThreaded)
-        reduce_sum!(∇◌rᵢ, SimThreadedArrays.∇◌rᵢThreaded)
+                                                                                                          K<:KernelOutputMode,
+                                                                                                          B<:MDBCMode,
+                                                                                                          L<:LogMode}
+        reduce_sum!(∇Cᵢ, SimThreadedArrays.∇CᵢThreaded, SimThreadedArrays.∇CᵢTouched)
+        reduce_sum!(∇◌rᵢ, SimThreadedArrays.∇◌rᵢThreaded, SimThreadedArrays.∇◌rᵢTouched)
         return nothing
     end
 
@@ -469,17 +545,17 @@ using LinearAlgebra
         return nothing
     end
     function reduce_kernel_arrays!(::SimulationMetaData{D,T,S,K,B,L}, Kernel, KernelGradient, SimThreadedArrays) where {D,T,S<:ShiftingMode,
-                                                                                                                     K<:KernelOutputMode,
-                                                                                                                     B<:MDBCMode,
-                                                                                                                     L<:LogMode}
-        reduce_sum!(Kernel, SimThreadedArrays.KernelThreaded)
-        reduce_sum!(KernelGradient, SimThreadedArrays.KernelGradientThreaded)
+                                                                                                                         K<:KernelOutputMode,
+                                                                                                                         B<:MDBCMode,
+                                                                                                                         L<:LogMode}
+        reduce_sum!(Kernel, SimThreadedArrays.KernelThreaded, SimThreadedArrays.KernelTouched)
+        reduce_sum!(KernelGradient, SimThreadedArrays.KernelGradientThreaded, SimThreadedArrays.KernelGradientTouched)
         return nothing
     end
 
     function ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
-        reduce_sum!(dρdtI, SimThreadedArrays.dρdtIThreaded)
-        reduce_sum!(Acceleration, SimThreadedArrays.AccelerationThreaded)
+        reduce_sum!(dρdtI, SimThreadedArrays.dρdtIThreaded, SimThreadedArrays.dρdtITouched)
+        reduce_sum!(Acceleration, SimThreadedArrays.AccelerationThreaded, SimThreadedArrays.AccelerationTouched)
 
         reduce_kernel_arrays!(SimMetaData, Kernel, KernelGradient, SimThreadedArrays)
         reduce_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ, SimThreadedArrays)
