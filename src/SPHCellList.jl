@@ -237,13 +237,14 @@ using LinearAlgebra
         IndexCounter = new_counter + 1
         ParticleRanges[IndexCounter + 1] = start_idx
 
-        @inbounds for bucket in 2:IndexCounter
+        for bucket in 2:IndexCounter
             write_ptrs[bucket] = ParticleRanges[bucket]
         end
 
-        @inbounds for i in 1:n
+        for i in 1:n
             bucket = code_to_bucket[cell_ids[i]]
             idx = write_ptrs[bucket]
+            @assert 1 <= idx <= n "Permutation index $idx out of bounds for $n particles"
             permutation[idx] = i
             write_ptrs[bucket] = idx + 1
         end
