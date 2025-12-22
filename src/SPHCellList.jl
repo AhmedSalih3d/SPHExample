@@ -398,7 +398,7 @@ using LinearAlgebra
     end
 
     function reduce_sum!(target_array, arrays, touched)
-        @inbounds @threads for j in eachindex(arrays)
+        @inbounds for j in eachindex(arrays)
             local array = arrays[j]
             local touched_indices = touched[j]
             for idx in touched_indices
