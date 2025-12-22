@@ -34,6 +34,28 @@ using UnicodePlots
 using LinearAlgebra
     using Bumper
 
+    struct NeighborScratch{CI}
+        cell_ids::Vector{UInt64}
+        unique_codes::Vector{UInt64}
+        cell_buffer::Vector{CI}
+        counts::Vector{Int}
+        write_ptrs::Vector{Int}
+        permutation::Vector{Int}
+        code_to_bucket::Dict{UInt64, Int}
+    end
+
+    function NeighborScratch(n::Integer, ::Type{CI}) where {CI}
+        return NeighborScratch(
+            Vector{UInt64}(undef, n),
+            Vector{UInt64}(undef, n),
+            Vector{CI}(undef, n),
+            Vector{Int}(undef, n),
+            Vector{Int}(undef, n),
+            Vector{Int}(undef, n),
+            Dict{UInt64, Int}(),
+        )
+    end
+
     function ConstructStencil(v::Val{d}) where d
         n_ = CartesianIndices(ntuple(_->-1:1,v))
         half_length = length(n_) ÷ 2
@@ -58,6 +80,22 @@ using LinearAlgebra
         # Consider -1.7 + 0.5, this would give -1.2 and then trunced 1, but we want -2, therefore absolute addition before hand
         # We add 0.5 instead of 1, to ensure proper rounding behavior when restoring the sign for negative numbers.
         Int(sign(x)) * unsafe_trunc(Int, muladd(abs(x),InverseCutOff,0.5))
+    end
+
+    @inline zigzag_encode(x::Int) = (reinterpret(UInt64, x) << 1) ⊻ (reinterpret(UInt64, x) >> 63)
+
+    @inline function morton_code(ci::CartesianIndex{D}) where {D}
+        coords = ntuple(i -> zigzag_encode(ci.I[i]), D)
+        max_bits = (sizeof(UInt64) * 8) ÷ D
+
+        code = zero(UInt64)
+        @inbounds for bit in 0:(max_bits - 1)
+            @inbounds for dim in 1:D
+                code |= ((coords[dim] >> bit) & UInt64(1)) << (bit * D + dim - 1)
+            end
+        end
+
+        return code
     end
 
     # Add contributions related to particle shifting. Dispatch on `SimulationMetaData`
@@ -128,38 +166,91 @@ using LinearAlgebra
     # Arguments
     - `Particles`: The particles whose neighbors are to be updated.
     - `CutOff`: The cutoff value used for cell extraction.
-    - `SortingScratchSpace`: Scratch space for sorting.
+    - `NeighborScratchSpace`: Scratch space for Morton encoding and counting sort.
     - `ParticleRanges`: Array to store the ranges of particles in each cell.
     - `UniqueCells`: Array to store the unique cells.
 
     # Returns
     - `IndexCounter`: The number of unique cells identified.
     """
-    function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
+    function UpdateNeighbors!(Particles, InverseCutOff, NeighborScratchSpace::NeighborScratch,
                               ParticleRanges, UniqueCells, CellDict)
         ExtractCells!(Particles, InverseCutOff)
 
-        sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
-        Cells = @views Particles.Cells
-        @. ParticleRanges             = zero(eltype(ParticleRanges))
-        ParticleRanges[1] = 1
-        IndexCounter                  = 2
-        ParticleRanges[IndexCounter]  = 1
-        UniqueCells[IndexCounter]     = Cells[1]
-        empty!(CellDict)
-        CellDict[Cells[1]] = IndexCounter
+        Cells          = @views Particles.Cells
+        n              = length(Cells)
+        cell_ids       = NeighborScratchSpace.cell_ids
+        counts         = NeighborScratchSpace.counts
+        write_ptrs     = NeighborScratchSpace.write_ptrs
+        permutation    = NeighborScratchSpace.permutation
+        unique_codes   = NeighborScratchSpace.unique_codes
+        cell_buffer    = NeighborScratchSpace.cell_buffer
+        code_to_bucket = NeighborScratchSpace.code_to_bucket
 
-        @inbounds @simd ivdep for i in eachindex(Cells)[2:end]
-            if Cells[i] != Cells[i-1] # Equivalent to diff(Cells) != 0
-                IndexCounter                 += 1
-                ParticleRanges[IndexCounter]  = i
-                UniqueCells[IndexCounter]     = Cells[i]
-                CellDict[Cells[i]]           = IndexCounter
-            end
+        @inbounds for i in 1:n
+            cell_ids[i] = morton_code(Cells[i])
         end
-        ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
 
-        return IndexCounter 
+        empty!(code_to_bucket)
+        fill!(counts, 0)
+
+        ParticleRanges[1] = 1
+        UniqueCells[1]    = zero(eltype(UniqueCells))
+
+        IndexCounter = 1
+        @inbounds for i in 1:n
+            code = cell_ids[i]
+            bucket = get(code_to_bucket, code, 0)
+            if bucket == 0
+                IndexCounter += 1
+                code_to_bucket[code] = IndexCounter
+                unique_codes[IndexCounter] = code
+                cell_buffer[IndexCounter] = Cells[i]
+            end
+            counts[code_to_bucket[code]] += 1
+        end
+
+        order_view = view(permutation, 1:(IndexCounter - 1))
+        sortperm!(order_view, view(unique_codes, 2:IndexCounter))
+
+        start_idx = 1
+        new_counter = 1
+        @inbounds for idx in order_view
+            bucket = idx + 1
+            new_bucket = new_counter + 1
+
+            count = counts[bucket]
+            ParticleRanges[new_bucket] = start_idx
+            UniqueCells[new_bucket]    = cell_buffer[bucket]
+            unique_codes[new_bucket]   = unique_codes[bucket]
+            counts[new_bucket]         = count
+            code_to_bucket[unique_codes[bucket]] = new_bucket
+
+            start_idx += count
+            new_counter += 1
+        end
+        IndexCounter = new_counter
+        ParticleRanges[IndexCounter + 1] = start_idx
+
+        @inbounds for bucket in 2:IndexCounter
+            write_ptrs[bucket] = ParticleRanges[bucket]
+        end
+
+        @inbounds for i in 1:n
+            bucket = code_to_bucket[cell_ids[i]]
+            idx = write_ptrs[bucket]
+            permutation[idx] = i
+            write_ptrs[bucket] = idx + 1
+        end
+
+        foreachfield(f -> permute!(f, permutation), Particles)
+
+        empty!(CellDict)
+        @inbounds for bucket in 2:IndexCounter
+            CellDict[UniqueCells[bucket]] = bucket
+        end
+
+        return IndexCounter
     end
 
 
@@ -732,7 +823,7 @@ using LinearAlgebra
                                       SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
                                       SimConstants, SimParticles, Stencil,
                                       ParticleRanges, UniqueCells, CellDict,
-                                      SortingScratchSpace, SimThreadedArrays,
+                                      NeighborScratchSpace, SimThreadedArrays,
                                       dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
                                       ∇Cᵢ, ∇◌rᵢ, MotionDefinition) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
         @unpack Position, Density, Pressure, Velocity, Acceleration, MotionLimiter, GroupMarker, Kernel, KernelGradient, GhostPoints, GhostNormals = SimParticles
@@ -760,7 +851,7 @@ using LinearAlgebra
                     # Remove if statement logic if you want to update each iteration
                     # if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
                     if Δx >= SimKernel.h
-                        @timeit SimMetaData.HourGlass "02a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells, CellDict)
+                        @timeit SimMetaData.HourGlass "02a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, NeighborScratchSpace,  ParticleRanges, UniqueCells, CellDict)
                         Δx = zero(eltype(Density))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                     end
@@ -845,7 +936,7 @@ using LinearAlgebra
         UniqueCells            = zeros(CartesianIndex{Dimensions}, NumberOfPoints)
         CellDict               = Dict{CartesianIndex{Dimensions}, Int}()
         Stencil                = ConstructStencil(Val(Dimensions))
-        _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
+        NeighborScratchSpace   = NeighborScratch(NumberOfPoints, CartesianIndex{Dimensions})
 
         output = SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
 
@@ -884,7 +975,7 @@ using LinearAlgebra
 
         @inbounds while true
 
-            @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, CellDict, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition)
+            @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, CellDict, NeighborScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition)
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
 
             log_step!(SimMetaData, SimLogger)
