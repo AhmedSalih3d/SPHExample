@@ -219,9 +219,10 @@ using LinearAlgebra
         sortperm!(order_view, view(unique_codes, 2:IndexCounter))
 
         start_idx = 1
-        new_counter = 1
+        new_counter = 0
         @inbounds for idx in order_view
             bucket = idx + 1
+            new_counter += 1
             new_bucket = new_counter + 1
 
             count = counts[bucket]
@@ -232,9 +233,8 @@ using LinearAlgebra
             code_to_bucket[unique_codes[bucket]] = new_bucket
 
             start_idx += count
-            new_counter += 1
         end
-        IndexCounter = new_counter
+        IndexCounter = new_counter + 1
         ParticleRanges[IndexCounter + 1] = start_idx
 
         @inbounds for bucket in 2:IndexCounter
