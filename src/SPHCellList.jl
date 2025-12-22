@@ -398,26 +398,12 @@ using LinearAlgebra
     end
 
     function reduce_sum!(target_array, arrays, touched)
-        # Collect unique indices across all touched lists to avoid races when writing to the
-        # shared `target_array`.
-        seen = falses(length(target_array))
-        unique_indices = Int[]
-        for touched_indices in touched
+        @inbounds for j in eachindex(arrays)
+            local array = arrays[j]
+            local touched_indices = touched[j]
             for idx in touched_indices
-                if !@inbounds seen[idx]
-                    @inbounds seen[idx] = true
-                    push!(unique_indices, idx)
-                end
+                target_array[idx] += array[idx]
             end
-        end
-
-        @inbounds Threads.@threads for k in eachindex(unique_indices)
-            idx = unique_indices[k]
-            acc = zero(eltype(target_array))
-            for j in eachindex(arrays)
-                acc += arrays[j][idx]
-            end
-            target_array[idx] += acc
         end
         return nothing
     end
