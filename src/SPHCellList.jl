@@ -60,6 +60,42 @@ using LinearAlgebra
         Int(sign(x)) * unsafe_trunc(Int, muladd(abs(x),InverseCutOff,0.5))
     end
 
+    @inline function compute_cell_offsets(cells::AbstractVector{<:CartesianIndex{D}}) where D
+        if isempty(cells)
+            return ntuple(_ -> 0, D)
+        end
+
+        mins = ntuple(_ -> typemax(Int), D)
+        @inbounds for cell in cells
+            coords = Tuple(cell)
+            mins = ntuple(i -> min(mins[i], coords[i]), D)
+        end
+
+        return mins
+    end
+
+    @inline function morton_code(coords::NTuple{D,UInt64}) where D
+        # Interleave bits of the coordinates. For D ∈ {2,3} this keeps up to 21 bits
+        # per coordinate inside a 64-bit Morton code. Higher bits are dropped to avoid
+        # overflow but spatial locality is preserved.
+        masked = ntuple(i -> coords[i] & 0x1f_ffff, D)
+        code = zero(UInt64)
+        @inbounds for bit in 0:20
+            shift = bit * D
+            @inbounds for dim in 1:D
+                code |= ((masked[dim] >> bit) & 0x1) << (shift + (dim - 1))
+            end
+        end
+        return code
+    end
+
+    @inline function morton_sort_key(cell::CartesianIndex{D},
+                                     offsets::NTuple{D,Int}) where D
+        coords = Tuple(cell)
+        shifted = ntuple(i -> UInt64(coords[i] - offsets[i]), D)
+        return morton_code(shifted)
+    end
+
     # Add contributions related to particle shifting. Dispatch on `SimulationMetaData`
     # so that no runtime checks are required.
     @inline function add_shifting_terms!(::SimulationMetaData{D,T,NoShifting,K,B,L}, SimThreadedArrays,
@@ -139,7 +175,10 @@ using LinearAlgebra
                               ParticleRanges, UniqueCells, CellDict)
         ExtractCells!(Particles, InverseCutOff)
 
-        sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
+        Cells = @views Particles.Cells
+        offsets = compute_cell_offsets(Cells)
+        sort_key = p -> (morton_sort_key(p.Cells, offsets), p.Cells)
+        sort!(Particles, by = sort_key; scratch=SortingScratchSpace)
         Cells = @views Particles.Cells
         @. ParticleRanges             = zero(eltype(ParticleRanges))
         ParticleRanges[1] = 1
