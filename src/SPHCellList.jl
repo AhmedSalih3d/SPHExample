@@ -60,6 +60,48 @@ using LinearAlgebra
         Int(sign(x)) * unsafe_trunc(Int, muladd(abs(x),InverseCutOff,0.5))
     end
 
+    @inline function compute_cell_offsets(cells::AbstractVector{<:CartesianIndex{D}}) where D
+        if isempty(cells)
+            return ntuple(_ -> 0, D)
+        end
+
+        mins = ntuple(_ -> typemax(Int), D)
+        @inbounds for cell in cells
+            coords = Tuple(cell)
+            mins = ntuple(i -> min(mins[i], coords[i]), D)
+        end
+
+        return mins
+    end
+
+    @inline function morton_code(coords::NTuple{D,UInt64}) where D
+        max_bit = zero(UInt64)
+        @inbounds for coord in coords
+            max_bit = max(max_bit, UInt64(64 - leading_zeros(coord)))
+        end
+
+        if iszero(max_bit)
+            return zero(UInt64)
+        end
+
+        code = zero(UInt64)
+        @inbounds for bit in 0:(max_bit - 1)
+            shift = bit * D
+            @inbounds for dim in 1:D
+                code |= ((coords[dim] >> bit) & 0x1) << (shift + (dim - 1))
+            end
+        end
+
+        return code
+    end
+
+    @inline function morton_sort_key(cell::CartesianIndex{D},
+                                     offsets::NTuple{D,Int}) where D
+        coords = Tuple(cell)
+        shifted = ntuple(i -> UInt64(coords[i] - offsets[i]), D)
+        return morton_code(shifted)
+    end
+
     # Add contributions related to particle shifting. Dispatch on `SimulationMetaData`
     # so that no runtime checks are required.
     @inline function add_shifting_terms!(::SimulationMetaData{D,T,NoShifting,K,B,L}, SimThreadedArrays,
@@ -139,7 +181,25 @@ using LinearAlgebra
                               ParticleRanges, UniqueCells, CellDict)
         ExtractCells!(Particles, InverseCutOff)
 
-        sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
+        Cells = @views Particles.Cells
+        offsets = compute_cell_offsets(Cells)
+        dimensions = length(offsets)
+        sort_key = p -> (morton_sort_key(p.Cells, offsets), p.Cells)
+        max_bit = zero(UInt64)
+
+        @inbounds for cell in Cells
+            coords = Tuple(cell)
+            @inbounds for dim in 1:dimensions
+                shifted = UInt64(coords[dim] - offsets[dim])
+                max_bit = max(max_bit, UInt64(64 - leading_zeros(shifted)))
+            end
+        end
+
+        if Int(max_bit) * dimensions <= 64
+            sort!(Particles, by = sort_key; scratch=SortingScratchSpace)
+        else
+            sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
+        end
         Cells = @views Particles.Cells
         @. ParticleRanges             = zero(eltype(ParticleRanges))
         ParticleRanges[1] = 1
