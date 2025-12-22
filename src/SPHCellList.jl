@@ -36,28 +36,13 @@ using LinearAlgebra
 
     struct NeighborScratch{CI}
         cell_ids::Vector{UInt64}
-        unique_codes::Vector{UInt64}
-        counts::Vector{Int}
-        write_ptrs::Vector{Int}
         permutation::Vector{Int}
-        code_to_bucket::Dict{UInt64, Int}
-        code_to_cell::Dict{UInt64, CI}
     end
 
     function NeighborScratch(n::Integer, ::Type{CI}) where {CI}
-        # The +1 accommodates the sentinel bucket used by `ParticleRanges`
-        # (mirroring its length of n + 2) so that we never write past the
-        # allocated scratch buffers even when every particle occupies a
-        # distinct cell.
-        with_sentinel = n + 1
         return NeighborScratch(
             Vector{UInt64}(undef, n),
-            Vector{UInt64}(undef, with_sentinel),
-            Vector{Int}(undef, with_sentinel),
-            Vector{Int}(undef, with_sentinel),
             Vector{Int}(undef, n),
-            Dict{UInt64, Int}(),
-            Dict{UInt64, CI}(),
         )
     end
 
@@ -185,87 +170,35 @@ using LinearAlgebra
         Cells          = @views Particles.Cells
         n              = length(Cells)
         cell_ids       = NeighborScratchSpace.cell_ids
-        counts         = NeighborScratchSpace.counts
-        write_ptrs     = NeighborScratchSpace.write_ptrs
         permutation    = NeighborScratchSpace.permutation
-        unique_codes   = NeighborScratchSpace.unique_codes
-        code_to_bucket = NeighborScratchSpace.code_to_bucket
-        code_to_cell   = NeighborScratchSpace.code_to_cell
 
         @inbounds for i in 1:n
             cell_ids[i] = morton_code(Cells[i])
         end
 
-        empty!(code_to_bucket)
-        empty!(code_to_cell)
-        fill!(counts, 0)
-
         ParticleRanges[1] = 1
         UniqueCells[1]    = zero(eltype(UniqueCells))
 
-        IndexCounter = 1
-        @inbounds for i in 1:n
-            code = cell_ids[i]
-            bucket = get(code_to_bucket, code, 0)
-            if bucket == 0
-                IndexCounter += 1
-                code_to_bucket[code] = IndexCounter
-                unique_codes[IndexCounter] = code
-                code_to_cell[code] = Cells[i]
-            end
-            counts[code_to_bucket[code]] += 1
-        end
+        order_view = view(permutation, 1:n)
+        sortperm!(order_view, cell_ids)
 
-        order_view = view(permutation, 1:(IndexCounter - 1))
-        sortperm!(order_view, view(unique_codes, 2:IndexCounter))
+        foreachfield(f -> permute!(f, order_view), Particles)
 
-        start_idx = 1
-        new_counter = 0
-        @inbounds for idx in order_view
-            bucket = idx + 1
-            new_counter += 1
-            new_bucket = new_counter + 1
-
-            code = unique_codes[bucket]
-            unique_codes[new_bucket] = code
-            UniqueCells[new_bucket]  = code_to_cell[code]
-            code_to_bucket[code]     = new_bucket
-        end
-        IndexCounter = new_counter + 1
-
-        # Recompute counts in the sorted bucket order to avoid stale state.
-        fill!(counts, 0)
-        @inbounds for i in 1:n
-            bucket = code_to_bucket[cell_ids[i]]
-            counts[bucket] += 1
-        end
-
-        # Build ParticleRanges from the refreshed counts and ensure totals match.
-        @inbounds for bucket in 2:IndexCounter
-            ParticleRanges[bucket] = start_idx
-            start_idx += counts[bucket]
-        end
-        @assert start_idx == n + 1 "Accumulated particle count $(start_idx - 1) differs from particle total $n"
-        ParticleRanges[IndexCounter + 1] = start_idx
-
-        @inbounds for bucket in 2:IndexCounter
-            write_ptrs[bucket] = ParticleRanges[bucket]
-        end
-
-        for i in 1:n
-            bucket = code_to_bucket[cell_ids[i]]
-            idx = write_ptrs[bucket]
-            @assert 1 <= idx <= n "Permutation index $idx out of bounds for $n particles"
-            permutation[idx] = i
-            write_ptrs[bucket] = idx + 1
-        end
-
-        foreachfield(f -> permute!(f, permutation), Particles)
-
+        Cells = @views Particles.Cells
         empty!(CellDict)
-        @inbounds for bucket in 2:IndexCounter
-            CellDict[UniqueCells[bucket]] = bucket
+        IndexCounter = 1
+        ParticleRanges[IndexCounter] = 1
+        UniqueCells[IndexCounter]    = Cells[1]
+
+        @inbounds for i in 2:n
+            if Cells[i] != Cells[i-1]
+                IndexCounter += 1
+                ParticleRanges[IndexCounter] = i
+                UniqueCells[IndexCounter]    = Cells[i]
+                CellDict[Cells[i]]           = IndexCounter
+            end
         end
+        ParticleRanges[IndexCounter + 1] = n + 1
 
         return IndexCounter
     end
