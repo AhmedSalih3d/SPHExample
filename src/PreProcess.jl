@@ -158,38 +158,21 @@ function AllocateSupportDataStructures(::SimulationMetaData{D,T,S,K,B,L}, Positi
 end
 
 function allocate_kernel_arrays(::SimulationMetaData{D,T,S,NoKernelOutput,B,L},
-                                 SimParticles, n_copy) where {D,T,S<:ShiftingMode,
-                                                              B<:MDBCMode,
-                                                              L<:LogMode}
-    KernelTouched          = [Int[] for _ in 1:n_copy]
-    KernelGradientTouched  = [Int[] for _ in 1:n_copy]
-    KernelMask             = [falses(length(SimParticles.Kernel)) for _ in 1:n_copy]
-    KernelGradientMask     = [falses(length(SimParticles.KernelGradient)) for _ in 1:n_copy]
-    return (
-        KernelTouched = KernelTouched,
-        KernelGradientTouched = KernelGradientTouched,
-        KernelMask = KernelMask,
-        KernelGradientMask = KernelGradientMask,
-    )
+                                SimParticles, n_copy) where {D,T,S<:ShiftingMode,
+                                                             B<:MDBCMode,
+                                                             L<:LogMode}
+    return NamedTuple()
 end
 function allocate_kernel_arrays(::SimulationMetaData{D,T,S,K,B,L},
-                                 SimParticles, n_copy) where {D,T,S<:ShiftingMode,
-                                                              K<:KernelOutputMode,
-                                                              B<:MDBCMode,
-                                                              L<:LogMode}
+                                SimParticles, n_copy) where {D,T,S<:ShiftingMode,
+                                                             K<:KernelOutputMode,
+                                                             B<:MDBCMode,
+                                                             L<:LogMode}
     KernelThreaded         = [copy(SimParticles.Kernel) for _ in 1:n_copy]
     KernelGradientThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
-    KernelTouched          = [Int[] for _ in 1:n_copy]
-    KernelGradientTouched  = [Int[] for _ in 1:n_copy]
-    KernelMask             = [falses(length(SimParticles.Kernel)) for _ in 1:n_copy]
-    KernelGradientMask     = [falses(length(SimParticles.KernelGradient)) for _ in 1:n_copy]
     return (
         KernelThreaded = KernelThreaded,
         KernelGradientThreaded = KernelGradientThreaded,
-        KernelTouched = KernelTouched,
-        KernelGradientTouched = KernelGradientTouched,
-        KernelMask = KernelMask,
-        KernelGradientMask = KernelGradientMask,
     )
 end
 
@@ -197,16 +180,7 @@ function allocate_shifting_arrays(::SimulationMetaData{D,T,NoShifting,K,B,L},
                                   ∇Cᵢ, ∇◌rᵢ, n_copy) where {D,T,K<:KernelOutputMode,
                                                             B<:MDBCMode,
                                                             L<:LogMode}
-    ∇CᵢTouched   = [Int[] for _ in 1:n_copy]
-    ∇◌rᵢTouched  = [Int[] for _ in 1:n_copy]
-    ∇CᵢMask      = [falses(length(∇Cᵢ)) for _ in 1:n_copy]
-    ∇◌rᵢMask     = [falses(length(∇◌rᵢ)) for _ in 1:n_copy]
-    return (
-        ∇CᵢTouched   = ∇CᵢTouched,
-        ∇◌rᵢTouched  = ∇◌rᵢTouched,
-        ∇CᵢMask      = ∇CᵢMask,
-        ∇◌rᵢMask     = ∇◌rᵢMask,
-    )
+    return NamedTuple()
 end
 function allocate_shifting_arrays(::SimulationMetaData{D,T,S,K,B,L},
                                   ∇Cᵢ, ∇◌rᵢ, n_copy) where {D,T,S<:ShiftingMode,
@@ -215,17 +189,9 @@ function allocate_shifting_arrays(::SimulationMetaData{D,T,S,K,B,L},
                                                             L<:LogMode}
     ∇CᵢThreaded  = [copy(∇Cᵢ) for _ in 1:n_copy]
     ∇◌rᵢThreaded = [copy(∇◌rᵢ) for _ in 1:n_copy]
-    ∇CᵢTouched   = [Int[] for _ in 1:n_copy]
-    ∇◌rᵢTouched  = [Int[] for _ in 1:n_copy]
-    ∇CᵢMask      = [falses(length(∇Cᵢ)) for _ in 1:n_copy]
-    ∇◌rᵢMask     = [falses(length(∇◌rᵢ)) for _ in 1:n_copy]
     return (
         ∇CᵢThreaded  = ∇CᵢThreaded,
         ∇◌rᵢThreaded = ∇◌rᵢThreaded,
-        ∇CᵢTouched   = ∇CᵢTouched,
-        ∇◌rᵢTouched  = ∇◌rᵢTouched,
-        ∇CᵢMask      = ∇CᵢMask,
-        ∇◌rᵢMask     = ∇◌rᵢMask,
     )
 end
 
@@ -237,17 +203,9 @@ function AllocateThreadedArrays(SimMetaData::SimulationMetaData{D,T,S,K,B,L},
                                                                            L<:LogMode}
     dρdtIThreaded        = [copy(dρdtI) for _ in 1:n_copy]
     AccelerationThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
-    dρdtITouched         = [Int[] for _ in 1:n_copy]
-    AccelerationTouched  = [Int[] for _ in 1:n_copy]
-    dρdtIMask            = [falses(length(dρdtI)) for _ in 1:n_copy]
-    AccelerationMask     = [falses(length(SimParticles.KernelGradient)) for _ in 1:n_copy]
     nt = (
         dρdtIThreaded = dρdtIThreaded,
         AccelerationThreaded = AccelerationThreaded,
-        dρdtITouched = dρdtITouched,
-        AccelerationTouched = AccelerationTouched,
-        dρdtIMask = dρdtIMask,
-        AccelerationMask = AccelerationMask,
     )
 
     nt = merge(nt, allocate_kernel_arrays(SimMetaData, SimParticles, n_copy))
