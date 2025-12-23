@@ -643,21 +643,21 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         end
 
         function close_files()
-            close(save_queue)
-            wait(save_worker)
-
             if !SimMetaData.ExportSingleVTKHDF
-                # Close all particle files in multi-file mode
                 for f in file_handles.particle_files
-                    isopen(f) && close(f)
+                    enqueue_save!(() -> isopen(f) && close(f))
                 end
             else
-                # Close single-file handles
-                isopen(file_handles.particle_files) && close(file_handles.particle_files)
+                enqueue_save!(() -> isopen(file_handles.particle_files) &&
+                                   close(file_handles.particle_files))
                 if file_handles.grid_files !== nothing
-                    isopen(file_handles.grid_files) && close(file_handles.grid_files)
+                    enqueue_save!(() -> isopen(file_handles.grid_files) &&
+                                       close(file_handles.grid_files))
                 end
             end
+
+            close(save_queue)
+            wait(save_worker)
         end
     
         # Return interface functions and handles
