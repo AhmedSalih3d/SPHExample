@@ -191,7 +191,7 @@ using LinearAlgebra
                 CellDict[Cells[i]]           = IndexCounter
             end
         end
-        ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
+        ParticleRanges[IndexCounter + 1]  = length(Cells) + 1
 
         return IndexCounter 
     end
