@@ -468,6 +468,17 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         grid_filename = (iter) -> "$(grid_savepath)_$(lpad(iter,6,"0")).vtkhdf"
         
         output_vars = SimMetaData.OutputVariables
+
+        # Asynchronous save queue to avoid blocking the simulation loop
+        save_queue = Channel{Function}(32)
+
+        save_worker = @async begin
+            for job in save_queue
+                job()
+            end
+        end
+
+        enqueue_save!(job) = put!(save_queue, job)
     
         # Initialize storage for file handles
         file_handles = if !SimMetaData.ExportSingleVTKHDF
@@ -574,40 +585,79 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 "GhostPoints" => gp,
                 "GhostNormals" => gn,
             )
-            output_data = [available[name] for name in output_vars]
 
-            if !SimMetaData.ExportSingleVTKHDF
-                SaveVTKHDF(file_handles.particle_files, iteration, particle_filename(iteration),
-                          pos, output_vars, output_data...)
-            else
-                AppendVTKHDFData(root, SimMetaData.TotalTime, pos, output_vars,
-                                output_data...)
-            end
+            output_data = [available[name] for name in output_vars]
+            current_time = SimMetaData.TotalTime
+            pos_snapshot = copy(pos)
+            output_snapshot = map(copy, output_data)
+
+            enqueue_save!(() -> begin
+                if !SimMetaData.ExportSingleVTKHDF
+                    SaveVTKHDF(
+                        file_handles.particle_files,
+                        iteration,
+                        particle_filename(iteration),
+                        pos_snapshot,
+                        output_vars,
+                        output_snapshot...,
+                    )
+                else
+                    AppendVTKHDFData(
+                        root,
+                        current_time,
+                        pos_snapshot,
+                        output_vars,
+                        output_snapshot...,
+                    )
+                end
+            end)
         end
-    
+
         function save_cell_grid(iteration, cells, SimParticles)
             if SimMetaData.ExportGridCells
+                cells_snapshot = copy(cells)
+
                 if !SimMetaData.ExportSingleVTKHDF
-                    SaveCellGridVTKHDF(grid_filename(iteration), SimKernel, cells)
-                else 
-                    AppendVTKHDFGridData(root_grid, SimMetaData.TotalTime, SimKernel, cells, SimParticles)
+                    enqueue_save!(() -> begin
+                        SaveCellGridVTKHDF(
+                            grid_filename(iteration),
+                            SimKernel,
+                            cells_snapshot,
+                        )
+                    end)
+                else
+                    current_time = SimMetaData.TotalTime
+                    chunk_ids = copy(view(SimParticles.ChunkID, 1:length(cells_snapshot)))
+
+                    enqueue_save!(() -> begin
+                        AppendVTKHDFGridData(
+                            root_grid,
+                            current_time,
+                            SimKernel,
+                            cells_snapshot,
+                            (; ChunkID = chunk_ids),
+                        )
+                    end)
                 end
             end
         end
-    
+
         function close_files()
             if !SimMetaData.ExportSingleVTKHDF
-                # Close all particle files in multi-file mode
                 for f in file_handles.particle_files
-                    isopen(f) && close(f)
+                    enqueue_save!(() -> isopen(f) && close(f))
                 end
             else
-                # Close single-file handles
-                isopen(file_handles.particle_files) && close(file_handles.particle_files)
+                enqueue_save!(() -> isopen(file_handles.particle_files) &&
+                                   close(file_handles.particle_files))
                 if file_handles.grid_files !== nothing
-                    isopen(file_handles.grid_files) && close(file_handles.grid_files)
+                    enqueue_save!(() -> isopen(file_handles.grid_files) &&
+                                       close(file_handles.grid_files))
                 end
             end
+
+            close(save_queue)
+            wait(save_worker)
         end
     
         # Return interface functions and handles
