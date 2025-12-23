@@ -499,13 +499,123 @@ using LinearAlgebra
         return nothing
     end
 
-    function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
-        # Threaded zeroing for main arrays
-        @threads for arr in (dρdtI, Acceleration)
-            fill!(arr, zero(eltype(arr)))
+    struct ResetCache
+        dρdtI_touched::Vector{Int}
+        acceleration_touched::Vector{Int}
+        kernel_touched::Vector{Int}
+        kernel_gradient_touched::Vector{Int}
+        ∇Cᵢ_touched::Vector{Int}
+        ∇◌rᵢ_touched::Vector{Int}
+        dρdtI_mask::BitVector
+        acceleration_mask::BitVector
+        kernel_mask::BitVector
+        kernel_gradient_mask::BitVector
+        ∇Cᵢ_mask::BitVector
+        ∇◌rᵢ_mask::BitVector
+    end
+
+    function ResetCache(SimParticles, dρdtI, ∇Cᵢ, ∇◌rᵢ)
+        return ResetCache(Int[], Int[], Int[], Int[], Int[], Int[],
+                          falses(length(dρdtI)),
+                          falses(length(SimParticles.Acceleration)),
+                          falses(length(SimParticles.Kernel)),
+                          falses(length(SimParticles.KernelGradient)),
+                          falses(length(∇Cᵢ)),
+                          falses(length(∇◌rᵢ)))
+    end
+
+    @inline function collect_touched!(global_touched::Vector{Int}, mask::BitVector,
+                                      touched_lists)
+        @inbounds for touched in touched_lists
+            for idx in touched
+                if !mask[idx]
+                    mask[idx] = true
+                    push!(global_touched, idx)
+                end
+            end
         end
-        zero_kernel_arrays!(SimMetaData, Kernel, KernelGradient)
-        zero_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ)
+        return nothing
+    end
+
+    @inline function reset_accumulators!(data, touched::Vector{Int}, mask::BitVector)
+        @inbounds for idx in touched
+            data[idx] = zero(eltype(data))
+            mask[idx] = false
+        end
+        empty!(touched)
+        return nothing
+    end
+
+    function reset_primary_arrays!(reset_cache::ResetCache, SimThreadedArrays, dρdtI,
+                                   Acceleration)
+        collect_touched!(reset_cache.dρdtI_touched, reset_cache.dρdtI_mask,
+                         SimThreadedArrays.dρdtITouched)
+        collect_touched!(reset_cache.acceleration_touched, reset_cache.acceleration_mask,
+                         SimThreadedArrays.AccelerationTouched)
+        reset_accumulators!(dρdtI, reset_cache.dρdtI_touched, reset_cache.dρdtI_mask)
+        reset_accumulators!(Acceleration, reset_cache.acceleration_touched,
+                            reset_cache.acceleration_mask)
+        return nothing
+    end
+
+    function reset_kernel_arrays!(
+        ::SimulationMetaData{D,T,S,NoKernelOutput,B,L},
+        ::ResetCache,
+        ::Any,
+        ::Any,
+        ::Any,
+    ) where {D,T,S<:ShiftingMode,B<:MDBCMode,L<:LogMode}
+        return nothing
+    end
+    function reset_kernel_arrays!(
+        ::SimulationMetaData{D,T,S,K,B,L},
+        reset_cache::ResetCache,
+        SimThreadedArrays,
+        Kernel,
+        KernelGradient,
+    ) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode,L<:LogMode}
+        collect_touched!(reset_cache.kernel_touched, reset_cache.kernel_mask,
+                         SimThreadedArrays.KernelTouched)
+        collect_touched!(reset_cache.kernel_gradient_touched,
+                         reset_cache.kernel_gradient_mask,
+                         SimThreadedArrays.KernelGradientTouched)
+        reset_accumulators!(Kernel, reset_cache.kernel_touched, reset_cache.kernel_mask)
+        reset_accumulators!(KernelGradient, reset_cache.kernel_gradient_touched,
+                            reset_cache.kernel_gradient_mask)
+        return nothing
+    end
+
+    function reset_shifting_arrays!(
+        ::SimulationMetaData{D,T,NoShifting,K,B,L},
+        ::ResetCache,
+        ::Any,
+        ::Any,
+        ::Any,
+    ) where {D,T,K<:KernelOutputMode,B<:MDBCMode,L<:LogMode}
+        return nothing
+    end
+    function reset_shifting_arrays!(
+        ::SimulationMetaData{D,T,S,K,B,L},
+        reset_cache::ResetCache,
+        SimThreadedArrays,
+        ∇Cᵢ,
+        ∇◌rᵢ,
+    ) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode,L<:LogMode}
+        collect_touched!(reset_cache.∇Cᵢ_touched, reset_cache.∇Cᵢ_mask,
+                         SimThreadedArrays.∇CᵢTouched)
+        collect_touched!(reset_cache.∇◌rᵢ_touched, reset_cache.∇◌rᵢ_mask,
+                         SimThreadedArrays.∇◌rᵢTouched)
+        reset_accumulators!(∇Cᵢ, reset_cache.∇Cᵢ_touched, reset_cache.∇Cᵢ_mask)
+        reset_accumulators!(∇◌rᵢ, reset_cache.∇◌rᵢ_touched, reset_cache.∇◌rᵢ_mask)
+        return nothing
+    end
+
+    function ResetStep!(SimMetaData, SimThreadedArrays, reset_cache::ResetCache, dρdtI,
+                        Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+        reset_primary_arrays!(reset_cache, SimThreadedArrays, dρdtI, Acceleration)
+        reset_kernel_arrays!(SimMetaData, reset_cache, SimThreadedArrays,
+                             Kernel, KernelGradient)
+        reset_shifting_arrays!(SimMetaData, reset_cache, SimThreadedArrays, ∇Cᵢ, ∇◌rᵢ)
         reset_threaded_arrays!(SimMetaData, SimThreadedArrays)
 
         return nothing
@@ -804,14 +914,33 @@ using LinearAlgebra
     end
 
     
-    @inbounds function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
-                                      SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
-                                      SimConstants, SimParticles, Stencil,
-                                      ParticleRanges, UniqueCells, CellDict,
-                                      SortingScratchSpace, SimThreadedArrays,
-                                      dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
-                                      ∇Cᵢ, ∇◌rᵢ, MotionDefinition) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
-        @unpack Position, Density, Pressure, Velocity, Acceleration, MotionLimiter, GroupMarker, Kernel, KernelGradient, GhostPoints, GhostNormals = SimParticles
+    @inbounds function SimulationLoop(
+        SimDensityDiffusion::SDD,
+        SimViscosity::SV,
+        SimKernel,
+        SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode,
+                                        LMode},
+        SimConstants,
+        SimParticles,
+        Stencil,
+        ParticleRanges,
+        UniqueCells,
+        CellDict,
+        SortingScratchSpace,
+        SimThreadedArrays,
+        reset_cache,
+        dρdtI,
+        Velocityₙ⁺,
+        Positionₙ⁺,
+        ρₙ⁺,
+        ∇Cᵢ,
+        ∇◌rᵢ,
+        MotionDefinition,
+    ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
+             SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
+        @unpack Position, Density, Pressure, Velocity, Acceleration, MotionLimiter,
+                GroupMarker, Kernel, KernelGradient, GhostPoints, GhostNormals =
+            SimParticles
         ParticleType   = SimParticles.Type
         ParticleMarker = GroupMarker
 
@@ -823,61 +952,131 @@ using LinearAlgebra
 
                 Δx = update_delta_x!(Δx, Positionₙ⁺, SimParticles.Position)
 
-                # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
+                # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ",
+                #         SimMetaData.CurrentTimeStep, " Iteration: ",
+                #         SimMetaData.Iteration, " TotalTime: ",
+                #         SimMetaData.TotalTime, " OutputIterationCounter: ",
+                #         SimMetaData.OutputIterationCounter)
 
-                @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel)
+                @timeit SimMetaData.HourGlass "01 Update TimeStep" begin
+                    dt = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel)
+                end
                 dt₂ = dt * 0.5
 
                 @timeit SimMetaData.HourGlass "02 Calculate IndexCounter"  begin
-                    # Note: If particles are not inside of the neighbor list visualiation, try setting this if statement to always true, since UniqueCells will be updated always then
-                    # In theory, the maximal speed is the speed of sound, this should give a safe guard
-                    # and ensure it is always updated in a reasonable manner. This only works well, assuming that
-                    # c₀ >= maximum(norm.(Velocity))
+                    # Note: If particles are not inside of the neighbor list
+                    # visualiation, try setting this if statement to always true,
+                    # since UniqueCells will be updated always then. In theory, the
+                    # maximal speed is the speed of sound, this should give a safe
+                    # guard and ensure it is always updated in a reasonable manner.
+                    # This only works well, assuming that c₀ >= maximum(norm.(Velocity))
                     # Remove if statement logic if you want to update each iteration
-                    # if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
+                    # if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H /
+                    # (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 ||
+                    # SimMetaData.Iteration == 1
                     if Δx >= SimKernel.h
-                        @timeit SimMetaData.HourGlass "02a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells, CellDict)
+                        @timeit SimMetaData.HourGlass "02a Actual Calculate IndexCounter" begin
+                            SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles,
+                                                                        SimKernel.H⁻¹,
+                                                                        SortingScratchSpace,
+                                                                        ParticleRanges,
+                                                                        UniqueCells,
+                                                                        CellDict)
+                        end
                         Δx = zero(eltype(Density))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                     end
                 end
 
-                @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
+                @timeit SimMetaData.HourGlass "Motion" begin
+                    ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂,
+                                   MotionDefinition, SimMetaData)
+                end
             
                 ###=== First step of resetting arrays
-                @timeit SimMetaData.HourGlass "ResetArrays"                              ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+                @timeit SimMetaData.HourGlass "ResetArrays" begin
+                    ResetStep!(SimMetaData, SimThreadedArrays, reset_cache, dρdtI,
+                               Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+                end
                 ###===
                  
-                @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-                @timeit SimMetaData.HourGlass "04 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType)
+                @timeit SimMetaData.HourGlass "03 Pressure" begin
+                    Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
+                end
+                @timeit SimMetaData.HourGlass "04 Apply MDBC before Half TimeStep" begin
+                    ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants,
+                                         SimParticles, ParticleRanges, CellDict,
+                                         Position, Density, GhostPoints, GhostNormals,
+                                         ParticleType)
+                end
 
-                @timeit SimMetaData.HourGlass "05 First NeighborLoop"                    NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, Position, Density, Pressure, Velocity, MotionLimiter, UniqueCellsView)
-                @timeit SimMetaData.HourGlass "Reduction"                                ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+                @timeit SimMetaData.HourGlass "05 First NeighborLoop" begin
+                    NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel,
+                                  SimMetaData, SimConstants, SimParticles,
+                                  SimThreadedArrays, ParticleRanges, CellDict, Stencil,
+                                  Position, Density, Pressure, Velocity, MotionLimiter,
+                                  UniqueCellsView)
+                end
+                @timeit SimMetaData.HourGlass "Reduction" begin
+                    ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration,
+                                   Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+                end
 
 
-                @timeit SimMetaData.HourGlass "06 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
+                @timeit SimMetaData.HourGlass "06 Update To Half TimeStep" begin
+                    HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺,
+                                 Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
+                end
 
 
-                @timeit SimMetaData.HourGlass "07 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+                @timeit SimMetaData.HourGlass "07 Half LimitDensityAtBoundary" begin
+                    LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+                end
             
                 ###=== Second step of resetting arrays
-                @timeit SimMetaData.HourGlass "ResetArrays"                              ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+                @timeit SimMetaData.HourGlass "ResetArrays" begin
+                    ResetStep!(SimMetaData, SimThreadedArrays, reset_cache, dρdtI,
+                               Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+                end
                 ###===
 
-                @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
+                @timeit SimMetaData.HourGlass "Motion" begin
+                    ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂,
+                                   MotionDefinition, SimMetaData)
+                end
             
-                @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-                @timeit SimMetaData.HourGlass "08 Second NeighborLoop"                   NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, ParticleRanges, CellDict, Stencil, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter, UniqueCellsView)
-                @timeit SimMetaData.HourGlass "Reduction"                                ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+                @timeit SimMetaData.HourGlass "03 Pressure" begin
+                    Pressure!(SimParticles.Pressure, ρₙ⁺, SimConstants)
+                end
+                @timeit SimMetaData.HourGlass "08 Second NeighborLoop" begin
+                    NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel,
+                                  SimMetaData, SimConstants, SimParticles,
+                                  SimThreadedArrays, ParticleRanges, CellDict, Stencil,
+                                  Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺, MotionLimiter,
+                                  UniqueCellsView)
+                end
+                @timeit SimMetaData.HourGlass "Reduction" begin
+                    ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration,
+                                   Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
+                end
 
             
-                @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
+                @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" begin
+                    LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
+                end
             
-                @timeit SimMetaData.HourGlass "10 Final Density"                         DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
+                @timeit SimMetaData.HourGlass "10 Final Density" begin
+                    DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
+                end
             
-                @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+                @timeit SimMetaData.HourGlass "11 Update To Final TimeStep" begin
+                    FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles,
+                                 ∇Cᵢ, ∇◌rᵢ, dt)
+                end
             
-                @timeit SimMetaData.HourGlass "12 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
+                @timeit SimMetaData.HourGlass "12 Update MetaData" begin
+                    UpdateMetaData!(SimMetaData, dt)
+                end
 
             end
         
@@ -915,6 +1114,7 @@ using LinearAlgebra
         Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
     
         SimThreadedArrays = AllocateThreadedArrays(SimMetaData, SimParticles, dρdtI, ∇Cᵢ, ∇◌rᵢ)
+        reset_cache = ResetCache(SimParticles, dρdtI, ∇Cᵢ, ∇◌rᵢ)
     
         # Produce sorting related variables
         ParticleRanges         = zeros(Int, NumberOfPoints + 1 + 1) # +1 for the last particle, +1 for dummy entry
@@ -960,7 +1160,13 @@ using LinearAlgebra
 
         @inbounds while true
 
-            @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles, Stencil, ParticleRanges, UniqueCells, CellDict, SortingScratchSpace, SimThreadedArrays, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition)
+            @timeit SimMetaData.HourGlass "00 SimulationLoop" begin
+                SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                               SimConstants, SimParticles, Stencil, ParticleRanges,
+                               UniqueCells, CellDict, SortingScratchSpace,
+                               SimThreadedArrays, reset_cache, dρdtI, Velocityₙ⁺,
+                               Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, MotionDefinition)
+            end
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
 
             log_step!(SimMetaData, SimLogger)
