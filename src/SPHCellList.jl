@@ -33,6 +33,7 @@ using Base.Threads
 using UnicodePlots
 using LinearAlgebra
     using Bumper
+    using Polyester
 
     function ConstructStencil(v::Val{d}) where d
         n_ = CartesianIndices(ntuple(_->-1:1,v))
@@ -231,7 +232,7 @@ using LinearAlgebra
         num_threads = Threads.nthreads()
         chunk_size = ceil(Int, N / num_threads)
 
-        @inbounds Threads.@threads for t in 1:num_threads
+        @inbounds @batch for t in 1:num_threads
             ichunk = t   # stable per-thread buffer index
             start_iter = (t-1) * chunk_size + 1
             end_iter = min(t * chunk_size, N)
@@ -283,7 +284,7 @@ using LinearAlgebra
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         Cells = SimParticles.Cells
-        @inbounds Threads.@threads for i in eachindex(Position)
+        @inbounds @batch for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
             CellIndex = Cells[i]
@@ -336,7 +337,7 @@ using LinearAlgebra
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         Cells = SimParticles.Cells
-        @inbounds Threads.@threads for i in eachindex(Position)
+        @inbounds @batch for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
             kernel_acc = zero(Kernel[i])
@@ -398,7 +399,7 @@ using LinearAlgebra
                                                   L<:LogMode,SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         Cells = SimParticles.Cells
-        @inbounds Threads.@threads for i in eachindex(Position)
+        @inbounds @batch for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
             shift_c_acc = zero(∇Cᵢ[i])
@@ -462,7 +463,7 @@ using LinearAlgebra
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         Cells = SimParticles.Cells
-        @inbounds Threads.@threads for i in eachindex(Position)
+        @inbounds @batch for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
             kernel_acc = zero(Kernel[i])
@@ -527,7 +528,7 @@ using LinearAlgebra
         
         FullStencil = CartesianIndices(ntuple(_->-1:1, Dimensions))
 
-        @inbounds @threads for iter in eachindex(GhostPoints)
+        @inbounds @batch for iter in eachindex(GhostPoints)
             GhostPoint = GhostPoints[iter]
 
             if !iszero(GhostPoint)
@@ -931,7 +932,7 @@ using LinearAlgebra
                                                                                        K<:KernelOutputMode,
                                                                                        B<:MDBCMode,
                                                                                        L<:LogMode}
-        @threads for arr in arrays
+        @batch for arr in arrays
             fill!(arr, zero(eltype(arr)))
         end
         return nothing
@@ -947,7 +948,7 @@ using LinearAlgebra
                                                                                      K<:KernelOutputMode,
                                                                                      B<:MDBCMode,
                                                                                      L<:LogMode}
-        @threads for arr in arrays
+        @batch for arr in arrays
             fill!(arr, zero(eltype(arr)))
         end
         return nothing
@@ -963,7 +964,7 @@ using LinearAlgebra
                                                                                                        K<:KernelOutputMode,
                                                                                                        B<:MDBCMode,
                                                                                                        L<:LogMode}
-        @threads for idx in eachindex(SimThreadedArrays.KernelThreaded)
+        @batch for idx in eachindex(SimThreadedArrays.KernelThreaded)
             reset_touched!(SimThreadedArrays.KernelThreaded[idx],
                            SimThreadedArrays.KernelTouched[idx],
                            SimThreadedArrays.KernelMask[idx])
@@ -986,7 +987,7 @@ using LinearAlgebra
                                                                        K<:KernelOutputMode,
                                                                        B<:MDBCMode,
                                                                        L<:LogMode}
-        @threads for idx in eachindex(SimThreadedArrays.∇CᵢThreaded)
+        @batch for idx in eachindex(SimThreadedArrays.∇CᵢThreaded)
             reset_touched!(SimThreadedArrays.∇CᵢThreaded[idx],
                            SimThreadedArrays.∇CᵢTouched[idx],
                            SimThreadedArrays.∇CᵢMask[idx])
@@ -998,7 +999,7 @@ using LinearAlgebra
     end
 
     function reset_threaded_arrays!(SimMetaData, SimThreadedArrays)
-        @threads for idx in eachindex(SimThreadedArrays.dρdtIThreaded)
+        @batch for idx in eachindex(SimThreadedArrays.dρdtIThreaded)
             reset_touched!(SimThreadedArrays.dρdtIThreaded[idx],
                            SimThreadedArrays.dρdtITouched[idx],
                            SimThreadedArrays.dρdtIMask[idx])
@@ -1013,7 +1014,7 @@ using LinearAlgebra
 
     function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
         # Threaded zeroing for main arrays
-        @threads for arr in (dρdtI, Acceleration)
+        @batch for arr in (dρdtI, Acceleration)
             fill!(arr, zero(eltype(arr)))
         end
         zero_kernel_arrays!(SimMetaData, Kernel, KernelGradient)
