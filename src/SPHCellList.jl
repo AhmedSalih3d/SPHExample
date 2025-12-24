@@ -1327,6 +1327,30 @@ using LinearAlgebra
         return Δx + 4*maxd
     end
 
+    """
+        update_local_delta_x!(Δx_local, posₙ⁺, pos, h)
+
+    Accumulate per-particle displacement since the last neighbor update and return
+    `true` when any particle exceeds `h`.
+    """
+    @inline function update_local_delta_x!(Δx_local::AbstractVector{T},
+                                           posₙ⁺::AbstractVector{SVector{D, T}},
+                                           pos   ::AbstractVector{SVector{D, T}},
+                                           h::T) where {D, T<:Real}
+        @inbounds for i in eachindex(posₙ⁺, pos, Δx_local)
+            sumsq = zero(T)
+            @inbounds for j in 1:D
+                d = posₙ⁺[i][j] - pos[i][j]
+                sumsq += d*d
+            end
+            Δx_local[i] += 4 * sqrt(sumsq)
+            if Δx_local[i] >= h
+                return true
+            end
+        end
+        return false
+    end
+
     
     @inbounds function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
@@ -1344,12 +1368,13 @@ using LinearAlgebra
         ParticleMarker = GroupMarker
 
         ###
-        Δx = one(eltype(Density)) + SimKernel.h
+        Δx_local = SimMetaData.LocalΔx
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
 
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
 
-                Δx = update_delta_x!(Δx, Positionₙ⁺, SimParticles.Position)
+                ShouldRebuild = update_local_delta_x!(Δx_local, Positionₙ⁺,
+                                                    SimParticles.Position, SimKernel.h)
 
                 # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
 
@@ -1363,9 +1388,9 @@ using LinearAlgebra
                     # c₀ >= maximum(norm.(Velocity))
                     # Remove if statement logic if you want to update each iteration
                     # if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
-                    if Δx >= SimKernel.h
+                    if ShouldRebuild
                         @timeit SimMetaData.HourGlass "02a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells, CellDict)
-                        Δx = zero(eltype(Density))
+                        fill!(Δx_local, zero(eltype(Δx_local)))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                         BuildNeighborCellLists!(neighbor_cell_lists, FullStencil,
                                                 UniqueCellsView, ParticleRanges,
@@ -1448,6 +1473,7 @@ using LinearAlgebra
         Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
     
         SimThreadedArrays = AllocateThreadedArrays(SimMetaData, SimParticles, dρdtI, ∇Cᵢ, ∇◌rᵢ)
+        SimMetaData.LocalΔx = zeros(eltype(dρdtI), NumberOfPoints)
     
         # Produce sorting related variables
         ParticleRanges         = zeros(Int, NumberOfPoints + 1 + 1) # +1 for the last particle, +1 for dummy entry

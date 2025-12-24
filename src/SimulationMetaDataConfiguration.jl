@@ -64,6 +64,7 @@ struct StoreLog <: LogMode end
     ]
     OpenLogFile::Bool                       = true
     ChunkMultiplier::Int                    = 1
+    LocalΔx::Vector{FloatType}              = Vector{FloatType}()
 end
 SimulationMetaData{D,T,S,K,B}(; kwargs...) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode} =
     SimulationMetaData{D,T,S,K,B,NoLog}(; kwargs...)
@@ -75,4 +76,3 @@ SimulationMetaData{D,T}(; kwargs...) where {D,T} =
     SimulationMetaData{D,T,NoShifting,NoKernelOutput,NoMDBC,NoLog}(; kwargs...)
 
 end
-
