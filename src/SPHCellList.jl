@@ -1328,26 +1328,23 @@ using LinearAlgebra
     end
 
     """
-        update_local_cell_delta_x!(Δx_cell, posₙ⁺, pos, cells, cell_dict, h)
+        update_local_delta_x!(Δx_local, posₙ⁺, pos, h)
 
-    Accumulate per-particle displacement into per-cell bins since the last neighbor
-    update and return `true` when any cell exceeds `h`.
+    Accumulate per-particle displacement since the last neighbor update and return
+    `true` when any particle exceeds `h`.
     """
-    @inline function update_local_cell_delta_x!(Δx_cell::AbstractVector{T},
-                                                posₙ⁺::AbstractVector{SVector{D, T}},
-                                                pos   ::AbstractVector{SVector{D, T}},
-                                                cells::AbstractVector,
-                                                cell_dict,
-                                                h::T) where {D, T<:Real}
-        @inbounds for i in eachindex(posₙ⁺, pos, cells)
+    @inline function update_local_delta_x!(Δx_local::AbstractVector{T},
+                                           posₙ⁺::AbstractVector{SVector{D, T}},
+                                           pos   ::AbstractVector{SVector{D, T}},
+                                           h::T) where {D, T<:Real}
+        @inbounds for i in eachindex(posₙ⁺, pos, Δx_local)
             sumsq = zero(T)
             @inbounds for j in 1:D
                 d = posₙ⁺[i][j] - pos[i][j]
                 sumsq += d*d
             end
-            cell_index = get(cell_dict, cells[i], 1)
-            Δx_cell[cell_index] += 4 * sqrt(sumsq)
-            if Δx_cell[cell_index] >= h
+            Δx_local[i] += 4 * sqrt(sumsq)
+            if Δx_local[i] >= h
                 return true
             end
         end
@@ -1371,15 +1368,13 @@ using LinearAlgebra
         ParticleMarker = GroupMarker
 
         ###
-        Δx_cell = SimMetaData.LocalCellΔx
+        Δx_local = SimMetaData.LocalΔx
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
 
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
 
-                ShouldRebuild = update_local_cell_delta_x!(
-                    Δx_cell, Positionₙ⁺, SimParticles.Position, SimParticles.Cells,
-                    CellDict, SimKernel.h,
-                )
+                ShouldRebuild = update_local_delta_x!(Δx_local, Positionₙ⁺,
+                                                    SimParticles.Position, SimKernel.h)
 
                 # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
 
@@ -1395,10 +1390,7 @@ using LinearAlgebra
                     # if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
                     if ShouldRebuild
                         @timeit SimMetaData.HourGlass "02a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells, CellDict)
-                        if length(Δx_cell) != SimMetaData.IndexCounter
-                            resize!(Δx_cell, SimMetaData.IndexCounter)
-                        end
-                        fill!(Δx_cell, zero(eltype(Δx_cell)))
+                        fill!(Δx_local, zero(eltype(Δx_local)))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                         BuildNeighborCellLists!(neighbor_cell_lists, FullStencil,
                                                 UniqueCellsView, ParticleRanges,
@@ -1481,7 +1473,7 @@ using LinearAlgebra
         Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
     
         SimThreadedArrays = AllocateThreadedArrays(SimMetaData, SimParticles, dρdtI, ∇Cᵢ, ∇◌rᵢ)
-        SimMetaData.LocalCellΔx = zeros(eltype(dρdtI), length(UniqueCells))
+        SimMetaData.LocalΔx = zeros(eltype(dρdtI), NumberOfPoints)
     
         # Produce sorting related variables
         ParticleRanges         = zeros(Int, NumberOfPoints + 1 + 1) # +1 for the last particle, +1 for dummy entry
