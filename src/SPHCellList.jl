@@ -42,7 +42,7 @@ using LinearAlgebra
         return n
     end
 
-    function construct_full_stencil(v::Val{d}) where d
+    function ConstructFullStencil(v::Val{d}) where d
         return CartesianIndices(ntuple(_->-1:1, v))
     end
 
@@ -1238,7 +1238,7 @@ using LinearAlgebra
         UniqueCells            = zeros(CartesianIndex{Dimensions}, NumberOfPoints)
         CellDict               = Dict{CartesianIndex{Dimensions}, Int}()
         HalfStencil            = ConstructStencil(Val(Dimensions))
-        FullStencil            = construct_full_stencil(Val(Dimensions))
+        FullStencil            = ConstructFullStencil(Val(Dimensions))
         _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
 
         output = SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
