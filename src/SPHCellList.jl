@@ -274,6 +274,61 @@ using LinearAlgebra
     end
 
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
+                                      SimMetaData::SimulationMetaData{D,T,NoShifting,NoKernelOutput,B,L},
+                                      SimConstants, SimParticles, ParticleRanges,
+                                      CellDict, neighbor_cell_lists, Position, Density,
+                                      Pressure, Velocity, MotionLimiter, dρdtI,
+                                      Acceleration, Kernel, KernelGradient, ∇Cᵢ,
+                                      ∇◌rᵢ) where {D,T,B<:MDBCMode,L<:LogMode,
+                                                  SDD<:SPHDensityDiffusion,
+                                                  SV<:SPHViscosity}
+        Cells = SimParticles.Cells
+        @inbounds Threads.@threads for i in eachindex(Position)
+            dρdt_acc = zero(dρdtI[i])
+            acc_acc = zero(Acceleration[i])
+            CellIndex = Cells[i]
+            CellListIndex = get(CellDict, CellIndex, 1)
+            SameCellStart = ParticleRanges[CellListIndex]
+            SameCellEnd = ParticleRanges[CellListIndex + 1] - 1
+            NeighborCellIndices = neighbor_cell_lists[CellListIndex]
+
+            for NeighborIdx in NeighborCellIndices
+                if NeighborIdx == CellListIndex
+                    @inbounds for j in SameCellStart:(i - 1)
+                        dρdt_acc, acc_acc = ComputeInteractionsPerParticleNoKernel!(
+                            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                            SimConstants, SimParticles, Position, Density, Pressure,
+                            Velocity, MotionLimiter, dρdt_acc, acc_acc, i, j,
+                        )
+                    end
+                    @inbounds for j in (i + 1):SameCellEnd
+                        dρdt_acc, acc_acc = ComputeInteractionsPerParticleNoKernel!(
+                            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                            SimConstants, SimParticles, Position, Density, Pressure,
+                            Velocity, MotionLimiter, dρdt_acc, acc_acc, i, j,
+                        )
+                    end
+                else
+                    StartIndex_ = ParticleRanges[NeighborIdx]
+                    EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
+                    @inbounds for j in StartIndex_:EndIndex_
+                        dρdt_acc, acc_acc = ComputeInteractionsPerParticleNoKernel!(
+                            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                            SimConstants, SimParticles, Position, Density, Pressure,
+                            Velocity, MotionLimiter, dρdt_acc, acc_acc, i, j,
+                        )
+                    end
+                end
+            end
+
+            dρdtI[i] = dρdt_acc
+            Acceleration[i] = acc_acc
+        end
+
+        return nothing
+    end
+
+    function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{D,T,NoShifting,K,B,L},
                                       SimConstants, SimParticles, ParticleRanges,
                                       CellDict, neighbor_cell_lists, Position, Density,
@@ -334,6 +389,71 @@ using LinearAlgebra
             Acceleration[i] = acc_acc
             Kernel[i] = kernel_acc
             KernelGradient[i] = kernel_grad_acc
+        end
+
+        return nothing
+    end
+
+    function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
+                                      SimMetaData::SimulationMetaData{D,T,S,NoKernelOutput,B,L},
+                                      SimConstants, SimParticles, ParticleRanges,
+                                      CellDict, neighbor_cell_lists, Position, Density,
+                                      Pressure, Velocity, MotionLimiter, dρdtI,
+                                      Acceleration, Kernel, KernelGradient, ∇Cᵢ,
+                                      ∇◌rᵢ) where {D,T,S<:ShiftingMode,B<:MDBCMode,
+                                                  L<:LogMode,SDD<:SPHDensityDiffusion,
+                                                  SV<:SPHViscosity}
+        Cells = SimParticles.Cells
+        @inbounds Threads.@threads for i in eachindex(Position)
+            dρdt_acc = zero(dρdtI[i])
+            acc_acc = zero(Acceleration[i])
+            shift_c_acc = zero(∇Cᵢ[i])
+            shift_r_acc = zero(∇◌rᵢ[i])
+            CellIndex = Cells[i]
+            CellListIndex = get(CellDict, CellIndex, 1)
+            SameCellStart = ParticleRanges[CellListIndex]
+            SameCellEnd = ParticleRanges[CellListIndex + 1] - 1
+            NeighborCellIndices = neighbor_cell_lists[CellListIndex]
+
+            for NeighborIdx in NeighborCellIndices
+                if NeighborIdx == CellListIndex
+                    @inbounds for j in SameCellStart:(i - 1)
+                        dρdt_acc, acc_acc, shift_c_acc, shift_r_acc =
+                            ComputeInteractionsPerParticleNoKernel!(
+                                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                                SimConstants, SimParticles, Position, Density, Pressure,
+                                Velocity, MotionLimiter, dρdt_acc, acc_acc, shift_c_acc,
+                                shift_r_acc, i, j,
+                            )
+                    end
+                    @inbounds for j in (i + 1):SameCellEnd
+                        dρdt_acc, acc_acc, shift_c_acc, shift_r_acc =
+                            ComputeInteractionsPerParticleNoKernel!(
+                                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                                SimConstants, SimParticles, Position, Density, Pressure,
+                                Velocity, MotionLimiter, dρdt_acc, acc_acc, shift_c_acc,
+                                shift_r_acc, i, j,
+                            )
+                    end
+                else
+                    StartIndex_ = ParticleRanges[NeighborIdx]
+                    EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
+                    @inbounds for j in StartIndex_:EndIndex_
+                        dρdt_acc, acc_acc, shift_c_acc, shift_r_acc =
+                            ComputeInteractionsPerParticleNoKernel!(
+                                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                                SimConstants, SimParticles, Position, Density, Pressure,
+                                Velocity, MotionLimiter, dρdt_acc, acc_acc, shift_c_acc,
+                                shift_r_acc, i, j,
+                            )
+                    end
+                end
+            end
+
+            dρdtI[i] = dρdt_acc
+            Acceleration[i] = acc_acc
+            ∇Cᵢ[i] = shift_c_acc
+            ∇◌rᵢ[i] = shift_r_acc
         end
 
         return nothing
@@ -567,6 +687,54 @@ using LinearAlgebra
         return dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc
     end
 
+    Base.@propagate_inbounds function ComputeInteractionsPerParticleNoKernel!(
+        SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
+        SimMetaData::SimulationMetaData{D,T,NoShifting,NoKernelOutput,B,L}, SimConstants,
+        SimParticles, Position, Density, Pressure, Velocity, MotionLimiter,
+        dρdt_acc, acc_acc, i, j) where {D,T,B<:MDBCMode,L<:LogMode,
+                                        SDD<:SPHDensityDiffusion,
+                                        SV<:SPHViscosity}
+        @unpack m₀, dx = SimConstants
+        @unpack h⁻¹, H² = SimKernel
+
+        xᵢⱼ = Position[i] - Position[j]
+        xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
+        if xᵢⱼ² <= H²
+            dᵢⱼ = sqrt(abs(xᵢⱼ²))
+            q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
+            ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
+
+            ρᵢ = Density[i]
+            ρⱼ = Density[j]
+
+            vᵢ = Velocity[i]
+            vⱼ = Velocity[j]
+            vᵢⱼ = vᵢ - vⱼ
+            density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
+            dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
+
+            Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel,
+                                              SimConstants, SimParticles, xᵢⱼ,
+                                              ∇ᵢWᵢⱼ, xᵢⱼ², i, j, MotionLimiter)
+
+            dρdt_acc += dρdt⁺ + Dᵢ
+
+            Pᵢ = Pressure[i]
+            Pⱼ = Pressure[j]
+            Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
+            f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
+            dvdt⁺ = -m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
+
+            visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants,
+                                             SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ,
+                                             xᵢⱼ², i, j)
+
+            acc_acc += dvdt⁺ + visc_term
+        end
+
+        return dρdt_acc, acc_acc
+    end
+
     Base.@propagate_inbounds function ComputeInteractionsPerParticle!(
         SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         SimMetaData::SimulationMetaData{D,T,S,K,B,L}, SimConstants,
@@ -625,6 +793,61 @@ using LinearAlgebra
         end
 
         return dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc, shift_r_acc
+    end
+
+    Base.@propagate_inbounds function ComputeInteractionsPerParticleNoKernel!(
+        SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
+        SimMetaData::SimulationMetaData{D,T,S,NoKernelOutput,B,L}, SimConstants,
+        SimParticles, Position, Density, Pressure, Velocity, MotionLimiter,
+        dρdt_acc, acc_acc, shift_c_acc, shift_r_acc, i, j) where {D,T,
+                                                                  S<:ShiftingMode,
+                                                                  B<:MDBCMode,
+                                                                  L<:LogMode,
+                                                                  SDD<:SPHDensityDiffusion,
+                                                                  SV<:SPHViscosity}
+        @unpack m₀, dx = SimConstants
+        @unpack h⁻¹, H² = SimKernel
+
+        xᵢⱼ = Position[i] - Position[j]
+        xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
+        if xᵢⱼ² <= H²
+            dᵢⱼ = sqrt(abs(xᵢⱼ²))
+            q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
+            ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
+
+            ρᵢ = Density[i]
+            ρⱼ = Density[j]
+
+            vᵢ = Velocity[i]
+            vⱼ = Velocity[j]
+            vᵢⱼ = vᵢ - vⱼ
+            density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
+            dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
+
+            Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel,
+                                              SimConstants, SimParticles, xᵢⱼ,
+                                              ∇ᵢWᵢⱼ, xᵢⱼ², i, j, MotionLimiter)
+
+            dρdt_acc += dρdt⁺ + Dᵢ
+
+            Pᵢ = Pressure[i]
+            Pⱼ = Pressure[j]
+            Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
+            f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
+            dvdt⁺ = -m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
+
+            visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants,
+                                             SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ,
+                                             xᵢⱼ², i, j)
+
+            acc_acc += dvdt⁺ + visc_term
+
+            MLcond = MotionLimiter[i] * MotionLimiter[j]
+            shift_c_acc += (m₀ / ρᵢ) * ∇ᵢWᵢⱼ
+            shift_r_acc += (m₀ / ρⱼ) * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MLcond
+        end
+
+        return dρdt_acc, acc_acc, shift_c_acc, shift_r_acc
     end
 
     Base.@propagate_inbounds function ComputeInteractionsMDBC!(SimKernel, SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}, SimConstants, Position, Density, ParticleType, GhostPoints, i, j) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
