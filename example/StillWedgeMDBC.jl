@@ -32,10 +32,10 @@ let
         SaveLocation="W:/Simulations/StillWedge2D_MDBC",
         SimulationTime=4.0,
         OutputTimes=0.01,
-        VisualizeInParaview=true,
+        VisualizeInParaview=false,
         ExportSingleVTKHDF=true,
         ExportGridCells=true,
-        OpenLogFile=true,
+        OpenLogFile=false,
         # OutputVariables = [
         #     # "ChunkID",
         #     # "Kernel",
