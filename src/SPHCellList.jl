@@ -84,64 +84,7 @@ using LinearAlgebra
         Int(sign(x)) * unsafe_trunc(Int, muladd(abs(x),InverseCutOff,0.5))
     end
 
-    # Add contributions related to particle shifting. Dispatch on `SimulationMetaData`
-    # so that no runtime checks are required.
-    @inline function add_shifting_terms!(::SimulationMetaData{D,T,NoShifting,K,B,L}, SimThreadedArrays,
-                                MotionLimiter, xᵢⱼ, ∇ᵢWᵢⱼ, m₀, ρᵢ, ρⱼ, i, j, ichunk) where {D,T,
-                                                                                                K<:KernelOutputMode,
-                                                                                                B<:MDBCMode,
-                                                                                                L<:LogMode}
-        return nothing
-    end
 
-    @inline function add_shifting_terms!(::SimulationMetaData{D,T,PlanarShifting,K,B,L}, SimThreadedArrays,
-                                MotionLimiter, xᵢⱼ, ∇ᵢWᵢⱼ, m₀, ρᵢ, ρⱼ, i, j, ichunk) where {D,T,
-                                                                                                   K<:KernelOutputMode,
-                                                                                                   B<:MDBCMode,
-                                                                                                   L<:LogMode}
-        MLcond = MotionLimiter[i] * MotionLimiter[j]
-
-        SimThreadedArrays.∇CᵢThreaded[ichunk][i]   += (m₀/ρᵢ) *  ∇ᵢWᵢⱼ
-        SimThreadedArrays.∇CᵢThreaded[ichunk][j]   += (m₀/ρⱼ) * -∇ᵢWᵢⱼ
-
-        # Switch signs compared to DSPH, else free surface detection does not make sense
-        # Agrees, https://arxiv.org/abs/2110.10076, it should have been r_ji
-        mark_pair!(SimThreadedArrays.∇CᵢTouched[ichunk], SimThreadedArrays.∇CᵢMask[ichunk], i, j)
-        SimThreadedArrays.∇◌rᵢThreaded[ichunk][i]  += (m₀/ρⱼ) * dot(-xᵢⱼ , ∇ᵢWᵢⱼ) * MLcond
-        SimThreadedArrays.∇◌rᵢThreaded[ichunk][j]  += (m₀/ρᵢ) * dot( xᵢⱼ ,-∇ᵢWᵢⱼ) * MLcond
-        mark_pair!(SimThreadedArrays.∇◌rᵢTouched[ichunk], SimThreadedArrays.∇◌rᵢMask[ichunk], i, j)
-        return nothing
-    end
-
-    # Optionally record kernel values and gradients based on `SimulationMetaData`
-    # This function is designed to be a no-op when kernel output is not requested.
-    # The `@inline` annotation encourages the compiler to substitute the function call
-    # with its body, which in this case is `nothing`. When the `SimMetaData` type
-    # is concrete at the call site, the compiler can completely eliminate this call,
-    # resulting in zero runtime overhead.
-    @inline function KernelOutput!(::SimulationMetaData{D,T,S,NoKernelOutput,B,L}, SimKernel,
-                            SimThreadedArrays, q, ∇ᵢWᵢⱼ, i, j, ichunk) where {D,T,S<:ShiftingMode,
-                                                                               B<:MDBCMode,
-                                                                               L<:LogMode}
-        return nothing
-    end
-
-    # This version is called when kernel output is requested.
-    # The `@inline` annotation helps reduce function call overhead, especially
-    # since this is called inside a tight loop (`ComputeInteractions!`).
-    @inline function KernelOutput!(::SimulationMetaData{D,T,S,StoreKernelOutput,B,L}, SimKernel,
-                            SimThreadedArrays, q, ∇ᵢWᵢⱼ, i, j, ichunk) where {D,T,S<:ShiftingMode,
-                                                                            B<:MDBCMode,
-                                                                            L<:LogMode}
-        Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
-        mark_pair!(SimThreadedArrays.KernelTouched[ichunk], SimThreadedArrays.KernelMask[ichunk], i, j)
-        SimThreadedArrays.KernelThreaded[ichunk][i]         += Wᵢⱼ
-        SimThreadedArrays.KernelThreaded[ichunk][j]         += Wᵢⱼ
-        mark_pair!(SimThreadedArrays.KernelGradientTouched[ichunk], SimThreadedArrays.KernelGradientMask[ichunk], i, j)
-        SimThreadedArrays.KernelGradientThreaded[ichunk][i] +=  ∇ᵢWᵢⱼ
-        SimThreadedArrays.KernelGradientThreaded[ichunk][j] += -∇ᵢWᵢⱼ
-        return nothing
-    end
 
     @inline function KernelOutputLocal!(::SimulationMetaData{D,T,S,NoKernelOutput,B,L},
                                         kernel_acc, kernel_grad_acc, SimKernel,
