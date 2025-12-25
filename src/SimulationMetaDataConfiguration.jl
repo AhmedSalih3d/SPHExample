@@ -48,8 +48,8 @@ struct StoreLog <: LogMode end
     VisualizeInParaview::Bool               = true
     ExportSingleVTKHDF::Bool                = true
     ExportGridCells::Bool                   = false
+    ExportGridCellParticleCounts::Bool      = false
     OutputVariables::Vector{String}         = [
-        "ChunkID",
         "Kernel",
         "KernelGradient",
         "Density",
@@ -64,6 +64,7 @@ struct StoreLog <: LogMode end
         "GhostNormals",
     ]
     OpenLogFile::Bool                       = true
+    OutputBufferCount::Int                  = 2
     ChunkMultiplier::Int                    = 1
     Δx::FloatType                           = zero(FloatType)
 end
