@@ -1112,8 +1112,8 @@ using LinearAlgebra
 
         # Save initial state, use 1 else this cannot be used to index fid vector
         SimMetaData.OutputIterationCounter = 1
-        output.save_particles(SimMetaData.OutputIterationCounter)
-        output.save_grid(SimMetaData.OutputIterationCounter, UniqueCells, SimParticles)
+        output.enqueue_particles(SimMetaData.OutputIterationCounter)
+        output.enqueue_grid(SimMetaData.OutputIterationCounter, UniqueCells, SimParticles)
 
 
         # Assuming group markers are sequential
@@ -1163,8 +1163,8 @@ using LinearAlgebra
 
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
             @timeit SimMetaData.HourGlass "13 Save Particle Data"  begin
-                output.save_particles(SimMetaData.OutputIterationCounter)
-                output.save_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, SimParticles)
+                output.enqueue_particles(SimMetaData.OutputIterationCounter)
+                output.enqueue_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, SimParticles)
             end
     
             if !SimLogger.ToConsole
