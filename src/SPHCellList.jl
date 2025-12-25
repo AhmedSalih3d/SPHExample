@@ -1178,9 +1178,6 @@ using LinearAlgebra
 
         # Unpack the relevant simulation meta data
         @unpack HourGlass = SimMetaData;
-
-        # Vector of time steps
-        TimeSteps = Vector{FloatType}()
         
         dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimMetaData, SimParticles.Position)
 
@@ -1249,7 +1246,7 @@ using LinearAlgebra
                 NeighborCellLists, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
                 ∇Cᵢ, ∇◌rᵢ, MotionDefinition,
             )
-            push!(TimeSteps, SimMetaData.CurrentTimeStep)
+            push!(SimMetaData.TimeSteps, SimMetaData.CurrentTimeStep)
 
             log_step!(SimMetaData, SimLogger)
     
@@ -1288,7 +1285,7 @@ using LinearAlgebra
                 AutoOpenParaview(SimMetaData, output.variable_names)
 
                 # Time steps line plot
-                UnicodeTimeStepsGraph = lineplot(1:length(TimeSteps), TimeSteps, title="Time Steps [s] as a function of iteration", name="Time Steps", xlabel="Iterations [-]", ylabel="Time Step Size [s]")
+                UnicodeTimeStepsGraph = lineplot(1:length(SimMetaData.TimeSteps), SimMetaData.TimeSteps, title="Time Steps [s] as a function of iteration", name="Time Steps", xlabel="Iterations [-]", ylabel="Time Step Size [s]")
 
                 finalize_log!(SimMetaData, SimLogger, HourGlass, UnicodeTimeStepsGraph)
 
