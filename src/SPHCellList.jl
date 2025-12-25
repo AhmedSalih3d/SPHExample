@@ -1100,8 +1100,6 @@ using LinearAlgebra
         NumberOfPoints = length(SimParticles)::Int
         Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
     
-        SimMetaData.Δx = zero(eltype(dρdtI))
-    
         # Produce sorting related variables
         ParticleRanges         = zeros(Int, NumberOfPoints + 1 + 1) # +1 for the last particle, +1 for dummy entry
         UniqueCells            = zeros(CartesianIndex{Dimensions}, NumberOfPoints)
