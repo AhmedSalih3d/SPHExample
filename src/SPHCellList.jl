@@ -817,7 +817,13 @@ using LinearAlgebra
         return nothing
     end
 
-    function ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionsDefinition, SimMetaData)
+    function ProgressMotion(SimParticles, dt₂, MotionsDefinition, SimMetaData)
+    end
+
+    function ProgressMotion(SimParticles, dt₂, MotionsDefinition, SimMetaData)
+        @unpack Position, Velocity = SimParticles
+        ParticleMarker  = SimParticles.GroupMarker
+        ParticleType    = SimParticles.Type
         @inbounds @simd ivdep for i in eachindex(Position)
             if ParticleType[i] == Moving
                 motion = MotionsDefinition[ParticleMarker[i]]
@@ -1014,7 +1020,7 @@ using LinearAlgebra
                     end
                 end
 
-                @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
+                @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
             
                 @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
                 @timeit SimMetaData.HourGlass "04 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType)
@@ -1033,7 +1039,7 @@ using LinearAlgebra
 
                 @timeit SimMetaData.HourGlass "07 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
             
-                @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(Position, Velocity, ParticleType, ParticleMarker, dt₂, MotionDefinition, SimMetaData)
+                @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
             
                 @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
                 @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticle!(
