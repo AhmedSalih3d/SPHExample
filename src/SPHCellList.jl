@@ -34,14 +34,6 @@ using UnicodePlots
 using LinearAlgebra
     using Bumper
 
-    function ConstructStencil(v::Val{d}) where d
-        n_ = CartesianIndices(ntuple(_->-1:1,v))
-        half_length = length(n_) ÷ 2
-        n  = n_[1:half_length]
-
-        return n
-    end
-
     function ConstructFullStencil(v::Val{d}) where d
         return CartesianIndices(ntuple(_->-1:1, v))
     end
@@ -213,64 +205,6 @@ using LinearAlgebra
         ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
 
         return IndexCounter 
-    end
-
-
-# Neither Polyester.@batch per core or thread is faster
-###=== Function to process each cell and its neighbors
-    function NeighborLoop!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
-                           SimMetaData, SimConstants, SimParticles,
-                           SimThreadedArrays, ParticleRanges, CellDict, Stencil,
-                           Position, Density, Pressure, Velocity, MotionLimiter,
-                           UniqueCellsView) where {SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
-
-        # Partition UniqueCellsView into contiguous chunks and use the loop index `t`
-        # as a stable per-thread buffer index instead of Threads.threadid(),
-        # avoiding issues when tasks yield and migrate between threads.
-        N = length(UniqueCellsView)
-        num_threads = Threads.nthreads()
-        chunk_size = ceil(Int, N / num_threads)
-
-        @inbounds Threads.@threads for t in 1:num_threads
-            ichunk = t   # stable per-thread buffer index
-            start_iter = (t-1) * chunk_size + 1
-            end_iter = min(t * chunk_size, N)
-
-            for iter = start_iter:end_iter
-                CellIndex = UniqueCellsView[iter]
-                StartIndex = ParticleRanges[iter]
-                EndIndex = ParticleRanges[iter+1] - 1
-
-                # (1) Interactions within same cell
-                @inbounds for i = StartIndex:EndIndex
-                    for j = (i+1):EndIndex
-                        ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                                             SimConstants, SimParticles, SimThreadedArrays,
-                                             Position, Density, Pressure, Velocity,
-                                             i, j, MotionLimiter, ichunk)
-                    end
-                end
-
-                # (2) Interactions with neighboring cells
-                @inbounds for offset in Stencil
-                    SCellIndex = CellIndex + offset
-                    NeighborIdx = get(CellDict, SCellIndex, 1)
-                    StartIndex_ = ParticleRanges[NeighborIdx]
-                    EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
-
-                    for i = StartIndex:EndIndex
-                        for j = StartIndex_:EndIndex_
-                            ComputeInteractions!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                                                 SimConstants, SimParticles, SimThreadedArrays,
-                                                 Position, Density, Pressure, Velocity,
-                                                 i, j, MotionLimiter, ichunk)
-                        end
-                    end
-                end
-            end
-        end
-
-        return nothing
     end
 
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
@@ -886,158 +820,6 @@ using LinearAlgebra
         return bΔ, AΔ
     end
 
-    @inline function mark_touched!(touched::Vector{Int}, mask::BitVector, idx::Int)
-        if !@inbounds mask[idx]
-            @inbounds mask[idx] = true
-            push!(touched, idx)
-        end
-        return nothing
-    end
-
-    @inline function mark_pair!(touched::Vector{Int}, mask::BitVector, i::Int, j::Int)
-        mark_touched!(touched, mask, i)
-        mark_touched!(touched, mask, j)
-        return nothing
-    end
-
-    function reset_touched!(data::Vector{T}, touched::Vector{Int}, mask::BitVector) where T
-        @inbounds for idx in touched
-            data[idx] = zero(T)
-            mask[idx] = false
-        end
-        empty!(touched)
-        return nothing
-    end
-
-    function reduce_sum!(target_array, arrays, touched)
-        @inbounds for j in eachindex(arrays)
-            local array = arrays[j]
-            local touched_indices = touched[j]
-            for idx in touched_indices
-                target_array[idx] += array[idx]
-            end
-        end
-        return nothing
-    end
-
-    # Zero arrays related to shifting depending on the selected mode.
-    function zero_shifting_arrays!(::SimulationMetaData{D,T,NoShifting,K,B,L}, _...) where {D,T,
-                                                                                           K<:KernelOutputMode,
-                                                                                           B<:MDBCMode,
-                                                                                           L<:LogMode}
-        return nothing
-    end
-    function zero_shifting_arrays!(::SimulationMetaData{D,T,S,K,B,L}, arrays...) where {D,T,S<:ShiftingMode,
-                                                                                       K<:KernelOutputMode,
-                                                                                       B<:MDBCMode,
-                                                                                       L<:LogMode}
-        @threads for arr in arrays
-            fill!(arr, zero(eltype(arr)))
-        end
-        return nothing
-    end
-
-    # Zero arrays related to kernel output depending on the selected mode.
-    function zero_kernel_arrays!(::SimulationMetaData{D,T,S,NoKernelOutput,B,L}, _...) where {D,T,S<:ShiftingMode,
-                                                                                             B<:MDBCMode,
-                                                                                             L<:LogMode}
-        return nothing
-    end
-    function zero_kernel_arrays!(::SimulationMetaData{D,T,S,K,B,L}, arrays...) where {D,T,S<:ShiftingMode,
-                                                                                     K<:KernelOutputMode,
-                                                                                     B<:MDBCMode,
-                                                                                     L<:LogMode}
-        @threads for arr in arrays
-            fill!(arr, zero(eltype(arr)))
-        end
-        return nothing
-    end
-
-    function reset_threaded_kernel_arrays!(::SimulationMetaData{D,T,S,NoKernelOutput,B,L},
-                                           _) where {D,T,S<:ShiftingMode,
-                                                     B<:MDBCMode,
-                                                     L<:LogMode}
-        return nothing
-    end
-    function reset_threaded_kernel_arrays!(::SimulationMetaData{D,T,S,K,B,L}, SimThreadedArrays) where {D,T,S<:ShiftingMode,
-                                                                                                       K<:KernelOutputMode,
-                                                                                                       B<:MDBCMode,
-                                                                                                       L<:LogMode}
-        @threads for idx in eachindex(SimThreadedArrays.KernelThreaded)
-            reset_touched!(SimThreadedArrays.KernelThreaded[idx],
-                           SimThreadedArrays.KernelTouched[idx],
-                           SimThreadedArrays.KernelMask[idx])
-            reset_touched!(SimThreadedArrays.KernelGradientThreaded[idx],
-                           SimThreadedArrays.KernelGradientTouched[idx],
-                           SimThreadedArrays.KernelGradientMask[idx])
-        end
-        return nothing
-    end
-
-    function reset_threaded_shifting_arrays!(::SimulationMetaData{D,T,NoShifting,K,B,L},
-                                             _) where {D,T,
-                                                       K<:KernelOutputMode,
-                                                       B<:MDBCMode,
-                                                       L<:LogMode}
-        return nothing
-    end
-    function reset_threaded_shifting_arrays!(::SimulationMetaData{D,T,S,K,B,L},
-                                             SimThreadedArrays) where {D,T,S<:ShiftingMode,
-                                                                       K<:KernelOutputMode,
-                                                                       B<:MDBCMode,
-                                                                       L<:LogMode}
-        @threads for idx in eachindex(SimThreadedArrays.∇CᵢThreaded)
-            reset_touched!(SimThreadedArrays.∇CᵢThreaded[idx],
-                           SimThreadedArrays.∇CᵢTouched[idx],
-                           SimThreadedArrays.∇CᵢMask[idx])
-            reset_touched!(SimThreadedArrays.∇◌rᵢThreaded[idx],
-                           SimThreadedArrays.∇◌rᵢTouched[idx],
-                           SimThreadedArrays.∇◌rᵢMask[idx])
-        end
-        return nothing
-    end
-
-    function reset_threaded_arrays!(SimMetaData, SimThreadedArrays)
-        @threads for idx in eachindex(SimThreadedArrays.dρdtIThreaded)
-            reset_touched!(SimThreadedArrays.dρdtIThreaded[idx],
-                           SimThreadedArrays.dρdtITouched[idx],
-                           SimThreadedArrays.dρdtIMask[idx])
-            reset_touched!(SimThreadedArrays.AccelerationThreaded[idx],
-                           SimThreadedArrays.AccelerationTouched[idx],
-                           SimThreadedArrays.AccelerationMask[idx])
-        end
-        reset_threaded_kernel_arrays!(SimMetaData, SimThreadedArrays)
-        reset_threaded_shifting_arrays!(SimMetaData, SimThreadedArrays)
-        return nothing
-    end
-
-    function ResetStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
-        # Threaded zeroing for main arrays
-        @threads for arr in (dρdtI, Acceleration)
-            fill!(arr, zero(eltype(arr)))
-        end
-        zero_kernel_arrays!(SimMetaData, Kernel, KernelGradient)
-        zero_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ)
-        reset_threaded_arrays!(SimMetaData, SimThreadedArrays)
-
-        return nothing
-    end
-
-    function reduce_shifting_arrays!(::SimulationMetaData{D,T,NoShifting,K,B,L}, _...) where {D,T,
-                                                                                           K<:KernelOutputMode,
-                                                                                           B<:MDBCMode,
-                                                                                           L<:LogMode}
-        return nothing
-    end
-    function reduce_shifting_arrays!(::SimulationMetaData{D,T,S,K,B,L}, ∇Cᵢ, ∇◌rᵢ, SimThreadedArrays) where {D,T,S<:ShiftingMode,
-                                                                                                          K<:KernelOutputMode,
-                                                                                                          B<:MDBCMode,
-                                                                                                          L<:LogMode}
-        reduce_sum!(∇Cᵢ, SimThreadedArrays.∇CᵢThreaded, SimThreadedArrays.∇CᵢTouched)
-        reduce_sum!(∇◌rᵢ, SimThreadedArrays.∇◌rᵢThreaded, SimThreadedArrays.∇◌rᵢTouched)
-        return nothing
-    end
-
     function prepare_shifting_arrays!(::SimulationMetaData{D,T,NoShifting,K,B,L}, ∇Cᵢ, ∇◌rᵢ) where {D,T,
                                                                                                 K<:KernelOutputMode,
                                                                                                 B<:MDBCMode,
@@ -1051,29 +833,6 @@ using LinearAlgebra
                                                                                B<:MDBCMode,
                                                                                L<:LogMode} = nothing
 
-    function reduce_kernel_arrays!(::SimulationMetaData{D,T,S,NoKernelOutput,B,L}, _...) where {D,T,S<:ShiftingMode,
-                                                                                             B<:MDBCMode,
-                                                                                             L<:LogMode}
-        return nothing
-    end
-    function reduce_kernel_arrays!(::SimulationMetaData{D,T,S,K,B,L}, Kernel, KernelGradient, SimThreadedArrays) where {D,T,S<:ShiftingMode,
-                                                                                                                         K<:KernelOutputMode,
-                                                                                                                         B<:MDBCMode,
-                                                                                                                         L<:LogMode}
-        reduce_sum!(Kernel, SimThreadedArrays.KernelThreaded, SimThreadedArrays.KernelTouched)
-        reduce_sum!(KernelGradient, SimThreadedArrays.KernelGradientThreaded, SimThreadedArrays.KernelGradientTouched)
-        return nothing
-    end
-
-    function ReductionStep!(SimMetaData, SimThreadedArrays, dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ)
-        reduce_sum!(dρdtI, SimThreadedArrays.dρdtIThreaded, SimThreadedArrays.dρdtITouched)
-        reduce_sum!(Acceleration, SimThreadedArrays.AccelerationThreaded, SimThreadedArrays.AccelerationTouched)
-
-        reduce_kernel_arrays!(SimMetaData, Kernel, KernelGradient, SimThreadedArrays)
-        reduce_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ, SimThreadedArrays)
-
-        return nothing
-    end
 
     function ApplyMDBCBeforeHalf!(::SimulationMetaData{D,T,S,K,NoMDBC,L}, _args...) where {D,T,S<:ShiftingMode,
                                                                                            K<:KernelOutputMode,
@@ -1315,29 +1074,7 @@ using LinearAlgebra
         return Δx + 4*maxd
     end
 
-    """
-        update_local_delta_x!(Δx_local, posₙ⁺, pos, h)
-
-    Accumulate per-particle displacement since the last neighbor update and return
-    `true` when any particle exceeds `h`.
-    """
-    @inline function update_local_delta_x!(Δx_local::AbstractVector{T},
-                                           posₙ⁺::AbstractVector{SVector{D, T}},
-                                           pos   ::AbstractVector{SVector{D, T}},
-                                           h::T) where {D, T<:Real}
-        @inbounds for i in eachindex(posₙ⁺, pos, Δx_local)
-            sumsq = zero(T)
-            @inbounds for j in 1:D
-                d = posₙ⁺[i][j] - pos[i][j]
-                sumsq += d*d
-            end
-            Δx_local[i] += 4 * sqrt(sumsq)
-            if Δx_local[i] >= h
-                return true
-            end
-        end
-        return false
-    end
+    # Per-particle local Δx removed: use single scalar `SimMetaData.Δx`.
 
     
     @inbounds function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
@@ -1356,13 +1093,12 @@ using LinearAlgebra
         ParticleMarker = GroupMarker
 
         ###
-        Δx_local = SimMetaData.LocalΔx
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
 
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
 
-                ShouldRebuild = update_local_delta_x!(Δx_local, Positionₙ⁺,
-                                                    SimParticles.Position, SimKernel.h)
+                SimMetaData.Δx = update_delta_x!(SimMetaData.Δx, Positionₙ⁺, SimParticles.Position)
+                ShouldRebuild = SimMetaData.Δx >= SimKernel.h
 
                 # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
 
@@ -1378,7 +1114,7 @@ using LinearAlgebra
                     # if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
                     if ShouldRebuild
                         @timeit SimMetaData.HourGlass "02a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells, CellDict)
-                        fill!(Δx_local, zero(eltype(Δx_local)))
+                        SimMetaData.Δx = zero(eltype(dρdtI))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                         BuildNeighborCellLists!(neighbor_cell_lists, FullStencil,
                                                 UniqueCellsView, ParticleRanges,
@@ -1461,7 +1197,7 @@ using LinearAlgebra
         Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
     
         SimThreadedArrays = AllocateThreadedArrays(SimMetaData, SimParticles, dρdtI, ∇Cᵢ, ∇◌rᵢ)
-        SimMetaData.LocalΔx = zeros(eltype(dρdtI), NumberOfPoints)
+        SimMetaData.Δx = zero(eltype(dρdtI))
     
         # Produce sorting related variables
         ParticleRanges         = zeros(Int, NumberOfPoints + 1 + 1) # +1 for the last particle, +1 for dummy entry
