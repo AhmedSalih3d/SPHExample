@@ -817,7 +817,8 @@ using LinearAlgebra
         return nothing
     end
 
-    function ProgressMotion(SimParticles, dt₂, MotionsDefinition, SimMetaData)
+    function ProgressMotion(_SimParticles, _dt₂, ::Nothing, _SimMetaData)
+        return nothing
     end
 
     function ProgressMotion(SimParticles, dt₂, MotionsDefinition, SimMetaData)
@@ -984,10 +985,18 @@ using LinearAlgebra
                                       SortingScratchSpace,
                                       NeighborCellLists, dρdtI, Velocityₙ⁺,
                                       Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ,
-                                      MotionDefinition) where {Dimensions, FloatType,
-                                                               SMode, KMode, BMode,
-                                                               LMode, SDD<:SPHDensityDiffusion,
-                                                               SV<:SPHViscosity}
+                                      MotionDefinition::Union{
+                                          Nothing,
+                                          AbstractVector{
+                                              Union{
+                                                  Nothing,
+                                                  MotionDetails{Dimensions, FloatType},
+                                              },
+                                          },
+                                      }) where {Dimensions, FloatType, SMode, KMode,
+                                                BMode, LMode,
+                                                SDD<:SPHDensityDiffusion,
+                                                SV<:SPHViscosity}
         @unpack Position, Density, Pressure, Velocity, Acceleration, MotionLimiter, GroupMarker, Kernel, KernelGradient, GhostPoints, GhostNormals = SimParticles
         ParticleType   = SimParticles.Type
         ParticleMarker = GroupMarker
@@ -1119,6 +1128,9 @@ using LinearAlgebra
             else
                 MotionDefinition[group_marker] = nothing
             end
+        end
+        if !any(!isnothing, MotionDefinition)
+            MotionDefinition = nothing
         end
 
         # Normal run and save data
