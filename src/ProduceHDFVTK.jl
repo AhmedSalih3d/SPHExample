@@ -574,7 +574,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 elseif name == "Type"
                     output_data[i] = Vector{Int8}(undef, n)
                 else
-                    src = getfield(SimParticles, field_map[name])
+                    src = getproperty(SimParticles, field_map[name])
                     output_data[i] = similar(src, n)
                 end
             end
@@ -596,14 +596,14 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                         buf[j] = Int8(src[j])
                     end
                 elseif name in vector_fields
-                    src = getfield(SimParticles, field_map[name])
+                    src = getproperty(SimParticles, field_map[name])
                     if Dimensions == 2
                         to_3d!(buf, src)
                     else
                         copy!(buf, src)
                     end
                 else
-                    src = getfield(SimParticles, field_map[name])
+                    src = getproperty(SimParticles, field_map[name])
                     copy!(buf, src)
                 end
             end
