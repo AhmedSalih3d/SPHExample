@@ -21,7 +21,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     using HDF5
     using StaticArrays
 
-    using ..AuxiliaryFunctions: to_3d
+    using ..AuxiliaryFunctions: to_3d!
 
 
     const idType = Int64
@@ -474,9 +474,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
     Prepare VTK/HDF5 output. Returns a named tuple with `enqueue_particles`,
     `enqueue_grid`, `flush_output`, and `close_files` functions. Output is
-    written asynchronously using a background task, and the queue must be
-    flushed before closing files. Uses single or multi-file mode depending on
-    `SimMetaData.ExportSingleVTKHDF`.
+    written asynchronously using a background task with double-buffered
+    particle snapshots, and the queue must be flushed before closing files.
+    Uses single or multi-file mode depending on `SimMetaData.ExportSingleVTKHDF`.
     """
     function SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
         # Generate save locations
@@ -539,6 +539,80 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             end
         end
 
+        vector_fields = Set([
+            "KernelGradient",
+            "Velocity",
+            "Acceleration",
+            "GhostPoints",
+            "GhostNormals",
+        ])
+        field_map = Dict(
+            "ChunkID" => :ChunkID,
+            "Kernel" => :Kernel,
+            "KernelGradient" => :KernelGradient,
+            "Density" => :Density,
+            "Pressure" => :Pressure,
+            "Velocity" => :Velocity,
+            "Acceleration" => :Acceleration,
+            "BoundaryBool" => :BoundaryBool,
+            "ID" => :ID,
+            "Type" => :Type,
+            "GroupMarker" => :GroupMarker,
+            "GhostPoints" => :GhostPoints,
+            "GhostNormals" => :GhostNormals,
+        )
+
+        T = eltype(eltype(SimParticles.Position))
+        function allocate_particle_snapshot()
+            n = length(SimParticles.Position)
+            positions = Vector{SVector{3, T}}(undef, n)
+            output_data = Vector{Any}(undef, length(output_vars))
+            for (i, name) in pairs(output_vars)
+                if name in vector_fields
+                    output_data[i] = Vector{SVector{3, T}}(undef, n)
+                elseif name == "Type"
+                    output_data[i] = Vector{Int8}(undef, n)
+                else
+                    src = getfield(SimParticles, field_map[name])
+                    output_data[i] = similar(src, n)
+                end
+            end
+            return ParticleSnapshot(positions, output_data)
+        end
+
+        function fill_particle_snapshot!(snapshot)
+            if Dimensions == 2
+                to_3d!(snapshot.positions, SimParticles.Position)
+            else
+                copy!(snapshot.positions, SimParticles.Position)
+            end
+
+            for (i, name) in pairs(output_vars)
+                buf = snapshot.output_data[i]
+                if name == "Type"
+                    src = SimParticles.Type
+                    @inbounds for j in eachindex(src)
+                        buf[j] = Int8(src[j])
+                    end
+                elseif name in vector_fields
+                    src = getfield(SimParticles, field_map[name])
+                    if Dimensions == 2
+                        to_3d!(buf, src)
+                    else
+                        copy!(buf, src)
+                    end
+                else
+                    src = getfield(SimParticles, field_map[name])
+                    copy!(buf, src)
+                end
+            end
+            return snapshot
+        end
+
+        buffer_pool = Channel{ParticleSnapshot}(2)
+        put!(buffer_pool, allocate_particle_snapshot())
+        put!(buffer_pool, allocate_particle_snapshot())
+
         job_channel = Channel{Any}(8)
         writer_task = @async begin
             for job in job_channel
@@ -562,6 +636,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                             snapshot.output_data...,
                         )
                     end
+                    put!(buffer_pool, snapshot)
                 elseif job isa GridWriteJob
                     if !SimMetaData.ExportSingleVTKHDF
                         SaveCellGridVTKHDF(
@@ -582,45 +657,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             end
         end
 
-        function snapshot_particle_data()
-            if Dimensions == 2
-                pos = to_3d(SimParticles.Position)
-                kgrad = to_3d(SimParticles.KernelGradient)
-                vel = to_3d(SimParticles.Velocity)
-                acc = to_3d(SimParticles.Acceleration)
-                gp = to_3d(SimParticles.GhostPoints)
-                gn = to_3d(SimParticles.GhostNormals)
-            else
-                pos = copy(SimParticles.Position)
-                kgrad = copy(SimParticles.KernelGradient)
-                vel = copy(SimParticles.Velocity)
-                acc = copy(SimParticles.Acceleration)
-                gp = copy(SimParticles.GhostPoints)
-                gn = copy(SimParticles.GhostNormals)
-            end
-
-            available = Dict(
-                "ChunkID" => copy(SimParticles.ChunkID),
-                "Kernel" => copy(SimParticles.Kernel),
-                "KernelGradient" => kgrad,
-                "Density" => copy(SimParticles.Density),
-                "Pressure" => copy(SimParticles.Pressure),
-                "Velocity" => vel,
-                "Acceleration" => acc,
-                "BoundaryBool" => copy(SimParticles.BoundaryBool),
-                "ID" => copy(SimParticles.ID),
-                "Type" => Int8.(SimParticles.Type),
-                "GroupMarker" => copy(SimParticles.GroupMarker),
-                "GhostPoints" => gp,
-                "GhostNormals" => gn,
-            )
-            output_data = [available[name] for name in output_vars]
-
-            return ParticleSnapshot(pos, output_data)
-        end
-
         function enqueue_particle_data(iteration)
-            snapshot = snapshot_particle_data()
+            snapshot = take!(buffer_pool)
+            fill_particle_snapshot!(snapshot)
             job = ParticleWriteJob(iteration, SimMetaData.TotalTime, snapshot)
             put!(job_channel, job)
         end
