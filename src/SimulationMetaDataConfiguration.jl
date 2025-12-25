@@ -48,7 +48,6 @@ struct StoreLog <: LogMode end
     VisualizeInParaview::Bool               = true
     ExportSingleVTKHDF::Bool                = true
     ExportGridCells::Bool                   = false
-    ExportGridCellParticleCounts::Bool      = false
     OutputVariables::Vector{String}         = [
         "Kernel",
         "KernelGradient",
