@@ -78,11 +78,7 @@ Pkg.add(url="https://github.com/AhmedSalih3d/SPHExample")
 
 ### Running an Example
 
-Open one of the files in `example/`, for instance `example/StillWedgeMDBC.jl`,
-and adjust the simulation parameters or the `ComputerInteractions!` function.
-Run the script to start the simulation. Results are written in `hdfvtk` format
-which can be loaded with ParaView 5.12 or newer. Output is written
-asynchronously, so files finish flushing when the simulation completes.
+Open one of the files in `example/`, for instance `example/StillWedgeMDBC.jl`, and adjust the simulation parameters or the `ComputerInteractions!` function. Run the script to start the simulation. Results are written in `hdfvtk` format which can be loaded with ParaView 5.12 or newer.
 
 ## Help
 
@@ -125,3 +121,4 @@ This project is licensed under the MIT License – see [LICENSE.md](LICENSE.md) 
 - Thanks to [PharmCat](https://github.com/PharmCat) for suggestions and code contributions.
 
 [![Star History](https://api.star-history.com/svg?repos=AhmedSalih3d/SPHExample)](https://star-history.com/#AhmedSalih3d/SPHExample)
+
