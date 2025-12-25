@@ -501,58 +501,9 @@ using LinearAlgebra
         return nothing
     end
 
-    Base.@propagate_inbounds function ComputeInteractions!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel, SimMetaData, SimConstants, SimParticles, SimThreadedArrays, Position, Density, Pressure, Velocity, i, j, MotionLimiter, ichunk) where {SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
-        @unpack m₀, dx = SimConstants
-
-        @unpack h⁻¹, H² = SimKernel 
-
-        xᵢⱼ  = Position[i] - Position[j]
-        xᵢⱼ² = dot(xᵢⱼ,xᵢⱼ)              
-        if  xᵢⱼ² <= H²
-            #https://discourse.julialang.org/t/sqrt-abs-x-is-even-faster-than-sqrt/58154/2
-            dᵢⱼ  = sqrt(abs(xᵢⱼ²))
-
-            # clamp seems faster than min, no util
-            q         = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0) #min(dᵢⱼ * h⁻¹, 2.0) - 8% util no DDT
-            ∇ᵢWᵢⱼ     = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
-            
-            ρᵢ        = Density[i]
-            ρⱼ        = Density[j]
-        
-            vᵢ        = Velocity[i]
-            vⱼ        = Velocity[j]
-            vᵢⱼ       = vᵢ - vⱼ
-            density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
-            dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  density_symmetric_term
-            dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  density_symmetric_term
-
-            Dᵢ, Dⱼ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ², i, j, MotionLimiter)
-
-            mark_pair!(SimThreadedArrays.dρdtITouched[ichunk], SimThreadedArrays.dρdtIMask[ichunk], i, j)
-            SimThreadedArrays.dρdtIThreaded[ichunk][i] += dρdt⁺ + Dᵢ
-            SimThreadedArrays.dρdtIThreaded[ichunk][j] += dρdt⁻ + Dⱼ
-
-
-            Pᵢ      =  Pressure[i]
-            Pⱼ      =  Pressure[j]
-            Pfac    = (Pᵢ+Pⱼ)/(ρᵢ*ρⱼ)
-            f_ab    = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
-            dvdt⁺   = - m₀ * (Pfac + f_ab) *  ∇ᵢWᵢⱼ
-
-            visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ², i, j)
-
-            uₘ = dvdt⁺ + visc_term
-            mark_pair!(SimThreadedArrays.AccelerationTouched[ichunk], SimThreadedArrays.AccelerationMask[ichunk], i, j)
-            SimThreadedArrays.AccelerationThreaded[ichunk][i] += uₘ
-            SimThreadedArrays.AccelerationThreaded[ichunk][j] -= uₘ 
-
-            
-            KernelOutput!(SimMetaData, SimKernel, SimThreadedArrays, q, ∇ᵢWᵢⱼ, i, j, ichunk)
-            add_shifting_terms!(SimMetaData, SimThreadedArrays, MotionLimiter, xᵢⱼ, ∇ᵢWᵢⱼ, m₀, ρᵢ, ρⱼ, i, j, ichunk)
-        end
-
-        return nothing
-    end
+    # The previous generic `ComputeInteractions!` implementation was unused
+    # in favour of the per-particle variants (ComputeInteractionsPerParticle! etc.).
+    # It has been removed to reduce code size and avoid dead code.
 
     Base.@propagate_inbounds function ComputeInteractionsPerParticle!(
         SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
