@@ -459,7 +459,7 @@ using LinearAlgebra
                                Density, GhostPoints, GhostNormals, ParticleType,
                                bᵧ, Aᵧ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
         
-        FullStencil = CartesianIndices(ntuple(_->-1:1, Dimensions))
+        FullStencil = ConstructFullStencil(Val(Dimensions))
 
         @inbounds @threads for iter in eachindex(GhostPoints)
             GhostPoint = GhostPoints[iter]
