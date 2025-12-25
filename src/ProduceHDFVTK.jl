@@ -18,6 +18,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
        AppendVTKHDFData, SaveCellGridVTKHDF, AppendVTKHDFGridData,
        SetupVTKOutput
 
+    using Base.Threads
     using HDF5
     using StaticArrays
 
@@ -614,7 +615,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         put!(buffer_pool, allocate_particle_snapshot())
 
         job_channel = Channel{Any}(8)
-        writer_task = @async begin
+        writer_task = Threads.@spawn begin
             for job in job_channel
                 if job isa ParticleWriteJob
                     snapshot = job.snapshot
