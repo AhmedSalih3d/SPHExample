@@ -150,6 +150,14 @@ using LinearAlgebra
         return IndexCounter 
     end
 
+    function compute_cell_particle_counts(particle_ranges, n_cells)
+        counts = Vector{Int}(undef, n_cells)
+        @inbounds for i in 1:n_cells
+            counts[i] = particle_ranges[i + 1] - particle_ranges[i]
+        end
+        return counts
+    end
+
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{D,T,NoShifting,NoKernelOutput,B,L},
                                       SimConstants, SimParticles, ParticleRanges,
@@ -1113,7 +1121,19 @@ using LinearAlgebra
         # Save initial state, use 1 else this cannot be used to index fid vector
         SimMetaData.OutputIterationCounter = 1
         output.enqueue_particles(SimMetaData.OutputIterationCounter)
-        output.enqueue_grid(SimMetaData.OutputIterationCounter, UniqueCells, SimParticles)
+        cell_particle_counts = nothing
+        if SimMetaData.ExportGridCellParticleCounts &&
+           SimMetaData.IndexCounter > 0
+            cell_particle_counts = compute_cell_particle_counts(
+                ParticleRanges,
+                SimMetaData.IndexCounter,
+            )
+        end
+        output.enqueue_grid(
+            SimMetaData.OutputIterationCounter,
+            UniqueCells,
+            cell_particle_counts=cell_particle_counts,
+        )
 
 
         # Assuming group markers are sequential
@@ -1162,9 +1182,20 @@ using LinearAlgebra
             SimMetaData.OutputIterationCounter += 1
 
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
+            cell_particle_counts = nothing
+            if SimMetaData.ExportGridCellParticleCounts
+                cell_particle_counts = compute_cell_particle_counts(
+                    ParticleRanges,
+                    length(UniqueCellsView),
+                )
+            end
             @timeit SimMetaData.HourGlass "13 Save Particle Data"  begin
                 output.enqueue_particles(SimMetaData.OutputIterationCounter)
-                output.enqueue_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, SimParticles)
+                output.enqueue_grid(
+                    SimMetaData.OutputIterationCounter,
+                    UniqueCellsView,
+                    cell_particle_counts=cell_particle_counts,
+                )
             end
     
             if !SimLogger.ToConsole
