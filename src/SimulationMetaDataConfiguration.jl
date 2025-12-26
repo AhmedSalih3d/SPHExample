@@ -49,7 +49,6 @@ struct StoreLog <: LogMode end
     ExportSingleVTKHDF::Bool                = true
     ExportGridCells::Bool                   = false
     OutputVariables::Vector{String}         = [
-        "ChunkID",
         "Kernel",
         "KernelGradient",
         "Density",
@@ -64,7 +63,6 @@ struct StoreLog <: LogMode end
         "GhostNormals",
     ]
     OpenLogFile::Bool                       = true
-    ChunkMultiplier::Int                    = 1
     Δx::FloatType                           = zero(FloatType)
 end
 SimulationMetaData{D,T,S,K,B}(; kwargs...) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode} =

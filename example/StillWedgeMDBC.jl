@@ -32,12 +32,11 @@ let
         SaveLocation="W:/Simulations/StillWedge2D_MDBC",
         SimulationTime=4.0,
         OutputTimes=0.01,
-        VisualizeInParaview=false,
+        VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
         ExportGridCells=true,
-        OpenLogFile=false,
+        OpenLogFile=true,
         # OutputVariables = [
-        #     # "ChunkID",
         #     # "Kernel",
         #     # "KernelGradient",
         #     "Density",
@@ -106,7 +105,6 @@ let
     
     # display(plt)
 end
-
 
 
 
