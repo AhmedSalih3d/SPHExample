@@ -158,6 +158,19 @@ using LinearAlgebra
         return counts
     end
 
+    function compute_cell_neighbor_counts(particle_ranges, neighbor_cell_lists, n_cells)
+        counts = compute_cell_particle_counts(particle_ranges, n_cells)
+        neighbors = Vector{Int}(undef, n_cells)
+        @inbounds for i in 1:n_cells
+            neighbor_total = 0
+            for neighbor_idx in neighbor_cell_lists[i]
+                neighbor_total += counts[neighbor_idx]
+            end
+            neighbors[i] = max(counts[i] - 1, 0) + neighbor_total
+        end
+        return neighbors
+    end
+
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{D,T,NoShifting,NoKernelOutput,B,L},
                                       SimConstants, SimParticles, ParticleRanges,
@@ -1121,22 +1134,28 @@ using LinearAlgebra
         # Save initial state, use 1 else this cannot be used to index fid vector
         SimMetaData.OutputIterationCounter = 1
         output.enqueue_particles(SimMetaData.OutputIterationCounter)
-        cell_particle_counts = nothing
-        if SimMetaData.ExportGridCellParticleCounts
-            if SimMetaData.IndexCounter > 0
+        if SimMetaData.IndexCounter > 0
+            unique_cells_view = view(UniqueCells, 1:SimMetaData.IndexCounter)
+            cell_particle_counts = nothing
+            cell_neighbor_counts = nothing
+            if SimMetaData.ExportGridCellParticleCounts
                 cell_particle_counts = compute_cell_particle_counts(
                     ParticleRanges,
                     SimMetaData.IndexCounter,
                 )
-            else
-                cell_particle_counts = zeros(Int, length(UniqueCells))
+                cell_neighbor_counts = compute_cell_neighbor_counts(
+                    ParticleRanges,
+                    NeighborCellLists,
+                    SimMetaData.IndexCounter,
+                )
             end
+            output.enqueue_grid(
+                SimMetaData.OutputIterationCounter,
+                unique_cells_view,
+                cell_particle_counts=cell_particle_counts,
+                cell_neighbor_counts=cell_neighbor_counts,
+            )
         end
-        output.enqueue_grid(
-            SimMetaData.OutputIterationCounter,
-            UniqueCells,
-            cell_particle_counts=cell_particle_counts,
-        )
 
 
         # Assuming group markers are sequential
@@ -1186,9 +1205,15 @@ using LinearAlgebra
 
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
             cell_particle_counts = nothing
+            cell_neighbor_counts = nothing
             if SimMetaData.ExportGridCellParticleCounts
                 cell_particle_counts = compute_cell_particle_counts(
                     ParticleRanges,
+                    length(UniqueCellsView),
+                )
+                cell_neighbor_counts = compute_cell_neighbor_counts(
+                    ParticleRanges,
+                    NeighborCellLists,
                     length(UniqueCellsView),
                 )
             end
@@ -1198,6 +1223,7 @@ using LinearAlgebra
                     SimMetaData.OutputIterationCounter,
                     UniqueCellsView,
                     cell_particle_counts=cell_particle_counts,
+                    cell_neighbor_counts=cell_neighbor_counts,
                 )
             end
     

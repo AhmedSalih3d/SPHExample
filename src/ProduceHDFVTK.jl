@@ -44,6 +44,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         time::Float64
         cells::Vector{CartesianIndex{N}}
         cell_particle_counts::Union{Nothing, Vector{Int}}
+        cell_neighbor_counts::Union{Nothing, Vector{Int}}
     end
 
     """Write an ASCII attribute `name => value` to `grp`."""
@@ -136,10 +137,13 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         return points, connectivity, offsets, cell_types, cell_ids, dims
     end
 
-    function cell_data_payload(cell_ids, cell_particle_counts)
+    function cell_data_payload(cell_ids, cell_particle_counts, cell_neighbor_counts)
         payload = Dict("CellData" => cell_ids)
         if cell_particle_counts !== nothing
             payload["ParticleCount"] = cell_particle_counts
+        end
+        if cell_neighbor_counts !== nothing
+            payload["ParticleNeighborsPerCell"] = cell_neighbor_counts
         end
         return payload
     end
@@ -367,7 +371,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     end
 
     function AppendVTKHDFGridData(root, newStep, SimKernel, UniqueCells,
-                                  cell_particle_counts = nothing)
+                                  cell_particle_counts = nothing,
+                                  cell_neighbor_counts = nothing)
         points, connectivity, offsets, cell_types, cell_ids, _ =
             compute_grid_geometry(SimKernel, UniqueCells)
         vtk_type = first(cell_types)
@@ -445,7 +450,11 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         HDF5.set_extent_dims(root["Types"], (length(root["Types"]) + length(UniqueCells),))
         root["Types"][TypesStartIndex:end] = vtk_type
 
-        cell_payload = cell_data_payload(cell_ids, cell_particle_counts)
+        cell_payload = cell_data_payload(
+            cell_ids,
+            cell_particle_counts,
+            cell_neighbor_counts,
+        )
         for (name, data) in cell_payload
             if !haskey(root["CellData"], name)
                 HDF5.create_dataset(
@@ -474,7 +483,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     end
 
     function SaveCellGridVTKHDF(FilePath, SimKernel, UniqueCells,
-                                cell_particle_counts = nothing)
+                                cell_particle_counts = nothing,
+                                cell_neighbor_counts = nothing)
         points, connectivity, offsets, cell_types, cell_ids, _ =
             compute_grid_geometry(SimKernel, UniqueCells)
 
@@ -502,7 +512,11 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
         # Write CellData (cell-level variables)
         let cell_group = HDF5.create_group(gtop, "CellData")
-            for (name, data) in cell_data_payload(cell_ids, cell_particle_counts)
+            for (name, data) in cell_data_payload(
+                cell_ids,
+                cell_particle_counts,
+                cell_neighbor_counts,
+            )
                 cell_group[name] = data
             end
             close(cell_group)
@@ -578,6 +592,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 cell_data_names = ["CellData"]
                 if SimMetaData.ExportGridCellParticleCounts
                     push!(cell_data_names, "ParticleCount")
+                    push!(cell_data_names, "ParticleNeighborsPerCell")
                 end
                 GenerateGeometryStructure(
                     root_grid;
@@ -700,6 +715,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                             SimKernel,
                             job.cells,
                             job.cell_particle_counts,
+                            job.cell_neighbor_counts,
                         )
                     else
                         AppendVTKHDFGridData(
@@ -708,6 +724,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                             SimKernel,
                             job.cells,
                             job.cell_particle_counts,
+                            job.cell_neighbor_counts,
                         )
                     end
                 end
@@ -721,18 +738,23 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             put!(job_channel, job)
         end
 
-        function enqueue_cell_grid(iteration, cells; cell_particle_counts = nothing)
+        function enqueue_cell_grid(iteration, cells;
+                                   cell_particle_counts = nothing,
+                                   cell_neighbor_counts = nothing)
             if !SimMetaData.ExportGridCells
                 return nothing
             end
             cells_snapshot = copy(cells)
             counts_snapshot = cell_particle_counts === nothing ? nothing :
                 copy(cell_particle_counts)
+            neighbors_snapshot = cell_neighbor_counts === nothing ? nothing :
+                copy(cell_neighbor_counts)
             job = GridWriteJob{Dimensions}(
                 iteration,
                 SimMetaData.TotalTime,
                 cells_snapshot,
                 counts_snapshot,
+                neighbors_snapshot,
             )
             put!(job_channel, job)
         end
