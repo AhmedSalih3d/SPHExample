@@ -1122,12 +1122,15 @@ using LinearAlgebra
         SimMetaData.OutputIterationCounter = 1
         output.enqueue_particles(SimMetaData.OutputIterationCounter)
         cell_particle_counts = nothing
-        if SimMetaData.ExportGridCellParticleCounts &&
-           SimMetaData.IndexCounter > 0
-            cell_particle_counts = compute_cell_particle_counts(
-                ParticleRanges,
-                SimMetaData.IndexCounter,
-            )
+        if SimMetaData.ExportGridCellParticleCounts
+            if SimMetaData.IndexCounter > 0
+                cell_particle_counts = compute_cell_particle_counts(
+                    ParticleRanges,
+                    SimMetaData.IndexCounter,
+                )
+            else
+                cell_particle_counts = zeros(Int, length(UniqueCells))
+            end
         end
         output.enqueue_grid(
             SimMetaData.OutputIterationCounter,
