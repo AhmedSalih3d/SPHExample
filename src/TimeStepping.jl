@@ -25,16 +25,27 @@ function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
     @unpack c₀, CFL = SimulationConstants
     @unpack h, η²   = SPHKernel
 
-    # Viscous timestep constraint
-    # More idiomatic and potentially faster version of max_visc
-    visc = maximum(zip(Velocity, Position)) do (v, r)
-        abs(h * dot(v, r) / (dot(r, r) + η²))
+    visc_values = fill(0.0, Threads.nthreads())
+    dt1_values = fill(Inf, Threads.nthreads())
+    Threads.@threads for i in eachindex(Position)
+        tid = Threads.threadid()
+        v = Velocity[i]
+        r = Position[i]
+        acc = Acceleration[i]
+
+        visc_values[tid] = max(
+            visc_values[tid],
+            abs(h * dot(v, r) / (dot(r, r) + η²)),
+        )
+
+        acc_norm = norm(acc)
+        if acc_norm != 0
+            dt1_values[tid] = min(dt1_values[tid], sqrt(h / acc_norm))
+        end
     end
 
-    # Force-based timestep constraint
-    # Use a generator expression with `minimum` for conciseness and efficiency
-    # The norm of the acceleration is calculated for each particle.
-    dt1 = minimum(sqrt(h / norm(acc)) for acc in Acceleration; init=Inf)
+    visc = maximum(visc_values)
+    dt1 = minimum(dt1_values)
 
     # Courant-like speed of sound condition
     dt2 = h / (c₀ + visc)
