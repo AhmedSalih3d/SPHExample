@@ -37,7 +37,6 @@ let
         ExportGridCells=true,
         OpenLogFile=true,
         # OutputVariables = [
-        #     # "ChunkID",
         #     # "Kernel",
         #     # "KernelGradient",
         #     "Density",
@@ -106,7 +105,6 @@ let
     
     # display(plt)
 end
-
 
 
 

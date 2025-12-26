@@ -39,11 +39,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         snapshot::ParticleSnapshot{P, V}
     end
 
-    struct GridWriteJob{N, C}
+    struct GridWriteJob{N}
         iteration::Int
         time::Float64
         cells::Vector{CartesianIndex{N}}
-        chunk_id::C
     end
 
     """Write an ASCII attribute `name => value` to `grp`."""
@@ -226,7 +225,6 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             CellData = HDF5.create_group(root, "CellData")
             HDF5.create_dataset(CellData, "CellData" , idType , ((0,),(-1,)), chunk=(chunk_size,))
 
-            HDF5.create_dataset(CellData, "ChunkID" , idType , ((0,),(-1,)), chunk=(chunk_size,))
         end
 
         return nothing
@@ -343,7 +341,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         end
     end
 
-    function AppendVTKHDFGridData(root, newStep, SimKernel, UniqueCells, chunk_id)
+    function AppendVTKHDFGridData(root, newStep, SimKernel, UniqueCells)
         points, connectivity, offsets, cell_types, cell_data, _ = compute_grid_geometry(SimKernel, UniqueCells)
         vtk_type = first(cell_types)
 
@@ -425,10 +423,6 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         root["CellData"]["CellData"][CellDataStartIndex:end] = cell_data
 
         
-        CellChunkIDIndex = length(root["CellData"]["ChunkID"]) + 1
-        HDF5.set_extent_dims(root["CellData"]["ChunkID"], (length(root["CellData"]["ChunkID"]) + length(UniqueCells),))
-        root["CellData"]["ChunkID"][CellChunkIDIndex:end] = chunk_id[1:length(cell_data)]
-
         return nothing
     end
 
@@ -508,7 +502,6 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
             
             available_init = Dict(
-                "ChunkID" => SimParticles.ChunkID,
                 "Kernel" => SimParticles.Kernel,
                 "KernelGradient" => SimParticles.KernelGradient,
                 "Density" => SimParticles.Density,
@@ -548,7 +541,6 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             "GhostNormals",
         ])
         field_map = Dict(
-            "ChunkID" => :ChunkID,
             "Kernel" => :Kernel,
             "KernelGradient" => :KernelGradient,
             "Density" => :Density,
@@ -651,7 +643,6 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                             job.time,
                             SimKernel,
                             job.cells,
-                            job.chunk_id,
                         )
                     end
                 end
@@ -670,12 +661,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 return nothing
             end
             cells_snapshot = copy(cells)
-            chunk_id_snapshot = copy(SimParticles.ChunkID)
-            job = GridWriteJob{Dimensions, typeof(chunk_id_snapshot)}(
+            job = GridWriteJob{Dimensions}(
                 iteration,
                 SimMetaData.TotalTime,
                 cells_snapshot,
-                chunk_id_snapshot,
             )
             put!(job_channel, job)
         end
