@@ -36,12 +36,11 @@ end
     kernel_val = [0.0]
     kernel_grad = [SVector{D,T}(0, 0)]
     cell = [CartesianIndex(0, 0)]
-    chunk = [0]
     gpoint = [SVector{D,T}(0, 0)]
     gnorm = [SVector{D,T}(0, 0)]
 
     particles = StructArray((
-        Cells=cell, ChunkID=chunk, Kernel=kernel_val, KernelGradient=kernel_grad,
+        Cells=cell, Kernel=kernel_val, KernelGradient=kernel_grad,
         Position=pos, Acceleration=acc, Velocity=vel, Density=dens, Pressure=press,
         GravityFactor=gf, MotionLimiter=limiter, BoundaryBool=bound, ID=id,
         Type=typ, GroupMarker=group, GhostPoints=gpoint, GhostNormals=gnorm,
