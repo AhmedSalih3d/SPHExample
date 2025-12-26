@@ -247,7 +247,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         return nothing
     end
 
-    function GenerateStepStructure(root,  variable_names = String[], args...; vtk_file_type = "PolyData", chunk_size = 1000)
+    function GenerateStepStructure(root, variable_names = String[], args...;
+                                   vtk_file_type = "PolyData",
+                                   chunk_size = 1000,
+                                   cell_data_names = ["CellData"])
         steps = HDF5.create_group(root, "Steps")
     
         NSteps, _ = HDF5.create_attribute(steps, "NSteps", Int32)
@@ -269,15 +272,20 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             for name in nTopoDSs
                 HDF5.create_dataset(steps, name, idType, ((0,),(-1,)), chunk=(chunk_size,))
             end
+            cData = HDF5.create_group(steps, "CellDataOffsets")
+            for name in cell_data_names
+                HDF5.create_dataset(cData, name, idType, ((0,),(-1,)),
+                                    chunk=(chunk_size,))
+            end
         end
             
         pData = HDF5.create_group(steps, "PointDataOffsets")
 
-
         for i ∈ eachindex(variable_names)
             var_name = variable_names[i]
 
-            HDF5.create_dataset(pData, var_name, idType, ((0,),(-1,)), chunk=(chunk_size,))
+            HDF5.create_dataset(pData, var_name, idType, ((0,),(-1,)),
+                                chunk=(chunk_size,))
         end
     
     end
@@ -450,6 +458,11 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             end
             start_index = length(root["CellData"][name]) + 1
             HDF5.set_extent_dims(
+                steps["CellDataOffsets"][name],
+                (length(steps["CellDataOffsets"][name]) + 1,),
+            )
+            steps["CellDataOffsets"][name][end] = start_index - 1
+            HDF5.set_extent_dims(
                 root["CellData"][name],
                 (length(root["CellData"][name]) + length(UniqueCells),),
             )
@@ -571,7 +584,11 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     vtk_file_type="UnstructuredGrid",
                     cell_data_names=cell_data_names,
                 )
-                GenerateStepStructure(root_grid; vtk_file_type="UnstructuredGrid")
+                GenerateStepStructure(
+                    root_grid;
+                    vtk_file_type="UnstructuredGrid",
+                    cell_data_names=cell_data_names,
+                )
                 
                 (particle_files = OutputVTKHDF, grid_files = OutputVTKHDFGrid)
             else
