@@ -1,9 +1,15 @@
 module TimeStepping
 
-export Δt
+export ΔtWorkspace, Δt
 
 using LinearAlgebra
 using Parameters
+
+struct ΔtWorkspace
+    tasks::Vector{Task}
+    # Pre-calculating indices here only works if particle count is constant
+end
+
 
 """
     Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
@@ -21,23 +27,19 @@ viscous, and force-based criteria.
 # Returns
 - The calculated time step `dt`.
 """
-function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
+function Δt(workspace, Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
     @unpack c₀, CFL = SimulationConstants
     @unpack h, η²   = SPHKernel
 
+    tasks = workspace.tasks
     # 1. Determine Chunks
     # We split the work evenly across the available threads
     num_particles = length(Position)
-    num_threads = Threads.nthreads()
     
     # Calculate chunk size (ceiling division to ensure we cover all particles)
-    chunk_size = cld(num_particles, num_threads)
+    chunk_size = cld(num_particles, length(tasks))
 
-    # 2. Spawn Tasks
-    # We create a vector of Tasks. Each task processes one chunk.
-    tasks = Vector{Task}(undef, num_threads)
-
-    for i in 1:num_threads
+    for i in eachindex(tasks)
         # Calculate start/end indices for this chunk
         idx_start = (i - 1) * chunk_size + 1
         idx_end = min(i * chunk_size, num_particles)
