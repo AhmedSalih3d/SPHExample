@@ -52,7 +52,7 @@ let
         # ]
     )
 
-    SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation; to_console=true)
+    SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
 
     CleanUpSimulationFolder(SimMetaDataWedge.SaveLocation)
 

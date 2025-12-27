@@ -7,7 +7,6 @@ module SimulationLoggerConfiguration
     using Logging, LoggingExtras
     using Printf
     using Dates
-    using InteractiveUtils
     using Base.Threads
 
     using ..SimulationGeometry
@@ -48,7 +47,7 @@ module SimulationLoggerConfiguration
         ToConsole::Bool              # whether log output is echoed to REPL
 
 
-        function SimulationLogger(SaveLocation::String; filename="SimulationOutput.log", to_console::Bool=false)
+        function SimulationLogger(SaveLocation::String; filename="SimulationOutput.log", to_console::Bool=true)
             io_logger = open(joinpath(SaveLocation, filename), "w")
             file_logger = FormatLogger(io_logger) do io, args
                 println(io, args.message)

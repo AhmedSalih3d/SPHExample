@@ -62,7 +62,7 @@ let
         mkdir(SimMetaDataMovingSquare.SaveLocation)
     end
 
-    SimLogger = SimulationLogger(SimMetaDataMovingSquare.SaveLocation; to_console=true)
+    SimLogger = SimulationLogger(SimMetaDataMovingSquare.SaveLocation)
 
     SimKernel = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); dx = SimConstantsMovingSquare.dx, k  = sqrt(2))
 

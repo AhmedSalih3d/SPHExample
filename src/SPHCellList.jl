@@ -24,7 +24,6 @@ import StructArrays: StructArray, foreachfield
 import LinearAlgebra: dot, norm, diagm, diag, cond, det
 import Parameters: @unpack
 import FastPow: @fastpow
-import ProgressMeter: next!, finish!
 using Format
 using TimerOutputs
 using Logging, LoggingExtras
@@ -1180,17 +1179,6 @@ using LinearAlgebra
         generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
         
 
-        if !SimLogger.ToConsole
-            @timeit HourGlass "14 Next TimeStep" next!(
-                SimMetaData.ProgressSpecification;
-                showvalues = generate_showvalues(
-                    SimMetaData.Iteration,
-                    SimMetaData.TotalTime,
-                    1e6,
-                ),
-            )
-        end
-
         @inbounds while true
 
             @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(
@@ -1230,27 +1218,11 @@ using LinearAlgebra
                 )
             end
     
-            if !SimLogger.ToConsole
-                TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) *
-                                    (TimerOutputs.tottime(HourGlass) / 1e9 / SimMetaData.TotalTime)
-                @timeit HourGlass "14 Next TimeStep" next!(
-                    SimMetaData.ProgressSpecification;
-                    showvalues = generate_showvalues(
-                        SimMetaData.Iteration,
-                        SimMetaData.TotalTime,
-                        TimeLeftInSeconds,
-                    ),
-                )
-            end
-    
             if SimMetaData.TotalTime > SimMetaData.SimulationTime
                 
                 # At end of simulation
                 @timeit SimMetaData.HourGlass "13B Close Data Streams" output.close_files()
 
-                if !SimLogger.ToConsole
-                    finish!(SimMetaData.ProgressSpecification)
-                end
                 show(HourGlass,sortby=:name)
                 show(HourGlass)
 

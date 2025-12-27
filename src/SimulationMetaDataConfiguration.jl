@@ -2,7 +2,7 @@ module SimulationMetaDataConfiguration
 
 using Parameters
 using TimerOutputs
-using ProgressMeter
+
 
 export SimulationMetaData, ShiftingMode, NoShifting, PlanarShifting,
        KernelOutputMode, NoKernelOutput, StoreKernelOutput,
@@ -44,7 +44,6 @@ struct StoreLog <: LogMode end
     SimulationTime::FloatType               = 0
     TimeSteps                               = Vector{FloatType}() 
     IndexCounter::Int                       = 0
-    ProgressSpecification::ProgressUnknown  = ProgressUnknown(desc="Simulation time per output each:", spinner=true, showspeed=true)
     VisualizeInParaview::Bool               = true
     ExportSingleVTKHDF::Bool                = true
     ExportGridCells::Bool                   = false

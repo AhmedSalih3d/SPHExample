@@ -44,7 +44,7 @@ let
         OpenLogFile            = true
     )
 
-    SimLogger = SimulationLogger(SimMetaDataDambreak3D.SaveLocation; to_console=true)
+    SimLogger = SimulationLogger(SimMetaDataDambreak3D.SaveLocation)
 
     @warn("""
     3D mode enabled but lightly tested.
