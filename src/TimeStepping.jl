@@ -7,7 +7,7 @@ using Parameters
 
 struct ΔtWorkspace
     tasks::Vector{Task}
-    # Pre-calculating indices here only works if particle count is constant
+    chunk_size::Int
 end
 
 
@@ -30,19 +30,12 @@ viscous, and force-based criteria.
 function Δt(workspace, Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
     @unpack c₀, CFL = SimulationConstants
     @unpack h, η²   = SPHKernel
-
-    tasks = workspace.tasks
-    # 1. Determine Chunks
-    # We split the work evenly across the available threads
-    num_particles = length(Position)
-    
-    # Calculate chunk size (ceiling division to ensure we cover all particles)
-    chunk_size = cld(num_particles, length(tasks))
+    @unpack tasks, chunk_size = workspace
 
     for i in eachindex(tasks)
         # Calculate start/end indices for this chunk
         idx_start = (i - 1) * chunk_size + 1
-        idx_end = min(i * chunk_size, num_particles)
+        idx_end = min(i * chunk_size, length(Position))
 
         # Spawn the task on any available thread
         tasks[i] = Threads.@spawn begin

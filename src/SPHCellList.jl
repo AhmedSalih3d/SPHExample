@@ -1107,8 +1107,8 @@ using LinearAlgebra
         ParticleNormalsPath::Union{Nothing,String} = nothing
         ) where {Dimensions,FloatType,SMode,KMode,BMode,LMode,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
 
-        workspace = ΔtWorkspace(Vector{Task}(undef, Threads.nthreads()))
-        
+        workspace = ΔtWorkspace(Vector{Task}(undef, Threads.nthreads()), cld(length(SimParticles), Threads.nthreads()))
+
         # Unpack the relevant simulation meta data
         @unpack HourGlass = SimMetaData;
         
