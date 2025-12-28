@@ -11,16 +11,16 @@ struct ΔtWorkspace
 end
 
 """
-    parallel_for!(workspace, length, body)
+    parallel_for!(workspace, total_count, body)
 
-Run `body(i)` in parallel over `1:length`, chunked according to `workspace`.
+Run `body(i)` in parallel over `1:total_count`, chunked according to `workspace`.
 """
-function parallel_for!(workspace, length, body)
+function parallel_for!(workspace::ΔtWorkspace, total_count::Integer, body::Function)
     @unpack tasks, chunk_size = workspace
 
     for i in eachindex(tasks)
         idx_start = (i - 1) * chunk_size + 1
-        idx_end = min(i * chunk_size, length)
+        idx_end = min(i * chunk_size, total_count)
 
         tasks[i] = Threads.@spawn begin
             if idx_start <= idx_end
@@ -37,6 +37,10 @@ function parallel_for!(workspace, length, body)
     end
 
     return nothing
+end
+
+function parallel_for!(body::Function, total_count::Integer, workspace::ΔtWorkspace)
+    return parallel_for!(workspace, total_count, body)
 end
 
 

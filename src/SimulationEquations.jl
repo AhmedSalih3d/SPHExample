@@ -5,7 +5,7 @@ export EquationOfState, EquationOfStateGamma7, Pressure!, DensityEpsi!, LimitDen
 using StaticArrays
 using Parameters
 using FastPow
-using ..TimeStepping: parallel_for!
+using ..TimeStepping
 
 @inline function EquationOfStateGamma7(ρ,c₀,ρ₀)
     return @fastpow ((c₀^2*ρ₀)/7) * ((ρ/ρ₀)^7 - 1)
@@ -27,7 +27,7 @@ end
 # This is to handle the special factor multiplied on density in the time stepping procedure, when
 # using symplectic time stepping
 @inline function DensityEpsi!(Density, dρdtIₙ⁺, ρₙ⁺, Δt, workspace)
-    parallel_for!(workspace, length(Density)) do i
+    TimeStepping.parallel_for!(workspace, length(Density)) do i
         epsi = - (dρdtIₙ⁺[i] / ρₙ⁺[i]) * Δt
         Density[i] *= (2 - epsi) / (2 + epsi)
     end
@@ -36,7 +36,7 @@ end
 
 # This version of the function using !Bool(MotionLimiter) instead of BoundaryBool
 @inline function LimitDensityAtBoundary!(Density, ρ₀, MotionLimiter, workspace)
-    parallel_for!(workspace, length(Density)) do i
+    TimeStepping.parallel_for!(workspace, length(Density)) do i
         if (Density[i] < ρ₀) * !Bool(MotionLimiter[i])
             Density[i] = ρ₀
         end
