@@ -225,6 +225,26 @@ using LinearAlgebra
         return nothing
     end
 
+    function NeighborLoopWithPressure!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
+                                       SimMetaData::SimulationMetaData{D,T,S,K,B,L},
+                                       SimConstants, SimParticles, ParticleRanges,
+                                       CellDict, NeighborCellLists, Position, Density,
+                                       Pressure, Velocity, MotionLimiter, dρdtI,
+                                       Acceleration, Kernel, KernelGradient, ∇Cᵢ,
+                                       ∇◌rᵢ, time_step_accumulator = nothing) where {D,T,
+                                                   S<:ShiftingMode,K<:KernelOutputMode,
+                                                   B<:MDBCMode,L<:LogMode,
+                                                   SDD<:SPHDensityDiffusion,
+                                                   SV<:SPHViscosity}
+        Pressure!(Pressure, Density, SimConstants)
+        NeighborLoopPerParticle!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                                 SimConstants, SimParticles, ParticleRanges, CellDict,
+                                 NeighborCellLists, Position, Density, Pressure, Velocity,
+                                 MotionLimiter, dρdtI, Acceleration, Kernel,
+                                 KernelGradient, ∇Cᵢ, ∇◌rᵢ, time_step_accumulator)
+        return nothing
+    end
+
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{D,T,NoShifting,K,B,L},
                                       SimConstants, SimParticles, ParticleRanges,
@@ -1065,10 +1085,9 @@ using LinearAlgebra
 
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
             
-                @timeit SimMetaData.HourGlass "02 Pressure"                              Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-                @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType)
+                @timeit SimMetaData.HourGlass "02 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType)
 
-                @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoopPerParticle!(
+                @timeit SimMetaData.HourGlass "03 First NeighborLoop" NeighborLoopWithPressure!(
                     SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                     SimConstants, SimParticles, ParticleRanges, CellDict,
                     NeighborCellLists, Position, Density, Pressure, Velocity,
@@ -1084,9 +1103,8 @@ using LinearAlgebra
             
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
             
-                @timeit SimMetaData.HourGlass "07 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
                 reset_time_step_accumulator!(time_step_accumulator)
-                @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticle!(
+                @timeit SimMetaData.HourGlass "07 Second NeighborLoop" NeighborLoopWithPressure!(
                     SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                     SimConstants, SimParticles, ParticleRanges, CellDict,
                     NeighborCellLists, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺,
