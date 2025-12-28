@@ -5,7 +5,6 @@ export EquationOfState, EquationOfStateGamma7, Pressure!, DensityEpsi!, LimitDen
 using StaticArrays
 using Parameters
 using FastPow
-using ..TimeStepping
 
 @inline function EquationOfStateGamma7(ρ,c₀,ρ₀)
     return @fastpow ((c₀^2*ρ₀)/7) * ((ρ/ρ₀)^7 - 1)
@@ -26,55 +25,25 @@ end
 
 # This is to handle the special factor multiplied on density in the time stepping procedure, when
 # using symplectic time stepping
-@inline function DensityEpsi!(Density, dρdtIₙ⁺, ρₙ⁺, Δt, workspace)
-    @unpack tasks, chunk_size = workspace
-
-    for task_index in eachindex(tasks)
-        idx_start = (task_index - 1) * chunk_size + 1
-        idx_end = min(task_index * chunk_size, length(Density))
-
-        tasks[task_index] = Threads.@spawn begin
-            if idx_start <= idx_end
-                @inbounds for i in idx_start:idx_end
-                    epsi = - (dρdtIₙ⁺[i] / ρₙ⁺[i]) * Δt
-                    Density[i] *= (2 - epsi) / (2 + epsi)
-                end
-            end
-            nothing
+@inline function DensityEpsi!(Density, dρdtIₙ⁺, ρₙ⁺, Δt, _workspace)
+    Threads.@threads for i in eachindex(Density)
+        @inbounds begin
+            epsi = - (dρdtIₙ⁺[i] / ρₙ⁺[i]) * Δt
+            Density[i] *= (2 - epsi) / (2 + epsi)
         end
     end
-
-    for task in tasks
-        fetch(task)
-    end
-
     return nothing
 end
 
 # This version of the function using !Bool(MotionLimiter) instead of BoundaryBool
-@inline function LimitDensityAtBoundary!(Density, ρ₀, MotionLimiter, workspace)
-    @unpack tasks, chunk_size = workspace
-
-    for task_index in eachindex(tasks)
-        idx_start = (task_index - 1) * chunk_size + 1
-        idx_end = min(task_index * chunk_size, length(Density))
-
-        tasks[task_index] = Threads.@spawn begin
-            if idx_start <= idx_end
-                @inbounds for i in idx_start:idx_end
-                    if (Density[i] < ρ₀) * !Bool(MotionLimiter[i])
-                        Density[i] = ρ₀
-                    end
-                end
+@inline function LimitDensityAtBoundary!(Density, ρ₀, MotionLimiter, _workspace)
+    Threads.@threads for i in eachindex(Density)
+        @inbounds begin
+            if (Density[i] < ρ₀) * !Bool(MotionLimiter[i])
+                Density[i] = ρ₀
             end
-            nothing
         end
     end
-
-    for task in tasks
-        fetch(task)
-    end
-
     return nothing
 end
 
