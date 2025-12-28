@@ -1,101 +1,60 @@
 module TimeStepping
 
-export ΔtWorkspace, Δt
+export Δt
 
-using LinearAlgebra
-using Parameters
+using LinearAlgebra, Parameters, Polyester, Bumper
 
-struct ΔtWorkspace
-    tasks::Vector{Task}
-    chunk_size::Int
-end
-
-
-"""
-    Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
-
-Calculates the adaptive time step for the simulation based on Courant-Friedrichs-Lewy (CFL),
-viscous, and force-based criteria.
-
-# Arguments
-- `Position`: Vector of position vectors for each particle.
-- `Velocity`: Vector of velocity vectors for each particle.
-- `Acceleration`: Vector of acceleration vectors for each particle.
-- `SimulationConstants`: Struct containing simulation parameters like `c₀` (speed of sound) and `CFL` number.
-- `SPHKernel`: Struct containing kernel parameters like `h` (smoothing length) and `η²`.
-
-# Returns
-- The calculated time step `dt`.
-"""
-function Δt(workspace, Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
+function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
     @unpack c₀, CFL = SimulationConstants
     @unpack h, η²   = SPHKernel
-    @unpack tasks, chunk_size = workspace
 
-    for i in eachindex(tasks)
-        # Calculate start/end indices for this chunk
-        idx_start = (i - 1) * chunk_size + 1
-        idx_end = min(i * chunk_size, length(Position))
+    N = length(Position)
+    n_threads = Threads.nthreads()
 
-        # Spawn the task on any available thread
-        tasks[i] = Threads.@spawn begin
-            # Local accumulators for this specific task
-            local_visc = 0.0
-            local_dt_force = Inf
+    # 1. We allocate the reduction buffers normally (on the heap or as StaticArrays) 
+    # because they need to exist across the threaded boundary.
+    # Since it's only 2 Float64s per thread, this is negligible.
+    visc_vals = zeros(Float64, n_threads)
+    dt_vals   = fill(Inf, n_threads)
 
-            # If this chunk has valid indices, run the loop
+    # 2. Parallel loop
+    @batch for i in 1:n_threads
+        # Each thread gets its own Bumper scope
+        @no_escape begin
+            idx_start = (i - 1) * cld(N, n_threads) + 1
+            idx_end   = min(i * cld(N, n_threads), N)
+
+            t_visc = 0.0
+            t_dt   = Inf
+
             if idx_start <= idx_end
-                # @inbounds is safe here because we calculated indices carefully
                 @inbounds for j in idx_start:idx_end
+                    # If you had larger Bumper arrays (like A_gamma), 
+                    # you would @alloc them here!
+                    
                     r = Position[j]
                     v = Velocity[j]
                     a = Acceleration[j]
 
-                    # --- Viscous Logic ---
                     r_sq = dot(r, r)
-                    # abs() is sufficient, removed redundant checks
                     curr_visc = abs(h * dot(v, r) / (r_sq + η²))
-                    
-                    if curr_visc > local_visc
-                        local_visc = curr_visc
-                    end
+                    t_visc = max(t_visc, curr_visc)
 
-                    # --- Force Logic ---
                     a_mag = norm(a)
                     if a_mag > 0
-                        curr_dt_force = sqrt(h / a_mag)
-                        if curr_dt_force < local_dt_force
-                            local_dt_force = curr_dt_force
-                        end
+                        t_dt = min(t_dt, sqrt(h / a_mag))
                     end
                 end
             end
-            # The task returns its local results as a tuple
-            (local_visc, local_dt_force)
+            
+            # Save thread-local results back to the shared reduction arrays
+            visc_vals[i] = t_visc
+            dt_vals[i]   = t_dt
         end
     end
 
-    # 3. Reduce Results
-    # Initialize global accumulators
-    global_visc = 0.0
-    global_dt_force = Inf
-
-    # Wait for all tasks to finish and combine their results
-    for t in tasks
-        (l_visc, l_dt) = fetch(t)
-        if l_visc > global_visc
-            global_visc = l_visc
-        end
-        if l_dt < global_dt_force
-            global_dt_force = l_dt
-        end
-    end
-
-    # 4. Final Calculation
-    dt2 = h / (c₀ + global_visc)
-    dt = CFL * min(global_dt_force, dt2)
-
-    return dt
+    # 3. Final Global Reduction (Implicit Return)
+    CFL * min(minimum(dt_vals), h / (c₀ + maximum(visc_vals)))
 end
 
 end

@@ -32,6 +32,7 @@ using Base.Threads
 using UnicodePlots
 using LinearAlgebra
     using Bumper
+    using Polyester
 
     function ConstructFullStencil(v::Val{d}) where d
         return CartesianIndices(ntuple(_->-1:1, v))
@@ -180,7 +181,7 @@ using LinearAlgebra
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         Cells = SimParticles.Cells
-        @inbounds Threads.@threads for i in eachindex(Position)
+        @inbounds @batch for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
             CellIndex = Cells[i]
@@ -233,7 +234,7 @@ using LinearAlgebra
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         Cells = SimParticles.Cells
-        @inbounds Threads.@threads for i in eachindex(Position)
+        @inbounds @batch for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
             kernel_acc = zero(Kernel[i])
@@ -295,7 +296,7 @@ using LinearAlgebra
                                                   L<:LogMode,SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         Cells = SimParticles.Cells
-        @inbounds Threads.@threads for i in eachindex(Position)
+        @inbounds @batch for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
             shift_c_acc = zero(∇Cᵢ[i])
@@ -359,7 +360,7 @@ using LinearAlgebra
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         Cells = SimParticles.Cells
-        @inbounds Threads.@threads for i in eachindex(Position)
+        @inbounds @batch for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
             kernel_acc = zero(Kernel[i])
@@ -424,7 +425,7 @@ using LinearAlgebra
         
         FullStencil = ConstructFullStencil(Val(Dimensions))
 
-        @inbounds @threads for iter in eachindex(GhostPoints)
+        @inbounds @batch for iter in eachindex(GhostPoints)
             GhostPoint = GhostPoints[iter]
 
             if !iszero(GhostPoint)
@@ -1014,7 +1015,7 @@ using LinearAlgebra
                                               },
                                           },
                                       }, 
-                                      workspace) where {Dimensions, FloatType, SMode, KMode,
+                                    ) where {Dimensions, FloatType, SMode, KMode,
                                                 BMode, LMode,
                                                 SDD<:SPHDensityDiffusion,
                                                 SV<:SPHViscosity}
@@ -1032,7 +1033,7 @@ using LinearAlgebra
 
                 # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
 
-                @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(workspace, Position, Velocity, Acceleration, SimConstants, SimKernel)
+                @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel)
                 dt₂ = dt * 0.5
 
                 @timeit SimMetaData.HourGlass "02 Calculate IndexCounter"  begin
@@ -1105,8 +1106,6 @@ using LinearAlgebra
         SimDensityDiffusion::SDD,
         ParticleNormalsPath::Union{Nothing,String} = nothing
         ) where {Dimensions,FloatType,SMode,KMode,BMode,LMode,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
-
-        workspace = ΔtWorkspace(Vector{Task}(undef, Threads.nthreads()), cld(length(SimParticles), Threads.nthreads()))
 
         # Unpack the relevant simulation meta data
         @unpack HourGlass = SimMetaData;
@@ -1186,7 +1185,7 @@ using LinearAlgebra
                 SimConstants, SimParticles, FullStencil, ParticleRanges,
                 UniqueCells, CellDict, SortingScratchSpace,
                 NeighborCellLists, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
-                ∇Cᵢ, ∇◌rᵢ, MotionDefinition, workspace,
+                ∇Cᵢ, ∇◌rᵢ, MotionDefinition
             )
             push!(SimMetaData.TimeSteps, SimMetaData.CurrentTimeStep)
 
