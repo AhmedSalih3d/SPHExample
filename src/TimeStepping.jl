@@ -6,6 +6,7 @@ export ΔtWorkspace, ΔtAccumulator, Δt, finalize_time_step, reset_time_step_ac
 using LinearAlgebra
 using Parameters
 using Base.Threads
+using Bumper
 
 struct ΔtWorkspace
     tasks::Vector{Task}
