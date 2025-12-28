@@ -25,20 +25,26 @@ end
 
 # This is to handle the special factor multiplied on density in the time stepping procedure, when
 # using symplectic time stepping
-@inline function DensityEpsi!(Density, dρdtIₙ⁺,ρₙ⁺,Δt)
-    @inbounds for i in eachindex(Density)
-        epsi = - (dρdtIₙ⁺[i] / ρₙ⁺[i]) * Δt
-        Density[i] *= (2 - epsi) / (2 + epsi)
+@inline function DensityEpsi!(Density, dρdtIₙ⁺, ρₙ⁺, Δt, _workspace)
+    Threads.@threads for i in eachindex(Density)
+        @inbounds begin
+            epsi = - (dρdtIₙ⁺[i] / ρₙ⁺[i]) * Δt
+            Density[i] *= (2 - epsi) / (2 + epsi)
+        end
     end
+    return nothing
 end
 
 # This version of the function using !Bool(MotionLimiter) instead of BoundaryBool
-@inline function LimitDensityAtBoundary!(Density,ρ₀, MotionLimiter)
-    @inbounds for i in eachindex(Density)
-        if (Density[i] < ρ₀) * !Bool(MotionLimiter[i])
-            Density[i] = ρ₀
+@inline function LimitDensityAtBoundary!(Density, ρ₀, MotionLimiter, _workspace)
+    Threads.@threads for i in eachindex(Density)
+        @inbounds begin
+            if (Density[i] < ρ₀) * !Bool(MotionLimiter[i])
+                Density[i] = ρ₀
+            end
         end
     end
+    return nothing
 end
 
 @inline function ConstructGravitySVector(_::SVector{N, T}, value) where {N, T}
