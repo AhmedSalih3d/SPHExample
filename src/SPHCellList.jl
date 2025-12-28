@@ -176,7 +176,8 @@ using LinearAlgebra
                                       CellDict, NeighborCellLists, Position, Density,
                                       Pressure, Velocity, MotionLimiter, dρdtI,
                                       Acceleration, Kernel, KernelGradient, ∇Cᵢ,
-                                      ∇◌rᵢ) where {D,T,B<:MDBCMode,L<:LogMode,
+                                      ∇◌rᵢ, time_step_accumulator = nothing) where {D,T,
+                                                  B<:MDBCMode,L<:LogMode,
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         Cells = SimParticles.Cells
@@ -217,6 +218,8 @@ using LinearAlgebra
 
             dρdtI[i] = dρdt_acc
             Acceleration[i] = acc_acc
+            update_time_step_accumulator!(time_step_accumulator, Position[i],
+                                          Velocity[i], acc_acc, SimKernel)
         end
 
         return nothing
@@ -228,7 +231,8 @@ using LinearAlgebra
                                       CellDict, NeighborCellLists, Position, Density,
                                       Pressure, Velocity, MotionLimiter, dρdtI,
                                       Acceleration, Kernel, KernelGradient, ∇Cᵢ,
-                                      ∇◌rᵢ) where {D,T,K<:KernelOutputMode,
+                                      ∇◌rᵢ, time_step_accumulator = nothing) where {D,T,
+                                                  K<:KernelOutputMode,
                                                   B<:MDBCMode,L<:LogMode,
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
@@ -280,6 +284,8 @@ using LinearAlgebra
             Acceleration[i] = acc_acc
             Kernel[i] = kernel_acc
             KernelGradient[i] = kernel_grad_acc
+            update_time_step_accumulator!(time_step_accumulator, Position[i],
+                                          Velocity[i], acc_acc, SimKernel)
         end
 
         return nothing
@@ -291,7 +297,8 @@ using LinearAlgebra
                                       CellDict, NeighborCellLists, Position, Density,
                                       Pressure, Velocity, MotionLimiter, dρdtI,
                                       Acceleration, Kernel, KernelGradient, ∇Cᵢ,
-                                      ∇◌rᵢ) where {D,T,S<:ShiftingMode,B<:MDBCMode,
+                                      ∇◌rᵢ, time_step_accumulator = nothing) where {D,T,
+                                                  S<:ShiftingMode,B<:MDBCMode,
                                                   L<:LogMode,SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         Cells = SimParticles.Cells
@@ -342,6 +349,8 @@ using LinearAlgebra
             Acceleration[i] = acc_acc
             ∇Cᵢ[i] = shift_c_acc
             ∇◌rᵢ[i] = shift_r_acc
+            update_time_step_accumulator!(time_step_accumulator, Position[i],
+                                          Velocity[i], acc_acc, SimKernel)
         end
 
         return nothing
@@ -353,7 +362,8 @@ using LinearAlgebra
                                       CellDict, NeighborCellLists, Position, Density,
                                       Pressure, Velocity, MotionLimiter, dρdtI,
                                       Acceleration, Kernel, KernelGradient, ∇Cᵢ,
-                                      ∇◌rᵢ) where {D,T,S<:ShiftingMode,
+                                      ∇◌rᵢ, time_step_accumulator = nothing) where {D,T,
+                                                  S<:ShiftingMode,
                                                   K<:KernelOutputMode,
                                                   B<:MDBCMode,L<:LogMode,
                                                   SDD<:SPHDensityDiffusion,
@@ -410,6 +420,8 @@ using LinearAlgebra
             KernelGradient[i] = kernel_grad_acc
             ∇Cᵢ[i] = shift_c_acc
             ∇◌rᵢ[i] = shift_r_acc
+            update_time_step_accumulator!(time_step_accumulator, Position[i],
+                                          Velocity[i], acc_acc, SimKernel)
         end
 
         return nothing
@@ -1013,8 +1025,9 @@ using LinearAlgebra
                                                   MotionDetails{Dimensions, FloatType},
                                               },
                                           },
-                                      }, 
-                                      workspace) where {Dimensions, FloatType, SMode, KMode,
+                                      },
+                                      workspace, time_step_accumulator) where {
+                                                Dimensions, FloatType, SMode, KMode,
                                                 BMode, LMode,
                                                 SDD<:SPHDensityDiffusion,
                                                 SV<:SPHViscosity}
@@ -1024,6 +1037,7 @@ using LinearAlgebra
 
         ###
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
+        dt = Δt(workspace, Position, Velocity, Acceleration, SimConstants, SimKernel)
 
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
 
@@ -1032,10 +1046,9 @@ using LinearAlgebra
 
                 # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
 
-                @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(workspace, Position, Velocity, Acceleration, SimConstants, SimKernel)
                 dt₂ = dt * 0.5
 
-                @timeit SimMetaData.HourGlass "02 Calculate IndexCounter"  begin
+                @timeit SimMetaData.HourGlass "01 Calculate IndexCounter"  begin
                     # Note: If particles are not inside of the neighbor list visualiation, try setting this if statement to always true, since UniqueCells will be updated always then
                     # In theory, the maximal speed is the speed of sound, this should give a safe guard
                     # and ensure it is always updated in a reasonable manner. This only works well, assuming that
@@ -1043,7 +1056,7 @@ using LinearAlgebra
                     # Remove if statement logic if you want to update each iteration
                     # if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
                     if ShouldRebuild
-                        @timeit SimMetaData.HourGlass "02a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells, CellDict)
+                        @timeit SimMetaData.HourGlass "01a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells, CellDict)
                         SimMetaData.Δx    = zero(eltype(dρdtI))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                         BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellDict)
@@ -1052,10 +1065,10 @@ using LinearAlgebra
 
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
             
-                @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-                @timeit SimMetaData.HourGlass "04 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType)
+                @timeit SimMetaData.HourGlass "02 Pressure"                              Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
+                @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType)
 
-                @timeit SimMetaData.HourGlass "05 First NeighborLoop" NeighborLoopPerParticle!(
+                @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoopPerParticle!(
                     SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                     SimConstants, SimParticles, ParticleRanges, CellDict,
                     NeighborCellLists, Position, Density, Pressure, Velocity,
@@ -1064,30 +1077,37 @@ using LinearAlgebra
                 )
 
 
-                @timeit SimMetaData.HourGlass "06 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
+                @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
 
 
-                @timeit SimMetaData.HourGlass "07 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+                @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
             
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
             
-                @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
+                @timeit SimMetaData.HourGlass "07 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
+                reset_time_step_accumulator!(time_step_accumulator)
                 @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticle!(
                     SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                     SimConstants, SimParticles, ParticleRanges, CellDict,
                     NeighborCellLists, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺,
                     MotionLimiter, dρdtI, Acceleration, Kernel,
-                    KernelGradient, ∇Cᵢ, ∇◌rᵢ,
+                    KernelGradient, ∇Cᵢ, ∇◌rᵢ, time_step_accumulator,
                 )
 
             
-                @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
+                @timeit SimMetaData.HourGlass "09 Update TimeStep" begin
+                    dt_next = finalize_time_step(time_step_accumulator, SimConstants,
+                                                 SimKernel)
+                end
+
+                @timeit SimMetaData.HourGlass "10 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
             
-                @timeit SimMetaData.HourGlass "10 Final Density"                         DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
+                @timeit SimMetaData.HourGlass "11 Final Density"                         DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
             
-                @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+                @timeit SimMetaData.HourGlass "12 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
             
-                @timeit SimMetaData.HourGlass "12 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
+                @timeit SimMetaData.HourGlass "13 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
+                dt = dt_next
 
             end
         
@@ -1106,7 +1126,9 @@ using LinearAlgebra
         ParticleNormalsPath::Union{Nothing,String} = nothing
         ) where {Dimensions,FloatType,SMode,KMode,BMode,LMode,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
 
-        workspace = ΔtWorkspace(Vector{Task}(undef, Threads.nthreads()), cld(length(SimParticles), Threads.nthreads()))
+        workspace = ΔtWorkspace(Vector{Task}(undef, Threads.nthreads()),
+                                cld(length(SimParticles), Threads.nthreads()))
+        time_step_accumulator = ΔtAccumulator(Threads.nthreads(), FloatType)
 
         # Unpack the relevant simulation meta data
         @unpack HourGlass = SimMetaData;
@@ -1186,7 +1208,7 @@ using LinearAlgebra
                 SimConstants, SimParticles, FullStencil, ParticleRanges,
                 UniqueCells, CellDict, SortingScratchSpace,
                 NeighborCellLists, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
-                ∇Cᵢ, ∇◌rᵢ, MotionDefinition, workspace,
+                ∇Cᵢ, ∇◌rᵢ, MotionDefinition, workspace, time_step_accumulator,
             )
             push!(SimMetaData.TimeSteps, SimMetaData.CurrentTimeStep)
 
