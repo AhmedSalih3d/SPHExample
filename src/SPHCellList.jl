@@ -176,7 +176,7 @@ using LinearAlgebra
                                       CellDict, NeighborCellLists, Position, Density,
                                       Pressure, Velocity, MotionLimiter, dρdtI,
                                       Acceleration, Kernel, KernelGradient, ∇Cᵢ,
-                                      ∇◌rᵢ, time_step_accumulator = nothing) where {D,T,
+                                      ∇◌rᵢ) where {D,T,
                                                   B<:MDBCMode,L<:LogMode,
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
@@ -218,8 +218,6 @@ using LinearAlgebra
 
             dρdtI[i] = dρdt_acc
             Acceleration[i] = acc_acc
-            update_time_step_accumulator!(time_step_accumulator, Position[i],
-                                          Velocity[i], acc_acc, SimKernel)
         end
 
         return nothing
@@ -231,7 +229,7 @@ using LinearAlgebra
                                       CellDict, NeighborCellLists, Position, Density,
                                       Pressure, Velocity, MotionLimiter, dρdtI,
                                       Acceleration, Kernel, KernelGradient, ∇Cᵢ,
-                                      ∇◌rᵢ, time_step_accumulator = nothing) where {D,T,
+                                      ∇◌rᵢ) where {D,T,
                                                   K<:KernelOutputMode,
                                                   B<:MDBCMode,L<:LogMode,
                                                   SDD<:SPHDensityDiffusion,
@@ -284,8 +282,6 @@ using LinearAlgebra
             Acceleration[i] = acc_acc
             Kernel[i] = kernel_acc
             KernelGradient[i] = kernel_grad_acc
-            update_time_step_accumulator!(time_step_accumulator, Position[i],
-                                          Velocity[i], acc_acc, SimKernel)
         end
 
         return nothing
@@ -297,7 +293,7 @@ using LinearAlgebra
                                       CellDict, NeighborCellLists, Position, Density,
                                       Pressure, Velocity, MotionLimiter, dρdtI,
                                       Acceleration, Kernel, KernelGradient, ∇Cᵢ,
-                                      ∇◌rᵢ, time_step_accumulator = nothing) where {D,T,
+                                      ∇◌rᵢ) where {D,T,
                                                   S<:ShiftingMode,B<:MDBCMode,
                                                   L<:LogMode,SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
@@ -349,8 +345,6 @@ using LinearAlgebra
             Acceleration[i] = acc_acc
             ∇Cᵢ[i] = shift_c_acc
             ∇◌rᵢ[i] = shift_r_acc
-            update_time_step_accumulator!(time_step_accumulator, Position[i],
-                                          Velocity[i], acc_acc, SimKernel)
         end
 
         return nothing
@@ -362,7 +356,7 @@ using LinearAlgebra
                                       CellDict, NeighborCellLists, Position, Density,
                                       Pressure, Velocity, MotionLimiter, dρdtI,
                                       Acceleration, Kernel, KernelGradient, ∇Cᵢ,
-                                      ∇◌rᵢ, time_step_accumulator = nothing) where {D,T,
+                                      ∇◌rᵢ) where {D,T,
                                                   S<:ShiftingMode,
                                                   K<:KernelOutputMode,
                                                   B<:MDBCMode,L<:LogMode,
@@ -420,8 +414,6 @@ using LinearAlgebra
             KernelGradient[i] = kernel_grad_acc
             ∇Cᵢ[i] = shift_c_acc
             ∇◌rᵢ[i] = shift_r_acc
-            update_time_step_accumulator!(time_step_accumulator, Position[i],
-                                          Velocity[i], acc_acc, SimKernel)
         end
 
         return nothing
@@ -1025,8 +1017,7 @@ using LinearAlgebra
                                                   MotionDetails{Dimensions, FloatType},
                                               },
                                           },
-                                      },
-                                      workspace, time_step_accumulator) where {
+                                      }) where {
                                                 Dimensions, FloatType, SMode, KMode,
                                                 BMode, LMode,
                                                 SDD<:SPHDensityDiffusion,
@@ -1037,7 +1028,7 @@ using LinearAlgebra
 
         ###
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-        dt = Δt(workspace, Position, Velocity, Acceleration, SimConstants, SimKernel)
+        dt = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel)
 
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
 
@@ -1085,19 +1076,18 @@ using LinearAlgebra
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
             
                 @timeit SimMetaData.HourGlass "07 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-                reset_time_step_accumulator!(time_step_accumulator)
                 @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticle!(
                     SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                     SimConstants, SimParticles, ParticleRanges, CellDict,
                     NeighborCellLists, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺,
                     MotionLimiter, dρdtI, Acceleration, Kernel,
-                    KernelGradient, ∇Cᵢ, ∇◌rᵢ, time_step_accumulator,
+                    KernelGradient, ∇Cᵢ, ∇◌rᵢ,
                 )
 
             
                 @timeit SimMetaData.HourGlass "09 Update TimeStep" begin
-                    dt_next = finalize_time_step(time_step_accumulator, SimConstants,
-                                                 SimKernel)
+                    dt_next = Δt(Positionₙ⁺, Velocityₙ⁺, Acceleration, SimConstants,
+                                 SimKernel)
                 end
 
                 @timeit SimMetaData.HourGlass "10 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
@@ -1126,10 +1116,7 @@ using LinearAlgebra
         ParticleNormalsPath::Union{Nothing,String} = nothing
         ) where {Dimensions,FloatType,SMode,KMode,BMode,LMode,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
 
-        workspace = ΔtWorkspace(Vector{Task}(undef, Threads.nthreads()),
-                                cld(length(SimParticles), Threads.nthreads()))
-        time_step_accumulator = ΔtAccumulator(FloatType)
-
+        NumberOfPoints = length(SimParticles)::Int
         # Unpack the relevant simulation meta data
         @unpack HourGlass = SimMetaData;
         
@@ -1142,7 +1129,6 @@ using LinearAlgebra
         initialize_log!(SimMetaData, SimLogger, SimConstants, SimKernel,
                         SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
         
-        NumberOfPoints = length(SimParticles)::Int
         Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
     
         # Produce sorting related variables
@@ -1204,12 +1190,12 @@ using LinearAlgebra
                 SimConstants, SimParticles, FullStencil, ParticleRanges,
                 UniqueCells, CellDict, SortingScratchSpace,
                 NeighborCellLists, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
-                ∇Cᵢ, ∇◌rᵢ, MotionDefinition, workspace, time_step_accumulator,
+                ∇Cᵢ, ∇◌rᵢ, MotionDefinition,
             )
             push!(SimMetaData.TimeSteps, SimMetaData.CurrentTimeStep)
 
             log_step!(SimMetaData, SimLogger)
-    
+
             SimMetaData.OutputIterationCounter += 1
 
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
@@ -1235,9 +1221,9 @@ using LinearAlgebra
                     cell_neighbor_counts=cell_neighbor_counts,
                 )
             end
-    
+
             if SimMetaData.TotalTime > SimMetaData.SimulationTime
-                
+
                 # At end of simulation
                 @timeit SimMetaData.HourGlass "13B Close Data Streams" output.close_files()
 
@@ -1247,9 +1233,17 @@ using LinearAlgebra
                 AutoOpenParaview(SimMetaData, output.variable_names)
 
                 # Time steps line plot
-                UnicodeTimeStepsGraph = lineplot(1:length(SimMetaData.TimeSteps), SimMetaData.TimeSteps, title="Time Steps [s] as a function of iteration", name="Time Steps", xlabel="Iterations [-]", ylabel="Time Step Size [s]")
+                UnicodeTimeStepsGraph = lineplot(
+                    1:length(SimMetaData.TimeSteps),
+                    SimMetaData.TimeSteps,
+                    title="Time Steps [s] as a function of iteration",
+                    name="Time Steps",
+                    xlabel="Iterations [-]",
+                    ylabel="Time Step Size [s]",
+                )
 
-                finalize_log!(SimMetaData, SimLogger, HourGlass, UnicodeTimeStepsGraph)
+                finalize_log!(SimMetaData, SimLogger, HourGlass,
+                              UnicodeTimeStepsGraph)
 
                 break
             end
