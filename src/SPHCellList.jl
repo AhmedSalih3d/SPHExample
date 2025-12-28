@@ -845,23 +845,39 @@ using LinearAlgebra
         @unpack Position, Velocity = SimParticles
         ParticleMarker  = SimParticles.GroupMarker
         ParticleType    = SimParticles.Type
-        TimeStepping.parallel_for!(workspace, length(Position)) do i
-            if ParticleType[i] == Moving
-                motion = MotionsDefinition[ParticleMarker[i]]
+        @unpack tasks, chunk_size = workspace
 
-                if motion !== nothing
-                    ShouldMove = (motion.StartTime <= SimMetaData.TotalTime) &&
-                                 (SimMetaData.TotalTime <= (motion.StartTime + motion.Duration))
+        for task_index in eachindex(tasks)
+            idx_start = (task_index - 1) * chunk_size + 1
+            idx_end = min(task_index * chunk_size, length(Position))
 
-                    # Retrieve motion parameters
-                    MotionVel = motion.Velocity
-                    MotionDir = motion.Direction
+            tasks[task_index] = Threads.@spawn begin
+                if idx_start <= idx_end
+                    @inbounds for i in idx_start:idx_end
+                        if ParticleType[i] == Moving
+                            motion = MotionsDefinition[ParticleMarker[i]]
 
-                    # Update Velocity and Position
-                    Velocity[i] = MotionVel * MotionDir * ShouldMove
-                    Position[i] += Velocity[i] * dt₂
+                            if motion !== nothing
+                                ShouldMove = (motion.StartTime <= SimMetaData.TotalTime) &&
+                                             (SimMetaData.TotalTime <= (motion.StartTime + motion.Duration))
+
+                                # Retrieve motion parameters
+                                MotionVel = motion.Velocity
+                                MotionDir = motion.Direction
+
+                                # Update Velocity and Position
+                                Velocity[i] = MotionVel * MotionDir * ShouldMove
+                                Position[i] += Velocity[i] * dt₂
+                            end
+                        end
+                    end
                 end
+                nothing
             end
+        end
+
+        for task in tasks
+            fetch(task)
         end
 
         return nothing
@@ -898,14 +914,33 @@ using LinearAlgebra
                           Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂,
                           workspace) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
         @unpack Position, Density, Velocity, Acceleration, GravityFactor, MotionLimiter = SimParticles
+        @unpack tasks, chunk_size = workspace
 
-        TimeStepping.parallel_for!(workspace, length(Position)) do i
-            Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
-            Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
-            Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
-            ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
+        for task_index in eachindex(tasks)
+            idx_start = (task_index - 1) * chunk_size + 1
+            idx_end = min(task_index * chunk_size, length(Position))
+
+            tasks[task_index] = Threads.@spawn begin
+                if idx_start <= idx_end
+                    @inbounds for i in idx_start:idx_end
+                        Acceleration[i]  += ConstructGravitySVector(
+                            Acceleration[i],
+                            SimConstants.g * GravityFactor[i],
+                        )
+                        Positionₙ⁺[i]     = Position[i] + Velocity[i] * dt₂ *
+                                           MotionLimiter[i]
+                        Velocityₙ⁺[i]     = Velocity[i] + Acceleration[i] * dt₂ *
+                                           MotionLimiter[i]
+                        ρₙ⁺[i]            = Density[i] + dρdtI[i] * dt₂
+                    end
+                end
+                nothing
+            end
         end
 
+        for task in tasks
+            fetch(task)
+        end
 
         return nothing
     end
@@ -917,10 +952,31 @@ using LinearAlgebra
                                                                              B<:MDBCMode,
                                                                              L<:LogMode}
         @unpack Position, Velocity, Acceleration, GravityFactor, MotionLimiter = SimParticles
-        TimeStepping.parallel_for!(workspace, length(Position)) do i
-            Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
-            Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
-            Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
+        @unpack tasks, chunk_size = workspace
+
+        for task_index in eachindex(tasks)
+            idx_start = (task_index - 1) * chunk_size + 1
+            idx_end = min(task_index * chunk_size, length(Position))
+
+            tasks[task_index] = Threads.@spawn begin
+                if idx_start <= idx_end
+                    @inbounds for i in idx_start:idx_end
+                        Acceleration[i] += ConstructGravitySVector(
+                            Acceleration[i],
+                            SimConstants.g * GravityFactor[i],
+                        )
+                        Velocity[i] += Acceleration[i] * dt * MotionLimiter[i]
+                        Position[i] += (((Velocity[i] + (Velocity[i] -
+                                         Acceleration[i] * dt * MotionLimiter[i])) /
+                                        2) * dt) * MotionLimiter[i]
+                    end
+                end
+                nothing
+            end
+        end
+
+        for task in tasks
+            fetch(task)
         end
         return nothing
     end
@@ -935,18 +991,41 @@ using LinearAlgebra
         A     = 2# Value between 1 to 6 advised
         A_FST = 0; # zero for internal flows
         A_FSM = length(first(Position)); #2d, 3d val different
-        TimeStepping.parallel_for!(workspace, length(Position)) do i
-            Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
-            Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
+        @unpack tasks, chunk_size = workspace
 
-            A_FSC                  = (∇◌rᵢ[i] - A_FST)/(A_FSM - A_FST)
-            if A_FSC < 0
-                δxᵢ = zero(eltype(Position))
-            else
-                δxᵢ = -A_FSC * A * SimKernel.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
+        for task_index in eachindex(tasks)
+            idx_start = (task_index - 1) * chunk_size + 1
+            idx_end = min(task_index * chunk_size, length(Position))
+
+            tasks[task_index] = Threads.@spawn begin
+                if idx_start <= idx_end
+                    @inbounds for i in idx_start:idx_end
+                        Acceleration[i] += ConstructGravitySVector(
+                            Acceleration[i],
+                            SimConstants.g * GravityFactor[i],
+                        )
+                        Velocity[i] += Acceleration[i] * dt * MotionLimiter[i]
+
+                        A_FSC = (∇◌rᵢ[i] - A_FST) / (A_FSM - A_FST)
+                        if A_FSC < 0
+                            δxᵢ = zero(eltype(Position))
+                        else
+                            δxᵢ = -A_FSC * A * SimKernel.h * norm(Velocity[i]) *
+                                  dt * ∇Cᵢ[i]
+                        end
+
+                        Position[i] += (((Velocity[i] + (Velocity[i] -
+                                         Acceleration[i] * dt *
+                                         MotionLimiter[i])) / 2) * dt +
+                                         δxᵢ) * MotionLimiter[i]
+                    end
+                end
+                nothing
             end
+        end
 
-            Position[i]           += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
+        for task in tasks
+            fetch(task)
         end
         return nothing
     end
