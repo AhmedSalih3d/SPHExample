@@ -1128,7 +1128,7 @@ using LinearAlgebra
 
         workspace = ΔtWorkspace(Vector{Task}(undef, Threads.nthreads()),
                                 cld(length(SimParticles), Threads.nthreads()))
-        time_step_accumulator = ΔtAccumulator(Threads.nthreads(), FloatType)
+        time_step_accumulator = ΔtAccumulator(FloatType)
 
         # Unpack the relevant simulation meta data
         @unpack HourGlass = SimMetaData;

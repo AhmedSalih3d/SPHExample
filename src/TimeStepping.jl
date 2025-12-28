@@ -27,6 +27,15 @@ function ΔtAccumulator(nthreads::Int, ::Type{T}) where {T<:AbstractFloat}
 end
 
 """
+    ΔtAccumulator(::Type{T})
+
+Create a thread-local accumulator sized to `Threads.maxthreadid()`.
+"""
+function ΔtAccumulator(::Type{T}) where {T<:AbstractFloat}
+    return ΔtAccumulator(Threads.maxthreadid(), T)
+end
+
+"""
     reset_time_step_accumulator!(accumulator)
 
 Reset the per-thread time step accumulators.
@@ -45,6 +54,9 @@ end
 @inline function update_time_step_accumulator!(accumulator::ΔtAccumulator, position,
                                                velocity, acceleration, sim_kernel)
     tid = threadid()
+    if tid > length(accumulator.max_visc)
+        return nothing
+    end
     h = sim_kernel.h
     η² = sim_kernel.η²
     r_sq = dot(position, position)
