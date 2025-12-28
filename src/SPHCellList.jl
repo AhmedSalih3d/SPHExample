@@ -1014,7 +1014,7 @@ using LinearAlgebra
                                               },
                                           },
                                       }, 
-                                      workspace) where {Dimensions, FloatType, SMode, KMode,
+                                    ) where {Dimensions, FloatType, SMode, KMode,
                                                 BMode, LMode,
                                                 SDD<:SPHDensityDiffusion,
                                                 SV<:SPHViscosity}
@@ -1032,7 +1032,7 @@ using LinearAlgebra
 
                 # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
 
-                @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(workspace, Position, Velocity, Acceleration, SimConstants, SimKernel)
+                @timeit SimMetaData.HourGlass "01 Update TimeStep"  dt  = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel)
                 dt₂ = dt * 0.5
 
                 @timeit SimMetaData.HourGlass "02 Calculate IndexCounter"  begin
@@ -1105,8 +1105,6 @@ using LinearAlgebra
         SimDensityDiffusion::SDD,
         ParticleNormalsPath::Union{Nothing,String} = nothing
         ) where {Dimensions,FloatType,SMode,KMode,BMode,LMode,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
-
-        workspace = ΔtWorkspace(Vector{Task}(undef, Threads.nthreads()), cld(length(SimParticles), Threads.nthreads()))
 
         # Unpack the relevant simulation meta data
         @unpack HourGlass = SimMetaData;
@@ -1186,7 +1184,7 @@ using LinearAlgebra
                 SimConstants, SimParticles, FullStencil, ParticleRanges,
                 UniqueCells, CellDict, SortingScratchSpace,
                 NeighborCellLists, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
-                ∇Cᵢ, ∇◌rᵢ, MotionDefinition, workspace,
+                ∇Cᵢ, ∇◌rᵢ, MotionDefinition,
             )
             push!(SimMetaData.TimeSteps, SimMetaData.CurrentTimeStep)
 

@@ -37,8 +37,8 @@ module SPHExample
     using .ProduceHDFVTK
     export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure, AppendVTKHDFData, SaveCellGridVTKHDF, AppendVTKHDFGridData, SetupVTKOutput
 
-    using .TimeStepping: ΔtWorkspace, Δt
-    export ΔtWorkspace, Δt
+    using .TimeStepping: Δt
+    export Δt
 
     using .SimulationEquations
     export EquationOfState, EquationOfStateGamma7, Pressure!, DensityEpsi!, LimitDensityAtBoundary!, ConstructGravitySVector, InverseHydrostaticEquationOfState, Estimate7thRoot
