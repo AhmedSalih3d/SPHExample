@@ -1173,10 +1173,6 @@ using LinearAlgebra
             MotionDefinition = nothing
         end
 
-        # Normal run and save data
-        generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [(:(Iteration),format(FormatExpr("{1:d}"),  Iteration)), (:(TotalTime),format(FormatExpr("{1:3.3f}"), TotalTime)), (:(TimeLeftInSeconds),format(FormatExpr("{1:3.1f} [s]"), TimeLeftInSeconds))]
-        
-
         @inbounds while true
 
             @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(
