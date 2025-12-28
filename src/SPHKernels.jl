@@ -29,14 +29,15 @@ CubicSpline{T}() where {T} = CubicSpline{T}(one(T))
 # General SPH Kernel Type
 @with_kw struct SPHKernelInstance{KernelType, Dimensions, FloatType}
     kernel::KernelType
-    k::FloatType   = 2.0          ; @assert k   > 0 "Scaling factor k must be positive"
-    h::FloatType                  ; @assert h   > 0 "Smoothing length h must be positive"
-    h⁻¹::FloatType = 1 / h        ; @assert h⁻¹ > 0 "Inverse smoothing length h⁻¹ must be positive"
-    H::FloatType   = k * h        ; @assert H   > 0 "Support radius H must be positive"
-    H⁻¹::FloatType = 1/H          ; @assert H⁻¹ > 0 "InverseCutOff must be greater than zero"
-    H²::FloatType  = H * H        ; @assert H²  > 0 "Support radius squared H² must be positive"
-    αD::FloatType                 ; @assert αD  > 0 "Normalization constant αD must be positive"
-    η²::FloatType  = (0.01 * h)^2 ; @assert η²  ≥ 0 "η² must be non-negative"
+    k::FloatType   = 2.0             ; @assert k   > 0 "Scaling factor k must be positive"
+    h::FloatType                     ; @assert h   > 0 "Smoothing length h must be positive"
+    h⁻¹::FloatType = 1 / h           ; @assert h⁻¹ > 0 "Inverse smoothing length h⁻¹ must be positive"
+    H::FloatType   = k * h           ; @assert H   > 0 "Support radius H must be positive"
+    H⁻¹::FloatType = 1 / H           ; @assert H⁻¹ > 0 "InverseCutOff must be greater than zero"
+    H²::FloatType  = H * H           ; @assert H²  > 0 "Support radius squared H² must be positive"
+    αD::FloatType                    ; @assert αD  > 0 "Normalization constant αD must be positive"
+    η²::FloatType  = (0.01 * h)^2    ; @assert η²  ≥ 0 "η² must be non-negative"
+    wendland_grad_factor::FloatType  ; @assert wendland_grad_factor > 0
 end
 
 function SPHKernelInstance{D,T}(
@@ -61,13 +62,15 @@ function SPHKernelInstance{D,T}(
     H⁻¹  = inv(H)
     H²   = H * H
     αD   = _αD(KernelType, Val(D), h₀)
-    η²   = (0.01*h₀)^2
+    η²   = (0.01 * h₀)^2
+    wendland_grad_factor = 5 * αD / (8 * h₀ * h₀)
 
     return SPHKernelInstance{KernelType,D,T}(
         kernel=kernel, k=k,
         h=h₀, h⁻¹=h₀⁻¹,
         H=H, H⁻¹=H⁻¹, H²=H²,
-        αD=αD, η²=η²
+        αD=αD, η²=η²,
+        wendland_grad_factor=wendland_grad_factor
     )
 end
 
@@ -78,12 +81,16 @@ end
 end
 
 @inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{<:WendlandC2}, q::T, xᵢⱼ) where {T}
-    @unpack h, αD, η² = kernel
+    @unpack wendland_grad_factor = kernel
     # Subhan Allah, if this math is correct, then η² can be avoided
     # denom = (q * h + η²)
     # factor = αD * 5 * (q - 2)^3 * q / (8 * h * denom)
-    factor = αD * 5 * (q - 2)^3 / (8 * h * h)
-    return factor * xᵢⱼ
+    return wendland_grad_factor * (q - 2)^3 * xᵢⱼ
+end
+
+@inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{<:WendlandC2}, q::T, xᵢⱼ,
+                      r::T) where {T}
+    return ∇Wᵢⱼ(kernel, q, xᵢⱼ)
 end
 
 @inline function Wᵢⱼ(kernel::SPHKernelInstance{<:CubicSpline}, q::T) where {T}
@@ -107,6 +114,21 @@ end
     # Chain rule: ∇W = (dW/dq) * (∇q)
     # Where ∇q = xᵢⱼ/(r*h)
     return dWdq * h⁻¹ * xᵢⱼ / (norm(xᵢⱼ) + η²)
+end
+
+@inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{<:CubicSpline}, q::T, xᵢⱼ,
+                      r::T) where {T}
+    @unpack h⁻¹, αD, η² = kernel
+
+    if 0 <= q <= 1
+        dWdq = αD * (-3 * q + (9 / 4) * q^2)
+    elseif 1 < q <= 2
+        dWdq = αD * (-3 / 4) * (2 - q)^2
+    else
+        dWdq = zero(T)
+    end
+
+    return dWdq * h⁻¹ * xᵢⱼ / (r + η²)
 end
 
 #---------------------------------------------------------------
