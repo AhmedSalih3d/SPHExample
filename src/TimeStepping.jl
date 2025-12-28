@@ -1,6 +1,6 @@
 module TimeStepping
 
-export ΔtWorkspace, Δt
+export ΔtWorkspace, Δt, parallel_for!
 
 using LinearAlgebra
 using Parameters
@@ -8,6 +8,35 @@ using Parameters
 struct ΔtWorkspace
     tasks::Vector{Task}
     chunk_size::Int
+end
+
+"""
+    parallel_for!(workspace, length, body)
+
+Run `body(i)` in parallel over `1:length`, chunked according to `workspace`.
+"""
+function parallel_for!(workspace, length, body)
+    @unpack tasks, chunk_size = workspace
+
+    for i in eachindex(tasks)
+        idx_start = (i - 1) * chunk_size + 1
+        idx_end = min(i * chunk_size, length)
+
+        tasks[i] = Threads.@spawn begin
+            if idx_start <= idx_end
+                @inbounds for j in idx_start:idx_end
+                    body(j)
+                end
+            end
+            nothing
+        end
+    end
+
+    for t in tasks
+        fetch(t)
+    end
+
+    return nothing
 end
 
 

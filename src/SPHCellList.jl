@@ -837,26 +837,26 @@ using LinearAlgebra
         return nothing
     end
 
-    function ProgressMotion(_SimParticles, _dt₂, ::Nothing, _SimMetaData)
+    function ProgressMotion(_SimParticles, _dt₂, ::Nothing, _SimMetaData, _workspace)
         return nothing
     end
 
-    function ProgressMotion(SimParticles, dt₂, MotionsDefinition, SimMetaData)
+    function ProgressMotion(SimParticles, dt₂, MotionsDefinition, SimMetaData, workspace)
         @unpack Position, Velocity = SimParticles
         ParticleMarker  = SimParticles.GroupMarker
         ParticleType    = SimParticles.Type
-        @inbounds @simd ivdep for i in eachindex(Position)
+        parallel_for!(workspace, length(Position)) do i
             if ParticleType[i] == Moving
                 motion = MotionsDefinition[ParticleMarker[i]]
-    
+
                 if motion !== nothing
                     ShouldMove = (motion.StartTime <= SimMetaData.TotalTime) &&
                                  (SimMetaData.TotalTime <= (motion.StartTime + motion.Duration))
-    
+
                     # Retrieve motion parameters
                     MotionVel = motion.Velocity
                     MotionDir = motion.Direction
-    
+
                     # Update Velocity and Position
                     Velocity[i] = MotionVel * MotionDir * ShouldMove
                     Position[i] += Velocity[i] * dt₂
@@ -895,10 +895,11 @@ using LinearAlgebra
     
     function HalfTimeStep(::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
                           SimConstants, SimParticles, Positionₙ⁺,
-                          Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
+                          Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂,
+                          workspace) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
         @unpack Position, Density, Velocity, Acceleration, GravityFactor, MotionLimiter = SimParticles
 
-        @inbounds @simd ivdep for i in eachindex(Position)
+        parallel_for!(workspace, length(Position)) do i
             Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
             Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
             Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
@@ -910,12 +911,13 @@ using LinearAlgebra
     end
 
     function FullTimeStep(::SimulationMetaData{D,T,NoShifting,K,B,L}, SimKernel,
-                          SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,
+                          SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt,
+                          workspace) where {D,T,
                                                                              K<:KernelOutputMode,
                                                                              B<:MDBCMode,
                                                                              L<:LogMode}
         @unpack Position, Velocity, Acceleration, GravityFactor, MotionLimiter = SimParticles
-        @inbounds @simd ivdep for i in eachindex(Position)
+        parallel_for!(workspace, length(Position)) do i
             Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
             Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
             Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
@@ -924,7 +926,8 @@ using LinearAlgebra
     end
 
     function FullTimeStep(::SimulationMetaData{D,T,S,K,B,L}, SimKernel, SimConstants,
-                          SimParticles, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,S<:ShiftingMode,
+                          SimParticles, ∇Cᵢ, ∇◌rᵢ, dt,
+                          workspace) where {D,T,S<:ShiftingMode,
                                                              K<:KernelOutputMode,
                                                              B<:MDBCMode,
                                                              L<:LogMode}
@@ -932,7 +935,7 @@ using LinearAlgebra
         A     = 2# Value between 1 to 6 advised
         A_FST = 0; # zero for internal flows
         A_FSM = length(first(Position)); #2d, 3d val different
-        @inbounds @simd ivdep for i in eachindex(Position)
+        parallel_for!(workspace, length(Position)) do i
             Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
             Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
 
@@ -1050,7 +1053,7 @@ using LinearAlgebra
                     end
                 end
 
-                @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
+                @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData, workspace)
             
                 @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
                 @timeit SimMetaData.HourGlass "04 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType)
@@ -1064,12 +1067,12 @@ using LinearAlgebra
                 )
 
 
-                @timeit SimMetaData.HourGlass "06 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
+                @timeit SimMetaData.HourGlass "06 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂, workspace)
 
 
-                @timeit SimMetaData.HourGlass "07 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+                @timeit SimMetaData.HourGlass "07 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter, workspace)
             
-                @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
+                @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData, workspace)
             
                 @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
                 @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticle!(
@@ -1081,11 +1084,11 @@ using LinearAlgebra
                 )
 
             
-                @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
+                @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter, workspace)
             
-                @timeit SimMetaData.HourGlass "10 Final Density"                         DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
+                @timeit SimMetaData.HourGlass "10 Final Density"                         DensityEpsi!(Density, dρdtI, ρₙ⁺, dt, workspace)
             
-                @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+                @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt, workspace)
             
                 @timeit SimMetaData.HourGlass "12 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
 
