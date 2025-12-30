@@ -71,9 +71,6 @@ function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
         v_buffer = @alloc(Float64, n_chunks)
         d_buffer = @alloc(Float64, n_chunks)
 
-        fill!(v_buffer, 0.0)
-        fill!(d_buffer, Inf)
-
         @sync for i in 1:n_chunks
             Threads.@spawn begin
                 idx_start = (i - 1) * chunk_size + 1
