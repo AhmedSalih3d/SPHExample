@@ -74,62 +74,83 @@ function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel,
     @unpack h, η²   = SPHKernel
 
     N = length(Position)
-    n_threads = Threads.nthreads()
+    n_chunks = Threads.nthreads()
+    chunk_size = cld(N, n_chunks)
 
     @no_escape begin
-        max_visc_buffer = @alloc(Float64, n_threads)
-        min_dt_buffer = @alloc(Float64, n_threads)
-        fill!(max_visc_buffer, 0.0)
-        fill!(min_dt_buffer, Inf)
+        max_visc_buffer = @alloc(Float64, n_chunks)
+        min_dt_buffer = @alloc(Float64, n_chunks)
 
-        Threads.@threads for i in 1:N
-            thread_idx = Threads.threadid()
-            local_visc = max_visc_buffer[thread_idx]
-            local_min_dt = min_dt_buffer[thread_idx]
+        @sync for chunk_idx in 1:n_chunks
+            Threads.@spawn begin
+                idx_start = (chunk_idx - 1) * chunk_size + 1
+                idx_end   = min(chunk_idx * chunk_size, N)
 
-            a_mag = norm(Acceleration[i])
-            if a_mag > 0
-                local_min_dt = min(local_min_dt, sqrt(h / a_mag))
-            end
+                local_visc = 0.0
+                local_min_dt = Inf
 
-            cell_index = Cells[i]
-            cell_list_index = get(CellDict, cell_index, 1)
-            same_cell_start = ParticleRanges[cell_list_index]
-            same_cell_end = ParticleRanges[cell_list_index + 1] - 1
-            neighbor_cell_indices = NeighborCellLists[cell_list_index]
+                if idx_start <= idx_end
+                    @inbounds for i in idx_start:idx_end
+                        a_mag = norm(Acceleration[i])
+                        if a_mag > 0
+                            local_min_dt = min(local_min_dt, sqrt(h / a_mag))
+                        end
 
-            @inbounds for j in same_cell_start:(i - 1)
-                local_visc = max(
-                    local_visc,
-                    viscous_term(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
-                )
-            end
-            @inbounds for j in (i + 1):same_cell_end
-                local_visc = max(
-                    local_visc,
-                    viscous_term(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
-                )
-            end
-            for neighbor_idx in neighbor_cell_indices
-                start_index = ParticleRanges[neighbor_idx]
-                end_index = ParticleRanges[neighbor_idx + 1] - 1
-                @inbounds for j in start_index:end_index
-                    local_visc = max(
-                        local_visc,
-                        viscous_term(
-                            Position[i],
-                            Velocity[i],
-                            Position[j],
-                            Velocity[j],
-                            h,
-                            η²,
-                        ),
-                    )
+                        cell_index = Cells[i]
+                        cell_list_index = get(CellDict, cell_index, 1)
+                        same_cell_start = ParticleRanges[cell_list_index]
+                        same_cell_end = ParticleRanges[cell_list_index + 1] - 1
+                        neighbor_cell_indices = NeighborCellLists[cell_list_index]
+
+                        @inbounds for j in same_cell_start:(i - 1)
+                            local_visc = max(
+                                local_visc,
+                                viscous_term(
+                                    Position[i],
+                                    Velocity[i],
+                                    Position[j],
+                                    Velocity[j],
+                                    h,
+                                    η²,
+                                ),
+                            )
+                        end
+                        @inbounds for j in (i + 1):same_cell_end
+                            local_visc = max(
+                                local_visc,
+                                viscous_term(
+                                    Position[i],
+                                    Velocity[i],
+                                    Position[j],
+                                    Velocity[j],
+                                    h,
+                                    η²,
+                                ),
+                            )
+                        end
+                        for neighbor_idx in neighbor_cell_indices
+                            start_index = ParticleRanges[neighbor_idx]
+                            end_index = ParticleRanges[neighbor_idx + 1] - 1
+                            @inbounds for j in start_index:end_index
+                                local_visc = max(
+                                    local_visc,
+                                    viscous_term(
+                                        Position[i],
+                                        Velocity[i],
+                                        Position[j],
+                                        Velocity[j],
+                                        h,
+                                        η²,
+                                    ),
+                                )
+                            end
+                        end
+                    end
                 end
-            end
 
-            max_visc_buffer[thread_idx] = local_visc
-            min_dt_buffer[thread_idx] = local_min_dt
+                max_visc_buffer[chunk_idx] = local_visc
+                min_dt_buffer[chunk_idx] = local_min_dt
+            end
         end
 
         global_visc = maximum(max_visc_buffer)
