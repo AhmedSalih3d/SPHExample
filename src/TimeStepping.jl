@@ -16,9 +16,11 @@ end
                                            acceleration, sim_kernel)
     h = sim_kernel.h
     a_mag = norm(acceleration)
-    curr_dt_force = a_mag > 0 ? sqrt(h / a_mag) : typemax(eltype(min_dt_force))
+    curr_dt_force = (isfinite(a_mag) && a_mag > 0) ?
+        sqrt(h / a_mag) : typemax(eltype(min_dt_force))
+    safe_viscous = isfinite(viscous_max) ? viscous_max : zero(viscous_max)
     @inbounds begin
-        max_visc[index] = viscous_max
+        max_visc[index] = safe_viscous
         min_dt_force[index] = curr_dt_force
     end
     return nothing
@@ -27,8 +29,10 @@ end
 @inline function viscous_term(position_a, velocity_a, position_b, velocity_b, h, η²)
     r_ab = position_a - position_b
     v_ab = velocity_a - velocity_b
-    r_sq = dot(r_ab, r_ab)
-    return abs(h * dot(v_ab, r_ab) / (r_sq + η²))
+    r_sq = norm(r_ab)^2
+    denom = r_sq + η²
+    term = h * dot(v_ab, r_ab) / denom
+    return (isfinite(term) && denom > 0) ? abs(term) : zero(term)
 end
 
 """
@@ -92,7 +96,7 @@ function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel,
                 if idx_start <= idx_end
                     @inbounds for i in idx_start:idx_end
                         a_mag = norm(Acceleration[i])
-                        if a_mag > 0
+                        if isfinite(a_mag) && a_mag > 0
                             local_min_dt = min(local_min_dt, sqrt(h / a_mag))
                         end
 
@@ -103,46 +107,46 @@ function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel,
                         neighbor_cell_indices = NeighborCellLists[cell_list_index]
 
                         @inbounds for j in same_cell_start:(i - 1)
-                            local_visc = max(
-                                local_visc,
-                                viscous_term(
-                                    Position[i],
-                                    Velocity[i],
-                                    Position[j],
-                                    Velocity[j],
-                                    h,
-                                    η²,
-                                ),
+                            term = viscous_term(
+                                Position[i],
+                                Velocity[i],
+                                Position[j],
+                                Velocity[j],
+                                h,
+                                η²,
                             )
+                            if isfinite(term)
+                                local_visc = max(local_visc, term)
+                            end
                         end
                         @inbounds for j in (i + 1):same_cell_end
-                            local_visc = max(
-                                local_visc,
-                                viscous_term(
-                                    Position[i],
-                                    Velocity[i],
-                                    Position[j],
-                                    Velocity[j],
-                                    h,
-                                    η²,
-                                ),
+                            term = viscous_term(
+                                Position[i],
+                                Velocity[i],
+                                Position[j],
+                                Velocity[j],
+                                h,
+                                η²,
                             )
+                            if isfinite(term)
+                                local_visc = max(local_visc, term)
+                            end
                         end
                         for neighbor_idx in neighbor_cell_indices
                             start_index = ParticleRanges[neighbor_idx]
                             end_index = ParticleRanges[neighbor_idx + 1] - 1
                             @inbounds for j in start_index:end_index
-                                local_visc = max(
-                                    local_visc,
-                                    viscous_term(
-                                        Position[i],
-                                        Velocity[i],
-                                        Position[j],
-                                        Velocity[j],
-                                        h,
-                                        η²,
-                                    ),
+                                term = viscous_term(
+                                    Position[i],
+                                    Velocity[i],
+                                    Position[j],
+                                    Velocity[j],
+                                    h,
+                                    η²,
                                 )
+                                if isfinite(term)
+                                    local_visc = max(local_visc, term)
+                                end
                             end
                         end
                     end
