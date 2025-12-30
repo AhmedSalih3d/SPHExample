@@ -195,24 +195,41 @@ using LinearAlgebra
             if max_visc === nothing
                 visc_acc = zero(eltype(dρdtI))
             else
-                # Pre-pass: compute per-particle viscous maximum for time stepping.
+                # Track viscous maxima inline with interactions.
                 visc_acc = zero(eltype(max_visc))
-                @inbounds for j in SameCellStart:(i - 1)
+            end
+
+            @inbounds for j in SameCellStart:(i - 1)
+                if max_visc !== nothing
                     visc_acc = max(
                         visc_acc,
                         ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
                     )
                 end
-                @inbounds for j in (i + 1):SameCellEnd
+                dρdt_acc, acc_acc = ComputeInteractionsPerParticleNoKernel!(
+                    SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                    SimConstants, SimParticles, Position, Density, Pressure,
+                    Velocity, MotionLimiter, dρdt_acc, acc_acc, i, j,
+                )
+            end
+            @inbounds for j in (i + 1):SameCellEnd
+                if max_visc !== nothing
                     visc_acc = max(
                         visc_acc,
                         ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
                     )
                 end
-                for NeighborIdx in NeighborCellIndices
-                    StartIndex_ = ParticleRanges[NeighborIdx]
-                    EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
-                    @inbounds for j in StartIndex_:EndIndex_
+                dρdt_acc, acc_acc = ComputeInteractionsPerParticleNoKernel!(
+                    SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                    SimConstants, SimParticles, Position, Density, Pressure,
+                    Velocity, MotionLimiter, dρdt_acc, acc_acc, i, j,
+                )
+            end
+            for NeighborIdx in NeighborCellIndices
+                StartIndex_ = ParticleRanges[NeighborIdx]
+                EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
+                @inbounds for j in StartIndex_:EndIndex_
+                    if max_visc !== nothing
                         visc_acc = max(
                             visc_acc,
                             ViscousTerm(
@@ -225,27 +242,6 @@ using LinearAlgebra
                             ),
                         )
                     end
-                end
-            end
-
-            @inbounds for j in SameCellStart:(i - 1)
-                dρdt_acc, acc_acc = ComputeInteractionsPerParticleNoKernel!(
-                    SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                    SimConstants, SimParticles, Position, Density, Pressure,
-                    Velocity, MotionLimiter, dρdt_acc, acc_acc, i, j,
-                )
-            end
-            @inbounds for j in (i + 1):SameCellEnd
-                dρdt_acc, acc_acc = ComputeInteractionsPerParticleNoKernel!(
-                    SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                    SimConstants, SimParticles, Position, Density, Pressure,
-                    Velocity, MotionLimiter, dρdt_acc, acc_acc, i, j,
-                )
-            end
-            for NeighborIdx in NeighborCellIndices
-                StartIndex_ = ParticleRanges[NeighborIdx]
-                EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
-                @inbounds for j in StartIndex_:EndIndex_
                     dρdt_acc, acc_acc = ComputeInteractionsPerParticleNoKernel!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, Position, Density, Pressure,
@@ -291,40 +287,17 @@ using LinearAlgebra
             if max_visc === nothing
                 visc_acc = zero(eltype(dρdtI))
             else
-                # Pre-pass: compute per-particle viscous maximum for time stepping.
+                # Track viscous maxima inline with interactions.
                 visc_acc = zero(eltype(max_visc))
-                @inbounds for j in SameCellStart:(i - 1)
-                    visc_acc = max(
-                        visc_acc,
-                        ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
-                    )
-                end
-                @inbounds for j in (i + 1):SameCellEnd
-                    visc_acc = max(
-                        visc_acc,
-                        ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
-                    )
-                end
-                for NeighborIdx in NeighborCellIndices
-                    StartIndex_ = ParticleRanges[NeighborIdx]
-                    EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
-                    @inbounds for j in StartIndex_:EndIndex_
-                        visc_acc = max(
-                            visc_acc,
-                            ViscousTerm(
-                                Position[i],
-                                Velocity[i],
-                                Position[j],
-                                Velocity[j],
-                                h,
-                                η²,
-                            ),
-                        )
-                    end
-                end
             end
 
             @inbounds for j in SameCellStart:(i - 1)
+                if max_visc !== nothing
+                    visc_acc = max(
+                        visc_acc,
+                        ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
+                    )
+                end
                 dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc =
                     ComputeInteractionsPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
@@ -334,6 +307,12 @@ using LinearAlgebra
                     )
             end
             @inbounds for j in (i + 1):SameCellEnd
+                if max_visc !== nothing
+                    visc_acc = max(
+                        visc_acc,
+                        ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
+                    )
+                end
                 dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc =
                     ComputeInteractionsPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
@@ -346,6 +325,19 @@ using LinearAlgebra
                 StartIndex_ = ParticleRanges[NeighborIdx]
                 EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
                 @inbounds for j in StartIndex_:EndIndex_
+                    if max_visc !== nothing
+                        visc_acc = max(
+                            visc_acc,
+                            ViscousTerm(
+                                Position[i],
+                                Velocity[i],
+                                Position[j],
+                                Velocity[j],
+                                h,
+                                η²,
+                            ),
+                        )
+                    end
                     dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc =
                         ComputeInteractionsPerParticle!(
                             SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
@@ -394,40 +386,17 @@ using LinearAlgebra
             if max_visc === nothing
                 visc_acc = zero(eltype(dρdtI))
             else
-                # Pre-pass: compute per-particle viscous maximum for time stepping.
+                # Track viscous maxima inline with interactions.
                 visc_acc = zero(eltype(max_visc))
-                @inbounds for j in SameCellStart:(i - 1)
-                    visc_acc = max(
-                        visc_acc,
-                        ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
-                    )
-                end
-                @inbounds for j in (i + 1):SameCellEnd
-                    visc_acc = max(
-                        visc_acc,
-                        ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
-                    )
-                end
-                for NeighborIdx in NeighborCellIndices
-                    StartIndex_ = ParticleRanges[NeighborIdx]
-                    EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
-                    @inbounds for j in StartIndex_:EndIndex_
-                        visc_acc = max(
-                            visc_acc,
-                            ViscousTerm(
-                                Position[i],
-                                Velocity[i],
-                                Position[j],
-                                Velocity[j],
-                                h,
-                                η²,
-                            ),
-                        )
-                    end
-                end
             end
 
             @inbounds for j in SameCellStart:(i - 1)
+                if max_visc !== nothing
+                    visc_acc = max(
+                        visc_acc,
+                        ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
+                    )
+                end
                 dρdt_acc, acc_acc, shift_c_acc, shift_r_acc =
                     ComputeInteractionsPerParticleNoKernel!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
@@ -437,6 +406,12 @@ using LinearAlgebra
                     )
             end
             @inbounds for j in (i + 1):SameCellEnd
+                if max_visc !== nothing
+                    visc_acc = max(
+                        visc_acc,
+                        ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
+                    )
+                end
                 dρdt_acc, acc_acc, shift_c_acc, shift_r_acc =
                     ComputeInteractionsPerParticleNoKernel!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
@@ -449,6 +424,19 @@ using LinearAlgebra
                 StartIndex_ = ParticleRanges[NeighborIdx]
                 EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
                 @inbounds for j in StartIndex_:EndIndex_
+                    if max_visc !== nothing
+                        visc_acc = max(
+                            visc_acc,
+                            ViscousTerm(
+                                Position[i],
+                                Velocity[i],
+                                Position[j],
+                                Velocity[j],
+                                h,
+                                η²,
+                            ),
+                        )
+                    end
                     dρdt_acc, acc_acc, shift_c_acc, shift_r_acc =
                         ComputeInteractionsPerParticleNoKernel!(
                             SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
@@ -501,40 +489,17 @@ using LinearAlgebra
             if max_visc === nothing
                 visc_acc = zero(eltype(dρdtI))
             else
-                # Pre-pass: compute per-particle viscous maximum for time stepping.
+                # Track viscous maxima inline with interactions.
                 visc_acc = zero(eltype(max_visc))
-                @inbounds for j in SameCellStart:(i - 1)
-                    visc_acc = max(
-                        visc_acc,
-                        ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
-                    )
-                end
-                @inbounds for j in (i + 1):SameCellEnd
-                    visc_acc = max(
-                        visc_acc,
-                        ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
-                    )
-                end
-                for NeighborIdx in NeighborCellIndices
-                    StartIndex_ = ParticleRanges[NeighborIdx]
-                    EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
-                    @inbounds for j in StartIndex_:EndIndex_
-                        visc_acc = max(
-                            visc_acc,
-                            ViscousTerm(
-                                Position[i],
-                                Velocity[i],
-                                Position[j],
-                                Velocity[j],
-                                h,
-                                η²,
-                            ),
-                        )
-                    end
-                end
             end
 
             @inbounds for j in SameCellStart:(i - 1)
+                if max_visc !== nothing
+                    visc_acc = max(
+                        visc_acc,
+                        ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
+                    )
+                end
                 dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc,
                 shift_r_acc = ComputeInteractionsPerParticle!(
                     SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
@@ -544,6 +509,12 @@ using LinearAlgebra
                 )
             end
             @inbounds for j in (i + 1):SameCellEnd
+                if max_visc !== nothing
+                    visc_acc = max(
+                        visc_acc,
+                        ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
+                    )
+                end
                 dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc,
                 shift_r_acc = ComputeInteractionsPerParticle!(
                     SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
@@ -556,6 +527,19 @@ using LinearAlgebra
                 StartIndex_ = ParticleRanges[NeighborIdx]
                 EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
                 @inbounds for j in StartIndex_:EndIndex_
+                    if max_visc !== nothing
+                        visc_acc = max(
+                            visc_acc,
+                            ViscousTerm(
+                                Position[i],
+                                Velocity[i],
+                                Position[j],
+                                Velocity[j],
+                                h,
+                                η²,
+                            ),
+                        )
+                    end
                     dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc,
                     shift_r_acc = ComputeInteractionsPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
