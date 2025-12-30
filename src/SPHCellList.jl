@@ -186,6 +186,7 @@ using LinearAlgebra
         @inbounds Threads.@threads for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
+            # Always compute viscous maxima here so no extra neighbor pass is needed.
             visc_acc = zero(eltype(max_visc))
             CellIndex = Cells[i]
             CellListIndex = get(CellDict, CellIndex, 1)
@@ -266,6 +267,7 @@ using LinearAlgebra
             acc_acc = zero(Acceleration[i])
             kernel_acc = zero(Kernel[i])
             kernel_grad_acc = zero(KernelGradient[i])
+            # Always compute viscous maxima here so no extra neighbor pass is needed.
             visc_acc = zero(eltype(max_visc))
             CellIndex = Cells[i]
             CellListIndex = get(CellDict, CellIndex, 1)
@@ -353,6 +355,7 @@ using LinearAlgebra
             acc_acc = zero(Acceleration[i])
             shift_c_acc = zero(∇Cᵢ[i])
             shift_r_acc = zero(∇◌rᵢ[i])
+            # Always compute viscous maxima here so no extra neighbor pass is needed.
             visc_acc = zero(eltype(max_visc))
             CellIndex = Cells[i]
             CellListIndex = get(CellDict, CellIndex, 1)
@@ -444,6 +447,7 @@ using LinearAlgebra
             kernel_grad_acc = zero(KernelGradient[i])
             shift_c_acc = zero(∇Cᵢ[i])
             shift_r_acc = zero(∇◌rᵢ[i])
+            # Always compute viscous maxima here so no extra neighbor pass is needed.
             visc_acc = zero(eltype(max_visc))
             CellIndex = Cells[i]
             CellListIndex = get(CellDict, CellIndex, 1)
