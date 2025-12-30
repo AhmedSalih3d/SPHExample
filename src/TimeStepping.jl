@@ -6,6 +6,11 @@ using LinearAlgebra
 using Parameters
 using Bumper
 
+@inline function UpdateTimeStepBuffers!(::Nothing, ::Nothing, _index, _viscous_max,
+                                           _acceleration, _sim_kernel)
+    return nothing
+end
+
 @inline function UpdateTimeStepBuffers!(max_visc, min_dt_force, index, viscous_max,
                                            acceleration, sim_kernel)
     h = sim_kernel.h

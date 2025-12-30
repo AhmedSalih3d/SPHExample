@@ -176,8 +176,8 @@ using LinearAlgebra
                                       CellDict, NeighborCellLists, Position, Density,
                                       Pressure, Velocity, MotionLimiter, dρdtI,
                                       Acceleration, Kernel, KernelGradient, ∇Cᵢ,
-                                      ∇◌rᵢ, max_visc,
-                                      min_dt_force) where {D,T,
+                                      ∇◌rᵢ, max_visc = nothing,
+                                      min_dt_force = nothing) where {D,T,
                                                   B<:MDBCMode,L<:LogMode,
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
@@ -192,35 +192,39 @@ using LinearAlgebra
             SameCellEnd = ParticleRanges[CellListIndex + 1] - 1
             NeighborCellIndices = NeighborCellLists[CellListIndex]
 
-            # Pre-pass: compute per-particle viscous maximum for time stepping.
-            visc_acc = zero(eltype(max_visc))
-            @inbounds for j in SameCellStart:(i - 1)
-                visc_acc = max(
-                    visc_acc,
-                    ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
-                )
-            end
-            @inbounds for j in (i + 1):SameCellEnd
-                visc_acc = max(
-                    visc_acc,
-                    ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
-                )
-            end
-            for NeighborIdx in NeighborCellIndices
-                StartIndex_ = ParticleRanges[NeighborIdx]
-                EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
-                @inbounds for j in StartIndex_:EndIndex_
+            if max_visc === nothing
+                visc_acc = zero(eltype(dρdtI))
+            else
+                # Pre-pass: compute per-particle viscous maximum for time stepping.
+                visc_acc = zero(eltype(max_visc))
+                @inbounds for j in SameCellStart:(i - 1)
                     visc_acc = max(
                         visc_acc,
-                        ViscousTerm(
-                            Position[i],
-                            Velocity[i],
-                            Position[j],
-                            Velocity[j],
-                            h,
-                            η²,
-                        ),
+                        ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
                     )
+                end
+                @inbounds for j in (i + 1):SameCellEnd
+                    visc_acc = max(
+                        visc_acc,
+                        ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
+                    )
+                end
+                for NeighborIdx in NeighborCellIndices
+                    StartIndex_ = ParticleRanges[NeighborIdx]
+                    EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
+                    @inbounds for j in StartIndex_:EndIndex_
+                        visc_acc = max(
+                            visc_acc,
+                            ViscousTerm(
+                                Position[i],
+                                Velocity[i],
+                                Position[j],
+                                Velocity[j],
+                                h,
+                                η²,
+                            ),
+                        )
+                    end
                 end
             end
 
@@ -265,8 +269,8 @@ using LinearAlgebra
                                       CellDict, NeighborCellLists, Position, Density,
                                       Pressure, Velocity, MotionLimiter, dρdtI,
                                       Acceleration, Kernel, KernelGradient, ∇Cᵢ,
-                                      ∇◌rᵢ, max_visc,
-                                      min_dt_force) where {D,T,
+                                      ∇◌rᵢ, max_visc = nothing,
+                                      min_dt_force = nothing) where {D,T,
                                                   K<:KernelOutputMode,
                                                   B<:MDBCMode,L<:LogMode,
                                                   SDD<:SPHDensityDiffusion,
@@ -284,35 +288,39 @@ using LinearAlgebra
             SameCellEnd = ParticleRanges[CellListIndex + 1] - 1
             NeighborCellIndices = NeighborCellLists[CellListIndex]
 
-            # Pre-pass: compute per-particle viscous maximum for time stepping.
-            visc_acc = zero(eltype(max_visc))
-            @inbounds for j in SameCellStart:(i - 1)
-                visc_acc = max(
-                    visc_acc,
-                    ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
-                )
-            end
-            @inbounds for j in (i + 1):SameCellEnd
-                visc_acc = max(
-                    visc_acc,
-                    ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
-                )
-            end
-            for NeighborIdx in NeighborCellIndices
-                StartIndex_ = ParticleRanges[NeighborIdx]
-                EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
-                @inbounds for j in StartIndex_:EndIndex_
+            if max_visc === nothing
+                visc_acc = zero(eltype(dρdtI))
+            else
+                # Pre-pass: compute per-particle viscous maximum for time stepping.
+                visc_acc = zero(eltype(max_visc))
+                @inbounds for j in SameCellStart:(i - 1)
                     visc_acc = max(
                         visc_acc,
-                        ViscousTerm(
-                            Position[i],
-                            Velocity[i],
-                            Position[j],
-                            Velocity[j],
-                            h,
-                            η²,
-                        ),
+                        ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
                     )
+                end
+                @inbounds for j in (i + 1):SameCellEnd
+                    visc_acc = max(
+                        visc_acc,
+                        ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
+                    )
+                end
+                for NeighborIdx in NeighborCellIndices
+                    StartIndex_ = ParticleRanges[NeighborIdx]
+                    EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
+                    @inbounds for j in StartIndex_:EndIndex_
+                        visc_acc = max(
+                            visc_acc,
+                            ViscousTerm(
+                                Position[i],
+                                Velocity[i],
+                                Position[j],
+                                Velocity[j],
+                                h,
+                                η²,
+                            ),
+                        )
+                    end
                 end
             end
 
@@ -365,8 +373,8 @@ using LinearAlgebra
                                       CellDict, NeighborCellLists, Position, Density,
                                       Pressure, Velocity, MotionLimiter, dρdtI,
                                       Acceleration, Kernel, KernelGradient, ∇Cᵢ,
-                                      ∇◌rᵢ, max_visc,
-                                      min_dt_force) where {D,T,
+                                      ∇◌rᵢ, max_visc = nothing,
+                                      min_dt_force = nothing) where {D,T,
                                                   S<:ShiftingMode,B<:MDBCMode,
                                                   L<:LogMode,SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
@@ -383,35 +391,39 @@ using LinearAlgebra
             SameCellEnd = ParticleRanges[CellListIndex + 1] - 1
             NeighborCellIndices = NeighborCellLists[CellListIndex]
 
-            # Pre-pass: compute per-particle viscous maximum for time stepping.
-            visc_acc = zero(eltype(max_visc))
-            @inbounds for j in SameCellStart:(i - 1)
-                visc_acc = max(
-                    visc_acc,
-                    ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
-                )
-            end
-            @inbounds for j in (i + 1):SameCellEnd
-                visc_acc = max(
-                    visc_acc,
-                    ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
-                )
-            end
-            for NeighborIdx in NeighborCellIndices
-                StartIndex_ = ParticleRanges[NeighborIdx]
-                EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
-                @inbounds for j in StartIndex_:EndIndex_
+            if max_visc === nothing
+                visc_acc = zero(eltype(dρdtI))
+            else
+                # Pre-pass: compute per-particle viscous maximum for time stepping.
+                visc_acc = zero(eltype(max_visc))
+                @inbounds for j in SameCellStart:(i - 1)
                     visc_acc = max(
                         visc_acc,
-                        ViscousTerm(
-                            Position[i],
-                            Velocity[i],
-                            Position[j],
-                            Velocity[j],
-                            h,
-                            η²,
-                        ),
+                        ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
                     )
+                end
+                @inbounds for j in (i + 1):SameCellEnd
+                    visc_acc = max(
+                        visc_acc,
+                        ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
+                    )
+                end
+                for NeighborIdx in NeighborCellIndices
+                    StartIndex_ = ParticleRanges[NeighborIdx]
+                    EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
+                    @inbounds for j in StartIndex_:EndIndex_
+                        visc_acc = max(
+                            visc_acc,
+                            ViscousTerm(
+                                Position[i],
+                                Velocity[i],
+                                Position[j],
+                                Velocity[j],
+                                h,
+                                η²,
+                            ),
+                        )
+                    end
                 end
             end
 
@@ -464,8 +476,8 @@ using LinearAlgebra
                                       CellDict, NeighborCellLists, Position, Density,
                                       Pressure, Velocity, MotionLimiter, dρdtI,
                                       Acceleration, Kernel, KernelGradient, ∇Cᵢ,
-                                      ∇◌rᵢ, max_visc,
-                                      min_dt_force) where {D,T,
+                                      ∇◌rᵢ, max_visc = nothing,
+                                      min_dt_force = nothing) where {D,T,
                                                   S<:ShiftingMode,
                                                   K<:KernelOutputMode,
                                                   B<:MDBCMode,L<:LogMode,
@@ -486,35 +498,39 @@ using LinearAlgebra
             SameCellEnd = ParticleRanges[CellListIndex + 1] - 1
             NeighborCellIndices = NeighborCellLists[CellListIndex]
 
-            # Pre-pass: compute per-particle viscous maximum for time stepping.
-            visc_acc = zero(eltype(max_visc))
-            @inbounds for j in SameCellStart:(i - 1)
-                visc_acc = max(
-                    visc_acc,
-                    ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
-                )
-            end
-            @inbounds for j in (i + 1):SameCellEnd
-                visc_acc = max(
-                    visc_acc,
-                    ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
-                )
-            end
-            for NeighborIdx in NeighborCellIndices
-                StartIndex_ = ParticleRanges[NeighborIdx]
-                EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
-                @inbounds for j in StartIndex_:EndIndex_
+            if max_visc === nothing
+                visc_acc = zero(eltype(dρdtI))
+            else
+                # Pre-pass: compute per-particle viscous maximum for time stepping.
+                visc_acc = zero(eltype(max_visc))
+                @inbounds for j in SameCellStart:(i - 1)
                     visc_acc = max(
                         visc_acc,
-                        ViscousTerm(
-                            Position[i],
-                            Velocity[i],
-                            Position[j],
-                            Velocity[j],
-                            h,
-                            η²,
-                        ),
+                        ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
                     )
+                end
+                @inbounds for j in (i + 1):SameCellEnd
+                    visc_acc = max(
+                        visc_acc,
+                        ViscousTerm(Position[i], Velocity[i], Position[j], Velocity[j], h, η²),
+                    )
+                end
+                for NeighborIdx in NeighborCellIndices
+                    StartIndex_ = ParticleRanges[NeighborIdx]
+                    EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
+                    @inbounds for j in StartIndex_:EndIndex_
+                        visc_acc = max(
+                            visc_acc,
+                            ViscousTerm(
+                                Position[i],
+                                Velocity[i],
+                                Position[j],
+                                Velocity[j],
+                                h,
+                                η²,
+                            ),
+                        )
+                    end
                 end
             end
 
