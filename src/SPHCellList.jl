@@ -1150,9 +1150,11 @@ using LinearAlgebra
 
         ###
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-        # This code here is to initialize the first time step for each simulation loop
-        dt = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel,
-                ParticleRanges, CellDict, NeighborCellLists, SimParticles.Cells)
+        # Initialize the first time step for each simulation loop
+        dt = SimMetaData.CurrentTimeStep
+        if dt <= zero(dt)
+            dt = SimConstants.CFL * SimKernel.h / SimConstants.c₀
+        end
 
         @no_escape begin
             max_visc = @alloc(FloatType, length(Position))

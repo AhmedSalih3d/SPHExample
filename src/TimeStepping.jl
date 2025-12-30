@@ -4,7 +4,6 @@ export Δt, finalize_time_step, update_time_step_buffers!, viscous_term
 
 using LinearAlgebra
 using Parameters
-using Base.Threads
 using Bumper
 
 @inline function update_time_step_buffers!(::Nothing, ::Nothing, index, viscous_max,
@@ -52,116 +51,22 @@ function finalize_time_step(max_visc, min_dt_force, SimulationConstants, SPHKern
 end
 
 """
-    Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel,
-       ParticleRanges, CellDict, NeighborCellLists, Cells)
+    Δt(max_visc, min_dt_force, SimulationConstants, SPHKernel)
 
 Calculates the adaptive time step for the simulation based on Courant-Friedrichs-Lewy (CFL),
-viscous, and force-based criteria.
+viscous, and force-based criteria using precomputed buffers.
 
 # Arguments
-- `Position`: Vector of position vectors for each particle.
-- `Velocity`: Vector of velocity vectors for each particle.
-- `Acceleration`: Vector of acceleration vectors for each particle.
+- `max_visc`: Per-particle viscous maxima buffer.
+- `min_dt_force`: Per-particle force-based time-step buffer.
 - `SimulationConstants`: Struct containing simulation parameters like `c₀` (speed of sound) and `CFL` number.
 - `SPHKernel`: Struct containing kernel parameters like `h` (smoothing length) and `η²`.
-- `ParticleRanges`: Cell list particle ranges for neighbor access.
-- `CellDict`: Mapping from cell coordinates to cell list indices.
-- `NeighborCellLists`: Precomputed neighbor cell indices.
-- `Cells`: Cell assignment for each particle.
 
 # Returns
 - The calculated time step `dt`.
 """
-function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel,
-            ParticleRanges, CellDict, NeighborCellLists, Cells)
-    @unpack c₀, CFL = SimulationConstants
-    @unpack h, η²   = SPHKernel
-
-    N = length(Position)
-    n_chunks = Threads.nthreads()
-    chunk_size = cld(N, n_chunks)
-
-    @no_escape begin
-        max_visc_buffer = @alloc(Float64, n_chunks)
-        min_dt_buffer = @alloc(Float64, n_chunks)
-
-        @sync for chunk_idx in 1:n_chunks
-            Threads.@spawn begin
-                idx_start = (chunk_idx - 1) * chunk_size + 1
-                idx_end   = min(chunk_idx * chunk_size, N)
-
-                local_visc = 0.0
-                local_min_dt = Inf
-
-                if idx_start <= idx_end
-                    @inbounds for i in idx_start:idx_end
-                        a_mag = norm(Acceleration[i])
-                        if isfinite(a_mag) && a_mag > 0
-                            local_min_dt = min(local_min_dt, sqrt(h / a_mag))
-                        end
-
-                        cell_index = Cells[i]
-                        cell_list_index = get(CellDict, cell_index, 1)
-                        same_cell_start = ParticleRanges[cell_list_index]
-                        same_cell_end = ParticleRanges[cell_list_index + 1] - 1
-                        neighbor_cell_indices = NeighborCellLists[cell_list_index]
-
-                        @inbounds for j in same_cell_start:(i - 1)
-                            term = viscous_term(
-                                Position[i],
-                                Velocity[i],
-                                Position[j],
-                                Velocity[j],
-                                h,
-                                η²,
-                            )
-                            if isfinite(term)
-                                local_visc = max(local_visc, term)
-                            end
-                        end
-                        @inbounds for j in (i + 1):same_cell_end
-                            term = viscous_term(
-                                Position[i],
-                                Velocity[i],
-                                Position[j],
-                                Velocity[j],
-                                h,
-                                η²,
-                            )
-                            if isfinite(term)
-                                local_visc = max(local_visc, term)
-                            end
-                        end
-                        for neighbor_idx in neighbor_cell_indices
-                            start_index = ParticleRanges[neighbor_idx]
-                            end_index = ParticleRanges[neighbor_idx + 1] - 1
-                            @inbounds for j in start_index:end_index
-                                term = viscous_term(
-                                    Position[i],
-                                    Velocity[i],
-                                    Position[j],
-                                    Velocity[j],
-                                    h,
-                                    η²,
-                                )
-                                if isfinite(term)
-                                    local_visc = max(local_visc, term)
-                                end
-                            end
-                        end
-                    end
-                end
-
-                max_visc_buffer[chunk_idx] = local_visc
-                min_dt_buffer[chunk_idx] = local_min_dt
-            end
-        end
-
-        global_visc = maximum(max_visc_buffer)
-        global_dt_force = minimum(min_dt_buffer)
-
-        CFL * min(global_dt_force, h / (c₀ + global_visc))
-    end
+function Δt(max_visc, min_dt_force, SimulationConstants, SPHKernel)
+    return finalize_time_step(max_visc, min_dt_force, SimulationConstants, SPHKernel)
 end
 
 end
