@@ -1176,7 +1176,9 @@ using LinearAlgebra
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
         # Initialize the first time step for each simulation loop
         dt = SimMetaData.CurrentTimeStep
-        dt = dt > zero(dt) ? dt : SimConstants.CFL * SimKernel.h / SimConstants.c₀
+        if dt <= zero(dt)
+            dt = SimConstants.CFL * SimKernel.h / SimConstants.c₀
+        end
 
         @no_escape begin
             max_visc = @alloc(FloatType, length(Position))

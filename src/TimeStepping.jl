@@ -11,13 +11,15 @@ using Bumper
     h = sim_kernel.h
     # Compute force-based dt from acceleration; if invalid, fall back to a large value.
     a_mag = norm(acceleration)
-    curr_dt_force = ifelse(
-        isfinite(a_mag) && a_mag > 0,
-        sqrt(h / a_mag),
-        typemax(eltype(min_dt_force)),
-    )
+    curr_dt_force = typemax(eltype(min_dt_force))
+    if isfinite(a_mag) && a_mag > 0
+        curr_dt_force = sqrt(h / a_mag)
+    end
     # Keep the viscous contribution finite; invalid values drop to zero.
-    safe_viscous = ifelse(isfinite(viscous_max), viscous_max, zero(viscous_max))
+    safe_viscous = zero(viscous_max)
+    if isfinite(viscous_max)
+        safe_viscous = viscous_max
+    end
     @inbounds begin
         max_visc[index] = safe_viscous
         min_dt_force[index] = curr_dt_force
@@ -33,7 +35,11 @@ end
     denom = r_sq + η²
     term = h * dot(v_ab, r_ab) / denom
     # Guard against invalid/degenerate denominators to avoid NaNs.
-    return ifelse(isfinite(term) && denom > 0, abs(term), zero(term))
+    viscous = zero(term)
+    if isfinite(term) && denom > 0
+        viscous = abs(term)
+    end
+    return viscous
 end
 
 """
