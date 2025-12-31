@@ -85,22 +85,177 @@ using LinearAlgebra
         Int(sign(x)) * unsafe_trunc(Int, muladd(abs(x),InverseCutOff,0.5))
     end
 
-    struct GPUWorkBuffers{T}
+    struct GPUWorkBuffers{D,T}
         pressure::CUDA.CuArray{T,1}
         density::CUDA.CuArray{T,1}
         density_n::CUDA.CuArray{T,1}
         density_rate::CUDA.CuArray{T,1}
         motion_limiter::CUDA.CuArray{T,1}
+        position::CUDA.CuArray{SVector{D,T},1}
+        velocity::CUDA.CuArray{SVector{D,T},1}
+        acceleration::CUDA.CuArray{SVector{D,T},1}
+        neighbor_offsets::CUDA.CuArray{Int,1}
+        neighbor_indices::CUDA.CuArray{Int,1}
     end
 
     function initialize_gpu_buffers(sim_particles, dρdtI, ρₙ⁺)
-        GPUWorkBuffers(
+        position = sim_particles.Position
+        D = length(first(position))
+        T = eltype(sim_particles.Density)
+        GPUWorkBuffers{D,T}(
             Adapt.adapt(CUDA.CuArray, sim_particles.Pressure),
             Adapt.adapt(CUDA.CuArray, sim_particles.Density),
             Adapt.adapt(CUDA.CuArray, ρₙ⁺),
             Adapt.adapt(CUDA.CuArray, dρdtI),
             Adapt.adapt(CUDA.CuArray, sim_particles.MotionLimiter),
+            Adapt.adapt(CUDA.CuArray, position),
+            Adapt.adapt(CUDA.CuArray, sim_particles.Velocity),
+            Adapt.adapt(CUDA.CuArray, sim_particles.Acceleration),
+            CUDA.CuArray{Int}(undef, 0),
+            CUDA.CuArray{Int}(undef, 0),
         )
+    end
+
+    function update_gpu_neighbors!(buffers::GPUWorkBuffers, offsets, indices)
+        buffers.neighbor_offsets = Adapt.adapt(CUDA.CuArray, offsets)
+        buffers.neighbor_indices = Adapt.adapt(CUDA.CuArray, indices)
+        return nothing
+    end
+
+    @inline has_gpu_neighbors(buffers::GPUWorkBuffers) =
+        length(buffers.neighbor_offsets) > 0
+
+    function build_particle_neighbor_list(sim_particles, particle_ranges,
+                                          neighbor_cell_lists, cell_dict)
+        n_particles = length(sim_particles.Position)
+        neighbors = Int[]
+        offsets = Vector{Int}(undef, n_particles + 1)
+        offsets[1] = 1
+
+        cells = sim_particles.Cells
+        @inbounds for i in 1:n_particles
+            cell_index = cells[i]
+            cell_list_index = get(cell_dict, cell_index, 1)
+            same_start = particle_ranges[cell_list_index]
+            same_end = particle_ranges[cell_list_index + 1] - 1
+            @inbounds for j in same_start:(i - 1)
+                push!(neighbors, j)
+            end
+            @inbounds for j in (i + 1):same_end
+                push!(neighbors, j)
+            end
+            for neighbor_idx in neighbor_cell_lists[cell_list_index]
+                start_idx = particle_ranges[neighbor_idx]
+                end_idx = particle_ranges[neighbor_idx + 1] - 1
+                @inbounds for j in start_idx:end_idx
+                    push!(neighbors, j)
+                end
+            end
+            offsets[i + 1] = length(neighbors) + 1
+        end
+
+        return neighbors, offsets
+    end
+
+    @inline function supports_gpu_neighbor_loop(::SimulationMetaData{D,T,NoShifting,
+                                                                      NoKernelOutput,
+                                                                      B,L},
+                                                ::ZeroDensityDiffusion,
+                                                ::ZeroViscosity) where {D,T,
+                                                                       B<:MDBCMode,
+                                                                       L<:LogMode}
+        return true
+    end
+    @inline supports_gpu_neighbor_loop(::SimulationMetaData, ::SPHDensityDiffusion,
+                                       ::SPHViscosity) = false
+
+    @inline function update_time_step_buffers_serial!(max_visc, min_dt_force,
+                                                      position, velocity,
+                                                      acceleration, sim_kernel)
+        if max_visc === nothing || min_dt_force === nothing
+            return nothing
+        end
+        @inbounds for i in eachindex(position)
+            update_time_step_buffers!(max_visc, min_dt_force, i, position[i],
+                                      velocity[i], acceleration[i], sim_kernel)
+        end
+        return nothing
+    end
+
+    function gpu_neighbor_loop_kernel!(dρdtI, acc, position, density, pressure,
+                                       velocity, neighbor_offsets,
+                                       neighbor_indices, H², h⁻¹, m₀, dx,
+                                       sim_kernel)
+        i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+        n_particles = length(position)
+        if i > n_particles
+            return nothing
+        end
+
+        dρdt_acc = zero(eltype(dρdtI))
+        acc_acc = zero(eltype(acc))
+
+        pos_i = position[i]
+        vel_i = velocity[i]
+        ρᵢ = density[i]
+        Pᵢ = pressure[i]
+
+        @inbounds for idx in neighbor_offsets[i]:(neighbor_offsets[i + 1] - 1)
+            j = neighbor_indices[idx]
+            xᵢⱼ = pos_i - position[j]
+            xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
+            if xᵢⱼ² <= H²
+                dᵢⱼ = sqrt(abs(xᵢⱼ²))
+                q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
+                ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(sim_kernel, q, xᵢⱼ)
+
+                ρⱼ = density[j]
+                vᵢⱼ = vel_i - velocity[j]
+                density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
+                dρdt_acc += -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
+
+                Pⱼ = pressure[j]
+                Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
+                f_ab = tensile_correction(sim_kernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
+                acc_acc += -m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
+            end
+        end
+
+        dρdtI[i] = dρdt_acc
+        acc[i] = acc_acc
+        return nothing
+    end
+
+    function neighbor_loop_gpu!(sim_kernel, sim_constants, position, density,
+                                pressure, velocity, dρdtI, acceleration,
+                                gpu_buffers, max_visc, min_dt_force)
+        copyto!(gpu_buffers.position, position)
+        copyto!(gpu_buffers.velocity, velocity)
+        copyto!(gpu_buffers.density, density)
+        copyto!(gpu_buffers.pressure, pressure)
+
+        threads = 256
+        blocks = cld(length(position), threads)
+        CUDA.@cuda threads=threads blocks=blocks gpu_neighbor_loop_kernel!(
+            gpu_buffers.density_rate,
+            gpu_buffers.acceleration,
+            gpu_buffers.position,
+            gpu_buffers.density,
+            gpu_buffers.pressure,
+            gpu_buffers.velocity,
+            gpu_buffers.neighbor_offsets,
+            gpu_buffers.neighbor_indices,
+            sim_kernel.H²,
+            sim_kernel.h⁻¹,
+            sim_constants.m₀,
+            sim_constants.dx,
+            sim_kernel,
+        )
+        copyto!(dρdtI, gpu_buffers.density_rate)
+        copyto!(acceleration, gpu_buffers.acceleration)
+        update_time_step_buffers_serial!(max_visc, min_dt_force, position,
+                                         velocity, acceleration, sim_kernel)
+        return nothing
     end
 
     function gpu_pressure!(buffers::GPUWorkBuffers, pressure, density,
@@ -1117,6 +1272,15 @@ using LinearAlgebra
                         SimMetaData.Δx    = zero(eltype(dρdtI))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                         BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellDict)
+                        if gpu_buffers !== nothing &&
+                           supports_gpu_neighbor_loop(SimMetaData, SimDensityDiffusion,
+                                                      SimViscosity)
+                            neighbors, offsets = build_particle_neighbor_list(
+                                SimParticles, ParticleRanges, NeighborCellLists,
+                                CellDict,
+                            )
+                            update_gpu_neighbors!(gpu_buffers, offsets, neighbors)
+                        end
                     end
                 end
 
@@ -1133,13 +1297,26 @@ using LinearAlgebra
                 end
                 @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType)
 
-                @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoopPerParticle!(
-                    SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                    SimConstants, SimParticles, ParticleRanges, CellDict,
-                    NeighborCellLists, Position, Density, Pressure, Velocity,
-                    MotionLimiter, dρdtI, Acceleration, Kernel,
-                    KernelGradient, ∇Cᵢ, ∇◌rᵢ,
-                )
+                @timeit SimMetaData.HourGlass "04 First NeighborLoop" begin
+                    if gpu_buffers !== nothing &&
+                       supports_gpu_neighbor_loop(SimMetaData, SimDensityDiffusion,
+                                                  SimViscosity) &&
+                       has_gpu_neighbors(gpu_buffers)
+                        neighbor_loop_gpu!(
+                            SimKernel, SimConstants, Position, Density, Pressure,
+                            Velocity, dρdtI, Acceleration, gpu_buffers, max_visc,
+                            min_dt_force,
+                        )
+                    else
+                        NeighborLoopPerParticle!(
+                            SimDensityDiffusion, SimViscosity, SimKernel,
+                            SimMetaData, SimConstants, SimParticles, ParticleRanges,
+                            CellDict, NeighborCellLists, Position, Density, Pressure,
+                            Velocity, MotionLimiter, dρdtI, Acceleration, Kernel,
+                            KernelGradient, ∇Cᵢ, ∇◌rᵢ,
+                        )
+                    end
+                end
 
 
                 @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
@@ -1163,13 +1340,26 @@ using LinearAlgebra
                                       SimConstants)
                     end
                 end
-                @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticle!(
-                    SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                    SimConstants, SimParticles, ParticleRanges, CellDict,
-                    NeighborCellLists, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺,
-                    MotionLimiter, dρdtI, Acceleration, Kernel,
-                    KernelGradient, ∇Cᵢ, ∇◌rᵢ, max_visc, min_dt_force,
-                )
+                @timeit SimMetaData.HourGlass "08 Second NeighborLoop" begin
+                    if gpu_buffers !== nothing &&
+                       supports_gpu_neighbor_loop(SimMetaData, SimDensityDiffusion,
+                                                  SimViscosity) &&
+                       has_gpu_neighbors(gpu_buffers)
+                        neighbor_loop_gpu!(
+                            SimKernel, SimConstants, Positionₙ⁺, ρₙ⁺, Pressure,
+                            Velocityₙ⁺, dρdtI, Acceleration, gpu_buffers, max_visc,
+                            min_dt_force,
+                        )
+                    else
+                        NeighborLoopPerParticle!(
+                            SimDensityDiffusion, SimViscosity, SimKernel,
+                            SimMetaData, SimConstants, SimParticles, ParticleRanges,
+                            CellDict, NeighborCellLists, Positionₙ⁺, ρₙ⁺, Pressure,
+                            Velocityₙ⁺, MotionLimiter, dρdtI, Acceleration, Kernel,
+                            KernelGradient, ∇Cᵢ, ∇◌rᵢ, max_visc, min_dt_force,
+                        )
+                    end
+                end
 
             
                 @timeit SimMetaData.HourGlass "09 Update TimeStep" begin
@@ -1229,6 +1419,12 @@ using LinearAlgebra
                 error("UseGPU=true requires a functional CUDA.jl installation.")
             end
             gpu_buffers = initialize_gpu_buffers(SimParticles, dρdtI, ρₙ⁺)
+            if !supports_gpu_neighbor_loop(SimMetaData, SimDensityDiffusion,
+                                           SimViscosity)
+                @warn("GPU neighbor loop is only available for NoShifting + " *
+                      "NoKernelOutput with ZeroDensityDiffusion and " *
+                      "ZeroViscosity. Falling back to CPU for neighbor loops.")
+            end
         end
 
         LoadMDBCNormals!(SimMetaData, SimParticles, ParticleNormalsPath)

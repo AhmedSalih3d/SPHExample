@@ -93,9 +93,10 @@ one plus the particles in its neighbor stencil.
 
 The solver can offload the per-particle equation-of-state and density boundary
 updates to CUDA. Enable it by setting `UseGPU=true` in the `SimulationMetaData`
-constructor and ensuring `CUDA.jl` is installed and functional. The neighbor
-loops still run on the CPU, so this mode is intended as a stepping stone for
-further GPU porting.
+constructor and ensuring `CUDA.jl` is installed and functional. Neighbor loops
+can also run on the GPU when `NoShifting` + `NoKernelOutput` are used with
+`ZeroDensityDiffusion` and `ZeroViscosity`; other configurations fall back to
+CPU for the neighbor work.
 
 ## Help
 
