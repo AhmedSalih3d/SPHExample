@@ -63,46 +63,23 @@ function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
     @unpack c₀, CFL = SimulationConstants
     @unpack h, η²   = SPHKernel
 
-    N = length(Position)
-    n_chunks = Threads.nthreads()
-    chunk_size = cld(N, n_chunks)
+    t_visc = 0.0
+    t_dt   = Inf
+    @inbounds for j in eachindex(Position)
+        r = Position[j]
+        v = Velocity[j]
+        a = Acceleration[j]
 
-    @no_escape begin
-        v_buffer = @alloc(Float64, n_chunks)
-        d_buffer = @alloc(Float64, n_chunks)
+        r_sq = sqrt(dot(r, r))
+        curr_visc = abs(h * dot(v, r) / (r_sq + η²))
+        t_visc = max(t_visc, curr_visc)
 
-        @sync for i in 1:n_chunks
-            Threads.@spawn begin
-                idx_start = (i - 1) * chunk_size + 1
-                idx_end   = min(i * chunk_size, N)
-
-                t_visc = 0.0
-                t_dt   = Inf
-
-                if idx_start <= idx_end
-                    @inbounds for j in idx_start:idx_end
-                        r = Position[j]
-                        v = Velocity[j]
-                        a = Acceleration[j]
-
-                        r_sq = sqrt(dot(r, r))
-                        curr_visc = abs(h * dot(v, r) / (r_sq + η²))
-                        t_visc = max(t_visc, curr_visc)
-
-                        a_mag = norm(a)
-                        if a_mag > 0
-                            t_dt = min(t_dt, sqrt(h / a_mag))
-                        end
-                    end
-                end
-
-                v_buffer[i] = t_visc
-                d_buffer[i] = t_dt
-            end
+        a_mag = norm(a)
+        if a_mag > 0
+            t_dt = min(t_dt, sqrt(h / a_mag))
         end
-
-        CFL * min(minimum(d_buffer), h / (c₀ + maximum(v_buffer)))
     end
+    return CFL * min(t_dt, h / (c₀ + t_visc))
 end
 
 end
