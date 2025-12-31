@@ -99,6 +99,8 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
 
     BoundaryBool  = UInt8.(.!Bool.(MotionLimiter))
 
+    
+
     Acceleration    = zeros(PositionType, NumberOfPoints)
     Velocity        = zeros(PositionType, NumberOfPoints)
     Kernel          = zeros(PositionUnderlyingType, NumberOfPoints)
@@ -109,6 +111,7 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
     Pressureᵢ      = zeros(PositionUnderlyingType, NumberOfPoints)
     
     Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
+    
     SimParticles = StructArray((Cells = Cells, Kernel = Kernel, KernelGradient = KernelGradient, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = Idp , Type = Types, GroupMarker = GroupMarker, GhostPoints = GhostPoints, GhostNormals=GhostNormals))
 
     sort!(SimParticles, by = p -> p.ID)
@@ -155,13 +158,13 @@ function AllocateSupportDataStructures(::SimulationMetaData{D,T,S,K,B,L}, Positi
     return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ
 end
 
-function allocate_kernel_arrays(::SimulationMetaData{D,T,S,NoKernelOutput,B,L},
+function AllocateKernelArrays(::SimulationMetaData{D,T,S,NoKernelOutput,B,L},
                                 SimParticles, n_copy) where {D,T,S<:ShiftingMode,
                                                              B<:MDBCMode,
                                                              L<:LogMode}
     return NamedTuple()
 end
-function allocate_kernel_arrays(::SimulationMetaData{D,T,S,K,B,L},
+function AllocateKernelArrays(::SimulationMetaData{D,T,S,K,B,L},
                                 SimParticles, n_copy) where {D,T,S<:ShiftingMode,
                                                              K<:KernelOutputMode,
                                                              B<:MDBCMode,
@@ -182,13 +185,13 @@ function allocate_kernel_arrays(::SimulationMetaData{D,T,S,K,B,L},
     )
 end
 
-function allocate_shifting_arrays(::SimulationMetaData{D,T,NoShifting,K,B,L},
+function AllocateShiftingArrays(::SimulationMetaData{D,T,NoShifting,K,B,L},
                                   ∇Cᵢ, ∇◌rᵢ, n_copy) where {D,T,K<:KernelOutputMode,
                                                             B<:MDBCMode,
                                                             L<:LogMode}
     return NamedTuple()
 end
-function allocate_shifting_arrays(::SimulationMetaData{D,T,S,K,B,L},
+function AllocateShiftingArrays(::SimulationMetaData{D,T,S,K,B,L},
                                   ∇Cᵢ, ∇◌rᵢ, n_copy) where {D,T,S<:ShiftingMode,
                                                             K<:KernelOutputMode,
                                                             B<:MDBCMode,
