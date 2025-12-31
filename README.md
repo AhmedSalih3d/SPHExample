@@ -89,6 +89,14 @@ To color exported cell grids by particle counts, set
 `ParticleNeighborsPerCell` array that includes each cell's particle count minus
 one plus the particles in its neighbor stencil.
 
+### Optional GPU Acceleration
+
+The solver can offload the per-particle equation-of-state and density boundary
+updates to CUDA. Enable it by setting `UseGPU=true` in the `SimulationMetaData`
+constructor and ensuring `CUDA.jl` is installed and functional. The neighbor
+loops still run on the CPU, so this mode is intended as a stepping stone for
+further GPU porting.
+
 ## Help
 
 Questions or issues can be posted on the GitHub issue tracker. Response times may vary but all feedback is welcome.

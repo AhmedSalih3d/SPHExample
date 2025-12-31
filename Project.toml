@@ -3,8 +3,10 @@ uuid = "49649ea8-6f54-4931-9342-0ba915f114f7"
 version = "0.7.0"
 
 [deps]
+Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
 Bumper = "8ce10254-0962-460f-a3d8-1f77fea1446e"
 CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
 FastPow = "c0e83750-1142-43a8-81cf-6c956b72b4d1"
 Format = "1fa38f19-a742-5d3f-a2b9-30dd87b9d5f8"
@@ -20,8 +22,10 @@ TimerOutputs = "a759f4b9-e2f1-59dc-863e-4aeb61b1ea8f"
 UnicodePlots = "b8865327-cd53-5732-bb35-84acbb429228"
 
 [compat]
+Adapt         = "^4.1.0"
 Bumper        = "^0.7.1"
 CSV           = "^0.10.15"
+CUDA          = "^5.5.0"
 FastPow       = "^0.1.0"
 Format        = "^1.3.7"
 HDF5          = "^0.17.2"

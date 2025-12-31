@@ -5,6 +5,7 @@ export EquationOfState, EquationOfStateGamma7, Pressure!, DensityEpsi!, LimitDen
 using StaticArrays
 using Parameters
 using FastPow
+using CUDA
 
 @inline function EquationOfStateGamma7(ρ,c₀,ρ₀)
     return @fastpow ((c₀^2*ρ₀)/7) * ((ρ/ρ₀)^7 - 1)
@@ -39,6 +40,29 @@ end
             Density[i] = ρ₀
         end
     end
+end
+
+@inline function Pressure!(Press::CUDA.AbstractGPUArray,
+                           Density::CUDA.AbstractGPUArray,
+                           SimulationConstants)
+    @unpack c₀, ρ₀ = SimulationConstants
+    @. Press = EquationOfStateGamma7(Density, c₀, ρ₀)
+    return nothing
+end
+
+@inline function DensityEpsi!(Density::CUDA.AbstractGPUArray,
+                              dρdtIₙ⁺::CUDA.AbstractGPUArray,
+                              ρₙ⁺::CUDA.AbstractGPUArray,
+                              Δt)
+    @. Density = Density * (2 + (dρdtIₙ⁺ / ρₙ⁺) * Δt) /
+        (2 - (dρdtIₙ⁺ / ρₙ⁺) * Δt)
+    return nothing
+end
+
+@inline function LimitDensityAtBoundary!(Density::CUDA.AbstractGPUArray, ρ₀,
+                                         MotionLimiter::CUDA.AbstractGPUArray)
+    @. Density = ifelse((Density < ρ₀) & (MotionLimiter == 0), ρ₀, Density)
+    return nothing
 end
 
 @inline function ConstructGravitySVector(_::SVector{N, T}, value) where {N, T}

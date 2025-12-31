@@ -32,6 +32,8 @@ using Base.Threads
 using UnicodePlots
 using LinearAlgebra
     using Bumper
+    using Adapt
+    using CUDA
 
     function ConstructFullStencil(v::Val{d}) where d
         return CartesianIndices(ntuple(_->-1:1, v))
@@ -81,6 +83,49 @@ using LinearAlgebra
         # Consider -1.7 + 0.5, this would give -1.2 and then trunced 1, but we want -2, therefore absolute addition before hand
         # We add 0.5 instead of 1, to ensure proper rounding behavior when restoring the sign for negative numbers.
         Int(sign(x)) * unsafe_trunc(Int, muladd(abs(x),InverseCutOff,0.5))
+    end
+
+    struct GPUWorkBuffers{T}
+        pressure::CUDA.CuArray{T,1}
+        density::CUDA.CuArray{T,1}
+        density_n::CUDA.CuArray{T,1}
+        density_rate::CUDA.CuArray{T,1}
+        motion_limiter::CUDA.CuArray{T,1}
+    end
+
+    function initialize_gpu_buffers(sim_particles, dρdtI, ρₙ⁺)
+        GPUWorkBuffers(
+            Adapt.adapt(CUDA.CuArray, sim_particles.Pressure),
+            Adapt.adapt(CUDA.CuArray, sim_particles.Density),
+            Adapt.adapt(CUDA.CuArray, ρₙ⁺),
+            Adapt.adapt(CUDA.CuArray, dρdtI),
+            Adapt.adapt(CUDA.CuArray, sim_particles.MotionLimiter),
+        )
+    end
+
+    function gpu_pressure!(buffers::GPUWorkBuffers, pressure, density,
+                           sim_constants)
+        copyto!(buffers.density, density)
+        Pressure!(buffers.pressure, buffers.density, sim_constants)
+        copyto!(pressure, buffers.pressure)
+        return nothing
+    end
+
+    function gpu_limit_density!(buffers::GPUWorkBuffers, density, ρ₀)
+        copyto!(buffers.density, density)
+        LimitDensityAtBoundary!(buffers.density, ρ₀, buffers.motion_limiter)
+        copyto!(density, buffers.density)
+        return nothing
+    end
+
+    function gpu_density_epsi!(buffers::GPUWorkBuffers, density, dρdtI, ρₙ⁺,
+                               Δt)
+        copyto!(buffers.density, density)
+        copyto!(buffers.density_rate, dρdtI)
+        copyto!(buffers.density_n, ρₙ⁺)
+        DensityEpsi!(buffers.density, buffers.density_rate, buffers.density_n, Δt)
+        copyto!(density, buffers.density)
+        return nothing
     end
 
 
@@ -1020,7 +1065,7 @@ using LinearAlgebra
                                       ParticleRanges, UniqueCells, CellDict,
                                       SortingScratchSpace,
                                       NeighborCellLists, dρdtI, Velocityₙ⁺,
-                                      Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ,
+                                      Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, gpu_buffers,
                                       MotionDefinition::Union{
                                           Nothing,
                                           AbstractVector{
@@ -1077,7 +1122,15 @@ using LinearAlgebra
 
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
             
-                @timeit SimMetaData.HourGlass "02 Pressure"                              Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
+                @timeit SimMetaData.HourGlass "02 Pressure" begin
+                    if gpu_buffers === nothing
+                        Pressure!(SimParticles.Pressure, SimParticles.Density,
+                                  SimConstants)
+                    else
+                        gpu_pressure!(gpu_buffers, SimParticles.Pressure,
+                                      SimParticles.Density, SimConstants)
+                    end
+                end
                 @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType)
 
                 @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoopPerParticle!(
@@ -1092,11 +1145,24 @@ using LinearAlgebra
                 @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
 
 
-                @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+                @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary" begin
+                    if gpu_buffers === nothing
+                        LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+                    else
+                        gpu_limit_density!(gpu_buffers, ρₙ⁺, SimConstants.ρ₀)
+                    end
+                end
             
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
             
-                @timeit SimMetaData.HourGlass "07 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
+                @timeit SimMetaData.HourGlass "07 Pressure" begin
+                    if gpu_buffers === nothing
+                        Pressure!(SimParticles.Pressure, ρₙ⁺, SimConstants)
+                    else
+                        gpu_pressure!(gpu_buffers, SimParticles.Pressure, ρₙ⁺,
+                                      SimConstants)
+                    end
+                end
                 @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticle!(
                     SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                     SimConstants, SimParticles, ParticleRanges, CellDict,
@@ -1111,9 +1177,22 @@ using LinearAlgebra
                                                  SimConstants, SimKernel)
                 end
 
-                @timeit SimMetaData.HourGlass "10 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
+                @timeit SimMetaData.HourGlass "10 Final LimitDensityAtBoundary" begin
+                    if gpu_buffers === nothing
+                        LimitDensityAtBoundary!(Density, SimConstants.ρ₀,
+                                                MotionLimiter)
+                    else
+                        gpu_limit_density!(gpu_buffers, Density, SimConstants.ρ₀)
+                    end
+                end
             
-                @timeit SimMetaData.HourGlass "11 Final Density"                         DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
+                @timeit SimMetaData.HourGlass "11 Final Density" begin
+                    if gpu_buffers === nothing
+                        DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
+                    else
+                        gpu_density_epsi!(gpu_buffers, Density, dρdtI, ρₙ⁺, dt)
+                    end
+                end
             
                 @timeit SimMetaData.HourGlass "12 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
             
@@ -1144,6 +1223,14 @@ using LinearAlgebra
         
         dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimMetaData, SimParticles.Position)
 
+        gpu_buffers = nothing
+        if SimMetaData.UseGPU
+            if !CUDA.functional()
+                error("UseGPU=true requires a functional CUDA.jl installation.")
+            end
+            gpu_buffers = initialize_gpu_buffers(SimParticles, dρdtI, ρₙ⁺)
+        end
+
         LoadMDBCNormals!(SimMetaData, SimParticles, ParticleNormalsPath)
 
         prepare_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ)
@@ -1151,7 +1238,12 @@ using LinearAlgebra
         initialize_log!(SimMetaData, SimLogger, SimConstants, SimKernel,
                         SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
         
-        Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
+        if gpu_buffers === nothing
+            Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
+        else
+            gpu_pressure!(gpu_buffers, SimParticles.Pressure,
+                          SimParticles.Density, SimConstants)
+        end
     
         # Produce sorting related variables
         ParticleRanges         = zeros(Int, NumberOfPoints + 1 + 1) # +1 for the last particle, +1 for dummy entry
@@ -1212,7 +1304,7 @@ using LinearAlgebra
                 SimConstants, SimParticles, FullStencil, ParticleRanges,
                 UniqueCells, CellDict, SortingScratchSpace,
                 NeighborCellLists, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
-                ∇Cᵢ, ∇◌rᵢ, MotionDefinition,
+                ∇Cᵢ, ∇◌rᵢ, gpu_buffers, MotionDefinition,
             )
             push!(SimMetaData.TimeSteps, SimMetaData.CurrentTimeStep)
 
