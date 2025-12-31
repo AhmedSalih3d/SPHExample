@@ -762,7 +762,7 @@ using LinearAlgebra
     function ApplyMDBCBeforeHalf!(::SimulationMetaData{D,T,S,K,NoMDBC,L}, _args...) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, L<:LogMode}
         return nothing
     end
-    
+
     function ApplyMDBCBeforeHalf!(SimMetaData::SimulationMetaData{D,T,S,K,SimpleMDBC,L},
                                   SimKernel, SimConstants, SimParticles,
                                   ParticleRanges, CellDict, Position, Density,
@@ -1142,8 +1142,7 @@ using LinearAlgebra
 
         prepare_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ)
 
-        initialize_log!(SimMetaData, SimLogger, SimConstants, SimKernel,
-                        SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
+        initialize_log!(SimMetaData, SimLogger, SimConstants, SimKernel, SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
         
         Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
     
