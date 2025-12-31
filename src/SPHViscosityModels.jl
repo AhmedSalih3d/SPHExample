@@ -2,7 +2,8 @@ module SPHViscosityModels
 
 using StaticArrays, LinearAlgebra, Parameters
 
-export SPHViscosity, ZeroViscosity, ArtificialViscosity, Laminar, LaminarSPS, compute_viscosity
+export SPHViscosity, ZeroViscosity, NoViscosity, ArtificialViscosity, Laminar, LaminarSPS,
+       compute_viscosity
 
 """
     abstract type SPHViscosity end
@@ -14,6 +15,7 @@ abstract type SPHViscosity end
 
 "Represents a simulation with no viscous forces."
 struct ZeroViscosity <: SPHViscosity end
+const NoViscosity = ZeroViscosity
 
 """
     ArtificialViscosity()

@@ -23,7 +23,8 @@ module SPHExample
     export SPHKernel, SPHKernelInstance, WendlandC2, CubicSpline, Wᵢⱼ, ∇Wᵢⱼ, tensile_correction
 
     using .SPHViscosityModels
-    export SPHViscosity, ZeroViscosity, ArtificialViscosity, Laminar, LaminarSPS, compute_viscosity
+    export SPHViscosity, ZeroViscosity, NoViscosity, ArtificialViscosity, Laminar,
+           LaminarSPS, compute_viscosity
 
     using .SPHDensityDiffusionModels
     export SPHDensityDiffusion, ZeroDensityDiffusion, ZeroGravityLinearDensityDiffusion, LinearDensityDiffusion, ZeroGravityComplexDensityDiffusion, ComplexDensityDiffusion, compute_density_diffusion
@@ -62,4 +63,3 @@ module SPHExample
     export AutoOpenLogFile, AutoOpenParaview
 
 end
-
