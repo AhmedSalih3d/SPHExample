@@ -37,16 +37,17 @@ using LinearAlgebra
         return CartesianIndices(ntuple(_->-1:1, v))
     end
 
-    function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView,
-                                     ParticleRanges, CellDict)
-        target_len = length(UniqueCellsView)
+    function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellDict)
+        target_len   = length(UniqueCellsView)
         original_len = length(NeighborCellLists)
         resize!(NeighborCellLists, target_len)
+
         if target_len > original_len
             @inbounds for idx in (original_len + 1):target_len
                 NeighborCellLists[idx] = Int[]
             end
         end
+        
         @inbounds for cell_idx in eachindex(UniqueCellsView)
             neighbors = NeighborCellLists[cell_idx]
             empty!(neighbors)
