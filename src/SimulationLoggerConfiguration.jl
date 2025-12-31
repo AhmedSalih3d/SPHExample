@@ -8,7 +8,8 @@ module SimulationLoggerConfiguration
     using Printf
     using Dates
     using Base.Threads
-
+    using InteractiveUtils
+    using LibGit2
     using ..SimulationGeometry
 
     export SimulationLogger, generate_format_string, InitializeLogger, LogSimulationDetails, LogStep, LogFinal
@@ -131,7 +132,13 @@ module SimulationLoggerConfiguration
         end
     end
     
-    
+    function git_branch_of_pkg(mod::Module)
+        pkg_path = dirname(dirname(pathof(mod)))
+        repo = LibGit2.GitRepo(pkg_path)
+        head = LibGit2.head(repo)
+        return LibGit2.shortname(head)  # returns nothing if detached
+    end
+
     """
         InitializeLogger(logger, constants, metadata, kernel, viscosity,
                          densitydiffusion, geometry, particles)
@@ -143,7 +150,7 @@ module SimulationLoggerConfiguration
     function InitializeLogger(SimLogger,SimConstants,SimMetaData, SimKernel, SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
         with_logger(SimLogger.Logger) do
             @info sprint(InteractiveUtils.versioninfo)
-            @info "Julia threads: $(Threads.nthreads())"
+            @info "Git branch of SPHExample: $(git_branch_of_pkg(@__MODULE__))"
             @info SimConstants
             @info SimMetaData
             @info SimKernel
