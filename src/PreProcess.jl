@@ -99,8 +99,6 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
 
     BoundaryBool  = UInt8.(.!Bool.(MotionLimiter))
 
-    
-
     Acceleration    = zeros(PositionType, NumberOfPoints)
     Velocity        = zeros(PositionType, NumberOfPoints)
     Kernel          = zeros(PositionUnderlyingType, NumberOfPoints)
