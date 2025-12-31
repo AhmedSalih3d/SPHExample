@@ -130,8 +130,8 @@ function AllocateSupportDataStructures(::SimulationMetaData{D,T,NoShifting,K,B,L
     Positionₙ⁺ = zeros(PositionType, NumberOfPoints)
     ρₙ⁺        = zeros(PositionUnderlyingType, NumberOfPoints)
 
-    ∇Cᵢ  = Vector{PositionType}(undef, 0)
-    ∇◌rᵢ = Vector{PositionUnderlyingType}(undef, 0)
+    ∇Cᵢ  = nothing
+    ∇◌rᵢ = nothing
 
     return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ
 end

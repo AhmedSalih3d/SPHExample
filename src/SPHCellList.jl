@@ -751,15 +751,6 @@ using LinearAlgebra
         return bΔ, AΔ
     end
 
-    function prepare_shifting_arrays!(::SimulationMetaData{D,T,NoShifting,K,B,L}, ∇Cᵢ, ∇◌rᵢ) where {D,T, K<:KernelOutputMode, B<:MDBCMode, L<:LogMode}
-        resize!(∇Cᵢ, 0)
-        resize!(∇◌rᵢ, 0)
-        return nothing
-    end
-
-    prepare_shifting_arrays!(::SimulationMetaData{D,T,S,K,B,L}, ∇Cᵢ, ∇◌rᵢ) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, B<:MDBCMode, L<:LogMode} = nothing
-
-
     function ApplyMDBCBeforeHalf!(::SimulationMetaData{D,T,S,K,NoMDBC,L}, _args...) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, L<:LogMode}
         return nothing
     end
@@ -1140,8 +1131,6 @@ using LinearAlgebra
         dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimMetaData, SimParticles.Position)
 
         LoadMDBCNormals!(SimMetaData, SimParticles, ParticleNormalsPath)
-
-        prepare_shifting_arrays!(SimMetaData, ∇Cᵢ, ∇◌rᵢ)
 
         initialize_log!(SimMetaData, SimLogger, SimConstants, SimKernel, SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
         
