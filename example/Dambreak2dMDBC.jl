@@ -2,7 +2,7 @@ using SPHExample
 
 let
     Dimensions = 2
-    FloatType  = Float64
+    FloatType  = Float32
 
     SimConstantsDambreak = SimulationConstants{FloatType}(dx=0.01,c₀=88.14487860902641, δᵩ = 0.1, CFL=0.5, α = 0.01)
 
@@ -30,8 +30,8 @@ let
     SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
         SimulationName="DamBreak2D",
         SaveLocation="E:/SecondApproach/DamBreak2D_MDBC/",
-        SimulationTime=2,
-        OutputTimes=collect(0.01:0.01:2),
+        SimulationTime=2f0,
+        OutputTimes=collect(0.01f0:0.01f0:2f0),
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
         ExportGridCells=true,

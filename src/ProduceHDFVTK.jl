@@ -35,13 +35,13 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
     struct ParticleWriteJob{P, V}
         iteration::Int
-        time::Float64
+        time::AbstractFloat
         snapshot::ParticleSnapshot{P, V}
     end
 
     struct GridWriteJob{N}
         iteration::Int
-        time::Float64
+        time::AbstractFloat
         cells::Vector{CartesianIndex{N}}
         cell_particle_counts::Union{Nothing, Vector{Int}}
         cell_neighbor_counts::Union{Nothing, Vector{Int}}
