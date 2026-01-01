@@ -790,12 +790,12 @@ using LinearAlgebra
         return nothing
     end
 
-    function initialize_log!(::SimulationMetaData{D,T,S,K,B,NoLog}, _args...) where {D,T,S<:ShiftingMode,
+    function InitializeLog!(::SimulationMetaData{D,T,S,K,B,NoLog}, _args...) where {D,T,S<:ShiftingMode,
                                                                                       K<:KernelOutputMode,
                                                                                       B<:MDBCMode}
         return nothing
     end
-    function initialize_log!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger,
+    function InitializeLog!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger,
                              SimConstants, SimKernel, SimViscosity, SimDensityDiffusion,
                              SimGeometry, SimParticles) where {D,T,S<:ShiftingMode,
                                                               K<:KernelOutputMode,
@@ -820,12 +820,12 @@ using LinearAlgebra
         return nothing
     end
 
-    function finalize_log!(::SimulationMetaData{D,T,S,K,B,NoLog}, _...) where {D,T,S<:ShiftingMode,
+    function FinalizeLog!(::SimulationMetaData{D,T,S,K,B,NoLog}, _...) where {D,T,S<:ShiftingMode,
                                                                               K<:KernelOutputMode,
                                                                               B<:MDBCMode}
         return nothing
     end
-    function finalize_log!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger,
+    function FinalizeLog!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger,
                            HourGlass, UnicodeTimeStepsGraph) where {D,T,S<:ShiftingMode,
                                                                       K<:KernelOutputMode,
                                                                       B<:MDBCMode}
@@ -1132,7 +1132,7 @@ using LinearAlgebra
 
         LoadMDBCNormals!(SimMetaData, SimParticles, ParticleNormalsPath)
 
-        initialize_log!(SimMetaData, SimLogger, SimConstants, SimKernel, SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
+        InitializeLog!(SimMetaData, SimLogger, SimConstants, SimKernel, SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
         
         Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
     
@@ -1247,7 +1247,7 @@ using LinearAlgebra
                     ylabel="Time Step Size [s]",
                 )
 
-                finalize_log!(SimMetaData, SimLogger, HourGlass,
+                FinalizeLog!(SimMetaData, SimLogger, HourGlass,
                               UnicodeTimeStepsGraph)
 
                 break
