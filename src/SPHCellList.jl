@@ -1087,8 +1087,7 @@ using LinearAlgebra
 
             
                 @timeit SimMetaData.HourGlass "09 Update TimeStep" begin
-                    dt_next = FinalizeTimeStep(max_visc, min_dt_force,
-                                                 SimConstants, SimKernel)
+                    dt_next = FinalizeTimeStep(max_visc, min_dt_force, SimConstants, SimKernel)
                 end
 
                 @timeit SimMetaData.HourGlass "10 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)

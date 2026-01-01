@@ -30,11 +30,12 @@ let
     SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
         SimulationName="DamBreak2D",
         SaveLocation="E:/SecondApproach/DamBreak2D_MDBC/",
-        SimulationTime=2f0,
-        OutputTimes=collect(0.01f0:0.01f0:2f0),
+        SimulationTime=2.0,
+        OutputTimes=collect(0.01:0.01:2.0),
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
         ExportGridCells=true,
+        ExportGridCellParticleCounts=true,
         OpenLogFile=true
     )
 
