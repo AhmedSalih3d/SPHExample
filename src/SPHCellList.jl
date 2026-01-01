@@ -807,12 +807,12 @@ using LinearAlgebra
         return nothing
     end
 
-    function log_step!(::SimulationMetaData{D,T,S,K,B,NoLog}, _...) where {D,T,S<:ShiftingMode,
+    function LogStep!(::SimulationMetaData{D,T,S,K,B,NoLog}, _...) where {D,T,S<:ShiftingMode,
                                                                            K<:KernelOutputMode,
                                                                            B<:MDBCMode}
         return nothing
     end
-    function log_step!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger) where {D,T,S<:ShiftingMode,
+    function LogStep!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger) where {D,T,S<:ShiftingMode,
                                                                                              K<:KernelOutputMode,
                                                                                              B<:MDBCMode}
         LogStep(SimLogger, SimMetaData, SimMetaData.HourGlass)
@@ -1199,7 +1199,7 @@ using LinearAlgebra
             )
             push!(SimMetaData.TimeSteps, SimMetaData.CurrentTimeStep)
 
-            log_step!(SimMetaData, SimLogger)
+            LogStep!(SimMetaData, SimLogger)
 
             SimMetaData.OutputIterationCounter += 1
 
