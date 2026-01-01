@@ -969,12 +969,12 @@ using LinearAlgebra
     end
 
     """
-        update_delta_x!(Δx, posₙ⁺, pos)
+        UpdateΔx!(Δx, posₙ⁺, pos)
 
     Increment Δx by twice the maximum ‖posₙ⁺[i] – pos[i]‖, without ever allocating.
     Returns the new Δx.
     """
-    @inline function update_delta_x!(Δx::T,
+    @inline function UpdateΔx!(Δx::T,
                                     posₙ⁺::AbstractVector{SVector{D, T}},
                                     pos   ::AbstractVector{SVector{D, T}}) where {D, T<:Real}
         maxd = zero(T)
@@ -1033,7 +1033,7 @@ using LinearAlgebra
             min_dt_force = @alloc(FloatType, length(Position))
 
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
-                SimMetaData.Δx = update_delta_x!(SimMetaData.Δx, Positionₙ⁺, SimParticles.Position)
+                SimMetaData.Δx = UpdateΔx!(SimMetaData.Δx, Positionₙ⁺, SimParticles.Position)
                 ShouldRebuild = SimMetaData.Δx >= SimKernel.h
 
                 # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
