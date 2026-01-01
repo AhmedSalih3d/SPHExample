@@ -1085,20 +1085,17 @@ using LinearAlgebra
                     KernelGradient, ∇Cᵢ, ∇◌rᵢ, max_visc, min_dt_force,
                 )
 
+                @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
             
-                @timeit SimMetaData.HourGlass "09 Update TimeStep" begin
-                    dt_next = FinalizeTimeStep(max_visc, min_dt_force, SimConstants, SimKernel)
+                @timeit SimMetaData.HourGlass "10 Final Density"                         DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
+            
+                @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+            
+                @timeit SimMetaData.HourGlass "12 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
+
+                @timeit SimMetaData.HourGlass "13 Update TimeStep" begin
+                    dt = FinalizeTimeStep(max_visc, min_dt_force, SimConstants, SimKernel)
                 end
-
-                @timeit SimMetaData.HourGlass "10 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
-            
-                @timeit SimMetaData.HourGlass "11 Final Density"                         DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
-            
-                @timeit SimMetaData.HourGlass "12 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
-            
-                @timeit SimMetaData.HourGlass "13 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
-                dt = dt_next
-
             end
         end
         
