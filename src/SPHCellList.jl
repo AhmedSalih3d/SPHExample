@@ -1032,6 +1032,8 @@ using LinearAlgebra
             max_visc = @alloc(FloatType, length(Position))
             min_dt_force = @alloc(FloatType, length(Position))
 
+            dt₂ = dt * 0.5
+
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
                 @timeit SimMetaData.HourGlass "01 Calculate IndexCounter"  begin
 
@@ -1039,8 +1041,6 @@ using LinearAlgebra
                     ShouldRebuild = SimMetaData.Δx >= SimKernel.h
 
                     # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
-
-                    dt₂ = dt * 0.5
 
                     # Note: If particles are not inside of the neighbor list visualiation, try setting this if statement to always true, since UniqueCells will be updated always then
                     # In theory, the maximal speed is the speed of sound, this should give a safe guard
