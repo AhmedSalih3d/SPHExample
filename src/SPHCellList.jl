@@ -768,14 +768,10 @@ using LinearAlgebra
         return nothing
     end
 
-    function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,NoMDBC,L}, SimParticles, path) where {D,T,S<:ShiftingMode,
-                                                                                                K<:KernelOutputMode,
-                                                                                                L<:LogMode}
+    function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,NoMDBC,L}, SimParticles, path) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, L<:LogMode}
         return nothing
     end
-    function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,SimpleMDBC,L}, SimParticles, path) where {D,T,S<:ShiftingMode,
-                                                                                                   K<:KernelOutputMode,
-                                                                                                   L<:LogMode}
+    function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,SimpleMDBC,L}, SimParticles, path) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, L<:LogMode}
         if isnothing(path)
             return nothing
         end
