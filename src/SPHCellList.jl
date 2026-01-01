@@ -513,7 +513,7 @@ using LinearAlgebra
 
             Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel,
                                               SimConstants, SimParticles, xᵢⱼ,
-                                              ∇ᵢWᵢⱼ, xᵢⱼ², i, j, MotionLimiter)
+                                              ∇ᵢWᵢⱼ, dᵢⱼ^2, i, j, MotionLimiter)
 
             dρdt_acc += dρdt⁺ + Dᵢ
 
@@ -525,7 +525,7 @@ using LinearAlgebra
 
             visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants,
                                              SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ,
-                                             xᵢⱼ², i, j)
+                                             dᵢⱼ^2, i, j)
 
             acc_acc += dvdt⁺ + visc_term
 
@@ -565,7 +565,7 @@ using LinearAlgebra
 
             Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel,
                                               SimConstants, SimParticles, xᵢⱼ,
-                                              ∇ᵢWᵢⱼ, xᵢⱼ², i, j, MotionLimiter)
+                                              ∇ᵢWᵢⱼ, dᵢⱼ^2, i, j, MotionLimiter)
 
             dρdt_acc += dρdt⁺ + Dᵢ
 
@@ -577,7 +577,7 @@ using LinearAlgebra
 
             visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants,
                                              SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ,
-                                             xᵢⱼ², i, j)
+                                             dᵢⱼ^2, i, j)
 
             acc_acc += dvdt⁺ + visc_term
         end
@@ -629,7 +629,7 @@ using LinearAlgebra
 
             visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants,
                                              SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ,
-                                             xᵢⱼ², i, j)
+                                             dᵢⱼ^2, i, j)
 
             acc_acc += dvdt⁺ + visc_term
 
@@ -676,7 +676,7 @@ using LinearAlgebra
 
             Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel,
                                               SimConstants, SimParticles, xᵢⱼ,
-                                              ∇ᵢWᵢⱼ, xᵢⱼ², i, j, MotionLimiter)
+                                              ∇ᵢWᵢⱼ, dᵢⱼ^2, i, j, MotionLimiter)
 
             dρdt_acc += dρdt⁺ + Dᵢ
 
@@ -688,7 +688,7 @@ using LinearAlgebra
 
             visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants,
                                              SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ,
-                                             xᵢⱼ², i, j)
+                                             dᵢⱼ^2, i, j)
 
             acc_acc += dvdt⁺ + visc_term
 
