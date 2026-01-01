@@ -1,8 +1,8 @@
 using SPHExample
 
-let
+# let
     Dimensions = 2
-    FloatType  = Float32
+    FloatType  = Float64
 
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.5)
     # SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=43.4, δᵩ = 0.1, CFL=0.2)
@@ -30,8 +30,8 @@ let
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
         SimulationName="StillWedge", 
         SaveLocation="W:/Simulations/StillWedge2D_MDBC",
-        SimulationTime=4f0,
-        OutputTimes=.01f0,
+        SimulationTime=4.0,
+        OutputTimes=0.01,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
         ExportGridCells=true,
@@ -104,7 +104,7 @@ let
     # ylims!((0, 1))
     
     # display(plt)
-end
+# end
 
 
 
