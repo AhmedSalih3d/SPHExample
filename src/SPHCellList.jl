@@ -1036,9 +1036,6 @@ using LinearAlgebra
             min_dt_force = @alloc(FloatType, length(Position))
 
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
-                fill!(max_visc, zero(FloatType))
-                fill!(min_dt_force, typemax(FloatType))
-
                 SimMetaData.Δx = update_delta_x!(SimMetaData.Δx, Positionₙ⁺, SimParticles.Position)
                 ShouldRebuild = SimMetaData.Δx >= SimKernel.h
 
