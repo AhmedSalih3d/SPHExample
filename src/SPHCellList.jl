@@ -1241,8 +1241,7 @@ using LinearAlgebra
                     ylabel="Time Step Size [s]",
                 )
 
-                FinalizeLog!(SimMetaData, SimLogger, HourGlass,
-                              UnicodeTimeStepsGraph)
+                FinalizeLog!(SimMetaData, SimLogger, HourGlass, UnicodeTimeStepsGraph)
 
                 break
             end
