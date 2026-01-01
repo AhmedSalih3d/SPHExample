@@ -1,18 +1,18 @@
 module TimeStepping
 
-export Δt, finalize_time_step, update_time_step_buffers!
+export Δt, FinalizeTimeStep, UpdateTimeStepBuffers!
 
 using LinearAlgebra
 using Parameters
 using Base.Threads
 using Bumper
 
-@inline function update_time_step_buffers!(::Nothing, ::Nothing, index, position,
+@inline function UpdateTimeStepBuffers!(::Nothing, ::Nothing, index, position,
                                            velocity, acceleration, sim_kernel)
     return nothing
 end
 
-@inline function update_time_step_buffers!(max_visc, min_dt_force, index, position,
+@inline function UpdateTimeStepBuffers!(max_visc, min_dt_force, index, position,
                                            velocity, acceleration, sim_kernel)
     h = sim_kernel.h
     η² = sim_kernel.η²
@@ -28,11 +28,11 @@ end
 end
 
 """
-    finalize_time_step(max_visc, min_dt_force, SimulationConstants, SPHKernel)
+    FinalizeTimeStep(max_visc, min_dt_force, SimulationConstants, SPHKernel)
 
 Compute the CFL-limited time step from the per-particle buffers.
 """
-function finalize_time_step(max_visc, min_dt_force, SimulationConstants, SPHKernel)
+function FinalizeTimeStep(max_visc, min_dt_force, SimulationConstants, SPHKernel)
     @unpack c₀, CFL = SimulationConstants
     @unpack h = SPHKernel
 

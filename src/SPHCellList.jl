@@ -220,7 +220,7 @@ using LinearAlgebra
 
             dρdtI[i] = dρdt_acc
             Acceleration[i] = acc_acc
-            update_time_step_buffers!(max_visc, min_dt_force, i, Position[i],
+            UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i],
                                       Velocity[i], acc_acc, SimKernel)
         end
 
@@ -287,7 +287,7 @@ using LinearAlgebra
             Acceleration[i] = acc_acc
             Kernel[i] = kernel_acc
             KernelGradient[i] = kernel_grad_acc
-            update_time_step_buffers!(max_visc, min_dt_force, i, Position[i],
+            UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i],
                                       Velocity[i], acc_acc, SimKernel)
         end
 
@@ -353,7 +353,7 @@ using LinearAlgebra
             Acceleration[i] = acc_acc
             ∇Cᵢ[i] = shift_c_acc
             ∇◌rᵢ[i] = shift_r_acc
-            update_time_step_buffers!(max_visc, min_dt_force, i, Position[i],
+            UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i],
                                       Velocity[i], acc_acc, SimKernel)
         end
 
@@ -425,7 +425,7 @@ using LinearAlgebra
             KernelGradient[i] = kernel_grad_acc
             ∇Cᵢ[i] = shift_c_acc
             ∇◌rᵢ[i] = shift_r_acc
-            update_time_step_buffers!(max_visc, min_dt_force, i, Position[i],
+            UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i],
                                       Velocity[i], acc_acc, SimKernel)
         end
 
@@ -1090,7 +1090,7 @@ using LinearAlgebra
 
             
                 @timeit SimMetaData.HourGlass "09 Update TimeStep" begin
-                    dt_next = finalize_time_step(max_visc, min_dt_force,
+                    dt_next = FinalizeTimeStep(max_visc, min_dt_force,
                                                  SimConstants, SimKernel)
                 end
 
