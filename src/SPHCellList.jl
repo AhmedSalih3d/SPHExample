@@ -968,6 +968,7 @@ using LinearAlgebra
         N = length(velocities)
         n_chunks = Threads.nthreads()
         chunk_size = cld(N, n_chunks)
+        result = zero(T)
         @no_escape begin
             v_buffer = @alloc(T, n_chunks)
             fill!(v_buffer, zero(T))
@@ -987,8 +988,9 @@ using LinearAlgebra
                     v_buffer[i] = local_max
                 end
             end
-            return maximum(v_buffer)
+            result = maximum(v_buffer)
         end
+        return result
     end
 
     # Per-particle local Δx removed: use single scalar `SimMetaData.Δx`.
