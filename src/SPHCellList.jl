@@ -1028,7 +1028,7 @@ using LinearAlgebra
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
                 @timeit SimMetaData.HourGlass "01 Calculate IndexCounter"  begin
 
-                    ShouldRebuild = SimMetaData.Δx >= SimKernel.h
+                    ShouldRebuild = SimMetaData.IndexCounter == 0 || SimMetaData.Δx >= SimKernel.h
 
                     # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
 
