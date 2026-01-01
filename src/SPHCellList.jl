@@ -110,6 +110,18 @@ using LinearAlgebra
         return nothing
     end
 
+    @inline function CellsChanged!(Particles, InverseCutOff)
+        changed = false
+        @inbounds @simd ivdep for i ∈ eachindex(Particles.Cells)
+            new_cell = CartesianIndex(map(x -> map_floor(x, InverseCutOff), Tuple(Particles.Position[i])))
+            if new_cell != Particles.Cells[i]
+                Particles.Cells[i] = new_cell
+                changed = true
+            end
+        end
+        return changed
+    end
+
     """
     Updates the neighbor list and sorts particles by their cell indices.
 
@@ -123,10 +135,8 @@ using LinearAlgebra
     # Returns
     - `IndexCounter`: The number of unique cells identified.
     """
-    function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
-                              ParticleRanges, UniqueCells, CellDict)
-        ExtractCells!(Particles, InverseCutOff)
-
+    function UpdateNeighborsFromCells!(Particles, SortingScratchSpace,
+                                       ParticleRanges, UniqueCells, CellDict)
         sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
         Cells = @views Particles.Cells
         @. ParticleRanges             = zero(eltype(ParticleRanges))
@@ -148,6 +158,13 @@ using LinearAlgebra
         ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
 
         return IndexCounter 
+    end
+
+    function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
+                              ParticleRanges, UniqueCells, CellDict)
+        ExtractCells!(Particles, InverseCutOff)
+        return UpdateNeighborsFromCells!(Particles, SortingScratchSpace,
+                                         ParticleRanges, UniqueCells, CellDict)
     end
 
     function compute_cell_particle_counts(particle_ranges, n_cells)
@@ -964,36 +981,7 @@ using LinearAlgebra
         end
     end
 
-    @inline function MaxSpeed(velocities::AbstractVector{SVector{D, T}}) where {D, T<:Real}
-        N = length(velocities)
-        n_chunks = Threads.nthreads()
-        chunk_size = cld(N, n_chunks)
-        result = zero(T)
-        @no_escape begin
-            v_buffer = @alloc(T, n_chunks)
-            fill!(v_buffer, zero(T))
-            @sync for i in 1:n_chunks
-                Threads.@spawn begin
-                    idx_start = (i - 1) * chunk_size + 1
-                    idx_end = min(i * chunk_size, N)
-                    local_max = zero(T)
-                    if idx_start <= idx_end
-                        @inbounds for j in idx_start:idx_end
-                            speed = norm(velocities[j])
-                            if speed > local_max
-                                local_max = speed
-                            end
-                        end
-                    end
-                    v_buffer[i] = local_max
-                end
-            end
-            result = maximum(v_buffer)
-        end
-        return result
-    end
-
-    # Per-particle local Δx removed: use single scalar `SimMetaData.Δx`.
+    # Per-particle local Δx removed: use cell-change detection for rebuilds.
 
     
     @inbounds function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
@@ -1036,7 +1024,8 @@ using LinearAlgebra
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
                 @timeit SimMetaData.HourGlass "01 Calculate IndexCounter"  begin
 
-                    ShouldRebuild = SimMetaData.IndexCounter == 0 || SimMetaData.Δx >= SimKernel.h
+                    CellsChanged = CellsChanged!(SimParticles, SimKernel.H⁻¹)
+                    ShouldRebuild = SimMetaData.IndexCounter == 0 || CellsChanged
 
                     # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
 
@@ -1047,8 +1036,9 @@ using LinearAlgebra
                     # Remove if statement logic if you want to update each iteration
                     # if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
                     if ShouldRebuild
-                        @timeit SimMetaData.HourGlass "01a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells, CellDict)
-                        SimMetaData.Δx    = zero(eltype(dρdtI))
+                        @timeit SimMetaData.HourGlass "01a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighborsFromCells!(
+                            SimParticles, SortingScratchSpace, ParticleRanges, UniqueCells, CellDict,
+                        )
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                         BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellDict)
                     end
@@ -1083,8 +1073,6 @@ using LinearAlgebra
                     MotionLimiter, dρdtI, Acceleration, Kernel,
                     KernelGradient, ∇Cᵢ, ∇◌rᵢ, max_visc, min_dt_force,
                 )
-
-                SimMetaData.Δx += 2 * MaxSpeed(Velocityₙ⁺) * dt
 
                 @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
             
