@@ -220,8 +220,7 @@ using LinearAlgebra
 
             dρdtI[i] = dρdt_acc
             Acceleration[i] = acc_acc
-            UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i],
-                                      Velocity[i], acc_acc, SimKernel)
+            UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i], Velocity[i], acc_acc, SimKernel)
         end
 
         return nothing
@@ -287,8 +286,7 @@ using LinearAlgebra
             Acceleration[i] = acc_acc
             Kernel[i] = kernel_acc
             KernelGradient[i] = kernel_grad_acc
-            UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i],
-                                      Velocity[i], acc_acc, SimKernel)
+            UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i], Velocity[i], acc_acc, SimKernel)
         end
 
         return nothing
@@ -353,8 +351,7 @@ using LinearAlgebra
             Acceleration[i] = acc_acc
             ∇Cᵢ[i] = shift_c_acc
             ∇◌rᵢ[i] = shift_r_acc
-            UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i],
-                                      Velocity[i], acc_acc, SimKernel)
+            UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i], Velocity[i], acc_acc, SimKernel)
         end
 
         return nothing
