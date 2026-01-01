@@ -178,7 +178,8 @@ using LinearAlgebra
                                       Pressure, Velocity, MotionLimiter, dρdtI,
                                       Acceleration, Kernel, KernelGradient, ∇Cᵢ,
                                       ∇◌rᵢ, max_visc = nothing,
-                                      min_dt_force = nothing) where {D,T,
+                                      min_dt_force = nothing,
+                                      thread_max_speed = nothing) where {D,T,
                                                   B<:MDBCMode,L<:LogMode,
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
@@ -221,6 +222,7 @@ using LinearAlgebra
             dρdtI[i] = dρdt_acc
             Acceleration[i] = acc_acc
             UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i], Velocity[i], acc_acc, SimKernel)
+            UpdateThreadMaxSpeed!(thread_max_speed, Velocity[i])
         end
 
         return nothing
@@ -233,7 +235,8 @@ using LinearAlgebra
                                       Pressure, Velocity, MotionLimiter, dρdtI,
                                       Acceleration, Kernel, KernelGradient, ∇Cᵢ,
                                       ∇◌rᵢ, max_visc = nothing,
-                                      min_dt_force = nothing) where {D,T,
+                                      min_dt_force = nothing,
+                                      thread_max_speed = nothing) where {D,T,
                                                   K<:KernelOutputMode,
                                                   B<:MDBCMode,L<:LogMode,
                                                   SDD<:SPHDensityDiffusion,
@@ -287,6 +290,7 @@ using LinearAlgebra
             Kernel[i] = kernel_acc
             KernelGradient[i] = kernel_grad_acc
             UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i], Velocity[i], acc_acc, SimKernel)
+            UpdateThreadMaxSpeed!(thread_max_speed, Velocity[i])
         end
 
         return nothing
@@ -299,7 +303,8 @@ using LinearAlgebra
                                       Pressure, Velocity, MotionLimiter, dρdtI,
                                       Acceleration, Kernel, KernelGradient, ∇Cᵢ,
                                       ∇◌rᵢ, max_visc = nothing,
-                                      min_dt_force = nothing) where {D,T,
+                                      min_dt_force = nothing,
+                                      thread_max_speed = nothing) where {D,T,
                                                   S<:ShiftingMode,B<:MDBCMode,
                                                   L<:LogMode,SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
@@ -352,6 +357,7 @@ using LinearAlgebra
             ∇Cᵢ[i] = shift_c_acc
             ∇◌rᵢ[i] = shift_r_acc
             UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i], Velocity[i], acc_acc, SimKernel)
+            UpdateThreadMaxSpeed!(thread_max_speed, Velocity[i])
         end
 
         return nothing
@@ -364,7 +370,8 @@ using LinearAlgebra
                                       Pressure, Velocity, MotionLimiter, dρdtI,
                                       Acceleration, Kernel, KernelGradient, ∇Cᵢ,
                                       ∇◌rᵢ, max_visc = nothing,
-                                      min_dt_force = nothing) where {D,T,
+                                      min_dt_force = nothing,
+                                      thread_max_speed = nothing) where {D,T,
                                                   S<:ShiftingMode,
                                                   K<:KernelOutputMode,
                                                   B<:MDBCMode,L<:LogMode,
@@ -424,6 +431,7 @@ using LinearAlgebra
             ∇◌rᵢ[i] = shift_r_acc
             UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i],
                                       Velocity[i], acc_acc, SimKernel)
+            UpdateThreadMaxSpeed!(thread_max_speed, Velocity[i])
         end
 
         return nothing
@@ -964,30 +972,16 @@ using LinearAlgebra
         end
     end
 
-    """
-        UpdateΔx!(Δx, posₙ⁺, pos)
+    @inline UpdateThreadMaxSpeed!(::Nothing, velocity) = nothing
 
-    Increment Δx by twice the maximum ‖posₙ⁺[i] – pos[i]‖, without ever allocating.
-    Returns the new Δx.
-    """
-    @inline function UpdateΔx!(Δx::T,
-                                    posₙ⁺::AbstractVector{SVector{D, T}},
-                                    pos   ::AbstractVector{SVector{D, T}}) where {D, T<:Real}
-        maxd = zero(T)
-        @inbounds for i in eachindex(posₙ⁺, pos)
-            # compute squared norm manually
-            sumsq = zero(T)
-            @inbounds for j in 1:D
-                d = posₙ⁺[i][j] - pos[i][j]
-                sumsq += d*d
-            end
-            # sqrt/T is allocation-free on scalars
-            nrm = sqrt(sumsq)
-            if nrm > maxd
-                maxd = nrm
-            end
+    @inline function UpdateThreadMaxSpeed!(thread_max_speed::AbstractVector{T},
+                                           velocity) where {T<:Real}
+        tid = Threads.threadid()
+        speed = norm(velocity)
+        if speed > thread_max_speed[tid]
+            thread_max_speed[tid] = speed
         end
-        return Δx + 4*maxd
+        return nothing
     end
 
     # Per-particle local Δx removed: use single scalar `SimMetaData.Δx`.
@@ -1027,13 +1021,13 @@ using LinearAlgebra
         @no_escape begin
             max_visc = @alloc(FloatType, length(Position))
             min_dt_force = @alloc(FloatType, length(Position))
+            thread_max_speed = @alloc(FloatType, Threads.nthreads())
 
             dt₂ = dt * 0.5
 
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
                 @timeit SimMetaData.HourGlass "01 Calculate IndexCounter"  begin
 
-                    SimMetaData.Δx = UpdateΔx!(SimMetaData.Δx, Positionₙ⁺, SimParticles.Position)
                     ShouldRebuild = SimMetaData.Δx >= SimKernel.h
 
                     # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
@@ -1074,13 +1068,17 @@ using LinearAlgebra
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
             
                 @timeit SimMetaData.HourGlass "07 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
+                fill!(thread_max_speed, zero(FloatType))
                 @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticle!(
                     SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                     SimConstants, SimParticles, ParticleRanges, CellDict,
                     NeighborCellLists, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺,
                     MotionLimiter, dρdtI, Acceleration, Kernel,
                     KernelGradient, ∇Cᵢ, ∇◌rᵢ, max_visc, min_dt_force,
+                    thread_max_speed,
                 )
+
+                SimMetaData.Δx += 2 * maximum(thread_max_speed) * dt
 
                 @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
             
