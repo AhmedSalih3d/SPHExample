@@ -223,26 +223,31 @@ function FillNeighborsGPU!(neighbor_indices, neighbor_offsets, Positions, CellID
     return nothing
 end
 
-function WendlandKernelKernel!(kernel_values, neighbor_indices, neighbor_offsets, Positions, h, kernel, count)
+function WendlandKernelKernel!(kernel_values, kernel_sums, neighbor_indices, neighbor_offsets, Positions, h, kernel, count)
     i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     if i <= count
         start_idx = neighbor_offsets[i] + 1
         end_idx = neighbor_offsets[i + 1]
         pos_i = Positions[i]
+        total = zero(eltype(kernel_sums))
         for idx in start_idx:end_idx
             j = neighbor_indices[idx]
             r = pos_i - Positions[j]
             q = sqrt(sum(abs2, r)) / h
-            kernel_values[idx] = kernel.norm * KernelValue(kernel, q)
+            value = kernel.norm * KernelValue(kernel, q)
+            kernel_values[idx] = value
+            total += value
         end
+        kernel_sums[i] = total
     end
     return
 end
 
-function WendlandKernelGPU!(kernel_values, neighbor_indices, neighbor_offsets, Positions, h, kernel)
+function WendlandKernelGPU!(kernel_values, kernel_sums, neighbor_indices, neighbor_offsets, Positions, h, kernel)
     count = length(Positions)
     CUDA.@sync @cuda threads=256 blocks=cld(count, 256) WendlandKernelKernel!(
         kernel_values,
+        kernel_sums,
         neighbor_indices,
         neighbor_offsets,
         Positions,
@@ -376,9 +381,11 @@ FillNeighborsGPU!(
 )
 
 kernel_values = CUDA.zeros(FloatType, total_neighbors)
+kernel_sums = CUDA.zeros(FloatType, NumberOfParticles)
 kernel = WendlandC2(FloatType, Dimensions)
 WendlandKernelGPU!(
     kernel_values,
+    kernel_sums,
     neighbor_indices,
     neighbor_offsets,
     SimParticlesGPU.Positions,
@@ -389,18 +396,19 @@ WendlandKernelGPU!(
 neighbor_offsets_cpu = Array(neighbor_offsets)
 neighbor_indices_cpu = Array(neighbor_indices)
 kernel_values_cpu = Array(kernel_values)
+kernel_sums_cpu = Array(kernel_sums)
 
 open("particle_neighbors.txt", "w") do io
     for i in 1:NumberOfParticles
         start_idx = neighbor_offsets_cpu[i] + 1
         end_idx = neighbor_offsets_cpu[i + 1]
         if start_idx > end_idx
-            println(io, i, ":")
+            println(io, i, " (sum=", kernel_sums_cpu[i], "):")
         else
             neighbors = neighbor_indices_cpu[start_idx:end_idx]
             kernels = kernel_values_cpu[start_idx:end_idx]
             entries = join(["$(neighbors[idx])=$(kernels[idx])" for idx in eachindex(neighbors)], ", ")
-            println(io, i, ": ", entries)
+            println(io, i, " (sum=", kernel_sums_cpu[i], "): ", entries)
         end
     end
 end
