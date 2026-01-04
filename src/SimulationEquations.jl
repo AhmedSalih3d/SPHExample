@@ -5,6 +5,7 @@ export EquationOfState, EquationOfStateGamma7, Pressure!, DensityEpsi!, LimitDen
 using StaticArrays
 using Parameters
 using FastPow
+using CUDA
 
 @inline function EquationOfStateGamma7(ρ,c₀,ρ₀)
     return @fastpow ((c₀^2*ρ₀)/7) * ((ρ/ρ₀)^7 - 1)
@@ -23,6 +24,24 @@ end
     end
 end
 
+function PressureCudaKernel!(Press, Density, c₀, ρ₀)
+    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    if i <= length(Press)
+        Press[i] = EquationOfStateGamma7(Density[i], c₀, ρ₀)
+    end
+    return nothing
+end
+
+function Pressure!(Press::CUDA.AbstractGPUArray, Density::CUDA.AbstractGPUArray,
+                   SimulationConstants)
+    c₀ = SimulationConstants.c₀
+    ρ₀ = SimulationConstants.ρ₀
+    threads = 256
+    blocks = cld(length(Press), threads)
+    CUDA.@sync CUDA.@cuda threads=threads blocks=blocks PressureCudaKernel!(Press, Density, c₀, ρ₀)
+    return nothing
+end
+
 # This is to handle the special factor multiplied on density in the time stepping procedure, when
 # using symplectic time stepping
 @inline function DensityEpsi!(Density, dρdtIₙ⁺,ρₙ⁺,Δt)
@@ -32,6 +51,23 @@ end
     end
 end
 
+function DensityEpsiCudaKernel!(Density, dρdtIₙ⁺, ρₙ⁺, Δt)
+    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    if i <= length(Density)
+        epsi = - (dρdtIₙ⁺[i] / ρₙ⁺[i]) * Δt
+        Density[i] *= (2 - epsi) / (2 + epsi)
+    end
+    return nothing
+end
+
+function DensityEpsi!(Density::CUDA.AbstractGPUArray, dρdtIₙ⁺::CUDA.AbstractGPUArray,
+                      ρₙ⁺::CUDA.AbstractGPUArray, Δt)
+    threads = 256
+    blocks = cld(length(Density), threads)
+    CUDA.@sync CUDA.@cuda threads=threads blocks=blocks DensityEpsiCudaKernel!(Density, dρdtIₙ⁺, ρₙ⁺, Δt)
+    return nothing
+end
+
 # This version of the function using !Bool(MotionLimiter) instead of BoundaryBool
 @inline function LimitDensityAtBoundary!(Density,ρ₀, MotionLimiter)
     @inbounds for i in eachindex(Density)
@@ -39,6 +75,24 @@ end
             Density[i] = ρ₀
         end
     end
+end
+
+function LimitDensityAtBoundaryCudaKernel!(Density, ρ₀, MotionLimiter)
+    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    if i <= length(Density)
+        if (Density[i] < ρ₀) * !Bool(MotionLimiter[i])
+            Density[i] = ρ₀
+        end
+    end
+    return nothing
+end
+
+function LimitDensityAtBoundary!(Density::CUDA.AbstractGPUArray, ρ₀,
+                                 MotionLimiter::CUDA.AbstractGPUArray)
+    threads = 256
+    blocks = cld(length(Density), threads)
+    CUDA.@sync CUDA.@cuda threads=threads blocks=blocks LimitDensityAtBoundaryCudaKernel!(Density, ρ₀, MotionLimiter)
+    return nothing
 end
 
 @inline function ConstructGravitySVector(_::SVector{N, T}, value) where {N, T}
