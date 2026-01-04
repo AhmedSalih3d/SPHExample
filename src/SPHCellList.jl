@@ -523,6 +523,8 @@ using LinearAlgebra
 
     mutable struct CudaNeighborBuffers
         n_particles::Int
+        host_neighbor_offsets::Vector{Int}
+        host_neighbor_indices::Vector{Int}
         position
         density
         pressure
@@ -548,6 +550,8 @@ using LinearAlgebra
         if needs_alloc
             buffers = CudaNeighborBuffers(
                 n_particles,
+                neighbor_offsets,
+                neighbor_indices,
                 CuArray(Position),
                 CuArray(Density),
                 CuArray(Pressure),
@@ -560,6 +564,8 @@ using LinearAlgebra
             )
             SimMetaData.CudaBuffers = buffers
         else
+            buffers.host_neighbor_offsets = neighbor_offsets
+            buffers.host_neighbor_indices = neighbor_indices
             copyto!(buffers.position, Position)
             copyto!(buffers.density, Density)
             copyto!(buffers.pressure, Pressure)
@@ -570,6 +576,22 @@ using LinearAlgebra
         end
 
         return buffers
+    end
+
+    function UpdateCudaNeighborPairList!(SimMetaData, SimParticles, CellDict, ParticleRanges,
+                                         NeighborCellLists)
+        buffers = SimMetaData.CudaBuffers
+        if buffers === nothing
+            buffers = CudaNeighborBuffers(0, Int[], Int[], nothing, nothing, nothing, nothing,
+                                          nothing, nothing, nothing, nothing)
+            SimMetaData.CudaBuffers = buffers
+        end
+
+        neighbor_offsets = buffers.host_neighbor_offsets
+        neighbor_indices = buffers.host_neighbor_indices
+        BuildNeighborPairList!(neighbor_offsets, neighbor_indices, SimParticles.Cells,
+                               CellDict, ParticleRanges, NeighborCellLists)
+        return nothing
     end
 
     """
@@ -656,10 +678,14 @@ using LinearAlgebra
                                  KernelGradient, ∇Cᵢ, ∇◌rᵢ, max_visc, min_dt_force)
         end
 
-        neighbor_offsets = Int[]
-        neighbor_indices = Int[]
-        BuildNeighborPairList!(neighbor_offsets, neighbor_indices, SimParticles.Cells,
-                               CellDict, ParticleRanges, NeighborCellLists)
+        if SimMetaData.CudaBuffers === nothing ||
+           isempty(SimMetaData.CudaBuffers.host_neighbor_offsets)
+            UpdateCudaNeighborPairList!(SimMetaData, SimParticles, CellDict, ParticleRanges,
+                                        NeighborCellLists)
+        end
+
+        neighbor_offsets = SimMetaData.CudaBuffers.host_neighbor_offsets
+        neighbor_indices = SimMetaData.CudaBuffers.host_neighbor_indices
 
         n_particles = length(Position)
         buffers = EnsureCudaNeighborBuffers!(SimMetaData, Position, Density, Pressure, Velocity,
@@ -1339,6 +1365,10 @@ using LinearAlgebra
                         SimMetaData.Δx    = zero(eltype(dρdtI))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                         BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellDict)
+                        if SimMetaData.UseCuda
+                            UpdateCudaNeighborPairList!(SimMetaData, SimParticles, CellDict,
+                                                        ParticleRanges, NeighborCellLists)
+                        end
                     end
                 end
 
