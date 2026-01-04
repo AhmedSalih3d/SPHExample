@@ -1087,9 +1087,7 @@ using LinearAlgebra
             
                 @timeit SimMetaData.HourGlass "12 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
 
-                @timeit SimMetaData.HourGlass "13 Update TimeStep" begin
-                    dt = FinalizeTimeStep(max_visc, min_dt_force, SimConstants, SimKernel)
-                end
+                @timeit SimMetaData.HourGlass "13 Update TimeStep" dt = FinalizeTimeStep(max_visc, min_dt_force, SimConstants, SimKernel)
             end
         end
         
