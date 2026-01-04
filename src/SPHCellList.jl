@@ -19,6 +19,7 @@ using ..OpenExternalPrograms
 using ..SPHKernels
 using ..SPHViscosityModels
 using ..SPHDensityDiffusionModels
+import ..SPHViscosityModels: compute_viscosity_gpu_term
 
 using StaticArrays
 import StructArrays: StructArray, foreachfield
@@ -713,7 +714,7 @@ using LinearAlgebra
                     f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
                     dvdt⁺ = -m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
 
-                    visc_term = SPHViscosityModels.compute_viscosity_gpu_term(
+                    visc_term = compute_viscosity_gpu_term(
                         SimViscosity, SimKernel, SimConstants, Density, Velocity,
                         xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ^2, i, j,
                     )

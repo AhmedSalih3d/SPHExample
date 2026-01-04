@@ -2,7 +2,7 @@ module SPHViscosityModels
 
 using StaticArrays, LinearAlgebra, Parameters
 
-export SPHViscosity, ZeroViscosity, ArtificialViscosity, Laminar, LaminarSPS, compute_viscosity
+export SPHViscosity, ZeroViscosity, ArtificialViscosity, Laminar, LaminarSPS, compute_viscosity, compute_viscosity_gpu_term
 
 """
     abstract type SPHViscosity end
