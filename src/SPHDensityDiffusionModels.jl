@@ -44,21 +44,6 @@ struct ZeroDensityDiffusion <: SPHDensityDiffusion end
         return zero(xᵢⱼ), zero(xᵢⱼ)
 end
 
-@inline function compute_density_diffusion(
-        ::ZeroDensityDiffusion,
-        SimKernel,
-        SimConstants,
-        Density,
-        MotionLimiter,
-        xᵢⱼ,
-        ∇ᵢWᵢⱼ,
-        d²,
-        i,
-        j
-)
-        return zero(xᵢⱼ), zero(xᵢⱼ)
-end
-
 #---------------------------------------------------------------
 # 2) ZeroGravityLinearDensityDiffusion(): 
 #---------------------------------------------------------------
@@ -150,7 +135,22 @@ struct LinearDensityDiffusion <: SPHDensityDiffusion end
         return Dᵢ, Dⱼ
 end
 
-@inline function compute_density_diffusion(
+@inline function compute_density_diffusion_gpu(
+        ::ZeroDensityDiffusion,
+        SimKernel,
+        SimConstants,
+        Density,
+        MotionLimiter,
+        xᵢⱼ,
+        ∇ᵢWᵢⱼ,
+        d²,
+        i,
+        j
+)
+        return zero(xᵢⱼ), zero(xᵢⱼ)
+end
+
+@inline function compute_density_diffusion_gpu(
         ::LinearDensityDiffusion,
         SimKernel,
         SimConstants,
