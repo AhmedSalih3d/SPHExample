@@ -110,6 +110,18 @@ using LinearAlgebra
         return nothing
     end
 
+    @inline function CellsChanged!(Particles, InverseCutOff)
+        changed = false
+        @inbounds @simd ivdep for i ∈ eachindex(Particles.Cells)
+            new_cell = CartesianIndex(map(x -> map_floor(x, InverseCutOff), Tuple(Particles.Position[i])))
+            if new_cell != Particles.Cells[i]
+                Particles.Cells[i] = new_cell
+                changed = true
+            end
+        end
+        return changed
+    end
+
     """
     Updates the neighbor list and sorts particles by their cell indices.
 
@@ -123,10 +135,8 @@ using LinearAlgebra
     # Returns
     - `IndexCounter`: The number of unique cells identified.
     """
-    function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
-                              ParticleRanges, UniqueCells, CellDict)
-        ExtractCells!(Particles, InverseCutOff)
-
+    function UpdateNeighborsFromCells!(Particles, SortingScratchSpace,
+                                       ParticleRanges, UniqueCells, CellDict)
         sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
         Cells = @views Particles.Cells
         @. ParticleRanges             = zero(eltype(ParticleRanges))
@@ -148,6 +158,13 @@ using LinearAlgebra
         ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
 
         return IndexCounter 
+    end
+
+    function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
+                              ParticleRanges, UniqueCells, CellDict)
+        ExtractCells!(Particles, InverseCutOff)
+        return UpdateNeighborsFromCells!(Particles, SortingScratchSpace,
+                                         ParticleRanges, UniqueCells, CellDict)
     end
 
     function compute_cell_particle_counts(particle_ranges, n_cells)
@@ -961,33 +978,7 @@ using LinearAlgebra
         end
     end
 
-    """
-        UpdateΔx!(Δx, posₙ⁺, pos)
-
-    Increment Δx by twice the maximum ‖posₙ⁺[i] – pos[i]‖, without ever allocating.
-    Returns the new Δx.
-    """
-    @inline function UpdateΔx!(Δx::T,
-                                    posₙ⁺::AbstractVector{SVector{D, T}},
-                                    pos   ::AbstractVector{SVector{D, T}}) where {D, T<:Real}
-        maxd = zero(T)
-        @inbounds for i in eachindex(posₙ⁺, pos)
-            # compute squared norm manually
-            sumsq = zero(T)
-            @inbounds for j in 1:D
-                d = posₙ⁺[i][j] - pos[i][j]
-                sumsq += d*d
-            end
-            # sqrt/T is allocation-free on scalars
-            nrm = sqrt(sumsq)
-            if nrm > maxd
-                maxd = nrm
-            end
-        end
-        return Δx + 4*maxd
-    end
-
-    # Per-particle local Δx removed: use single scalar `SimMetaData.Δx`.
+    # Per-particle local Δx removed: use cell-change detection for rebuilds.
 
     
     @inbounds function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
@@ -1030,8 +1021,8 @@ using LinearAlgebra
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
                 @timeit SimMetaData.HourGlass "01 Calculate IndexCounter"  begin
 
-                    SimMetaData.Δx = UpdateΔx!(SimMetaData.Δx, Positionₙ⁺, SimParticles.Position)
-                    ShouldRebuild = SimMetaData.Δx >= SimKernel.h
+                    CellsChanged = CellsChanged!(SimParticles, SimKernel.H⁻¹)
+                    ShouldRebuild = SimMetaData.IndexCounter == 0 || CellsChanged
 
                     # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
 
@@ -1042,8 +1033,9 @@ using LinearAlgebra
                     # Remove if statement logic if you want to update each iteration
                     # if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
                     if ShouldRebuild
-                        @timeit SimMetaData.HourGlass "01a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells, CellDict)
-                        SimMetaData.Δx    = zero(eltype(dρdtI))
+                        @timeit SimMetaData.HourGlass "01a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighborsFromCells!(
+                            SimParticles, SortingScratchSpace, ParticleRanges, UniqueCells, CellDict,
+                        )
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                         BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellDict)
                     end
