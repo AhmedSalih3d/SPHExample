@@ -805,19 +805,17 @@ using LinearAlgebra
                                                                            B<:MDBCMode}
         return nothing
     end
-    function LogStep!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger) where {D,T,S<:ShiftingMode,
-                                                                                             K<:KernelOutputMode,
-                                                                                             B<:MDBCMode}
+
+    function LogStep!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, B<:MDBCMode}
         LogStep(SimLogger, SimMetaData, SimMetaData.HourGlass)
         SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
         return nothing
     end
 
-    function FinalizeLog!(::SimulationMetaData{D,T,S,K,B,NoLog}, _...) where {D,T,S<:ShiftingMode,
-                                                                              K<:KernelOutputMode,
-                                                                              B<:MDBCMode}
+    function FinalizeLog!(::SimulationMetaData{D,T,S,K,B,NoLog}, _...) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, B<:MDBCMode}
         return nothing
     end
+    
     function FinalizeLog!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger, UnicodeTimeStepsGraph) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, B<:MDBCMode}
         LogFinal(SimLogger, SimMetaData.HourGlass)
         with_logger(SimLogger.Logger) do
