@@ -41,7 +41,8 @@ let
         VisualizeInParaview    = true,
         ExportSingleVTKHDF     = true,
         ExportGridCells        = true,
-        OpenLogFile            = true
+        OpenLogFile            = true,
+        UseCuda                = true
     )
 
     SimLogger = SimulationLogger(SimMetaDataDambreak3D.SaveLocation)

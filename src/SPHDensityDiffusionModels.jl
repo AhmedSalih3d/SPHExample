@@ -44,6 +44,21 @@ struct ZeroDensityDiffusion <: SPHDensityDiffusion end
         return zero(xᵢⱼ), zero(xᵢⱼ)
 end
 
+@inline function compute_density_diffusion(
+        ::ZeroDensityDiffusion,
+        SimKernel,
+        SimConstants,
+        Density,
+        MotionLimiter,
+        xᵢⱼ,
+        ∇ᵢWᵢⱼ,
+        d²,
+        i,
+        j
+)
+        return zero(xᵢⱼ), zero(xᵢⱼ)
+end
+
 #---------------------------------------------------------------
 # 2) ZeroGravityLinearDensityDiffusion(): 
 #---------------------------------------------------------------
@@ -122,6 +137,43 @@ struct LinearDensityDiffusion <: SPHDensityDiffusion end
         ρᵢⱼᴴ  = Pᵢⱼᴴ * Linear_ρ_factor
 
         
+        invdᵢⱼ²η² = one(eltype(ρᵢ)) / (d² + η²)
+
+        ρⱼᵢ = ρⱼ - ρᵢ
+        ψᵢⱼ = 2 * (ρⱼᵢ - ρᵢⱼᴴ)  * (-xᵢⱼ) * invdᵢⱼ²η²
+
+        MLcond = MotionLimiter[i] * MotionLimiter[j]
+
+        Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ) * MLcond
+        Dⱼ  = -Dᵢ
+
+        return Dᵢ, Dⱼ
+end
+
+@inline function compute_density_diffusion(
+        ::LinearDensityDiffusion,
+        SimKernel,
+        SimConstants,
+        Density,
+        MotionLimiter,
+        xᵢⱼ,
+        ∇ᵢWᵢⱼ,
+        d²,
+        i,
+        j
+)
+
+        @unpack ρ₀, m₀, c₀, δᵩ, Cb, γ, g = SimConstants
+        @unpack h, η²                    = SimKernel
+
+        Linear_ρ_factor = (1/(Cb*γ))*ρ₀
+
+        ρᵢ  = Density[i]
+        ρⱼ  = Density[j]
+
+        Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
+        ρᵢⱼᴴ  = Pᵢⱼᴴ * Linear_ρ_factor
+
         invdᵢⱼ²η² = one(eltype(ρᵢ)) / (d² + η²)
 
         ρⱼᵢ = ρⱼ - ρᵢ

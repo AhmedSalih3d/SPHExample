@@ -64,6 +64,7 @@ struct StoreLog <: LogMode end
     ]
     OpenLogFile::Bool                       = true
     Δx::FloatType                           = zero(FloatType)
+    UseCuda::Bool                           = false
 end
 SimulationMetaData{D,T,S,K,B}(; kwargs...) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode} =
     SimulationMetaData{D,T,S,K,B,NoLog}(; kwargs...)

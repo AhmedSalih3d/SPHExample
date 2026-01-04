@@ -52,6 +52,10 @@ selected viscosity `model`. Returns `(Πᵢ, Πⱼ)`.
     return zero(xᵢⱼ), zero(xᵢⱼ)
 end
 
+@inline function compute_viscosity(::ZeroViscosity, SimKernel, SimConstants, Density, Velocity, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
+    return zero(xᵢⱼ), zero(xᵢⱼ)
+end
+
 # Artificial viscosity formulation.
 @inline function compute_viscosity(::ArtificialViscosity, SimKernel, SimConstants, SimParticles,
                                    xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
@@ -60,6 +64,26 @@ end
 
     ρᵢ = SimParticles.Density[i]
     ρⱼ = SimParticles.Density[j]
+
+    v_dot_x = dot(vᵢⱼ, xᵢⱼ)
+    if v_dot_x < 0
+        ρ̄ = 0.5 * (ρᵢ + ρⱼ)
+        μᵢⱼ = h * v_dot_x / (d² + η²)
+
+        Π = -m₀ * (-α * c₀ * μᵢⱼ) / ρ̄ * ∇ᵢWᵢⱼ
+        return Π, -Π
+    end
+
+    return zero(xᵢⱼ), zero(xᵢⱼ)
+end
+
+@inline function compute_viscosity(::ArtificialViscosity, SimKernel, SimConstants, Density, Velocity,
+                                   xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
+    @unpack m₀, α, c₀ = SimConstants
+    @unpack h, η²     = SimKernel
+
+    ρᵢ = Density[i]
+    ρⱼ = Density[j]
 
     v_dot_x = dot(vᵢⱼ, xᵢⱼ)
     if v_dot_x < 0
