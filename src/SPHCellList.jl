@@ -19,7 +19,6 @@ using ..OpenExternalPrograms
 using ..SPHKernels
 using ..SPHViscosityModels
 using ..SPHDensityDiffusionModels
-import ..SPHViscosityModels: compute_viscosity_gpu_term
 
 using StaticArrays
 import StructArrays: StructArray, foreachfield
