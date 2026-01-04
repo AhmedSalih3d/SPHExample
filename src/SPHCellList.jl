@@ -700,9 +700,10 @@ using LinearAlgebra
                     density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
                     dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
 
-                    Dᵢ = compute_density_diffusion_gpu_d(SimDensityDiffusion, SimKernel,
-                                                         SimConstants, Density, MotionLimiter,
-                                                         xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ^2, i, j)
+                    Dᵢ = SPHDensityDiffusionModels.compute_density_diffusion_gpu_d(
+                        SimDensityDiffusion, SimKernel, SimConstants, Density,
+                        MotionLimiter, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ^2, i, j,
+                    )
 
                     dρdt_acc += dρdt⁺ + Dᵢ
 
@@ -712,15 +713,16 @@ using LinearAlgebra
                     f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
                     dvdt⁺ = -m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
 
-                    visc_term = compute_viscosity_gpu_term(SimViscosity, SimKernel, SimConstants,
-                                                           Density, Velocity, xᵢⱼ, vᵢⱼ,
-                                                           ∇ᵢWᵢⱼ, dᵢⱼ^2, i, j)
+                    visc_term = SPHViscosityModels.compute_viscosity_gpu_term(
+                        SimViscosity, SimKernel, SimConstants, Density, Velocity,
+                        xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ^2, i, j,
+                    )
 
                     acc_acc += dvdt⁺ + visc_term
                 end
             end
-            dρdtI[i] = dρdt_acc
-            Acceleration[i] = acc_acc
+            dρdtI[i] = dρdt_acc::eltype(dρdtI)
+            Acceleration[i] = acc_acc::eltype(Acceleration)
         end
         return nothing
     end
