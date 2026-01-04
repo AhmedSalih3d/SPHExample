@@ -526,6 +526,88 @@ using LinearAlgebra
     @inline CudaNeighborLoopSupported(::LinearDensityDiffusion, ::ArtificialViscosity) = true
     @inline CudaNeighborLoopSupported(::SPHDensityDiffusion, ::SPHViscosity) = false
 
+    mutable struct CudaNeighborBuffers
+        n_particles::Int
+        position
+        density
+        pressure
+        velocity
+        motion_limiter
+        neighbor_offsets
+        neighbor_indices
+        dρdtI
+        acceleration
+        max_visc
+        min_dt_force
+    end
+
+    function EnsureCudaNeighborBuffers!(SimMetaData, Position, Density, Pressure, Velocity,
+                                        MotionLimiter, neighbor_offsets, neighbor_indices,
+                                        dρdtI, Acceleration, max_visc, min_dt_force)
+        n_particles = length(Position)
+        offsets_len = length(neighbor_offsets)
+        indices_len = length(neighbor_indices)
+        buffers = SimMetaData.CudaBuffers
+        needs_alloc = buffers === nothing ||
+                      buffers.n_particles != n_particles ||
+                      length(buffers.neighbor_offsets) != offsets_len ||
+                      length(buffers.neighbor_indices) != indices_len
+        if needs_alloc
+            buffers = CudaNeighborBuffers(
+                n_particles,
+                CuArray(Position),
+                CuArray(Density),
+                CuArray(Pressure),
+                CuArray(Velocity),
+                CuArray(MotionLimiter),
+                CuArray(neighbor_offsets),
+                CuArray(neighbor_indices),
+                similar(CuArray(dρdtI)),
+                similar(CuArray(Acceleration)),
+                max_visc === nothing ? nothing : (max_visc isa CUDA.AbstractGPUArray ? max_visc : CuArray(max_visc)),
+                min_dt_force === nothing ? nothing : (min_dt_force isa CUDA.AbstractGPUArray ? min_dt_force : CuArray(min_dt_force)),
+            )
+            SimMetaData.CudaBuffers = buffers
+        else
+            copyto!(buffers.position, Position)
+            copyto!(buffers.density, Density)
+            copyto!(buffers.pressure, Pressure)
+            copyto!(buffers.velocity, Velocity)
+            copyto!(buffers.motion_limiter, MotionLimiter)
+            copyto!(buffers.neighbor_offsets, neighbor_offsets)
+            copyto!(buffers.neighbor_indices, neighbor_indices)
+            if max_visc !== nothing && buffers.max_visc === nothing
+                buffers.max_visc = max_visc isa CUDA.AbstractGPUArray ? max_visc : CuArray(max_visc)
+            end
+            if min_dt_force !== nothing && buffers.min_dt_force === nothing
+                buffers.min_dt_force = min_dt_force isa CUDA.AbstractGPUArray ? min_dt_force : CuArray(min_dt_force)
+            end
+        end
+
+        return buffers
+    end
+
+    function UpdateTimeStepBuffersCudaKernel!(max_visc, min_dt_force, Position, Velocity,
+                                              Acceleration, SimKernel)
+        i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+        if i <= length(Position)
+            h = SimKernel.h
+            η² = SimKernel.η²
+            position = Position[i]
+            velocity = Velocity[i]
+            acceleration = Acceleration[i]
+            r_sq = sqrt(dot(position, position))^2
+            curr_visc = abs(h * dot(velocity, position) / (r_sq + η²))
+            a_mag = norm(acceleration)
+            curr_dt_force = a_mag > 0 ? sqrt(h / a_mag) : typemax(eltype(min_dt_force))
+            @inbounds begin
+                max_visc[i] = curr_visc
+                min_dt_force[i] = curr_dt_force
+            end
+        end
+        return nothing
+    end
+
     """
         NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                       SimConstants, SimParticles, ParticleRanges, CellDict,
@@ -616,15 +698,18 @@ using LinearAlgebra
                                CellDict, ParticleRanges, NeighborCellLists)
 
         n_particles = length(Position)
-        d_position = CuArray(Position)
-        d_density = CuArray(Density)
-        d_pressure = CuArray(Pressure)
-        d_velocity = CuArray(Velocity)
-        d_motion_limiter = CuArray(MotionLimiter)
-        d_neighbor_offsets = CuArray(neighbor_offsets)
-        d_neighbor_indices = CuArray(neighbor_indices)
-        d_dρdtI = similar(CuArray(dρdtI))
-        d_acceleration = similar(CuArray(Acceleration))
+        buffers = EnsureCudaNeighborBuffers!(SimMetaData, Position, Density, Pressure, Velocity,
+                                             MotionLimiter, neighbor_offsets, neighbor_indices,
+                                             dρdtI, Acceleration, max_visc, min_dt_force)
+        d_position = buffers.position
+        d_density = buffers.density
+        d_pressure = buffers.pressure
+        d_velocity = buffers.velocity
+        d_motion_limiter = buffers.motion_limiter
+        d_neighbor_offsets = buffers.neighbor_offsets
+        d_neighbor_indices = buffers.neighbor_indices
+        d_dρdtI = buffers.dρdtI
+        d_acceleration = buffers.acceleration
 
         threads = 256
         blocks = cld(n_particles, threads)
@@ -634,12 +719,23 @@ using LinearAlgebra
             SimKernel, SimConstants, SimDensityDiffusion, SimViscosity,
         )
 
-        copyto!(dρdtI, Array(d_dρdtI))
-        copyto!(Acceleration, Array(d_acceleration))
+        copyto!(dρdtI, d_dρdtI)
+        copyto!(Acceleration, d_acceleration)
 
-        @inbounds for i in eachindex(Position)
-            UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i],
-                                   Velocity[i], Acceleration[i], SimKernel)
+        if max_visc !== nothing && min_dt_force !== nothing
+            d_max_visc = buffers.max_visc
+            d_min_dt_force = buffers.min_dt_force
+            threads = 256
+            blocks = cld(n_particles, threads)
+            CUDA.@sync CUDA.@cuda threads=threads blocks=blocks UpdateTimeStepBuffersCudaKernel!(
+                d_max_visc, d_min_dt_force, d_position, d_velocity, d_acceleration, SimKernel,
+            )
+            if !(max_visc isa CUDA.AbstractGPUArray)
+                copyto!(max_visc, d_max_visc)
+            end
+            if !(min_dt_force isa CUDA.AbstractGPUArray)
+                copyto!(min_dt_force, d_min_dt_force)
+            end
         end
 
         return nothing
@@ -1273,9 +1369,15 @@ using LinearAlgebra
         # This code here is to initialize the first time step for each simulation loop
         dt = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel)
 
+        use_cuda_neighbor_loop = SimMetaData.UseCuda &&
+                                 CUDA.functional() &&
+                                 CudaNeighborLoopSupported(SimDensityDiffusion, SimViscosity) &&
+                                 (SMode <: NoShifting) &&
+                                 (KMode <: NoKernelOutput)
+
         @no_escape begin
-            max_visc = @alloc(FloatType, length(Position))
-            min_dt_force = @alloc(FloatType, length(Position))
+            max_visc = use_cuda_neighbor_loop ? CUDA.zeros(FloatType, length(Position)) : @alloc(FloatType, length(Position))
+            min_dt_force = use_cuda_neighbor_loop ? CUDA.zeros(FloatType, length(Position)) : @alloc(FloatType, length(Position))
 
             dt₂ = dt * 0.5
 

@@ -3,6 +3,7 @@ module TimeStepping
 export Δt, FinalizeTimeStep, UpdateTimeStepBuffers!
 
 using LinearAlgebra
+using CUDA
 using Parameters
 using Base.Threads
 using Bumper
@@ -38,6 +39,18 @@ function FinalizeTimeStep(max_visc, min_dt_force, SimulationConstants, SPHKernel
 
     global_visc = maximum(max_visc)
     global_dt_force = minimum(min_dt_force)
+
+    dt2 = h / (c₀ + global_visc)
+    return CFL * min(global_dt_force, dt2)
+end
+
+function FinalizeTimeStep(max_visc::CUDA.AbstractGPUArray, min_dt_force::CUDA.AbstractGPUArray,
+                          SimulationConstants, SPHKernel)
+    @unpack c₀, CFL = SimulationConstants
+    @unpack h = SPHKernel
+
+    global_visc = CUDA.maximum(max_visc)
+    global_dt_force = CUDA.minimum(min_dt_force)
 
     dt2 = h / (c₀ + global_visc)
     return CFL * min(global_dt_force, dt2)
