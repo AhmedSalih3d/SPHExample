@@ -2,7 +2,7 @@ module SPHViscosityModels
 
 using StaticArrays, LinearAlgebra, Parameters
 
-export SPHViscosity, ZeroViscosity, ArtificialViscosity, Laminar, LaminarSPS, compute_viscosity
+export SPHViscosity, ZeroViscosity, ArtificialViscosity, Laminar, LaminarSPS, compute_viscosity, compute_viscosity_gpu_term
 
 """
     abstract type SPHViscosity end
@@ -71,6 +71,33 @@ end
     end
 
     return zero(xᵢⱼ), zero(xᵢⱼ)
+end
+
+@inline function compute_viscosity_gpu_term(::ZeroViscosity, SimKernel, SimConstants, Density, Velocity, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
+    return zero(xᵢⱼ)
+end
+
+@inline function compute_viscosity_gpu_term(::ArtificialViscosity, SimKernel, SimConstants, Density, Velocity,
+                                            xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
+    m₀ = SimConstants.m₀
+    α = SimConstants.α
+    c₀ = SimConstants.c₀
+    h = SimKernel.h
+    η² = SimKernel.η²
+
+    ρᵢ = Density[i]
+    ρⱼ = Density[j]
+
+    v_dot_x = dot(vᵢⱼ, xᵢⱼ)
+    if v_dot_x < 0
+        ρ̄ = 0.5 * (ρᵢ + ρⱼ)
+        μᵢⱼ = h * v_dot_x / (d² + η²)
+
+        Π = -m₀ * (-α * c₀ * μᵢⱼ) / ρ̄ * ∇ᵢWᵢⱼ
+        return Π
+    end
+
+    return zero(xᵢⱼ)
 end
 
 # Laminar viscosity formulation.

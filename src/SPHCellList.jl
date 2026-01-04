@@ -3,6 +3,7 @@ module SPHCellList
 export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!, RunSimulation
 
 using Parameters, FastPow, StaticArrays, Base.Threads
+using CUDA
 import LinearAlgebra: dot
 
 using ..SimulationEquations
@@ -171,6 +172,50 @@ using LinearAlgebra
         return neighbors
     end
 
+    function BuildNeighborPairList!(NeighborOffsets, NeighborIndices, Cells, CellDict,
+                                    ParticleRanges, NeighborCellLists)
+        n_particles = length(Cells)
+        resize!(NeighborOffsets, n_particles + 1)
+        NeighborOffsets[1] = 1
+
+        total_neighbors = 0
+        @inbounds for i in 1:n_particles
+            cell_index = get(CellDict, Cells[i], 1)
+            same_start = ParticleRanges[cell_index]
+            same_end = ParticleRanges[cell_index + 1] - 1
+            count = same_end - same_start
+            for neighbor_idx in NeighborCellLists[cell_index]
+                count += ParticleRanges[neighbor_idx + 1] - ParticleRanges[neighbor_idx]
+            end
+            total_neighbors += count
+            NeighborOffsets[i + 1] = total_neighbors + 1
+        end
+
+        resize!(NeighborIndices, total_neighbors)
+        @inbounds for i in 1:n_particles
+            idx = NeighborOffsets[i]
+            cell_index = get(CellDict, Cells[i], 1)
+            same_start = ParticleRanges[cell_index]
+            same_end = ParticleRanges[cell_index + 1] - 1
+            for j in same_start:same_end
+                if j != i
+                    NeighborIndices[idx] = j
+                    idx += 1
+                end
+            end
+            for neighbor_idx in NeighborCellLists[cell_index]
+                start_idx = ParticleRanges[neighbor_idx]
+                end_idx = ParticleRanges[neighbor_idx + 1] - 1
+                for j in start_idx:end_idx
+                    NeighborIndices[idx] = j
+                    idx += 1
+                end
+            end
+        end
+
+        return nothing
+    end
+
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{D,T,NoShifting,NoKernelOutput,B,L},
                                       SimConstants, SimParticles, ParticleRanges,
@@ -220,7 +265,6 @@ using LinearAlgebra
 
             dρdtI[i] = dρdt_acc
             Acceleration[i] = acc_acc
-            UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i], Velocity[i], acc_acc, SimKernel)
         end
 
         return nothing
@@ -286,7 +330,6 @@ using LinearAlgebra
             Acceleration[i] = acc_acc
             Kernel[i] = kernel_acc
             KernelGradient[i] = kernel_grad_acc
-            UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i], Velocity[i], acc_acc, SimKernel)
         end
 
         return nothing
@@ -351,7 +394,6 @@ using LinearAlgebra
             Acceleration[i] = acc_acc
             ∇Cᵢ[i] = shift_c_acc
             ∇◌rᵢ[i] = shift_r_acc
-            UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i], Velocity[i], acc_acc, SimKernel)
         end
 
         return nothing
@@ -422,8 +464,6 @@ using LinearAlgebra
             KernelGradient[i] = kernel_grad_acc
             ∇Cᵢ[i] = shift_c_acc
             ∇◌rᵢ[i] = shift_r_acc
-            UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i],
-                                      Velocity[i], acc_acc, SimKernel)
         end
 
         return nothing
@@ -475,6 +515,285 @@ using LinearAlgebra
             end    
         end
 
+        return nothing
+    end
+
+    @inline CudaNeighborLoopSupported(::LinearDensityDiffusion, ::ArtificialViscosity) = true
+    @inline CudaNeighborLoopSupported(::SPHDensityDiffusion, ::SPHViscosity) = false
+
+    mutable struct CudaNeighborBuffers
+        n_particles::Int
+        host_neighbor_offsets::Vector{Int}
+        host_neighbor_indices::Vector{Int}
+        position
+        density
+        pressure
+        velocity
+        motion_limiter
+        neighbor_offsets
+        neighbor_indices
+        dρdtI
+        acceleration
+    end
+
+    function EnsureCudaNeighborBuffers!(SimMetaData, Position, Density, Pressure, Velocity,
+                                        MotionLimiter, neighbor_offsets, neighbor_indices,
+                                        dρdtI, Acceleration)
+        n_particles = length(Position)
+        offsets_len = length(neighbor_offsets)
+        indices_len = length(neighbor_indices)
+        buffers = SimMetaData.CudaBuffers
+        needs_alloc = buffers === nothing ||
+                      buffers.n_particles != n_particles ||
+                      length(buffers.neighbor_offsets) != offsets_len ||
+                      length(buffers.neighbor_indices) != indices_len
+        if needs_alloc
+            buffers = CudaNeighborBuffers(
+                n_particles,
+                neighbor_offsets,
+                neighbor_indices,
+                CuArray(Position),
+                CuArray(Density),
+                CuArray(Pressure),
+                CuArray(Velocity),
+                CuArray(MotionLimiter),
+                CuArray(neighbor_offsets),
+                CuArray(neighbor_indices),
+                similar(CuArray(dρdtI)),
+                similar(CuArray(Acceleration)),
+            )
+            SimMetaData.CudaBuffers = buffers
+        else
+            buffers.host_neighbor_offsets = neighbor_offsets
+            buffers.host_neighbor_indices = neighbor_indices
+            copyto!(buffers.position, Position)
+            copyto!(buffers.density, Density)
+            copyto!(buffers.pressure, Pressure)
+            copyto!(buffers.velocity, Velocity)
+            copyto!(buffers.motion_limiter, MotionLimiter)
+            copyto!(buffers.neighbor_offsets, neighbor_offsets)
+            copyto!(buffers.neighbor_indices, neighbor_indices)
+        end
+
+        return buffers
+    end
+
+    function UpdateCudaNeighborPairList!(SimMetaData, SimParticles, CellDict, ParticleRanges,
+                                         NeighborCellLists)
+        buffers = SimMetaData.CudaBuffers
+        if buffers === nothing
+            buffers = CudaNeighborBuffers(0, Int[], Int[], nothing, nothing, nothing, nothing,
+                                          nothing, nothing, nothing, nothing)
+            SimMetaData.CudaBuffers = buffers
+        end
+
+        neighbor_offsets = buffers.host_neighbor_offsets
+        neighbor_indices = buffers.host_neighbor_indices
+        BuildNeighborPairList!(neighbor_offsets, neighbor_indices, SimParticles.Cells,
+                               CellDict, ParticleRanges, NeighborCellLists)
+        return nothing
+    end
+
+    """
+        NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                      SimConstants, SimParticles, ParticleRanges, CellDict,
+                      NeighborCellLists, Position, Density, Pressure, Velocity,
+                      MotionLimiter, dρdtI, Acceleration, Kernel, KernelGradient,
+                      ∇Cᵢ, ∇◌rᵢ; max_visc, min_dt_force)
+
+    Dispatch to the CPU or CUDA neighbor loop based on `SimMetaData.UseCuda`.
+    """
+    function NeighborLoop!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
+                           SimMetaData::SimulationMetaData{D,T,S,K,B,L},
+                           SimConstants, SimParticles, ParticleRanges,
+                           CellDict, NeighborCellLists, Position, Density,
+                           Pressure, Velocity, MotionLimiter, dρdtI,
+                           Acceleration, Kernel, KernelGradient, ∇Cᵢ,
+                           ∇◌rᵢ, max_visc = nothing,
+                           min_dt_force = nothing) where {D,T,
+                                                          S<:ShiftingMode,
+                                                          K<:KernelOutputMode,
+                                                          B<:MDBCMode,
+                                                          L<:LogMode,
+                                                          SDD<:SPHDensityDiffusion,
+                                                          SV<:SPHViscosity}
+        return NeighborLoop!(Val(SimMetaData.UseCuda), SimDensityDiffusion, SimViscosity,
+                             SimKernel, SimMetaData, SimConstants, SimParticles,
+                             ParticleRanges, CellDict, NeighborCellLists, Position,
+                             Density, Pressure, Velocity, MotionLimiter, dρdtI,
+                             Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
+                             max_visc, min_dt_force)
+    end
+
+    function NeighborLoop!(::Val{false}, SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
+                           SimMetaData::SimulationMetaData{D,T,S,K,B,L},
+                           SimConstants, SimParticles, ParticleRanges,
+                           CellDict, NeighborCellLists, Position, Density,
+                           Pressure, Velocity, MotionLimiter, dρdtI,
+                           Acceleration, Kernel, KernelGradient, ∇Cᵢ,
+                           ∇◌rᵢ, max_visc = nothing,
+                           min_dt_force = nothing) where {D,T,
+                                                          S<:ShiftingMode,
+                                                          K<:KernelOutputMode,
+                                                          B<:MDBCMode,
+                                                          L<:LogMode,
+                                                          SDD<:SPHDensityDiffusion,
+                                                          SV<:SPHViscosity}
+        return NeighborLoopPerParticle!(SimDensityDiffusion, SimViscosity, SimKernel,
+                                        SimMetaData, SimConstants, SimParticles,
+                                        ParticleRanges, CellDict, NeighborCellLists,
+                                        Position, Density, Pressure, Velocity,
+                                        MotionLimiter, dρdtI, Acceleration, Kernel,
+                                        KernelGradient, ∇Cᵢ, ∇◌rᵢ, max_visc,
+                                        min_dt_force)
+    end
+
+    function NeighborLoop!(::Val{true}, SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
+                           SimMetaData::SimulationMetaData{D,T,NoShifting,NoKernelOutput,B,L},
+                           SimConstants, SimParticles, ParticleRanges,
+                           CellDict, NeighborCellLists, Position, Density,
+                           Pressure, Velocity, MotionLimiter, dρdtI,
+                           Acceleration, Kernel, KernelGradient, ∇Cᵢ,
+                           ∇◌rᵢ, max_visc = nothing,
+                           min_dt_force = nothing) where {D,T,
+                                                          B<:MDBCMode,
+                                                          L<:LogMode,
+                                                          SDD<:SPHDensityDiffusion,
+                                                          SV<:SPHViscosity}
+        if !CUDA.functional()
+            @warn "CUDA requested but not functional; falling back to CPU neighbor loop."
+            return NeighborLoop!(Val(false), SimDensityDiffusion, SimViscosity, SimKernel,
+                                 SimMetaData, SimConstants, SimParticles, ParticleRanges,
+                                 CellDict, NeighborCellLists, Position, Density, Pressure,
+                                 Velocity, MotionLimiter, dρdtI, Acceleration, Kernel,
+                                 KernelGradient, ∇Cᵢ, ∇◌rᵢ, max_visc, min_dt_force)
+        end
+
+        if !CudaNeighborLoopSupported(SimDensityDiffusion, SimViscosity)
+            @warn "CUDA neighbor loop only supports LinearDensityDiffusion + ArtificialViscosity; falling back to CPU."
+            return NeighborLoop!(Val(false), SimDensityDiffusion, SimViscosity, SimKernel,
+                                 SimMetaData, SimConstants, SimParticles, ParticleRanges,
+                                 CellDict, NeighborCellLists, Position, Density, Pressure,
+                                 Velocity, MotionLimiter, dρdtI, Acceleration, Kernel,
+                                 KernelGradient, ∇Cᵢ, ∇◌rᵢ, max_visc, min_dt_force)
+        end
+
+        if SimMetaData.CudaBuffers === nothing ||
+           isempty(SimMetaData.CudaBuffers.host_neighbor_offsets)
+            UpdateCudaNeighborPairList!(SimMetaData, SimParticles, CellDict, ParticleRanges,
+                                        NeighborCellLists)
+        end
+
+        neighbor_offsets = SimMetaData.CudaBuffers.host_neighbor_offsets
+        neighbor_indices = SimMetaData.CudaBuffers.host_neighbor_indices
+
+        n_particles = length(Position)
+        buffers = EnsureCudaNeighborBuffers!(SimMetaData, Position, Density, Pressure, Velocity,
+                                             MotionLimiter, neighbor_offsets, neighbor_indices,
+                                             dρdtI, Acceleration)
+        d_position = buffers.position
+        d_density = buffers.density
+        d_pressure = buffers.pressure
+        d_velocity = buffers.velocity
+        d_motion_limiter = buffers.motion_limiter
+        d_neighbor_offsets = buffers.neighbor_offsets
+        d_neighbor_indices = buffers.neighbor_indices
+        d_dρdtI = buffers.dρdtI
+        d_acceleration = buffers.acceleration
+
+        threads = 256
+        blocks = cld(n_particles, threads)
+        CUDA.@sync CUDA.@cuda threads=threads blocks=blocks NeighborLoopCudaKernel!(
+            d_dρdtI, d_acceleration, d_position, d_density, d_pressure,
+            d_velocity, d_motion_limiter, d_neighbor_offsets, d_neighbor_indices,
+            SimKernel, SimConstants, SimDensityDiffusion, SimViscosity,
+        )
+
+        copyto!(dρdtI, d_dρdtI)
+        copyto!(Acceleration, d_acceleration)
+
+        return nothing
+    end
+
+    function NeighborLoop!(::Val{true}, SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
+                           SimMetaData::SimulationMetaData{D,T,S,K,B,L},
+                           SimConstants, SimParticles, ParticleRanges,
+                           CellDict, NeighborCellLists, Position, Density,
+                           Pressure, Velocity, MotionLimiter, dρdtI,
+                           Acceleration, Kernel, KernelGradient, ∇Cᵢ,
+                           ∇◌rᵢ, max_visc = nothing,
+                           min_dt_force = nothing) where {D,T,
+                                                          S<:ShiftingMode,
+                                                          K<:KernelOutputMode,
+                                                          B<:MDBCMode,
+                                                          L<:LogMode,
+                                                          SDD<:SPHDensityDiffusion,
+                                                          SV<:SPHViscosity}
+        @warn "CUDA neighbor loop is only wired for NoShifting/NoKernelOutput; falling back to CPU."
+        return NeighborLoop!(Val(false), SimDensityDiffusion, SimViscosity, SimKernel,
+                             SimMetaData, SimConstants, SimParticles, ParticleRanges,
+                             CellDict, NeighborCellLists, Position, Density, Pressure,
+                             Velocity, MotionLimiter, dρdtI, Acceleration, Kernel,
+                             KernelGradient, ∇Cᵢ, ∇◌rᵢ, max_visc, min_dt_force)
+    end
+
+    function NeighborLoopCudaKernel!(dρdtI, Acceleration, Position, Density, Pressure,
+                                     Velocity, MotionLimiter, NeighborOffsets,
+                                     NeighborIndices, SimKernel, SimConstants,
+                                     SimDensityDiffusion, SimViscosity)
+        i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+        if i <= length(Position)
+            dρdt_acc = zero(eltype(dρdtI))
+            acc_acc = zero(eltype(Acceleration))
+            start_idx = NeighborOffsets[i]
+            end_idx = NeighborOffsets[i + 1] - 1
+            @inbounds for idx in start_idx:end_idx
+                j = NeighborIndices[idx]
+                m₀ = SimConstants.m₀
+                dx = SimConstants.dx
+                h⁻¹ = SimKernel.h⁻¹
+                H² = SimKernel.H²
+
+                xᵢⱼ = Position[i] - Position[j]
+                xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
+                if xᵢⱼ² <= H²
+                    dᵢⱼ = sqrt(abs(xᵢⱼ²))
+                    q = clamp(dᵢⱼ * h⁻¹, zero(dᵢⱼ), 2 * one(dᵢⱼ))
+                    ∇ᵢWᵢⱼ = ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
+
+                    ρᵢ = Density[i]
+                    ρⱼ = Density[j]
+
+                    vᵢ = Velocity[i]
+                    vⱼ = Velocity[j]
+                    vᵢⱼ = vᵢ - vⱼ
+                    density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
+                    dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
+
+                    Dᵢ = SPHDensityDiffusionModels.compute_density_diffusion_gpu_d(
+                        SimDensityDiffusion, SimKernel, SimConstants, Density,
+                        MotionLimiter, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ^2, i, j,
+                    )
+
+                    dρdt_acc += dρdt⁺ + Dᵢ
+
+                    Pᵢ = Pressure[i]
+                    Pⱼ = Pressure[j]
+                    Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
+                    f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
+                    dvdt⁺ = -m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
+
+                    visc_term = compute_viscosity_gpu_term(
+                        SimViscosity, SimKernel, SimConstants, Density, Velocity,
+                        xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ^2, i, j,
+                    )
+
+                    acc_acc += dvdt⁺ + visc_term
+                end
+            end
+            dρdtI[i] = dρdt_acc::eltype(dρdtI)
+            Acceleration[i] = acc_acc::eltype(Acceleration)
+        end
         return nothing
     end
 
@@ -1025,9 +1344,6 @@ using LinearAlgebra
         dt = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel)
 
         @no_escape begin
-            max_visc = @alloc(FloatType, length(Position))
-            min_dt_force = @alloc(FloatType, length(Position))
-
             dt₂ = dt * 0.5
 
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
@@ -1049,6 +1365,10 @@ using LinearAlgebra
                         SimMetaData.Δx    = zero(eltype(dρdtI))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                         BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellDict)
+                        if SimMetaData.UseCuda
+                            UpdateCudaNeighborPairList!(SimMetaData, SimParticles, CellDict,
+                                                        ParticleRanges, NeighborCellLists)
+                        end
                     end
                 end
 
@@ -1057,7 +1377,7 @@ using LinearAlgebra
                 @timeit SimMetaData.HourGlass "02 Pressure"                              Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
                 @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType)
 
-                @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoopPerParticle!(
+                @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoop!(
                     SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                     SimConstants, SimParticles, ParticleRanges, CellDict,
                     NeighborCellLists, Position, Density, Pressure, Velocity,
@@ -1074,15 +1394,15 @@ using LinearAlgebra
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
             
                 @timeit SimMetaData.HourGlass "07 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-                @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticle!(
+                @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoop!(
                     SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                     SimConstants, SimParticles, ParticleRanges, CellDict,
                     NeighborCellLists, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺,
                     MotionLimiter, dρdtI, Acceleration, Kernel,
-                    KernelGradient, ∇Cᵢ, ∇◌rᵢ, max_visc, min_dt_force,
+                    KernelGradient, ∇Cᵢ, ∇◌rᵢ,
                 )
 
-                @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
+        @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
             
                 @timeit SimMetaData.HourGlass "10 Final Density"                         DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
             
@@ -1091,7 +1411,12 @@ using LinearAlgebra
                 @timeit SimMetaData.HourGlass "12 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
 
                 @timeit SimMetaData.HourGlass "13 Update TimeStep" begin
-                    dt = FinalizeTimeStep(max_visc, min_dt_force, SimConstants, SimKernel)
+                    if SimMetaData.UseCuda && SimMetaData.CudaBuffers !== nothing
+                        buffers = SimMetaData.CudaBuffers
+                        dt = Δt(buffers.position, buffers.velocity, buffers.acceleration, SimConstants, SimKernel)
+                    else
+                        dt = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel)
+                    end
                 end
             end
         end

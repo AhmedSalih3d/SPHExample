@@ -3,6 +3,7 @@ module TimeStepping
 export Δt, FinalizeTimeStep, UpdateTimeStepBuffers!
 
 using LinearAlgebra
+using CUDA
 using Parameters
 using Base.Threads
 using Bumper
@@ -38,6 +39,18 @@ function FinalizeTimeStep(max_visc, min_dt_force, SimulationConstants, SPHKernel
 
     global_visc = maximum(max_visc)
     global_dt_force = minimum(min_dt_force)
+
+    dt2 = h / (c₀ + global_visc)
+    return CFL * min(global_dt_force, dt2)
+end
+
+function FinalizeTimeStep(max_visc::CUDA.AbstractGPUArray, min_dt_force::CUDA.AbstractGPUArray,
+                          SimulationConstants, SPHKernel)
+    @unpack c₀, CFL = SimulationConstants
+    @unpack h = SPHKernel
+
+    global_visc = CUDA.maximum(max_visc)
+    global_dt_force = CUDA.minimum(min_dt_force)
 
     dt2 = h / (c₀ + global_visc)
     return CFL * min(global_dt_force, dt2)
@@ -103,6 +116,32 @@ function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
 
         CFL * min(minimum(d_buffer), h / (c₀ + maximum(v_buffer)))
     end
+end
+
+function Δt(Position::CUDA.AbstractGPUArray, Velocity::CUDA.AbstractGPUArray,
+            Acceleration::CUDA.AbstractGPUArray, SimulationConstants, SPHKernel)
+    @unpack c₀, CFL = SimulationConstants
+    @unpack h, η²   = SPHKernel
+
+    max_visc = CUDA.mapreduce(
+        (r, v) -> begin
+            r_sq = sqrt(dot(r, r))^2
+            abs(h * dot(v, r) / (r_sq + η²))
+        end,
+        max,
+        Position,
+        Velocity,
+    )
+    min_dt_force = CUDA.mapreduce(
+        a -> begin
+            a_mag = norm(a)
+            a_mag > 0 ? sqrt(h / a_mag) : typemax(eltype(a))
+        end,
+        min,
+        Acceleration,
+    )
+
+    CFL * min(min_dt_force, h / (c₀ + max_visc))
 end
 
 end

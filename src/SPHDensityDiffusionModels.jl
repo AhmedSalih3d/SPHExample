@@ -135,6 +135,64 @@ struct LinearDensityDiffusion <: SPHDensityDiffusion end
         return Dᵢ, Dⱼ
 end
 
+@inline function compute_density_diffusion_gpu_d(
+        ::ZeroDensityDiffusion,
+        SimKernel,
+        SimConstants,
+        Density,
+        MotionLimiter,
+        xᵢⱼ,
+        ∇ᵢWᵢⱼ,
+        d²,
+        i,
+        j
+)
+        return zero(xᵢⱼ)
+end
+
+@inline function compute_density_diffusion_gpu_d(
+        ::LinearDensityDiffusion,
+        SimKernel,
+        SimConstants,
+        Density,
+        MotionLimiter,
+        xᵢⱼ,
+        ∇ᵢWᵢⱼ,
+        d²,
+        i,
+        j
+)
+        ρ₀ = SimConstants.ρ₀
+        m₀ = SimConstants.m₀
+        c₀ = SimConstants.c₀
+        δᵩ = SimConstants.δᵩ
+        Cb = SimConstants.Cb
+        γ = SimConstants.γ
+        g = SimConstants.g
+
+        h = SimKernel.h
+        η² = SimKernel.η²
+
+        Linear_ρ_factor = (one(eltype(ρ₀)) / (Cb * γ)) * ρ₀
+
+        ρᵢ  = Density[i]
+        ρⱼ  = Density[j]
+
+        Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
+        ρᵢⱼᴴ  = Pᵢⱼᴴ * Linear_ρ_factor
+
+        invdᵢⱼ²η² = one(eltype(ρᵢ)) / (d² + η²)
+
+        ρⱼᵢ = ρⱼ - ρᵢ
+        ψᵢⱼ = 2 * (ρⱼᵢ - ρᵢⱼᴴ)  * (-xᵢⱼ) * invdᵢⱼ²η²
+
+        MLcond = MotionLimiter[i] * MotionLimiter[j]
+
+        Dᵢ  = δᵩ * h * c₀ * (m₀ / ρⱼ) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ) * MLcond
+
+        return Dᵢ
+end
+
 #---------------------------------------------------------------
 # 3) LinearDensityDiffusion(): Linear approach, uses gravity from
 # SimConstants.g
