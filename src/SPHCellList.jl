@@ -583,7 +583,7 @@ using LinearAlgebra
         buffers = SimMetaData.CudaBuffers
         if buffers === nothing
             buffers = CudaNeighborBuffers(0, Int[], Int[], nothing, nothing, nothing, nothing,
-                                          nothing, nothing, nothing, nothing)
+                                          nothing, nothing, nothing, nothing, nothing)
             SimMetaData.CudaBuffers = buffers
         end
 
