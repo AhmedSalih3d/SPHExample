@@ -27,7 +27,7 @@ let
     # Load in particles
     SimParticles = AllocateDataStructures(SimulationGeometry)
 
-    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,NoMDBC,StoreLog}(
+    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
         SimulationName="StillWedge", 
         SaveLocation="W:/Simulations/StillWedge2D_MDBC",
         SimulationTime=4.0,

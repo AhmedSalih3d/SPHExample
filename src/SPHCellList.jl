@@ -818,11 +818,8 @@ using LinearAlgebra
                                                                               B<:MDBCMode}
         return nothing
     end
-    function FinalizeLog!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger,
-                           HourGlass, UnicodeTimeStepsGraph) where {D,T,S<:ShiftingMode,
-                                                                      K<:KernelOutputMode,
-                                                                      B<:MDBCMode}
-        LogFinal(SimLogger, HourGlass)
+    function FinalizeLog!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger, UnicodeTimeStepsGraph) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, B<:MDBCMode}
+        LogFinal(SimLogger, SimMetaData.HourGlass)
         with_logger(SimLogger.Logger) do
             @info ""
             show(SimLogger.LoggerIo, UnicodeTimeStepsGraph)
@@ -1111,9 +1108,7 @@ using LinearAlgebra
         ParticleNormalsPath::Union{Nothing,String} = nothing
         ) where {Dimensions,FloatType,SMode,KMode,BMode,LMode,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
 
-        NumberOfPoints = length(SimParticles)::Int
-        # Unpack the relevant simulation meta data
-        @unpack HourGlass = SimMetaData;
+        NumberOfPoints = length(SimParticles)
         
         dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimMetaData, SimParticles.Position)
 
@@ -1219,8 +1214,8 @@ using LinearAlgebra
                 # At end of simulation
                 @timeit SimMetaData.HourGlass "13B Close Data Streams" output.close_files()
 
-                show(HourGlass,sortby=:name)
-                show(HourGlass)
+                show(SimMetaData.HourGlass,sortby=:name)
+                show(SimMetaData.HourGlass)
 
                 AutoOpenParaview(SimMetaData, output.variable_names)
 
@@ -1234,7 +1229,7 @@ using LinearAlgebra
                     ylabel="Time Step Size [s]",
                 )
 
-                FinalizeLog!(SimMetaData, SimLogger, HourGlass, UnicodeTimeStepsGraph)
+                FinalizeLog!(SimMetaData, SimLogger, UnicodeTimeStepsGraph)
 
                 break
             end
