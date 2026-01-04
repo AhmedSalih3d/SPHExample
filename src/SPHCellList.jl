@@ -649,7 +649,7 @@ using LinearAlgebra
                              KernelGradient, ∇Cᵢ, ∇◌rᵢ, max_visc, min_dt_force)
     end
 
-    function NeighborLoopCudaKernel!(dρdtI, Acceleration, Position, Density, Pressure,
+    function NeighborLoopCudaKernel!(dρdtI, Acceleration, Position, Density,
                                      Velocity, MotionLimiter, NeighborOffsets,
                                      NeighborIndices, SimKernel, SimConstants,
                                      SimDensityDiffusion, SimViscosity)
@@ -689,8 +689,8 @@ using LinearAlgebra
 
                     dρdt_acc += dρdt⁺ + Dᵢ
 
-                    Pᵢ = Pressure[i]
-                    Pⱼ = Pressure[j]
+                    Pᵢ = EquationOfStateGamma7(ρᵢ, SimConstants.c₀, SimConstants.ρ₀)
+                    Pⱼ = EquationOfStateGamma7(ρⱼ, SimConstants.c₀, SimConstants.ρ₀)
                     Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
                     f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
                     dvdt⁺ = -m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
