@@ -135,7 +135,7 @@ struct LinearDensityDiffusion <: SPHDensityDiffusion end
         return Dᵢ, Dⱼ
 end
 
-@inline function compute_density_diffusion_gpu(
+@inline function compute_density_diffusion_gpu_d(
         ::ZeroDensityDiffusion,
         SimKernel,
         SimConstants,
@@ -147,10 +147,10 @@ end
         i,
         j
 )
-        return zero(xᵢⱼ), zero(xᵢⱼ)
+        return zero(xᵢⱼ)
 end
 
-@inline function compute_density_diffusion_gpu(
+@inline function compute_density_diffusion_gpu_d(
         ::LinearDensityDiffusion,
         SimKernel,
         SimConstants,
@@ -162,11 +162,18 @@ end
         i,
         j
 )
+        ρ₀ = SimConstants.ρ₀
+        m₀ = SimConstants.m₀
+        c₀ = SimConstants.c₀
+        δᵩ = SimConstants.δᵩ
+        Cb = SimConstants.Cb
+        γ = SimConstants.γ
+        g = SimConstants.g
 
-        @unpack ρ₀, m₀, c₀, δᵩ, Cb, γ, g = SimConstants
-        @unpack h, η²                    = SimKernel
+        h = SimKernel.h
+        η² = SimKernel.η²
 
-        Linear_ρ_factor = (1/(Cb*γ))*ρ₀
+        Linear_ρ_factor = (one(eltype(ρ₀)) / (Cb * γ)) * ρ₀
 
         ρᵢ  = Density[i]
         ρⱼ  = Density[j]
@@ -181,10 +188,9 @@ end
 
         MLcond = MotionLimiter[i] * MotionLimiter[j]
 
-        Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ) * MLcond
-        Dⱼ  = -Dᵢ
+        Dᵢ  = δᵩ * h * c₀ * (m₀ / ρⱼ) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ) * MLcond
 
-        return Dᵢ, Dⱼ
+        return Dᵢ
 end
 
 #---------------------------------------------------------------

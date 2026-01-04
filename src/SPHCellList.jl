@@ -667,51 +667,6 @@ using LinearAlgebra
                              KernelGradient, ∇Cᵢ, ∇◌rᵢ, max_visc, min_dt_force)
     end
 
-    Base.@propagate_inbounds function ComputeInteractionsCudaNoKernel!(
-        SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel, SimConstants,
-        Position, Density, Pressure, Velocity, MotionLimiter, dρdt_acc,
-        acc_acc, i, j) where {SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
-        @unpack m₀, dx = SimConstants
-        @unpack h⁻¹, H² = SimKernel
-
-        xᵢⱼ = Position[i] - Position[j]
-        xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
-        if xᵢⱼ² <= H²
-            dᵢⱼ = sqrt(abs(xᵢⱼ²))
-            q = clamp(dᵢⱼ * h⁻¹, zero(dᵢⱼ), 2 * one(dᵢⱼ))
-            ∇ᵢWᵢⱼ = ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
-
-            ρᵢ = Density[i]
-            ρⱼ = Density[j]
-
-            vᵢ = Velocity[i]
-            vⱼ = Velocity[j]
-            vᵢⱼ = vᵢ - vⱼ
-            density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
-            dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
-
-            Dᵢ, _ = compute_density_diffusion_gpu(SimDensityDiffusion, SimKernel,
-                                                  SimConstants, Density, MotionLimiter,
-                                                  xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ^2, i, j)
-
-            dρdt_acc += dρdt⁺ + Dᵢ
-
-            Pᵢ = Pressure[i]
-            Pⱼ = Pressure[j]
-            Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
-            f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
-            dvdt⁺ = -m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
-
-            visc_term, _ = compute_viscosity_gpu(SimViscosity, SimKernel, SimConstants,
-                                                 Density, Velocity, xᵢⱼ, vᵢⱼ,
-                                                 ∇ᵢWᵢⱼ, dᵢⱼ^2, i, j)
-
-            acc_acc += dvdt⁺ + visc_term
-        end
-
-        return dρdt_acc, acc_acc
-    end
-
     function NeighborLoopCudaKernel!(dρdtI, Acceleration, Position, Density, Pressure,
                                      Velocity, MotionLimiter, NeighborOffsets,
                                      NeighborIndices, SimKernel, SimConstants,
@@ -724,11 +679,45 @@ using LinearAlgebra
             end_idx = NeighborOffsets[i + 1] - 1
             @inbounds for idx in start_idx:end_idx
                 j = NeighborIndices[idx]
-                dρdt_acc, acc_acc = ComputeInteractionsCudaNoKernel!(
-                    SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-                    Position, Density, Pressure, Velocity, MotionLimiter,
-                    dρdt_acc, acc_acc, i, j,
-                )
+                m₀ = SimConstants.m₀
+                dx = SimConstants.dx
+                h⁻¹ = SimKernel.h⁻¹
+                H² = SimKernel.H²
+
+                xᵢⱼ = Position[i] - Position[j]
+                xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
+                if xᵢⱼ² <= H²
+                    dᵢⱼ = sqrt(abs(xᵢⱼ²))
+                    q = clamp(dᵢⱼ * h⁻¹, zero(dᵢⱼ), 2 * one(dᵢⱼ))
+                    ∇ᵢWᵢⱼ = ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
+
+                    ρᵢ = Density[i]
+                    ρⱼ = Density[j]
+
+                    vᵢ = Velocity[i]
+                    vⱼ = Velocity[j]
+                    vᵢⱼ = vᵢ - vⱼ
+                    density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
+                    dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
+
+                    Dᵢ = compute_density_diffusion_gpu_d(SimDensityDiffusion, SimKernel,
+                                                         SimConstants, Density, MotionLimiter,
+                                                         xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ^2, i, j)
+
+                    dρdt_acc += dρdt⁺ + Dᵢ
+
+                    Pᵢ = Pressure[i]
+                    Pⱼ = Pressure[j]
+                    Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
+                    f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
+                    dvdt⁺ = -m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
+
+                    visc_term = compute_viscosity_gpu_term(SimViscosity, SimKernel, SimConstants,
+                                                           Density, Velocity, xᵢⱼ, vᵢⱼ,
+                                                           ∇ᵢWᵢⱼ, dᵢⱼ^2, i, j)
+
+                    acc_acc += dvdt⁺ + visc_term
+                end
             end
             dρdtI[i] = dρdt_acc
             Acceleration[i] = acc_acc
