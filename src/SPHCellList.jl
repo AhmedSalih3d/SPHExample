@@ -1534,6 +1534,14 @@ using LinearAlgebra
         buffers = SimMetaData.CudaBuffers
         if UseCudaLoop
             if buffers === nothing || isempty(buffers.host_neighbor_offsets)
+                if SimMetaData.IndexCounter == 0
+                    SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹,
+                                                               SortingScratchSpace, ParticleRanges,
+                                                               UniqueCells, CellDict)
+                    UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
+                    BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView,
+                                            ParticleRanges, CellDict)
+                end
                 UpdateCudaNeighborPairList!(SimMetaData, SimParticles, CellDict, ParticleRanges,
                                             NeighborCellLists)
                 buffers = SimMetaData.CudaBuffers
