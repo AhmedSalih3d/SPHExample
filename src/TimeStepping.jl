@@ -118,4 +118,30 @@ function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
     end
 end
 
+function Δt(Position::CUDA.AbstractGPUArray, Velocity::CUDA.AbstractGPUArray,
+            Acceleration::CUDA.AbstractGPUArray, SimulationConstants, SPHKernel)
+    @unpack c₀, CFL = SimulationConstants
+    @unpack h, η²   = SPHKernel
+
+    max_visc = CUDA.mapreduce(
+        (r, v) -> begin
+            r_sq = sqrt(dot(r, r))^2
+            abs(h * dot(v, r) / (r_sq + η²))
+        end,
+        max,
+        Position,
+        Velocity,
+    )
+    min_dt_force = CUDA.mapreduce(
+        a -> begin
+            a_mag = norm(a)
+            a_mag > 0 ? sqrt(h / a_mag) : typemax(eltype(a))
+        end,
+        min,
+        Acceleration,
+    )
+
+    CFL * min(min_dt_force, h / (c₀ + max_visc))
+end
+
 end
