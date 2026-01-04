@@ -7,6 +7,15 @@ using Parameters
 using FastPow
 using CUDA
 
+@inline function CudaLaunchConfig(n::Integer)
+    if n <= 0
+        return 1, 1
+    end
+    threads = min(256, max(32, 1 << floor(Int, log2(min(n, 256)))))
+    blocks = cld(n, threads)
+    return threads, blocks
+end
+
 @inline function EquationOfStateGamma7(ρ,c₀,ρ₀)
     return @fastpow ((c₀^2*ρ₀)/7) * ((ρ/ρ₀)^7 - 1)
 end
@@ -36,8 +45,7 @@ function Pressure!(Press::CUDA.AbstractGPUArray, Density::CUDA.AbstractGPUArray,
                    SimulationConstants)
     c₀ = SimulationConstants.c₀
     ρ₀ = SimulationConstants.ρ₀
-    threads = 256
-    blocks = cld(length(Press), threads)
+    threads, blocks = CudaLaunchConfig(length(Press))
     CUDA.@sync CUDA.@cuda threads=threads blocks=blocks PressureCudaKernel!(Press, Density, c₀, ρ₀)
     return nothing
 end
@@ -62,8 +70,7 @@ end
 
 function DensityEpsi!(Density::CUDA.AbstractGPUArray, dρdtIₙ⁺::CUDA.AbstractGPUArray,
                       ρₙ⁺::CUDA.AbstractGPUArray, Δt)
-    threads = 256
-    blocks = cld(length(Density), threads)
+    threads, blocks = CudaLaunchConfig(length(Density))
     CUDA.@sync CUDA.@cuda threads=threads blocks=blocks DensityEpsiCudaKernel!(Density, dρdtIₙ⁺, ρₙ⁺, Δt)
     return nothing
 end
@@ -89,8 +96,7 @@ end
 
 function LimitDensityAtBoundary!(Density::CUDA.AbstractGPUArray, ρ₀,
                                  MotionLimiter::CUDA.AbstractGPUArray)
-    threads = 256
-    blocks = cld(length(Density), threads)
+    threads, blocks = CudaLaunchConfig(length(Density))
     CUDA.@sync CUDA.@cuda threads=threads blocks=blocks LimitDensityAtBoundaryCudaKernel!(Density, ρ₀, MotionLimiter)
     return nothing
 end

@@ -196,8 +196,7 @@ function NeighborLoopCuda!(buffers, SimDensityDiffusion, SimViscosity, SimKernel
                            density = buffers.density, pressure = buffers.pressure,
                            velocity = buffers.velocity)
     n_particles = buffers.n_particles
-    threads = 256
-    blocks = cld(n_particles, threads)
+    threads, blocks = CudaLaunchConfig(n_particles)
     CUDA.@sync CUDA.@cuda threads=threads blocks=blocks NeighborLoopCudaKernel!(
         buffers.dρdtI,
         buffers.acceleration,
@@ -216,6 +215,15 @@ function NeighborLoopCuda!(buffers, SimDensityDiffusion, SimViscosity, SimKernel
     return nothing
 end
 
+@inline function CudaLaunchConfig(n_particles::Integer)
+    if n_particles <= 0
+        return 1, 1
+    end
+    threads = min(256, max(32, 1 << floor(Int, log2(min(n_particles, 256)))))
+    blocks = cld(n_particles, threads)
+    return threads, blocks
+end
+
 function HalfTimeStepCudaKernel!(Position, Density, Velocity, Acceleration, GravityFactor,
                                  MotionLimiter, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂, g)
     i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
@@ -230,8 +238,7 @@ function HalfTimeStepCudaKernel!(Position, Density, Velocity, Acceleration, Grav
 end
 
 function HalfTimeStepCuda!(SimConstants, buffers, dt₂)
-    threads = 256
-    blocks = cld(buffers.n_particles, threads)
+    threads, blocks = CudaLaunchConfig(buffers.n_particles)
     CUDA.@sync CUDA.@cuda threads=threads blocks=blocks HalfTimeStepCudaKernel!(
         buffers.position,
         buffers.density,
@@ -271,8 +278,7 @@ function FullTimeStepCudaKernel!(Position, Velocity, Acceleration, GravityFactor
 end
 
 function FullTimeStepCuda!(SimKernel, SimConstants, buffers, dt)
-    threads = 256
-    blocks = cld(buffers.n_particles, threads)
+    threads, blocks = CudaLaunchConfig(buffers.n_particles)
     CUDA.@sync CUDA.@cuda threads=threads blocks=blocks FullTimeStepCudaKernel!(
         buffers.position,
         buffers.velocity,
