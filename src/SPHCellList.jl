@@ -545,6 +545,33 @@ using LinearAlgebra
         active::Bool
     end
 
+    function EmptyCudaNeighborBuffers()
+        return CudaNeighborBuffers(
+            0,
+            Int[],
+            Int[],
+            nothing,
+            nothing,
+            nothing,
+            nothing,
+            nothing,
+            nothing,
+            Int[],
+            Int[],
+            nothing,
+            nothing,
+            nothing,
+            nothing,
+            nothing,
+            nothing,
+            nothing,
+            nothing,
+            true,
+            false,
+            false,
+        )
+    end
+
     function EnsureCudaNeighborBuffers!(SimMetaData, Position, Density, Pressure, Velocity,
                                         GravityFactor, MotionLimiter, neighbor_offsets,
                                         neighbor_indices, dρdtI, Acceleration; sync_state = true,
@@ -655,10 +682,7 @@ using LinearAlgebra
                                          NeighborCellLists)
         buffers = SimMetaData.CudaBuffers
         if buffers === nothing
-            buffers = CudaNeighborBuffers(0, Int[], Int[], nothing, nothing, nothing, nothing,
-                                          nothing, nothing, Int[], Int[], nothing, nothing,
-                                          nothing, nothing, nothing, nothing, nothing,
-                                          nothing, true, false, false)
+            buffers = EmptyCudaNeighborBuffers()
             SimMetaData.CudaBuffers = buffers
         end
 
