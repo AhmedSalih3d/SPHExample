@@ -521,79 +521,6 @@ using LinearAlgebra
     @inline CudaNeighborLoopSupported(::LinearDensityDiffusion, ::ArtificialViscosity) = true
     @inline CudaNeighborLoopSupported(::SPHDensityDiffusion, ::SPHViscosity) = false
 
-    mutable struct CudaNeighborBuffers
-        n_particles::Int
-        host_neighbor_offsets::Vector{Int}
-        host_neighbor_indices::Vector{Int}
-        position
-        density
-        pressure
-        velocity
-        motion_limiter
-        neighbor_offsets
-        neighbor_indices
-        dρdtI
-        acceleration
-    end
-
-    function EnsureCudaNeighborBuffers!(SimMetaData, Position, Density, Pressure, Velocity,
-                                        MotionLimiter, neighbor_offsets, neighbor_indices,
-                                        dρdtI, Acceleration)
-        n_particles = length(Position)
-        offsets_len = length(neighbor_offsets)
-        indices_len = length(neighbor_indices)
-        buffers = SimMetaData.CudaBuffers
-        needs_alloc = buffers === nothing ||
-                      buffers.n_particles != n_particles ||
-                      length(buffers.neighbor_offsets) != offsets_len ||
-                      length(buffers.neighbor_indices) != indices_len
-        if needs_alloc
-            buffers = CudaNeighborBuffers(
-                n_particles,
-                neighbor_offsets,
-                neighbor_indices,
-                CuArray(Position),
-                CuArray(Density),
-                CuArray(Pressure),
-                CuArray(Velocity),
-                CuArray(MotionLimiter),
-                CuArray(neighbor_offsets),
-                CuArray(neighbor_indices),
-                similar(CuArray(dρdtI)),
-                similar(CuArray(Acceleration)),
-            )
-            SimMetaData.CudaBuffers = buffers
-        else
-            buffers.host_neighbor_offsets = neighbor_offsets
-            buffers.host_neighbor_indices = neighbor_indices
-            copyto!(buffers.position, Position)
-            copyto!(buffers.density, Density)
-            copyto!(buffers.pressure, Pressure)
-            copyto!(buffers.velocity, Velocity)
-            copyto!(buffers.motion_limiter, MotionLimiter)
-            copyto!(buffers.neighbor_offsets, neighbor_offsets)
-            copyto!(buffers.neighbor_indices, neighbor_indices)
-        end
-
-        return buffers
-    end
-
-    function UpdateCudaNeighborPairList!(SimMetaData, SimParticles, CellDict, ParticleRanges,
-                                         NeighborCellLists)
-        buffers = SimMetaData.CudaBuffers
-        if buffers === nothing
-            buffers = CudaNeighborBuffers(0, Int[], Int[], nothing, nothing, nothing, nothing,
-                                          nothing, nothing, nothing, nothing, nothing)
-            SimMetaData.CudaBuffers = buffers
-        end
-
-        neighbor_offsets = buffers.host_neighbor_offsets
-        neighbor_indices = buffers.host_neighbor_indices
-        BuildNeighborPairList!(neighbor_offsets, neighbor_indices, SimParticles.Cells,
-                               CellDict, ParticleRanges, NeighborCellLists)
-        return nothing
-    end
-
     """
         NeighborLoop!(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                       SimConstants, SimParticles, ParticleRanges, CellDict,
@@ -687,30 +614,15 @@ using LinearAlgebra
         neighbor_offsets = SimMetaData.CudaBuffers.host_neighbor_offsets
         neighbor_indices = SimMetaData.CudaBuffers.host_neighbor_indices
 
-        n_particles = length(Position)
         buffers = EnsureCudaNeighborBuffers!(SimMetaData, Position, Density, Pressure, Velocity,
-                                             MotionLimiter, neighbor_offsets, neighbor_indices,
-                                             dρdtI, Acceleration)
-        d_position = buffers.position
-        d_density = buffers.density
-        d_pressure = buffers.pressure
-        d_velocity = buffers.velocity
-        d_motion_limiter = buffers.motion_limiter
-        d_neighbor_offsets = buffers.neighbor_offsets
-        d_neighbor_indices = buffers.neighbor_indices
-        d_dρdtI = buffers.dρdtI
-        d_acceleration = buffers.acceleration
+                                             SimParticles.GravityFactor, MotionLimiter,
+                                             neighbor_offsets, neighbor_indices, dρdtI,
+                                             Acceleration)
 
-        threads = 256
-        blocks = cld(n_particles, threads)
-        CUDA.@sync CUDA.@cuda threads=threads blocks=blocks NeighborLoopCudaKernel!(
-            d_dρdtI, d_acceleration, d_position, d_density, d_pressure,
-            d_velocity, d_motion_limiter, d_neighbor_offsets, d_neighbor_indices,
-            SimKernel, SimConstants, SimDensityDiffusion, SimViscosity,
-        )
+        NeighborLoopCuda!(buffers, SimDensityDiffusion, SimViscosity, SimKernel, SimConstants)
 
-        copyto!(dρdtI, d_dρdtI)
-        copyto!(Acceleration, d_acceleration)
+        copyto!(dρdtI, buffers.dρdtI)
+        copyto!(Acceleration, buffers.acceleration)
 
         return nothing
     end
@@ -1311,8 +1223,22 @@ using LinearAlgebra
 
     # Per-particle local Δx removed: use single scalar `SimMetaData.Δx`.
 
+    abstract type SimulationBackend end
+    struct CPUBackend <: SimulationBackend end
+    struct GPUBackend <: SimulationBackend end
+
+    SelectBackend(::Val{false}, _SimMetaData, _MotionDefinition, _SimDensityDiffusion,
+                  _SimViscosity) = CPUBackend()
+
+    function SelectBackend(::Val{true}, SimMetaData, MotionDefinition,
+                           SimDensityDiffusion, SimViscosity)
+        return SelectCudaBackend(SimMetaData, MotionDefinition, SimDensityDiffusion, SimViscosity)
+    end
+
+    SyncBackendState!(::CPUBackend, _SimParticles, _SimMetaData) = nothing
+
     
-    @inbounds function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
+    @inbounds function SimulationLoop(::CPUBackend, SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
                                       SimConstants, SimParticles, FullStencil,
                                       ParticleRanges, UniqueCells, CellDict,
@@ -1348,7 +1274,6 @@ using LinearAlgebra
 
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
                 @timeit SimMetaData.HourGlass "01 Calculate IndexCounter"  begin
-
                     SimMetaData.Δx = UpdateΔx!(SimMetaData.Δx, Positionₙ⁺, SimParticles.Position)
                     ShouldRebuild = SimMetaData.Δx >= SimKernel.h
 
@@ -1365,17 +1290,13 @@ using LinearAlgebra
                         SimMetaData.Δx    = zero(eltype(dρdtI))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                         BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellDict)
-                        if SimMetaData.UseCuda
-                            UpdateCudaNeighborPairList!(SimMetaData, SimParticles, CellDict,
-                                                        ParticleRanges, NeighborCellLists)
-                        end
                     end
                 end
 
-                @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
-            
-                @timeit SimMetaData.HourGlass "02 Pressure"                              Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-                @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType)
+                @timeit SimMetaData.HourGlass "Motion" ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
+
+                @timeit SimMetaData.HourGlass "02 Pressure" Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
+                @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep" ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType)
 
                 @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoop!(
                     SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
@@ -1385,15 +1306,13 @@ using LinearAlgebra
                     KernelGradient, ∇Cᵢ, ∇◌rᵢ,
                 )
 
+                @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
 
-                @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
-
-
-                @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+                @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary" LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
             
-                @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
+                @timeit SimMetaData.HourGlass "Motion" ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
             
-                @timeit SimMetaData.HourGlass "07 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
+                @timeit SimMetaData.HourGlass "07 Pressure" Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
                 @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoop!(
                     SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                     SimConstants, SimParticles, ParticleRanges, CellDict,
@@ -1402,21 +1321,16 @@ using LinearAlgebra
                     KernelGradient, ∇Cᵢ, ∇◌rᵢ,
                 )
 
-        @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
+                @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
             
-                @timeit SimMetaData.HourGlass "10 Final Density"                         DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
+                @timeit SimMetaData.HourGlass "10 Final Density" DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
             
-                @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+                @timeit SimMetaData.HourGlass "11 Update To Final TimeStep" FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
             
-                @timeit SimMetaData.HourGlass "12 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
+                @timeit SimMetaData.HourGlass "12 Update MetaData" UpdateMetaData!(SimMetaData, dt)
 
                 @timeit SimMetaData.HourGlass "13 Update TimeStep" begin
-                    if SimMetaData.UseCuda && SimMetaData.CudaBuffers !== nothing
-                        buffers = SimMetaData.CudaBuffers
-                        dt = Δt(buffers.position, buffers.velocity, buffers.acceleration, SimConstants, SimKernel)
-                    else
-                        dt = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel)
-                    end
+                    dt = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel)
                 end
             end
         end
@@ -1424,6 +1338,8 @@ using LinearAlgebra
         return nothing
     end
     
+    include("SPHCellListGPU.jl")
+
     ###===
     function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}, #Don't further specify type for now
         SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
@@ -1500,15 +1416,19 @@ using LinearAlgebra
             MotionDefinition = nothing
         end
 
+        backend = SelectBackend(Val(SimMetaData.UseCuda), SimMetaData, MotionDefinition,
+                                SimDensityDiffusion, SimViscosity)
+
         @inbounds while true
 
             @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(
-                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                backend, SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                 SimConstants, SimParticles, FullStencil, ParticleRanges,
                 UniqueCells, CellDict, SortingScratchSpace,
                 NeighborCellLists, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
                 ∇Cᵢ, ∇◌rᵢ, MotionDefinition,
             )
+            SyncBackendState!(backend, SimParticles, SimMetaData)
             push!(SimMetaData.TimeSteps, SimMetaData.CurrentTimeStep)
 
             LogStep!(SimMetaData, SimLogger)
