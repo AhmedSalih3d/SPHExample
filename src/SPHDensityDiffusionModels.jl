@@ -41,7 +41,7 @@ struct ZeroDensityDiffusion <: SPHDensityDiffusion end
         j,
         MotionLimiter
 )
-        return zero(xᵢⱼ), zero(xᵢⱼ)
+        return zero(d²), zero(d²)
 end
 
 #---------------------------------------------------------------
