@@ -79,9 +79,6 @@ using LinearAlgebra
     """
     # Replace unsafe_trunc with trunc if this ever errors
     @inline function map_floor(x, InverseCutOff)
-        if !isfinite(x)
-            return zero(Int)
-        end
         # This is different than just doing muladd(x,InverseCutOff,0.5) because it rounds towards zero.
         # Consider -1.7 + 0.5, this would give -1.2 and then trunced 1, but we want -2, therefore absolute addition before hand
         # We add 0.5 instead of 1, to ensure proper rounding behavior when restoring the sign for negative numbers.
