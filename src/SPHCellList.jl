@@ -33,6 +33,11 @@ using UnicodePlots
 using LinearAlgebra
     using Bumper
 
+    const CellSizeFactor = 2.0
+
+    @inline cell_inverse_cutoff(SimKernel) = SimKernel.H⁻¹ / CellSizeFactor
+    @inline cell_rebuild_threshold(SimKernel) = SimKernel.h * CellSizeFactor
+
     function ConstructFullStencil(v::Val{d}) where d
         return CartesianIndices(ntuple(_->-1:1, v))
     end
@@ -429,7 +434,7 @@ using LinearAlgebra
         return nothing
     end
 
-    f(SimKernel, GhostPoint) = CartesianIndex(map(x->map_floor(x,SimKernel.H⁻¹), Tuple(GhostPoint)))
+    f(SimKernel, GhostPoint) = CartesianIndex(map(x -> map_floor(x, cell_inverse_cutoff(SimKernel)), Tuple(GhostPoint)))
     function NeighborLoopMDBC!(SimKernel,
                                SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
                                SimConstants, ParticleRanges, CellDict, Position,
@@ -1031,7 +1036,7 @@ using LinearAlgebra
                 @timeit SimMetaData.HourGlass "01 Calculate IndexCounter"  begin
 
                     SimMetaData.Δx = UpdateΔx!(SimMetaData.Δx, Positionₙ⁺, SimParticles.Position)
-                    ShouldRebuild = SimMetaData.Δx >= SimKernel.h
+                    ShouldRebuild = SimMetaData.Δx >= cell_rebuild_threshold(SimKernel)
 
                     # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
 
@@ -1042,7 +1047,7 @@ using LinearAlgebra
                     # Remove if statement logic if you want to update each iteration
                     # if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
                     if ShouldRebuild
-                        @timeit SimMetaData.HourGlass "01a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells, CellDict)
+                        @timeit SimMetaData.HourGlass "01a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, cell_inverse_cutoff(SimKernel), SortingScratchSpace,  ParticleRanges, UniqueCells, CellDict)
                         SimMetaData.Δx    = zero(eltype(dρdtI))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                         BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellDict)
