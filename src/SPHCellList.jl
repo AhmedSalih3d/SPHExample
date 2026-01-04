@@ -961,6 +961,25 @@ using LinearAlgebra
         end
     end
 
+    function GenerateMotionDetails(SimParticles, SimGeometry, Dimensions, FloatType)
+        # Assuming group markers are sequential
+        MotionDefinition = Vector{Union{Nothing, MotionDetails{Dimensions, FloatType}}}(undef, maximum(SimParticles.GroupMarker))
+
+        for geom in SimGeometry
+            group_marker = geom.GroupMarker
+            if geom.Motion !== nothing
+                MotionDefinition[group_marker] = geom.Motion
+            else
+                MotionDefinition[group_marker] = nothing
+            end
+        end
+        if !any(!isnothing, MotionDefinition)
+            MotionDefinition = nothing
+        end
+        return MotionDefinition
+    end
+
+
     """
         UpdateΔx!(Δx, posₙ⁺, pos)
 
@@ -1153,20 +1172,7 @@ using LinearAlgebra
         end
 
 
-        # Assuming group markers are sequential
-        MotionDefinition = Vector{Union{Nothing, MotionDetails{Dimensions, FloatType}}}(undef, maximum(SimParticles.GroupMarker))
-
-        for geom in SimGeometry
-            group_marker = geom.GroupMarker
-            if geom.Motion !== nothing
-                MotionDefinition[group_marker] = geom.Motion
-            else
-                MotionDefinition[group_marker] = nothing
-            end
-        end
-        if !any(!isnothing, MotionDefinition)
-            MotionDefinition = nothing
-        end
+        MotionDefinition = GenerateMotionDetails(SimParticles, SimGeometry, Dimensions, FloatType)
 
         @inbounds while true
 
