@@ -4,7 +4,7 @@ let
     Dimensions = 2
     FloatType  = Float64
 
-    SimConstantsDambreak = SimulationConstants{FloatType}(dx=0.01,c₀=88.14487860902641, δᵩ = 0.1, CFL=0.5, α = 0.01)
+    SimConstantsDambreak = SimulationConstants{FloatType}(dx=0.02,c₀=88.14487860902641, δᵩ = 0.1, CFL=0.2, α = 0.02)
 
     # Create Geometry instances
     FixedBoundary = Geometry{Dimensions, FloatType}(
@@ -27,7 +27,7 @@ let
     # Load in particles
     SimParticles = AllocateDataStructures(SimulationGeometry)
 
-    SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
+    SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,NoMDBC,StoreLog}(
         SimulationName="DamBreak2D",
         SaveLocation="E:/SecondApproach/DamBreak2D_MDBC/",
         SimulationTime=2.0,
@@ -74,7 +74,7 @@ let
         SimGeometry          = SimulationGeometry,
         SimMetaData          = SimMetaDataDambreak,
         SimConstants         = SimConstantsDambreak,
-        SimKernel            = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); dx = SimConstantsDambreak.dx),
+        SimKernel            = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); h = 0.028284),
         SimLogger            = SimLogger,
         SimParticles         = SimParticles,
         SimViscosity         = ArtificialViscosity(),
