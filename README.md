@@ -24,6 +24,7 @@ The project demonstrates how to assemble a small SPH solver with Julia. It focus
 - **Dynamic boundary condition** – inspired by DualSPHysics.
 - **Density diffusion** – based on Fourtakas et al. 2019 to reduce pressure noise.
 - **Wendland quintic kernel** – simple and stable without tensile corrections.
+- **Adaptive time stepping** – CFL, force, and viscous limits with a minimum clamp.
 
 ## Folder Structure
 

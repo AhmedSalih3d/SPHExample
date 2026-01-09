@@ -177,7 +177,7 @@ using LinearAlgebra
                                       CellDict, NeighborCellLists, Position, Density,
                                       Pressure, Velocity, MotionLimiter, dρdtI,
                                       Acceleration, Kernel, KernelGradient, ∇Cᵢ,
-                                      ∇◌rᵢ, max_visc = nothing,
+                                      ∇◌rᵢ, max_speed = nothing,
                                       min_dt_force = nothing) where {D,T,
                                                   B<:MDBCMode,L<:LogMode,
                                                   SDD<:SPHDensityDiffusion,
@@ -220,7 +220,7 @@ using LinearAlgebra
 
             dρdtI[i] = dρdt_acc
             Acceleration[i] = acc_acc
-            UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i], Velocity[i], acc_acc, SimKernel)
+            UpdateTimeStepBuffers!(max_speed, min_dt_force, i, Position[i], Velocity[i], acc_acc, SimKernel)
         end
 
         return nothing
@@ -232,7 +232,7 @@ using LinearAlgebra
                                       CellDict, NeighborCellLists, Position, Density,
                                       Pressure, Velocity, MotionLimiter, dρdtI,
                                       Acceleration, Kernel, KernelGradient, ∇Cᵢ,
-                                      ∇◌rᵢ, max_visc = nothing,
+                                      ∇◌rᵢ, max_speed = nothing,
                                       min_dt_force = nothing) where {D,T,
                                                   K<:KernelOutputMode,
                                                   B<:MDBCMode,L<:LogMode,
@@ -286,7 +286,7 @@ using LinearAlgebra
             Acceleration[i] = acc_acc
             Kernel[i] = kernel_acc
             KernelGradient[i] = kernel_grad_acc
-            UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i], Velocity[i], acc_acc, SimKernel)
+            UpdateTimeStepBuffers!(max_speed, min_dt_force, i, Position[i], Velocity[i], acc_acc, SimKernel)
         end
 
         return nothing
@@ -298,7 +298,7 @@ using LinearAlgebra
                                       CellDict, NeighborCellLists, Position, Density,
                                       Pressure, Velocity, MotionLimiter, dρdtI,
                                       Acceleration, Kernel, KernelGradient, ∇Cᵢ,
-                                      ∇◌rᵢ, max_visc = nothing,
+                                      ∇◌rᵢ, max_speed = nothing,
                                       min_dt_force = nothing) where {D,T,
                                                   S<:ShiftingMode,B<:MDBCMode,
                                                   L<:LogMode,SDD<:SPHDensityDiffusion,
@@ -351,7 +351,7 @@ using LinearAlgebra
             Acceleration[i] = acc_acc
             ∇Cᵢ[i] = shift_c_acc
             ∇◌rᵢ[i] = shift_r_acc
-            UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i], Velocity[i], acc_acc, SimKernel)
+            UpdateTimeStepBuffers!(max_speed, min_dt_force, i, Position[i], Velocity[i], acc_acc, SimKernel)
         end
 
         return nothing
@@ -363,7 +363,7 @@ using LinearAlgebra
                                       CellDict, NeighborCellLists, Position, Density,
                                       Pressure, Velocity, MotionLimiter, dρdtI,
                                       Acceleration, Kernel, KernelGradient, ∇Cᵢ,
-                                      ∇◌rᵢ, max_visc = nothing,
+                                      ∇◌rᵢ, max_speed = nothing,
                                       min_dt_force = nothing) where {D,T,
                                                   S<:ShiftingMode,
                                                   K<:KernelOutputMode,
@@ -422,8 +422,8 @@ using LinearAlgebra
             KernelGradient[i] = kernel_grad_acc
             ∇Cᵢ[i] = shift_c_acc
             ∇◌rᵢ[i] = shift_r_acc
-            UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i],
-                                      Velocity[i], acc_acc, SimKernel)
+            UpdateTimeStepBuffers!(max_speed, min_dt_force, i, Position[i],
+                                   Velocity[i], acc_acc, SimKernel)
         end
 
         return nothing
@@ -1052,7 +1052,7 @@ using LinearAlgebra
         dt = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel)
 
         @no_escape begin
-            max_visc = @alloc(FloatType, length(Position))
+            max_speed = @alloc(FloatType, length(Position))
             min_dt_force = @alloc(FloatType, length(Position))
 
             dt₂ = dt * 0.5
@@ -1106,7 +1106,7 @@ using LinearAlgebra
                     SimConstants, SimParticles, ParticleRanges, CellDict,
                     NeighborCellLists, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺,
                     MotionLimiter, dρdtI, Acceleration, Kernel,
-                    KernelGradient, ∇Cᵢ, ∇◌rᵢ, max_visc, min_dt_force,
+                    KernelGradient, ∇Cᵢ, ∇◌rᵢ, max_speed, min_dt_force,
                 )
 
                 @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
@@ -1117,7 +1117,7 @@ using LinearAlgebra
             
                 @timeit SimMetaData.HourGlass "12 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
 
-                @timeit SimMetaData.HourGlass "13 Update TimeStep" dt = FinalizeTimeStep(max_visc, min_dt_force, SimConstants, SimKernel)
+                @timeit SimMetaData.HourGlass "13 Update TimeStep" dt = FinalizeTimeStep(max_speed, min_dt_force, SimConstants, SimKernel)
             end
         end
         

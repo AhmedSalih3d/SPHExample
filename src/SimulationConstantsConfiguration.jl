@@ -21,6 +21,7 @@ SimulationConstants is a parameterized struct representing the constants and par
 - `c₀::T`: Speed of sound (must be at least 10 times the highest velocity in the simulation). Default is computed based on `g`.
 - `γ::TI`: Adiabatic index (positive integer). Default is 7.
 - `dt::T`: Initial time step. Default is 1e-5.
+- `dt_min::T`: Minimum time step clamp. Default is 1e-6.
 - `δᵩ::T`: Coefficient for density diffusion. Default is 0.1.
 - `CFL::T`: CFL (Courant-Friedrichs-Lewy) number (positive). Default is 0.2.
 - `η²::T`: Eta squared (positive). Default is computed as `(0.01 * H)^2`.
@@ -42,6 +43,7 @@ constants = SimulationConstants(ρ₀=1017, dx=0.03, α=0.02)
     c₀::T  = sqrt(g * 2) * 20     ; @assert c₀   > 0 "Speed of sound (c₀) must be positive"
     γ::T  = 7                     ; @assert γ    > 0 "Adiabatic index (γ) must be positive"
     γ⁻¹::T  = 1/γ                 ; @assert γ⁻¹  > 0 "Inverse adiabatic index (γ⁻¹) must be positive"
+    dt_min::T = 1e-6              ; @assert dt_min > 0 "Minimum time step (dt_min) must be positive"
     δᵩ::T  = 0.1                  ; @assert δᵩ   > 0 "Density variation (δᵩ) must be positive"
     CFL::T = 0.2                  ; @assert CFL  > 0 "CFL condition (CFL) must be positive"
     Cb::T  = (c₀^2 * ρ₀)/γ        ; @assert Cb  >= 0 "Cb (pressure coefficient) must be positive"
