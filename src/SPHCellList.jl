@@ -102,6 +102,12 @@ using LinearAlgebra
         return nothing
     end
 
+    @inline function ChunkRange(TaskIndex, ChunkSize, TotalCount)
+        StartIndex = (TaskIndex - 1) * ChunkSize + 1
+        EndIndex = min(TaskIndex * ChunkSize, TotalCount)
+        return StartIndex, EndIndex
+    end
+
     @inline function CellToLinearIndex(Cell::CartesianIndex{D},
                                        Offset::NTuple{D, Int},
                                        Dims::NTuple{D, Int}) where D
@@ -366,44 +372,53 @@ using LinearAlgebra
         ResetThreadBuffer!(ThreadBuffers.DρdtBuffers, dρdtI)
         ResetThreadBuffer!(ThreadBuffers.AccelerationBuffers, Acceleration)
 
-        @inbounds Threads.@threads for i in eachindex(Position)
-            ThreadId = Threads.threadid()
-            DρdtBuffer = ThreadBuffers.DρdtBuffers[ThreadId]
-            AccBuffer = ThreadBuffers.AccelerationBuffers[ThreadId]
-            CellListIndexLocal = CellListIndex[i]
-            SameCellStart = ParticleRanges[CellListIndexLocal]
-            SameCellEnd = ParticleRanges[CellListIndexLocal + 1] - 1
-            NeighborStart = NeighborCellOffsets[CellListIndexLocal]
-            NeighborEnd = NeighborCellOffsets[CellListIndexLocal + 1] - 1
-
-            @inbounds for j in (i + 1):SameCellEnd
-                dρdtᵢ, dρdtⱼ, accᵢ, accⱼ = ComputeInteractionsPairNoKernel!(
-                    SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                    SimConstants, SimParticles, Position, Density, Pressure,
-                    Velocity, MotionLimiter, i, j,
-                )
-                DρdtBuffer[i] += dρdtᵢ
-                DρdtBuffer[j] += dρdtⱼ
-                AccBuffer[i] += accᵢ
-                AccBuffer[j] += accⱼ
+        TaskCount = length(ThreadBuffers.DρdtBuffers)
+        ChunkSize = cld(length(Position), TaskCount)
+        @sync for TaskIndex in 1:TaskCount
+            StartIndex, EndIndex = ChunkRange(TaskIndex, ChunkSize, length(Position))
+            if StartIndex > EndIndex
+                continue
             end
-            for NeighborOffsetIndex in NeighborStart:NeighborEnd
-                NeighborIndex = NeighborCellIndices[NeighborOffsetIndex]
-                if NeighborIndex <= CellListIndexLocal
-                    continue
-                end
-                StartIndex_ = ParticleRanges[NeighborIndex]
-                EndIndex_ = ParticleRanges[NeighborIndex + 1] - 1
-                @inbounds for j in StartIndex_:EndIndex_
-                    dρdtᵢ, dρdtⱼ, accᵢ, accⱼ = ComputeInteractionsPairNoKernel!(
-                        SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                        SimConstants, SimParticles, Position, Density, Pressure,
-                        Velocity, MotionLimiter, i, j,
-                    )
-                    DρdtBuffer[i] += dρdtᵢ
-                    DρdtBuffer[j] += dρdtⱼ
-                    AccBuffer[i] += accᵢ
-                    AccBuffer[j] += accⱼ
+            Threads.@spawn begin
+                DρdtBuffer = ThreadBuffers.DρdtBuffers[TaskIndex]
+                AccBuffer = ThreadBuffers.AccelerationBuffers[TaskIndex]
+                @inbounds for i in StartIndex:EndIndex
+                    CellListIndexLocal = CellListIndex[i]
+                    SameCellStart = ParticleRanges[CellListIndexLocal]
+                    SameCellEnd = ParticleRanges[CellListIndexLocal + 1] - 1
+                    NeighborStart = NeighborCellOffsets[CellListIndexLocal]
+                    NeighborEnd = NeighborCellOffsets[CellListIndexLocal + 1] - 1
+
+                    @inbounds for j in (i + 1):SameCellEnd
+                        dρdtᵢ, dρdtⱼ, accᵢ, accⱼ = ComputeInteractionsPairNoKernel!(
+                            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                            SimConstants, SimParticles, Position, Density, Pressure,
+                            Velocity, MotionLimiter, i, j,
+                        )
+                        DρdtBuffer[i] += dρdtᵢ
+                        DρdtBuffer[j] += dρdtⱼ
+                        AccBuffer[i] += accᵢ
+                        AccBuffer[j] += accⱼ
+                    end
+                    for NeighborOffsetIndex in NeighborStart:NeighborEnd
+                        NeighborIndex = NeighborCellIndices[NeighborOffsetIndex]
+                        if NeighborIndex <= CellListIndexLocal
+                            continue
+                        end
+                        StartIndex_ = ParticleRanges[NeighborIndex]
+                        EndIndex_ = ParticleRanges[NeighborIndex + 1] - 1
+                        @inbounds for j in StartIndex_:EndIndex_
+                            dρdtᵢ, dρdtⱼ, accᵢ, accⱼ = ComputeInteractionsPairNoKernel!(
+                                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                                SimConstants, SimParticles, Position, Density, Pressure,
+                                Velocity, MotionLimiter, i, j,
+                            )
+                            DρdtBuffer[i] += dρdtᵢ
+                            DρdtBuffer[j] += dρdtⱼ
+                            AccBuffer[i] += accᵢ
+                            AccBuffer[j] += accⱼ
+                        end
+                    end
                 end
             end
         end
@@ -435,56 +450,65 @@ using LinearAlgebra
         ResetThreadBuffer!(ThreadBuffers.KernelBuffers, Kernel)
         ResetThreadBuffer!(ThreadBuffers.KernelGradientBuffers, KernelGradient)
 
-        @inbounds Threads.@threads for i in eachindex(Position)
-            ThreadId = Threads.threadid()
-            DρdtBuffer = ThreadBuffers.DρdtBuffers[ThreadId]
-            AccBuffer = ThreadBuffers.AccelerationBuffers[ThreadId]
-            KernelBuffer = ThreadBuffers.KernelBuffers[ThreadId]
-            KernelGradientBuffer = ThreadBuffers.KernelGradientBuffers[ThreadId]
-            CellListIndexLocal = CellListIndex[i]
-            SameCellStart = ParticleRanges[CellListIndexLocal]
-            SameCellEnd = ParticleRanges[CellListIndexLocal + 1] - 1
-            NeighborStart = NeighborCellOffsets[CellListIndexLocal]
-            NeighborEnd = NeighborCellOffsets[CellListIndexLocal + 1] - 1
-
-            @inbounds for j in (i + 1):SameCellEnd
-                dρdtᵢ, dρdtⱼ, accᵢ, accⱼ, kernelᵢ, kernelⱼ, kernel_gradᵢ, kernel_gradⱼ =
-                    ComputeInteractionsPair!(
-                        SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                        SimConstants, SimParticles, Position, Density, Pressure,
-                        Velocity, MotionLimiter, i, j,
-                    )
-                DρdtBuffer[i] += dρdtᵢ
-                DρdtBuffer[j] += dρdtⱼ
-                AccBuffer[i] += accᵢ
-                AccBuffer[j] += accⱼ
-                KernelBuffer[i] += kernelᵢ
-                KernelBuffer[j] += kernelⱼ
-                KernelGradientBuffer[i] += kernel_gradᵢ
-                KernelGradientBuffer[j] += kernel_gradⱼ
+        TaskCount = length(ThreadBuffers.DρdtBuffers)
+        ChunkSize = cld(length(Position), TaskCount)
+        @sync for TaskIndex in 1:TaskCount
+            StartIndex, EndIndex = ChunkRange(TaskIndex, ChunkSize, length(Position))
+            if StartIndex > EndIndex
+                continue
             end
-            for NeighborOffsetIndex in NeighborStart:NeighborEnd
-                NeighborIndex = NeighborCellIndices[NeighborOffsetIndex]
-                if NeighborIndex <= CellListIndexLocal
-                    continue
-                end
-                StartIndex_ = ParticleRanges[NeighborIndex]
-                EndIndex_ = ParticleRanges[NeighborIndex + 1] - 1
-                @inbounds for j in StartIndex_:EndIndex_
-                    dρdtᵢ, dρdtⱼ, accᵢ, accⱼ, kernelᵢ, kernelⱼ, kernel_gradᵢ, kernel_gradⱼ =
-                        ComputeInteractionsPair!(
-                            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                            SimConstants, SimParticles, Position, Density, Pressure,
-                            Velocity, MotionLimiter, i, j,
-                        )
-                    DρdtBuffer[i] += dρdtᵢ
-                    DρdtBuffer[j] += dρdtⱼ
-                    AccBuffer[i] += accᵢ
-                    AccBuffer[j] += accⱼ
-                    KernelBuffer[i] += kernelᵢ
-                    KernelBuffer[j] += kernelⱼ
-                    KernelGradientBuffer[i] += kernel_gradᵢ
-                    KernelGradientBuffer[j] += kernel_gradⱼ
+            Threads.@spawn begin
+                DρdtBuffer = ThreadBuffers.DρdtBuffers[TaskIndex]
+                AccBuffer = ThreadBuffers.AccelerationBuffers[TaskIndex]
+                KernelBuffer = ThreadBuffers.KernelBuffers[TaskIndex]
+                KernelGradientBuffer = ThreadBuffers.KernelGradientBuffers[TaskIndex]
+                @inbounds for i in StartIndex:EndIndex
+                    CellListIndexLocal = CellListIndex[i]
+                    SameCellStart = ParticleRanges[CellListIndexLocal]
+                    SameCellEnd = ParticleRanges[CellListIndexLocal + 1] - 1
+                    NeighborStart = NeighborCellOffsets[CellListIndexLocal]
+                    NeighborEnd = NeighborCellOffsets[CellListIndexLocal + 1] - 1
+
+                    @inbounds for j in (i + 1):SameCellEnd
+                        dρdtᵢ, dρdtⱼ, accᵢ, accⱼ, kernelᵢ, kernelⱼ, kernel_gradᵢ, kernel_gradⱼ =
+                            ComputeInteractionsPair!(
+                                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                                SimConstants, SimParticles, Position, Density, Pressure,
+                                Velocity, MotionLimiter, i, j,
+                            )
+                        DρdtBuffer[i] += dρdtᵢ
+                        DρdtBuffer[j] += dρdtⱼ
+                        AccBuffer[i] += accᵢ
+                        AccBuffer[j] += accⱼ
+                        KernelBuffer[i] += kernelᵢ
+                        KernelBuffer[j] += kernelⱼ
+                        KernelGradientBuffer[i] += kernel_gradᵢ
+                        KernelGradientBuffer[j] += kernel_gradⱼ
+                    end
+                    for NeighborOffsetIndex in NeighborStart:NeighborEnd
+                        NeighborIndex = NeighborCellIndices[NeighborOffsetIndex]
+                        if NeighborIndex <= CellListIndexLocal
+                            continue
+                        end
+                        StartIndex_ = ParticleRanges[NeighborIndex]
+                        EndIndex_ = ParticleRanges[NeighborIndex + 1] - 1
+                        @inbounds for j in StartIndex_:EndIndex_
+                            dρdtᵢ, dρdtⱼ, accᵢ, accⱼ, kernelᵢ, kernelⱼ, kernel_gradᵢ, kernel_gradⱼ =
+                                ComputeInteractionsPair!(
+                                    SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                                    SimConstants, SimParticles, Position, Density, Pressure,
+                                    Velocity, MotionLimiter, i, j,
+                                )
+                            DρdtBuffer[i] += dρdtᵢ
+                            DρdtBuffer[j] += dρdtⱼ
+                            AccBuffer[i] += accᵢ
+                            AccBuffer[j] += accⱼ
+                            KernelBuffer[i] += kernelᵢ
+                            KernelBuffer[j] += kernelⱼ
+                            KernelGradientBuffer[i] += kernel_gradᵢ
+                            KernelGradientBuffer[j] += kernel_gradⱼ
+                        end
+                    end
                 end
             end
         end
@@ -517,56 +541,65 @@ using LinearAlgebra
         ResetThreadBuffer!(ThreadBuffers.ShiftCBuffers, ∇Cᵢ)
         ResetThreadBuffer!(ThreadBuffers.ShiftRBuffers, ∇◌rᵢ)
 
-        @inbounds Threads.@threads for i in eachindex(Position)
-            ThreadId = Threads.threadid()
-            DρdtBuffer = ThreadBuffers.DρdtBuffers[ThreadId]
-            AccBuffer = ThreadBuffers.AccelerationBuffers[ThreadId]
-            ShiftCBuffer = ThreadBuffers.ShiftCBuffers[ThreadId]
-            ShiftRBuffer = ThreadBuffers.ShiftRBuffers[ThreadId]
-            CellListIndexLocal = CellListIndex[i]
-            SameCellStart = ParticleRanges[CellListIndexLocal]
-            SameCellEnd = ParticleRanges[CellListIndexLocal + 1] - 1
-            NeighborStart = NeighborCellOffsets[CellListIndexLocal]
-            NeighborEnd = NeighborCellOffsets[CellListIndexLocal + 1] - 1
-
-            @inbounds for j in (i + 1):SameCellEnd
-                dρdtᵢ, dρdtⱼ, accᵢ, accⱼ, shift_cᵢ, shift_cⱼ, shift_rᵢ, shift_rⱼ =
-                    ComputeInteractionsPairNoKernel!(
-                        SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                        SimConstants, SimParticles, Position, Density, Pressure,
-                        Velocity, MotionLimiter, i, j,
-                    )
-                DρdtBuffer[i] += dρdtᵢ
-                DρdtBuffer[j] += dρdtⱼ
-                AccBuffer[i] += accᵢ
-                AccBuffer[j] += accⱼ
-                ShiftCBuffer[i] += shift_cᵢ
-                ShiftCBuffer[j] += shift_cⱼ
-                ShiftRBuffer[i] += shift_rᵢ
-                ShiftRBuffer[j] += shift_rⱼ
+        TaskCount = length(ThreadBuffers.DρdtBuffers)
+        ChunkSize = cld(length(Position), TaskCount)
+        @sync for TaskIndex in 1:TaskCount
+            StartIndex, EndIndex = ChunkRange(TaskIndex, ChunkSize, length(Position))
+            if StartIndex > EndIndex
+                continue
             end
-            for NeighborOffsetIndex in NeighborStart:NeighborEnd
-                NeighborIndex = NeighborCellIndices[NeighborOffsetIndex]
-                if NeighborIndex <= CellListIndexLocal
-                    continue
-                end
-                StartIndex_ = ParticleRanges[NeighborIndex]
-                EndIndex_ = ParticleRanges[NeighborIndex + 1] - 1
-                @inbounds for j in StartIndex_:EndIndex_
-                    dρdtᵢ, dρdtⱼ, accᵢ, accⱼ, shift_cᵢ, shift_cⱼ, shift_rᵢ, shift_rⱼ =
-                        ComputeInteractionsPairNoKernel!(
-                            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                            SimConstants, SimParticles, Position, Density, Pressure,
-                            Velocity, MotionLimiter, i, j,
-                        )
-                    DρdtBuffer[i] += dρdtᵢ
-                    DρdtBuffer[j] += dρdtⱼ
-                    AccBuffer[i] += accᵢ
-                    AccBuffer[j] += accⱼ
-                    ShiftCBuffer[i] += shift_cᵢ
-                    ShiftCBuffer[j] += shift_cⱼ
-                    ShiftRBuffer[i] += shift_rᵢ
-                    ShiftRBuffer[j] += shift_rⱼ
+            Threads.@spawn begin
+                DρdtBuffer = ThreadBuffers.DρdtBuffers[TaskIndex]
+                AccBuffer = ThreadBuffers.AccelerationBuffers[TaskIndex]
+                ShiftCBuffer = ThreadBuffers.ShiftCBuffers[TaskIndex]
+                ShiftRBuffer = ThreadBuffers.ShiftRBuffers[TaskIndex]
+                @inbounds for i in StartIndex:EndIndex
+                    CellListIndexLocal = CellListIndex[i]
+                    SameCellStart = ParticleRanges[CellListIndexLocal]
+                    SameCellEnd = ParticleRanges[CellListIndexLocal + 1] - 1
+                    NeighborStart = NeighborCellOffsets[CellListIndexLocal]
+                    NeighborEnd = NeighborCellOffsets[CellListIndexLocal + 1] - 1
+
+                    @inbounds for j in (i + 1):SameCellEnd
+                        dρdtᵢ, dρdtⱼ, accᵢ, accⱼ, shift_cᵢ, shift_cⱼ, shift_rᵢ, shift_rⱼ =
+                            ComputeInteractionsPairNoKernel!(
+                                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                                SimConstants, SimParticles, Position, Density, Pressure,
+                                Velocity, MotionLimiter, i, j,
+                            )
+                        DρdtBuffer[i] += dρdtᵢ
+                        DρdtBuffer[j] += dρdtⱼ
+                        AccBuffer[i] += accᵢ
+                        AccBuffer[j] += accⱼ
+                        ShiftCBuffer[i] += shift_cᵢ
+                        ShiftCBuffer[j] += shift_cⱼ
+                        ShiftRBuffer[i] += shift_rᵢ
+                        ShiftRBuffer[j] += shift_rⱼ
+                    end
+                    for NeighborOffsetIndex in NeighborStart:NeighborEnd
+                        NeighborIndex = NeighborCellIndices[NeighborOffsetIndex]
+                        if NeighborIndex <= CellListIndexLocal
+                            continue
+                        end
+                        StartIndex_ = ParticleRanges[NeighborIndex]
+                        EndIndex_ = ParticleRanges[NeighborIndex + 1] - 1
+                        @inbounds for j in StartIndex_:EndIndex_
+                            dρdtᵢ, dρdtⱼ, accᵢ, accⱼ, shift_cᵢ, shift_cⱼ, shift_rᵢ, shift_rⱼ =
+                                ComputeInteractionsPairNoKernel!(
+                                    SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                                    SimConstants, SimParticles, Position, Density, Pressure,
+                                    Velocity, MotionLimiter, i, j,
+                                )
+                            DρdtBuffer[i] += dρdtᵢ
+                            DρdtBuffer[j] += dρdtⱼ
+                            AccBuffer[i] += accᵢ
+                            AccBuffer[j] += accⱼ
+                            ShiftCBuffer[i] += shift_cᵢ
+                            ShiftCBuffer[j] += shift_cⱼ
+                            ShiftRBuffer[i] += shift_rᵢ
+                            ShiftRBuffer[j] += shift_rⱼ
+                        end
+                    end
                 end
             end
         end
@@ -603,68 +636,77 @@ using LinearAlgebra
         ResetThreadBuffer!(ThreadBuffers.ShiftCBuffers, ∇Cᵢ)
         ResetThreadBuffer!(ThreadBuffers.ShiftRBuffers, ∇◌rᵢ)
 
-        @inbounds Threads.@threads for i in eachindex(Position)
-            ThreadId = Threads.threadid()
-            DρdtBuffer = ThreadBuffers.DρdtBuffers[ThreadId]
-            AccBuffer = ThreadBuffers.AccelerationBuffers[ThreadId]
-            KernelBuffer = ThreadBuffers.KernelBuffers[ThreadId]
-            KernelGradientBuffer = ThreadBuffers.KernelGradientBuffers[ThreadId]
-            ShiftCBuffer = ThreadBuffers.ShiftCBuffers[ThreadId]
-            ShiftRBuffer = ThreadBuffers.ShiftRBuffers[ThreadId]
-            CellListIndexLocal = CellListIndex[i]
-            SameCellStart = ParticleRanges[CellListIndexLocal]
-            SameCellEnd = ParticleRanges[CellListIndexLocal + 1] - 1
-            NeighborStart = NeighborCellOffsets[CellListIndexLocal]
-            NeighborEnd = NeighborCellOffsets[CellListIndexLocal + 1] - 1
-
-            @inbounds for j in (i + 1):SameCellEnd
-                dρdtᵢ, dρdtⱼ, accᵢ, accⱼ, kernelᵢ, kernelⱼ, kernel_gradᵢ, kernel_gradⱼ,
-                shift_cᵢ, shift_cⱼ, shift_rᵢ, shift_rⱼ =
-                    ComputeInteractionsPair!(
-                        SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                        SimConstants, SimParticles, Position, Density, Pressure,
-                        Velocity, MotionLimiter, i, j,
-                    )
-                DρdtBuffer[i] += dρdtᵢ
-                DρdtBuffer[j] += dρdtⱼ
-                AccBuffer[i] += accᵢ
-                AccBuffer[j] += accⱼ
-                KernelBuffer[i] += kernelᵢ
-                KernelBuffer[j] += kernelⱼ
-                KernelGradientBuffer[i] += kernel_gradᵢ
-                KernelGradientBuffer[j] += kernel_gradⱼ
-                ShiftCBuffer[i] += shift_cᵢ
-                ShiftCBuffer[j] += shift_cⱼ
-                ShiftRBuffer[i] += shift_rᵢ
-                ShiftRBuffer[j] += shift_rⱼ
+        TaskCount = length(ThreadBuffers.DρdtBuffers)
+        ChunkSize = cld(length(Position), TaskCount)
+        @sync for TaskIndex in 1:TaskCount
+            StartIndex, EndIndex = ChunkRange(TaskIndex, ChunkSize, length(Position))
+            if StartIndex > EndIndex
+                continue
             end
-            for NeighborOffsetIndex in NeighborStart:NeighborEnd
-                NeighborIndex = NeighborCellIndices[NeighborOffsetIndex]
-                if NeighborIndex <= CellListIndexLocal
-                    continue
-                end
-                StartIndex_ = ParticleRanges[NeighborIndex]
-                EndIndex_ = ParticleRanges[NeighborIndex + 1] - 1
-                @inbounds for j in StartIndex_:EndIndex_
-                    dρdtᵢ, dρdtⱼ, accᵢ, accⱼ, kernelᵢ, kernelⱼ, kernel_gradᵢ, kernel_gradⱼ,
-                    shift_cᵢ, shift_cⱼ, shift_rᵢ, shift_rⱼ =
-                        ComputeInteractionsPair!(
-                            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                            SimConstants, SimParticles, Position, Density, Pressure,
-                            Velocity, MotionLimiter, i, j,
-                        )
-                    DρdtBuffer[i] += dρdtᵢ
-                    DρdtBuffer[j] += dρdtⱼ
-                    AccBuffer[i] += accᵢ
-                    AccBuffer[j] += accⱼ
-                    KernelBuffer[i] += kernelᵢ
-                    KernelBuffer[j] += kernelⱼ
-                    KernelGradientBuffer[i] += kernel_gradᵢ
-                    KernelGradientBuffer[j] += kernel_gradⱼ
-                    ShiftCBuffer[i] += shift_cᵢ
-                    ShiftCBuffer[j] += shift_cⱼ
-                    ShiftRBuffer[i] += shift_rᵢ
-                    ShiftRBuffer[j] += shift_rⱼ
+            Threads.@spawn begin
+                DρdtBuffer = ThreadBuffers.DρdtBuffers[TaskIndex]
+                AccBuffer = ThreadBuffers.AccelerationBuffers[TaskIndex]
+                KernelBuffer = ThreadBuffers.KernelBuffers[TaskIndex]
+                KernelGradientBuffer = ThreadBuffers.KernelGradientBuffers[TaskIndex]
+                ShiftCBuffer = ThreadBuffers.ShiftCBuffers[TaskIndex]
+                ShiftRBuffer = ThreadBuffers.ShiftRBuffers[TaskIndex]
+                @inbounds for i in StartIndex:EndIndex
+                    CellListIndexLocal = CellListIndex[i]
+                    SameCellStart = ParticleRanges[CellListIndexLocal]
+                    SameCellEnd = ParticleRanges[CellListIndexLocal + 1] - 1
+                    NeighborStart = NeighborCellOffsets[CellListIndexLocal]
+                    NeighborEnd = NeighborCellOffsets[CellListIndexLocal + 1] - 1
+
+                    @inbounds for j in (i + 1):SameCellEnd
+                        dρdtᵢ, dρdtⱼ, accᵢ, accⱼ, kernelᵢ, kernelⱼ, kernel_gradᵢ, kernel_gradⱼ,
+                        shift_cᵢ, shift_cⱼ, shift_rᵢ, shift_rⱼ =
+                            ComputeInteractionsPair!(
+                                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                                SimConstants, SimParticles, Position, Density, Pressure,
+                                Velocity, MotionLimiter, i, j,
+                            )
+                        DρdtBuffer[i] += dρdtᵢ
+                        DρdtBuffer[j] += dρdtⱼ
+                        AccBuffer[i] += accᵢ
+                        AccBuffer[j] += accⱼ
+                        KernelBuffer[i] += kernelᵢ
+                        KernelBuffer[j] += kernelⱼ
+                        KernelGradientBuffer[i] += kernel_gradᵢ
+                        KernelGradientBuffer[j] += kernel_gradⱼ
+                        ShiftCBuffer[i] += shift_cᵢ
+                        ShiftCBuffer[j] += shift_cⱼ
+                        ShiftRBuffer[i] += shift_rᵢ
+                        ShiftRBuffer[j] += shift_rⱼ
+                    end
+                    for NeighborOffsetIndex in NeighborStart:NeighborEnd
+                        NeighborIndex = NeighborCellIndices[NeighborOffsetIndex]
+                        if NeighborIndex <= CellListIndexLocal
+                            continue
+                        end
+                        StartIndex_ = ParticleRanges[NeighborIndex]
+                        EndIndex_ = ParticleRanges[NeighborIndex + 1] - 1
+                        @inbounds for j in StartIndex_:EndIndex_
+                            dρdtᵢ, dρdtⱼ, accᵢ, accⱼ, kernelᵢ, kernelⱼ, kernel_gradᵢ, kernel_gradⱼ,
+                            shift_cᵢ, shift_cⱼ, shift_rᵢ, shift_rⱼ =
+                                ComputeInteractionsPair!(
+                                    SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                                    SimConstants, SimParticles, Position, Density, Pressure,
+                                    Velocity, MotionLimiter, i, j,
+                                )
+                            DρdtBuffer[i] += dρdtᵢ
+                            DρdtBuffer[j] += dρdtⱼ
+                            AccBuffer[i] += accᵢ
+                            AccBuffer[j] += accⱼ
+                            KernelBuffer[i] += kernelᵢ
+                            KernelBuffer[j] += kernelⱼ
+                            KernelGradientBuffer[i] += kernel_gradᵢ
+                            KernelGradientBuffer[j] += kernel_gradⱼ
+                            ShiftCBuffer[i] += shift_cᵢ
+                            ShiftCBuffer[j] += shift_cⱼ
+                            ShiftRBuffer[i] += shift_rᵢ
+                            ShiftRBuffer[j] += shift_rⱼ
+                        end
+                    end
                 end
             end
         end
