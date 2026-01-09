@@ -1216,12 +1216,7 @@ using LinearAlgebra
             end
             @timeit SimMetaData.HourGlass "13 Save Particle Data"  begin
                 output.enqueue_particles(SimMetaData.OutputIterationCounter)
-                output.enqueue_grid(
-                    SimMetaData.OutputIterationCounter,
-                    UniqueCellsView,
-                    cell_particle_counts=cell_particle_counts,
-                    cell_neighbor_counts=cell_neighbor_counts,
-                )
+                output.enqueue_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, cell_particle_counts=cell_particle_counts, cell_neighbor_counts=cell_neighbor_counts)
             end
 
             if SimMetaData.TotalTime > SimMetaData.SimulationTime
