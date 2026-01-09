@@ -816,13 +816,26 @@ using LinearAlgebra
         return nothing
     end
     
-    function FinalizeLog!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger, UnicodeTimeStepsGraph) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, B<:MDBCMode}
+    function FinalizeLog!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, B<:MDBCMode}
         LogFinal(SimLogger, SimMetaData.HourGlass)
+        
+        # Time steps line plot
+        UnicodeTimeStepsGraph = lineplot(
+            1:length(SimMetaData.TimeSteps),
+            SimMetaData.TimeSteps,
+            title="Time Steps [s] as a function of iteration",
+            name="Time Steps",
+            xlabel="Iterations [-]",
+            ylabel="Time Step Size [s]",
+        )
+
         with_logger(SimLogger.Logger) do
             @info ""
             show(SimLogger.LoggerIo, UnicodeTimeStepsGraph)
         end
+        
         close(SimLogger.LoggerIo)
+        
         AutoOpenLogFile(SimLogger, SimMetaData)
         return nothing
     end
@@ -1221,17 +1234,7 @@ using LinearAlgebra
 
                 AutoOpenParaview(SimMetaData, output.variable_names)
 
-                # Time steps line plot
-                UnicodeTimeStepsGraph = lineplot(
-                    1:length(SimMetaData.TimeSteps),
-                    SimMetaData.TimeSteps,
-                    title="Time Steps [s] as a function of iteration",
-                    name="Time Steps",
-                    xlabel="Iterations [-]",
-                    ylabel="Time Step Size [s]",
-                )
-
-                FinalizeLog!(SimMetaData, SimLogger, UnicodeTimeStepsGraph)
+                FinalizeLog!(SimMetaData, SimLogger)
 
                 break
             end
