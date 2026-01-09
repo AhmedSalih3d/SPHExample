@@ -129,6 +129,7 @@ using LinearAlgebra
 
         sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
         Cells = @views Particles.Cells
+        CellListIndex = Particles.CellListIndex
         @. ParticleRanges             = zero(eltype(ParticleRanges))
         ParticleRanges[1] = 1
         IndexCounter                  = 2
@@ -136,6 +137,7 @@ using LinearAlgebra
         UniqueCells[IndexCounter]     = Cells[1]
         empty!(CellDict)
         CellDict[Cells[1]] = IndexCounter
+        CellListIndex[1] = IndexCounter
 
         @inbounds @simd ivdep for i in eachindex(Cells)[2:end]
             if Cells[i] != Cells[i-1] # Equivalent to diff(Cells) != 0
@@ -144,6 +146,7 @@ using LinearAlgebra
                 UniqueCells[IndexCounter]     = Cells[i]
                 CellDict[Cells[i]]           = IndexCounter
             end
+            CellListIndex[i] = IndexCounter
         end
         ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
 
@@ -182,15 +185,14 @@ using LinearAlgebra
                                                   B<:MDBCMode,L<:LogMode,
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
-        Cells = SimParticles.Cells
+        CellListIndex = SimParticles.CellListIndex
         @inbounds Threads.@threads for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
-            CellIndex = Cells[i]
-            CellListIndex = get(CellDict, CellIndex, 1)
-            SameCellStart = ParticleRanges[CellListIndex]
-            SameCellEnd = ParticleRanges[CellListIndex + 1] - 1
-            NeighborCellIndices = NeighborCellLists[CellListIndex]
+            CellListIndexI = CellListIndex[i]
+            SameCellStart = ParticleRanges[CellListIndexI]
+            SameCellEnd = ParticleRanges[CellListIndexI + 1] - 1
+            NeighborCellIndices = NeighborCellLists[CellListIndexI]
 
             @inbounds for j in SameCellStart:(i - 1)
                 dρdt_acc, acc_acc = ComputeInteractionsPerParticleNoKernel!(
@@ -238,17 +240,16 @@ using LinearAlgebra
                                                   B<:MDBCMode,L<:LogMode,
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
-        Cells = SimParticles.Cells
+        CellListIndex = SimParticles.CellListIndex
         @inbounds Threads.@threads for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
             kernel_acc = zero(Kernel[i])
             kernel_grad_acc = zero(KernelGradient[i])
-            CellIndex = Cells[i]
-            CellListIndex = get(CellDict, CellIndex, 1)
-            SameCellStart = ParticleRanges[CellListIndex]
-            SameCellEnd = ParticleRanges[CellListIndex + 1] - 1
-            NeighborCellIndices = NeighborCellLists[CellListIndex]
+            CellListIndexI = CellListIndex[i]
+            SameCellStart = ParticleRanges[CellListIndexI]
+            SameCellEnd = ParticleRanges[CellListIndexI + 1] - 1
+            NeighborCellIndices = NeighborCellLists[CellListIndexI]
 
             @inbounds for j in SameCellStart:(i - 1)
                 dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc =
@@ -303,17 +304,16 @@ using LinearAlgebra
                                                   S<:ShiftingMode,B<:MDBCMode,
                                                   L<:LogMode,SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
-        Cells = SimParticles.Cells
+        CellListIndex = SimParticles.CellListIndex
         @inbounds Threads.@threads for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
             shift_c_acc = zero(∇Cᵢ[i])
             shift_r_acc = zero(∇◌rᵢ[i])
-            CellIndex = Cells[i]
-            CellListIndex = get(CellDict, CellIndex, 1)
-            SameCellStart = ParticleRanges[CellListIndex]
-            SameCellEnd = ParticleRanges[CellListIndex + 1] - 1
-            NeighborCellIndices = NeighborCellLists[CellListIndex]
+            CellListIndexI = CellListIndex[i]
+            SameCellStart = ParticleRanges[CellListIndexI]
+            SameCellEnd = ParticleRanges[CellListIndexI + 1] - 1
+            NeighborCellIndices = NeighborCellLists[CellListIndexI]
 
             @inbounds for j in SameCellStart:(i - 1)
                 dρdt_acc, acc_acc, shift_c_acc, shift_r_acc =
@@ -370,7 +370,7 @@ using LinearAlgebra
                                                   B<:MDBCMode,L<:LogMode,
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
-        Cells = SimParticles.Cells
+        CellListIndex = SimParticles.CellListIndex
         @inbounds Threads.@threads for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
@@ -378,11 +378,10 @@ using LinearAlgebra
             kernel_grad_acc = zero(KernelGradient[i])
             shift_c_acc = zero(∇Cᵢ[i])
             shift_r_acc = zero(∇◌rᵢ[i])
-            CellIndex = Cells[i]
-            CellListIndex = get(CellDict, CellIndex, 1)
-            SameCellStart = ParticleRanges[CellListIndex]
-            SameCellEnd = ParticleRanges[CellListIndex + 1] - 1
-            NeighborCellIndices = NeighborCellLists[CellListIndex]
+            CellListIndexI = CellListIndex[i]
+            SameCellStart = ParticleRanges[CellListIndexI]
+            SameCellEnd = ParticleRanges[CellListIndexI + 1] - 1
+            NeighborCellIndices = NeighborCellLists[CellListIndexI]
 
             @inbounds for j in SameCellStart:(i - 1)
                 dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc,
