@@ -180,21 +180,65 @@ using LinearAlgebra
         return SameCellStart, SameCellEnd, NeighborCellIndices
     end
 
-    @inline function AccumulateNeighborInteractions!(ComputeInteractions!, Accumulators, i,
+    struct NoKernelInteractionHandler{SDD,SV,SK,SM,SC,SP,PO,DE,PR,VE,ML}
+        SimDensityDiffusion::SDD
+        SimViscosity::SV
+        SimKernel::SK
+        SimMetaData::SM
+        SimConstants::SC
+        SimParticles::SP
+        Position::PO
+        Density::DE
+        Pressure::PR
+        Velocity::VE
+        MotionLimiter::ML
+    end
+
+    struct KernelInteractionHandler{SDD,SV,SK,SM,SC,SP,PO,DE,PR,VE,ML}
+        SimDensityDiffusion::SDD
+        SimViscosity::SV
+        SimKernel::SK
+        SimMetaData::SM
+        SimConstants::SC
+        SimParticles::SP
+        Position::PO
+        Density::DE
+        Pressure::PR
+        Velocity::VE
+        MotionLimiter::ML
+    end
+
+    @inline function ComputeInteractions(Handler::NoKernelInteractionHandler, Accumulators, i, j)
+        return ComputeInteractionsPerParticleNoKernel!(
+            Handler.SimDensityDiffusion, Handler.SimViscosity, Handler.SimKernel, Handler.SimMetaData,
+            Handler.SimConstants, Handler.SimParticles, Handler.Position, Handler.Density,
+            Handler.Pressure, Handler.Velocity, Handler.MotionLimiter, Accumulators..., i, j,
+        )
+    end
+
+    @inline function ComputeInteractions(Handler::KernelInteractionHandler, Accumulators, i, j)
+        return ComputeInteractionsPerParticle!(
+            Handler.SimDensityDiffusion, Handler.SimViscosity, Handler.SimKernel, Handler.SimMetaData,
+            Handler.SimConstants, Handler.SimParticles, Handler.Position, Handler.Density,
+            Handler.Pressure, Handler.Velocity, Handler.MotionLimiter, Accumulators..., i, j,
+        )
+    end
+
+    @inline function AccumulateNeighborInteractions!(Handler, Accumulators, i,
                                                      SameCellStart, SameCellEnd,
                                                      NeighborCellIndices, ParticleRanges,
                                                      last_index)
         @inbounds for j in SameCellStart:(i - 1)
-            Accumulators = ComputeInteractions!(Accumulators, i, j)
+            Accumulators = ComputeInteractions(Handler, Accumulators, i, j)
         end
         @inbounds for j in (i + 1):SameCellEnd
-            Accumulators = ComputeInteractions!(Accumulators, i, j)
+            Accumulators = ComputeInteractions(Handler, Accumulators, i, j)
         end
         for NeighborIdx in NeighborCellIndices
             StartIndex_ = ParticleRanges[NeighborIdx]
             EndIndex_ = min(ParticleRanges[NeighborIdx + 1] - 1, last_index)
             @inbounds for j in StartIndex_:EndIndex_
-                Accumulators = ComputeInteractions!(Accumulators, i, j)
+                Accumulators = ComputeInteractions(Handler, Accumulators, i, j)
             end
         end
 
@@ -213,18 +257,17 @@ using LinearAlgebra
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         Cells = SimParticles.Cells
+        Handler = NoKernelInteractionHandler(
+            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles,
+            Position, Density, Pressure, Velocity, MotionLimiter,
+        )
         @inbounds Threads.@threads for i in eachindex(Position)
             Accumulators = (zero(dρdtI[i]), zero(Acceleration[i]))
             SameCellStart, SameCellEnd, NeighborCellIndices = NeighborLoopCellData(
                 Cells, CellDict, ParticleRanges, NeighborCellLists, i,
             )
-            ComputeInteractions!(Accumulators, i, j) = ComputeInteractionsPerParticleNoKernel!(
-                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                SimConstants, SimParticles, Position, Density, Pressure,
-                Velocity, MotionLimiter, Accumulators..., i, j,
-            )
             Accumulators = AccumulateNeighborInteractions!(
-                ComputeInteractions!, Accumulators, i, SameCellStart, SameCellEnd,
+                Handler, Accumulators, i, SameCellStart, SameCellEnd,
                 NeighborCellIndices, ParticleRanges, lastindex(Cells),
             )
 
@@ -251,6 +294,10 @@ using LinearAlgebra
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         Cells = SimParticles.Cells
+        Handler = KernelInteractionHandler(
+            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles,
+            Position, Density, Pressure, Velocity, MotionLimiter,
+        )
         @inbounds Threads.@threads for i in eachindex(Position)
             Accumulators = (
                 zero(dρdtI[i]),
@@ -261,13 +308,8 @@ using LinearAlgebra
             SameCellStart, SameCellEnd, NeighborCellIndices = NeighborLoopCellData(
                 Cells, CellDict, ParticleRanges, NeighborCellLists, i,
             )
-            ComputeInteractions!(Accumulators, i, j) = ComputeInteractionsPerParticle!(
-                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                SimConstants, SimParticles, Position, Density, Pressure,
-                Velocity, MotionLimiter, Accumulators..., i, j,
-            )
             Accumulators = AccumulateNeighborInteractions!(
-                ComputeInteractions!, Accumulators, i, SameCellStart, SameCellEnd,
+                Handler, Accumulators, i, SameCellStart, SameCellEnd,
                 NeighborCellIndices, ParticleRanges, lastindex(Cells),
             )
 
@@ -295,6 +337,10 @@ using LinearAlgebra
                                                   L<:LogMode,SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         Cells = SimParticles.Cells
+        Handler = NoKernelInteractionHandler(
+            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles,
+            Position, Density, Pressure, Velocity, MotionLimiter,
+        )
         @inbounds Threads.@threads for i in eachindex(Position)
             Accumulators = (
                 zero(dρdtI[i]),
@@ -305,13 +351,8 @@ using LinearAlgebra
             SameCellStart, SameCellEnd, NeighborCellIndices = NeighborLoopCellData(
                 Cells, CellDict, ParticleRanges, NeighborCellLists, i,
             )
-            ComputeInteractions!(Accumulators, i, j) = ComputeInteractionsPerParticleNoKernel!(
-                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                SimConstants, SimParticles, Position, Density, Pressure,
-                Velocity, MotionLimiter, Accumulators..., i, j,
-            )
             Accumulators = AccumulateNeighborInteractions!(
-                ComputeInteractions!, Accumulators, i, SameCellStart, SameCellEnd,
+                Handler, Accumulators, i, SameCellStart, SameCellEnd,
                 NeighborCellIndices, ParticleRanges, lastindex(Cells),
             )
 
@@ -341,6 +382,10 @@ using LinearAlgebra
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         Cells = SimParticles.Cells
+        Handler = KernelInteractionHandler(
+            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants, SimParticles,
+            Position, Density, Pressure, Velocity, MotionLimiter,
+        )
         @inbounds Threads.@threads for i in eachindex(Position)
             Accumulators = (
                 zero(dρdtI[i]),
@@ -353,13 +398,8 @@ using LinearAlgebra
             SameCellStart, SameCellEnd, NeighborCellIndices = NeighborLoopCellData(
                 Cells, CellDict, ParticleRanges, NeighborCellLists, i,
             )
-            ComputeInteractions!(Accumulators, i, j) = ComputeInteractionsPerParticle!(
-                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                SimConstants, SimParticles, Position, Density, Pressure,
-                Velocity, MotionLimiter, Accumulators..., i, j,
-            )
             Accumulators = AccumulateNeighborInteractions!(
-                ComputeInteractions!, Accumulators, i, SameCellStart, SameCellEnd,
+                Handler, Accumulators, i, SameCellStart, SameCellEnd,
                 NeighborCellIndices, ParticleRanges, lastindex(Cells),
             )
 
