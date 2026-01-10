@@ -175,14 +175,15 @@ using LinearAlgebra
         CellIndex = Cells[i]
         CellListIndex = get(CellDict, CellIndex, 1)
         SameCellStart = ParticleRanges[CellListIndex]
-        SameCellEnd = ParticleRanges[CellListIndex + 1] - 1
+        SameCellEnd = min(ParticleRanges[CellListIndex + 1] - 1, lastindex(Cells))
         NeighborCellIndices = NeighborCellLists[CellListIndex]
         return SameCellStart, SameCellEnd, NeighborCellIndices
     end
 
     @inline function AccumulateNeighborInteractions!(ComputeInteractions!, Accumulators, i,
                                                      SameCellStart, SameCellEnd,
-                                                     NeighborCellIndices, ParticleRanges)
+                                                     NeighborCellIndices, ParticleRanges,
+                                                     last_index)
         @inbounds for j in SameCellStart:(i - 1)
             Accumulators = ComputeInteractions!(Accumulators, i, j)
         end
@@ -191,7 +192,7 @@ using LinearAlgebra
         end
         for NeighborIdx in NeighborCellIndices
             StartIndex_ = ParticleRanges[NeighborIdx]
-            EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
+            EndIndex_ = min(ParticleRanges[NeighborIdx + 1] - 1, last_index)
             @inbounds for j in StartIndex_:EndIndex_
                 Accumulators = ComputeInteractions!(Accumulators, i, j)
             end
@@ -224,7 +225,7 @@ using LinearAlgebra
             )
             Accumulators = AccumulateNeighborInteractions!(
                 ComputeInteractions!, Accumulators, i, SameCellStart, SameCellEnd,
-                NeighborCellIndices, ParticleRanges,
+                NeighborCellIndices, ParticleRanges, lastindex(Cells),
             )
 
             dρdt_acc, acc_acc = Accumulators
@@ -267,7 +268,7 @@ using LinearAlgebra
             )
             Accumulators = AccumulateNeighborInteractions!(
                 ComputeInteractions!, Accumulators, i, SameCellStart, SameCellEnd,
-                NeighborCellIndices, ParticleRanges,
+                NeighborCellIndices, ParticleRanges, lastindex(Cells),
             )
 
             dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc = Accumulators
@@ -311,7 +312,7 @@ using LinearAlgebra
             )
             Accumulators = AccumulateNeighborInteractions!(
                 ComputeInteractions!, Accumulators, i, SameCellStart, SameCellEnd,
-                NeighborCellIndices, ParticleRanges,
+                NeighborCellIndices, ParticleRanges, lastindex(Cells),
             )
 
             dρdt_acc, acc_acc, shift_c_acc, shift_r_acc = Accumulators
@@ -359,7 +360,7 @@ using LinearAlgebra
             )
             Accumulators = AccumulateNeighborInteractions!(
                 ComputeInteractions!, Accumulators, i, SameCellStart, SameCellEnd,
-                NeighborCellIndices, ParticleRanges,
+                NeighborCellIndices, ParticleRanges, lastindex(Cells),
             )
 
             dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc, shift_r_acc = Accumulators
