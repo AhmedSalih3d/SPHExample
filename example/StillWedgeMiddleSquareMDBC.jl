@@ -7,6 +7,17 @@ let
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.5)
     # SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=43.4, δᵩ = 0.1, CFL=0.2)
 
+    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
+        SimulationName="StillWedge", 
+        SaveLocation="E:/SecondApproach/StillWedgeMiddleSquare2D_MDBC",
+        SimulationTime=4,
+        OutputTimes=0.01,
+        VisualizeInParaview=true,
+        ExportSingleVTKHDF=true,
+        ExportGridCells=true,
+        OpenLogFile=true
+    )
+
     # Assuming SimConstantsWedge is defined somewhere else with the field `dx`
     FixedBoundary = Geometry{Dimensions, FloatType}(
         CSVFile     = "./input/still_wedge_middle_square_mdbc/StillWedge_MiddleSquare_Dp$(SimConstantsWedge.dx)_Bound.csv",
@@ -25,18 +36,7 @@ let
     SimulationGeometry = [FixedBoundary;Water]
     
     # Load in particles
-    SimParticles = AllocateDataStructures(SimulationGeometry)
-
-    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
-        SimulationName="StillWedge", 
-        SaveLocation="E:/SecondApproach/StillWedgeMiddleSquare2D_MDBC",
-        SimulationTime=4,
-        OutputTimes=0.01,
-        VisualizeInParaview=true,
-        ExportSingleVTKHDF=true,
-        ExportGridCells=true,
-        OpenLogFile=true
-    )
+    SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaDataWedge)
 
     # If save directory is not already made, make it
     if !isdir(SimMetaDataWedge.SaveLocation)
@@ -96,7 +96,5 @@ let
     
     # display(plt)
 end
-
-
 
 

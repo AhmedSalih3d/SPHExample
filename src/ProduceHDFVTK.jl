@@ -566,21 +566,32 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             OutputVTKHDF = h5open("$(particle_savepath).vtkhdf", "w")
             root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
             
-            available_init = Dict(
-                "Kernel" => SimParticles.Kernel,
-                "KernelGradient" => SimParticles.KernelGradient,
-                "Density" => SimParticles.Density,
-                "Pressure" => SimParticles.Pressure,
-                "Velocity" => SimParticles.Velocity,
-                "Acceleration" => SimParticles.Acceleration,
-                "BoundaryBool" => SimParticles.BoundaryBool,
-                "ID" => SimParticles.ID,
-                "Type" => Int8.(SimParticles.Type),
-                "GroupMarker" => SimParticles.GroupMarker,
-                "GhostPoints" => SimParticles.GhostPoints,
-                "GhostNormals" => SimParticles.GhostNormals,
+            field_map = Dict(
+                "Kernel" => :Kernel,
+                "KernelGradient" => :KernelGradient,
+                "Density" => :Density,
+                "Pressure" => :Pressure,
+                "Velocity" => :Velocity,
+                "Acceleration" => :Acceleration,
+                "BoundaryBool" => :BoundaryBool,
+                "ID" => :ID,
+                "Type" => :Type,
+                "GroupMarker" => :GroupMarker,
+                "GhostPoints" => :GhostPoints,
+                "GhostNormals" => :GhostNormals,
             )
-            output_data_init = [available_init[name] for name in output_vars]
+            output_data_init = Vector{Any}(undef, length(output_vars))
+            for (i, name) in pairs(output_vars)
+                prop = get(field_map, name, nothing)
+                if prop === nothing || !hasproperty(SimParticles, prop)
+                    error("OutputVariables includes $(name) but SimParticles has no field $(name).")
+                end
+                if name == "Type"
+                    output_data_init[i] = Int8.(getproperty(SimParticles, prop))
+                else
+                    output_data_init[i] = getproperty(SimParticles, prop)
+                end
+            end
 
             GenerateGeometryStructure(root, output_vars, output_data_init...; chunk_size=1024)
             GenerateStepStructure(root, output_vars, output_data_init...)
@@ -644,7 +655,11 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 elseif name == "Type"
                     output_data[i] = Vector{Int8}(undef, n)
                 else
-                    src = getproperty(SimParticles, field_map[name])
+                    prop = field_map[name]
+                    if !hasproperty(SimParticles, prop)
+                        error("OutputVariables includes $(name) but SimParticles has no field $(name).")
+                    end
+                    src = getproperty(SimParticles, prop)
                     output_data[i] = similar(src, n)
                 end
             end
@@ -666,14 +681,22 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                         buf[j] = Int8(src[j])
                     end
                 elseif name in vector_fields
-                    src = getproperty(SimParticles, field_map[name])
+                    prop = field_map[name]
+                    if !hasproperty(SimParticles, prop)
+                        error("OutputVariables includes $(name) but SimParticles has no field $(name).")
+                    end
+                    src = getproperty(SimParticles, prop)
                     if Dimensions == 2
                         to_3d!(buf, src)
                     else
                         copy!(buf, src)
                     end
                 else
-                    src = getproperty(SimParticles, field_map[name])
+                    prop = field_map[name]
+                    if !hasproperty(SimParticles, prop)
+                        error("OutputVariables includes $(name) but SimParticles has no field $(name).")
+                    end
+                    src = getproperty(SimParticles, prop)
                     copy!(buf, src)
                 end
             end

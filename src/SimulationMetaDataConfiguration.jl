@@ -49,18 +49,12 @@ struct StoreLog <: LogMode end
     ExportGridCells::Bool                   = false
     ExportGridCellParticleCounts::Bool      = false
     OutputVariables::Vector{String}         = [
-        "Kernel",
-        "KernelGradient",
         "Density",
         "Pressure",
         "Velocity",
         "Acceleration",
-        "BoundaryBool",
-        "ID",
         "Type",
         "GroupMarker",
-        "GhostPoints",
-        "GhostNormals",
     ]
     OpenLogFile::Bool                       = true
     Δx::FloatType                           = zero(FloatType)

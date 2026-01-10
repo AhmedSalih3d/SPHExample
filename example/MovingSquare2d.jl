@@ -53,7 +53,7 @@ let
     SimulationGeometry = [FixedBoundary;Water;MovingSquare]
 
     # Load in particles
-    SimParticles = AllocateDataStructures(SimulationGeometry)
+    SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaDataMovingSquare)
     
     # Collect Geometry instances into a vector
     SimulationGeometry = [FixedBoundary, Water, MovingSquare]

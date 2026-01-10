@@ -14,6 +14,18 @@ let
         CFL = 0.2
     )
 
+    # --- Simulation metadata & logging ---
+    SimMetaDataDambreak3D = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,NoMDBC,StoreLog}(
+        SimulationName         = "DamBreak3D_Test",
+        SaveLocation           = "E:/SecondApproach/TESTING_CPU_3DDambreak",
+        SimulationTime         = 1.6,
+        OutputTimes            = 0.01,
+        VisualizeInParaview    = true,
+        ExportSingleVTKHDF     = true,
+        ExportGridCells        = true,
+        OpenLogFile            = true
+    )
+
     # --- Geometry ---
     FixedBoundary = Geometry{Dimensions, FloatType}(
         CSVFile     = "./input/dam_break_3d/DamBreak3d_Dp$(dx)_Bound.csv",
@@ -30,19 +42,7 @@ let
     SimulationGeometry = [FixedBoundary; Water]
 
     # --- Allocate particles ---
-    SimParticles = AllocateDataStructures(SimulationGeometry)
-
-    # --- Simulation metadata & logging ---
-    SimMetaDataDambreak3D = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,NoMDBC,StoreLog}(
-        SimulationName         = "DamBreak3D_Test",
-        SaveLocation           = "E:/SecondApproach/TESTING_CPU_3DDambreak",
-        SimulationTime         = 1.6,
-        OutputTimes            = 0.01,
-        VisualizeInParaview    = true,
-        ExportSingleVTKHDF     = true,
-        ExportGridCells        = true,
-        OpenLogFile            = true
-    )
+    SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaDataDambreak3D)
 
     SimLogger = SimulationLogger(SimMetaDataDambreak3D.SaveLocation)
 
