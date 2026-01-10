@@ -6,6 +6,17 @@ let
     
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=23.43842998154953, δᵩ = 0.1, CFL=0.2, α=0.02, m₀=0.001)
 
+    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
+        SimulationName="CaseDuckling",
+        SaveLocation="E:/SecondApproach/TESTING_CPU_Duckling",
+        SimulationTime=1,
+        OutputTimes=0.02,
+        VisualizeInParaview=true,
+        ExportSingleVTKHDF=true,
+        ExportGridCells= true,
+        OpenLogFile=true
+    )
+
     # Assuming SimConstantsWedge is defined somewhere else with the field `dx`
     FixedBoundary = Geometry{Dimensions, FloatType}(
         CSVFile     = "./input/case_duckling_mdbc/CaseDuckling_Dp$(SimConstantsWedge.dx)_Bound_MDBC.csv",
@@ -24,18 +35,7 @@ let
     SimulationGeometry = [FixedBoundary;Water]
     
     # Load in particles
-    SimParticles = AllocateDataStructures(SimulationGeometry)
-
-    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
-        SimulationName="CaseDuckling",
-        SaveLocation="E:/SecondApproach/TESTING_CPU_Duckling",
-        SimulationTime=1,
-        OutputTimes=0.02,
-        VisualizeInParaview=true,
-        ExportSingleVTKHDF=true,
-        ExportGridCells= true,
-        OpenLogFile=true
-    )
+    SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaDataWedge)
 
     SimKernel           = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); dx = SimConstantsWedge.dx, k = 1.5)
     SimViscosity        = ArtificialViscosity()
@@ -60,6 +60,4 @@ let
 
     return SimParticles
 end
-
-
 

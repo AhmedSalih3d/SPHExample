@@ -42,7 +42,7 @@ function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, parti
     return points, density, types, group_marker, idp
 end
 
-function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, FloatType}}) where {Dimensions, FloatType}
+function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, FloatType}}; OutputVariables=String[], RequireMDBC::Bool=false, RequireKernelOutput::Bool=false) where {Dimensions, FloatType}
     Position    = Vector{SVector{Dimensions, FloatType}}()
     Density     = Vector{FloatType}()
     Types       = Vector{ParticleType}()
@@ -75,6 +75,13 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
     PositionType             = eltype(Position)
     PositionUnderlyingType   = eltype(PositionType)
 
+    sort_perm = sortperm(Idp)
+    Position = Position[sort_perm]
+    Density = Density[sort_perm]
+    Types = Types[sort_perm]
+    GroupMarker = GroupMarker[sort_perm]
+    Idp = Idp[sort_perm]
+
     GravityFactor = similar(Density)
     for i ∈ eachindex(GravityFactor)
         fac = 0
@@ -97,24 +104,58 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
         MotionLimiter[i] = fac
     end
 
-    BoundaryBool  = UInt8.(.!Bool.(MotionLimiter))
+    if !RequireKernelOutput && ("Kernel" in OutputVariables || "KernelGradient" in OutputVariables)
+        error("Kernel output requires StoreKernelOutput in SimulationMetaData.")
+    end
 
     Acceleration    = zeros(PositionType, NumberOfPoints)
     Velocity        = zeros(PositionType, NumberOfPoints)
-    Kernel          = zeros(PositionUnderlyingType, NumberOfPoints)
-    KernelGradient  = zeros(PositionType, NumberOfPoints)
-    GhostPoints     = zeros(PositionType, NumberOfPoints)
-    GhostNormals    = zeros(PositionType, NumberOfPoints)
-
     Pressureᵢ      = zeros(PositionUnderlyingType, NumberOfPoints)
     
     Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
     
-    SimParticles = StructArray((Cells = Cells, Kernel = Kernel, KernelGradient = KernelGradient, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = Idp , Type = Types, GroupMarker = GroupMarker, GhostPoints = GhostPoints, GhostNormals=GhostNormals))
+    ParticleFields = (;
+        Cells = Cells,
+        Position = Position,
+        Acceleration = Acceleration,
+        Velocity = Velocity,
+        Density = Density,
+        Pressure = Pressureᵢ,
+        GravityFactor = GravityFactor,
+        MotionLimiter = MotionLimiter,
+        Type = Types,
+        GroupMarker = GroupMarker,
+    )
+    if RequireKernelOutput
+        Kernel = zeros(PositionUnderlyingType, NumberOfPoints)
+        KernelGradient = zeros(PositionType, NumberOfPoints)
+        ParticleFields = merge(ParticleFields, (; Kernel = Kernel, KernelGradient = KernelGradient))
+    end
+    if RequireMDBC || "GhostPoints" in OutputVariables
+        GhostPoints = zeros(PositionType, NumberOfPoints)
+        ParticleFields = merge(ParticleFields, (; GhostPoints = GhostPoints))
+    end
+    if RequireMDBC || "GhostNormals" in OutputVariables
+        GhostNormals = zeros(PositionType, NumberOfPoints)
+        ParticleFields = merge(ParticleFields, (; GhostNormals = GhostNormals))
+    end
+    if "BoundaryBool" in OutputVariables
+        BoundaryBool = UInt8.(.!Bool.(MotionLimiter))
+        ParticleFields = merge(ParticleFields, (; BoundaryBool = BoundaryBool))
+    end
+    if "ID" in OutputVariables
+        ParticleFields = merge(ParticleFields, (; ID = Idp))
+    end
 
-    sort!(SimParticles, by = p -> p.ID)
+    SimParticles = StructArray(ParticleFields)
 
     return SimParticles
+end
+
+function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, FloatType}}, SimMetaData::SimulationMetaData{Dimensions, FloatType}) where {Dimensions, FloatType}
+    RequireMDBC = !(SimMetaData isa SimulationMetaData{Dimensions, FloatType, SMode, KMode, NoMDBC, LMode} where {SMode, KMode, LMode})
+    RequireKernelOutput = !(SimMetaData isa SimulationMetaData{Dimensions, FloatType, SMode, NoKernelOutput, BMode, LMode} where {SMode, BMode, LMode})
+    return AllocateDataStructures(SimGeometry; OutputVariables = SimMetaData.OutputVariables, RequireMDBC = RequireMDBC, RequireKernelOutput = RequireKernelOutput)
 end
 
 function AllocateSupportDataStructures(::SimulationMetaData{D,T,NoShifting,K,B,L}, Position) where {D,T,K<:KernelOutputMode,

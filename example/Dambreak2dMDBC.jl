@@ -6,6 +6,18 @@ let
 
     SimConstantsDambreak = SimulationConstants{FloatType}(dx=0.02,c₀=88.14487860902641, δᵩ = 0.1, CFL=0.2, α = 0.02)
 
+    SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,NoMDBC,StoreLog}(
+        SimulationName="DamBreak2D",
+        SaveLocation="E:/SecondApproach/DamBreak2D_MDBC/",
+        SimulationTime=2.0,
+        OutputTimes=collect(0.01:0.01:2.0),
+        VisualizeInParaview=true,
+        ExportSingleVTKHDF=true,
+        ExportGridCells=true,
+        ExportGridCellParticleCounts=true,
+        OpenLogFile=true
+    )
+
     # Create Geometry instances
     FixedBoundary = Geometry{Dimensions, FloatType}(
         CSVFile     = "./input/dam_break_2d/DamBreak2d_Dp0.02_MDBC_Bound_ThreeLayers.csv",
@@ -25,19 +37,7 @@ let
     SimulationGeometry = [FixedBoundary; Water]
 
     # Load in particles
-    SimParticles = AllocateDataStructures(SimulationGeometry)
-
-    SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,NoMDBC,StoreLog}(
-        SimulationName="DamBreak2D",
-        SaveLocation="E:/SecondApproach/DamBreak2D_MDBC/",
-        SimulationTime=2.0,
-        OutputTimes=collect(0.01:0.01:2.0),
-        VisualizeInParaview=true,
-        ExportSingleVTKHDF=true,
-        ExportGridCells=true,
-        ExportGridCellParticleCounts=true,
-        OpenLogFile=true
-    )
+    SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaDataDambreak)
 
     # If save directory is not already made, make it
     if !isdir(SimMetaDataDambreak.SaveLocation)
