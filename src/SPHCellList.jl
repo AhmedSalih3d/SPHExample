@@ -77,7 +77,7 @@ using LinearAlgebra
     # Replace unsafe_trunc with trunc if this ever errors
     @inline function map_floor(x, InverseCutOff)
         # This is different than just doing muladd(x,InverseCutOff,0.5) because it rounds towards zero.
-        # Consider -1.7 + 0.5, this would give -1.2 and then trunced 1, but we want -2, therefore absolute addition before hand
+        # Consider -1.7 + 0.5, this would give -1.2 and then truncated 1, but we want -2, therefore absolute addition before hand
         # We add 0.5 instead of 1, to ensure proper rounding behavior when restoring the sign for negative numbers.
         Int(sign(x)) * unsafe_trunc(Int, muladd(abs(x),InverseCutOff,0.5))
     end
