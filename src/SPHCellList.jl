@@ -185,8 +185,7 @@ using LinearAlgebra
                                                   B<:MDBCMode,L<:LogMode,
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
-        Cells = SimParticles.Cells
-        MotionLimiter = SimParticles.MotionLimiter
+        @unpack Cells, MotionLimiter = SimParticles
         @inbounds Threads.@threads for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
@@ -245,10 +244,7 @@ using LinearAlgebra
                                                   B<:MDBCMode,L<:LogMode,
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
-        Cells = SimParticles.Cells
-        MotionLimiter = SimParticles.MotionLimiter
-        Kernel = SimParticles.Kernel
-        KernelGradient = SimParticles.KernelGradient
+        @unpack Cells, MotionLimiter, Kernel, KernelGradient = SimParticles
         @inbounds Threads.@threads for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
@@ -316,8 +312,7 @@ using LinearAlgebra
                                                   S<:ShiftingMode,B<:MDBCMode,
                                                   L<:LogMode,SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
-        Cells = SimParticles.Cells
-        MotionLimiter = SimParticles.MotionLimiter
+        @unpack Cells, MotionLimiter = SimParticles
         @inbounds Threads.@threads for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
@@ -387,10 +382,7 @@ using LinearAlgebra
                                                   B<:MDBCMode,L<:LogMode,
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
-        Cells = SimParticles.Cells
-        MotionLimiter = SimParticles.MotionLimiter
-        Kernel = SimParticles.Kernel
-        KernelGradient = SimParticles.KernelGradient
+        @unpack Cells, MotionLimiter, Kernel, KernelGradient = SimParticles
         @inbounds Threads.@threads for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
