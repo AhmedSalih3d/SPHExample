@@ -102,9 +102,14 @@ using LinearAlgebra
     end
    
     @inline function ExtractCells!(Particles, InverseCutOff)
+        if isempty(Particles.Cells)
+            return nothing
+        end
+        dimension = length(Particles.Position[1])
+        v_dimension = Val(dimension)
         @inbounds @simd ivdep for i ∈ eachindex(Particles.Cells)
             position = Particles.Position[i]
-            Particles.Cells[i] = CartesianIndex(ntuple(d -> map_floor(position[d], InverseCutOff), Val(length(position))))
+            Particles.Cells[i] = CartesianIndex(ntuple(d -> map_floor(position[d], InverseCutOff), v_dimension))
         end
         return nothing
     end
