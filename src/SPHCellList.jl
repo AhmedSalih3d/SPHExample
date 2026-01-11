@@ -3,7 +3,6 @@ module SPHCellList
 export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!, RunSimulation
 
 using Parameters, FastPow, StaticArrays, Base.Threads
-import LinearAlgebra: dot
 
 using ..SimulationEquations
 using ..SimulationGeometry
@@ -20,10 +19,10 @@ using ..SPHViscosityModels
 using ..SPHDensityDiffusionModels
 
 using StaticArrays
-import StructArrays: StructArray, foreachfield
-import LinearAlgebra: dot, norm, diagm, diag, cond, det
-import Parameters: @unpack
-import FastPow: @fastpow
+using StructArrays: StructArray, foreachfield
+using LinearAlgebra: dot, norm, diagm, diag, cond, det
+using Parameters: @unpack
+using FastPow: @fastpow
 using Format
 using TimerOutputs
 using Logging, LoggingExtras
@@ -1151,6 +1150,63 @@ using LinearAlgebra
     end
     
     ###===
+    function EnqueueInitialGrid!(::Val{true}, Output, SimMetaData, UniqueCells, ParticleRanges, NeighborCellLists)
+        UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
+        CellParticleCounts, CellNeighborCounts = ComputeGridCellCounts(
+            Val(SimMetaData.ExportGridCellParticleCounts),
+            ParticleRanges,
+            NeighborCellLists,
+            length(UniqueCellsView),
+        )
+        Output.enqueue_grid(
+            SimMetaData.OutputIterationCounter,
+            UniqueCellsView,
+            cell_particle_counts=CellParticleCounts,
+            cell_neighbor_counts=CellNeighborCounts,
+        )
+
+        return nothing
+    end
+
+    function EnqueueInitialGrid!(::Val{false}, Output, SimMetaData, UniqueCells, ParticleRanges, NeighborCellLists)
+        return nothing
+    end
+
+    function ComputeGridCellCounts(::Val{true}, ParticleRanges, NeighborCellLists, UniqueCellCount)
+        CellParticleCounts = compute_cell_particle_counts(
+            ParticleRanges,
+            UniqueCellCount,
+        )
+        CellNeighborCounts = compute_cell_neighbor_counts(
+            ParticleRanges,
+            NeighborCellLists,
+            UniqueCellCount,
+        )
+
+        return CellParticleCounts, CellNeighborCounts
+    end
+
+    function ComputeGridCellCounts(::Val{false}, ParticleRanges, NeighborCellLists, UniqueCellCount)
+        return nothing, nothing
+    end
+
+    function HandleSimulationEnd!(::Val{true}, SimMetaData, SimLogger, Output)
+        @timeit SimMetaData.HourGlass "13B Close Data Streams" Output.close_files()
+
+        show(SimMetaData.HourGlass, sortby=:name)
+        show(SimMetaData.HourGlass)
+
+        AutoOpenParaview(SimMetaData, Output.variable_names)
+
+        FinalizeLog!(SimMetaData, SimLogger)
+
+        return true
+    end
+
+    function HandleSimulationEnd!(::Val{false}, SimMetaData, SimLogger, Output)
+        return false
+    end
+
     function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}, #Don't further specify type for now
         SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
         SimConstants::SimulationConstants,
@@ -1185,28 +1241,14 @@ using LinearAlgebra
         # Save initial state, use 1 else this cannot be used to index fid vector
         SimMetaData.OutputIterationCounter = 1
         output.enqueue_particles(SimMetaData.OutputIterationCounter)
-        if SimMetaData.IndexCounter > 0
-            unique_cells_view = view(UniqueCells, 1:SimMetaData.IndexCounter)
-            cell_particle_counts = nothing
-            cell_neighbor_counts = nothing
-            if SimMetaData.ExportGridCellParticleCounts
-                cell_particle_counts = compute_cell_particle_counts(
-                    ParticleRanges,
-                    SimMetaData.IndexCounter,
-                )
-                cell_neighbor_counts = compute_cell_neighbor_counts(
-                    ParticleRanges,
-                    NeighborCellLists,
-                    SimMetaData.IndexCounter,
-                )
-            end
-            output.enqueue_grid(
-                SimMetaData.OutputIterationCounter,
-                unique_cells_view,
-                cell_particle_counts=cell_particle_counts,
-                cell_neighbor_counts=cell_neighbor_counts,
-            )
-        end
+        EnqueueInitialGrid!(
+            Val(SimMetaData.IndexCounter > 0),
+            output,
+            SimMetaData,
+            UniqueCells,
+            ParticleRanges,
+            NeighborCellLists,
+        )
 
 
         MotionDefinition = GenerateMotionDetails(SimParticles, SimGeometry, Dimensions, FloatType)
@@ -1227,38 +1269,28 @@ using LinearAlgebra
             SimMetaData.OutputIterationCounter += 1
 
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-            cell_particle_counts = nothing
-            cell_neighbor_counts = nothing
-            if SimMetaData.ExportGridCellParticleCounts
-                cell_particle_counts = compute_cell_particle_counts(
-                    ParticleRanges,
-                    length(UniqueCellsView),
-                )
-                cell_neighbor_counts = compute_cell_neighbor_counts(
-                    ParticleRanges,
-                    NeighborCellLists,
-                    length(UniqueCellsView),
-                )
-            end
+            CellParticleCounts, CellNeighborCounts = ComputeGridCellCounts(
+                Val(SimMetaData.ExportGridCellParticleCounts),
+                ParticleRanges,
+                NeighborCellLists,
+                length(UniqueCellsView),
+            )
             @timeit SimMetaData.HourGlass "13 Save Particle Data"  begin
                 output.enqueue_particles(SimMetaData.OutputIterationCounter)
-                output.enqueue_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, cell_particle_counts=cell_particle_counts, cell_neighbor_counts=cell_neighbor_counts)
+                output.enqueue_grid(
+                    SimMetaData.OutputIterationCounter,
+                    UniqueCellsView,
+                    cell_particle_counts=CellParticleCounts,
+                    cell_neighbor_counts=CellNeighborCounts,
+                )
             end
 
-            if SimMetaData.TotalTime > SimMetaData.SimulationTime
-
-                # At end of simulation
-                @timeit SimMetaData.HourGlass "13B Close Data Streams" output.close_files()
-
-                show(SimMetaData.HourGlass,sortby=:name)
-                show(SimMetaData.HourGlass)
-
-                AutoOpenParaview(SimMetaData, output.variable_names)
-
-                FinalizeLog!(SimMetaData, SimLogger)
-
-                break
-            end
+            HandleSimulationEnd!(
+                Val(SimMetaData.TotalTime > SimMetaData.SimulationTime),
+                SimMetaData,
+                SimLogger,
+                output,
+            ) && break
         end
     end
     
