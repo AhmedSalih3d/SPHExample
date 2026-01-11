@@ -174,15 +174,19 @@ using LinearAlgebra
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{D,T,NoShifting,NoKernelOutput,B,L},
                                       SimConstants, SimParticles, ParticleRanges,
-                                      CellDict, NeighborCellLists, Position, Density,
-                                      Pressure, Velocity, MotionLimiter, dρdtI,
+                                      CellDict, NeighborCellLists, dρdtI,
                                       Acceleration, ∇Cᵢ,
                                       ∇◌rᵢ, max_visc = nothing,
-                                      min_dt_force = nothing) where {D,T,
+                                      min_dt_force = nothing;
+                                      Position = SimParticles.Position,
+                                      Density = SimParticles.Density,
+                                      Pressure = SimParticles.Pressure,
+                                      Velocity = SimParticles.Velocity) where {D,T,
                                                   B<:MDBCMode,L<:LogMode,
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         Cells = SimParticles.Cells
+        MotionLimiter = SimParticles.MotionLimiter
         @inbounds Threads.@threads for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
@@ -229,16 +233,22 @@ using LinearAlgebra
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{D,T,NoShifting,K,B,L},
                                       SimConstants, SimParticles, ParticleRanges,
-                                      CellDict, NeighborCellLists, Position, Density,
-                                      Pressure, Velocity, MotionLimiter, dρdtI,
-                                      Acceleration, Kernel, KernelGradient, ∇Cᵢ,
+                                      CellDict, NeighborCellLists, dρdtI,
+                                      Acceleration, ∇Cᵢ,
                                       ∇◌rᵢ, max_visc = nothing,
-                                      min_dt_force = nothing) where {D,T,
+                                      min_dt_force = nothing;
+                                      Position = SimParticles.Position,
+                                      Density = SimParticles.Density,
+                                      Pressure = SimParticles.Pressure,
+                                      Velocity = SimParticles.Velocity) where {D,T,
                                                   K<:KernelOutputMode,
                                                   B<:MDBCMode,L<:LogMode,
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         Cells = SimParticles.Cells
+        MotionLimiter = SimParticles.MotionLimiter
+        Kernel = SimParticles.Kernel
+        KernelGradient = SimParticles.KernelGradient
         @inbounds Threads.@threads for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
@@ -295,15 +305,19 @@ using LinearAlgebra
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{D,T,S,NoKernelOutput,B,L},
                                       SimConstants, SimParticles, ParticleRanges,
-                                      CellDict, NeighborCellLists, Position, Density,
-                                      Pressure, Velocity, MotionLimiter, dρdtI,
+                                      CellDict, NeighborCellLists, dρdtI,
                                       Acceleration, ∇Cᵢ,
                                       ∇◌rᵢ, max_visc = nothing,
-                                      min_dt_force = nothing) where {D,T,
+                                      min_dt_force = nothing;
+                                      Position = SimParticles.Position,
+                                      Density = SimParticles.Density,
+                                      Pressure = SimParticles.Pressure,
+                                      Velocity = SimParticles.Velocity) where {D,T,
                                                   S<:ShiftingMode,B<:MDBCMode,
                                                   L<:LogMode,SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         Cells = SimParticles.Cells
+        MotionLimiter = SimParticles.MotionLimiter
         @inbounds Threads.@threads for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
@@ -360,17 +374,23 @@ using LinearAlgebra
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{D,T,S,K,B,L},
                                       SimConstants, SimParticles, ParticleRanges,
-                                      CellDict, NeighborCellLists, Position, Density,
-                                      Pressure, Velocity, MotionLimiter, dρdtI,
-                                      Acceleration, Kernel, KernelGradient, ∇Cᵢ,
+                                      CellDict, NeighborCellLists, dρdtI,
+                                      Acceleration, ∇Cᵢ,
                                       ∇◌rᵢ, max_visc = nothing,
-                                      min_dt_force = nothing) where {D,T,
+                                      min_dt_force = nothing;
+                                      Position = SimParticles.Position,
+                                      Density = SimParticles.Density,
+                                      Pressure = SimParticles.Pressure,
+                                      Velocity = SimParticles.Velocity) where {D,T,
                                                   S<:ShiftingMode,
                                                   K<:KernelOutputMode,
                                                   B<:MDBCMode,L<:LogMode,
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         Cells = SimParticles.Cells
+        MotionLimiter = SimParticles.MotionLimiter
+        Kernel = SimParticles.Kernel
+        KernelGradient = SimParticles.KernelGradient
         @inbounds Threads.@threads for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
@@ -1044,8 +1064,6 @@ using LinearAlgebra
                 GroupMarker = SimParticles
         ParticleType   = SimParticles.Type
         ParticleMarker = GroupMarker
-        Kernel = hasproperty(SimParticles, :Kernel) ? SimParticles.Kernel : nothing
-        KernelGradient = hasproperty(SimParticles, :KernelGradient) ? SimParticles.KernelGradient : nothing
         GhostPoints = hasproperty(SimParticles, :GhostPoints) ? SimParticles.GhostPoints : nothing
         GhostNormals = hasproperty(SimParticles, :GhostNormals) ? SimParticles.GhostNormals : nothing
 
@@ -1095,16 +1113,13 @@ using LinearAlgebra
                     @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoopPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, ParticleRanges, CellDict,
-                        NeighborCellLists, Position, Density, Pressure, Velocity,
-                        MotionLimiter, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ,
+                        NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ,
                     )
                 else
                     @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoopPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, ParticleRanges, CellDict,
-                        NeighborCellLists, Position, Density, Pressure, Velocity,
-                        MotionLimiter, dρdtI, Acceleration, Kernel, KernelGradient,
-                        ∇Cᵢ, ∇◌rᵢ,
+                        NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ,
                     )
                 end
 
@@ -1121,17 +1136,21 @@ using LinearAlgebra
                     @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, ParticleRanges, CellDict,
-                        NeighborCellLists, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺,
-                        MotionLimiter, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ,
+                        NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ,
                         max_visc, min_dt_force,
+                        Position = Positionₙ⁺,
+                        Density = ρₙ⁺,
+                        Velocity = Velocityₙ⁺,
                     )
                 else
                     @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, ParticleRanges, CellDict,
-                        NeighborCellLists, Positionₙ⁺, ρₙ⁺, Pressure, Velocityₙ⁺,
-                        MotionLimiter, dρdtI, Acceleration, Kernel,
-                        KernelGradient, ∇Cᵢ, ∇◌rᵢ, max_visc, min_dt_force,
+                        NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ,
+                        max_visc, min_dt_force,
+                        Position = Positionₙ⁺,
+                        Density = ρₙ⁺,
+                        Velocity = Velocityₙ⁺,
                     )
                 end
 
