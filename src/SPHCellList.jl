@@ -141,7 +141,8 @@ using LinearAlgebra
         empty!(CellDict)
         CellDict[Cells[1]] = IndexCounter
 
-        @inbounds @simd ivdep for i in eachindex(Cells)[2:end]
+        n_cells = length(Cells)
+        @inbounds @simd ivdep for i in 2:n_cells
             if Cells[i] != Cells[i-1] # Equivalent to diff(Cells) != 0
                 IndexCounter                 += 1
                 ParticleRanges[IndexCounter]  = i
