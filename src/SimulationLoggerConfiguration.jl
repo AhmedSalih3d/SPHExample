@@ -10,9 +10,12 @@ module SimulationLoggerConfiguration
     using Base.Threads
     using InteractiveUtils
     using LibGit2
+    using UnicodePlots
     using ..SimulationGeometry
+    using ..SimulationMetaDataConfiguration
 
     export SimulationLogger, generate_format_string, InitializeLogger, LogSimulationDetails, LogStep, LogFinal
+    export InitializeLog!, LogStep!, FinalizeLog!
 
     """
         generate_format_string(values; padding=10)
@@ -220,6 +223,62 @@ module SimulationLoggerConfiguration
             @info "\n Sorted by time \n"
             show(SimLogger.LoggerIo, HourGlass)
         end
+    end
+
+    function InitializeLog!(::SimulationMetaData{D,T,S,K,B,NoLog}, _args...) where {D,T,S<:ShiftingMode,
+                                                                                      K<:KernelOutputMode,
+                                                                                      B<:MDBCMode}
+        return nothing
+    end
+    function InitializeLog!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger,
+                             SimConstants, SimKernel, SimViscosity, SimDensityDiffusion,
+                             SimGeometry, SimParticles) where {D,T,S<:ShiftingMode,
+                                                              K<:KernelOutputMode,
+                                                              B<:MDBCMode}
+        InitializeLogger(SimLogger, SimConstants, SimMetaData, SimKernel,
+                         SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
+        LogStep(SimLogger, SimMetaData, SimMetaData.HourGlass)
+        SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
+        return nothing
+    end
+
+    function LogStep!(::SimulationMetaData{D,T,S,K,B,NoLog}, _...) where {D,T,S<:ShiftingMode,
+                                                                           K<:KernelOutputMode,
+                                                                           B<:MDBCMode}
+        return nothing
+    end
+
+    function LogStep!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, B<:MDBCMode}
+        LogStep(SimLogger, SimMetaData, SimMetaData.HourGlass)
+        SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
+        return nothing
+    end
+
+    function FinalizeLog!(::SimulationMetaData{D,T,S,K,B,NoLog}, _...) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, B<:MDBCMode}
+        return nothing
+    end
+    
+    function FinalizeLog!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, B<:MDBCMode}
+        LogFinal(SimLogger, SimMetaData.HourGlass)
+        
+        # Time steps line plot
+        UnicodeTimeStepsGraph = lineplot(
+            1:length(SimMetaData.TimeSteps),
+            SimMetaData.TimeSteps,
+            title="Time Steps [s] as a function of iteration",
+            name="Time Steps",
+            xlabel="Iterations [-]",
+            ylabel="Time Step Size [s]",
+        )
+
+        with_logger(SimLogger.Logger) do
+            @info ""
+            show(SimLogger.LoggerIo, UnicodeTimeStepsGraph)
+        end
+        
+        close(SimLogger.LoggerIo)
+
+        return nothing
     end
 
 end
