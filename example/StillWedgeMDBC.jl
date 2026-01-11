@@ -16,20 +16,6 @@ let
         ExportSingleVTKHDF=true,
         ExportGridCells=true,
         OpenLogFile=true,
-        # OutputVariables = [
-        #     # "Kernel",
-        #     # "KernelGradient",
-        #     "Density",
-        #     "Pressure",
-        #     "Velocity",
-        #     "Acceleration",
-        #     # "BoundaryBool",
-        #     # "ID",
-        #     # "Type",
-        #     # "GroupMarker",
-        #     # "GhostPoints",
-        #     # "GhostNormals",
-        # ]
     )
 
     # If save directory is not already made, make it
