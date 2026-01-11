@@ -148,25 +148,52 @@ using LinearAlgebra
         return IndexCounter 
     end
 
-    function compute_cell_particle_counts(particle_ranges, n_cells)
-        counts = Vector{Int}(undef, n_cells)
-        @inbounds for i in 1:n_cells
-            counts[i] = particle_ranges[i + 1] - particle_ranges[i]
-        end
-        return counts
+    struct CellCounters{P,N}
+        ParticleCounts::P
+        NeighborCounts::N
     end
 
-    function compute_cell_neighbor_counts(particle_ranges, neighbor_cell_lists, n_cells)
-        counts = compute_cell_particle_counts(particle_ranges, n_cells)
-        neighbors = Vector{Int}(undef, n_cells)
+    @inline function AllocateCellCounters(::Val{true}, n_cells)
+        cell_counters = @alloc(Int, 2, n_cells)
+        cell_particle_counts = @view cell_counters[1, :]
+        cell_neighbor_counts = @view cell_counters[2, :]
+        return CellCounters(cell_particle_counts, cell_neighbor_counts)
+    end
+    @inline AllocateCellCounters(::Val{false}, _n_cells) = nothing
+
+    @inline function CellCountersView(::Val{true}, cell_counters::CellCounters, n_cells)
+        cell_particle_counts = view(cell_counters.ParticleCounts, 1:n_cells)
+        cell_neighbor_counts = view(cell_counters.NeighborCounts, 1:n_cells)
+        return cell_particle_counts, cell_neighbor_counts
+    end
+    @inline CellCountersView(::Val{false}, ::Nothing, _n_cells) = (nothing, nothing)
+
+    @inline function UpdateCellCounters!(::Val{true}, cell_counters::CellCounters,
+                                         particle_ranges, neighbor_cell_lists, n_cells)
+        UpdateCellCounters!(
+            cell_counters.ParticleCounts,
+            cell_counters.NeighborCounts,
+            particle_ranges,
+            neighbor_cell_lists,
+            n_cells,
+        )
+        return nothing
+    end
+    @inline UpdateCellCounters!(::Val{false}, ::Nothing, _args...) = nothing
+
+    function UpdateCellCounters!(cell_particle_counts, cell_neighbor_counts,
+                                 particle_ranges, neighbor_cell_lists, n_cells)
+        @inbounds for i in 1:n_cells
+            cell_particle_counts[i] = particle_ranges[i + 1] - particle_ranges[i]
+        end
         @inbounds for i in 1:n_cells
             neighbor_total = 0
             for neighbor_idx in neighbor_cell_lists[i]
-                neighbor_total += counts[neighbor_idx]
+                neighbor_total += cell_particle_counts[neighbor_idx]
             end
-            neighbors[i] = max(counts[i] - 1, 0) + neighbor_total
+            cell_neighbor_counts[i] = max(cell_particle_counts[i] - 1, 0) + neighbor_total
         end
-        return neighbors
+        return nothing
     end
 
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
@@ -1134,83 +1161,85 @@ using LinearAlgebra
 
         output = SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
 
-        # Save initial state, use 1 else this cannot be used to index fid vector
-        SimMetaData.OutputIterationCounter = 1
-        output.enqueue_particles(SimMetaData.OutputIterationCounter)
-        if SimMetaData.IndexCounter > 0
-            unique_cells_view = view(UniqueCells, 1:SimMetaData.IndexCounter)
-            cell_particle_counts = nothing
-            cell_neighbor_counts = nothing
-            if SimMetaData.ExportGridCellParticleCounts
-                cell_particle_counts = compute_cell_particle_counts(
-                    ParticleRanges,
-                    SimMetaData.IndexCounter,
-                )
-                cell_neighbor_counts = compute_cell_neighbor_counts(
+        @no_escape begin
+            export_cell_counts = Val(SimMetaData.ExportGridCellParticleCounts)
+            cell_counters = AllocateCellCounters(export_cell_counts, length(UniqueCells))
+
+            # Save initial state, use 1 else this cannot be used to index fid vector
+            SimMetaData.OutputIterationCounter = 1
+            output.enqueue_particles(SimMetaData.OutputIterationCounter)
+            if SimMetaData.IndexCounter > 0
+                unique_cells_view = view(UniqueCells, 1:SimMetaData.IndexCounter)
+                UpdateCellCounters!(
+                    export_cell_counts,
+                    cell_counters,
                     ParticleRanges,
                     NeighborCellLists,
                     SimMetaData.IndexCounter,
                 )
-            end
-            output.enqueue_grid(
-                SimMetaData.OutputIterationCounter,
-                unique_cells_view,
-                cell_particle_counts=cell_particle_counts,
-                cell_neighbor_counts=cell_neighbor_counts,
-            )
-        end
-
-
-        MotionDefinition = GenerateMotionDetails(SimParticles, SimGeometry, Dimensions, FloatType)
-
-        @inbounds while true
-
-            @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(
-                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                SimConstants, SimParticles, FullStencil, ParticleRanges,
-                UniqueCells, CellDict, SortingScratchSpace,
-                NeighborCellLists, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
-                ∇Cᵢ, ∇◌rᵢ, MotionDefinition,
-            )
-            push!(SimMetaData.TimeSteps, SimMetaData.CurrentTimeStep)
-
-            LogStep!(SimMetaData, SimLogger)
-
-            SimMetaData.OutputIterationCounter += 1
-
-            UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-            cell_particle_counts = nothing
-            cell_neighbor_counts = nothing
-            if SimMetaData.ExportGridCellParticleCounts
-                cell_particle_counts = compute_cell_particle_counts(
-                    ParticleRanges,
-                    length(UniqueCellsView),
+                cell_particle_counts_view, cell_neighbor_counts_view =
+                    CellCountersView(export_cell_counts, cell_counters, SimMetaData.IndexCounter)
+                output.enqueue_grid(
+                    SimMetaData.OutputIterationCounter,
+                    unique_cells_view,
+                    cell_particle_counts=cell_particle_counts_view,
+                    cell_neighbor_counts=cell_neighbor_counts_view,
                 )
-                cell_neighbor_counts = compute_cell_neighbor_counts(
+            end
+
+
+            MotionDefinition = GenerateMotionDetails(SimParticles, SimGeometry, Dimensions, FloatType)
+
+            @inbounds while true
+
+                @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(
+                    SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                    SimConstants, SimParticles, FullStencil, ParticleRanges,
+                    UniqueCells, CellDict, SortingScratchSpace,
+                    NeighborCellLists, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
+                    ∇Cᵢ, ∇◌rᵢ, MotionDefinition,
+                )
+                push!(SimMetaData.TimeSteps, SimMetaData.CurrentTimeStep)
+
+                LogStep!(SimMetaData, SimLogger)
+
+                SimMetaData.OutputIterationCounter += 1
+
+                UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
+                UpdateCellCounters!(
+                    export_cell_counts,
+                    cell_counters,
                     ParticleRanges,
                     NeighborCellLists,
                     length(UniqueCellsView),
                 )
-            end
-            @timeit SimMetaData.HourGlass "13 Save Particle Data"  begin
-                output.enqueue_particles(SimMetaData.OutputIterationCounter)
-                output.enqueue_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, cell_particle_counts=cell_particle_counts, cell_neighbor_counts=cell_neighbor_counts)
-            end
+                cell_particle_counts_view, cell_neighbor_counts_view =
+                    CellCountersView(export_cell_counts, cell_counters, length(UniqueCellsView))
+                @timeit SimMetaData.HourGlass "13 Save Particle Data"  begin
+                    output.enqueue_particles(SimMetaData.OutputIterationCounter)
+                    output.enqueue_grid(
+                        SimMetaData.OutputIterationCounter,
+                        UniqueCellsView,
+                        cell_particle_counts=cell_particle_counts_view,
+                        cell_neighbor_counts=cell_neighbor_counts_view,
+                    )
+                end
 
-            if SimMetaData.TotalTime > SimMetaData.SimulationTime
+                if SimMetaData.TotalTime > SimMetaData.SimulationTime
 
-                # At end of simulation
-                @timeit SimMetaData.HourGlass "13B Close Data Streams" output.close_files()
+                    # At end of simulation
+                    @timeit SimMetaData.HourGlass "13B Close Data Streams" output.close_files()
 
-                show(SimMetaData.HourGlass,sortby=:name)
-                show(SimMetaData.HourGlass)
+                    show(SimMetaData.HourGlass,sortby=:name)
+                    show(SimMetaData.HourGlass)
 
-                AutoOpenParaview(SimMetaData, output.variable_names)
+                    AutoOpenParaview(SimMetaData, output.variable_names)
 
-                FinalizeLog!(SimMetaData, SimLogger)
-                AutoOpenLogFile(SimLogger, SimMetaData)
+                    FinalizeLog!(SimMetaData, SimLogger)
+                    AutoOpenLogFile(SimLogger, SimMetaData)
 
-                break
+                    break
+                end
             end
         end
     end
