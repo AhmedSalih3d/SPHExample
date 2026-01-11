@@ -26,6 +26,11 @@ let
         OpenLogFile            = true
     )
 
+    # If save directory is not already made, make it
+    if !isdir(SimMetaDataDambreak3D.SaveLocation)
+        mkdir(SimMetaDataDambreak3D.SaveLocation)
+    end
+
     # --- Geometry ---
     FixedBoundary = Geometry{Dimensions, FloatType}(
         CSVFile     = "./input/dam_break_3d/DamBreak3d_Dp$(dx)_Bound.csv",

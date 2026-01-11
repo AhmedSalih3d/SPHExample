@@ -32,6 +32,11 @@ let
         # ]
     )
 
+    # If save directory is not already made, make it
+    if !isdir(SimMetaDataWedge.SaveLocation)
+        mkdir(SimMetaDataWedge.SaveLocation)
+    end
+
     # Assuming SimConstantsWedge is defined somewhere else with the field `dx`
     FixedBoundary = Geometry{Dimensions, FloatType}(
         CSVFile     = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Bound.csv",

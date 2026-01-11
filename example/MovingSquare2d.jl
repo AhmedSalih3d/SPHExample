@@ -24,6 +24,12 @@ let
         ExportSingleVTKHDF=true,
         OpenLogFile=true
     )
+
+    # If save directory is not already made, make it
+    if !isdir(SimMetaDataMovingSquare.SaveLocation)
+        mkdir(SimMetaDataMovingSquare.SaveLocation)
+    end
+
     FixedBoundary = Geometry{Dimensions, FloatType}(
         CSVFile     = "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Fixed.csv",
         GroupMarker = 1,

@@ -18,6 +18,11 @@ let
         OpenLogFile=true
     )
 
+    # If save directory is not already made, make it
+    if !isdir(SimMetaDataWedge.SaveLocation)
+        mkdir(SimMetaDataWedge.SaveLocation)
+    end
+
     # Assuming SimConstantsWedge is defined somewhere else with the field `dx`
     FixedBoundary = Geometry{Dimensions, FloatType}(
         CSVFile     = "./input/still_wedge_middle_square_mdbc/StillWedge_MiddleSquare_Dp$(SimConstantsWedge.dx)_Bound.csv",
