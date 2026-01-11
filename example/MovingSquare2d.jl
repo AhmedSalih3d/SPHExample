@@ -1,4 +1,4 @@
-import StaticArrays: SVector
+using StaticArrays: SVector
 using SPHExample
 
 let
