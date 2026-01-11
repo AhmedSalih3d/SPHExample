@@ -3,7 +3,6 @@ module SPHCellList
 export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!, RunSimulation
 
 using Parameters, FastPow, StaticArrays, Base.Threads
-import LinearAlgebra: dot
 
 using ..SimulationEquations
 using ..SimulationGeometry
@@ -20,10 +19,10 @@ using ..SPHViscosityModels
 using ..SPHDensityDiffusionModels
 
 using StaticArrays
-import StructArrays: StructArray, foreachfield
-import LinearAlgebra: dot, norm, diagm, diag, cond, det
-import Parameters: @unpack
-import FastPow: @fastpow
+using StructArrays: StructArray, foreachfield
+using LinearAlgebra: dot, norm, diagm, diag, cond, det
+using Parameters: @unpack
+using FastPow: @fastpow
 using Format
 using TimerOutputs
 using Logging, LoggingExtras
