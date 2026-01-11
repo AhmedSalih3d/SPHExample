@@ -16,7 +16,7 @@ end
                                            velocity, acceleration, sim_kernel)
     h = sim_kernel.h
     η² = sim_kernel.η²
-    r_sq = sqrt(dot(position, position))^2
+    r_sq = dot(position, position)
     curr_visc = abs(h * dot(velocity, position) / (r_sq + η²))
     a_mag = norm(acceleration)
     curr_dt_force = a_mag > 0 ? sqrt(h / a_mag) : typemax(eltype(min_dt_force))
@@ -85,7 +85,7 @@ function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
                         v = Velocity[j]
                         a = Acceleration[j]
 
-                        r_sq = sqrt(dot(r, r))^2
+                        r_sq = dot(r, r)
                         curr_visc = abs(h * dot(v, r) / (r_sq + η²))
                         t_visc = max(t_visc, curr_visc)
 

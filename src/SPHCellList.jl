@@ -77,7 +77,7 @@ using LinearAlgebra
     # Replace unsafe_trunc with trunc if this ever errors
     @inline function map_floor(x, InverseCutOff)
         # This is different than just doing muladd(x,InverseCutOff,0.5) because it rounds towards zero.
-        # Consider -1.7 + 0.5, this would give -1.2 and then trunced 1, but we want -2, therefore absolute addition before hand
+        # Consider -1.7 + 0.5, this would give -1.2 and then truncated 1, but we want -2, therefore absolute addition before hand
         # We add 0.5 instead of 1, to ensure proper rounding behavior when restoring the sign for negative numbers.
         Int(sign(x)) * unsafe_trunc(Int, muladd(abs(x),InverseCutOff,0.5))
     end
@@ -102,8 +102,14 @@ using LinearAlgebra
     end
    
     @inline function ExtractCells!(Particles, InverseCutOff)
+        if isempty(Particles.Cells)
+            return nothing
+        end
+        dimension = length(Particles.Position[1])
+        v_dimension = Val(dimension)
         @inbounds @simd ivdep for i ∈ eachindex(Particles.Cells)
-            Particles.Cells[i] = CartesianIndex(map(x -> map_floor(x, InverseCutOff), Tuple(Particles.Position[i])))
+            position = Particles.Position[i]
+            Particles.Cells[i] = CartesianIndex(ntuple(d -> map_floor(position[d], InverseCutOff), v_dimension))
         end
         return nothing
     end
@@ -135,7 +141,8 @@ using LinearAlgebra
         empty!(CellDict)
         CellDict[Cells[1]] = IndexCounter
 
-        @inbounds @simd ivdep for i in eachindex(Cells)[2:end]
+        n_cells = length(Cells)
+        @inbounds @simd ivdep for i in 2:n_cells
             if Cells[i] != Cells[i-1] # Equivalent to diff(Cells) != 0
                 IndexCounter                 += 1
                 ParticleRanges[IndexCounter]  = i
@@ -150,6 +157,12 @@ using LinearAlgebra
 
     function compute_cell_particle_counts(particle_ranges, n_cells)
         counts = Vector{Int}(undef, n_cells)
+        compute_cell_particle_counts!(counts, particle_ranges, n_cells)
+        return counts
+    end
+
+    function compute_cell_particle_counts!(counts, particle_ranges, n_cells)
+        resize!(counts, n_cells)
         @inbounds for i in 1:n_cells
             counts[i] = particle_ranges[i + 1] - particle_ranges[i]
         end
@@ -159,6 +172,12 @@ using LinearAlgebra
     function compute_cell_neighbor_counts(particle_ranges, neighbor_cell_lists, n_cells)
         counts = compute_cell_particle_counts(particle_ranges, n_cells)
         neighbors = Vector{Int}(undef, n_cells)
+        compute_cell_neighbor_counts!(neighbors, counts, neighbor_cell_lists, n_cells)
+        return neighbors
+    end
+
+    function compute_cell_neighbor_counts!(neighbors, counts, neighbor_cell_lists, n_cells)
+        resize!(neighbors, n_cells)
         @inbounds for i in 1:n_cells
             neighbor_total = 0
             for neighbor_idx in neighbor_cell_lists[i]
@@ -1134,30 +1153,26 @@ using LinearAlgebra
 
         output = SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
 
+        cell_particle_counts = Int[]
+        cell_neighbor_counts = Int[]
+
         # Save initial state, use 1 else this cannot be used to index fid vector
         SimMetaData.OutputIterationCounter = 1
         output.enqueue_particles(SimMetaData.OutputIterationCounter)
         if SimMetaData.IndexCounter > 0
             unique_cells_view = view(UniqueCells, 1:SimMetaData.IndexCounter)
-            cell_particle_counts = nothing
-            cell_neighbor_counts = nothing
             if SimMetaData.ExportGridCellParticleCounts
-                cell_particle_counts = compute_cell_particle_counts(
-                    ParticleRanges,
-                    SimMetaData.IndexCounter,
+                compute_cell_particle_counts!(cell_particle_counts, ParticleRanges, SimMetaData.IndexCounter)
+                compute_cell_neighbor_counts!(cell_neighbor_counts, cell_particle_counts, NeighborCellLists, SimMetaData.IndexCounter)
+                output.enqueue_grid(
+                    SimMetaData.OutputIterationCounter,
+                    unique_cells_view,
+                    cell_particle_counts=cell_particle_counts,
+                    cell_neighbor_counts=cell_neighbor_counts,
                 )
-                cell_neighbor_counts = compute_cell_neighbor_counts(
-                    ParticleRanges,
-                    NeighborCellLists,
-                    SimMetaData.IndexCounter,
-                )
+            else
+                output.enqueue_grid(SimMetaData.OutputIterationCounter, unique_cells_view)
             end
-            output.enqueue_grid(
-                SimMetaData.OutputIterationCounter,
-                unique_cells_view,
-                cell_particle_counts=cell_particle_counts,
-                cell_neighbor_counts=cell_neighbor_counts,
-            )
         end
 
 
@@ -1179,22 +1194,18 @@ using LinearAlgebra
             SimMetaData.OutputIterationCounter += 1
 
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-            cell_particle_counts = nothing
-            cell_neighbor_counts = nothing
             if SimMetaData.ExportGridCellParticleCounts
-                cell_particle_counts = compute_cell_particle_counts(
-                    ParticleRanges,
-                    length(UniqueCellsView),
-                )
-                cell_neighbor_counts = compute_cell_neighbor_counts(
-                    ParticleRanges,
-                    NeighborCellLists,
-                    length(UniqueCellsView),
-                )
-            end
-            @timeit SimMetaData.HourGlass "13 Save Particle Data"  begin
-                output.enqueue_particles(SimMetaData.OutputIterationCounter)
-                output.enqueue_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, cell_particle_counts=cell_particle_counts, cell_neighbor_counts=cell_neighbor_counts)
+                compute_cell_particle_counts!(cell_particle_counts, ParticleRanges, length(UniqueCellsView))
+                compute_cell_neighbor_counts!(cell_neighbor_counts, cell_particle_counts, NeighborCellLists, length(UniqueCellsView))
+                @timeit SimMetaData.HourGlass "13 Save Particle Data"  begin
+                    output.enqueue_particles(SimMetaData.OutputIterationCounter)
+                    output.enqueue_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, cell_particle_counts=cell_particle_counts, cell_neighbor_counts=cell_neighbor_counts)
+                end
+            else
+                @timeit SimMetaData.HourGlass "13 Save Particle Data"  begin
+                    output.enqueue_particles(SimMetaData.OutputIterationCounter)
+                    output.enqueue_grid(SimMetaData.OutputIterationCounter, UniqueCellsView)
+                end
             end
 
             if SimMetaData.TotalTime > SimMetaData.SimulationTime
