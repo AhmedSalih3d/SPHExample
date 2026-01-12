@@ -1,6 +1,6 @@
 module PreProcess
 
-export LoadBoundaryNormals, AllocateDataStructures, AllocateSupportDataStructures, AllocateThreadedArrays
+export LoadBoundaryNormals, LoadMDBCNormals!, AllocateDataStructures, AllocateSupportDataStructures, AllocateThreadedArrays
 
 using CSV
 using StaticArrays
@@ -223,6 +223,22 @@ function LoadBoundaryNormals(::Val{D}, ::Type{T}, path_mdbc) where {D, T}
     end
 
     return points, ghost_points, normals
+end
+
+function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,NoMDBC,L}, SimParticles, path) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, L<:LogMode}
+    return nothing
+end
+
+function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,SimpleMDBC,L}, SimParticles, path) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, L<:LogMode}
+    if isnothing(path)
+        return nothing
+    end
+    _, GhostPoints, GhostNormals = LoadBoundaryNormals(Val(D), T, path)
+    for gi ∈ eachindex(GhostPoints)
+        SimParticles.GhostPoints[gi]  = GhostPoints[gi]
+        SimParticles.GhostNormals[gi] = GhostNormals[gi]
+    end
+    return nothing
 end
 
 end

@@ -1,6 +1,6 @@
 module TimeStepping
 
-export Δt, FinalizeTimeStep, UpdateTimeStepBuffers!, next_output_time
+export Δt, FinalizeTimeStep, UpdateTimeStepBuffers!, next_output_time, ProgressMotion
 
 using LinearAlgebra
 using Parameters
@@ -116,6 +116,36 @@ end
     else
         return SimMetaData.SimulationTime
     end
+end
+
+function ProgressMotion(_SimParticles, _dt₂, ::Nothing, _SimMetaData)
+    return nothing
+end
+
+function ProgressMotion(SimParticles, dt₂, MotionsDefinition, SimMetaData)
+    @unpack Position, Velocity = SimParticles
+    ParticleMarker  = SimParticles.GroupMarker
+    ParticleType    = SimParticles.Type
+    @inbounds @simd ivdep for i in eachindex(Position)
+        if ParticleType[i] == Moving
+            motion = MotionsDefinition[ParticleMarker[i]]
+
+            if motion !== nothing
+                ShouldMove = (motion.StartTime <= SimMetaData.TotalTime) &&
+                             (SimMetaData.TotalTime <= (motion.StartTime + motion.Duration))
+
+                # Retrieve motion parameters
+                MotionVel = motion.Velocity
+                MotionDir = motion.Direction
+
+                # Update Velocity and Position
+                Velocity[i] = MotionVel * MotionDir * ShouldMove
+                Position[i] += Velocity[i] * dt₂
+            end
+        end
+    end
+
+    return nothing
 end
 
 end
