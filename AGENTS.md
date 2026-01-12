@@ -11,6 +11,7 @@ It may evolve over time, in shaa Allah.
 - `Project.toml`/`Manifest.toml`: dependency declarations
   (do not modify without instruction)
 - `README.md`: high level project overview and instructions
+- A future `Motions`-related file is planned for upcoming motion utilities, in shaa Allah.
 
 ## Common Code Patterns in This Repository
 - Each file in `/src` typically defines a `module` with the same name as the file

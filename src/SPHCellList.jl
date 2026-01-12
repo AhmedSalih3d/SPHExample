@@ -778,51 +778,6 @@ using LinearAlgebra
         return nothing
     end
 
-    function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,NoMDBC,L}, SimParticles, path) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, L<:LogMode}
-        return nothing
-    end
-    function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,SimpleMDBC,L}, SimParticles, path) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, L<:LogMode}
-        if isnothing(path)
-            return nothing
-        end
-        _, GhostPoints, GhostNormals = LoadBoundaryNormals(Val(D), T, path)
-        for gi ∈ eachindex(GhostPoints)
-            SimParticles.GhostPoints[gi]  = GhostPoints[gi]
-            SimParticles.GhostNormals[gi] = GhostNormals[gi]
-        end
-        return nothing
-    end
-
-    function ProgressMotion(_SimParticles, _dt₂, ::Nothing, _SimMetaData)
-        return nothing
-    end
-
-    function ProgressMotion(SimParticles, dt₂, MotionsDefinition, SimMetaData)
-        @unpack Position, Velocity = SimParticles
-        ParticleMarker  = SimParticles.GroupMarker
-        ParticleType    = SimParticles.Type
-        @inbounds @simd ivdep for i in eachindex(Position)
-            if ParticleType[i] == Moving
-                motion = MotionsDefinition[ParticleMarker[i]]
-    
-                if motion !== nothing
-                    ShouldMove = (motion.StartTime <= SimMetaData.TotalTime) &&
-                                 (SimMetaData.TotalTime <= (motion.StartTime + motion.Duration))
-    
-                    # Retrieve motion parameters
-                    MotionVel = motion.Velocity
-                    MotionDir = motion.Direction
-    
-                    # Update Velocity and Position
-                    Velocity[i] = MotionVel * MotionDir * ShouldMove
-                    Position[i] += Velocity[i] * dt₂
-                end
-            end
-        end
-
-        return nothing
-    end
-
     function ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
 
         Position    = SimParticles.Position
