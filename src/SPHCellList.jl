@@ -18,7 +18,7 @@ using ..OpenExternalPrograms
 using ..SPHKernels
 using ..SPHViscosityModels
 using ..SPHDensityDiffusionModels
-using ..SPHNeighborList: BuildNeighborCellLists!, ComputeCellNeighborCounts, ComputeCellParticleCounts, ConstructStencil, ExtractCells!, MapFloor, UpdateNeighbors!
+using ..SPHNeighborList: BuildNeighborCellLists!, ComputeCellNeighborCounts, ComputeCellParticleCounts, ConstructStencil, ExtractCells!, MapFloor, UpdateNeighbors!, UpdateΔx!
 
 using StaticArrays
 using StructArrays: StructArray, foreachfield
@@ -703,35 +703,8 @@ using LinearAlgebra
     end
 
 
-    """
-        UpdateΔx!(Δx, posₙ⁺, pos)
-
-    Increment Δx by twice the maximum ‖posₙ⁺[i] – pos[i]‖, without ever allocating.
-    Returns the new Δx.
-    """
-    @inline function UpdateΔx!(Δx::T,
-                                    posₙ⁺::AbstractVector{SVector{D, T}},
-                                    pos   ::AbstractVector{SVector{D, T}}) where {D, T<:Real}
-        maxd = zero(T)
-        @inbounds for i in eachindex(posₙ⁺, pos)
-            # compute squared norm manually
-            sumsq = zero(T)
-            @inbounds for j in 1:D
-                d = posₙ⁺[i][j] - pos[i][j]
-                sumsq += d*d
-            end
-            # sqrt/T is allocation-free on scalars
-            nrm = sqrt(sumsq)
-            if nrm > maxd
-                maxd = nrm
-            end
-        end
-        return Δx + 4*maxd
-    end
-
     # Per-particle local Δx removed: use single scalar `SimMetaData.Δx`.
 
-    
     @inbounds function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
                                       SimConstants, SimParticles, FullStencil,

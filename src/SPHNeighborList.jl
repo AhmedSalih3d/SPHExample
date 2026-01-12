@@ -1,6 +1,6 @@
 module SPHNeighborList
 
-export ConstructStencil, ExtractCells!, UpdateNeighbors!, BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts
+export ConstructStencil, ExtractCells!, UpdateNeighbors!, BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts, UpdateΔx!
 
 function ConstructStencil(V::Val{d}) where d
     return CartesianIndices(ntuple(_ -> -1:1, V))
@@ -119,6 +119,32 @@ function ComputeCellNeighborCounts(ParticleRanges, NeighborCellLists, CellCount)
         Neighbors[Index] = max(Counts[Index] - 1, 0) + NeighborTotal
     end
     return Neighbors
+end
+
+"""
+    UpdateΔx!(Δx, posₙ⁺, pos)
+
+Increment Δx by twice the maximum ‖posₙ⁺[i] – pos[i]‖, without ever allocating.
+Returns the new Δx.
+"""
+@inline function UpdateΔx!(Δx::T,
+                           posₙ⁺::AbstractVector{SVector{D, T}},
+                           pos   ::AbstractVector{SVector{D, T}}) where {D, T<:Real}
+    maxd = zero(T)
+    @inbounds for i in eachindex(posₙ⁺, pos)
+        # compute squared norm manually
+        sumsq = zero(T)
+        @inbounds for j in 1:D
+            d = posₙ⁺[i][j] - pos[i][j]
+            sumsq += d*d
+        end
+        # sqrt/T is allocation-free on scalars
+        nrm = sqrt(sumsq)
+        if nrm > maxd
+            maxd = nrm
+        end
+    end
+    return Δx + 4 * maxd
 end
 
 end
