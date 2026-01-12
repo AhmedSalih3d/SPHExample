@@ -4,10 +4,10 @@ module SPHExample
     include("SPHKernels.jl")
     include("SPHViscosityModels.jl")      
     include("ProduceHDFVTK.jl")    
-    include("TimeStepping.jl");       
-    include("SimulationEquations.jl");
     include("SimulationGeometry.jl")
     include("SimulationMetaDataConfiguration.jl");
+    include("SimulationEquations.jl");
+    include("TimeStepping.jl");       
     include("SimulationConstantsConfiguration.jl");
     include("SimulationLoggerConfiguration.jl");
     include("PreProcess.jl");
@@ -62,4 +62,3 @@ module SPHExample
     export AutoOpenLogFile, AutoOpenParaview
 
 end
-
