@@ -2,6 +2,8 @@ module SPHNeighborList
 
 export ConstructStencil, ExtractCells!, UpdateNeighbors!, BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts, UpdateΔx!
 
+using StaticArrays
+
 function ConstructStencil(V::Val{d}) where d
     return CartesianIndices(ntuple(_ -> -1:1, V))
 end
