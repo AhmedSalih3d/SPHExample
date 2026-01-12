@@ -1,6 +1,6 @@
 module SPHCellList
 
-export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!, RunSimulation
+export NeighborLoop!, ComputeInteractions!, RunSimulation
 
 using Parameters, FastPow, StaticArrays, Base.Threads
 import LinearAlgebra: dot
@@ -18,6 +18,7 @@ using ..OpenExternalPrograms
 using ..SPHKernels
 using ..SPHViscosityModels
 using ..SPHDensityDiffusionModels
+using ..SPHNeighborList: BuildNeighborCellLists!, ComputeCellNeighborCounts, ComputeCellParticleCounts, ConstructStencil, ExtractCells!, MapFloor, UpdateNeighbors!
 
 using StaticArrays
 using StructArrays: StructArray, foreachfield
@@ -30,59 +31,6 @@ using HDF5
 using Base.Threads
 using LinearAlgebra
     using Bumper
-
-    function ConstructFullStencil(v::Val{d}) where d
-        return CartesianIndices(ntuple(_->-1:1, v))
-    end
-
-    function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellDict)
-        target_len   = length(UniqueCellsView)
-        original_len = length(NeighborCellLists)
-        resize!(NeighborCellLists, target_len)
-
-        if target_len > original_len
-            @inbounds for idx in (original_len + 1):target_len
-                NeighborCellLists[idx] = Int[]
-            end
-        end
-        
-        @inbounds for cell_idx in eachindex(UniqueCellsView)
-            neighbors = NeighborCellLists[cell_idx]
-            empty!(neighbors)
-            cell = UniqueCellsView[cell_idx]
-            for offset in FullStencil
-                neighbor_cell = cell + offset
-                neighbor_idx = get(CellDict, neighbor_cell, 1)
-                start_idx = ParticleRanges[neighbor_idx]
-                end_idx = ParticleRanges[neighbor_idx + 1] - 1
-                if start_idx <= end_idx && neighbor_idx != cell_idx
-                    push!(neighbors, neighbor_idx)
-                end
-            end
-        end
-
-        return nothing
-    end
-
-    """
-    Extracts the cells for each particle based on their positions and the inverse cutoff value.
-
-    # Arguments
-    - `Particles`: The particles whose cells are to be extracted.
-    - `::Val{InverseCutOff}`: The inverse cutoff value used for cell extraction.
-
-    # Returns
-    - `nothing`: This function modifies the `Particles` in place.
-    """
-    # Replace unsafe_trunc with trunc if this ever errors
-    @inline function map_floor(x, InverseCutOff)
-        # This is different than just doing muladd(x,InverseCutOff,0.5) because it rounds towards zero.
-        # Consider -1.7 + 0.5, this would give -1.2 and then truncated 1, but we want -2, therefore absolute addition beforehand
-        # We add 0.5 instead of 1, to ensure proper rounding behavior when restoring the sign for negative numbers.
-        Int(sign(x)) * unsafe_trunc(Int, muladd(abs(x),InverseCutOff,0.5))
-    end
-
-
 
     @inline function KernelOutputLocal!(::SimulationMetaData{D,T,S,NoKernelOutput,B,L},
                                         kernel_acc, kernel_grad_acc, SimKernel,
@@ -101,74 +49,6 @@ using LinearAlgebra
         return kernel_acc + Wᵢⱼ, kernel_grad_acc + ∇ᵢWᵢⱼ
     end
    
-    @inline function ExtractCells!(Particles, InverseCutOff)
-        @inbounds @simd ivdep for i ∈ eachindex(Particles.Cells)
-            Particles.Cells[i] = CartesianIndex(map(x -> map_floor(x, InverseCutOff), Tuple(Particles.Position[i])))
-        end
-        return nothing
-    end
-
-    """
-    Updates the neighbor list and sorts particles by their cell indices.
-
-    # Arguments
-    - `Particles`: The particles whose neighbors are to be updated.
-    - `CutOff`: The cutoff value used for cell extraction.
-    - `SortingScratchSpace`: Scratch space for sorting.
-    - `ParticleRanges`: Array to store the ranges of particles in each cell.
-    - `UniqueCells`: Array to store the unique cells.
-
-    # Returns
-    - `IndexCounter`: The number of unique cells identified.
-    """
-    function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
-                              ParticleRanges, UniqueCells, CellDict)
-        ExtractCells!(Particles, InverseCutOff)
-
-        sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
-        Cells = @views Particles.Cells
-        @. ParticleRanges             = zero(eltype(ParticleRanges))
-        ParticleRanges[1] = 1
-        IndexCounter                  = 2
-        ParticleRanges[IndexCounter]  = 1
-        UniqueCells[IndexCounter]     = Cells[1]
-        empty!(CellDict)
-        CellDict[Cells[1]] = IndexCounter
-
-        @inbounds @simd ivdep for i in eachindex(Cells)[2:end]
-            if Cells[i] != Cells[i-1] # Equivalent to diff(Cells) != 0
-                IndexCounter                 += 1
-                ParticleRanges[IndexCounter]  = i
-                UniqueCells[IndexCounter]     = Cells[i]
-                CellDict[Cells[i]]           = IndexCounter
-            end
-        end
-        ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
-
-        return IndexCounter 
-    end
-
-    function compute_cell_particle_counts(particle_ranges, n_cells)
-        counts = Vector{Int}(undef, n_cells)
-        @inbounds for i in 1:n_cells
-            counts[i] = particle_ranges[i + 1] - particle_ranges[i]
-        end
-        return counts
-    end
-
-    function compute_cell_neighbor_counts(particle_ranges, neighbor_cell_lists, n_cells)
-        counts = compute_cell_particle_counts(particle_ranges, n_cells)
-        neighbors = Vector{Int}(undef, n_cells)
-        @inbounds for i in 1:n_cells
-            neighbor_total = 0
-            for neighbor_idx in neighbor_cell_lists[i]
-                neighbor_total += counts[neighbor_idx]
-            end
-            neighbors[i] = max(counts[i] - 1, 0) + neighbor_total
-        end
-        return neighbors
-    end
-
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{D,T,NoShifting,NoKernelOutput,B,L},
                                       SimConstants, SimParticles, ParticleRanges,
@@ -439,14 +319,14 @@ using LinearAlgebra
         return nothing
     end
 
-    f(SimKernel, GhostPoint) = CartesianIndex(map(x->map_floor(x,SimKernel.H⁻¹), Tuple(GhostPoint)))
+    f(SimKernel, GhostPoint) = CartesianIndex(map(x -> MapFloor(x, SimKernel.H⁻¹), Tuple(GhostPoint)))
     function NeighborLoopMDBC!(SimKernel,
                                SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
                                SimConstants, ParticleRanges, CellDict, Position,
                                Density, GhostPoints, GhostNormals, ParticleType,
                                bᵧ, Aᵧ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
         
-        FullStencil = ConstructFullStencil(Val(Dimensions))
+        FullStencil = ConstructStencil(Val(Dimensions))
 
         @inbounds @threads for iter in eachindex(GhostPoints)
             GhostPoint = GhostPoints[iter]
@@ -1007,7 +887,7 @@ using LinearAlgebra
         ParticleRanges         = zeros(Int, NumberOfPoints + 1 + 1) # +1 for the last particle, +1 for dummy entry
         UniqueCells            = zeros(CartesianIndex{Dimensions}, NumberOfPoints)
         CellDict               = Dict{CartesianIndex{Dimensions}, Int}()
-        FullStencil            = ConstructFullStencil(Val(Dimensions))
+        FullStencil            = ConstructStencil(Val(Dimensions))
         NeighborCellLists      = [Int[] for _ in 1:length(UniqueCells)]
         _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
 
@@ -1021,11 +901,11 @@ using LinearAlgebra
             cell_particle_counts = nothing
             cell_neighbor_counts = nothing
             if SimMetaData.ExportGridCellParticleCounts
-                cell_particle_counts = compute_cell_particle_counts(
+                cell_particle_counts = ComputeCellParticleCounts(
                     ParticleRanges,
                     SimMetaData.IndexCounter,
                 )
-                cell_neighbor_counts = compute_cell_neighbor_counts(
+                cell_neighbor_counts = ComputeCellNeighborCounts(
                     ParticleRanges,
                     NeighborCellLists,
                     SimMetaData.IndexCounter,
@@ -1061,11 +941,11 @@ using LinearAlgebra
             cell_particle_counts = nothing
             cell_neighbor_counts = nothing
             if SimMetaData.ExportGridCellParticleCounts
-                cell_particle_counts = compute_cell_particle_counts(
+                cell_particle_counts = ComputeCellParticleCounts(
                     ParticleRanges,
                     length(UniqueCellsView),
                 )
-                cell_neighbor_counts = compute_cell_neighbor_counts(
+                cell_neighbor_counts = ComputeCellNeighborCounts(
                     ParticleRanges,
                     NeighborCellLists,
                     length(UniqueCellsView),
