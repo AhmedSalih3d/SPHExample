@@ -1,11 +1,13 @@
 module TimeStepping
 
-export Δt, FinalizeTimeStep, UpdateTimeStepBuffers!, next_output_time, ProgressMotion
+export Δt, FinalizeTimeStep, UpdateTimeStepBuffers!, next_output_time, ProgressMotion, HalfTimeStep, FullTimeStep
 
 using LinearAlgebra
 using Parameters
 using Base.Threads
 using Bumper
+using ..SimulationEquations
+using ..SimulationMetaDataConfiguration
 
 @inline function UpdateTimeStepBuffers!(::Nothing, ::Nothing, index, position,
                                            velocity, acceleration, sim_kernel)
@@ -145,6 +147,60 @@ function ProgressMotion(SimParticles, dt₂, MotionsDefinition, SimMetaData)
         end
     end
 
+    return nothing
+end
+
+function HalfTimeStep(::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
+                          SimConstants, SimParticles, Positionₙ⁺,
+                          Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
+    @unpack Position, Density, Velocity, Acceleration, GravityFactor, MotionLimiter = SimParticles
+
+    @inbounds @simd ivdep for i in eachindex(Position)
+        Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+        Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
+        Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
+        ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
+    end
+
+    return nothing
+end
+
+function FullTimeStep(::SimulationMetaData{D,T,NoShifting,K,B,L}, SimKernel,
+                          SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,
+                                                                             K<:KernelOutputMode,
+                                                                             B<:MDBCMode,
+                                                                             L<:LogMode}
+    @unpack Position, Velocity, Acceleration, GravityFactor, MotionLimiter = SimParticles
+    @inbounds @simd ivdep for i in eachindex(Position)
+        Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+        Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
+        Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
+    end
+    return nothing
+end
+
+function FullTimeStep(::SimulationMetaData{D,T,S,K,B,L}, SimKernel, SimConstants,
+                          SimParticles, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,S<:ShiftingMode,
+                                                             K<:KernelOutputMode,
+                                                             B<:MDBCMode,
+                                                             L<:LogMode}
+    @unpack Position, Velocity, Acceleration, GravityFactor, MotionLimiter = SimParticles
+    A     = 2# Value between 1 to 6 advised
+    A_FST = 0; # zero for internal flows
+    A_FSM = length(first(Position)); #2d, 3d val different
+    @inbounds @simd ivdep for i in eachindex(Position)
+        Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+        Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
+
+        A_FSC                  = (∇◌rᵢ[i] - A_FST)/(A_FSM - A_FST)
+        if A_FSC < 0
+            δxᵢ = zero(eltype(Position))
+        else
+            δxᵢ = -A_FSC * A * SimKernel.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
+        end
+
+        Position[i]           += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
+    end
     return nothing
 end
 
