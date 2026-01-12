@@ -4,7 +4,7 @@ using Parameters
 using TimerOutputs
 
 
-export SimulationMetaData, ShiftingMode, NoShifting, PlanarShifting,
+export SimulationMetaData, UpdateMetaData!, ShiftingMode, NoShifting, PlanarShifting,
        KernelOutputMode, NoKernelOutput, StoreKernelOutput,
        MDBCMode, NoMDBC, SimpleMDBC,
        LogMode, NoLog, StoreLog
@@ -67,5 +67,13 @@ SimulationMetaData{D,T,S}(; kwargs...) where {D,T,S<:ShiftingMode} =
     SimulationMetaData{D,T,S,NoKernelOutput,NoMDBC,NoLog}(; kwargs...)
 SimulationMetaData{D,T}(; kwargs...) where {D,T} =
     SimulationMetaData{D,T,NoShifting,NoKernelOutput,NoMDBC,NoLog}(; kwargs...)
+
+function UpdateMetaData!(SimMetaData, dt)
+    SimMetaData.Iteration      += 1
+    SimMetaData.CurrentTimeStep = dt
+    SimMetaData.TotalTime      += dt
+
+    return nothing
+end
 
 end

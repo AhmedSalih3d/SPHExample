@@ -1,6 +1,6 @@
 module TimeStepping
 
-export Δt, FinalizeTimeStep, UpdateTimeStepBuffers!
+export Δt, FinalizeTimeStep, UpdateTimeStepBuffers!, next_output_time
 
 using LinearAlgebra
 using Parameters
@@ -102,6 +102,19 @@ function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
         end
 
         CFL * min(minimum(d_buffer), h / (c₀ + maximum(v_buffer)))
+    end
+end
+
+@inline next_output_time(SimMetaData) = next_output_time(SimMetaData.OutputTimes, SimMetaData)
+
+@inline next_output_time(interval::Real, SimMetaData) = interval * SimMetaData.OutputIterationCounter
+
+@inline function next_output_time(times::AbstractVector, SimMetaData)
+    idx = SimMetaData.OutputIterationCounter
+    if idx < length(times)
+        return times[idx]
+    else
+        return SimMetaData.SimulationTime
     end
 end
 

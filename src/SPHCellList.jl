@@ -904,27 +904,6 @@ using LinearAlgebra
         return nothing
     end
 
-    function UpdateMetaData!(SimMetaData, dt)
-        SimMetaData.Iteration      += 1
-        SimMetaData.CurrentTimeStep = dt
-        SimMetaData.TotalTime      += dt
-
-        return nothing
-    end
-
-    @inline next_output_time(SimMetaData) = next_output_time(SimMetaData.OutputTimes, SimMetaData)
-
-    @inline next_output_time(interval::Real, SimMetaData) = interval * SimMetaData.OutputIterationCounter
-
-    @inline function next_output_time(times::AbstractVector, SimMetaData)
-        idx = SimMetaData.OutputIterationCounter
-        if idx < length(times)
-            return times[idx]
-        else
-            return SimMetaData.SimulationTime
-        end
-    end
-
     function GenerateMotionDetails(SimParticles, SimGeometry, Dimensions, FloatType)
         # Assuming group markers are sequential
         MotionDefinition = Vector{Union{Nothing, MotionDetails{Dimensions, FloatType}}}(undef, maximum(SimParticles.GroupMarker))
