@@ -13,6 +13,7 @@ module SPHExample
     include("PreProcess.jl");
     include("OpenExternalPrograms.jl")
     include("SPHDensityDiffusionModels.jl")  
+    include("SPHNeighborList.jl")
     include("SPHCellList.jl") #Must be last    
 
     # Re-export desired functions from each submodule
@@ -55,8 +56,11 @@ module SPHExample
     using .SimulationConstantsConfiguration
     export SimulationConstants
 
+    using .SPHNeighborList
+    export ConstructStencil, ExtractCells!, UpdateNeighbors!, BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts
+
     using .SPHCellList
-    export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!, RunSimulation
+    export NeighborLoop!, ComputeInteractions!, RunSimulation
 
     using .OpenExternalPrograms
     export AutoOpenLogFile, AutoOpenParaview
