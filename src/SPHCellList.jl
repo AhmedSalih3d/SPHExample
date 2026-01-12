@@ -32,23 +32,6 @@ using Base.Threads
 using LinearAlgebra
     using Bumper
 
-    @inline function KernelOutputLocal!(::SimulationMetaData{D,T,S,NoKernelOutput,B,L},
-                                        kernel_acc, kernel_grad_acc, SimKernel,
-                                        q, ∇ᵢWᵢⱼ) where {D,T,S<:ShiftingMode,
-                                                        B<:MDBCMode,
-                                                        L<:LogMode}
-        return kernel_acc, kernel_grad_acc
-    end
-
-    @inline function KernelOutputLocal!(::SimulationMetaData{D,T,S,StoreKernelOutput,B,L},
-                                        kernel_acc, kernel_grad_acc, SimKernel,
-                                        q, ∇ᵢWᵢⱼ) where {D,T,S<:ShiftingMode,
-                                                        B<:MDBCMode,
-                                                        L<:LogMode}
-        Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
-        return kernel_acc + Wᵢⱼ, kernel_grad_acc + ∇ᵢWᵢⱼ
-    end
-   
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{D,T,NoShifting,NoKernelOutput,B,L},
                                       SimConstants, SimParticles, ParticleRanges,
@@ -372,6 +355,23 @@ using LinearAlgebra
     # in favour of the per-particle variants (ComputeInteractionsPerParticle! etc.).
     # It has been removed to reduce code size and avoid dead code.
 
+    @inline function compute_kernel_output_local(::SimulationMetaData{D,T,S,NoKernelOutput,B,L},
+                                                 kernel_acc, kernel_grad_acc, SimKernel,
+                                                 q, ∇ᵢWᵢⱼ) where {D,T,S<:ShiftingMode,
+                                                                 B<:MDBCMode,
+                                                                 L<:LogMode}
+        return kernel_acc, kernel_grad_acc
+    end
+
+    @inline function compute_kernel_output_local(::SimulationMetaData{D,T,S,StoreKernelOutput,B,L},
+                                                 kernel_acc, kernel_grad_acc, SimKernel,
+                                                 q, ∇ᵢWᵢⱼ) where {D,T,S<:ShiftingMode,
+                                                                 B<:MDBCMode,
+                                                                 L<:LogMode}
+        Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
+        return kernel_acc + Wᵢⱼ, kernel_grad_acc + ∇ᵢWᵢⱼ
+    end
+
     Base.@propagate_inbounds function ComputeInteractionsPerParticle!(
         SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         SimMetaData::SimulationMetaData{D,T,NoShifting,K,B,L}, SimConstants,
@@ -420,8 +420,8 @@ using LinearAlgebra
             acc_acc += dvdt⁺ + visc_term
 
             kernel_acc, kernel_grad_acc =
-                KernelOutputLocal!(SimMetaData, kernel_acc, kernel_grad_acc,
-                                   SimKernel, q, ∇ᵢWᵢⱼ)
+                compute_kernel_output_local(SimMetaData, kernel_acc, kernel_grad_acc,
+                                            SimKernel, q, ∇ᵢWᵢⱼ)
         end
 
         return dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc
@@ -524,8 +524,8 @@ using LinearAlgebra
             acc_acc += dvdt⁺ + visc_term
 
             kernel_acc, kernel_grad_acc =
-                KernelOutputLocal!(SimMetaData, kernel_acc, kernel_grad_acc,
-                                   SimKernel, q, ∇ᵢWᵢⱼ)
+                compute_kernel_output_local(SimMetaData, kernel_acc, kernel_grad_acc,
+                                            SimKernel, q, ∇ᵢWᵢⱼ)
 
             MLcond = MotionLimiter[i] * MotionLimiter[j]
             shift_c_acc += (m₀ / ρᵢ) * ∇ᵢWᵢⱼ
