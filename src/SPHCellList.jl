@@ -169,6 +169,15 @@ using LinearAlgebra
         return neighbors
     end
 
+    @inline function NeighborLoopCellData(Cells, CellDict, ParticleRanges, NeighborCellLists, i)
+        CellIndex = Cells[i]
+        CellListIndex = get(CellDict, CellIndex, 1)
+        SameCellStart = ParticleRanges[CellListIndex]
+        SameCellEnd = min(ParticleRanges[CellListIndex + 1] - 1, lastindex(Cells))
+        NeighborCellIndices = NeighborCellLists[CellListIndex]
+        return SameCellStart, SameCellEnd, NeighborCellIndices
+    end
+
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{D,T,NoShifting,NoKernelOutput,B,L},
                                       SimConstants, SimParticles, ParticleRanges,
@@ -187,11 +196,9 @@ using LinearAlgebra
         @inbounds Threads.@threads for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
-            CellIndex = Cells[i]
-            CellListIndex = get(CellDict, CellIndex, 1)
-            SameCellStart = ParticleRanges[CellListIndex]
-            SameCellEnd = ParticleRanges[CellListIndex + 1] - 1
-            NeighborCellIndices = NeighborCellLists[CellListIndex]
+            SameCellStart, SameCellEnd, NeighborCellIndices = NeighborLoopCellData(
+                Cells, CellDict, ParticleRanges, NeighborCellLists, i,
+            )
 
             @inbounds for j in SameCellStart:(i - 1)
                 dρdt_acc, acc_acc = ComputeInteractionsPerParticleNoKernel!(
@@ -209,7 +216,7 @@ using LinearAlgebra
             end
             for NeighborIdx in NeighborCellIndices
                 StartIndex_ = ParticleRanges[NeighborIdx]
-                EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
+                EndIndex_ = min(ParticleRanges[NeighborIdx + 1] - 1, lastindex(Cells))
                 @inbounds for j in StartIndex_:EndIndex_
                     dρdt_acc, acc_acc = ComputeInteractionsPerParticleNoKernel!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
@@ -248,11 +255,9 @@ using LinearAlgebra
             acc_acc = zero(Acceleration[i])
             kernel_acc = zero(Kernel[i])
             kernel_grad_acc = zero(KernelGradient[i])
-            CellIndex = Cells[i]
-            CellListIndex = get(CellDict, CellIndex, 1)
-            SameCellStart = ParticleRanges[CellListIndex]
-            SameCellEnd = ParticleRanges[CellListIndex + 1] - 1
-            NeighborCellIndices = NeighborCellLists[CellListIndex]
+            SameCellStart, SameCellEnd, NeighborCellIndices = NeighborLoopCellData(
+                Cells, CellDict, ParticleRanges, NeighborCellLists, i,
+            )
 
             @inbounds for j in SameCellStart:(i - 1)
                 dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc =
@@ -274,7 +279,7 @@ using LinearAlgebra
             end
             for NeighborIdx in NeighborCellIndices
                 StartIndex_ = ParticleRanges[NeighborIdx]
-                EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
+                EndIndex_ = min(ParticleRanges[NeighborIdx + 1] - 1, lastindex(Cells))
                 @inbounds for j in StartIndex_:EndIndex_
                     dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc =
                         ComputeInteractionsPerParticle!(
@@ -316,11 +321,9 @@ using LinearAlgebra
             acc_acc = zero(Acceleration[i])
             shift_c_acc = zero(∇Cᵢ[i])
             shift_r_acc = zero(∇◌rᵢ[i])
-            CellIndex = Cells[i]
-            CellListIndex = get(CellDict, CellIndex, 1)
-            SameCellStart = ParticleRanges[CellListIndex]
-            SameCellEnd = ParticleRanges[CellListIndex + 1] - 1
-            NeighborCellIndices = NeighborCellLists[CellListIndex]
+            SameCellStart, SameCellEnd, NeighborCellIndices = NeighborLoopCellData(
+                Cells, CellDict, ParticleRanges, NeighborCellLists, i,
+            )
 
             @inbounds for j in SameCellStart:(i - 1)
                 dρdt_acc, acc_acc, shift_c_acc, shift_r_acc =
@@ -342,7 +345,7 @@ using LinearAlgebra
             end
             for NeighborIdx in NeighborCellIndices
                 StartIndex_ = ParticleRanges[NeighborIdx]
-                EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
+                EndIndex_ = min(ParticleRanges[NeighborIdx + 1] - 1, lastindex(Cells))
                 @inbounds for j in StartIndex_:EndIndex_
                     dρdt_acc, acc_acc, shift_c_acc, shift_r_acc =
                         ComputeInteractionsPerParticleNoKernel!(
@@ -388,11 +391,9 @@ using LinearAlgebra
             kernel_grad_acc = zero(KernelGradient[i])
             shift_c_acc = zero(∇Cᵢ[i])
             shift_r_acc = zero(∇◌rᵢ[i])
-            CellIndex = Cells[i]
-            CellListIndex = get(CellDict, CellIndex, 1)
-            SameCellStart = ParticleRanges[CellListIndex]
-            SameCellEnd = ParticleRanges[CellListIndex + 1] - 1
-            NeighborCellIndices = NeighborCellLists[CellListIndex]
+            SameCellStart, SameCellEnd, NeighborCellIndices = NeighborLoopCellData(
+                Cells, CellDict, ParticleRanges, NeighborCellLists, i,
+            )
 
             @inbounds for j in SameCellStart:(i - 1)
                 dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc,
@@ -414,7 +415,7 @@ using LinearAlgebra
             end
             for NeighborIdx in NeighborCellIndices
                 StartIndex_ = ParticleRanges[NeighborIdx]
-                EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
+                EndIndex_ = min(ParticleRanges[NeighborIdx + 1] - 1, lastindex(Cells))
                 @inbounds for j in StartIndex_:EndIndex_
                     dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc,
                     shift_r_acc = ComputeInteractionsPerParticle!(
