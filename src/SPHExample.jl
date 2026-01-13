@@ -65,4 +65,27 @@ module SPHExample
     using .OpenExternalPrograms
     export AutoOpenLogFile, AutoOpenParaview
 
+    using PrecompileTools
+    using StaticArrays
+
+    @setup_workload begin
+        KernelInstance = SPHKernelInstance{2, Float64}(WendlandC2(); dx=0.02)
+        Constants = SimulationConstants()
+        Position = SVector(0.0, 0.0)
+        Density = [Constants.ρ₀, Constants.ρ₀]
+        Pressure = similar(Density)
+        MotionLimiter = [1.0, 0.0]
+        q = 0.5
+
+        @compile_workload begin
+            Wᵢⱼ(KernelInstance, q)
+            ∇Wᵢⱼ(KernelInstance, q, Position)
+            tensile_correction(KernelInstance, 0.0, 1.0, 0.0, 1.0, q, 0.02)
+            EquationOfStateGamma7(Constants.ρ₀, Constants.c₀, Constants.ρ₀)
+            ConstructGravitySVector(Position, Constants.g)
+            Pressure!(Pressure, Density, Constants)
+            LimitDensityAtBoundary!(Density, Constants.ρ₀, MotionLimiter)
+        end
+    end
+
 end
