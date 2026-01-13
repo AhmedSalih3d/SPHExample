@@ -67,24 +67,58 @@ module SPHExample
 
     using PrecompileTools
     using StaticArrays
+    using StructArrays
 
     @setup_workload begin
         KernelInstance = SPHKernelInstance{2, Float64}(WendlandC2(); dx=0.02)
         Constants = SimulationConstants()
-        Position = SVector(0.0, 0.0)
-        Density = [Constants.ρ₀, Constants.ρ₀]
-        Pressure = similar(Density)
+        Position = [SVector(0.0, 0.0), SVector(0.02, 0.0)]
+        Velocity = [SVector(0.0, 0.0), SVector(0.1, 0.0)]
+        Acceleration = [SVector(0.0, 0.0), SVector(0.0, -9.81)]
+        Density = fill(Constants.ρ₀, 2)
+        Pressure = zeros(Float64, 2)
+        GravityFactor = [-1.0, 1.0]
         MotionLimiter = [1.0, 0.0]
-        q = 0.5
+        Types = [Fluid, Moving]
+        GroupMarker = [UInt(1), UInt(1)]
+        Cells = fill(CartesianIndex{2}(0, 0), 2)
+        SimParticles = StructArray((;
+            Cells = Cells,
+            Position = Position,
+            Acceleration = Acceleration,
+            Velocity = Velocity,
+            Density = Density,
+            Pressure = Pressure,
+            GravityFactor = GravityFactor,
+            MotionLimiter = MotionLimiter,
+            Type = Types,
+            GroupMarker = GroupMarker,
+        ))
+        Xij = Position[1] - Position[2]
+        Vij = Velocity[1] - Velocity[2]
+        DistanceSquared = dot(Xij, Xij)
+        Q = sqrt(DistanceSquared) * KernelInstance.h⁻¹
+        GradientWij = ∇Wᵢⱼ(KernelInstance, Q, Xij)
+        SimMetaData = SimulationMetaData{2, Float64}(SimulationName = "Precompile", SaveLocation = ".")
+        PositionNext = similar(Position)
+        VelocityNext = similar(Velocity)
+        DensityNext = similar(Density)
+        DensityRate = zeros(Float64, 2)
+        HalfStep = 0.5
 
         @compile_workload begin
-            Wᵢⱼ(KernelInstance, q)
-            ∇Wᵢⱼ(KernelInstance, q, Position)
-            tensile_correction(KernelInstance, 0.0, 1.0, 0.0, 1.0, q, 0.02)
+            Wᵢⱼ(KernelInstance, Q)
+            ∇Wᵢⱼ(KernelInstance, Q, Xij)
+            tensile_correction(KernelInstance, 0.0, 1.0, 0.0, 1.0, Q, 0.02)
             EquationOfStateGamma7(Constants.ρ₀, Constants.c₀, Constants.ρ₀)
-            ConstructGravitySVector(Position, Constants.g)
+            ConstructGravitySVector(Xij, Constants.g)
             Pressure!(Pressure, Density, Constants)
             LimitDensityAtBoundary!(Density, Constants.ρ₀, MotionLimiter)
+            compute_viscosity(ArtificialViscosity(), KernelInstance, Constants, SimParticles, Xij, Vij, GradientWij, DistanceSquared, 1, 2)
+            compute_viscosity(Laminar(), KernelInstance, Constants, SimParticles, Xij, Vij, GradientWij, DistanceSquared, 1, 2)
+            compute_density_diffusion(LinearDensityDiffusion(), KernelInstance, Constants, SimParticles, Xij, GradientWij, DistanceSquared, 1, 2, MotionLimiter)
+            compute_density_diffusion(ComplexDensityDiffusion(), KernelInstance, Constants, SimParticles, Xij, GradientWij, DistanceSquared, 1, 2, MotionLimiter)
+            HalfTimeStep(SimMetaData, Constants, SimParticles, PositionNext, VelocityNext, DensityNext, DensityRate, HalfStep)
         end
     end
 
