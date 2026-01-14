@@ -23,14 +23,17 @@ function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView
     @inbounds for CellIndex in eachindex(UniqueCellsView)
         Neighbors = NeighborCellLists[CellIndex]
         empty!(Neighbors)
+        sizehint!(Neighbors, length(FullStencil) - 1)
         Cell = UniqueCellsView[CellIndex]
         for Offset in FullStencil
             NeighborCell = Cell + Offset
-            NeighborIndex = get(CellDict, NeighborCell, 1)
-            StartIndex = ParticleRanges[NeighborIndex]
-            EndIndex = ParticleRanges[NeighborIndex + 1] - 1
-            if StartIndex <= EndIndex && NeighborIndex != CellIndex
-                push!(Neighbors, NeighborIndex)
+            NeighborIndex = get(CellDict, NeighborCell, 0)
+            if NeighborIndex != 0 && NeighborIndex != CellIndex
+                StartIndex = ParticleRanges[NeighborIndex]
+                EndIndex = ParticleRanges[NeighborIndex + 1] - 1
+                if StartIndex <= EndIndex
+                    push!(Neighbors, NeighborIndex)
+                end
             end
         end
     end
