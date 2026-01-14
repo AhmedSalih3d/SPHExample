@@ -57,7 +57,7 @@ module SPHExample
     export SimulationConstants
 
     using .SPHNeighborList
-    export ConstructStencil, ExtractCells!, UpdateNeighbors!, UpdateNeighborsNoSort!,
+    export ConstructStencil, ExtractCells!, UpdateNeighbors!,
            BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts
 
     using .SPHCellList

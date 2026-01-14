@@ -18,7 +18,7 @@ using ..OpenExternalPrograms
 using ..SPHKernels
 using ..SPHViscosityModels
 using ..SPHDensityDiffusionModels
-using ..SPHNeighborList: BuildNeighborCellLists!, ComputeCellNeighborCounts, ComputeCellParticleCounts, ConstructStencil, ExtractCells!, MapFloor, UpdateNeighbors!, UpdateNeighborsNoSort!, UpdateΔx!
+using ..SPHNeighborList: BuildNeighborCellLists!, ComputeCellNeighborCounts, ComputeCellParticleCounts, ConstructStencil, ExtractCells!, MapFloor, UpdateNeighbors!, UpdateΔx!
 
 using StaticArrays
 using StructArrays: StructArray, foreachfield
@@ -32,14 +32,6 @@ using Base.Threads
 using LinearAlgebra
     using Bumper
 
-    @inline function ResolveParticleIndex(::Nothing, Index)
-        return Index
-    end
-
-    @inline function ResolveParticleIndex(ParticleOrder, Index)
-        return @inbounds ParticleOrder[Index]
-    end
-
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{D,T,NoShifting,NoKernelOutput,B,L},
                                       SimConstants, SimParticles, ParticleRanges,
@@ -51,7 +43,7 @@ using LinearAlgebra
                                       Density = SimParticles.Density,
                                       Pressure = SimParticles.Pressure,
                                       Velocity = SimParticles.Velocity,
-                                      ParticleOrder = nothing) where {D,T,
+                                      ParticleOrder) where {D,T,
                                                   B<:MDBCMode,L<:LogMode,
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
@@ -65,54 +57,26 @@ using LinearAlgebra
             SameCellEnd = ParticleRanges[CellListIndex + 1] - 1
             NeighborCellIndices = NeighborCellLists[CellListIndex]
 
-            if ParticleOrder === nothing
-                @inbounds for j in SameCellStart:(i - 1)
+            @inbounds for j in SameCellStart:SameCellEnd
+                jIndex = ParticleOrder[j]
+                if jIndex != i
                     dρdt_acc, acc_acc = ComputeInteractionsPerParticleNoKernel!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, Position, Density, Pressure,
-                        Velocity, MotionLimiter, dρdt_acc, acc_acc, i, j,
+                        Velocity, MotionLimiter, dρdt_acc, acc_acc, i, jIndex,
                     )
                 end
-                @inbounds for j in (i + 1):SameCellEnd
+            end
+            for NeighborIdx in NeighborCellIndices
+                StartIndex_ = ParticleRanges[NeighborIdx]
+                EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
+                @inbounds for j in StartIndex_:EndIndex_
+                    jIndex = ParticleOrder[j]
                     dρdt_acc, acc_acc = ComputeInteractionsPerParticleNoKernel!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, Position, Density, Pressure,
-                        Velocity, MotionLimiter, dρdt_acc, acc_acc, i, j,
+                        Velocity, MotionLimiter, dρdt_acc, acc_acc, i, jIndex,
                     )
-                end
-                for NeighborIdx in NeighborCellIndices
-                    StartIndex_ = ParticleRanges[NeighborIdx]
-                    EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
-                    @inbounds for j in StartIndex_:EndIndex_
-                        dρdt_acc, acc_acc = ComputeInteractionsPerParticleNoKernel!(
-                            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                            SimConstants, SimParticles, Position, Density, Pressure,
-                            Velocity, MotionLimiter, dρdt_acc, acc_acc, i, j,
-                        )
-                    end
-                end
-            else
-                @inbounds for j in SameCellStart:SameCellEnd
-                    jIndex = ResolveParticleIndex(ParticleOrder, j)
-                    if jIndex != i
-                        dρdt_acc, acc_acc = ComputeInteractionsPerParticleNoKernel!(
-                            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                            SimConstants, SimParticles, Position, Density, Pressure,
-                            Velocity, MotionLimiter, dρdt_acc, acc_acc, i, jIndex,
-                        )
-                    end
-                end
-                for NeighborIdx in NeighborCellIndices
-                    StartIndex_ = ParticleRanges[NeighborIdx]
-                    EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
-                    @inbounds for j in StartIndex_:EndIndex_
-                        jIndex = ResolveParticleIndex(ParticleOrder, j)
-                        dρdt_acc, acc_acc = ComputeInteractionsPerParticleNoKernel!(
-                            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                            SimConstants, SimParticles, Position, Density, Pressure,
-                            Velocity, MotionLimiter, dρdt_acc, acc_acc, i, jIndex,
-                        )
-                    end
                 end
             end
 
@@ -135,7 +99,7 @@ using LinearAlgebra
                                       Density = SimParticles.Density,
                                       Pressure = SimParticles.Pressure,
                                       Velocity = SimParticles.Velocity,
-                                      ParticleOrder = nothing) where {D,T,
+                                      ParticleOrder) where {D,T,
                                                   K<:KernelOutputMode,
                                                   B<:MDBCMode,L<:LogMode,
                                                   SDD<:SPHDensityDiffusion,
@@ -152,64 +116,30 @@ using LinearAlgebra
             SameCellEnd = ParticleRanges[CellListIndex + 1] - 1
             NeighborCellIndices = NeighborCellLists[CellListIndex]
 
-            if ParticleOrder === nothing
-                @inbounds for j in SameCellStart:(i - 1)
+            @inbounds for j in SameCellStart:SameCellEnd
+                jIndex = ParticleOrder[j]
+                if jIndex != i
                     dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc =
                         ComputeInteractionsPerParticle!(
                             SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                             SimConstants, SimParticles, Position, Density, Pressure,
                             Velocity, MotionLimiter, dρdt_acc, acc_acc, kernel_acc,
-                            kernel_grad_acc, i, j,
+                            kernel_grad_acc, i, jIndex,
                         )
                 end
-                @inbounds for j in (i + 1):SameCellEnd
+            end
+            for NeighborIdx in NeighborCellIndices
+                StartIndex_ = ParticleRanges[NeighborIdx]
+                EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
+                @inbounds for j in StartIndex_:EndIndex_
+                    jIndex = ParticleOrder[j]
                     dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc =
                         ComputeInteractionsPerParticle!(
                             SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                             SimConstants, SimParticles, Position, Density, Pressure,
                             Velocity, MotionLimiter, dρdt_acc, acc_acc, kernel_acc,
-                            kernel_grad_acc, i, j,
+                            kernel_grad_acc, i, jIndex,
                         )
-                end
-                for NeighborIdx in NeighborCellIndices
-                    StartIndex_ = ParticleRanges[NeighborIdx]
-                    EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
-                    @inbounds for j in StartIndex_:EndIndex_
-                        dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc =
-                            ComputeInteractionsPerParticle!(
-                                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                                SimConstants, SimParticles, Position, Density, Pressure,
-                                Velocity, MotionLimiter, dρdt_acc, acc_acc, kernel_acc,
-                                kernel_grad_acc, i, j,
-                            )
-                    end
-                end
-            else
-                @inbounds for j in SameCellStart:SameCellEnd
-                    jIndex = ResolveParticleIndex(ParticleOrder, j)
-                    if jIndex != i
-                        dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc =
-                            ComputeInteractionsPerParticle!(
-                                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                                SimConstants, SimParticles, Position, Density, Pressure,
-                                Velocity, MotionLimiter, dρdt_acc, acc_acc, kernel_acc,
-                                kernel_grad_acc, i, jIndex,
-                            )
-                    end
-                end
-                for NeighborIdx in NeighborCellIndices
-                    StartIndex_ = ParticleRanges[NeighborIdx]
-                    EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
-                    @inbounds for j in StartIndex_:EndIndex_
-                        jIndex = ResolveParticleIndex(ParticleOrder, j)
-                        dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc =
-                            ComputeInteractionsPerParticle!(
-                                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                                SimConstants, SimParticles, Position, Density, Pressure,
-                                Velocity, MotionLimiter, dρdt_acc, acc_acc, kernel_acc,
-                                kernel_grad_acc, i, jIndex,
-                            )
-                    end
                 end
             end
 
@@ -234,7 +164,7 @@ using LinearAlgebra
                                       Density = SimParticles.Density,
                                       Pressure = SimParticles.Pressure,
                                       Velocity = SimParticles.Velocity,
-                                      ParticleOrder = nothing) where {D,T,
+                                      ParticleOrder) where {D,T,
                                                   S<:ShiftingMode,B<:MDBCMode,
                                                   L<:LogMode,SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
@@ -250,64 +180,30 @@ using LinearAlgebra
             SameCellEnd = ParticleRanges[CellListIndex + 1] - 1
             NeighborCellIndices = NeighborCellLists[CellListIndex]
 
-            if ParticleOrder === nothing
-                @inbounds for j in SameCellStart:(i - 1)
+            @inbounds for j in SameCellStart:SameCellEnd
+                jIndex = ParticleOrder[j]
+                if jIndex != i
                     dρdt_acc, acc_acc, shift_c_acc, shift_r_acc =
                         ComputeInteractionsPerParticleNoKernel!(
                             SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                             SimConstants, SimParticles, Position, Density, Pressure,
                             Velocity, MotionLimiter, dρdt_acc, acc_acc, shift_c_acc,
-                            shift_r_acc, i, j,
+                            shift_r_acc, i, jIndex,
                         )
                 end
-                @inbounds for j in (i + 1):SameCellEnd
+            end
+            for NeighborIdx in NeighborCellIndices
+                StartIndex_ = ParticleRanges[NeighborIdx]
+                EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
+                @inbounds for j in StartIndex_:EndIndex_
+                    jIndex = ParticleOrder[j]
                     dρdt_acc, acc_acc, shift_c_acc, shift_r_acc =
                         ComputeInteractionsPerParticleNoKernel!(
                             SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                             SimConstants, SimParticles, Position, Density, Pressure,
                             Velocity, MotionLimiter, dρdt_acc, acc_acc, shift_c_acc,
-                            shift_r_acc, i, j,
+                            shift_r_acc, i, jIndex,
                         )
-                end
-                for NeighborIdx in NeighborCellIndices
-                    StartIndex_ = ParticleRanges[NeighborIdx]
-                    EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
-                    @inbounds for j in StartIndex_:EndIndex_
-                        dρdt_acc, acc_acc, shift_c_acc, shift_r_acc =
-                            ComputeInteractionsPerParticleNoKernel!(
-                                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                                SimConstants, SimParticles, Position, Density, Pressure,
-                                Velocity, MotionLimiter, dρdt_acc, acc_acc, shift_c_acc,
-                                shift_r_acc, i, j,
-                            )
-                    end
-                end
-            else
-                @inbounds for j in SameCellStart:SameCellEnd
-                    jIndex = ResolveParticleIndex(ParticleOrder, j)
-                    if jIndex != i
-                        dρdt_acc, acc_acc, shift_c_acc, shift_r_acc =
-                            ComputeInteractionsPerParticleNoKernel!(
-                                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                                SimConstants, SimParticles, Position, Density, Pressure,
-                                Velocity, MotionLimiter, dρdt_acc, acc_acc, shift_c_acc,
-                                shift_r_acc, i, jIndex,
-                            )
-                    end
-                end
-                for NeighborIdx in NeighborCellIndices
-                    StartIndex_ = ParticleRanges[NeighborIdx]
-                    EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
-                    @inbounds for j in StartIndex_:EndIndex_
-                        jIndex = ResolveParticleIndex(ParticleOrder, j)
-                        dρdt_acc, acc_acc, shift_c_acc, shift_r_acc =
-                            ComputeInteractionsPerParticleNoKernel!(
-                                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                                SimConstants, SimParticles, Position, Density, Pressure,
-                                Velocity, MotionLimiter, dρdt_acc, acc_acc, shift_c_acc,
-                                shift_r_acc, i, jIndex,
-                            )
-                    end
                 end
             end
 
@@ -332,7 +228,7 @@ using LinearAlgebra
                                       Density = SimParticles.Density,
                                       Pressure = SimParticles.Pressure,
                                       Velocity = SimParticles.Velocity,
-                                      ParticleOrder = nothing) where {D,T,
+                                      ParticleOrder) where {D,T,
                                                   S<:ShiftingMode,
                                                   K<:KernelOutputMode,
                                                   B<:MDBCMode,L<:LogMode,
@@ -352,64 +248,30 @@ using LinearAlgebra
             SameCellEnd = ParticleRanges[CellListIndex + 1] - 1
             NeighborCellIndices = NeighborCellLists[CellListIndex]
 
-            if ParticleOrder === nothing
-                @inbounds for j in SameCellStart:(i - 1)
+            @inbounds for j in SameCellStart:SameCellEnd
+                jIndex = ParticleOrder[j]
+                if jIndex != i
                     dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc,
                     shift_r_acc = ComputeInteractionsPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, Position, Density, Pressure,
                         Velocity, MotionLimiter, dρdt_acc, acc_acc, kernel_acc,
-                        kernel_grad_acc, shift_c_acc, shift_r_acc, i, j,
+                        kernel_grad_acc, shift_c_acc, shift_r_acc, i, jIndex,
                     )
                 end
-                @inbounds for j in (i + 1):SameCellEnd
+            end
+            for NeighborIdx in NeighborCellIndices
+                StartIndex_ = ParticleRanges[NeighborIdx]
+                EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
+                @inbounds for j in StartIndex_:EndIndex_
+                    jIndex = ParticleOrder[j]
                     dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc,
                     shift_r_acc = ComputeInteractionsPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, Position, Density, Pressure,
                         Velocity, MotionLimiter, dρdt_acc, acc_acc, kernel_acc,
-                        kernel_grad_acc, shift_c_acc, shift_r_acc, i, j,
+                        kernel_grad_acc, shift_c_acc, shift_r_acc, i, jIndex,
                     )
-                end
-                for NeighborIdx in NeighborCellIndices
-                    StartIndex_ = ParticleRanges[NeighborIdx]
-                    EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
-                    @inbounds for j in StartIndex_:EndIndex_
-                        dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc,
-                        shift_r_acc = ComputeInteractionsPerParticle!(
-                            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                            SimConstants, SimParticles, Position, Density, Pressure,
-                            Velocity, MotionLimiter, dρdt_acc, acc_acc, kernel_acc,
-                            kernel_grad_acc, shift_c_acc, shift_r_acc, i, j,
-                        )
-                    end
-                end
-            else
-                @inbounds for j in SameCellStart:SameCellEnd
-                    jIndex = ResolveParticleIndex(ParticleOrder, j)
-                    if jIndex != i
-                        dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc,
-                        shift_r_acc = ComputeInteractionsPerParticle!(
-                            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                            SimConstants, SimParticles, Position, Density, Pressure,
-                            Velocity, MotionLimiter, dρdt_acc, acc_acc, kernel_acc,
-                            kernel_grad_acc, shift_c_acc, shift_r_acc, i, jIndex,
-                        )
-                    end
-                end
-                for NeighborIdx in NeighborCellIndices
-                    StartIndex_ = ParticleRanges[NeighborIdx]
-                    EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
-                    @inbounds for j in StartIndex_:EndIndex_
-                        jIndex = ResolveParticleIndex(ParticleOrder, j)
-                        dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc,
-                        shift_r_acc = ComputeInteractionsPerParticle!(
-                            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                            SimConstants, SimParticles, Position, Density, Pressure,
-                            Velocity, MotionLimiter, dρdt_acc, acc_acc, kernel_acc,
-                            kernel_grad_acc, shift_c_acc, shift_r_acc, i, jIndex,
-                        )
-                    end
                 end
             end
 
@@ -432,7 +294,7 @@ using LinearAlgebra
                                SimConstants, ParticleRanges, CellDict, Position,
                                Density, GhostPoints, GhostNormals, ParticleType,
                                bᵧ, Aᵧ;
-                               ParticleOrder = nothing) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
+                               ParticleOrder) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
         
         FullStencil = ConstructStencil(Val(Dimensions))
 
@@ -457,9 +319,9 @@ using LinearAlgebra
                     StartIndex_       = ParticleRanges[NeighborIdx] 
                     EndIndex_         = ParticleRanges[NeighborIdx + 1] - 1
 
-                    for j in StartIndex_:EndIndex_
+                    @inbounds for j in StartIndex_:EndIndex_
                         # change ComputeInteractions to take & return contributions, e.g.:
-                        jIndex = ResolveParticleIndex(ParticleOrder, j)
+                        jIndex = ParticleOrder[j]
                         bΔ, AΔ = ComputeInteractionsMDBC!(SimKernel, SimMetaData, SimConstants,
                                                         Position, Density, ParticleType,
                                                         GhostPoints, iter, jIndex)
@@ -772,7 +634,7 @@ using LinearAlgebra
                                   SimKernel, SimConstants, SimParticles,
                                   ParticleRanges, CellDict, Position, Density,
                                   GhostPoints, GhostNormals, ParticleType;
-                                  ParticleOrder = nothing
+                                  ParticleOrder
                                  ) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,L<:LogMode}
         @no_escape begin
             DimensionsPlus = D + 1
@@ -836,7 +698,7 @@ using LinearAlgebra
                                       SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
                                       SimConstants, SimParticles, FullStencil,
                                       ParticleRanges, UniqueCells, CellDict,
-                                      SortingScratchSpace, ParticleOrder, CellOffsets,
+                                      ParticleOrder, CellOffsets,
                                       NeighborCellLists, dρdtI, Velocityₙ⁺,
                                       Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ,
                                       MotionDefinition::Union{
@@ -885,11 +747,7 @@ using LinearAlgebra
                     # Remove if statement logic if you want to update each iteration
                     # if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
                     if ShouldRebuild
-                        if SimMetaData.UseSortingNeighborList
-                            @timeit SimMetaData.HourGlass "01a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells, CellDict)
-                        else
-                            @timeit SimMetaData.HourGlass "01a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighborsNoSort!(SimParticles, SimKernel.H⁻¹, ParticleRanges, UniqueCells, CellDict, ParticleOrder, CellOffsets)
-                        end
+                        @timeit SimMetaData.HourGlass "01a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, ParticleRanges, UniqueCells, CellDict, ParticleOrder, CellOffsets)
                         SimMetaData.Δx    = zero(eltype(dρdtI))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                         BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellDict)
@@ -899,11 +757,10 @@ using LinearAlgebra
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
             
                 @timeit SimMetaData.HourGlass "02 Pressure"                              Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-                ParticleOrderView = SimMetaData.UseSortingNeighborList ? nothing : ParticleOrder
                 if SimMetaData isa SimulationMetaData{Dimensions, FloatType, SMode, KMode, NoMDBC, LMode} where {SMode, KMode, LMode}
                     @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData)
                 else
-                    @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType; ParticleOrder = ParticleOrderView)
+                    @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, CellDict, Position, Density, GhostPoints, GhostNormals, ParticleType; ParticleOrder = ParticleOrder)
                 end
 
                 if SimMetaData isa SimulationMetaData{Dimensions, FloatType, SMode, NoKernelOutput, BMode, LMode} where {SMode, BMode, LMode}
@@ -911,14 +768,14 @@ using LinearAlgebra
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, ParticleRanges, CellDict,
                         NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ,
-                        ParticleOrder = ParticleOrderView,
+                        ParticleOrder = ParticleOrder,
                     )
                 else
                     @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoopPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, ParticleRanges, CellDict,
                         NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ,
-                        ParticleOrder = ParticleOrderView,
+                        ParticleOrder = ParticleOrder,
                     )
                 end
 
@@ -937,7 +794,7 @@ using LinearAlgebra
                         SimConstants, SimParticles, ParticleRanges, CellDict,
                         NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ,
                         max_visc, min_dt_force,
-                        ParticleOrder = ParticleOrderView,
+                        ParticleOrder = ParticleOrder,
                         Position = Positionₙ⁺,
                         Density = ρₙ⁺,
                         Velocity = Velocityₙ⁺,
@@ -948,7 +805,7 @@ using LinearAlgebra
                         SimConstants, SimParticles, ParticleRanges, CellDict,
                         NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ,
                         max_visc, min_dt_force,
-                        ParticleOrder = ParticleOrderView,
+                        ParticleOrder = ParticleOrder,
                         Position = Positionₙ⁺,
                         Density = ρₙ⁺,
                         Velocity = Velocityₙ⁺,
@@ -1000,7 +857,6 @@ using LinearAlgebra
         NeighborCellLists      = [Int[] for _ in 1:length(UniqueCells)]
         ParticleOrder          = zeros(Int, NumberOfPoints)
         CellOffsets            = zeros(Int, length(ParticleRanges))
-        _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
 
         output = SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
 
@@ -1038,8 +894,7 @@ using LinearAlgebra
             @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(
                 SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                 SimConstants, SimParticles, FullStencil, ParticleRanges,
-                UniqueCells, CellDict, SortingScratchSpace,
-                ParticleOrder, CellOffsets,
+                UniqueCells, CellDict, ParticleOrder, CellOffsets,
                 NeighborCellLists, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
                 ∇Cᵢ, ∇◌rᵢ, MotionDefinition,
             )

@@ -1,6 +1,6 @@
 module SPHNeighborList
 
-export ConstructStencil, ExtractCells!, UpdateNeighbors!, UpdateNeighborsNoSort!,
+export ConstructStencil, ExtractCells!, UpdateNeighbors!,
        BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts, UpdateΔx!
 
 using StaticArrays
@@ -64,53 +64,13 @@ end
 end
 
 """
-Updates the neighbor list and sorts particles by their cell indices.
-
-# Arguments
-- `Particles`: The particles whose neighbors are to be updated.
-- `CutOff`: The cutoff value used for cell extraction.
-- `SortingScratchSpace`: Scratch space for sorting.
-- `ParticleRanges`: Array to store the ranges of particles in each cell.
-- `UniqueCells`: Array to store the unique cells.
-
-# Returns
-- `IndexCounter`: The number of unique cells identified.
-"""
-function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
-                          ParticleRanges, UniqueCells, CellDict)
-    ExtractCells!(Particles, InverseCutOff)
-
-    sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
-    Cells = @views Particles.Cells
-    fill!(ParticleRanges, zero(eltype(ParticleRanges)))
-    ParticleRanges[1] = 1
-    IndexCounter                  = 2
-    ParticleRanges[IndexCounter]  = 1
-    UniqueCells[IndexCounter]     = Cells[1]
-    empty!(CellDict)
-    CellDict[Cells[1]] = IndexCounter
-
-    @inbounds @simd ivdep for Index in eachindex(Cells)[2:end]
-        if Cells[Index] != Cells[Index - 1] # Equivalent to diff(Cells) != 0
-            IndexCounter                 += 1
-            ParticleRanges[IndexCounter]  = Index
-            UniqueCells[IndexCounter]     = Cells[Index]
-            CellDict[Cells[Index]]       = IndexCounter
-        end
-    end
-    ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
-
-    return IndexCounter
-end
-
-"""
 Updates the neighbor list without sorting particle storage.
 
 This builds a per-cell particle ordering buffer so cell ranges can be iterated
 without reordering the particle arrays.
 """
-function UpdateNeighborsNoSort!(Particles, InverseCutOff, ParticleRanges,
-                                UniqueCells, CellDict, ParticleOrder, CellOffsets)
+function UpdateNeighbors!(Particles, InverseCutOff, ParticleRanges,
+                          UniqueCells, CellDict, ParticleOrder, CellOffsets)
     ExtractCells!(Particles, InverseCutOff)
 
     Cells = @views Particles.Cells
