@@ -133,6 +133,8 @@ NeighborLoopCUDA!(InteractionKernel, neighbor_list, acc, position)
 These CUDA utilities are intended as building blocks for integrating GPU
 workflows into the existing solver. You can keep the CPU path intact and
 incrementally replace the neighbor loop where it makes sense for your use case.
+The `example/StillWedgeMDBC_CUDA.jl` script shows how to load the StillWedge
+geometry and run a CUDA neighbor-count pass using these utilities.
 
 ## Help
 
