@@ -7,6 +7,7 @@ using Parameters
 using Base.Threads
 using Bumper
 using ..SimulationEquations
+using ..SimulationGeometry
 using ..SimulationMetaDataConfiguration
 
 @inline function UpdateTimeStepBuffers!(::Nothing, ::Nothing, index, position,
