@@ -77,10 +77,10 @@ function UpdateNeighbors!(Particles, InverseCutOff, ParticleRanges,
     ExtractCells!(Particles, InverseCutOff)
 
     Cells = @views Particles.Cells
-    fill!(ParticleRanges, zero(eltype(ParticleRanges)))
     ParticleRanges[1] = 1
     IndexCounter = 1
     empty!(CellDict)
+    fill!(CellOffsets, zero(eltype(CellOffsets)))
 
     @inbounds for Index in eachindex(Cells)
         Cell = Cells[Index]
@@ -91,12 +91,12 @@ function UpdateNeighbors!(Particles, InverseCutOff, ParticleRanges,
             CellDict[Cell] = CellIndex
             UniqueCells[CellIndex] = Cell
         end
-        ParticleRanges[CellIndex] += 1
+        CellOffsets[CellIndex] += 1
     end
 
     RunningIndex = 1
     @inbounds for CellIndex in 2:IndexCounter
-        Count = ParticleRanges[CellIndex]
+        Count = CellOffsets[CellIndex]
         ParticleRanges[CellIndex] = RunningIndex
         CellOffsets[CellIndex] = RunningIndex
         RunningIndex += Count
