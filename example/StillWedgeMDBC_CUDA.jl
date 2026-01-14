@@ -101,7 +101,7 @@ let
     println("  Max neighbors: ", MaximumNeighbors)
     println("  Avg neighbors: ", AverageNeighbors)
 
-    RunSimulation(
+    RunSimulationCUDA(
         SimGeometry         = SimulationGeometry,
         SimMetaData         = SimMetaDataWedge,
         SimConstants        = SimConstantsWedge,

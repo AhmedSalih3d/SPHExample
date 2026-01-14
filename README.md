@@ -138,6 +138,11 @@ incrementally replace the neighbor loop where it makes sense for your use case.
 The `example/StillWedgeMDBC_CUDA.jl` script shows how to load the StillWedge
 geometry and run a CUDA neighbor-count pass using these utilities.
 
+For an end-to-end GPU path (limited to `NoShifting`, `NoKernelOutput`, `NoMDBC`,
+`ArtificialViscosity`, and `LinearDensityDiffusion`), use `RunSimulationCUDA`
+from the `SPHCUDASimulation` module. This runs the StillWedge-style workflow on
+CUDA arrays and syncs particle data to the CPU only for output/logging.
+
 ## Help
 
 Questions or issues can be posted on the GitHub issue tracker. Response times may vary but all feedback is welcome.

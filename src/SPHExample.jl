@@ -17,6 +17,7 @@ module SPHExample
     const HasCUDA = Base.find_package("CUDA") !== nothing
     if HasCUDA
         include("SPHCUDANeighborList.jl")
+        include("SPHCUDASimulation.jl")
     end
     include("SPHCellList.jl") #Must be last    
 
@@ -69,6 +70,8 @@ module SPHExample
         export CUDACellGrid, CUDANeighborList, AllocateCUDANeighborList,
                ConstructNeighborOffsets, BuildNeighborCellListsCUDA!,
                UpdateNeighborsCUDA!, NeighborLoopCUDA!, NeighborLoopPerParticleCUDA!
+        using .SPHCUDASimulation
+        export RunSimulationCUDA, AllocateCUDASimParticles, SyncParticlesFromCUDA!
     end
 
     using .SPHCellList
