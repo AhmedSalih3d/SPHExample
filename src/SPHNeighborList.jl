@@ -6,6 +6,7 @@ export ConstructStencil, ExtractCells!, UpdateNeighbors!, BuildNeighborCellLists
        UpdateΔx!
 
 using StaticArrays
+using Base.Threads
 
 mutable struct NeighborListScratch
     CellCounts::Vector{Int}
@@ -39,16 +40,32 @@ function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView
         end
     end
 
-    @inbounds for CellIndex in eachindex(UniqueCellsView)
-        Neighbors = NeighborCellLists[CellIndex]
-        empty!(Neighbors)
-        sizehint!(Neighbors, length(FullStencil))
-        Cell = UniqueCellsView[CellIndex]
-        for Offset in FullStencil
-            NeighborCell = Cell + Offset
-            NeighborIndex = get(CellDict, NeighborCell, 1)
-            if NeighborIndex != CellIndex && CellOccupied[NeighborIndex]
-                push!(Neighbors, NeighborIndex)
+    if nthreads() > 1
+        @inbounds Threads.@threads for CellIndex in eachindex(UniqueCellsView)
+            Neighbors = NeighborCellLists[CellIndex]
+            empty!(Neighbors)
+            sizehint!(Neighbors, length(FullStencil))
+            Cell = UniqueCellsView[CellIndex]
+            for Offset in FullStencil
+                NeighborCell = Cell + Offset
+                NeighborIndex = get(CellDict, NeighborCell, 1)
+                if NeighborIndex != CellIndex && CellOccupied[NeighborIndex]
+                    push!(Neighbors, NeighborIndex)
+                end
+            end
+        end
+    else
+        @inbounds for CellIndex in eachindex(UniqueCellsView)
+            Neighbors = NeighborCellLists[CellIndex]
+            empty!(Neighbors)
+            sizehint!(Neighbors, length(FullStencil))
+            Cell = UniqueCellsView[CellIndex]
+            for Offset in FullStencil
+                NeighborCell = Cell + Offset
+                NeighborIndex = get(CellDict, NeighborCell, 1)
+                if NeighborIndex != CellIndex && CellOccupied[NeighborIndex]
+                    push!(Neighbors, NeighborIndex)
+                end
             end
         end
     end
