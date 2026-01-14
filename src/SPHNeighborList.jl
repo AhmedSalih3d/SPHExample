@@ -82,7 +82,7 @@ function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
 
     sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
     Cells = @views Particles.Cells
-    @. ParticleRanges             = zero(eltype(ParticleRanges))
+    fill!(ParticleRanges, zero(eltype(ParticleRanges)))
     ParticleRanges[1] = 1
     IndexCounter                  = 2
     ParticleRanges[IndexCounter]  = 1
@@ -114,7 +114,7 @@ function UpdateNeighborsNoSort!(Particles, InverseCutOff, ParticleRanges,
     ExtractCells!(Particles, InverseCutOff)
 
     Cells = @views Particles.Cells
-    @. ParticleRanges = zero(eltype(ParticleRanges))
+    fill!(ParticleRanges, zero(eltype(ParticleRanges)))
     ParticleRanges[1] = 1
     IndexCounter = 1
     empty!(CellDict)

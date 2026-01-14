@@ -48,7 +48,7 @@ struct StoreLog <: LogMode end
     ExportSingleVTKHDF::Bool                = true
     ExportGridCells::Bool                   = false
     ExportGridCellParticleCounts::Bool      = false
-    UseSortingNeighborList::Bool            = true
+    UseSortingNeighborList::Bool            = false
     OutputVariables::Vector{String}         = [
         "Density",
         "Pressure",
