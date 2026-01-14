@@ -1,6 +1,7 @@
 module SPHNeighborList
 
-export ConstructStencil, ExtractCells!, UpdateNeighbors!, BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts, UpdateΔx!
+export ConstructStencil, ExtractCells!, UpdateNeighbors!, UpdateNeighborsNoSort!,
+       BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts, UpdateΔx!
 
 using StaticArrays
 
@@ -98,6 +99,53 @@ function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
         end
     end
     ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
+
+    return IndexCounter
+end
+
+"""
+Updates the neighbor list without sorting particle storage.
+
+This builds a per-cell particle ordering buffer so cell ranges can be iterated
+without reordering the particle arrays.
+"""
+function UpdateNeighborsNoSort!(Particles, InverseCutOff, ParticleRanges,
+                                UniqueCells, CellDict, ParticleOrder, CellOffsets)
+    ExtractCells!(Particles, InverseCutOff)
+
+    Cells = @views Particles.Cells
+    @. ParticleRanges = zero(eltype(ParticleRanges))
+    ParticleRanges[1] = 1
+    IndexCounter = 1
+    empty!(CellDict)
+
+    @inbounds for Index in eachindex(Cells)
+        Cell = Cells[Index]
+        CellIndex = get(CellDict, Cell, 0)
+        if CellIndex == 0
+            IndexCounter += 1
+            CellIndex = IndexCounter
+            CellDict[Cell] = CellIndex
+            UniqueCells[CellIndex] = Cell
+        end
+        ParticleRanges[CellIndex] += 1
+    end
+
+    RunningIndex = 1
+    @inbounds for CellIndex in 2:IndexCounter
+        Count = ParticleRanges[CellIndex]
+        ParticleRanges[CellIndex] = RunningIndex
+        CellOffsets[CellIndex] = RunningIndex
+        RunningIndex += Count
+    end
+    ParticleRanges[IndexCounter + 1] = RunningIndex
+
+    @inbounds for Index in eachindex(Cells)
+        CellIndex = CellDict[Cells[Index]]
+        TargetIndex = CellOffsets[CellIndex]
+        ParticleOrder[TargetIndex] = Index
+        CellOffsets[CellIndex] = TargetIndex + 1
+    end
 
     return IndexCounter
 end
