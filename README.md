@@ -88,6 +88,8 @@ To color exported cell grids by particle counts, set
 `ExportGridCellParticleCounts=true` in `SimulationMetaData`. This also adds a
 `ParticleNeighborsPerCell` array that includes each cell's particle count minus
 one plus the particles in its neighbor stencil.
+Neighbor rebuilds use a per-cell ordering buffer without reordering particle
+storage.
 
 ## Help
 

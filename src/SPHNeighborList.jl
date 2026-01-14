@@ -1,6 +1,7 @@
 module SPHNeighborList
 
-export ConstructStencil, ExtractCells!, UpdateNeighbors!, BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts, UpdateΔx!
+export ConstructStencil, ExtractCells!, UpdateNeighbors!,
+       BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts, UpdateΔx!
 
 using StaticArrays
 
@@ -22,14 +23,17 @@ function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView
     @inbounds for CellIndex in eachindex(UniqueCellsView)
         Neighbors = NeighborCellLists[CellIndex]
         empty!(Neighbors)
+        sizehint!(Neighbors, length(FullStencil) - 1)
         Cell = UniqueCellsView[CellIndex]
         for Offset in FullStencil
             NeighborCell = Cell + Offset
-            NeighborIndex = get(CellDict, NeighborCell, 1)
-            StartIndex = ParticleRanges[NeighborIndex]
-            EndIndex = ParticleRanges[NeighborIndex + 1] - 1
-            if StartIndex <= EndIndex && NeighborIndex != CellIndex
-                push!(Neighbors, NeighborIndex)
+            NeighborIndex = get(CellDict, NeighborCell, 0)
+            if NeighborIndex != 0 && NeighborIndex != CellIndex
+                StartIndex = ParticleRanges[NeighborIndex]
+                EndIndex = ParticleRanges[NeighborIndex + 1] - 1
+                if StartIndex <= EndIndex
+                    push!(Neighbors, NeighborIndex)
+                end
             end
         end
     end
@@ -63,41 +67,48 @@ end
 end
 
 """
-Updates the neighbor list and sorts particles by their cell indices.
+Updates the neighbor list without sorting particle storage.
 
-# Arguments
-- `Particles`: The particles whose neighbors are to be updated.
-- `CutOff`: The cutoff value used for cell extraction.
-- `SortingScratchSpace`: Scratch space for sorting.
-- `ParticleRanges`: Array to store the ranges of particles in each cell.
-- `UniqueCells`: Array to store the unique cells.
-
-# Returns
-- `IndexCounter`: The number of unique cells identified.
+This builds a per-cell particle ordering buffer so cell ranges can be iterated
+without reordering the particle arrays.
 """
-function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
-                          ParticleRanges, UniqueCells, CellDict)
+function UpdateNeighbors!(Particles, InverseCutOff, ParticleRanges,
+                          UniqueCells, CellDict, ParticleOrder, CellOffsets)
     ExtractCells!(Particles, InverseCutOff)
 
-    sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
     Cells = @views Particles.Cells
-    @. ParticleRanges             = zero(eltype(ParticleRanges))
     ParticleRanges[1] = 1
-    IndexCounter                  = 2
-    ParticleRanges[IndexCounter]  = 1
-    UniqueCells[IndexCounter]     = Cells[1]
+    IndexCounter = 1
     empty!(CellDict)
-    CellDict[Cells[1]] = IndexCounter
+    fill!(CellOffsets, zero(eltype(CellOffsets)))
 
-    @inbounds @simd ivdep for Index in eachindex(Cells)[2:end]
-        if Cells[Index] != Cells[Index - 1] # Equivalent to diff(Cells) != 0
-            IndexCounter                 += 1
-            ParticleRanges[IndexCounter]  = Index
-            UniqueCells[IndexCounter]     = Cells[Index]
-            CellDict[Cells[Index]]       = IndexCounter
+    @inbounds for Index in eachindex(Cells)
+        Cell = Cells[Index]
+        CellIndex = get(CellDict, Cell, 0)
+        if CellIndex == 0
+            IndexCounter += 1
+            CellIndex = IndexCounter
+            CellDict[Cell] = CellIndex
+            UniqueCells[CellIndex] = Cell
         end
+        CellOffsets[CellIndex] += 1
     end
-    ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
+
+    RunningIndex = 1
+    @inbounds for CellIndex in 2:IndexCounter
+        Count = CellOffsets[CellIndex]
+        ParticleRanges[CellIndex] = RunningIndex
+        CellOffsets[CellIndex] = RunningIndex
+        RunningIndex += Count
+    end
+    ParticleRanges[IndexCounter + 1] = RunningIndex
+
+    @inbounds for Index in eachindex(Cells)
+        CellIndex = CellDict[Cells[Index]]
+        TargetIndex = CellOffsets[CellIndex]
+        ParticleOrder[TargetIndex] = Index
+        CellOffsets[CellIndex] = TargetIndex + 1
+    end
 
     return IndexCounter
 end
