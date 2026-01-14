@@ -1,14 +1,34 @@
 module SPHNeighborList
 
-export ConstructStencil, ExtractCells!, UpdateNeighbors!, BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts, UpdateΔx!
+export ConstructStencil, ExtractCells!, UpdateNeighbors!, BuildNeighborCellLists!,
+       NeighborListScratch, UpdateCellCounts!, ComputeCellParticleCounts!,
+       ComputeCellNeighborCounts!, ComputeCellParticleCounts, ComputeCellNeighborCounts,
+       UpdateΔx!
 
 using StaticArrays
+
+mutable struct NeighborListScratch
+    CellCounts::Vector{Int}
+    CellOccupied::Vector{Bool}
+    NeighborCounts::Vector{Int}
+
+    function NeighborListScratch()
+        new(Int[], Bool[], Int[])
+    end
+end
+
+@inline function ResizeNeighborListScratch!(Scratch::NeighborListScratch, CellCount)
+    resize!(Scratch.CellCounts, CellCount)
+    resize!(Scratch.CellOccupied, CellCount)
+    resize!(Scratch.NeighborCounts, CellCount)
+    return nothing
+end
 
 function ConstructStencil(V::Val{d}) where d
     return CartesianIndices(ntuple(_ -> -1:1, V))
 end
 
-function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellDict)
+function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, CellDict, CellOccupied)
     TargetLen   = length(UniqueCellsView)
     OriginalLen = length(NeighborCellLists)
     resize!(NeighborCellLists, TargetLen)
@@ -22,13 +42,12 @@ function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView
     @inbounds for CellIndex in eachindex(UniqueCellsView)
         Neighbors = NeighborCellLists[CellIndex]
         empty!(Neighbors)
+        sizehint!(Neighbors, length(FullStencil))
         Cell = UniqueCellsView[CellIndex]
         for Offset in FullStencil
             NeighborCell = Cell + Offset
             NeighborIndex = get(CellDict, NeighborCell, 1)
-            StartIndex = ParticleRanges[NeighborIndex]
-            EndIndex = ParticleRanges[NeighborIndex + 1] - 1
-            if StartIndex <= EndIndex && NeighborIndex != CellIndex
+            if NeighborIndex != CellIndex && CellOccupied[NeighborIndex]
                 push!(Neighbors, NeighborIndex)
             end
         end
@@ -102,17 +121,34 @@ function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
     return IndexCounter
 end
 
-function ComputeCellParticleCounts(ParticleRanges, CellCount)
-    Counts = Vector{Int}(undef, CellCount)
+function UpdateCellCounts!(Scratch::NeighborListScratch, ParticleRanges, CellCount)
+    ResizeNeighborListScratch!(Scratch, CellCount)
+    Counts = Scratch.CellCounts
+    Occupied = Scratch.CellOccupied
+    @inbounds for Index in 1:CellCount
+        Count = ParticleRanges[Index + 1] - ParticleRanges[Index]
+        Counts[Index] = Count
+        Occupied[Index] = Count > 0
+    end
+    return nothing
+end
+
+function ComputeCellParticleCounts!(Counts, ParticleRanges, CellCount)
+    resize!(Counts, CellCount)
     @inbounds for Index in 1:CellCount
         Counts[Index] = ParticleRanges[Index + 1] - ParticleRanges[Index]
     end
+    return nothing
+end
+
+function ComputeCellParticleCounts(ParticleRanges, CellCount)
+    Counts = Vector{Int}(undef, CellCount)
+    ComputeCellParticleCounts!(Counts, ParticleRanges, CellCount)
     return Counts
 end
 
-function ComputeCellNeighborCounts(ParticleRanges, NeighborCellLists, CellCount)
-    Counts = ComputeCellParticleCounts(ParticleRanges, CellCount)
-    Neighbors = Vector{Int}(undef, CellCount)
+function ComputeCellNeighborCounts!(Neighbors, Counts, NeighborCellLists, CellCount)
+    resize!(Neighbors, CellCount)
     @inbounds for Index in 1:CellCount
         NeighborTotal = 0
         for NeighborIndex in NeighborCellLists[Index]
@@ -120,6 +156,13 @@ function ComputeCellNeighborCounts(ParticleRanges, NeighborCellLists, CellCount)
         end
         Neighbors[Index] = max(Counts[Index] - 1, 0) + NeighborTotal
     end
+    return nothing
+end
+
+function ComputeCellNeighborCounts(ParticleRanges, NeighborCellLists, CellCount)
+    Counts = ComputeCellParticleCounts(ParticleRanges, CellCount)
+    Neighbors = Vector{Int}(undef, CellCount)
+    ComputeCellNeighborCounts!(Neighbors, Counts, NeighborCellLists, CellCount)
     return Neighbors
 end
 
