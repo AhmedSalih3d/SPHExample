@@ -69,7 +69,8 @@ module SPHExample
         using .SPHCUDANeighborList
         export CUDACellGrid, CUDANeighborList, AllocateCUDANeighborList,
                ConstructNeighborOffsets, BuildNeighborCellListsCUDA!,
-               UpdateNeighborsCUDA!, NeighborLoopCUDA!, NeighborLoopPerParticleCUDA!
+               UpdateNeighborsCUDA!, NeighborLoopCUDA!, NeighborLoopPerParticleCUDA!,
+               CUDAPackedNeighborList, AllocateCUDAPackedNeighborList, UpdateNeighborsCPUToCUDA!
         using .SPHCUDASimulation
         export RunSimulationCUDA, AllocateCUDASimParticles, SyncParticlesFromCUDA!
     end

@@ -3,7 +3,8 @@ module SPHCUDANeighborList
 export CUDACellGrid, CUDANeighborList, AllocateCUDANeighborList,
        ConstructNeighborOffsets, BuildNeighborCellListsCUDA!,
        UpdateNeighborsCUDA!, NeighborLoopCUDA!,
-       NeighborLoopPerParticleCUDA!
+       NeighborLoopPerParticleCUDA!, CUDAPackedNeighborList,
+       AllocateCUDAPackedNeighborList, UpdateNeighborsCPUToCUDA!
 
 const CUDAIndex = Int32
 
@@ -51,6 +52,16 @@ struct CUDANeighborList{D, T}
     NeighborOffsets::CuArray{SVector{D, CUDAIndex}}
 end
 
+struct CUDAPackedNeighborList
+    CellIds::CuArray{CUDAIndex}
+    ParticleOrder::CuArray{CUDAIndex}
+    ParticleRanges::CuArray{CUDAIndex}
+    NeighborCells::CuArray{CUDAIndex}
+    NeighborCounts::CuArray{CUDAIndex}
+    CellCount::Int
+    MaxNeighbors::Int
+end
+
 """
     ConstructNeighborOffsets(Val(D))
 
@@ -92,6 +103,56 @@ function AllocateCUDANeighborList(Grid::CUDACellGrid{D, T}, ParticleCount::Int) 
         NeighborOffsets,
     )
     BuildNeighborCellListsCUDA!(NeighborList)
+    return NeighborList
+end
+
+function AllocateCUDAPackedNeighborList(ParticleCount::Int, CellCount::Int, MaxNeighbors::Int)
+    CellIds = CUDA.zeros(CUDAIndex, ParticleCount)
+    ParticleOrder = CUDA.zeros(CUDAIndex, ParticleCount)
+    ParticleRanges = CUDA.zeros(CUDAIndex, CellCount + 1)
+    NeighborCells = CUDA.zeros(CUDAIndex, MaxNeighbors, CellCount)
+    NeighborCounts = CUDA.zeros(CUDAIndex, CellCount)
+    return CUDAPackedNeighborList(
+        CellIds,
+        ParticleOrder,
+        ParticleRanges,
+        NeighborCells,
+        NeighborCounts,
+        CellCount,
+        MaxNeighbors,
+    )
+end
+
+function UpdateNeighborsCPUToCUDA!(NeighborList::Union{Nothing, CUDAPackedNeighborList},
+                                   CellIdsHost,
+                                   ParticleOrderHost,
+                                   ParticleRangesHost,
+                                   NeighborCellListsHost)
+    CellCount = length(NeighborCellListsHost)
+    MaxNeighbors = maximum(length, NeighborCellListsHost; init=0)
+    if NeighborList === nothing || NeighborList.CellCount != CellCount || NeighborList.MaxNeighbors < MaxNeighbors
+        NeighborList = AllocateCUDAPackedNeighborList(
+            length(CellIdsHost),
+            CellCount,
+            max(MaxNeighbors, 1),
+        )
+    end
+
+    NeighborCountsHost = zeros(CUDAIndex, CellCount)
+    NeighborCellsHost = zeros(CUDAIndex, NeighborList.MaxNeighbors, CellCount)
+    @inbounds for CellIndex in 1:CellCount
+        Neighbors = NeighborCellListsHost[CellIndex]
+        NeighborCountsHost[CellIndex] = CUDAIndex(length(Neighbors))
+        for (NeighborOffset, NeighborIndex) in enumerate(Neighbors)
+            NeighborCellsHost[NeighborOffset, CellIndex] = CUDAIndex(NeighborIndex)
+        end
+    end
+
+    copyto!(NeighborList.CellIds, CUDAIndex.(CellIdsHost))
+    copyto!(NeighborList.ParticleOrder, CUDAIndex.(ParticleOrderHost))
+    copyto!(NeighborList.ParticleRanges, CUDAIndex.(ParticleRangesHost))
+    copyto!(NeighborList.NeighborCells, NeighborCellsHost)
+    copyto!(NeighborList.NeighborCounts, NeighborCountsHost)
     return NeighborList
 end
 
@@ -337,6 +398,23 @@ function NeighborLoopCUDA!(InteractionKernel,
     return nothing
 end
 
+function NeighborLoopCUDA!(InteractionKernel,
+                           NeighborList::CUDAPackedNeighborList,
+                           Args...;
+                           Threads::Int = 256)
+    Blocks = cld(length(NeighborList.CellIds), Threads)
+    CUDA.@cuda threads=Threads blocks=Blocks NeighborLoopKernel!(
+        InteractionKernel,
+        NeighborList.CellIds,
+        NeighborList.ParticleOrder,
+        NeighborList.ParticleRanges,
+        NeighborList.NeighborCells,
+        NeighborList.NeighborCounts,
+        Args...,
+    )
+    return nothing
+end
+
 """
     NeighborLoopPerParticleCUDA!(InitKernel, InteractionKernel, FinalKernel, NeighborList, Args...; Threads=256)
 
@@ -351,6 +429,27 @@ function NeighborLoopPerParticleCUDA!(InitKernel,
                                       InteractionKernel,
                                       FinalKernel,
                                       NeighborList::CUDANeighborList,
+                                      Args...;
+                                      Threads::Int = 256)
+    Blocks = cld(length(NeighborList.CellIds), Threads)
+    CUDA.@cuda threads=Threads blocks=Blocks NeighborLoopPerParticleKernel!(
+        InitKernel,
+        InteractionKernel,
+        FinalKernel,
+        NeighborList.CellIds,
+        NeighborList.ParticleOrder,
+        NeighborList.ParticleRanges,
+        NeighborList.NeighborCells,
+        NeighborList.NeighborCounts,
+        Args...,
+    )
+    return nothing
+end
+
+function NeighborLoopPerParticleCUDA!(InitKernel,
+                                      InteractionKernel,
+                                      FinalKernel,
+                                      NeighborList::CUDAPackedNeighborList,
                                       Args...;
                                       Threads::Int = 256)
     Blocks = cld(length(NeighborList.CellIds), Threads)

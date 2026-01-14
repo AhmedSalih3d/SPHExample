@@ -19,6 +19,7 @@ using ..SPHViscosityModels
 using ..TimeStepping: next_output_time
 using ..SimulationEquations: EquationOfStateGamma7
 using ..OpenExternalPrograms
+using ..SPHNeighborList: BuildNeighborCellLists!, ConstructStencil, UpdateNeighbors!
 
 struct CUDASimParticles{D, T}
     Position::CuArray{SVector{D, T}}
@@ -61,6 +62,13 @@ end
     Extents = MaxCorner - MinCorner
     Dims = SVector{length(MinCorner), Int}(ceil.(Int, Extents ./ CellSize) .+ 1)
     return CUDACellGrid(MinCorner, CellSize, Dims)
+end
+
+@inline function BuildCellIds!(CellIds, Cells, CellDict)
+    @inbounds for Index in eachindex(CellIds, Cells)
+        CellIds[Index] = CellDict[Cells[Index]]
+    end
+    return nothing
 end
 
 @generated function GravityVector(::Val{D}, Value::T) where {D, T}
@@ -231,9 +239,15 @@ function RunSimulationCUDA(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}
     MaxVisc = CUDA.zeros(FloatType, NumberOfPoints)
     MinDtForce = CUDA.zeros(FloatType, NumberOfPoints)
 
-    MinCorner, MaxCorner = ComputeBounds(SimParticles.Position)
-    Grid = BuildGrid(MinCorner, MaxCorner, SimKernel.H)
-    NeighborList = AllocateCUDANeighborList(Grid, NumberOfPoints)
+    ParticleRanges = zeros(Int, NumberOfPoints + 1 + 1)
+    UniqueCells = zeros(CartesianIndex{Dimensions}, NumberOfPoints)
+    CellDict = Dict{CartesianIndex{Dimensions}, Int}()
+    FullStencil = ConstructStencil(Val(Dimensions))
+    NeighborCellLists = [Int[] for _ in 1:length(UniqueCells)]
+    ParticleOrder = zeros(Int, NumberOfPoints)
+    CellOffsets = zeros(Int, length(ParticleRanges))
+    CellIdsHost = zeros(Int, NumberOfPoints)
+    PackedNeighborList = nothing
 
     output = SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
 
@@ -253,7 +267,18 @@ function RunSimulationCUDA(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}
     Dt = ComputeNextTimeStep(MaxVisc, MinDtForce, SimConstants, SimKernel)
 
     while SimMetaData.TotalTime <= next_output_time(SimMetaData)
-        UpdateNeighborsCUDA!(NeighborList, CUDAParticles.Position)
+        copyto!(SimParticles.Position, Array(CUDAParticles.Position))
+        IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, ParticleRanges, UniqueCells, CellDict, ParticleOrder, CellOffsets)
+        UniqueCellsView = view(UniqueCells, 1:IndexCounter)
+        BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellDict)
+        BuildCellIds!(CellIdsHost, SimParticles.Cells, CellDict)
+        PackedNeighborList = UpdateNeighborsCPUToCUDA!(
+            PackedNeighborList,
+            CellIdsHost,
+            ParticleOrder,
+            view(ParticleRanges, 1:(IndexCounter + 1)),
+            view(NeighborCellLists, 1:IndexCounter),
+        )
 
         CUDA.@cuda threads=Threads blocks=Blocks PressureKernel!(CUDAParticles.Pressure, CUDAParticles.Density, SimConstants)
 
@@ -261,7 +286,7 @@ function RunSimulationCUDA(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}
             InitAccumulatorKernel,
             InteractionKernel,
             FinalKernel,
-            NeighborList,
+            PackedNeighborList,
             CUDAParticles.Position,
             CUDAParticles.Density,
             CUDAParticles.Pressure,
@@ -298,7 +323,7 @@ function RunSimulationCUDA(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}
             InitAccumulatorKernel,
             InteractionKernel,
             FinalKernel,
-            NeighborList,
+            PackedNeighborList,
             PositionHalf,
             DensityHalf,
             CUDAParticles.Pressure,

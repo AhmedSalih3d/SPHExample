@@ -141,7 +141,9 @@ geometry and run a CUDA neighbor-count pass using these utilities.
 For an end-to-end GPU path (limited to `NoShifting`, `NoKernelOutput`, `NoMDBC`,
 `ArtificialViscosity`, and `LinearDensityDiffusion`), use `RunSimulationCUDA`
 from the `SPHCUDASimulation` module. This runs the StillWedge-style workflow on
-CUDA arrays and syncs particle data to the CPU only for output/logging.
+CUDA arrays and builds neighbor lists on the CPU, then launches GPU neighbor
+loops (particle data is synced to the CPU only for neighbor-list construction
+and output/logging).
 
 ## Help
 

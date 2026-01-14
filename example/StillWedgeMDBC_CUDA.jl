@@ -84,12 +84,31 @@ let
     CleanUpSimulationFolder(SimMetaDataWedge.SaveLocation)
 
     PositionGPU = CuArray(SimParticles.Position)
-    MinCorner, MaxCorner = ComputeBounds(SimParticles.Position)
-    Grid = BuildGrid(MinCorner, MaxCorner, SimKernel.H)
-    NeighborList = AllocateCUDANeighborList(Grid, length(PositionGPU))
 
-    UpdateNeighborsCUDA!(NeighborList, PositionGPU)
-    NeighborCounts = CountNeighborsCUDA(PositionGPU, NeighborList, SimKernel.H²)
+    ParticleRanges = zeros(Int, length(SimParticles) + 2)
+    UniqueCells = zeros(CartesianIndex{Dimensions}, length(SimParticles))
+    CellDict = Dict{CartesianIndex{Dimensions}, Int}()
+    FullStencil = ConstructStencil(Val(Dimensions))
+    NeighborCellLists = [Int[] for _ in 1:length(UniqueCells)]
+    ParticleOrder = zeros(Int, length(SimParticles))
+    CellOffsets = zeros(Int, length(ParticleRanges))
+    CellIdsHost = zeros(Int, length(SimParticles))
+
+    IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, ParticleRanges, UniqueCells, CellDict, ParticleOrder, CellOffsets)
+    UniqueCellsView = view(UniqueCells, 1:IndexCounter)
+    BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellDict)
+    @inbounds for Index in eachindex(CellIdsHost, SimParticles.Cells)
+        CellIdsHost[Index] = CellDict[SimParticles.Cells[Index]]
+    end
+    NeighborListPacked = UpdateNeighborsCPUToCUDA!(
+        nothing,
+        CellIdsHost,
+        ParticleOrder,
+        view(ParticleRanges, 1:(IndexCounter + 1)),
+        view(NeighborCellLists, 1:IndexCounter),
+    )
+
+    NeighborCounts = CountNeighborsCUDA(PositionGPU, NeighborListPacked, SimKernel.H²)
 
     NeighborCountsHost = Array(NeighborCounts)
     MinimumNeighbors = minimum(NeighborCountsHost)
