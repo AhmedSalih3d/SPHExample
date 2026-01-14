@@ -60,10 +60,28 @@ let
         Motion      = nothing,
     )
 
+    SimMetaDataWedge  = SimulationMetaData{Dimensions, FloatType, NoShifting, NoKernelOutput, NoMDBC, StoreLog}(
+        SimulationName="StillWedge",
+        SaveLocation="W:/Simulations/StillWedge2D_MDBC_CUDA",
+        SimulationTime=4.0f0,
+        OutputTimes=0.01f0,
+        VisualizeInParaview=true,
+        ExportSingleVTKHDF=true,
+        ExportGridCells=true,
+        OpenLogFile=true,
+    )
+
+    if !isdir(SimMetaDataWedge.SaveLocation)
+        mkdir(SimMetaDataWedge.SaveLocation)
+    end
+
     SimulationGeometry = [FixedBoundary; Water]
-    SimParticles = AllocateDataStructures(SimulationGeometry)
+    SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaDataWedge)
 
     SimKernel = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); dx = SimConstantsWedge.dx)
+    SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
+
+    CleanUpSimulationFolder(SimMetaDataWedge.SaveLocation)
 
     PositionGPU = CuArray(SimParticles.Position)
     MinCorner, MaxCorner = ComputeBounds(SimParticles.Position)
@@ -82,4 +100,15 @@ let
     println("  Min neighbors: ", MinimumNeighbors)
     println("  Max neighbors: ", MaximumNeighbors)
     println("  Avg neighbors: ", AverageNeighbors)
+
+    RunSimulation(
+        SimGeometry         = SimulationGeometry,
+        SimMetaData         = SimMetaDataWedge,
+        SimConstants        = SimConstantsWedge,
+        SimKernel           = SimKernel,
+        SimLogger           = SimLogger,
+        SimParticles        = SimParticles,
+        SimViscosity        = ArtificialViscosity(),
+        SimDensityDiffusion = LinearDensityDiffusion(),
+    )
 end

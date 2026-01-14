@@ -5,6 +5,8 @@ export CUDACellGrid, CUDANeighborList, AllocateCUDANeighborList,
        UpdateNeighborsCUDA!, NeighborLoopCUDA!,
        NeighborLoopPerParticleCUDA!
 
+const CUDAIndex = Int32
+
 using CUDA
 using StaticArrays
 
@@ -39,14 +41,14 @@ CUDA storage for per-cell particle ranges and neighbor cell indices.
 """
 struct CUDANeighborList{D, T}
     Grid::CUDACellGrid{D, T}
-    CellIds::CuArray{Int}
-    ParticleOrder::CuArray{Int}
-    ParticleRanges::CuArray{Int}
-    CellCounts::CuArray{Int}
-    CellOffsets::CuArray{Int}
-    NeighborCells::CuArray{Int}
-    NeighborCounts::CuArray{Int}
-    NeighborOffsets::CuArray{SVector{D, Int}}
+    CellIds::CuArray{CUDAIndex}
+    ParticleOrder::CuArray{CUDAIndex}
+    ParticleRanges::CuArray{CUDAIndex}
+    CellCounts::CuArray{CUDAIndex}
+    CellOffsets::CuArray{CUDAIndex}
+    NeighborCells::CuArray{CUDAIndex}
+    NeighborCounts::CuArray{CUDAIndex}
+    NeighborOffsets::CuArray{SVector{D, CUDAIndex}}
 end
 
 """
@@ -55,10 +57,10 @@ end
 Return the non-zero stencil offsets for a D-dimensional Moore neighborhood.
 """
 function ConstructNeighborOffsets(::Val{D}) where {D}
-    Offsets = SVector{D, Int}[]
+    Offsets = SVector{D, CUDAIndex}[]
     for Offset in CartesianIndices(ntuple(_ -> -1:1, D))
         if !all(iszero, Tuple(Offset))
-            push!(Offsets, SVector{D, Int}(Tuple(Offset)))
+            push!(Offsets, SVector{D, CUDAIndex}(Tuple(Offset)))
         end
     end
     return Offsets
@@ -70,14 +72,14 @@ end
 Allocate GPU buffers for neighbor cell lists and particle ordering.
 """
 function AllocateCUDANeighborList(Grid::CUDACellGrid{D, T}, ParticleCount::Int) where {D, T}
-    CellIds = CUDA.zeros(Int, ParticleCount)
-    ParticleOrder = CUDA.zeros(Int, ParticleCount)
-    ParticleRanges = CUDA.zeros(Int, Grid.CellCount + 1)
-    CellCounts = CUDA.zeros(Int, Grid.CellCount)
-    CellOffsets = CUDA.zeros(Int, Grid.CellCount)
+    CellIds = CUDA.zeros(CUDAIndex, ParticleCount)
+    ParticleOrder = CUDA.zeros(CUDAIndex, ParticleCount)
+    ParticleRanges = CUDA.zeros(CUDAIndex, Grid.CellCount + 1)
+    CellCounts = CUDA.zeros(CUDAIndex, Grid.CellCount)
+    CellOffsets = CUDA.zeros(CUDAIndex, Grid.CellCount)
     NeighborOffsets = CuArray(ConstructNeighborOffsets(Val(D)))
-    NeighborCells = CUDA.zeros(Int, length(NeighborOffsets), Grid.CellCount)
-    NeighborCounts = CUDA.zeros(Int, Grid.CellCount)
+    NeighborCells = CUDA.zeros(CUDAIndex, length(NeighborOffsets), Grid.CellCount)
+    NeighborCounts = CUDA.zeros(CUDAIndex, Grid.CellCount)
     NeighborList = CUDANeighborList{D, T}(
         Grid,
         CellIds,
@@ -93,27 +95,27 @@ function AllocateCUDANeighborList(Grid::CUDACellGrid{D, T}, ParticleCount::Int) 
     return NeighborList
 end
 
-@inline function LinearCellId(CellCoords::SVector{D, Int}, Grid::CUDACellGrid{D, T}) where {D, T}
-    CellId = 1
+@inline function LinearCellId(CellCoords::SVector{D, CUDAIndex}, Grid::CUDACellGrid{D, T}) where {D, T}
+    CellId = CUDAIndex(1)
     @inbounds for DimIndex in 1:D
-        CellId += CellCoords[DimIndex] * Grid.Strides[DimIndex]
+        CellId += CellCoords[DimIndex] * CUDAIndex(Grid.Strides[DimIndex])
     end
     return CellId
 end
 
-@generated function CellCoordsFromId(CellId::Int, Grid::CUDACellGrid{D, T}) where {D, T}
+@generated function CellCoordsFromId(CellId::CUDAIndex, Grid::CUDACellGrid{D, T}) where {D, T}
     coord_symbols = [Symbol(:Coord_, i) for i in 1:D]
     coord_defs = map(enumerate(coord_symbols)) do (i, sym)
         quote
-            Dim = Grid.Dims[$i]
+            Dim = CUDAIndex(Grid.Dims[$i])
             $sym = Remaining % Dim
             Remaining = Remaining ÷ Dim
         end
     end
     return quote
-        Remaining = CellId - 1
+        Remaining = CellId - CUDAIndex(1)
         $(coord_defs...)
-        return SVector{$D, Int}($(coord_symbols...))
+        return SVector{$D, CUDAIndex}($(coord_symbols...))
     end
 end
 
@@ -121,12 +123,12 @@ end
     coord_exprs = map(1:D) do i
         quote
             Raw = (Position[$i] - Grid.Origin[$i]) * Grid.InvCellSize
-            Cell = floor(Int, Raw)
-            clamp(Cell, 0, Grid.Dims[$i] - 1)
+            Cell = floor(CUDAIndex, Raw)
+            clamp(Cell, CUDAIndex(0), CUDAIndex(Grid.Dims[$i] - 1))
         end
     end
     return quote
-        return SVector{$D, Int}($(coord_exprs...))
+        return SVector{$D, CUDAIndex}($(coord_exprs...))
     end
 end
 
@@ -144,7 +146,7 @@ function ComputeCellCountsKernel!(CellCounts, CellIds)
     Index = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     if Index <= length(CellIds)
         CellId = CellIds[Index]
-        CUDA.atomic_add!(CellCounts, CellId, 1)
+        CUDA.atomic_add!(CellCounts, CellId, CUDAIndex(1))
     end
     return nothing
 end
@@ -153,9 +155,9 @@ function BuildParticleRangesKernel!(ParticleRanges, CellPrefix)
     Index = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     if Index <= length(CellPrefix)
         if Index == 1
-            ParticleRanges[1] = 1
+            ParticleRanges[1] = CUDAIndex(1)
         end
-        ParticleRanges[Index + 1] = CellPrefix[Index] + 1
+        ParticleRanges[Index + 1] = CellPrefix[Index] + CUDAIndex(1)
     end
     return nothing
 end
@@ -164,8 +166,8 @@ function BuildParticleOrderKernel!(ParticleOrder, CellOffsets, CellIds)
     Index = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     if Index <= length(CellIds)
         CellId = CellIds[Index]
-        TargetIndex = CUDA.atomic_add!(CellOffsets, CellId, 1)
-        ParticleOrder[TargetIndex] = Index
+        TargetIndex = CUDA.atomic_add!(CellOffsets, CellId, CUDAIndex(1))
+        ParticleOrder[Int(TargetIndex)] = CUDAIndex(Index)
     end
     return nothing
 end
@@ -173,21 +175,21 @@ end
 function BuildNeighborCellListsKernel!(NeighborCells, NeighborCounts, NeighborOffsets, Grid::CUDACellGrid{D, T}) where {D, T}
     CellId = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     if CellId <= Grid.CellCount
-        CellCoord = CellCoordsFromId(CellId, Grid)
-        NeighborIndex = 0
+        CellCoord = CellCoordsFromId(CUDAIndex(CellId), Grid)
+        NeighborIndex = CUDAIndex(0)
         for OffsetIndex in 1:length(NeighborOffsets)
             Offset = NeighborOffsets[OffsetIndex]
             NeighborCoord = CellCoord + Offset
             IsValid = true
             @inbounds for DimIndex in 1:D
-                if NeighborCoord[DimIndex] < 0 || NeighborCoord[DimIndex] >= Grid.Dims[DimIndex]
+                if NeighborCoord[DimIndex] < CUDAIndex(0) || NeighborCoord[DimIndex] >= CUDAIndex(Grid.Dims[DimIndex])
                     IsValid = false
                     break
                 end
             end
             if IsValid
-                NeighborIndex += 1
-                NeighborCells[NeighborIndex, CellId] = LinearCellId(NeighborCoord, Grid)
+                NeighborIndex += CUDAIndex(1)
+                NeighborCells[Int(NeighborIndex), CellId] = LinearCellId(NeighborCoord, Grid)
             end
         end
         NeighborCounts[CellId] = NeighborIndex
@@ -254,22 +256,22 @@ function NeighborLoopKernel!(InteractionKernel,
                              Args...)
     Index = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     if Index <= length(CellIds)
-        CellId = CellIds[Index]
-        StartIndex = ParticleRanges[CellId]
-        EndIndex = ParticleRanges[CellId + 1] - 1
+        CellId = Int(CellIds[Index])
+        StartIndex = Int(ParticleRanges[CellId])
+        EndIndex = Int(ParticleRanges[CellId + 1]) - 1
         for j in StartIndex:EndIndex
-            NeighborIndex = ParticleOrder[j]
+            NeighborIndex = Int(ParticleOrder[j])
             if NeighborIndex != Index
                 InteractionKernel(Index, NeighborIndex, Args...)
             end
         end
-        NeighborCount = NeighborCounts[CellId]
+        NeighborCount = Int(NeighborCounts[CellId])
         for n in 1:NeighborCount
-            NeighborCell = NeighborCells[n, CellId]
-            StartIndex = ParticleRanges[NeighborCell]
-            EndIndex = ParticleRanges[NeighborCell + 1] - 1
+            NeighborCell = Int(NeighborCells[n, CellId])
+            StartIndex = Int(ParticleRanges[NeighborCell])
+            EndIndex = Int(ParticleRanges[NeighborCell + 1]) - 1
             for j in StartIndex:EndIndex
-                NeighborIndex = ParticleOrder[j]
+                NeighborIndex = Int(ParticleOrder[j])
                 InteractionKernel(Index, NeighborIndex, Args...)
             end
         end
@@ -288,23 +290,23 @@ function NeighborLoopPerParticleKernel!(InitKernel,
                                         Args...)
     Index = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     if Index <= length(CellIds)
-        CellId = CellIds[Index]
+        CellId = Int(CellIds[Index])
         Accumulator = InitKernel(Index, Args...)
-        StartIndex = ParticleRanges[CellId]
-        EndIndex = ParticleRanges[CellId + 1] - 1
+        StartIndex = Int(ParticleRanges[CellId])
+        EndIndex = Int(ParticleRanges[CellId + 1]) - 1
         for j in StartIndex:EndIndex
-            NeighborIndex = ParticleOrder[j]
+            NeighborIndex = Int(ParticleOrder[j])
             if NeighborIndex != Index
                 Accumulator = InteractionKernel(Index, NeighborIndex, Accumulator, Args...)
             end
         end
-        NeighborCount = NeighborCounts[CellId]
+        NeighborCount = Int(NeighborCounts[CellId])
         for n in 1:NeighborCount
-            NeighborCell = NeighborCells[n, CellId]
-            StartIndex = ParticleRanges[NeighborCell]
-            EndIndex = ParticleRanges[NeighborCell + 1] - 1
+            NeighborCell = Int(NeighborCells[n, CellId])
+            StartIndex = Int(ParticleRanges[NeighborCell])
+            EndIndex = Int(ParticleRanges[NeighborCell + 1]) - 1
             for j in StartIndex:EndIndex
-                NeighborIndex = ParticleOrder[j]
+                NeighborIndex = Int(ParticleOrder[j])
                 Accumulator = InteractionKernel(Index, NeighborIndex, Accumulator, Args...)
             end
         end
