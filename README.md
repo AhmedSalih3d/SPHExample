@@ -24,6 +24,7 @@ The project demonstrates how to assemble a small SPH solver with Julia. It focus
 - **Dynamic boundary condition** – inspired by DualSPHysics.
 - **Density diffusion** – based on Fourtakas et al. 2019 to reduce pressure noise.
 - **Wendland quintic kernel** – simple and stable without tensile corrections.
+- **CUDA neighbor lists** – optional GPU neighbor cell list and loop utilities for CUDA arrays.
 
 ## Folder Structure
 
@@ -90,6 +91,48 @@ To color exported cell grids by particle counts, set
 one plus the particles in its neighbor stencil.
 Neighbor rebuilds use a per-cell ordering buffer without reordering particle
 storage.
+
+### CUDA Neighbor Utilities
+
+This package ships with an optional CUDA-focused neighbor list to offload the
+cell list construction and neighbor iteration. Install CUDA.jl in the project
+environment before using these helpers:
+
+```julia
+using Pkg
+Pkg.add("CUDA")
+```
+
+The CUDA utilities are only loaded when CUDA.jl is available. The workflow is:
+
+1. Build a `CUDACellGrid` describing the simulation bounds and desired cell size.
+2. Allocate a `CUDANeighborList` once for the particle count.
+3. Call `UpdateNeighborsCUDA!` each step after updating positions.
+4. Launch `NeighborLoopCUDA!` with a GPU kernel that computes pairwise
+   interactions.
+
+Here is a minimal sketch:
+
+```julia
+using CUDA
+using SPHExample
+
+grid = CUDACellGrid(SVector(0.0f0, 0.0f0), 0.01f0, SVector(128, 128))
+neighbor_list = AllocateCUDANeighborList(grid, length(position))
+
+UpdateNeighborsCUDA!(neighbor_list, position)
+
+function InteractionKernel(i, j, acc, pos)
+    @inbounds acc[i] += pos[j] - pos[i]
+    return nothing
+end
+
+NeighborLoopCUDA!(InteractionKernel, neighbor_list, acc, position)
+```
+
+These CUDA utilities are intended as building blocks for integrating GPU
+workflows into the existing solver. You can keep the CPU path intact and
+incrementally replace the neighbor loop where it makes sense for your use case.
 
 ## Help
 
