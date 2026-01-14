@@ -100,27 +100,41 @@ end
     return CellId
 end
 
-@inline function CellCoordsFromId(CellId::Int, Grid::CUDACellGrid{D, T}) where {D, T}
-    Remaining = CellId - 1
-    Coords = ntuple(DimIndex -> begin
-        Dim = Grid.Dims[DimIndex]
-        Coord = Remaining % Dim
-        Remaining ÷= Dim
-        Coord
-    end, D)
-    return SVector{D, Int}(Coords)
+@generated function CellCoordsFromId(CellId::Int, Grid::CUDACellGrid{D, T}) where {D, T}
+    coord_symbols = [Symbol(:Coord_, i) for i in 1:D]
+    coord_defs = map(enumerate(coord_symbols)) do (i, sym)
+        quote
+            Dim = Grid.Dims[$i]
+            $sym = Remaining % Dim
+            Remaining = Remaining ÷ Dim
+        end
+    end
+    return quote
+        Remaining = CellId - 1
+        $(coord_defs...)
+        return SVector{$D, Int}($(coord_symbols...))
+    end
+end
+
+@generated function CellCoordsFromPosition(Position, Grid::CUDACellGrid{D, T}) where {D, T}
+    coord_exprs = map(1:D) do i
+        quote
+            Raw = (Position[$i] - Grid.Origin[$i]) * Grid.InvCellSize
+            Cell = floor(Int, Raw)
+            clamp(Cell, 0, Grid.Dims[$i] - 1)
+        end
+    end
+    return quote
+        return SVector{$D, Int}($(coord_exprs...))
+    end
 end
 
 function ComputeCellIdsKernel!(CellIds, Position, Grid::CUDACellGrid{D, T}) where {D, T}
     Index = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     if Index <= length(CellIds)
         Pos = Position[Index]
-        Coords = ntuple(DimIndex -> begin
-            Raw = (Pos[DimIndex] - Grid.Origin[DimIndex]) * Grid.InvCellSize
-            Cell = floor(Int, Raw)
-            clamp(Cell, 0, Grid.Dims[DimIndex] - 1)
-        end, D)
-        CellIds[Index] = LinearCellId(SVector{D, Int}(Coords), Grid)
+        Coords = CellCoordsFromPosition(Pos, Grid)
+        CellIds[Index] = LinearCellId(Coords, Grid)
     end
     return nothing
 end
@@ -155,7 +169,7 @@ function BuildParticleOrderKernel!(ParticleOrder, CellOffsets, CellIds)
     return nothing
 end
 
-function BuildNeighborCellListsKernel!(NeighborCells, NeighborCounts, NeighborOffsets, Grid)
+function BuildNeighborCellListsKernel!(NeighborCells, NeighborCounts, NeighborOffsets, Grid::CUDACellGrid{D, T}) where {D, T}
     CellId = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     if CellId <= Grid.CellCount
         CellCoord = CellCoordsFromId(CellId, Grid)
@@ -164,7 +178,7 @@ function BuildNeighborCellListsKernel!(NeighborCells, NeighborCounts, NeighborOf
             Offset = NeighborOffsets[OffsetIndex]
             NeighborCoord = CellCoord + Offset
             IsValid = true
-            @inbounds for DimIndex in 1:length(Grid.Dims)
+            @inbounds for DimIndex in 1:D
                 if NeighborCoord[DimIndex] < 0 || NeighborCoord[DimIndex] >= Grid.Dims[DimIndex]
                     IsValid = false
                     break
