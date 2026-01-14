@@ -2,7 +2,8 @@ module SPHCUDANeighborList
 
 export CUDACellGrid, CUDANeighborList, AllocateCUDANeighborList,
        ConstructNeighborOffsets, BuildNeighborCellListsCUDA!,
-       UpdateNeighborsCUDA!, NeighborLoopCUDA!
+       UpdateNeighborsCUDA!, NeighborLoopCUDA!,
+       NeighborLoopPerParticleCUDA!
 
 using CUDA
 using StaticArrays
@@ -276,6 +277,42 @@ function NeighborLoopKernel!(InteractionKernel,
     return nothing
 end
 
+function NeighborLoopPerParticleKernel!(InitKernel,
+                                        InteractionKernel,
+                                        FinalKernel,
+                                        CellIds,
+                                        ParticleOrder,
+                                        ParticleRanges,
+                                        NeighborCells,
+                                        NeighborCounts,
+                                        Args...)
+    Index = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    if Index <= length(CellIds)
+        CellId = CellIds[Index]
+        Accumulator = InitKernel(Index, Args...)
+        StartIndex = ParticleRanges[CellId]
+        EndIndex = ParticleRanges[CellId + 1] - 1
+        for j in StartIndex:EndIndex
+            NeighborIndex = ParticleOrder[j]
+            if NeighborIndex != Index
+                Accumulator = InteractionKernel(Index, NeighborIndex, Accumulator, Args...)
+            end
+        end
+        NeighborCount = NeighborCounts[CellId]
+        for n in 1:NeighborCount
+            NeighborCell = NeighborCells[n, CellId]
+            StartIndex = ParticleRanges[NeighborCell]
+            EndIndex = ParticleRanges[NeighborCell + 1] - 1
+            for j in StartIndex:EndIndex
+                NeighborIndex = ParticleOrder[j]
+                Accumulator = InteractionKernel(Index, NeighborIndex, Accumulator, Args...)
+            end
+        end
+        FinalKernel(Index, Accumulator, Args...)
+    end
+    return nothing
+end
+
 """
     NeighborLoopCUDA!(InteractionKernel, NeighborList, Args...; Threads=256)
 
@@ -288,6 +325,37 @@ function NeighborLoopCUDA!(InteractionKernel,
     Blocks = cld(length(NeighborList.CellIds), Threads)
     CUDA.@cuda threads=Threads blocks=Blocks NeighborLoopKernel!(
         InteractionKernel,
+        NeighborList.CellIds,
+        NeighborList.ParticleOrder,
+        NeighborList.ParticleRanges,
+        NeighborList.NeighborCells,
+        NeighborList.NeighborCounts,
+        Args...,
+    )
+    return nothing
+end
+
+"""
+    NeighborLoopPerParticleCUDA!(InitKernel, InteractionKernel, FinalKernel, NeighborList, Args...; Threads=256)
+
+Launch a CUDA neighbor loop that accumulates per-particle state. The kernels
+are called as:
+
+- `InitKernel(i, Args...)` to initialize the per-particle accumulator.
+- `InteractionKernel(i, j, Accumulator, Args...)` for each neighbor, returning an updated accumulator.
+- `FinalKernel(i, Accumulator, Args...)` to store the final per-particle state.
+"""
+function NeighborLoopPerParticleCUDA!(InitKernel,
+                                      InteractionKernel,
+                                      FinalKernel,
+                                      NeighborList::CUDANeighborList,
+                                      Args...;
+                                      Threads::Int = 256)
+    Blocks = cld(length(NeighborList.CellIds), Threads)
+    CUDA.@cuda threads=Threads blocks=Blocks NeighborLoopPerParticleKernel!(
+        InitKernel,
+        InteractionKernel,
+        FinalKernel,
         NeighborList.CellIds,
         NeighborList.ParticleOrder,
         NeighborList.ParticleRanges,

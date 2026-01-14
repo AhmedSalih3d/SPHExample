@@ -110,6 +110,8 @@ The CUDA utilities are only loaded when CUDA.jl is available. The workflow is:
 3. Call `UpdateNeighborsCUDA!` each step after updating positions.
 4. Launch `NeighborLoopCUDA!` with a GPU kernel that computes pairwise
    interactions.
+   For per-particle accumulation (mirroring `NeighborLoopPerParticle!`),
+   use `NeighborLoopPerParticleCUDA!` with init/interact/final callbacks.
 
 Here is a minimal sketch:
 
