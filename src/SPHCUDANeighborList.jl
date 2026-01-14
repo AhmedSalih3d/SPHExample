@@ -146,7 +146,7 @@ function ComputeCellCountsKernel!(CellCounts, CellIds)
     Index = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     if Index <= length(CellIds)
         CellId = CellIds[Index]
-        CUDA.atomic_add!(CellCounts, CellId, CUDAIndex(1))
+        CUDA.atomic_add!(CellCounts, Int(CellId), CUDAIndex(1))
     end
     return nothing
 end
@@ -166,7 +166,7 @@ function BuildParticleOrderKernel!(ParticleOrder, CellOffsets, CellIds)
     Index = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     if Index <= length(CellIds)
         CellId = CellIds[Index]
-        TargetIndex = CUDA.atomic_add!(CellOffsets, CellId, CUDAIndex(1))
+        TargetIndex = CUDA.atomic_add!(CellOffsets, Int(CellId), CUDAIndex(1))
         ParticleOrder[Int(TargetIndex)] = CUDAIndex(Index)
     end
     return nothing
