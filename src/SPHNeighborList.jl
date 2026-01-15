@@ -49,7 +49,7 @@ end
 @inline function HashCellIndex(Cell::CartesianIndex{D}) where D
     h = UInt(0x9e3779b97f4a7c15)
     @inbounds for i in 1:D
-        v = UInt(Cell.I[i])
+        v = unsigned(Cell.I[i])
         h ⊻= v + 0x9e3779b97f4a7c15 + (h << 6) + (h >> 2)
     end
     return h
@@ -57,32 +57,34 @@ end
 
 @inline function GetCellIndex(Lookup::CellLookup{D}, Cell::CartesianIndex{D}, default::Int) where D
     mask = Lookup.Mask
-    index = Int((HashCellIndex(Cell) & UInt(mask)) + 1)
+    index = Int(HashCellIndex(Cell) & UInt(mask))
     @inbounds for _ in 0:mask
-        if !Lookup.Filled[index]
+        slot = index + 1
+        if !Lookup.Filled[slot]
             return default
-        elseif Lookup.Keys[index] == Cell
-            return Lookup.Values[index]
+        elseif Lookup.Keys[slot] == Cell
+            return Lookup.Values[slot]
         end
-        index = (index & mask) + 1
+        index = (index + 1) & mask
     end
     return default
 end
 
 @inline function SetCellIndex!(Lookup::CellLookup{D}, Cell::CartesianIndex{D}, value::Int) where D
     mask = Lookup.Mask
-    index = Int((HashCellIndex(Cell) & UInt(mask)) + 1)
+    index = Int(HashCellIndex(Cell) & UInt(mask))
     @inbounds for _ in 0:mask
-        if !Lookup.Filled[index]
-            Lookup.Filled[index] = true
-            Lookup.Keys[index] = Cell
-            Lookup.Values[index] = value
+        slot = index + 1
+        if !Lookup.Filled[slot]
+            Lookup.Filled[slot] = true
+            Lookup.Keys[slot] = Cell
+            Lookup.Values[slot] = value
             return nothing
-        elseif Lookup.Keys[index] == Cell
-            Lookup.Values[index] = value
+        elseif Lookup.Keys[slot] == Cell
+            Lookup.Values[slot] = value
             return nothing
         end
-        index = (index & mask) + 1
+        index = (index + 1) & mask
     end
     return nothing
 end
