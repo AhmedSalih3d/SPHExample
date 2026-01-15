@@ -9,8 +9,9 @@ using StaticArrays
 mutable struct CellLookup{D}
     Keys::Vector{CartesianIndex{D}}
     Values::Vector{Int}
-    Filled::Vector{Bool}
+    Stamps::Vector{UInt32}
     Mask::Int
+    Epoch::UInt32
 end
 
 @inline function ZeroCell(::Val{D}) where D
@@ -28,7 +29,7 @@ end
 function InitializeCellLookup(::Val{D}, capacity::Int) where D
     size = NextPow2(max(16, capacity))
     zero_cell = ZeroCell(Val(D))
-    return CellLookup{D}(fill(zero_cell, size), zeros(Int, size), fill(false, size), size - 1)
+    return CellLookup{D}(fill(zero_cell, size), zeros(Int, size), zeros(UInt32, size), size - 1, UInt32(1))
 end
 
 function ResetCellLookup!(Lookup::CellLookup{D}, capacity::Int) where D
@@ -38,10 +39,15 @@ function ResetCellLookup!(Lookup::CellLookup{D}, capacity::Int) where D
         zero_cell = ZeroCell(Val(D))
         Lookup.Keys = fill(zero_cell, size)
         Lookup.Values = zeros(Int, size)
-        Lookup.Filled = fill(false, size)
+        Lookup.Stamps = zeros(UInt32, size)
         Lookup.Mask = size - 1
+        Lookup.Epoch = UInt32(1)
     else
-        fill!(Lookup.Filled, false)
+        Lookup.Epoch += 1
+        if Lookup.Epoch == UInt32(0)
+            fill!(Lookup.Stamps, 0)
+            Lookup.Epoch = UInt32(1)
+        end
     end
     return nothing
 end
@@ -60,7 +66,7 @@ end
     index = Int(HashCellIndex(Cell) & UInt(mask))
     @inbounds for _ in 0:mask
         slot = index + 1
-        if !Lookup.Filled[slot]
+        if Lookup.Stamps[slot] != Lookup.Epoch
             return default
         elseif Lookup.Keys[slot] == Cell
             return Lookup.Values[slot]
@@ -75,8 +81,8 @@ end
     index = Int(HashCellIndex(Cell) & UInt(mask))
     @inbounds for _ in 0:mask
         slot = index + 1
-        if !Lookup.Filled[slot]
-            Lookup.Filled[slot] = true
+        if Lookup.Stamps[slot] != Lookup.Epoch
+            Lookup.Stamps[slot] = Lookup.Epoch
             Lookup.Keys[slot] = Cell
             Lookup.Values[slot] = value
             return nothing
@@ -87,6 +93,26 @@ end
         index = (index + 1) & mask
     end
     return nothing
+end
+
+@inline function GetOrInsertCellIndex!(Lookup::CellLookup{D},
+                                       Cell::CartesianIndex{D},
+                                       NextIndex::Int) where D
+    mask = Lookup.Mask
+    index = Int(HashCellIndex(Cell) & UInt(mask))
+    @inbounds for _ in 0:mask
+        slot = index + 1
+        if Lookup.Stamps[slot] != Lookup.Epoch
+            Lookup.Stamps[slot] = Lookup.Epoch
+            Lookup.Keys[slot] = Cell
+            Lookup.Values[slot] = NextIndex
+            return NextIndex, true
+        elseif Lookup.Keys[slot] == Cell
+            return Lookup.Values[slot], false
+        end
+        index = (index + 1) & mask
+    end
+    return NextIndex, true
 end
 
 function ConstructStencil(V::Val{d}) where d
@@ -163,16 +189,14 @@ function UpdateNeighbors!(Particles, InverseCutOff, ParticleRanges,
     Cells = @views Particles.Cells
     ParticleRanges[1] = 1
     IndexCounter = 1
-    ResetCellLookup!(CellLookup, length(Cells) * 2)
+    ResetCellLookup!(CellLookup, length(Cells) * 4)
     fill!(CellOffsets, zero(eltype(CellOffsets)))
 
     @inbounds for Index in eachindex(Cells)
         Cell = Cells[Index]
-        CellIndex = GetCellIndex(CellLookup, Cell, 0)
-        if CellIndex == 0
-            IndexCounter += 1
-            CellIndex = IndexCounter
-            SetCellIndex!(CellLookup, Cell, CellIndex)
+        CellIndex, IsNew = GetOrInsertCellIndex!(CellLookup, Cell, IndexCounter + 1)
+        if IsNew
+            IndexCounter = CellIndex
             UniqueCells[CellIndex] = Cell
         end
         CellOffsets[CellIndex] += 1
