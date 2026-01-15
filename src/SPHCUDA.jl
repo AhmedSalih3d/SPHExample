@@ -358,6 +358,7 @@ end
         @timeit SimMetaData.HourGlass "12 Update MetaData" UpdateMetaData!(SimMetaData, dt)
 
         @timeit SimMetaData.HourGlass "13 Update TimeStep" dt = Δt(Positionₙ⁺, Velocityₙ⁺, Acceleration, SimConstants, SimKernel)
+        dt₂ = dt * 0.5
     end
 
     return nothing
