@@ -27,6 +27,14 @@ using StructArrays: StructArray
 
 CUDAAvailable() = CUDA.functional()
 
+@inline function KernelLaunchConfig(length)
+    if length == 0
+        return 1, 1
+    end
+    threads = min(256, length)
+    return threads, cld(length, threads)
+end
+
 struct CUDAParticleBuffers{D, T}
     Position::CuArray{SVector{D, T}, 1}
     Density::CuArray{T, 1}
@@ -209,8 +217,7 @@ function PressureCUDAKernel!(Press, Density, SimConstants)
 end
 
 function PressureCUDA!(Press, Density, SimConstants)
-    threads = 256
-    blocks = cld(length(Press), threads)
+    threads, blocks = KernelLaunchConfig(length(Press))
     @cuda threads=threads blocks=blocks PressureCUDAKernel!(Press, Density, SimConstants)
     return nothing
 end
@@ -225,8 +232,7 @@ function DensityEpsiCUDAKernel!(Density, dρdtIₙ⁺, ρₙ⁺, Δt)
 end
 
 function DensityEpsiCUDA!(Density, dρdtIₙ⁺, ρₙ⁺, Δt)
-    threads = 256
-    blocks = cld(length(Density), threads)
+    threads, blocks = KernelLaunchConfig(length(Density))
     @cuda threads=threads blocks=blocks DensityEpsiCUDAKernel!(Density, dρdtIₙ⁺, ρₙ⁺, Δt)
     return nothing
 end
@@ -242,8 +248,7 @@ function LimitDensityAtBoundaryCUDAKernel!(Density, ρ₀, MotionLimiter)
 end
 
 function LimitDensityAtBoundaryCUDA!(Density, ρ₀, MotionLimiter)
-    threads = 256
-    blocks = cld(length(Density), threads)
+    threads, blocks = KernelLaunchConfig(length(Density))
     @cuda threads=threads blocks=blocks LimitDensityAtBoundaryCUDAKernel!(Density, ρ₀, MotionLimiter)
     return nothing
 end
@@ -263,8 +268,7 @@ function HalfTimeStepCUDAKernel!(Position, Density, Velocity, Acceleration, Grav
 end
 
 function HalfTimeStepCUDA!(CUDAParticles::CUDAParticleBuffers, CUDASupport::CUDASupportBuffers, dt₂, SimConstants)
-    threads = 256
-    blocks = cld(length(CUDAParticles.Position), threads)
+    threads, blocks = KernelLaunchConfig(length(CUDAParticles.Position))
     @cuda threads=threads blocks=blocks HalfTimeStepCUDAKernel!(
         CUDAParticles.Position,
         CUDAParticles.Density,
@@ -295,8 +299,7 @@ function FullTimeStepCUDAKernel!(Position, Velocity, Acceleration, GravityFactor
 end
 
 function FullTimeStepCUDA!(CUDAParticles::CUDAParticleBuffers, dt, SimConstants)
-    threads = 256
-    blocks = cld(length(CUDAParticles.Position), threads)
+    threads, blocks = KernelLaunchConfig(length(CUDAParticles.Position))
     @cuda threads=threads blocks=blocks FullTimeStepCUDAKernel!(
         CUDAParticles.Position,
         CUDAParticles.Velocity,
@@ -327,8 +330,7 @@ function ProgressMotionCUDAKernel!(Position, Velocity, MotionVelocity, MotionSta
 end
 
 function ProgressMotionCUDA!(CUDAParticles::CUDAParticleBuffers, MotionBuffers::CUDAMotionBuffers, TotalTime, dt₂)
-    threads = 256
-    blocks = cld(length(CUDAParticles.Position), threads)
+    threads, blocks = KernelLaunchConfig(length(CUDAParticles.Position))
     @cuda threads=threads blocks=blocks ProgressMotionCUDAKernel!(
         CUDAParticles.Position,
         CUDAParticles.Velocity,
@@ -365,8 +367,7 @@ function ΔtCUDAKernel!(ViscousBuffer, ForceBuffer, Position, Velocity, Accelera
 end
 
 function ΔtCUDA(CUDASupport::CUDASupportBuffers, CUDAParticles::CUDAParticleBuffers, SimConstants, SimKernel)
-    threads = 256
-    blocks = cld(length(CUDAParticles.Position), threads)
+    threads, blocks = KernelLaunchConfig(length(CUDAParticles.Position))
     @cuda threads=threads blocks=blocks ΔtCUDAKernel!(
         CUDASupport.ΔtViscous,
         CUDASupport.ΔtForce,
@@ -391,8 +392,7 @@ function MaxDisplacementCUDAKernel!(Scratch, Positionₙ⁺, Position)
 end
 
 function UpdateΔxCUDA!(Δx, CUDASupport::CUDASupportBuffers, CUDAParticles::CUDAParticleBuffers)
-    threads = 256
-    blocks = cld(length(CUDAParticles.Position), threads)
+    threads, blocks = KernelLaunchConfig(length(CUDAParticles.Position))
     @cuda threads=threads blocks=blocks MaxDisplacementCUDAKernel!(
         CUDASupport.ΔxScratch,
         CUDASupport.Positionₙ⁺,
@@ -578,8 +578,7 @@ function NeighborLoopPerParticleCUDA!(SimDensityDiffusion::SDD, SimViscosity::SV
         error("CUDA neighbor loop supports ArtificialViscosity or ZeroViscosity.")
     end
 
-    threads = 256
-    blocks = cld(length(Position), threads)
+    threads, blocks = KernelLaunchConfig(length(Position))
     @cuda threads=threads blocks=blocks NeighborLoopCUDAKernel!(
         dρdtI, Acceleration, Position, Density, Pressure,
         Velocity, CUDAParticles.MotionLimiter, NeighborBuffers.CellListIndices,
