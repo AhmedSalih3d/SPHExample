@@ -932,11 +932,11 @@ using LinearAlgebra
                 show(SimMetaData.HourGlass,sortby=:name)
                 show(SimMetaData.HourGlass)
 
-                AutoOpenParaview(SimMetaData, output.variable_names)
-
                 FinalizeLog!(SimMetaData, SimLogger)
+                
                 AutoOpenLogFile(SimLogger, SimMetaData)
-
+                AutoOpenParaview(SimMetaData, output.variable_names)
+                
                 break
             end
         end
