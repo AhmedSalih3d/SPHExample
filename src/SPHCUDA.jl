@@ -27,36 +27,6 @@ using StructArrays: StructArray
 
 CUDAAvailable() = CUDA.functional()
 
-function ΔtCUDAKernel!(visc_buffer, dt_buffer, Position, Velocity, Acceleration, h, η²)
-    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
-    if i <= length(Position)
-        r = Position[i]
-        v = Velocity[i]
-        a = Acceleration[i]
-        r_sq = sqrt(dot(r, r))^2
-        curr_visc = abs(h * dot(v, r) / (r_sq + η²))
-        a_mag = norm(a)
-        curr_dt_force = a_mag > 0 ? sqrt(h / a_mag) : oftype(a_mag, Inf)
-        visc_buffer[i] = curr_visc
-        dt_buffer[i] = curr_dt_force
-    end
-    return nothing
-end
-
-@inline function ΔtCUDA!(visc_buffer, dt_buffer, Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
-    @unpack c₀, CFL = SimulationConstants
-    @unpack h, η² = SPHKernel
-
-    threads = 256
-    blocks = cld(length(Position), threads)
-    @cuda threads=threads blocks=blocks ΔtCUDAKernel!(visc_buffer, dt_buffer, Position, Velocity, Acceleration, h, η²)
-
-    global_visc = CUDA.reduce(max, visc_buffer)
-    global_dt_force = CUDA.reduce(min, dt_buffer)
-    dt2 = h / (c₀ + global_visc)
-    return CFL * min(global_dt_force, dt2)
-end
-
 @inline function BuildNeighborCellRanges(NeighborCellLists, cell_count)
     starts = zeros(Int, cell_count + 1)
     total = 0
@@ -319,15 +289,7 @@ end
 
     UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
 
-    position_step_gpu = CuArray(Position)
-    velocity_step_gpu = CuArray(Velocity)
-    acceleration_step_gpu = CuArray(Acceleration)
-
-    scalar_type = eltype(eltype(Position))
-    visc_buffer_gpu = CUDA.zeros(scalar_type, length(Position))
-    dt_buffer_gpu = CUDA.zeros(scalar_type, length(Position))
-
-    dt = ΔtCUDA!(visc_buffer_gpu, dt_buffer_gpu, position_step_gpu, velocity_step_gpu, acceleration_step_gpu, SimConstants, SimKernel)
+    dt = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel)
 
     dt₂ = dt * 0.5
 
@@ -390,10 +352,7 @@ end
 
         @timeit SimMetaData.HourGlass "12 Update MetaData" UpdateMetaData!(SimMetaData, dt)
 
-        CUDA.copyto!(position_step_gpu, Positionₙ⁺)
-        CUDA.copyto!(velocity_step_gpu, Velocityₙ⁺)
-        CUDA.copyto!(acceleration_step_gpu, Acceleration)
-        @timeit SimMetaData.HourGlass "13 Update TimeStep" dt = ΔtCUDA!(visc_buffer_gpu, dt_buffer_gpu, position_step_gpu, velocity_step_gpu, acceleration_step_gpu, SimConstants, SimKernel)
+        @timeit SimMetaData.HourGlass "13 Update TimeStep" dt = Δt(Positionₙ⁺, Velocityₙ⁺, Acceleration, SimConstants, SimKernel)
         dt₂ = dt * 0.5
     end
 
