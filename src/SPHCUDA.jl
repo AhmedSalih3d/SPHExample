@@ -27,6 +27,147 @@ using StructArrays: StructArray
 
 CUDAAvailable() = CUDA.functional()
 
+struct CUDAParticleBuffers{D, T}
+    Position::CuArray{SVector{D, T}, 1}
+    Density::CuArray{T, 1}
+    Pressure::CuArray{T, 1}
+    Velocity::CuArray{SVector{D, T}, 1}
+    Acceleration::CuArray{SVector{D, T}, 1}
+    MotionLimiter::CuArray{T, 1}
+    GravityFactor::CuArray{T, 1}
+end
+
+struct CUDASupportBuffers{D, T}
+    DρdtI::CuArray{T, 1}
+    Velocityₙ⁺::CuArray{SVector{D, T}, 1}
+    Positionₙ⁺::CuArray{SVector{D, T}, 1}
+    ρₙ⁺::CuArray{T, 1}
+    ∇Cᵢ::CuArray{SVector{D, T}, 1}
+    ∇◌rᵢ::CuArray{T, 1}
+    ΔtViscous::CuArray{T, 1}
+    ΔtForce::CuArray{T, 1}
+    ΔxScratch::CuArray{T, 1}
+end
+
+mutable struct CUDANeighborBuffers
+    CellListIndices::CuArray{Int, 1}
+    ParticleRanges::CuArray{Int, 1}
+    ParticleOrder::CuArray{Int, 1}
+    NeighborCellStarts::CuArray{Int, 1}
+    NeighborCellEntries::CuArray{Int, 1}
+end
+
+struct CUDAMotionBuffers{D, T}
+    Velocity::CuArray{T, 1}
+    StartTime::CuArray{T, 1}
+    Duration::CuArray{T, 1}
+    Direction::CuArray{SVector{D, T}, 1}
+    Active::CuArray{Bool, 1}
+end
+
+function BuildCUDAParticleBuffers(SimParticles)
+    return CUDAParticleBuffers(
+        CuArray(SimParticles.Position),
+        CuArray(SimParticles.Density),
+        CuArray(SimParticles.Pressure),
+        CuArray(SimParticles.Velocity),
+        CuArray(SimParticles.Acceleration),
+        CuArray(SimParticles.MotionLimiter),
+        CuArray(SimParticles.GravityFactor),
+    )
+end
+
+function BuildCUDASupportBuffers(dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ)
+    return CUDASupportBuffers(
+        CuArray(dρdtI),
+        CuArray(Velocityₙ⁺),
+        CuArray(Positionₙ⁺),
+        CuArray(ρₙ⁺),
+        CuArray(∇Cᵢ),
+        CuArray(∇◌rᵢ),
+        CuArray(similar(dρdtI)),
+        CuArray(similar(dρdtI)),
+        CuArray(similar(dρdtI)),
+    )
+end
+
+function BuildCUDAMotionBuffers(SimParticles, MotionDefinition, ::Val{Dimensions}, ::Type{FloatType}) where {Dimensions, FloatType}
+    NumberOfPoints = length(SimParticles.Position)
+    ZeroVector = zero(eltype(SimParticles.Position))
+    MotionVelocity = zeros(FloatType, NumberOfPoints)
+    MotionStartTime = zeros(FloatType, NumberOfPoints)
+    MotionDuration = zeros(FloatType, NumberOfPoints)
+    MotionDirection = Vector{SVector{Dimensions, FloatType}}(undef, NumberOfPoints)
+    MotionActive = falses(NumberOfPoints)
+
+    if MotionDefinition !== nothing
+        @inbounds for i in 1:NumberOfPoints
+            MotionDirection[i] = ZeroVector
+            if SimParticles.Type[i] == Moving
+                motion = MotionDefinition[SimParticles.GroupMarker[i]]
+                if motion !== nothing
+                    MotionVelocity[i] = motion.Velocity
+                    MotionStartTime[i] = motion.StartTime
+                    MotionDuration[i] = motion.Duration
+                    MotionDirection[i] = motion.Direction
+                    MotionActive[i] = true
+                end
+            end
+        end
+    else
+        fill!(MotionDirection, ZeroVector)
+    end
+
+    return CUDAMotionBuffers(
+        CuArray(MotionVelocity),
+        CuArray(MotionStartTime),
+        CuArray(MotionDuration),
+        CuArray(MotionDirection),
+        CuArray(MotionActive),
+    )
+end
+
+function BuildCUDANeighborBuffers(SimParticles, ParticleRanges, ParticleOrder, NeighborCellLists, CellLookup)
+    cell_list_indices = BuildCellListIndices(SimParticles.Cells, CellLookup)
+    cell_count = length(NeighborCellLists)
+    neighbor_cell_starts, neighbor_cell_entries = BuildNeighborCellRanges(NeighborCellLists, cell_count)
+
+    return CUDANeighborBuffers(
+        CuArray(cell_list_indices),
+        CuArray(ParticleRanges),
+        CuArray(ParticleOrder),
+        CuArray(neighbor_cell_starts),
+        CuArray(neighbor_cell_entries),
+    )
+end
+
+function RefreshCUDANeighborBuffers!(NeighborBuffers::CUDANeighborBuffers, SimParticles, ParticleRanges, ParticleOrder, NeighborCellLists, CellLookup)
+    cell_list_indices = BuildCellListIndices(SimParticles.Cells, CellLookup)
+    cell_count = length(NeighborCellLists)
+    neighbor_cell_starts, neighbor_cell_entries = BuildNeighborCellRanges(NeighborCellLists, cell_count)
+
+    NeighborBuffers.CellListIndices = CuArray(cell_list_indices)
+    NeighborBuffers.ParticleRanges = CuArray(ParticleRanges)
+    NeighborBuffers.ParticleOrder = CuArray(ParticleOrder)
+    NeighborBuffers.NeighborCellStarts = CuArray(neighbor_cell_starts)
+    NeighborBuffers.NeighborCellEntries = CuArray(neighbor_cell_entries)
+    return nothing
+end
+
+function SyncParticlesToHost!(SimParticles, CUDABuffers::CUDAParticleBuffers)
+    CUDA.copyto!(SimParticles.Position, CUDABuffers.Position)
+    CUDA.copyto!(SimParticles.Density, CUDABuffers.Density)
+    CUDA.copyto!(SimParticles.Pressure, CUDABuffers.Pressure)
+    CUDA.copyto!(SimParticles.Velocity, CUDABuffers.Velocity)
+    CUDA.copyto!(SimParticles.Acceleration, CUDABuffers.Acceleration)
+    return nothing
+end
+
+function SyncPositionsToHost!(SimParticles, CUDABuffers::CUDAParticleBuffers)
+    CUDA.copyto!(SimParticles.Position, CUDABuffers.Position)
+    return nothing
+end
+
 @inline function BuildNeighborCellRanges(NeighborCellLists, cell_count)
     starts = zeros(Int, cell_count + 1)
     total = 0
@@ -45,6 +186,209 @@ CUDAAvailable() = CUDA.functional()
         end
     end
     return starts, entries
+end
+
+function PressureCUDAKernel!(Press, Density, SimConstants)
+    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    if i <= length(Press)
+        ρ = Density[i]
+        Press[i] = ((SimConstants.c₀^2 * SimConstants.ρ₀) / 7) * ((ρ / SimConstants.ρ₀)^7 - 1)
+    end
+    return nothing
+end
+
+function PressureCUDA!(Press, Density, SimConstants)
+    threads = 256
+    blocks = cld(length(Press), threads)
+    @cuda threads=threads blocks=blocks PressureCUDAKernel!(Press, Density, SimConstants)
+    return nothing
+end
+
+function DensityEpsiCUDAKernel!(Density, dρdtIₙ⁺, ρₙ⁺, Δt)
+    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    if i <= length(Density)
+        epsi = -(dρdtIₙ⁺[i] / ρₙ⁺[i]) * Δt
+        Density[i] = Density[i] * (2 - epsi) / (2 + epsi)
+    end
+    return nothing
+end
+
+function DensityEpsiCUDA!(Density, dρdtIₙ⁺, ρₙ⁺, Δt)
+    threads = 256
+    blocks = cld(length(Density), threads)
+    @cuda threads=threads blocks=blocks DensityEpsiCUDAKernel!(Density, dρdtIₙ⁺, ρₙ⁺, Δt)
+    return nothing
+end
+
+function LimitDensityAtBoundaryCUDAKernel!(Density, ρ₀, MotionLimiter)
+    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    if i <= length(Density)
+        if (Density[i] < ρ₀) * !Bool(MotionLimiter[i])
+            Density[i] = ρ₀
+        end
+    end
+    return nothing
+end
+
+function LimitDensityAtBoundaryCUDA!(Density, ρ₀, MotionLimiter)
+    threads = 256
+    blocks = cld(length(Density), threads)
+    @cuda threads=threads blocks=blocks LimitDensityAtBoundaryCUDAKernel!(Density, ρ₀, MotionLimiter)
+    return nothing
+end
+
+function HalfTimeStepCUDAKernel!(Position, Density, Velocity, Acceleration, GravityFactor, MotionLimiter,
+                                 Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂, SimConstants)
+    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    if i <= length(Position)
+        acc = Acceleration[i] + ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+        Acceleration[i] = acc
+        limiter = MotionLimiter[i]
+        Positionₙ⁺[i] = Position[i] + Velocity[i] * dt₂ * limiter
+        Velocityₙ⁺[i] = Velocity[i] + acc * dt₂ * limiter
+        ρₙ⁺[i] = Density[i] + dρdtI[i] * dt₂
+    end
+    return nothing
+end
+
+function HalfTimeStepCUDA!(CUDAParticles::CUDAParticleBuffers, CUDASupport::CUDASupportBuffers, dt₂, SimConstants)
+    threads = 256
+    blocks = cld(length(CUDAParticles.Position), threads)
+    @cuda threads=threads blocks=blocks HalfTimeStepCUDAKernel!(
+        CUDAParticles.Position,
+        CUDAParticles.Density,
+        CUDAParticles.Velocity,
+        CUDAParticles.Acceleration,
+        CUDAParticles.GravityFactor,
+        CUDAParticles.MotionLimiter,
+        CUDASupport.Positionₙ⁺,
+        CUDASupport.Velocityₙ⁺,
+        CUDASupport.ρₙ⁺,
+        CUDASupport.DρdtI,
+        dt₂,
+        SimConstants,
+    )
+    return nothing
+end
+
+function FullTimeStepCUDAKernel!(Position, Velocity, Acceleration, GravityFactor, MotionLimiter, dt, SimConstants)
+    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    if i <= length(Position)
+        acc = Acceleration[i] + ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
+        Acceleration[i] = acc
+        limiter = MotionLimiter[i]
+        Velocity[i] = Velocity[i] + acc * dt * limiter
+        Position[i] = Position[i] + (((Velocity[i] + (Velocity[i] - acc * dt * limiter)) / 2) * dt) * limiter
+    end
+    return nothing
+end
+
+function FullTimeStepCUDA!(CUDAParticles::CUDAParticleBuffers, dt, SimConstants)
+    threads = 256
+    blocks = cld(length(CUDAParticles.Position), threads)
+    @cuda threads=threads blocks=blocks FullTimeStepCUDAKernel!(
+        CUDAParticles.Position,
+        CUDAParticles.Velocity,
+        CUDAParticles.Acceleration,
+        CUDAParticles.GravityFactor,
+        CUDAParticles.MotionLimiter,
+        dt,
+        SimConstants,
+    )
+    return nothing
+end
+
+function ProgressMotionCUDAKernel!(Position, Velocity, MotionVelocity, MotionStartTime, MotionDuration,
+                                   MotionDirection, MotionActive, TotalTime, dt₂)
+    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    if i <= length(Position)
+        if MotionActive[i]
+            should_move = (MotionStartTime[i] <= TotalTime) && (TotalTime <= (MotionStartTime[i] + MotionDuration[i]))
+            if should_move
+                Velocity[i] = MotionVelocity[i] * MotionDirection[i]
+            else
+                Velocity[i] = zero(Position[i])
+            end
+            Position[i] = Position[i] + Velocity[i] * dt₂
+        end
+    end
+    return nothing
+end
+
+function ProgressMotionCUDA!(CUDAParticles::CUDAParticleBuffers, MotionBuffers::CUDAMotionBuffers, TotalTime, dt₂)
+    threads = 256
+    blocks = cld(length(CUDAParticles.Position), threads)
+    @cuda threads=threads blocks=blocks ProgressMotionCUDAKernel!(
+        CUDAParticles.Position,
+        CUDAParticles.Velocity,
+        MotionBuffers.Velocity,
+        MotionBuffers.StartTime,
+        MotionBuffers.Duration,
+        MotionBuffers.Direction,
+        MotionBuffers.Active,
+        TotalTime,
+        dt₂,
+    )
+    return nothing
+end
+
+function ΔtCUDAKernel!(ViscousBuffer, ForceBuffer, Position, Velocity, Acceleration, SimConstants, SimKernel)
+    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    if i <= length(Position)
+        r = Position[i]
+        v = Velocity[i]
+        a = Acceleration[i]
+
+        r_sq = dot(r, r)
+        ViscousBuffer[i] = abs(SimKernel.h * dot(v, r) / (r_sq + SimKernel.η²))
+
+        a_sq = dot(a, a)
+        if a_sq > 0
+            a_mag = sqrt(a_sq)
+            ForceBuffer[i] = sqrt(SimKernel.h / a_mag)
+        else
+            ForceBuffer[i] = Inf
+        end
+    end
+    return nothing
+end
+
+function ΔtCUDA(CUDASupport::CUDASupportBuffers, CUDAParticles::CUDAParticleBuffers, SimConstants, SimKernel)
+    threads = 256
+    blocks = cld(length(CUDAParticles.Position), threads)
+    @cuda threads=threads blocks=blocks ΔtCUDAKernel!(
+        CUDASupport.ΔtViscous,
+        CUDASupport.ΔtForce,
+        CUDAParticles.Position,
+        CUDAParticles.Velocity,
+        CUDAParticles.Acceleration,
+        SimConstants,
+        SimKernel,
+    )
+    max_visc = CUDA.reduce(max, CUDASupport.ΔtViscous)
+    min_force = CUDA.reduce(min, CUDASupport.ΔtForce)
+    return SimConstants.CFL * min(min_force, SimKernel.h / (SimConstants.c₀ + max_visc))
+end
+
+function MaxDisplacementCUDAKernel!(Scratch, Positionₙ⁺, Position)
+    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    if i <= length(Position)
+        diff = Positionₙ⁺[i] - Position[i]
+        Scratch[i] = sqrt(dot(diff, diff))
+    end
+    return nothing
+end
+
+function UpdateΔxCUDA!(Δx, CUDASupport::CUDASupportBuffers, CUDAParticles::CUDAParticleBuffers)
+    threads = 256
+    blocks = cld(length(CUDAParticles.Position), threads)
+    @cuda threads=threads blocks=blocks MaxDisplacementCUDAKernel!(
+        CUDASupport.ΔxScratch,
+        CUDASupport.Positionₙ⁺,
+        CUDAParticles.Position,
+    )
+    maxd = CUDA.reduce(max, CUDASupport.ΔxScratch)
+    return Δx + 4 * maxd
 end
 
 @inline function BuildCellListIndices(Cells, CellLookup)
@@ -204,19 +548,14 @@ function NeighborLoopCUDAKernel!(dρdtI, Acceleration, Position, Density, Pressu
 end
 
 function NeighborLoopPerParticleCUDA!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
-                                      SimMetaData::SimulationMetaData{D,T,NoShifting,NoKernelOutput,B,L},
-                                      SimConstants, SimParticles, ParticleRanges,
-                                      CellLookup, NeighborCellLists, dρdtI,
-                                      Acceleration, ∇Cᵢ,
-                                      ∇◌rᵢ;
-                                      Position = SimParticles.Position,
-                                      Density = SimParticles.Density,
-                                      Pressure = SimParticles.Pressure,
-                                      Velocity = SimParticles.Velocity,
-                                      ParticleOrder) where {D,T,
-                                                           B<:MDBCMode,L<:LogMode,
-                                                           SDD<:SPHDensityDiffusion,
-                                                           SV<:SPHViscosity}
+                                      SimConstants, CUDAParticles::CUDAParticleBuffers,
+                                      NeighborBuffers::CUDANeighborBuffers, dρdtI, Acceleration;
+                                      Position = CUDAParticles.Position,
+                                      Density = CUDAParticles.Density,
+                                      Pressure = CUDAParticles.Pressure,
+                                      Velocity = CUDAParticles.Velocity) where {
+                                      SDD<:SPHDensityDiffusion,
+                                      SV<:SPHViscosity}
     if !CUDAAvailable()
         error("CUDA is not available; cannot run GPU neighbor loop.")
     end
@@ -228,34 +567,15 @@ function NeighborLoopPerParticleCUDA!(SimDensityDiffusion::SDD, SimViscosity::SV
         error("CUDA neighbor loop supports ArtificialViscosity or ZeroViscosity.")
     end
 
-    cell_list_indices = BuildCellListIndices(SimParticles.Cells, CellLookup)
-    cell_count = length(NeighborCellLists)
-    neighbor_cell_starts, neighbor_cell_entries = BuildNeighborCellRanges(NeighborCellLists, cell_count)
-
-    dρdtI_gpu = CuArray(dρdtI)
-    acceleration_gpu = CuArray(Acceleration)
-    position_gpu = CuArray(Position)
-    density_gpu = CuArray(Density)
-    pressure_gpu = CuArray(Pressure)
-    velocity_gpu = CuArray(Velocity)
-    motion_limiter_gpu = CuArray(SimParticles.MotionLimiter)
-    cell_list_indices_gpu = CuArray(cell_list_indices)
-    particle_ranges_gpu = CuArray(ParticleRanges)
-    particle_order_gpu = CuArray(ParticleOrder)
-    neighbor_cell_starts_gpu = CuArray(neighbor_cell_starts)
-    neighbor_cell_entries_gpu = CuArray(neighbor_cell_entries)
-
     threads = 256
     blocks = cld(length(Position), threads)
     @cuda threads=threads blocks=blocks NeighborLoopCUDAKernel!(
-        dρdtI_gpu, acceleration_gpu, position_gpu, density_gpu, pressure_gpu,
-        velocity_gpu, motion_limiter_gpu, cell_list_indices_gpu, particle_ranges_gpu,
-        particle_order_gpu, neighbor_cell_starts_gpu, neighbor_cell_entries_gpu,
+        dρdtI, Acceleration, Position, Density, Pressure,
+        Velocity, CUDAParticles.MotionLimiter, NeighborBuffers.CellListIndices,
+        NeighborBuffers.ParticleRanges, NeighborBuffers.ParticleOrder,
+        NeighborBuffers.NeighborCellStarts, NeighborBuffers.NeighborCellEntries,
         SimKernel, SimConstants, SimDensityDiffusion, SimViscosity,
     )
-
-    CUDA.copyto!(dρdtI, dρdtI_gpu)
-    CUDA.copyto!(Acceleration, acceleration_gpu)
 
     return nothing
 end
@@ -265,96 +585,76 @@ end
                                       SimConstants, SimParticles, FullStencil,
                                       ParticleRanges, UniqueCells, CellLookup,
                                       ParticleOrder, CellOffsets,
-                                      NeighborCellLists, dρdtI, Velocityₙ⁺,
-                                      Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ,
-                                      MotionDefinition::Union{
-                                          Nothing,
-                                          AbstractVector{
-                                              Union{
-                                                  Nothing,
-                                                  MotionDetails{Dimensions, FloatType},
-                                              },
-                                          },
-                                      }) where {
-                                                Dimensions, FloatType, SMode, KMode,
-                                                BMode, LMode,
-                                                SDD<:SPHDensityDiffusion,
-                                                SV<:SPHViscosity}
-    @unpack Position, Density, Pressure, Velocity, Acceleration, MotionLimiter,
-            GroupMarker = SimParticles
-    ParticleType   = SimParticles.Type
-    ParticleMarker = GroupMarker
-    GhostPoints = hasproperty(SimParticles, :GhostPoints) ? SimParticles.GhostPoints : nothing
-    GhostNormals = hasproperty(SimParticles, :GhostNormals) ? SimParticles.GhostNormals : nothing
-
+                                      NeighborCellLists, CUDAParticles::CUDAParticleBuffers,
+                                      CUDASupport::CUDASupportBuffers, MotionBuffers,
+                                      NeighborBuffers::CUDANeighborBuffers) where {
+                                      Dimensions, FloatType, SMode, KMode,
+                                      BMode, LMode,
+                                      SDD<:SPHDensityDiffusion,
+                                      SV<:SPHViscosity}
     UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
 
-    dt = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel)
-
+    dt = ΔtCUDA(CUDASupport, CUDAParticles, SimConstants, SimKernel)
     dt₂ = dt * 0.5
 
     while SimMetaData.TotalTime <= next_output_time(SimMetaData)
         @timeit SimMetaData.HourGlass "01 Calculate IndexCounter" begin
-            SimMetaData.Δx = UpdateΔx!(SimMetaData.Δx, Positionₙ⁺, SimParticles.Position)
+            SimMetaData.Δx = UpdateΔxCUDA!(SimMetaData.Δx, CUDASupport, CUDAParticles)
             ShouldRebuild = SimMetaData.Δx >= SimKernel.h
 
             if ShouldRebuild
+                SyncPositionsToHost!(SimParticles, CUDAParticles)
                 @timeit SimMetaData.HourGlass "01a Actual Calculate IndexCounter" begin
                     SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, ParticleRanges, UniqueCells, CellLookup, ParticleOrder, CellOffsets)
                 end
-                SimMetaData.Δx = zero(eltype(dρdtI))
+                SimMetaData.Δx = zero(eltype(CUDASupport.DρdtI))
                 UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
                 BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellLookup)
+                RefreshCUDANeighborBuffers!(NeighborBuffers, SimParticles, ParticleRanges, ParticleOrder, NeighborCellLists, CellLookup)
             end
         end
 
-        @timeit SimMetaData.HourGlass "Motion" ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
-
-        @timeit SimMetaData.HourGlass "02 Pressure" Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
-        if SimMetaData isa SimulationMetaData{Dimensions, FloatType, SMode, KMode, NoMDBC, LMode} where {SMode, KMode, LMode}
-            @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep" SPHCellList.ApplyMDBCBeforeHalf!(SimMetaData)
-        else
-            @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep" SPHCellList.ApplyMDBCBeforeHalf!(
-                SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, CellLookup, Position,
-                Density, GhostPoints, GhostNormals, ParticleType; ParticleOrder = ParticleOrder,
-            )
+        if MotionBuffers !== nothing
+            @timeit SimMetaData.HourGlass "Motion" ProgressMotionCUDA!(CUDAParticles, MotionBuffers, SimMetaData.TotalTime, dt₂)
         end
 
+        @timeit SimMetaData.HourGlass "02 Pressure" PressureCUDA!(CUDAParticles.Pressure, CUDAParticles.Density, SimConstants)
+
         @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoopPerParticleCUDA!(
-            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-            SimConstants, SimParticles, ParticleRanges, CellLookup,
-            NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ,
-            ParticleOrder = ParticleOrder,
+            SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
+            CUDAParticles, NeighborBuffers, CUDASupport.DρdtI, CUDAParticles.Acceleration,
         )
 
-        @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
+        @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" HalfTimeStepCUDA!(CUDAParticles, CUDASupport, dt₂, SimConstants)
 
-        @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary" LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+        @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary" LimitDensityAtBoundaryCUDA!(CUDASupport.ρₙ⁺, SimConstants.ρ₀, CUDAParticles.MotionLimiter)
 
-        @timeit SimMetaData.HourGlass "Motion" ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
+        if MotionBuffers !== nothing
+            @timeit SimMetaData.HourGlass "Motion" ProgressMotionCUDA!(CUDAParticles, MotionBuffers, SimMetaData.TotalTime, dt₂)
+        end
 
-        @timeit SimMetaData.HourGlass "07 Pressure" Pressure!(SimParticles.Pressure, ρₙ⁺, SimConstants)
+        @timeit SimMetaData.HourGlass "07 Pressure" PressureCUDA!(CUDAParticles.Pressure, CUDASupport.ρₙ⁺, SimConstants)
         @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticleCUDA!(
-            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-            SimConstants, SimParticles, ParticleRanges, CellLookup,
-            NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ,
-            ParticleOrder = ParticleOrder,
-            Position = Positionₙ⁺,
-            Density = ρₙ⁺,
-            Velocity = Velocityₙ⁺,
+            SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
+            CUDAParticles, NeighborBuffers, CUDASupport.DρdtI, CUDAParticles.Acceleration,
+            Position = CUDASupport.Positionₙ⁺,
+            Density = CUDASupport.ρₙ⁺,
+            Velocity = CUDASupport.Velocityₙ⁺,
         )
 
-        @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
+        @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundaryCUDA!(CUDAParticles.Density, SimConstants.ρ₀, CUDAParticles.MotionLimiter)
 
-        @timeit SimMetaData.HourGlass "10 Final Density" DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
+        @timeit SimMetaData.HourGlass "10 Final Density" DensityEpsiCUDA!(CUDAParticles.Density, CUDASupport.DρdtI, CUDASupport.ρₙ⁺, dt)
 
-        @timeit SimMetaData.HourGlass "11 Update To Final TimeStep" FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+        @timeit SimMetaData.HourGlass "11 Update To Final TimeStep" FullTimeStepCUDA!(CUDAParticles, dt, SimConstants)
 
         @timeit SimMetaData.HourGlass "12 Update MetaData" UpdateMetaData!(SimMetaData, dt)
 
-        @timeit SimMetaData.HourGlass "13 Update TimeStep" dt = Δt(Positionₙ⁺, Velocityₙ⁺, Acceleration, SimConstants, SimKernel)
+        @timeit SimMetaData.HourGlass "13 Update TimeStep" dt = ΔtCUDA(CUDASupport, CUDAParticles, SimConstants, SimKernel)
         dt₂ = dt * 0.5
     end
+
+    SyncParticlesToHost!(SimParticles, CUDAParticles)
 
     return nothing
 end
@@ -372,8 +672,8 @@ function RunSimulationCUDA(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}
     if !CUDAAvailable()
         error("CUDA is not available; cannot run RunSimulationCUDA.")
     end
-    if !(SimMetaData isa SimulationMetaData{Dimensions, FloatType, NoShifting, NoKernelOutput, BMode, LMode} where {BMode, LMode})
-        error("RunSimulationCUDA currently supports NoShifting and NoKernelOutput configurations.")
+    if !(SimMetaData isa SimulationMetaData{Dimensions, FloatType, NoShifting, NoKernelOutput, NoMDBC, LMode} where {LMode})
+        error("RunSimulationCUDA currently supports NoShifting, NoKernelOutput, and NoMDBC configurations.")
     end
 
     NumberOfPoints = length(SimParticles)
@@ -415,14 +715,18 @@ function RunSimulationCUDA(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}
     end
 
     MotionDefinition = SPHCellList.GenerateMotionDetails(SimParticles, SimGeometry, Dimensions, FloatType)
+    CUDAParticles = BuildCUDAParticleBuffers(SimParticles)
+    CUDASupport = BuildCUDASupportBuffers(dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ)
+    MotionBuffers = MotionDefinition === nothing ? nothing : BuildCUDAMotionBuffers(SimParticles, MotionDefinition, Val(Dimensions), FloatType)
+    NeighborBuffers = BuildCUDANeighborBuffers(SimParticles, ParticleRanges, ParticleOrder, NeighborCellLists, CellLookup)
 
     @inbounds while true
         @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoopCUDA(
             SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
             SimConstants, SimParticles, FullStencil, ParticleRanges,
             UniqueCells, CellLookup, ParticleOrder, CellOffsets,
-            NeighborCellLists, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
-            ∇Cᵢ, ∇◌rᵢ, MotionDefinition,
+            NeighborCellLists, CUDAParticles, CUDASupport,
+            MotionBuffers, NeighborBuffers,
         )
         push!(SimMetaData.TimeSteps, SimMetaData.CurrentTimeStep)
 
