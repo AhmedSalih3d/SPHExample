@@ -18,9 +18,10 @@ using ..OpenExternalPrograms
 using ..SPHKernels
 using ..SPHViscosityModels
 using ..SPHDensityDiffusionModels
-using ..SPHNeighborList: BuildNeighborCellLists!, CellLookup, DenseCellLookup, ComputeCellNeighborCounts,
-                         ComputeCellParticleCounts, ConstructStencil, ExtractCells!, GetCellIndexDispatch,
-                         InitializeCellLookup, InitializeDenseCellLookup, MapFloor, UpdateNeighbors!, UpdateΔx!
+using ..SPHNeighborList: BuildNeighborCellLists!, CellLookup, DenseCellLookup, ComputeCellNeighborCounts!,
+                         ComputeCellParticleCounts!, ConstructStencil, ExtractCells!, GetCellIndexDispatch,
+                         InitializeCellLookup, InitializeDenseCellLookup, MapFloor, NeighborListScratch,
+                         UpdateCellCounts!, UpdateNeighbors!, UpdateΔx!
 
 using StaticArrays
 using StructArrays: StructArray, foreachfield
@@ -702,7 +703,7 @@ using LinearAlgebra
                                       ParticleRanges, UniqueCells, CellLookup, DenseLookup, UseDense,
                                       ParticleOrder, CellOffsets, CellIndices,
                                       NeighborCellOffsets, NeighborCellCounts, NeighborCells,
-                                      dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ,
+                                      NeighborScratch, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ,
                                       MotionDefinition::Union{
                                           Nothing,
                                           AbstractVector{
@@ -750,18 +751,19 @@ using LinearAlgebra
                     # if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
                     if ShouldRebuild
                         @timeit SimMetaData.HourGlass "01a Actual Calculate IndexCounter" begin
-                            SimMetaData.IndexCounter, UseDense[] = UpdateNeighbors!(
-                                SimParticles,
-                                SimKernel.H⁻¹,
-                                ParticleRanges,
+                        SimMetaData.IndexCounter, UseDense[] = UpdateNeighbors!(
+                            SimParticles,
+                            SimKernel.H⁻¹,
+                            ParticleRanges,
                                 UniqueCells,
                                 CellLookup,
                                 ParticleOrder,
                                 CellOffsets,
-                                CellIndices,
-                                DenseLookup,
-                            )
+                            CellIndices,
+                            DenseLookup,
+                        )
                         end
+                        UpdateCellCounts!(NeighborScratch, ParticleRanges, SimMetaData.IndexCounter)
                         SimMetaData.Δx    = zero(eltype(dρdtI))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                         BuildNeighborCellLists!(
@@ -774,6 +776,7 @@ using LinearAlgebra
                             CellLookup,
                             DenseLookup,
                             Val(UseDense[]),
+                            NeighborScratch.CellOccupied,
                         )
                     end
                 end
@@ -858,10 +861,12 @@ using LinearAlgebra
     # To control if grid is exported in output
     function DetermineOutput(::Val{true}, SimMetaData, output, ParticleRanges,
                              NeighborCellOffsets, NeighborCellCounts, NeighborCells,
+                             NeighborScratch,
                              UniqueCellsView)
-        cell_particle_counts = ComputeCellParticleCounts(ParticleRanges, length(UniqueCellsView))
-        cell_neighbor_counts = ComputeCellNeighborCounts(
-            ParticleRanges,
+        UpdateCellCounts!(NeighborScratch, ParticleRanges, length(UniqueCellsView))
+        ComputeCellNeighborCounts!(
+            NeighborScratch.NeighborCounts,
+            NeighborScratch.CellCounts,
             NeighborCellOffsets,
             NeighborCellCounts,
             NeighborCells,
@@ -870,12 +875,18 @@ using LinearAlgebra
         
         @timeit SimMetaData.HourGlass "13 Save Particle Data"  begin
             output.enqueue_particles(SimMetaData.OutputIterationCounter)
-            output.enqueue_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, cell_particle_counts=cell_particle_counts, cell_neighbor_counts=cell_neighbor_counts)
+            output.enqueue_grid(
+                SimMetaData.OutputIterationCounter,
+                UniqueCellsView,
+                cell_particle_counts=NeighborScratch.CellCounts,
+                cell_neighbor_counts=NeighborScratch.NeighborCounts,
+            )
         end
     end
 
     function DetermineOutput(::Val{false}, SimMetaData, output, ParticleRanges,
                              NeighborCellOffsets, NeighborCellCounts, NeighborCells,
+                             NeighborScratch,
                              UniqueCellsView)
         output.enqueue_particles(SimMetaData.OutputIterationCounter)
     end
@@ -912,6 +923,7 @@ using LinearAlgebra
         NeighborCellOffsets    = zeros(Int, length(UniqueCells))
         NeighborCellCounts     = zeros(Int, length(UniqueCells))
         NeighborCells          = zeros(Int, length(UniqueCells) * (length(FullStencil) - 1))
+        NeighborScratch        = NeighborListScratch()
         ParticleOrder          = zeros(Int, NumberOfPoints)
         CellOffsets            = zeros(Int, length(ParticleRanges))
         CellIndices            = zeros(Int, NumberOfPoints)
@@ -926,17 +938,17 @@ using LinearAlgebra
             cell_particle_counts = nothing
             cell_neighbor_counts = nothing
             if SimMetaData.ExportGridCellParticleCounts
-                cell_particle_counts = ComputeCellParticleCounts(
-                    ParticleRanges,
-                    SimMetaData.IndexCounter,
-                )
-                cell_neighbor_counts = ComputeCellNeighborCounts(
-                    ParticleRanges,
+                UpdateCellCounts!(NeighborScratch, ParticleRanges, SimMetaData.IndexCounter)
+                ComputeCellNeighborCounts!(
+                    NeighborScratch.NeighborCounts,
+                    NeighborScratch.CellCounts,
                     NeighborCellOffsets,
                     NeighborCellCounts,
                     NeighborCells,
                     SimMetaData.IndexCounter,
                 )
+                cell_particle_counts = NeighborScratch.CellCounts
+                cell_neighbor_counts = NeighborScratch.NeighborCounts
             end
             output.enqueue_grid(
                 SimMetaData.OutputIterationCounter,
@@ -955,7 +967,7 @@ using LinearAlgebra
                 SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                 SimConstants, SimParticles, FullStencil, ParticleRanges,
                 UniqueCells, CellLookup, DenseLookup, UseDense, ParticleOrder, CellOffsets, CellIndices,
-                NeighborCellOffsets, NeighborCellCounts, NeighborCells,
+                NeighborCellOffsets, NeighborCellCounts, NeighborCells, NeighborScratch,
                 dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
                 ∇Cᵢ, ∇◌rᵢ, MotionDefinition,
             )
@@ -975,6 +987,7 @@ using LinearAlgebra
                 NeighborCellOffsets,
                 NeighborCellCounts,
                 NeighborCells,
+                NeighborScratch,
                 UniqueCellsView,
             )
 
