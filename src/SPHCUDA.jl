@@ -296,9 +296,6 @@ end
     UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
     dt = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel)
 
-    max_visc = Vector{FloatType}(undef, length(Position))
-    min_dt_force = Vector{FloatType}(undef, length(Position))
-
     dt₂ = dt * 0.5
 
     while SimMetaData.TotalTime <= next_output_time(SimMetaData)
@@ -346,7 +343,6 @@ end
             SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
             SimConstants, SimParticles, ParticleRanges, CellLookup,
             NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ,
-            max_visc, min_dt_force,
             ParticleOrder = ParticleOrder,
             Position = Positionₙ⁺,
             Density = ρₙ⁺,
@@ -361,7 +357,7 @@ end
 
         @timeit SimMetaData.HourGlass "12 Update MetaData" UpdateMetaData!(SimMetaData, dt)
 
-        @timeit SimMetaData.HourGlass "13 Update TimeStep" dt = FinalizeTimeStep(max_visc, min_dt_force, SimConstants, SimKernel)
+        @timeit SimMetaData.HourGlass "13 Update TimeStep" dt = Δt(Positionₙ⁺, Velocityₙ⁺, Acceleration, SimConstants, SimKernel)
     end
 
     return nothing
