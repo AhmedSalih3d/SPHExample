@@ -141,6 +141,17 @@ function BuildCUDANeighborBuffers(SimParticles, ParticleRanges, ParticleOrder, N
     )
 end
 
+function BuildEmptyCUDANeighborBuffers()
+    empty_ints = Int[]
+    return CUDANeighborBuffers(
+        CuArray(empty_ints),
+        CuArray(empty_ints),
+        CuArray(empty_ints),
+        CuArray(empty_ints),
+        CuArray(empty_ints),
+    )
+end
+
 function RefreshCUDANeighborBuffers!(NeighborBuffers::CUDANeighborBuffers, SimParticles, ParticleRanges, ParticleOrder, NeighborCellLists, CellLookup)
     cell_list_indices = BuildCellListIndices(SimParticles.Cells, CellLookup)
     cell_count = length(NeighborCellLists)
@@ -594,6 +605,14 @@ end
                                       SV<:SPHViscosity}
     UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
 
+    if isempty(CellLookup.Grid)
+        SyncPositionsToHost!(SimParticles, CUDAParticles)
+        SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, ParticleRanges, UniqueCells, CellLookup, ParticleOrder, CellOffsets)
+        UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
+        BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellLookup)
+        RefreshCUDANeighborBuffers!(NeighborBuffers, SimParticles, ParticleRanges, ParticleOrder, NeighborCellLists, CellLookup)
+    end
+
     dt = ΔtCUDA(CUDASupport, CUDAParticles, SimConstants, SimKernel)
     dt₂ = dt * 0.5
 
@@ -718,7 +737,7 @@ function RunSimulationCUDA(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}
     CUDAParticles = BuildCUDAParticleBuffers(SimParticles)
     CUDASupport = BuildCUDASupportBuffers(dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ)
     MotionBuffers = MotionDefinition === nothing ? nothing : BuildCUDAMotionBuffers(SimParticles, MotionDefinition, Val(Dimensions), FloatType)
-    NeighborBuffers = BuildCUDANeighborBuffers(SimParticles, ParticleRanges, ParticleOrder, NeighborCellLists, CellLookup)
+    NeighborBuffers = BuildEmptyCUDANeighborBuffers()
 
     @inbounds while true
         @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoopCUDA(
