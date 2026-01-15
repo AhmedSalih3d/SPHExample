@@ -2,7 +2,8 @@ module SPHNeighborList
 
 export ConstructStencil, ExtractCells!, UpdateNeighbors!,
        BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts, UpdateΔx!,
-       CellLookup, InitializeCellLookup, ResetCellLookup!, GetCellIndex, SetCellIndex!
+       CellLookup, DenseCellLookup, InitializeCellLookup, InitializeDenseCellLookup,
+       ResetCellLookup!, GetCellIndex, SetCellIndex!, GetCellIndexDense, GetCellIndexDispatch
 
 using StaticArrays
 
@@ -12,6 +13,13 @@ mutable struct CellLookup{D}
     Stamps::Vector{UInt32}
     Mask::Int
     Epoch::UInt32
+end
+
+mutable struct DenseCellLookup{D}
+    MinCell::SVector{D, Int}
+    Dims::SVector{D, Int}
+    Strides::SVector{D, Int}
+    IndexMap::Vector{Int}
 end
 
 @inline function ZeroCell(::Val{D}) where D
@@ -30,6 +38,41 @@ function InitializeCellLookup(::Val{D}, capacity::Int) where D
     size = NextPow2(max(16, capacity))
     zero_cell = ZeroCell(Val(D))
     return CellLookup{D}(fill(zero_cell, size), zeros(Int, size), zeros(UInt32, size), size - 1, UInt32(1))
+end
+
+function InitializeDenseCellLookup(::Val{D}) where D
+    zero_vec = SVector{D, Int}(ntuple(_ -> 0, Val(D)))
+    return DenseCellLookup{D}(zero_vec, zero_vec, zero_vec, Int[])
+end
+
+@inline function DenseIndex(Dims, Strides, MinCell, Cell)
+    index = 1
+    @inbounds for i in 1:length(Dims)
+        index += (Cell[i] - MinCell[i]) * Strides[i]
+    end
+    return index
+end
+
+@inline function GetCellIndexDense(Lookup::DenseCellLookup{D}, Cell::CartesianIndex{D}, default::Int) where D
+    MinCell = Lookup.MinCell
+    Dims = Lookup.Dims
+    @inbounds for i in 1:D
+        v = Cell.I[i] - MinCell[i]
+        if v < 0 || v >= Dims[i]
+            return default
+        end
+    end
+    index = DenseIndex(Dims, Lookup.Strides, MinCell, Cell.I)
+    value = Lookup.IndexMap[index]
+    return value == 0 ? default : value
+end
+
+@inline function GetCellIndexDispatch(::Val{true}, DenseLookup, CellLookup, Cell, default)
+    return GetCellIndexDense(DenseLookup, Cell, default)
+end
+
+@inline function GetCellIndexDispatch(::Val{false}, DenseLookup, CellLookup, Cell, default)
+    return GetCellIndex(CellLookup, Cell, default)
 end
 
 function ResetCellLookup!(Lookup::CellLookup{D}, capacity::Int) where D
@@ -120,7 +163,8 @@ function ConstructStencil(V::Val{d}) where d
 end
 
 function BuildNeighborCellLists!(NeighborCellOffsets, NeighborCellCounts, NeighborCells,
-                                 FullStencil, UniqueCellsView, ParticleRanges, CellLookup)
+                                 FullStencil, UniqueCellsView, ParticleRanges,
+                                 CellLookup, DenseLookup, UseDense)
     TargetLen = length(UniqueCellsView)
     resize!(NeighborCellOffsets, TargetLen)
     resize!(NeighborCellCounts, TargetLen)
@@ -137,7 +181,7 @@ function BuildNeighborCellLists!(NeighborCellOffsets, NeighborCellCounts, Neighb
         count = 0
         for Offset in FullStencil
             NeighborCell = Cell + Offset
-            NeighborIndex = GetCellIndex(CellLookup, NeighborCell, 0)
+            NeighborIndex = GetCellIndexDispatch(UseDense, DenseLookup, CellLookup, NeighborCell, 0)
             if NeighborIndex != 0 && NeighborIndex != CellIndex
                 StartIndex = ParticleRanges[NeighborIndex]
                 EndIndex = ParticleRanges[NeighborIndex + 1] - 1
@@ -187,7 +231,7 @@ without reordering the particle arrays.
 """
 function UpdateNeighbors!(Particles, InverseCutOff, ParticleRanges,
                           UniqueCells, CellLookup, ParticleOrder, CellOffsets,
-                          CellIndices)
+                          CellIndices, DenseLookup)
     ExtractCells!(Particles, InverseCutOff)
 
     Cells = @views Particles.Cells
@@ -195,9 +239,15 @@ function UpdateNeighbors!(Particles, InverseCutOff, ParticleRanges,
     IndexCounter = 1
     ResetCellLookup!(CellLookup, length(Cells) * 8)
     fill!(CellOffsets, zero(eltype(CellOffsets)))
+    min_cell = Cells[1].I
+    max_cell = Cells[1].I
 
     @inbounds for Index in eachindex(Cells)
         Cell = Cells[Index]
+        for i in 1:length(Cell.I)
+            min_cell = Base.setindex(min_cell, min(min_cell[i], Cell.I[i]), i)
+            max_cell = Base.setindex(max_cell, max(max_cell[i], Cell.I[i]), i)
+        end
         CellIndex, IsNew = GetOrInsertCellIndex!(CellLookup, Cell, IndexCounter + 1)
         if IsNew
             IndexCounter = CellIndex
@@ -223,7 +273,26 @@ function UpdateNeighbors!(Particles, InverseCutOff, ParticleRanges,
         CellOffsets[CellIndex] = TargetIndex + 1
     end
 
-    return IndexCounter
+    dims = max_cell .- min_cell .+ 1
+    dense_size = prod(dims)
+    use_dense = dense_size <= 8 * IndexCounter && dense_size <= 1_000_000
+    if use_dense
+        DenseLookup.MinCell = SVector{length(min_cell), Int}(min_cell)
+        DenseLookup.Dims = SVector{length(dims), Int}(dims)
+        strides = ntuple(i -> i == 1 ? 1 : prod(dims[1:(i - 1)]), length(dims))
+        DenseLookup.Strides = SVector{length(dims), Int}(strides)
+        if length(DenseLookup.IndexMap) < dense_size
+            resize!(DenseLookup.IndexMap, dense_size)
+        end
+        fill!(DenseLookup.IndexMap, 0)
+        @inbounds for CellIndex in 2:IndexCounter
+            Cell = UniqueCells[CellIndex]
+            linear = DenseIndex(DenseLookup.Dims, DenseLookup.Strides, DenseLookup.MinCell, Cell.I)
+            DenseLookup.IndexMap[linear] = CellIndex
+        end
+    end
+
+    return IndexCounter, use_dense
 end
 
 function ComputeCellParticleCounts(ParticleRanges, CellCount)
