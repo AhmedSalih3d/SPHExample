@@ -1,15 +1,63 @@
 module SPHNeighborList
 
 export ConstructStencil, ExtractCells!, UpdateNeighbors!,
-       BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts, UpdateΔx!
+       BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts, UpdateΔx!,
+       CellIndexLookup, InitializeCellIndexLookup, CellLookupIndex
 
 using StaticArrays
+
+mutable struct CellIndexLookup{D}
+    Grid::Vector{Int}
+    MinCell::MVector{D, Int}
+    MaxCell::MVector{D, Int}
+    Strides::MVector{D, Int}
+end
+
+function InitializeCellIndexLookup(::Val{D}) where D
+    zeros_tuple = ntuple(_ -> 0, D)
+    return CellIndexLookup{D}(
+        Int[],
+        MVector{D, Int}(zeros_tuple),
+        MVector{D, Int}(zeros_tuple),
+        MVector{D, Int}(zeros_tuple),
+    )
+end
+
+@inline function PrepareCellLookup!(CellLookup::CellIndexLookup{D}) where D
+    total = 1
+    @inbounds for d in 1:D
+        dim = CellLookup.MaxCell[d] - CellLookup.MinCell[d] + 1
+        CellLookup.Strides[d] = total
+        total *= dim
+    end
+    resize!(CellLookup.Grid, total)
+    fill!(CellLookup.Grid, 0)
+    return nothing
+end
+
+@inline function CellLinearIndex(CellLookup::CellIndexLookup{D}, Cell::CartesianIndex{D}) where D
+    idx = 1
+    @inbounds for d in 1:D
+        idx += (Cell[d] - CellLookup.MinCell[d]) * CellLookup.Strides[d]
+    end
+    return idx
+end
+
+@inline function CellLookupIndex(CellLookup::CellIndexLookup{D}, Cell::CartesianIndex{D}, Default) where D
+    @inbounds for d in 1:D
+        value = Cell[d]
+        if value < CellLookup.MinCell[d] || value > CellLookup.MaxCell[d]
+            return Default
+        end
+    end
+    return CellLookup.Grid[CellLinearIndex(CellLookup, Cell)]
+end
 
 function ConstructStencil(V::Val{d}) where d
     return CartesianIndices(ntuple(_ -> -1:1, V))
 end
 
-function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellDict)
+function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellLookup)
     TargetLen   = length(UniqueCellsView)
     OriginalLen = length(NeighborCellLists)
     resize!(NeighborCellLists, TargetLen)
@@ -27,7 +75,7 @@ function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView
         Cell = UniqueCellsView[CellIndex]
         for Offset in FullStencil
             NeighborCell = Cell + Offset
-            NeighborIndex = get(CellDict, NeighborCell, 0)
+            NeighborIndex = CellLookupIndex(CellLookup, NeighborCell, 0)
             if NeighborIndex != 0 && NeighborIndex != CellIndex
                 StartIndex = ParticleRanges[NeighborIndex]
                 EndIndex = ParticleRanges[NeighborIndex + 1] - 1
@@ -66,6 +114,38 @@ end
     return nothing
 end
 
+@inline function ExtractCellsAndBounds!(Particles, InverseCutOff, MinCell, MaxCell)
+    Cells = Particles.Cells
+    Positions = Particles.Position
+    if isempty(Cells)
+        return false
+    end
+
+    FirstCell = CartesianIndex(map(X -> MapFloor(X, InverseCutOff), Tuple(Positions[1])))
+    Cells[1] = FirstCell
+    @inbounds for d in eachindex(MinCell)
+        MinCell[d] = FirstCell[d]
+        MaxCell[d] = FirstCell[d]
+    end
+
+    if length(Cells) > 1
+        @inbounds @simd ivdep for Index in 2:length(Cells)
+            Cell = CartesianIndex(map(X -> MapFloor(X, InverseCutOff), Tuple(Positions[Index])))
+            Cells[Index] = Cell
+            @inbounds for d in eachindex(MinCell)
+                value = Cell[d]
+                if value < MinCell[d]
+                    MinCell[d] = value
+                elseif value > MaxCell[d]
+                    MaxCell[d] = value
+                end
+            end
+        end
+    end
+
+    return true
+end
+
 """
 Updates the neighbor list without sorting particle storage.
 
@@ -73,22 +153,26 @@ This builds a per-cell particle ordering buffer so cell ranges can be iterated
 without reordering the particle arrays.
 """
 function UpdateNeighbors!(Particles, InverseCutOff, ParticleRanges,
-                          UniqueCells, CellDict, ParticleOrder, CellOffsets)
-    ExtractCells!(Particles, InverseCutOff)
+                          UniqueCells, CellLookup, ParticleOrder, CellOffsets)
+    HasParticles = ExtractCellsAndBounds!(Particles, InverseCutOff, CellLookup.MinCell, CellLookup.MaxCell)
+    if !HasParticles
+        return 0
+    end
+    PrepareCellLookup!(CellLookup)
 
     Cells = @views Particles.Cells
     ParticleRanges[1] = 1
     IndexCounter = 1
-    empty!(CellDict)
     fill!(CellOffsets, zero(eltype(CellOffsets)))
 
     @inbounds for Index in eachindex(Cells)
         Cell = Cells[Index]
-        CellIndex = get(CellDict, Cell, 0)
+        LinearIndex = CellLinearIndex(CellLookup, Cell)
+        CellIndex = CellLookup.Grid[LinearIndex]
         if CellIndex == 0
             IndexCounter += 1
             CellIndex = IndexCounter
-            CellDict[Cell] = CellIndex
+            CellLookup.Grid[LinearIndex] = CellIndex
             UniqueCells[CellIndex] = Cell
         end
         CellOffsets[CellIndex] += 1
@@ -104,7 +188,7 @@ function UpdateNeighbors!(Particles, InverseCutOff, ParticleRanges,
     ParticleRanges[IndexCounter + 1] = RunningIndex
 
     @inbounds for Index in eachindex(Cells)
-        CellIndex = CellDict[Cells[Index]]
+        CellIndex = CellLookup.Grid[CellLinearIndex(CellLookup, Cells[Index])]
         TargetIndex = CellOffsets[CellIndex]
         ParticleOrder[TargetIndex] = Index
         CellOffsets[CellIndex] = TargetIndex + 1
