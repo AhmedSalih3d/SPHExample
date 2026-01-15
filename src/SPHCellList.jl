@@ -826,6 +826,21 @@ using LinearAlgebra
         
         return nothing
     end
+
+    # To control if grid is exported in output
+    function DetermineOutput(::Val{true}, SimMetaData, output, ParticleRanges, NeighborCellLists, UniqueCellsView)
+        cell_particle_counts = ComputeCellParticleCounts(ParticleRanges, length(UniqueCellsView))
+        cell_neighbor_counts = ComputeCellNeighborCounts(ParticleRanges, NeighborCellLists, length(UniqueCellsView))
+        
+        @timeit SimMetaData.HourGlass "13 Save Particle Data"  begin
+            output.enqueue_particles(SimMetaData.OutputIterationCounter)
+            output.enqueue_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, cell_particle_counts=cell_particle_counts, cell_neighbor_counts=cell_neighbor_counts)
+        end
+    end
+
+    function DetermineOutput(::Val{false}, SimMetaData, output, ParticleRanges, NeighborCellLists, UniqueCellsView)
+        output.enqueue_particles(SimMetaData.OutputIterationCounter)
+    end
     
     ###===
     function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}, #Don't further specify type for now
@@ -905,24 +920,9 @@ using LinearAlgebra
             SimMetaData.OutputIterationCounter += 1
 
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-            cell_particle_counts = nothing
-            cell_neighbor_counts = nothing
-            if SimMetaData.ExportGridCellParticleCounts
-                cell_particle_counts = ComputeCellParticleCounts(
-                    ParticleRanges,
-                    length(UniqueCellsView),
-                )
-                cell_neighbor_counts = ComputeCellNeighborCounts(
-                    ParticleRanges,
-                    NeighborCellLists,
-                    length(UniqueCellsView),
-                )
-            end
-            
-            @timeit SimMetaData.HourGlass "13 Save Particle Data"  begin
-                output.enqueue_particles(SimMetaData.OutputIterationCounter)
-                output.enqueue_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, cell_particle_counts=cell_particle_counts, cell_neighbor_counts=cell_neighbor_counts)
-            end
+
+            @timeit SimMetaData.HourGlass "13 Determine Output" DetermineOutput(Val(SimMetaData.ExportGridCellParticleCounts), SimMetaData,output, ParticleRanges, NeighborCellLists, UniqueCellsView)
+
 
             if SimMetaData.TotalTime > SimMetaData.SimulationTime
 
