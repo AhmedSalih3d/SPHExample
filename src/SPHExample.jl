@@ -58,7 +58,9 @@ module SPHExample
 
     using .SPHNeighborList
     export ConstructStencil, ExtractCells!, UpdateNeighbors!,
-           BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts
+           BuildNeighborCellLists!, NeighborListScratch, UpdateCellCounts!,
+           ComputeCellParticleCounts!, ComputeCellNeighborCounts!,
+           ComputeCellParticleCounts, ComputeCellNeighborCounts
 
     using .SPHCellList
     export NeighborLoop!, ComputeInteractions!, RunSimulation
