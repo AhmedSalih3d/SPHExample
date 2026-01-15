@@ -605,33 +605,11 @@ end
                                       SV<:SPHViscosity}
     UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
 
-    if isempty(CellLookup.Grid)
-        SyncPositionsToHost!(SimParticles, CUDAParticles)
-        SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, ParticleRanges, UniqueCells, CellLookup, ParticleOrder, CellOffsets)
-        UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-        BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellLookup)
-        RefreshCUDANeighborBuffers!(NeighborBuffers, SimParticles, ParticleRanges, ParticleOrder, NeighborCellLists, CellLookup)
-    end
-
     dt = ΔtCUDA(CUDASupport, CUDAParticles, SimConstants, SimKernel)
     dt₂ = dt * 0.5
 
     while SimMetaData.TotalTime <= next_output_time(SimMetaData)
-        @timeit SimMetaData.HourGlass "01 Calculate IndexCounter" begin
-            SimMetaData.Δx = UpdateΔxCUDA!(SimMetaData.Δx, CUDASupport, CUDAParticles)
-            ShouldRebuild = SimMetaData.Δx >= SimKernel.h
-
-            if ShouldRebuild
-                SyncPositionsToHost!(SimParticles, CUDAParticles)
-                @timeit SimMetaData.HourGlass "01a Actual Calculate IndexCounter" begin
-                    SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, ParticleRanges, UniqueCells, CellLookup, ParticleOrder, CellOffsets)
-                end
-                SimMetaData.Δx = zero(eltype(CUDASupport.DρdtI))
-                UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-                BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellLookup)
-                RefreshCUDANeighborBuffers!(NeighborBuffers, SimParticles, ParticleRanges, ParticleOrder, NeighborCellLists, CellLookup)
-            end
-        end
+        @timeit SimMetaData.HourGlass "01 Calculate IndexCounter" SimMetaData.Δx = UpdateΔxCUDA!(SimMetaData.Δx, CUDASupport, CUDAParticles)
 
         if MotionBuffers !== nothing
             @timeit SimMetaData.HourGlass "Motion" ProgressMotionCUDA!(CUDAParticles, MotionBuffers, SimMetaData.TotalTime, dt₂)
@@ -738,6 +716,12 @@ function RunSimulationCUDA(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}
     CUDASupport = BuildCUDASupportBuffers(dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ)
     MotionBuffers = MotionDefinition === nothing ? nothing : BuildCUDAMotionBuffers(SimParticles, MotionDefinition, Val(Dimensions), FloatType)
     NeighborBuffers = BuildEmptyCUDANeighborBuffers()
+    SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, ParticleRanges, UniqueCells, CellLookup, ParticleOrder, CellOffsets)
+    if SimMetaData.IndexCounter > 0
+        unique_cells_view = view(UniqueCells, 1:SimMetaData.IndexCounter)
+        BuildNeighborCellLists!(NeighborCellLists, FullStencil, unique_cells_view, ParticleRanges, CellLookup)
+        RefreshCUDANeighborBuffers!(NeighborBuffers, SimParticles, ParticleRanges, ParticleOrder, NeighborCellLists, CellLookup)
+    end
 
     @inbounds while true
         @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoopCUDA(
@@ -748,6 +732,16 @@ function RunSimulationCUDA(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}
             MotionBuffers, NeighborBuffers,
         )
         push!(SimMetaData.TimeSteps, SimMetaData.CurrentTimeStep)
+
+        if SimMetaData.Δx >= SimKernel.h
+            SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, ParticleRanges, UniqueCells, CellLookup, ParticleOrder, CellOffsets)
+            SimMetaData.Δx = zero(eltype(dρdtI))
+            if SimMetaData.IndexCounter > 0
+                unique_cells_view = view(UniqueCells, 1:SimMetaData.IndexCounter)
+                BuildNeighborCellLists!(NeighborCellLists, FullStencil, unique_cells_view, ParticleRanges, CellLookup)
+                RefreshCUDANeighborBuffers!(NeighborBuffers, SimParticles, ParticleRanges, ParticleOrder, NeighborCellLists, CellLookup)
+            end
+        end
 
         LogStep!(SimMetaData, SimLogger)
 
