@@ -27,21 +27,36 @@ using StructArrays: StructArray
 
 CUDAAvailable() = CUDA.functional()
 
-@inline function ΔtCUDA(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
-    @unpack c₀, CFL = SimulationConstants
-    @unpack h, η² = SPHKernel
-
-    map_fn = (r, v, a) -> begin
+function ΔtCUDAKernel!(max_visc, min_dt_force, Position, Velocity, Acceleration, h, η²)
+    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    if i <= length(Position)
+        r = Position[i]
+        v = Velocity[i]
+        a = Acceleration[i]
         r_sq = sqrt(dot(r, r))^2
         curr_visc = abs(h * dot(v, r) / (r_sq + η²))
         a_mag = norm(a)
         curr_dt_force = a_mag > 0 ? sqrt(h / a_mag) : typemax(eltype(a_mag))
-        return (curr_visc, curr_dt_force)
+        CUDA.atomic_max!(max_visc, 1, curr_visc)
+        CUDA.atomic_min!(min_dt_force, 1, curr_dt_force)
     end
+    return nothing
+end
 
-    reduce_fn = (left, right) -> (max(left[1], right[1]), min(left[2], right[2]))
-    global_visc, global_dt_force = CUDA.mapreduce(map_fn, reduce_fn, Position, Velocity, Acceleration)
+@inline function ΔtCUDA(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
+    @unpack c₀, CFL = SimulationConstants
+    @unpack h, η² = SPHKernel
 
+    scalar_type = eltype(eltype(Position))
+    max_visc = CUDA.zeros(scalar_type, 1)
+    min_dt_force = CUDA.fill(typemax(scalar_type), 1)
+
+    threads = 256
+    blocks = cld(length(Position), threads)
+    @cuda threads=threads blocks=blocks ΔtCUDAKernel!(max_visc, min_dt_force, Position, Velocity, Acceleration, h, η²)
+
+    global_visc = Array(max_visc)[1]
+    global_dt_force = Array(min_dt_force)[1]
     dt2 = h / (c₀ + global_visc)
     return CFL * min(global_dt_force, dt2)
 end

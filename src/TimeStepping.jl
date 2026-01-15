@@ -34,9 +34,9 @@ function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
     n_chunks = Threads.nthreads()
     chunk_size = cld(N, n_chunks)
 
-    Bumper.@no_escape begin
-        v_buffer = Bumper.@alloc(Float64, n_chunks)
-        d_buffer = Bumper.@alloc(Float64, n_chunks)
+    @no_escape begin
+        v_buffer = @alloc(Float64, n_chunks)
+        d_buffer = @alloc(Float64, n_chunks)
 
         @sync for i in 1:n_chunks
             Threads.@spawn begin
