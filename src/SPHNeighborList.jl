@@ -1,7 +1,8 @@
 module SPHNeighborList
 
 export ConstructStencil, ExtractCells!, UpdateNeighbors!,
-       BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts, UpdateΔx!
+       BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts,
+       FlattenNeighborCellLists!, UpdateΔx!
 
 using StaticArrays
 
@@ -73,7 +74,8 @@ This builds a per-cell particle ordering buffer so cell ranges can be iterated
 without reordering the particle arrays.
 """
 function UpdateNeighbors!(Particles, InverseCutOff, ParticleRanges,
-                          UniqueCells, CellDict, ParticleOrder, CellOffsets)
+                          UniqueCells, CellDict, ParticleOrder, CellOffsets,
+                          CellListIndices)
     ExtractCells!(Particles, InverseCutOff)
 
     Cells = @views Particles.Cells
@@ -92,6 +94,9 @@ function UpdateNeighbors!(Particles, InverseCutOff, ParticleRanges,
             UniqueCells[CellIndex] = Cell
         end
         CellOffsets[CellIndex] += 1
+        if CellListIndices !== nothing
+            CellListIndices[Index] = CellIndex
+        end
     end
 
     RunningIndex = 1
@@ -113,6 +118,13 @@ function UpdateNeighbors!(Particles, InverseCutOff, ParticleRanges,
     return IndexCounter
 end
 
+function UpdateNeighbors!(Particles, InverseCutOff, ParticleRanges,
+                          UniqueCells, CellDict, ParticleOrder, CellOffsets)
+    return UpdateNeighbors!(Particles, InverseCutOff, ParticleRanges,
+                            UniqueCells, CellDict, ParticleOrder, CellOffsets,
+                            nothing)
+end
+
 function ComputeCellParticleCounts(ParticleRanges, CellCount)
     Counts = Vector{Int}(undef, CellCount)
     @inbounds for Index in 1:CellCount
@@ -132,6 +144,26 @@ function ComputeCellNeighborCounts(ParticleRanges, NeighborCellLists, CellCount)
         Neighbors[Index] = max(Counts[Index] - 1, 0) + NeighborTotal
     end
     return Neighbors
+end
+
+function FlattenNeighborCellLists!(NeighborCellOffsets, NeighborCellIndices,
+                                   NeighborCellLists, CellCount)
+    resize!(NeighborCellOffsets, CellCount + 1)
+    total_neighbors = 0
+    @inbounds for Index in 1:CellCount
+        NeighborCellOffsets[Index] = total_neighbors + 1
+        total_neighbors += length(NeighborCellLists[Index])
+    end
+    NeighborCellOffsets[CellCount + 1] = total_neighbors + 1
+    resize!(NeighborCellIndices, total_neighbors)
+    next_index = 1
+    @inbounds for Index in 1:CellCount
+        for NeighborIndex in NeighborCellLists[Index]
+            NeighborCellIndices[next_index] = NeighborIndex
+            next_index += 1
+        end
+    end
+    return nothing
 end
 
 """
