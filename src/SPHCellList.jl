@@ -339,6 +339,23 @@ using LinearAlgebra
         return nothing
     end
 
+    """
+    Sort particle storage by the cell ordering recorded in `ParticleOrder`.
+
+    This is intended to be used once at the start of a simulation to improve
+    locality. After sorting, `ParticleOrder` is reset to the identity mapping.
+    """
+    function SortParticlesByCellID!(SimParticles::StructArray, ParticleOrder)
+        foreachfield(SimParticles) do Field
+            FieldSorted = Field[ParticleOrder]
+            copyto!(Field, FieldSorted)
+        end
+        @inbounds for Index in eachindex(ParticleOrder)
+            ParticleOrder[Index] = Index
+        end
+        return nothing
+    end
+
     # The previous generic `ComputeInteractions!` implementation was unused
     # in favour of the per-particle variants (ComputeInteractionsPerParticle! etc.).
     # It has been removed to reduce code size and avoid dead code.
@@ -748,6 +765,9 @@ using LinearAlgebra
                     # if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
                     if ShouldRebuild
                         @timeit SimMetaData.HourGlass "01a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, ParticleRanges, UniqueCells, CellDict, ParticleOrder, CellOffsets)
+                        if SimMetaData.Iteration == 0
+                            @timeit SimMetaData.HourGlass "01b Initial Sort By CellID" SortParticlesByCellID!(SimParticles, ParticleOrder)
+                        end
                         SimMetaData.Δx    = zero(eltype(dρdtI))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                         BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellDict)
