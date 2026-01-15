@@ -119,22 +119,22 @@ function ConstructStencil(V::Val{d}) where d
     return CartesianIndices(ntuple(_ -> -1:1, V))
 end
 
-function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellLookup)
-    TargetLen   = length(UniqueCellsView)
-    OriginalLen = length(NeighborCellLists)
-    resize!(NeighborCellLists, TargetLen)
+function BuildNeighborCellLists!(NeighborCellOffsets, NeighborCellCounts, NeighborCells,
+                                 FullStencil, UniqueCellsView, ParticleRanges, CellLookup)
+    TargetLen = length(UniqueCellsView)
+    resize!(NeighborCellOffsets, TargetLen)
+    resize!(NeighborCellCounts, TargetLen)
 
-    if TargetLen > OriginalLen
-        @inbounds for Index in (OriginalLen + 1):TargetLen
-            NeighborCellLists[Index] = Int[]
-        end
+    MaxNeighbors = length(FullStencil) - 1
+    RequiredLen = TargetLen * MaxNeighbors
+    if length(NeighborCells) < RequiredLen
+        resize!(NeighborCells, RequiredLen)
     end
 
     @inbounds for CellIndex in eachindex(UniqueCellsView)
-        Neighbors = NeighborCellLists[CellIndex]
-        empty!(Neighbors)
-        sizehint!(Neighbors, length(FullStencil) - 1)
         Cell = UniqueCellsView[CellIndex]
+        write_index = (CellIndex - 1) * MaxNeighbors + 1
+        count = 0
         for Offset in FullStencil
             NeighborCell = Cell + Offset
             NeighborIndex = GetCellIndex(CellLookup, NeighborCell, 0)
@@ -142,10 +142,13 @@ function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView
                 StartIndex = ParticleRanges[NeighborIndex]
                 EndIndex = ParticleRanges[NeighborIndex + 1] - 1
                 if StartIndex <= EndIndex
-                    push!(Neighbors, NeighborIndex)
+                    count += 1
+                    NeighborCells[write_index + count - 1] = NeighborIndex
                 end
             end
         end
+        NeighborCellOffsets[CellIndex] = write_index
+        NeighborCellCounts[CellIndex] = count
     end
 
     return nothing
@@ -183,13 +186,14 @@ This builds a per-cell particle ordering buffer so cell ranges can be iterated
 without reordering the particle arrays.
 """
 function UpdateNeighbors!(Particles, InverseCutOff, ParticleRanges,
-                          UniqueCells, CellLookup, ParticleOrder, CellOffsets)
+                          UniqueCells, CellLookup, ParticleOrder, CellOffsets,
+                          CellIndices)
     ExtractCells!(Particles, InverseCutOff)
 
     Cells = @views Particles.Cells
     ParticleRanges[1] = 1
     IndexCounter = 1
-    ResetCellLookup!(CellLookup, length(Cells) * 4)
+    ResetCellLookup!(CellLookup, length(Cells) * 8)
     fill!(CellOffsets, zero(eltype(CellOffsets)))
 
     @inbounds for Index in eachindex(Cells)
@@ -199,6 +203,7 @@ function UpdateNeighbors!(Particles, InverseCutOff, ParticleRanges,
             IndexCounter = CellIndex
             UniqueCells[CellIndex] = Cell
         end
+        CellIndices[Index] = CellIndex
         CellOffsets[CellIndex] += 1
     end
 
@@ -212,7 +217,7 @@ function UpdateNeighbors!(Particles, InverseCutOff, ParticleRanges,
     ParticleRanges[IndexCounter + 1] = RunningIndex
 
     @inbounds for Index in eachindex(Cells)
-        CellIndex = GetCellIndex(CellLookup, Cells[Index], 0)
+        CellIndex = CellIndices[Index]
         TargetIndex = CellOffsets[CellIndex]
         ParticleOrder[TargetIndex] = Index
         CellOffsets[CellIndex] = TargetIndex + 1
@@ -229,12 +234,15 @@ function ComputeCellParticleCounts(ParticleRanges, CellCount)
     return Counts
 end
 
-function ComputeCellNeighborCounts(ParticleRanges, NeighborCellLists, CellCount)
+function ComputeCellNeighborCounts(ParticleRanges, NeighborCellOffsets, NeighborCellCounts, NeighborCells, CellCount)
     Counts = ComputeCellParticleCounts(ParticleRanges, CellCount)
     Neighbors = Vector{Int}(undef, CellCount)
     @inbounds for Index in 1:CellCount
         NeighborTotal = 0
-        for NeighborIndex in NeighborCellLists[Index]
+        count = NeighborCellCounts[Index]
+        start = NeighborCellOffsets[Index]
+        for j in 0:(count - 1)
+            NeighborIndex = NeighborCells[start + j]
             NeighborTotal += Counts[NeighborIndex]
         end
         Neighbors[Index] = max(Counts[Index] - 1, 0) + NeighborTotal
