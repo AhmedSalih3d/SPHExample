@@ -14,6 +14,11 @@ module SPHExample
     include("OpenExternalPrograms.jl")
     include("SPHDensityDiffusionModels.jl")  
     include("SPHNeighborList.jl")
+    const HasCUDA = Base.find_package("CUDA") !== nothing
+    if HasCUDA
+        include("SPHCUDANeighborList.jl")
+        include("SPHCUDASimulation.jl")
+    end
     include("SPHCellList.jl") #Must be last    
 
     # Re-export desired functions from each submodule
@@ -60,6 +65,16 @@ module SPHExample
     export ConstructStencil, ExtractCells!, UpdateNeighbors!,
            BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts,
            CellIndexLookup, InitializeCellIndexLookup
+
+    if HasCUDA
+        using .SPHCUDANeighborList
+        export CUDACellGrid, CUDANeighborList, AllocateCUDANeighborList,
+               ConstructNeighborOffsets, BuildNeighborCellListsCUDA!,
+               UpdateNeighborsCUDA!, NeighborLoopCUDA!, NeighborLoopPerParticleCUDA!,
+               CUDAPackedNeighborList, AllocateCUDAPackedNeighborList, UpdateNeighborsCPUToCUDA!
+        using .SPHCUDASimulation
+        export RunSimulationCUDA, AllocateCUDASimParticles, SyncParticlesFromCUDA!
+    end
 
     using .SPHCellList
     export NeighborLoop!, ComputeInteractions!, RunSimulation
