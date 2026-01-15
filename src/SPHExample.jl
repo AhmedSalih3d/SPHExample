@@ -15,6 +15,9 @@ module SPHExample
     include("SPHDensityDiffusionModels.jl")  
     include("SPHNeighborList.jl")
     include("SPHCellList.jl") #Must be last    
+    if Base.find_package("CUDA") !== nothing
+        include("SPHCUDA.jl")
+    end
 
     # Re-export desired functions from each submodule
     using .AuxiliaryFunctions
@@ -63,6 +66,14 @@ module SPHExample
 
     using .SPHCellList
     export NeighborLoop!, ComputeInteractions!, RunSimulation
+
+    if Base.find_package("CUDA") !== nothing
+        using .SPHCUDA
+        export RunSimulationCUDA, CUDAAvailable
+    else
+        CUDAAvailable() = false
+        export CUDAAvailable
+    end
 
     using .OpenExternalPrograms
     export AutoOpenLogFile, AutoOpenParaview
