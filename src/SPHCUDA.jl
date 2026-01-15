@@ -6,6 +6,7 @@ using CUDA
 using LinearAlgebra
 using Parameters
 using StaticArrays
+using TimerOutputs
 
 using ..SPHKernels
 using ..SPHViscosityModels
@@ -207,8 +208,7 @@ function NeighborLoopPerParticleCUDA!(SimDensityDiffusion::SDD, SimViscosity::SV
                                       SimConstants, SimParticles, ParticleRanges,
                                       CellLookup, NeighborCellLists, dρdtI,
                                       Acceleration, ∇Cᵢ,
-                                      ∇◌rᵢ, max_visc = nothing,
-                                      min_dt_force = nothing;
+                                      ∇◌rᵢ;
                                       Position = SimParticles.Position,
                                       Density = SimParticles.Density,
                                       Pressure = SimParticles.Pressure,
@@ -256,12 +256,6 @@ function NeighborLoopPerParticleCUDA!(SimDensityDiffusion::SDD, SimViscosity::SV
 
     CUDA.copyto!(dρdtI, dρdtI_gpu)
     CUDA.copyto!(Acceleration, acceleration_gpu)
-
-    if max_visc !== nothing || min_dt_force !== nothing
-        @inbounds for i in eachindex(Position)
-            UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i], Velocity[i], Acceleration[i], SimKernel)
-        end
-    end
 
     return nothing
 end
