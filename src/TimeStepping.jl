@@ -17,9 +17,9 @@ end
 
 @inline function UpdateTimeStepBuffers!(max_visc, min_dt_force, index, visc_sum,
                                            position, velocity, acceleration, sim_kernel)
-    h = sim_kernel.h
-    a_mag = norm(acceleration)
-    curr_dt_force = a_mag > 0 ? sqrt(h / a_mag) : typemax(eltype(min_dt_force))
+    h             = sim_kernel.h
+    a_mag         = norm(acceleration)
+    curr_dt_force = sqrt(h / a_mag)
     @inbounds begin
         max_visc[index] = visc_sum
         min_dt_force[index] = curr_dt_force
@@ -36,7 +36,7 @@ function FinalizeTimeStep(max_visc, min_dt_force, SimulationConstants, SPHKernel
     @unpack c₀, CFL = SimulationConstants
     @unpack h = SPHKernel
 
-    global_visc = maximum(max_visc)
+    global_visc     = maximum(max_visc)
     global_dt_force = minimum(min_dt_force)
 
     dt2 = h / (c₀ + global_visc)

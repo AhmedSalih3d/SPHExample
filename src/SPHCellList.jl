@@ -387,7 +387,7 @@ using LinearAlgebra
                                                                       SDD<:SPHDensityDiffusion,
                                                                       SV<:SPHViscosity}
         @unpack m₀, dx = SimConstants
-        @unpack h⁻¹, H² = SimKernel
+        @unpack h⁻¹, H², h, η² = SimKernel
 
         xᵢⱼ = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
@@ -422,7 +422,7 @@ using LinearAlgebra
                                              dᵢⱼ^2, i, j)
 
             acc_acc += dvdt⁺ + visc_term
-            visc_acc += norm(visc_term)
+            visc_acc += abs(h * dot(vᵢ, Position[i])) / (dᵢⱼ^2 + η²)
 
             kernel_acc, kernel_grad_acc =
                 compute_kernel_output_local(SimMetaData, kernel_acc, kernel_grad_acc,
@@ -440,7 +440,7 @@ using LinearAlgebra
                                         SDD<:SPHDensityDiffusion,
                                         SV<:SPHViscosity}
         @unpack m₀, dx = SimConstants
-        @unpack h⁻¹, H² = SimKernel
+        @unpack h⁻¹, H², h, η² = SimKernel
 
         xᵢⱼ = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
@@ -475,7 +475,7 @@ using LinearAlgebra
                                              dᵢⱼ^2, i, j)
 
             acc_acc += dvdt⁺ + visc_term
-            visc_acc += norm(visc_term)
+            visc_acc += abs(h * dot(vᵢ, Position[i])) / (dᵢⱼ^2 + η²)
         end
 
         return dρdt_acc, acc_acc, visc_acc
@@ -493,7 +493,7 @@ using LinearAlgebra
                                   SDD<:SPHDensityDiffusion,
                                   SV<:SPHViscosity}
         @unpack m₀, dx = SimConstants
-        @unpack h⁻¹, H² = SimKernel
+        @unpack h⁻¹, H², h, η² = SimKernel
 
         xᵢⱼ = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
@@ -528,7 +528,7 @@ using LinearAlgebra
                                              dᵢⱼ^2, i, j)
 
             acc_acc += dvdt⁺ + visc_term
-            visc_acc += norm(visc_term)
+            visc_acc += abs(h * dot(vᵢ, Position[i])) / (dᵢⱼ^2 + η²)
 
             kernel_acc, kernel_grad_acc =
                 compute_kernel_output_local(SimMetaData, kernel_acc, kernel_grad_acc,
@@ -553,7 +553,7 @@ using LinearAlgebra
                                                                   SDD<:SPHDensityDiffusion,
                                                                   SV<:SPHViscosity}
         @unpack m₀, dx = SimConstants
-        @unpack h⁻¹, H² = SimKernel
+        @unpack h⁻¹, H², h, η² = SimKernel
 
         xᵢⱼ = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
@@ -588,7 +588,7 @@ using LinearAlgebra
                                              dᵢⱼ^2, i, j)
 
             acc_acc += dvdt⁺ + visc_term
-            visc_acc += norm(visc_term)
+            visc_acc += abs(h * dot(vᵢ, Position[i])) / (dᵢⱼ^2 + η²)
 
             MLcond = MotionLimiter[i] * MotionLimiter[j]
             shift_c_acc += (m₀ / ρᵢ) * ∇ᵢWᵢⱼ
