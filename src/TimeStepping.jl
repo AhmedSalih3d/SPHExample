@@ -42,7 +42,7 @@ function FinalizeTimeStep(max_visc, max_speed, min_dt_force, SimulationConstants
     global_speed    = maximum(max_speed)
     global_dt_force = minimum(min_dt_force)
 
-    dt2 = h / (max(c₀, global_speed * 10) + h * global_visc)
+    dt2 = h / (max(c₀, global_speed) + h * global_visc)
     return CFL * min(global_dt_force, dt2)
 end
 
@@ -101,7 +101,7 @@ function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
             end
         end
 
-        CFL * min(minimum(d_buffer), h / max(c₀, maximum(v_buffer) * 10))
+        CFL * min(minimum(d_buffer), h / max(c₀, maximum(v_buffer)))
     end
 end
 
