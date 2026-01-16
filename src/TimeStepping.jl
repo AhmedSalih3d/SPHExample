@@ -10,36 +10,39 @@ using ..SimulationEquations
 using ..SimulationGeometry
 using ..SimulationMetaDataConfiguration
 
-@inline function UpdateTimeStepBuffers!(::Nothing, ::Nothing, index, visc_sum,
+@inline function UpdateTimeStepBuffers!(::Nothing, ::Nothing, ::Nothing, index, visc_sum,
                                            position, velocity, acceleration, sim_kernel)
     return nothing
 end
 
-@inline function UpdateTimeStepBuffers!(max_visc, min_dt_force, index, visc_sum,
+@inline function UpdateTimeStepBuffers!(max_visc, max_speed, min_dt_force, index, visc_sum,
                                            position, velocity, acceleration, sim_kernel)
     h             = sim_kernel.h
     a_mag         = norm(acceleration)
-    curr_dt_force = sqrt(h / a_mag)
+    curr_dt_force = a_mag > 0 ? sqrt(h / a_mag) : Inf
+    speed_mag     = norm(velocity)
     @inbounds begin
         max_visc[index] = visc_sum
+        max_speed[index] = speed_mag
         min_dt_force[index] = curr_dt_force
     end
     return nothing
 end
 
 """
-    FinalizeTimeStep(max_visc, min_dt_force, SimulationConstants, SPHKernel)
+    FinalizeTimeStep(max_visc, max_speed, min_dt_force, SimulationConstants, SPHKernel)
 
 Compute the CFL-limited time step from the per-particle buffers.
 """
-function FinalizeTimeStep(max_visc, min_dt_force, SimulationConstants, SPHKernel)
+function FinalizeTimeStep(max_visc, max_speed, min_dt_force, SimulationConstants, SPHKernel)
     @unpack c₀, CFL = SimulationConstants
     @unpack h = SPHKernel
 
     global_visc     = maximum(max_visc)
+    global_speed    = maximum(max_speed)
     global_dt_force = minimum(min_dt_force)
 
-    dt2 = h / (c₀ + global_visc)
+    dt2 = h / (max(c₀, global_speed) + h * global_visc)
     return CFL * min(global_dt_force, dt2)
 end
 
@@ -61,7 +64,7 @@ viscous, and force-based criteria.
 """
 function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
     @unpack c₀, CFL = SimulationConstants
-    @unpack h, η²   = SPHKernel
+    @unpack h   = SPHKernel
 
     N = length(Position)
     n_chunks = Threads.nthreads()
@@ -76,18 +79,15 @@ function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
                 idx_start = (i - 1) * chunk_size + 1
                 idx_end   = min(i * chunk_size, N)
 
-                t_visc = 0.0
+                t_vel = 0.0
                 t_dt   = Inf
 
                 if idx_start <= idx_end
                     @inbounds for j in idx_start:idx_end
-                        r = Position[j]
                         v = Velocity[j]
                         a = Acceleration[j]
 
-                        r_sq = sqrt(dot(r, r))^2
-                        curr_visc = abs(h * dot(v, r) / (r_sq + η²))
-                        t_visc = max(t_visc, curr_visc)
+                        t_vel = max(t_vel, norm(v))
 
                         a_mag = norm(a)
                         if a_mag > 0
@@ -96,12 +96,12 @@ function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
                     end
                 end
 
-                v_buffer[i] = t_visc
+                v_buffer[i] = t_vel
                 d_buffer[i] = t_dt
             end
         end
 
-        CFL * min(minimum(d_buffer), h / (c₀ + maximum(v_buffer)))
+        CFL * min(minimum(d_buffer), h / max(c₀, maximum(v_buffer)))
     end
 end
 
