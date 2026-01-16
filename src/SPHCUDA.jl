@@ -143,13 +143,12 @@ function BuildCUDAMotionBuffers(SimParticles, MotionDefinition, ::Val{Dimensions
     )
 end
 
-function BuildCUDAGridBuffers(SimParticles, FullStencil)
+function BuildCUDAGridBuffers(SimParticles, FullStencil, ::Val{D}) where {D}
     NumberOfPoints = length(SimParticles.Position)
-    Dimensions = length(first(SimParticles.Position))
     BucketCount = max(1, 2 * NumberOfPoints)
-    NeighborOffsets = [SVector{Dimensions, Int}(Tuple(offset)) for offset in FullStencil]
+    NeighborOffsets = [SVector{D, Int}(Tuple(offset)) for offset in FullStencil]
     return CUDAGridBuffers(
-        CuArray(similar(SimParticles.Position, SVector{Dimensions, Int})),
+        CuArray(similar(SimParticles.Position, SVector{D, Int})),
         CuArray(zeros(Int, BucketCount)),
         CuArray(zeros(Int, BucketCount)),
         CuArray(zeros(Int, BucketCount)),
@@ -737,7 +736,7 @@ function RunSimulationCUDA(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}
     CUDAParticles = BuildCUDAParticleBuffers(SimParticles)
     CUDASupport = BuildCUDASupportBuffers(dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ)
     MotionBuffers = MotionDefinition === nothing ? nothing : BuildCUDAMotionBuffers(SimParticles, MotionDefinition, Val(Dimensions), FloatType)
-    CUDAGrid = BuildCUDAGridBuffers(SimParticles, FullStencil)
+    CUDAGrid = BuildCUDAGridBuffers(SimParticles, FullStencil, Val(Dimensions))
 
     @inbounds while true
         @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoopCUDA(
