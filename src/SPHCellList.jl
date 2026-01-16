@@ -50,9 +50,15 @@ using LinearAlgebra
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         @unpack Cells, MotionLimiter = SimParticles
+        ParticleType = SimParticles.Type
         @inbounds Threads.@threads for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
+            if ParticleType[i] != Fluid
+                dρdtI[i] = dρdt_acc
+                Acceleration[i] = acc_acc
+                continue
+            end
             CellIndex = Cells[i]
             CellListIndex = CellLookupIndex(CellLookup, CellIndex, 1)
             SameCellStart = ParticleRanges[CellListIndex]
@@ -61,7 +67,7 @@ using LinearAlgebra
 
             @inbounds for j in SameCellStart:SameCellEnd
                 jIndex = ParticleOrder[j]
-                if jIndex != i
+                if jIndex != i && ParticleType[jIndex] == Fluid
                     dρdt_acc, acc_acc = ComputeInteractionsPerParticleNoKernel!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, Position, Density, Pressure,
@@ -74,11 +80,13 @@ using LinearAlgebra
                 EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
                 @inbounds for j in StartIndex_:EndIndex_
                     jIndex = ParticleOrder[j]
-                    dρdt_acc, acc_acc = ComputeInteractionsPerParticleNoKernel!(
-                        SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                        SimConstants, SimParticles, Position, Density, Pressure,
-                        Velocity, MotionLimiter, dρdt_acc, acc_acc, i, jIndex,
-                    )
+                    if ParticleType[jIndex] == Fluid
+                        dρdt_acc, acc_acc = ComputeInteractionsPerParticleNoKernel!(
+                            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                            SimConstants, SimParticles, Position, Density, Pressure,
+                            Velocity, MotionLimiter, dρdt_acc, acc_acc, i, jIndex,
+                        )
+                    end
                 end
             end
 
@@ -107,11 +115,19 @@ using LinearAlgebra
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         @unpack Cells, MotionLimiter, Kernel, KernelGradient = SimParticles
+        ParticleType = SimParticles.Type
         @inbounds Threads.@threads for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
             kernel_acc = zero(Kernel[i])
             kernel_grad_acc = zero(KernelGradient[i])
+            if ParticleType[i] != Fluid
+                dρdtI[i] = dρdt_acc
+                Acceleration[i] = acc_acc
+                Kernel[i] = kernel_acc
+                KernelGradient[i] = kernel_grad_acc
+                continue
+            end
             CellIndex = Cells[i]
             CellListIndex = CellLookupIndex(CellLookup, CellIndex, 1)
             SameCellStart = ParticleRanges[CellListIndex]
@@ -120,7 +136,7 @@ using LinearAlgebra
 
             @inbounds for j in SameCellStart:SameCellEnd
                 jIndex = ParticleOrder[j]
-                if jIndex != i
+                if jIndex != i && ParticleType[jIndex] == Fluid
                     dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc =
                         ComputeInteractionsPerParticle!(
                             SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
@@ -135,13 +151,15 @@ using LinearAlgebra
                 EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
                 @inbounds for j in StartIndex_:EndIndex_
                     jIndex = ParticleOrder[j]
-                    dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc =
-                        ComputeInteractionsPerParticle!(
-                            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                            SimConstants, SimParticles, Position, Density, Pressure,
-                            Velocity, MotionLimiter, dρdt_acc, acc_acc, kernel_acc,
-                            kernel_grad_acc, i, jIndex,
-                        )
+                    if ParticleType[jIndex] == Fluid
+                        dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc =
+                            ComputeInteractionsPerParticle!(
+                                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                                SimConstants, SimParticles, Position, Density, Pressure,
+                                Velocity, MotionLimiter, dρdt_acc, acc_acc, kernel_acc,
+                                kernel_grad_acc, i, jIndex,
+                            )
+                    end
                 end
             end
 
@@ -171,11 +189,19 @@ using LinearAlgebra
                                                   L<:LogMode,SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         @unpack Cells, MotionLimiter = SimParticles
+        ParticleType = SimParticles.Type
         @inbounds Threads.@threads for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
             shift_c_acc = zero(∇Cᵢ[i])
             shift_r_acc = zero(∇◌rᵢ[i])
+            if ParticleType[i] != Fluid
+                dρdtI[i] = dρdt_acc
+                Acceleration[i] = acc_acc
+                ∇Cᵢ[i] = shift_c_acc
+                ∇◌rᵢ[i] = shift_r_acc
+                continue
+            end
             CellIndex = Cells[i]
             CellListIndex = CellLookupIndex(CellLookup, CellIndex, 1)
             SameCellStart = ParticleRanges[CellListIndex]
@@ -184,7 +210,7 @@ using LinearAlgebra
 
             @inbounds for j in SameCellStart:SameCellEnd
                 jIndex = ParticleOrder[j]
-                if jIndex != i
+                if jIndex != i && ParticleType[jIndex] == Fluid
                     dρdt_acc, acc_acc, shift_c_acc, shift_r_acc =
                         ComputeInteractionsPerParticleNoKernel!(
                             SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
@@ -199,13 +225,15 @@ using LinearAlgebra
                 EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
                 @inbounds for j in StartIndex_:EndIndex_
                     jIndex = ParticleOrder[j]
-                    dρdt_acc, acc_acc, shift_c_acc, shift_r_acc =
-                        ComputeInteractionsPerParticleNoKernel!(
-                            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                            SimConstants, SimParticles, Position, Density, Pressure,
-                            Velocity, MotionLimiter, dρdt_acc, acc_acc, shift_c_acc,
-                            shift_r_acc, i, jIndex,
-                        )
+                    if ParticleType[jIndex] == Fluid
+                        dρdt_acc, acc_acc, shift_c_acc, shift_r_acc =
+                            ComputeInteractionsPerParticleNoKernel!(
+                                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                                SimConstants, SimParticles, Position, Density, Pressure,
+                                Velocity, MotionLimiter, dρdt_acc, acc_acc, shift_c_acc,
+                                shift_r_acc, i, jIndex,
+                            )
+                    end
                 end
             end
 
@@ -237,6 +265,7 @@ using LinearAlgebra
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         @unpack Cells, MotionLimiter, Kernel, KernelGradient = SimParticles
+        ParticleType = SimParticles.Type
         @inbounds Threads.@threads for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
@@ -244,6 +273,15 @@ using LinearAlgebra
             kernel_grad_acc = zero(KernelGradient[i])
             shift_c_acc = zero(∇Cᵢ[i])
             shift_r_acc = zero(∇◌rᵢ[i])
+            if ParticleType[i] != Fluid
+                dρdtI[i] = dρdt_acc
+                Acceleration[i] = acc_acc
+                Kernel[i] = kernel_acc
+                KernelGradient[i] = kernel_grad_acc
+                ∇Cᵢ[i] = shift_c_acc
+                ∇◌rᵢ[i] = shift_r_acc
+                continue
+            end
             CellIndex = Cells[i]
             CellListIndex = CellLookupIndex(CellLookup, CellIndex, 1)
             SameCellStart = ParticleRanges[CellListIndex]
@@ -252,7 +290,7 @@ using LinearAlgebra
 
             @inbounds for j in SameCellStart:SameCellEnd
                 jIndex = ParticleOrder[j]
-                if jIndex != i
+                if jIndex != i && ParticleType[jIndex] == Fluid
                     dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc,
                     shift_r_acc = ComputeInteractionsPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
@@ -267,13 +305,15 @@ using LinearAlgebra
                 EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
                 @inbounds for j in StartIndex_:EndIndex_
                     jIndex = ParticleOrder[j]
-                    dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc,
-                    shift_r_acc = ComputeInteractionsPerParticle!(
-                        SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                        SimConstants, SimParticles, Position, Density, Pressure,
-                        Velocity, MotionLimiter, dρdt_acc, acc_acc, kernel_acc,
-                        kernel_grad_acc, shift_c_acc, shift_r_acc, i, jIndex,
-                    )
+                    if ParticleType[jIndex] == Fluid
+                        dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc,
+                        shift_r_acc = ComputeInteractionsPerParticle!(
+                            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                            SimConstants, SimParticles, Position, Density, Pressure,
+                            Velocity, MotionLimiter, dρdt_acc, acc_acc, kernel_acc,
+                            kernel_grad_acc, shift_c_acc, shift_r_acc, i, jIndex,
+                        )
+                    end
                 end
             end
 
