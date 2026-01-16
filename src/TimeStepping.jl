@@ -10,21 +10,18 @@ using ..SimulationEquations
 using ..SimulationGeometry
 using ..SimulationMetaDataConfiguration
 
-@inline function UpdateTimeStepBuffers!(::Nothing, ::Nothing, index, position,
-                                           velocity, acceleration, sim_kernel)
+@inline function UpdateTimeStepBuffers!(::Nothing, ::Nothing, index, visc_sum,
+                                           position, velocity, acceleration, sim_kernel)
     return nothing
 end
 
-@inline function UpdateTimeStepBuffers!(max_visc, min_dt_force, index, position,
-                                           velocity, acceleration, sim_kernel)
+@inline function UpdateTimeStepBuffers!(max_visc, min_dt_force, index, visc_sum,
+                                           position, velocity, acceleration, sim_kernel)
     h = sim_kernel.h
-    η² = sim_kernel.η²
-    r_sq = sqrt(dot(position, position))^2
-    curr_visc = abs(h * dot(velocity, position) / (r_sq + η²))
     a_mag = norm(acceleration)
     curr_dt_force = a_mag > 0 ? sqrt(h / a_mag) : typemax(eltype(min_dt_force))
     @inbounds begin
-        max_visc[index] = curr_visc
+        max_visc[index] = visc_sum
         min_dt_force[index] = curr_dt_force
     end
     return nothing
