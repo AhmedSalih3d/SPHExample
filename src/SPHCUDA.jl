@@ -27,12 +27,17 @@ using StructArrays: StructArray
 
 CUDAAvailable() = CUDA.functional()
 
+struct LaunchConfig
+    Threads::Int
+    Blocks::Int
+end
+
 @inline function KernelLaunchConfig(length)
     if length == 0
-        return 1, 1
+        return LaunchConfig(1, 1)
     end
     threads = min(256, length)
-    return threads, cld(length, threads)
+    return LaunchConfig(threads, cld(length, threads))
 end
 
 struct CUDAParticleBuffers{D, T}
@@ -216,9 +221,8 @@ function PressureCUDAKernel!(Press, Density, SimConstants)
     return nothing
 end
 
-function PressureCUDA!(Press, Density, SimConstants)
-    threads, blocks = KernelLaunchConfig(length(Press))
-    @cuda threads=threads blocks=blocks PressureCUDAKernel!(Press, Density, SimConstants)
+function PressureCUDA!(Press, Density, SimConstants, Launch)
+    @cuda threads=Launch.Threads blocks=Launch.Blocks PressureCUDAKernel!(Press, Density, SimConstants)
     return nothing
 end
 
@@ -231,9 +235,8 @@ function DensityEpsiCUDAKernel!(Density, dρdtIₙ⁺, ρₙ⁺, Δt)
     return nothing
 end
 
-function DensityEpsiCUDA!(Density, dρdtIₙ⁺, ρₙ⁺, Δt)
-    threads, blocks = KernelLaunchConfig(length(Density))
-    @cuda threads=threads blocks=blocks DensityEpsiCUDAKernel!(Density, dρdtIₙ⁺, ρₙ⁺, Δt)
+function DensityEpsiCUDA!(Density, dρdtIₙ⁺, ρₙ⁺, Δt, Launch)
+    @cuda threads=Launch.Threads blocks=Launch.Blocks DensityEpsiCUDAKernel!(Density, dρdtIₙ⁺, ρₙ⁺, Δt)
     return nothing
 end
 
@@ -247,9 +250,8 @@ function LimitDensityAtBoundaryCUDAKernel!(Density, ρ₀, MotionLimiter)
     return nothing
 end
 
-function LimitDensityAtBoundaryCUDA!(Density, ρ₀, MotionLimiter)
-    threads, blocks = KernelLaunchConfig(length(Density))
-    @cuda threads=threads blocks=blocks LimitDensityAtBoundaryCUDAKernel!(Density, ρ₀, MotionLimiter)
+function LimitDensityAtBoundaryCUDA!(Density, ρ₀, MotionLimiter, Launch)
+    @cuda threads=Launch.Threads blocks=Launch.Blocks LimitDensityAtBoundaryCUDAKernel!(Density, ρ₀, MotionLimiter)
     return nothing
 end
 
@@ -267,9 +269,8 @@ function HalfTimeStepCUDAKernel!(Position, Density, Velocity, Acceleration, Grav
     return nothing
 end
 
-function HalfTimeStepCUDA!(CUDAParticles::CUDAParticleBuffers, CUDASupport::CUDASupportBuffers, dt₂, SimConstants)
-    threads, blocks = KernelLaunchConfig(length(CUDAParticles.Position))
-    @cuda threads=threads blocks=blocks HalfTimeStepCUDAKernel!(
+function HalfTimeStepCUDA!(CUDAParticles::CUDAParticleBuffers, CUDASupport::CUDASupportBuffers, dt₂, SimConstants, Launch)
+    @cuda threads=Launch.Threads blocks=Launch.Blocks HalfTimeStepCUDAKernel!(
         CUDAParticles.Position,
         CUDAParticles.Density,
         CUDAParticles.Velocity,
@@ -298,9 +299,8 @@ function FullTimeStepCUDAKernel!(Position, Velocity, Acceleration, GravityFactor
     return nothing
 end
 
-function FullTimeStepCUDA!(CUDAParticles::CUDAParticleBuffers, dt, SimConstants)
-    threads, blocks = KernelLaunchConfig(length(CUDAParticles.Position))
-    @cuda threads=threads blocks=blocks FullTimeStepCUDAKernel!(
+function FullTimeStepCUDA!(CUDAParticles::CUDAParticleBuffers, dt, SimConstants, Launch)
+    @cuda threads=Launch.Threads blocks=Launch.Blocks FullTimeStepCUDAKernel!(
         CUDAParticles.Position,
         CUDAParticles.Velocity,
         CUDAParticles.Acceleration,
@@ -329,9 +329,8 @@ function ProgressMotionCUDAKernel!(Position, Velocity, MotionVelocity, MotionSta
     return nothing
 end
 
-function ProgressMotionCUDA!(CUDAParticles::CUDAParticleBuffers, MotionBuffers::CUDAMotionBuffers, TotalTime, dt₂)
-    threads, blocks = KernelLaunchConfig(length(CUDAParticles.Position))
-    @cuda threads=threads blocks=blocks ProgressMotionCUDAKernel!(
+function ProgressMotionCUDA!(CUDAParticles::CUDAParticleBuffers, MotionBuffers::CUDAMotionBuffers, TotalTime, dt₂, Launch)
+    @cuda threads=Launch.Threads blocks=Launch.Blocks ProgressMotionCUDAKernel!(
         CUDAParticles.Position,
         CUDAParticles.Velocity,
         MotionBuffers.Velocity,
@@ -366,9 +365,8 @@ function ΔtCUDAKernel!(ViscousBuffer, ForceBuffer, Position, Velocity, Accelera
     return nothing
 end
 
-function ΔtCUDA(CUDASupport::CUDASupportBuffers, CUDAParticles::CUDAParticleBuffers, SimConstants, SimKernel)
-    threads, blocks = KernelLaunchConfig(length(CUDAParticles.Position))
-    @cuda threads=threads blocks=blocks ΔtCUDAKernel!(
+function ΔtCUDA(CUDASupport::CUDASupportBuffers, CUDAParticles::CUDAParticleBuffers, SimConstants, SimKernel, Launch)
+    @cuda threads=Launch.Threads blocks=Launch.Blocks ΔtCUDAKernel!(
         CUDASupport.ΔtViscous,
         CUDASupport.ΔtForce,
         CUDAParticles.Position,
@@ -391,9 +389,8 @@ function MaxDisplacementCUDAKernel!(Scratch, Positionₙ⁺, Position)
     return nothing
 end
 
-function UpdateΔxCUDA!(Δx, CUDASupport::CUDASupportBuffers, CUDAParticles::CUDAParticleBuffers)
-    threads, blocks = KernelLaunchConfig(length(CUDAParticles.Position))
-    @cuda threads=threads blocks=blocks MaxDisplacementCUDAKernel!(
+function UpdateΔxCUDA!(Δx, CUDASupport::CUDASupportBuffers, CUDAParticles::CUDAParticleBuffers, Launch)
+    @cuda threads=Launch.Threads blocks=Launch.Blocks MaxDisplacementCUDAKernel!(
         CUDASupport.ΔxScratch,
         CUDASupport.Positionₙ⁺,
         CUDAParticles.Position,
@@ -560,7 +557,7 @@ end
 
 function NeighborLoopPerParticleCUDA!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimConstants, CUDAParticles::CUDAParticleBuffers,
-                                      NeighborBuffers::CUDANeighborBuffers, dρdtI, Acceleration;
+                                      NeighborBuffers::CUDANeighborBuffers, dρdtI, Acceleration, Launch;
                                       Position = CUDAParticles.Position,
                                       Density = CUDAParticles.Density,
                                       Pressure = CUDAParticles.Pressure,
@@ -578,8 +575,7 @@ function NeighborLoopPerParticleCUDA!(SimDensityDiffusion::SDD, SimViscosity::SV
         error("CUDA neighbor loop supports ArtificialViscosity or ZeroViscosity.")
     end
 
-    threads, blocks = KernelLaunchConfig(length(Position))
-    @cuda threads=threads blocks=blocks NeighborLoopCUDAKernel!(
+    @cuda threads=Launch.Threads blocks=Launch.Blocks NeighborLoopCUDAKernel!(
         dρdtI, Acceleration, Position, Density, Pressure,
         Velocity, CUDAParticles.MotionLimiter, NeighborBuffers.CellListIndices,
         NeighborBuffers.ParticleRanges, NeighborBuffers.ParticleOrder,
@@ -604,49 +600,50 @@ end
                                       SV<:SPHViscosity}
     UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
 
-    dt = ΔtCUDA(CUDASupport, CUDAParticles, SimConstants, SimKernel)
+    Launch = KernelLaunchConfig(length(CUDAParticles.Position))
+    dt = ΔtCUDA(CUDASupport, CUDAParticles, SimConstants, SimKernel, Launch)
     dt₂ = dt * 0.5
 
     while SimMetaData.TotalTime <= next_output_time(SimMetaData)
-        @timeit SimMetaData.HourGlass "01 Calculate IndexCounter" SimMetaData.Δx = UpdateΔxCUDA!(SimMetaData.Δx, CUDASupport, CUDAParticles)
+        @timeit SimMetaData.HourGlass "01 Calculate IndexCounter" SimMetaData.Δx = UpdateΔxCUDA!(SimMetaData.Δx, CUDASupport, CUDAParticles, Launch)
 
         if MotionBuffers !== nothing
-            @timeit SimMetaData.HourGlass "Motion" ProgressMotionCUDA!(CUDAParticles, MotionBuffers, SimMetaData.TotalTime, dt₂)
+            @timeit SimMetaData.HourGlass "Motion" ProgressMotionCUDA!(CUDAParticles, MotionBuffers, SimMetaData.TotalTime, dt₂, Launch)
         end
 
-        @timeit SimMetaData.HourGlass "02 Pressure" PressureCUDA!(CUDAParticles.Pressure, CUDAParticles.Density, SimConstants)
+        @timeit SimMetaData.HourGlass "02 Pressure" PressureCUDA!(CUDAParticles.Pressure, CUDAParticles.Density, SimConstants, Launch)
 
         @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoopPerParticleCUDA!(
             SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-            CUDAParticles, NeighborBuffers, CUDASupport.DρdtI, CUDAParticles.Acceleration,
+            CUDAParticles, NeighborBuffers, CUDASupport.DρdtI, CUDAParticles.Acceleration, Launch,
         )
 
-        @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" HalfTimeStepCUDA!(CUDAParticles, CUDASupport, dt₂, SimConstants)
+        @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" HalfTimeStepCUDA!(CUDAParticles, CUDASupport, dt₂, SimConstants, Launch)
 
-        @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary" LimitDensityAtBoundaryCUDA!(CUDASupport.ρₙ⁺, SimConstants.ρ₀, CUDAParticles.MotionLimiter)
+        @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary" LimitDensityAtBoundaryCUDA!(CUDASupport.ρₙ⁺, SimConstants.ρ₀, CUDAParticles.MotionLimiter, Launch)
 
         if MotionBuffers !== nothing
-            @timeit SimMetaData.HourGlass "Motion" ProgressMotionCUDA!(CUDAParticles, MotionBuffers, SimMetaData.TotalTime, dt₂)
+            @timeit SimMetaData.HourGlass "Motion" ProgressMotionCUDA!(CUDAParticles, MotionBuffers, SimMetaData.TotalTime, dt₂, Launch)
         end
 
-        @timeit SimMetaData.HourGlass "07 Pressure" PressureCUDA!(CUDAParticles.Pressure, CUDASupport.ρₙ⁺, SimConstants)
+        @timeit SimMetaData.HourGlass "07 Pressure" PressureCUDA!(CUDAParticles.Pressure, CUDASupport.ρₙ⁺, SimConstants, Launch)
         @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticleCUDA!(
             SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-            CUDAParticles, NeighborBuffers, CUDASupport.DρdtI, CUDAParticles.Acceleration,
+            CUDAParticles, NeighborBuffers, CUDASupport.DρdtI, CUDAParticles.Acceleration, Launch,
             Position = CUDASupport.Positionₙ⁺,
             Density = CUDASupport.ρₙ⁺,
             Velocity = CUDASupport.Velocityₙ⁺,
         )
 
-        @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundaryCUDA!(CUDAParticles.Density, SimConstants.ρ₀, CUDAParticles.MotionLimiter)
+        @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary" LimitDensityAtBoundaryCUDA!(CUDAParticles.Density, SimConstants.ρ₀, CUDAParticles.MotionLimiter, Launch)
 
-        @timeit SimMetaData.HourGlass "10 Final Density" DensityEpsiCUDA!(CUDAParticles.Density, CUDASupport.DρdtI, CUDASupport.ρₙ⁺, dt)
+        @timeit SimMetaData.HourGlass "10 Final Density" DensityEpsiCUDA!(CUDAParticles.Density, CUDASupport.DρdtI, CUDASupport.ρₙ⁺, dt, Launch)
 
-        @timeit SimMetaData.HourGlass "11 Update To Final TimeStep" FullTimeStepCUDA!(CUDAParticles, dt, SimConstants)
+        @timeit SimMetaData.HourGlass "11 Update To Final TimeStep" FullTimeStepCUDA!(CUDAParticles, dt, SimConstants, Launch)
 
         @timeit SimMetaData.HourGlass "12 Update MetaData" UpdateMetaData!(SimMetaData, dt)
 
-        @timeit SimMetaData.HourGlass "13 Update TimeStep" dt = ΔtCUDA(CUDASupport, CUDAParticles, SimConstants, SimKernel)
+        @timeit SimMetaData.HourGlass "13 Update TimeStep" dt = ΔtCUDA(CUDASupport, CUDAParticles, SimConstants, SimKernel, Launch)
         dt₂ = dt * 0.5
     end
 
