@@ -62,12 +62,15 @@ struct CUDASupportBuffers{D, T}
     ΔxScratch::CuArray{T, 1}
 end
 
-mutable struct CUDANeighborBuffers
-    CellListIndices::CuArray{Int, 1}
-    ParticleRanges::CuArray{Int, 1}
-    ParticleOrder::CuArray{Int, 1}
-    NeighborCellStarts::CuArray{Int, 1}
-    NeighborCellEntries::CuArray{Int, 1}
+mutable struct CUDAGridBuffers{D}
+    CellCoords::CuArray{SVector{D, Int}, 1}
+    BucketCounts::CuArray{Int, 1}
+    BucketEnds::CuArray{Int, 1}
+    BucketStarts::CuArray{Int, 1}
+    BucketWrite::CuArray{Int, 1}
+    BucketParticles::CuArray{Int, 1}
+    NeighborOffsets::CuArray{SVector{D, Int}, 1}
+    BucketCount::Int
 end
 
 struct CUDAMotionBuffers{D, T}
@@ -140,42 +143,21 @@ function BuildCUDAMotionBuffers(SimParticles, MotionDefinition, ::Val{Dimensions
     )
 end
 
-function BuildCUDANeighborBuffers(SimParticles, ParticleRanges, ParticleOrder, NeighborCellLists, CellLookup)
-    cell_list_indices = BuildCellListIndices(SimParticles.Cells, CellLookup)
-    cell_count = length(NeighborCellLists)
-    neighbor_cell_starts, neighbor_cell_entries = BuildNeighborCellRanges(NeighborCellLists, cell_count)
-
-    return CUDANeighborBuffers(
-        CuArray(cell_list_indices),
-        CuArray(ParticleRanges),
-        CuArray(ParticleOrder),
-        CuArray(neighbor_cell_starts),
-        CuArray(neighbor_cell_entries),
+function BuildCUDAGridBuffers(SimParticles, FullStencil)
+    NumberOfPoints = length(SimParticles.Position)
+    Dimensions = length(first(SimParticles.Position))
+    BucketCount = max(1, 2 * NumberOfPoints)
+    NeighborOffsets = [SVector{Dimensions, Int}(Tuple(offset)) for offset in FullStencil]
+    return CUDAGridBuffers(
+        CuArray(similar(SimParticles.Position, SVector{Dimensions, Int})),
+        CuArray(zeros(Int, BucketCount)),
+        CuArray(zeros(Int, BucketCount)),
+        CuArray(zeros(Int, BucketCount)),
+        CuArray(zeros(Int, BucketCount)),
+        CuArray(zeros(Int, NumberOfPoints)),
+        CuArray(NeighborOffsets),
+        BucketCount,
     )
-end
-
-function BuildEmptyCUDANeighborBuffers()
-    empty_ints = Int[]
-    return CUDANeighborBuffers(
-        CuArray(empty_ints),
-        CuArray(empty_ints),
-        CuArray(empty_ints),
-        CuArray(empty_ints),
-        CuArray(empty_ints),
-    )
-end
-
-function RefreshCUDANeighborBuffers!(NeighborBuffers::CUDANeighborBuffers, SimParticles, ParticleRanges, ParticleOrder, NeighborCellLists, CellLookup)
-    cell_list_indices = BuildCellListIndices(SimParticles.Cells, CellLookup)
-    cell_count = length(NeighborCellLists)
-    neighbor_cell_starts, neighbor_cell_entries = BuildNeighborCellRanges(NeighborCellLists, cell_count)
-
-    NeighborBuffers.CellListIndices = CuArray(cell_list_indices)
-    NeighborBuffers.ParticleRanges = CuArray(ParticleRanges)
-    NeighborBuffers.ParticleOrder = CuArray(ParticleOrder)
-    NeighborBuffers.NeighborCellStarts = CuArray(neighbor_cell_starts)
-    NeighborBuffers.NeighborCellEntries = CuArray(neighbor_cell_entries)
-    return nothing
 end
 
 function SyncParticlesToHost!(SimParticles, CUDABuffers::CUDAParticleBuffers)
@@ -399,12 +381,89 @@ function UpdateΔxCUDA!(Δx, CUDASupport::CUDASupportBuffers, CUDAParticles::CUD
     return Δx + 4 * maxd
 end
 
-@inline function BuildCellListIndices(Cells, CellLookup)
-    indices = similar(Cells, Int)
-    @inbounds for i in eachindex(Cells)
-        indices[i] = CellLookupIndex(CellLookup, Cells[i], 1)
+@inline function MapFloorGPU(X, InverseCutOff)
+    return Int(sign(X)) * unsafe_trunc(Int, muladd(abs(X), InverseCutOff, 0.5))
+end
+
+@inline function HashCell(Cell)
+    if length(Cell) == 2
+        return Cell[1] * 73856093 ⊻ Cell[2] * 19349663
     end
-    return indices
+    return Cell[1] * 73856093 ⊻ Cell[2] * 19349663 ⊻ Cell[3] * 83492791
+end
+
+function ResetBucketsKernel!(BucketCounts, BucketEnds, BucketStarts, BucketWrite)
+    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    if i <= length(BucketCounts)
+        BucketCounts[i] = 0
+        BucketEnds[i] = 0
+        BucketStarts[i] = 0
+        BucketWrite[i] = 0
+    end
+    return nothing
+end
+
+function BuildCellCoordsKernel!(CellCoords, BucketCounts, Position, InverseCutOff, BucketCount)
+    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    if i <= length(Position)
+        pos = Position[i]
+        CellCoords[i] = SVector{length(pos), Int}(ntuple(d -> MapFloorGPU(pos[d], InverseCutOff), length(pos)))
+        hash_val = HashCell(CellCoords[i])
+        bucket = mod(hash_val, BucketCount) + 1
+        CUDA.atomic_add!(BucketCounts, bucket, 1)
+    end
+    return nothing
+end
+
+function InitializeBucketStartsKernel!(BucketCounts, BucketEnds, BucketStarts, BucketWrite)
+    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    if i <= length(BucketCounts)
+        count = BucketCounts[i]
+        BucketStarts[i] = BucketEnds[i] - count + 1
+        BucketWrite[i] = BucketStarts[i]
+    end
+    return nothing
+end
+
+function FillBucketsKernel!(BucketWrite, BucketParticles, CellCoords, BucketCount)
+    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    if i <= length(CellCoords)
+        hash_val = HashCell(CellCoords[i])
+        bucket = mod(hash_val, BucketCount) + 1
+        index = CUDA.atomic_add!(BucketWrite, bucket, 1)
+        BucketParticles[index] = i
+    end
+    return nothing
+end
+
+function RebuildNeighborGridCUDA!(CUDAGrid::CUDAGridBuffers, CUDAParticles::CUDAParticleBuffers, SimKernel, Launch)
+    @cuda threads=Launch.Threads blocks=Launch.Blocks ResetBucketsKernel!(
+        CUDAGrid.BucketCounts,
+        CUDAGrid.BucketEnds,
+        CUDAGrid.BucketStarts,
+        CUDAGrid.BucketWrite,
+    )
+    @cuda threads=Launch.Threads blocks=Launch.Blocks BuildCellCoordsKernel!(
+        CUDAGrid.CellCoords,
+        CUDAGrid.BucketCounts,
+        CUDAParticles.Position,
+        SimKernel.H⁻¹,
+        CUDAGrid.BucketCount,
+    )
+    CUDAGrid.BucketEnds .= CUDA.cumsum(CUDAGrid.BucketCounts)
+    @cuda threads=Launch.Threads blocks=Launch.Blocks InitializeBucketStartsKernel!(
+        CUDAGrid.BucketCounts,
+        CUDAGrid.BucketEnds,
+        CUDAGrid.BucketStarts,
+        CUDAGrid.BucketWrite,
+    )
+    @cuda threads=Launch.Threads blocks=Launch.Blocks FillBucketsKernel!(
+        CUDAGrid.BucketWrite,
+        CUDAGrid.BucketParticles,
+        CUDAGrid.CellCoords,
+        CUDAGrid.BucketCount,
+    )
+    return nothing
 end
 
 @inline function ComputeDensityDiffusionGPU(::ZeroDensityDiffusion, _SimKernel, _SimConstants,
@@ -459,92 +518,56 @@ end
 end
 
 function NeighborLoopCUDAKernel!(dρdtI, Acceleration, Position, Density, Pressure, Velocity,
-                                 MotionLimiter, CellListIndices, ParticleRanges, ParticleOrder,
-                                 NeighborCellStarts, NeighborCellEntries, SimKernel, SimConstants,
+                                 MotionLimiter, CellCoords, BucketStarts, BucketEnds,
+                                 BucketParticles, NeighborOffsets, BucketCount, SimKernel, SimConstants,
                                  SimDensityDiffusion, SimViscosity)
     i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     if i <= length(Position)
         dρdt_acc = zero(eltype(dρdtI))
         acc_acc = zero(Position[i])
-        cell_list_index = CellListIndices[i]
-        same_cell_start = ParticleRanges[cell_list_index]
-        same_cell_end = ParticleRanges[cell_list_index + 1] - 1
+        cell = CellCoords[i]
+        @inbounds for offset_index in eachindex(NeighborOffsets)
+            neighbor_cell = cell + NeighborOffsets[offset_index]
+            hash_val = HashCell(neighbor_cell)
+            bucket = mod(hash_val, BucketCount) + 1
+            start_index = BucketStarts[bucket]
+            end_index = BucketEnds[bucket]
+            if start_index <= end_index
+                @inbounds for j in start_index:end_index
+                    j_index = BucketParticles[j]
+                    if CellCoords[j_index] == neighbor_cell && j_index != i
+                        xᵢⱼ = Position[i] - Position[j_index]
+                        xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
+                        if xᵢⱼ² <= SimKernel.H²
+                            dᵢⱼ = sqrt(abs(xᵢⱼ²))
+                            q = clamp(dᵢⱼ * SimKernel.h⁻¹, zero(eltype(dᵢⱼ)), one(eltype(dᵢⱼ)) * 2)
+                            ∇ᵢWᵢⱼ = ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
 
-        @inbounds for j in same_cell_start:same_cell_end
-            j_index = ParticleOrder[j]
-            if j_index != i
-                xᵢⱼ = Position[i] - Position[j_index]
-                xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
-                if xᵢⱼ² <= SimKernel.H²
-                    dᵢⱼ = sqrt(abs(xᵢⱼ²))
-                    q = clamp(dᵢⱼ * SimKernel.h⁻¹, zero(eltype(dᵢⱼ)), one(eltype(dᵢⱼ)) * 2)
-                    ∇ᵢWᵢⱼ = ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
+                            ρᵢ = Density[i]
+                            ρⱼ = Density[j_index]
+                            vᵢⱼ = Velocity[i] - Velocity[j_index]
 
-                    ρᵢ = Density[i]
-                    ρⱼ = Density[j_index]
-                    vᵢⱼ = Velocity[i] - Velocity[j_index]
+                            density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
+                            dρdt⁺ = -ρᵢ * (SimConstants.m₀ / ρⱼ) * density_symmetric_term
 
-                    density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
-                    dρdt⁺ = -ρᵢ * (SimConstants.m₀ / ρⱼ) * density_symmetric_term
+                            Dᵢ = ComputeDensityDiffusionGPU(SimDensityDiffusion, SimKernel, SimConstants,
+                                                            Density, MotionLimiter, xᵢⱼ, ∇ᵢWᵢⱼ,
+                                                            dᵢⱼ^2, i, j_index)
 
-                    Dᵢ = ComputeDensityDiffusionGPU(SimDensityDiffusion, SimKernel, SimConstants,
-                                                    Density, MotionLimiter, xᵢⱼ, ∇ᵢWᵢⱼ,
-                                                    dᵢⱼ^2, i, j_index)
+                            dρdt_acc += dρdt⁺ + Dᵢ
 
-                    dρdt_acc += dρdt⁺ + Dᵢ
+                            Pᵢ = Pressure[i]
+                            Pⱼ = Pressure[j_index]
+                            Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
+                            f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, SimConstants.dx)
+                            dvdt⁺ = -SimConstants.m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
 
-                    Pᵢ = Pressure[i]
-                    Pⱼ = Pressure[j_index]
-                    Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
-                    f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, SimConstants.dx)
-                    dvdt⁺ = -SimConstants.m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
+                            visc_term = ComputeViscosityGPU(SimViscosity, SimKernel, SimConstants,
+                                                            Density, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ^2, i, j_index)
 
-                    visc_term = ComputeViscosityGPU(SimViscosity, SimKernel, SimConstants,
-                                                    Density, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ^2, i, j_index)
-
-                    acc_acc += dvdt⁺ + visc_term
-                end
-            end
-        end
-
-        neighbor_start = NeighborCellStarts[cell_list_index]
-        neighbor_end = NeighborCellStarts[cell_list_index + 1] - 1
-        @inbounds for neighbor_cursor in neighbor_start:neighbor_end
-            neighbor_index = NeighborCellEntries[neighbor_cursor]
-            start_index = ParticleRanges[neighbor_index]
-            end_index = ParticleRanges[neighbor_index + 1] - 1
-            for j in start_index:end_index
-                j_index = ParticleOrder[j]
-                xᵢⱼ = Position[i] - Position[j_index]
-                xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
-                if xᵢⱼ² <= SimKernel.H²
-                    dᵢⱼ = sqrt(abs(xᵢⱼ²))
-                    q = clamp(dᵢⱼ * SimKernel.h⁻¹, zero(eltype(dᵢⱼ)), one(eltype(dᵢⱼ)) * 2)
-                    ∇ᵢWᵢⱼ = ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
-
-                    ρᵢ = Density[i]
-                    ρⱼ = Density[j_index]
-                    vᵢⱼ = Velocity[i] - Velocity[j_index]
-
-                    density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
-                    dρdt⁺ = -ρᵢ * (SimConstants.m₀ / ρⱼ) * density_symmetric_term
-
-                    Dᵢ = ComputeDensityDiffusionGPU(SimDensityDiffusion, SimKernel, SimConstants,
-                                                    Density, MotionLimiter, xᵢⱼ, ∇ᵢWᵢⱼ,
-                                                    dᵢⱼ^2, i, j_index)
-
-                    dρdt_acc += dρdt⁺ + Dᵢ
-
-                    Pᵢ = Pressure[i]
-                    Pⱼ = Pressure[j_index]
-                    Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
-                    f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, SimConstants.dx)
-                    dvdt⁺ = -SimConstants.m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
-
-                    visc_term = ComputeViscosityGPU(SimViscosity, SimKernel, SimConstants,
-                                                    Density, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ^2, i, j_index)
-
-                    acc_acc += dvdt⁺ + visc_term
+                            acc_acc += dvdt⁺ + visc_term
+                        end
+                    end
                 end
             end
         end
@@ -557,7 +580,7 @@ end
 
 function NeighborLoopPerParticleCUDA!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimConstants, CUDAParticles::CUDAParticleBuffers,
-                                      NeighborBuffers::CUDANeighborBuffers, dρdtI, Acceleration, Launch;
+                                      CUDAGrid::CUDAGridBuffers, dρdtI, Acceleration, Launch;
                                       Position = CUDAParticles.Position,
                                       Density = CUDAParticles.Density,
                                       Pressure = CUDAParticles.Pressure,
@@ -577,9 +600,9 @@ function NeighborLoopPerParticleCUDA!(SimDensityDiffusion::SDD, SimViscosity::SV
 
     @cuda threads=Launch.Threads blocks=Launch.Blocks NeighborLoopCUDAKernel!(
         dρdtI, Acceleration, Position, Density, Pressure,
-        Velocity, CUDAParticles.MotionLimiter, NeighborBuffers.CellListIndices,
-        NeighborBuffers.ParticleRanges, NeighborBuffers.ParticleOrder,
-        NeighborBuffers.NeighborCellStarts, NeighborBuffers.NeighborCellEntries,
+        Velocity, CUDAParticles.MotionLimiter, CUDAGrid.CellCoords,
+        CUDAGrid.BucketStarts, CUDAGrid.BucketEnds, CUDAGrid.BucketParticles,
+        CUDAGrid.NeighborOffsets, CUDAGrid.BucketCount,
         SimKernel, SimConstants, SimDensityDiffusion, SimViscosity,
     )
 
@@ -593,19 +616,22 @@ end
                                       ParticleOrder, CellOffsets,
                                       NeighborCellLists, CUDAParticles::CUDAParticleBuffers,
                                       CUDASupport::CUDASupportBuffers, MotionBuffers,
-                                      NeighborBuffers::CUDANeighborBuffers) where {
+                                      CUDAGrid::CUDAGridBuffers) where {
                                       Dimensions, FloatType, SMode, KMode,
                                       BMode, LMode,
                                       SDD<:SPHDensityDiffusion,
                                       SV<:SPHViscosity}
-    UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-
     Launch = KernelLaunchConfig(length(CUDAParticles.Position))
+    RebuildNeighborGridCUDA!(CUDAGrid, CUDAParticles, SimKernel, Launch)
     dt = ΔtCUDA(CUDASupport, CUDAParticles, SimConstants, SimKernel, Launch)
     dt₂ = dt * 0.5
 
     while SimMetaData.TotalTime <= next_output_time(SimMetaData)
         @timeit SimMetaData.HourGlass "01 Calculate IndexCounter" SimMetaData.Δx = UpdateΔxCUDA!(SimMetaData.Δx, CUDASupport, CUDAParticles, Launch)
+        if SimMetaData.Δx >= SimKernel.h
+            @timeit SimMetaData.HourGlass "01a Rebuild Neighbor Grid" RebuildNeighborGridCUDA!(CUDAGrid, CUDAParticles, SimKernel, Launch)
+            SimMetaData.Δx = zero(eltype(CUDASupport.DρdtI))
+        end
 
         if MotionBuffers !== nothing
             @timeit SimMetaData.HourGlass "Motion" ProgressMotionCUDA!(CUDAParticles, MotionBuffers, SimMetaData.TotalTime, dt₂, Launch)
@@ -615,7 +641,7 @@ end
 
         @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoopPerParticleCUDA!(
             SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-            CUDAParticles, NeighborBuffers, CUDASupport.DρdtI, CUDAParticles.Acceleration, Launch,
+            CUDAParticles, CUDAGrid, CUDASupport.DρdtI, CUDAParticles.Acceleration, Launch,
         )
 
         @timeit SimMetaData.HourGlass "05 Update To Half TimeStep" HalfTimeStepCUDA!(CUDAParticles, CUDASupport, dt₂, SimConstants, Launch)
@@ -629,7 +655,7 @@ end
         @timeit SimMetaData.HourGlass "07 Pressure" PressureCUDA!(CUDAParticles.Pressure, CUDASupport.ρₙ⁺, SimConstants, Launch)
         @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticleCUDA!(
             SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-            CUDAParticles, NeighborBuffers, CUDASupport.DρdtI, CUDAParticles.Acceleration, Launch,
+            CUDAParticles, CUDAGrid, CUDASupport.DρdtI, CUDAParticles.Acceleration, Launch,
             Position = CUDASupport.Positionₙ⁺,
             Density = CUDASupport.ρₙ⁺,
             Velocity = CUDASupport.Velocityₙ⁺,
@@ -711,13 +737,7 @@ function RunSimulationCUDA(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}
     CUDAParticles = BuildCUDAParticleBuffers(SimParticles)
     CUDASupport = BuildCUDASupportBuffers(dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ)
     MotionBuffers = MotionDefinition === nothing ? nothing : BuildCUDAMotionBuffers(SimParticles, MotionDefinition, Val(Dimensions), FloatType)
-    NeighborBuffers = BuildEmptyCUDANeighborBuffers()
-    SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, ParticleRanges, UniqueCells, CellLookup, ParticleOrder, CellOffsets)
-    if SimMetaData.IndexCounter > 0
-        unique_cells_view = view(UniqueCells, 1:SimMetaData.IndexCounter)
-        BuildNeighborCellLists!(NeighborCellLists, FullStencil, unique_cells_view, ParticleRanges, CellLookup)
-        RefreshCUDANeighborBuffers!(NeighborBuffers, SimParticles, ParticleRanges, ParticleOrder, NeighborCellLists, CellLookup)
-    end
+    CUDAGrid = BuildCUDAGridBuffers(SimParticles, FullStencil)
 
     @inbounds while true
         @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoopCUDA(
@@ -725,24 +745,21 @@ function RunSimulationCUDA(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}
             SimConstants, SimParticles, FullStencil, ParticleRanges,
             UniqueCells, CellLookup, ParticleOrder, CellOffsets,
             NeighborCellLists, CUDAParticles, CUDASupport,
-            MotionBuffers, NeighborBuffers,
+            MotionBuffers, CUDAGrid,
         )
         push!(SimMetaData.TimeSteps, SimMetaData.CurrentTimeStep)
-
-        if SimMetaData.Δx >= SimKernel.h
-            SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, ParticleRanges, UniqueCells, CellLookup, ParticleOrder, CellOffsets)
-            SimMetaData.Δx = zero(eltype(dρdtI))
-            if SimMetaData.IndexCounter > 0
-                unique_cells_view = view(UniqueCells, 1:SimMetaData.IndexCounter)
-                BuildNeighborCellLists!(NeighborCellLists, FullStencil, unique_cells_view, ParticleRanges, CellLookup)
-                RefreshCUDANeighborBuffers!(NeighborBuffers, SimParticles, ParticleRanges, ParticleOrder, NeighborCellLists, CellLookup)
-            end
-        end
 
         LogStep!(SimMetaData, SimLogger)
 
         SimMetaData.OutputIterationCounter += 1
 
+        if SimMetaData.ExportGridCellParticleCounts
+            SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, ParticleRanges, UniqueCells, CellLookup, ParticleOrder, CellOffsets)
+            if SimMetaData.IndexCounter > 0
+                unique_cells_view = view(UniqueCells, 1:SimMetaData.IndexCounter)
+                BuildNeighborCellLists!(NeighborCellLists, FullStencil, unique_cells_view, ParticleRanges, CellLookup)
+            end
+        end
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
 
         @timeit SimMetaData.HourGlass "13 Determine Output" SPHCellList.DetermineOutput(
