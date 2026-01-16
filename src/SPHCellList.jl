@@ -39,8 +39,7 @@ using LinearAlgebra
                                       SimConstants, SimParticles, ParticleRanges,
                                       CellLookup, NeighborCellLists, dρdtI,
                                       Acceleration, ∇Cᵢ,
-                                      ∇◌rᵢ, max_visc = nothing,
-                                      min_dt_force = nothing;
+                                      ∇◌rᵢ;
                                       Position = SimParticles.Position,
                                       Density = SimParticles.Density,
                                       Pressure = SimParticles.Pressure,
@@ -84,7 +83,6 @@ using LinearAlgebra
 
             dρdtI[i] = dρdt_acc
             Acceleration[i] = acc_acc
-            UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i], Velocity[i], acc_acc, SimKernel)
         end
 
         return nothing
@@ -95,8 +93,7 @@ using LinearAlgebra
                                       SimConstants, SimParticles, ParticleRanges,
                                       CellLookup, NeighborCellLists, dρdtI,
                                       Acceleration, ∇Cᵢ,
-                                      ∇◌rᵢ, max_visc = nothing,
-                                      min_dt_force = nothing;
+                                      ∇◌rᵢ;
                                       Position = SimParticles.Position,
                                       Density = SimParticles.Density,
                                       Pressure = SimParticles.Pressure,
@@ -149,7 +146,6 @@ using LinearAlgebra
             Acceleration[i] = acc_acc
             Kernel[i] = kernel_acc
             KernelGradient[i] = kernel_grad_acc
-            UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i], Velocity[i], acc_acc, SimKernel)
         end
 
         return nothing
@@ -160,8 +156,7 @@ using LinearAlgebra
                                       SimConstants, SimParticles, ParticleRanges,
                                       CellLookup, NeighborCellLists, dρdtI,
                                       Acceleration, ∇Cᵢ,
-                                      ∇◌rᵢ, max_visc = nothing,
-                                      min_dt_force = nothing;
+                                      ∇◌rᵢ;
                                       Position = SimParticles.Position,
                                       Density = SimParticles.Density,
                                       Pressure = SimParticles.Pressure,
@@ -213,7 +208,6 @@ using LinearAlgebra
             Acceleration[i] = acc_acc
             ∇Cᵢ[i] = shift_c_acc
             ∇◌rᵢ[i] = shift_r_acc
-            UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i], Velocity[i], acc_acc, SimKernel)
         end
 
         return nothing
@@ -224,8 +218,7 @@ using LinearAlgebra
                                       SimConstants, SimParticles, ParticleRanges,
                                       CellLookup, NeighborCellLists, dρdtI,
                                       Acceleration, ∇Cᵢ,
-                                      ∇◌rᵢ, max_visc = nothing,
-                                      min_dt_force = nothing;
+                                      ∇◌rᵢ;
                                       Position = SimParticles.Position,
                                       Density = SimParticles.Density,
                                       Pressure = SimParticles.Pressure,
@@ -283,8 +276,6 @@ using LinearAlgebra
             KernelGradient[i] = kernel_grad_acc
             ∇Cᵢ[i] = shift_c_acc
             ∇◌rᵢ[i] = shift_r_acc
-            UpdateTimeStepBuffers!(max_visc, min_dt_force, i, Position[i],
-                                      Velocity[i], acc_acc, SimKernel)
         end
 
         return nothing
@@ -729,9 +720,6 @@ using LinearAlgebra
         dt = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel)
 
         @no_escape begin
-            max_visc = @alloc(FloatType, length(Position))
-            min_dt_force = @alloc(FloatType, length(Position))
-
             dt₂ = dt * 0.5
 
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
@@ -795,7 +783,6 @@ using LinearAlgebra
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, ParticleRanges, CellLookup,
                         NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ,
-                        max_visc, min_dt_force,
                         ParticleOrder = ParticleOrder,
                         Position = Positionₙ⁺,
                         Density = ρₙ⁺,
@@ -806,7 +793,6 @@ using LinearAlgebra
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, ParticleRanges, CellLookup,
                         NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ,
-                        max_visc, min_dt_force,
                         ParticleOrder = ParticleOrder,
                         Position = Positionₙ⁺,
                         Density = ρₙ⁺,
@@ -822,7 +808,8 @@ using LinearAlgebra
             
                 @timeit SimMetaData.HourGlass "12 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
 
-                @timeit SimMetaData.HourGlass "13 Update TimeStep" dt = FinalizeTimeStep(max_visc, min_dt_force, SimConstants, SimKernel)
+                @timeit SimMetaData.HourGlass "13 Update TimeStep" dt = Δt(Positionₙ⁺, Velocityₙ⁺, Acceleration, SimConstants, SimKernel)
+                dt₂ = dt * 0.5
             end
         end
         
