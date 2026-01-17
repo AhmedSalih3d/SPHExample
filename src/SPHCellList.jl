@@ -37,9 +37,7 @@ using LinearAlgebra
                                       SimConstants, SimParticles, ParticleRanges,
                                       CellDict, NeighborCellLists, dρdtI,
                                       Acceleration, ∇Cᵢ,
-                                      ∇◌rᵢ, max_visc = nothing,
-                                      max_speed = nothing,
-                                      min_dt_force = nothing;
+                                      ∇◌rᵢ, AccelerationMax;
                                       Position = SimParticles.Position,
                                       Density = SimParticles.Density,
                                       Pressure = SimParticles.Pressure,
@@ -86,7 +84,7 @@ using LinearAlgebra
 
             dρdtI[i] = dρdt_acc
             Acceleration[i] = acc_acc
-            # UpdateTimeStepBuffers!(max_visc, max_speed, min_dt_force, i, visc_acc, Position[i], Velocity[i], acc_acc, SimKernel)
+            AccelerationMax[i] = norm(acc_acc)
         end
 
         return nothing
@@ -97,9 +95,7 @@ using LinearAlgebra
                                       SimConstants, SimParticles, ParticleRanges,
                                       CellDict, NeighborCellLists, dρdtI,
                                       Acceleration, ∇Cᵢ,
-                                      ∇◌rᵢ, max_visc = nothing,
-                                      max_speed = nothing,
-                                      min_dt_force = nothing;
+                                      ∇◌rᵢ, AccelerationMax;
                                       Position = SimParticles.Position,
                                       Density = SimParticles.Density,
                                       Pressure = SimParticles.Pressure,
@@ -157,7 +153,7 @@ using LinearAlgebra
             Acceleration[i] = acc_acc
             Kernel[i] = kernel_acc
             KernelGradient[i] = kernel_grad_acc
-            # UpdateTimeStepBuffers!(max_visc, max_speed, min_dt_force, i, visc_acc, Position[i], Velocity[i], acc_acc, SimKernel)
+            AccelerationMax[i] = norm(acc_acc)
         end
 
         return nothing
@@ -168,9 +164,7 @@ using LinearAlgebra
                                       SimConstants, SimParticles, ParticleRanges,
                                       CellDict, NeighborCellLists, dρdtI,
                                       Acceleration, ∇Cᵢ,
-                                      ∇◌rᵢ, max_visc = nothing,
-                                      max_speed = nothing,
-                                      min_dt_force = nothing;
+                                      ∇◌rᵢ, AccelerationMax;
                                       Position = SimParticles.Position,
                                       Density = SimParticles.Density,
                                       Pressure = SimParticles.Pressure,
@@ -227,7 +221,7 @@ using LinearAlgebra
             Acceleration[i] = acc_acc
             ∇Cᵢ[i] = shift_c_acc
             ∇◌rᵢ[i] = shift_r_acc
-            # UpdateTimeStepBuffers!(max_visc, max_speed, min_dt_force, i, visc_acc, Position[i], Velocity[i], acc_acc, SimKernel)
+            AccelerationMax[i] = norm(acc_acc)
         end
 
         return nothing
@@ -238,9 +232,7 @@ using LinearAlgebra
                                       SimConstants, SimParticles, ParticleRanges,
                                       CellDict, NeighborCellLists, dρdtI,
                                       Acceleration, ∇Cᵢ,
-                                      ∇◌rᵢ, max_visc = nothing,
-                                      max_speed = nothing,
-                                      min_dt_force = nothing;
+                                      ∇◌rᵢ, AccelerationMax;
                                       Position = SimParticles.Position,
                                       Density = SimParticles.Density,
                                       Pressure = SimParticles.Pressure,
@@ -303,8 +295,7 @@ using LinearAlgebra
             KernelGradient[i] = kernel_grad_acc
             ∇Cᵢ[i] = shift_c_acc
             ∇◌rᵢ[i] = shift_r_acc
-            # UpdateTimeStepBuffers!(max_visc, max_speed, min_dt_force, i, visc_acc, Position[i],
-            #                        Velocity[i], acc_acc, SimKernel)
+            AccelerationMax[i] = norm(acc_acc)
         end
 
         return nothing
@@ -384,7 +375,7 @@ using LinearAlgebra
         SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         SimMetaData::SimulationMetaData{D,T,NoShifting,K,B,L}, SimConstants,
         SimParticles, Position, Density, Pressure, Velocity, MotionLimiter,
-        dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, visc_acc, i, j) where {D,T,
+            dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, visc_acc, i, j) where {D,T,
                                                                       K<:KernelOutputMode,
                                                                       B<:MDBCMode,
                                                                       L<:LogMode,
@@ -751,13 +742,10 @@ using LinearAlgebra
         ###
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
         # This code here is to initialize the first time step for each simulation loop
-        dt = Δt(Position, Velocity, Acceleration, SimConstants, SimKernel)
+        dt = SimConstants.CFL * (SimKernel.h / SimConstants.c₀)
 
         @no_escape begin
-            max_visc = @alloc(FloatType, length(Position))
-            max_speed = @alloc(FloatType, length(Position))
-            min_dt_force = @alloc(FloatType, length(Position))
-
+            AccelerationMax = @alloc(FloatType, length(Position))
             dt₂ = dt * 0.5
 
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
@@ -795,13 +783,13 @@ using LinearAlgebra
                     @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoopPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, ParticleRanges, CellDict,
-                        NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ,
+                        NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
                     )
                 else
                     @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoopPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, ParticleRanges, CellDict,
-                        NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ,
+                        NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
                     )
                 end
 
@@ -818,8 +806,7 @@ using LinearAlgebra
                     @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, ParticleRanges, CellDict,
-                        NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ,
-                        max_visc, max_speed, min_dt_force,
+                        NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
                         Position = Positionₙ⁺,
                         Density = ρₙ⁺,
                         Velocity = Velocityₙ⁺,
@@ -828,8 +815,7 @@ using LinearAlgebra
                     @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, ParticleRanges, CellDict,
-                        NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ,
-                        max_visc, max_speed, min_dt_force,
+                        NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
                         Position = Positionₙ⁺,
                         Density = ρₙ⁺,
                         Velocity = Velocityₙ⁺,
@@ -844,7 +830,10 @@ using LinearAlgebra
             
                 @timeit SimMetaData.HourGlass "12 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
 
-                @timeit SimMetaData.HourGlass "13 Update TimeStep" dt =  SimConstants.CFL * min(sqrt(SimKernel.h / maximum(norm(SimParticles.Acceleration))), SimKernel.h / SimConstants.c₀)
+                @timeit SimMetaData.HourGlass "13 Update TimeStep" begin
+                    max_acceleration = maximum(AccelerationMax)
+                    dt = Δt(max_acceleration, SimConstants, SimKernel)
+                end
             end
         end
         

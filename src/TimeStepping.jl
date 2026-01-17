@@ -1,6 +1,6 @@
 module TimeStepping
 
-export Δt, FinalizeTimeStep, UpdateTimeStepBuffers!, next_output_time, ProgressMotion, HalfTimeStep, FullTimeStep
+export Δt, next_output_time, ProgressMotion, HalfTimeStep, FullTimeStep
 
 using LinearAlgebra
 using Parameters
@@ -10,99 +10,26 @@ using ..SimulationEquations
 using ..SimulationGeometry
 using ..SimulationMetaDataConfiguration
 
-@inline function UpdateTimeStepBuffers!(::Nothing, ::Nothing, ::Nothing, index, visc_sum,
-                                           position, velocity, acceleration, sim_kernel)
-    return nothing
-end
-
-@inline function UpdateTimeStepBuffers!(max_visc, max_speed, min_dt_force, index, visc_sum,
-                                           position, velocity, acceleration, sim_kernel)
-    h             = sim_kernel.h
-    a_mag         = norm(acceleration)
-    curr_dt_force = a_mag > 0 ? sqrt(h / a_mag) : Inf
-    speed_mag     = norm(velocity)
-    @inbounds begin
-        max_visc[index] = visc_sum
-        max_speed[index] = speed_mag
-        min_dt_force[index] = curr_dt_force
-    end
-    return nothing
-end
-
 """
-    FinalizeTimeStep(max_visc, max_speed, min_dt_force, SimulationConstants, SPHKernel)
+    Δt(max_acceleration, SimulationConstants, SPHKernel)
 
-Compute the CFL-limited time step from the per-particle buffers.
-"""
-function FinalizeTimeStep(max_visc, max_speed, min_dt_force, SimulationConstants, SPHKernel)
-    @unpack c₀, CFL = SimulationConstants
-    @unpack h = SPHKernel
-
-    global_visc     = maximum(max_visc)
-    global_speed    = maximum(max_speed)
-    global_dt_force = minimum(min_dt_force)
-
-    dt2 = h / (max(c₀, global_speed) + h * global_visc)
-    return CFL * min(global_dt_force, dt2)
-end
-
-"""
-    Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
-
-Calculates the adaptive time step for the simulation based on Courant-Friedrichs-Lewy (CFL),
-viscous, and force-based criteria.
+Calculates the adaptive time step for the simulation based on Courant-Friedrichs-Lewy (CFL)
+and force-based criteria.
 
 # Arguments
-- `Position`: Vector of position vectors for each particle.
-- `Velocity`: Vector of velocity vectors for each particle.
-- `Acceleration`: Vector of acceleration vectors for each particle.
+- `max_acceleration`: Maximum acceleration magnitude across particles.
 - `SimulationConstants`: Struct containing simulation parameters like `c₀` (speed of sound) and `CFL` number.
 - `SPHKernel`: Struct containing kernel parameters like `h` (smoothing length) and `η²`.
 
 # Returns
 - The calculated time step `dt`.
 """
-function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
+function Δt(max_acceleration, SimulationConstants, SPHKernel)
     @unpack c₀, CFL = SimulationConstants
     @unpack h   = SPHKernel
 
-    N = length(Position)
-    n_chunks = Threads.nthreads()
-    chunk_size = cld(N, n_chunks)
-
-    @no_escape begin
-        v_buffer = @alloc(Float64, n_chunks)
-        d_buffer = @alloc(Float64, n_chunks)
-
-        @sync for i in 1:n_chunks
-            Threads.@spawn begin
-                idx_start = (i - 1) * chunk_size + 1
-                idx_end   = min(i * chunk_size, N)
-
-                t_vel = 0.0
-                t_dt   = Inf
-
-                if idx_start <= idx_end
-                    @inbounds for j in idx_start:idx_end
-                        v = Velocity[j]
-                        a = Acceleration[j]
-
-                        t_vel = max(t_vel, norm(v))
-
-                        a_mag = norm(a)
-                        if a_mag > 0
-                            t_dt = min(t_dt, sqrt(h / a_mag))
-                        end
-                    end
-                end
-
-                v_buffer[i] = t_vel
-                d_buffer[i] = t_dt
-            end
-        end
-
-        CFL * min(minimum(d_buffer), h / max(c₀, maximum(v_buffer)))
-    end
+    dt_force = max_acceleration > 0 ? sqrt(h / max_acceleration) : h / c₀
+    return CFL * min(h / c₀, dt_force)
 end
 
 @inline next_output_time(SimMetaData) = next_output_time(SimMetaData.OutputTimes, SimMetaData)
