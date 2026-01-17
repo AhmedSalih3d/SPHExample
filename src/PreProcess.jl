@@ -9,6 +9,19 @@ using StructArrays
 using ..SimulationGeometry
 using ..SimulationMetaDataConfiguration
 
+@inline function LoadCSVPoint(::Val{2}, ::Type{T}, row) where {T}
+    P1 = getproperty(row, Symbol("Points:0"))
+    P3 = getproperty(row, Symbol("Points:2"))
+    return SVector{2,T}(P1, P3)
+end
+
+@inline function LoadCSVPoint(::Val{3}, ::Type{T}, row) where {T}
+    P1 = getproperty(row, Symbol("Points:0"))
+    P2 = getproperty(row, Symbol("Points:1"))
+    P3 = getproperty(row, Symbol("Points:2"))
+    return SVector{3,T}(P1, P2, P3)
+end
+
 function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, particle_group_marker::Int, specific_csv::String) where {D, T}
     csv_file = CSV.File(specific_csv)
 
@@ -21,17 +34,9 @@ function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, parti
     idp          = Vector{Int}(undef, nrows)
 
     for (i, row) ∈ enumerate(csv_file)
-        P1   = getproperty(row, Symbol("Points:0"))
-        P2   = getproperty(row, Symbol("Points:1"))
-        P3   = getproperty(row, Symbol("Points:2"))
         Rhop = row.Rhop
         Idp  = row.Idp + 1
-
-        points[i] = if D == 3
-            SVector{3,T}(P1, P2, P3)
-        else
-            SVector{2,T}(P1, P3)
-        end
+        points[i] = LoadCSVPoint(Val(D), T, row)
 
         density[i]      = Rhop
         types[i]        = particle_type
@@ -40,6 +45,18 @@ function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, parti
     end
 
     return points, density, types, group_marker, idp
+end
+
+@inline function LoadBoundaryNormalPoint(::Val{2}, ::Type{T}, row) where {T}
+    normal = SVector{2,T}(getproperty(row, Symbol("Normal:0")), getproperty(row, Symbol("Normal:2")))
+    point  = SVector{2,T}(getproperty(row, Symbol("Points:0")), getproperty(row, Symbol("Points:2")))
+    return normal, point
+end
+
+@inline function LoadBoundaryNormalPoint(::Val{3}, ::Type{T}, row) where {T}
+    normal = SVector{3,T}(getproperty(row, Symbol("Normal:0")), getproperty(row, Symbol("Normal:1")), getproperty(row, Symbol("Normal:2")))
+    point  = SVector{3,T}(getproperty(row, Symbol("Points:0")), getproperty(row, Symbol("Points:1")), getproperty(row, Symbol("Points:2")))
+    return normal, point
 end
 
 function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, FloatType}}; OutputVariables=String[], RequireMDBC::Bool=false, RequireKernelOutput::Bool=false) where {Dimensions, FloatType}
@@ -208,13 +225,7 @@ function LoadBoundaryNormals(::Val{D}, ::Type{T}, path_mdbc) where {D, T}
     # Loop over each row of the file
     for row in csv_file
         # Extract the "Normal" fields into an SVector
-        if D == 3
-            normal = SVector{D,T}(getproperty(row, Symbol("Normal:0")), getproperty(row, Symbol("Normal:1")), getproperty(row, Symbol("Normal:2")))
-            point  = SVector{D,T}(getproperty(row, Symbol("Points:0")), getproperty(row, Symbol("Points:1")), getproperty(row, Symbol("Points:2")))
-        elseif D == 2
-            normal = SVector{D,T}(getproperty(row, Symbol("Normal:0")), getproperty(row, Symbol("Normal:2")))
-            point  = SVector{D,T}(getproperty(row, Symbol("Points:0")), getproperty(row, Symbol("Points:2")))
-        end
+        normal, point = LoadBoundaryNormalPoint(Val(D), T, row)
 
         push!(normals, normal)
         push!(points,  point)
