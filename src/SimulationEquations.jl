@@ -1,6 +1,6 @@
 module SimulationEquations
 
-export EquationOfState, EquationOfStateGamma7, Pressure!, DensityEpsi!, LimitDensityAtBoundary!, ConstructGravitySVector, InverseHydrostaticEquationOfState, Estimate7thRoot
+export EquationOfState, EquationOfStateGamma7, Pressure!, DensityEpsi!, LimitDensityAtBoundary!, ConstructGravitySVector, InverseHydrostaticEquationOfState, Estimate7thRoot, CleaningWaveSpeed
 
 using StaticArrays
 using Parameters
@@ -61,5 +61,11 @@ end
     t
 end
 @inline InverseHydrostaticEquationOfState(ρ₀, P, invCb) = ρ₀ * ( Estimate7thRoot( 1 + (P * invCb)) - 1)
+
+@inline function CleaningWaveSpeed(P, ρ, SimulationConstants)
+    @unpack κ = SimulationConstants
+    P_safe = max(P, zero(P))
+    return κ * sqrt(P_safe / ρ)
+end
 
 end

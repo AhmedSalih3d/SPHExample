@@ -22,6 +22,8 @@ SimulationConstants is a parameterized struct representing the constants and par
 - `γ::TI`: Adiabatic index (positive integer). Default is 7.
 - `dt::T`: Initial time step. Default is 1e-5.
 - `δᵩ::T`: Coefficient for density diffusion. Default is 0.1.
+- `κ::T`: Divergence-cleaning Mach scaling factor. Default is 10.
+- `σ::T`: Divergence-cleaning decay coefficient. Default is 1.
 - `CFL::T`: CFL (Courant-Friedrichs-Lewy) number (positive). Default is 0.2.
 - `η²::T`: Eta squared (positive). Default is computed as `(0.01 * H)^2`.
 
@@ -43,6 +45,8 @@ constants = SimulationConstants(ρ₀=1017, dx=0.03, α=0.02)
     γ::T  = 7                     ; @assert γ    > 0 "Adiabatic index (γ) must be positive"
     γ⁻¹::T  = 1/γ                 ; @assert γ⁻¹  > 0 "Inverse adiabatic index (γ⁻¹) must be positive"
     δᵩ::T  = 0.1                  ; @assert δᵩ   > 0 "Density variation (δᵩ) must be positive"
+    κ::T   = 10.0                 ; @assert κ    > 0 "Divergence-cleaning factor (κ) must be positive"
+    σ::T   = 1.0                  ; @assert σ    > 0 "Divergence-cleaning decay (σ) must be positive"
     CFL::T = 0.2                  ; @assert CFL  > 0 "CFL condition (CFL) must be positive"
     Cb::T  = (c₀^2 * ρ₀)/γ        ; @assert Cb  >= 0 "Cb (pressure coefficient) must be positive"
     Cb⁻¹::T  = inv(Cb)            ; @assert Cb⁻¹>= 0 "Inverse Cb (inverse pressure coefficient) must be positive"
