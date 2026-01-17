@@ -506,9 +506,7 @@ using LinearAlgebra
 
             acc_acc += dvdt⁺ + visc_term
 
-            kernel_acc, kernel_grad_acc =
-                compute_kernel_output_local(SimMetaData, kernel_acc, kernel_grad_acc,
-                                            SimKernel, q, ∇ᵢWᵢⱼ)
+            kernel_acc, kernel_grad_acc = compute_kernel_output_local(SimMetaData, kernel_acc, kernel_grad_acc, SimKernel, q, ∇ᵢWᵢⱼ)
 
             MLcond = MotionLimiter[i] * MotionLimiter[j]
             shift_c_acc += (m₀ / ρᵢ) * ∇ᵢWᵢⱼ
