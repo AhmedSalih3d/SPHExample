@@ -28,7 +28,7 @@ function Δt(max_acceleration, SimulationConstants, SPHKernel)
     @unpack c₀, CFL = SimulationConstants
     @unpack h   = SPHKernel
 
-    dt_force = max_acceleration > 0 ? sqrt(h / max_acceleration) : h / c₀
+    dt_force = sqrt(h / max_acceleration)
     return CFL * min(h / c₀, dt_force)
 end
 
