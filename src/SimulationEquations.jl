@@ -5,6 +5,7 @@ export EquationOfState, EquationOfStateGamma7, Pressure!, DensityEpsi!, LimitDen
 using StaticArrays
 using Parameters
 using FastPow
+using ..SimulationGeometry
 
 @inline function EquationOfStateGamma7(ρ,c₀,ρ₀)
     return @fastpow ((c₀^2*ρ₀)/7) * ((ρ/ρ₀)^7 - 1)
@@ -32,10 +33,11 @@ end
     end
 end
 
-# This version of the function using !Bool(MotionLimiter) instead of BoundaryBool
-@inline function LimitDensityAtBoundary!(Density,ρ₀, MotionLimiter)
+# This version of the function uses the MotionLimiter factor instead of BoundaryBool.
+@inline function LimitDensityAtBoundary!(Density, ρ₀, ParticleTypes)
+    FloatType = eltype(Density)
     @inbounds for i in eachindex(Density)
-        if (Density[i] < ρ₀) * !Bool(MotionLimiter[i])
+        if (Density[i] < ρ₀) * !Bool(MotionLimiter(FloatType, ParticleTypes[i]))
             Density[i] = ρ₀
         end
     end
