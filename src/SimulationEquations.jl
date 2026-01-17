@@ -64,8 +64,9 @@ end
 
 @inline function CleaningWaveSpeed(P, ρ, SimulationConstants)
     @unpack κ = SimulationConstants
-    P_safe = max(P, zero(P))
-    return κ * sqrt(P_safe / ρ)
+    P_safe = abs(P)
+    ρ_safe = max(ρ, eps(ρ))
+    return κ * sqrt(P_safe / ρ_safe)
 end
 
 end
