@@ -11,29 +11,22 @@ using ..SimulationGeometry
 using ..SimulationMetaDataConfiguration
 
 """
-    Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
+    Δt(max_acceleration, SimulationConstants, SPHKernel)
 
 Calculates the adaptive time step for the simulation based on Courant-Friedrichs-Lewy (CFL)
 and force-based criteria.
 
 # Arguments
-- `Position`: Vector of position vectors for each particle.
-- `Velocity`: Vector of velocity vectors for each particle.
-- `Acceleration`: Vector of acceleration vectors for each particle.
+- `max_acceleration`: Maximum acceleration magnitude across particles.
 - `SimulationConstants`: Struct containing simulation parameters like `c₀` (speed of sound) and `CFL` number.
 - `SPHKernel`: Struct containing kernel parameters like `h` (smoothing length) and `η²`.
 
 # Returns
 - The calculated time step `dt`.
 """
-function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
+function Δt(max_acceleration, SimulationConstants, SPHKernel)
     @unpack c₀, CFL = SimulationConstants
     @unpack h   = SPHKernel
-
-    max_acceleration = zero(eltype(SPHKernel.h))
-    @inbounds for i in eachindex(Acceleration)
-        max_acceleration = max(max_acceleration, norm(Acceleration[i]))
-    end
 
     dt_force = max_acceleration > 0 ? sqrt(h / max_acceleration) : h / c₀
     return CFL * min(h / c₀, dt_force)
