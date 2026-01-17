@@ -77,6 +77,10 @@ Updates the neighbor list and sorts particles by their cell indices.
 """
 function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
                           ParticleRanges, UniqueCells, CellDict)
+    RequiredLen = length(Particles) + 2
+    if length(ParticleRanges) < RequiredLen
+        resize!(ParticleRanges, RequiredLen)
+    end
     ExtractCells!(Particles, InverseCutOff)
 
     sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
@@ -97,7 +101,7 @@ function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
             CellDict[Cells[Index]]       = IndexCounter
         end
     end
-    ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
+    ParticleRanges[IndexCounter + 1]  = length(Particles) + 1
 
     return IndexCounter
 end
