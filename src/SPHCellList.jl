@@ -715,15 +715,15 @@ using LinearAlgebra
         dt = SimConstants.CFL * (SimKernel.h / SimConstants.c₀)
 
         @no_escape begin
-            AccelerationMax = @alloc(FloatType, length(Position))
-            dρdtI = @alloc(FloatType, length(Position))
             PositionType = eltype(Position)
             PositionUnderlyingType = eltype(PositionType)
-            Velocityₙ⁺ = @alloc(PositionType, length(Position))
-            Positionₙ⁺ = @alloc(PositionType, length(Position))
-            ρₙ⁺ = @alloc(PositionUnderlyingType, length(Position))
-            ∇Cᵢ = SMode <: NoShifting ? Vector{PositionType}(undef, 0) : @alloc(PositionType, length(Position))
-            ∇◌rᵢ = SMode <: NoShifting ? Vector{PositionUnderlyingType}(undef, 0) : @alloc(PositionUnderlyingType, length(Position))
+            AccelerationMax = similar(Density)
+            dρdtI = similar(Density)
+            Velocityₙ⁺ = similar(Position)
+            Positionₙ⁺ = similar(Position)
+            ρₙ⁺ = similar(Density)
+            ∇Cᵢ = SMode <: NoShifting ? Vector{PositionType}(undef, 0) : similar(Position)
+            ∇◌rᵢ = SMode <: NoShifting ? Vector{PositionUnderlyingType}(undef, 0) : similar(Density)
             dt₂ = dt * 0.5
             fill!(dρdtI, zero(FloatType))
             if !(SMode <: NoShifting)
