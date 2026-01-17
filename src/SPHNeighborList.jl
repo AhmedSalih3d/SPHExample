@@ -3,6 +3,7 @@ module SPHNeighborList
 export ConstructStencil, ExtractCells!, UpdateNeighbors!, BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts, UpdateΔx!
 
 using StaticArrays
+using LinearAlgebra: dot
 
 function ConstructStencil(V::Val{d}) where d
     return CartesianIndices(ntuple(_ -> -1:1, V))
@@ -77,6 +78,10 @@ Updates the neighbor list and sorts particles by their cell indices.
 """
 function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
                           ParticleRanges, UniqueCells, CellDict)
+    RequiredLen = length(Particles) + 2
+    if length(ParticleRanges) < RequiredLen
+        resize!(ParticleRanges, RequiredLen)
+    end
     ExtractCells!(Particles, InverseCutOff)
 
     sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
@@ -97,7 +102,7 @@ function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
             CellDict[Cells[Index]]       = IndexCounter
         end
     end
-    ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
+    ParticleRanges[IndexCounter + 1]  = length(Particles) + 1
 
     return IndexCounter
 end
@@ -141,6 +146,21 @@ Returns the new Δx.
             sumsq += d*d
         end
         # sqrt/T is allocation-free on scalars
+        nrm = sqrt(sumsq)
+        if nrm > maxd
+            maxd = nrm
+        end
+    end
+    return Δx + 4 * maxd
+end
+
+@inline function UpdateΔx!(Δx::T,
+                           posₙ⁺,
+                           pos::AbstractVector{SVector{D, T}}) where {D, T<:Real}
+    maxd = zero(T)
+    @inbounds for i in eachindex(pos)
+        diff = posₙ⁺[i] - pos[i]
+        sumsq = dot(diff, diff)
         nrm = sqrt(sumsq)
         if nrm > maxd
             maxd = nrm
