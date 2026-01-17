@@ -1,6 +1,6 @@
 module SimulationEquations
 
-export EquationOfState, EquationOfStateGamma7, Pressure!, DensityEpsi!, LimitDensityAtBoundary!, ConstructGravitySVector, InverseHydrostaticEquationOfState, Estimate7thRoot
+export EquationOfState, EquationOfStateGamma7, Pressure!, PressureHalfStep!, DensityEpsi!, LimitDensityAtBoundary!, ConstructGravitySVector, InverseHydrostaticEquationOfState, Estimate7thRoot
 
 using StaticArrays
 using Parameters
