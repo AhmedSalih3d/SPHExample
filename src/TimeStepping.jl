@@ -1,6 +1,6 @@
 module TimeStepping
 
-export Δt, FinalizeTimeStep, UpdateTimeStepBuffers!, next_output_time, ProgressMotion, HalfTimeStep, FullTimeStep
+export Δt, next_output_time, ProgressMotion, HalfTimeStep, FullTimeStep
 
 using LinearAlgebra
 using Parameters
@@ -9,42 +9,6 @@ using Bumper
 using ..SimulationEquations
 using ..SimulationGeometry
 using ..SimulationMetaDataConfiguration
-
-@inline function UpdateTimeStepBuffers!(::Nothing, ::Nothing, ::Nothing, index, visc_sum,
-                                           position, velocity, acceleration, sim_kernel)
-    return nothing
-end
-
-@inline function UpdateTimeStepBuffers!(max_visc, max_speed, min_dt_force, index, visc_sum,
-                                           position, velocity, acceleration, sim_kernel)
-    h             = sim_kernel.h
-    a_mag         = norm(acceleration)
-    curr_dt_force = a_mag > 0 ? sqrt(h / a_mag) : Inf
-    speed_mag     = norm(velocity)
-    @inbounds begin
-        max_visc[index] = visc_sum
-        max_speed[index] = speed_mag
-        min_dt_force[index] = curr_dt_force
-    end
-    return nothing
-end
-
-"""
-    FinalizeTimeStep(max_visc, max_speed, min_dt_force, SimulationConstants, SPHKernel)
-
-Compute the CFL-limited time step from the per-particle buffers.
-"""
-function FinalizeTimeStep(max_visc, max_speed, min_dt_force, SimulationConstants, SPHKernel)
-    @unpack c₀, CFL = SimulationConstants
-    @unpack h = SPHKernel
-
-    global_visc     = maximum(max_visc)
-    global_speed    = maximum(max_speed)
-    global_dt_force = minimum(min_dt_force)
-
-    dt2 = h / (max(c₀, global_speed) + h * global_visc)
-    return CFL * min(global_dt_force, dt2)
-end
 
 """
     Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
