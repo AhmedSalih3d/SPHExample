@@ -85,6 +85,9 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
     if !RequireKernelOutput && ("Kernel" in OutputVariables || "KernelGradient" in OutputVariables)
         error("Kernel output requires StoreKernelOutput in SimulationMetaData.")
     end
+    if "GravityFactor" in OutputVariables || "MotionLimiter" in OutputVariables
+        error("GravityFactor and MotionLimiter are derived from particle types and are not stored in SimParticles.")
+    end
 
     Acceleration    = zeros(PositionType, NumberOfPoints)
     Velocity        = zeros(PositionType, NumberOfPoints)
@@ -102,20 +105,6 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
         Type = Types,
         GroupMarker = GroupMarker,
     )
-    if "GravityFactor" in OutputVariables
-        GravityFactorValues = similar(Density)
-        @inbounds for i ∈ eachindex(GravityFactorValues)
-            GravityFactorValues[i] = GravityFactor(PositionUnderlyingType, Types[i])
-        end
-        ParticleFields = merge(ParticleFields, (; GravityFactor = GravityFactorValues))
-    end
-    if "MotionLimiter" in OutputVariables
-        MotionLimiterValues = similar(Density)
-        @inbounds for i ∈ eachindex(MotionLimiterValues)
-            MotionLimiterValues[i] = MotionLimiter(PositionUnderlyingType, Types[i])
-        end
-        ParticleFields = merge(ParticleFields, (; MotionLimiter = MotionLimiterValues))
-    end
     if RequireKernelOutput
         Kernel = zeros(PositionUnderlyingType, NumberOfPoints)
         KernelGradient = zeros(PositionType, NumberOfPoints)
