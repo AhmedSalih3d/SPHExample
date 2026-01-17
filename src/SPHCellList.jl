@@ -32,6 +32,52 @@ using Base.Threads
 using LinearAlgebra
     using Bumper
 
+    struct HalfStepPosition{P, V, M, T}
+        Position::P
+        Velocity::V
+        MotionLimiter::M
+        Δt₂::T
+    end
+
+    Base.IndexStyle(::Type{<:HalfStepPosition}) = IndexLinear()
+    Base.axes(half::HalfStepPosition) = axes(half.Position)
+    Base.size(half::HalfStepPosition) = size(half.Position)
+    Base.keys(half::HalfStepPosition) = keys(half.Position)
+    Base.getindex(half::HalfStepPosition, i::Int) = half.Position[i] + half.Velocity[i] * half.Δt₂ * half.MotionLimiter[i]
+
+    struct HalfStepVelocity{V, A, M, T}
+        Velocity::V
+        Acceleration::A
+        MotionLimiter::M
+        Δt₂::T
+    end
+
+    Base.IndexStyle(::Type{<:HalfStepVelocity}) = IndexLinear()
+    Base.axes(half::HalfStepVelocity) = axes(half.Velocity)
+    Base.size(half::HalfStepVelocity) = size(half.Velocity)
+    Base.keys(half::HalfStepVelocity) = keys(half.Velocity)
+    Base.getindex(half::HalfStepVelocity, i::Int) = half.Velocity[i] + half.Acceleration[i] * half.Δt₂ * half.MotionLimiter[i]
+
+    struct HalfStepDensity{D, R, M, T}
+        Density::D
+        dρdtI::R
+        MotionLimiter::M
+        ρ₀::T
+        Δt₂::T
+    end
+
+    Base.IndexStyle(::Type{<:HalfStepDensity}) = IndexLinear()
+    Base.axes(half::HalfStepDensity) = axes(half.Density)
+    Base.size(half::HalfStepDensity) = size(half.Density)
+    Base.keys(half::HalfStepDensity) = keys(half.Density)
+    function Base.getindex(half::HalfStepDensity, i::Int)
+        density = half.Density[i] + half.dρdtI[i] * half.Δt₂
+        if (density < half.ρ₀) * !Bool(half.MotionLimiter[i])
+            density = half.ρ₀
+        end
+        return density
+    end
+
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{D,T,NoShifting,NoKernelOutput,B,L},
                                       SimConstants, SimParticles, ParticleRanges,
@@ -688,9 +734,7 @@ using LinearAlgebra
                                       SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
                                       SimConstants, SimParticles, FullStencil,
                                       ParticleRanges, UniqueCells, CellDict,
-                                      SortingScratchSpace,
-                                      NeighborCellLists, dρdtI, Velocityₙ⁺,
-                                      Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ,
+                                      SortingScratchSpace, NeighborCellLists,
                                       MotionDefinition::Union{
                                           Nothing,
                                           AbstractVector{
@@ -717,14 +761,25 @@ using LinearAlgebra
         dt = SimConstants.CFL * (SimKernel.h / SimConstants.c₀)
 
         @no_escape begin
-            AccelerationMax = @alloc(FloatType, length(Position))
+            PositionType = eltype(Position)
+            PositionUnderlyingType = eltype(PositionType)
+            AccelerationMax = similar(Density)
+            dρdtI = similar(Density)
+            ∇Cᵢ = SMode <: NoShifting ? Vector{PositionType}(undef, 0) : similar(Position)
+            ∇◌rᵢ = SMode <: NoShifting ? Vector{PositionUnderlyingType}(undef, 0) : similar(Density)
             dt₂ = dt * 0.5
+            fill!(dρdtI, zero(FloatType))
+            if !(SMode <: NoShifting)
+                fill!(∇Cᵢ, zero(PositionType))
+                fill!(∇◌rᵢ, zero(PositionUnderlyingType))
+            end
 
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
                 @timeit SimMetaData.HourGlass "01 Calculate IndexCounter"  begin
 
-                    SimMetaData.Δx = UpdateΔx!(SimMetaData.Δx, Positionₙ⁺, SimParticles.Position)
-                    ShouldRebuild = SimMetaData.Δx >= SimKernel.h
+                    PositionHalfStep = HalfStepPosition(Position, Velocity, MotionLimiter, dt₂)
+                    SimMetaData.Δx = UpdateΔx!(SimMetaData.Δx, PositionHalfStep, SimParticles.Position)
+                    ShouldRebuild = SimMetaData.Δx >= SimKernel.h || SimMetaData.IndexCounter == 0
 
                     # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
 
@@ -757,26 +812,21 @@ using LinearAlgebra
                 )
 
 
-                @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
-
-
-                @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
-            
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
             
-                @timeit SimMetaData.HourGlass "07 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
+                @timeit SimMetaData.HourGlass "07 Pressure"                              PressureHalfStep!(SimParticles.Pressure, Density, dρdtI, MotionLimiter, SimConstants.ρ₀, dt₂, SimConstants)
                 @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticle!(
                     SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                     SimConstants, SimParticles, ParticleRanges, CellDict,
                     NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
-                    Position = Positionₙ⁺,
-                    Density = ρₙ⁺,
-                    Velocity = Velocityₙ⁺,
+                    Position = HalfStepPosition(Position, Velocity, MotionLimiter, dt₂),
+                    Density = HalfStepDensity(Density, dρdtI, MotionLimiter, SimConstants.ρ₀, dt₂),
+                    Velocity = HalfStepVelocity(Velocity, Acceleration, MotionLimiter, dt₂),
                 )
 
                 @timeit SimMetaData.HourGlass "09 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
             
-                @timeit SimMetaData.HourGlass "10 Final Density"                         DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
+                @timeit SimMetaData.HourGlass "10 Final Density"                         DensityEpsi!(Density, dρdtI, MotionLimiter, SimConstants.ρ₀, dt, dt₂)
             
                 @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
             
@@ -805,8 +855,6 @@ using LinearAlgebra
         ) where {Dimensions,FloatType,SMode,KMode,BMode,LMode,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
 
         NumberOfPoints = length(SimParticles)
-        
-        dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimMetaData, SimParticles.Position)
 
         LoadMDBCNormals!(SimMetaData, SimParticles, ParticleNormalsPath)
 
@@ -859,8 +907,7 @@ using LinearAlgebra
                 SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                 SimConstants, SimParticles, FullStencil, ParticleRanges,
                 UniqueCells, CellDict, SortingScratchSpace,
-                NeighborCellLists, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
-                ∇Cᵢ, ∇◌rᵢ, MotionDefinition,
+                NeighborCellLists, MotionDefinition,
             )
             push!(SimMetaData.TimeSteps, SimMetaData.CurrentTimeStep)
 

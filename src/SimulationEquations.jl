@@ -1,6 +1,6 @@
 module SimulationEquations
 
-export EquationOfState, EquationOfStateGamma7, Pressure!, DensityEpsi!, LimitDensityAtBoundary!, ConstructGravitySVector, InverseHydrostaticEquationOfState, Estimate7thRoot
+export EquationOfState, EquationOfStateGamma7, Pressure!, PressureHalfStep!, DensityEpsi!, LimitDensityAtBoundary!, ConstructGravitySVector, InverseHydrostaticEquationOfState, Estimate7thRoot
 
 using StaticArrays
 using Parameters
@@ -23,11 +23,33 @@ end
     end
 end
 
+@inline function PressureHalfStep!(Press, Density, dρdtI, MotionLimiter, ρ₀, Δt₂, SimulationConstants)
+    @unpack c₀ = SimulationConstants
+    @inbounds for i ∈ eachindex(Press, Density, dρdtI, MotionLimiter)
+        ρₙ⁺ = Density[i] + dρdtI[i] * Δt₂
+        if (ρₙ⁺ < ρ₀) * !Bool(MotionLimiter[i])
+            ρₙ⁺ = ρ₀
+        end
+        Press[i] = EquationOfStateGamma7(ρₙ⁺, c₀, ρ₀)
+    end
+end
+
 # This is to handle the special factor multiplied on density in the time stepping procedure, when
 # using symplectic time stepping
 @inline function DensityEpsi!(Density, dρdtIₙ⁺,ρₙ⁺,Δt)
     @inbounds for i in eachindex(Density)
         epsi = - (dρdtIₙ⁺[i] / ρₙ⁺[i]) * Δt
+        Density[i] *= (2 - epsi) / (2 + epsi)
+    end
+end
+
+@inline function DensityEpsi!(Density, dρdtI, MotionLimiter, ρ₀, Δt, Δt₂)
+    @inbounds for i in eachindex(Density, dρdtI, MotionLimiter)
+        ρₙ⁺ = Density[i] + dρdtI[i] * Δt₂
+        if (ρₙ⁺ < ρ₀) * !Bool(MotionLimiter[i])
+            ρₙ⁺ = ρ₀
+        end
+        epsi = - (dρdtI[i] / ρₙ⁺) * Δt
         Density[i] *= (2 - epsi) / (2 + epsi)
     end
 end
