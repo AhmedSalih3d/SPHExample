@@ -99,30 +99,11 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
     GroupMarker = GroupMarker[sort_perm]
     Idp = Idp[sort_perm]
 
-    GravityFactor = similar(Density)
-    for i ∈ eachindex(GravityFactor)
-        fac = 0
-        if     Types[i] == Fluid
-            fac = -1
-        elseif Types[i] == Moving
-            fac =  1
-        end
-        GravityFactor[i] = fac
-    end
-
-    MotionLimiter = similar(Density)
-    for i ∈ eachindex(MotionLimiter)
-        fac = 0
-        if   Types[i] == Fluid
-            fac =  1
-        else Types[i] == Moving
-            fac =  0
-        end
-        MotionLimiter[i] = fac
-    end
-
     if !RequireKernelOutput && ("Kernel" in OutputVariables || "KernelGradient" in OutputVariables)
         error("Kernel output requires StoreKernelOutput in SimulationMetaData.")
+    end
+    if "GravityFactor" in OutputVariables || "MotionLimiter" in OutputVariables
+        error("GravityFactor and MotionLimiter are derived from particle types and are not stored in SimParticles.")
     end
 
     Acceleration    = zeros(PositionType, NumberOfPoints)
@@ -138,8 +119,6 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
         Velocity = Velocity,
         Density = Density,
         Pressure = Pressureᵢ,
-        GravityFactor = GravityFactor,
-        MotionLimiter = MotionLimiter,
         Type = Types,
         GroupMarker = GroupMarker,
     )
@@ -157,7 +136,7 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
         ParticleFields = merge(ParticleFields, (; GhostNormals = GhostNormals))
     end
     if "BoundaryBool" in OutputVariables
-        BoundaryBool = UInt8.(.!Bool.(MotionLimiter))
+        BoundaryBool = [UInt8(!Bool(MotionLimiter(PositionUnderlyingType, particle_type))) for particle_type in Types]
         ParticleFields = merge(ParticleFields, (; BoundaryBool = BoundaryBool))
     end
     if "ID" in OutputVariables
