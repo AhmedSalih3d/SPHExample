@@ -153,4 +153,19 @@ Returns the new Δx.
     return Δx + 4 * maxd
 end
 
+@inline function UpdateΔx!(Δx::T,
+                           posₙ⁺,
+                           pos::AbstractVector{SVector{D, T}}) where {D, T<:Real}
+    maxd = zero(T)
+    @inbounds for i in eachindex(pos)
+        diff = posₙ⁺[i] - pos[i]
+        sumsq = dot(diff, diff)
+        nrm = sqrt(sumsq)
+        if nrm > maxd
+            maxd = nrm
+        end
+    end
+    return Δx + 4 * maxd
+end
+
 end
