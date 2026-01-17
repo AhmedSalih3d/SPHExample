@@ -490,9 +490,7 @@ using LinearAlgebra
             density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
             dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
 
-            Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel,
-                                              SimConstants, SimParticles, xᵢⱼ,
-                                              ∇ᵢWᵢⱼ, xᵢⱼ², i, j, MotionLimiter)
+            Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ², i, j, MotionLimiter)
 
             dρdt_acc += dρdt⁺ + Dᵢ
 
@@ -555,9 +553,7 @@ using LinearAlgebra
             f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
             dvdt⁺ = -m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
 
-            visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants,
-                                             SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ,
-                                             dᵢⱼ^2, i, j)
+            visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ^2, i, j)
 
             acc_acc += dvdt⁺ + visc_term
 
