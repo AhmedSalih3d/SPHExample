@@ -88,7 +88,7 @@ using LinearAlgebra
             dρdtI[i] = dρdt_acc
             local_c = CleaningWaveSpeed(Pressure[i], Density[i], SimConstants)
             decay = SimConstants.σ * local_c / SimKernel.h
-            dΨdtI[i] = MotionLimiter[i] * (-SimConstants.c₀^2 * divu_acc - Psi[i] * decay)
+            dΨdtI[i] = MotionLimiter[i] * (-local_c^2 * divu_acc - Psi[i] * decay)
             Acceleration[i] = acc_acc
             # UpdateTimeStepBuffers!(max_visc, max_speed, min_dt_force, i, visc_acc, Position[i], Velocity[i], acc_acc, SimKernel)
         end
@@ -161,7 +161,7 @@ using LinearAlgebra
             dρdtI[i] = dρdt_acc
             local_c = CleaningWaveSpeed(Pressure[i], Density[i], SimConstants)
             decay = SimConstants.σ * local_c / SimKernel.h
-            dΨdtI[i] = MotionLimiter[i] * (-SimConstants.c₀^2 * divu_acc - Psi[i] * decay)
+            dΨdtI[i] = MotionLimiter[i] * (-local_c^2 * divu_acc - Psi[i] * decay)
             Acceleration[i] = acc_acc
             Kernel[i] = kernel_acc
             KernelGradient[i] = kernel_grad_acc
@@ -235,7 +235,7 @@ using LinearAlgebra
             dρdtI[i] = dρdt_acc
             local_c = CleaningWaveSpeed(Pressure[i], Density[i], SimConstants)
             decay = SimConstants.σ * local_c / SimKernel.h
-            dΨdtI[i] = MotionLimiter[i] * (-SimConstants.c₀^2 * divu_acc - Psi[i] * decay)
+            dΨdtI[i] = MotionLimiter[i] * (-local_c^2 * divu_acc - Psi[i] * decay)
             Acceleration[i] = acc_acc
             ∇Cᵢ[i] = shift_c_acc
             ∇◌rᵢ[i] = shift_r_acc
@@ -313,7 +313,7 @@ using LinearAlgebra
             dρdtI[i] = dρdt_acc
             local_c = CleaningWaveSpeed(Pressure[i], Density[i], SimConstants)
             decay = SimConstants.σ * local_c / SimKernel.h
-            dΨdtI[i] = MotionLimiter[i] * (-SimConstants.c₀^2 * divu_acc - Psi[i] * decay)
+            dΨdtI[i] = MotionLimiter[i] * (-local_c^2 * divu_acc - Psi[i] * decay)
             Acceleration[i] = acc_acc
             Kernel[i] = kernel_acc
             KernelGradient[i] = kernel_grad_acc
