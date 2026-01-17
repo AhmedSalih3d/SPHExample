@@ -11,7 +11,7 @@ let
         c₀  = 33.14,
         α   = 0.1,
         m₀  = 1000 * dx^3,
-        CFL = 0.8
+        CFL = 0.2
     )
 
     # --- Simulation metadata & logging ---
