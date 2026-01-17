@@ -688,9 +688,7 @@ using LinearAlgebra
                                       SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
                                       SimConstants, SimParticles, FullStencil,
                                       ParticleRanges, UniqueCells, CellDict,
-                                      SortingScratchSpace,
-                                      NeighborCellLists, dρdtI, Velocityₙ⁺,
-                                      Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ,
+                                      SortingScratchSpace, NeighborCellLists,
                                       MotionDefinition::Union{
                                           Nothing,
                                           AbstractVector{
@@ -718,7 +716,23 @@ using LinearAlgebra
 
         @no_escape begin
             AccelerationMax = @alloc(FloatType, length(Position))
+            dρdtI = @alloc(FloatType, length(Position))
+            PositionType = eltype(Position)
+            PositionUnderlyingType = eltype(PositionType)
+            Velocityₙ⁺ = @alloc(PositionType, length(Position))
+            Positionₙ⁺ = @alloc(PositionType, length(Position))
+            ρₙ⁺ = @alloc(PositionUnderlyingType, length(Position))
+            ∇Cᵢ = SMode <: NoShifting ? Vector{PositionType}(undef, 0) : @alloc(PositionType, length(Position))
+            ∇◌rᵢ = SMode <: NoShifting ? Vector{PositionUnderlyingType}(undef, 0) : @alloc(PositionUnderlyingType, length(Position))
             dt₂ = dt * 0.5
+            fill!(dρdtI, zero(FloatType))
+            if !(SMode <: NoShifting)
+                fill!(∇Cᵢ, zero(PositionType))
+                fill!(∇◌rᵢ, zero(PositionUnderlyingType))
+            end
+            copyto!(Positionₙ⁺, Position)
+            copyto!(Velocityₙ⁺, Velocity)
+            copyto!(ρₙ⁺, Density)
 
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
                 @timeit SimMetaData.HourGlass "01 Calculate IndexCounter"  begin
@@ -805,8 +819,6 @@ using LinearAlgebra
         ) where {Dimensions,FloatType,SMode,KMode,BMode,LMode,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
 
         NumberOfPoints = length(SimParticles)
-        
-        dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimMetaData, SimParticles.Position)
 
         LoadMDBCNormals!(SimMetaData, SimParticles, ParticleNormalsPath)
 
@@ -859,8 +871,7 @@ using LinearAlgebra
                 SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                 SimConstants, SimParticles, FullStencil, ParticleRanges,
                 UniqueCells, CellDict, SortingScratchSpace,
-                NeighborCellLists, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
-                ∇Cᵢ, ∇◌rᵢ, MotionDefinition,
+                NeighborCellLists, MotionDefinition,
             )
             push!(SimMetaData.TimeSteps, SimMetaData.CurrentTimeStep)
 
