@@ -23,7 +23,6 @@ The project demonstrates how to assemble a small SPH solver with Julia. It focus
   metadata.
 - **Dynamic boundary condition** – inspired by DualSPHysics.
 - **Density diffusion** – based on Fourtakas et al. 2019 to reduce pressure noise.
-- **Velocity divergence cleaning** – hyperbolic/parabolic cleaning to damp acoustic pressure waves.
 - **Wendland quintic kernel** – simple and stable without tensile corrections.
 
 ## Folder Structure

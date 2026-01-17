@@ -111,7 +111,6 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
     Acceleration    = zeros(PositionType, NumberOfPoints)
     Velocity        = zeros(PositionType, NumberOfPoints)
     Pressureᵢ      = zeros(PositionUnderlyingType, NumberOfPoints)
-    Psi           = zeros(PositionUnderlyingType, NumberOfPoints)
     
     Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
     
@@ -122,7 +121,6 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
         Velocity = Velocity,
         Density = Density,
         Pressure = Pressureᵢ,
-        Psi = Psi,
         GravityFactor = GravityFactor,
         MotionLimiter = MotionLimiter,
         Type = Types,
@@ -169,16 +167,14 @@ function AllocateSupportDataStructures(::SimulationMetaData{D,T,NoShifting,K,B,L
     PositionUnderlyingType = eltype(PositionType)
 
     dρdtI      = zeros(PositionUnderlyingType, NumberOfPoints)
-    dΨdtI      = zeros(PositionUnderlyingType, NumberOfPoints)
     Velocityₙ⁺ = zeros(PositionType, NumberOfPoints)
     Positionₙ⁺ = zeros(PositionType, NumberOfPoints)
     ρₙ⁺        = zeros(PositionUnderlyingType, NumberOfPoints)
-    Ψₙ⁺        = zeros(PositionUnderlyingType, NumberOfPoints)
 
     ∇Cᵢ  = Vector{PositionType}(undef, 0)
     ∇◌rᵢ = Vector{PositionUnderlyingType}(undef, 0)
 
-    return dρdtI, dΨdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Ψₙ⁺, ∇Cᵢ, ∇◌rᵢ
+    return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ
 end
 
 function AllocateSupportDataStructures(::SimulationMetaData{D,T,S,K,B,L}, Position) where {D,T,S<:ShiftingMode,
@@ -191,16 +187,14 @@ function AllocateSupportDataStructures(::SimulationMetaData{D,T,S,K,B,L}, Positi
     PositionUnderlyingType = eltype(PositionType)
 
     dρdtI      = zeros(PositionUnderlyingType, NumberOfPoints)
-    dΨdtI      = zeros(PositionUnderlyingType, NumberOfPoints)
     Velocityₙ⁺ = zeros(PositionType, NumberOfPoints)
     Positionₙ⁺ = zeros(PositionType, NumberOfPoints)
     ρₙ⁺        = zeros(PositionUnderlyingType, NumberOfPoints)
-    Ψₙ⁺        = zeros(PositionUnderlyingType, NumberOfPoints)
 
     ∇Cᵢ  = zeros(PositionType, NumberOfPoints)
     ∇◌rᵢ = zeros(PositionUnderlyingType, NumberOfPoints)
 
-    return dρdtI, dΨdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Ψₙ⁺, ∇Cᵢ, ∇◌rᵢ
+    return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ
 end
 
 function LoadBoundaryNormals(::Val{D}, ::Type{T}, path_mdbc) where {D, T}

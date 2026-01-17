@@ -47,7 +47,7 @@ function FinalizeTimeStep(max_visc, max_speed, min_dt_force, SimulationConstants
 end
 
 """
-    Δt(Position, Velocity, Acceleration, Pressure, Density, SimulationConstants, SPHKernel)
+    Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
 
 Calculates the adaptive time step for the simulation based on Courant-Friedrichs-Lewy (CFL),
 viscous, and force-based criteria.
@@ -56,60 +56,16 @@ viscous, and force-based criteria.
 - `Position`: Vector of position vectors for each particle.
 - `Velocity`: Vector of velocity vectors for each particle.
 - `Acceleration`: Vector of acceleration vectors for each particle.
-- `Pressure`: Vector of pressures for each particle.
-- `Density`: Vector of densities for each particle.
 - `SimulationConstants`: Struct containing simulation parameters like `c₀` (speed of sound) and `CFL` number.
 - `SPHKernel`: Struct containing kernel parameters like `h` (smoothing length) and `η²`.
 
 # Returns
 - The calculated time step `dt`.
 """
-function Δt(Position, Velocity, Acceleration, Pressure, Density, SimulationConstants, SPHKernel)
+function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
     @unpack c₀, CFL = SimulationConstants
     @unpack h   = SPHKernel
-
-    N = length(Position)
-    n_chunks = Threads.nthreads()
-    chunk_size = cld(N, n_chunks)
-
-    @no_escape begin
-        v_buffer = @alloc(Float64, n_chunks)
-        d_buffer = @alloc(Float64, n_chunks)
-        c_buffer = @alloc(Float64, n_chunks)
-
-        @sync for i in 1:n_chunks
-            Threads.@spawn begin
-                idx_start = (i - 1) * chunk_size + 1
-                idx_end   = min(i * chunk_size, N)
-
-                t_vel = 0.0
-                t_dt   = Inf
-                t_c    = 0.0
-
-                if idx_start <= idx_end
-                    @inbounds for j in idx_start:idx_end
-                        v = Velocity[j]
-                        a = Acceleration[j]
-
-                        t_vel = max(t_vel, norm(v))
-                        t_c = max(t_c, CleaningWaveSpeed(Pressure[j], Density[j], SimulationConstants))
-
-                        a_mag = norm(a)
-                        if a_mag > 0
-                            t_dt = min(t_dt, sqrt(h / a_mag))
-                        end
-                    end
-                end
-
-                v_buffer[i] = t_vel
-                d_buffer[i] = t_dt
-                c_buffer[i] = t_c
-            end
-        end
-
-        max_wave = max(c₀, maximum(v_buffer), maximum(c_buffer))
-        CFL * min(minimum(d_buffer), h / max_wave)
-    end
+    return CFL * (h / c₀)
 end
 
 @inline next_output_time(SimMetaData) = next_output_time(SimMetaData.OutputTimes, SimMetaData)
@@ -157,41 +113,39 @@ end
 
 function HalfTimeStep(::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
                           SimConstants, SimParticles, Positionₙ⁺,
-                          Velocityₙ⁺, ρₙ⁺, Ψₙ⁺, dρdtI, dΨdtI, dt₂) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
-    @unpack Position, Density, Velocity, Acceleration, GravityFactor, MotionLimiter, Psi = SimParticles
+                          Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
+    @unpack Position, Density, Velocity, Acceleration, GravityFactor, MotionLimiter = SimParticles
 
     @inbounds @simd ivdep for i in eachindex(Position)
         Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
         Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiter[i]
         Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiter[i]
         ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
-        Ψₙ⁺[i]            =  Psi[i]        + dΨdtI[i]       *  dt₂
     end
 
     return nothing
 end
 
 function FullTimeStep(::SimulationMetaData{D,T,NoShifting,K,B,L}, SimKernel,
-                          SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dΨdtI, dt) where {D,T,
+                          SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,
                                                                              K<:KernelOutputMode,
                                                                              B<:MDBCMode,
                                                                              L<:LogMode}
-    @unpack Position, Velocity, Acceleration, GravityFactor, MotionLimiter, Psi = SimParticles
+    @unpack Position, Velocity, Acceleration, GravityFactor, MotionLimiter = SimParticles
     @inbounds @simd ivdep for i in eachindex(Position)
         Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
         Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
         Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
-        Psi[i]            +=  dΨdtI[i] * dt * MotionLimiter[i]
     end
     return nothing
 end
 
 function FullTimeStep(::SimulationMetaData{D,T,S,K,B,L}, SimKernel, SimConstants,
-                          SimParticles, ∇Cᵢ, ∇◌rᵢ, dΨdtI, dt) where {D,T,S<:ShiftingMode,
+                          SimParticles, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,S<:ShiftingMode,
                                                              K<:KernelOutputMode,
                                                              B<:MDBCMode,
                                                              L<:LogMode}
-    @unpack Position, Velocity, Acceleration, GravityFactor, MotionLimiter, Psi = SimParticles
+    @unpack Position, Velocity, Acceleration, GravityFactor, MotionLimiter = SimParticles
     A     = 2# Value between 1 to 6 advised
     A_FST = 0; # zero for internal flows
     A_FSM = length(first(Position)); #2d, 3d val different
@@ -207,7 +161,6 @@ function FullTimeStep(::SimulationMetaData{D,T,S,K,B,L}, SimKernel, SimConstants
         end
 
         Position[i]           += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
-        Psi[i]                += dΨdtI[i] * dt * MotionLimiter[i]
     end
     return nothing
 end
