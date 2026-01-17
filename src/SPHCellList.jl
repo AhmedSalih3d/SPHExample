@@ -844,7 +844,14 @@ using LinearAlgebra
             
                 @timeit SimMetaData.HourGlass "12 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
 
-                @timeit SimMetaData.HourGlass "13 Update TimeStep" dt = SimConstants.CFL * (SimKernel.h / SimConstants.c₀)
+                @timeit SimMetaData.HourGlass "13 Update TimeStep" begin
+                    max_acceleration = zero(eltype(SimParticles.Acceleration))
+                    @inbounds for i in eachindex(SimParticles.Acceleration)
+                        max_acceleration = max(max_acceleration, norm(SimParticles.Acceleration[i]))
+                    end
+                    dt_force = max_acceleration > 0 ? sqrt(SimKernel.h / max_acceleration) : SimKernel.h / SimConstants.c₀
+                    dt = SimConstants.CFL * min(SimKernel.h / SimConstants.c₀, dt_force)
+                end
             end
         end
         

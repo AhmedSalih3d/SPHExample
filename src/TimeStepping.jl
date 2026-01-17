@@ -49,8 +49,8 @@ end
 """
     Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
 
-Calculates the adaptive time step for the simulation based on Courant-Friedrichs-Lewy (CFL),
-viscous, and force-based criteria.
+Calculates the adaptive time step for the simulation based on Courant-Friedrichs-Lewy (CFL)
+and force-based criteria.
 
 # Arguments
 - `Position`: Vector of position vectors for each particle.
@@ -65,7 +65,14 @@ viscous, and force-based criteria.
 function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
     @unpack c₀, CFL = SimulationConstants
     @unpack h   = SPHKernel
-    return CFL * (h / c₀)
+
+    max_acceleration = zero(eltype(Acceleration))
+    @inbounds for i in eachindex(Acceleration)
+        max_acceleration = max(max_acceleration, norm(Acceleration[i]))
+    end
+
+    dt_force = max_acceleration > 0 ? sqrt(h / max_acceleration) : h / c₀
+    return CFL * min(h / c₀, dt_force)
 end
 
 @inline next_output_time(SimMetaData) = next_output_time(SimMetaData.OutputTimes, SimMetaData)
