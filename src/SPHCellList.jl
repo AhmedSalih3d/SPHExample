@@ -42,6 +42,7 @@ using LinearAlgebra
     Base.IndexStyle(::Type{<:HalfStepPosition}) = IndexLinear()
     Base.axes(half::HalfStepPosition) = axes(half.Position)
     Base.size(half::HalfStepPosition) = size(half.Position)
+    Base.keys(half::HalfStepPosition) = keys(half.Position)
     Base.getindex(half::HalfStepPosition, i::Int) = half.Position[i] + half.Velocity[i] * half.Δt₂ * half.MotionLimiter[i]
 
     struct HalfStepVelocity{V, A, M, T}
@@ -54,6 +55,7 @@ using LinearAlgebra
     Base.IndexStyle(::Type{<:HalfStepVelocity}) = IndexLinear()
     Base.axes(half::HalfStepVelocity) = axes(half.Velocity)
     Base.size(half::HalfStepVelocity) = size(half.Velocity)
+    Base.keys(half::HalfStepVelocity) = keys(half.Velocity)
     Base.getindex(half::HalfStepVelocity, i::Int) = half.Velocity[i] + half.Acceleration[i] * half.Δt₂ * half.MotionLimiter[i]
 
     struct HalfStepDensity{D, R, M, T}
@@ -67,6 +69,7 @@ using LinearAlgebra
     Base.IndexStyle(::Type{<:HalfStepDensity}) = IndexLinear()
     Base.axes(half::HalfStepDensity) = axes(half.Density)
     Base.size(half::HalfStepDensity) = size(half.Density)
+    Base.keys(half::HalfStepDensity) = keys(half.Density)
     function Base.getindex(half::HalfStepDensity, i::Int)
         density = half.Density[i] + half.dρdtI[i] * half.Δt₂
         if (density < half.ρ₀) * !Bool(half.MotionLimiter[i])
