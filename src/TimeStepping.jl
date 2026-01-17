@@ -30,7 +30,7 @@ function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
     @unpack c₀, CFL = SimulationConstants
     @unpack h   = SPHKernel
 
-    max_acceleration = zero(eltype(Acceleration))
+    max_acceleration = zero(eltype(SPHKernel.h))
     @inbounds for i in eachindex(Acceleration)
         max_acceleration = max(max_acceleration, norm(Acceleration[i]))
     end
