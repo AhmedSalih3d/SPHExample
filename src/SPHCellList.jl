@@ -738,7 +738,7 @@ using LinearAlgebra
                 @timeit SimMetaData.HourGlass "01 Calculate IndexCounter"  begin
 
                     SimMetaData.Δx = UpdateΔx!(SimMetaData.Δx, Positionₙ⁺, SimParticles.Position)
-                    ShouldRebuild = SimMetaData.Δx >= SimKernel.h
+                    ShouldRebuild = SimMetaData.Δx >= SimKernel.h || SimMetaData.IndexCounter == 0
 
                     # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
 
