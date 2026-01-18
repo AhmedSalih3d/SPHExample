@@ -92,9 +92,9 @@ one plus the particles in its neighbor stencil.
 
 To record a property at a specific point, populate `PointMeasures` in the
 `SimulationMetaData` configuration. Each `PointMeasure` names a location and a
-list of variables to interpolate (or fallback to the nearest particle when the
-kernel support is empty). These values are written into the main VTKHDF output
-as `FieldData` arrays so they travel with each time step.
+list of variables to interpolate within the neighbor stencil. These values are
+written into a dedicated `*_PointMeasures.vtkhdf` file so you can load probe
+points alongside the particle data.
 
 ## Help
 

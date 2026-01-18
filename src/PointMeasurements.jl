@@ -6,7 +6,8 @@ using StaticArrays
 using ..SPHKernels: Wᵢⱼ
 using ..SPHNeighborList: MapFloor
 
-export PointMeasure, PointMeasureFieldNames, FillPointMeasureData!
+export PointMeasure, PointMeasureFieldNames, PointMeasureOutputVariableNames,
+       FillPointMeasureData!, FillPointMeasureSnapshot!
 
 """
     PointMeasure(Name, Position, Variables)
@@ -36,6 +37,20 @@ function PointMeasureFieldNames(PointMeasures::Vector{<:PointMeasure})
         end
     end
     return FieldNames
+end
+
+function PointMeasureOutputVariableNames(PointMeasures::Vector{<:PointMeasure})
+    OutputNames = String[]
+    Seen = Set{String}()
+    for Measure in PointMeasures
+        for Variable in Measure.Variables
+            if !(Variable in Seen)
+                push!(OutputNames, Variable)
+                push!(Seen, Variable)
+            end
+        end
+    end
+    return OutputNames
 end
 
 function FillPointMeasureData!(FieldData, PointMeasures::Vector{<:PointMeasure},
@@ -156,6 +171,47 @@ function AppendPointMeasureResults!(FieldData, Measure::PointMeasure{D, T},
     end
 
     return FieldData
+end
+
+function FillPointMeasureSnapshot!(snapshot_positions, snapshot_output_data,
+                                   PointMeasures::Vector{<:PointMeasure},
+                                   OutputVariables::Vector{String},
+                                   SimParticles, SimKernel, Dimensions;
+                                   field_map, vector_fields,
+                                   neighbor_data = nothing)
+    if isempty(PointMeasures)
+        return snapshot_positions, snapshot_output_data
+    end
+    if neighbor_data === nothing
+        error("PointMeasure evaluation requires neighbor data; pass `neighbor_data` from the cell list.")
+    end
+
+    resize!(snapshot_positions, length(PointMeasures))
+    for Output in snapshot_output_data
+        resize!(Output, length(PointMeasures))
+        fill!(Output, zero(eltype(Output)))
+    end
+
+    output_index = Dict(name => idx for (idx, name) in pairs(OutputVariables))
+
+    for (MeasureIndex, Measure) in pairs(PointMeasures)
+        snapshot_positions[MeasureIndex] = To3DPoint(Val(Dimensions), Measure.Position)
+
+        buffer = Any[]
+        AppendPointMeasureResults!(buffer, Measure, SimParticles, SimKernel, Dimensions;
+                                   field_map = field_map,
+                                   vector_fields = vector_fields,
+                                   neighbor_data = neighbor_data)
+
+        data_index = 2
+        for Variable in Measure.Variables
+            index = output_index[Variable]
+            snapshot_output_data[index][MeasureIndex] = buffer[data_index]
+            data_index += 1
+        end
+    end
+
+    return snapshot_positions, snapshot_output_data
 end
 
 end
