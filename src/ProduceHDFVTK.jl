@@ -748,7 +748,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             return ParticleSnapshot(positions, output_data, field_data)
         end
 
-        function fill_particle_snapshot!(snapshot)
+        function fill_particle_snapshot!(snapshot; neighbor_data = nothing)
             if Dimensions == 2
                 to_3d!(snapshot.positions, SimParticles.Position)
             else
@@ -790,6 +790,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 Dimensions;
                 field_map = field_map,
                 vector_fields = vector_fields,
+                neighbor_data = neighbor_data,
             )
             return snapshot
         end
@@ -849,9 +850,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             end
         end
 
-        function enqueue_particle_data(iteration)
+        function enqueue_particle_data(iteration; neighbor_data = nothing)
             snapshot = take!(buffer_pool)
-            fill_particle_snapshot!(snapshot)
+            fill_particle_snapshot!(snapshot; neighbor_data = neighbor_data)
             job = ParticleWriteJob(iteration, SimMetaData.TotalTime, snapshot)
             put!(job_channel, job)
         end

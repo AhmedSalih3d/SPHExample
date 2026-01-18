@@ -884,7 +884,14 @@ using LinearAlgebra
             end
             
             @timeit SimMetaData.HourGlass "13 Save Particle Data"  begin
-                output.enqueue_particles(SimMetaData.OutputIterationCounter)
+                output.enqueue_particles(
+                    SimMetaData.OutputIterationCounter;
+                    neighbor_data = (
+                        particle_ranges = ParticleRanges,
+                        cell_dict = CellDict,
+                        full_stencil = FullStencil,
+                    ),
+                )
                 output.enqueue_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, cell_particle_counts=cell_particle_counts, cell_neighbor_counts=cell_neighbor_counts)
             end
 
