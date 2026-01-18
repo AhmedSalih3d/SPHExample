@@ -152,7 +152,15 @@ function AppendPointMeasureResults!(FieldData, Measure::PointMeasure{D, T},
     end
 
     if !HasCandidates
-        error("PointMeasure found no neighbor candidates; adjust probe position or cell list.")
+        for (Index, Variable) in pairs(Variables)
+            if Variable in vector_fields
+                push!(FieldData, MissingVectorValue(Val(Dimensions), T))
+            else
+                Source = Sources[Index]
+                push!(FieldData, MissingScalarValue(eltype(Source)))
+            end
+        end
+        return FieldData
     end
 
     for (Index, Variable) in pairs(Variables)
@@ -171,6 +179,18 @@ function AppendPointMeasureResults!(FieldData, Measure::PointMeasure{D, T},
     end
 
     return FieldData
+end
+
+@inline function MissingScalarValue(::Type{T}) where {T}
+    return T <: AbstractFloat ? T(NaN) : zero(T)
+end
+
+@inline function MissingVectorValue(::Val{2}, ::Type{T}) where {T}
+    return SVector{3, T}(MissingScalarValue(T), MissingScalarValue(T), MissingScalarValue(T))
+end
+
+@inline function MissingVectorValue(::Val{3}, ::Type{T}) where {T}
+    return SVector{3, T}(MissingScalarValue(T), MissingScalarValue(T), MissingScalarValue(T))
 end
 
 function FillPointMeasureSnapshot!(snapshot_positions, snapshot_output_data,
