@@ -43,6 +43,7 @@ Example scripts live in `example/` and read geometry from `input/`. The solver c
 src/
 ├── AuxiliaryFunctions.jl            # Small helper utilities
 ├── OpenExternalPrograms.jl          # Convenience wrappers for logs and ParaView
+├── PointMeasurements.jl             # Point probe configuration helpers
 ├── PreProcess.jl                    # Load inputs and allocate arrays
 ├── ProduceHDFVTK.jl                 # Write simulation data in HDF5/VTK format
 ├── SPHCellList.jl                   # Custom neighbour search and time stepping
@@ -88,6 +89,12 @@ To color exported cell grids by particle counts, set
 `ExportGridCellParticleCounts=true` in `SimulationMetaData`. This also adds a
 `ParticleNeighborsPerCell` array that includes each cell's particle count minus
 one plus the particles in its neighbor stencil.
+
+To record a property at a specific point, populate `PointMeasures` in the
+`SimulationMetaData` configuration. Each `PointMeasure` names a location and a
+list of variables to interpolate (or fallback to the nearest particle when the
+kernel support is empty). These values are written into the main VTKHDF output
+as `FieldData` arrays so they travel with each time step.
 
 ## Help
 

@@ -23,20 +23,22 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     using StaticArrays
 
     using ..AuxiliaryFunctions: to_3d!
+    using ..PointMeasurements: PointMeasureFieldNames, FillPointMeasureData!
 
 
     const idType = Int64
     const fType = Float64
 
-    struct ParticleSnapshot{P, V}
+    struct ParticleSnapshot{P, V, F}
         positions::P
         output_data::V
+        field_data::F
     end
 
-    struct ParticleWriteJob{P, V}
+    struct ParticleWriteJob{P, V, F}
         iteration::Int
         time::AbstractFloat
-        snapshot::ParticleSnapshot{P, V}
+        snapshot::ParticleSnapshot{P, V, F}
     end
 
     struct GridWriteJob{N}
@@ -148,8 +150,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         return payload
     end
 
-    function SaveVTKHDF(fid_vector, index, filepath, points, variable_names = String[], args...)
+    function SaveVTKHDF(fid_vector, index, filepath, points, variable_names = String[], args...;
+                        field_data_names = String[], field_data = Any[])
         @assert length(variable_names) == length(args) "Same number of variable_names as args is necessary"
+        @assert length(field_data_names) == length(field_data) "Same number of field_data_names as field_data is necessary"
         io = h5open(filepath, "w")
         gtop = HDF5.create_group(io, "VTKHDF")
 
@@ -165,6 +169,18 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         let g = HDF5.create_group(gtop, "PointData")
             for i ∈ eachindex(variable_names)
                 g[variable_names[i]] = reinterpret(reshape, eltype(eltype(args[i])), args[i])
+            end
+        end
+
+        # Field data
+        let g = HDF5.create_group(gtop, "FieldData")
+            for i ∈ eachindex(field_data_names)
+                value = field_data[i]
+                if value isa AbstractArray
+                    g[field_data_names[i]] = reinterpret(reshape, eltype(value), value)
+                else
+                    g[field_data_names[i]] = [value]
+                end
             end
         end
 
@@ -196,8 +212,11 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                                        vtk_file_type = "PolyData",
                                        idType = Int64,
                                        fType = Float64,
-                                       cell_data_names = ["CellData"])
+                                       cell_data_names = ["CellData"],
+                                       field_data_names = String[],
+                                       field_data_init = Any[])
         @assert length(variable_names) == length(args) "Same number of variable_names as args is necessary"
+        @assert length(field_data_names) == length(field_data_init) "Same number of field_data_names as field_data_init is necessary"
         # Write version of VTKHDF format as an attribute
         HDF5.attrs(root)["Version"] = Int32.([2, 3])
         
@@ -231,6 +250,20 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     HDF5.create_dataset(pData, var_name, arg_val_type, ((0,),(-1,)), chunk=(chunk_size,))
                 end
             end
+
+            FieldData = HDF5.create_group(root, "FieldData")
+            for i ∈ eachindex(field_data_names)
+                field_name = field_data_names[i]
+                field_value = field_data_init[i]
+                field_value_type = field_value isa Number ? typeof(field_value) : eltype(field_value)
+                field_value_length = field_value isa AbstractArray ? length(field_value) : 1
+
+                if field_value_length == 3
+                    HDF5.create_dataset(FieldData, field_name, field_value_type, ((3,0),(3,-1)), chunk=(3,chunk_size))
+                else
+                    HDF5.create_dataset(FieldData, field_name, field_value_type, ((0,),(-1,)), chunk=(chunk_size,))
+                end
+            end
         elseif vtk_file_type == "UnstructuredGrid"
             HDF5.create_dataset(root, "Connectivity" , idType , ((0,),(-1,)), chunk=(chunk_size,))
             HDF5.create_dataset(root, "NumberOfCells" , idType , ((0,),(-1,)), chunk=(chunk_size,))
@@ -238,7 +271,19 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             HDF5.create_dataset(root, "Offsets" , idType , ((0,),(-1,)), chunk=(chunk_size,))
             HDF5.create_dataset(root, "Types" , UInt8 , ((0,),(-1,)), chunk=(chunk_size,)) #Must be UInt8
             
-            FieldData = HDF5.create_group(root, "FieldData") #Currently just empty group
+            FieldData = HDF5.create_group(root, "FieldData")
+            for i ∈ eachindex(field_data_names)
+                field_name = field_data_names[i]
+                field_value = field_data_init[i]
+                field_value_type = field_value isa Number ? typeof(field_value) : eltype(field_value)
+                field_value_length = field_value isa AbstractArray ? length(field_value) : 1
+
+                if field_value_length == 3
+                    HDF5.create_dataset(FieldData, field_name, field_value_type, ((3,0),(3,-1)), chunk=(3,chunk_size))
+                else
+                    HDF5.create_dataset(FieldData, field_name, field_value_type, ((0,),(-1,)), chunk=(chunk_size,))
+                end
+            end
 
             CellData = HDF5.create_group(root, "CellData")
             for name in cell_data_names
@@ -254,7 +299,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     function GenerateStepStructure(root, variable_names = String[], args...;
                                    vtk_file_type = "PolyData",
                                    chunk_size = 1000,
-                                   cell_data_names = ["CellData"])
+                                   cell_data_names = ["CellData"],
+                                   field_data_names = String[])
         steps = HDF5.create_group(root, "Steps")
     
         NSteps, _ = HDF5.create_attribute(steps, "NSteps", Int32)
@@ -271,6 +317,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             for name in nTopoDSs
                 HDF5.create_dataset(steps, name, idType, ((4,0),(4, -1)), chunk=(4, chunk_size))
             end
+            fData = HDF5.create_group(steps, "FieldDataOffsets")
+            for name in field_data_names
+                HDF5.create_dataset(fData, name, idType, ((0,),(-1,)), chunk=(chunk_size,))
+            end
         elseif vtk_file_type == "UnstructuredGrid"
             nTopoDSs = ["CellOffsets", "ConnectivityIdOffsets"]
             for name in nTopoDSs
@@ -280,6 +330,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             for name in cell_data_names
                 HDF5.create_dataset(cData, name, idType, ((0,),(-1,)),
                                     chunk=(chunk_size,))
+            end
+            fData = HDF5.create_group(steps, "FieldDataOffsets")
+            for name in field_data_names
+                HDF5.create_dataset(fData, name, idType, ((0,),(-1,)), chunk=(chunk_size,))
             end
         end
             
@@ -294,7 +348,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     
     end
 
-    function AppendVTKHDFData(root, newStep, Positions, variable_names, args...)
+    function AppendVTKHDFData(root, newStep, Positions, variable_names, args...;
+                              field_data_names = String[], field_data = Any[])
         steps = root["Steps"]
 
         # To update attributes, this is the best way I've found so far
@@ -357,6 +412,24 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             else
                 HDF5.set_extent_dims(root["PointData"][var_name], (length(root["PointData"][var_name]) + PositionLength,))
                 root["PointData"][var_name][PointsStartIndex:(PointsStartIndex + PositionLength - 1)] = arg
+            end
+        end
+
+        if !isempty(field_data_names)
+            for i ∈ eachindex(field_data_names)
+                field_name = field_data_names[i]
+                field_value = field_data[i]
+                if field_value isa AbstractArray
+                    FieldDataStartIndex = size(root["FieldData"][field_name], 2) + 1
+                    HDF5.set_extent_dims(root["FieldData"][field_name], (length(field_value), FieldDataStartIndex))
+                    root["FieldData"][field_name][:, FieldDataStartIndex] = field_value
+                else
+                    FieldDataStartIndex = length(root["FieldData"][field_name]) + 1
+                    HDF5.set_extent_dims(root["FieldData"][field_name], (FieldDataStartIndex,))
+                    root["FieldData"][field_name][FieldDataStartIndex] = field_value
+                end
+                HDF5.set_extent_dims(steps["FieldDataOffsets"][field_name], (length(steps["FieldDataOffsets"][field_name]) + 1,))
+                steps["FieldDataOffsets"][field_name][end] = Int(FieldDataStartIndex - 1)
             end
         end
         
@@ -548,6 +621,29 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         grid_filename = (iter) -> "$(grid_savepath)_$(lpad(iter,6,"0")).vtkhdf"
         
         output_vars = SimMetaData.OutputVariables
+        point_measure_names = PointMeasureFieldNames(SimMetaData.PointMeasures)
+
+        vector_fields = Set([
+            "KernelGradient",
+            "Velocity",
+            "Acceleration",
+            "GhostPoints",
+            "GhostNormals",
+        ])
+        field_map = Dict(
+            "Kernel" => :Kernel,
+            "KernelGradient" => :KernelGradient,
+            "Density" => :Density,
+            "Pressure" => :Pressure,
+            "Velocity" => :Velocity,
+            "Acceleration" => :Acceleration,
+            "BoundaryBool" => :BoundaryBool,
+            "ID" => :ID,
+            "Type" => :Type,
+            "GroupMarker" => :GroupMarker,
+            "GhostPoints" => :GhostPoints,
+            "GhostNormals" => :GhostNormals,
+        )
     
         # Initialize storage for file handles
         file_handles = if !SimMetaData.ExportSingleVTKHDF
@@ -566,20 +662,6 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             OutputVTKHDF = h5open("$(particle_savepath).vtkhdf", "w")
             root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
             
-            field_map = Dict(
-                "Kernel" => :Kernel,
-                "KernelGradient" => :KernelGradient,
-                "Density" => :Density,
-                "Pressure" => :Pressure,
-                "Velocity" => :Velocity,
-                "Acceleration" => :Acceleration,
-                "BoundaryBool" => :BoundaryBool,
-                "ID" => :ID,
-                "Type" => :Type,
-                "GroupMarker" => :GroupMarker,
-                "GhostPoints" => :GhostPoints,
-                "GhostNormals" => :GhostNormals,
-            )
             output_data_init = Vector{Any}(undef, length(output_vars))
             for (i, name) in pairs(output_vars)
                 prop = get(field_map, name, nothing)
@@ -593,8 +675,29 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 end
             end
 
-            GenerateGeometryStructure(root, output_vars, output_data_init...; chunk_size=1024)
-            GenerateStepStructure(root, output_vars, output_data_init...)
+            point_measure_init = FillPointMeasureData!(
+                Any[],
+                SimMetaData.PointMeasures,
+                SimParticles,
+                SimKernel,
+                Dimensions;
+                field_map = field_map,
+                vector_fields = vector_fields,
+            )
+            GenerateGeometryStructure(
+                root,
+                output_vars,
+                output_data_init...;
+                chunk_size = 1024,
+                field_data_names = point_measure_names,
+                field_data_init = point_measure_init,
+            )
+            GenerateStepStructure(
+                root,
+                output_vars,
+                output_data_init...;
+                field_data_names = point_measure_names,
+            )
     
             # Initialize grid file if needed
             if SimMetaData.ExportGridCells
@@ -622,28 +725,6 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             end
         end
 
-        vector_fields = Set([
-            "KernelGradient",
-            "Velocity",
-            "Acceleration",
-            "GhostPoints",
-            "GhostNormals",
-        ])
-        field_map = Dict(
-            "Kernel" => :Kernel,
-            "KernelGradient" => :KernelGradient,
-            "Density" => :Density,
-            "Pressure" => :Pressure,
-            "Velocity" => :Velocity,
-            "Acceleration" => :Acceleration,
-            "BoundaryBool" => :BoundaryBool,
-            "ID" => :ID,
-            "Type" => :Type,
-            "GroupMarker" => :GroupMarker,
-            "GhostPoints" => :GhostPoints,
-            "GhostNormals" => :GhostNormals,
-        )
-
         T = eltype(eltype(SimParticles.Position))
         function allocate_particle_snapshot()
             n = length(SimParticles.Position)
@@ -663,7 +744,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     output_data[i] = similar(src, n)
                 end
             end
-            return ParticleSnapshot(positions, output_data)
+            field_data = Any[]
+            return ParticleSnapshot(positions, output_data, field_data)
         end
 
         function fill_particle_snapshot!(snapshot)
@@ -700,6 +782,15 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     copy!(buf, src)
                 end
             end
+            FillPointMeasureData!(
+                snapshot.field_data,
+                SimMetaData.PointMeasures,
+                SimParticles,
+                SimKernel,
+                Dimensions;
+                field_map = field_map,
+                vector_fields = vector_fields,
+            )
             return snapshot
         end
 
@@ -719,7 +810,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                             particle_filename(job.iteration),
                             snapshot.positions,
                             output_vars,
-                            snapshot.output_data...,
+                            snapshot.output_data...;
+                            field_data_names = point_measure_names,
+                            field_data = snapshot.field_data,
                         )
                     else
                         AppendVTKHDFData(
@@ -727,7 +820,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                             job.time,
                             snapshot.positions,
                             output_vars,
-                            snapshot.output_data...,
+                            snapshot.output_data...;
+                            field_data_names = point_measure_names,
+                            field_data = snapshot.field_data,
                         )
                     end
                     put!(buffer_pool, snapshot)

@@ -3,6 +3,8 @@ module SimulationMetaDataConfiguration
 using Parameters
 using TimerOutputs
 
+using ..PointMeasurements: PointMeasure
+
 
 export SimulationMetaData, UpdateMetaData!, ShiftingMode, NoShifting, PlanarShifting,
        KernelOutputMode, NoKernelOutput, StoreKernelOutput,
@@ -56,6 +58,7 @@ struct StoreLog <: LogMode end
         "Type",
         "GroupMarker",
     ]
+    PointMeasures::Vector{PointMeasure}     = PointMeasure[]
     OpenLogFile::Bool                       = true
     Δx::FloatType                           = zero(FloatType)
 end

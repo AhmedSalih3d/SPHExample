@@ -1,4 +1,5 @@
 using SPHExample
+using StaticArrays
 
 let
     Dimensions = 2
@@ -15,6 +16,13 @@ let
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
         ExportGridCells=true,
+        PointMeasures=[
+            PointMeasure(
+                "Middle",
+                SVector{Dimensions, FloatType}(0.5, 0.25),
+                ["Pressure", "Velocity"],
+            ),
+        ],
         OpenLogFile=true,
     )
 
@@ -97,5 +105,4 @@ let
     
     # display(plt)
 end
-
 
