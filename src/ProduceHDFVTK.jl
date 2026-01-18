@@ -555,6 +555,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         particle_filename = (iter) -> "$(particle_savepath)_$(lpad(iter,6,"0")).vtkhdf"
         grid_filename = (iter) -> "$(grid_savepath)_$(lpad(iter,6,"0")).vtkhdf"
         point_filename = (iter) -> "$(particle_savepath)_PointMeasures_$(lpad(iter,6,"0")).vtkhdf"
+        multiblock_filename = "$(particle_savepath)_MultiBlock.vtkhdf"
         
         output_vars = SimMetaData.OutputVariables
         point_measure_vars = PointMeasureOutputVariableNames(SimMetaData.PointMeasures)
@@ -582,13 +583,13 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         )
 
         T = eltype(eltype(SimParticles.Position))
-        to_point3d = if Dimensions == 2
-            (point, ::Type{T}) -> SVector{3, T}(point[1], point[2], zero(T))
-        else
-            (point, ::Type{T}) -> point
-        end
-    
         # Initialize storage for file handles
+        if SimMetaData.ExportMultiBlockVTKHDF && !SimMetaData.ExportSingleVTKHDF
+            error("ExportMultiBlockVTKHDF requires ExportSingleVTKHDF=true.")
+        end
+
+        export_multiblock = SimMetaData.ExportMultiBlockVTKHDF && !isempty(point_measure_vars)
+
         file_handles = if !SimMetaData.ExportSingleVTKHDF
             # Multi-file mode: vector for particle files
             n_outputs = if SimMetaData.OutputTimes isa AbstractVector
@@ -603,7 +604,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             )
         else
             # Single-file mode: handles for both files
-            OutputVTKHDF = h5open("$(particle_savepath).vtkhdf", "w")
+            OutputVTKHDF = h5open(export_multiblock ? multiblock_filename : "$(particle_savepath).vtkhdf", "w")
             root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
             
             output_data_init = Vector{Any}(undef, length(output_vars))
@@ -619,14 +620,25 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 end
             end
 
+            root_particles = root
+            root_points = nothing
+
+            if export_multiblock
+                HDF5.attrs(root)["Version"] = Int32.([2, 3])
+                write_ascii_attribute(root, "Type", "MultiBlock")
+                blocks = HDF5.create_group(root, "Blocks")
+                root_particles = HDF5.create_group(blocks, "Particles")
+                root_points = HDF5.create_group(blocks, "PointMeasures")
+            end
+
             GenerateGeometryStructure(
-                root,
+                root_particles,
                 output_vars,
                 output_data_init...;
                 chunk_size = 1024,
             )
             GenerateStepStructure(
-                root,
+                root_particles,
                 output_vars,
                 output_data_init...;
             )
@@ -653,9 +665,11 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 
                 point_handle = nothing
                 if !isempty(point_measure_vars)
-                    OutputVTKHDFPoints = h5open("$(particle_savepath)_PointMeasures.vtkhdf", "w")
-                    point_root = HDF5.create_group(OutputVTKHDFPoints, "VTKHDF")
-                    point_positions = [to_point3d(measure.Position, T) for measure in SimMetaData.PointMeasures]
+                    point_root = root_points
+                    if !export_multiblock
+                        OutputVTKHDFPoints = h5open("$(particle_savepath)_PointMeasures.vtkhdf", "w")
+                        point_root = HDF5.create_group(OutputVTKHDFPoints, "VTKHDF")
+                    end
                     point_output_init = Vector{Any}(undef, length(point_measure_vars))
                     for (index, name) in pairs(point_measure_vars)
                         if name in vector_fields
@@ -668,16 +682,18 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     end
                     GenerateGeometryStructure(point_root, point_measure_vars, point_output_init...; chunk_size = 1024)
                     GenerateStepStructure(point_root, point_measure_vars, point_output_init...)
-                    point_handle = (file = OutputVTKHDFPoints, root = point_root)
+                    point_handle = export_multiblock ? (file = OutputVTKHDF, root = point_root, shared = true) : (file = OutputVTKHDFPoints, root = point_root, shared = false)
                 end
 
-                (particle_files = OutputVTKHDF, grid_files = OutputVTKHDFGrid, point_files = point_handle)
+                (particle_files = OutputVTKHDF, grid_files = OutputVTKHDFGrid, point_files = point_handle, particle_root = root_particles)
             else
                 point_handle = nothing
                 if !isempty(point_measure_vars)
-                    OutputVTKHDFPoints = h5open("$(particle_savepath)_PointMeasures.vtkhdf", "w")
-                    point_root = HDF5.create_group(OutputVTKHDFPoints, "VTKHDF")
-                    point_positions = [to_point3d(measure.Position, T) for measure in SimMetaData.PointMeasures]
+                    point_root = root_points
+                    if !export_multiblock
+                        OutputVTKHDFPoints = h5open("$(particle_savepath)_PointMeasures.vtkhdf", "w")
+                        point_root = HDF5.create_group(OutputVTKHDFPoints, "VTKHDF")
+                    end
                     point_output_init = Vector{Any}(undef, length(point_measure_vars))
                     for (index, name) in pairs(point_measure_vars)
                         if name in vector_fields
@@ -690,10 +706,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     end
                     GenerateGeometryStructure(point_root, point_measure_vars, point_output_init...; chunk_size = 1024)
                     GenerateStepStructure(point_root, point_measure_vars, point_output_init...)
-                    point_handle = (file = OutputVTKHDFPoints, root = point_root)
+                    point_handle = export_multiblock ? (file = OutputVTKHDF, root = point_root, shared = true) : (file = OutputVTKHDFPoints, root = point_root, shared = false)
                 end
 
-                (particle_files = OutputVTKHDF, grid_files = nothing, point_files = point_handle)
+                (particle_files = OutputVTKHDF, grid_files = nothing, point_files = point_handle, particle_root = root_particles)
             end
         end
 
@@ -799,7 +815,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                         )
                     else
                         AppendVTKHDFData(
-                            root,
+                            file_handles.particle_root,
                             job.time,
                             snapshot.positions,
                             output_vars,
@@ -904,7 +920,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     isopen(file_handles.grid_files) && close(file_handles.grid_files)
                 end
                 if file_handles.point_files !== nothing
-                    isopen(file_handles.point_files.file) && close(file_handles.point_files.file)
+                    if !file_handles.point_files.shared
+                        isopen(file_handles.point_files.file) && close(file_handles.point_files.file)
+                    end
                 end
             end
         end

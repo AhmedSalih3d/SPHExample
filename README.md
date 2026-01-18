@@ -94,7 +94,9 @@ To record a property at a specific point, populate `PointMeasures` in the
 `SimulationMetaData` configuration. Each `PointMeasure` names a location and a
 list of variables to interpolate within the neighbor stencil. These values are
 written into a dedicated `*_PointMeasures.vtkhdf` file so you can load probe
-points alongside the particle data.
+points alongside the particle data. Set `ExportMultiBlockVTKHDF=true` to emit a
+single `*_MultiBlock.vtkhdf` file that groups particle data and point measures
+as separate blocks for ParaView.
 
 ## Help
 

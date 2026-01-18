@@ -48,6 +48,7 @@ struct StoreLog <: LogMode end
     IndexCounter::Int                       = 0
     VisualizeInParaview::Bool               = true
     ExportSingleVTKHDF::Bool                = true
+    ExportMultiBlockVTKHDF::Bool            = false
     ExportGridCells::Bool                   = false
     ExportGridCellParticleCounts::Bool      = false
     OutputVariables::Vector{String}         = [
