@@ -588,7 +588,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             error("ExportMultiBlockVTKHDF requires ExportSingleVTKHDF=true.")
         end
 
-        export_multiblock = SimMetaData.ExportMultiBlockVTKHDF && !isempty(point_measure_vars)
+        export_multiblock = SimMetaData.ExportMultiBlockVTKHDF
 
         file_handles = if !SimMetaData.ExportSingleVTKHDF
             # Multi-file mode: vector for particle files
@@ -605,8 +605,12 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         else
             # Single-file mode: handles for both files
             OutputVTKHDF = h5open(export_multiblock ? multiblock_filename : "$(particle_savepath).vtkhdf", "w")
-            root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
-            
+                if !isempty(point_measure_vars)
+                    root_points = create_ordered_group(root, "PointMeasures")
+                end
+                if !isempty(point_measure_vars)
+                    create_soft_link("/VTKHDF/PointMeasures", assembly, "PointMeasures")
+                end
             output_data_init = Vector{Any}(undef, length(output_vars))
             for (i, name) in pairs(output_vars)
                 prop = get(field_map, name, nothing)
