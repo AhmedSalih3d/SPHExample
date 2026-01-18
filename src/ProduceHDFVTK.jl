@@ -63,21 +63,6 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         HDF5.write_attribute(attr, dtype, value)
     end
 
-    """
-    Compute points and connectivity information for an unstructured grid given
-    `UniqueCells` from the SPH cell list.  Returns `(points, connectivity,
-    offsets, cell_types, cell_ids, dims)` where `dims` is 2 or 3.
-    """
-    function compute_grid_geometry(SimKernel, UniqueCells)
-        ExtractDimensionality(::AbstractVector{CartesianIndex{N}}) where N = N
-
-        dims = ExtractDimensionality(UniqueCells)
-
-        dx = dy = dz = SimKernel.H
-
-        if dims == 2
-            minx, maxx = minimum(ci -> ci[1], UniqueCells), maximum(ci -> ci[1], UniqueCells)
-            miny, maxy = minimum(ci -> ci[2], UniqueCells), maximum(ci -> ci[2], UniqueCells)
             nx = maxx - minx + 1
         elseif dims == 3
             minx, maxx = minimum(ci -> ci[1], UniqueCells), maximum(ci -> ci[1], UniqueCells)
@@ -556,6 +541,21 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         grid_filename = (iter) -> "$(grid_savepath)_$(lpad(iter,6,"0")).vtkhdf"
         point_filename = (iter) -> "$(particle_savepath)_PointMeasures_$(lpad(iter,6,"0")).vtkhdf"
         multiblock_filename = "$(particle_savepath)_MultiBlock.vtkhdf"
+
+        function ordered_group(parent, name::String)
+            gcpl = HDF5.API.h5p_create(HDF5.API.H5P_GROUP_CREATE)
+            flags = HDF5.API.H5P_CRT_ORDER_TRACKED | HDF5.API.H5P_CRT_ORDER_INDEXED
+            HDF5.API.h5pset_link_creation_order(gcpl, flags)
+            HDF5.API.h5pset_attr_creation_order(gcpl, flags)
+            group_id = HDF5.API.h5gcreate(parent.id, name, HDF5.API.H5P_DEFAULT, gcpl, HDF5.API.H5P_DEFAULT)
+            HDF5.API.h5p_close(gcpl)
+            return HDF5.Group(group_id)
+        end
+
+        function create_soft_link(target_path::String, parent, name::String)
+            HDF5.API.h5l_create_soft(target_path, parent.id, name, HDF5.API.H5P_DEFAULT, HDF5.API.H5P_DEFAULT)
+            return nothing
+        end
         
         output_vars = SimMetaData.OutputVariables
         point_measure_vars = PointMeasureOutputVariableNames(SimMetaData.PointMeasures)
@@ -605,10 +605,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         else
             # Single-file mode: handles for both files
             OutputVTKHDF = h5open(export_multiblock ? multiblock_filename : "$(particle_savepath).vtkhdf", "w")
-                if !isempty(point_measure_vars)
-                    root_points = create_ordered_group(root, "PointMeasures")
-                end
-                if !isempty(point_measure_vars)
+            root = export_multiblock ? ordered_group(OutputVTKHDF, "VTKHDF") : HDF5.create_group(OutputVTKHDF, "VTKHDF")
+                root_particles = ordered_group(root, "Particles")
+                    root_points = ordered_group(root, "PointMeasures")
+                assembly = ordered_group(root, "Assembly")
                     create_soft_link("/VTKHDF/PointMeasures", assembly, "PointMeasures")
                 end
             output_data_init = Vector{Any}(undef, length(output_vars))
