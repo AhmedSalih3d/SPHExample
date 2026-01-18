@@ -46,6 +46,9 @@ function FillPointMeasureData!(FieldData, PointMeasures::Vector{<:PointMeasure},
     if isempty(PointMeasures)
         return FieldData
     end
+    if neighbor_data === nothing
+        error("PointMeasure evaluation requires neighbor data; pass `neighbor_data` from the cell list.")
+    end
 
     for Measure in PointMeasures
         AppendPointMeasureResults!(FieldData, Measure, SimParticles, SimKernel, Dimensions;
@@ -55,19 +58,6 @@ function FillPointMeasureData!(FieldData, PointMeasures::Vector{<:PointMeasure},
     end
 
     return FieldData
-end
-
-function FindNearestIndex(Positions, Position)
-    NearestIndex = 1
-    NearestDistance = typemax(eltype(Position))
-    @inbounds for ParticleIndex in eachindex(Positions)
-        Distance = norm(Position - Positions[ParticleIndex])
-        if Distance < NearestDistance
-            NearestDistance = Distance
-            NearestIndex = ParticleIndex
-        end
-    end
-    return NearestIndex, NearestDistance
 end
 
 function AppendPointMeasureResults!(FieldData, Measure::PointMeasure{D, T},
@@ -108,37 +98,35 @@ function AppendPointMeasureResults!(FieldData, Measure::PointMeasure{D, T},
     NearestDistance = typemax(T)
     WeightSum = zero(T)
 
-    HasCandidates = false
-    if neighbor_data !== nothing
-        cell_dict = neighbor_data.cell_dict
-        particle_ranges = neighbor_data.particle_ranges
-        full_stencil = neighbor_data.full_stencil
-        cell_index = CartesianIndex(map(x -> MapFloor(x, SimKernel.H⁻¹), Tuple(Position)))
+    cell_dict = neighbor_data.cell_dict
+    particle_ranges = neighbor_data.particle_ranges
+    full_stencil = neighbor_data.full_stencil
+    cell_index = CartesianIndex(map(x -> MapFloor(x, SimKernel.H⁻¹), Tuple(Position)))
 
-        @inbounds for offset in full_stencil
-            neighbor_cell = cell_index + offset
-            neighbor_index = get(cell_dict, neighbor_cell, 0)
-            if neighbor_index != 0
-                start_index = particle_ranges[neighbor_index]
-                end_index = particle_ranges[neighbor_index + 1] - 1
-                if start_index <= end_index
-                    HasCandidates = true
-                    for particle_index in start_index:end_index
-                        Offset = Position - Positions[particle_index]
-                        Distance = norm(Offset)
-                        if Distance < NearestDistance
-                            NearestDistance = Distance
-                            NearestIndex = particle_index
-                        end
-                        q = clamp(Distance * SimKernel.h⁻¹, zero(T), T(2))
-                        if q <= T(2)
-                            Weight = Wᵢⱼ(SimKernel, q)
-                            if Weight != zero(T)
-                                WeightSum += Weight
-                                for VariableIndex in eachindex(Variables)
-                                    if InterpolateMask[VariableIndex]
-                                        Accumulators[VariableIndex] += Sources[VariableIndex][particle_index] * Weight
-                                    end
+    HasCandidates = false
+    @inbounds for offset in full_stencil
+        neighbor_cell = cell_index + offset
+        neighbor_index = get(cell_dict, neighbor_cell, 0)
+        if neighbor_index != 0
+            start_index = particle_ranges[neighbor_index]
+            end_index = particle_ranges[neighbor_index + 1] - 1
+            if start_index <= end_index
+                HasCandidates = true
+                for particle_index in start_index:end_index
+                    Offset = Position - Positions[particle_index]
+                    Distance = norm(Offset)
+                    if Distance < NearestDistance
+                        NearestDistance = Distance
+                        NearestIndex = particle_index
+                    end
+                    q = clamp(Distance * SimKernel.h⁻¹, zero(T), T(2))
+                    if q <= T(2)
+                        Weight = Wᵢⱼ(SimKernel, q)
+                        if Weight != zero(T)
+                            WeightSum += Weight
+                            for VariableIndex in eachindex(Variables)
+                                if InterpolateMask[VariableIndex]
+                                    Accumulators[VariableIndex] += Sources[VariableIndex][particle_index] * Weight
                                 end
                             end
                         end
@@ -149,22 +137,7 @@ function AppendPointMeasureResults!(FieldData, Measure::PointMeasure{D, T},
     end
 
     if !HasCandidates
-        NearestIndex, NearestDistance = FindNearestIndex(Positions, Position)
-        @inbounds for ParticleIndex in eachindex(Positions)
-            Distance = norm(Position - Positions[ParticleIndex])
-            q = clamp(Distance * SimKernel.h⁻¹, zero(T), T(2))
-            if q <= T(2)
-                Weight = Wᵢⱼ(SimKernel, q)
-                if Weight != zero(T)
-                    WeightSum += Weight
-                    for VariableIndex in eachindex(Variables)
-                        if InterpolateMask[VariableIndex]
-                            Accumulators[VariableIndex] += Sources[VariableIndex][ParticleIndex] * Weight
-                        end
-                    end
-                end
-            end
-        end
+        error("PointMeasure found no neighbor candidates; adjust probe position or cell list.")
     end
 
     for (Index, Variable) in pairs(Variables)
