@@ -720,6 +720,17 @@ using LinearAlgebra
             AccelerationMax = @alloc(FloatType, length(Position))
             dt₂ = dt * 0.5
 
+            @timeit SimMetaData.HourGlass "00 Init Pressure"                          Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
+            @timeit SimMetaData.HourGlass "00a Init MDBC"                              ApplyMDBCBeforeHalf!(
+                SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, CellDict,
+                Position, Density, GhostPoints, GhostNormals, ParticleType,
+            )
+            @timeit SimMetaData.HourGlass "00b Init NeighborLoop" NeighborLoopPerParticle!(
+                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                SimConstants, SimParticles, ParticleRanges, CellDict,
+                NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
+            )
+
             while SimMetaData.TotalTime <= next_output_time(SimMetaData)
                 @timeit SimMetaData.HourGlass "01 Calculate IndexCounter"  begin
 
@@ -744,28 +755,15 @@ using LinearAlgebra
 
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
             
-                @timeit SimMetaData.HourGlass "02 Pressure"                              Pressure!(SimParticles.Pressure,SimParticles.Density,SimConstants)
-                @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(
-                    SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, CellDict,
-                    Position, Density, GhostPoints, GhostNormals, ParticleType,
-                )
-
-                @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoopPerParticle!(
-                    SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                    SimConstants, SimParticles, ParticleRanges, CellDict,
-                    NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
-                )
+                @timeit SimMetaData.HourGlass "02 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
 
 
-                @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
-
-
-                @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
+                @timeit SimMetaData.HourGlass "03 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, MotionLimiter)
             
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
 
-                @timeit SimMetaData.HourGlass "07 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
-                @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticle!(
+                @timeit SimMetaData.HourGlass "04 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺,SimConstants)
+                @timeit SimMetaData.HourGlass "05 NeighborLoop" NeighborLoopPerParticle!(
                     SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                     SimConstants, SimParticles, ParticleRanges, CellDict,
                     NeighborCellLists, dρdtI, Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
@@ -774,15 +772,15 @@ using LinearAlgebra
                     Velocity = Velocityₙ⁺,
                 )
 
-                @timeit SimMetaData.HourGlass "09 Final Density"                         DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
+                @timeit SimMetaData.HourGlass "06 Final Density"                         DensityEpsi!(Density, dρdtI, ρₙ⁺, dt)
 
-                @timeit SimMetaData.HourGlass "10 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
+                @timeit SimMetaData.HourGlass "07 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(Density, SimConstants.ρ₀, MotionLimiter)
 
-                @timeit SimMetaData.HourGlass "11 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt)
+                @timeit SimMetaData.HourGlass "08 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt)
 
-                @timeit SimMetaData.HourGlass "12 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
+                @timeit SimMetaData.HourGlass "09 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
 
-                @timeit SimMetaData.HourGlass "13 Update TimeStep" begin
+                @timeit SimMetaData.HourGlass "10 Update TimeStep" begin
                     max_acceleration = maximum(AccelerationMax)
                     dt = Δt(max_acceleration, SimConstants, SimKernel)
                 end
