@@ -92,7 +92,7 @@ function HalfTimeStep(::SimulationMetaData{Dimensions, FloatType, SMode, KMode, 
 end
 
 function FullTimeStep(::SimulationMetaData{D,T,NoShifting,K,B,L}, SimKernel,
-                          SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,
+                          SimConstants, SimParticles, Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,
                                                                              K<:KernelOutputMode,
                                                                              B<:MDBCMode,
                                                                              L<:LogMode}
@@ -100,13 +100,13 @@ function FullTimeStep(::SimulationMetaData{D,T,NoShifting,K,B,L}, SimKernel,
     @inbounds @simd ivdep for i in eachindex(Position)
         Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor[i])
         Velocity[i]       +=  Acceleration[i] * dt * MotionLimiter[i]
-        Position[i]       +=  (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt) * MotionLimiter[i]
+        Position[i]       +=  (Velocityₙ⁺[i] * dt) * MotionLimiter[i]
     end
     return nothing
 end
 
 function FullTimeStep(::SimulationMetaData{D,T,S,K,B,L}, SimKernel, SimConstants,
-                          SimParticles, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,S<:ShiftingMode,
+                          SimParticles, Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,S<:ShiftingMode,
                                                              K<:KernelOutputMode,
                                                              B<:MDBCMode,
                                                              L<:LogMode}
@@ -122,10 +122,10 @@ function FullTimeStep(::SimulationMetaData{D,T,S,K,B,L}, SimKernel, SimConstants
         if A_FSC < 0
             δxᵢ = zero(eltype(Position))
         else
-            δxᵢ = -A_FSC * A * SimKernel.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
+            δxᵢ = -A_FSC * A * SimKernel.h * norm(Velocityₙ⁺[i]) * dt * ∇Cᵢ[i]
         end
 
-        Position[i]           += (((Velocity[i] + (Velocity[i] - Acceleration[i] * dt * MotionLimiter[i])) / 2) * dt + δxᵢ) * MotionLimiter[i]
+        Position[i]           += (Velocityₙ⁺[i] * dt + δxᵢ) * MotionLimiter[i]
     end
     return nothing
 end
