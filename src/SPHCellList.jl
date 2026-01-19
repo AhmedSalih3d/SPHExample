@@ -720,6 +720,10 @@ using LinearAlgebra
             AccelerationMax = @alloc(FloatType, length(Position))
             dt₂ = dt * 0.5
 
+            SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace, ParticleRanges, UniqueCells, CellDict)
+            UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
+            BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellDict)
+
             @timeit SimMetaData.HourGlass "00 Init Pressure"                          Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
             @timeit SimMetaData.HourGlass "00a Init MDBC"                              ApplyMDBCBeforeHalf!(
                 SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, CellDict,
