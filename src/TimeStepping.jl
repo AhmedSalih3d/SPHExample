@@ -28,8 +28,9 @@ function Δt(max_acceleration, SimulationConstants, SPHKernel)
     @unpack c₀, CFL = SimulationConstants
     @unpack h   = SPHKernel
 
+    dt_speed = h / c₀
     dt_force = sqrt(h / max_acceleration)
-    return CFL * min(h / c₀, dt_force)
+    return CFL * min(dt_speed, dt_force)
 end
 
 @inline next_output_time(SimMetaData) = next_output_time(SimMetaData.OutputTimes, SimMetaData)
