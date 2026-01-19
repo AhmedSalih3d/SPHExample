@@ -7,9 +7,10 @@ let
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.5)
     # SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=43.4, δᵩ = 0.1, CFL=0.2)
 # 
+    OutputDirectory = joinpath(pwd(), "output", "StillWedge2D_MDBC")
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
         SimulationName="StillWedge", 
-        SaveLocation="W:/Simulations/StillWedge2D_MDBC",
+        SaveLocation=OutputDirectory,
         SimulationTime=4.0,
         OutputTimes=0.01,
         VisualizeInParaview=true,
@@ -19,9 +20,7 @@ let
     )
 
     # If save directory is not already made, make it
-    if !isdir(SimMetaDataWedge.SaveLocation)
-        mkdir(SimMetaDataWedge.SaveLocation)
-    end
+    mkpath(SimMetaDataWedge.SaveLocation)
 
     # Assuming SimConstantsWedge is defined somewhere else with the field `dx`
     FixedBoundary = Geometry{Dimensions, FloatType}(
@@ -49,7 +48,7 @@ let
 
     SimKernel = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); dx = SimConstantsWedge.dx)
 
-    @profview RunSimulation(
+    RunSimulation(
         SimGeometry         = SimulationGeometry,
         SimMetaData         = SimMetaDataWedge,
         SimConstants        = SimConstantsWedge,
@@ -97,5 +96,3 @@ let
     
     # display(plt)
 end
-
-
