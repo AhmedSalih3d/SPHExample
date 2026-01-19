@@ -18,7 +18,7 @@ using ..OpenExternalPrograms
 using ..SPHKernels
 using ..SPHViscosityModels
 using ..SPHDensityDiffusionModels
-using ..SPHNeighborList: BuildNeighborCellLists!, ComputeCellNeighborCounts, ComputeCellParticleCounts, ConstructStencil, ExtractCells!, MapFloor, UpdateNeighbors!, UpdateΔx!
+using ..SPHNeighborList: BuildNeighborCellLists!, ComputeCellNeighborCounts, ComputeCellParticleCounts, ConstructStencil, DefaultNeighborLipFactor, ExtractCells!, MapFloor, NeighborListInverseCutOff, UpdateNeighbors!, UpdateΔx!
 
 using StaticArrays
 using StructArrays: StructArray, foreachfield
@@ -297,7 +297,7 @@ using LinearAlgebra
         return nothing
     end
 
-    f(SimKernel, GhostPoint) = CartesianIndex(map(x -> MapFloor(x, SimKernel.H⁻¹), Tuple(GhostPoint)))
+    f(SimKernel, GhostPoint; LipFactor = DefaultNeighborLipFactor) = CartesianIndex(map(x -> MapFloor(x, NeighborListInverseCutOff(SimKernel.H⁻¹, typeof(SimKernel.H⁻¹)(LipFactor))), Tuple(GhostPoint)))
     function NeighborLoopMDBC!(SimKernel,
                                SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
                                SimConstants, ParticleRanges, CellDict, Position,
@@ -724,7 +724,8 @@ using LinearAlgebra
                 @timeit SimMetaData.HourGlass "01 Calculate IndexCounter"  begin
 
                     SimMetaData.Δx = UpdateΔx!(SimMetaData.Δx, Positionₙ⁺, SimParticles.Position)
-                    ShouldRebuild = SimMetaData.Δx >= SimKernel.h
+                    NeighborListLipFactor = FloatType(DefaultNeighborLipFactor)
+                    ShouldRebuild = SimMetaData.Δx >= SimKernel.h * NeighborListLipFactor
 
                     # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
 
@@ -735,7 +736,7 @@ using LinearAlgebra
                     # Remove if statement logic if you want to update each iteration
                     # if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
                     if ShouldRebuild
-                        @timeit SimMetaData.HourGlass "01a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells, CellDict)
+                        @timeit SimMetaData.HourGlass "01a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells, CellDict; LipFactor = NeighborListLipFactor)
                         SimMetaData.Δx    = zero(eltype(dρdtI))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                         BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellDict)
