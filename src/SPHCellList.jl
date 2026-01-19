@@ -304,7 +304,7 @@ using LinearAlgebra
                                Density, GhostPoints, GhostNormals, ParticleType,
                                bᵧ, Aᵧ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
         
-        const FullStencil = ConstructStencil(Val(Dimensions))
+        FullStencil = ConstructStencil(Val(Dimensions))
 
         @inbounds @threads for iter in eachindex(GhostPoints)
             GhostPoint = GhostPoints[iter]
