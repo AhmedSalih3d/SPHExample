@@ -304,7 +304,7 @@ using LinearAlgebra
                                Density, GhostPoints, GhostNormals, ParticleType,
                                bᵧ, Aᵧ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
         
-        FullStencil = ConstructStencil(Val(Dimensions))
+        const FullStencil = ConstructStencil(Val(Dimensions))
 
         @inbounds @threads for iter in eachindex(GhostPoints)
             GhostPoint = GhostPoints[iter]
@@ -708,8 +708,8 @@ using LinearAlgebra
                 GroupMarker = SimParticles
         ParticleType   = SimParticles.Type
         ParticleMarker = GroupMarker
-        GhostPoints = hasproperty(SimParticles, :GhostPoints) ? SimParticles.GhostPoints : nothing
-        GhostNormals = hasproperty(SimParticles, :GhostNormals) ? SimParticles.GhostNormals : nothing
+        GhostPoints    = hasproperty(SimParticles, :GhostPoints) ? SimParticles.GhostPoints : nothing
+        GhostNormals   = hasproperty(SimParticles, :GhostNormals) ? SimParticles.GhostNormals : nothing
 
         ###
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
