@@ -390,7 +390,7 @@ using LinearAlgebra
             dᵢⱼ = sqrt(abs(xᵢⱼ²))
             dᵢⱼ² = dᵢⱼ^2
             q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
-            ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
+            ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ, dᵢⱼ)
 
             ρᵢ = Density[i]
             ρⱼ = Density[j]
@@ -437,7 +437,7 @@ using LinearAlgebra
             dᵢⱼ = sqrt(abs(xᵢⱼ²))
             dᵢⱼ² = dᵢⱼ^2
             q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
-            ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
+            ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ, dᵢⱼ)
 
             ρᵢ = Density[i]
             ρⱼ = Density[j]
@@ -486,7 +486,7 @@ using LinearAlgebra
             dᵢⱼ = sqrt(abs(xᵢⱼ²))
             dᵢⱼ² = dᵢⱼ^2
             q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
-            ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
+            ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ, dᵢⱼ)
 
             ρᵢ = Density[i]
             ρⱼ = Density[j]
@@ -540,7 +540,7 @@ using LinearAlgebra
             dᵢⱼ = sqrt(abs(xᵢⱼ²))
             dᵢⱼ² = dᵢⱼ^2
             q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
-            ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
+            ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ, dᵢⱼ)
 
             ρᵢ = Density[i]
             ρⱼ = Density[j]
@@ -599,7 +599,7 @@ using LinearAlgebra
         
                 Wᵢⱼ = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
 
-                ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
+                ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ, dᵢⱼ)
 
                 Vⱼ = m₀ / ρⱼ
         
