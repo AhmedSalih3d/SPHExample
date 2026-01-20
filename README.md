@@ -24,6 +24,10 @@ The project demonstrates how to assemble a small SPH solver with Julia. It focus
 - **Dynamic boundary condition** – inspired by DualSPHysics.
 - **Density diffusion** – based on Fourtakas et al. 2019 to reduce pressure noise.
 - **Wendland quintic kernel** – simple and stable without tensile corrections.
+- **Symplectic time stepping** – choose between symplectic two-loop and single-loop midpoint updates.
+
+Time-stepping behavior is selected via `RunSimulation(..., SimTimeStepping=...)` with either
+`SymplecticTimeStepping()` or `SingleNeighborTimeStepping()` depending on the desired update path.
 
 ## Folder Structure
 

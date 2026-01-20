@@ -72,6 +72,7 @@ let
         SimLogger          = SimLogger,
         SimParticles       = SimParticles,
         SimViscosity       = SimViscosity,
-        SimDensityDiffusion= SimDensityDiffusion
+        SimDensityDiffusion= SimDensityDiffusion,
+        SimTimeStepping    = SingleNeighborTimeStepping()
     )
 end

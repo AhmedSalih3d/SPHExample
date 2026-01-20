@@ -7,7 +7,8 @@ using TimerOutputs
 export SimulationMetaData, UpdateMetaData!, ShiftingMode, NoShifting, PlanarShifting,
        KernelOutputMode, NoKernelOutput, StoreKernelOutput,
        MDBCMode, NoMDBC, SimpleMDBC,
-       LogMode, NoLog, StoreLog
+       LogMode, NoLog, StoreLog,
+       TimeSteppingMode, SymplecticTimeStepping, SingleNeighborTimeStepping
 
 abstract type ShiftingMode end
 struct NoShifting    <: ShiftingMode end
@@ -24,6 +25,10 @@ struct SimpleMDBC <: MDBCMode end
 abstract type LogMode end
 struct NoLog    <: LogMode end
 struct StoreLog <: LogMode end
+
+abstract type TimeSteppingMode end
+struct SymplecticTimeStepping    <: TimeSteppingMode end
+struct SingleNeighborTimeStepping <: TimeSteppingMode end
 
 @with_kw mutable struct SimulationMetaData{Dimensions,
                                            FloatType <: AbstractFloat,
@@ -58,6 +63,7 @@ struct StoreLog <: LogMode end
     ]
     OpenLogFile::Bool                       = true
     Δx::FloatType                           = zero(FloatType)
+    TimeSteppingMode::TimeSteppingMode      = SingleNeighborTimeStepping()
 end
 SimulationMetaData{D,T,S,K,B}(; kwargs...) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode} =
     SimulationMetaData{D,T,S,K,B,NoLog}(; kwargs...)
