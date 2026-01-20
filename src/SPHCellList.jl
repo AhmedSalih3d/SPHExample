@@ -824,10 +824,7 @@ using LinearAlgebra
 
                 @timeit SimMetaData.HourGlass "10 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
 
-                @timeit SimMetaData.HourGlass "11 Update TimeStep" begin
-                    max_acceleration = maximum(AccelerationMax)
-                    dt = Δt(max_acceleration, SimConstants, SimKernel)
-                end
+                @timeit SimMetaData.HourGlass "11 Update TimeStep" dt = UpdateTimeStep(AccelerationMax, SimConstants, SimKernel)
             end
         end
         

@@ -1,6 +1,6 @@
 module TimeStepping
 
-export Δt, next_output_time, ProgressMotion, HalfTimeStep, FullTimeStep
+export Δt, next_output_time, ProgressMotion, HalfTimeStep, FullTimeStep, UpdateTimeStep
 
 using LinearAlgebra
 using Parameters
@@ -31,6 +31,24 @@ function Δt(max_acceleration, SimulationConstants, SPHKernel)
     dt_speed = h / c₀
     dt_force = sqrt(h / max_acceleration)
     return CFL * min(dt_speed, dt_force)
+end
+
+"""
+    UpdateTimeStep(AccelerationMax, SimConstants, SimKernel)
+
+Computes and returns the updated time step based on maximum acceleration across all particles.
+
+# Arguments
+- `AccelerationMax`: Array of acceleration magnitudes for each particle.
+- `SimConstants`: Struct containing simulation parameters.
+- `SimKernel`: Struct containing kernel parameters.
+
+# Returns
+- The calculated adaptive time step `dt`.
+"""
+function UpdateTimeStep(AccelerationMax, SimConstants, SimKernel)
+    max_acceleration = maximum(AccelerationMax)
+    return Δt(max_acceleration, SimConstants, SimKernel)
 end
 
 @inline next_output_time(SimMetaData) = next_output_time(SimMetaData.OutputTimes, SimMetaData)
