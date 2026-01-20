@@ -2,6 +2,7 @@ module SPHDensityDiffusionModels
 
 using StaticArrays, LinearAlgebra, Parameters
 using ..SimulationEquations
+using ..SimulationGeometry
 #---------------------------------------------------------------
 # Exported
 #---------------------------------------------------------------
@@ -39,7 +40,7 @@ struct ZeroDensityDiffusion <: SPHDensityDiffusion end
         d²,
         i,
         j,
-        MotionLimiter
+        ParticleType
 )
         return zero(d²), zero(d²)
 end
@@ -63,7 +64,7 @@ struct ZeroGravityLinearDensityDiffusion <: SPHDensityDiffusion end
         d²,
         i,
         j,
-        MotionLimiter
+        ParticleType
 )
 
         @unpack ρ₀, m₀, c₀, δᵩ, Cb, Cb⁻¹, γ    = SimConstants
@@ -107,7 +108,7 @@ struct LinearDensityDiffusion <: SPHDensityDiffusion end
         d²,
         i,
         j,
-        MotionLimiter
+        ParticleType
 )
 
         @unpack ρ₀, m₀, c₀, δᵩ, Cb, Cb⁻¹, γ, g = SimConstants
@@ -127,7 +128,7 @@ struct LinearDensityDiffusion <: SPHDensityDiffusion end
         ρⱼᵢ = ρⱼ - ρᵢ
         ψᵢⱼ = 2 * (ρⱼᵢ - ρᵢⱼᴴ)  * (-xᵢⱼ) * invdᵢⱼ²η²
 
-        MLcond = MotionLimiter[i] * MotionLimiter[j]
+        MLcond = MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
 
         Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ) * MLcond
         Dⱼ  = -Dᵢ
@@ -157,7 +158,7 @@ struct ComplexDensityDiffusion <: SPHDensityDiffusion end
         d²,
         i,
         j,
-        MotionLimiter
+        ParticleType
 )
 
         @unpack ρ₀, m₀, c₀, δᵩ, Cb, Cb⁻¹, γ, g = SimConstants
@@ -179,7 +180,7 @@ struct ComplexDensityDiffusion <: SPHDensityDiffusion end
         ρⱼᵢ = ρⱼ - ρᵢ
         ψᵢⱼ = 2 * (ρⱼᵢ - ρᵢⱼᴴ)  * (-xᵢⱼ) * invdᵢⱼ²η²
 
-        MLcond = MotionLimiter[i] * MotionLimiter[j]
+        MLcond = MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
 
         Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ) * MLcond
         Dⱼ  = -Dᵢ
