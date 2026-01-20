@@ -84,11 +84,11 @@ function HalfTimeStep(::SimulationMetaData{Dimensions, FloatType, SMode, KMode, 
     AccelerationScalarType = eltype(eltype(Acceleration))
 
     @inbounds @simd ivdep for i in eachindex(Position)
-        motion_limiter = MotionLimiterValue(AccelerationScalarType, ParticleType[i])
-        gravity_factor = GravityFactorValue(AccelerationScalarType, ParticleType[i])
-        Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * gravity_factor)
-        Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * motion_limiter
-        Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * motion_limiter
+        MotionLimiterFactor = MotionLimiterValue(AccelerationScalarType, ParticleType[i])
+        GravityFactor = GravityFactorValue(AccelerationScalarType, ParticleType[i])
+        Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor)
+        Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiterFactor
+        Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiterFactor
         ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
     end
 
@@ -104,11 +104,11 @@ function FullTimeStep(::SimulationMetaData{D,T,NoShifting,K,B,L}, SimKernel,
     ParticleType = SimParticles.Type
     AccelerationScalarType = eltype(eltype(Acceleration))
     @inbounds @simd ivdep for i in eachindex(Position)
-        motion_limiter = MotionLimiterValue(AccelerationScalarType, ParticleType[i])
-        gravity_factor = GravityFactorValue(AccelerationScalarType, ParticleType[i])
-        Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * gravity_factor)
-        Velocity[i]       +=  Acceleration[i] * dt * motion_limiter
-        Position[i]       +=  (Velocityₙ⁺[i] * dt) * motion_limiter
+        MotionLimiterFactor = MotionLimiterValue(AccelerationScalarType, ParticleType[i])
+        GravityFactor = GravityFactorValue(AccelerationScalarType, ParticleType[i])
+        Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor)
+        Velocity[i]       +=  Acceleration[i] * dt * MotionLimiterFactor
+        Position[i]       +=  (Velocityₙ⁺[i] * dt) * MotionLimiterFactor
     end
     return nothing
 end
@@ -125,10 +125,10 @@ function FullTimeStep(::SimulationMetaData{D,T,S,K,B,L}, SimKernel, SimConstants
     A_FST = 0; # zero for internal flows
     A_FSM = length(first(Position)); #2d, 3d val different
     @inbounds @simd ivdep for i in eachindex(Position)
-        motion_limiter = MotionLimiterValue(AccelerationScalarType, ParticleType[i])
-        gravity_factor = GravityFactorValue(AccelerationScalarType, ParticleType[i])
-        Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * gravity_factor)
-        Velocity[i]       +=  Acceleration[i] * dt * motion_limiter
+        MotionLimiterFactor = MotionLimiterValue(AccelerationScalarType, ParticleType[i])
+        GravityFactor = GravityFactorValue(AccelerationScalarType, ParticleType[i])
+        Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor)
+        Velocity[i]       +=  Acceleration[i] * dt * MotionLimiterFactor
 
         A_FSC                  = (∇◌rᵢ[i] - A_FST)/(A_FSM - A_FST)
         if A_FSC < 0
@@ -137,7 +137,7 @@ function FullTimeStep(::SimulationMetaData{D,T,S,K,B,L}, SimKernel, SimConstants
             δxᵢ = -A_FSC * A * SimKernel.h * norm(Velocityₙ⁺[i]) * dt * ∇Cᵢ[i]
         end
 
-        Position[i]           += (Velocityₙ⁺[i] * dt + δxᵢ) * motion_limiter
+        Position[i]           += (Velocityₙ⁺[i] * dt + δxᵢ) * MotionLimiterFactor
     end
     return nothing
 end

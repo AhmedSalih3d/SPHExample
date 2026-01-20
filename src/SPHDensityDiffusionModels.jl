@@ -128,9 +128,9 @@ struct LinearDensityDiffusion <: SPHDensityDiffusion end
         ρⱼᵢ = ρⱼ - ρᵢ
         ψᵢⱼ = 2 * (ρⱼᵢ - ρᵢⱼᴴ)  * (-xᵢⱼ) * invdᵢⱼ²η²
 
-        MLcond = MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
+        MotionLimiterCondition = MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
 
-        Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ) * MLcond
+        Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
         Dⱼ  = -Dᵢ
 
         return Dᵢ, Dⱼ
@@ -180,9 +180,9 @@ struct ComplexDensityDiffusion <: SPHDensityDiffusion end
         ρⱼᵢ = ρⱼ - ρᵢ
         ψᵢⱼ = 2 * (ρⱼᵢ - ρᵢⱼᴴ)  * (-xᵢⱼ) * invdᵢⱼ²η²
 
-        MLcond = MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
+        MotionLimiterCondition = MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
 
-        Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ) * MLcond
+        Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
         Dⱼ  = -Dᵢ
 
         return Dᵢ, Dⱼ
