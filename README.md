@@ -46,6 +46,7 @@ src/
 ├── PreProcess.jl                    # Load inputs and allocate arrays
 ├── ProduceHDFVTK.jl                 # Write simulation data in HDF5/VTK format
 ├── SPHCellList.jl                   # Custom neighbour search and time stepping
+├── SPHCUDA.jl                       # Optional CUDA interaction path
 ├── SPHDensityDiffusionModels.jl     # Density diffusion implementations
 ├── SPHExample.jl                    # Glue module re-exporting all functions
 ├── SPHKernels.jl                    # SPH kernel definitions
@@ -90,6 +91,20 @@ To color exported cell grids by particle counts, set
 one plus the particles in its neighbor stencil.
 Neighbor rebuilds use a per-cell ordering buffer without reordering particle
 storage.
+
+### CUDA Acceleration (Optional)
+
+The solver can offload the particle interaction loops to a CUDA GPU when
+`CUDA.jl` is available in your Julia environment. The helper `CUDAAvailable()`
+reports whether CUDA is functional, and the `RunSimulationCUDA` entry point
+mirrors `RunSimulation` while delegating the interaction loops to the GPU.
+Currently, the CUDA path supports the `NoShifting` and `NoKernelOutput`
+configurations with `LinearDensityDiffusion` or `ZeroDensityDiffusion` plus
+`ArtificialViscosity` or `ZeroViscosity`.
+
+To try the GPU workflow, install CUDA.jl in your environment and run
+`example/StillWedgeMDBC.jl`, which will automatically pick `RunSimulationCUDA`
+when CUDA is available.
 
 ## Help
 
