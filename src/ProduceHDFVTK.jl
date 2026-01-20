@@ -23,20 +23,27 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     using StaticArrays
 
     using ..AuxiliaryFunctions: to_3d!
+    using ..PointMeasurements: PointMeasureOutputVariableNames, FillPointMeasureSnapshot!
 
 
     const idType = Int64
     const fType = Float64
 
-    struct ParticleSnapshot{P, V}
+    struct ParticleSnapshot{P, V, M}
         positions::P
         output_data::V
+        point_measure_snapshot::M
     end
 
-    struct ParticleWriteJob{P, V}
+    struct ParticleWriteJob{P, V, M}
         iteration::Int
         time::AbstractFloat
-        snapshot::ParticleSnapshot{P, V}
+        snapshot::ParticleSnapshot{P, V, M}
+    end
+
+    struct PointMeasureSnapshot{P, V}
+        positions::P
+        output_data::V
     end
 
     struct GridWriteJob{N}
@@ -56,21 +63,21 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         HDF5.write_attribute(attr, dtype, value)
     end
 
-    """
-    Compute points and connectivity information for an unstructured grid given
-    `UniqueCells` from the SPH cell list.  Returns `(points, connectivity,
-    offsets, cell_types, cell_ids, dims)` where `dims` is 2 or 3.
-    """
-    function compute_grid_geometry(SimKernel, UniqueCells)
-        ExtractDimensionality(::AbstractVector{CartesianIndex{N}}) where N = N
+    function create_ordered_group(parent, name::String)
+        gcpl = HDF5.API.h5p_create(HDF5.API.H5P_GROUP_CREATE)
+        flags = HDF5.API.H5P_CRT_ORDER_TRACKED | HDF5.API.H5P_CRT_ORDER_INDEXED
+        HDF5.API.h5pset_link_creation_order(gcpl, flags)
+        HDF5.API.h5pset_attr_creation_order(gcpl, flags)
+        group_id = HDF5.API.h5gcreate(parent.id, name, HDF5.API.H5P_DEFAULT, gcpl, HDF5.API.H5P_DEFAULT)
+        HDF5.API.h5p_close(gcpl)
+        return HDF5.Group(group_id)
+    end
 
-        dims = ExtractDimensionality(UniqueCells)
+    function create_soft_link(target_path::String, parent, name::String)
+        HDF5.API.h5l_create_soft(target_path, parent.id, name, HDF5.API.H5P_DEFAULT, HDF5.API.H5P_DEFAULT)
+        return nothing
+    end
 
-        dx = dy = dz = SimKernel.H
-
-        if dims == 2
-            minx, maxx = minimum(ci -> ci[1], UniqueCells), maximum(ci -> ci[1], UniqueCells)
-            miny, maxy = minimum(ci -> ci[2], UniqueCells), maximum(ci -> ci[2], UniqueCells)
             nx = maxx - minx + 1
         elseif dims == 3
             minx, maxx = minimum(ci -> ci[1], UniqueCells), maximum(ci -> ci[1], UniqueCells)
@@ -231,6 +238,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     HDF5.create_dataset(pData, var_name, arg_val_type, ((0,),(-1,)), chunk=(chunk_size,))
                 end
             end
+
+            FieldData = HDF5.create_group(root, "FieldData")
         elseif vtk_file_type == "UnstructuredGrid"
             HDF5.create_dataset(root, "Connectivity" , idType , ((0,),(-1,)), chunk=(chunk_size,))
             HDF5.create_dataset(root, "NumberOfCells" , idType , ((0,),(-1,)), chunk=(chunk_size,))
@@ -238,7 +247,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             HDF5.create_dataset(root, "Offsets" , idType , ((0,),(-1,)), chunk=(chunk_size,))
             HDF5.create_dataset(root, "Types" , UInt8 , ((0,),(-1,)), chunk=(chunk_size,)) #Must be UInt8
             
-            FieldData = HDF5.create_group(root, "FieldData") #Currently just empty group
+            FieldData = HDF5.create_group(root, "FieldData")
 
             CellData = HDF5.create_group(root, "CellData")
             for name in cell_data_names
@@ -359,7 +368,6 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 root["PointData"][var_name][PointsStartIndex:(PointsStartIndex + PositionLength - 1)] = arg
             end
         end
-        
 
         connectivities = ["Vertices", "Lines", "Polygons", "Strips"]
         for connect in connectivities
@@ -546,81 +554,11 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         # File naming functions
         particle_filename = (iter) -> "$(particle_savepath)_$(lpad(iter,6,"0")).vtkhdf"
         grid_filename = (iter) -> "$(grid_savepath)_$(lpad(iter,6,"0")).vtkhdf"
-        
-        output_vars = SimMetaData.OutputVariables
-    
-        # Initialize storage for file handles
-        file_handles = if !SimMetaData.ExportSingleVTKHDF
-            # Multi-file mode: vector for particle files
-            n_outputs = if SimMetaData.OutputTimes isa AbstractVector
-                length(SimMetaData.OutputTimes) + 1
-            else
-                Int(SimMetaData.SimulationTime/SimMetaData.OutputTimes + 1)
-            end
-            (
-                particle_files = Vector{HDF5.File}(undef, n_outputs),
-                grid_files = nothing,
-            )
-        else
-            # Single-file mode: handles for both files
-            OutputVTKHDF = h5open("$(particle_savepath).vtkhdf", "w")
-            root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
-            
-            field_map = Dict(
-                "Kernel" => :Kernel,
-                "KernelGradient" => :KernelGradient,
-                "Density" => :Density,
-                "Pressure" => :Pressure,
-                "Velocity" => :Velocity,
-                "Acceleration" => :Acceleration,
-                "BoundaryBool" => :BoundaryBool,
-                "ID" => :ID,
-                "Type" => :Type,
-                "GroupMarker" => :GroupMarker,
-                "GhostPoints" => :GhostPoints,
-                "GhostNormals" => :GhostNormals,
-            )
-            output_data_init = Vector{Any}(undef, length(output_vars))
-            for (i, name) in pairs(output_vars)
-                prop = get(field_map, name, nothing)
-                if prop === nothing || !hasproperty(SimParticles, prop)
-                    error("OutputVariables includes $(name) but SimParticles has no field $(name).")
-                end
-                if name == "Type"
-                    output_data_init[i] = Int8.(getproperty(SimParticles, prop))
-                else
-                    output_data_init[i] = getproperty(SimParticles, prop)
-                end
-            end
+        point_filename = (iter) -> "$(particle_savepath)_PointMeasures_$(lpad(iter,6,"0")).vtkhdf"
+        multiblock_filename = "$(particle_savepath)_MultiBlock.vtkhdf"
 
-            GenerateGeometryStructure(root, output_vars, output_data_init...; chunk_size=1024)
-            GenerateStepStructure(root, output_vars, output_data_init...)
-    
-            # Initialize grid file if needed
-            if SimMetaData.ExportGridCells
-                OutputVTKHDFGrid = h5open("$(particle_savepath)_GridCells.vtkhdf", "w")
-                root_grid = HDF5.create_group(OutputVTKHDFGrid, "VTKHDF")
-                cell_data_names = ["CellData"]
-                if SimMetaData.ExportGridCellParticleCounts
-                    push!(cell_data_names, "ParticleCount")
-                    push!(cell_data_names, "ParticleNeighborsPerCell")
-                end
-                GenerateGeometryStructure(
-                    root_grid;
-                    vtk_file_type="UnstructuredGrid",
-                    cell_data_names=cell_data_names,
-                )
-                GenerateStepStructure(
-                    root_grid;
-                    vtk_file_type="UnstructuredGrid",
-                    cell_data_names=cell_data_names,
-                )
-                
-                (particle_files = OutputVTKHDF, grid_files = OutputVTKHDFGrid)
-            else
-                (particle_files = OutputVTKHDF, grid_files = nothing)
-            end
-        end
+        output_vars = SimMetaData.OutputVariables
+        point_measure_vars = PointMeasureOutputVariableNames(SimMetaData.PointMeasures)
 
         vector_fields = Set([
             "KernelGradient",
@@ -645,6 +583,140 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         )
 
         T = eltype(eltype(SimParticles.Position))
+        # Initialize storage for file handles
+        if SimMetaData.ExportMultiBlockVTKHDF && !SimMetaData.ExportSingleVTKHDF
+            error("ExportMultiBlockVTKHDF requires ExportSingleVTKHDF=true.")
+        end
+
+        export_multiblock = SimMetaData.ExportMultiBlockVTKHDF
+
+        file_handles = if !SimMetaData.ExportSingleVTKHDF
+            # Multi-file mode: vector for particle files
+            n_outputs = if SimMetaData.OutputTimes isa AbstractVector
+                length(SimMetaData.OutputTimes) + 1
+            else
+                Int(SimMetaData.SimulationTime/SimMetaData.OutputTimes + 1)
+            end
+            (
+                particle_files = Vector{HDF5.File}(undef, n_outputs),
+                grid_files = nothing,
+                point_files = isempty(point_measure_vars) ? nothing : Vector{HDF5.File}(undef, n_outputs),
+            )
+        else
+            # Single-file mode: handles for both files
+            OutputVTKHDF = h5open(export_multiblock ? multiblock_filename : "$(particle_savepath).vtkhdf", "w")
+            root = export_multiblock ? create_ordered_group(OutputVTKHDF, "VTKHDF") : HDF5.create_group(OutputVTKHDF, "VTKHDF")
+                root_particles = create_ordered_group(root, "Particles")
+                    root_points = create_ordered_group(root, "PointMeasures")
+                assembly = create_ordered_group(root, "Assembly")
+                    create_soft_link("/VTKHDF/PointMeasures", assembly, "PointMeasures")
+                end
+            output_data_init = Vector{Any}(undef, length(output_vars))
+            for (i, name) in pairs(output_vars)
+                prop = get(field_map, name, nothing)
+                if prop === nothing || !hasproperty(SimParticles, prop)
+                    error("OutputVariables includes $(name) but SimParticles has no field $(name).")
+                end
+                if name == "Type"
+                    output_data_init[i] = Int8.(getproperty(SimParticles, prop))
+                else
+                    output_data_init[i] = getproperty(SimParticles, prop)
+                end
+            end
+
+            root_particles = root
+            root_points = nothing
+
+            if export_multiblock
+                HDF5.attrs(root)["Version"] = Int32.([2, 3])
+                write_ascii_attribute(root, "Type", "MultiBlock")
+                blocks = HDF5.create_group(root, "Blocks")
+                root_particles = HDF5.create_group(blocks, "Particles")
+                root_points = HDF5.create_group(blocks, "PointMeasures")
+            end
+
+            GenerateGeometryStructure(
+                root_particles,
+                output_vars,
+                output_data_init...;
+                chunk_size = 1024,
+            )
+            GenerateStepStructure(
+                root_particles,
+                output_vars,
+                output_data_init...;
+            )
+    
+            # Initialize grid file if needed
+            if SimMetaData.ExportGridCells
+                OutputVTKHDFGrid = h5open("$(particle_savepath)_GridCells.vtkhdf", "w")
+                root_grid = HDF5.create_group(OutputVTKHDFGrid, "VTKHDF")
+                cell_data_names = ["CellData"]
+                if SimMetaData.ExportGridCellParticleCounts
+                    push!(cell_data_names, "ParticleCount")
+                    push!(cell_data_names, "ParticleNeighborsPerCell")
+                end
+                GenerateGeometryStructure(
+                    root_grid;
+                    vtk_file_type="UnstructuredGrid",
+                    cell_data_names=cell_data_names,
+                )
+                GenerateStepStructure(
+                    root_grid;
+                    vtk_file_type="UnstructuredGrid",
+                    cell_data_names=cell_data_names,
+                )
+                
+                point_handle = nothing
+                if !isempty(point_measure_vars)
+                    point_root = root_points
+                    if !export_multiblock
+                        OutputVTKHDFPoints = h5open("$(particle_savepath)_PointMeasures.vtkhdf", "w")
+                        point_root = HDF5.create_group(OutputVTKHDFPoints, "VTKHDF")
+                    end
+                    point_output_init = Vector{Any}(undef, length(point_measure_vars))
+                    for (index, name) in pairs(point_measure_vars)
+                        if name in vector_fields
+                            point_output_init[index] = fill(zero(SVector{3, T}), length(SimMetaData.PointMeasures))
+                        else
+                            prop = field_map[name]
+                            src = getproperty(SimParticles, prop)
+                            point_output_init[index] = fill(zero(eltype(src)), length(SimMetaData.PointMeasures))
+                        end
+                    end
+                    GenerateGeometryStructure(point_root, point_measure_vars, point_output_init...; chunk_size = 1024)
+                    GenerateStepStructure(point_root, point_measure_vars, point_output_init...)
+                    point_handle = export_multiblock ? (file = OutputVTKHDF, root = point_root, shared = true) : (file = OutputVTKHDFPoints, root = point_root, shared = false)
+                end
+
+                (particle_files = OutputVTKHDF, grid_files = OutputVTKHDFGrid, point_files = point_handle, particle_root = root_particles)
+            else
+                point_handle = nothing
+                if !isempty(point_measure_vars)
+                    point_root = root_points
+                    if !export_multiblock
+                        OutputVTKHDFPoints = h5open("$(particle_savepath)_PointMeasures.vtkhdf", "w")
+                        point_root = HDF5.create_group(OutputVTKHDFPoints, "VTKHDF")
+                    end
+                    point_output_init = Vector{Any}(undef, length(point_measure_vars))
+                    for (index, name) in pairs(point_measure_vars)
+                        if name in vector_fields
+                            point_output_init[index] = fill(zero(SVector{3, T}), length(SimMetaData.PointMeasures))
+                        else
+                            prop = field_map[name]
+                            src = getproperty(SimParticles, prop)
+                            point_output_init[index] = fill(zero(eltype(src)), length(SimMetaData.PointMeasures))
+                        end
+                    end
+                    GenerateGeometryStructure(point_root, point_measure_vars, point_output_init...; chunk_size = 1024)
+                    GenerateStepStructure(point_root, point_measure_vars, point_output_init...)
+                    point_handle = export_multiblock ? (file = OutputVTKHDF, root = point_root, shared = true) : (file = OutputVTKHDFPoints, root = point_root, shared = false)
+                end
+
+                (particle_files = OutputVTKHDF, grid_files = nothing, point_files = point_handle, particle_root = root_particles)
+            end
+        end
+
         function allocate_particle_snapshot()
             n = length(SimParticles.Position)
             positions = Vector{SVector{3, T}}(undef, n)
@@ -663,10 +735,22 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     output_data[i] = similar(src, n)
                 end
             end
-            return ParticleSnapshot(positions, output_data)
+            point_positions = Vector{SVector{3, T}}(undef, length(SimMetaData.PointMeasures))
+            point_output_data = Vector{Any}(undef, length(point_measure_vars))
+            for (index, name) in pairs(point_measure_vars)
+                if name in vector_fields
+                    point_output_data[index] = fill(zero(SVector{3, T}), length(SimMetaData.PointMeasures))
+                else
+                    prop = field_map[name]
+                    src = getproperty(SimParticles, prop)
+                    point_output_data[index] = fill(zero(eltype(src)), length(SimMetaData.PointMeasures))
+                end
+            end
+            point_snapshot = PointMeasureSnapshot(point_positions, point_output_data)
+            return ParticleSnapshot(positions, output_data, point_snapshot)
         end
 
-        function fill_particle_snapshot!(snapshot)
+        function fill_particle_snapshot!(snapshot; neighbor_data = nothing)
             if Dimensions == 2
                 to_3d!(snapshot.positions, SimParticles.Position)
             else
@@ -700,6 +784,18 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     copy!(buf, src)
                 end
             end
+            FillPointMeasureSnapshot!(
+                snapshot.point_measure_snapshot.positions,
+                snapshot.point_measure_snapshot.output_data,
+                SimMetaData.PointMeasures,
+                point_measure_vars,
+                SimParticles,
+                SimKernel,
+                Dimensions;
+                field_map = field_map,
+                vector_fields = vector_fields,
+                neighbor_data = neighbor_data,
+            )
             return snapshot
         end
 
@@ -719,16 +815,36 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                             particle_filename(job.iteration),
                             snapshot.positions,
                             output_vars,
-                            snapshot.output_data...,
+                            snapshot.output_data...;
                         )
                     else
                         AppendVTKHDFData(
-                            root,
+                            file_handles.particle_root,
                             job.time,
                             snapshot.positions,
                             output_vars,
-                            snapshot.output_data...,
+                            snapshot.output_data...;
                         )
+                    end
+                    if !isempty(point_measure_vars)
+                        if !SimMetaData.ExportSingleVTKHDF
+                            SaveVTKHDF(
+                                file_handles.point_files,
+                                job.iteration,
+                                point_filename(job.iteration),
+                                snapshot.point_measure_snapshot.positions,
+                                point_measure_vars,
+                                snapshot.point_measure_snapshot.output_data...,
+                            )
+                        else
+                            AppendVTKHDFData(
+                                file_handles.point_files.root,
+                                job.time,
+                                snapshot.point_measure_snapshot.positions,
+                                point_measure_vars,
+                                snapshot.point_measure_snapshot.output_data...,
+                            )
+                        end
                     end
                     put!(buffer_pool, snapshot)
                 elseif job isa GridWriteJob
@@ -754,9 +870,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             end
         end
 
-        function enqueue_particle_data(iteration)
+        function enqueue_particle_data(iteration; neighbor_data = nothing)
             snapshot = take!(buffer_pool)
-            fill_particle_snapshot!(snapshot)
+            fill_particle_snapshot!(snapshot; neighbor_data = neighbor_data)
             job = ParticleWriteJob(iteration, SimMetaData.TotalTime, snapshot)
             put!(job_channel, job)
         end
@@ -796,11 +912,21 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 for f in file_handles.particle_files
                     isopen(f) && close(f)
                 end
+                if file_handles.point_files !== nothing
+                    for f in file_handles.point_files
+                        isopen(f) && close(f)
+                    end
+                end
             else
                 # Close single-file handles
                 isopen(file_handles.particle_files) && close(file_handles.particle_files)
                 if file_handles.grid_files !== nothing
                     isopen(file_handles.grid_files) && close(file_handles.grid_files)
+                end
+                if file_handles.point_files !== nothing
+                    if !file_handles.point_files.shared
+                        isopen(file_handles.point_files.file) && close(file_handles.point_files.file)
+                    end
                 end
             end
         end

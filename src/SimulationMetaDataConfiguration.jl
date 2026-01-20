@@ -3,6 +3,8 @@ module SimulationMetaDataConfiguration
 using Parameters
 using TimerOutputs
 
+using ..PointMeasurements: PointMeasure
+
 
 export SimulationMetaData, UpdateMetaData!, ShiftingMode, NoShifting, PlanarShifting,
        KernelOutputMode, NoKernelOutput, StoreKernelOutput,
@@ -51,6 +53,7 @@ struct SingleNeighborTimeStepping <: TimeSteppingMode end
     IndexCounter::Int                       = 0
     VisualizeInParaview::Bool               = true
     ExportSingleVTKHDF::Bool                = true
+    ExportMultiBlockVTKHDF::Bool            = false
     ExportGridCells::Bool                   = false
     ExportGridCellParticleCounts::Bool      = false
     OutputVariables::Vector{String}         = [
@@ -61,6 +64,7 @@ struct SingleNeighborTimeStepping <: TimeSteppingMode end
         "Type",
         "GroupMarker",
     ]
+    PointMeasures::Vector{PointMeasure}     = PointMeasure[]
     OpenLogFile::Bool                       = true
     Δx::FloatType                           = zero(FloatType)
     TimeSteppingMode::TimeSteppingMode      = SingleNeighborTimeStepping()

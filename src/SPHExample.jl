@@ -3,6 +3,8 @@ module SPHExample
     include("AuxiliaryFunctions.jl");
     include("SPHKernels.jl")
     include("SPHViscosityModels.jl")      
+    include("SPHNeighborList.jl")
+    include("PointMeasurements.jl")
     include("ProduceHDFVTK.jl")    
     include("SimulationGeometry.jl")
     include("SimulationMetaDataConfiguration.jl");
@@ -13,7 +15,6 @@ module SPHExample
     include("PreProcess.jl");
     include("OpenExternalPrograms.jl")
     include("SPHDensityDiffusionModels.jl")  
-    include("SPHNeighborList.jl")
     include("SPHCellList.jl") #Must be last    
 
     # Re-export desired functions from each submodule
@@ -22,6 +23,9 @@ module SPHExample
 
     using .SPHKernels
     export SPHKernel, SPHKernelInstance, WendlandC2, CubicSpline, Wᵢⱼ, ∇Wᵢⱼ, tensile_correction
+
+    using .PointMeasurements
+    export PointMeasure, PointMeasureFieldNames, FillPointMeasureData!
 
     using .SPHViscosityModels
     export SPHViscosity, ZeroViscosity, ArtificialViscosity, Laminar, LaminarSPS, compute_viscosity

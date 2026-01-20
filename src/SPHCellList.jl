@@ -868,7 +868,14 @@ using LinearAlgebra
 
         # Save initial state, use 1 else this cannot be used to index fid vector
         SimMetaData.OutputIterationCounter = 1
-        output.enqueue_particles(SimMetaData.OutputIterationCounter)
+        output.enqueue_particles(
+            SimMetaData.OutputIterationCounter;
+            neighbor_data = (
+                particle_ranges = ParticleRanges,
+                cell_dict = CellDict,
+                full_stencil = FullStencil,
+            ),
+        )
         if SimMetaData.IndexCounter > 0
             unique_cells_view = view(UniqueCells, 1:SimMetaData.IndexCounter)
             cell_particle_counts = nothing
@@ -926,7 +933,14 @@ using LinearAlgebra
             end
             
             @timeit SimMetaData.HourGlass "13 Save Particle Data"  begin
-                output.enqueue_particles(SimMetaData.OutputIterationCounter)
+                output.enqueue_particles(
+                    SimMetaData.OutputIterationCounter;
+                    neighbor_data = (
+                        particle_ranges = ParticleRanges,
+                        cell_dict = CellDict,
+                        full_stencil = FullStencil,
+                    ),
+                )
                 output.enqueue_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, cell_particle_counts=cell_particle_counts, cell_neighbor_counts=cell_neighbor_counts)
             end
 

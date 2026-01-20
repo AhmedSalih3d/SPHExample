@@ -70,7 +70,11 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData, OutputVariableNames;
 
     if SimMetaData.ExportSingleVTKHDF
         ParaViewStateFileName = joinpath(SimMetaData.SaveLocation, SimMetaData.SimulationName) * "_SingleVTKHDFStateFile.py"
-        py_regex = "$(SimMetaData.SimulationName).vtkhdf"
+        if SimMetaData.ExportMultiBlockVTKHDF
+            py_regex = "$(SimMetaData.SimulationName)_MultiBlock.vtkhdf"
+        else
+            py_regex = "$(SimMetaData.SimulationName).vtkhdf"
+        end
     else
         ParaViewStateFileName = joinpath(SimMetaData.SaveLocation, SimMetaData.SimulationName) * "_StateFile.py"
         py_regex = "^$(SimMetaData.SimulationName)_(\\d+).vtk" #^ means to anchor the regex to the start of the string
