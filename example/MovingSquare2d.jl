@@ -82,6 +82,7 @@ let
         SimParticles        = SimParticles,
         SimKernel           = SimKernel,
         SimViscosity        = LaminarSPS(),
-        SimDensityDiffusion = LinearDensityDiffusion()
+        SimDensityDiffusion = LinearDensityDiffusion(),
+        SimTimeStepping     = SingleNeighborTimeStepping()
     )
 end

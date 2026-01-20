@@ -840,11 +840,14 @@ using LinearAlgebra
         SimParticles::StructArray,
         SimViscosity::SV,
         SimDensityDiffusion::SDD,
+        SimTimeStepping::TimeSteppingMode,
         ParticleNormalsPath::Union{Nothing,String} = nothing
         ) where {Dimensions,FloatType,SMode,KMode,BMode,LMode,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
 
         NumberOfPoints = length(SimParticles)
-        
+
+        SimMetaData.TimeSteppingMode = SimTimeStepping
+
         dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimMetaData, SimParticles.Position)
 
         LoadMDBCNormals!(SimMetaData, SimParticles, ParticleNormalsPath)

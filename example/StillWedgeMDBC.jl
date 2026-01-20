@@ -58,6 +58,7 @@ let
         SimParticles        = SimParticles,
         SimViscosity        = ArtificialViscosity(),
         SimDensityDiffusion = LinearDensityDiffusion(),
+        SimTimeStepping     = SingleNeighborTimeStepping(),
         ParticleNormalsPath = "./input/still_wedge_mdbc/StillWedge_Dp$(SimConstantsWedge.dx)_GhostNodes_Correct.csv"
     )
 
@@ -97,5 +98,4 @@ let
     
     # display(plt)
 end
-
 
