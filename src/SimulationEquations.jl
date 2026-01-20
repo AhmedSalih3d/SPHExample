@@ -36,7 +36,7 @@ end
 # This version of the function uses ParticleType instead of BoundaryBool
 @inline function LimitDensityAtBoundary!(Density, ρ₀, ParticleType)
     @inbounds for i in eachindex(Density)
-        if (Density[i] < ρ₀) * (ParticleType[i] != Fluid)
+        if (Density[i] < ρ₀) && (ParticleType[i] != Fluid)
             Density[i] = ρ₀
         end
     end
