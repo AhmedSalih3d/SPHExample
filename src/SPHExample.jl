@@ -3,8 +3,8 @@ module SPHExample
     include("AuxiliaryFunctions.jl");
     include("SPHKernels.jl")
     include("SPHViscosityModels.jl")      
-    include("ProduceHDFVTK.jl")    
     include("SimulationGeometry.jl")
+    include("ProduceHDFVTK.jl")    
     include("SimulationMetaDataConfiguration.jl");
     include("SimulationEquations.jl");
     include("TimeStepping.jl");       
