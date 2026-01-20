@@ -23,6 +23,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     using StaticArrays
 
     using ..AuxiliaryFunctions: to_3d!
+    using ..SimulationGeometry
 
 
     const idType = Int64
@@ -573,7 +574,6 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 "Pressure" => :Pressure,
                 "Velocity" => :Velocity,
                 "Acceleration" => :Acceleration,
-                "BoundaryBool" => :BoundaryBool,
                 "ID" => :ID,
                 "Type" => :Type,
                 "GroupMarker" => :GroupMarker,
@@ -583,12 +583,14 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             output_data_init = Vector{Any}(undef, length(output_vars))
             for (i, name) in pairs(output_vars)
                 prop = get(field_map, name, nothing)
-                if prop === nothing || !hasproperty(SimParticles, prop)
-                    error("OutputVariables includes $(name) but SimParticles has no field $(name).")
-                end
                 if name == "Type"
                     output_data_init[i] = Int8.(getproperty(SimParticles, prop))
+                elseif name == "BoundaryBool"
+                    output_data_init[i] = UInt8.(SimParticles.Type .!= Fluid)
                 else
+                    if prop === nothing || !hasproperty(SimParticles, prop)
+                        error("OutputVariables includes $(name) but SimParticles has no field $(name).")
+                    end
                     output_data_init[i] = getproperty(SimParticles, prop)
                 end
             end
@@ -636,7 +638,6 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             "Pressure" => :Pressure,
             "Velocity" => :Velocity,
             "Acceleration" => :Acceleration,
-            "BoundaryBool" => :BoundaryBool,
             "ID" => :ID,
             "Type" => :Type,
             "GroupMarker" => :GroupMarker,
@@ -654,6 +655,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     output_data[i] = Vector{SVector{3, T}}(undef, n)
                 elseif name == "Type"
                     output_data[i] = Vector{Int8}(undef, n)
+                elseif name == "BoundaryBool"
+                    output_data[i] = Vector{UInt8}(undef, n)
                 else
                     prop = field_map[name]
                     if !hasproperty(SimParticles, prop)
@@ -679,6 +682,11 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     src = SimParticles.Type
                     @inbounds for j in eachindex(src)
                         buf[j] = Int8(src[j])
+                    end
+                elseif name == "BoundaryBool"
+                    src = SimParticles.Type
+                    @inbounds for j in eachindex(src)
+                        buf[j] = UInt8(src[j] != Fluid)
                     end
                 elseif name in vector_fields
                     prop = field_map[name]

@@ -132,10 +132,6 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
         GhostNormals = zeros(PositionType, NumberOfPoints)
         ParticleFields = merge(ParticleFields, (; GhostNormals = GhostNormals))
     end
-    if "BoundaryBool" in OutputVariables
-        BoundaryBool = UInt8.(Types .!= Fluid)
-        ParticleFields = merge(ParticleFields, (; BoundaryBool = BoundaryBool))
-    end
     if "ID" in OutputVariables
         ParticleFields = merge(ParticleFields, (; ID = Idp))
     end
