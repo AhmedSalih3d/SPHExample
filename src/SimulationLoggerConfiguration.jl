@@ -266,6 +266,9 @@ module SimulationLoggerConfiguration
     end
 
     function LogStep!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, B<:MDBCMode}
+        if SimMetaData.LogEvery > 1 && mod(SimMetaData.OutputIterationCounter, SimMetaData.LogEvery) != 0
+            return nothing
+        end
         LogStep(SimLogger, SimMetaData, SimMetaData.HourGlass)
         SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
         return nothing
