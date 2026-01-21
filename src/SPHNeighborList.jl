@@ -1,6 +1,6 @@
 module SPHNeighborList
 
-export ConstructStencil, ExtractCells!, UpdateNeighbors!, BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts, UpdateΔx!
+export ConstructStencil, ExtractCells!, UpdateNeighbors!, BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts, UpdateΔx!, FindCellIndex
 
 using StaticArrays
 
@@ -8,7 +8,19 @@ function ConstructStencil(V::Val{d}) where d
     return CartesianIndices(ntuple(_ -> -1:1, V))
 end
 
-function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellDict)
+@inline function MinCell(::Type{CartesianIndex{D}}) where D
+    return CartesianIndex(ntuple(_ -> typemin(Int), Val(D)))
+end
+
+@inline function FindCellIndex(UniqueCellsView, Cell)
+    idx = searchsortedfirst(UniqueCellsView, Cell)
+    if idx <= length(UniqueCellsView) && UniqueCellsView[idx] == Cell
+        return idx
+    end
+    return 1
+end
+
+function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
     TargetLen   = length(UniqueCellsView)
     OriginalLen = length(NeighborCellLists)
     resize!(NeighborCellLists, TargetLen)
@@ -25,7 +37,7 @@ function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView
         Cell = UniqueCellsView[CellIndex]
         for Offset in FullStencil
             NeighborCell = Cell + Offset
-            NeighborIndex = get(CellDict, NeighborCell, 1)
+            NeighborIndex = FindCellIndex(UniqueCellsView, NeighborCell)
             StartIndex = ParticleRanges[NeighborIndex]
             EndIndex = ParticleRanges[NeighborIndex + 1] - 1
             if StartIndex <= EndIndex && NeighborIndex != CellIndex
@@ -76,26 +88,26 @@ Updates the neighbor list and sorts particles by their cell indices.
 - `IndexCounter`: The number of unique cells identified.
 """
 function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
-                          ParticleRanges, UniqueCells, CellDict)
+                          ParticleRanges, UniqueCells, CellListIndices)
     ExtractCells!(Particles, InverseCutOff)
 
     sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
     Cells = @views Particles.Cells
+    UniqueCells[1] = MinCell(eltype(Cells))
     @. ParticleRanges             = zero(eltype(ParticleRanges))
     ParticleRanges[1] = 1
     IndexCounter                  = 2
     ParticleRanges[IndexCounter]  = 1
     UniqueCells[IndexCounter]     = Cells[1]
-    empty!(CellDict)
-    CellDict[Cells[1]] = IndexCounter
+    CellListIndices[1]            = IndexCounter
 
     @inbounds @simd ivdep for Index in eachindex(Cells)[2:end]
         if Cells[Index] != Cells[Index - 1] # Equivalent to diff(Cells) != 0
             IndexCounter                 += 1
             ParticleRanges[IndexCounter]  = Index
             UniqueCells[IndexCounter]     = Cells[Index]
-            CellDict[Cells[Index]]       = IndexCounter
         end
+        CellListIndices[Index]            = IndexCounter
     end
     ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
 
