@@ -150,7 +150,13 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     end
 
     @inline function IsVectorField(Source)
-        return eltype(Source) <: StaticVector
+        if eltype(Source) <: StaticVector
+            return true
+        end
+        if isempty(Source)
+            return false
+        end
+        return length(first(Source)) > 1
     end
 
     function ResolveParticleField(Name, SimParticles)
