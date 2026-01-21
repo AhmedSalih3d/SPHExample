@@ -411,8 +411,6 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         HDF5.set_extent_dims(steps["PartOffsets"], (PartOffsetsLength,))
         steps["PartOffsets"][PartOffsetsStartIndex] = PartOffsetsLength - 1
 
-
-
         HDF5.set_extent_dims(steps["ConnectivityIdOffsets"], (length(steps["ConnectivityIdOffsets"]) + 1,))
         steps["ConnectivityIdOffsets"][end] = PointsStartIndex - 1
 
