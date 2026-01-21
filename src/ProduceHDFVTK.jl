@@ -149,6 +149,15 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         return payload
     end
 
+    @inline function IsVectorField(Source)
+        return eltype(Source) <: StaticVector
+    end
+
+    function ResolveParticleField(Name, SimParticles)
+        FieldSymbol = Symbol(Name)
+        return hasproperty(SimParticles, FieldSymbol) ? FieldSymbol : nothing
+    end
+
     function SaveVTKHDF(fid_vector, index, filepath, points, variable_names = String[], args...)
         @assert length(variable_names) == length(args) "Same number of variable_names as args is necessary"
         io = h5open(filepath, "w")
@@ -565,31 +574,23 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             OutputVTKHDF = h5open("$(particle_savepath).vtkhdf", "w")
             root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
             
-            field_map = Dict(
-                "Kernel" => :Kernel,
-                "KernelGradient" => :KernelGradient,
-                "Density" => :Density,
-                "Pressure" => :Pressure,
-                "Velocity" => :Velocity,
-                "Acceleration" => :Acceleration,
-                "ID" => :ID,
-                "Type" => :Type,
-                "GroupMarker" => :GroupMarker,
-                "GhostPoints" => :GhostPoints,
-                "GhostNormals" => :GhostNormals,
-            )
             output_data_init = Vector{Any}(undef, length(output_vars))
-            for (i, name) in pairs(output_vars)
-                prop = get(field_map, name, nothing)
-                if name == "Type"
-                    output_data_init[i] = Int8.(getproperty(SimParticles, prop))
-                elseif name == "BoundaryBool"
+            for (i, Name) in pairs(output_vars)
+                if Name == "BoundaryBool"
+                    if !hasproperty(SimParticles, :Type)
+                        error("OutputVariables includes $(Name) but SimParticles has no field Type.")
+                    end
                     output_data_init[i] = UInt8.(SimParticles.Type .!= Fluid)
                 else
-                    if prop === nothing || !hasproperty(SimParticles, prop)
-                        error("OutputVariables includes $(name) but SimParticles has no field $(name).")
+                    FieldSymbol = ResolveParticleField(Name, SimParticles)
+                    if FieldSymbol === nothing
+                        error("OutputVariables includes $(Name) but SimParticles has no field $(Name).")
                     end
-                    output_data_init[i] = getproperty(SimParticles, prop)
+                    if Name == "Type"
+                        output_data_init[i] = Int8.(getproperty(SimParticles, FieldSymbol))
+                    else
+                        output_data_init[i] = getproperty(SimParticles, FieldSymbol)
+                    end
                 end
             end
 
@@ -622,46 +623,33 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             end
         end
 
-        vector_fields = Set([
-            "KernelGradient",
-            "Velocity",
-            "Acceleration",
-            "GhostPoints",
-            "GhostNormals",
-        ])
-        field_map = Dict(
-            "Kernel" => :Kernel,
-            "KernelGradient" => :KernelGradient,
-            "Density" => :Density,
-            "Pressure" => :Pressure,
-            "Velocity" => :Velocity,
-            "Acceleration" => :Acceleration,
-            "ID" => :ID,
-            "Type" => :Type,
-            "GroupMarker" => :GroupMarker,
-            "GhostPoints" => :GhostPoints,
-            "GhostNormals" => :GhostNormals,
-        )
-
         T = eltype(eltype(SimParticles.Position))
         function allocate_particle_snapshot()
             n = length(SimParticles.Position)
             positions = Vector{SVector{3, T}}(undef, n)
             output_data = Vector{Any}(undef, length(output_vars))
-            for (i, name) in pairs(output_vars)
-                if name in vector_fields
-                    output_data[i] = Vector{SVector{3, T}}(undef, n)
-                elseif name == "Type"
+            for (i, Name) in pairs(output_vars)
+                if Name == "Type"
+                    if !hasproperty(SimParticles, :Type)
+                        error("OutputVariables includes $(Name) but SimParticles has no field Type.")
+                    end
                     output_data[i] = Vector{Int8}(undef, n)
-                elseif name == "BoundaryBool"
+                elseif Name == "BoundaryBool"
+                    if !hasproperty(SimParticles, :Type)
+                        error("OutputVariables includes $(Name) but SimParticles has no field Type.")
+                    end
                     output_data[i] = Vector{UInt8}(undef, n)
                 else
-                    prop = field_map[name]
-                    if !hasproperty(SimParticles, prop)
-                        error("OutputVariables includes $(name) but SimParticles has no field $(name).")
+                    FieldSymbol = ResolveParticleField(Name, SimParticles)
+                    if FieldSymbol === nothing
+                        error("OutputVariables includes $(Name) but SimParticles has no field $(Name).")
                     end
-                    src = getproperty(SimParticles, prop)
-                    output_data[i] = similar(src, n)
+                    Source = getproperty(SimParticles, FieldSymbol)
+                    if IsVectorField(Source)
+                        output_data[i] = Dimensions == 2 ? Vector{SVector{3, T}}(undef, n) : similar(Source, n)
+                    else
+                        output_data[i] = similar(Source, n)
+                    end
                 end
             end
             return ParticleSnapshot(positions, output_data)
@@ -674,36 +662,33 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 copy!(snapshot.positions, SimParticles.Position)
             end
 
-            for (i, name) in pairs(output_vars)
+            for (i, Name) in pairs(output_vars)
                 buf = snapshot.output_data[i]
-                if name == "Type"
+                if Name == "Type"
                     src = SimParticles.Type
                     @inbounds for j in eachindex(src)
                         buf[j] = Int8(src[j])
                     end
-                elseif name == "BoundaryBool"
+                elseif Name == "BoundaryBool"
                     src = SimParticles.Type
                     @inbounds for j in eachindex(src)
                         buf[j] = UInt8(src[j] != Fluid)
                     end
-                elseif name in vector_fields
-                    prop = field_map[name]
-                    if !hasproperty(SimParticles, prop)
-                        error("OutputVariables includes $(name) but SimParticles has no field $(name).")
-                    end
-                    src = getproperty(SimParticles, prop)
-                    if Dimensions == 2
-                        to_3d!(buf, src)
-                    else
-                        copy!(buf, src)
-                    end
                 else
-                    prop = field_map[name]
-                    if !hasproperty(SimParticles, prop)
-                        error("OutputVariables includes $(name) but SimParticles has no field $(name).")
+                    FieldSymbol = ResolveParticleField(Name, SimParticles)
+                    if FieldSymbol === nothing
+                        error("OutputVariables includes $(Name) but SimParticles has no field $(Name).")
                     end
-                    src = getproperty(SimParticles, prop)
-                    copy!(buf, src)
+                    Source = getproperty(SimParticles, FieldSymbol)
+                    if IsVectorField(Source)
+                        if Dimensions == 2
+                            to_3d!(buf, Source)
+                        else
+                            copy!(buf, Source)
+                        end
+                    else
+                        copy!(buf, Source)
+                    end
                 end
             end
             return snapshot
