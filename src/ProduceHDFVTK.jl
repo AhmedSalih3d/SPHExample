@@ -150,13 +150,48 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     end
 
     @inline function IsVectorField(Source)
+        return eltype(Source) <: StaticVector || eltype(Source) <: CartesianIndex
+    end
+
+    @inline function VectorElementType(Source)
         if eltype(Source) <: StaticVector
-            return true
+            return eltype(eltype(Source))
+        elseif eltype(Source) <: CartesianIndex
+            return eltype(first(Source))
         end
-        if isempty(Source)
-            return false
+        return eltype(Source)
+    end
+
+    @inline function AllocateVectorBuffer(Source, n)
+        element_type = VectorElementType(Source)
+        return Vector{SVector{3, element_type}}(undef, n)
+    end
+
+    function FillVectorBuffer!(Dest, Source, Dimensions)
+        if eltype(Source) <: StaticVector
+            if Dimensions == 2
+                to_3d!(Dest, Source)
+            else
+                copy!(Dest, Source)
+            end
+            return Dest
         end
-        return length(first(Source)) > 1
+        if eltype(Source) <: CartesianIndex
+            if Dimensions == 2
+                @inbounds for i in eachindex(Source)
+                    idx = Source[i]
+                    Dest[i] = SVector(idx[1], idx[2], zero(VectorElementType(Source)))
+                end
+            else
+                @inbounds for i in eachindex(Source)
+                    idx = Source[i]
+                    Dest[i] = SVector(idx[1], idx[2], idx[3])
+                end
+            end
+            return Dest
+        end
+        copy!(Dest, Source)
+        return Dest
     end
 
     function ResolveParticleField(Name, SimParticles)
@@ -561,7 +596,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         particle_filename = (iter) -> "$(particle_savepath)_$(lpad(iter,6,"0")).vtkhdf"
         grid_filename = (iter) -> "$(grid_savepath)_$(lpad(iter,6,"0")).vtkhdf"
         
-        output_vars = SimMetaData.OutputVariables
+        output_vars = unique(vcat(string.(propertynames(SimParticles)), SimMetaData.OutputVariables))
     
         # Initialize storage for file handles
         file_handles = if !SimMetaData.ExportSingleVTKHDF
@@ -595,7 +630,13 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     if Name == "Type"
                         output_data_init[i] = Int8.(getproperty(SimParticles, FieldSymbol))
                     else
-                        output_data_init[i] = getproperty(SimParticles, FieldSymbol)
+                        Source = getproperty(SimParticles, FieldSymbol)
+                        if IsVectorField(Source)
+                            output_data_init[i] = AllocateVectorBuffer(Source, length(Source))
+                            FillVectorBuffer!(output_data_init[i], Source, Dimensions)
+                        else
+                            output_data_init[i] = Source
+                        end
                     end
                 end
             end
@@ -652,7 +693,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     end
                     Source = getproperty(SimParticles, FieldSymbol)
                     if IsVectorField(Source)
-                        output_data[i] = Dimensions == 2 ? Vector{SVector{3, T}}(undef, n) : similar(Source, n)
+                        output_data[i] = AllocateVectorBuffer(Source, n)
                     else
                         output_data[i] = similar(Source, n)
                     end
@@ -687,11 +728,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     end
                     Source = getproperty(SimParticles, FieldSymbol)
                     if IsVectorField(Source)
-                        if Dimensions == 2
-                            to_3d!(buf, Source)
-                        else
-                            copy!(buf, Source)
-                        end
+                        FillVectorBuffer!(buf, Source, Dimensions)
                     else
                         copy!(buf, Source)
                     end
