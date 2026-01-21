@@ -53,14 +53,6 @@ struct SingleNeighborTimeStepping <: TimeSteppingMode end
     ExportSingleVTKHDF::Bool                = true
     ExportGridCells::Bool                   = false
     ExportGridCellParticleCounts::Bool      = false
-    OutputVariables::Vector{String}         = [
-        "Density",
-        "Pressure",
-        "Velocity",
-        "Acceleration",
-        "Type",
-        "GroupMarker",
-    ]
     OpenLogFile::Bool                       = true
     Δx::FloatType                           = zero(FloatType)
     TimeSteppingMode::TimeSteppingMode      = SingleNeighborTimeStepping()
