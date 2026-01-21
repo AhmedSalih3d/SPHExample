@@ -59,7 +59,7 @@ end
     return normal, point
 end
 
-function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, FloatType}}; OutputVariables=String[], RequireMDBC::Bool=false, RequireKernelOutput::Bool=false) where {Dimensions, FloatType}
+function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, FloatType}}; RequireMDBC::Bool=false, RequireKernelOutput::Bool=false) where {Dimensions, FloatType}
     Position    = Vector{SVector{Dimensions, FloatType}}()
     Density     = Vector{FloatType}()
     Types       = Vector{ParticleType}()
@@ -99,10 +99,6 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
     GroupMarker = GroupMarker[sort_perm]
     Idp = Idp[sort_perm]
 
-    if !RequireKernelOutput && ("Kernel" in OutputVariables || "KernelGradient" in OutputVariables)
-        error("Kernel output requires StoreKernelOutput in SimulationMetaData.")
-    end
-
     Acceleration    = zeros(PositionType, NumberOfPoints)
     Velocity        = zeros(PositionType, NumberOfPoints)
     Pressureᵢ      = zeros(PositionUnderlyingType, NumberOfPoints)
@@ -124,17 +120,15 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
         KernelGradient = zeros(PositionType, NumberOfPoints)
         ParticleFields = merge(ParticleFields, (; Kernel = Kernel, KernelGradient = KernelGradient))
     end
-    if RequireMDBC || "GhostPoints" in OutputVariables
+    if RequireMDBC
         GhostPoints = zeros(PositionType, NumberOfPoints)
         ParticleFields = merge(ParticleFields, (; GhostPoints = GhostPoints))
     end
-    if RequireMDBC || "GhostNormals" in OutputVariables
+    if RequireMDBC
         GhostNormals = zeros(PositionType, NumberOfPoints)
         ParticleFields = merge(ParticleFields, (; GhostNormals = GhostNormals))
     end
-    if "ID" in OutputVariables
-        ParticleFields = merge(ParticleFields, (; ID = Idp))
-    end
+    ParticleFields = merge(ParticleFields, (; ID = Idp))
 
     SimParticles = StructArray(ParticleFields)
 
@@ -144,7 +138,7 @@ end
 function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, FloatType}}, SimMetaData::SimulationMetaData{Dimensions, FloatType}) where {Dimensions, FloatType}
     RequireMDBC = !(SimMetaData isa SimulationMetaData{Dimensions, FloatType, SMode, KMode, NoMDBC, LMode} where {SMode, KMode, LMode})
     RequireKernelOutput = !(SimMetaData isa SimulationMetaData{Dimensions, FloatType, SMode, NoKernelOutput, BMode, LMode} where {SMode, BMode, LMode})
-    return AllocateDataStructures(SimGeometry; OutputVariables = SimMetaData.OutputVariables, RequireMDBC = RequireMDBC, RequireKernelOutput = RequireKernelOutput)
+    return AllocateDataStructures(SimGeometry; RequireMDBC = RequireMDBC, RequireKernelOutput = RequireKernelOutput)
 end
 
 function AllocateSupportDataStructures(::SimulationMetaData{D,T,NoShifting,K,B,L}, Position) where {D,T,K<:KernelOutputMode,
