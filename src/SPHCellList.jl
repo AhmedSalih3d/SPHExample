@@ -229,7 +229,7 @@ using LinearAlgebra
                                       Acceleration, ∇Cᵢ,
                                       ∇◌rᵢ, AccelerationMax;
                                       Position = SimParticles.Position,
-                                      Density = SimParticles.Density,
+                                      Density  = SimParticles.Density,
                                       Pressure = SimParticles.Pressure,
                                       Velocity = SimParticles.Velocity) where {D,T,
                                                   S<:ShiftingMode,
