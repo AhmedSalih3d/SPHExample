@@ -596,7 +596,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         particle_filename = (iter) -> "$(particle_savepath)_$(lpad(iter,6,"0")).vtkhdf"
         grid_filename = (iter) -> "$(grid_savepath)_$(lpad(iter,6,"0")).vtkhdf"
         
-        output_vars = unique(vcat(string.(propertynames(SimParticles)), SimMetaData.OutputVariables))
+        output_variables_list = SimMetaData.OutputVariables isa AbstractVector ?
+            SimMetaData.OutputVariables :
+            collect(SimMetaData.OutputVariables)
+        output_vars = unique(vcat(string.(propertynames(SimParticles)), string.(output_variables_list)))
     
         # Initialize storage for file handles
         file_handles = if !SimMetaData.ExportSingleVTKHDF
