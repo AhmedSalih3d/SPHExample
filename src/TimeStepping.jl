@@ -48,10 +48,20 @@ Computes and returns the updated time step based on maximum acceleration across 
 """
 function UpdateTimeStep(Acceleration, SimConstants, SimKernel)
     max_acceleration = zero(eltype(eltype(Acceleration)))
-    @inbounds @simd for i in eachindex(Acceleration)
-        acc_norm = norm(Acceleration[i])
-        if acc_norm > max_acceleration
-            max_acceleration = acc_norm
+    @no_escape begin
+        thread_max = @alloc(eltype(eltype(Acceleration)), nthreads())
+        fill!(thread_max, max_acceleration)
+        @inbounds Threads.@threads for i in eachindex(Acceleration)
+            acc_norm = norm(Acceleration[i])
+            tid = threadid()
+            if acc_norm > thread_max[tid]
+                thread_max[tid] = acc_norm
+            end
+        end
+        @inbounds for i in eachindex(thread_max)
+            if thread_max[i] > max_acceleration
+                max_acceleration = thread_max[i]
+            end
         end
     end
     return Δt(max_acceleration, SimConstants, SimKernel)
