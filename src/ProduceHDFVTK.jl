@@ -596,10 +596,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         particle_filename = (iter) -> "$(particle_savepath)_$(lpad(iter,6,"0")).vtkhdf"
         grid_filename = (iter) -> "$(grid_savepath)_$(lpad(iter,6,"0")).vtkhdf"
         
-        output_variables_list = SimMetaData.OutputVariables isa AbstractVector ?
-            SimMetaData.OutputVariables :
-            collect(SimMetaData.OutputVariables)
-        output_vars = unique(vcat(string.(propertynames(SimParticles)), string.(output_variables_list)))
+        output_vars = string.(propertynames(SimParticles))
     
         # Initialize storage for file handles
         file_handles = if !SimMetaData.ExportSingleVTKHDF
@@ -621,15 +618,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             output_data_init = Vector{Any}(undef, length(output_vars))
             for (i, Name) in pairs(output_vars)
                 if Name == "BoundaryBool"
-                    if !hasproperty(SimParticles, :Type)
-                        error("OutputVariables includes $(Name) but SimParticles has no field Type.")
-                    end
                     output_data_init[i] = UInt8.(SimParticles.Type .!= Fluid)
                 else
                     FieldSymbol = ResolveParticleField(Name, SimParticles)
-                    if FieldSymbol === nothing
-                        error("OutputVariables includes $(Name) but SimParticles has no field $(Name).")
-                    end
                     if Name == "Type"
                         output_data_init[i] = Int8.(getproperty(SimParticles, FieldSymbol))
                     else
@@ -680,20 +671,11 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             output_data = Vector{Any}(undef, length(output_vars))
             for (i, Name) in pairs(output_vars)
                 if Name == "Type"
-                    if !hasproperty(SimParticles, :Type)
-                        error("OutputVariables includes $(Name) but SimParticles has no field Type.")
-                    end
                     output_data[i] = Vector{Int8}(undef, n)
                 elseif Name == "BoundaryBool"
-                    if !hasproperty(SimParticles, :Type)
-                        error("OutputVariables includes $(Name) but SimParticles has no field Type.")
-                    end
                     output_data[i] = Vector{UInt8}(undef, n)
                 else
                     FieldSymbol = ResolveParticleField(Name, SimParticles)
-                    if FieldSymbol === nothing
-                        error("OutputVariables includes $(Name) but SimParticles has no field $(Name).")
-                    end
                     Source = getproperty(SimParticles, FieldSymbol)
                     if IsVectorField(Source)
                         output_data[i] = AllocateVectorBuffer(Source, n)
@@ -726,9 +708,6 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     end
                 else
                     FieldSymbol = ResolveParticleField(Name, SimParticles)
-                    if FieldSymbol === nothing
-                        error("OutputVariables includes $(Name) but SimParticles has no field $(Name).")
-                    end
                     Source = getproperty(SimParticles, FieldSymbol)
                     if IsVectorField(Source)
                         FillVectorBuffer!(buf, Source, Dimensions)
