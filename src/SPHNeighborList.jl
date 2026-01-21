@@ -1,8 +1,15 @@
 module SPHNeighborList
 
-export ConstructStencil, ExtractCells!, UpdateNeighbors!, BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts, UpdateΔx!
+export ConstructStencil, ExtractCells!, UpdateNeighbors!, BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts, UpdateΔx!, NeighborListInverseCutOff
 
 using StaticArrays
+
+const DefaultNeighborLipFactor = 1.2
+
+@inline function NeighborListInverseCutOff(InverseCutOff::T, LipFactor::T = T(DefaultNeighborLipFactor)) where {T<:Real}
+    @assert LipFactor > zero(T) "Neighbor list lip factor must be positive"
+    return InverseCutOff / LipFactor
+end
 
 function ConstructStencil(V::Val{d}) where d
     return CartesianIndices(ntuple(_ -> -1:1, V))
@@ -42,7 +49,8 @@ Extracts the cells for each particle based on their positions and the inverse cu
 
 # Arguments
 - `Particles`: The particles whose cells are to be extracted.
-- `::Val{InverseCutOff}`: The inverse cutoff value used for cell extraction.
+- `InverseCutOff`: The inverse cutoff value used for cell extraction.
+- `LipFactor`: Scaling factor to expand cell sizes around their centers.
 
 # Returns
 - `nothing`: This function modifies the `Particles` in place.
@@ -55,9 +63,10 @@ Extracts the cells for each particle based on their positions and the inverse cu
     Int(sign(X)) * unsafe_trunc(Int, muladd(abs(X), InverseCutOff, 0.5))
 end
 
-@inline function ExtractCells!(Particles, InverseCutOff)
+@inline function ExtractCells!(Particles, InverseCutOff, LipFactor = DefaultNeighborLipFactor)
+    EffectiveInverseCutOff = NeighborListInverseCutOff(InverseCutOff, typeof(InverseCutOff)(LipFactor))
     @inbounds @simd ivdep for Index ∈ eachindex(Particles.Cells)
-        Particles.Cells[Index] = CartesianIndex(map(X -> MapFloor(X, InverseCutOff), Tuple(Particles.Position[Index])))
+        Particles.Cells[Index] = CartesianIndex(map(X -> MapFloor(X, EffectiveInverseCutOff), Tuple(Particles.Position[Index])))
     end
     return nothing
 end
@@ -71,13 +80,15 @@ Updates the neighbor list and sorts particles by their cell indices.
 - `SortingScratchSpace`: Scratch space for sorting.
 - `ParticleRanges`: Array to store the ranges of particles in each cell.
 - `UniqueCells`: Array to store the unique cells.
+- `LipFactor`: Scaling factor to expand cell sizes around their centers.
 
 # Returns
 - `IndexCounter`: The number of unique cells identified.
 """
 function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
-                          ParticleRanges, UniqueCells, CellDict)
-    ExtractCells!(Particles, InverseCutOff)
+                          ParticleRanges, UniqueCells, CellDict;
+                          LipFactor = DefaultNeighborLipFactor)
+    ExtractCells!(Particles, InverseCutOff, LipFactor)
 
     sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
     Cells = @views Particles.Cells
