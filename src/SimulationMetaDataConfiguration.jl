@@ -6,7 +6,7 @@ using TimerOutputs
 
 export SimulationMetaData, UpdateMetaData!, ShiftingMode, NoShifting, PlanarShifting,
        KernelOutputMode, NoKernelOutput, StoreKernelOutput,
-       MDBCMode, NoMDBC, SimpleMDBC, AdvancedMDBC,
+       MDBCMode, NoMDBC, SimpleMDBC,
        LogMode, NoLog, StoreLog,
        TimeSteppingMode, SymplecticTimeStepping, SingleNeighborTimeStepping
 
@@ -21,7 +21,6 @@ struct StoreKernelOutput <: KernelOutputMode end
 abstract type MDBCMode end
 struct NoMDBC    <: MDBCMode end
 struct SimpleMDBC <: MDBCMode end
-struct AdvancedMDBC <: MDBCMode end
 
 abstract type LogMode end
 struct NoLog    <: LogMode end

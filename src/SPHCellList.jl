@@ -299,7 +299,7 @@ using LinearAlgebra
     function NeighborLoopMDBC!(SimKernel,
                                SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
                                SimConstants, ParticleRanges, UniqueCellsView,
-                               SimParticles, bᵧ, Aᵧ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
+                               SimParticles, bᵧ, Aᵧ, KernelSums, DivPos) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
 
         @unpack Position, Density, GhostPoints, GhostNormals = SimParticles
         ParticleType = SimParticles.Type                       
@@ -313,6 +313,8 @@ using LinearAlgebra
                 # zero‐initialize per‐ghost accumulators
                 b_acc = zero(bᵧ[iter])            # an SVector{D+1,FloatType}
                 A_acc = zero(Aᵧ[iter])            # an SMatrix{D+1,D+1,FloatType}
+                kernel_sum_acc = zero(KernelSums[iter])
+                div_pos_acc = zero(DivPos[iter])
             
                 # compute and accumulate into the locals
                 GhostCellIndex = f(SimKernel, GhostPoints[iter])
@@ -329,17 +331,21 @@ using LinearAlgebra
 
                     for j in StartIndex_:EndIndex_
                         # change ComputeInteractions to take & return contributions, e.g.:
-                        bΔ, AΔ = ComputeInteractionsMDBC!(SimKernel, SimMetaData, SimConstants,
-                                                        Position, Density, ParticleType,
-                                                        GhostPoints, iter, j)
+                        bΔ, AΔ, kernel_sum, div_pos = ComputeInteractionsMDBC!(SimKernel, SimMetaData, SimConstants,
+                                                                              Position, Density, ParticleType,
+                                                                              GhostPoints, iter, j)
                         b_acc += bΔ
                         A_acc += AΔ
+                        kernel_sum_acc += kernel_sum
+                        div_pos_acc += div_pos
                     end
                 end
             
                 # write out once
                 bᵧ[iter] = b_acc
                 Aᵧ[iter] = A_acc
+                KernelSums[iter] = kernel_sum_acc
+                DivPos[iter] = div_pos_acc
             end    
         end
 
@@ -586,6 +592,8 @@ using LinearAlgebra
         # always zero‐initialize
         bΔ = zero(SVector{DimensionsPlus,FloatType})
         AΔ = zero(SMatrix{DimensionsPlus, DimensionsPlus,FloatType})
+        kernel_sum = zero(FloatType)
+        div_pos = zero(FloatType)
 
         # ᵢ is ghost node! ⱼ is fluid node
 
@@ -618,56 +626,14 @@ using LinearAlgebra
                     first_column...,
                     ((xⱼᵢ * first_column')')...
                 )
+
+                kernel_sum = VⱼWᵢⱼ
+                div_pos = Vⱼ * dot(Position[j] - GhostPoints[i], ∇ᵢWᵢⱼ)
             end
         end
         
     
-        return bΔ, AΔ
-    end
-
-    Base.@propagate_inbounds function ComputeInteractionsMDBCAdvanced!(SimKernel, SimConstants,
-                                                                       Position, Density, Velocity,
-                                                                       ParticleType, GhostPoints, i, j)
-        @unpack m₀ = SimConstants
-        @unpack h⁻¹, H² = SimKernel
-
-        Dimensions = length(first(Position))
-        DimensionsPlus = Dimensions + 1
-        bΔ = zero(SVector{DimensionsPlus, eltype(Density)})
-        AΔ = zero(SMatrix{DimensionsPlus, DimensionsPlus, eltype(Density)})
-        kernel_sum = zero(eltype(Density))
-        velocity_sum = zero(eltype(Velocity))
-        div_pos = zero(eltype(Density))
-
-        if ParticleType[j] == Fluid
-            xᵢⱼ  = GhostPoints[i] - Position[j]
-            xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
-            if xᵢⱼ² <= H²
-                dᵢⱼ = sqrt(abs(xᵢⱼ²))
-                q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
-
-                ρⱼ = Density[j]
-                Wᵢⱼ = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
-                ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
-
-                Vⱼ = m₀ / ρⱼ
-                VⱼWᵢⱼ = Vⱼ * Wᵢⱼ
-
-                bΔ  = SVector{DimensionsPlus, eltype(Density)}(m₀ * Wᵢⱼ, (m₀ * ∇ᵢWᵢⱼ)...)
-                xⱼᵢ = -xᵢⱼ
-                first_column = [VⱼWᵢⱼ; Vⱼ * ∇ᵢWᵢⱼ]
-                AΔ = SMatrix{DimensionsPlus, DimensionsPlus, eltype(Density), DimensionsPlus*DimensionsPlus}(
-                    first_column...,
-                    ((xⱼᵢ * first_column')')...
-                )
-
-                kernel_sum = VⱼWᵢⱼ
-                velocity_sum = Velocity[j] * VⱼWᵢⱼ
-                div_pos = Vⱼ * dot(Position[j] - GhostPoints[i], ∇ᵢWᵢⱼ)
-            end
-        end
-
-        return bΔ, AΔ, kernel_sum, velocity_sum, div_pos
+        return bΔ, AΔ, kernel_sum, div_pos
     end
 
     function ApplyMDBCBeforeHalf!(::SimulationMetaData{D,T,S,K,NoMDBC,L}, _args...) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, L<:LogMode}
@@ -682,134 +648,47 @@ using LinearAlgebra
             DimensionsPlus = D + 1
             bᵧ = @alloc(SVector{DimensionsPlus, T}, length(SimParticles.Position))
             Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, T, DimensionsPlus*DimensionsPlus}, length(SimParticles.Position))
-            UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-            NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, UniqueCellsView, SimParticles, bᵧ, Aᵧ)
-            ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
-        end
-
-        return nothing
-    end
-
-    function ApplyMDBCBeforeHalf!(SimMetaData::SimulationMetaData{D,T,S,K,AdvancedMDBC,L},
-                                  SimKernel, SimConstants, SimParticles,
-                                  ParticleRanges, UniqueCells;
-                                  Position = SimParticles.Position,
-                                  Density = SimParticles.Density,
-                                  Velocity = SimParticles.Velocity
-                                 ) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,L<:LogMode}
-        @no_escape begin
-            DimensionsPlus = D + 1
-            bᵧ = @alloc(SVector{DimensionsPlus, T}, length(SimParticles.Position))
-            Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, T, DimensionsPlus*DimensionsPlus}, length(SimParticles.Position))
             KernelSums = @alloc(T, length(SimParticles.Position))
-            VelocitySums = @alloc(eltype(SimParticles.Velocity), length(SimParticles.Position))
             DivPos = @alloc(T, length(SimParticles.Position))
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-            NeighborLoopMDBCAdvanced!(SimKernel, SimConstants, ParticleRanges, UniqueCellsView,
-                                      SimParticles, bᵧ, Aᵧ, KernelSums, VelocitySums, DivPos;
-                                      Position = Position, Density = Density, Velocity = Velocity)
-            ApplyMDBCCorrectionAdvanced(SimConstants, SimParticles, bᵧ, Aᵧ, KernelSums, VelocitySums, DivPos)
+            NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, UniqueCellsView, SimParticles, bᵧ, Aᵧ, KernelSums, DivPos)
+            ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ, KernelSums, DivPos)
         end
 
         return nothing
     end
-
-    function ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
+    function ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ, KernelSums, DivPos)
 
         Position    = SimParticles.Position
         Density     = SimParticles.Density
         GhostPoints = SimParticles.GhostPoints
+        BoundOnOff  = SimParticles.BoundOnOff
+        Pressure    = SimParticles.Pressure
+        GhostNormals = SimParticles.GhostNormals
+        Acceleration = SimParticles.Acceleration
 
         ρ₀ = SimConstants.ρ₀
-        #https://github.com/DualSPHysics/DualSPHysics/blob/f4fa76ad5083873fa1c6dd3b26cdce89c55a9aeb/src/source/JSphCpu_mdbc.cpp#L347
-        @inbounds @simd ivdep for i in eachindex(Position)
-            A = Aᵧ[i]
-
-            # Since Aᵧ is not reset anymore, we need to check if it is zero
-            if !iszero(GhostPoints[i])
-                if abs(det(A)) >= 1e-3
-                        GhostPointDensity = A \ bᵧ[i]
-                        diff = Position[i] - GhostPoints[i]
-                        v1   = first(GhostPointDensity) + sum(GhostPointDensity[j+1] * diff[j] for j in eachindex(diff))
-                        Density[i] = isnan(v1) ? ρ₀ : v1
-                elseif first(A) > 0.0
-                        v = first(bᵧ[i]) / first(A)
-                        Density[i] = isnan(v) ? ρ₀ : v
-                end
-            end
-        end
-    end
-
-    function NeighborLoopMDBCAdvanced!(SimKernel, SimConstants, ParticleRanges, UniqueCellsView,
-                                       SimParticles, bᵧ, Aᵧ, KernelSums, VelocitySums, DivPos;
-                                       Position = SimParticles.Position,
-                                       Density = SimParticles.Density,
-                                       Velocity = SimParticles.Velocity)
-        @unpack GhostPoints = SimParticles
-        ParticleType = SimParticles.Type
-        FullStencil = ConstructStencil(Val(length(first(Position))))
-
-        @inbounds @threads for iter in eachindex(GhostPoints)
-            GhostPoint = GhostPoints[iter]
-            if !iszero(GhostPoint)
-                b_acc = zero(bᵧ[iter])
-                A_acc = zero(Aᵧ[iter])
-                kernel_sum_acc = zero(KernelSums[iter])
-                velocity_sum_acc = zero(VelocitySums[iter])
-                div_pos_acc = zero(DivPos[iter])
-
-                GhostCellIndex = f(SimKernel, GhostPoint)
-                @inbounds for offset ∈ FullStencil
-                    SCellIndex = GhostCellIndex + offset
-                    NeighborIdx = FindCellIndex(UniqueCellsView, SCellIndex)
-                    StartIndex_ = ParticleRanges[NeighborIdx]
-                    EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
-
-                    for j in StartIndex_:EndIndex_
-                        bΔ, AΔ, kernel_sum, velocity_sum, div_pos = ComputeInteractionsMDBCAdvanced!(
-                            SimKernel, SimConstants, Position, Density, Velocity, ParticleType, GhostPoints, iter, j
-                        )
-                        b_acc += bΔ
-                        A_acc += AΔ
-                        kernel_sum_acc += kernel_sum
-                        velocity_sum_acc += velocity_sum
-                        div_pos_acc += div_pos
-                    end
-                end
-
-                bᵧ[iter] = b_acc
-                Aᵧ[iter] = A_acc
-                KernelSums[iter] = kernel_sum_acc
-                VelocitySums[iter] = velocity_sum_acc
-                DivPos[iter] = div_pos_acc
-            end
-        end
-
-        return nothing
-    end
-
-    function ApplyMDBCCorrectionAdvanced(SimConstants, SimParticles, bᵧ, Aᵧ, KernelSums, VelocitySums, DivPos)
-        @unpack Position, Density, GhostPoints, GhostNormals, Velocity, Acceleration, Pressure, BoundOnOff = SimParticles
-        @unpack ρ₀, c₀, Cb⁻¹, g = SimConstants
+        c₀ = SimConstants.c₀
+        Cb⁻¹ = SimConstants.Cb⁻¹
+        g = SimConstants.g
 
         kernel_sum_threshold = eltype(KernelSums)(0.1)
         det_threshold = eltype(KernelSums)(1e-3)
         cond_threshold = eltype(KernelSums)(50.0)
 
-        @inbounds for i in eachindex(Position)
+        @inbounds @simd ivdep for i in eachindex(Position)
+            A = Aᵧ[i]
+
             if iszero(GhostPoints[i])
                 continue
             end
 
             if !(DivPos[i] > zero(DivPos[i]))
                 BoundOnOff[i] = zero(eltype(BoundOnOff))
-                Density[i] = ρ₀
-                Pressure[i] = EquationOfStateGamma7(ρ₀, c₀, ρ₀)
                 continue
             end
             BoundOnOff[i] = one(eltype(BoundOnOff))
 
-            A = Aᵧ[i]
             kernel_sum = KernelSums[i]
             ghost_density = ρ₀
             grad_density = zero(SVector{length(Position[i]), eltype(ρ₀)})
@@ -870,14 +749,6 @@ using LinearAlgebra
             Density[i] = isnan(boundary_density) ? ρ₀ : boundary_density
             if isnan(Pressure[i])
                 Pressure[i] = EquationOfStateGamma7(Density[i], c₀, ρ₀)
-            end
-
-            if kernel_sum >= kernel_sum_threshold
-                ghost_velocity = VelocitySums[i] / kernel_sum
-                if !any(isnan, ghost_velocity)
-                    prescribed_velocity = Velocity[i]
-                    Velocity[i] = (prescribed_velocity * 2) - ghost_velocity
-                end
             end
         end
     end
