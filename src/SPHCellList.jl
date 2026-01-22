@@ -810,6 +810,7 @@ using LinearAlgebra
                 elseif isfinite(first(A)) && first(A) > zero(eltype(A)) && isfinite(first(bᵧ[i]))
                     ghost_density = first(bᵧ[i]) / first(A)
                 end
+                ghost_density = isfinite(ghost_density) ? ghost_density : ρ₀
 
                 diff = Position[i] - GhostPoints[i]
                 boundary_density = ghost_density + dot(diff, grad_density)
@@ -839,6 +840,9 @@ using LinearAlgebra
                 end
 
                 Density[i] = isfinite(boundary_density) ? boundary_density : ρ₀
+                if !isfinite(Pressure[i])
+                    Pressure[i] = EquationOfStateGamma7(Density[i], c₀, ρ₀)
+                end
 
                 if isfinite(kernel_sum) && kernel_sum >= kernel_sum_threshold
                     ghost_velocity = VelocitySums[i] / kernel_sum
