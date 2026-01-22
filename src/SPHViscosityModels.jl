@@ -61,7 +61,7 @@ end
 
     ρᵢ = SimParticles.Density[i]
     ρⱼ = SimParticles.Density[j]
-    mⱼ = m₀ * BoundOnOff[j]
+    mⱼ = SimParticles.Type[j] == Fluid ? m₀ : m₀ * BoundOnOff[j]
 
     v_dot_x = dot(vᵢⱼ, xᵢⱼ)
     if v_dot_x < 0
@@ -84,7 +84,7 @@ end
     dᵢⱼ =  sqrt(abs(d²))
     ρᵢ  = SimParticles.Density[i]
     ρⱼ  = SimParticles.Density[j]
-    mⱼ  = m₀ * BoundOnOff[j]
+    mⱼ  = SimParticles.Type[j] == Fluid ? m₀ : m₀ * BoundOnOff[j]
 
     term = (4 * mⱼ * ν₀ * dot(xᵢⱼ, ∇ᵢWᵢⱼ)) / ((ρᵢ + ρⱼ) + (d² + η²))
     return term * vᵢⱼ, -term * vᵢⱼ
@@ -100,7 +100,7 @@ end
 
     ρᵢ  = SimParticles.Density[i]
     ρⱼ  = SimParticles.Density[j]
-    mⱼ  = m₀ * BoundOnOff[j]
+    mⱼ  = SimParticles.Type[j] == Fluid ? m₀ : m₀ * BoundOnOff[j]
 
     vᵢ  = SimParticles.Velocity[i]
     vⱼ  = SimParticles.Velocity[j]

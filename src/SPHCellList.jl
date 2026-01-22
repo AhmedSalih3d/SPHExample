@@ -402,7 +402,7 @@ using LinearAlgebra
             vⱼ = Velocity[j]
             vᵢⱼ = vᵢ - vⱼ
             density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
-            mⱼ = m₀ * BoundOnOff[j]
+            mⱼ = ParticleType[j] == Fluid ? m₀ : m₀ * BoundOnOff[j]
             dρdt⁺ = -ρᵢ * (mⱼ / ρⱼ) * density_symmetric_term
 
             Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)
@@ -451,7 +451,7 @@ using LinearAlgebra
             vⱼ = Velocity[j]
             vᵢⱼ = vᵢ - vⱼ
             density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
-            mⱼ = m₀ * BoundOnOff[j]
+            mⱼ = ParticleType[j] == Fluid ? m₀ : m₀ * BoundOnOff[j]
             dρdt⁺ = -ρᵢ * (mⱼ / ρⱼ) * density_symmetric_term
 
             Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)
@@ -502,7 +502,7 @@ using LinearAlgebra
             vⱼ = Velocity[j]
             vᵢⱼ = vᵢ - vⱼ
             density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
-            mⱼ = m₀ * BoundOnOff[j]
+            mⱼ = ParticleType[j] == Fluid ? m₀ : m₀ * BoundOnOff[j]
             dρdt⁺ = -ρᵢ * (mⱼ / ρⱼ) * density_symmetric_term
 
             Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)
@@ -558,7 +558,7 @@ using LinearAlgebra
             vⱼ = Velocity[j]
             vᵢⱼ = vᵢ - vⱼ
             density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
-            mⱼ = m₀ * BoundOnOff[j]
+            mⱼ = ParticleType[j] == Fluid ? m₀ : m₀ * BoundOnOff[j]
             dρdt⁺ = -ρᵢ * (mⱼ / ρⱼ) * density_symmetric_term
 
             Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)

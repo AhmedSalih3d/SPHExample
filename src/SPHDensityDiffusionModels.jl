@@ -73,7 +73,7 @@ struct ZeroGravityLinearDensityDiffusion <: SPHDensityDiffusion end
 
         ρᵢ  = SimParticles.Density[i]
         ρⱼ  = SimParticles.Density[j]
-        mⱼ  = m₀ * BoundOnOff[j]
+        mⱼ  = ParticleType[j] == Fluid ? m₀ : m₀ * BoundOnOff[j]
 
         # g == 0 => skip any hydrostatic parts
         
@@ -121,7 +121,7 @@ struct LinearDensityDiffusion <: SPHDensityDiffusion end
 
         ρᵢ  = SimParticles.Density[i]
         ρⱼ  = SimParticles.Density[j]
-        mⱼ  = m₀ * BoundOnOff[j]
+        mⱼ  = ParticleType[j] == Fluid ? m₀ : m₀ * BoundOnOff[j]
 
         Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
         ρᵢⱼᴴ  = Pᵢⱼᴴ * Linear_ρ_factor
@@ -171,7 +171,7 @@ struct ComplexDensityDiffusion <: SPHDensityDiffusion end
 
         ρᵢ  = SimParticles.Density[i]
         ρⱼ  = SimParticles.Density[j]
-        mⱼ  = m₀ * BoundOnOff[j]
+        mⱼ  = ParticleType[j] == Fluid ? m₀ : m₀ * BoundOnOff[j]
 
         # In theory these two equations are not completely symmetric.
         # In practice it is 'good' enough and saves a lot of time to
