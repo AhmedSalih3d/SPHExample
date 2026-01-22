@@ -788,68 +788,82 @@ using LinearAlgebra
         det_threshold = eltype(KernelSums)(1e-3)
         cond_threshold = eltype(KernelSums)(50.0)
 
-        @inbounds @simd ivdep for i in eachindex(Position)
-            if !(iszero(GhostPoints[i]) || DivPos[i] <= zero(DivPos[i]))
-                A = Aᵧ[i]
-                kernel_sum = KernelSums[i]
-                ghost_density = ρ₀
-                grad_density = zero(SVector{length(Position[i]), eltype(ρ₀)})
+        @inbounds for i in eachindex(Position)
+            if iszero(GhostPoints[i])
+                continue
+            end
 
-                use_matrix = false
-                if isfinite(kernel_sum) && kernel_sum >= kernel_sum_threshold && all(isfinite, A) && abs(det(A)) >= det_threshold
+            if !(isfinite(DivPos[i]) && DivPos[i] > zero(DivPos[i]))
+                Density[i] = ρ₀
+                Pressure[i] = EquationOfStateGamma7(ρ₀, c₀, ρ₀)
+                continue
+            end
+
+            A = Aᵧ[i]
+            kernel_sum = KernelSums[i]
+            ghost_density = ρ₀
+            grad_density = zero(SVector{length(Position[i]), eltype(ρ₀)})
+
+            use_shepherd = true
+            use_matrix = false
+
+            if isfinite(kernel_sum) && kernel_sum >= kernel_sum_threshold && all(isfinite, A)
+                det_value = det(A)
+                if isfinite(det_value) && abs(det_value) >= det_threshold
                     condition_number = cond(A)
                     use_matrix = isfinite(condition_number) && condition_number < cond_threshold
+                    use_shepherd = !use_matrix
                 end
+            end
 
-                if use_matrix
-                    ghost_state = A \ bᵧ[i]
-                    if all(isfinite, ghost_state)
-                        ghost_density = first(ghost_state)
-                        grad_density = SVector{length(ghost_state) - 1, eltype(ghost_state)}(ghost_state[2:end])
-                    end
-                elseif isfinite(first(A)) && first(A) > zero(eltype(A)) && isfinite(first(bᵧ[i]))
-                    ghost_density = first(bᵧ[i]) / first(A)
+            if use_matrix
+                ghost_state = A \ bᵧ[i]
+                if all(isfinite, ghost_state)
+                    ghost_density = first(ghost_state)
+                    grad_density = SVector{length(ghost_state) - 1, eltype(ghost_state)}(ghost_state[2:end])
                 end
-                ghost_density = isfinite(ghost_density) ? ghost_density : ρ₀
+            elseif use_shepherd && isfinite(first(A)) && first(A) > zero(eltype(A)) && isfinite(first(bᵧ[i]))
+                ghost_density = first(bᵧ[i]) / first(A)
+            end
 
-                diff = Position[i] - GhostPoints[i]
-                boundary_density = ghost_density + dot(diff, grad_density)
-                boundary_density = isfinite(boundary_density) ? boundary_density : ρ₀
+            ghost_density = isfinite(ghost_density) ? ghost_density : ρ₀
+            diff = Position[i] - GhostPoints[i]
+            boundary_density = ghost_density + dot(diff, grad_density)
+            boundary_density = isfinite(boundary_density) ? boundary_density : ρ₀
 
-                normal = GhostNormals[i]
-                if !iszero(normal) && all(isfinite, normal)
-                    normal_distance = dot(GhostPoints[i] - Position[i], normal)
-                    gravity_vec = ConstructGravitySVector(normal, g)
-                    gravity_normal = dot(gravity_vec, normal)
-                    acceleration_normal = dot(Acceleration[i], normal)
-                    ghost_pressure = EquationOfStateGamma7(ghost_density, c₀, ρ₀)
-                    boundary_pressure = ghost_pressure + ρ₀ * (gravity_normal - acceleration_normal) * normal_distance
-                    if isfinite(boundary_pressure)
-                        density_argument = one(eltype(boundary_pressure)) + boundary_pressure * Cb⁻¹
-                        if isfinite(density_argument) && density_argument > zero(density_argument)
-                            boundary_density = ρ₀ + InverseHydrostaticEquationOfState(ρ₀, boundary_pressure, Cb⁻¹)
-                            Pressure[i] = boundary_pressure
-                        else
-                            Pressure[i] = EquationOfStateGamma7(boundary_density, c₀, ρ₀)
-                        end
+            normal = GhostNormals[i]
+            if !iszero(normal) && all(isfinite, normal)
+                normal_distance = dot(GhostPoints[i] - Position[i], normal)
+                gravity_vec = ConstructGravitySVector(normal, g)
+                gravity_normal = dot(gravity_vec, normal)
+                acceleration_normal = dot(Acceleration[i], normal)
+                ghost_pressure = EquationOfStateGamma7(ghost_density, c₀, ρ₀)
+                boundary_pressure = ghost_pressure + ρ₀ * (gravity_normal - acceleration_normal) * normal_distance
+                if isfinite(boundary_pressure)
+                    density_argument = one(eltype(boundary_pressure)) + boundary_pressure * Cb⁻¹
+                    if isfinite(density_argument) && density_argument > zero(density_argument)
+                        boundary_density = ρ₀ + InverseHydrostaticEquationOfState(ρ₀, boundary_pressure, Cb⁻¹)
+                        Pressure[i] = boundary_pressure
                     else
                         Pressure[i] = EquationOfStateGamma7(boundary_density, c₀, ρ₀)
                     end
                 else
                     Pressure[i] = EquationOfStateGamma7(boundary_density, c₀, ρ₀)
                 end
+            else
+                Pressure[i] = EquationOfStateGamma7(boundary_density, c₀, ρ₀)
+            end
 
-                Density[i] = isfinite(boundary_density) ? boundary_density : ρ₀
-                if !isfinite(Pressure[i])
-                    Pressure[i] = EquationOfStateGamma7(Density[i], c₀, ρ₀)
-                end
+            Density[i] = isfinite(boundary_density) ? boundary_density : ρ₀
+            if !isfinite(Pressure[i])
+                Pressure[i] = EquationOfStateGamma7(Density[i], c₀, ρ₀)
+            end
 
-                if isfinite(kernel_sum) && kernel_sum >= kernel_sum_threshold
-                    ghost_velocity = VelocitySums[i] / kernel_sum
-                    if all(isfinite, ghost_velocity)
-                        prescribed_velocity = Velocity[i]
-                        Velocity[i] = (prescribed_velocity * 2) - ghost_velocity
-                    end
+            if isfinite(kernel_sum) && kernel_sum >= kernel_sum_threshold
+                ghost_velocity = VelocitySums[i] / kernel_sum
+                if all(isfinite, ghost_velocity)
+                    prescribed_velocity = Velocity[i]
+                    Velocity[i] = (prescribed_velocity * 2) - ghost_velocity
                 end
             end
         end
