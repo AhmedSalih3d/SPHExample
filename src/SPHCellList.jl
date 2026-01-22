@@ -789,7 +789,7 @@ using LinearAlgebra
     end
 
     function ApplyMDBCCorrectionAdvanced(SimConstants, SimParticles, bᵧ, Aᵧ, KernelSums, VelocitySums, DivPos)
-        @unpack Position, Density, GhostPoints, GhostNormals, Velocity, Acceleration, Pressure, BoundOnOff = SimParticles
+        @unpack Position, Density, GhostPoints, GhostNormals, Velocity, Acceleration, Pressure, BoundOnOff, Type = SimParticles
         @unpack ρ₀, c₀, Cb⁻¹, g = SimConstants
 
         kernel_sum_threshold = eltype(KernelSums)(0.1)
@@ -797,14 +797,20 @@ using LinearAlgebra
         cond_threshold = eltype(KernelSums)(50.0)
 
         @inbounds for i in eachindex(Position)
+            if Type[i] == Fluid
+                BoundOnOff[i] = one(eltype(BoundOnOff))
+                continue
+            end
+
             if iszero(GhostPoints[i])
+                BoundOnOff[i] = one(eltype(BoundOnOff))
                 continue
             end
 
             if !(DivPos[i] > zero(DivPos[i]))
                 BoundOnOff[i] = zero(eltype(BoundOnOff))
                 Density[i] = ρ₀
-                Pressure[i] = zero(eltype(Pressure))
+                Pressure[i] = EquationOfStateGamma7(ρ₀, c₀, ρ₀)
                 continue
             end
             BoundOnOff[i] = one(eltype(BoundOnOff))
