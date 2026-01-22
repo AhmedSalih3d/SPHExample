@@ -796,34 +796,41 @@ using LinearAlgebra
                 grad_density = zero(SVector{length(Position[i]), eltype(ρ₀)})
 
                 use_matrix = false
-                if kernel_sum >= kernel_sum_threshold && abs(det(A)) >= det_threshold
-                    use_matrix = cond(A) < cond_threshold
+                if isfinite(kernel_sum) && kernel_sum >= kernel_sum_threshold && all(isfinite, A) && abs(det(A)) >= det_threshold
+                    condition_number = cond(A)
+                    use_matrix = isfinite(condition_number) && condition_number < cond_threshold
                 end
 
                 if use_matrix
                     ghost_state = A \ bᵧ[i]
-                    ghost_density = first(ghost_state)
-                    grad_density = SVector{length(ghost_state) - 1, eltype(ghost_state)}(ghost_state[2:end])
-                elseif first(A) > zero(eltype(A))
+                    if all(isfinite, ghost_state)
+                        ghost_density = first(ghost_state)
+                        grad_density = SVector{length(ghost_state) - 1, eltype(ghost_state)}(ghost_state[2:end])
+                    end
+                elseif isfinite(first(A)) && first(A) > zero(eltype(A)) && isfinite(first(bᵧ[i]))
                     ghost_density = first(bᵧ[i]) / first(A)
                 end
 
                 diff = Position[i] - GhostPoints[i]
                 boundary_density = ghost_density + dot(diff, grad_density)
-                boundary_density = isnan(boundary_density) ? ρ₀ : boundary_density
+                boundary_density = isfinite(boundary_density) ? boundary_density : ρ₀
 
                 normal = GhostNormals[i]
-                if !iszero(normal)
+                if !iszero(normal) && all(isfinite, normal)
                     normal_distance = dot(GhostPoints[i] - Position[i], normal)
                     gravity_vec = ConstructGravitySVector(normal, g)
                     gravity_normal = dot(gravity_vec, normal)
                     acceleration_normal = dot(Acceleration[i], normal)
                     ghost_pressure = EquationOfStateGamma7(ghost_density, c₀, ρ₀)
                     boundary_pressure = ghost_pressure + ρ₀ * (gravity_normal - acceleration_normal) * normal_distance
-                    density_argument = one(eltype(boundary_pressure)) + boundary_pressure * Cb⁻¹
-                    if density_argument > zero(density_argument)
-                        boundary_density = ρ₀ + InverseHydrostaticEquationOfState(ρ₀, boundary_pressure, Cb⁻¹)
-                        Pressure[i] = boundary_pressure
+                    if isfinite(boundary_pressure)
+                        density_argument = one(eltype(boundary_pressure)) + boundary_pressure * Cb⁻¹
+                        if isfinite(density_argument) && density_argument > zero(density_argument)
+                            boundary_density = ρ₀ + InverseHydrostaticEquationOfState(ρ₀, boundary_pressure, Cb⁻¹)
+                            Pressure[i] = boundary_pressure
+                        else
+                            Pressure[i] = EquationOfStateGamma7(boundary_density, c₀, ρ₀)
+                        end
                     else
                         Pressure[i] = EquationOfStateGamma7(boundary_density, c₀, ρ₀)
                     end
@@ -831,12 +838,14 @@ using LinearAlgebra
                     Pressure[i] = EquationOfStateGamma7(boundary_density, c₀, ρ₀)
                 end
 
-                Density[i] = isnan(boundary_density) ? ρ₀ : boundary_density
+                Density[i] = isfinite(boundary_density) ? boundary_density : ρ₀
 
-                if kernel_sum >= kernel_sum_threshold
+                if isfinite(kernel_sum) && kernel_sum >= kernel_sum_threshold
                     ghost_velocity = VelocitySums[i] / kernel_sum
-                    prescribed_velocity = Velocity[i]
-                    Velocity[i] = (prescribed_velocity * 2) - ghost_velocity
+                    if all(isfinite, ghost_velocity)
+                        prescribed_velocity = Velocity[i]
+                        Velocity[i] = (prescribed_velocity * 2) - ghost_velocity
+                    end
                 end
             end
         end
