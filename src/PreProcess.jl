@@ -218,4 +218,16 @@ function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,SimpleMDBC,L}, SimParticl
     return nothing
 end
 
+function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,AdvancedMDBC,L}, SimParticles, path) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, L<:LogMode}
+    if isnothing(path)
+        return nothing
+    end
+    _, GhostPoints, GhostNormals = LoadBoundaryNormals(Val(D), T, path)
+    for gi ∈ eachindex(GhostPoints)
+        SimParticles.GhostPoints[gi]  = GhostPoints[gi]
+        SimParticles.GhostNormals[gi] = GhostNormals[gi]
+    end
+    return nothing
+end
+
 end

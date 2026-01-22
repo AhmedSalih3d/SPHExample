@@ -50,7 +50,7 @@ module SPHExample
     using .SimulationMetaDataConfiguration
     export SimulationMetaData, ShiftingMode, NoShifting, PlanarShifting,
            KernelOutputMode, NoKernelOutput, StoreKernelOutput,
-           MDBCMode, NoMDBC, SimpleMDBC,
+           MDBCMode, NoMDBC, SimpleMDBC, AdvancedMDBC,
            LogMode, NoLog, StoreLog,
            TimeSteppingMode, SymplecticTimeStepping, SingleNeighborTimeStepping
 
