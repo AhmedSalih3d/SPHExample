@@ -57,16 +57,18 @@ end
                                    xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
     @unpack m₀, α, c₀ = SimConstants
     @unpack h, η²     = SimKernel
+    @unpack BoundOnOff = SimParticles
 
     ρᵢ = SimParticles.Density[i]
     ρⱼ = SimParticles.Density[j]
+    mⱼ = m₀ * BoundOnOff[j]
 
     v_dot_x = dot(vᵢⱼ, xᵢⱼ)
     if v_dot_x < 0
         ρ̄ = 0.5 * (ρᵢ + ρⱼ)
         μᵢⱼ = h * v_dot_x / (d² + η²)
 
-        Π = -m₀ * (-α * c₀ * μᵢⱼ) / ρ̄ * ∇ᵢWᵢⱼ
+        Π = -mⱼ * (-α * c₀ * μᵢⱼ) / ρ̄ * ∇ᵢWᵢⱼ
         return Π, -Π
     end
 
@@ -77,24 +79,28 @@ end
 @inline function compute_viscosity(::Laminar, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
     @unpack m₀, ν₀ = SimConstants
     @unpack η²     = SimKernel
+    @unpack BoundOnOff = SimParticles
 
     dᵢⱼ =  sqrt(abs(d²))
     ρᵢ  = SimParticles.Density[i]
     ρⱼ  = SimParticles.Density[j]
+    mⱼ  = m₀ * BoundOnOff[j]
 
-    term = (4 * m₀ * ν₀ * dot(xᵢⱼ, ∇ᵢWᵢⱼ)) / ((ρᵢ + ρⱼ) + (d² + η²))
+    term = (4 * mⱼ * ν₀ * dot(xᵢⱼ, ∇ᵢWᵢⱼ)) / ((ρᵢ + ρⱼ) + (d² + η²))
     return term * vᵢⱼ, -term * vᵢⱼ
 end
 
 # LaminarSPS: with sub-grid scale stresses.
 @inline function compute_viscosity(::LaminarSPS, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
     @unpack m₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
+    @unpack BoundOnOff = SimParticles
     
     t1,t2 = compute_viscosity(Laminar(), SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
     
 
     ρᵢ  = SimParticles.Density[i]
     ρⱼ  = SimParticles.Density[j]
+    mⱼ  = m₀ * BoundOnOff[j]
 
     vᵢ  = SimParticles.Velocity[i]
     vⱼ  = SimParticles.Velocity[j]
@@ -107,19 +113,19 @@ end
     # 0.0  0.0  0.0
     # 0.0  0.0  0.0
     # Strain *rate* tensor is the gradient of velocity
-    Sᵢ = ∇vᵢ =  (m₀/ρⱼ) * (vⱼ - vᵢ) * ∇ᵢWᵢⱼ'
+    Sᵢ = ∇vᵢ =  (mⱼ/ρⱼ) * (vⱼ - vᵢ) * ∇ᵢWᵢⱼ'
     norm_Sᵢ  = sqrt(2 * sum(Sᵢ .^ 2))
     νtᵢ      = (SmagorinskyConstant * dx)^2 * norm_Sᵢ
     trace_Sᵢ = sum(diag(Sᵢ))
     τᶿᵢ      = 2*νtᵢ*ρᵢ * (Sᵢ - (1/3) * trace_Sᵢ * Iᴹ) - (2/3) * ρᵢ * BlinConstant * dx^2 * norm_Sᵢ^2 * Iᴹ
-    Sⱼ = ∇vⱼ =  (m₀/ρᵢ) * (vᵢ - vⱼ) * -∇ᵢWᵢⱼ'
+    Sⱼ = ∇vⱼ =  (mⱼ/ρᵢ) * (vᵢ - vⱼ) * -∇ᵢWᵢⱼ'
     norm_Sⱼ  = sqrt(2 * sum(Sⱼ .^ 2))
     νtⱼ      = (SmagorinskyConstant * dx)^2 * norm_Sⱼ
     trace_Sⱼ = sum(diag(Sⱼ))
     τᶿⱼ      = 2*νtⱼ*ρⱼ * (Sⱼ - (1/3) * trace_Sⱼ * Iᴹ) - (2/3) * ρⱼ * BlinConstant * dx^2 * norm_Sⱼ^2 * Iᴹ
 
     # MATHEMATICALLY THIS IS DOT PRODUCT TO GO FROM TENSOR TO VECTOR, BUT USE * IN JULIA TO REPRESENT IT
-    dτdtᵢ = (m₀/(ρⱼ * ρᵢ)) * (τᶿᵢ + τᶿⱼ) *  ∇ᵢWᵢⱼ 
+    dτdtᵢ = (mⱼ/(ρⱼ * ρᵢ)) * (τᶿᵢ + τᶿⱼ) *  ∇ᵢWᵢⱼ 
     dτdtⱼ = -dτdtᵢ
 
     return t1 + dτdtᵢ, t2 + dτdtⱼ

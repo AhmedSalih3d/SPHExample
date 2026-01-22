@@ -69,9 +69,11 @@ struct ZeroGravityLinearDensityDiffusion <: SPHDensityDiffusion end
 
         @unpack ρ₀, m₀, c₀, δᵩ, Cb, Cb⁻¹, γ    = SimConstants
         @unpack h, η²                          = SimKernel
+        @unpack BoundOnOff                     = SimParticles
 
         ρᵢ  = SimParticles.Density[i]
         ρⱼ  = SimParticles.Density[j]
+        mⱼ  = m₀ * BoundOnOff[j]
 
         # g == 0 => skip any hydrostatic parts
         
@@ -80,7 +82,7 @@ struct ZeroGravityLinearDensityDiffusion <: SPHDensityDiffusion end
         ρⱼᵢ = ρⱼ - ρᵢ
         ψᵢⱼ = 2 * ρⱼᵢ * (-xᵢⱼ) * invdᵢⱼ²η²
 
-        Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ)
+        Dᵢ  = δᵩ * h * c₀ * (mⱼ/ρⱼ) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ)
         Dⱼ  = -Dᵢ
 
 
@@ -113,11 +115,13 @@ struct LinearDensityDiffusion <: SPHDensityDiffusion end
 
         @unpack ρ₀, m₀, c₀, δᵩ, Cb, Cb⁻¹, γ, g = SimConstants
         @unpack h, η²                          = SimKernel
+        @unpack BoundOnOff                     = SimParticles
 
         Linear_ρ_factor = (1/(Cb*γ))*ρ₀
 
         ρᵢ  = SimParticles.Density[i]
         ρⱼ  = SimParticles.Density[j]
+        mⱼ  = m₀ * BoundOnOff[j]
 
         Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
         ρᵢⱼᴴ  = Pᵢⱼᴴ * Linear_ρ_factor
@@ -130,7 +134,7 @@ struct LinearDensityDiffusion <: SPHDensityDiffusion end
 
         MotionLimiterCondition = MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
 
-        Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
+        Dᵢ  = δᵩ * h * c₀ * (mⱼ/ρⱼ) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
         Dⱼ  = -Dᵢ
 
         return Dᵢ, Dⱼ
@@ -163,9 +167,11 @@ struct ComplexDensityDiffusion <: SPHDensityDiffusion end
 
         @unpack ρ₀, m₀, c₀, δᵩ, Cb, Cb⁻¹, γ, g = SimConstants
         @unpack h, η²                          = SimKernel
+        @unpack BoundOnOff                     = SimParticles
 
         ρᵢ  = SimParticles.Density[i]
         ρⱼ  = SimParticles.Density[j]
+        mⱼ  = m₀ * BoundOnOff[j]
 
         # In theory these two equations are not completely symmetric.
         # In practice it is 'good' enough and saves a lot of time to
@@ -182,7 +188,7 @@ struct ComplexDensityDiffusion <: SPHDensityDiffusion end
 
         MotionLimiterCondition = MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
 
-        Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
+        Dᵢ  = δᵩ * h * c₀ * (mⱼ/ρⱼ) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
         Dⱼ  = -Dᵢ
 
         return Dᵢ, Dⱼ
