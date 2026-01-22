@@ -685,6 +685,8 @@ using LinearAlgebra
 
             if !(DivPos[i] > zero(DivPos[i]))
                 BoundOnOff[i] = zero(eltype(BoundOnOff))
+                Density[i] = ρ₀
+                Pressure[i] = EquationOfStateGamma7(ρ₀, c₀, ρ₀)
                 continue
             end
             BoundOnOff[i] = one(eltype(BoundOnOff))
