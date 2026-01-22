@@ -789,7 +789,7 @@ using LinearAlgebra
     end
 
     function ApplyMDBCCorrectionAdvanced(SimConstants, SimParticles, bᵧ, Aᵧ, KernelSums, VelocitySums, DivPos)
-        @unpack Position, Density, GhostPoints, GhostNormals, Velocity, Acceleration, Pressure, BoundOnOff, Type = SimParticles
+        @unpack Position, Density, GhostPoints, GhostNormals, Velocity, Acceleration, Pressure, BoundOnOff = SimParticles
         @unpack ρ₀, c₀, Cb⁻¹, g = SimConstants
 
         kernel_sum_threshold = eltype(KernelSums)(0.1)
@@ -797,13 +797,7 @@ using LinearAlgebra
         cond_threshold = eltype(KernelSums)(50.0)
 
         @inbounds for i in eachindex(Position)
-            if Type[i] == Fluid
-                BoundOnOff[i] = one(eltype(BoundOnOff))
-                continue
-            end
-
             if iszero(GhostPoints[i])
-                BoundOnOff[i] = one(eltype(BoundOnOff))
                 continue
             end
 
@@ -820,16 +814,15 @@ using LinearAlgebra
             ghost_density = ρ₀
             grad_density = zero(SVector{length(Position[i]), eltype(ρ₀)})
 
-            use_shepherd = true
+            use_shepherd = kernel_sum < kernel_sum_threshold
             use_matrix = false
-
-            if kernel_sum >= kernel_sum_threshold
+            if !use_shepherd
                 det_value = det(A)
                 if abs(det_value) >= det_threshold
                     condition_number = cond(A)
                     use_matrix = condition_number < cond_threshold
-                    use_shepherd = !use_matrix
                 end
+                use_shepherd = !use_matrix
             end
 
             if use_matrix
@@ -838,8 +831,8 @@ using LinearAlgebra
                     ghost_density = first(ghost_state)
                     grad_density = SVector{length(ghost_state) - 1, eltype(ghost_state)}(ghost_state[2:end])
                 end
-            elseif use_shepherd && first(A) > zero(eltype(A)) && !isnan(first(bᵧ[i]))
-                ghost_density = first(bᵧ[i]) / first(A)
+            elseif use_shepherd && kernel_sum > zero(eltype(kernel_sum))
+                ghost_density = first(bᵧ[i]) / kernel_sum
             end
 
             if isnan(ghost_density)
@@ -1000,14 +993,6 @@ using LinearAlgebra
                     @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
 
                     @timeit SimMetaData.HourGlass "07 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺, SimConstants)
-                    if SimMetaData isa SimulationMetaData{Dimensions, FloatType, SMode, KMode, AdvancedMDBC, LMode}
-                        @timeit SimMetaData.HourGlass "07a Apply MDBC before Full TimeStep"  ApplyMDBCBeforeHalf!(
-                            SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells;
-                            Position = Positionₙ⁺,
-                            Density = ρₙ⁺,
-                            Velocity = Velocityₙ⁺,
-                        )
-                    end
                     @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, ParticleRanges, CellListIndices,
