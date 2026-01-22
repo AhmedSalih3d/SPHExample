@@ -676,7 +676,7 @@ using LinearAlgebra
         det_threshold = eltype(KernelSums)(1e-3)
         cond_threshold = eltype(KernelSums)(50.0)
 
-        @inbounds @simd ivdep for i in eachindex(Position)
+        @inbounds for i in eachindex(Position)
             A = Aᵧ[i]
 
             if iszero(GhostPoints[i])
