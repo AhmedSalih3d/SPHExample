@@ -64,9 +64,6 @@ Extracts the cells for each particle based on their positions and the inverse cu
     # This is different than just doing muladd(x,InverseCutOff,0.5) because it rounds towards zero.
     # Consider -1.7 + 0.5, this would give -1.2 and then truncated 1, but we want -2, therefore absolute addition beforehand
     # We add 0.5 instead of 1, to ensure proper rounding behavior when restoring the sign for negative numbers.
-    if !isfinite(X)
-        return zero(Int)
-    end
     Int(sign(X)) * unsafe_trunc(Int, muladd(abs(X), InverseCutOff, 0.5))
 end
 

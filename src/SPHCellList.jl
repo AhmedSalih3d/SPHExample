@@ -379,6 +379,7 @@ using LinearAlgebra
                                                                       SV<:SPHViscosity}
         @unpack m₀, dx = SimConstants
         @unpack h⁻¹, H², h = SimKernel
+        @unpack BoundOnOff = SimParticles
 
         xᵢⱼ = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
@@ -395,7 +396,8 @@ using LinearAlgebra
             vⱼ = Velocity[j]
             vᵢⱼ = vᵢ - vⱼ
             density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
-            dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
+            mⱼ = m₀ * BoundOnOff[j]
+            dρdt⁺ = -ρᵢ * (mⱼ / ρⱼ) * density_symmetric_term
 
             Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)
 
@@ -405,7 +407,7 @@ using LinearAlgebra
             Pⱼ = Pressure[j]
             Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
             f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
-            dvdt⁺ = -m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
+            dvdt⁺ = -mⱼ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
 
             visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j)
 
@@ -426,6 +428,7 @@ using LinearAlgebra
                                         SV<:SPHViscosity}
         @unpack m₀, dx = SimConstants
         @unpack h⁻¹, H², h = SimKernel
+        @unpack BoundOnOff = SimParticles
 
         xᵢⱼ = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
@@ -442,7 +445,8 @@ using LinearAlgebra
             vⱼ = Velocity[j]
             vᵢⱼ = vᵢ - vⱼ
             density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
-            dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
+            mⱼ = m₀ * BoundOnOff[j]
+            dρdt⁺ = -ρᵢ * (mⱼ / ρⱼ) * density_symmetric_term
 
             Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)
 
@@ -452,7 +456,7 @@ using LinearAlgebra
             Pⱼ = Pressure[j]
             Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
             f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
-            dvdt⁺ = -m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
+            dvdt⁺ = -mⱼ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
 
             visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j)
 
@@ -475,6 +479,7 @@ using LinearAlgebra
                                   SV<:SPHViscosity}
         @unpack m₀, dx = SimConstants
         @unpack h⁻¹, H², h = SimKernel
+        @unpack BoundOnOff = SimParticles
 
         xᵢⱼ = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
@@ -491,7 +496,8 @@ using LinearAlgebra
             vⱼ = Velocity[j]
             vᵢⱼ = vᵢ - vⱼ
             density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
-            dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
+            mⱼ = m₀ * BoundOnOff[j]
+            dρdt⁺ = -ρᵢ * (mⱼ / ρⱼ) * density_symmetric_term
 
             Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)
 
@@ -501,7 +507,7 @@ using LinearAlgebra
             Pⱼ = Pressure[j]
             Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
             f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
-            dvdt⁺ = -m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
+            dvdt⁺ = -mⱼ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
 
             visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j)
 
@@ -511,7 +517,7 @@ using LinearAlgebra
 
             MotionLimiterCondition = MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
             shift_c_acc += (m₀ / ρᵢ) * ∇ᵢWᵢⱼ
-            shift_r_acc += (m₀ / ρⱼ) * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
+            shift_r_acc += (mⱼ / ρⱼ) * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
         end
 
         return dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc, shift_r_acc
@@ -529,6 +535,7 @@ using LinearAlgebra
                                                                   SV<:SPHViscosity}
         @unpack m₀, dx = SimConstants
         @unpack h⁻¹, H², h = SimKernel
+        @unpack BoundOnOff = SimParticles
 
         xᵢⱼ = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
@@ -545,7 +552,8 @@ using LinearAlgebra
             vⱼ = Velocity[j]
             vᵢⱼ = vᵢ - vⱼ
             density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
-            dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
+            mⱼ = m₀ * BoundOnOff[j]
+            dρdt⁺ = -ρᵢ * (mⱼ / ρⱼ) * density_symmetric_term
 
             Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)
 
@@ -555,7 +563,7 @@ using LinearAlgebra
             Pⱼ = Pressure[j]
             Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
             f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
-            dvdt⁺ = -m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
+            dvdt⁺ = -mⱼ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
 
             visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j)
 
@@ -563,7 +571,7 @@ using LinearAlgebra
 
             MotionLimiterCondition = MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
             shift_c_acc += (m₀ / ρᵢ) * ∇ᵢWᵢⱼ
-            shift_r_acc += (m₀ / ρⱼ) * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
+            shift_r_acc += (mⱼ / ρⱼ) * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
         end
 
         return dρdt_acc, acc_acc, shift_c_acc, shift_r_acc
@@ -781,7 +789,7 @@ using LinearAlgebra
     end
 
     function ApplyMDBCCorrectionAdvanced(SimConstants, SimParticles, bᵧ, Aᵧ, KernelSums, VelocitySums, DivPos)
-        @unpack Position, Density, GhostPoints, GhostNormals, Velocity, Acceleration, Pressure = SimParticles
+        @unpack Position, Density, GhostPoints, GhostNormals, Velocity, Acceleration, Pressure, BoundOnOff = SimParticles
         @unpack ρ₀, c₀, Cb⁻¹, g = SimConstants
 
         kernel_sum_threshold = eltype(KernelSums)(0.1)
@@ -794,10 +802,12 @@ using LinearAlgebra
             end
 
             if !(isfinite(DivPos[i]) && DivPos[i] > zero(DivPos[i]))
+                BoundOnOff[i] = zero(eltype(BoundOnOff))
                 Density[i] = ρ₀
-                Pressure[i] = EquationOfStateGamma7(ρ₀, c₀, ρ₀)
+                Pressure[i] = zero(eltype(Pressure))
                 continue
             end
+            BoundOnOff[i] = one(eltype(BoundOnOff))
 
             A = Aᵧ[i]
             kernel_sum = KernelSums[i]

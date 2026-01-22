@@ -128,6 +128,8 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
         GhostNormals = zeros(PositionType, NumberOfPoints)
         ParticleFields = merge(ParticleFields, (; GhostNormals = GhostNormals))
     end
+    BoundOnOff = ones(PositionUnderlyingType, NumberOfPoints)
+    ParticleFields = merge(ParticleFields, (; BoundOnOff = BoundOnOff))
     ParticleFields = merge(ParticleFields, (; ID = Idp))
 
     SimParticles = StructArray(ParticleFields)
