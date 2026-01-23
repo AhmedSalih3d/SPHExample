@@ -170,7 +170,7 @@ using LinearAlgebra
         dρdt_buffers = [zeros(eltype(dρdtI), particle_count) for _ in 1:thread_count]
         acc_buffers = [zeros(eltype(Acceleration), particle_count) for _ in 1:thread_count]
 
-        @inbounds Threads.@threads for CellListIndex in eachindex(NeighborCellLists)
+        @inbounds Threads.@threads :static for CellListIndex in eachindex(NeighborCellLists)
             thread_id = Threads.threadid()
             dρdt_local = dρdt_buffers[thread_id]
             acc_local = acc_buffers[thread_id]
@@ -398,7 +398,7 @@ using LinearAlgebra
         kernel_buffers = [zeros(eltype(Kernel), particle_count) for _ in 1:thread_count]
         kernel_gradient_buffers = [zeros(eltype(KernelGradient), particle_count) for _ in 1:thread_count]
 
-        @inbounds Threads.@threads for CellListIndex in eachindex(NeighborCellLists)
+        @inbounds Threads.@threads :static for CellListIndex in eachindex(NeighborCellLists)
             thread_id = Threads.threadid()
             dρdt_local = dρdt_buffers[thread_id]
             acc_local = acc_buffers[thread_id]
@@ -638,7 +638,7 @@ using LinearAlgebra
         shift_c_buffers = [zeros(eltype(∇Cᵢ), particle_count) for _ in 1:thread_count]
         shift_r_buffers = [zeros(eltype(∇◌rᵢ), particle_count) for _ in 1:thread_count]
 
-        @inbounds Threads.@threads for CellListIndex in eachindex(NeighborCellLists)
+        @inbounds Threads.@threads :static for CellListIndex in eachindex(NeighborCellLists)
             thread_id = Threads.threadid()
             dρdt_local = dρdt_buffers[thread_id]
             acc_local = acc_buffers[thread_id]
@@ -903,7 +903,7 @@ using LinearAlgebra
         shift_c_buffers = [zeros(eltype(∇Cᵢ), particle_count) for _ in 1:thread_count]
         shift_r_buffers = [zeros(eltype(∇◌rᵢ), particle_count) for _ in 1:thread_count]
 
-        @inbounds Threads.@threads for CellListIndex in eachindex(NeighborCellLists)
+        @inbounds Threads.@threads :static for CellListIndex in eachindex(NeighborCellLists)
             thread_id = Threads.threadid()
             dρdt_local = dρdt_buffers[thread_id]
             acc_local = acc_buffers[thread_id]
