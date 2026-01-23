@@ -1766,7 +1766,7 @@ using LinearAlgebra
                         NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
                     )
                 else
-                    @timeit SimMetaData.HourGlass "00b Init NeighborLoop" NeighborLoopPairwiseThreaded!(
+                    @timeit SimMetaData.HourGlass "00b Init NeighborLoop" NeighborLoopPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, ParticleRanges, CellListIndices,
                         NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
@@ -1809,7 +1809,7 @@ using LinearAlgebra
                             NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
                         )
                     else
-                        @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoopPairwiseThreaded!(
+                        @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoopPerParticle!(
                             SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                             SimConstants, SimParticles, ParticleRanges, CellListIndices,
                             NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
@@ -1833,7 +1833,7 @@ using LinearAlgebra
                             Velocity = Velocityₙ⁺,
                         )
                     else
-                        @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPairwiseThreaded!(
+                        @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticle!(
                             SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                             SimConstants, SimParticles, ParticleRanges, CellListIndices,
                             NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
@@ -1862,7 +1862,7 @@ using LinearAlgebra
                             Velocity = Velocityₙ⁺,
                         )
                     else
-                        @timeit SimMetaData.HourGlass "06 NeighborLoop" NeighborLoopPairwiseThreaded!(
+                        @timeit SimMetaData.HourGlass "06 NeighborLoop" NeighborLoopPerParticle!(
                             SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                             SimConstants, SimParticles, ParticleRanges, CellListIndices,
                             NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
