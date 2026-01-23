@@ -5,6 +5,7 @@ export EquationOfState, EquationOfStateGamma7, Pressure!, DensityEpsi!, LimitDen
 using StaticArrays
 using Parameters
 using FastPow
+using SIMD
 
 @inline function EquationOfStateGamma7(ρ,c₀,ρ₀)
     return @fastpow ((c₀^2*ρ₀)/7) * ((ρ/ρ₀)^7 - 1)
@@ -26,10 +27,32 @@ end
 # This is to handle the special factor multiplied on density in the time stepping procedure, when
 # using symplectic time stepping
 @inline function DensityEpsi!(Density, dρdtIₙ⁺,ρₙ⁺,Δt)
-    @inbounds for i in eachindex(Density)
-        epsi = - (dρdtIₙ⁺[i] / ρₙ⁺[i]) * Δt
-        Density[i] *= (2 - epsi) / (2 + epsi)
+    _density_epsi_simd!(Density, dρdtIₙ⁺, ρₙ⁺, Δt)
+    return Density
+end
+
+@inline function _density_epsi_simd!(Density, dρdtIₙ⁺, ρₙ⁺, Δt)
+    T = eltype(Density)
+    lanes = T === Float32 ? 8 : 4
+    W = Vec{lanes, T}
+    n = length(Density)
+    i = 1
+
+    @inbounds while i <= n - lanes + 1
+        density_vec = vload(W, Density, i)
+        dρdt_vec = vload(W, dρdtIₙ⁺, i)
+        ρn_vec = vload(W, ρₙ⁺, i)
+        epsi_vec = -(dρdt_vec / ρn_vec) * T(Δt)
+        ratio_vec = (T(2) - epsi_vec) / (T(2) + epsi_vec)
+        vstore!(Density, i, density_vec * ratio_vec)
+        i += lanes
     end
+
+    @inbounds for j in i:n
+        epsi = - (dρdtIₙ⁺[j] / ρₙ⁺[j]) * Δt
+        Density[j] *= (2 - epsi) / (2 + epsi)
+    end
+    return Density
 end
 
 # This version of the function using !Bool(MotionLimiter) instead of BoundaryBool
