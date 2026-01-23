@@ -30,7 +30,6 @@ using TimerOutputs
 using HDF5
 using Base.Threads
 using LinearAlgebra
-using SIMD: Vec
     using Bumper
 
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
@@ -350,22 +349,6 @@ using SIMD: Vec
     # The previous generic `ComputeInteractions!` implementation was unused
     # in favour of the per-particle variants (ComputeInteractionsPerParticle! etc.).
     # It has been removed to reduce code size and avoid dead code.
-
-    @inline function DotSimd(a::SVector{2,T}, b::SVector{2,T}) where {T<:AbstractFloat}
-        veca = Vec{2,T}(Tuple(a))
-        vecb = Vec{2,T}(Tuple(b))
-        return sum(veca * vecb)
-    end
-
-    @inline function DotSimd(a::SVector{3,T}, b::SVector{3,T}) where {T<:AbstractFloat}
-        veca = Vec{4,T}(a[1], a[2], a[3], zero(T))
-        vecb = Vec{4,T}(b[1], b[2], b[3], zero(T))
-        return sum(veca * vecb)
-    end
-
-    @inline function DotSimd(a::SVector{D,T}, b::SVector{D,T}) where {D,T}
-        return dot(a, b)
-    end
 
     @inline function compute_kernel_output_local(::SimulationMetaData{D,T,S,NoKernelOutput,B,L},
                                                  kernel_acc, kernel_grad_acc, SimKernel,

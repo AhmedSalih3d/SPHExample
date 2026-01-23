@@ -1,6 +1,7 @@
 module SPHViscosityModels
 
 using StaticArrays, LinearAlgebra, Parameters
+using ..AuxiliaryFunctions
 
 export SPHViscosity, ZeroViscosity, ArtificialViscosity, Laminar, LaminarSPS, compute_viscosity
 
@@ -61,7 +62,7 @@ end
     ρᵢ = SimParticles.Density[i]
     ρⱼ = SimParticles.Density[j]
 
-    v_dot_x = dot(vᵢⱼ, xᵢⱼ)
+    v_dot_x = DotSimd(vᵢⱼ, xᵢⱼ)
     if v_dot_x < 0
         ρ̄ = 0.5 * (ρᵢ + ρⱼ)
         μᵢⱼ = h * v_dot_x / (d² + η²)
@@ -82,7 +83,7 @@ end
     ρᵢ  = SimParticles.Density[i]
     ρⱼ  = SimParticles.Density[j]
 
-    term = (4 * m₀ * ν₀ * dot(xᵢⱼ, ∇ᵢWᵢⱼ)) / ((ρᵢ + ρⱼ) + (d² + η²))
+    term = (4 * m₀ * ν₀ * DotSimd(xᵢⱼ, ∇ᵢWᵢⱼ)) / ((ρᵢ + ρⱼ) + (d² + η²))
     return term * vᵢⱼ, -term * vᵢⱼ
 end
 

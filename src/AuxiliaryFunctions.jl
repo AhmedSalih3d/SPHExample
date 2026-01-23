@@ -2,8 +2,10 @@ module AuxiliaryFunctions
 using StaticArrays
 using Base.Threads
 using HDF5
+using SIMD: Vec
+import LinearAlgebra: dot
 
-export ResetArrays!, to_3d, CloseHDFVTKManually, CleanUpSimulationFolder
+export ResetArrays!, to_3d, CloseHDFVTKManually, CleanUpSimulationFolder, DotSimd
 
 """
     ResetArrays!(arrays...)
@@ -18,6 +20,28 @@ Fill each array in `arrays` with zeros in place.
 Convert a vector of 2D `SVector`s to 3D by appending a zero z-component.
 """
 @inline to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
+
+"""
+    DotSimd(a, b)
+
+SIMD-accelerated dot product for `SVector` inputs where it is practical,
+falling back to `dot` for other sizes and types.
+"""
+@inline function DotSimd(a::SVector{2,T}, b::SVector{2,T}) where {T<:AbstractFloat}
+    veca = Vec{2,T}(Tuple(a))
+    vecb = Vec{2,T}(Tuple(b))
+    return sum(veca * vecb)
+end
+
+@inline function DotSimd(a::SVector{3,T}, b::SVector{3,T}) where {T<:AbstractFloat}
+    veca = Vec{4,T}(a[1], a[2], a[3], zero(T))
+    vecb = Vec{4,T}(b[1], b[2], b[3], zero(T))
+    return sum(veca * vecb)
+end
+
+@inline function DotSimd(a::SVector{D,T}, b::SVector{D,T}) where {D,T}
+    return dot(a, b)
+end
 
 """
     to_3d!(dest, src)
