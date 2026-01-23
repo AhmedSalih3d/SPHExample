@@ -88,6 +88,9 @@ and adjust the simulation parameters or the `ComputerInteractions!` function.
 Run the script to start the simulation. Results are written in `hdfvtk` format
 which can be loaded with ParaView 5.12 or newer. Output is written
 asynchronously, so files finish flushing when the simulation completes.
+Boundary conditions can be selected with the `MDBCMode` type parameter in
+`SimulationMetaData`. `SimpleMDBC` now includes updated numerical checks, pressure cloning, and
+no-slip velocity treatment.
 To color exported cell grids by particle counts, set
 `ExportGridCellParticleCounts=true` in `SimulationMetaData`. This also adds a
 `ParticleNeighborsPerCell` array that includes each cell's particle count minus
