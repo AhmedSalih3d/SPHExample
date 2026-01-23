@@ -55,13 +55,13 @@ let
             Direction = SVector{Dimensions, FloatType}(1.0, 0.0)  # 2D direction vector with Float64 type
         )
     )
-
-    # Load in particles
-    SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaDataMovingSquare)
     
     # Collect Geometry instances into a vector
     SimulationGeometry = [FixedBoundary, Water, MovingSquare]
     
+    # Load in particles
+    SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaDataMovingSquare)
+
     # If save directory is not already made, make it
     if !isdir(SimMetaDataMovingSquare.SaveLocation)
         mkdir(SimMetaDataMovingSquare.SaveLocation)
