@@ -30,6 +30,7 @@ using TimerOutputs
 using HDF5
 using Base.Threads
 using LinearAlgebra
+using SIMD: Vec
     using Bumper
 
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
@@ -350,6 +351,22 @@ using LinearAlgebra
     # in favour of the per-particle variants (ComputeInteractionsPerParticle! etc.).
     # It has been removed to reduce code size and avoid dead code.
 
+    @inline function DotSimd(a::SVector{2,T}, b::SVector{2,T}) where {T<:AbstractFloat}
+        veca = Vec{2,T}(Tuple(a))
+        vecb = Vec{2,T}(Tuple(b))
+        return sum(veca * vecb)
+    end
+
+    @inline function DotSimd(a::SVector{3,T}, b::SVector{3,T}) where {T<:AbstractFloat}
+        veca = Vec{4,T}(a[1], a[2], a[3], zero(T))
+        vecb = Vec{4,T}(b[1], b[2], b[3], zero(T))
+        return sum(veca * vecb)
+    end
+
+    @inline function DotSimd(a::SVector{D,T}, b::SVector{D,T}) where {D,T}
+        return dot(a, b)
+    end
+
     @inline function compute_kernel_output_local(::SimulationMetaData{D,T,S,NoKernelOutput,B,L},
                                                  kernel_acc, kernel_grad_acc, SimKernel,
                                                  q, ∇ᵢWᵢⱼ) where {D,T,S<:ShiftingMode,
@@ -381,7 +398,7 @@ using LinearAlgebra
         @unpack h⁻¹, H², h = SimKernel
 
         xᵢⱼ = Position[i] - Position[j]
-        xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
+        xᵢⱼ² = DotSimd(xᵢⱼ, xᵢⱼ)
         if xᵢⱼ² <= H²
             dᵢⱼ = sqrt(abs(xᵢⱼ²))
             dᵢⱼ² = dᵢⱼ^2
@@ -394,7 +411,7 @@ using LinearAlgebra
             vᵢ = Velocity[i]
             vⱼ = Velocity[j]
             vᵢⱼ = vᵢ - vⱼ
-            density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
+            density_symmetric_term = DotSimd(-vᵢⱼ, ∇ᵢWᵢⱼ)
             dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
 
             Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)
@@ -428,7 +445,7 @@ using LinearAlgebra
         @unpack h⁻¹, H², h = SimKernel
 
         xᵢⱼ = Position[i] - Position[j]
-        xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
+        xᵢⱼ² = DotSimd(xᵢⱼ, xᵢⱼ)
         if xᵢⱼ² <= H²
             dᵢⱼ = sqrt(abs(xᵢⱼ²))
             dᵢⱼ² = dᵢⱼ^2
@@ -441,7 +458,7 @@ using LinearAlgebra
             vᵢ = Velocity[i]
             vⱼ = Velocity[j]
             vᵢⱼ = vᵢ - vⱼ
-            density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
+            density_symmetric_term = DotSimd(-vᵢⱼ, ∇ᵢWᵢⱼ)
             dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
 
             Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)
@@ -477,7 +494,7 @@ using LinearAlgebra
         @unpack h⁻¹, H², h = SimKernel
 
         xᵢⱼ = Position[i] - Position[j]
-        xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
+        xᵢⱼ² = DotSimd(xᵢⱼ, xᵢⱼ)
         if xᵢⱼ² <= H²
             dᵢⱼ = sqrt(abs(xᵢⱼ²))
             dᵢⱼ² = dᵢⱼ^2
@@ -490,7 +507,7 @@ using LinearAlgebra
             vᵢ = Velocity[i]
             vⱼ = Velocity[j]
             vᵢⱼ = vᵢ - vⱼ
-            density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
+            density_symmetric_term = DotSimd(-vᵢⱼ, ∇ᵢWᵢⱼ)
             dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
 
             Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)
@@ -511,7 +528,7 @@ using LinearAlgebra
 
             MotionLimiterCondition = MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
             shift_c_acc += (m₀ / ρᵢ) * ∇ᵢWᵢⱼ
-            shift_r_acc += (m₀ / ρⱼ) * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
+            shift_r_acc += (m₀ / ρⱼ) * DotSimd(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
         end
 
         return dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc, shift_r_acc
@@ -531,7 +548,7 @@ using LinearAlgebra
         @unpack h⁻¹, H², h = SimKernel
 
         xᵢⱼ = Position[i] - Position[j]
-        xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
+        xᵢⱼ² = DotSimd(xᵢⱼ, xᵢⱼ)
         if xᵢⱼ² <= H²
             dᵢⱼ = sqrt(abs(xᵢⱼ²))
             dᵢⱼ² = dᵢⱼ^2
@@ -544,7 +561,7 @@ using LinearAlgebra
             vᵢ = Velocity[i]
             vⱼ = Velocity[j]
             vᵢⱼ = vᵢ - vⱼ
-            density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
+            density_symmetric_term = DotSimd(-vᵢⱼ, ∇ᵢWᵢⱼ)
             dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
 
             Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)
@@ -563,7 +580,7 @@ using LinearAlgebra
 
             MotionLimiterCondition = MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
             shift_c_acc += (m₀ / ρᵢ) * ∇ᵢWᵢⱼ
-            shift_r_acc += (m₀ / ρⱼ) * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
+            shift_r_acc += (m₀ / ρⱼ) * DotSimd(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
         end
 
         return dρdt_acc, acc_acc, shift_c_acc, shift_r_acc
@@ -585,7 +602,7 @@ using LinearAlgebra
 
             xᵢⱼ  = GhostPoints[i] - Position[j]
 
-            xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
+            xᵢⱼ² = DotSimd(xᵢⱼ, xᵢⱼ)
             if xᵢⱼ² <= H²
                 dᵢⱼ = sqrt(abs(xᵢⱼ²))
                 q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
