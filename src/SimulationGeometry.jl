@@ -4,13 +4,14 @@ using StaticArrays
 using Parameters
 
 # Export relevant types and structs
-export ParticleType, Geometry, Fluid, Fixed, Moving, MotionDetails, GravityFactorValue, MotionLimiterValue
+export ParticleType, Geometry, Fluid, Fixed, Moving, FixedMoving, MotionDetails, GravityFactorValue, MotionLimiterValue, MotionPositionFactorValue
 
 # Use the existing @enum for ParticleType
 @enum ParticleType::UInt8 begin
     Fluid  = UInt8(1)
     Fixed  = UInt8(2)
     Moving = UInt8(3)
+    FixedMoving = UInt8(4)
 end
 
 @inline function GravityFactorValue(::Type{T}, particle_type::ParticleType) where {T}
@@ -24,6 +25,10 @@ end
 
 @inline function MotionLimiterValue(::Type{T}, particle_type::ParticleType) where {T}
     return particle_type == Fluid ? one(T) : zero(T)
+end
+
+@inline function MotionPositionFactorValue(::Type{T}, particle_type::ParticleType) where {T}
+    return particle_type == Moving ? one(T) : zero(T)
 end
 
 # Define a struct to store motion details, with parametric dimensions and floating point type

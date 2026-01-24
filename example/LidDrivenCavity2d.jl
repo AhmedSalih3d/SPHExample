@@ -15,7 +15,7 @@ function GenerateLidDrivenCavityCSVs(
     InputFolder;
     Density=1000.0,
     LidVelocity=0.0,
-    LidIsMoving=false,
+    LidType=Moving,
     ForceRegenerate=false
 )
     BaseName = "LidDrivenCavity_N$(Resolution)"
@@ -65,9 +65,8 @@ function GenerateLidDrivenCavityCSVs(
     open(LidFile, "w") do Io
         println(Io, Header)
         PointId = 0
-        LidType = LidIsMoving ? Int(Moving) : Int(Fixed)
         for X in range(0.0, length=Resolution + 1, step=Dx)
-            WriteParticleRow!(Io, PointId, IdpCounter, 3, X, 1.0, Density, LidType, LidVelocity, 0.0)
+            WriteParticleRow!(Io, PointId, IdpCounter, 3, X, 1.0, Density, Int(LidType), LidVelocity, 0.0)
             PointId += 1
             IdpCounter += 1
         end
@@ -83,10 +82,11 @@ let
     Resolution = 50
     Reynolds = 1000.0
     LidVelocity = 1.0
-    LidIsMoving = true
-    LidMovesPosition = false
+    LidType = FixedMoving
+    LidMovesPosition = LidType == Moving
     RegenerateCSVs = true
     DomainLength = 1.0
+    KernelScale = 2.0
 
     Dx = DomainLength / Resolution
     KinematicViscosity = LidVelocity * DomainLength / Reynolds
@@ -100,7 +100,7 @@ let
         Dx,
         InputFolder;
         LidVelocity = LidVelocity,
-        LidIsMoving = LidIsMoving,
+        LidType = LidType,
         ForceRegenerate = RegenerateCSVs
     )
 
@@ -145,8 +145,8 @@ let
     MovingLid = Geometry{Dimensions, FloatType}(
         CSVFile = LidCSV,
         GroupMarker = 3,
-        Type = LidIsMoving ? Moving : Fixed,
-        Motion = LidIsMoving ? MotionDetails{Dimensions, FloatType}(
+        Type = LidType,
+        Motion = (LidType == Moving || LidType == FixedMoving) ? MotionDetails{Dimensions, FloatType}(
             Velocity = LidVelocity,
             StartTime = 0.0,
             Duration = SimulationTime,
@@ -159,7 +159,7 @@ let
     SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaData)
 
     SimLogger = SimulationLogger(SimMetaData.SaveLocation)
-    SimKernel = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); dx = SimConstants.dx, k = sqrt(2))
+    SimKernel = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); dx = SimConstants.dx, k = KernelScale)
 
     CleanUpSimulationFolder(SimMetaData.SaveLocation)
 
