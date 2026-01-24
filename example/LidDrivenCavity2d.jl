@@ -9,6 +9,12 @@ function WriteParticleRow!(Io, PointId, Idp, Marker, X, Y, Density, TypeValue, V
     return nothing
 end
 
+function WriteGhostRow!(Io, Idp, Marker, Nx, Ny, X, Y)
+    NormalSize = sqrt(Nx^2 + Ny^2)
+    println(Io, join((Idp, Marker, Nx, 0.0, Ny, NormalSize, X, 0.0, Y), ","))
+    return nothing
+end
+
 function GenerateLidDrivenCavityCSVs(
     Resolution,
     Dx,
@@ -32,23 +38,21 @@ function GenerateLidDrivenCavityCSVs(
     Header = "\"Point ID\", \"Idp\", \"Mk\", \"Points:0\", \"Points:1\", \"Points:2\", \"Points Magnitude\", \"Rhop\", \"Type\", \"Vel:0\", \"Vel:1\", \"Vel:2\", \"Vel Magnitude\""
     IdpCounter = 0
 
-    open(FluidFile, "w") do Io
-        println(Io, Header)
-        PointId = 0
-        for Y in range(Dx / 2, length=Resolution, step=Dx)
-            for X in range(Dx / 2, length=Resolution, step=Dx)
-                WriteParticleRow!(Io, PointId, IdpCounter, 2, X, Y, Density, Int(Fluid), 0.0, 0.0)
-                PointId += 1
-                IdpCounter += 1
-            end
-        end
-    end
-
     open(FixedFile, "w") do Io
         println(Io, Header)
         PointId = 0
-        for X in range(0.0, length=Resolution + 1, step=Dx)
+        for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
             WriteParticleRow!(Io, PointId, IdpCounter, 1, X, 0.0, Density, Int(Fixed), 0.0, 0.0)
+            PointId += 1
+            IdpCounter += 1
+        end
+        for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
+            WriteParticleRow!(Io, PointId, IdpCounter, 1, X, -Dx, Density, Int(Fixed), 0.0, 0.0)
+            PointId += 1
+            IdpCounter += 1
+        end
+        for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
+            WriteParticleRow!(Io, PointId, IdpCounter, 1, X, -2 * Dx, Density, Int(Fixed), 0.0, 0.0)
             PointId += 1
             IdpCounter += 1
         end
@@ -60,38 +64,138 @@ function GenerateLidDrivenCavityCSVs(
             PointId += 1
             IdpCounter += 1
         end
+        for Y in range(Dx, length=Resolution - 1, step=Dx)
+            WriteParticleRow!(Io, PointId, IdpCounter, 1, -Dx, Y, Density, Int(Fixed), 0.0, 0.0)
+            PointId += 1
+            IdpCounter += 1
+            WriteParticleRow!(Io, PointId, IdpCounter, 1, 1.0 + Dx, Y, Density, Int(Fixed), 0.0, 0.0)
+            PointId += 1
+            IdpCounter += 1
+        end
+        for Y in range(Dx, length=Resolution - 1, step=Dx)
+            WriteParticleRow!(Io, PointId, IdpCounter, 1, -2 * Dx, Y, Density, Int(Fixed), 0.0, 0.0)
+            PointId += 1
+            IdpCounter += 1
+            WriteParticleRow!(Io, PointId, IdpCounter, 1, 1.0 + 2 * Dx, Y, Density, Int(Fixed), 0.0, 0.0)
+            PointId += 1
+            IdpCounter += 1
+        end
     end
 
     open(LidFile, "w") do Io
         println(Io, Header)
         PointId = 0
-        for X in range(0.0, length=Resolution + 1, step=Dx)
+        for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
             WriteParticleRow!(Io, PointId, IdpCounter, 3, X, 1.0, Density, Int(LidType), LidVelocity, 0.0)
             PointId += 1
             IdpCounter += 1
+        end
+        for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
+            WriteParticleRow!(Io, PointId, IdpCounter, 3, X, 1.0 - Dx, Density, Int(LidType), LidVelocity, 0.0)
+            PointId += 1
+            IdpCounter += 1
+        end
+        for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
+            WriteParticleRow!(Io, PointId, IdpCounter, 3, X, 1.0 - 2 * Dx, Density, Int(LidType), LidVelocity, 0.0)
+            PointId += 1
+            IdpCounter += 1
+        end
+    end
+
+    open(FluidFile, "w") do Io
+        println(Io, Header)
+        PointId = 0
+        for Y in range(Dx, length=Resolution - 1, step=Dx)
+            for X in range(Dx, length=Resolution - 1, step=Dx)
+                WriteParticleRow!(Io, PointId, IdpCounter, 2, X, Y, Density, Int(Fluid), 0.0, 0.0)
+                PointId += 1
+                IdpCounter += 1
+            end
         end
     end
 
     return FluidFile, FixedFile, LidFile
 end
 
+function GenerateLidDrivenCavityGhostNodes(Resolution, Dx, InputFolder; ForceRegenerate=false)
+    BaseName = "LidDrivenCavity_N$(Resolution)"
+    GhostFile = joinpath(InputFolder, "$(BaseName)_GhostNodes.csv")
+
+    if !ForceRegenerate && isfile(GhostFile)
+        return GhostFile
+    end
+
+    mkpath(InputFolder)
+
+    Header = "\"Idp\",\"Mk\",\"Normal:0\",\"Normal:1\",\"Normal:2\",\"NormalSize\",\"Points:0\",\"Points:1\",\"Points:2\""
+    IdpCounter = 0
+
+    open(GhostFile, "w") do Io
+        println(Io, Header)
+        for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
+            WriteGhostRow!(Io, IdpCounter, 1, 0.0, 1.0, X, 0.0)
+            IdpCounter += 1
+        end
+        for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
+            WriteGhostRow!(Io, IdpCounter, 1, 0.0, 1.0, X, -Dx)
+            IdpCounter += 1
+        end
+        for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
+            WriteGhostRow!(Io, IdpCounter, 1, 0.0, 1.0, X, -2 * Dx)
+            IdpCounter += 1
+        end
+        for Y in range(Dx, length=Resolution - 1, step=Dx)
+            WriteGhostRow!(Io, IdpCounter, 1, 1.0, 0.0, 0.0, Y)
+            IdpCounter += 1
+            WriteGhostRow!(Io, IdpCounter, 1, -1.0, 0.0, 1.0, Y)
+            IdpCounter += 1
+        end
+        for Y in range(Dx, length=Resolution - 1, step=Dx)
+            WriteGhostRow!(Io, IdpCounter, 1, 1.0, 0.0, -Dx, Y)
+            IdpCounter += 1
+            WriteGhostRow!(Io, IdpCounter, 1, -1.0, 0.0, 1.0 + Dx, Y)
+            IdpCounter += 1
+        end
+        for Y in range(Dx, length=Resolution - 1, step=Dx)
+            WriteGhostRow!(Io, IdpCounter, 1, 1.0, 0.0, -2 * Dx, Y)
+            IdpCounter += 1
+            WriteGhostRow!(Io, IdpCounter, 1, -1.0, 0.0, 1.0 + 2 * Dx, Y)
+            IdpCounter += 1
+        end
+        for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
+            WriteGhostRow!(Io, IdpCounter, 3, 0.0, -1.0, X, 1.0)
+            IdpCounter += 1
+        end
+        for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
+            WriteGhostRow!(Io, IdpCounter, 3, 0.0, -1.0, X, 1.0 - Dx)
+            IdpCounter += 1
+        end
+        for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
+            WriteGhostRow!(Io, IdpCounter, 3, 0.0, -1.0, X, 1.0 - 2 * Dx)
+            IdpCounter += 1
+        end
+    end
+
+    return GhostFile
+end
+
 let
     Dimensions = 2
     FloatType = Float64
 
-    Resolution = 50
+    Resolution = 100
     Reynolds = 1000.0
     LidVelocity = 1.0
     LidType = FixedMoving
     LidMovesPosition = LidType == Moving
     RegenerateCSVs = true
     DomainLength = 1.0
-    KernelScale = 2.0
+    KernelScale = 1.2 * sqrt(2)
 
     Dx = DomainLength / Resolution
     KinematicViscosity = LidVelocity * DomainLength / Reynolds
 
-    SimulationTime = 5.0
+    SimulationTime = 100.5
     OutputInterval = 0.1
 
     InputFolder = "./input/lid_driven_cavity"
@@ -103,6 +207,7 @@ let
         LidType = LidType,
         ForceRegenerate = RegenerateCSVs
     )
+    GhostCSV = GenerateLidDrivenCavityGhostNodes(Resolution, Dx, InputFolder; ForceRegenerate = RegenerateCSVs)
 
     SimConstants = SimulationConstants{FloatType}(
         dx = Dx,
@@ -114,7 +219,7 @@ let
         δᵩ = 0.1
     )
 
-    SimMetaData = SimulationMetaData{Dimensions, FloatType, NoShifting, NoKernelOutput, NoMDBC, StoreLog}(
+    SimMetaData = SimulationMetaData{Dimensions, FloatType, NoShifting, NoKernelOutput, SimpleMDBC, StoreLog}(
         SimulationName = "LidDrivenCavityRe$(Int(Reynolds))",
         SaveLocation = "output/LidDrivenCavityRe$(Int(Reynolds))_N$(Resolution)",
         SimulationTime = SimulationTime,
@@ -163,7 +268,7 @@ let
 
     CleanUpSimulationFolder(SimMetaData.SaveLocation)
 
-    SimViscosity = Reynolds >= 5000 ? LaminarSPS() : Laminar()
+    SimViscosity = ArtificialViscosity()
 
     RunSimulation(
         SimGeometry = SimulationGeometry,
@@ -173,7 +278,8 @@ let
         SimParticles = SimParticles,
         SimKernel = SimKernel,
         SimViscosity = SimViscosity,
-        SimDensityDiffusion = LinearDensityDiffusion(),
-        SimTimeStepping = SingleNeighborTimeStepping()
+        SimDensityDiffusion = ZeroGravityLinearDensityDiffusion(),
+        SimTimeStepping = SingleNeighborTimeStepping(),
+        ParticleNormalsPath = GhostCSV
     )
 end
