@@ -84,7 +84,7 @@ let
     Reynolds = 1000.0
     LidVelocity = 1.0
     LidIsMoving = true
-    LidMovesPosition = true
+    LidMovesPosition = false
     RegenerateCSVs = true
     DomainLength = 1.0
 
