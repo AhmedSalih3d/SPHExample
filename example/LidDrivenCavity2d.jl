@@ -206,7 +206,7 @@ let
         δᵩ = 0.1
     )
 
-    SimMetaData = SimulationMetaData{Dimensions, FloatType, NoShifting, NoKernelOutput, SimpleMDBC, StoreLog}(
+    SimMetaData = SimulationMetaData{Dimensions, FloatType, PlanarShifting, NoKernelOutput, SimpleMDBC, StoreLog}(
         SimulationName = "LidDrivenCavityRe$(Int(Reynolds))",
         SaveLocation = "output/LidDrivenCavityRe$(Int(Reynolds))_N$(Resolution)",
         SimulationTime = SimulationTime,
