@@ -121,42 +121,43 @@ function GenerateLidDrivenCavityGhostNodes(Resolution, Dx, InputFolder; ForceReg
 
     Header = "\"Idp\",\"Mk\",\"Normal:0\",\"Normal:1\",\"Normal:2\",\"NormalSize\",\"Points:0\",\"Points:1\",\"Points:2\""
     IdpCounter = 0
+    NormalScale = 5 * Dx
 
     open(GhostFile, "w") do Io
         println(Io, Header)
         for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
-            WriteGhostRow!(Io, IdpCounter, 1, 0.0, 1.0, X, 0.0)
+            WriteGhostRow!(Io, IdpCounter, 1, 0.0, NormalScale, X, 0.0)
             IdpCounter += 1
         end
         for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
-            WriteGhostRow!(Io, IdpCounter, 1, 0.0, 1.0, X, -Dx)
+            WriteGhostRow!(Io, IdpCounter, 1, 0.0, NormalScale, X, -Dx)
             IdpCounter += 1
         end
         for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
-            WriteGhostRow!(Io, IdpCounter, 1, 0.0, 1.0, X, -2 * Dx)
+            WriteGhostRow!(Io, IdpCounter, 1, 0.0, NormalScale, X, -2 * Dx)
             IdpCounter += 1
         end
         for Y in range(Dx, length=Resolution - 3, step=Dx)
-            WriteGhostRow!(Io, IdpCounter, 1, 1.0, 0.0, 0.0, Y)
+            WriteGhostRow!(Io, IdpCounter, 1, NormalScale, 0.0, 0.0, Y)
             IdpCounter += 1
-            WriteGhostRow!(Io, IdpCounter, 1, -1.0, 0.0, 1.0, Y)
-            IdpCounter += 1
-        end
-        for Y in range(Dx, length=Resolution - 3, step=Dx)
-            WriteGhostRow!(Io, IdpCounter, 1, 1.0, 0.0, -Dx, Y)
-            IdpCounter += 1
-            WriteGhostRow!(Io, IdpCounter, 1, -1.0, 0.0, 1.0 + Dx, Y)
+            WriteGhostRow!(Io, IdpCounter, 1, -NormalScale, 0.0, 1.0, Y)
             IdpCounter += 1
         end
         for Y in range(Dx, length=Resolution - 3, step=Dx)
-            WriteGhostRow!(Io, IdpCounter, 1, 1.0, 0.0, -2 * Dx, Y)
+            WriteGhostRow!(Io, IdpCounter, 1, NormalScale, 0.0, -Dx, Y)
             IdpCounter += 1
-            WriteGhostRow!(Io, IdpCounter, 1, -1.0, 0.0, 1.0 + 2 * Dx, Y)
+            WriteGhostRow!(Io, IdpCounter, 1, -NormalScale, 0.0, 1.0 + Dx, Y)
+            IdpCounter += 1
+        end
+        for Y in range(Dx, length=Resolution - 3, step=Dx)
+            WriteGhostRow!(Io, IdpCounter, 1, NormalScale, 0.0, -2 * Dx, Y)
+            IdpCounter += 1
+            WriteGhostRow!(Io, IdpCounter, 1, -NormalScale, 0.0, 1.0 + 2 * Dx, Y)
             IdpCounter += 1
         end
         for Y in (1.0, 1.0 - Dx, 1.0 - 2 * Dx)
             for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
-                WriteGhostRow!(Io, IdpCounter, 3, 0.0, -1.0, X, Y)
+                WriteGhostRow!(Io, IdpCounter, 3, 0.0, -NormalScale, X, Y)
                 IdpCounter += 1
             end
         end
