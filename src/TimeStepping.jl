@@ -83,10 +83,13 @@ function ProgressMotion(SimParticles, dt₂, MotionsDefinition, SimMetaData)
                 # Retrieve motion parameters
                 MotionVel = motion.Velocity
                 MotionDir = motion.Direction
+                MotionFactor = ShouldMove ? one(MotionVel) : zero(MotionVel)
 
                 # Update Velocity and Position
-                Velocity[i] = MotionVel * MotionDir * ShouldMove
-                Position[i] += Velocity[i] * dt₂
+                Velocity[i] = MotionFactor * MotionVel * MotionDir
+                if motion.MovePosition && ShouldMove
+                    Position[i] += Velocity[i] * dt₂
+                end
             end
         end
     end

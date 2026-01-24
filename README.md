@@ -90,6 +90,8 @@ which can be loaded with ParaView 5.12 or newer. Output is written
 asynchronously, so files finish flushing when the simulation completes. The
 `example/LidDrivenCavity2d.jl` script is a lid-driven cavity setup that generates
 its CSV particle layout on first run and then reuses it from `input/`.
+Velocities provided in CSV inputs (e.g., for moving lids or inflows) are loaded
+into the initial particle state.
 To color exported cell grids by particle counts, set
 `ExportGridCellParticleCounts=true` in `SimulationMetaData`. This also adds a
 `ParticleNeighborsPerCell` array that includes each cell's particle count minus

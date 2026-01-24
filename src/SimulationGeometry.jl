@@ -32,6 +32,7 @@ end
     StartTime::T
     Duration::T
     Direction::SVector{D, T}  # Direction vector is now parametric based on dimensions D and FloatType T
+    MovePosition::Bool = true
 end
 
 # Define the Geometry struct to store the ParticleType enum and Motion details

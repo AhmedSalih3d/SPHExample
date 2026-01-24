@@ -22,12 +22,30 @@ end
     return SVector{3,T}(P1, P2, P3)
 end
 
+@inline function LoadCSVVelocity(::Val{2}, ::Type{T}, row) where {T}
+    V1 = getproperty(row, Symbol("Vel:0"))
+    V3 = getproperty(row, Symbol("Vel:2"))
+    return SVector{2,T}(V1, V3)
+end
+
+@inline function LoadCSVVelocity(::Val{3}, ::Type{T}, row) where {T}
+    V1 = getproperty(row, Symbol("Vel:0"))
+    V2 = getproperty(row, Symbol("Vel:1"))
+    V3 = getproperty(row, Symbol("Vel:2"))
+    return SVector{3,T}(V1, V2, V3)
+end
+
 function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, particle_group_marker::Int, specific_csv::String) where {D, T}
     csv_file = CSV.File(specific_csv)
 
     nrows = length(csv_file)
+    available_columns = Set(propertynames(csv_file))
+    velocity_symbols = D == 2 ? (Symbol("Vel:0"), Symbol("Vel:2")) : (Symbol("Vel:0"), Symbol("Vel:1"), Symbol("Vel:2"))
+    has_velocity = all(symbol -> symbol in available_columns, velocity_symbols)
+    zero_velocity = zero(SVector{D, T})
 
     points       = Vector{SVector{D,T}}(undef, nrows)
+    velocity     = Vector{SVector{D,T}}(undef, nrows)
     density      = Vector{T}(undef, nrows)
     types        = Vector{ParticleType}(undef, nrows)
     group_marker = Vector{Int}(undef, nrows)
@@ -37,6 +55,7 @@ function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, parti
         Rhop = row.Rhop
         Idp  = row.Idp + 1
         points[i] = LoadCSVPoint(Val(D), T, row)
+        velocity[i] = has_velocity ? LoadCSVVelocity(Val(D), T, row) : zero_velocity
 
         density[i]      = Rhop
         types[i]        = particle_type
@@ -44,7 +63,7 @@ function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, parti
         idp[i]          = Idp
     end
 
-    return points, density, types, group_marker, idp
+    return points, velocity, density, types, group_marker, idp
 end
 
 @inline function LoadBoundaryNormalPoint(::Val{2}, ::Type{T}, row) where {T}
@@ -61,6 +80,7 @@ end
 
 function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, FloatType}}; RequireMDBC::Bool=false, RequireKernelOutput::Bool=false) where {Dimensions, FloatType}
     Position    = Vector{SVector{Dimensions, FloatType}}()
+    Velocity    = Vector{SVector{Dimensions, FloatType}}()
     Density     = Vector{FloatType}()
     Types       = Vector{ParticleType}()
     GroupMarker = Vector{UInt}()
@@ -71,17 +91,19 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
         particle_group_marker = geom.GroupMarker
         specific_csv          = geom.CSVFile
 
-        points, density, types, group_marker, idp =
+        points, velocity, density, types, group_marker, idp =
             LoadSpecificCSV(Val(Dimensions), FloatType, particle_type,
                            particle_group_marker, specific_csv)
 
         sizehint!(Position,    length(Position)    + length(points))
+        sizehint!(Velocity,    length(Velocity)    + length(velocity))
         sizehint!(Density,     length(Density)     + length(density))
         sizehint!(Types,       length(Types)       + length(types))
         sizehint!(GroupMarker, length(GroupMarker) + length(group_marker))
         sizehint!(Idp,         length(Idp)         + length(idp))
 
         append!(Position,    points)
+        append!(Velocity,    velocity)
         append!(Density,     density)
         append!(Types,       types)
         append!(GroupMarker, group_marker)
@@ -94,13 +116,13 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
 
     sort_perm = sortperm(Idp)
     Position = Position[sort_perm]
+    Velocity = Velocity[sort_perm]
     Density = Density[sort_perm]
     Types = Types[sort_perm]
     GroupMarker = GroupMarker[sort_perm]
     Idp = Idp[sort_perm]
 
     Acceleration    = zeros(PositionType, NumberOfPoints)
-    Velocity        = zeros(PositionType, NumberOfPoints)
     Pressureᵢ      = zeros(PositionUnderlyingType, NumberOfPoints)
     
     Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)

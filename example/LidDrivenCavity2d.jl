@@ -66,9 +66,8 @@ function GenerateLidDrivenCavityCSVs(
         println(Io, Header)
         PointId = 0
         LidType = LidIsMoving ? Int(Moving) : Int(Fixed)
-        LidVx = LidIsMoving ? 0.0 : LidVelocity
         for X in range(0.0, length=Resolution + 1, step=Dx)
-            WriteParticleRow!(Io, PointId, IdpCounter, 3, X, 1.0, Density, LidType, LidVx, 0.0)
+            WriteParticleRow!(Io, PointId, IdpCounter, 3, X, 1.0, Density, LidType, LidVelocity, 0.0)
             PointId += 1
             IdpCounter += 1
         end
@@ -84,7 +83,8 @@ let
     Resolution = 50
     Reynolds = 1000.0
     LidVelocity = 1.0
-    LidIsMoving = false
+    LidIsMoving = true
+    LidMovesPosition = true
     RegenerateCSVs = true
     DomainLength = 1.0
 
@@ -150,7 +150,8 @@ let
             Velocity = LidVelocity,
             StartTime = 0.0,
             Duration = SimulationTime,
-            Direction = SVector{Dimensions, FloatType}(1.0, 0.0)
+            Direction = SVector{Dimensions, FloatType}(1.0, 0.0),
+            MovePosition = LidMovesPosition
         ) : nothing
     )
 
