@@ -15,6 +15,21 @@ function WriteGhostRow!(Io, Idp, Marker, Nx, Ny, X, Y)
     return nothing
 end
 
+function IsSideLayerX(X, Dx; DomainLength=1.0)
+    Atol = Dx / 10
+    return isapprox(X, -2 * Dx; atol=Atol) ||
+           isapprox(X, -Dx; atol=Atol) ||
+           isapprox(X, 0.0; atol=Atol) ||
+           isapprox(X, DomainLength; atol=Atol) ||
+           isapprox(X, DomainLength + Dx; atol=Atol) ||
+           isapprox(X, DomainLength + 2 * Dx; atol=Atol)
+end
+
+function ShouldIncludeLidPoint(X, Y, Dx; DomainLength=1.0)
+    Atol = Dx / 10
+    return isapprox(Y, DomainLength; atol=Atol) || !IsSideLayerX(X, Dx; DomainLength=DomainLength)
+end
+
 function GenerateLidDrivenCavityCSVs(
     Resolution,
     Dx,
@@ -85,20 +100,14 @@ function GenerateLidDrivenCavityCSVs(
     open(LidFile, "w") do Io
         println(Io, Header)
         PointId = 0
-        for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
-            WriteParticleRow!(Io, PointId, IdpCounter, 3, X, 1.0, Density, Int(LidType), LidVelocity, 0.0)
-            PointId += 1
-            IdpCounter += 1
-        end
-        for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
-            WriteParticleRow!(Io, PointId, IdpCounter, 3, X, 1.0 - Dx, Density, Int(LidType), LidVelocity, 0.0)
-            PointId += 1
-            IdpCounter += 1
-        end
-        for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
-            WriteParticleRow!(Io, PointId, IdpCounter, 3, X, 1.0 - 2 * Dx, Density, Int(LidType), LidVelocity, 0.0)
-            PointId += 1
-            IdpCounter += 1
+        for Y in (1.0, 1.0 - Dx, 1.0 - 2 * Dx)
+            for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
+                if ShouldIncludeLidPoint(X, Y, Dx)
+                    WriteParticleRow!(Io, PointId, IdpCounter, 3, X, Y, Density, Int(LidType), LidVelocity, 0.0)
+                    PointId += 1
+                    IdpCounter += 1
+                end
+            end
         end
     end
 
@@ -162,17 +171,13 @@ function GenerateLidDrivenCavityGhostNodes(Resolution, Dx, InputFolder; ForceReg
             WriteGhostRow!(Io, IdpCounter, 1, -1.0, 0.0, 1.0 + 2 * Dx, Y)
             IdpCounter += 1
         end
-        for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
-            WriteGhostRow!(Io, IdpCounter, 3, 0.0, -1.0, X, 1.0)
-            IdpCounter += 1
-        end
-        for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
-            WriteGhostRow!(Io, IdpCounter, 3, 0.0, -1.0, X, 1.0 - Dx)
-            IdpCounter += 1
-        end
-        for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
-            WriteGhostRow!(Io, IdpCounter, 3, 0.0, -1.0, X, 1.0 - 2 * Dx)
-            IdpCounter += 1
+        for Y in (1.0, 1.0 - Dx, 1.0 - 2 * Dx)
+            for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
+                if ShouldIncludeLidPoint(X, Y, Dx)
+                    WriteGhostRow!(Io, IdpCounter, 3, 0.0, -1.0, X, Y)
+                    IdpCounter += 1
+                end
+            end
         end
     end
 
