@@ -15,21 +15,6 @@ function WriteGhostRow!(Io, Idp, Marker, Nx, Ny, X, Y)
     return nothing
 end
 
-function IsSideLayerX(X, Dx; DomainLength=1.0)
-    Atol = Dx / 10
-    return isapprox(X, -2 * Dx; atol=Atol) ||
-           isapprox(X, -Dx; atol=Atol) ||
-           isapprox(X, 0.0; atol=Atol) ||
-           isapprox(X, DomainLength; atol=Atol) ||
-           isapprox(X, DomainLength + Dx; atol=Atol) ||
-           isapprox(X, DomainLength + 2 * Dx; atol=Atol)
-end
-
-function ShouldIncludeLidPoint(X, Y, Dx; DomainLength=1.0)
-    Atol = Dx / 10
-    return isapprox(Y, DomainLength; atol=Atol) || !IsSideLayerX(X, Dx; DomainLength=DomainLength)
-end
-
 function GenerateLidDrivenCavityCSVs(
     Resolution,
     Dx,
@@ -71,7 +56,7 @@ function GenerateLidDrivenCavityCSVs(
             PointId += 1
             IdpCounter += 1
         end
-        for Y in range(Dx, length=Resolution - 1, step=Dx)
+        for Y in range(Dx, length=Resolution - 3, step=Dx)
             WriteParticleRow!(Io, PointId, IdpCounter, 1, 0.0, Y, Density, Int(Fixed), 0.0, 0.0)
             PointId += 1
             IdpCounter += 1
@@ -79,7 +64,7 @@ function GenerateLidDrivenCavityCSVs(
             PointId += 1
             IdpCounter += 1
         end
-        for Y in range(Dx, length=Resolution - 1, step=Dx)
+        for Y in range(Dx, length=Resolution - 3, step=Dx)
             WriteParticleRow!(Io, PointId, IdpCounter, 1, -Dx, Y, Density, Int(Fixed), 0.0, 0.0)
             PointId += 1
             IdpCounter += 1
@@ -87,7 +72,7 @@ function GenerateLidDrivenCavityCSVs(
             PointId += 1
             IdpCounter += 1
         end
-        for Y in range(Dx, length=Resolution - 1, step=Dx)
+        for Y in range(Dx, length=Resolution - 3, step=Dx)
             WriteParticleRow!(Io, PointId, IdpCounter, 1, -2 * Dx, Y, Density, Int(Fixed), 0.0, 0.0)
             PointId += 1
             IdpCounter += 1
@@ -102,11 +87,9 @@ function GenerateLidDrivenCavityCSVs(
         PointId = 0
         for Y in (1.0, 1.0 - Dx, 1.0 - 2 * Dx)
             for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
-                if ShouldIncludeLidPoint(X, Y, Dx)
-                    WriteParticleRow!(Io, PointId, IdpCounter, 3, X, Y, Density, Int(LidType), LidVelocity, 0.0)
-                    PointId += 1
-                    IdpCounter += 1
-                end
+                WriteParticleRow!(Io, PointId, IdpCounter, 3, X, Y, Density, Int(LidType), LidVelocity, 0.0)
+                PointId += 1
+                IdpCounter += 1
             end
         end
     end
@@ -153,19 +136,19 @@ function GenerateLidDrivenCavityGhostNodes(Resolution, Dx, InputFolder; ForceReg
             WriteGhostRow!(Io, IdpCounter, 1, 0.0, 1.0, X, -2 * Dx)
             IdpCounter += 1
         end
-        for Y in range(Dx, length=Resolution - 1, step=Dx)
+        for Y in range(Dx, length=Resolution - 3, step=Dx)
             WriteGhostRow!(Io, IdpCounter, 1, 1.0, 0.0, 0.0, Y)
             IdpCounter += 1
             WriteGhostRow!(Io, IdpCounter, 1, -1.0, 0.0, 1.0, Y)
             IdpCounter += 1
         end
-        for Y in range(Dx, length=Resolution - 1, step=Dx)
+        for Y in range(Dx, length=Resolution - 3, step=Dx)
             WriteGhostRow!(Io, IdpCounter, 1, 1.0, 0.0, -Dx, Y)
             IdpCounter += 1
             WriteGhostRow!(Io, IdpCounter, 1, -1.0, 0.0, 1.0 + Dx, Y)
             IdpCounter += 1
         end
-        for Y in range(Dx, length=Resolution - 1, step=Dx)
+        for Y in range(Dx, length=Resolution - 3, step=Dx)
             WriteGhostRow!(Io, IdpCounter, 1, 1.0, 0.0, -2 * Dx, Y)
             IdpCounter += 1
             WriteGhostRow!(Io, IdpCounter, 1, -1.0, 0.0, 1.0 + 2 * Dx, Y)
@@ -173,10 +156,8 @@ function GenerateLidDrivenCavityGhostNodes(Resolution, Dx, InputFolder; ForceReg
         end
         for Y in (1.0, 1.0 - Dx, 1.0 - 2 * Dx)
             for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
-                if ShouldIncludeLidPoint(X, Y, Dx)
-                    WriteGhostRow!(Io, IdpCounter, 3, 0.0, -1.0, X, Y)
-                    IdpCounter += 1
-                end
+                WriteGhostRow!(Io, IdpCounter, 3, 0.0, -1.0, X, Y)
+                IdpCounter += 1
             end
         end
     end
