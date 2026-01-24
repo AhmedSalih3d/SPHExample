@@ -1,5 +1,4 @@
 using Printf
-using StaticArrays: SVector
 using SPHExample
 
 function WriteParticleRow!(Io, PointId, Idp, Marker, X, Y, Density, TypeValue, Vx, Vy)
@@ -9,7 +8,7 @@ function WriteParticleRow!(Io, PointId, Idp, Marker, X, Y, Density, TypeValue, V
     return nothing
 end
 
-function GenerateLidDrivenCavityCSVs(Resolution, Dx, InputFolder; Density=1000.0)
+function GenerateLidDrivenCavityCSVs(Resolution, Dx, InputFolder; Density=1000.0, LidVelocity=0.0)
     BaseName = "LidDrivenCavity_N$(Resolution)"
     FluidFile = joinpath(InputFolder, "$(BaseName)_Fluid.csv")
     FixedFile = joinpath(InputFolder, "$(BaseName)_Fixed.csv")
@@ -58,7 +57,7 @@ function GenerateLidDrivenCavityCSVs(Resolution, Dx, InputFolder; Density=1000.0
         println(Io, Header)
         PointId = 0
         for X in range(0.0, length=Resolution + 1, step=Dx)
-            WriteParticleRow!(Io, PointId, IdpCounter, 3, X, 1.0, Density, Int(Moving), 0.0, 0.0)
+            WriteParticleRow!(Io, PointId, IdpCounter, 3, X, 1.0, Density, Int(Fixed), LidVelocity, 0.0)
             PointId += 1
             IdpCounter += 1
         end
@@ -83,7 +82,7 @@ let
     OutputInterval = 0.1
 
     InputFolder = "./input/lid_driven_cavity"
-    FluidCSV, FixedCSV, LidCSV = GenerateLidDrivenCavityCSVs(Resolution, Dx, InputFolder)
+    FluidCSV, FixedCSV, LidCSV = GenerateLidDrivenCavityCSVs(Resolution, Dx, InputFolder; LidVelocity = LidVelocity)
 
     SimConstants = SimulationConstants{FloatType}(
         dx = Dx,
@@ -126,13 +125,8 @@ let
     MovingLid = Geometry{Dimensions, FloatType}(
         CSVFile = LidCSV,
         GroupMarker = 3,
-        Type = Moving,
-        Motion = MotionDetails{Dimensions, FloatType}(
-            Velocity = LidVelocity,
-            StartTime = 0.0,
-            Duration = SimulationTime,
-            Direction = SVector{Dimensions, FloatType}(1.0, 0.0)
-        )
+        Type = Fixed,
+        Motion = nothing
     )
 
     SimulationGeometry = [FixedWalls, FluidDomain, MovingLid]
