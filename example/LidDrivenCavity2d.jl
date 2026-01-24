@@ -9,13 +9,21 @@ function WriteParticleRow!(Io, PointId, Idp, Marker, X, Y, Density, TypeValue, V
     return nothing
 end
 
-function GenerateLidDrivenCavityCSVs(Resolution, Dx, InputFolder; Density=1000.0, LidVelocity=0.0, LidIsMoving=false)
+function GenerateLidDrivenCavityCSVs(
+    Resolution,
+    Dx,
+    InputFolder;
+    Density=1000.0,
+    LidVelocity=0.0,
+    LidIsMoving=false,
+    ForceRegenerate=false
+)
     BaseName = "LidDrivenCavity_N$(Resolution)"
     FluidFile = joinpath(InputFolder, "$(BaseName)_Fluid.csv")
     FixedFile = joinpath(InputFolder, "$(BaseName)_Fixed.csv")
     LidFile = joinpath(InputFolder, "$(BaseName)_Lid.csv")
 
-    if isfile(FluidFile) && isfile(FixedFile) && isfile(LidFile)
+    if !ForceRegenerate && isfile(FluidFile) && isfile(FixedFile) && isfile(LidFile)
         return FluidFile, FixedFile, LidFile
     end
 
@@ -77,6 +85,7 @@ let
     Reynolds = 1000.0
     LidVelocity = 1.0
     LidIsMoving = false
+    RegenerateCSVs = true
     DomainLength = 1.0
 
     Dx = DomainLength / Resolution
@@ -91,7 +100,8 @@ let
         Dx,
         InputFolder;
         LidVelocity = LidVelocity,
-        LidIsMoving = LidIsMoving
+        LidIsMoving = LidIsMoving,
+        ForceRegenerate = RegenerateCSVs
     )
 
     SimConstants = SimulationConstants{FloatType}(
