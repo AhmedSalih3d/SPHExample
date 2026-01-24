@@ -97,7 +97,7 @@ function GenerateLidDrivenCavityCSVs(
     open(FluidFile, "w") do Io
         println(Io, Header)
         PointId = 0
-        for Y in range(Dx, length=Resolution - 1, step=Dx)
+        for Y in range(Dx, length=Resolution - 3, step=Dx)
             for X in range(Dx, length=Resolution - 1, step=Dx)
                 WriteParticleRow!(Io, PointId, IdpCounter, 2, X, Y, Density, Int(Fluid), 0.0, 0.0)
                 PointId += 1
