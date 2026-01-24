@@ -121,7 +121,7 @@ function GenerateLidDrivenCavityGhostNodes(Resolution, Dx, InputFolder; ForceReg
 
     Header = "\"Idp\",\"Mk\",\"Normal:0\",\"Normal:1\",\"Normal:2\",\"NormalSize\",\"Points:0\",\"Points:1\",\"Points:2\""
     IdpCounter = 0
-    NormalScale = 5 * Dx
+    NormalScale = Dx
 
     open(GhostFile, "w") do Io
         println(Io, Header)
