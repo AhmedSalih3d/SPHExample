@@ -87,7 +87,13 @@ Open one of the files in `example/`, for instance `example/StillWedgeMDBC.jl`,
 and adjust the simulation parameters or the `ComputerInteractions!` function.
 Run the script to start the simulation. Results are written in `hdfvtk` format
 which can be loaded with ParaView 5.12 or newer. Output is written
-asynchronously, so files finish flushing when the simulation completes.
+asynchronously, so files finish flushing when the simulation completes. The
+`example/LidDrivenCavity2d.jl` script is a lid-driven cavity setup that generates
+its CSV particle layout on first run and then reuses it from `input/`.
+Velocities provided in CSV inputs (e.g., for moving lids or inflows) are loaded
+into the initial particle state.
+For moving boundaries that should keep a prescribed velocity while staying
+spatially fixed, use the `FixedMoving` particle type.
 To color exported cell grids by particle counts, set
 `ExportGridCellParticleCounts=true` in `SimulationMetaData`. This also adds a
 `ParticleNeighborsPerCell` array that includes each cell's particle count minus

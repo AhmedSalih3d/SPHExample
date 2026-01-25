@@ -73,7 +73,7 @@ function ProgressMotion(SimParticles, dt₂, MotionsDefinition, SimMetaData)
     ParticleMarker  = SimParticles.GroupMarker
     ParticleType    = SimParticles.Type
     @inbounds @simd ivdep for i in eachindex(Position)
-        if ParticleType[i] == Moving
+        if ParticleType[i] == Moving || ParticleType[i] == FixedMoving
             motion = MotionsDefinition[ParticleMarker[i]]
 
             if motion !== nothing
@@ -83,10 +83,14 @@ function ProgressMotion(SimParticles, dt₂, MotionsDefinition, SimMetaData)
                 # Retrieve motion parameters
                 MotionVel = motion.Velocity
                 MotionDir = motion.Direction
+                MotionFactor = ShouldMove ? one(MotionVel) : zero(MotionVel)
+                PositionFactor = MotionPositionFactorValue(typeof(MotionVel), ParticleType[i])
 
                 # Update Velocity and Position
-                Velocity[i] = MotionVel * MotionDir * ShouldMove
-                Position[i] += Velocity[i] * dt₂
+                Velocity[i] = MotionFactor * MotionVel * MotionDir
+                if motion.MovePosition && ShouldMove && PositionFactor != zero(PositionFactor)
+                    Position[i] += Velocity[i] * dt₂ * PositionFactor
+                end
             end
         end
     end
