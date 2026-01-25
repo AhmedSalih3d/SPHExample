@@ -562,7 +562,7 @@ using LinearAlgebra
             acc_acc += dvdt⁺ + visc_term
 
             MotionLimiterCondition = MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
-            shift_c_acc += (m₀ / ρᵢ) * ∇ᵢWᵢⱼ
+            shift_c_acc += (m₀ / ρⱼ) * ∇ᵢWᵢⱼ
             shift_r_acc += (m₀ / ρⱼ) * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
         end
 

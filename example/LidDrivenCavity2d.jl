@@ -170,7 +170,7 @@ let
     Dimensions = 2
     FloatType = Float64
 
-    Resolution = 50
+    Resolution = 120
     Reynolds = 1000.0
     LidVelocity = 1.0
     LidType = FixedMoving
@@ -200,13 +200,13 @@ let
         dx = Dx,
         ν₀ = KinematicViscosity,
         g = 0.0,
-        c₀ = max(20 * LidVelocity, 20.0),
+        c₀ = 10LidVelocity,
         α = 0.01,
         CFL = 0.2,
         δᵩ = 0.1
     )
 
-    SimMetaData = SimulationMetaData{Dimensions, FloatType, NoShifting, NoKernelOutput, SimpleMDBC, StoreLog}(
+    SimMetaData = SimulationMetaData{Dimensions, FloatType, PlanarShifting, NoKernelOutput, SimpleMDBC, StoreLog}(
         SimulationName = "LidDrivenCavityRe$(Int(Reynolds))",
         SaveLocation = "output/LidDrivenCavityRe$(Int(Reynolds))_N$(Resolution)",
         SimulationTime = SimulationTime,
