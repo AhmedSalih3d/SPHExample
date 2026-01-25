@@ -1,4 +1,4 @@
-module SPHCellList
+﻿module SPHCellList
 
 export NeighborLoop!, ComputeInteractions!, RunSimulation
 
@@ -482,6 +482,7 @@ using LinearAlgebra
             dᵢⱼ = sqrt(abs(xᵢⱼ²))
             dᵢⱼ² = dᵢⱼ^2
             q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
+            Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
             ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
 
             ρᵢ = Density[i]
@@ -510,7 +511,7 @@ using LinearAlgebra
             kernel_acc, kernel_grad_acc = compute_kernel_output_local(SimMetaData, kernel_acc, kernel_grad_acc, SimKernel, q, ∇ᵢWᵢⱼ)
 
             MotionLimiterCondition = MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
-            shift_c_acc += (m₀ / ρᵢ) * ∇ᵢWᵢⱼ
+            shift_c_acc += (m₀ / ρⱼ) * Wᵢⱼ * (m₀ / ρᵢ) * ∇ᵢWᵢⱼ
             shift_r_acc += (m₀ / ρⱼ) * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
         end
 
@@ -536,6 +537,7 @@ using LinearAlgebra
             dᵢⱼ = sqrt(abs(xᵢⱼ²))
             dᵢⱼ² = dᵢⱼ^2
             q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
+            Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
             ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
 
             ρᵢ = Density[i]
@@ -562,7 +564,7 @@ using LinearAlgebra
             acc_acc += dvdt⁺ + visc_term
 
             MotionLimiterCondition = MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
-            shift_c_acc += (m₀ / ρᵢ) * ∇ᵢWᵢⱼ
+            shift_c_acc += (m₀ / ρⱼ) * Wᵢⱼ * (m₀ / ρⱼ) * ∇ᵢWᵢⱼ
             shift_r_acc += (m₀ / ρⱼ) * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
         end
 
