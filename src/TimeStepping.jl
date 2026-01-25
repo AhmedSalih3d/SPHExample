@@ -160,8 +160,6 @@ function FullTimeStep(::SimulationMetaData{D,T,S,K,B,L}, SimKernel, SimConstants
             δxᵢ = -A * SimKernel.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
         end
 
-        # δxᵢ = -A * SimKernel.h * norm(Velocityₙ⁺[i]) * ∇Cᵢ[i] * dt
-
         Position[i]           += (Velocityₙ⁺[i] * dt + δxᵢ) * MotionLimiterFactor
     end
     return nothing
