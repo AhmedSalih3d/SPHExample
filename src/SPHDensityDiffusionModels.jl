@@ -3,6 +3,7 @@ module SPHDensityDiffusionModels
 using StaticArrays, LinearAlgebra, Parameters
 using ..SimulationEquations
 using ..SimulationGeometry
+using ..AuxiliaryFunctions
 #---------------------------------------------------------------
 # Exported
 #---------------------------------------------------------------
@@ -80,7 +81,7 @@ struct ZeroGravityLinearDensityDiffusion <: SPHDensityDiffusion end
         ρⱼᵢ = ρⱼ - ρᵢ
         ψᵢⱼ = 2 * ρⱼᵢ * (-xᵢⱼ) * invdᵢⱼ²η²
 
-        Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ)
+        Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * DotSimd(ψᵢⱼ, ∇ᵢWᵢⱼ)
         Dⱼ  = -Dᵢ
 
 
@@ -130,7 +131,7 @@ struct LinearDensityDiffusion <: SPHDensityDiffusion end
 
         MotionLimiterCondition = MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
 
-        Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
+        Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * DotSimd(ψᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
         Dⱼ  = -Dᵢ
 
         return Dᵢ, Dⱼ
@@ -182,7 +183,7 @@ struct ComplexDensityDiffusion <: SPHDensityDiffusion end
 
         MotionLimiterCondition = MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
 
-        Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
+        Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * DotSimd(ψᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
         Dⱼ  = -Dᵢ
 
         return Dᵢ, Dⱼ

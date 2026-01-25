@@ -381,7 +381,7 @@ using LinearAlgebra
         @unpack h⁻¹, H², h = SimKernel
 
         xᵢⱼ = Position[i] - Position[j]
-        xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
+        xᵢⱼ² = DotSimd(xᵢⱼ, xᵢⱼ)
         if xᵢⱼ² <= H²
             dᵢⱼ = sqrt(abs(xᵢⱼ²))
             dᵢⱼ² = dᵢⱼ^2
@@ -394,7 +394,7 @@ using LinearAlgebra
             vᵢ = Velocity[i]
             vⱼ = Velocity[j]
             vᵢⱼ = vᵢ - vⱼ
-            density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
+            density_symmetric_term = DotSimd(-vᵢⱼ, ∇ᵢWᵢⱼ)
             dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
 
             Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)
@@ -428,7 +428,7 @@ using LinearAlgebra
         @unpack h⁻¹, H², h = SimKernel
 
         xᵢⱼ = Position[i] - Position[j]
-        xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
+        xᵢⱼ² = DotSimd(xᵢⱼ, xᵢⱼ)
         if xᵢⱼ² <= H²
             dᵢⱼ = sqrt(abs(xᵢⱼ²))
             dᵢⱼ² = dᵢⱼ^2
@@ -441,7 +441,7 @@ using LinearAlgebra
             vᵢ = Velocity[i]
             vⱼ = Velocity[j]
             vᵢⱼ = vᵢ - vⱼ
-            density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
+            density_symmetric_term = DotSimd(-vᵢⱼ, ∇ᵢWᵢⱼ)
             dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
 
             Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)
@@ -477,7 +477,7 @@ using LinearAlgebra
         @unpack h⁻¹, H², h = SimKernel
 
         xᵢⱼ = Position[i] - Position[j]
-        xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
+        xᵢⱼ² = DotSimd(xᵢⱼ, xᵢⱼ)
         if xᵢⱼ² <= H²
             dᵢⱼ = sqrt(abs(xᵢⱼ²))
             dᵢⱼ² = dᵢⱼ^2
@@ -490,7 +490,7 @@ using LinearAlgebra
             vᵢ = Velocity[i]
             vⱼ = Velocity[j]
             vᵢⱼ = vᵢ - vⱼ
-            density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
+            density_symmetric_term = DotSimd(-vᵢⱼ, ∇ᵢWᵢⱼ)
             dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
 
             Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)
@@ -511,7 +511,7 @@ using LinearAlgebra
 
             MotionLimiterCondition = MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
             shift_c_acc += (m₀ / ρᵢ) * ∇ᵢWᵢⱼ
-            shift_r_acc += (m₀ / ρⱼ) * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
+            shift_r_acc += (m₀ / ρⱼ) * DotSimd(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
         end
 
         return dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc, shift_r_acc
@@ -531,7 +531,7 @@ using LinearAlgebra
         @unpack h⁻¹, H², h = SimKernel
 
         xᵢⱼ = Position[i] - Position[j]
-        xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
+        xᵢⱼ² = DotSimd(xᵢⱼ, xᵢⱼ)
         if xᵢⱼ² <= H²
             dᵢⱼ = sqrt(abs(xᵢⱼ²))
             dᵢⱼ² = dᵢⱼ^2
@@ -544,7 +544,7 @@ using LinearAlgebra
             vᵢ = Velocity[i]
             vⱼ = Velocity[j]
             vᵢⱼ = vᵢ - vⱼ
-            density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
+            density_symmetric_term = DotSimd(-vᵢⱼ, ∇ᵢWᵢⱼ)
             dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
 
             Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)
@@ -563,7 +563,7 @@ using LinearAlgebra
 
             MotionLimiterCondition = MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
             shift_c_acc += (m₀ / ρᵢ) * ∇ᵢWᵢⱼ
-            shift_r_acc += (m₀ / ρⱼ) * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
+            shift_r_acc += (m₀ / ρⱼ) * DotSimd(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
         end
 
         return dρdt_acc, acc_acc, shift_c_acc, shift_r_acc
@@ -585,7 +585,7 @@ using LinearAlgebra
 
             xᵢⱼ  = GhostPoints[i] - Position[j]
 
-            xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
+            xᵢⱼ² = DotSimd(xᵢⱼ, xᵢⱼ)
             if xᵢⱼ² <= H²
                 dᵢⱼ = sqrt(abs(xᵢⱼ²))
                 q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
