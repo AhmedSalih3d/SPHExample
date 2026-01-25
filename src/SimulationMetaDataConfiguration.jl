@@ -5,6 +5,7 @@ using TimerOutputs
 
 
 export SimulationMetaData, UpdateMetaData!, ShiftingMode, NoShifting, PlanarShifting,
+       FreeSurfaceMode, InternalFlow, FreeSurfaceCorrection,
        KernelOutputMode, NoKernelOutput, StoreKernelOutput,
        MDBCMode, NoMDBC, SimpleMDBC,
        LogMode, NoLog, StoreLog,
@@ -13,6 +14,27 @@ export SimulationMetaData, UpdateMetaData!, ShiftingMode, NoShifting, PlanarShif
 abstract type ShiftingMode end
 struct NoShifting    <: ShiftingMode end
 struct PlanarShifting <: ShiftingMode end
+
+"""
+    FreeSurfaceMode
+
+Controls whether shifting uses a free-surface correction.
+"""
+abstract type FreeSurfaceMode end
+
+"""
+    InternalFlow
+
+Disables free-surface correction for internal flows.
+"""
+struct InternalFlow <: FreeSurfaceMode end
+
+"""
+    FreeSurfaceCorrection
+
+Enables free-surface correction constants for 2D/3D flows.
+"""
+struct FreeSurfaceCorrection <: FreeSurfaceMode end
 
 abstract type KernelOutputMode end
 struct NoKernelOutput    <: KernelOutputMode end
@@ -55,6 +77,7 @@ struct SingleNeighborTimeStepping <: TimeSteppingMode end
     ExportGridCellParticleCounts::Bool      = false
     OpenLogFile::Bool                       = true
     Δx::FloatType                           = zero(FloatType)
+    FreeSurfaceMode::FreeSurfaceMode        = FreeSurfaceCorrection()
     TimeSteppingMode::TimeSteppingMode      = SingleNeighborTimeStepping()
 end
 SimulationMetaData{D,T,S,K,B}(; kwargs...) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode} =

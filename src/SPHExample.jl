@@ -49,6 +49,7 @@ module SPHExample
 
     using .SimulationMetaDataConfiguration
     export SimulationMetaData, ShiftingMode, NoShifting, PlanarShifting,
+           FreeSurfaceMode, InternalFlow, FreeSurfaceCorrection,
            KernelOutputMode, NoKernelOutput, StoreKernelOutput,
            MDBCMode, NoMDBC, SimpleMDBC,
            LogMode, NoLog, StoreLog,
