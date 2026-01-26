@@ -147,7 +147,7 @@ function FullTimeStep(::SimulationMetaData{D,T,S,K,B,L}, SimKernel, SimConstants
     @inbounds for i in eachindex(Velocityₙ⁺)
         max_velocity = max(max_velocity, norm(Velocityₙ⁺[i]))
     end
-    shift_scale = -SimConstants.CFL * (max_velocity / SimConstants.c₀) * (2 * SimKernel.h)^2
+    shift_scale = -SimConstants.ShiftCFL * (max_velocity / SimConstants.c₀) * (2 * SimKernel.h)^2
     @inbounds @simd ivdep for i in eachindex(Position)
         MotionLimiterFactor = MotionLimiterValue(AccelerationScalarType, ParticleType[i])
         GravityFactor = GravityFactorValue(AccelerationScalarType, ParticleType[i])
