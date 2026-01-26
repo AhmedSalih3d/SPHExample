@@ -48,8 +48,7 @@ module SPHExample
     export SimulationLogger, generate_format_string, InitializeLogger, LogSimulationDetails, LogStep, LogFinal
 
     using .SimulationMetaDataConfiguration
-    export SimulationMetaData, ShiftingMode, NoShifting, PlanarShifting, WCSPHShifting,
-           FreeSurfaceMode, InternalFlow, FreeSurfaceCorrection,
+    export SimulationMetaData, ShiftingMode, NoShifting, PlanarShifting,
            KernelOutputMode, NoKernelOutput, StoreKernelOutput,
            MDBCMode, NoMDBC, SimpleMDBC,
            LogMode, NoLog, StoreLog,

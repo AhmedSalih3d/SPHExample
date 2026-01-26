@@ -46,7 +46,7 @@ end
         Type=typ, GroupMarker=group, GhostPoints=gpoint, GhostNormals=gnorm,
     ))
 
-    dρdtI, vel_n, pos_n, ρ_n, ∇C, ∇r, ∇ρ, ∇u =
+    dρdtI, vel_n, pos_n, ρ_n, ∇C, ∇r =
         AllocateSupportDataStructures(meta, particles.Position)
 
     for _ in 1:1000

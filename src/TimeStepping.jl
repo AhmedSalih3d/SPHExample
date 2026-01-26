@@ -10,18 +10,6 @@ using ..SimulationEquations
 using ..SimulationGeometry
 using ..SimulationMetaDataConfiguration
 
-@inline function FreeSurfaceThreshold(::Val{2}, ::Type{T}) where {T}
-    return T(1.5)
-end
-
-@inline function FreeSurfaceThreshold(::Val{3}, ::Type{T}) where {T}
-    return T(2.75)
-end
-
-@inline function FreeSurfaceThreshold(::Val{D}, ::Type{T}) where {D,T}
-    error("Free-surface shifting threshold is only defined for 2D and 3D.")
-end
-
 """
     Δt(max_acceleration, SimulationConstants, SPHKernel)
 
@@ -147,69 +135,19 @@ function FullTimeStep(::SimulationMetaData{D,T,NoShifting,K,B,L}, SimKernel,
     return nothing
 end
 
-function FullTimeStep(SimMetaData::SimulationMetaData{D,T,NoShifting,K,B,L}, SimKernel,
-                          SimConstants, SimParticles, Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, _∇ρᵢ, _∇uᵢ, dt) where {D,T,
-                                                                             K<:KernelOutputMode,
-                                                                             B<:MDBCMode,
-                                                                             L<:LogMode}
-    return FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt)
-end
-
 function FullTimeStep(::SimulationMetaData{D,T,S,K,B,L}, SimKernel, SimConstants,
-                          SimParticles, Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, ∇ρᵢ, ∇uᵢ, dt) where {D,T,S<:ShiftingMode,
+                          SimParticles, Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,S<:ShiftingMode,
                                                              K<:KernelOutputMode,
                                                              B<:MDBCMode,
                                                              L<:LogMode}
     @unpack Position, Velocity, Acceleration = SimParticles
-    Density = SimParticles.Density
     ParticleType = SimParticles.Type
     AccelerationScalarType = eltype(eltype(Acceleration))
-    A = T(2) # Value between 1 to 6 advised
-    UseFreeSurfaceCorrection = SimMetaData.FreeSurfaceMode isa FreeSurfaceCorrection
-    A_FST = FreeSurfaceThreshold(Val(D), T)
-    A_FSM = T(D)
-    @inbounds @simd ivdep for i in eachindex(Position)
-        MotionLimiterFactor = MotionLimiterValue(AccelerationScalarType, ParticleType[i])
-        GravityFactor = GravityFactorValue(AccelerationScalarType, ParticleType[i])
-        Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor)
-        Velocity[i]       +=  Acceleration[i] * dt * MotionLimiterFactor
-
-        shift_scale = -A * SimKernel.h * norm(Velocityₙ⁺[i]) * dt
-        if UseFreeSurfaceCorrection
-            divergence_delta = ∇◌rᵢ[i] - A_FST
-            if divergence_delta < 0
-                A_FSC = divergence_delta / (A_FSM - A_FST)
-                δxᵢ = shift_scale * A_FSC * ∇Cᵢ[i]
-            else
-                δxᵢ = shift_scale * ∇Cᵢ[i]
-            end
-        else
-            δxᵢ = shift_scale * ∇Cᵢ[i]
-        end
-
-        Density[i]         += dot(δxᵢ, ∇ρᵢ[i]) * MotionLimiterFactor
-        Velocity[i]        += (∇uᵢ[i] * δxᵢ) * MotionLimiterFactor
-        Position[i]           += (Velocityₙ⁺[i] * dt + δxᵢ) * MotionLimiterFactor
-    end
-    return nothing
-end
-
-function FullTimeStep(::SimulationMetaData{D,T,WCSPHShifting,K,B,L}, SimKernel, SimConstants,
-                          SimParticles, Velocityₙ⁺, ∇Cᵢ, _∇◌rᵢ, ∇ρᵢ, ∇uᵢ, dt) where {D,T,
-                                                             K<:KernelOutputMode,
-                                                             B<:MDBCMode,
-                                                             L<:LogMode}
-    @unpack Position, Velocity, Acceleration = SimParticles
-    Density = SimParticles.Density
-    ParticleType = SimParticles.Type
-    AccelerationScalarType = eltype(eltype(Acceleration))
-
     max_velocity = zero(eltype(eltype(Velocityₙ⁺)))
     @inbounds for i in eachindex(Velocityₙ⁺)
         max_velocity = max(max_velocity, norm(Velocityₙ⁺[i]))
     end
     shift_scale = -SimConstants.CFL * (max_velocity / SimConstants.c₀) * (2 * SimKernel.h)^2
-
     @inbounds @simd ivdep for i in eachindex(Position)
         MotionLimiterFactor = MotionLimiterValue(AccelerationScalarType, ParticleType[i])
         GravityFactor = GravityFactorValue(AccelerationScalarType, ParticleType[i])
@@ -217,9 +155,8 @@ function FullTimeStep(::SimulationMetaData{D,T,WCSPHShifting,K,B,L}, SimKernel, 
         Velocity[i]       +=  Acceleration[i] * dt * MotionLimiterFactor
 
         δxᵢ = shift_scale * ∇Cᵢ[i]
-        Density[i]   += dot(δxᵢ, ∇ρᵢ[i]) * MotionLimiterFactor
-        Velocity[i]  += (∇uᵢ[i] * δxᵢ) * MotionLimiterFactor
-        Position[i]  += (Velocityₙ⁺[i] * dt + δxᵢ) * MotionLimiterFactor
+
+        Position[i]           += (Velocityₙ⁺[i] * dt + δxᵢ) * MotionLimiterFactor
     end
     return nothing
 end
