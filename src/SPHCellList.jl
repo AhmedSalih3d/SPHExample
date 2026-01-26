@@ -531,6 +531,67 @@ using LinearAlgebra
                density_grad_acc, velocity_grad_acc
     end
 
+    Base.@propagate_inbounds function ComputeInteractionsPerParticle!(
+        SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
+        SimMetaData::SimulationMetaData{D,T,WCSPHShifting,K,B,L}, SimConstants,
+        SimParticles, Position, Density, Pressure, Velocity, ParticleType,
+        dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc,
+        shift_r_acc, density_grad_acc, velocity_grad_acc, i, j) where {D,T,
+                                  K<:KernelOutputMode,
+                                  B<:MDBCMode,
+                                  L<:LogMode,
+                                  SDD<:SPHDensityDiffusion,
+                                  SV<:SPHViscosity}
+        @unpack m₀, dx = SimConstants
+        @unpack h⁻¹, H², h = SimKernel
+
+        xᵢⱼ = Position[i] - Position[j]
+        xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
+        if xᵢⱼ² <= H²
+            dᵢⱼ = sqrt(abs(xᵢⱼ²))
+            dᵢⱼ² = dᵢⱼ^2
+            q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
+            ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
+            kernel_value = @fastpow Wᵢⱼ(SimKernel, q)
+
+            ρᵢ = Density[i]
+            ρⱼ = Density[j]
+
+            vᵢ = Velocity[i]
+            vⱼ = Velocity[j]
+            vᵢⱼ = vᵢ - vⱼ
+            density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
+            dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
+
+            Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)
+
+            dρdt_acc += dρdt⁺ + Dᵢ
+
+            Pᵢ = Pressure[i]
+            Pⱼ = Pressure[j]
+            Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
+            f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
+            dvdt⁺ = -m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
+
+            visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j)
+
+            acc_acc += dvdt⁺ + visc_term
+
+            kernel_acc, kernel_grad_acc = compute_kernel_output_local(SimMetaData, kernel_acc, kernel_grad_acc, SimKernel, q, ∇ᵢWᵢⱼ)
+
+            w_ref = @fastpow Wᵢⱼ(SimKernel, dx * h⁻¹)
+            correction = one(T) + T(0.2) * (kernel_value / w_ref)^T(4)
+            shift_weight = (m₀ / (ρᵢ + ρⱼ)) * correction * kernel_value
+            shift_c_acc += shift_weight * xᵢⱼ
+
+            density_grad_acc += (m₀ / ρⱼ) * (ρⱼ - ρᵢ) * ∇ᵢWᵢⱼ
+            velocity_grad_acc += (m₀ / ρⱼ) * (vⱼ - vᵢ) * transpose(∇ᵢWᵢⱼ)
+        end
+
+        return dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc, shift_r_acc,
+               density_grad_acc, velocity_grad_acc
+    end
+
     Base.@propagate_inbounds function ComputeInteractionsPerParticleNoKernel!(
         SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         SimMetaData::SimulationMetaData{D,T,S,NoKernelOutput,B,L}, SimConstants,
@@ -578,6 +639,62 @@ using LinearAlgebra
             MotionLimiterCondition = MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
             shift_c_acc += (m₀ / ρᵢ) * ∇ᵢWᵢⱼ
             shift_r_acc += (m₀ / ρⱼ) * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
+            density_grad_acc += (m₀ / ρⱼ) * (ρⱼ - ρᵢ) * ∇ᵢWᵢⱼ
+            velocity_grad_acc += (m₀ / ρⱼ) * (vⱼ - vᵢ) * transpose(∇ᵢWᵢⱼ)
+        end
+
+        return dρdt_acc, acc_acc, shift_c_acc, shift_r_acc, density_grad_acc, velocity_grad_acc
+    end
+
+    Base.@propagate_inbounds function ComputeInteractionsPerParticleNoKernel!(
+        SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
+        SimMetaData::SimulationMetaData{D,T,WCSPHShifting,NoKernelOutput,B,L}, SimConstants,
+        SimParticles, Position, Density, Pressure, Velocity, ParticleType,
+        dρdt_acc, acc_acc, shift_c_acc, shift_r_acc, density_grad_acc, velocity_grad_acc, i, j) where {D,T,
+                                                                  B<:MDBCMode,
+                                                                  L<:LogMode,
+                                                                  SDD<:SPHDensityDiffusion,
+                                                                  SV<:SPHViscosity}
+        @unpack m₀, dx = SimConstants
+        @unpack h⁻¹, H², h = SimKernel
+
+        xᵢⱼ = Position[i] - Position[j]
+        xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
+        if xᵢⱼ² <= H²
+            dᵢⱼ = sqrt(abs(xᵢⱼ²))
+            dᵢⱼ² = dᵢⱼ^2
+            q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
+            ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
+            kernel_value = @fastpow Wᵢⱼ(SimKernel, q)
+
+            ρᵢ = Density[i]
+            ρⱼ = Density[j]
+
+            vᵢ = Velocity[i]
+            vⱼ = Velocity[j]
+            vᵢⱼ = vᵢ - vⱼ
+            density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
+            dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
+
+            Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)
+
+            dρdt_acc += dρdt⁺ + Dᵢ
+
+            Pᵢ = Pressure[i]
+            Pⱼ = Pressure[j]
+            Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
+            f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
+            dvdt⁺ = -m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
+
+            visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j)
+
+            acc_acc += dvdt⁺ + visc_term
+
+            w_ref = @fastpow Wᵢⱼ(SimKernel, dx * h⁻¹)
+            correction = one(T) + T(0.2) * (kernel_value / w_ref)^T(4)
+            shift_weight = (m₀ / (ρᵢ + ρⱼ)) * correction * kernel_value
+            shift_c_acc += shift_weight * xᵢⱼ
+
             density_grad_acc += (m₀ / ρⱼ) * (ρⱼ - ρᵢ) * ∇ᵢWᵢⱼ
             velocity_grad_acc += (m₀ / ρⱼ) * (vⱼ - vᵢ) * transpose(∇ᵢWᵢⱼ)
         end

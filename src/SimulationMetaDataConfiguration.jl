@@ -4,7 +4,7 @@ using Parameters
 using TimerOutputs
 
 
-export SimulationMetaData, UpdateMetaData!, ShiftingMode, NoShifting, PlanarShifting,
+export SimulationMetaData, UpdateMetaData!, ShiftingMode, NoShifting, PlanarShifting, WCSPHShifting,
        FreeSurfaceMode, InternalFlow, FreeSurfaceCorrection,
        KernelOutputMode, NoKernelOutput, StoreKernelOutput,
        MDBCMode, NoMDBC, SimpleMDBC,
@@ -14,6 +14,7 @@ export SimulationMetaData, UpdateMetaData!, ShiftingMode, NoShifting, PlanarShif
 abstract type ShiftingMode end
 struct NoShifting    <: ShiftingMode end
 struct PlanarShifting <: ShiftingMode end
+struct WCSPHShifting <: ShiftingMode end
 
 """
     FreeSurfaceMode

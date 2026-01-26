@@ -194,4 +194,34 @@ function FullTimeStep(::SimulationMetaData{D,T,S,K,B,L}, SimKernel, SimConstants
     return nothing
 end
 
+function FullTimeStep(::SimulationMetaData{D,T,WCSPHShifting,K,B,L}, SimKernel, SimConstants,
+                          SimParticles, Velocityₙ⁺, ∇Cᵢ, _∇◌rᵢ, ∇ρᵢ, ∇uᵢ, dt) where {D,T,
+                                                             K<:KernelOutputMode,
+                                                             B<:MDBCMode,
+                                                             L<:LogMode}
+    @unpack Position, Velocity, Acceleration = SimParticles
+    Density = SimParticles.Density
+    ParticleType = SimParticles.Type
+    AccelerationScalarType = eltype(eltype(Acceleration))
+
+    max_velocity = zero(eltype(eltype(Velocityₙ⁺)))
+    @inbounds for i in eachindex(Velocityₙ⁺)
+        max_velocity = max(max_velocity, norm(Velocityₙ⁺[i]))
+    end
+    shift_scale = -SimConstants.CFL * (max_velocity / SimConstants.c₀) * (2 * SimKernel.h)^2
+
+    @inbounds @simd ivdep for i in eachindex(Position)
+        MotionLimiterFactor = MotionLimiterValue(AccelerationScalarType, ParticleType[i])
+        GravityFactor = GravityFactorValue(AccelerationScalarType, ParticleType[i])
+        Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor)
+        Velocity[i]       +=  Acceleration[i] * dt * MotionLimiterFactor
+
+        δxᵢ = shift_scale * ∇Cᵢ[i]
+        Density[i]   += dot(δxᵢ, ∇ρᵢ[i]) * MotionLimiterFactor
+        Velocity[i]  += (∇uᵢ[i] * δxᵢ) * MotionLimiterFactor
+        Position[i]  += (Velocityₙ⁺[i] * dt + δxᵢ) * MotionLimiterFactor
+    end
+    return nothing
+end
+
 end
