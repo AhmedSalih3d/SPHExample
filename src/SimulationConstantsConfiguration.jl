@@ -24,6 +24,7 @@ SimulationConstants is a parameterized struct representing the constants and par
 - `δᵩ::T`: Coefficient for density diffusion. Default is 0.1.
 - `CFL::T`: CFL (Courant-Friedrichs-Lewy) number (positive). Default is 0.2.
 - `η²::T`: Eta squared (positive). Default is computed as `(0.01 * H)^2`.
+- `A::T`: Shifting factor for particle shifting. Default is 0.01.
 
 # Example
 ```julia
@@ -44,6 +45,7 @@ constants = SimulationConstants(ρ₀=1017, dx=0.03, α=0.02)
     γ⁻¹::T  = 1/γ                 ; @assert γ⁻¹  > 0 "Inverse adiabatic index (γ⁻¹) must be positive"
     δᵩ::T  = 0.1                  ; @assert δᵩ   > 0 "Density variation (δᵩ) must be positive"
     CFL::T = 0.2                  ; @assert CFL  > 0 "CFL condition (CFL) must be positive"
+    A::T   = 0.01                 ; @assert A    > 0 "Shifting factor (A) must be positive"
     Cb::T  = (c₀^2 * ρ₀)/γ        ; @assert Cb  >= 0 "Cb (pressure coefficient) must be positive"
     Cb⁻¹::T  = inv(Cb)            ; @assert Cb⁻¹>= 0 "Inverse Cb (inverse pressure coefficient) must be positive"
     ν₀::T    = 1e-6               ; @assert ν₀  >= 0 "Kinematic viscosity must be positive"

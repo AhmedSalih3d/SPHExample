@@ -203,7 +203,8 @@ let
         c₀ = 10LidVelocity,
         α = 0.01,
         CFL = 0.2,
-        δᵩ = 0.1
+        δᵩ = 0.1,
+        A = 0.01
     )
 
     SimMetaData = SimulationMetaData{Dimensions, FloatType, PlanarShifting, NoKernelOutput, SimpleMDBC, StoreLog}(
