@@ -13,7 +13,7 @@ let
         Cb = 112000,
         α  = 1e-6,
         CFL=0.2,
-        A  = 0.01
+        A  = 0.01 # Default shifting value from earlier commits
     )
 
     SimMetaDataMovingSquare  = SimulationMetaData{Dimensions,FloatType,PlanarShifting,NoKernelOutput,NoMDBC,StoreLog}(
