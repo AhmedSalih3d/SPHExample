@@ -510,8 +510,8 @@ using LinearAlgebra
 
             kernel_acc, kernel_grad_acc = compute_kernel_output_local(SimMetaData, kernel_acc, kernel_grad_acc, SimKernel, q, ∇ᵢWᵢⱼ)
 
-            MotionLimiterCondition = MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
-            shift_c_acc += (m₀ / ρⱼ) * Wᵢⱼ * (m₀ / ρᵢ) * ∇ᵢWᵢⱼ
+            MotionLimiterCondition = ParticleType[i]==Fluid && ParticleType[j]==Fluid #MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
+            shift_c_acc += (m₀ / ρⱼ) * Wᵢⱼ * (m₀ / ρᵢ) * ∇ᵢWᵢⱼ * MotionLimiterCondition
             shift_r_acc += (m₀ / ρⱼ) * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
         end
 
@@ -563,8 +563,8 @@ using LinearAlgebra
 
             acc_acc += dvdt⁺ + visc_term
 
-            MotionLimiterCondition = MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
-            shift_c_acc += (m₀ / ρⱼ) * Wᵢⱼ * (m₀ / ρⱼ) * ∇ᵢWᵢⱼ
+            MotionLimiterCondition = ParticleType[i]==Fluid && ParticleType[j]==Fluid #MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
+            shift_c_acc += (m₀ / ρⱼ) * Wᵢⱼ * (m₀ / ρⱼ) * ∇ᵢWᵢⱼ * MotionLimiterCondition
             shift_r_acc += (m₀ / ρⱼ) * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
         end
 

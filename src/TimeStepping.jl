@@ -143,7 +143,7 @@ function FullTimeStep(::SimulationMetaData{D,T,S,K,B,L}, SimKernel, SimConstants
     @unpack Position, Velocity, Acceleration = SimParticles
     ParticleType = SimParticles.Type
     AccelerationScalarType = eltype(eltype(Acceleration))
-    A     = 0.005# Value between 1 to 6 advised
+    A     = 0.01# Value between 1 to 6 advised
     A_FST = 0; # zero for internal flows
     A_FSM = length(first(Position)); #2d, 3d val different
     @inbounds @simd ivdep for i in eachindex(Position)
@@ -159,6 +159,11 @@ function FullTimeStep(::SimulationMetaData{D,T,S,K,B,L}, SimKernel, SimConstants
         elseif (∇◌rᵢ[i] - A_FST) >= 0
             δxᵢ = -A * SimKernel.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
         end
+
+        # nδ = norm(δxᵢ)
+        # if nδ > SimConstants.dx
+        #     δxᵢ *= SimConstants.dx / nδ
+        # end
 
         Position[i]           += (Velocityₙ⁺[i] * dt + δxᵢ) * MotionLimiterFactor
     end
