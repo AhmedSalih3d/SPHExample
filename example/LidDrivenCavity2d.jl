@@ -170,7 +170,7 @@ let
     Dimensions = 2
     FloatType = Float64
 
-    Resolution = 120
+    Resolution = 200
     Reynolds = 1000.0
     LidVelocity = 1.0
     LidType = FixedMoving
@@ -201,7 +201,7 @@ let
         ν₀ = KinematicViscosity,
         g = 0.0,
         c₀ = 10LidVelocity,
-        α = 0.01,
+        α = 0.0001,
         CFL = 0.2,
         δᵩ = 0.1,
         A = 0.01
