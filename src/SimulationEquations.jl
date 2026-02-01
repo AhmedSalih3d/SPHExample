@@ -6,6 +6,7 @@ using StaticArrays
 using Parameters
 using FastPow
 using ..SimulationGeometry
+using ..SimulationMetaDataConfiguration
 
 @inline function EquationOfStateGamma7(ρ,c₀,ρ₀)
     return @fastpow ((c₀^2*ρ₀)/7) * ((ρ/ρ₀)^7 - 1)
@@ -40,6 +41,18 @@ end
             Density[i] = ρ₀
         end
     end
+end
+
+@inline function LimitDensityAtBoundary!(Density, ρ₀, ParticleType, ::MDBCMode)
+    return LimitDensityAtBoundary!(Density, ρ₀, ParticleType)
+end
+
+@inline function LimitDensityAtBoundary!(_Density, _ρ₀, _ParticleType, ::AdvancedMDBC)
+    return nothing
+end
+
+@inline function LimitDensityAtBoundary!(Density, ρ₀, ParticleType, SimMetaData::SimulationMetaData{D,T,S,K,B,L}) where {D,T,S,K,B<:MDBCMode,L}
+    return LimitDensityAtBoundary!(Density, ρ₀, ParticleType, B())
 end
 
 @inline function ConstructGravitySVector(_::SVector{N, T}, value) where {N, T}

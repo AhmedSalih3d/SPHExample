@@ -346,6 +346,55 @@ using LinearAlgebra
         return nothing
     end
 
+    function NeighborLoopMDBCAdvanced!(SimKernel,
+                                       SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, AdvancedMDBC, LMode},
+                                       SimConstants, ParticleRanges, UniqueCellsView,
+                                       SimParticles, bᵧ, Aᵧ, VelocitySum;
+                                       Position = SimParticles.Position,
+                                       Density = SimParticles.Density,
+                                       Velocity = SimParticles.Velocity) where {Dimensions, FloatType, SMode, KMode, LMode}
+
+        GhostPoints = SimParticles.GhostPoints
+        ParticleType = SimParticles.Type
+
+        FullStencil = ConstructStencil(Val(Dimensions))
+
+        @inbounds @threads for iter in eachindex(GhostPoints)
+            GhostPoint = GhostPoints[iter]
+
+            if !iszero(GhostPoint)
+                b_acc = zero(bᵧ[iter])
+                A_acc = zero(Aᵧ[iter])
+                VelocityAcc = zero(VelocitySum[iter])
+
+                GhostCellIndex = f(SimKernel, GhostPoints[iter])
+                @inbounds for offset ∈ FullStencil
+                    SCellIndex = GhostCellIndex + offset
+
+                    NeighborIdx = FindCellIndex(UniqueCellsView, SCellIndex)
+
+                    StartIndex_ = ParticleRanges[NeighborIdx]
+                    EndIndex_   = ParticleRanges[NeighborIdx + 1] - 1
+
+                    for j in StartIndex_:EndIndex_
+                        bΔ, AΔ = ComputeInteractionsMDBC!(SimKernel, SimMetaData, SimConstants,
+                                                        Position, Density, ParticleType,
+                                                        GhostPoints, iter, j)
+                        b_acc += bΔ
+                        A_acc += AΔ
+                        VelocityAcc += AΔ[1, 1] * Velocity[j]
+                    end
+                end
+
+                bᵧ[iter] = b_acc
+                Aᵧ[iter] = A_acc
+                VelocitySum[iter] = VelocityAcc
+            end
+        end
+
+        return nothing
+    end
+
     # The previous generic `ComputeInteractions!` implementation was unused
     # in favour of the per-particle variants (ComputeInteractionsPerParticle! etc.).
     # It has been removed to reduce code size and avoid dead code.
@@ -664,6 +713,100 @@ using LinearAlgebra
             end
         end
     end
+
+    @inline function MDBCPositionDivergence(A)
+        div_pos = zero(eltype(A))
+        @inbounds for idx in 2:size(A, 1)
+            div_pos += A[idx, idx]
+        end
+        return div_pos
+    end
+
+    function ApplyMDBCBeforeHalf!(SimMetaData::SimulationMetaData{D,T,S,K,AdvancedMDBC,L},
+                                  SimKernel, SimConstants, SimParticles,
+                                  ParticleRanges, UniqueCells;
+                                  Position = SimParticles.Position,
+                                  Density = SimParticles.Density,
+                                  Velocity = SimParticles.Velocity,
+                                  Pressure = SimParticles.Pressure,
+                                  Acceleration = SimParticles.Acceleration
+                                 ) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,L<:LogMode}
+        @no_escape begin
+            DimensionsPlus = D + 1
+            bᵧ = @alloc(SVector{DimensionsPlus, T}, length(SimParticles.Position))
+            Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, T, DimensionsPlus*DimensionsPlus}, length(SimParticles.Position))
+            VelocitySum = @alloc(SVector{D, T}, length(SimParticles.Position))
+            UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
+            NeighborLoopMDBCAdvanced!(SimKernel, SimMetaData, SimConstants, ParticleRanges, UniqueCellsView, SimParticles, bᵧ, Aᵧ, VelocitySum;
+                                      Position = Position, Density = Density, Velocity = Velocity)
+            ApplyMDBCCorrectionAdvanced(SimConstants, SimParticles, Position, Density, Velocity, Pressure, Acceleration, bᵧ, Aᵧ, VelocitySum)
+        end
+
+        return nothing
+    end
+
+    function ApplyMDBCCorrectionAdvanced(SimConstants, SimParticles, Position, Density, Velocity, Pressure, Acceleration, bᵧ, Aᵧ, VelocitySum)
+
+        GhostPoints = SimParticles.GhostPoints
+        GhostNormals = SimParticles.GhostNormals
+
+        ρ₀ = SimConstants.ρ₀
+        c₀ = SimConstants.c₀
+        GravityVector = ConstructGravitySVector(first(Position), SimConstants.g)
+
+        @inbounds @simd ivdep for i in eachindex(Position)
+            A = Aᵧ[i]
+
+            if !iszero(GhostPoints[i])
+                KernelSum = A[1, 1]
+                if KernelSum <= 0
+                    continue
+                end
+
+                DivPosition = MDBCPositionDivergence(A)
+                if DivPosition <= 0
+                    continue
+                end
+
+                UseShepherd = KernelSum < 0.1
+                if !UseShepherd
+                    if abs(det(A)) <= 1e-3
+                        UseShepherd = true
+                    elseif cond(A) >= 50
+                        UseShepherd = true
+                    end
+                end
+
+                if UseShepherd
+                    GhostDensity = first(bᵧ[i]) / KernelSum
+                else
+                    GhostPointDensity = A \ bᵧ[i]
+                    diff = Position[i] - GhostPoints[i]
+                    GhostDensity = first(GhostPointDensity) + sum(GhostPointDensity[j+1] * diff[j] for j in eachindex(diff))
+                end
+
+                if isnan(GhostDensity)
+                    GhostDensity = ρ₀
+                end
+
+                P_g = c₀^2 * (GhostDensity - ρ₀)
+                normal = GhostNormals[i]
+                GhostOffset = GhostPoints[i] - Position[i]
+                BoundaryAcceleration = Acceleration[i]
+                PressureTerm = ρ₀ * dot(GravityVector - BoundaryAcceleration, normal) * dot(GhostOffset, normal)
+                BoundaryPressure = P_g + PressureTerm
+                BoundaryDensity = ρ₀ + BoundaryPressure / c₀^2
+
+                Density[i] = BoundaryDensity
+                Pressure[i] = BoundaryPressure
+
+                GhostVelocity = VelocitySum[i] / KernelSum
+                BoundaryVelocity = 2 * Velocity[i] - GhostVelocity
+                BoundaryVelocity = BoundaryVelocity - dot(BoundaryVelocity, normal) * normal
+                Velocity[i] = BoundaryVelocity
+            end
+        end
+    end
     
     function GenerateMotionDetails(SimParticles, SimGeometry, Dimensions, FloatType)
         # Assuming group markers are sequential
@@ -771,11 +914,21 @@ using LinearAlgebra
 
                     @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
 
-                    @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, ParticleType)
+                    @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, ParticleType, SimMetaData)
 
                     @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
 
                     @timeit SimMetaData.HourGlass "07 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺, SimConstants)
+                    if SimMetaData isa SimulationMetaData{Dimensions, FloatType, SMode, KMode, AdvancedMDBC, LMode}
+                        @timeit SimMetaData.HourGlass "07a Half Apply Advanced MDBC"           ApplyMDBCBeforeHalf!(
+                            SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells;
+                            Position = Positionₙ⁺,
+                            Density = ρₙ⁺,
+                            Velocity = Velocityₙ⁺,
+                            Pressure = SimParticles.Pressure,
+                            Acceleration = SimParticles.Acceleration,
+                        )
+                    end
                     @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, ParticleRanges, CellListIndices,
@@ -789,11 +942,21 @@ using LinearAlgebra
 
                     @timeit SimMetaData.HourGlass "03 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
 
-                    @timeit SimMetaData.HourGlass "04 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, ParticleType)
+                    @timeit SimMetaData.HourGlass "04 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, ParticleType, SimMetaData)
 
                     @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
 
                     @timeit SimMetaData.HourGlass "05 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺, SimConstants)
+                    if SimMetaData isa SimulationMetaData{Dimensions, FloatType, SMode, KMode, AdvancedMDBC, LMode}
+                        @timeit SimMetaData.HourGlass "05a Half Apply Advanced MDBC"           ApplyMDBCBeforeHalf!(
+                            SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells;
+                            Position = Positionₙ⁺,
+                            Density = ρₙ⁺,
+                            Velocity = Velocityₙ⁺,
+                            Pressure = SimParticles.Pressure,
+                            Acceleration = SimParticles.Acceleration,
+                        )
+                    end
                     @timeit SimMetaData.HourGlass "06 NeighborLoop" NeighborLoopPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, ParticleRanges, CellListIndices,
@@ -806,7 +969,7 @@ using LinearAlgebra
 
                 @timeit SimMetaData.HourGlass "07 Final Density"                         DensityEpsi!(SimParticles.Density, dρdtI, ρₙ⁺, dt)
 
-                @timeit SimMetaData.HourGlass "08 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(SimParticles.Density, SimConstants.ρ₀, ParticleType)
+                @timeit SimMetaData.HourGlass "08 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(SimParticles.Density, SimConstants.ρ₀, ParticleType, SimMetaData)
 
                 @timeit SimMetaData.HourGlass "09 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt)
 
