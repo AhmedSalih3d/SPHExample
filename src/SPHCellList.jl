@@ -18,6 +18,7 @@ using ..OpenExternalPrograms
 using ..SPHKernels
 using ..SPHViscosityModels
 using ..SPHDensityDiffusionModels
+using ..SPHNeighborList: MinCell
 using ..SPHNeighborList: BuildNeighborCellLists!, ComputeCellNeighborCounts, ComputeCellParticleCounts, ConstructStencil, ExtractCells!, FindCellIndex, MapFloor, UpdateNeighbors!, UpdateΔx!
 
 using StaticArrays
@@ -676,9 +677,20 @@ using LinearAlgebra
         cell_particle_counts, cell_neighbor_counts = CollectGridCounts(
             Val(SimMetaData.ExportGridCellParticleCounts), ParticleRanges, NeighborCellLists, length(UniqueCellsView),
         )
+        cells_for_output = UniqueCellsView
+        if UniqueCellsView[1] == MinCell(eltype(UniqueCellsView))
+            if length(UniqueCellsView) == 1
+                return nothing
+            end
+            cells_for_output = view(UniqueCellsView, 2:length(UniqueCellsView))
+            if cell_particle_counts !== nothing
+                cell_particle_counts = view(cell_particle_counts, 2:length(cell_particle_counts))
+                cell_neighbor_counts = view(cell_neighbor_counts, 2:length(cell_neighbor_counts))
+            end
+        end
         output.enqueue_grid(
             iteration,
-            UniqueCellsView,
+            cells_for_output,
             cell_particle_counts=cell_particle_counts,
             cell_neighbor_counts=cell_neighbor_counts,
         )
