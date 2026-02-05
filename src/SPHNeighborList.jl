@@ -109,7 +109,7 @@ function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
         end
         CellListIndices[Index]            = IndexCounter
     end
-    ParticleRanges[IndexCounter + 1]  = length(ParticleRanges)
+    ParticleRanges[IndexCounter + 1]  = length(Cells) + 1
 
     return IndexCounter
 end
