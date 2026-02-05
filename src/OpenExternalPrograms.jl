@@ -178,7 +178,7 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData, OutputVariableNames;
             OpenInParaview = `$(paraview_cmd) --state="$(ParaViewStateFileName)"`
             run(OpenInParaview; wait=false)
         catch e
-            @error("You must add Paraview to path as $(paraview_cmd) and use at minimum version 5.12", e)
+            @error("You must add Paraview to path as $(paraview_cmd) and use at minimum version 6.0.0", e)
         end
     end
 
