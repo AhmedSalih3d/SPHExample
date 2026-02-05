@@ -854,9 +854,6 @@ using LinearAlgebra
                                                 SDD<:SPHDensityDiffusion,
                                                 SV<:SPHViscosity}
         ParticleType   = SimParticles.Type
-        ParticleMarker = SimParticles.GroupMarker
-        GhostPoints    = hasproperty(SimParticles, :GhostPoints) ? SimParticles.GhostPoints : nothing
-        GhostNormals   = hasproperty(SimParticles, :GhostNormals) ? SimParticles.GhostNormals : nothing
 
         ###
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
