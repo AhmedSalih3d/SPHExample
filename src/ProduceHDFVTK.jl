@@ -194,6 +194,20 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         return Dest
     end
 
+    @inline function FillTypeBuffer!(Dest::AbstractVector{Int8}, Source)
+        @inbounds for i in eachindex(Source)
+            Dest[i] = Int8(Source[i])
+        end
+        return Dest
+    end
+
+    @inline function FillBoundaryBoolBuffer!(Dest::AbstractVector{UInt8}, Source)
+        @inbounds for i in eachindex(Source)
+            Dest[i] = UInt8(Source[i] != Fluid)
+        end
+        return Dest
+    end
+
     function ResolveParticleField(Name, SimParticles)
         FieldSymbol = Symbol(Name)
         return hasproperty(SimParticles, FieldSymbol) ? FieldSymbol : nothing
@@ -700,15 +714,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             for (i, Name) in pairs(output_vars)
                 buf = snapshot.output_data[i]
                 if Name == "Type"
-                    src = SimParticles.Type
-                    @inbounds for j in eachindex(src)
-                        buf[j] = Int8(src[j])
-                    end
+                    FillTypeBuffer!(buf::Vector{Int8}, SimParticles.Type)
                 elseif Name == "BoundaryBool"
-                    src = SimParticles.Type
-                    @inbounds for j in eachindex(src)
-                        buf[j] = UInt8(src[j] != Fluid)
-                    end
+                    FillBoundaryBoolBuffer!(buf::Vector{UInt8}, SimParticles.Type)
                 else
                     FieldSymbol = ResolveParticleField(Name, SimParticles)
                     Source = getproperty(SimParticles, FieldSymbol)
