@@ -34,15 +34,15 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         output_data::V
     end
 
-    struct ParticleWriteJob{P, V}
+    struct ParticleWriteJob{T <: AbstractFloat, P, V}
         iteration::Int
-        time::AbstractFloat
+        time::T
         snapshot::ParticleSnapshot{P, V}
     end
 
-    struct GridWriteJob{N}
+    struct GridWriteJob{N, T <: AbstractFloat}
         iteration::Int
-        time::AbstractFloat
+        time::T
         cells::Vector{CartesianIndex{N}}
         cell_particle_counts::Union{Nothing, Vector{Int}}
         cell_neighbor_counts::Union{Nothing, Vector{Int}}
@@ -208,9 +208,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         return Dest
     end
 
-    function ResolveParticleField(Name, SimParticles)
+    @inline function ResolveParticleField(Name, SimParticles)
         FieldSymbol = Symbol(Name)
-        return hasproperty(SimParticles, FieldSymbol) ? FieldSymbol : nothing
+        @assert hasproperty(SimParticles, FieldSymbol) "Output field $(Name) does not exist in SimParticles."
+        return FieldSymbol
     end
 
     function SaveVTKHDF(fid_vector, index, filepath, points, variable_names = String[], args...)
@@ -632,7 +633,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             OutputVTKHDF = h5open("$(particle_savepath).vtkhdf", "w")
             root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
             
-            output_data_init = Vector{Any}(undef, length(output_vars))
+            output_data_init = Vector{AbstractVector}(undef, length(output_vars))
             for (i, Name) in pairs(output_vars)
                 if Name == "BoundaryBool"
                     output_data_init[i] = UInt8.(SimParticles.Type .!= Fluid)
@@ -685,7 +686,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         function allocate_particle_snapshot()
             n = length(SimParticles.Position)
             positions = Vector{SVector{3, T}}(undef, n)
-            output_data = Vector{Any}(undef, length(output_vars))
+            output_data = Vector{AbstractVector}(undef, length(output_vars))
             for (i, Name) in pairs(output_vars)
                 if Name == "Type"
                     output_data[i] = Vector{Int8}(undef, n)
@@ -730,14 +731,18 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             return snapshot
         end
 
-        buffer_pool = Channel{ParticleSnapshot}(2)
-        put!(buffer_pool, allocate_particle_snapshot())
-        put!(buffer_pool, allocate_particle_snapshot())
+        snapshot1 = allocate_particle_snapshot()
+        snapshot2 = allocate_particle_snapshot()
+        buffer_pool = Channel{typeof(snapshot1)}(2)
+        put!(buffer_pool, snapshot1)
+        put!(buffer_pool, snapshot2)
 
-        job_channel = Channel{Any}(8)
+        ParticleJobType = typeof(ParticleWriteJob(0, SimMetaData.TotalTime, snapshot1))
+        GridJobType = GridWriteJob{Dimensions, typeof(SimMetaData.TotalTime)}
+        job_channel = Channel{Union{ParticleJobType, GridJobType}}(8)
         writer_task = Threads.@spawn begin
             for job in job_channel
-                if job isa ParticleWriteJob
+                if job isa ParticleJobType
                     snapshot = job.snapshot
                     if !SimMetaData.ExportSingleVTKHDF
                         SaveVTKHDF(
@@ -758,7 +763,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                         )
                     end
                     put!(buffer_pool, snapshot)
-                elseif job isa GridWriteJob
+                elseif job isa GridJobType
                     if !SimMetaData.ExportSingleVTKHDF
                         SaveCellGridVTKHDF(
                             grid_filename(job.iteration),
@@ -799,7 +804,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 copy(cell_particle_counts)
             neighbors_snapshot = cell_neighbor_counts === nothing ? nothing :
                 copy(cell_neighbor_counts)
-            job = GridWriteJob{Dimensions}(
+            job = GridWriteJob{Dimensions, typeof(SimMetaData.TotalTime)}(
                 iteration,
                 SimMetaData.TotalTime,
                 cells_snapshot,
