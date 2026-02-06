@@ -81,6 +81,11 @@ using Pkg
 Pkg.add(url="https://github.com/AhmedSalih3d/SPHExample")
 ```
 
+The package uses `PrecompileTools` to precompile representative workloads on
+first load, improving time-to-first-simulation across platforms. The initial
+`using SPHExample` may take a little longer while the precompile cache is
+generated, but subsequent loads will be noticeably faster.
+
 ### Running an Example
 
 Open one of the files in `example/`, for instance `example/StillWedgeMDBC.jl`,
