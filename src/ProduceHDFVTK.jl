@@ -611,10 +611,33 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         particle_filename = (iter) -> "$(particle_savepath)_$(lpad(iter,6,"0")).vtkhdf"
         grid_filename = (iter) -> "$(grid_savepath)_$(lpad(iter,6,"0")).vtkhdf"
         
-        output_vars = filter(
-            Name -> !(Name in ("Cells", "Position")),
-            string.(propertynames(SimParticles)),
+        output_fields = filter(
+            Name -> !(Name in (:Cells, :Position)),
+            propertynames(SimParticles),
         )
+        output_var_names = String.(output_fields)
+
+        OUTPUT_KIND_TYPE = UInt8(1)
+        OUTPUT_KIND_BOUNDARY_BOOL = UInt8(2)
+        OUTPUT_KIND_VECTOR = UInt8(3)
+        OUTPUT_KIND_SCALAR = UInt8(4)
+        n_output_fields = length(output_fields)
+        output_kinds = Vector{UInt8}(undef, n_output_fields)
+        output_sources = Vector{AbstractVector}(undef, n_output_fields)
+        @inbounds for i in eachindex(output_fields)
+            Field = output_fields[i]
+            if Field === :Type
+                output_kinds[i] = OUTPUT_KIND_TYPE
+                output_sources[i] = SimParticles.Type
+            elseif Field === :BoundaryBool
+                output_kinds[i] = OUTPUT_KIND_BOUNDARY_BOOL
+                output_sources[i] = SimParticles.Type
+            else
+                Source = getproperty(SimParticles, Field)
+                output_sources[i] = Source
+                output_kinds[i] = IsVectorField(Source) ? OUTPUT_KIND_VECTOR : OUTPUT_KIND_SCALAR
+            end
+        end
     
         # Initialize storage for file handles
         file_handles = if !SimMetaData.ExportSingleVTKHDF
@@ -633,28 +656,24 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             OutputVTKHDF = h5open("$(particle_savepath).vtkhdf", "w")
             root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
             
-            output_data_init = Vector{AbstractVector}(undef, length(output_vars))
-            for (i, Name) in pairs(output_vars)
-                if Name == "BoundaryBool"
-                    output_data_init[i] = UInt8.(SimParticles.Type .!= Fluid)
+            output_data_init = Vector{AbstractVector}(undef, n_output_fields)
+            @inbounds for i in eachindex(output_fields)
+                Kind = output_kinds[i]
+                Source = output_sources[i]
+                if Kind == OUTPUT_KIND_BOUNDARY_BOOL
+                    output_data_init[i] = UInt8.(Source .!= Fluid)
+                elseif Kind == OUTPUT_KIND_TYPE
+                    output_data_init[i] = Int8.(Source)
+                elseif Kind == OUTPUT_KIND_VECTOR
+                    output_data_init[i] = AllocateVectorBuffer(Source, length(Source))
+                    FillVectorBuffer!(output_data_init[i], Source, Dimensions)
                 else
-                    FieldSymbol = ResolveParticleField(Name, SimParticles)
-                    if Name == "Type"
-                        output_data_init[i] = Int8.(getproperty(SimParticles, FieldSymbol))
-                    else
-                        Source = getproperty(SimParticles, FieldSymbol)
-                        if IsVectorField(Source)
-                            output_data_init[i] = AllocateVectorBuffer(Source, length(Source))
-                            FillVectorBuffer!(output_data_init[i], Source, Dimensions)
-                        else
-                            output_data_init[i] = Source
-                        end
-                    end
+                    output_data_init[i] = Source
                 end
             end
 
-            GenerateGeometryStructure(root, output_vars, output_data_init...; chunk_size=1024)
-            GenerateStepStructure(root, output_vars, output_data_init...)
+            GenerateGeometryStructure(root, output_var_names, output_data_init...; chunk_size=1024)
+            GenerateStepStructure(root, output_var_names, output_data_init...)
     
             # Initialize grid file if needed
             if SimMetaData.ExportGridCells
@@ -686,20 +705,18 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         function allocate_particle_snapshot()
             n = length(SimParticles.Position)
             positions = Vector{SVector{3, T}}(undef, n)
-            output_data = Vector{AbstractVector}(undef, length(output_vars))
-            for (i, Name) in pairs(output_vars)
-                if Name == "Type"
+            output_data = Vector{AbstractVector}(undef, n_output_fields)
+            @inbounds for i in eachindex(output_fields)
+                Kind = output_kinds[i]
+                Source = output_sources[i]
+                if Kind == OUTPUT_KIND_TYPE
                     output_data[i] = Vector{Int8}(undef, n)
-                elseif Name == "BoundaryBool"
+                elseif Kind == OUTPUT_KIND_BOUNDARY_BOOL
                     output_data[i] = Vector{UInt8}(undef, n)
+                elseif Kind == OUTPUT_KIND_VECTOR
+                    output_data[i] = AllocateVectorBuffer(Source, n)
                 else
-                    FieldSymbol = ResolveParticleField(Name, SimParticles)
-                    Source = getproperty(SimParticles, FieldSymbol)
-                    if IsVectorField(Source)
-                        output_data[i] = AllocateVectorBuffer(Source, n)
-                    else
-                        output_data[i] = similar(Source, n)
-                    end
+                    output_data[i] = similar(Source, n)
                 end
             end
             return ParticleSnapshot(positions, output_data)
@@ -712,20 +729,18 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 copy!(snapshot.positions, SimParticles.Position)
             end
 
-            for (i, Name) in pairs(output_vars)
+            @inbounds for i in eachindex(output_fields)
+                Kind = output_kinds[i]
+                Source = output_sources[i]
                 buf = snapshot.output_data[i]
-                if Name == "Type"
-                    FillTypeBuffer!(buf::Vector{Int8}, SimParticles.Type)
-                elseif Name == "BoundaryBool"
-                    FillBoundaryBoolBuffer!(buf::Vector{UInt8}, SimParticles.Type)
+                if Kind == OUTPUT_KIND_TYPE
+                    FillTypeBuffer!(buf::Vector{Int8}, Source)
+                elseif Kind == OUTPUT_KIND_BOUNDARY_BOOL
+                    FillBoundaryBoolBuffer!(buf::Vector{UInt8}, Source)
+                elseif Kind == OUTPUT_KIND_VECTOR
+                    FillVectorBuffer!(buf, Source, Dimensions)
                 else
-                    FieldSymbol = ResolveParticleField(Name, SimParticles)
-                    Source = getproperty(SimParticles, FieldSymbol)
-                    if IsVectorField(Source)
-                        FillVectorBuffer!(buf, Source, Dimensions)
-                    else
-                        copy!(buf, Source)
-                    end
+                    copy!(buf, Source)
                 end
             end
             return snapshot
@@ -750,7 +765,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                             job.iteration,
                             particle_filename(job.iteration),
                             snapshot.positions,
-                            output_vars,
+                            output_var_names,
                             snapshot.output_data...,
                         )
                     else
@@ -758,7 +773,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                             root,
                             job.time,
                             snapshot.positions,
-                            output_vars,
+                            output_var_names,
                             snapshot.output_data...,
                         )
                     end
@@ -844,7 +859,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             flush_output = flush_output,
             close_files = close_files,
             file_handles = file_handles,  # For advanced access if needed
-            variable_names = output_vars
+            variable_names = output_var_names
         )
     end
 
