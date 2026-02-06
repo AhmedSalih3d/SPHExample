@@ -465,8 +465,8 @@ using LinearAlgebra
         xᵢⱼ = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
         if xᵢⱼ² <= H²
-            dᵢⱼ = sqrt(abs(xᵢⱼ²))
-            dᵢⱼ² = dᵢⱼ^2
+            dᵢⱼ² = xᵢⱼ²
+            dᵢⱼ = sqrt(dᵢⱼ²)
             q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
             ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
 
@@ -549,8 +549,8 @@ using LinearAlgebra
         xᵢⱼ = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
         if xᵢⱼ² <= H²
-            dᵢⱼ = sqrt(abs(xᵢⱼ²))
-            dᵢⱼ² = dᵢⱼ^2
+            dᵢⱼ² = xᵢⱼ²
+            dᵢⱼ = sqrt(dᵢⱼ²)
             q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
             Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
             ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
@@ -626,7 +626,7 @@ using LinearAlgebra
 
             xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
             if xᵢⱼ² <= H²
-                dᵢⱼ = sqrt(abs(xᵢⱼ²))
+                dᵢⱼ = sqrt(xᵢⱼ²)
                 q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
         
                 ρⱼ = Density[j]
@@ -642,13 +642,11 @@ using LinearAlgebra
         
                 bΔ  = SVector{DimensionsPlus, FloatType}(m₀ * Wᵢⱼ, (m₀ * ∇ᵢWᵢⱼ)...)
 
-                # Filling the Aᵧ matrix is done in column-major order
+                # Build AΔ without temporary heap arrays.
                 xⱼᵢ = -xᵢⱼ
-                first_column = [VⱼWᵢⱼ; Vⱼ * ∇ᵢWᵢⱼ]
-                AΔ = SMatrix{DimensionsPlus, DimensionsPlus, FloatType, DimensionsPlus*DimensionsPlus}(
-                    first_column...,
-                    ((xⱼᵢ * first_column')')...
-                )
+                first_column = SVector{DimensionsPlus, FloatType}(VⱼWᵢⱼ, (Vⱼ * ∇ᵢWᵢⱼ)...)
+                column_scalars = SVector{DimensionsPlus, FloatType}(one(FloatType), xⱼᵢ...)
+                AΔ = first_column * transpose(column_scalars)
             end
         end
         
