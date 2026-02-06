@@ -208,6 +208,63 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         return Dest
     end
 
+    @inline function ResolveOutputSource(::Val{:BoundaryBool}, SimParticles)
+        return SimParticles.Type
+    end
+
+    @inline function ResolveOutputSource(::Val{Name}, SimParticles) where {Name}
+        return getproperty(SimParticles, Name)
+    end
+
+    @inline function InitializeOutputData(::Val{:Type}, Source, Dimensions)
+        return Int8.(Source)
+    end
+
+    @inline function InitializeOutputData(::Val{:BoundaryBool}, Source, Dimensions)
+        return UInt8.(Source .!= Fluid)
+    end
+
+    @inline function InitializeOutputData(::Val{Name}, Source, Dimensions) where {Name}
+        if IsVectorField(Source)
+            Dest = AllocateVectorBuffer(Source, length(Source))
+            FillVectorBuffer!(Dest, Source, Dimensions)
+            return Dest
+        end
+        return Source
+    end
+
+    @inline function AllocateSnapshotBuffer(::Val{:Type}, Source, n, Dimensions)
+        return Vector{Int8}(undef, n)
+    end
+
+    @inline function AllocateSnapshotBuffer(::Val{:BoundaryBool}, Source, n, Dimensions)
+        return Vector{UInt8}(undef, n)
+    end
+
+    @inline function AllocateSnapshotBuffer(::Val{Name}, Source, n, Dimensions) where {Name}
+        if IsVectorField(Source)
+            return AllocateVectorBuffer(Source, n)
+        end
+        return similar(Source, n)
+    end
+
+    @inline function FillOutputField!(::Val{:Type}, Dest, Source, Dimensions)
+        return FillTypeBuffer!(Dest, Source)
+    end
+
+    @inline function FillOutputField!(::Val{:BoundaryBool}, Dest, Source, Dimensions)
+        return FillBoundaryBoolBuffer!(Dest, Source)
+    end
+
+    @inline function FillOutputField!(::Val{Name}, Dest, Source, Dimensions) where {Name}
+        if IsVectorField(Source)
+            FillVectorBuffer!(Dest, Source, Dimensions)
+        else
+            copy!(Dest, Source)
+        end
+        return Dest
+    end
+
     @inline function ResolveParticleField(Name, SimParticles)
         FieldSymbol = Symbol(Name)
         @assert hasproperty(SimParticles, FieldSymbol) "Output field $(Name) does not exist in SimParticles."
@@ -615,28 +672,12 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             Name -> !(Name in (:Cells, :Position)),
             propertynames(SimParticles),
         )
-        output_var_names = String.(output_fields)
-
-        OUTPUT_KIND_TYPE = UInt8(1)
-        OUTPUT_KIND_BOUNDARY_BOOL = UInt8(2)
-        OUTPUT_KIND_VECTOR = UInt8(3)
-        OUTPUT_KIND_SCALAR = UInt8(4)
+        output_var_names = collect(String.(output_fields))
         n_output_fields = length(output_fields)
-        output_kinds = Vector{UInt8}(undef, n_output_fields)
-        output_sources = Vector{AbstractVector}(undef, n_output_fields)
-        @inbounds for i in eachindex(output_fields)
+        # Keep output sources as a typed tuple so per-field copy logic can be specialized.
+        output_sources = ntuple(Val(n_output_fields)) do i
             Field = output_fields[i]
-            if Field === :Type
-                output_kinds[i] = OUTPUT_KIND_TYPE
-                output_sources[i] = SimParticles.Type
-            elseif Field === :BoundaryBool
-                output_kinds[i] = OUTPUT_KIND_BOUNDARY_BOOL
-                output_sources[i] = SimParticles.Type
-            else
-                Source = getproperty(SimParticles, Field)
-                output_sources[i] = Source
-                output_kinds[i] = IsVectorField(Source) ? OUTPUT_KIND_VECTOR : OUTPUT_KIND_SCALAR
-            end
+            ResolveOutputSource(Val(Field), SimParticles)
         end
     
         # Initialize storage for file handles
@@ -656,20 +697,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             OutputVTKHDF = h5open("$(particle_savepath).vtkhdf", "w")
             root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
             
-            output_data_init = Vector{AbstractVector}(undef, n_output_fields)
-            @inbounds for i in eachindex(output_fields)
-                Kind = output_kinds[i]
+            output_data_init = ntuple(Val(n_output_fields)) do i
+                Field = output_fields[i]
                 Source = output_sources[i]
-                if Kind == OUTPUT_KIND_BOUNDARY_BOOL
-                    output_data_init[i] = UInt8.(Source .!= Fluid)
-                elseif Kind == OUTPUT_KIND_TYPE
-                    output_data_init[i] = Int8.(Source)
-                elseif Kind == OUTPUT_KIND_VECTOR
-                    output_data_init[i] = AllocateVectorBuffer(Source, length(Source))
-                    FillVectorBuffer!(output_data_init[i], Source, Dimensions)
-                else
-                    output_data_init[i] = Source
-                end
+                InitializeOutputData(Val(Field), Source, Dimensions)
             end
 
             GenerateGeometryStructure(root, output_var_names, output_data_init...; chunk_size=1024)
@@ -705,19 +736,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         function allocate_particle_snapshot()
             n = length(SimParticles.Position)
             positions = Vector{SVector{3, T}}(undef, n)
-            output_data = Vector{AbstractVector}(undef, n_output_fields)
-            @inbounds for i in eachindex(output_fields)
-                Kind = output_kinds[i]
+            output_data = ntuple(Val(n_output_fields)) do i
+                Field = output_fields[i]
                 Source = output_sources[i]
-                if Kind == OUTPUT_KIND_TYPE
-                    output_data[i] = Vector{Int8}(undef, n)
-                elseif Kind == OUTPUT_KIND_BOUNDARY_BOOL
-                    output_data[i] = Vector{UInt8}(undef, n)
-                elseif Kind == OUTPUT_KIND_VECTOR
-                    output_data[i] = AllocateVectorBuffer(Source, n)
-                else
-                    output_data[i] = similar(Source, n)
-                end
+                AllocateSnapshotBuffer(Val(Field), Source, n, Dimensions)
             end
             return ParticleSnapshot(positions, output_data)
         end
@@ -729,19 +751,12 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 copy!(snapshot.positions, SimParticles.Position)
             end
 
-            @inbounds for i in eachindex(output_fields)
-                Kind = output_kinds[i]
+            # Iterate via `ntuple` to preserve compile-time field information.
+            ntuple(Val(n_output_fields)) do i
+                Field = output_fields[i]
                 Source = output_sources[i]
-                buf = snapshot.output_data[i]
-                if Kind == OUTPUT_KIND_TYPE
-                    FillTypeBuffer!(buf::Vector{Int8}, Source)
-                elseif Kind == OUTPUT_KIND_BOUNDARY_BOOL
-                    FillBoundaryBoolBuffer!(buf::Vector{UInt8}, Source)
-                elseif Kind == OUTPUT_KIND_VECTOR
-                    FillVectorBuffer!(buf, Source, Dimensions)
-                else
-                    copy!(buf, Source)
-                end
+                Dest = snapshot.output_data[i]
+                FillOutputField!(Val(Field), Dest, Source, Dimensions)
             end
             return snapshot
         end
