@@ -40,9 +40,9 @@ module SimulationLoggerConfiguration
     When `to_console` is `false`, the code can instead display a terminal
     progress bar.
     """
-    struct SimulationLogger
+    struct SimulationLogger{L <: AbstractLogger}
         LoggerIo::IOStream           # handle to the log file
-        Logger::AbstractLogger       # may be a TeeLogger or FormatLogger
+        Logger::L                    # may be a TeeLogger or FormatLogger
         FormatStr::String            # format used for progress lines
         ValuesToPrint::String        # header line describing logged values
         ValuesToPrintC::String       # separator line below the header
@@ -76,7 +76,7 @@ module SimulationLoggerConfiguration
             CurrentDate    = now()
             CurrentDataStr = Dates.format(CurrentDate, "dd-mm-yyyy HH:MM:SS")
 
-            new(io_logger, logger, format_string, ValuesToPrint, ValuesToPrintC, CurrentDate, CurrentDataStr, to_console)
+            new{typeof(logger)}(io_logger, logger, format_string, ValuesToPrint, ValuesToPrintC, CurrentDate, CurrentDataStr, to_console)
         end
     end
 
@@ -150,7 +150,7 @@ module SimulationLoggerConfiguration
     store the start time. This is typically called once before the time stepping
     loop begins.
     """
-    function InitializeLogger(SimLogger,SimConstants,SimMetaData, SimKernel, SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
+    function InitializeLogger(SimLogger::SimulationLogger, SimConstants, SimMetaData, SimKernel, SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
         with_logger(SimLogger.Logger) do
             @info sprint(InteractiveUtils.versioninfo)
             @info "Git branch of SPHExample: $(git_branch_of_pkg(@__MODULE__))"
@@ -177,7 +177,7 @@ module SimulationLoggerConfiguration
     Record information about the current iteration such as physical time,
     wall-clock time and an estimate of the remaining run time.
     """
-    function LogStep(SimLogger, SimMetaData, HourGlass)
+    function LogStep(SimLogger::SimulationLogger, SimMetaData, HourGlass)
         with_logger(SimLogger.Logger) do
             PartNumber               = "Part_" * lpad(SimMetaData.OutputIterationCounter, 4, "0")
             PartTime                 = string(@sprintf("%-.6f", SimMetaData.TotalTime))
@@ -188,16 +188,14 @@ module SimulationLoggerConfiguration
             TimeUptillNow            = string(@sprintf("%-.3f", elapsed_time_))
             TimePerPhysicalSecond    = string(@sprintf("%-.2f", elapsed_time_ / SimMetaData.TotalTime))
     
-            SecondsToFinish          = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (elapsed_time_ / SimMetaData.TotalTime)
-            if isnan(SecondsToFinish)
-                SecondsToFinish = 0.0
-                ExpectedFinishTime       = now() + Second(ceil(Int, SecondsToFinish))
-                ExpectedFinishTimeString = missing
+            SecondsToFinish = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (elapsed_time_ / SimMetaData.TotalTime)
+            ExpectedFinishTimeString::String = if !isfinite(SecondsToFinish) || SecondsToFinish < 0
+                "N/A"
             else
-                ExpectedFinishTime       = now() + Second(ceil(Int, SecondsToFinish))
-                ExpectedFinishTimeString = Dates.format(ExpectedFinishTime, "dd-mm-yyyy HH:MM:SS")
+                ExpectedFinishTime = now() + Second(ceil(Int, SecondsToFinish))
+                Dates.format(ExpectedFinishTime, "dd-mm-yyyy HH:MM:SS")
             end
-            
+             
     
             @info @. $join(cfmt(SimLogger.FormatStr, (PartNumber, PartTime, PartTotalSteps, CurrentSteps, TimeUptillNow, TimePerPhysicalSecond, ExpectedFinishTimeString)))
         end
@@ -210,7 +208,7 @@ module SimulationLoggerConfiguration
     Called once the simulation loop ends. Prints total run time and a summary of
     the collected [`TimerOutput`] information.
     """
-    function LogFinal(SimLogger, HourGlass)
+    function LogFinal(SimLogger::SimulationLogger, HourGlass)
         with_logger(SimLogger.Logger) do
             # Get the current date and time
             current_time = now()
