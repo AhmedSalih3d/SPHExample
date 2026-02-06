@@ -733,7 +733,8 @@ using LinearAlgebra
                 )
             end
 
-            while SimMetaData.TotalTime <= next_output_time(SimMetaData)
+            NextOutputTime = next_output_time(SimMetaData)
+            while SimMetaData.TotalTime <= NextOutputTime
                 @timeit SimMetaData.HourGlass "01 Calculate IndexCounter"  begin
 
                     SimMetaData.Δx = UpdateΔx!(SimMetaData.Δx, Positionₙ⁺, SimParticles.Position)
