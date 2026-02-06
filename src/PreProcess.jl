@@ -228,8 +228,10 @@ function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,NoMDBC,L}, SimParticles, 
     return nothing
 end
 
-function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,SimpleMDBC,L}, SimParticles, path) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, L<:LogMode}
+function LoadMDBCNormals!(SimMetaData::SimulationMetaData{D,T,S,K,SimpleMDBC,L}, SimParticles, path) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, L<:LogMode}
     if isnothing(path)
+        SimMetaData.GhostIndices = Int[]
+        SimMetaData.GhostNeighborCellLists = Vector{Vector{Int}}()
         return nothing
     end
     _, GhostPoints, GhostNormals = LoadBoundaryNormals(Val(D), T, path)
@@ -237,6 +239,9 @@ function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,SimpleMDBC,L}, SimParticl
         SimParticles.GhostPoints[gi]  = GhostPoints[gi]
         SimParticles.GhostNormals[gi] = GhostNormals[gi]
     end
+    ghost_indices = findall(x -> !iszero(x), SimParticles.GhostPoints)
+    SimMetaData.GhostIndices = ghost_indices
+    SimMetaData.GhostNeighborCellLists = [Int[] for _ in 1:length(ghost_indices)]
     return nothing
 end
 

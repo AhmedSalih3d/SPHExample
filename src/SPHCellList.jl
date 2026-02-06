@@ -299,49 +299,121 @@ using LinearAlgebra
     f(SimKernel, GhostPoint) = CartesianIndex(map(x -> MapFloor(x, SimKernel.H⁻¹), Tuple(GhostPoint)))
     function NeighborLoopMDBC!(SimKernel,
                                SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
-                               SimConstants, ParticleRanges, UniqueCellsView,
+                               SimConstants, ParticleRanges,
                                SimParticles, bᵧ, Aᵧ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
 
-        @unpack Position, Density, GhostPoints, GhostNormals = SimParticles
-        ParticleType = SimParticles.Type                       
+        @unpack Position, Density, GhostPoints = SimParticles
+        ParticleType = SimParticles.Type
+        GhostIndices = SimMetaData.GhostIndices
+        GhostNeighborCellLists = SimMetaData.GhostNeighborCellLists
 
-        FullStencil = ConstructStencil(Val(Dimensions))
+        if isempty(GhostIndices)
+            return nothing
+        end
 
-        @inbounds @threads for iter in eachindex(GhostPoints)
+        @inbounds @threads for gpos in eachindex(GhostIndices)
+            iter = GhostIndices[gpos]
             GhostPoint = GhostPoints[iter]
 
             if !iszero(GhostPoint)
                 # zero‐initialize per‐ghost accumulators
                 b_acc = zero(bᵧ[iter])            # an SVector{D+1,FloatType}
                 A_acc = zero(Aᵧ[iter])            # an SMatrix{D+1,D+1,FloatType}
-            
-                # compute and accumulate into the locals
-                GhostCellIndex = f(SimKernel, GhostPoints[iter])
-                @inbounds for offset ∈ FullStencil
-                    SCellIndex = GhostCellIndex + offset
 
-                    # Returns a range, x>:x for exact match and x=:x for no match
-                    # utilizes that it is a sorted array and requires no isequal constructor,
-                    # so I prefer this for now
-                    NeighborIdx = FindCellIndex(UniqueCellsView, SCellIndex)
-
-                    StartIndex_       = ParticleRanges[NeighborIdx] 
-                    EndIndex_         = ParticleRanges[NeighborIdx + 1] - 1
+                NeighborCellIndices = GhostNeighborCellLists[gpos]
+                @inbounds for NeighborIdx in NeighborCellIndices
+                    StartIndex_ = ParticleRanges[NeighborIdx]
+                    EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
 
                     for j in StartIndex_:EndIndex_
-                        # change ComputeInteractions to take & return contributions, e.g.:
                         bΔ, AΔ = ComputeInteractionsMDBC!(SimKernel, SimMetaData, SimConstants,
-                                                        Position, Density, ParticleType,
-                                                        GhostPoints, iter, j)
+                                                          Position, Density, ParticleType,
+                                                          GhostPoints, iter, j)
                         b_acc += bΔ
                         A_acc += AΔ
                     end
                 end
-            
+
                 # write out once
                 bᵧ[iter] = b_acc
                 Aᵧ[iter] = A_acc
-            end    
+            end
+        end
+
+        return nothing
+    end
+
+    @inline function UpdateGhostNeighborCellLists!(::SimulationMetaData{D,T,S,K,NoMDBC,L}, _args...) where {D,T,S<:ShiftingMode,
+                                                                                                          K<:KernelOutputMode,
+                                                                                                          L<:LogMode}
+        return nothing
+    end
+
+    @inline function UpdateGhostIndices!(::SimulationMetaData{D,T,S,K,NoMDBC,L}, _args...) where {D,T,S<:ShiftingMode,
+                                                                                                 K<:KernelOutputMode,
+                                                                                                 L<:LogMode}
+        return nothing
+    end
+
+    function UpdateGhostIndices!(SimMetaData::SimulationMetaData{D,T,S,K,SimpleMDBC,L}, SimParticles) where {D,T,S<:ShiftingMode,
+                                                                                                            K<:KernelOutputMode,
+                                                                                                            L<:LogMode}
+        GhostIndices = SimMetaData.GhostIndices
+        empty!(GhostIndices)
+        @inbounds for i in eachindex(SimParticles.GhostPoints)
+            if !iszero(SimParticles.GhostPoints[i])
+                push!(GhostIndices, i)
+            end
+        end
+
+        GhostNeighborCellLists = SimMetaData.GhostNeighborCellLists
+        if length(GhostNeighborCellLists) != length(GhostIndices)
+            resize!(GhostNeighborCellLists, length(GhostIndices))
+            @inbounds for idx in eachindex(GhostNeighborCellLists)
+                GhostNeighborCellLists[idx] = Int[]
+            end
+        end
+
+        return nothing
+    end
+
+    function UpdateGhostNeighborCellLists!(SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, SimpleMDBC, LMode},
+                                           SimKernel,
+                                           SimParticles,
+                                           ParticleRanges,
+                                           UniqueCellsView,
+                                           FullStencil) where {Dimensions, FloatType, SMode, KMode, LMode}
+        GhostIndices = SimMetaData.GhostIndices
+        if isempty(GhostIndices)
+            return nothing
+        end
+
+        GhostNeighborCellLists = SimMetaData.GhostNeighborCellLists
+        if length(GhostNeighborCellLists) != length(GhostIndices)
+            resize!(GhostNeighborCellLists, length(GhostIndices))
+            @inbounds for idx in eachindex(GhostNeighborCellLists)
+                GhostNeighborCellLists[idx] = Int[]
+            end
+        end
+
+        @inbounds for (gpos, iter) in enumerate(GhostIndices)
+            NeighborCellIndices = GhostNeighborCellLists[gpos]
+            empty!(NeighborCellIndices)
+            GhostPoint = SimParticles.GhostPoints[iter]
+            if iszero(GhostPoint)
+                continue
+            end
+
+            GhostCellIndex = f(SimKernel, GhostPoint)
+            @inbounds for offset ∈ FullStencil
+                SCellIndex = GhostCellIndex + offset
+                NeighborIdx = FindCellIndex(UniqueCellsView, SCellIndex)
+                StartIndex_ = ParticleRanges[NeighborIdx]
+                EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
+                if StartIndex_ <= EndIndex_
+                    push!(NeighborCellIndices, NeighborIdx)
+                end
+            end
         end
 
         return nothing
@@ -595,21 +667,24 @@ using LinearAlgebra
 
     function ApplyMDBCBeforeHalf!(SimMetaData::SimulationMetaData{D,T,S,K,SimpleMDBC,L},
                                   SimKernel, SimConstants, SimParticles,
-                                  ParticleRanges, UniqueCells
+                                  ParticleRanges
                                  ) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,L<:LogMode}
+        if isempty(SimMetaData.GhostIndices)
+            return nothing
+        end
+
         @no_escape begin
             DimensionsPlus = D + 1
             bᵧ = @alloc(SVector{DimensionsPlus, T}, length(SimParticles.Position))
             Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, T, DimensionsPlus*DimensionsPlus}, length(SimParticles.Position))
-            UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-            NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, UniqueCellsView, SimParticles, bᵧ, Aᵧ)
-            ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
+            NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, SimParticles, bᵧ, Aᵧ)
+            ApplyMDBCCorrection(SimConstants, SimParticles, SimMetaData.GhostIndices, bᵧ, Aᵧ)
         end
 
         return nothing
     end
 
-    function ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
+    function ApplyMDBCCorrection(SimConstants, SimParticles, GhostIndices, bᵧ, Aᵧ)
 
         Position    = SimParticles.Position
         Density     = SimParticles.Density
@@ -617,7 +692,8 @@ using LinearAlgebra
 
         ρ₀ = SimConstants.ρ₀
         #https://github.com/DualSPHysics/DualSPHysics/blob/f4fa76ad5083873fa1c6dd3b26cdce89c55a9aeb/src/source/JSphCpu_mdbc.cpp#L347
-        @inbounds @simd ivdep for i in eachindex(Position)
+        @inbounds @simd ivdep for gpos in eachindex(GhostIndices)
+            i = GhostIndices[gpos]
             A = Aᵧ[i]
 
             # Since Aᵧ is not reset anymore, we need to check if it is zero
@@ -717,7 +793,7 @@ using LinearAlgebra
                                      AccelerationMax,
                                      UniqueCells) where {SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
         @timeit SimMetaData.HourGlass "00 Init Pressure"                          Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
-        @timeit SimMetaData.HourGlass "00a Init MDBC"                             ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
+        @timeit SimMetaData.HourGlass "00a Init MDBC"                             ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges)
         @timeit SimMetaData.HourGlass "00b Init NeighborLoop" NeighborLoopPerParticle!(
             SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
             SimConstants, SimParticles, ParticleRanges, CellListIndices,
@@ -748,7 +824,7 @@ using LinearAlgebra
                               MotionDefinition,
                               UniqueCells) where {SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
         @timeit SimMetaData.HourGlass "02 Pressure"                              Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
-        @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
+        @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges)
 
         @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoopPerParticle!(
             SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
@@ -795,7 +871,7 @@ using LinearAlgebra
                               ParticleType,
                               MotionDefinition,
                               UniqueCells) where {SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
-        @timeit SimMetaData.HourGlass "02 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
+        @timeit SimMetaData.HourGlass "02 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges)
 
         @timeit SimMetaData.HourGlass "03 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
 
@@ -867,6 +943,8 @@ using LinearAlgebra
             SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace, ParticleRanges, UniqueCells, CellListIndices)
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
             BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
+            UpdateGhostIndices!(SimMetaData, SimParticles)
+            UpdateGhostNeighborCellLists!(SimMetaData, SimKernel, SimParticles, ParticleRanges, UniqueCellsView, FullStencil)
 
             InitializeTimeStepping!(
                 SimMetaData.TimeSteppingMode,
@@ -895,6 +973,8 @@ using LinearAlgebra
                         SimMetaData.Δx    = zero(eltype(dρdtI))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                         BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
+                        UpdateGhostIndices!(SimMetaData, SimParticles)
+                        UpdateGhostNeighborCellLists!(SimMetaData, SimKernel, SimParticles, ParticleRanges, UniqueCellsView, FullStencil)
                     end
                 end
 

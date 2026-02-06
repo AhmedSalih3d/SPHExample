@@ -49,6 +49,8 @@ struct SingleNeighborTimeStepping <: TimeSteppingMode end
     SimulationTime::FloatType               = 0
     TimeSteps                               = Vector{FloatType}() 
     IndexCounter::Int                       = 0
+    GhostIndices::Vector{Int}               = Int[]
+    GhostNeighborCellLists::Vector{Vector{Int}} = Vector{Vector{Int}}()
     VisualizeInParaview::Bool               = true
     ExportSingleVTKHDF::Bool                = true
     ExportGridCells::Bool                   = false
