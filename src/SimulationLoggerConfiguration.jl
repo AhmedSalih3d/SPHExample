@@ -44,11 +44,13 @@ module SimulationLoggerConfiguration
         LoggerIo::IOStream           # handle to the log file
         Logger::AbstractLogger       # may be a TeeLogger or FormatLogger
         FormatStr::String            # format used for progress lines
+        FormatSpec::Printf.Format    # pre-parsed format for LogStep
         ValuesToPrint::String        # header line describing logged values
         ValuesToPrintC::String       # separator line below the header
         CurrentDate::DateTime        # start time of the simulation
         CurrentDataStr::String       # preformatted start time string
         ToConsole::Bool              # whether log output is echoed to REPL
+        StepBuffer::IOBuffer         # reusable buffer for formatted progress lines
 
 
         function SimulationLogger(SaveLocation::String; filename="SimulationOutput.log", to_console::Bool=true)
@@ -68,6 +70,7 @@ module SimulationLoggerConfiguration
             values        = ("PART [-]", "PartTime [s]", "TotalSteps [-] ", "Steps  [-] ", "Run Time [s]", "Time/Sec [-]", "Remaining Time [Date]")
             values_eq     = map(x -> repeat("=", length(x)), values)
             format_string = generate_format_string(values)
+            format_spec   = Printf.Format(format_string)
 
             ValuesToPrint  = @. $join(cfmt(format_string, values))
             ValuesToPrintC = @. $join(cfmt(format_string, values_eq))
@@ -76,7 +79,7 @@ module SimulationLoggerConfiguration
             CurrentDate    = now()
             CurrentDataStr = Dates.format(CurrentDate, "dd-mm-yyyy HH:MM:SS")
 
-            new(io_logger, logger, format_string, ValuesToPrint, ValuesToPrintC, CurrentDate, CurrentDataStr, to_console)
+            new(io_logger, logger, format_string, format_spec, ValuesToPrint, ValuesToPrintC, CurrentDate, CurrentDataStr, to_console, IOBuffer())
         end
     end
 
@@ -199,7 +202,21 @@ module SimulationLoggerConfiguration
             end
             
     
-            @info @. $join(cfmt(SimLogger.FormatStr, (PartNumber, PartTime, PartTotalSteps, CurrentSteps, TimeUptillNow, TimePerPhysicalSecond, ExpectedFinishTimeString)))
+            buffer = SimLogger.StepBuffer
+            truncate(buffer, 0)
+            seekstart(buffer)
+            Printf.format(
+                buffer,
+                SimLogger.FormatSpec,
+                PartNumber,
+                PartTime,
+                PartTotalSteps,
+                CurrentSteps,
+                TimeUptillNow,
+                TimePerPhysicalSecond,
+                ExpectedFinishTimeString,
+            )
+            @info String(take!(buffer))
         end
     end
     
@@ -249,6 +266,9 @@ module SimulationLoggerConfiguration
     end
 
     function LogStep!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, B<:MDBCMode}
+        if SimMetaData.LogEvery > 1 && mod(SimMetaData.OutputIterationCounter, SimMetaData.LogEvery) != 0
+            return nothing
+        end
         LogStep(SimLogger, SimMetaData, SimMetaData.HourGlass)
         SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
         return nothing

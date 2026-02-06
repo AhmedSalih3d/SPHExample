@@ -44,6 +44,7 @@ struct SingleNeighborTimeStepping <: TimeSteppingMode end
     OutputTimes::Union{FloatType,Vector{FloatType}} = OutputEach
     OutputIterationCounter::Int             = 0
     StepsTakenForLastOutput::Int            = 0
+    LogEvery::Int                           = 1  # log every N output iterations
     CurrentTimeStep::FloatType              = 0
     TotalTime::FloatType                    = 0
     SimulationTime::FloatType               = 0
