@@ -1,4 +1,4 @@
-module SPHCellList
+﻿module SPHCellList
 
 export NeighborLoop!, ComputeInteractions!, RunSimulation
 
@@ -440,18 +440,13 @@ using LinearAlgebra
         return kernel_acc + Wᵢⱼ, kernel_grad_acc + ∇ᵢWᵢⱼ
     end
 
-    @inline function ShiftCScale(::SimulationMetaData{D,T,S,NoKernelOutput,B,L},
-                                 M0, RhoI, RhoJ) where {D,T,S<:ShiftingMode,
-                                                       B<:MDBCMode,
-                                                       L<:LogMode}
-        return (M0 / RhoJ) * (M0 / RhoJ)
-    end
 
-    @inline function ShiftCScale(::SimulationMetaData{D,T,S,StoreKernelOutput,B,L},
-                                 M0, RhoI, RhoJ) where {D,T,S<:ShiftingMode,
-                                                       B<:MDBCMode,
-                                                       L<:LogMode}
-        return (M0 / RhoJ) * (M0 / RhoI)
+    @inline function ShiftCScale(::SimulationMetaData{D,T,S,K,B,L},
+                                 m₀, ρᵢ, ρⱼ) where {D,T,S<:ShiftingMode,
+                                                        K<:KernelOutputMode,
+                                                        B<:MDBCMode,
+                                                        L<:LogMode}
+        return (m₀ / ρⱼ) * (m₀ / ρᵢ)
     end
 
     @inline function ComputeInteractionsPerParticleNoShiftingCore!(
