@@ -15,6 +15,7 @@ module SPHExample
     include("OpenExternalPrograms.jl")
     include("SPHDensityDiffusionModels.jl")  
     include("SPHNeighborList.jl")
+    include("SPHMDBC.jl")
     include("SPHCellList.jl") #Must be last    
 
     # Re-export desired functions from each submodule
