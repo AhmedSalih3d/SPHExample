@@ -4,7 +4,8 @@ let
     Dimensions = 3
     FloatType  = Float64
     
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=23.43842998154953, δᵩ = 0.1, CFL=0.2, α=0.02, m₀=0.001)
+    Artificialα = 0.02
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=23.43842998154953, δᵩ = 0.1, CFL=0.2, m₀=0.001)
 
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
         SimulationName="CaseDuckling",
@@ -43,7 +44,7 @@ let
     SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaDataWedge)
 
     SimKernel           = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); dx = SimConstantsWedge.dx, k = 1.5)
-    SimViscosity        = ArtificialViscosity()
+    SimViscosity        = ArtificialViscosity(α = Artificialα)
     SimDensityDiffusion = LinearDensityDiffusion()
 
     SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)

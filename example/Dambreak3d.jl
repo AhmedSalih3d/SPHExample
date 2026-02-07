@@ -6,10 +6,10 @@ let
 
     # --- SPH constants ---
     dx = 0.0085
+    Artificialα = 0.1
     SimConstantsDambreak3D = SimulationConstants{FloatType}(
         dx  = dx,
         c₀  = 33.14,
-        α   = 0.1,
         m₀  = 1000 * dx^3,
         CFL = 0.2
     )
@@ -60,7 +60,7 @@ let
 
     # --- Kernel, viscosity & diffusion ---
     SimKernel = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); h   = 1 * sqrt(3 * dx^2))
-    SimViscosity        = ArtificialViscosity()
+    SimViscosity        = ArtificialViscosity(α = Artificialα)
     SimDensityDiffusion = LinearDensityDiffusion()
 
     # --- Run simulation ---

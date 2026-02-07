@@ -16,27 +16,55 @@ abstract type SPHViscosity end
 struct ZeroViscosity <: SPHViscosity end
 
 """
-    ArtificialViscosity()
+    ArtificialViscosity(; α=0.01)
 
 Monaghan style artificial viscosity for shock capturing and preventing
 particle interpenetration.
 """
-struct ArtificialViscosity <: SPHViscosity end
+struct ArtificialViscosity{T<:AbstractFloat} <: SPHViscosity
+    α::T
+end
+
+function ArtificialViscosity(; α::Real=0.01)
+    αValue = float(α)
+    @assert αValue > 0 "Artificial viscosity parameter (α) must be positive"
+    return ArtificialViscosity{typeof(αValue)}(αValue)
+end
 
 """
-    Laminar()
+    Laminar(; ν=1e-6)
 
-Standard laminar viscosity governed by the kinematic viscosity `ν₀`.
+Standard laminar viscosity governed by kinematic viscosity `ν`.
 """
-struct Laminar <: SPHViscosity end
+struct Laminar{T<:AbstractFloat} <: SPHViscosity
+    ν::T
+end
+
+function Laminar(; ν::Real=1e-6)
+    νValue = float(ν)
+    @assert νValue >= 0 "Kinematic viscosity (ν) must be non-negative"
+    return Laminar{typeof(νValue)}(νValue)
+end
 
 """
-    LaminarSPS()
+    LaminarSPS(; ν=1e-6, SmagorinskyConstant=0.12, BlinConstant=0.0066)
 
 Hybrid model combining `Laminar` viscosity with a Smagorinsky type
 sub-particle scale turbulence closure.
 """
-struct LaminarSPS <: SPHViscosity end
+struct LaminarSPS{T<:AbstractFloat} <: SPHViscosity
+    ν::T
+    smagorinsky_constant::T
+    blin_constant::T
+end
+
+function LaminarSPS(; ν::Real=1e-6, SmagorinskyConstant::Real=0.12, BlinConstant::Real=0.0066)
+    νValue, SmagorinskyConstantValue, BlinConstantValue = promote(float(ν), float(SmagorinskyConstant), float(BlinConstant))
+    @assert νValue >= 0 "Kinematic viscosity (ν) must be non-negative"
+    @assert SmagorinskyConstantValue >= 0 "Smagorinsky constant must be non-negative"
+    @assert BlinConstantValue >= 0 "Blin constant must be non-negative"
+    return LaminarSPS{typeof(νValue)}(νValue, SmagorinskyConstantValue, BlinConstantValue)
+end
 
 
 """
@@ -53,10 +81,11 @@ selected viscosity `model`. Returns `(Πᵢ, Πⱼ)`.
 end
 
 # Artificial viscosity formulation.
-@inline function compute_viscosity(::ArtificialViscosity, SimKernel, SimConstants, SimParticles,
+@inline function compute_viscosity(SimViscosity::ArtificialViscosity, SimKernel, SimConstants, SimParticles,
                                    xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
-    @unpack m₀, α, c₀ = SimConstants
+    @unpack m₀, c₀ = SimConstants
     @unpack h, η²     = SimKernel
+    α = SimViscosity.α
 
     ρᵢ = SimParticles.Density[i]
     ρⱼ = SimParticles.Density[j]
@@ -74,23 +103,27 @@ end
 end
 
 # Laminar viscosity formulation.
-@inline function compute_viscosity(::Laminar, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
-    @unpack m₀, ν₀ = SimConstants
+@inline function compute_viscosity(SimViscosity::Laminar, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
+    @unpack m₀ = SimConstants
     @unpack η²     = SimKernel
+    ν = SimViscosity.ν
 
     dᵢⱼ =  sqrt(abs(d²))
     ρᵢ  = SimParticles.Density[i]
     ρⱼ  = SimParticles.Density[j]
 
-    term = (4 * m₀ * ν₀ * dot(xᵢⱼ, ∇ᵢWᵢⱼ)) / ((ρᵢ + ρⱼ) + (d² + η²))
+    term = (4 * m₀ * ν * dot(xᵢⱼ, ∇ᵢWᵢⱼ)) / ((ρᵢ + ρⱼ) + (d² + η²))
     return term * vᵢⱼ, -term * vᵢⱼ
 end
 
 # LaminarSPS: with sub-grid scale stresses.
-@inline function compute_viscosity(::LaminarSPS, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
-    @unpack m₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
+@inline function compute_viscosity(SimViscosity::LaminarSPS, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
+    @unpack m₀, dx = SimConstants
+    ν = SimViscosity.ν
+    SmagorinskyConstant = SimViscosity.smagorinsky_constant
+    BlinConstant = SimViscosity.blin_constant
     
-    t1,t2 = compute_viscosity(Laminar(), SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
+    t1,t2 = compute_viscosity(Laminar(ν = ν), SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
     
 
     ρᵢ  = SimParticles.Density[i]

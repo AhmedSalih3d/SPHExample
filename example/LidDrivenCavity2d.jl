@@ -198,10 +198,8 @@ let
 
     SimConstants = SimulationConstants{FloatType}(
         dx = Dx,
-        ν₀ = KinematicViscosity,
         g = 0.0,
         c₀ = 10LidVelocity,
-        α = 0.01,
         CFL = 0.2,
         δᵩ = 0.1,
         A = 0.0075
@@ -256,7 +254,7 @@ let
 
     CleanUpSimulationFolder(SimMetaData.SaveLocation)
 
-    SimViscosity = ArtificialViscosity()
+    SimViscosity = Laminar(ν = KinematicViscosity)
 
     RunSimulation(
         SimGeometry = SimulationGeometry,
