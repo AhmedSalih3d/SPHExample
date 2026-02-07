@@ -166,10 +166,15 @@ let
     DrivingMode = :acceleration
 
     Dx = 0.002
-    BoundaryLayers = 3
+    # In this codebase, h = k*dx and support radius H = k*h = k^2*dx.
+    # Keep k modest for stability in this case.
+    KernelScale = 2.0
+    # Full wall support requires (BoundaryLayers - 1) * dx >= H.
+    BoundaryLayers = max(3, ceil(Int, KernelScale^2) + 1)
     SoundSpeed = 28.198718
     ArtificialAlpha = 0.05
-    GhostInsetFactor = 1.0
+    # mDBC ghost point depth inside fluid (in units of dx).
+    GhostInsetFactor = 0.5
 
     InputFolder = "./input/sloshing_tank_2d_layers"
 
@@ -182,7 +187,9 @@ let
         GhostInsetFactor = GhostInsetFactor,
     )
 
-    SimulationName = DrivingMode == :motion ? "SloshingTank2DMotionLayers3" : "SloshingTank2DAccLayers3"
+    SimulationName = DrivingMode == :motion ?
+        "SloshingTank2DMotionLayers$(BoundaryLayers)" :
+        "SloshingTank2DAccLayers$(BoundaryLayers)"
 
     # MDBC normals are generated, but MDBC is enabled by default only in fixed-boundary acceleration mode.
     UseMDBC = (DrivingMode == :acceleration)
@@ -194,7 +201,7 @@ let
             c₀ = SoundSpeed,
             g = 9.81,
             δᵩ = 0.1,
-            CFL = 0.2,
+            CFL = 0.20,
         ) :
         SimulationConstants{FloatType}(
             dx = Dx,
@@ -202,7 +209,7 @@ let
             c₀ = SoundSpeed,
             g = 0.0,
             δᵩ = 0.1,
-            CFL = 0.2,
+            CFL = 0.20,
         )
 
     SimMetaData = UseMDBC ?
@@ -250,7 +257,7 @@ let
     SimulationGeometry = [TankBoundary, Water]
     SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaData)
     SimLogger = SimulationLogger(SimMetaData.SaveLocation)
-    SimKernel = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); dx = SimConstants.dx)
+    SimKernel = SPHKernelInstance{Dimensions, FloatType}(WendlandC2();  h = 1.3 * Dx, k = KernelScale)
 
     FluidAccelerationModel = nothing
     RigidMotionModel = nothing
