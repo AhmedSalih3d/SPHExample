@@ -8,6 +8,7 @@ using StructArrays
 
 using ..SimulationGeometry
 using ..SimulationMetaDataConfiguration
+using ..MDBCGhostDataConfiguration: MDBCGhostData, ResetGhostData!, InitializeGhostData!
 
 @inline function LoadCSVPoint(::Val{2}, ::Type{T}, row) where {T}
     P1 = getproperty(row, Symbol("Points:0"))
@@ -224,14 +225,13 @@ function LoadBoundaryNormals(::Val{D}, ::Type{T}, path_mdbc) where {D, T}
     return points, ghost_points, normals
 end
 
-function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,NoMDBC,L}, SimParticles, path) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, L<:LogMode}
+function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,NoMDBC,L}, SimParticles, path, ::Nothing) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, L<:LogMode}
     return nothing
 end
 
-function LoadMDBCNormals!(SimMetaData::SimulationMetaData{D,T,S,K,SimpleMDBC,L}, SimParticles, path) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, L<:LogMode}
+function LoadMDBCNormals!(SimMetaData::SimulationMetaData{D,T,S,K,SimpleMDBC,L}, SimParticles, path, GhostData::MDBCGhostData) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, L<:LogMode}
     if isnothing(path)
-        SimMetaData.GhostIndices = Int[]
-        SimMetaData.GhostNeighborCellLists = Vector{Vector{Int}}()
+        ResetGhostData!(GhostData)
         return nothing
     end
     _, GhostPoints, GhostNormals = LoadBoundaryNormals(Val(D), T, path)
@@ -240,8 +240,7 @@ function LoadMDBCNormals!(SimMetaData::SimulationMetaData{D,T,S,K,SimpleMDBC,L},
         SimParticles.GhostNormals[gi] = GhostNormals[gi]
     end
     ghost_indices = findall(x -> !iszero(x), SimParticles.GhostPoints)
-    SimMetaData.GhostIndices = ghost_indices
-    SimMetaData.GhostNeighborCellLists = [Int[] for _ in 1:length(ghost_indices)]
+    InitializeGhostData!(GhostData, ghost_indices)
     return nothing
 end
 

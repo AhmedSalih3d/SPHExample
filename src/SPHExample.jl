@@ -5,6 +5,7 @@ module SPHExample
     include("SPHViscosityModels.jl")      
     include("SimulationGeometry.jl")
     include("ProduceHDFVTK.jl")    
+    include("MDBCGhostDataConfiguration.jl");
     include("SimulationMetaDataConfiguration.jl");
     include("SimulationEquations.jl");
     include("TimeStepping.jl");       

@@ -81,7 +81,7 @@ let
     # pressures = [d.Pressure    for d in fluid_data]  # Extract the pressure
     
     # # Normalize positions and pressures
-    # normalized_positions = [p / max_height for p in positions]  # Normalize height
+    # normalized_positions = [p / max_height for p in positions]  # Normalize height*
     # hydrostatic_pressure = [rho * g * (max_height - h) for h in positions]     # Theoretical hydrostatic pressure
     # normalized_pressures = [p / maximum(hydrostatic_pressure) for p in pressures]  # Normalize pressure
     
