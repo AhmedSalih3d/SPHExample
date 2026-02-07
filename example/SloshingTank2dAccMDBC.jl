@@ -174,7 +174,7 @@ let
     SoundSpeed = 28.198718
     ArtificialAlpha = 0.05
     # mDBC ghost point depth inside fluid (in units of dx).
-    GhostInsetFactor = 0.5
+    GhostInsetFactor = 1.0
 
     InputFolder = "./input/sloshing_tank_2d_layers"
 
