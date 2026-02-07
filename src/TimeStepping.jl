@@ -1,14 +1,186 @@
 module TimeStepping
 
-export Δt, next_output_time, ProgressMotion, HalfTimeStep, FullTimeStep, UpdateTimeStep
+export Δt, next_output_time, ProgressMotion, HalfTimeStep, FullTimeStep, UpdateTimeStep,
+       FluidAccelerationSeries, EvaluateFluidAcceleration,
+       RigidRotationMotionSeries, EvaluateRotationState, ApplyRigidRotationMotion!
 
 using LinearAlgebra
 using Parameters
 using Base.Threads
 using Bumper
+using StaticArrays: SVector
 using ..SimulationEquations
 using ..SimulationGeometry
 using ..SimulationMetaDataConfiguration
+
+mutable struct FluidAccelerationSeries{D,T<:AbstractFloat}
+    Times::Vector{T}
+    Values::Vector{SVector{D,T}}
+    Cursor::Int
+end
+
+function FluidAccelerationSeries(Times::AbstractVector{T}, Values::AbstractVector{SVector{D,T}}) where {D,T<:AbstractFloat}
+    @assert !isempty(Times) "Fluid acceleration timeline cannot be empty."
+    @assert length(Times) == length(Values) "Fluid acceleration times and values must have the same length."
+    times_vector = collect(Times)
+    values_vector = collect(Values)
+    @assert issorted(times_vector) "Fluid acceleration times must be sorted in ascending order."
+    return FluidAccelerationSeries{D,T}(times_vector, values_vector, 1)
+end
+
+@inline function EvaluateFluidAcceleration(::Nothing, ::Type{T}, ::Val{D}, _time) where {D,T}
+    return zero(SVector{D,T})
+end
+
+function EvaluateFluidAcceleration(model::FluidAccelerationSeries{D,T}, ::Type{T}, ::Val{D}, time::T) where {D,T<:AbstractFloat}
+    times = model.Times
+    values = model.Values
+    last_index = length(times)
+
+    if time <= times[1]
+        model.Cursor = 1
+        return values[1]
+    elseif time >= times[last_index]
+        model.Cursor = last_index
+        return values[last_index]
+    end
+
+    idx = clamp(model.Cursor, 1, last_index - 1)
+    @inbounds begin
+        while idx < (last_index - 1) && time > times[idx + 1]
+            idx += 1
+        end
+        while idx > 1 && time < times[idx]
+            idx -= 1
+        end
+
+        t0 = times[idx]
+        t1 = times[idx + 1]
+        a0 = values[idx]
+        a1 = values[idx + 1]
+        model.Cursor = idx
+
+        if t1 == t0
+            return a1
+        end
+
+        alpha = (time - t0) / (t1 - t0)
+        return a0 + (a1 - a0) * alpha
+    end
+end
+
+mutable struct RigidRotationMotionSeries{D,T<:AbstractFloat}
+    Times::Vector{T}
+    Angles::Vector{T}
+    ParticleIndices::Vector{Int}
+    InitialPositions::Vector{SVector{D,T}}
+    Pivot::SVector{D,T}
+    Cursor::Int
+end
+
+function RigidRotationMotionSeries(
+    Times::AbstractVector{T},
+    Angles::AbstractVector{T},
+    ParticleIndices::AbstractVector{Int},
+    InitialPositions::AbstractVector{SVector{D,T}},
+    Pivot::SVector{D,T},
+) where {D,T<:AbstractFloat}
+    @assert !isempty(Times) "Rigid rotation timeline cannot be empty."
+    @assert length(Times) == length(Angles) "Rotation times and angles must have the same length."
+    @assert length(ParticleIndices) == length(InitialPositions) "Rigid rotation particle indices and initial positions must match."
+    times_vector = collect(Times)
+    angles_vector = collect(Angles)
+    @assert issorted(times_vector) "Rigid rotation times must be sorted in ascending order."
+    return RigidRotationMotionSeries{D,T}(
+        times_vector,
+        angles_vector,
+        collect(ParticleIndices),
+        collect(InitialPositions),
+        Pivot,
+        1,
+    )
+end
+
+@inline function EvaluateRotationState(::Nothing, ::Type{T}, _time) where {T<:AbstractFloat}
+    return zero(T), zero(T)
+end
+
+function EvaluateRotationState(model::RigidRotationMotionSeries{D,T}, ::Type{T}, time::T) where {D,T<:AbstractFloat}
+    times = model.Times
+    angles = model.Angles
+    last_index = length(times)
+
+    if last_index == 1
+        model.Cursor = 1
+        return angles[1], zero(T)
+    end
+
+    if time <= times[1]
+        model.Cursor = 1
+        dt = times[2] - times[1]
+        omega = dt == zero(T) ? zero(T) : (angles[2] - angles[1]) / dt
+        return angles[1], omega
+    elseif time >= times[last_index]
+        model.Cursor = last_index - 1
+        dt = times[last_index] - times[last_index - 1]
+        omega = dt == zero(T) ? zero(T) : (angles[last_index] - angles[last_index - 1]) / dt
+        return angles[last_index], omega
+    end
+
+    idx = clamp(model.Cursor, 1, last_index - 1)
+    @inbounds begin
+        while idx < (last_index - 1) && time > times[idx + 1]
+            idx += 1
+        end
+        while idx > 1 && time < times[idx]
+            idx -= 1
+        end
+
+        t0 = times[idx]
+        t1 = times[idx + 1]
+        a0 = angles[idx]
+        a1 = angles[idx + 1]
+        model.Cursor = idx
+
+        if t1 == t0
+            return a1, zero(T)
+        end
+
+        alpha = (time - t0) / (t1 - t0)
+        theta = a0 + (a1 - a0) * alpha
+        omega = (a1 - a0) / (t1 - t0)
+
+        return theta, omega
+    end
+end
+
+@inline function ApplyRigidRotationMotion!(_SimParticles, ::Nothing, _FloatType, _Time)
+    return nothing
+end
+
+function ApplyRigidRotationMotion!(SimParticles, model::RigidRotationMotionSeries{2,T}, ::Type{T}, time::T) where {T<:AbstractFloat}
+    theta, omega = EvaluateRotationState(model, T, time)
+    ctheta = cos(theta)
+    stheta = sin(theta)
+
+    @inbounds @simd ivdep for i in eachindex(model.ParticleIndices)
+        particle_index = model.ParticleIndices[i]
+        rel0 = model.InitialPositions[i] - model.Pivot
+        rel = SVector{2,T}(
+            ctheta * rel0[1] + stheta * rel0[2],
+            -stheta * rel0[1] + ctheta * rel0[2],
+        )
+
+        SimParticles.Position[particle_index] = model.Pivot + rel
+        SimParticles.Velocity[particle_index] = SVector{2,T}(omega * rel[2], -omega * rel[1])
+    end
+
+    return nothing
+end
+
+function ApplyRigidRotationMotion!(_SimParticles, ::RigidRotationMotionSeries{D,T}, ::Type{T}, _Time) where {D,T<:AbstractFloat}
+    throw(ArgumentError("RigidRotationMotionSeries currently supports D=2 only."))
+end
 
 """
     Δt(max_acceleration, SimulationConstants, SPHKernel)
@@ -26,7 +198,7 @@ and force-based criteria.
 """
 function Δt(max_acceleration, SimulationConstants, SPHKernel)
     @unpack c₀, CFL = SimulationConstants
-    @unpack h   = SPHKernel
+    @unpack h = SPHKernel
 
     dt_speed = h / c₀
     dt_force = sqrt(h / max_acceleration)
@@ -70,8 +242,8 @@ end
 
 function ProgressMotion(SimParticles, dt₂, MotionsDefinition, SimMetaData)
     @unpack Position, Velocity = SimParticles
-    ParticleMarker  = SimParticles.GroupMarker
-    ParticleType    = SimParticles.Type
+    ParticleMarker = SimParticles.GroupMarker
+    ParticleType = SimParticles.Type
     @inbounds @simd ivdep for i in eachindex(Position)
         if ParticleType[i] == Moving || ParticleType[i] == FixedMoving
             motion = MotionsDefinition[ParticleMarker[i]]
@@ -80,13 +252,11 @@ function ProgressMotion(SimParticles, dt₂, MotionsDefinition, SimMetaData)
                 ShouldMove = (motion.StartTime <= SimMetaData.TotalTime) &&
                              (SimMetaData.TotalTime <= (motion.StartTime + motion.Duration))
 
-                # Retrieve motion parameters
                 MotionVel = motion.Velocity
                 MotionDir = motion.Direction
                 MotionFactor = ShouldMove ? one(MotionVel) : zero(MotionVel)
                 PositionFactor = MotionPositionFactorValue(typeof(MotionVel), ParticleType[i])
 
-                # Update Velocity and Position
                 Velocity[i] = MotionFactor * MotionVel * MotionDir
                 if motion.MovePosition && ShouldMove && PositionFactor != zero(PositionFactor)
                     Position[i] += Velocity[i] * dt₂ * PositionFactor
@@ -99,8 +269,8 @@ function ProgressMotion(SimParticles, dt₂, MotionsDefinition, SimMetaData)
 end
 
 function HalfTimeStep(::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
-                          SimConstants, SimParticles, Positionₙ⁺,
-                          Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
+                      SimConstants, SimParticles, Positionₙ⁺,
+                      Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂, FluidAcceleration) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
     @unpack Position, Density, Velocity, Acceleration = SimParticles
     ParticleType = SimParticles.Type
     AccelerationScalarType = eltype(eltype(Acceleration))
@@ -108,64 +278,68 @@ function HalfTimeStep(::SimulationMetaData{Dimensions, FloatType, SMode, KMode, 
     @inbounds @simd ivdep for i in eachindex(Position)
         MotionLimiterFactor = MotionLimiterValue(AccelerationScalarType, ParticleType[i])
         GravityFactor = GravityFactorValue(AccelerationScalarType, ParticleType[i])
-        Acceleration[i]  +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor)
-        Positionₙ⁺[i]     =  Position[i]   + Velocity[i]   * dt₂  * MotionLimiterFactor
-        Velocityₙ⁺[i]     =  Velocity[i]   + Acceleration[i]  *  dt₂ * MotionLimiterFactor
-        ρₙ⁺[i]            =  Density[i]    + dρdtI[i]       *  dt₂
+        Acceleration[i] += ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor)
+        if ParticleType[i] == Fluid
+            Acceleration[i] += FluidAcceleration
+        end
+        Positionₙ⁺[i] = Position[i] + Velocity[i] * dt₂ * MotionLimiterFactor
+        Velocityₙ⁺[i] = Velocity[i] + Acceleration[i] * dt₂ * MotionLimiterFactor
+        ρₙ⁺[i] = Density[i] + dρdtI[i] * dt₂
     end
 
     return nothing
 end
 
 function FullTimeStep(::SimulationMetaData{D,T,NoShifting,K,B,L}, SimKernel,
-                          SimConstants, SimParticles, Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,
-                                                                             K<:KernelOutputMode,
-                                                                             B<:MDBCMode,
-                                                                             L<:LogMode}
+                      SimConstants, SimParticles, Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt, FluidAcceleration) where {D,T,
+                                                                                                         K<:KernelOutputMode,
+                                                                                                         B<:MDBCMode,
+                                                                                                         L<:LogMode}
     @unpack Position, Velocity, Acceleration = SimParticles
     ParticleType = SimParticles.Type
     AccelerationScalarType = eltype(eltype(Acceleration))
     @inbounds @simd ivdep for i in eachindex(Position)
         MotionLimiterFactor = MotionLimiterValue(AccelerationScalarType, ParticleType[i])
         GravityFactor = GravityFactorValue(AccelerationScalarType, ParticleType[i])
-        Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor)
-        Velocity[i]       +=  Acceleration[i] * dt * MotionLimiterFactor
-        Position[i]       +=  (Velocityₙ⁺[i] * dt) * MotionLimiterFactor
+        Acceleration[i] += ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor)
+        if ParticleType[i] == Fluid
+            Acceleration[i] += FluidAcceleration
+        end
+        Velocity[i] += Acceleration[i] * dt * MotionLimiterFactor
+        Position[i] += (Velocityₙ⁺[i] * dt) * MotionLimiterFactor
     end
     return nothing
 end
 
 function FullTimeStep(::SimulationMetaData{D,T,S,K,B,L}, SimKernel, SimConstants,
-                          SimParticles, Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,S<:ShiftingMode,
-                                                             K<:KernelOutputMode,
-                                                             B<:MDBCMode,
-                                                             L<:LogMode}
+                      SimParticles, Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt, FluidAcceleration) where {D,T,S<:ShiftingMode,
+                                                                                         K<:KernelOutputMode,
+                                                                                         B<:MDBCMode,
+                                                                                         L<:LogMode}
     @unpack Position, Velocity, Acceleration = SimParticles
     ParticleType = SimParticles.Type
     AccelerationScalarType = eltype(eltype(Acceleration))
-    A     = SimConstants.A
-    A_FST = 0; # zero for internal flows
-    A_FSM = length(first(Position)); #2d, 3d val different
+    A = SimConstants.A
+    A_FST = 0
+    A_FSM = length(first(Position))
     @inbounds @simd ivdep for i in eachindex(Position)
         MotionLimiterFactor = MotionLimiterValue(AccelerationScalarType, ParticleType[i])
         GravityFactor = GravityFactorValue(AccelerationScalarType, ParticleType[i])
-        Acceleration[i]   +=  ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor)
-        Velocity[i]       +=  Acceleration[i] * dt * MotionLimiterFactor
+        Acceleration[i] += ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor)
+        if ParticleType[i] == Fluid
+            Acceleration[i] += FluidAcceleration
+        end
+        Velocity[i] += Acceleration[i] * dt * MotionLimiterFactor
 
         δxᵢ = zero(Acceleration[i])
-        A_FSC                  = (∇◌rᵢ[i] - A_FST)/(A_FSM - A_FST)
+        A_FSC = (∇◌rᵢ[i] - A_FST) / (A_FSM - A_FST)
         if (∇◌rᵢ[i] - A_FST) < 0
             δxᵢ = -A_FSC * A * SimKernel.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
         elseif (∇◌rᵢ[i] - A_FST) >= 0
             δxᵢ = -A * SimKernel.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
         end
 
-        # nδ = norm(δxᵢ)
-        # if nδ > SimConstants.dx
-        #     δxᵢ *= SimConstants.dx / nδ
-        # end
-
-        Position[i]           += (Velocityₙ⁺[i] * dt + δxᵢ) * MotionLimiterFactor
+        Position[i] += (Velocityₙ⁺[i] * dt + δxᵢ) * MotionLimiterFactor
     end
     return nothing
 end

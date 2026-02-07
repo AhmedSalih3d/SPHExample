@@ -28,6 +28,10 @@ The project demonstrates how to assemble a small SPH solver with Julia. It focus
 
 Time-stepping behavior is selected via `RunSimulation(..., SimTimeStepping=...)` with either
 `SymplecticTimeStepping()` or `SingleNeighborTimeStepping()` depending on the desired update path.
+For non-inertial tank-frame cases, `RunSimulation(..., FluidAccelerationModel=...)`
+accepts a `FluidAccelerationSeries` time history that applies external acceleration to fluid particles.
+For prescribed rigid-body tank rotation in 2D, `RunSimulation(..., RigidMotionModel=...)`
+accepts a `RigidRotationMotionSeries` built from angle-versus-time data.
 
 ## Folder Structure
 
@@ -90,6 +94,9 @@ which can be loaded with ParaView 5.12 or newer. Output is written
 asynchronously, so files finish flushing when the simulation completes. The
 `example/LidDrivenCavity2d.jl` script is a lid-driven cavity setup that generates
 its CSV particle layout on first run and then reuses it from `input/`.
+The `example/SloshingTank2dAccMDBC.jl` script reproduces the sloshing benchmark
+with a motion-first setup, three boundary layers for full kernel support, and an optional
+acceleration-frame mode that uses the same input history.
 Velocities provided in CSV inputs (e.g., for moving lids or inflows) are loaded
 into the initial particle state.
 For moving boundaries that should keep a prescribed velocity while staying

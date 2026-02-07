@@ -40,8 +40,10 @@ module SPHExample
     using .ProduceHDFVTK
     export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure, AppendVTKHDFData, SaveCellGridVTKHDF, AppendVTKHDFGridData, SetupVTKOutput
 
-    using .TimeStepping: Δt
-    export Δt
+    using .TimeStepping: Δt, FluidAccelerationSeries, EvaluateFluidAcceleration,
+                         RigidRotationMotionSeries, EvaluateRotationState, ApplyRigidRotationMotion!
+    export Δt, FluidAccelerationSeries, EvaluateFluidAcceleration,
+           RigidRotationMotionSeries, EvaluateRotationState, ApplyRigidRotationMotion!
 
     using .SimulationEquations
     export EquationOfState, EquationOfStateGamma7, Pressure!, DensityEpsi!, LimitDensityAtBoundary!, ConstructGravitySVector, InverseHydrostaticEquationOfState, Estimate7thRoot

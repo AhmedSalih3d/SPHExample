@@ -599,7 +599,9 @@ using LinearAlgebra
                               dt₂,
                               ParticleType,
                               MotionDefinition,
-                              UniqueCells) where {SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
+                              UniqueCells,
+                              FluidAcceleration,
+                              RigidMotionModel) where {SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
         @timeit SimMetaData.HourGlass "02 Pressure"                              Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
         @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, GhostData, SimKernel, SimConstants, SimParticles, ParticleRanges)
 
@@ -609,7 +611,7 @@ using LinearAlgebra
             NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
         )
 
-        @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
+        @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂, FluidAcceleration)
 
         @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, ParticleType)
 
@@ -648,10 +650,12 @@ using LinearAlgebra
                               dt₂,
                               ParticleType,
                               MotionDefinition,
-                              UniqueCells) where {SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
+                              UniqueCells,
+                              FluidAcceleration,
+                              RigidMotionModel) where {SDD<:SPHDensityDiffusion, SV<:SPHViscosity}
         @timeit SimMetaData.HourGlass "02 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, GhostData, SimKernel, SimConstants, SimParticles, ParticleRanges)
 
-        @timeit SimMetaData.HourGlass "03 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
+        @timeit SimMetaData.HourGlass "03 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂, FluidAcceleration)
 
         @timeit SimMetaData.HourGlass "04 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, ParticleType)
 
@@ -703,6 +707,14 @@ using LinearAlgebra
                                                   MotionDetails{Dimensions, FloatType},
                                               },
                                           },
+                                      },
+                                      FluidAccelerationModel::Union{
+                                          Nothing,
+                                          FluidAccelerationSeries{Dimensions, FloatType},
+                                      },
+                                      RigidMotionModel::Union{
+                                          Nothing,
+                                          RigidRotationMotionSeries{Dimensions, FloatType},
                                       }) where {
                                                 Dimensions, FloatType, SMode, KMode,
                                                 BMode, LMode,
@@ -758,6 +770,11 @@ using LinearAlgebra
                 end
 
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
+                @timeit SimMetaData.HourGlass "Rigid Motion"                             ApplyRigidRotationMotion!(SimParticles, RigidMotionModel, FloatType, SimMetaData.TotalTime)
+
+                CurrentFluidAcceleration = EvaluateFluidAcceleration(
+                    FluidAccelerationModel, FloatType, Val(Dimensions), SimMetaData.TotalTime,
+                )
 
                 AdvanceTimeStep!(
                     SimMetaData.TimeSteppingMode,
@@ -765,14 +782,14 @@ using LinearAlgebra
                     SimConstants, SimParticles, ParticleRanges, CellListIndices,
                     NeighborCellLists, dρdtI, AccelerationMax, Positionₙ⁺,
                     Velocityₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt₂, ParticleType,
-                    MotionDefinition, UniqueCells,
+                    MotionDefinition, UniqueCells, CurrentFluidAcceleration, RigidMotionModel,
                 )
 
                 @timeit SimMetaData.HourGlass "07 Final Density"                         DensityEpsi!(SimParticles.Density, dρdtI, ρₙ⁺, dt)
 
                 @timeit SimMetaData.HourGlass "08 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(SimParticles.Density, SimConstants.ρ₀, ParticleType)
 
-                @timeit SimMetaData.HourGlass "09 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt)
+                @timeit SimMetaData.HourGlass "09 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt, CurrentFluidAcceleration)
 
                 @timeit SimMetaData.HourGlass "10 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
 
@@ -793,7 +810,9 @@ using LinearAlgebra
         SimViscosity::SV,
         SimDensityDiffusion::SDD,
         SimTimeStepping::TimeSteppingMode,
-        ParticleNormalsPath::Union{Nothing,String} = nothing
+        ParticleNormalsPath::Union{Nothing,String} = nothing,
+        FluidAccelerationModel::Union{Nothing, FluidAccelerationSeries{Dimensions, FloatType}} = nothing,
+        RigidMotionModel::Union{Nothing, RigidRotationMotionSeries{Dimensions, FloatType}} = nothing
         ) where {Dimensions,FloatType,SMode,KMode,BMode,LMode,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
 
         NumberOfPoints = length(SimParticles)
@@ -842,7 +861,7 @@ using LinearAlgebra
                 SimConstants, SimParticles, FullStencil, ParticleRanges,
                 UniqueCells, CellListIndices, SortingScratchSpace,
                 NeighborCellLists, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
-                ∇Cᵢ, ∇◌rᵢ, MotionDefinition,
+                ∇Cᵢ, ∇◌rᵢ, MotionDefinition, FluidAccelerationModel, RigidMotionModel,
             )
             push!(SimMetaData.TimeSteps, SimMetaData.CurrentTimeStep)
 
