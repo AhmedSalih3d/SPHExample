@@ -8,7 +8,7 @@ using StructArrays
 
 using ..SimulationGeometry
 using ..SimulationMetaDataConfiguration
-using ..MDBCGhostDataConfiguration: MDBCGhostData, ResetGhostData!, InitializeGhostData!
+using ..SPHMDBC: MDBCGhostData, ResetGhostData!, InitializeGhostData!
 
 @inline function LoadCSVPoint(::Val{2}, ::Type{T}, row) where {T}
     P1 = getproperty(row, Symbol("Points:0"))

@@ -5,17 +5,16 @@ module SPHExample
     include("SPHViscosityModels.jl")      
     include("SimulationGeometry.jl")
     include("ProduceHDFVTK.jl")    
-    include("MDBCGhostDataConfiguration.jl");
     include("SimulationMetaDataConfiguration.jl");
     include("SimulationEquations.jl");
     include("TimeStepping.jl");       
     include("SimulationConstantsConfiguration.jl");
     include("SimulationLoggerConfiguration.jl");
-    include("PreProcess.jl");
-    include("OpenExternalPrograms.jl")
     include("SPHDensityDiffusionModels.jl")  
     include("SPHNeighborList.jl")
     include("SPHMDBC.jl")
+    include("PreProcess.jl");
+    include("OpenExternalPrograms.jl")
     include("SPHCellList.jl") #Must be last    
 
     # Re-export desired functions from each submodule
