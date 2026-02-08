@@ -732,6 +732,7 @@ using LinearAlgebra
             dt₂ = dt * 0.5
 
             SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace, ParticleRanges, UniqueCells, CellListIndices)
+            TimeStepping.RefreshRigidRotationParticleIndices!(RigidMotionModel, SimParticles)
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
             BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
             UpdateGhostIndices!(SimMetaData, GhostData, SimParticles)
@@ -761,6 +762,7 @@ using LinearAlgebra
                     # if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
                     if ShouldRebuild
                         @timeit SimMetaData.HourGlass "01a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells, CellListIndices)
+                        TimeStepping.RefreshRigidRotationParticleIndices!(RigidMotionModel, SimParticles)
                         SimMetaData.Δx    = zero(eltype(dρdtI))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                         BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)

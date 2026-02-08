@@ -76,6 +76,8 @@ mutable struct RigidRotationMotionSeries{D,T<:AbstractFloat}
     ParticleIndexByKey::Dict{Tuple{Int,Int},Int}
     InitialPositions::Vector{SVector{D,T}}
     Pivot::SVector{D,T}
+    CurrentParticleIndices::Vector{Int}
+    IndexCacheReady::Bool
     FollowGhostNormals::Bool
     ReferenceGhostNormals::Union{Nothing,Vector{SVector{D,T}}}
     GhostReferenceReady::Bool
@@ -110,11 +112,38 @@ function RigidRotationMotionSeries(
         particle_index_by_key,
         collect(InitialPositions),
         Pivot,
+        Int[],
+        false,
         FollowGhostNormals,
         nothing,
         false,
         1,
     )
+end
+
+@inline function RefreshRigidRotationParticleIndices!(::Nothing, _SimParticles)
+    return nothing
+end
+
+function RefreshRigidRotationParticleIndices!(model::RigidRotationMotionSeries{D,T}, SimParticles) where {D,T<:AbstractFloat}
+    cached_indices = model.CurrentParticleIndices
+    target_len = length(model.ParticleKeys)
+    if length(cached_indices) != target_len
+        resize!(cached_indices, target_len)
+    end
+    fill!(cached_indices, 0)
+
+    @inbounds for particle_index in eachindex(SimParticles.Position)
+        key = (Int(SimParticles.GroupMarker[particle_index]), SimParticles.ID[particle_index])
+        initial_index = get(model.ParticleIndexByKey, key, 0)
+        if initial_index != 0
+            cached_indices[initial_index] = particle_index
+        end
+    end
+
+    @assert all(!iszero, cached_indices) "Could not map all rigid-body particles after neighbor sorting."
+    model.IndexCacheReady = true
+    return nothing
 end
 
 function InitializeGhostNormalReferences!(model::RigidRotationMotionSeries{2,T}, SimParticles) where {T<:AbstractFloat}
@@ -125,19 +154,18 @@ function InitializeGhostNormalReferences!(model::RigidRotationMotionSeries{2,T},
     @assert hasproperty(SimParticles, :GhostNormals) "FollowGhostNormals=true requires SimParticles.GhostNormals."
     @assert hasproperty(SimParticles, :GhostPoints) "FollowGhostNormals=true requires SimParticles.GhostPoints."
 
-    references = fill(zero(SVector{2,T}), length(model.ParticleKeys))
-    found = zeros(Bool, length(model.ParticleKeys))
-
-    @inbounds for particle_index in eachindex(SimParticles.Position)
-        key = (Int(SimParticles.GroupMarker[particle_index]), SimParticles.ID[particle_index])
-        initial_index = get(model.ParticleIndexByKey, key, 0)
-        if initial_index != 0
-            references[initial_index] = SimParticles.GhostNormals[particle_index]
-            found[initial_index] = true
-        end
+    if !model.IndexCacheReady
+        RefreshRigidRotationParticleIndices!(model, SimParticles)
     end
 
-    @assert all(found) "Could not initialize all rigid-body ghost normal references."
+    references = fill(zero(SVector{2,T}), length(model.ParticleKeys))
+
+    @inbounds for initial_index in eachindex(model.CurrentParticleIndices)
+        particle_index = model.CurrentParticleIndices[initial_index]
+        @assert particle_index != 0 "Could not initialize rigid-body ghost normal references."
+        references[initial_index] = SimParticles.GhostNormals[particle_index]
+    end
+
     model.ReferenceGhostNormals = references
     model.GhostReferenceReady = true
     return nothing
@@ -204,31 +232,35 @@ function ApplyRigidRotationMotion!(SimParticles, model::RigidRotationMotionSerie
     theta, omega = EvaluateRotationState(model, T, time)
     ctheta = cos(theta)
     stheta = sin(theta)
+    if !model.IndexCacheReady
+        RefreshRigidRotationParticleIndices!(model, SimParticles)
+    end
     InitializeGhostNormalReferences!(model, SimParticles)
     ghost_refs = model.ReferenceGhostNormals
 
-    @inbounds for particle_index in eachindex(SimParticles.Position)
-        key = (Int(SimParticles.GroupMarker[particle_index]), SimParticles.ID[particle_index])
-        initial_index = get(model.ParticleIndexByKey, key, 0)
-        if initial_index != 0
-            rel0 = model.InitialPositions[initial_index] - model.Pivot
-            rel = SVector{2,T}(
-                ctheta * rel0[1] - stheta * rel0[2],
-                stheta * rel0[1] + ctheta * rel0[2],
+    @inbounds for initial_index in eachindex(model.CurrentParticleIndices)
+        particle_index = model.CurrentParticleIndices[initial_index]
+        if particle_index == 0
+            continue
+        end
+
+        rel0 = model.InitialPositions[initial_index] - model.Pivot
+        rel = SVector{2,T}(
+            ctheta * rel0[1] - stheta * rel0[2],
+            stheta * rel0[1] + ctheta * rel0[2],
+        )
+
+        SimParticles.Position[particle_index] = model.Pivot + rel
+        SimParticles.Velocity[particle_index] = SVector{2,T}(-omega * rel[2], omega * rel[1])
+
+        if model.FollowGhostNormals && model.GhostReferenceReady && ghost_refs !== nothing
+            normal0 = ghost_refs[initial_index]
+            normal = SVector{2,T}(
+                ctheta * normal0[1] - stheta * normal0[2],
+                stheta * normal0[1] + ctheta * normal0[2],
             )
-
-            SimParticles.Position[particle_index] = model.Pivot + rel
-            SimParticles.Velocity[particle_index] = SVector{2,T}(-omega * rel[2], omega * rel[1])
-
-            if model.FollowGhostNormals && model.GhostReferenceReady && ghost_refs !== nothing
-                normal0 = ghost_refs[initial_index]
-                normal = SVector{2,T}(
-                    ctheta * normal0[1] - stheta * normal0[2],
-                    stheta * normal0[1] + ctheta * normal0[2],
-                )
-                SimParticles.GhostNormals[particle_index] = normal
-                SimParticles.GhostPoints[particle_index] = SimParticles.Position[particle_index] + normal
-            end
+            SimParticles.GhostNormals[particle_index] = normal
+            SimParticles.GhostPoints[particle_index] = SimParticles.Position[particle_index] + normal
         end
     end
 
