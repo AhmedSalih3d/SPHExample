@@ -400,6 +400,10 @@ function FullTimeStep(::SimulationMetaData{D,T,NoShifting,K,B,L}, SimKernel,
     return nothing
 end
 
+@inline free_surface_threshold(::Val{2}, ::Type{T}) where {T} = T(1.5)
+@inline free_surface_threshold(::Val{3}, ::Type{T}) where {T} = T(2.5)
+@inline free_surface_threshold(::Val{D}, ::Type{T}) where {D,T} = T(D) - T(0.5)
+
 function FullTimeStep(::SimulationMetaData{D,T,S,K,B,L}, SimKernel, SimConstants,
                       SimParticles, Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt, FluidAcceleration) where {D,T,S<:ShiftingMode,
                                                                                          K<:KernelOutputMode,
@@ -409,8 +413,8 @@ function FullTimeStep(::SimulationMetaData{D,T,S,K,B,L}, SimKernel, SimConstants
     ParticleType = SimParticles.Type
     AccelerationScalarType = eltype(eltype(Acceleration))
     A = SimConstants.A
-    A_FST = 0
-    A_FSM = length(first(Position))
+    A_FST = free_surface_threshold(Val(D), T)
+    A_FSM = T(length(first(Position)))
     @inbounds @simd ivdep for i in eachindex(Position)
         MotionLimiterFactor = MotionLimiterValue(AccelerationScalarType, ParticleType[i])
         GravityFactor = GravityFactorValue(AccelerationScalarType, ParticleType[i])
@@ -421,12 +425,8 @@ function FullTimeStep(::SimulationMetaData{D,T,S,K,B,L}, SimKernel, SimConstants
         Velocity[i] += Acceleration[i] * dt * MotionLimiterFactor
 
         δxᵢ = zero(Acceleration[i])
-        A_FSC = (∇◌rᵢ[i] - A_FST) / (A_FSM - A_FST)
-        if (∇◌rᵢ[i] - A_FST) < 0
-            δxᵢ = -A_FSC * A * SimKernel.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
-        elseif (∇◌rᵢ[i] - A_FST) >= 0
-            δxᵢ = -A * SimKernel.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
-        end
+        A_FSC = clamp((∇◌rᵢ[i] - A_FST) / (A_FSM - A_FST), zero(T), one(T))
+        δxᵢ = -A_FSC * A * SimKernel.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
 
         Position[i] += (Velocityₙ⁺[i] * dt + δxᵢ) * MotionLimiterFactor
     end

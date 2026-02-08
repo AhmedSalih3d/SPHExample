@@ -170,7 +170,7 @@ let
     Dimensions = 2
     FloatType = Float64
 
-    Resolution = 100
+    Resolution = 200
     Reynolds = 1000.0
     LidVelocity = 1.0
     LidType = FixedMoving
@@ -254,7 +254,7 @@ let
 
     CleanUpSimulationFolder(SimMetaData.SaveLocation)
 
-    SimViscosity = Laminar(ν = KinematicViscosity)
+    SimViscosity = ArtificialViscosity(α = 0.01)  #Laminar(ν = KinematicViscosity)
 
     RunSimulation(
         SimGeometry = SimulationGeometry,

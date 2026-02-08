@@ -177,10 +177,11 @@ function AllocateSupportDataStructures(::SimulationMetaData{D,T,NoShifting,K,B,L
     Positionₙ⁺ = zeros(PositionType, NumberOfPoints)
     ρₙ⁺        = zeros(PositionUnderlyingType, NumberOfPoints)
 
+    Cᵢ   = Vector{PositionUnderlyingType}(undef, 0)
     ∇Cᵢ  = Vector{PositionType}(undef, 0)
     ∇◌rᵢ = Vector{PositionUnderlyingType}(undef, 0)
 
-    return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ
+    return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Cᵢ, ∇Cᵢ, ∇◌rᵢ
 end
 
 function AllocateSupportDataStructures(::SimulationMetaData{D,T,S,K,B,L}, Position) where {D,T,S<:ShiftingMode,
@@ -197,10 +198,11 @@ function AllocateSupportDataStructures(::SimulationMetaData{D,T,S,K,B,L}, Positi
     Positionₙ⁺ = zeros(PositionType, NumberOfPoints)
     ρₙ⁺        = zeros(PositionUnderlyingType, NumberOfPoints)
 
+    Cᵢ   = zeros(PositionUnderlyingType, NumberOfPoints)
     ∇Cᵢ  = zeros(PositionType, NumberOfPoints)
     ∇◌rᵢ = zeros(PositionUnderlyingType, NumberOfPoints)
 
-    return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ
+    return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Cᵢ, ∇Cᵢ, ∇◌rᵢ
 end
 
 function LoadBoundaryNormals(::Val{D}, ::Type{T}, path_mdbc) where {D, T}
