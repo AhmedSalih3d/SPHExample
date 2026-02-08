@@ -72,7 +72,8 @@ end
 mutable struct RigidRotationMotionSeries{D,T<:AbstractFloat}
     Times::Vector{T}
     Angles::Vector{T}
-    ParticleIndices::Vector{Int}
+    ParticleKeys::Vector{Tuple{Int,Int}}
+    ParticleIndexByKey::Dict{Tuple{Int,Int},Int}
     InitialPositions::Vector{SVector{D,T}}
     Pivot::SVector{D,T}
     Cursor::Int
@@ -81,20 +82,27 @@ end
 function RigidRotationMotionSeries(
     Times::AbstractVector{T},
     Angles::AbstractVector{T},
-    ParticleIndices::AbstractVector{Int},
+    ParticleKeys::AbstractVector{Tuple{Int,Int}},
     InitialPositions::AbstractVector{SVector{D,T}},
     Pivot::SVector{D,T},
 ) where {D,T<:AbstractFloat}
     @assert !isempty(Times) "Rigid rotation timeline cannot be empty."
     @assert length(Times) == length(Angles) "Rotation times and angles must have the same length."
-    @assert length(ParticleIndices) == length(InitialPositions) "Rigid rotation particle indices and initial positions must match."
+    @assert length(ParticleKeys) == length(InitialPositions) "Rigid rotation particle keys and initial positions must match."
     times_vector = collect(Times)
     angles_vector = collect(Angles)
+    particle_keys_vector = collect(ParticleKeys)
+    @assert length(unique(particle_keys_vector)) == length(particle_keys_vector) "Rigid rotation particle keys must be unique."
+    particle_index_by_key = Dict{Tuple{Int,Int},Int}()
+    @inbounds for i in eachindex(particle_keys_vector)
+        particle_index_by_key[particle_keys_vector[i]] = i
+    end
     @assert issorted(times_vector) "Rigid rotation times must be sorted in ascending order."
     return RigidRotationMotionSeries{D,T}(
         times_vector,
         angles_vector,
-        collect(ParticleIndices),
+        particle_keys_vector,
+        particle_index_by_key,
         collect(InitialPositions),
         Pivot,
         1,
@@ -163,16 +171,19 @@ function ApplyRigidRotationMotion!(SimParticles, model::RigidRotationMotionSerie
     ctheta = cos(theta)
     stheta = sin(theta)
 
-    @inbounds @simd ivdep for i in eachindex(model.ParticleIndices)
-        particle_index = model.ParticleIndices[i]
-        rel0 = model.InitialPositions[i] - model.Pivot
-        rel = SVector{2,T}(
-            ctheta * rel0[1] + stheta * rel0[2],
-            -stheta * rel0[1] + ctheta * rel0[2],
-        )
+    @inbounds for particle_index in eachindex(SimParticles.Position)
+        key = (Int(SimParticles.GroupMarker[particle_index]), SimParticles.ID[particle_index])
+        initial_index = get(model.ParticleIndexByKey, key, 0)
+        if initial_index != 0
+            rel0 = model.InitialPositions[initial_index] - model.Pivot
+            rel = SVector{2,T}(
+                ctheta * rel0[1] + stheta * rel0[2],
+                -stheta * rel0[1] + ctheta * rel0[2],
+            )
 
-        SimParticles.Position[particle_index] = model.Pivot + rel
-        SimParticles.Velocity[particle_index] = SVector{2,T}(omega * rel[2], -omega * rel[1])
+            SimParticles.Position[particle_index] = model.Pivot + rel
+            SimParticles.Velocity[particle_index] = SVector{2,T}(omega * rel[2], -omega * rel[1])
+        end
     end
 
     return nothing

@@ -163,7 +163,11 @@ let
     FloatType = Float64
 
     # Set to :motion for tank-rotation forcing, or :acceleration for equivalent fluid-frame forcing.
-    DrivingMode = :acceleration
+    DrivingMode = :motion
+    # In :motion mode, use :translation first to isolate rigid-rotation effects.
+    MotionMode = :translation
+    TranslationVelocity = FloatType(0.01)
+    TranslationDirection = SVector{Dimensions,FloatType}(1.0, 0.0)
 
     Dx = 0.002
     # In this codebase, h = k*dx and support radius H = k*h = k^2*dx.
@@ -188,7 +192,7 @@ let
     )
 
     SimulationName = DrivingMode == :motion ?
-        "SloshingTank2DMotionLayers$(BoundaryLayers)" :
+        "SloshingTank2D$(MotionMode)Layers$(BoundaryLayers)" :
         "SloshingTank2DAccLayers$(BoundaryLayers)"
 
     # MDBC normals are generated, but MDBC is enabled by default only in fixed-boundary acceleration mode.
@@ -239,12 +243,19 @@ let
     end
 
     BoundaryType = DrivingMode == :motion ? Moving : Fixed
+    TankMotion = (DrivingMode == :motion && MotionMode == :translation) ? MotionDetails{Dimensions, FloatType}(
+        Velocity = TranslationVelocity,
+        StartTime = zero(FloatType),
+        Duration = SimMetaData.SimulationTime,
+        Direction = TranslationDirection,
+        MovePosition = true,
+    ) : nothing
 
     TankBoundary = Geometry{Dimensions, FloatType}(
         CSVFile = BoundCSV,
         GroupMarker = 1,
         Type = BoundaryType,
-        Motion = nothing,
+        Motion = TankMotion,
     )
 
     Water = Geometry{Dimensions, FloatType}(
@@ -263,25 +274,32 @@ let
     RigidMotionModel = nothing
 
     if DrivingMode == :motion
-        MotionFile = ResolveFirstExistingPath([
-            joinpath(dirname(@__FILE__), "CaseSloshingMotionData.dat"),
-            "W:/DualSPHysics_v5.4/examples/main/05_SloshingTank/CaseSloshingMotionData.dat",
-            "E:/DualSPHysics_v5.4/examples/main/05_SloshingTank/CaseSloshingMotionData.dat",
-        ])
+        if MotionMode == :rotation
+            MotionFile = ResolveFirstExistingPath([
+                joinpath(dirname(@__FILE__), "CaseSloshingMotionData.dat"),
+                "W:/DualSPHysics_v5.4/examples/main/05_SloshingTank/CaseSloshingMotionData.dat",
+                "E:/DualSPHysics_v5.4/examples/main/05_SloshingTank/CaseSloshingMotionData.dat",
+            ])
 
-        MotionTimes, MotionAngles = LoadSloshingMotionAngles(MotionFile, FloatType)
+            MotionTimes, MotionAngles = LoadSloshingMotionAngles(MotionFile, FloatType)
 
-        BoundaryIndices = findall(i -> SimParticles.Type[i] == Moving, eachindex(SimParticles.Type))
-        InitialBoundaryPositions = copy(SimParticles.Position[BoundaryIndices])
-        Pivot = SVector{2,FloatType}(0.0, 0.0)
+            BoundaryIndices = findall(i -> SimParticles.Type[i] == Moving, eachindex(SimParticles.Type))
+            BoundaryKeys = [(Int(SimParticles.GroupMarker[i]), SimParticles.ID[i]) for i in BoundaryIndices]
+            InitialBoundaryPositions = copy(SimParticles.Position[BoundaryIndices])
+            Pivot = SVector{2,FloatType}(0.0, 0.0)
 
-        RigidMotionModel = RigidRotationMotionSeries(
-            MotionTimes,
-            MotionAngles,
-            BoundaryIndices,
-            InitialBoundaryPositions,
-            Pivot,
-        )
+            RigidMotionModel = RigidRotationMotionSeries(
+                MotionTimes,
+                MotionAngles,
+                BoundaryKeys,
+                InitialBoundaryPositions,
+                Pivot,
+            )
+        elseif MotionMode == :translation
+            RigidMotionModel = nothing
+        else
+            error("Unsupported MotionMode=$(MotionMode). Use :translation or :rotation.")
+        end
     else
         AccelerationFile = ResolveFirstExistingPath([
             joinpath(dirname(@__FILE__), "CaseSloshingAccData.csv"),
