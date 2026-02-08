@@ -76,6 +76,9 @@ mutable struct RigidRotationMotionSeries{D,T<:AbstractFloat}
     ParticleIndexByKey::Dict{Tuple{Int,Int},Int}
     InitialPositions::Vector{SVector{D,T}}
     Pivot::SVector{D,T}
+    FollowGhostNormals::Bool
+    ReferenceGhostNormals::Union{Nothing,Vector{SVector{D,T}}}
+    GhostReferenceReady::Bool
     Cursor::Int
 end
 
@@ -85,6 +88,8 @@ function RigidRotationMotionSeries(
     ParticleKeys::AbstractVector{Tuple{Int,Int}},
     InitialPositions::AbstractVector{SVector{D,T}},
     Pivot::SVector{D,T},
+    ;
+    FollowGhostNormals::Bool=false,
 ) where {D,T<:AbstractFloat}
     @assert !isempty(Times) "Rigid rotation timeline cannot be empty."
     @assert length(Times) == length(Angles) "Rotation times and angles must have the same length."
@@ -105,8 +110,37 @@ function RigidRotationMotionSeries(
         particle_index_by_key,
         collect(InitialPositions),
         Pivot,
+        FollowGhostNormals,
+        nothing,
+        false,
         1,
     )
+end
+
+function InitializeGhostNormalReferences!(model::RigidRotationMotionSeries{2,T}, SimParticles) where {T<:AbstractFloat}
+    if !model.FollowGhostNormals || model.GhostReferenceReady
+        return nothing
+    end
+
+    @assert hasproperty(SimParticles, :GhostNormals) "FollowGhostNormals=true requires SimParticles.GhostNormals."
+    @assert hasproperty(SimParticles, :GhostPoints) "FollowGhostNormals=true requires SimParticles.GhostPoints."
+
+    references = fill(zero(SVector{2,T}), length(model.ParticleKeys))
+    found = zeros(Bool, length(model.ParticleKeys))
+
+    @inbounds for particle_index in eachindex(SimParticles.Position)
+        key = (Int(SimParticles.GroupMarker[particle_index]), SimParticles.ID[particle_index])
+        initial_index = get(model.ParticleIndexByKey, key, 0)
+        if initial_index != 0
+            references[initial_index] = SimParticles.GhostNormals[particle_index]
+            found[initial_index] = true
+        end
+    end
+
+    @assert all(found) "Could not initialize all rigid-body ghost normal references."
+    model.ReferenceGhostNormals = references
+    model.GhostReferenceReady = true
+    return nothing
 end
 
 @inline function EvaluateRotationState(::Nothing, ::Type{T}, _time) where {T<:AbstractFloat}
@@ -170,6 +204,8 @@ function ApplyRigidRotationMotion!(SimParticles, model::RigidRotationMotionSerie
     theta, omega = EvaluateRotationState(model, T, time)
     ctheta = cos(theta)
     stheta = sin(theta)
+    InitializeGhostNormalReferences!(model, SimParticles)
+    ghost_refs = model.ReferenceGhostNormals
 
     @inbounds for particle_index in eachindex(SimParticles.Position)
         key = (Int(SimParticles.GroupMarker[particle_index]), SimParticles.ID[particle_index])
@@ -177,12 +213,22 @@ function ApplyRigidRotationMotion!(SimParticles, model::RigidRotationMotionSerie
         if initial_index != 0
             rel0 = model.InitialPositions[initial_index] - model.Pivot
             rel = SVector{2,T}(
-                ctheta * rel0[1] + stheta * rel0[2],
-                -stheta * rel0[1] + ctheta * rel0[2],
+                ctheta * rel0[1] - stheta * rel0[2],
+                stheta * rel0[1] + ctheta * rel0[2],
             )
 
             SimParticles.Position[particle_index] = model.Pivot + rel
-            SimParticles.Velocity[particle_index] = SVector{2,T}(omega * rel[2], -omega * rel[1])
+            SimParticles.Velocity[particle_index] = SVector{2,T}(-omega * rel[2], omega * rel[1])
+
+            if model.FollowGhostNormals && model.GhostReferenceReady && ghost_refs !== nothing
+                normal0 = ghost_refs[initial_index]
+                normal = SVector{2,T}(
+                    ctheta * normal0[1] - stheta * normal0[2],
+                    stheta * normal0[1] + ctheta * normal0[2],
+                )
+                SimParticles.GhostNormals[particle_index] = normal
+                SimParticles.GhostPoints[particle_index] = SimParticles.Position[particle_index] + normal
+            end
         end
     end
 

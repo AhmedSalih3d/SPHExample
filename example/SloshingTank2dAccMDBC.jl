@@ -165,7 +165,9 @@ let
     # Set to :motion for tank-rotation forcing, or :acceleration for equivalent fluid-frame forcing.
     DrivingMode = :motion
     # In :motion mode, use :translation first to isolate rigid-rotation effects.
-    MotionMode = :translation
+    MotionMode = :rotation
+    RigidGeometryMotionMode = :FollowMDBCNormals
+    EnableMDBCInRigidMotion = true
     TranslationVelocity = FloatType(0.01)
     TranslationDirection = SVector{Dimensions,FloatType}(1.0, 0.0)
 
@@ -195,8 +197,10 @@ let
         "SloshingTank2D$(MotionMode)Layers$(BoundaryLayers)" :
         "SloshingTank2DAccLayers$(BoundaryLayers)"
 
-    # MDBC normals are generated, but MDBC is enabled by default only in fixed-boundary acceleration mode.
-    UseMDBC = (DrivingMode == :acceleration)
+    # MDBC can be enabled for rigid motion as well. In that case, use
+    # `RigidGeometryMotionMode = :FollowMDBCNormals` so ghost normals/points rotate with the boundary.
+    UseMDBC = (DrivingMode == :acceleration) ||
+              (DrivingMode == :motion && MotionMode == :rotation && EnableMDBCInRigidMotion)
 
     SimConstants = DrivingMode == :motion ?
         SimulationConstants{FloatType}(
@@ -294,6 +298,7 @@ let
                 BoundaryKeys,
                 InitialBoundaryPositions,
                 Pivot,
+                FollowGhostNormals = UseMDBC && (RigidGeometryMotionMode == :FollowMDBCNormals),
             )
         elseif MotionMode == :translation
             RigidMotionModel = nothing
