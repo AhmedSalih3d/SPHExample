@@ -110,41 +110,15 @@ function GenerateSloshingTankCSVs(
     return BoundFile, FluidFile, GhostFile
 end
 
-function ResolveFirstExistingPath(Candidates)
-    for Path in Candidates
-        if isfile(Path)
-            return Path
-        end
-    end
-    return nothing
-end
-
 function EnsureSloshingAccelerationFile(
-    InputFolder::String;
-    ForceRegenerate::Bool=false,
-    DualSPHysicsCaseFolders=(
-        "W:/DualSPHysics_v5.4/examples/main/05_SloshingTank",
-        "E:/DualSPHysics_v5.4/examples/main/05_SloshingTank",
-    ),
+    InputFolder::String,
 )
-    ForcingFolder = joinpath(InputFolder, "forcing")
-    AccelerationFile = joinpath(ForcingFolder, "CaseSloshingAccData.csv")
+    AccelerationFile = joinpath(InputFolder, "CaseSloshingAccData.csv")
 
-    if !ForceRegenerate && isfile(AccelerationFile)
-        return AccelerationFile
+    if !isfile(AccelerationFile)
+        error("Missing local sloshing acceleration file: $(AccelerationFile).")
     end
 
-    mkpath(ForcingFolder)
-
-    SourceCandidates = String[joinpath(dirname(@__FILE__), "CaseSloshingAccData.csv")]
-    append!(SourceCandidates, [joinpath(Folder, "CaseSloshingAccData.csv") for Folder in DualSPHysicsCaseFolders])
-    SourceAccelerationFile = ResolveFirstExistingPath(SourceCandidates)
-
-    if SourceAccelerationFile === nothing
-        error("Could not find benchmark sloshing acceleration file. Checked paths:\n$(join(SourceCandidates, '\n'))")
-    end
-
-    cp(SourceAccelerationFile, AccelerationFile; force=true)
     return AccelerationFile
 end
 
@@ -200,7 +174,7 @@ let
         mkpath(SimMetaData.SaveLocation)
     end
 
-    AccelerationFile = EnsureSloshingAccelerationFile(InputFolder; ForceRegenerate = false)
+    AccelerationFile = EnsureSloshingAccelerationFile(InputFolder)
 
     TankBoundary = Geometry{Dimensions, FloatType}(
         CSVFile = BoundCSV,

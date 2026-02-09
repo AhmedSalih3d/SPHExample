@@ -110,41 +110,15 @@ function GenerateSloshingTankCSVs(
     return BoundFile, FluidFile, GhostFile
 end
 
-function ResolveFirstExistingPath(Candidates)
-    for Path in Candidates
-        if isfile(Path)
-            return Path
-        end
-    end
-    return nothing
-end
-
 function EnsureSloshingMotionFile(
-    InputFolder::String;
-    ForceRegenerate::Bool=false,
-    DualSPHysicsCaseFolders=(
-        "W:/DualSPHysics_v5.4/examples/main/05_SloshingTank",
-        "E:/DualSPHysics_v5.4/examples/main/05_SloshingTank",
-    ),
+    InputFolder::String,
 )
-    ForcingFolder = joinpath(InputFolder, "forcing")
-    MotionFile = joinpath(ForcingFolder, "CaseSloshingMotionData.dat")
+    MotionFile = joinpath(InputFolder, "CaseSloshingMotionData.dat")
 
-    if !ForceRegenerate && isfile(MotionFile)
-        return MotionFile
+    if !isfile(MotionFile)
+        error("Missing local sloshing motion file: $(MotionFile).")
     end
 
-    mkpath(ForcingFolder)
-
-    SourceCandidates = String[joinpath(dirname(@__FILE__), "CaseSloshingMotionData.dat")]
-    append!(SourceCandidates, [joinpath(Folder, "CaseSloshingMotionData.dat") for Folder in DualSPHysicsCaseFolders])
-    SourceMotionFile = ResolveFirstExistingPath(SourceCandidates)
-
-    if SourceMotionFile === nothing
-        error("Could not find benchmark sloshing motion file. Checked paths:\n$(join(SourceCandidates, '\n'))")
-    end
-
-    cp(SourceMotionFile, MotionFile; force=true)
     return MotionFile
 end
 
@@ -222,7 +196,7 @@ let
         mkpath(SimMetaData.SaveLocation)
     end
 
-    MotionFile = EnsureSloshingMotionFile(InputFolder; ForceRegenerate = false)
+    MotionFile = EnsureSloshingMotionFile(InputFolder)
     MotionTimes, MotionAngles = LoadSloshingMotionAngles(MotionFile, FloatType)
 
     TankBoundary = Geometry{Dimensions, FloatType}(
