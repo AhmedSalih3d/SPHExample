@@ -39,9 +39,13 @@ module SPHExample
     using .ProduceHDFVTK
     export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure, AppendVTKHDFData, SaveCellGridVTKHDF, AppendVTKHDFGridData, SetupVTKOutput
 
-    using .TimeStepping: Δt, FluidAccelerationSeries, EvaluateFluidAcceleration,
+    using .TimeStepping: Δt, FluidAccelerationSeries, FluidAccelerationByGroup, LoadFluidAccelerationSeriesCSV, LoadFluidAccelerationByGroupCSV,
+                         FluidAccelerationInputState, FluidAccelerationInputSeries, FluidAccelerationInputByGroup,
+                         LoadFluidAccelerationInputSeriesCSV, LoadFluidAccelerationInputByGroupCSV, EvaluateFluidAcceleration,
                          RigidRotationMotionSeries, EvaluateRotationState, ApplyRigidRotationMotion!
-    export Δt, FluidAccelerationSeries, EvaluateFluidAcceleration,
+    export Δt, FluidAccelerationSeries, FluidAccelerationByGroup, LoadFluidAccelerationSeriesCSV, LoadFluidAccelerationByGroupCSV,
+                         FluidAccelerationInputState, FluidAccelerationInputSeries, FluidAccelerationInputByGroup,
+                         LoadFluidAccelerationInputSeriesCSV, LoadFluidAccelerationInputByGroupCSV, EvaluateFluidAcceleration,
            RigidRotationMotionSeries, EvaluateRotationState, ApplyRigidRotationMotion!
 
     using .SimulationEquations

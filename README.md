@@ -30,6 +30,18 @@ Time-stepping behavior is selected via `RunSimulation(..., SimTimeStepping=...)`
 `SymplecticTimeStepping()` or `SingleNeighborTimeStepping()` depending on the desired update path.
 For non-inertial tank-frame cases, `RunSimulation(..., FluidAccelerationModel=...)`
 accepts a `FluidAccelerationSeries` time history that applies external acceleration to fluid particles.
+For multiple fluid groups with different prescribed accelerations, pass
+`FluidAccelerationByGroup` where each group marker maps to its own `FluidAccelerationSeries`.
+To build those models directly from CSV files (e.g. DualSPHysics `CaseForcesData_*.csv`),
+use `LoadFluidAccelerationSeriesCSV(path, Val(D), FloatType)` and
+`LoadFluidAccelerationByGroupCSV(Dict(group=>path, ...), max_group, Val(D), FloatType)`.
+Defaults are `LinearAccX/LinearAccZ` in 2D and `LinearAccX/LinearAccY/LinearAccZ` in 3D;
+you can override columns with the `AccelerationColumns=(...)` keyword.
+For full DualSPHysics `accinput` style forcing (linear + angular + centre + per-group gravity flag),
+use `FluidAccelerationInputSeries`/`FluidAccelerationInputByGroup` with
+`LoadFluidAccelerationInputSeriesCSV(...)` and `LoadFluidAccelerationInputByGroupCSV(...)`.
+Those loaders default to `AngularAccX/AngularAccY/AngularAccZ` in 3D
+(`AngularAccX/AngularAccZ` in 2D) and allow per-group centre/gravity overrides.
 For prescribed rigid-body tank rotation in 2D, `RunSimulation(..., RigidMotionModel=...)`
 accepts a `RigidRotationMotionSeries` built from angle-versus-time data.
 
@@ -94,9 +106,11 @@ which can be loaded with ParaView 5.12 or newer. Output is written
 asynchronously, so files finish flushing when the simulation completes. The
 `example/LidDrivenCavity2d.jl` script is a lid-driven cavity setup that generates
 its CSV particle layout on first run and then reuses it from `input/`.
-The `example/SloshingTank2dAccMDBC.jl` script reproduces the sloshing benchmark
-with a motion-first setup, three boundary layers for full kernel support, and an optional
-acceleration-frame mode that uses the same input history.
+The `example/SloshingTank2dAccMDBC.jl` script is the acceleration-frame sloshing case
+with three boundary layers for full kernel support.
+The `example/SloshingTank2dRotMDBC.jl` script is the rigid-rotation sloshing case.
+The `example/CaseForces3dAcc.jl` script is a DualSPHysics ExternalForces-style
+3D two-fluid case using per-group linear and angular acceleration files.
 Velocities provided in CSV inputs (e.g., for moving lids or inflows) are loaded
 into the initial particle state.
 For moving boundaries that should keep a prescribed velocity while staying

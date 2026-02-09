@@ -720,6 +720,9 @@ using LinearAlgebra
                                       FluidAccelerationModel::Union{
                                           Nothing,
                                           FluidAccelerationSeries{Dimensions, FloatType},
+                                          FluidAccelerationByGroup{Dimensions, FloatType},
+                                          FluidAccelerationInputSeries{Dimensions, FloatType},
+                                          FluidAccelerationInputByGroup{Dimensions, FloatType},
                                       },
                                       RigidMotionModel::Union{
                                           Nothing,
@@ -822,7 +825,13 @@ using LinearAlgebra
         SimDensityDiffusion::SDD,
         SimTimeStepping::TimeSteppingMode,
         ParticleNormalsPath::Union{Nothing,String} = nothing,
-        FluidAccelerationModel::Union{Nothing, FluidAccelerationSeries{Dimensions, FloatType}} = nothing,
+        FluidAccelerationModel::Union{
+            Nothing,
+            FluidAccelerationSeries{Dimensions, FloatType},
+            FluidAccelerationByGroup{Dimensions, FloatType},
+            FluidAccelerationInputSeries{Dimensions, FloatType},
+            FluidAccelerationInputByGroup{Dimensions, FloatType},
+        } = nothing,
         RigidMotionModel::Union{Nothing, RigidRotationMotionSeries{Dimensions, FloatType}} = nothing
         ) where {Dimensions,FloatType,SMode,KMode,BMode,LMode,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
 

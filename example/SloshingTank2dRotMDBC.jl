@@ -119,7 +119,7 @@ function ResolveFirstExistingPath(Candidates)
     return nothing
 end
 
-function EnsureSloshingAccelerationFile(
+function EnsureSloshingMotionFile(
     InputFolder::String;
     ForceRegenerate::Bool=false,
     DualSPHysicsCaseFolders=(
@@ -128,24 +128,47 @@ function EnsureSloshingAccelerationFile(
     ),
 )
     ForcingFolder = joinpath(InputFolder, "forcing")
-    AccelerationFile = joinpath(ForcingFolder, "CaseSloshingAccData.csv")
+    MotionFile = joinpath(ForcingFolder, "CaseSloshingMotionData.dat")
 
-    if !ForceRegenerate && isfile(AccelerationFile)
-        return AccelerationFile
+    if !ForceRegenerate && isfile(MotionFile)
+        return MotionFile
     end
 
     mkpath(ForcingFolder)
 
-    SourceCandidates = String[joinpath(dirname(@__FILE__), "CaseSloshingAccData.csv")]
-    append!(SourceCandidates, [joinpath(Folder, "CaseSloshingAccData.csv") for Folder in DualSPHysicsCaseFolders])
-    SourceAccelerationFile = ResolveFirstExistingPath(SourceCandidates)
+    SourceCandidates = String[joinpath(dirname(@__FILE__), "CaseSloshingMotionData.dat")]
+    append!(SourceCandidates, [joinpath(Folder, "CaseSloshingMotionData.dat") for Folder in DualSPHysicsCaseFolders])
+    SourceMotionFile = ResolveFirstExistingPath(SourceCandidates)
 
-    if SourceAccelerationFile === nothing
-        error("Could not find benchmark sloshing acceleration file. Checked paths:\n$(join(SourceCandidates, '\n'))")
+    if SourceMotionFile === nothing
+        error("Could not find benchmark sloshing motion file. Checked paths:\n$(join(SourceCandidates, '\n'))")
     end
 
-    cp(SourceAccelerationFile, AccelerationFile; force=true)
-    return AccelerationFile
+    cp(SourceMotionFile, MotionFile; force=true)
+    return MotionFile
+end
+
+function LoadSloshingMotionAngles(MotionFile::String, ::Type{T}) where {T<:AbstractFloat}
+    Times = T[]
+    Angles = T[]
+
+    for line in eachline(MotionFile)
+        text = strip(line)
+        if isempty(text) || startswith(text, "#")
+            continue
+        end
+
+        fields = split(text)
+        if length(fields) < 2
+            continue
+        end
+
+        push!(Times, parse(T, fields[1]))
+        push!(Angles, deg2rad(parse(T, fields[2])))
+    end
+
+    @assert !isempty(Times) "No motion samples were loaded from $(MotionFile)."
+    return Times, Angles
 end
 
 let
@@ -160,7 +183,6 @@ let
     BoundaryLayers = max(3, ceil(Int, KernelScale^2) + 1)
     SoundSpeed = 28.198718
     ArtificialAlpha = 0.05
-    # mDBC ghost point depth inside fluid (in units of dx).
     GhostInsetFactor = 1.0
 
     InputFolder = "./input/sloshing_tank_2d_layers"
@@ -174,13 +196,13 @@ let
         GhostInsetFactor = GhostInsetFactor,
     )
 
-    SimulationName = "SloshingTank2DAccLayers$(BoundaryLayers)"
+    SimulationName = "SloshingTank2DRotationLayers$(BoundaryLayers)"
 
     SimConstants = SimulationConstants{FloatType}(
         dx = Dx,
         ρ₀ = 1000.0,
         c₀ = SoundSpeed,
-        g = 0.0,
+        g = 9.81,
         δᵩ = 0.1,
         CFL = 0.20,
     )
@@ -200,12 +222,13 @@ let
         mkpath(SimMetaData.SaveLocation)
     end
 
-    AccelerationFile = EnsureSloshingAccelerationFile(InputFolder; ForceRegenerate = false)
+    MotionFile = EnsureSloshingMotionFile(InputFolder; ForceRegenerate = false)
+    MotionTimes, MotionAngles = LoadSloshingMotionAngles(MotionFile, FloatType)
 
     TankBoundary = Geometry{Dimensions, FloatType}(
         CSVFile = BoundCSV,
         GroupMarker = 1,
-        Type = Fixed,
+        Type = Moving,
         Motion = nothing,
     )
 
@@ -219,25 +242,20 @@ let
     SimulationGeometry = [TankBoundary, Water]
     SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaData)
     SimLogger = SimulationLogger(SimMetaData.SaveLocation)
-    SimKernel = SPHKernelInstance{Dimensions, FloatType}(WendlandC2();  h = 1.3 * Dx, k = KernelScale)
+    SimKernel = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); h = 1.3 * Dx, k = KernelScale)
 
-    GroupModelCount = maximum(geom.GroupMarker for geom in SimulationGeometry)
-    FluidAccelerationFilesByGroup = Dict{Int,String}()
-    for geom in SimulationGeometry
-        if geom.Type == Fluid
-            # Assign per-fluid timelines by group marker.
-            # Example for DualSPHysics ExternalForces:
-            # FluidAccelerationFilesByGroup[2] = "E:/DualSPHysics_v5.4/examples/main/04_ExternalForces/CaseForcesData_0.csv"
-            # FluidAccelerationFilesByGroup[3] = "E:/DualSPHysics_v5.4/examples/main/04_ExternalForces/CaseForcesData_1.csv"
-            FluidAccelerationFilesByGroup[geom.GroupMarker] = AccelerationFile
-        end
-    end
+    BoundaryIndices = findall(i -> SimParticles.Type[i] == Moving, eachindex(SimParticles.Type))
+    BoundaryKeys = [(Int(SimParticles.GroupMarker[i]), SimParticles.ID[i]) for i in BoundaryIndices]
+    InitialBoundaryPositions = copy(SimParticles.Position[BoundaryIndices])
+    Pivot = SVector{2,FloatType}(0.0, 0.0)
 
-    FluidAccelerationModel = LoadFluidAccelerationByGroupCSV(
-        FluidAccelerationFilesByGroup,
-        GroupModelCount,
-        Val(Dimensions),
-        FloatType,
+    RigidMotionModel = RigidRotationMotionSeries(
+        MotionTimes,
+        MotionAngles,
+        BoundaryKeys,
+        InitialBoundaryPositions,
+        Pivot,
+        FollowGhostNormals = true,
     )
 
     CleanUpSimulationFolder(SimMetaData.SaveLocation)
@@ -253,6 +271,6 @@ let
         SimDensityDiffusion = LinearDensityDiffusion(),
         SimTimeStepping = SingleNeighborTimeStepping(),
         ParticleNormalsPath = GhostCSV,
-        FluidAccelerationModel = FluidAccelerationModel,
+        RigidMotionModel = RigidMotionModel,
     )
 end
