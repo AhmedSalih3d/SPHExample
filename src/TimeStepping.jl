@@ -33,40 +33,56 @@ end
 end
 
 function EvaluateFluidAcceleration(model::FluidAccelerationSeries{D,T}, ::Type{T}, ::Val{D}, time::T) where {D,T<:AbstractFloat}
-    times = model.Times
-    values = model.Values
-    last_index = length(times)
+    TimeSamples = model.Times
+    AccelerationSamples = model.Values
+    LastIndex = length(TimeSamples)
 
-    if time <= times[1]
+    if LastIndex == 1
         model.Cursor = 1
-        return values[1]
-    elseif time >= times[last_index]
-        model.Cursor = last_index
-        return values[last_index]
+        return AccelerationSamples[LastIndex]
     end
 
-    idx = clamp(model.Cursor, 1, last_index - 1)
+    i = LocateTimeInterval(TimeSamples, model.Cursor, time)
+    model.Cursor = i
+
     @inbounds begin
-        while idx < (last_index - 1) && time > times[idx + 1]
-            idx += 1
-        end
-        while idx > 1 && time < times[idx]
-            idx -= 1
-        end
-
-        t0 = times[idx]
-        t1 = times[idx + 1]
-        a0 = values[idx]
-        a1 = values[idx + 1]
-        model.Cursor = idx
-
-        if t1 == t0
+        t0 = TimeSamples[i]
+        t1 = TimeSamples[i + 1]
+        a0 = AccelerationSamples[i]
+        a1 = AccelerationSamples[i + 1]
+        dt = t1 - t0
+        if iszero(dt)
             return a1
         end
 
-        alpha = (time - t0) / (t1 - t0)
+        alpha = clamp((time - t0) / dt, zero(T), one(T))
         return a0 + (a1 - a0) * alpha
     end
+end
+
+@inline function LocateTimeInterval(TimeSamples::AbstractVector{T}, Cursor::Int, time::T) where {T<:AbstractFloat}
+    LastInterval = length(TimeSamples) - 1
+    IntervalIndex = clamp(Cursor, 1, LastInterval)
+    @inbounds begin
+        while IntervalIndex < LastInterval && time > TimeSamples[IntervalIndex + 1]
+            IntervalIndex += 1
+        end
+        while IntervalIndex > 1 && time < TimeSamples[IntervalIndex]
+            IntervalIndex -= 1
+        end
+    end
+    return IntervalIndex
+end
+
+@inline function Rotate2D(Vector2::SVector{2,T}, CosTheta::T, SinTheta::T) where {T<:AbstractFloat}
+    return SVector{2,T}(
+        CosTheta * Vector2[1] - SinTheta * Vector2[2],
+        SinTheta * Vector2[1] + CosTheta * Vector2[2],
+    )
+end
+
+@inline function RotationalVelocity2D(RelativePosition::SVector{2,T}, AngularSpeed::T) where {T<:AbstractFloat}
+    return SVector{2,T}(-AngularSpeed * RelativePosition[2], AngularSpeed * RelativePosition[1])
 end
 
 mutable struct RigidRotationMotionSeries{D,T<:AbstractFloat}
@@ -176,51 +192,33 @@ end
 end
 
 function EvaluateRotationState(model::RigidRotationMotionSeries{D,T}, ::Type{T}, time::T) where {D,T<:AbstractFloat}
-    times = model.Times
-    angles = model.Angles
-    last_index = length(times)
+    TimeSamples = model.Times
+    AngleSamples = model.Angles
+    LastIndex = length(TimeSamples)
 
-    if last_index == 1
+    if LastIndex == 1
         model.Cursor = 1
-        return angles[1], zero(T)
+        return AngleSamples[1], zero(T)
     end
 
-    if time <= times[1]
-        model.Cursor = 1
-        dt = times[2] - times[1]
-        omega = dt == zero(T) ? zero(T) : (angles[2] - angles[1]) / dt
-        return angles[1], omega
-    elseif time >= times[last_index]
-        model.Cursor = last_index - 1
-        dt = times[last_index] - times[last_index - 1]
-        omega = dt == zero(T) ? zero(T) : (angles[last_index] - angles[last_index - 1]) / dt
-        return angles[last_index], omega
-    end
+    i = LocateTimeInterval(TimeSamples, model.Cursor, time)
+    model.Cursor = i
 
-    idx = clamp(model.Cursor, 1, last_index - 1)
     @inbounds begin
-        while idx < (last_index - 1) && time > times[idx + 1]
-            idx += 1
-        end
-        while idx > 1 && time < times[idx]
-            idx -= 1
-        end
-
-        t0 = times[idx]
-        t1 = times[idx + 1]
-        a0 = angles[idx]
-        a1 = angles[idx + 1]
-        model.Cursor = idx
-
-        if t1 == t0
+        t0 = TimeSamples[i]
+        t1 = TimeSamples[i + 1]
+        a0 = AngleSamples[i]
+        a1 = AngleSamples[i + 1]
+        dt = t1 - t0
+        if iszero(dt)
             return a1, zero(T)
         end
 
-        alpha = (time - t0) / (t1 - t0)
-        theta = a0 + (a1 - a0) * alpha
-        omega = (a1 - a0) / (t1 - t0)
+        AngularSpeed = (a1 - a0) / dt
+        alpha = clamp((time - t0) / dt, zero(T), one(T))
+        Angle = a0 + (a1 - a0) * alpha
 
-        return theta, omega
+        return Angle, AngularSpeed
     end
 end
 
@@ -229,38 +227,34 @@ end
 end
 
 function ApplyRigidRotationMotion!(SimParticles, model::RigidRotationMotionSeries{2,T}, ::Type{T}, time::T) where {T<:AbstractFloat}
-    theta, omega = EvaluateRotationState(model, T, time)
-    ctheta = cos(theta)
-    stheta = sin(theta)
+    Angle, AngularSpeed = EvaluateRotationState(model, T, time)
+    CosTheta = cos(Angle)
+    SinTheta = sin(Angle)
     if !model.IndexCacheReady
         RefreshRigidRotationParticleIndices!(model, SimParticles)
     end
     InitializeGhostNormalReferences!(model, SimParticles)
-    ghost_refs = model.ReferenceGhostNormals
+    ReferenceGhostNormals = model.ReferenceGhostNormals
+    ShouldRotateGhostNormals = model.FollowGhostNormals && model.GhostReferenceReady && ReferenceGhostNormals !== nothing
 
     @inbounds for initial_index in eachindex(model.CurrentParticleIndices)
-        particle_index = model.CurrentParticleIndices[initial_index]
-        if particle_index == 0
+        ParticleIndex = model.CurrentParticleIndices[initial_index]
+        if ParticleIndex == 0
             continue
         end
 
-        rel0 = model.InitialPositions[initial_index] - model.Pivot
-        rel = SVector{2,T}(
-            ctheta * rel0[1] - stheta * rel0[2],
-            stheta * rel0[1] + ctheta * rel0[2],
-        )
+        InitialRelativePosition = model.InitialPositions[initial_index] - model.Pivot
+        RelativePosition = Rotate2D(InitialRelativePosition, CosTheta, SinTheta)
+        CurrentPosition = model.Pivot + RelativePosition
 
-        SimParticles.Position[particle_index] = model.Pivot + rel
-        SimParticles.Velocity[particle_index] = SVector{2,T}(-omega * rel[2], omega * rel[1])
+        SimParticles.Position[ParticleIndex] = CurrentPosition
+        SimParticles.Velocity[ParticleIndex] = RotationalVelocity2D(RelativePosition, AngularSpeed)
 
-        if model.FollowGhostNormals && model.GhostReferenceReady && ghost_refs !== nothing
-            normal0 = ghost_refs[initial_index]
-            normal = SVector{2,T}(
-                ctheta * normal0[1] - stheta * normal0[2],
-                stheta * normal0[1] + ctheta * normal0[2],
-            )
-            SimParticles.GhostNormals[particle_index] = normal
-            SimParticles.GhostPoints[particle_index] = SimParticles.Position[particle_index] + normal
+        if ShouldRotateGhostNormals
+            InitialNormal = (ReferenceGhostNormals::Vector{SVector{2,T}})[initial_index]
+            RotatedNormal = Rotate2D(InitialNormal, CosTheta, SinTheta)
+            SimParticles.GhostNormals[ParticleIndex] = RotatedNormal
+            SimParticles.GhostPoints[ParticleIndex] = CurrentPosition + RotatedNormal
         end
     end
 
@@ -334,22 +328,21 @@ function ProgressMotion(SimParticles, dt₂, MotionsDefinition, SimMetaData)
     ParticleMarker = SimParticles.GroupMarker
     ParticleType = SimParticles.Type
     @inbounds @simd ivdep for i in eachindex(Position)
-        if ParticleType[i] == Moving || ParticleType[i] == FixedMoving
-            motion = MotionsDefinition[ParticleMarker[i]]
+        CurrentType = ParticleType[i]
+        IsDrivenType = (CurrentType == Moving) || (CurrentType == FixedMoving)
+        MotionSpec = IsDrivenType ? MotionsDefinition[ParticleMarker[i]] : nothing
+        if MotionSpec !== nothing
+            IsWithinMotionWindow = (MotionSpec.StartTime <= SimMetaData.TotalTime) &&
+                                   (SimMetaData.TotalTime <= (MotionSpec.StartTime + MotionSpec.Duration))
 
-            if motion !== nothing
-                ShouldMove = (motion.StartTime <= SimMetaData.TotalTime) &&
-                             (SimMetaData.TotalTime <= (motion.StartTime + motion.Duration))
+            PrescribedSpeed = MotionSpec.Velocity
+            DirectionVector = MotionSpec.Direction
+            MotionScale = IsWithinMotionWindow ? one(PrescribedSpeed) : zero(PrescribedSpeed)
+            PositionScale = MotionPositionFactorValue(typeof(PrescribedSpeed), CurrentType)
 
-                MotionVel = motion.Velocity
-                MotionDir = motion.Direction
-                MotionFactor = ShouldMove ? one(MotionVel) : zero(MotionVel)
-                PositionFactor = MotionPositionFactorValue(typeof(MotionVel), ParticleType[i])
-
-                Velocity[i] = MotionFactor * MotionVel * MotionDir
-                if motion.MovePosition && ShouldMove && PositionFactor != zero(PositionFactor)
-                    Position[i] += Velocity[i] * dt₂ * PositionFactor
-                end
+            Velocity[i] = MotionScale * PrescribedSpeed * DirectionVector
+            if MotionSpec.MovePosition && IsWithinMotionWindow && PositionScale != zero(PositionScale)
+                Position[i] += Velocity[i] * dt₂ * PositionScale
             end
         end
     end
