@@ -15,6 +15,12 @@ function WriteGhostRow!(Io, Idp, Marker, Nx, Ny, X, Y)
     return nothing
 end
 
+@inline function WallNormalTowardFluid(X, Y, FluidMinX, FluidMaxX, FluidMinY, FluidMaxY)
+    TargetX = clamp(X, FluidMinX, FluidMaxX)
+    TargetY = clamp(Y, FluidMinY, FluidMaxY)
+    return TargetX - X, TargetY - Y
+end
+
 function GenerateLidDrivenCavityCSVs(
     Resolution,
     Dx,
@@ -122,40 +128,52 @@ function GenerateLidDrivenCavityGhostNodes(Resolution, Dx, InputFolder; ForceReg
     Header = "\"Idp\",\"Mk\",\"Normal:0\",\"Normal:1\",\"Normal:2\",\"NormalSize\",\"Points:0\",\"Points:1\",\"Points:2\""
     IdpCounter = 0
     LayerScales = (Dx, 2 * Dx, 3 * Dx)
+    FluidMinX = Dx
+    FluidMaxX = 1.0 - Dx
+    FluidMinY = Dx
+    FluidMaxY = 1.0 - 3 * Dx
 
     open(GhostFile, "w") do Io
         println(Io, Header)
         BottomRows = ((0.0, LayerScales[1]), (-Dx, LayerScales[2]), (-2 * Dx, LayerScales[3]))
-        for (Y, NormalScale) in BottomRows
+        for (Y, _NormalScale) in BottomRows
             for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
-                WriteGhostRow!(Io, IdpCounter, 1, 0.0, NormalScale, X, Y)
+                Nx, Ny = WallNormalTowardFluid(X, Y, FluidMinX, FluidMaxX, FluidMinY, FluidMaxY)
+                WriteGhostRow!(Io, IdpCounter, 1, Nx, Ny, X, Y)
                 IdpCounter += 1
             end
         end
         # Keep the same loop ordering as GenerateLidDrivenCavityCSVs so ghost
         # rows remain aligned by Idp with the vertical wall particle ordering.
         for Y in range(Dx, length=Resolution - 3, step=Dx)
-            WriteGhostRow!(Io, IdpCounter, 1, LayerScales[1], 0.0, 0.0, Y)
+            Nx, Ny = WallNormalTowardFluid(0.0, Y, FluidMinX, FluidMaxX, FluidMinY, FluidMaxY)
+            WriteGhostRow!(Io, IdpCounter, 1, Nx, Ny, 0.0, Y)
             IdpCounter += 1
-            WriteGhostRow!(Io, IdpCounter, 1, -LayerScales[1], 0.0, 1.0, Y)
-            IdpCounter += 1
-        end
-        for Y in range(Dx, length=Resolution - 3, step=Dx)
-            WriteGhostRow!(Io, IdpCounter, 1, LayerScales[2], 0.0, -Dx, Y)
-            IdpCounter += 1
-            WriteGhostRow!(Io, IdpCounter, 1, -LayerScales[2], 0.0, 1.0 + Dx, Y)
+            Nx, Ny = WallNormalTowardFluid(1.0, Y, FluidMinX, FluidMaxX, FluidMinY, FluidMaxY)
+            WriteGhostRow!(Io, IdpCounter, 1, Nx, Ny, 1.0, Y)
             IdpCounter += 1
         end
         for Y in range(Dx, length=Resolution - 3, step=Dx)
-            WriteGhostRow!(Io, IdpCounter, 1, LayerScales[3], 0.0, -2 * Dx, Y)
+            Nx, Ny = WallNormalTowardFluid(-Dx, Y, FluidMinX, FluidMaxX, FluidMinY, FluidMaxY)
+            WriteGhostRow!(Io, IdpCounter, 1, Nx, Ny, -Dx, Y)
             IdpCounter += 1
-            WriteGhostRow!(Io, IdpCounter, 1, -LayerScales[3], 0.0, 1.0 + 2 * Dx, Y)
+            Nx, Ny = WallNormalTowardFluid(1.0 + Dx, Y, FluidMinX, FluidMaxX, FluidMinY, FluidMaxY)
+            WriteGhostRow!(Io, IdpCounter, 1, Nx, Ny, 1.0 + Dx, Y)
+            IdpCounter += 1
+        end
+        for Y in range(Dx, length=Resolution - 3, step=Dx)
+            Nx, Ny = WallNormalTowardFluid(-2 * Dx, Y, FluidMinX, FluidMaxX, FluidMinY, FluidMaxY)
+            WriteGhostRow!(Io, IdpCounter, 1, Nx, Ny, -2 * Dx, Y)
+            IdpCounter += 1
+            Nx, Ny = WallNormalTowardFluid(1.0 + 2 * Dx, Y, FluidMinX, FluidMaxX, FluidMinY, FluidMaxY)
+            WriteGhostRow!(Io, IdpCounter, 1, Nx, Ny, 1.0 + 2 * Dx, Y)
             IdpCounter += 1
         end
         LidRows = ((1.0, LayerScales[3]), (1.0 - Dx, LayerScales[2]), (1.0 - 2 * Dx, LayerScales[1]))
-        for (Y, NormalScale) in LidRows
+        for (Y, _NormalScale) in LidRows
             for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
-                WriteGhostRow!(Io, IdpCounter, 3, 0.0, -NormalScale, X, Y)
+                Nx, Ny = WallNormalTowardFluid(X, Y, FluidMinX, FluidMaxX, FluidMinY, FluidMaxY)
+                WriteGhostRow!(Io, IdpCounter, 3, Nx, Ny, X, Y)
                 IdpCounter += 1
             end
         end
