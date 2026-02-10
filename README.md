@@ -106,6 +106,9 @@ which can be loaded with ParaView 5.12 or newer. Output is written
 asynchronously, so files finish flushing when the simulation completes. The
 `example/LidDrivenCavity2d.jl` script is a lid-driven cavity setup that generates
 its CSV particle layout on first run and then reuses it from `input/`.
+For mDBC runs, toggle `MDBCImplementation` in the example scripts between
+`SimpleMDBC` (original mode) and `UpdatedMDBC` (pressure cloning, no-slip mirror,
+submergence checks, and no-penetration correction).
 The `example/SloshingTank2dAccMDBC.jl` script is the acceleration-frame sloshing case
 with three boundary layers for full kernel support.
 The `example/SloshingTank2dRotMDBC.jl` script is the rigid-rotation sloshing case.

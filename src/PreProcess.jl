@@ -151,6 +151,19 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
         GhostNormals = zeros(PositionType, NumberOfPoints)
         ParticleFields = merge(ParticleFields, (; GhostNormals = GhostNormals))
     end
+    if RequireMDBC
+        MDBCMotionVelocity = zeros(PositionType, NumberOfPoints)
+        MDBCTangentVelocity = zeros(PositionType, NumberOfPoints)
+        MDBCBoundaryFactor = ones(PositionUnderlyingType, NumberOfPoints)
+        ParticleFields = merge(
+            ParticleFields,
+            (;
+                MDBCMotionVelocity = MDBCMotionVelocity,
+                MDBCTangentVelocity = MDBCTangentVelocity,
+                MDBCBoundaryFactor = MDBCBoundaryFactor,
+            ),
+        )
+    end
     ParticleFields = merge(ParticleFields, (; ID = Idp))
 
     SimParticles = StructArray(ParticleFields)
@@ -231,7 +244,7 @@ function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,NoMDBC,L}, SimParticles, 
     return nothing
 end
 
-function LoadMDBCNormals!(SimMetaData::SimulationMetaData{D,T,S,K,SimpleMDBC,L}, SimParticles, path, GhostData::MDBCGhostData) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, L<:LogMode}
+function LoadMDBCNormalsImpl!(::Val{D}, ::Type{T}, SimParticles, path, GhostData::MDBCGhostData) where {D,T}
     if isnothing(path)
         ResetGhostData!(GhostData)
         return nothing
@@ -244,6 +257,14 @@ function LoadMDBCNormals!(SimMetaData::SimulationMetaData{D,T,S,K,SimpleMDBC,L},
     ghost_indices = findall(x -> !iszero(x), SimParticles.GhostPoints)
     InitializeGhostData!(GhostData, ghost_indices)
     return nothing
+end
+
+function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,SimpleMDBC,L}, SimParticles, path, GhostData::MDBCGhostData) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, L<:LogMode}
+    return LoadMDBCNormalsImpl!(Val(D), T, SimParticles, path, GhostData)
+end
+
+function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,UpdatedMDBC,L}, SimParticles, path, GhostData::MDBCGhostData) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, L<:LogMode}
+    return LoadMDBCNormalsImpl!(Val(D), T, SimParticles, path, GhostData)
 end
 
 end

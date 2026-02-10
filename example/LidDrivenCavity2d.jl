@@ -169,6 +169,7 @@ end
 let
     Dimensions = 2
     FloatType = Float64
+    MDBCImplementation = UpdatedMDBC # Set to SimpleMDBC to run original implementation.
 
     Resolution = 200
     Reynolds = 1000.0
@@ -205,7 +206,7 @@ let
         A = 0.0075
     )
 
-    SimMetaData = SimulationMetaData{Dimensions, FloatType, PlanarShifting, NoKernelOutput, SimpleMDBC, StoreLog}(
+    SimMetaData = SimulationMetaData{Dimensions, FloatType, PlanarShifting, NoKernelOutput, MDBCImplementation, StoreLog}(
         SimulationName = "LidDrivenCavityRe$(Int(Reynolds))",
         SaveLocation = "output/LidDrivenCavityRe$(Int(Reynolds))_N$(Resolution)",
         SimulationTime = SimulationTime,

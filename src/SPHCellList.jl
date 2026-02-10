@@ -323,10 +323,34 @@ using LinearAlgebra
     @inline function compute_kernel_output_local(::SimulationMetaData{D,T,S,StoreKernelOutput,B,L},
                                                  kernel_acc, kernel_grad_acc, SimKernel,
                                                  q, ∇ᵢWᵢⱼ) where {D,T,S<:ShiftingMode,
-                                                                 B<:MDBCMode,
-                                                                 L<:LogMode}
+                                                                  B<:MDBCMode,
+                                                                  L<:LogMode}
         Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
         return kernel_acc + Wᵢⱼ, kernel_grad_acc + ∇ᵢWᵢⱼ
+    end
+
+    @inline function ResolveBoundaryMassFactor(::SimulationMetaData{D,T,S,K,B,L}, SimParticles, ParticleType, j) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode,L<:LogMode}
+        return one(eltype(SimParticles.Density))
+    end
+
+    @inline function ResolveBoundaryMassFactor(::SimulationMetaData{D,T,S,K,UpdatedMDBC,L}, SimParticles, ParticleType, j) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,L<:LogMode}
+        return ParticleType[j] == Fluid ? one(eltype(SimParticles.Density)) : SimParticles.MDBCBoundaryFactor[j]
+    end
+
+    @inline function ResolveDensityVelocityAtJ(::SimulationMetaData{D,T,S,K,B,L}, SimParticles, Velocity, ParticleType, j) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode,L<:LogMode}
+        return Velocity[j]
+    end
+
+    @inline function ResolveDensityVelocityAtJ(::SimulationMetaData{D,T,S,K,UpdatedMDBC,L}, SimParticles, Velocity, ParticleType, j) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,L<:LogMode}
+        return ParticleType[j] == Fluid ? Velocity[j] : SimParticles.MDBCMotionVelocity[j]
+    end
+
+    @inline function ResolveViscosityVelocityAtJ(::SimulationMetaData{D,T,S,K,B,L}, SimParticles, Velocity, ParticleType, j) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode,L<:LogMode}
+        return Velocity[j]
+    end
+
+    @inline function ResolveViscosityVelocityAtJ(::SimulationMetaData{D,T,S,K,UpdatedMDBC,L}, SimParticles, Velocity, ParticleType, j) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,L<:LogMode}
+        return ParticleType[j] == Fluid ? Velocity[j] : SimParticles.MDBCTangentVelocity[j]
     end
 
     @inline function ComputeInteractionsPerParticleNoShiftingCore!(
@@ -350,30 +374,37 @@ using LinearAlgebra
             q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
             ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
 
-            ρᵢ = Density[i]
-            ρⱼ = Density[j]
+            InteractionFactor = ResolveBoundaryMassFactor(SimMetaData, SimParticles, ParticleType, j)
+            if InteractionFactor > zero(InteractionFactor)
+                mⱼ = m₀ * InteractionFactor
 
-            vᵢ = Velocity[i]
-            vⱼ = Velocity[j]
-            vᵢⱼ = vᵢ - vⱼ
-            density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
-            dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
+                ρᵢ = Density[i]
+                ρⱼ = Density[j]
 
-            Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)
+                vᵢ = Velocity[i]
+                vⱼ_density = ResolveDensityVelocityAtJ(SimMetaData, SimParticles, Velocity, ParticleType, j)
+                vᵢⱼ_density = vᵢ - vⱼ_density
+                density_symmetric_term = dot(-vᵢⱼ_density, ∇ᵢWᵢⱼ)
+                dρdt⁺ = -ρᵢ * (mⱼ / ρⱼ) * density_symmetric_term
 
-            dρdt_acc += dρdt⁺ + Dᵢ
+                Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)
 
-            Pᵢ = Pressure[i]
-            Pⱼ = Pressure[j]
-            Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
-            f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
-            dvdt⁺ = -m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
+                dρdt_acc += dρdt⁺ + Dᵢ * InteractionFactor
 
-            visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j)
+                Pᵢ = Pressure[i]
+                Pⱼ = Pressure[j]
+                Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
+                f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
+                dvdt⁺ = -mⱼ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
 
-            acc_acc += dvdt⁺ + visc_term
+                vⱼ_visc = ResolveViscosityVelocityAtJ(SimMetaData, SimParticles, Velocity, ParticleType, j)
+                vᵢⱼ_visc = vᵢ - vⱼ_visc
+                visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ_visc, ∇ᵢWᵢⱼ, dᵢⱼ², i, j)
 
-            kernel_acc, kernel_grad_acc = compute_kernel_output_local(SimMetaData, kernel_acc, kernel_grad_acc, SimKernel, q, ∇ᵢWᵢⱼ)
+                acc_acc += dvdt⁺ + visc_term * InteractionFactor
+
+                kernel_acc, kernel_grad_acc = compute_kernel_output_local(SimMetaData, kernel_acc, kernel_grad_acc, SimKernel, q, ∇ᵢWᵢⱼ)
+            end
         end
 
         return dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc
@@ -435,37 +466,44 @@ using LinearAlgebra
             Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
             ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
 
-            ρᵢ = Density[i]
-            ρⱼ = Density[j]
+            InteractionFactor = ResolveBoundaryMassFactor(SimMetaData, SimParticles, ParticleType, j)
+            if InteractionFactor > zero(InteractionFactor)
+                mⱼ = m₀ * InteractionFactor
 
-            vᵢ = Velocity[i]
-            vⱼ = Velocity[j]
-            vᵢⱼ = vᵢ - vⱼ
-            density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
-            dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
+                ρᵢ = Density[i]
+                ρⱼ = Density[j]
 
-            Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)
+                vᵢ = Velocity[i]
+                vⱼ_density = ResolveDensityVelocityAtJ(SimMetaData, SimParticles, Velocity, ParticleType, j)
+                vᵢⱼ_density = vᵢ - vⱼ_density
+                density_symmetric_term = dot(-vᵢⱼ_density, ∇ᵢWᵢⱼ)
+                dρdt⁺ = -ρᵢ * (mⱼ / ρⱼ) * density_symmetric_term
 
-            dρdt_acc += dρdt⁺ + Dᵢ
+                Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)
 
-            Pᵢ = Pressure[i]
-            Pⱼ = Pressure[j]
-            Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
-            f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
-            dvdt⁺ = -m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
+                dρdt_acc += dρdt⁺ + Dᵢ * InteractionFactor
 
-            visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j)
+                Pᵢ = Pressure[i]
+                Pⱼ = Pressure[j]
+                Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
+                f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
+                dvdt⁺ = -mⱼ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
 
-            acc_acc += dvdt⁺ + visc_term
+                vⱼ_visc = ResolveViscosityVelocityAtJ(SimMetaData, SimParticles, Velocity, ParticleType, j)
+                vᵢⱼ_visc = vᵢ - vⱼ_visc
+                visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ_visc, ∇ᵢWᵢⱼ, dᵢⱼ², i, j)
 
-            kernel_acc, kernel_grad_acc = compute_kernel_output_local(SimMetaData, kernel_acc, kernel_grad_acc, SimKernel, q, ∇ᵢWᵢⱼ)
+                acc_acc += dvdt⁺ + visc_term * InteractionFactor
 
-            if ParticleType[i] == Fluid
-                Vⱼ = m₀ / ρⱼ
-                # Concentration and concentration-gradient core sums (Eq. 5.14, 5.15).
-                concentration_acc += Vⱼ * Wᵢⱼ
-                shift_grad_raw_acc += Vⱼ * ∇ᵢWᵢⱼ
-                shift_r_acc += Vⱼ * dot(-xᵢⱼ, ∇ᵢWᵢⱼ)
+                kernel_acc, kernel_grad_acc = compute_kernel_output_local(SimMetaData, kernel_acc, kernel_grad_acc, SimKernel, q, ∇ᵢWᵢⱼ)
+
+                if ParticleType[i] == Fluid
+                    Vⱼ = mⱼ / ρⱼ
+                    # Concentration and concentration-gradient core sums (Eq. 5.14, 5.15).
+                    concentration_acc += Vⱼ * Wᵢⱼ
+                    shift_grad_raw_acc += Vⱼ * ∇ᵢWᵢⱼ
+                    shift_r_acc += Vⱼ * dot(-xᵢⱼ, ∇ᵢWᵢⱼ)
+                end
             end
         end
 
@@ -490,6 +528,15 @@ using LinearAlgebra
         )
 
         return dρdt_acc, acc_acc, concentration_acc, shift_grad_raw_acc, shift_r_acc
+    end
+
+    @inline function LimitDensityAtBoundaryForMode!(::SimulationMetaData{D,T,S,K,UpdatedMDBC,L}, Density, ρ₀, ParticleType) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,L<:LogMode}
+        return nothing
+    end
+
+    @inline function LimitDensityAtBoundaryForMode!(::SimulationMetaData{D,T,S,K,B,L}, Density, ρ₀, ParticleType) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode,L<:LogMode}
+        LimitDensityAtBoundary!(Density, ρ₀, ParticleType)
+        return nothing
     end
 
     function GenerateMotionDetails(SimParticles, SimGeometry, Dimensions, FloatType)
@@ -585,6 +632,25 @@ using LinearAlgebra
         return nothing
     end
 
+    @inline function ApplyMDBCBeforeCorrector!(SimMetaData::SimulationMetaData{D,T,S,K,UpdatedMDBC,L},
+                                                GhostData,
+                                                SimKernel,
+                                                SimConstants,
+                                                SimParticles,
+                                                ParticleRanges) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,L<:LogMode}
+        ApplyMDBCBeforeHalf!(SimMetaData, GhostData, SimKernel, SimConstants, SimParticles, ParticleRanges)
+        return nothing
+    end
+
+    @inline function ApplyMDBCBeforeCorrector!(::SimulationMetaData{D,T,S,K,B,L},
+                                                _GhostData,
+                                                _SimKernel,
+                                                _SimConstants,
+                                                _SimParticles,
+                                                _ParticleRanges) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode,L<:LogMode}
+        return nothing
+    end
+
     function AdvanceTimeStep!(::SymplecticTimeStepping,
                               SimDensityDiffusion::SDD,
                               SimViscosity::SV,
@@ -621,11 +687,12 @@ using LinearAlgebra
 
         @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂, FluidAcceleration)
 
-        @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, ParticleType)
+        @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"           LimitDensityAtBoundaryForMode!(SimMetaData, ρₙ⁺, SimConstants.ρ₀, ParticleType)
 
         @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
 
         @timeit SimMetaData.HourGlass "07 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺, SimConstants)
+        @timeit SimMetaData.HourGlass "07a Apply MDBC before Corrector"          ApplyMDBCBeforeCorrector!(SimMetaData, GhostData, SimKernel, SimConstants, SimParticles, ParticleRanges)
         @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticle!(
             SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
             SimConstants, SimParticles, ParticleRanges, CellListIndices,
@@ -666,7 +733,7 @@ using LinearAlgebra
 
         @timeit SimMetaData.HourGlass "03 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂, FluidAcceleration)
 
-        @timeit SimMetaData.HourGlass "04 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, ParticleType)
+        @timeit SimMetaData.HourGlass "04 Half LimitDensityAtBoundary"           LimitDensityAtBoundaryForMode!(SimMetaData, ρₙ⁺, SimConstants.ρ₀, ParticleType)
 
         @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
 
@@ -801,7 +868,7 @@ using LinearAlgebra
 
                 @timeit SimMetaData.HourGlass "07 Final Density"                         DensityEpsi!(SimParticles.Density, dρdtI, ρₙ⁺, dt)
 
-                @timeit SimMetaData.HourGlass "08 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(SimParticles.Density, SimConstants.ρ₀, ParticleType)
+                @timeit SimMetaData.HourGlass "08 Final LimitDensityAtBoundary"          LimitDensityAtBoundaryForMode!(SimMetaData, SimParticles.Density, SimConstants.ρ₀, ParticleType)
 
                 @timeit SimMetaData.HourGlass "09 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt, CurrentFluidAcceleration)
 
