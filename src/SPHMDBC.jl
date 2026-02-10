@@ -355,9 +355,10 @@ function ApplyUpdatedMDBCCorrection(SimKernel,
 
     ρ₀ = SimConstants.ρ₀
     c₀ = SimConstants.c₀
-    Dx² = SimConstants.dx * SimConstants.dx
     Gravity = GravityVectorForMDBC(first(Position), SimConstants.g)
     DensityFloor = ρ₀ * eltype(Density)(1e-3)
+    DensityMin = ρ₀ * eltype(Density)(0.8)
+    DensityMax = ρ₀ * eltype(Density)(1.2)
 
     @inbounds for i in eachindex(MDBCBoundaryFactor)
         CurrentType = ParticleType[i]
@@ -393,7 +394,7 @@ function ApplyUpdatedMDBCCorrection(SimKernel,
                 DeterminantA = det(A)
                 if abs(DeterminantA) >= eltype(DeterminantA)(1e-3)
                     InverseA = inv(A)
-                    ConditionInf = Dx² * MatrixInfNorm(A) * MatrixInfNorm(InverseA)
+                    ConditionInf = MatrixInfNorm(A) * MatrixInfNorm(InverseA)
                     if ConditionInf <= eltype(ConditionInf)(50)
                         GhostDensityState = InverseA * b
                         GhostDensity = first(GhostDensityState)
@@ -405,6 +406,7 @@ function ApplyUpdatedMDBCCorrection(SimKernel,
                 end
             end
             GhostDensity = isfinite(GhostDensity) ? GhostDensity : ρ₀
+            GhostDensity = clamp(GhostDensity, DensityMin, DensityMax)
 
             GhostPressure = c₀ * c₀ * (GhostDensity - ρ₀)
             dpos = Position[i] - GhostPoints[i]
@@ -413,7 +415,7 @@ function ApplyUpdatedMDBCCorrection(SimKernel,
             BoundaryPressure = GhostPressure + PressureCloneTerm
             BoundaryDensity = ρ₀ + BoundaryPressure / (c₀ * c₀)
             if isfinite(BoundaryDensity)
-                Density[i] = max(BoundaryDensity, DensityFloor)
+                Density[i] = clamp(BoundaryDensity, max(DensityFloor, DensityMin), DensityMax)
             else
                 Density[i] = ρ₀
             end
@@ -503,7 +505,12 @@ function ApplyUpdatedNoPenetration!(SimConstants,
                 VelocityToBoundary = dot(RelativeVelocity, NormalUnit)
                 if VelocityToBoundary < zero(VelocityToBoundary)
                     Ratio = max(abs(NormalDistance / NormalScale), RatioFloor)
-                    Factor = -eltype(Ratio)(4.0) * Ratio + eltype(Ratio)(3.0)
+                    # Keep no-penetration corrective and non-reflective:
+                    # do not inject extra kinetic energy by reversing the
+                    # normal component beyond zero.
+                    Factor = clamp(-eltype(Ratio)(4.0) * Ratio + eltype(Ratio)(3.0),
+                                   zero(eltype(Ratio)),
+                                   one(eltype(Ratio)))
                     VelocityCorrection = -(Factor * VelocityToBoundary) * NormalUnit
                     NoPenShift[j] += VelocityCorrection
                     NoPenCount[j] += one(eltype(NoPenCount))
