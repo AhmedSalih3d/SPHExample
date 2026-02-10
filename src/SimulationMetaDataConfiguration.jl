@@ -55,6 +55,8 @@ struct SingleNeighborTimeStepping <: TimeSteppingMode end
     ExportGridCells::Bool                   = false
     ExportGridCellParticleCounts::Bool      = false
     OpenLogFile::Bool                       = true
+    PointGaussianRadiusFactor::FloatType    = 0.5 ; @assert PointGaussianRadiusFactor > 0
+    PointGaussianRadius::FloatType          = zero(FloatType)
     Δx::FloatType                           = zero(FloatType)
     TimeSteppingMode::TimeSteppingMode      = SingleNeighborTimeStepping()
 end

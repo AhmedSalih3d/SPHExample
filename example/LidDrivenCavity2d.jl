@@ -121,41 +121,39 @@ function GenerateLidDrivenCavityGhostNodes(Resolution, Dx, InputFolder; ForceReg
 
     Header = "\"Idp\",\"Mk\",\"Normal:0\",\"Normal:1\",\"Normal:2\",\"NormalSize\",\"Points:0\",\"Points:1\",\"Points:2\""
     IdpCounter = 0
-    NormalScale = Dx
+    LayerScales = (Dx, 2 * Dx, 3 * Dx)
 
     open(GhostFile, "w") do Io
         println(Io, Header)
-        for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
-            WriteGhostRow!(Io, IdpCounter, 1, 0.0, NormalScale, X, 0.0)
-            IdpCounter += 1
+        BottomRows = ((0.0, LayerScales[1]), (-Dx, LayerScales[2]), (-2 * Dx, LayerScales[3]))
+        for (Y, NormalScale) in BottomRows
+            for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
+                WriteGhostRow!(Io, IdpCounter, 1, 0.0, NormalScale, X, Y)
+                IdpCounter += 1
+            end
         end
-        for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
-            WriteGhostRow!(Io, IdpCounter, 1, 0.0, NormalScale, X, -Dx)
+        # Keep the same loop ordering as GenerateLidDrivenCavityCSVs so ghost
+        # rows remain aligned by Idp with the vertical wall particle ordering.
+        for Y in range(Dx, length=Resolution - 3, step=Dx)
+            WriteGhostRow!(Io, IdpCounter, 1, LayerScales[1], 0.0, 0.0, Y)
             IdpCounter += 1
-        end
-        for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
-            WriteGhostRow!(Io, IdpCounter, 1, 0.0, NormalScale, X, -2 * Dx)
+            WriteGhostRow!(Io, IdpCounter, 1, -LayerScales[1], 0.0, 1.0, Y)
             IdpCounter += 1
         end
         for Y in range(Dx, length=Resolution - 3, step=Dx)
-            WriteGhostRow!(Io, IdpCounter, 1, NormalScale, 0.0, 0.0, Y)
+            WriteGhostRow!(Io, IdpCounter, 1, LayerScales[2], 0.0, -Dx, Y)
             IdpCounter += 1
-            WriteGhostRow!(Io, IdpCounter, 1, -NormalScale, 0.0, 1.0, Y)
-            IdpCounter += 1
-        end
-        for Y in range(Dx, length=Resolution - 3, step=Dx)
-            WriteGhostRow!(Io, IdpCounter, 1, NormalScale, 0.0, -Dx, Y)
-            IdpCounter += 1
-            WriteGhostRow!(Io, IdpCounter, 1, -NormalScale, 0.0, 1.0 + Dx, Y)
+            WriteGhostRow!(Io, IdpCounter, 1, -LayerScales[2], 0.0, 1.0 + Dx, Y)
             IdpCounter += 1
         end
         for Y in range(Dx, length=Resolution - 3, step=Dx)
-            WriteGhostRow!(Io, IdpCounter, 1, NormalScale, 0.0, -2 * Dx, Y)
+            WriteGhostRow!(Io, IdpCounter, 1, LayerScales[3], 0.0, -2 * Dx, Y)
             IdpCounter += 1
-            WriteGhostRow!(Io, IdpCounter, 1, -NormalScale, 0.0, 1.0 + 2 * Dx, Y)
+            WriteGhostRow!(Io, IdpCounter, 1, -LayerScales[3], 0.0, 1.0 + 2 * Dx, Y)
             IdpCounter += 1
         end
-        for Y in (1.0, 1.0 - Dx, 1.0 - 2 * Dx)
+        LidRows = ((1.0, LayerScales[3]), (1.0 - Dx, LayerScales[2]), (1.0 - 2 * Dx, LayerScales[1]))
+        for (Y, NormalScale) in LidRows
             for X in range(-2 * Dx, length=Resolution + 5, step=Dx)
                 WriteGhostRow!(Io, IdpCounter, 3, 0.0, -NormalScale, X, Y)
                 IdpCounter += 1
@@ -183,7 +181,7 @@ let
     Dx = DomainLength / Resolution
     KinematicViscosity = LidVelocity * DomainLength / Reynolds
 
-    SimulationTime = 100.5
+    SimulationTime = 0
     OutputInterval = 0.1
 
     InputFolder = "./input/lid_driven_cavity"

@@ -905,6 +905,7 @@ using LinearAlgebra
         NumberOfPoints = length(SimParticles)
 
         SimMetaData.TimeSteppingMode = SimTimeStepping
+        SimMetaData.PointGaussianRadius = SimConstants.dx * SimMetaData.PointGaussianRadiusFactor
 
         dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Cᵢ, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimMetaData, SimParticles.Position)
 

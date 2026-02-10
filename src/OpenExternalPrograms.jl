@@ -150,6 +150,8 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData, OutputVariableNames;
                             Simulation_vtkhdfDisplay = Show(Simulation_vtkhdf, renderView1, 'GeometryRepresentation')
 
                             Simulation_vtkhdfDisplay.SetRepresentationType('$(representation)')
+                            if "$(representation)" == "Point Gaussian":
+                                Simulation_vtkhdfDisplay.GaussianRadius = $(SimMetaData.PointGaussianRadius)
 
                             # To always load in at correct position
                             # Simulation_vtkhdfDisplay.Position = [0.0, 0.0, 0.0]

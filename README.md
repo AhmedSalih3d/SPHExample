@@ -118,6 +118,9 @@ Velocities provided in CSV inputs (e.g., for moving lids or inflows) are loaded
 into the initial particle state.
 For moving boundaries that should keep a prescribed velocity while staying
 spatially fixed, use the `FixedMoving` particle type.
+ParaView auto-state now defaults `Point Gaussian` radius to
+`PointGaussianRadiusFactor * dx` (default factor `0.5`); override with
+`PointGaussianRadiusFactor` in `SimulationMetaData` when needed.
 To color exported cell grids by particle counts, set
 `ExportGridCellParticleCounts=true` in `SimulationMetaData`. This also adds a
 `ParticleNeighborsPerCell` array that includes each cell's particle count minus
