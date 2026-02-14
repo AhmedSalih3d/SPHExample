@@ -187,7 +187,7 @@ let
     FloatType = Float64
     MDBCImplementation = UpdatedMDBC # Set to SimpleMDBC to run original implementation.
 
-    Resolution = 200
+    Resolution = 100
     Reynolds = 1000.0
     LidVelocity = 1.0
     LidType = FixedMoving
@@ -199,7 +199,7 @@ let
     Dx = DomainLength / Resolution
     KinematicViscosity = LidVelocity * DomainLength / Reynolds
 
-    SimulationTime = 0
+    SimulationTime = 100.5
     OutputInterval = 0.1
 
     InputFolder = "./input/lid_driven_cavity"

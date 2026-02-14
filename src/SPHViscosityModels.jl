@@ -21,14 +21,8 @@ struct ZeroViscosity <: SPHViscosity end
 Monaghan style artificial viscosity for shock capturing and preventing
 particle interpenetration.
 """
-struct ArtificialViscosity{T<:AbstractFloat} <: SPHViscosity
+@with_kw struct ArtificialViscosity{T<:Union{Float32, Float64}} <: SPHViscosity
     α::T
-end
-
-function ArtificialViscosity(; α::Real=0.01)
-    αValue = float(α)
-    @assert αValue > 0 "Artificial viscosity parameter (α) must be positive"
-    return ArtificialViscosity{typeof(αValue)}(αValue)
 end
 
 """
@@ -36,15 +30,10 @@ end
 
 Standard laminar viscosity governed by kinematic viscosity `ν`.
 """
-struct Laminar{T<:AbstractFloat} <: SPHViscosity
+@with_kw struct Laminar{T<:Union{Float32, Float64}} <: SPHViscosity
     ν::T
 end
 
-function Laminar(; ν::Real=1e-6)
-    νValue = float(ν)
-    @assert νValue >= 0 "Kinematic viscosity (ν) must be non-negative"
-    return Laminar{typeof(νValue)}(νValue)
-end
 
 """
     LaminarSPS(; ν=1e-6, SmagorinskyConstant=0.12, BlinConstant=0.0066)
@@ -52,20 +41,11 @@ end
 Hybrid model combining `Laminar` viscosity with a Smagorinsky type
 sub-particle scale turbulence closure.
 """
-struct LaminarSPS{T<:AbstractFloat} <: SPHViscosity
+@with_kw struct LaminarSPS{T<:Union{Float32, Float64}} <: SPHViscosity
     ν::T
-    smagorinsky_constant::T
-    blin_constant::T
+    SmagorinskyConstant::T
+    BlinConstant::T
 end
-
-function LaminarSPS(; ν::Real=1e-6, SmagorinskyConstant::Real=0.12, BlinConstant::Real=0.0066)
-    νValue, SmagorinskyConstantValue, BlinConstantValue = promote(float(ν), float(SmagorinskyConstant), float(BlinConstant))
-    @assert νValue >= 0 "Kinematic viscosity (ν) must be non-negative"
-    @assert SmagorinskyConstantValue >= 0 "Smagorinsky constant must be non-negative"
-    @assert BlinConstantValue >= 0 "Blin constant must be non-negative"
-    return LaminarSPS{typeof(νValue)}(νValue, SmagorinskyConstantValue, BlinConstantValue)
-end
-
 
 """
     compute_viscosity(model, SimKernel, SimConstants, SimParticles,

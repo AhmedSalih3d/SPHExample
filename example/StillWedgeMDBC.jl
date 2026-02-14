@@ -5,11 +5,11 @@ let
     FloatType  = Float64
     MDBCImplementation = UpdatedMDBC # Set to SimpleMDBC to run original implementation.
 
-    Artificialα = 0.01
+    Artificialα = FloatType(0.01)
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.5)
     # SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=43.4, δᵩ = 0.1, CFL=0.2)
 # 
-    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,MDBCImplementation,StoreLog}(
+    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,NoMDBC,StoreLog}(
         SimulationName="StillWedge", 
         SaveLocation="W:/Simulations/StillWedge2D_MDBC",
         SimulationTime=4.0,
@@ -58,7 +58,7 @@ let
         SimKernel           = SimKernel,
         SimLogger           = SimLogger,
         SimParticles        = SimParticles,
-        SimViscosity        = ArtificialViscosity(α = Artificialα),
+        SimViscosity        = ArtificialViscosity{Float64}(α = 0.01),
         SimDensityDiffusion = LinearDensityDiffusion(),
         SimTimeStepping     = SingleNeighborTimeStepping(),
         ParticleNormalsPath = "./input/still_wedge_mdbc/StillWedge_Dp$(SimConstantsWedge.dx)_GhostNodes_Correct.csv"
@@ -101,3 +101,4 @@ let
     # display(plt)
 end
 
+     

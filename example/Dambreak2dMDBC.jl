@@ -7,7 +7,7 @@ let
     Artificialα = 0.02
     SimConstantsDambreak = SimulationConstants{FloatType}(dx=0.02,c₀=88.14487860902641, δᵩ = 0.1, CFL=0.2)
 
-    SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,NoMDBC,StoreLog}(
+    SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
         SimulationName="DamBreak2D",
         SaveLocation="E:/SecondApproach/DamBreak2D_MDBC/",
         SimulationTime=2.0,
