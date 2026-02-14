@@ -43,8 +43,8 @@ sub-particle scale turbulence closure.
 """
 @with_kw struct LaminarSPS{T<:Union{Float32, Float64}} <: SPHViscosity
     ν::T
-    SmagorinskyConstant::T
-    BlinConstant::T
+    SmagorinskyConstant::T = 0.12
+    BlinConstant::T        = 0.0066
 end
 
 """
