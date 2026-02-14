@@ -60,7 +60,7 @@ let
 
     # --- Kernel, viscosity & diffusion ---
     SimKernel = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); h   = 1 * sqrt(3 * dx^2))
-    SimViscosity        = ArtificialViscosity(α = Artificialα)
+    SimViscosity        = ArtificialViscosity{FloatType}(α = Artificialα)
     SimDensityDiffusion = LinearDensityDiffusion()
 
     # --- Run simulation ---
@@ -76,3 +76,4 @@ let
         SimTimeStepping    = SingleNeighborTimeStepping()
     )
 end
+

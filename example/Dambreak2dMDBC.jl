@@ -79,9 +79,10 @@ let
         SimKernel            = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); h = 0.028284),
         SimLogger            = SimLogger,
         SimParticles         = SimParticles,
-        SimViscosity         = ArtificialViscosity(α = Artificialα),
+        SimViscosity         = ArtificialViscosity{FloatType}(α = Artificialα),
         SimDensityDiffusion  = LinearDensityDiffusion(),
         SimTimeStepping      = SingleNeighborTimeStepping(),
         ParticleNormalsPath  = "./input/dam_break_2d/DamBreak2d_Dp0.02_MDBC_GhostNodes_ThreeLayers.csv"
     )
 end
+

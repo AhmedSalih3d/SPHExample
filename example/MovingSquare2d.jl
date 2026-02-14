@@ -81,8 +81,9 @@ let
         SimLogger           = SimLogger,
         SimParticles        = SimParticles,
         SimKernel           = SimKernel,
-        SimViscosity        = LaminarSPS(ν = Kinematicν),
+        SimViscosity        = LaminarSPS{FloatType}(ν = Kinematicν),
         SimDensityDiffusion = LinearDensityDiffusion(),
         SimTimeStepping     = SingleNeighborTimeStepping()
     )
 end
+

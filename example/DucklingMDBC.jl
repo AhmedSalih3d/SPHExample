@@ -44,7 +44,7 @@ let
     SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaDataWedge)
 
     SimKernel           = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); dx = SimConstantsWedge.dx, k = 1.5)
-    SimViscosity        = ArtificialViscosity(α = Artificialα)
+    SimViscosity        = ArtificialViscosity{FloatType}(α = Artificialα)
     SimDensityDiffusion = LinearDensityDiffusion()
 
     SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
@@ -67,3 +67,4 @@ let
 
     return SimParticles
 end
+

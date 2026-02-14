@@ -271,7 +271,7 @@ let
 
     CleanUpSimulationFolder(SimMetaData.SaveLocation)
 
-    SimViscosity = ArtificialViscosity(α = 0.01)  #Laminar(ν = KinematicViscosity)
+    SimViscosity = ArtificialViscosity{FloatType}(α = 0.01)  #Laminar{FloatType}(ν = KinematicViscosity)
 
     RunSimulation(
         SimGeometry = SimulationGeometry,
@@ -286,3 +286,4 @@ let
         ParticleNormalsPath = GhostCSV
     )
 end
+

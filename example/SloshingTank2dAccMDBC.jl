@@ -223,10 +223,11 @@ let
         SimLogger = SimLogger,
         SimParticles = SimParticles,
         SimKernel = SimKernel,
-        SimViscosity = ArtificialViscosity(α = ArtificialAlpha),
+        SimViscosity = ArtificialViscosity{FloatType}(α = ArtificialAlpha),
         SimDensityDiffusion = LinearDensityDiffusion(),
         SimTimeStepping = SingleNeighborTimeStepping(),
         ParticleNormalsPath = GhostCSV,
         FluidAccelerationModel = FluidAccelerationModel,
     )
 end
+
