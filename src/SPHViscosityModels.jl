@@ -99,9 +99,7 @@ end
 # LaminarSPS: with sub-grid scale stresses.
 @inline function compute_viscosity(SimViscosity::LaminarSPS, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
     @unpack m₀, dx = SimConstants
-    ν = SimViscosity.ν
-    SmagorinskyConstant = SimViscosity.smagorinsky_constant
-    BlinConstant = SimViscosity.blin_constant
+    @unpack ν, SmagorinskyConstant, BlinConstant = SimViscosity
     
     t1,t2 = compute_viscosity(Laminar(ν = ν), SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
     
