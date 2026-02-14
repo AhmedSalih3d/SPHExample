@@ -6,7 +6,6 @@ let
     FloatType  = Float64
 
     # ViscoBoundFactor should be 1, but need to understand how to implement it
-    Kinematicν = 1e-6
     SimConstantsMovingSquare = SimulationConstants{FloatType}(dx=0.02,
         c₀=28, 
         δᵩ = 0.1,
@@ -81,7 +80,7 @@ let
         SimLogger           = SimLogger,
         SimParticles        = SimParticles,
         SimKernel           = SimKernel,
-        SimViscosity        = LaminarSPS{FloatType}(ν = Kinematicν),
+        SimViscosity        = LaminarSPS{FloatType}(),
         SimDensityDiffusion = LinearDensityDiffusion(),
         SimTimeStepping     = SingleNeighborTimeStepping()
     )

@@ -4,56 +4,25 @@ using StaticArrays, LinearAlgebra, Parameters
 
 export SPHViscosity, ZeroViscosity, ArtificialViscosity, Laminar, LaminarSPS, compute_viscosity
 
-"""
-    abstract type SPHViscosity end
-
-Abstract supertype for all SPH viscosity models. Concrete models implement
-`compute_viscosity` for their formulation.
-"""
 abstract type SPHViscosity end
 
-"Represents a simulation with no viscous forces."
 struct ZeroViscosity <: SPHViscosity end
 
-"""
-    ArtificialViscosity(; α=0.01)
-
-Monaghan style artificial viscosity for shock capturing and preventing
-particle interpenetration.
-"""
 @with_kw struct ArtificialViscosity{T<:Union{Float32, Float64}} <: SPHViscosity
     α::T
 end
 
-"""
-    Laminar(; ν=1e-6)
-
-Standard laminar viscosity governed by kinematic viscosity `ν`.
-"""
 @with_kw struct Laminar{T<:Union{Float32, Float64}} <: SPHViscosity
-    ν::T
+    ν::T = 1e-6
 end
 
 
-"""
-    LaminarSPS(; ν=1e-6, SmagorinskyConstant=0.12, BlinConstant=0.0066)
-
-Hybrid model combining `Laminar` viscosity with a Smagorinsky type
-sub-particle scale turbulence closure.
-"""
 @with_kw struct LaminarSPS{T<:Union{Float32, Float64}} <: SPHViscosity
-    ν::T
+    ν::T                   = 1e-6
     SmagorinskyConstant::T = 0.12
     BlinConstant::T        = 0.0066
 end
 
-"""
-    compute_viscosity(model, SimKernel, SimConstants, SimParticles,
-                      xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
-
-Compute the viscous acceleration between particles `i` and `j` for the
-selected viscosity `model`. Returns `(Πᵢ, Πⱼ)`.
-"""
 
 # No viscosity: return zero contributions.
 @inline function compute_viscosity(::ZeroViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
