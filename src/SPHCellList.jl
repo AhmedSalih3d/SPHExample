@@ -853,11 +853,11 @@ using LinearAlgebra
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
                 @timeit SimMetaData.HourGlass "Rigid Motion"                             ApplyRigidRotationMotion!(SimParticles, RigidMotionModel, FloatType, SimMetaData.TotalTime)
 
-                CurrentFluidAcceleration = EvaluateFluidAcceleration(
+                @timeit SimMetaData.HourGlass "FluidAcceleration" CurrentFluidAcceleration = EvaluateFluidAcceleration(
                     FluidAccelerationModel, FloatType, Val(Dimensions), SimMetaData.TotalTime,
                 )
 
-                AdvanceTimeStep!(
+                @timeit SimMetaData.HourGlass "AdvanceTimeStep" AdvanceTimeStep!(
                     SimMetaData.TimeSteppingMode,
                     SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, GhostData,
                     SimConstants, SimParticles, ParticleRanges, CellListIndices,
