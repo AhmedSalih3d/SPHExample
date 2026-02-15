@@ -4,7 +4,6 @@ let
     Dimensions = 2
     FloatType  = Float64
 
-    Artificialα = 0.01
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.5)
     # SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=43.4, δᵩ = 0.1, CFL=0.2)
 
@@ -62,7 +61,7 @@ let
         SimKernel           = SimKernel,
         SimLogger           = SimLogger,
         SimParticles        = SimParticles,
-        SimViscosity        = ArtificialViscosity{FloatType}(α = Artificialα),
+        SimViscosity        = ArtificialViscosity{FloatType}(α = 0.01),
         SimDensityDiffusion = LinearDensityDiffusion(),
         SimTimeStepping     = SingleNeighborTimeStepping(),
         ParticleNormalsPath = "./input/still_wedge_middle_square_mdbc/StillWedge_MiddleSquare_Dp$(SimConstantsWedge.dx)_GhostNodes.csv"
