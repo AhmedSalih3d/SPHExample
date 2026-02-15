@@ -7,6 +7,7 @@ module SPHExample
     include("ProduceHDFVTK.jl")    
     include("SimulationMetaDataConfiguration.jl");
     include("SimulationEquations.jl");
+    include("FluidAcceleration.jl")
     include("TimeStepping.jl");       
     include("SimulationConstantsConfiguration.jl");
     include("SimulationLoggerConfiguration.jl");
