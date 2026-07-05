@@ -161,10 +161,12 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData, OutputVariableNames;
                             Simulation_vtkhdfDisplay.RescaleTransferFunctionToDataRange(True, False)
 
                             # show color bar/color legend
-                            Simulation_vtkhdfDisplay.SetScalarBarVisibility(renderView1, True)
                             colorTransferFunction = GetColorTransferFunction('$(color_variable)')
                             colorLegend = GetScalarBar(colorTransferFunction, renderView1)
+                            colorLegend.AutomaticLabelFormat = 0
                             colorLegend.LabelFormat = '{:.0f}'
+                            colorLegend.RangeLabelFormat = '{:.0f}'
+                            Simulation_vtkhdfDisplay.SetScalarBarVisibility(renderView1, True)
                             
                             # Focus the camera on the dataset
                             renderView1.ResetCamera()
