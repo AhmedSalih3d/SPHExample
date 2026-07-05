@@ -60,7 +60,6 @@ let
         SimKernel           = SimKernel,
         SimViscosity        = SimViscosity,
         SimDensityDiffusion = SimDensityDiffusion,
-        SimTimeStepping     = SingleNeighborTimeStepping(),
         ParticleNormalsPath = "./input/case_duckling_mdbc/CaseDuckling_Dp$(SimConstantsWedge.dx)_GhostNodes.csv"
     )
 
