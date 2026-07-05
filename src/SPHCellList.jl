@@ -821,6 +821,12 @@ using LinearAlgebra
         return nothing
     end
     
+
+    ValidateTimeSteppingMode(::SimulationMetaData{D,T,S,K,B,L,TMode}, ::TMode) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode,L<:LogMode,TMode<:TimeSteppingMode} = nothing
+    function ValidateTimeSteppingMode(::SimulationMetaData{D,T,S,K,B,L,TMode}, SimTimeStepping::TimeSteppingMode) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode,L<:LogMode,TMode<:TimeSteppingMode}
+        throw(ArgumentError("SimTimeStepping $(typeof(SimTimeStepping)) does not match SimulationMetaData time-stepping mode $TMode."))
+    end
+
     ###===
     function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}, #Don't further specify type for now
         SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode, TMode},
@@ -834,7 +840,7 @@ using LinearAlgebra
         ParticleNormalsPath::Union{Nothing,String} = nothing
         ) where {Dimensions,FloatType,SMode,KMode,BMode,LMode,TMode<:TimeSteppingMode,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
 
-        @assert SimTimeStepping isa TMode "SimTimeStepping must match the time-stepping mode encoded in SimMetaData."
+        ValidateTimeSteppingMode(SimMetaData, SimTimeStepping)
 
         NumberOfPoints = length(SimParticles)
 
