@@ -35,7 +35,8 @@ struct SingleNeighborTimeStepping <: TimeSteppingMode end
                                            SMode <: ShiftingMode,
                                            KMode <: KernelOutputMode,
                                            BMode <: MDBCMode,
-                                           LMode <: LogMode}
+                                           LMode <: LogMode,
+                                           TMode <: TimeSteppingMode}
     SimulationName::String
     SaveLocation::String
     HourGlass::TimerOutput                  = TimerOutput()
@@ -55,7 +56,26 @@ struct SingleNeighborTimeStepping <: TimeSteppingMode end
     ExportGridCellParticleCounts::Bool      = false
     OpenLogFile::Bool                       = true
     Δx::FloatType                           = zero(FloatType)
-    TimeSteppingMode::TimeSteppingMode      = SingleNeighborTimeStepping()
+    TimeSteppingMode::Type{TMode}           = TMode
+end
+
+_time_stepping_type(::Type{TMode}) where {TMode<:TimeSteppingMode} = TMode
+_time_stepping_type(::_TMode) where {_TMode<:TimeSteppingMode} = _TMode
+
+function _metadata_kwargs_without_time_stepping_mode(kwargs)
+    Kw = NamedTuple(kwargs)
+    Names = Tuple(Name for Name in keys(Kw) if Name !== :TimeSteppingMode)
+    Values = Tuple(Kw[Name] for Name in Names)
+
+    return NamedTuple{Names}(Values)
+end
+
+function SimulationMetaData{D,T,S,K,B,L}(; kwargs...) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode,L<:LogMode}
+    Kw = NamedTuple(kwargs)
+    TMode = _time_stepping_type(get(Kw, :TimeSteppingMode, SingleNeighborTimeStepping))
+    CleanKw = _metadata_kwargs_without_time_stepping_mode(Kw)
+
+    return SimulationMetaData{D,T,S,K,B,L,TMode}(; CleanKw...)
 end
 SimulationMetaData{D,T,S,K,B}(; kwargs...) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode} =
     SimulationMetaData{D,T,S,K,B,NoLog}(; kwargs...)

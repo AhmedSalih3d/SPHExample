@@ -703,9 +703,11 @@ using LinearAlgebra
                                                   MotionDetails{Dimensions, FloatType},
                                               },
                                           },
-                                      }) where {
+                                      },
+                                      ::Type{TMode}) where {
                                                 Dimensions, FloatType, SMode, KMode,
                                                 BMode, LMode,
+                                                TMode<:TimeSteppingMode,
                                                 SDD<:SPHDensityDiffusion,
                                                 SV<:SPHViscosity}
         ParticleType   = SimParticles.Type
@@ -717,8 +719,6 @@ using LinearAlgebra
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
         # This code here is to initialize the first time step for each simulation loop
         dt = SimConstants.CFL * (SimKernel.h / SimConstants.c₀)
-        TimeSteppingMode = SimMetaData.TimeSteppingMode
-
         @no_escape begin
             AccelerationMax = @alloc(FloatType, length(SimParticles.Position))
             dt₂ = dt * 0.5
@@ -727,7 +727,7 @@ using LinearAlgebra
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
             BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
 
-            if TimeSteppingMode isa SingleNeighborTimeStepping
+            if TMode <: SingleNeighborTimeStepping
                 @timeit SimMetaData.HourGlass "00 Init Pressure"                          Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
                 @timeit SimMetaData.HourGlass "00a Init MDBC"                             ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
                 @timeit SimMetaData.HourGlass "00b Init NeighborLoop" NeighborLoopPerParticle!(
@@ -762,7 +762,7 @@ using LinearAlgebra
 
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
 
-                if TimeSteppingMode isa SymplecticTimeStepping
+                if TMode <: SymplecticTimeStepping
                     @timeit SimMetaData.HourGlass "02 Pressure"                              Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
                     @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
 
@@ -837,7 +837,7 @@ using LinearAlgebra
 
         NumberOfPoints = length(SimParticles)
 
-        SimMetaData.TimeSteppingMode = SimTimeStepping
+        TimeSteppingType = typeof(SimTimeStepping)
 
         dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimMetaData, SimParticles.Position)
 
@@ -893,7 +893,7 @@ using LinearAlgebra
                 SimConstants, SimParticles, FullStencil, ParticleRanges,
                 UniqueCells, CellListIndices, SortingScratchSpace,
                 NeighborCellLists, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
-                ∇Cᵢ, ∇◌rᵢ, MotionDefinition,
+                ∇Cᵢ, ∇◌rᵢ, MotionDefinition, TimeSteppingType,
             )
             push!(SimMetaData.TimeSteps, SimMetaData.CurrentTimeStep)
 
