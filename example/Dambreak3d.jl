@@ -73,6 +73,5 @@ let
         SimParticles       = SimParticles,
         SimViscosity       = SimViscosity,
         SimDensityDiffusion= SimDensityDiffusion,
-        SimTimeStepping    = SingleNeighborTimeStepping()
     )
 end
