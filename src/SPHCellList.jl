@@ -688,6 +688,86 @@ using LinearAlgebra
 
     # Per-particle local Δx removed: use single scalar `SimMetaData.Δx`.
 
+    function InitialNeighborLoop!(::SimulationMetaData{D,T,S,K,B,L,SymplecticTimeStepping}, _args...) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode,L<:LogMode}
+        return nothing
+    end
+
+    function InitialNeighborLoop!(SimMetaData::SimulationMetaData{D,T,S,K,B,L,SingleNeighborTimeStepping},
+                                  SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
+                                  SimParticles, ParticleRanges, CellListIndices, NeighborCellLists,
+                                  dρdtI, ∇Cᵢ, ∇◌rᵢ, AccelerationMax, UniqueCells) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode,L<:LogMode}
+        @timeit SimMetaData.HourGlass "00 Init Pressure"                          Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
+        @timeit SimMetaData.HourGlass "00a Init MDBC"                             ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
+        @timeit SimMetaData.HourGlass "00b Init NeighborLoop" NeighborLoopPerParticle!(
+            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+            SimConstants, SimParticles, ParticleRanges, CellListIndices,
+            NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
+        )
+
+        return nothing
+    end
+
+    function HalfStepNeighborLoops!(SimMetaData::SimulationMetaData{D,T,S,K,B,L,SymplecticTimeStepping},
+                                    SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
+                                    SimParticles, ParticleRanges, UniqueCells, CellListIndices,
+                                    NeighborCellLists, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
+                                    ∇Cᵢ, ∇◌rᵢ, AccelerationMax, dt₂, ParticleType,
+                                    MotionDefinition) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode,L<:LogMode}
+        @timeit SimMetaData.HourGlass "02 Pressure"                              Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
+        @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
+
+        @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoopPerParticle!(
+            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+            SimConstants, SimParticles, ParticleRanges, CellListIndices,
+            NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
+        )
+
+        @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
+
+        @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, ParticleType)
+
+        @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
+
+        @timeit SimMetaData.HourGlass "07 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺, SimConstants)
+        @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticle!(
+            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+            SimConstants, SimParticles, ParticleRanges, CellListIndices,
+            NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
+            Position = Positionₙ⁺,
+            Density = ρₙ⁺,
+            Velocity = Velocityₙ⁺,
+        )
+
+        return nothing
+    end
+
+    function HalfStepNeighborLoops!(SimMetaData::SimulationMetaData{D,T,S,K,B,L,SingleNeighborTimeStepping},
+                                    SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
+                                    SimParticles, ParticleRanges, UniqueCells, CellListIndices,
+                                    NeighborCellLists, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
+                                    ∇Cᵢ, ∇◌rᵢ, AccelerationMax, dt₂, ParticleType,
+                                    MotionDefinition) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode,L<:LogMode}
+        @timeit SimMetaData.HourGlass "02 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
+
+        @timeit SimMetaData.HourGlass "03 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
+
+        @timeit SimMetaData.HourGlass "04 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, ParticleType)
+
+        @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
+
+        @timeit SimMetaData.HourGlass "05 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺, SimConstants)
+        @timeit SimMetaData.HourGlass "06 NeighborLoop" NeighborLoopPerParticle!(
+            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+            SimConstants, SimParticles, ParticleRanges, CellListIndices,
+            NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
+            Position = Positionₙ⁺,
+            Density = ρₙ⁺,
+            Velocity = Velocityₙ⁺,
+        )
+
+        return nothing
+    end
+
     @inbounds function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode, TMode},
                                       SimConstants, SimParticles, FullStencil,
@@ -726,15 +806,9 @@ using LinearAlgebra
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
             BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
 
-            if TMode <: SingleNeighborTimeStepping
-                @timeit SimMetaData.HourGlass "00 Init Pressure"                          Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
-                @timeit SimMetaData.HourGlass "00a Init MDBC"                             ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
-                @timeit SimMetaData.HourGlass "00b Init NeighborLoop" NeighborLoopPerParticle!(
-                    SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                    SimConstants, SimParticles, ParticleRanges, CellListIndices,
-                    NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
-                )
-            end
+            InitialNeighborLoop!(SimMetaData, SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
+                                 SimParticles, ParticleRanges, CellListIndices, NeighborCellLists,
+                                 dρdtI, ∇Cᵢ, ∇◌rᵢ, AccelerationMax, UniqueCells)
 
             NextOutputTime = next_output_time(SimMetaData)
             while SimMetaData.TotalTime <= NextOutputTime
@@ -761,50 +835,10 @@ using LinearAlgebra
 
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
 
-                if TMode <: SymplecticTimeStepping
-                    @timeit SimMetaData.HourGlass "02 Pressure"                              Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
-                    @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
-
-                    @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoopPerParticle!(
-                        SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                        SimConstants, SimParticles, ParticleRanges, CellListIndices,
-                        NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
-                    )
-
-                    @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
-
-                    @timeit SimMetaData.HourGlass "06 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, ParticleType)
-
-                    @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
-
-                    @timeit SimMetaData.HourGlass "07 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺, SimConstants)
-                    @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticle!(
-                        SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                        SimConstants, SimParticles, ParticleRanges, CellListIndices,
-                        NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
-                        Position = Positionₙ⁺,
-                        Density = ρₙ⁺,
-                        Velocity = Velocityₙ⁺,
-                    )
-                else
-                    @timeit SimMetaData.HourGlass "02 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
-
-                    @timeit SimMetaData.HourGlass "03 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
-
-                    @timeit SimMetaData.HourGlass "04 Half LimitDensityAtBoundary"           LimitDensityAtBoundary!(ρₙ⁺, SimConstants.ρ₀, ParticleType)
-
-                    @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
-
-                    @timeit SimMetaData.HourGlass "05 Pressure"                              Pressure!(SimParticles.Pressure, ρₙ⁺, SimConstants)
-                    @timeit SimMetaData.HourGlass "06 NeighborLoop" NeighborLoopPerParticle!(
-                        SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                        SimConstants, SimParticles, ParticleRanges, CellListIndices,
-                        NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
-                        Position = Positionₙ⁺,
-                        Density = ρₙ⁺,
-                        Velocity = Velocityₙ⁺,
-                    )
-                end
+                HalfStepNeighborLoops!(SimMetaData, SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
+                                       SimParticles, ParticleRanges, UniqueCells, CellListIndices,
+                                       NeighborCellLists, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
+                                       ∇Cᵢ, ∇◌rᵢ, AccelerationMax, dt₂, ParticleType, MotionDefinition)
 
                 @timeit SimMetaData.HourGlass "07 Final Density"                         DensityEpsi!(SimParticles.Density, dρdtI, ρₙ⁺, dt)
 
@@ -820,13 +854,6 @@ using LinearAlgebra
         
         return nothing
     end
-    
-
-    ValidateTimeSteppingMode(::SimulationMetaData{D,T,S,K,B,L,TMode}, ::TMode) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode,L<:LogMode,TMode<:TimeSteppingMode} = nothing
-    function ValidateTimeSteppingMode(::SimulationMetaData{D,T,S,K,B,L,TMode}, SimTimeStepping::TimeSteppingMode) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode,L<:LogMode,TMode<:TimeSteppingMode}
-        throw(ArgumentError("SimTimeStepping $(typeof(SimTimeStepping)) does not match SimulationMetaData time-stepping mode $TMode."))
-    end
-
     ###===
     function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}, #Don't further specify type for now
         SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode, TMode},
@@ -836,11 +863,8 @@ using LinearAlgebra
         SimParticles::StructArray,
         SimViscosity::SV,
         SimDensityDiffusion::SDD,
-        SimTimeStepping::TimeSteppingMode,
         ParticleNormalsPath::Union{Nothing,String} = nothing
         ) where {Dimensions,FloatType,SMode,KMode,BMode,LMode,TMode<:TimeSteppingMode,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
-
-        ValidateTimeSteppingMode(SimMetaData, SimTimeStepping)
 
         NumberOfPoints = length(SimParticles)
 

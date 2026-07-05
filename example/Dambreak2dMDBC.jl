@@ -79,7 +79,6 @@ let
         SimParticles         = SimParticles,
         SimViscosity         = ArtificialViscosity(),
         SimDensityDiffusion  = LinearDensityDiffusion(),
-        SimTimeStepping      = SingleNeighborTimeStepping(),
         ParticleNormalsPath  = "./input/dam_break_2d/DamBreak2d_Dp0.02_MDBC_GhostNodes_ThreeLayers.csv"
     )
 end
