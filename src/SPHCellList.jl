@@ -1,9 +1,6 @@
-﻿module SPHCellList
+module SPHCellList
 
 export NeighborLoop!, ComputeInteractions!, RunSimulation
-
-using Parameters, FastPow, StaticArrays, Base.Threads
-import LinearAlgebra: dot
 
 using ..SimulationEquations
 using ..SimulationGeometry
@@ -20,17 +17,14 @@ using ..SPHViscosityModels
 using ..SPHDensityDiffusionModels
 using ..SPHNeighborList: BuildNeighborCellLists!, ComputeCellNeighborCounts, ComputeCellParticleCounts, ConstructStencil, ExtractCells!, FindCellIndex, MapFloor, UpdateNeighbors!, UpdateΔx!
 
-using StaticArrays
-using StructArrays: StructArray, foreachfield
-using LinearAlgebra: dot, norm, diagm, diag, cond, det
-using Parameters: @unpack
+using Base.Threads: @threads
+using Bumper: @alloc, @no_escape
 using FastPow: @fastpow
-using Format
-using TimerOutputs
-using HDF5
-using Base.Threads
-using LinearAlgebra
-    using Bumper
+using LinearAlgebra: det, dot, norm
+using Parameters: @unpack
+using StaticArrays: SMatrix, SVector
+using StructArrays: StructArray
+using TimerOutputs: @timeit
 
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{D,T,NoShifting,NoKernelOutput,B,L},
@@ -46,7 +40,7 @@ using LinearAlgebra
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         ParticleType = SimParticles.Type
-        @inbounds Threads.@threads for i in eachindex(Position)
+        @inbounds @threads for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
             CellListIndex = CellListIndices[i]
@@ -104,7 +98,7 @@ using LinearAlgebra
                                                   SV<:SPHViscosity}
         @unpack Kernel, KernelGradient = SimParticles
         ParticleType = SimParticles.Type
-        @inbounds Threads.@threads for i in eachindex(Position)
+        @inbounds @threads for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
             kernel_acc = zero(Kernel[i])
@@ -170,7 +164,7 @@ using LinearAlgebra
                                                   L<:LogMode,SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         ParticleType = SimParticles.Type
-        @inbounds Threads.@threads for i in eachindex(Position)
+        @inbounds @threads for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
             shift_c_acc = zero(∇Cᵢ[i])
@@ -239,7 +233,7 @@ using LinearAlgebra
                                                   SV<:SPHViscosity}
         @unpack Kernel, KernelGradient = SimParticles
         ParticleType = SimParticles.Type
-        @inbounds Threads.@threads for i in eachindex(Position)
+        @inbounds @threads for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
             kernel_acc = zero(Kernel[i])
