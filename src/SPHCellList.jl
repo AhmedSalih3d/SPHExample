@@ -689,7 +689,7 @@ using LinearAlgebra
     # Per-particle local Δx removed: use single scalar `SimMetaData.Δx`.
 
     @inbounds function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
-                                      SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
+                                      SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode, TMode},
                                       SimConstants, SimParticles, FullStencil,
                                       ParticleRanges, UniqueCells, CellListIndices,
                                       SortingScratchSpace,
@@ -703,8 +703,7 @@ using LinearAlgebra
                                                   MotionDetails{Dimensions, FloatType},
                                               },
                                           },
-                                      },
-                                      ::Type{TMode}) where {
+                                      }) where {
                                                 Dimensions, FloatType, SMode, KMode,
                                                 BMode, LMode,
                                                 TMode<:TimeSteppingMode,
@@ -824,7 +823,7 @@ using LinearAlgebra
     
     ###===
     function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}, #Don't further specify type for now
-        SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
+        SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode, TMode},
         SimConstants::SimulationConstants,
         SimKernel::SPHKernelInstance,
         SimLogger::SimulationLogger,
@@ -833,11 +832,11 @@ using LinearAlgebra
         SimDensityDiffusion::SDD,
         SimTimeStepping::TimeSteppingMode,
         ParticleNormalsPath::Union{Nothing,String} = nothing
-        ) where {Dimensions,FloatType,SMode,KMode,BMode,LMode,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
+        ) where {Dimensions,FloatType,SMode,KMode,BMode,LMode,TMode<:TimeSteppingMode,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
+
+        @assert SimTimeStepping isa TMode "SimTimeStepping must match the time-stepping mode encoded in SimMetaData."
 
         NumberOfPoints = length(SimParticles)
-
-        TimeSteppingType = typeof(SimTimeStepping)
 
         dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ = AllocateSupportDataStructures(SimMetaData, SimParticles.Position)
 
@@ -893,7 +892,7 @@ using LinearAlgebra
                 SimConstants, SimParticles, FullStencil, ParticleRanges,
                 UniqueCells, CellListIndices, SortingScratchSpace,
                 NeighborCellLists, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
-                ∇Cᵢ, ∇◌rᵢ, MotionDefinition, TimeSteppingType,
+                ∇Cᵢ, ∇◌rᵢ, MotionDefinition,
             )
             push!(SimMetaData.TimeSteps, SimMetaData.CurrentTimeStep)
 
