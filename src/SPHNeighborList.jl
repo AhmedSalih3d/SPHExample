@@ -1,6 +1,6 @@
 module SPHNeighborList
 
-export ConstructStencil, ExtractCells!, UpdateNeighbors!, BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts, UpdateΔx!, FindCellIndex
+export ConstructStencil, ExtractCells!, UpdateNeighbors!, BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts, UpdateΔx!, FindCellIndex, CompressedNeighborCellLists
 
 using StaticArrays
 
@@ -20,20 +20,67 @@ end
     return 1
 end
 
-function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
-    TargetLen   = length(UniqueCellsView)
-    OriginalLen = length(NeighborCellLists)
-    resize!(NeighborCellLists, TargetLen)
+"""
+    CompressedNeighborCellLists(FullStencil, CellCapacity)
 
-    if TargetLen > OriginalLen
-        @inbounds for Index in (OriginalLen + 1):TargetLen
-            NeighborCellLists[Index] = Int[]
-        end
+Stores per-cell neighbor adjacency in one dense `(max_neighbors, n_cells)` matrix
+plus a count per cell, avoiding one small `Vector{Int}` allocation per cell.
+"""
+mutable struct CompressedNeighborCellLists
+    Indices::Matrix{Int}
+    Counts::Vector{Int}
+end
+
+function CompressedNeighborCellLists(FullStencil, CellCapacity::Integer)
+    MaxNeighborCount = length(FullStencil) - 1
+    return CompressedNeighborCellLists(Matrix{Int}(undef, MaxNeighborCount, CellCapacity), zeros(Int, CellCapacity))
+end
+
+struct NeighborCellIndices
+    Indices::Matrix{Int}
+    CellIndex::Int
+    Count::Int
+end
+
+@inline Base.length(Neighbors::NeighborCellIndices) = Neighbors.Count
+@inline Base.eltype(::Type{NeighborCellIndices}) = Int
+@inline Base.IteratorSize(::Type{NeighborCellIndices}) = Base.HasLength()
+
+@inline function Base.iterate(Neighbors::NeighborCellIndices, State::Int = 1)
+    State > Neighbors.Count && return nothing
+    return (@inbounds(Neighbors.Indices[State, Neighbors.CellIndex]), State + 1)
+end
+
+@inline function Base.getindex(NeighborCellLists::CompressedNeighborCellLists, CellIndex::Integer)
+    return NeighborCellIndices(NeighborCellLists.Indices, CellIndex, @inbounds(NeighborCellLists.Counts[CellIndex]))
+end
+
+function EnsureNeighborCellCapacity!(NeighborCellLists::CompressedNeighborCellLists, CellCount::Integer)
+    if CellCount <= length(NeighborCellLists.Counts)
+        return nothing
     end
 
+    MaxNeighborCount = size(NeighborCellLists.Indices, 1)
+    NewIndices = Matrix{Int}(undef, MaxNeighborCount, CellCount)
+    NewCounts = zeros(Int, CellCount)
+    OldCellCount = length(NeighborCellLists.Counts)
+    @inbounds for CellIndex in 1:OldCellCount
+        NewCounts[CellIndex] = NeighborCellLists.Counts[CellIndex]
+        for NeighborOffset in 1:MaxNeighborCount
+            NewIndices[NeighborOffset, CellIndex] = NeighborCellLists.Indices[NeighborOffset, CellIndex]
+        end
+    end
+    NeighborCellLists.Indices = NewIndices
+    NeighborCellLists.Counts = NewCounts
+    return nothing
+end
+
+function BuildNeighborCellLists!(NeighborCellLists::CompressedNeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
+    TargetLen = length(UniqueCellsView)
+    EnsureNeighborCellCapacity!(NeighborCellLists, TargetLen)
+
     @inbounds for CellIndex in eachindex(UniqueCellsView)
-        Neighbors = NeighborCellLists[CellIndex]
-        empty!(Neighbors)
+        NeighborCount = 0
         Cell = UniqueCellsView[CellIndex]
         for Offset in FullStencil
             NeighborCell = Cell + Offset
@@ -41,12 +88,14 @@ function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView
             StartIndex = ParticleRanges[NeighborIndex]
             EndIndex = ParticleRanges[NeighborIndex + 1] - 1
             if StartIndex <= EndIndex && NeighborIndex != CellIndex
-                push!(Neighbors, NeighborIndex)
+                NeighborCount += 1
+                NeighborCellLists.Indices[NeighborCount, CellIndex] = NeighborIndex
             end
         end
+        NeighborCellLists.Counts[CellIndex] = NeighborCount
     end
 
-    return nothing
+    return NeighborCellLists
 end
 
 """
