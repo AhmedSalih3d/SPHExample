@@ -510,10 +510,11 @@ using TimerOutputs: @timeit
 
             kernel_acc, kernel_grad_acc = compute_kernel_output_local(SimMetaData, kernel_acc, kernel_grad_acc, SimKernel, q, ∇ᵢWᵢⱼ)
 
-            MotionLimiterCondition = ParticleType[i]==Fluid && ParticleType[j]==Fluid #MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
-            Vᵢ = m₀ / ρᵢ
-            shift_c_acc += Vⱼ * Wᵢⱼ * Vᵢ * ∇ᵢWᵢⱼ * MotionLimiterCondition
-            shift_r_acc += Vⱼ * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
+            if ParticleType[i] == Fluid && ParticleType[j] == Fluid
+                Vᵢ = m₀ / ρᵢ
+                shift_c_acc += Vⱼ * Wᵢⱼ * Vᵢ * ∇ᵢWᵢⱼ
+                shift_r_acc += Vⱼ * dot(-xᵢⱼ, ∇ᵢWᵢⱼ)
+            end
         end
 
         return dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc, shift_r_acc
@@ -566,9 +567,10 @@ using TimerOutputs: @timeit
 
             acc_acc += dvdt⁺ + visc_term
 
-            MotionLimiterCondition = ParticleType[i]==Fluid && ParticleType[j]==Fluid #MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
-            shift_c_acc += Vⱼ * Wᵢⱼ * Vⱼ * ∇ᵢWᵢⱼ * MotionLimiterCondition
-            shift_r_acc += Vⱼ * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
+            if ParticleType[i] == Fluid && ParticleType[j] == Fluid
+                shift_c_acc += Vⱼ * Wᵢⱼ * Vⱼ * ∇ᵢWᵢⱼ
+                shift_r_acc += Vⱼ * dot(-xᵢⱼ, ∇ᵢWᵢⱼ)
+            end
         end
 
         return dρdt_acc, acc_acc, shift_c_acc, shift_r_acc
