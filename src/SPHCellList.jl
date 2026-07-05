@@ -399,7 +399,7 @@ using LinearAlgebra
         if xᵢⱼ² <= H²
             dᵢⱼ = sqrt(abs(xᵢⱼ²))
             dᵢⱼ² = dᵢⱼ^2
-            q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
+            q = clamp(dᵢⱼ * h⁻¹, zero(T), T(2))
             ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
 
             ρᵢ = Density[i]
@@ -483,7 +483,7 @@ using LinearAlgebra
         if xᵢⱼ² <= H²
             dᵢⱼ = sqrt(abs(xᵢⱼ²))
             dᵢⱼ² = dᵢⱼ^2
-            q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
+            q = clamp(dᵢⱼ * h⁻¹, zero(T), T(2))
             Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
             ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
 
@@ -538,7 +538,7 @@ using LinearAlgebra
         if xᵢⱼ² <= H²
             dᵢⱼ = sqrt(abs(xᵢⱼ²))
             dᵢⱼ² = dᵢⱼ^2
-            q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
+            q = clamp(dᵢⱼ * h⁻¹, zero(T), T(2))
             Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
             ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
 
@@ -592,7 +592,7 @@ using LinearAlgebra
             xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
             if xᵢⱼ² <= H²
                 dᵢⱼ = sqrt(abs(xᵢⱼ²))
-                q = clamp(dᵢⱼ * h⁻¹, 0.0, 2.0)
+                q = clamp(dᵢⱼ * h⁻¹, zero(FloatType), FloatType(2))
         
                 ρⱼ = Density[j]
 
@@ -648,18 +648,20 @@ using LinearAlgebra
         GhostPoints = SimParticles.GhostPoints
 
         ρ₀ = SimConstants.ρ₀
+        T = eltype(Density)
+        DetTolerance = T(1e-3)
         #https://github.com/DualSPHysics/DualSPHysics/blob/f4fa76ad5083873fa1c6dd3b26cdce89c55a9aeb/src/source/JSphCpu_mdbc.cpp#L347
         @inbounds @simd ivdep for i in eachindex(Position)
             A = Aᵧ[i]
 
             # Since Aᵧ is not reset anymore, we need to check if it is zero
             if !iszero(GhostPoints[i])
-                if abs(det(A)) >= 1e-3
+                if abs(det(A)) >= DetTolerance
                         GhostPointDensity = A \ bᵧ[i]
                         diff = Position[i] - GhostPoints[i]
                         v1   = first(GhostPointDensity) + sum(GhostPointDensity[j+1] * diff[j] for j in eachindex(diff))
                         Density[i] = isnan(v1) ? ρ₀ : v1
-                elseif first(A) > 0.0
+                elseif first(A) > zero(T)
                         v = first(bᵧ[i]) / first(A)
                         Density[i] = isnan(v) ? ρ₀ : v
                 end
