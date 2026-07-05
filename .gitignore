@@ -15,3 +15,7 @@ Manifest.toml
 julia-*.tar.gz
 # Ignore mem files
 *.mem
+# Ignore html files
+*.html
+
+output/
