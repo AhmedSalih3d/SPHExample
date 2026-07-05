@@ -1,4 +1,4 @@
-﻿module SPHCellList
+module SPHCellList
 
 export NeighborLoop!, ComputeInteractions!, RunSimulation
 
@@ -397,8 +397,8 @@ using LinearAlgebra
         xᵢⱼ = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
         if xᵢⱼ² <= H²
-            dᵢⱼ = sqrt(abs(xᵢⱼ²))
-            dᵢⱼ² = dᵢⱼ^2
+            dᵢⱼ² = xᵢⱼ²
+            dᵢⱼ = sqrt(dᵢⱼ²)
             q = clamp(dᵢⱼ * h⁻¹, zero(T), T(2))
             ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
 
@@ -409,7 +409,8 @@ using LinearAlgebra
             vⱼ = Velocity[j]
             vᵢⱼ = vᵢ - vⱼ
             density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
-            dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
+            Vⱼ = m₀ / ρⱼ
+            dρdt⁺ = -ρᵢ * Vⱼ * density_symmetric_term
 
             Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)
 
@@ -417,7 +418,8 @@ using LinearAlgebra
 
             Pᵢ = Pressure[i]
             Pⱼ = Pressure[j]
-            Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
+            ρᵢρⱼ_inv = inv(ρᵢ * ρⱼ)
+            Pfac = (Pᵢ + Pⱼ) * ρᵢρⱼ_inv
             f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
             dvdt⁺ = -m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
 
@@ -481,8 +483,8 @@ using LinearAlgebra
         xᵢⱼ = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
         if xᵢⱼ² <= H²
-            dᵢⱼ = sqrt(abs(xᵢⱼ²))
-            dᵢⱼ² = dᵢⱼ^2
+            dᵢⱼ² = xᵢⱼ²
+            dᵢⱼ = sqrt(dᵢⱼ²)
             q = clamp(dᵢⱼ * h⁻¹, zero(T), T(2))
             Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
             ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
@@ -494,7 +496,8 @@ using LinearAlgebra
             vⱼ = Velocity[j]
             vᵢⱼ = vᵢ - vⱼ
             density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
-            dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
+            Vⱼ = m₀ / ρⱼ
+            dρdt⁺ = -ρᵢ * Vⱼ * density_symmetric_term
 
             Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)
 
@@ -502,7 +505,8 @@ using LinearAlgebra
 
             Pᵢ = Pressure[i]
             Pⱼ = Pressure[j]
-            Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
+            ρᵢρⱼ_inv = inv(ρᵢ * ρⱼ)
+            Pfac = (Pᵢ + Pⱼ) * ρᵢρⱼ_inv
             f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
             dvdt⁺ = -m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
 
@@ -513,8 +517,9 @@ using LinearAlgebra
             kernel_acc, kernel_grad_acc = compute_kernel_output_local(SimMetaData, kernel_acc, kernel_grad_acc, SimKernel, q, ∇ᵢWᵢⱼ)
 
             MotionLimiterCondition = ParticleType[i]==Fluid && ParticleType[j]==Fluid #MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
-            shift_c_acc += (m₀ / ρⱼ) * Wᵢⱼ * (m₀ / ρᵢ) * ∇ᵢWᵢⱼ * MotionLimiterCondition
-            shift_r_acc += (m₀ / ρⱼ) * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
+            Vᵢ = m₀ / ρᵢ
+            shift_c_acc += Vⱼ * Wᵢⱼ * Vᵢ * ∇ᵢWᵢⱼ * MotionLimiterCondition
+            shift_r_acc += Vⱼ * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
         end
 
         return dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc, shift_r_acc
@@ -536,8 +541,8 @@ using LinearAlgebra
         xᵢⱼ = Position[i] - Position[j]
         xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
         if xᵢⱼ² <= H²
-            dᵢⱼ = sqrt(abs(xᵢⱼ²))
-            dᵢⱼ² = dᵢⱼ^2
+            dᵢⱼ² = xᵢⱼ²
+            dᵢⱼ = sqrt(dᵢⱼ²)
             q = clamp(dᵢⱼ * h⁻¹, zero(T), T(2))
             Wᵢⱼ  = @fastpow SPHKernels.Wᵢⱼ(SimKernel, q)
             ∇ᵢWᵢⱼ = @fastpow ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
@@ -549,7 +554,8 @@ using LinearAlgebra
             vⱼ = Velocity[j]
             vᵢⱼ = vᵢ - vⱼ
             density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
-            dρdt⁺ = -ρᵢ * (m₀ / ρⱼ) * density_symmetric_term
+            Vⱼ = m₀ / ρⱼ
+            dρdt⁺ = -ρᵢ * Vⱼ * density_symmetric_term
 
             Dᵢ, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, dᵢⱼ², i, j, ParticleType)
 
@@ -557,7 +563,8 @@ using LinearAlgebra
 
             Pᵢ = Pressure[i]
             Pⱼ = Pressure[j]
-            Pfac = (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
+            ρᵢρⱼ_inv = inv(ρᵢ * ρⱼ)
+            Pfac = (Pᵢ + Pⱼ) * ρᵢρⱼ_inv
             f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
             dvdt⁺ = -m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
 
@@ -566,8 +573,8 @@ using LinearAlgebra
             acc_acc += dvdt⁺ + visc_term
 
             MotionLimiterCondition = ParticleType[i]==Fluid && ParticleType[j]==Fluid #MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
-            shift_c_acc += (m₀ / ρⱼ) * Wᵢⱼ * (m₀ / ρⱼ) * ∇ᵢWᵢⱼ * MotionLimiterCondition
-            shift_r_acc += (m₀ / ρⱼ) * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
+            shift_c_acc += Vⱼ * Wᵢⱼ * Vⱼ * ∇ᵢWᵢⱼ * MotionLimiterCondition
+            shift_r_acc += Vⱼ * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
         end
 
         return dρdt_acc, acc_acc, shift_c_acc, shift_r_acc
