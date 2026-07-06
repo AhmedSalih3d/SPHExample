@@ -718,9 +718,10 @@ using TimerOutputs: @timeit
 
         ###
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-        # Continue from the adaptive time step computed by the previous output
-        # block.  `SimulationLoop` advances only until the next requested output,
-        # so reinitializing `dt` here would make `OutputTimes` part of the
+        # Continue from the adaptive time step computed before the previous output.
+        # If this is the first block, fall back to the initial CFL estimate.
+        dt = SimMetaData.ContinuousTimeStep > zero(FloatType) ? SimMetaData.ContinuousTimeStep : SimConstants.CFL * (SimKernel.h / SimConstants.c₀)
+                dt₂ = dt * 0.5
         # numerical integration instead of only an I/O schedule.
         dt = SimMetaData.CurrentTimeStep > zero(FloatType) ? SimMetaData.CurrentTimeStep : SimConstants.CFL * (SimKernel.h / SimConstants.c₀)
         TimeSteppingMode = SimMetaData.TimeSteppingMode
@@ -797,6 +798,7 @@ using TimerOutputs: @timeit
                         Density = ρₙ⁺,
                         Velocity = Velocityₙ⁺,
                     )
+                SimMetaData.ContinuousTimeStep = dt
                 else
                     @timeit SimMetaData.HourGlass "02 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
 

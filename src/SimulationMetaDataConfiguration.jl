@@ -45,6 +45,7 @@ struct SingleNeighborTimeStepping <: TimeSteppingMode end
     OutputIterationCounter::Int             = 0
     StepsTakenForLastOutput::Int            = 0
     CurrentTimeStep::FloatType              = 0
+    ContinuousTimeStep::FloatType           = 0
     TotalTime::FloatType                    = 0
     SimulationTime::FloatType               = 0
     TimeSteps                               = Vector{FloatType}() 
