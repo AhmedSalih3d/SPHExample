@@ -86,10 +86,10 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData, OutputVariableNames;
                             # import regex library
                             import re
 
-                            # state file generated using paraview version 6.0.0
+                            # state file generated using paraview version 6.1.0
                             import paraview
                             paraview.compatibility.major = 6
-                            paraview.compatibility.minor = 0
+                            paraview.compatibility.minor = 1
                             
                             # Directory containing the .vtkhdf files
                             directory = "$(SimMetaData.SaveLocation)"
@@ -161,6 +161,11 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData, OutputVariableNames;
                             Simulation_vtkhdfDisplay.RescaleTransferFunctionToDataRange(True, False)
 
                             # show color bar/color legend
+                            colorTransferFunction = GetColorTransferFunction('$(color_variable)')
+                            colorLegend = GetScalarBar(colorTransferFunction, renderView1)
+                            colorLegend.AutomaticLabelFormat = 0
+                            colorLegend.LabelFormat = '{:.0f}'
+                            colorLegend.RangeLabelFormat = '{:.0f}'
                             Simulation_vtkhdfDisplay.SetScalarBarVisibility(renderView1, True)
                             
                             # Focus the camera on the dataset
