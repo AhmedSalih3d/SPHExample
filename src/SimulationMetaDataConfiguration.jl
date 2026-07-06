@@ -35,7 +35,8 @@ struct SingleNeighborTimeStepping <: TimeSteppingMode end
                                            SMode <: ShiftingMode,
                                            KMode <: KernelOutputMode,
                                            BMode <: MDBCMode,
-                                           LMode <: LogMode}
+                                           LMode <: LogMode,
+                                           TMode <: TimeSteppingMode}
     SimulationName::String
     SaveLocation::String
     HourGlass::TimerOutput                  = TimerOutput()
@@ -55,8 +56,10 @@ struct SingleNeighborTimeStepping <: TimeSteppingMode end
     ExportGridCellParticleCounts::Bool      = false
     OpenLogFile::Bool                       = true
     Δx::FloatType                           = zero(FloatType)
-    TimeSteppingMode::TimeSteppingMode      = SingleNeighborTimeStepping()
 end
+
+SimulationMetaData{D,T,S,K,B,L}(; kwargs...) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode,L<:LogMode} =
+    SimulationMetaData{D,T,S,K,B,L,SingleNeighborTimeStepping}(; kwargs...)
 SimulationMetaData{D,T,S,K,B}(; kwargs...) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode} =
     SimulationMetaData{D,T,S,K,B,NoLog}(; kwargs...)
 SimulationMetaData{D,T,S,K}(; kwargs...) where {D,T,S<:ShiftingMode,K<:KernelOutputMode} =
