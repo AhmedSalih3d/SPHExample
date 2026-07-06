@@ -718,13 +718,15 @@ using TimerOutputs: @timeit
 
         ###
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-        # This code here is to initialize the first time step for each simulation loop
-        dt = SimConstants.CFL * (SimKernel.h / SimConstants.c₀)
+        # Continue from the adaptive time step computed by the previous output
+        # block.  `SimulationLoop` advances only until the next requested output,
+        # so reinitializing `dt` here would make `OutputTimes` part of the
+        # numerical integration instead of only an I/O schedule.
+        dt = SimMetaData.CurrentTimeStep > zero(FloatType) ? SimMetaData.CurrentTimeStep : SimConstants.CFL * (SimKernel.h / SimConstants.c₀)
         TimeSteppingMode = SimMetaData.TimeSteppingMode
 
         @no_escape begin
             AccelerationMax = @alloc(FloatType, length(SimParticles.Position))
-            dt₂ = dt * 0.5
 
             SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace, ParticleRanges, UniqueCells, CellListIndices)
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
@@ -742,6 +744,7 @@ using TimerOutputs: @timeit
 
             NextOutputTime = next_output_time(SimMetaData)
             while SimMetaData.TotalTime <= NextOutputTime
+                dt₂ = dt * 0.5
                 @timeit SimMetaData.HourGlass "01 Calculate IndexCounter"  begin
 
                     SimMetaData.Δx = UpdateΔx!(SimMetaData.Δx, Positionₙ⁺, SimParticles.Position)
@@ -819,6 +822,7 @@ using TimerOutputs: @timeit
                 @timeit SimMetaData.HourGlass "10 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
 
                 @timeit SimMetaData.HourGlass "11 Update TimeStep"                       dt = UpdateTimeStep(AccelerationMax, SimConstants, SimKernel)
+                SimMetaData.CurrentTimeStep = dt
             end
         end
         
