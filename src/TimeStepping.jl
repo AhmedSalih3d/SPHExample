@@ -33,6 +33,14 @@ function Δt(max_acceleration, SimulationConstants, SPHKernel)
     return CFL * min(dt_speed, dt_force)
 end
 
+@inline function Δt(Position, Velocity, Acceleration, SimulationConstants, SPHKernel)
+    max_acceleration = zero(eltype(first(Acceleration)))
+    @inbounds for a in Acceleration
+        max_acceleration = max(max_acceleration, norm(a))
+    end
+    return Δt(max_acceleration, SimulationConstants, SPHKernel)
+end
+
 """
     UpdateTimeStep(AccelerationMax, SimConstants, SimKernel)
 

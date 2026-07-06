@@ -113,7 +113,7 @@ end
 # Tensile Corrections for specific kernels
 #---------------------------------------------------------------
 @inline function tensile_correction(instance::SPHKernelInstance{<:WendlandC2}, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
-     return zero(eltype(q))
+    return zero(q)
 end
 
 @inline function tensile_correction(instance::SPHKernelInstance{<:CubicSpline}, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx; n = 4)
