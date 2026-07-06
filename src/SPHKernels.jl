@@ -2,7 +2,6 @@ module SPHKernels
 
 using Parameters
 using LinearAlgebra
-using FastPow
 
 export SPHKernel, SPHKernelInstance, WendlandC2, CubicSpline, Wᵢⱼ, ∇Wᵢⱼ, tensile_correction
 
@@ -74,7 +73,9 @@ end
 # Kernel Evaluation Functions
 @inline function Wᵢⱼ(kernel::SPHKernelInstance{<:WendlandC2}, q::T) where {T}
     @unpack αD = kernel
-    return αD * (1 - q/2)^4 * (2q + 1)
+    s = muladd(-q, T(1//2), one(T))
+    s² = s * s
+    return αD * s² * s² * muladd(T(2), q, one(T))
 end
 
 @inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{<:WendlandC2}, q::T, xᵢⱼ) where {T}
@@ -82,13 +83,23 @@ end
     # Subhan Allah, if this math is correct, then η² can be avoided
     # denom = (q * h + η²)
     # factor = αD * 5 * (q - 2)^3 * q / (8 * h * denom)
-    factor = αD * 5 * (q - 2)^3 / (8 * h * h)
+    qₘ₂ = q - T(2)
+    factor = αD * T(5//8) * qₘ₂ * qₘ₂ * qₘ₂ / (h * h)
     return factor * xᵢⱼ
 end
 
 @inline function Wᵢⱼ(kernel::SPHKernelInstance{<:CubicSpline}, q::T) where {T}
     @unpack αD = kernel
-    return αD * (((1 - (3/2)*q^2 + (3/4)*q^3) * (0 <= q <= 1)) + ((1/4)*(2 - q)^3 * (1 < q <= 2)))
+
+    if 0 <= q <= 1
+        q² = q * q
+        return αD * muladd(muladd(T(3//4), q, T(-3//2)), q², one(T))
+    elseif 1 < q <= 2
+        q₂ = T(2) - q
+        return αD * T(1//4) * q₂ * q₂ * q₂
+    else
+        return zero(T)
+    end
 end
 
 @inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{<:CubicSpline}, q::T, xᵢⱼ) where {T}
@@ -97,9 +108,10 @@ end
     # inv_r_h = 1/(r + η²)  # η² is a small regularization to avoid division by zero
     
     if 0 <= q <= 1
-        dWdq = αD * (-3*q + (9/4)*q^2)
+        dWdq = αD * q * muladd(T(9//4), q, T(-3))
     elseif 1 < q <= 2
-        dWdq = αD * (-3/4)*(2 - q)^2
+        q₂ = T(2) - q
+        dWdq = αD * T(-3//4) * q₂ * q₂
     else
         dWdq = zero(T)
     end
