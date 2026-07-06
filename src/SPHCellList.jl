@@ -732,7 +732,11 @@ using TimerOutputs: @timeit
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
             BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
 
-            if TimeSteppingMode isa SingleNeighborTimeStepping
+            # The single-neighbor scheme carries its last force evaluation into
+            # the next step.  Seed that state only once; doing it at every
+            # output boundary would make the output cadence change the force
+            # history and therefore the physical solution.
+            if TimeSteppingMode isa SingleNeighborTimeStepping && SimMetaData.Iteration == 0
                 @timeit SimMetaData.HourGlass "00 Init Pressure"                          Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
                 @timeit SimMetaData.HourGlass "00a Init MDBC"                             ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
                 @timeit SimMetaData.HourGlass "00b Init NeighborLoop" NeighborLoopPerParticle!(
