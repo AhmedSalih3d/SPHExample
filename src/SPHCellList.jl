@@ -825,7 +825,7 @@ using TimerOutputs: @timeit
         return nothing
     end
     
-    function FinalizeSimulationOutput!(SimMetaData, SimLogger, output; finalize_log::Bool=true)
+    function FinalizeSimulationOutput!(SimMetaData, SimLogger, output; log_status::String="finished")
         @timeit SimMetaData.HourGlass "13B Close Data Streams" output.close_files()
 
         show(SimMetaData.HourGlass,sortby=:name)
@@ -833,10 +833,8 @@ using TimerOutputs: @timeit
 
         AutoOpenParaview(SimMetaData, output.variable_names)
 
-        if finalize_log
-            FinalizeLog!(SimMetaData, SimLogger)
-            AutoOpenLogFile(SimLogger, SimMetaData)
-        end
+        FinalizeLog!(SimMetaData, SimLogger; status=log_status)
+        AutoOpenLogFile(SimLogger, SimMetaData)
 
         return nothing
     end
@@ -908,8 +906,8 @@ using TimerOutputs: @timeit
         OutputFinalized = Ref(false)
         atexit() do
             if !OutputFinalized[]
-                @warn "Julia is exiting before the simulation completed; closing VTKHDF output and opening ParaView for the data written so far."
-                FinalizeSimulationOutput!(SimMetaData, SimLogger, output; finalize_log=false)
+                @warn "Julia is exiting before the simulation completed; closing VTKHDF output, finalizing the log, and opening ParaView for the data written so far."
+                FinalizeSimulationOutput!(SimMetaData, SimLogger, output; log_status="stopped as Julia exited")
                 OutputFinalized[] = true
             end
         end
@@ -961,11 +959,12 @@ using TimerOutputs: @timeit
             end
         catch e
             if e isa InterruptException
-                @warn "Simulation interrupted; closing VTKHDF output and opening ParaView for the data written so far."
+                @warn "Simulation interrupted; closing VTKHDF output, finalizing the log, and opening ParaView for the data written so far."
                 if !OutputFinalized[]
-                    FinalizeSimulationOutput!(SimMetaData, SimLogger, output; finalize_log=false)
+                    FinalizeSimulationOutput!(SimMetaData, SimLogger, output; log_status="interrupted")
                     OutputFinalized[] = true
                 end
+                return nothing
             end
             rethrow()
         end

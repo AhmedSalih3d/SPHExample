@@ -208,12 +208,12 @@ module SimulationLoggerConfiguration
     Called once the simulation loop ends. Prints total run time and a summary of
     the collected [`TimerOutput`] information.
     """
-    function LogFinal(SimLogger::SimulationLogger, HourGlass)
+    function LogFinal(SimLogger::SimulationLogger, HourGlass; status::String="finished")
         with_logger(SimLogger.Logger) do
             # Get the current date and time
             current_time = now()
             # Format the current date and time
-            formatted_time = "\n Simulation finished at: " * Dates.format(current_time, "dd-mm-yyyy HH:MM:SS")
+            formatted_time = "\n Simulation $(status) at: " * Dates.format(current_time, "dd-mm-yyyy HH:MM:SS")
 
             @info formatted_time
             @info "\n Simulation took " * @sprintf("%-.2f", TimerOutputs.tottime(HourGlass)/1e9) * "[s]"
@@ -252,12 +252,12 @@ module SimulationLoggerConfiguration
         return nothing
     end
 
-    function FinalizeLog!(::SimulationMetaData{D,T,S,K,B,NoLog}, _...) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, B<:MDBCMode}
+    function FinalizeLog!(::SimulationMetaData{D,T,S,K,B,NoLog}, args...; kwargs...) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, B<:MDBCMode}
         return nothing
     end
     
-    function FinalizeLog!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, B<:MDBCMode}
-        LogFinal(SimLogger, SimMetaData.HourGlass)
+    function FinalizeLog!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger; status::String="finished") where {D,T,S<:ShiftingMode, K<:KernelOutputMode, B<:MDBCMode}
+        LogFinal(SimLogger, SimMetaData.HourGlass; status=status)
         
         # Time steps line plot
         UnicodeTimeStepsGraph = lineplot(
