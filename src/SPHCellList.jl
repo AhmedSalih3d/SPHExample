@@ -851,11 +851,18 @@ using TimerOutputs: @timeit
     function RunWithSimulationFinalizer!(RunFunction, SimMetaData, SimLogger, output)
         OutputFinalized = Ref(false)
 
+        function FinalizeOnce!(log_status::String)
+            if !OutputFinalized[]
+                FinalizeSimulationOutput!(SimMetaData, SimLogger, output; log_status=log_status)
+                OutputFinalized[] = true
+            end
+            return nothing
+        end
+
         atexit() do
             if !OutputFinalized[]
                 @warn "Julia is exiting before the simulation completed; closing VTKHDF output, finalizing the log, and opening ParaView for the data written so far."
-                FinalizeSimulationOutput!(SimMetaData, SimLogger, output; log_status="stopped as Julia exited")
-                OutputFinalized[] = true
+                FinalizeOnce!("stopped as Julia exited")
             end
         end
 
@@ -863,18 +870,20 @@ using TimerOutputs: @timeit
 
         # This is the smallest reliable Ctrl+C boundary for REPL/VS Code/terminal
         # execution: without catching `InterruptException`, Julia returns control
-        # to the caller and the `atexit` hook is not guaranteed to run.
+        # to the caller and the `atexit` hook is not guaranteed to run. The same
+        # boundary also closes VTKHDF files for ordinary simulation failures
+        # before rethrowing the original error to the caller.
         try
             RunFunction(OutputFinalized)
         catch e
             if e isa InterruptException
                 @warn "Simulation interrupted; closing VTKHDF output, finalizing the log, and opening ParaView for the data written so far."
-                if !OutputFinalized[]
-                    FinalizeSimulationOutput!(SimMetaData, SimLogger, output; log_status="interrupted")
-                    OutputFinalized[] = true
-                end
+                FinalizeOnce!("interrupted")
                 return nothing
             end
+
+            @warn "Simulation failed; closing VTKHDF output, finalizing the log, and opening ParaView for the data written so far." exception=(e, catch_backtrace())
+            FinalizeOnce!("failed")
             rethrow()
         end
 
