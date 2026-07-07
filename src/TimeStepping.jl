@@ -1,6 +1,6 @@
 module TimeStepping
 
-export Δt, next_output_time, ProgressMotion, HalfTimeStep, FullTimeStep, UpdateTimeStep
+export Δt, initial_time_step, next_output_time, ProgressMotion, HalfTimeStep, FullTimeStep, UpdateTimeStep
 
 using LinearAlgebra
 using Parameters
@@ -33,6 +33,14 @@ function Δt(max_acceleration, SimulationConstants, SPHKernel)
     return CFL * min(dt_speed, dt_force)
 end
 
+function Δt(_Position, _Velocity, Acceleration, SimulationConstants, SPHKernel)
+    max_acceleration = zero(eltype(eltype(Acceleration)))
+    @inbounds for Accelerationᵢ in Acceleration
+        max_acceleration = max(max_acceleration, norm(Accelerationᵢ))
+    end
+    return Δt(max_acceleration, SimulationConstants, SPHKernel)
+end
+
 """
     UpdateTimeStep(AccelerationMax, SimConstants, SimKernel)
 
@@ -47,8 +55,20 @@ Computes and returns the updated time step based on maximum acceleration across 
 - The calculated adaptive time step `dt`.
 """
 function UpdateTimeStep(AccelerationMax, SimConstants, SimKernel)
+    NonFiniteIndex = findfirst(!isfinite, AccelerationMax)
+    if NonFiniteIndex !== nothing
+        throw(DomainError(AccelerationMax[NonFiniteIndex], "non-finite acceleration magnitude at particle index $(NonFiniteIndex); simulation state is unstable and cannot produce a finite time step"))
+    end
+
     max_acceleration = maximum(AccelerationMax)
     return Δt(max_acceleration, SimConstants, SimKernel)
+end
+
+@inline function initial_time_step(SimMetaData, SimConstants, SimKernel)
+    if iszero(SimMetaData.CurrentTimeStep)
+        return SimConstants.CFL * (SimKernel.h / SimConstants.c₀)
+    end
+    return SimMetaData.CurrentTimeStep
 end
 
 @inline next_output_time(SimMetaData) = next_output_time(SimMetaData.OutputTimes, SimMetaData)
@@ -113,6 +133,14 @@ function HalfTimeStep(::SimulationMetaData{Dimensions, FloatType, SMode, KMode, 
     return nothing
 end
 
+function FullTimeStep(SimMetaData::SimulationMetaData{D,T,NoShifting,K,B,L}, SimKernel,
+                      SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,
+                                                                         K<:KernelOutputMode,
+                                                                         B<:MDBCMode,
+                                                                         L<:LogMode}
+    return FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, SimParticles.Velocity, ∇Cᵢ, ∇◌rᵢ, dt)
+end
+
 function FullTimeStep(::SimulationMetaData{D,T,NoShifting,K,B,L}, SimKernel,
                           SimConstants, SimParticles, Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,
                                                                              K<:KernelOutputMode,
@@ -129,6 +157,14 @@ function FullTimeStep(::SimulationMetaData{D,T,NoShifting,K,B,L}, SimKernel,
         Position[i]       +=  (Velocityₙ⁺[i] * dt) * MotionLimiterFactor
     end
     return nothing
+end
+
+function FullTimeStep(SimMetaData::SimulationMetaData{D,T,S,K,B,L}, SimKernel, SimConstants,
+                      SimParticles, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,S<:ShiftingMode,
+                                                           K<:KernelOutputMode,
+                                                           B<:MDBCMode,
+                                                           L<:LogMode}
+    return FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, SimParticles.Velocity, ∇Cᵢ, ∇◌rᵢ, dt)
 end
 
 function FullTimeStep(::SimulationMetaData{D,T,S,K,B,L}, SimKernel, SimConstants,
