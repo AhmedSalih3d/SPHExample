@@ -40,14 +40,14 @@ struct SingleNeighborTimeStepping <: TimeSteppingMode end
     SaveLocation::String
     HourGlass::TimerOutput                  = TimerOutput()
     Iteration::Int                          = 0
-    OutputEach::FloatType                   = 0.02 #seconds
+    OutputEach::FloatType                   = FloatType(0.02) #seconds
     OutputTimes::Union{FloatType,Vector{FloatType}} = OutputEach
     OutputIterationCounter::Int             = 0
     StepsTakenForLastOutput::Int            = 0
-    CurrentTimeStep::FloatType              = 0
-    TotalTime::FloatType                    = 0
-    SimulationTime::FloatType               = 0
-    TimeSteps                               = Vector{FloatType}() 
+    CurrentTimeStep::FloatType              = zero(FloatType)
+    TotalTime::FloatType                    = zero(FloatType)
+    SimulationTime::FloatType               = zero(FloatType)
+    TimeSteps                               = FloatType[]
     IndexCounter::Int                       = 0
     VisualizeInParaview::Bool               = true
     ExportSingleVTKHDF::Bool                = true
@@ -56,6 +56,54 @@ struct SingleNeighborTimeStepping <: TimeSteppingMode end
     OpenLogFile::Bool                       = true
     Δx::FloatType                           = zero(FloatType)
     TimeSteppingMode::TimeSteppingMode      = SingleNeighborTimeStepping()
+end
+
+const SimulationMetaDataKeywordNames = (:SimulationName, :SaveLocation, :HourGlass, :Iteration, :OutputEach,
+                                        :OutputTimes, :OutputIterationCounter, :StepsTakenForLastOutput,
+                                        :CurrentTimeStep, :TotalTime, :SimulationTime, :TimeSteps,
+                                        :IndexCounter, :VisualizeInParaview, :ExportSingleVTKHDF,
+                                        :ExportGridCells, :ExportGridCellParticleCounts, :OpenLogFile,
+                                        :Δx, :TimeSteppingMode)
+
+@inline ConvertMetaDataFloat(::Type{T}, Value::Real) where {T <: AbstractFloat} = T(Value)
+@inline ConvertMetaDataFloat(::Type{T}, Value::AbstractVector{<:Real}) where {T <: AbstractFloat} = T.(Value)
+@inline ConvertMetaDataFloat(::Type{T}, Value) where {T <: AbstractFloat} = Value
+
+function SimulationMetaData{D,T,S,K,B,L}(; kwargs...) where {D,T<:AbstractFloat,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode,L<:LogMode}
+    for Key in keys(kwargs)
+        Key in SimulationMetaDataKeywordNames || throw(ArgumentError("unsupported SimulationMetaData keyword: $Key"))
+    end
+
+    haskey(kwargs, :SimulationName) || throw(UndefKeywordError(:SimulationName))
+    haskey(kwargs, :SaveLocation) || throw(UndefKeywordError(:SaveLocation))
+
+    SimulationName = kwargs[:SimulationName]
+    SaveLocation = kwargs[:SaveLocation]
+    HourGlass = get(kwargs, :HourGlass, TimerOutput())
+    Iteration = get(kwargs, :Iteration, 0)
+    OutputEach = ConvertMetaDataFloat(T, get(kwargs, :OutputEach, T(0.02)))
+    OutputTimes = ConvertMetaDataFloat(T, get(kwargs, :OutputTimes, OutputEach))
+    OutputIterationCounter = get(kwargs, :OutputIterationCounter, 0)
+    StepsTakenForLastOutput = get(kwargs, :StepsTakenForLastOutput, 0)
+    CurrentTimeStep = ConvertMetaDataFloat(T, get(kwargs, :CurrentTimeStep, zero(T)))
+    TotalTime = ConvertMetaDataFloat(T, get(kwargs, :TotalTime, zero(T)))
+    SimulationTime = ConvertMetaDataFloat(T, get(kwargs, :SimulationTime, zero(T)))
+    TimeSteps = ConvertMetaDataFloat(T, get(kwargs, :TimeSteps, T[]))
+    IndexCounter = get(kwargs, :IndexCounter, 0)
+    VisualizeInParaview = get(kwargs, :VisualizeInParaview, true)
+    ExportSingleVTKHDF = get(kwargs, :ExportSingleVTKHDF, true)
+    ExportGridCells = get(kwargs, :ExportGridCells, false)
+    ExportGridCellParticleCounts = get(kwargs, :ExportGridCellParticleCounts, false)
+    OpenLogFile = get(kwargs, :OpenLogFile, true)
+    Δx = ConvertMetaDataFloat(T, get(kwargs, :Δx, zero(T)))
+    TimeSteppingMode = get(kwargs, :TimeSteppingMode, SingleNeighborTimeStepping())
+
+    return SimulationMetaData{D,T,S,K,B,L}(SimulationName, SaveLocation, HourGlass, Iteration, OutputEach,
+                                          OutputTimes, OutputIterationCounter, StepsTakenForLastOutput,
+                                          CurrentTimeStep, TotalTime, SimulationTime, TimeSteps,
+                                          IndexCounter, VisualizeInParaview, ExportSingleVTKHDF,
+                                          ExportGridCells, ExportGridCellParticleCounts, OpenLogFile,
+                                          Δx, TimeSteppingMode)
 end
 SimulationMetaData{D,T,S,K,B}(; kwargs...) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode} =
     SimulationMetaData{D,T,S,K,B,NoLog}(; kwargs...)
