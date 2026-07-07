@@ -375,7 +375,46 @@ using TimerOutputs: @timeit
         return (M0 / RhoJ) * (M0 / RhoI)
     end
 
+    @inline IsFluidParticle(particle_type) = particle_type == Fluid
+
+    @inline function PairMotionLimiter(::Val{IsFluidI}, ::Val{IsFluidJ}, value) where {IsFluidI, IsFluidJ}
+        return IsFluidI && IsFluidJ ? one(value) : zero(value)
+    end
+
+    @inline function ComputeFluidFluidInteraction!(ComputeGenericInteraction!, args...)
+        return ComputeGenericInteraction!(Val(true), Val(true), args...)
+    end
+
+    @inline function ComputeFluidBoundaryInteraction!(ComputeGenericInteraction!, args...)
+        return ComputeGenericInteraction!(Val(true), Val(false), args...)
+    end
+
+    @inline function ComputeBoundaryFluidInteraction!(ComputeGenericInteraction!, args...)
+        return ComputeGenericInteraction!(Val(false), Val(true), args...)
+    end
+
+    @inline function ComputeBoundaryBoundaryInteraction!(ComputeGenericInteraction!, args...)
+        return ComputeGenericInteraction!(Val(false), Val(false), args...)
+    end
+
+    @inline function ComputeCategorizedInteraction!(ComputeGenericInteraction!, IsFluidI::Bool, IsFluidJ::Bool, args...)
+        if IsFluidI
+            if IsFluidJ
+                return ComputeFluidFluidInteraction!(ComputeGenericInteraction!, args...)
+            else
+                return ComputeFluidBoundaryInteraction!(ComputeGenericInteraction!, args...)
+            end
+        else
+            if IsFluidJ
+                return ComputeBoundaryFluidInteraction!(ComputeGenericInteraction!, args...)
+            else
+                return ComputeBoundaryBoundaryInteraction!(ComputeGenericInteraction!, args...)
+            end
+        end
+    end
+
     @inline function ComputeInteractionsPerParticleNoShiftingCore!(
+        ::Val{IsFluidI}, ::Val{IsFluidJ},
         SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         SimMetaData::SimulationMetaData{D,T,NoShifting,K,B,L}, SimConstants,
         SimParticles, Position, Density, Pressure, Velocity, ParticleType,
@@ -384,7 +423,8 @@ using TimerOutputs: @timeit
                                                                      B<:MDBCMode,
                                                                      L<:LogMode,
                                                                      SDD<:SPHDensityDiffusion,
-                                                                     SV<:SPHViscosity}
+                                                                     SV<:SPHViscosity,
+                                                                     IsFluidI, IsFluidJ}
         @unpack m₀, dx = SimConstants
         @unpack h⁻¹, H², h = SimKernel
 
@@ -437,7 +477,9 @@ using TimerOutputs: @timeit
                                                                      L<:LogMode,
                                                                      SDD<:SPHDensityDiffusion,
                                                                      SV<:SPHViscosity}
-        return ComputeInteractionsPerParticleNoShiftingCore!(
+        IsFluidI = IsFluidParticle(ParticleType[i])
+        IsFluidJ = IsFluidParticle(ParticleType[j])
+        return ComputeCategorizedInteraction!(ComputeInteractionsPerParticleNoShiftingCore!, IsFluidI, IsFluidJ,
             SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants,
             SimParticles, Position, Density, Pressure, Velocity, ParticleType,
             dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, i, j,
@@ -451,7 +493,9 @@ using TimerOutputs: @timeit
         dρdt_acc, acc_acc, i, j) where {D,T,B<:MDBCMode,L<:LogMode,
                                         SDD<:SPHDensityDiffusion,
                                         SV<:SPHViscosity}
-        dρdt_acc, acc_acc, _, _ = ComputeInteractionsPerParticleNoShiftingCore!(
+        IsFluidI = IsFluidParticle(ParticleType[i])
+        IsFluidJ = IsFluidParticle(ParticleType[j])
+        dρdt_acc, acc_acc, _, _ = ComputeCategorizedInteraction!(ComputeInteractionsPerParticleNoShiftingCore!, IsFluidI, IsFluidJ,
             SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants,
             SimParticles, Position, Density, Pressure, Velocity, ParticleType,
             dρdt_acc, acc_acc, nothing, nothing, i, j,
@@ -460,7 +504,8 @@ using TimerOutputs: @timeit
         return dρdt_acc, acc_acc
     end
 
-    Base.@propagate_inbounds function ComputeInteractionsPerParticle!(
+    @inline function ComputeInteractionsPerParticleShiftingCore!(
+        ::Val{IsFluidI}, ::Val{IsFluidJ},
         SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         SimMetaData::SimulationMetaData{D,T,S,K,B,L}, SimConstants,
         SimParticles, Position, Density, Pressure, Velocity, ParticleType,
@@ -470,7 +515,8 @@ using TimerOutputs: @timeit
                                   B<:MDBCMode,
                                   L<:LogMode,
                                   SDD<:SPHDensityDiffusion,
-                                  SV<:SPHViscosity}
+                                  SV<:SPHViscosity,
+                                  IsFluidI, IsFluidJ}
         @unpack m₀, dx = SimConstants
         @unpack h⁻¹, H², h = SimKernel
 
@@ -510,7 +556,7 @@ using TimerOutputs: @timeit
 
             kernel_acc, kernel_grad_acc = compute_kernel_output_local(SimMetaData, kernel_acc, kernel_grad_acc, SimKernel, q, ∇ᵢWᵢⱼ)
 
-            MotionLimiterCondition = ParticleType[i]==Fluid && ParticleType[j]==Fluid #MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
+            MotionLimiterCondition = PairMotionLimiter(Val(IsFluidI), Val(IsFluidJ), ρᵢ)
             Vᵢ = m₀ / ρᵢ
             shift_c_acc += Vⱼ * Wᵢⱼ * Vᵢ * ∇ᵢWᵢⱼ * MotionLimiterCondition
             shift_r_acc += Vⱼ * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
@@ -519,7 +565,30 @@ using TimerOutputs: @timeit
         return dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc, shift_r_acc
     end
 
+
     Base.@propagate_inbounds function ComputeInteractionsPerParticle!(
+        SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
+        SimMetaData::SimulationMetaData{D,T,S,K,B,L}, SimConstants,
+        SimParticles, Position, Density, Pressure, Velocity, ParticleType,
+        dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc,
+        shift_r_acc, i, j) where {D,T,S<:ShiftingMode,
+                                  K<:KernelOutputMode,
+                                  B<:MDBCMode,
+                                  L<:LogMode,
+                                  SDD<:SPHDensityDiffusion,
+                                  SV<:SPHViscosity}
+        IsFluidI = IsFluidParticle(ParticleType[i])
+        IsFluidJ = IsFluidParticle(ParticleType[j])
+        return ComputeCategorizedInteraction!(ComputeInteractionsPerParticleShiftingCore!, IsFluidI, IsFluidJ,
+            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+            SimConstants, SimParticles, Position, Density, Pressure,
+            Velocity, ParticleType, dρdt_acc, acc_acc, kernel_acc,
+            kernel_grad_acc, shift_c_acc, shift_r_acc, i, j,
+        )
+    end
+
+    @inline function ComputeInteractionsPerParticleShiftingNoKernelCore!(
+        ::Val{IsFluidI}, ::Val{IsFluidJ},
         SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         SimMetaData::SimulationMetaData{D,T,S,NoKernelOutput,B,L}, SimConstants,
         SimParticles, Position, Density, Pressure, Velocity, ParticleType,
@@ -528,7 +597,8 @@ using TimerOutputs: @timeit
                                                                   B<:MDBCMode,
                                                                   L<:LogMode,
                                                                   SDD<:SPHDensityDiffusion,
-                                                                  SV<:SPHViscosity}
+                                                                  SV<:SPHViscosity,
+                                                                  IsFluidI, IsFluidJ}
         @unpack m₀, dx = SimConstants
         @unpack h⁻¹, H², h = SimKernel
 
@@ -566,12 +636,33 @@ using TimerOutputs: @timeit
 
             acc_acc += dvdt⁺ + visc_term
 
-            MotionLimiterCondition = ParticleType[i]==Fluid && ParticleType[j]==Fluid #MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
+            MotionLimiterCondition = PairMotionLimiter(Val(IsFluidI), Val(IsFluidJ), ρᵢ)
             shift_c_acc += Vⱼ * Wᵢⱼ * Vⱼ * ∇ᵢWᵢⱼ * MotionLimiterCondition
             shift_r_acc += Vⱼ * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
         end
 
         return dρdt_acc, acc_acc, shift_c_acc, shift_r_acc
+    end
+
+
+    Base.@propagate_inbounds function ComputeInteractionsPerParticle!(
+        SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
+        SimMetaData::SimulationMetaData{D,T,S,NoKernelOutput,B,L}, SimConstants,
+        SimParticles, Position, Density, Pressure, Velocity, ParticleType,
+        dρdt_acc, acc_acc, shift_c_acc, shift_r_acc, i, j) where {D,T,
+                                                                  S<:ShiftingMode,
+                                                                  B<:MDBCMode,
+                                                                  L<:LogMode,
+                                                                  SDD<:SPHDensityDiffusion,
+                                                                  SV<:SPHViscosity}
+        IsFluidI = IsFluidParticle(ParticleType[i])
+        IsFluidJ = IsFluidParticle(ParticleType[j])
+        return ComputeCategorizedInteraction!(ComputeInteractionsPerParticleShiftingNoKernelCore!, IsFluidI, IsFluidJ,
+            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+            SimConstants, SimParticles, Position, Density, Pressure,
+            Velocity, ParticleType, dρdt_acc, acc_acc, shift_c_acc,
+            shift_r_acc, i, j,
+        )
     end
 
     Base.@propagate_inbounds function ComputeInteractionsMDBC!(SimKernel, SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}, SimConstants, Position, Density, ParticleType, GhostPoints, i, j) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
