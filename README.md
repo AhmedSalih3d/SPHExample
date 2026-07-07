@@ -88,6 +88,9 @@ and adjust the simulation parameters or the `ComputerInteractions!` function.
 Run the script to start the simulation. Results are written in `hdfvtk` format
 which can be loaded with ParaView 5.12 or newer. Output is written
 asynchronously, so files finish flushing when the simulation completes.
+Pressing `Ctrl+C` during `RunSimulation` also flushes and closes the active
+VTKHDF output, finalizes the `.log` file, and opens the data written so far in
+ParaView.
 To color exported cell grids by particle counts, set
 `ExportGridCellParticleCounts=true` in `SimulationMetaData`. This also adds a
 `ParticleNeighborsPerCell` array that includes each cell's particle count minus
