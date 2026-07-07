@@ -839,6 +839,15 @@ using TimerOutputs: @timeit
         return nothing
     end
 
+    """
+        RunWithSimulationFinalizer!(RunFunction, SimMetaData, SimLogger, output)
+
+    Run the simulation body with a single cleanup boundary around it. Ctrl+C in
+    interactive Julia sessions is delivered as an `InterruptException` instead
+    of process exit, so `atexit` alone does not run for that path. Keep the
+    interrupt handling here to register Ctrl+C reliably while leaving the main
+    simulation loop free of `try`/`catch` structure.
+    """
     function RunWithSimulationFinalizer!(RunFunction, SimMetaData, SimLogger, output)
         OutputFinalized = Ref(false)
 
@@ -852,6 +861,9 @@ using TimerOutputs: @timeit
 
         Base.exit_on_sigint(false)
 
+        # This is the smallest reliable Ctrl+C boundary for REPL/VS Code/terminal
+        # execution: without catching `InterruptException`, Julia returns control
+        # to the caller and the `atexit` hook is not guaranteed to run.
         try
             RunFunction(OutputFinalized)
         catch e
