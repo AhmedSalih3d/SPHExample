@@ -904,6 +904,7 @@ using TimerOutputs: @timeit
         MotionDefinition = GenerateMotionDetails(SimParticles, SimGeometry, Dimensions, FloatType)
 
         OutputFinalized = Ref(false)
+        Base.exit_on_sigint(true)
         atexit() do
             if !OutputFinalized[]
                 @warn "Julia is exiting before the simulation completed; closing VTKHDF output, finalizing the log, and opening ParaView for the data written so far."
@@ -912,61 +913,49 @@ using TimerOutputs: @timeit
             end
         end
 
-        try
-            @inbounds while true
+        @inbounds while true
 
-                @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(
-                    SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                    SimConstants, SimParticles, FullStencil, ParticleRanges,
-                    UniqueCells, CellListIndices, SortingScratchSpace,
-                    NeighborCellLists, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
-                    ∇Cᵢ, ∇◌rᵢ, MotionDefinition,
+            @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(
+                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                SimConstants, SimParticles, FullStencil, ParticleRanges,
+                UniqueCells, CellListIndices, SortingScratchSpace,
+                NeighborCellLists, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
+                ∇Cᵢ, ∇◌rᵢ, MotionDefinition,
+            )
+            push!(SimMetaData.TimeSteps, SimMetaData.CurrentTimeStep)
+
+            LogStep!(SimMetaData, SimLogger)
+
+            SimMetaData.OutputIterationCounter += 1
+
+            UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
+            cell_particle_counts = nothing
+            cell_neighbor_counts = nothing
+            if SimMetaData.ExportGridCellParticleCounts
+                cell_particle_counts = ComputeCellParticleCounts(
+                    ParticleRanges,
+                    length(UniqueCellsView),
                 )
-                push!(SimMetaData.TimeSteps, SimMetaData.CurrentTimeStep)
-
-                LogStep!(SimMetaData, SimLogger)
-
-                SimMetaData.OutputIterationCounter += 1
-
-                UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-                cell_particle_counts = nothing
-                cell_neighbor_counts = nothing
-                if SimMetaData.ExportGridCellParticleCounts
-                    cell_particle_counts = ComputeCellParticleCounts(
-                        ParticleRanges,
-                        length(UniqueCellsView),
-                    )
-                    cell_neighbor_counts = ComputeCellNeighborCounts(
-                        ParticleRanges,
-                        NeighborCellLists,
-                        length(UniqueCellsView),
-                    )
-                end
-
-                @timeit SimMetaData.HourGlass "13 Save Particle Data"  begin
-                    output.enqueue_particles(SimMetaData.OutputIterationCounter)
-                    output.enqueue_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, cell_particle_counts=cell_particle_counts, cell_neighbor_counts=cell_neighbor_counts)
-                end
-
-                if SimMetaData.TotalTime > SimMetaData.SimulationTime
-
-                    # At end of simulation
-                    FinalizeSimulationOutput!(SimMetaData, SimLogger, output)
-                    OutputFinalized[] = true
-
-                    break
-                end
+                cell_neighbor_counts = ComputeCellNeighborCounts(
+                    ParticleRanges,
+                    NeighborCellLists,
+                    length(UniqueCellsView),
+                )
             end
-        catch e
-            if e isa InterruptException
-                @warn "Simulation interrupted; closing VTKHDF output, finalizing the log, and opening ParaView for the data written so far."
-                if !OutputFinalized[]
-                    FinalizeSimulationOutput!(SimMetaData, SimLogger, output; log_status="interrupted")
-                    OutputFinalized[] = true
-                end
-                return nothing
+
+            @timeit SimMetaData.HourGlass "13 Save Particle Data"  begin
+                output.enqueue_particles(SimMetaData.OutputIterationCounter)
+                output.enqueue_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, cell_particle_counts=cell_particle_counts, cell_neighbor_counts=cell_neighbor_counts)
             end
-            rethrow()
+
+            if SimMetaData.TotalTime > SimMetaData.SimulationTime
+
+                # At end of simulation
+                FinalizeSimulationOutput!(SimMetaData, SimLogger, output)
+                OutputFinalized[] = true
+
+                break
+            end
         end
     end
     
