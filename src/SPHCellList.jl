@@ -748,8 +748,8 @@ using TimerOutputs: @timeit
                         BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
 
                         if TimeSteppingMode isa SingleNeighborTimeStepping
-                            @timeit SimMetaData.HourGlass "01b Rebuild Pressure"                          Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
-                            @timeit SimMetaData.HourGlass "01c Rebuild MDBC"                             ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
+                            @timeit SimMetaData.HourGlass "01b Rebuild MDBC"                             ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
+                            @timeit SimMetaData.HourGlass "01c Rebuild Pressure"                         Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
                             @timeit SimMetaData.HourGlass "01d Rebuild NeighborLoop" NeighborLoopPerParticle!(
                                 SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                                 SimConstants, SimParticles, ParticleRanges, CellListIndices,
@@ -762,8 +762,8 @@ using TimerOutputs: @timeit
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
 
                 if TimeSteppingMode isa SymplecticTimeStepping
-                    @timeit SimMetaData.HourGlass "02 Pressure"                              Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
-                    @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
+                    @timeit SimMetaData.HourGlass "02 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
+                    @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
 
                     @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoopPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
