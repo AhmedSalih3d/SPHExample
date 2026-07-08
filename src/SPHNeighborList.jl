@@ -68,12 +68,8 @@ Extracts the cells for each particle based on their positions and the inverse cu
 end
 
 @inline function ExtractCells!(Particles, InverseCutOff)
-    @inbounds for Index ∈ eachindex(Particles.Cells)
-        Position = Particles.Position[Index]
-        if !all(isfinite, Tuple(Position))
-            throw(DomainError(Position, "non-finite particle position at particle index $(Index); cell extraction requires finite coordinates"))
-        end
-        Particles.Cells[Index] = CartesianIndex(map(X -> MapFloor(X, InverseCutOff), Tuple(Position)))
+    @inbounds @simd ivdep for Index ∈ eachindex(Particles.Cells)
+        Particles.Cells[Index] = CartesianIndex(map(X -> MapFloor(X, InverseCutOff), Tuple(Particles.Position[Index])))
     end
     return nothing
 end

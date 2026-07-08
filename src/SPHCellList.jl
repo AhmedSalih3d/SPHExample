@@ -718,8 +718,8 @@ using TimerOutputs: @timeit
 
         ###
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-        # Keep the adaptive time step continuous across output chunks; output cadence must not reset the integrator.
-        dt = initial_time_step(SimMetaData, SimConstants, SimKernel)
+        CurrentTimeStep = SimMetaData.CurrentTimeStep
+        dt = iszero(CurrentTimeStep) ? SimConstants.CFL * (SimKernel.h / SimConstants.c₀) : CurrentTimeStep
         TimeSteppingMode = SimMetaData.TimeSteppingMode
 
         @no_escape begin

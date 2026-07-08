@@ -1,6 +1,6 @@
 module TimeStepping
 
-export Δt, initial_time_step, next_output_time, ProgressMotion, HalfTimeStep, FullTimeStep, UpdateTimeStep
+export Δt, next_output_time, ProgressMotion, HalfTimeStep, FullTimeStep, UpdateTimeStep
 
 using LinearAlgebra
 using Parameters
@@ -62,13 +62,6 @@ function UpdateTimeStep(AccelerationMax, SimConstants, SimKernel)
 
     max_acceleration = maximum(AccelerationMax)
     return Δt(max_acceleration, SimConstants, SimKernel)
-end
-
-@inline function initial_time_step(SimMetaData, SimConstants, SimKernel)
-    if iszero(SimMetaData.CurrentTimeStep)
-        return SimConstants.CFL * (SimKernel.h / SimConstants.c₀)
-    end
-    return SimMetaData.CurrentTimeStep
 end
 
 @inline next_output_time(SimMetaData) = next_output_time(SimMetaData.OutputTimes, SimMetaData)
