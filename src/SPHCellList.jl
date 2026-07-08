@@ -689,9 +689,17 @@ using TimerOutputs: @timeit
     end
 
 
-    # Per-particle local Δx removed: use single scalar `SimMetaData.Δx`.
+    # Runtime state that must persist across output intervals. Keeping these
+    # values outside SimulationLoop prevents output scheduling from changing
+    # neighbor-list rebuilds or adaptive time-step sequencing.
+    mutable struct SimulationRuntimeState{T}
+        Δx::T
+        dt::T
+        IsInitialized::Bool
+    end
 
     @inbounds function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
+                                      Runtime::SimulationRuntimeState{FloatType},
                                       SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
                                       SimConstants, SimParticles, FullStencil,
                                       ParticleRanges, UniqueCells, CellListIndices,
@@ -718,34 +726,36 @@ using TimerOutputs: @timeit
 
         ###
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-        # This code here is to initialize the first time step for each simulation loop
-        dt = SimConstants.CFL * (SimKernel.h / SimConstants.c₀)
+        dt = Runtime.dt
         TimeSteppingMode = SimMetaData.TimeSteppingMode
 
         @no_escape begin
             AccelerationMax = @alloc(FloatType, length(SimParticles.Position))
             dt₂ = dt * 0.5
 
-            SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace, ParticleRanges, UniqueCells, CellListIndices)
-            UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-            BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
+            if !Runtime.IsInitialized
+                SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace, ParticleRanges, UniqueCells, CellListIndices)
+                UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
+                BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
+                Runtime.IsInitialized = true
 
-            if TimeSteppingMode isa SingleNeighborTimeStepping
-                @timeit SimMetaData.HourGlass "00 Init Pressure"                          Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
-                @timeit SimMetaData.HourGlass "00a Init MDBC"                             ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
-                @timeit SimMetaData.HourGlass "00b Init NeighborLoop" NeighborLoopPerParticle!(
-                    SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                    SimConstants, SimParticles, ParticleRanges, CellListIndices,
-                    NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
-                )
+                if TimeSteppingMode isa SingleNeighborTimeStepping
+                    @timeit SimMetaData.HourGlass "00 Init Pressure"                          Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
+                    @timeit SimMetaData.HourGlass "00a Init MDBC"                             ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
+                    @timeit SimMetaData.HourGlass "00b Init NeighborLoop" NeighborLoopPerParticle!(
+                        SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                        SimConstants, SimParticles, ParticleRanges, CellListIndices,
+                        NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
+                    )
+                end
             end
 
             NextOutputTime = next_output_time(SimMetaData)
             while SimMetaData.TotalTime <= NextOutputTime
                 @timeit SimMetaData.HourGlass "01 Calculate IndexCounter"  begin
 
-                    SimMetaData.Δx = UpdateΔx!(SimMetaData.Δx, Positionₙ⁺, SimParticles.Position)
-                    ShouldRebuild = SimMetaData.Δx >= SimKernel.h
+                    Runtime.Δx = UpdateΔx!(Runtime.Δx, Positionₙ⁺, SimParticles.Position)
+                    ShouldRebuild = Runtime.Δx >= SimKernel.h
 
                     # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
 
@@ -757,7 +767,7 @@ using TimerOutputs: @timeit
                     # if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
                     if ShouldRebuild
                         @timeit SimMetaData.HourGlass "01a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells, CellListIndices)
-                        SimMetaData.Δx    = zero(eltype(dρdtI))
+                        Runtime.Δx        = zero(eltype(dρdtI))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                         BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
                     end
@@ -819,7 +829,10 @@ using TimerOutputs: @timeit
                 @timeit SimMetaData.HourGlass "10 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
 
                 @timeit SimMetaData.HourGlass "11 Update TimeStep"                       dt = UpdateTimeStep(AccelerationMax, SimConstants, SimKernel)
+                dt₂ = dt * 0.5
             end
+
+            Runtime.dt = dt
         end
         
         return nothing
@@ -913,6 +926,11 @@ using TimerOutputs: @timeit
         FullStencil            = ConstructStencil(Val(Dimensions))
         NeighborCellLists      = [Int[] for _ in 1:length(UniqueCells)]
         _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
+        Runtime = SimulationRuntimeState(
+            one(FloatType) + SimKernel.h,
+            SimConstants.CFL * (SimKernel.h / SimConstants.c₀),
+            false,
+        )
 
         output = SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
 
@@ -949,7 +967,7 @@ using TimerOutputs: @timeit
             @inbounds while true
 
                 @timeit SimMetaData.HourGlass "00 SimulationLoop" SimulationLoop(
-                    SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                    SimDensityDiffusion, SimViscosity, SimKernel, Runtime, SimMetaData,
                     SimConstants, SimParticles, FullStencil, ParticleRanges,
                     UniqueCells, CellListIndices, SortingScratchSpace,
                     NeighborCellLists, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
