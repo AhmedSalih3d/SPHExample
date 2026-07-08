@@ -122,6 +122,10 @@ function HalfTimeStep(::SimulationMetaData{Dimensions, FloatType, SMode, KMode, 
     return nothing
 end
 
+function FullTimeStep(SimMetaData::SimulationMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+    return FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, SimParticles.Velocity, ∇Cᵢ, ∇◌rᵢ, dt)
+end
+
 function FullTimeStep(::SimulationMetaData{D,T,NoShifting,K,B,L}, SimKernel,
                           SimConstants, SimParticles, Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,
                                                                              K<:KernelOutputMode,

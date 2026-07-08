@@ -737,6 +737,8 @@ using TimerOutputs: @timeit
                 SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace, ParticleRanges, UniqueCells, CellListIndices)
                 UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
                 BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
+                copyto!(Positionₙ⁺, SimParticles.Position)
+                Runtime.Δx = zero(Runtime.Δx)
                 Runtime.IsInitialized = true
 
                 if TimeSteppingMode isa SingleNeighborTimeStepping
@@ -770,6 +772,17 @@ using TimerOutputs: @timeit
                         Runtime.Δx        = zero(eltype(dρdtI))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                         BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
+                        copyto!(Positionₙ⁺, SimParticles.Position)
+
+                        if TimeSteppingMode isa SingleNeighborTimeStepping
+                            @timeit SimMetaData.HourGlass "01b Rebuild Pressure" Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
+                            @timeit SimMetaData.HourGlass "01c Rebuild MDBC" ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
+                            @timeit SimMetaData.HourGlass "01d Rebuild NeighborLoop" NeighborLoopPerParticle!(
+                                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                                SimConstants, SimParticles, ParticleRanges, CellListIndices,
+                                NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
+                            )
+                        end
                     end
                 end
 
@@ -927,7 +940,7 @@ using TimerOutputs: @timeit
         NeighborCellLists      = [Int[] for _ in 1:length(UniqueCells)]
         _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
         Runtime = SimulationRuntimeState(
-            one(FloatType) + SimKernel.h,
+            zero(FloatType),
             SimConstants.CFL * (SimKernel.h / SimConstants.c₀),
             false,
         )
