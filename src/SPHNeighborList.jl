@@ -91,6 +91,11 @@ function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
                           ParticleRanges, UniqueCells, CellListIndices)
     ExtractCells!(Particles, InverseCutOff)
 
+    RequiredCellSlots = length(Particles.Cells) + 1
+    if length(UniqueCells) < RequiredCellSlots
+        throw(ArgumentError("UniqueCells must have at least one sentinel slot plus one slot per particle; got $(length(UniqueCells)) slots for $(length(Particles.Cells)) particles"))
+    end
+
     sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
     Cells = @views Particles.Cells
     UniqueCells[1] = MinCell(eltype(Cells))
