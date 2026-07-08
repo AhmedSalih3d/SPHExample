@@ -718,20 +718,34 @@ using TimerOutputs: @timeit
 
         ###
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-        CurrentTimeStep = SimMetaData.CurrentTimeStep
-        dt = iszero(CurrentTimeStep) ? SimConstants.CFL * (SimKernel.h / SimConstants.c₀) : CurrentTimeStep
+        # This code here is to initialize the first time step for each simulation loop
+        dt = SimConstants.CFL * (SimKernel.h / SimConstants.c₀)
         TimeSteppingMode = SimMetaData.TimeSteppingMode
 
         @no_escape begin
             AccelerationMax = @alloc(FloatType, length(SimParticles.Position))
             dt₂ = dt * 0.5
 
+            SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace, ParticleRanges, UniqueCells, CellListIndices)
+            UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
+            BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
+
+            if TimeSteppingMode isa SingleNeighborTimeStepping
+                @timeit SimMetaData.HourGlass "00 Init Pressure"                          Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
+                @timeit SimMetaData.HourGlass "00a Init MDBC"                             ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
+                @timeit SimMetaData.HourGlass "00b Init NeighborLoop" NeighborLoopPerParticle!(
+                    SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                    SimConstants, SimParticles, ParticleRanges, CellListIndices,
+                    NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
+                )
+            end
+
             NextOutputTime = next_output_time(SimMetaData)
             while SimMetaData.TotalTime <= NextOutputTime
                 @timeit SimMetaData.HourGlass "01 Calculate IndexCounter"  begin
 
                     SimMetaData.Δx = UpdateΔx!(SimMetaData.Δx, Positionₙ⁺, SimParticles.Position)
-                    ShouldRebuild = SimMetaData.Iteration == 0 || SimMetaData.Δx >= SimKernel.h
+                    ShouldRebuild = SimMetaData.Δx >= SimKernel.h
 
                     # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
 
@@ -746,24 +760,14 @@ using TimerOutputs: @timeit
                         SimMetaData.Δx    = zero(eltype(dρdtI))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
                         BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
-
-                        if TimeSteppingMode isa SingleNeighborTimeStepping
-                            @timeit SimMetaData.HourGlass "01b Rebuild MDBC"                             ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
-                            @timeit SimMetaData.HourGlass "01c Rebuild Pressure"                         Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
-                            @timeit SimMetaData.HourGlass "01d Rebuild NeighborLoop" NeighborLoopPerParticle!(
-                                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                                SimConstants, SimParticles, ParticleRanges, CellListIndices,
-                                NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
-                            )
-                        end
                     end
                 end
 
                 @timeit SimMetaData.HourGlass "Motion"                                   ProgressMotion(SimParticles, dt₂, MotionDefinition, SimMetaData)
 
                 if TimeSteppingMode isa SymplecticTimeStepping
-                    @timeit SimMetaData.HourGlass "02 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
-                    @timeit SimMetaData.HourGlass "03 Pressure"                              Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
+                    @timeit SimMetaData.HourGlass "02 Pressure"                              Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
+                    @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
 
                     @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoopPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
@@ -815,7 +819,6 @@ using TimerOutputs: @timeit
                 @timeit SimMetaData.HourGlass "10 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
 
                 @timeit SimMetaData.HourGlass "11 Update TimeStep"                       dt = UpdateTimeStep(AccelerationMax, SimConstants, SimKernel)
-                dt₂ = dt * 0.5
             end
         end
         
