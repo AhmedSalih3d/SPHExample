@@ -742,6 +742,9 @@ using TimerOutputs: @timeit
 
             NextOutputTime = next_output_time(SimMetaData)
             while SimMetaData.TotalTime <= NextOutputTime
+                # Keep the predictor half-step consistent with the adaptive full step.
+                dt₂ = dt * 0.5
+
                 @timeit SimMetaData.HourGlass "01 Calculate IndexCounter"  begin
 
                     SimMetaData.Δx = UpdateΔx!(SimMetaData.Δx, Positionₙ⁺, SimParticles.Position)
