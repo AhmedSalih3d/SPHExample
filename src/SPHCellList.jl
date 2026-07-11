@@ -740,10 +740,18 @@ using TimerOutputs: @timeit
                 )
             end
 
-            NextOutputTime = next_output_time(SimMetaData)
-            while SimMetaData.TotalTime <= NextOutputTime
-                # Keep the predictor half-step consistent with the adaptive full step.
-                dt₂ = dt * 0.5
+            NextOutputTime = min(next_output_time(SimMetaData), SimMetaData.SimulationTime)
+            TimeTolerance = eps(FloatType) * max(one(FloatType), abs(NextOutputTime)) * 16
+            while SimMetaData.TotalTime < NextOutputTime
+                RemainingTime = NextOutputTime - SimMetaData.TotalTime
+                if RemainingTime <= TimeTolerance
+                    SimMetaData.TotalTime = NextOutputTime
+                    break
+                end
+                dt_step = min(dt, RemainingTime)
+                # Keep the predictor half-step consistent with the adaptive full step,
+                # including shortened steps that land exactly on output/final times.
+                dt₂ = dt_step * 0.5
 
                 @timeit SimMetaData.HourGlass "01 Calculate IndexCounter"  begin
 
@@ -813,13 +821,13 @@ using TimerOutputs: @timeit
                     )
                 end
 
-                @timeit SimMetaData.HourGlass "07 Final Density"                         DensityEpsi!(SimParticles.Density, dρdtI, ρₙ⁺, dt)
+                @timeit SimMetaData.HourGlass "07 Final Density"                         DensityEpsi!(SimParticles.Density, dρdtI, ρₙ⁺, dt_step)
 
                 @timeit SimMetaData.HourGlass "08 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(SimParticles.Density, SimConstants.ρ₀, ParticleType)
 
-                @timeit SimMetaData.HourGlass "09 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt)
+                @timeit SimMetaData.HourGlass "09 Update To Final TimeStep"              FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt_step)
 
-                @timeit SimMetaData.HourGlass "10 Update MetaData"                       UpdateMetaData!(SimMetaData, dt)
+                @timeit SimMetaData.HourGlass "10 Update MetaData"                       UpdateMetaData!(SimMetaData, dt_step)
 
                 @timeit SimMetaData.HourGlass "11 Update TimeStep"                       dt = UpdateTimeStep(AccelerationMax, SimConstants, SimKernel)
             end
@@ -984,7 +992,7 @@ using TimerOutputs: @timeit
                     output.enqueue_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, cell_particle_counts=cell_particle_counts, cell_neighbor_counts=cell_neighbor_counts)
                 end
 
-                if SimMetaData.TotalTime > SimMetaData.SimulationTime
+                if SimMetaData.TotalTime >= SimMetaData.SimulationTime
 
                     # At end of simulation
                     FinalizeSimulationOutput!(SimMetaData, SimLogger, output)
