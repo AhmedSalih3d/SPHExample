@@ -2,6 +2,7 @@ using Test
 using SPHExample
 using StaticArrays
 using StructArrays
+using LinearAlgebra
 
 @testset "time stepping" begin
     pos = [SVector{2,Float64}(0.0, 0.0), SVector{2,Float64}(1.0, 0.0)]
@@ -9,10 +10,38 @@ using StructArrays
     acc = [SVector{2,Float64}(0.0, 0.0), SVector{2,Float64}(0.0, -9.81)]
     sc = SimulationConstants{Float64}()
     ker = SPHKernelInstance{2, Float64}(WendlandC2(); dx=sc.dx)
-    dt  = Δt(pos, vel, acc, sc, ker)
+    dt  = Δt(maximum(norm, acc), sc, ker)
     @test dt > 0
-    alloc = @allocated Δt(pos, vel, acc, sc, ker)
+    alloc = @allocated Δt(maximum(norm, acc), sc, ker)
     @test alloc == 0
+end
+
+@testset "aligned neighbor rebuild" begin
+    D = 2
+    T = Float64
+    positions = [
+        SVector{D,T}(2.0, 0.0),
+        SVector{D,T}(0.0, 0.0),
+        SVector{D,T}(1.0, 0.0),
+    ]
+    particles = StructArray((
+        Cells = fill(CartesianIndex(0, 0), 3),
+        Position = copy(positions),
+        ID = [20, 0, 10],
+    ))
+    aligned = ["id-20", "id-0", "id-10"]
+    particle_ranges = zeros(Int, length(particles) + 2)
+    unique_cells = zeros(CartesianIndex{D}, length(particles) + 1)
+    cell_list_indices = zeros(Int, length(particles))
+    _, sorting_scratch = Base.Sort.make_scratch(nothing, eltype(particles), length(particles))
+
+    SPHExample.SPHNeighborList.UpdateNeighborsAligned!(
+        particles, one(T), sorting_scratch, particle_ranges, unique_cells,
+        cell_list_indices, aligned,
+    )
+
+    @test particles.ID == [0, 10, 20]
+    @test aligned == ["id-0", "id-10", "id-20"]
 end
 
 @testset "isolated particle" begin
@@ -51,15 +80,14 @@ end
 
     for _ in 1:1000
         ResetArrays!(dρdtI, particles.Acceleration)
-        dt = Δt(particles.Position, particles.Velocity, particles.Acceleration,
-                 sc, ker)
+        dt = Δt(maximum(norm, particles.Acceleration), sc, ker)
         dt2 = dt / 2
 
         SPHExample.SPHCellList.HalfTimeStep(meta, sc, particles, pos_n, vel_n,
                                            ρ_n, dρdtI, dt2)
         LimitDensityAtBoundary!(ρ_n, sc.ρ₀, particles.MotionLimiter)
         Pressure!(press, ρ_n, sc)
-        SPHExample.SPHCellList.FullTimeStep(meta, ker, sc, particles, ∇C, ∇r, dt)
+        SPHExample.SPHCellList.FullTimeStep(meta, ker, sc, particles, vel_n, ∇C, ∇r, dt)
         DensityEpsi!(dens, dρdtI, ρ_n, dt)
         LimitDensityAtBoundary!(dens, sc.ρ₀, particles.MotionLimiter)
         SPHExample.SPHCellList.UpdateMetaData!(meta, dt)
