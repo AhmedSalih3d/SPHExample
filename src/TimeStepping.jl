@@ -33,6 +33,15 @@ function Δt(max_acceleration, SimulationConstants, SPHKernel)
     return CFL * min(dt_speed, dt_force)
 end
 
+function Δt(_Position, _Velocity, Acceleration::AbstractVector, SimulationConstants, SPHKernel)
+    max_acceleration = zero(real(eltype(eltype(Acceleration))))
+    @inbounds for a in Acceleration
+        acc_norm = norm(a)
+        max_acceleration = ifelse(acc_norm > max_acceleration, acc_norm, max_acceleration)
+    end
+    return Δt(max_acceleration, SimulationConstants, SPHKernel)
+end
+
 """
     UpdateTimeStep(AccelerationMax, SimConstants, SimKernel)
 
@@ -57,7 +66,7 @@ end
 
 @inline function next_output_time(times::AbstractVector, SimMetaData)
     idx = SimMetaData.OutputIterationCounter
-    if idx < length(times)
+    if idx <= length(times)
         return times[idx]
     else
         return SimMetaData.SimulationTime
@@ -111,6 +120,10 @@ function HalfTimeStep(::SimulationMetaData{Dimensions, FloatType, SMode, KMode, 
     end
 
     return nothing
+end
+
+function FullTimeStep(SimMetaData::SimulationMetaData, SimKernel, SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt)
+    return FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, SimParticles.Velocity, ∇Cᵢ, ∇◌rᵢ, dt)
 end
 
 function FullTimeStep(::SimulationMetaData{D,T,NoShifting,K,B,L}, SimKernel,
