@@ -726,25 +726,22 @@ using TimerOutputs: @timeit
             AccelerationMax = @alloc(FloatType, length(SimParticles.Position))
             dt₂ = dt * 0.5
 
-            SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace, ParticleRanges, UniqueCells, CellListIndices)
-            UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-            BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
+            if SimMetaData.IndexCounter == 0
+                SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace, ParticleRanges, UniqueCells, CellListIndices)
+                UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
+                BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
+            end
             NextOutputTime = min(next_output_time(SimMetaData), SimMetaData.SimulationTime)
             TimeTolerance = eps(FloatType) * max(one(FloatType), abs(NextOutputTime)) * 16
             while SimMetaData.TotalTime < NextOutputTime
-                StepTargetTime = NextOutputTime
-                if TimeSteppingMode isa SingleNeighborTimeStepping && SimMetaData.NextSingleNeighborRefreshTime > SimMetaData.TotalTime + TimeTolerance
-                    StepTargetTime = min(StepTargetTime, SimMetaData.NextSingleNeighborRefreshTime)
-                end
-
-                RemainingTime = StepTargetTime - SimMetaData.TotalTime
+                RemainingTime = NextOutputTime - SimMetaData.TotalTime
                 if RemainingTime <= TimeTolerance
-                    SimMetaData.TotalTime = StepTargetTime
-                    continue
+                    SimMetaData.TotalTime = NextOutputTime
+                    break
                 end
                 dt_step = min(dt, RemainingTime)
                 # Keep the predictor half-step consistent with the adaptive full step,
-                # including shortened steps that land exactly on output/final/refresh times.
+                # including shortened steps that land exactly on output/final times.
                 dt₂ = dt_step * 0.5
 
                 @timeit SimMetaData.HourGlass "01 Calculate IndexCounter"  begin
@@ -796,7 +793,7 @@ using TimerOutputs: @timeit
                         Velocity = Velocityₙ⁺,
                     )
                 else
-                    RefreshFullState = SimMetaData.Iteration == 0 || SimMetaData.TotalTime >= SimMetaData.NextSingleNeighborRefreshTime - TimeTolerance
+                    RefreshFullState = SimMetaData.Iteration == 0 || ShouldRebuild
                     if RefreshFullState
                         @timeit SimMetaData.HourGlass "02 Refresh Pressure"                   Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
                         @timeit SimMetaData.HourGlass "03 Refresh MDBC"                       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
@@ -805,9 +802,6 @@ using TimerOutputs: @timeit
                             SimConstants, SimParticles, ParticleRanges, CellListIndices,
                             NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
                         )
-                        while SimMetaData.NextSingleNeighborRefreshTime <= SimMetaData.TotalTime + TimeTolerance
-                            SimMetaData.NextSingleNeighborRefreshTime += SimMetaData.SingleNeighborRefreshEach
-                        end
                     else
                         @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep"   ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
                     end

@@ -44,8 +44,6 @@ struct SingleNeighborTimeStepping <: TimeSteppingMode end
     OutputTimes::Union{FloatType,Vector{FloatType}} = OutputEach
     OutputIterationCounter::Int             = 0
     StepsTakenForLastOutput::Int            = 0
-    SingleNeighborRefreshEach::FloatType    = 0.01 ; @assert SingleNeighborRefreshEach > 0 "Single-neighbor refresh interval must be positive"
-    NextSingleNeighborRefreshTime::FloatType = 0
     CurrentTimeStep::FloatType              = 0
     TotalTime::FloatType                    = 0
     SimulationTime::FloatType               = 0
