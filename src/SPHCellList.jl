@@ -724,16 +724,6 @@ using TimerOutputs: @timeit
         @no_escape begin
             AccelerationMax = @alloc(FloatType, length(SimParticles.Position))
 
-            if TimeSteppingMode isa SingleNeighborTimeStepping && SimMetaData.Iteration == 0
-                @timeit SimMetaData.HourGlass "00 Init Pressure"                          Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
-                @timeit SimMetaData.HourGlass "00a Init MDBC"                             ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
-                @timeit SimMetaData.HourGlass "00b Init NeighborLoop" NeighborLoopPerParticle!(
-                    SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                    SimConstants, SimParticles, ParticleRanges, CellListIndices,
-                    NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
-                )
-            end
-
             NextOutputTime = next_output_time(SimMetaData)
             while SimMetaData.TotalTime < NextOutputTime
                 dt = SimMetaData.CurrentTimeStep
@@ -915,6 +905,17 @@ using TimerOutputs: @timeit
         SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace, ParticleRanges, UniqueCells, CellListIndices)
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
         BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
+
+        if SimTimeStepping isa SingleNeighborTimeStepping
+            InitialAccelerationMax = zeros(FloatType, NumberOfPoints)
+            @timeit SimMetaData.HourGlass "00 Init Pressure"                          Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
+            @timeit SimMetaData.HourGlass "00a Init MDBC"                             ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
+            @timeit SimMetaData.HourGlass "00b Init NeighborLoop" NeighborLoopPerParticle!(
+                SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                SimConstants, SimParticles, ParticleRanges, CellListIndices,
+                NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, InitialAccelerationMax,
+            )
+        end
 
         output = SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
 
