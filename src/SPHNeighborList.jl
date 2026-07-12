@@ -24,23 +24,34 @@ function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView
     TargetLen   = length(UniqueCellsView)
     OriginalLen = length(NeighborCellLists)
     resize!(NeighborCellLists, TargetLen)
+    MaxNeighborCount = max(length(FullStencil) - 1, 0)
 
     if TargetLen > OriginalLen
         @inbounds for Index in (OriginalLen + 1):TargetLen
             NeighborCellLists[Index] = Int[]
+            sizehint!(NeighborCellLists[Index], MaxNeighborCount)
+        end
+    end
+
+    CellIndexMap = Dict{eltype(UniqueCellsView), Int}()
+    sizehint!(CellIndexMap, TargetLen)
+    @inbounds for CellIndex in eachindex(UniqueCellsView)
+        if ParticleRanges[CellIndex] < ParticleRanges[CellIndex + 1]
+            CellIndexMap[UniqueCellsView[CellIndex]] = CellIndex
         end
     end
 
     @inbounds for CellIndex in eachindex(UniqueCellsView)
         Neighbors = NeighborCellLists[CellIndex]
         empty!(Neighbors)
+        if ParticleRanges[CellIndex] >= ParticleRanges[CellIndex + 1]
+            continue
+        end
         Cell = UniqueCellsView[CellIndex]
         for Offset in FullStencil
             NeighborCell = Cell + Offset
-            NeighborIndex = FindCellIndex(UniqueCellsView, NeighborCell)
-            StartIndex = ParticleRanges[NeighborIndex]
-            EndIndex = ParticleRanges[NeighborIndex + 1] - 1
-            if StartIndex <= EndIndex && NeighborIndex != CellIndex
+            NeighborIndex = get(CellIndexMap, NeighborCell, 0)
+            if !iszero(NeighborIndex) && NeighborIndex != CellIndex
                 push!(Neighbors, NeighborIndex)
             end
         end
