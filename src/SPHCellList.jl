@@ -746,7 +746,9 @@ using TimerOutputs: @timeit
 
                 @timeit SimMetaData.HourGlass "01 Calculate IndexCounter"  begin
 
-                    SimMetaData.Δx = UpdateΔx!(SimMetaData.Δx, Positionₙ⁺, SimParticles.Position)
+                    StepΔx = UpdateΔx!(zero(SimMetaData.Δx), Positionₙ⁺, SimParticles.Position)
+                    SimMetaData.Δx += StepΔx
+                    SimMetaData.SingleNeighborRefreshΔx += StepΔx
                     ShouldRebuild = SimMetaData.Δx >= SimKernel.h
 
                     # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
@@ -793,8 +795,8 @@ using TimerOutputs: @timeit
                         Velocity = Velocityₙ⁺,
                     )
                 else
-                    RefreshFullState = SimMetaData.Iteration == 0 || ShouldRebuild
-                    if RefreshFullState
+                    ShouldRefreshFullState = SimMetaData.Iteration == 0 || ShouldRebuild || SimMetaData.SingleNeighborRefreshΔx >= 0.1 * SimConstants.dx
+                    if ShouldRefreshFullState
                         @timeit SimMetaData.HourGlass "02 Refresh Pressure"                   Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
                         @timeit SimMetaData.HourGlass "03 Refresh MDBC"                       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
                         @timeit SimMetaData.HourGlass "04 Refresh NeighborLoop" NeighborLoopPerParticle!(
@@ -802,6 +804,7 @@ using TimerOutputs: @timeit
                             SimConstants, SimParticles, ParticleRanges, CellListIndices,
                             NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
                         )
+                        SimMetaData.SingleNeighborRefreshΔx = zero(SimMetaData.SingleNeighborRefreshΔx)
                     else
                         @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep"   ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
                     end
