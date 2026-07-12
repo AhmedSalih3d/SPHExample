@@ -691,6 +691,16 @@ using TimerOutputs: @timeit
 
     # Per-particle local Δx removed: use single scalar `SimMetaData.Δx`.
 
+
+    @inline function MeanSquaredDensityStep(dρdtI, dt)
+        Accum = zero(eltype(dρdtI))
+        @inbounds for i in eachindex(dρdtI)
+            Δρ = dρdtI[i] * dt
+            Accum += Δρ * Δρ
+        end
+        return Accum / length(dρdtI)
+    end
+
     @inbounds function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
                                       SimConstants, SimParticles, FullStencil,
@@ -797,7 +807,11 @@ using TimerOutputs: @timeit
                         Velocity = Velocityₙ⁺,
                     )
                 else
-                    ShouldRefreshFullState = SimMetaData.Iteration == 0 || ShouldRebuild || SimMetaData.SingleNeighborRefreshΔx >= 0.1 * SimConstants.dx
+                    DensityRefreshThreshold² = (1e-4 * SimConstants.ρ₀)^2
+                    ShouldRefreshFullState = SimMetaData.Iteration == 0 ||
+                                             ShouldRebuild ||
+                                             SimMetaData.SingleNeighborRefreshΔx >= 0.1 * SimConstants.dx ||
+                                             SimMetaData.SingleNeighborRefreshDensity² >= DensityRefreshThreshold²
                     if ShouldRefreshFullState
                         @timeit SimMetaData.HourGlass "02 Refresh Pressure"                   Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
                         @timeit SimMetaData.HourGlass "03 Refresh MDBC"                       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
@@ -807,6 +821,7 @@ using TimerOutputs: @timeit
                             NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
                         )
                         SimMetaData.SingleNeighborRefreshΔx = zero(SimMetaData.SingleNeighborRefreshΔx)
+                        SimMetaData.SingleNeighborRefreshDensity² = zero(SimMetaData.SingleNeighborRefreshDensity²)
                     else
                         @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep"   ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
                     end
@@ -829,6 +844,9 @@ using TimerOutputs: @timeit
                 end
 
                 @timeit SimMetaData.HourGlass "07 Final Density"                         DensityEpsi!(SimParticles.Density, dρdtI, ρₙ⁺, dt_step)
+                if TimeSteppingMode isa SingleNeighborTimeStepping
+                    SimMetaData.SingleNeighborRefreshDensity² += MeanSquaredDensityStep(dρdtI, dt_step)
+                end
 
                 @timeit SimMetaData.HourGlass "08 Final LimitDensityAtBoundary"          LimitDensityAtBoundary!(SimParticles.Density, SimConstants.ρ₀, ParticleType)
 
