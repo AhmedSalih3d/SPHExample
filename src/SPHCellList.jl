@@ -718,10 +718,6 @@ using TimerOutputs: @timeit
 
         ###
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-        # Initialize the adaptive time step once, then keep using SimMetaData.CurrentTimeStep.
-        if SimMetaData.CurrentTimeStep <= zero(FloatType)
-            SimMetaData.CurrentTimeStep = SimConstants.CFL * (SimKernel.h / SimConstants.c₀)
-        end
         dt = SimMetaData.CurrentTimeStep
         TimeSteppingMode = SimMetaData.TimeSteppingMode
 
@@ -918,6 +914,8 @@ using TimerOutputs: @timeit
         FullStencil            = ConstructStencil(Val(Dimensions))
         NeighborCellLists      = [Int[] for _ in 1:length(UniqueCells)]
         _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
+
+        SimMetaData.CurrentTimeStep = SimConstants.CFL * (SimKernel.h / SimConstants.c₀)
 
         output = SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
 
