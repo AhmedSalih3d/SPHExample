@@ -724,9 +724,11 @@ using TimerOutputs: @timeit
         @no_escape begin
             AccelerationMax = @alloc(FloatType, length(SimParticles.Position))
 
-            SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace, ParticleRanges, UniqueCells, CellListIndices)
-            UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-            BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
+            if SimMetaData.IndexCounter == 0
+                SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace, ParticleRanges, UniqueCells, CellListIndices)
+                UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
+                BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
+            end
 
             if TimeSteppingMode isa SingleNeighborTimeStepping
                 @timeit SimMetaData.HourGlass "00 Init Pressure"                          Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
