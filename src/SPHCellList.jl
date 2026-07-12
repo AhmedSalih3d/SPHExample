@@ -718,8 +718,10 @@ using TimerOutputs: @timeit
 
         ###
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-        # This code here is to initialize the first time step for each simulation loop
-        dt = SimConstants.CFL * (SimKernel.h / SimConstants.c₀)
+        # Continue the adaptive time-step sequence across output chunks; output cadence
+        # should not reset the integrator's proposed next step.
+        InitialDt = SimConstants.CFL * (SimKernel.h / SimConstants.c₀)
+        dt = SimMetaData.NextTimeStep > zero(FloatType) ? SimMetaData.NextTimeStep : InitialDt
         TimeSteppingMode = SimMetaData.TimeSteppingMode
 
         @no_escape begin
@@ -734,14 +736,14 @@ using TimerOutputs: @timeit
             NextOutputTime = min(next_output_time(SimMetaData), SimMetaData.SimulationTime)
             TimeTolerance = eps(FloatType) * max(one(FloatType), abs(NextOutputTime)) * 16
             while SimMetaData.TotalTime < NextOutputTime
-                RemainingTime = NextOutputTime - SimMetaData.TotalTime
-                if RemainingTime <= TimeTolerance
-                    SimMetaData.TotalTime = NextOutputTime
+                RemainingSimulationTime = SimMetaData.SimulationTime - SimMetaData.TotalTime
+                if RemainingSimulationTime <= TimeTolerance
+                    SimMetaData.TotalTime = SimMetaData.SimulationTime
                     break
                 end
-                dt_step = min(dt, RemainingTime)
-                # Keep the predictor half-step consistent with the adaptive full step,
-                # including shortened steps that land exactly on output/final times.
+                dt_step = min(dt, RemainingSimulationTime)
+                # Output cadence must not shorten physical steps; only the final
+                # simulation time may clip the adaptive step.
                 dt₂ = dt_step * 0.5
 
                 @timeit SimMetaData.HourGlass "01 Calculate IndexCounter"  begin
@@ -836,6 +838,7 @@ using TimerOutputs: @timeit
 
                 @timeit SimMetaData.HourGlass "11 Update TimeStep"                       dt = UpdateTimeStep(AccelerationMax, SimConstants, SimKernel)
             end
+            SimMetaData.NextTimeStep = dt
         end
         
         return nothing
