@@ -1,6 +1,6 @@
 module TimeStepping
 
-export Δt, next_output_time, ProgressMotion, HalfTimeStep, FullTimeStep, UpdateTimeStep
+export Δt, next_output_time, ProgressMotion, HalfTimeStep, FullTimeStep, SingleNeighborVerletStep!, UpdateTimeStep
 
 using LinearAlgebra
 using Parameters
@@ -31,6 +31,11 @@ function Δt(max_acceleration, SimulationConstants, SPHKernel)
     dt_speed = h / c₀
     dt_force = sqrt(h / max_acceleration)
     return CFL * min(dt_speed, dt_force)
+end
+
+function Δt(_Position, _Velocity, Acceleration, SimulationConstants, SPHKernel)
+    max_acceleration = maximum(norm, Acceleration)
+    return Δt(max_acceleration, SimulationConstants, SPHKernel)
 end
 
 """
@@ -131,6 +136,11 @@ function FullTimeStep(::SimulationMetaData{D,T,NoShifting,K,B,L}, SimKernel,
     return nothing
 end
 
+function FullTimeStep(SimMetaData::SimulationMetaData{D,T,NoShifting,K,B,L}, SimKernel,
+                      SimConstants, SimParticles, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,K<:KernelOutputMode,B<:MDBCMode,L<:LogMode}
+    return FullTimeStep(SimMetaData, SimKernel, SimConstants, SimParticles, SimParticles.Velocity, ∇Cᵢ, ∇◌rᵢ, dt)
+end
+
 function FullTimeStep(::SimulationMetaData{D,T,S,K,B,L}, SimKernel, SimConstants,
                           SimParticles, Velocityₙ⁺, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,S<:ShiftingMode,
                                                              K<:KernelOutputMode,
@@ -157,6 +167,95 @@ function FullTimeStep(::SimulationMetaData{D,T,S,K,B,L}, SimKernel, SimConstants
 
         Position[i]           += (Velocityₙ⁺[i] * dt + δxᵢ) * MotionLimiterFactor
     end
+    return nothing
+end
+
+@inline function VerletCorrectionStep(SimMetaData, Period::Int = 40)
+    return SimMetaData.Iteration == 0 || mod(SimMetaData.Iteration + 1, Period) == 0
+end
+
+"""
+    SingleNeighborVerletStep!(...)
+
+Advance the low-cost single-neighbor-loop scheme with Verlet history keyed by
+particle `ID`.  The keyed history is required because cell-list rebuilds sort
+`SimParticles`, so the previous-step velocity and density cannot safely be
+looked up by the current storage index.  Every 40 solver iterations the update
+uses the current state as a correction step, matching the usual Verlet practice
+for preventing staggered density/velocity drift without performing another
+neighbor calculation.
+"""
+function SingleNeighborVerletStep!(SimMetaData::SimulationMetaData{D,T,NoShifting,K,B,L},
+                                   SimKernel, SimConstants, SimParticles,
+                                   dρdtI, Velocityₙ⁻, ρₙ⁻, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,K<:KernelOutputMode,B<:MDBCMode,L<:LogMode}
+    @unpack Position, Velocity, Density, Acceleration, ID = SimParticles
+    ParticleType = SimParticles.Type
+    AccelerationScalarType = eltype(eltype(Acceleration))
+    DoCorrection = VerletCorrectionStep(SimMetaData)
+
+    @inbounds @simd ivdep for i in eachindex(Position)
+        ParticleID = ID[i]
+        MotionLimiterFactor = MotionLimiterValue(AccelerationScalarType, ParticleType[i])
+        GravityFactor = GravityFactorValue(AccelerationScalarType, ParticleType[i])
+        Acceleration[i] += ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor)
+
+        Velocityₙ = Velocity[i]
+        Densityₙ = Density[i]
+        if DoCorrection
+            Velocity[i] = Velocity[i] + Acceleration[i] * dt * MotionLimiterFactor
+            Density[i] = Density[i] + dρdtI[i] * dt
+        else
+            Velocity[i] = Velocityₙ⁻[ParticleID] + 2 * Acceleration[i] * dt * MotionLimiterFactor
+            Density[i] = ρₙ⁻[ParticleID] + 2 * dρdtI[i] * dt
+        end
+
+        Position[i] += Velocity[i] * dt * MotionLimiterFactor
+        Velocityₙ⁻[ParticleID] = Velocityₙ
+        ρₙ⁻[ParticleID] = Densityₙ
+    end
+
+    return nothing
+end
+
+function SingleNeighborVerletStep!(SimMetaData::SimulationMetaData{D,T,S,K,B,L},
+                                   SimKernel, SimConstants, SimParticles,
+                                   dρdtI, Velocityₙ⁻, ρₙ⁻, ∇Cᵢ, ∇◌rᵢ, dt) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode,L<:LogMode}
+    @unpack Position, Velocity, Density, Acceleration, ID = SimParticles
+    ParticleType = SimParticles.Type
+    AccelerationScalarType = eltype(eltype(Acceleration))
+    A     = 2
+    A_FST = 0
+    A_FSM = length(first(Position))
+    DoCorrection = VerletCorrectionStep(SimMetaData)
+
+    @inbounds @simd ivdep for i in eachindex(Position)
+        ParticleID = ID[i]
+        MotionLimiterFactor = MotionLimiterValue(AccelerationScalarType, ParticleType[i])
+        GravityFactor = GravityFactorValue(AccelerationScalarType, ParticleType[i])
+        Acceleration[i] += ConstructGravitySVector(Acceleration[i], SimConstants.g * GravityFactor)
+
+        Velocityₙ = Velocity[i]
+        Densityₙ = Density[i]
+        if DoCorrection
+            Velocity[i] = Velocity[i] + Acceleration[i] * dt * MotionLimiterFactor
+            Density[i] = Density[i] + dρdtI[i] * dt
+        else
+            Velocity[i] = Velocityₙ⁻[ParticleID] + 2 * Acceleration[i] * dt * MotionLimiterFactor
+            Density[i] = ρₙ⁻[ParticleID] + 2 * dρdtI[i] * dt
+        end
+
+        A_FSC = (∇◌rᵢ[i] - A_FST) / (A_FSM - A_FST)
+        if A_FSC < 0
+            δxᵢ = zero(eltype(Position))
+        else
+            δxᵢ = -A_FSC * A * SimKernel.h * norm(Velocity[i]) * dt * ∇Cᵢ[i]
+        end
+
+        Position[i] += (Velocity[i] * dt + δxᵢ) * MotionLimiterFactor
+        Velocityₙ⁻[ParticleID] = Velocityₙ
+        ρₙ⁻[ParticleID] = Densityₙ
+    end
+
     return nothing
 end
 
