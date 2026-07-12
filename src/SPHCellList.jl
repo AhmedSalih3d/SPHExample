@@ -29,7 +29,7 @@ using TimerOutputs: @timeit
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{D,T,NoShifting,NoKernelOutput,B,L},
                                       SimConstants, SimParticles, ParticleRanges,
-                                      CellListIndices, NeighborCellLists, dρdtI,
+                                      CellListIndices, NeighborCellListOffsets, NeighborCellListIndices, dρdtI,
                                       Acceleration, ∇Cᵢ,
                                       ∇◌rᵢ, AccelerationMax;
                                       Position = SimParticles.Position,
@@ -46,7 +46,8 @@ using TimerOutputs: @timeit
             CellListIndex = CellListIndices[i]
             SameCellStart = ParticleRanges[CellListIndex]
             SameCellEnd = ParticleRanges[CellListIndex + 1] - 1
-            NeighborCellIndices = NeighborCellLists[CellListIndex]
+            NeighborCellStart = NeighborCellListOffsets[CellListIndex]
+            NeighborCellEnd = NeighborCellListOffsets[CellListIndex + 1] - 1
 
             @inbounds for j in SameCellStart:(i - 1)
                 dρdt_acc, acc_acc = ComputeInteractionsPerParticle!(
@@ -62,7 +63,8 @@ using TimerOutputs: @timeit
                     Velocity, ParticleType, dρdt_acc, acc_acc, i, j,
                 )
             end
-            for NeighborIdx in NeighborCellIndices
+            for NeighborCellCursor in NeighborCellStart:NeighborCellEnd
+                NeighborIdx = NeighborCellListIndices[NeighborCellCursor]
                 StartIndex_ = ParticleRanges[NeighborIdx]
                 EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
                 @inbounds for j in StartIndex_:EndIndex_
@@ -85,7 +87,7 @@ using TimerOutputs: @timeit
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{D,T,NoShifting,K,B,L},
                                       SimConstants, SimParticles, ParticleRanges,
-                                      CellListIndices, NeighborCellLists, dρdtI,
+                                      CellListIndices, NeighborCellListOffsets, NeighborCellListIndices, dρdtI,
                                       Acceleration, ∇Cᵢ,
                                       ∇◌rᵢ, AccelerationMax;
                                       Position = SimParticles.Position,
@@ -106,7 +108,8 @@ using TimerOutputs: @timeit
             CellListIndex = CellListIndices[i]
             SameCellStart = ParticleRanges[CellListIndex]
             SameCellEnd = ParticleRanges[CellListIndex + 1] - 1
-            NeighborCellIndices = NeighborCellLists[CellListIndex]
+            NeighborCellStart = NeighborCellListOffsets[CellListIndex]
+            NeighborCellEnd = NeighborCellListOffsets[CellListIndex + 1] - 1
 
             @inbounds for j in SameCellStart:(i - 1)
                 dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc =
@@ -126,7 +129,8 @@ using TimerOutputs: @timeit
                         kernel_grad_acc, i, j,
                     )
             end
-            for NeighborIdx in NeighborCellIndices
+            for NeighborCellCursor in NeighborCellStart:NeighborCellEnd
+                NeighborIdx = NeighborCellListIndices[NeighborCellCursor]
                 StartIndex_ = ParticleRanges[NeighborIdx]
                 EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
                 @inbounds for j in StartIndex_:EndIndex_
@@ -153,7 +157,7 @@ using TimerOutputs: @timeit
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{D,T,S,NoKernelOutput,B,L},
                                       SimConstants, SimParticles, ParticleRanges,
-                                      CellListIndices, NeighborCellLists, dρdtI,
+                                      CellListIndices, NeighborCellListOffsets, NeighborCellListIndices, dρdtI,
                                       Acceleration, ∇Cᵢ,
                                       ∇◌rᵢ, AccelerationMax;
                                       Position = SimParticles.Position,
@@ -172,7 +176,8 @@ using TimerOutputs: @timeit
             CellListIndex = CellListIndices[i]
             SameCellStart = ParticleRanges[CellListIndex]
             SameCellEnd = ParticleRanges[CellListIndex + 1] - 1
-            NeighborCellIndices = NeighborCellLists[CellListIndex]
+            NeighborCellStart = NeighborCellListOffsets[CellListIndex]
+            NeighborCellEnd = NeighborCellListOffsets[CellListIndex + 1] - 1
 
             @inbounds for j in SameCellStart:(i - 1)
                 dρdt_acc, acc_acc, shift_c_acc, shift_r_acc =
@@ -192,7 +197,8 @@ using TimerOutputs: @timeit
                         shift_r_acc, i, j,
                     )
             end
-            for NeighborIdx in NeighborCellIndices
+            for NeighborCellCursor in NeighborCellStart:NeighborCellEnd
+                NeighborIdx = NeighborCellListIndices[NeighborCellCursor]
                 StartIndex_ = ParticleRanges[NeighborIdx]
                 EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
                 @inbounds for j in StartIndex_:EndIndex_
@@ -219,7 +225,7 @@ using TimerOutputs: @timeit
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{D,T,S,K,B,L},
                                       SimConstants, SimParticles, ParticleRanges,
-                                      CellListIndices, NeighborCellLists, dρdtI,
+                                      CellListIndices, NeighborCellListOffsets, NeighborCellListIndices, dρdtI,
                                       Acceleration, ∇Cᵢ,
                                       ∇◌rᵢ, AccelerationMax;
                                       Position = SimParticles.Position,
@@ -243,7 +249,8 @@ using TimerOutputs: @timeit
             CellListIndex = CellListIndices[i]
             SameCellStart = ParticleRanges[CellListIndex]
             SameCellEnd = ParticleRanges[CellListIndex + 1] - 1
-            NeighborCellIndices = NeighborCellLists[CellListIndex]
+            NeighborCellStart = NeighborCellListOffsets[CellListIndex]
+            NeighborCellEnd = NeighborCellListOffsets[CellListIndex + 1] - 1
 
             @inbounds for j in SameCellStart:(i - 1)
                 dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc,
@@ -263,7 +270,8 @@ using TimerOutputs: @timeit
                     kernel_grad_acc, shift_c_acc, shift_r_acc, i, j,
                 )
             end
-            for NeighborIdx in NeighborCellIndices
+            for NeighborCellCursor in NeighborCellStart:NeighborCellEnd
+                NeighborIdx = NeighborCellListIndices[NeighborCellCursor]
                 StartIndex_ = ParticleRanges[NeighborIdx]
                 EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
                 @inbounds for j in StartIndex_:EndIndex_
@@ -691,7 +699,7 @@ using TimerOutputs: @timeit
                                       SimConstants, SimParticles, FullStencil,
                                       ParticleRanges, UniqueCells, CellListIndices,
                                       SortingScratchSpace,
-                                      NeighborCellLists, NeighborCellIndexMap, dρdtI, Velocityₙ⁺,
+                                      NeighborCellListOffsets, NeighborCellListIndices, NeighborCellIndexMap, dρdtI, Velocityₙ⁺,
                                       Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ,
                                       MotionDefinition::Union{
                                           Nothing,
@@ -723,7 +731,7 @@ using TimerOutputs: @timeit
 
             SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace, ParticleRanges, UniqueCells, CellListIndices)
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-            BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, NeighborCellIndexMap)
+            BuildNeighborCellLists!(NeighborCellListOffsets, NeighborCellListIndices, FullStencil, UniqueCellsView, ParticleRanges, NeighborCellIndexMap)
 
             if TimeSteppingMode isa SingleNeighborTimeStepping
                 @timeit SimMetaData.HourGlass "00 Init Pressure"                          Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
@@ -731,7 +739,7 @@ using TimerOutputs: @timeit
                 @timeit SimMetaData.HourGlass "00b Init NeighborLoop" NeighborLoopPerParticle!(
                     SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                     SimConstants, SimParticles, ParticleRanges, CellListIndices,
-                    NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
+                    NeighborCellListOffsets, NeighborCellListIndices, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
                 )
             end
 
@@ -754,7 +762,7 @@ using TimerOutputs: @timeit
                         @timeit SimMetaData.HourGlass "01a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells, CellListIndices)
                         SimMetaData.Δx    = zero(eltype(dρdtI))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
-                        BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, NeighborCellIndexMap)
+                        BuildNeighborCellLists!(NeighborCellListOffsets, NeighborCellListIndices, FullStencil, UniqueCellsView, ParticleRanges, NeighborCellIndexMap)
                     end
                 end
 
@@ -767,7 +775,7 @@ using TimerOutputs: @timeit
                     @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoopPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, ParticleRanges, CellListIndices,
-                        NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
+                        NeighborCellListOffsets, NeighborCellListIndices, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
                     )
 
                     @timeit SimMetaData.HourGlass "05 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
@@ -780,7 +788,7 @@ using TimerOutputs: @timeit
                     @timeit SimMetaData.HourGlass "08 Second NeighborLoop" NeighborLoopPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, ParticleRanges, CellListIndices,
-                        NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
+                        NeighborCellListOffsets, NeighborCellListIndices, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
                         Position = Positionₙ⁺,
                         Density = ρₙ⁺,
                         Velocity = Velocityₙ⁺,
@@ -798,7 +806,7 @@ using TimerOutputs: @timeit
                     @timeit SimMetaData.HourGlass "06 NeighborLoop" NeighborLoopPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, ParticleRanges, CellListIndices,
-                        NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
+                        NeighborCellListOffsets, NeighborCellListIndices, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
                         Position = Positionₙ⁺,
                         Density = ρₙ⁺,
                         Velocity = Velocityₙ⁺,
@@ -906,7 +914,8 @@ using TimerOutputs: @timeit
         UniqueCells            = zeros(CartesianIndex{Dimensions}, NumberOfPoints)
         CellListIndices        = zeros(Int, NumberOfPoints)
         FullStencil            = ConstructStencil(Val(Dimensions))
-        NeighborCellLists      = [Int[] for _ in 1:length(UniqueCells)]
+        NeighborCellListOffsets = zeros(Int, length(UniqueCells) + 1)
+        NeighborCellListIndices = Int[]
         NeighborCellIndexMap   = Dict{CartesianIndex{Dimensions}, Int}()
         _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
 
@@ -926,7 +935,8 @@ using TimerOutputs: @timeit
                 )
                 cell_neighbor_counts = ComputeCellNeighborCounts(
                     ParticleRanges,
-                    NeighborCellLists,
+                    NeighborCellListOffsets,
+                    NeighborCellListIndices,
                     SimMetaData.IndexCounter,
                 )
             end
@@ -948,7 +958,7 @@ using TimerOutputs: @timeit
                     SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                     SimConstants, SimParticles, FullStencil, ParticleRanges,
                     UniqueCells, CellListIndices, SortingScratchSpace,
-                    NeighborCellLists, NeighborCellIndexMap, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
+                    NeighborCellListOffsets, NeighborCellListIndices, NeighborCellIndexMap, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
                     ∇Cᵢ, ∇◌rᵢ, MotionDefinition,
                 )
                 push!(SimMetaData.TimeSteps, SimMetaData.CurrentTimeStep)
@@ -967,7 +977,8 @@ using TimerOutputs: @timeit
                     )
                     cell_neighbor_counts = ComputeCellNeighborCounts(
                         ParticleRanges,
-                        NeighborCellLists,
+                        NeighborCellListOffsets,
+                        NeighborCellListIndices,
                         length(UniqueCellsView),
                     )
                 end
