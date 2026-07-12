@@ -57,7 +57,6 @@ struct SingleNeighborTimeStepping <: TimeSteppingMode end
     OpenLogFile::Bool                       = true
     Δx::FloatType                           = zero(FloatType)
     SingleNeighborRefreshΔx::FloatType      = zero(FloatType)
-    SingleNeighborRefreshDensity²::FloatType = zero(FloatType)
     TimeSteppingMode::TimeSteppingMode      = SingleNeighborTimeStepping()
 end
 SimulationMetaData{D,T,S,K,B}(; kwargs...) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode} =
