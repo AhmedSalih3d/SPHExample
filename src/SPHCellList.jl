@@ -724,13 +724,7 @@ using TimerOutputs: @timeit
         @no_escape begin
             AccelerationMax = @alloc(FloatType, length(SimParticles.Position))
 
-            if SimMetaData.IndexCounter == 0
-                SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace, ParticleRanges, UniqueCells, CellListIndices)
-                UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-                BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
-            end
-
-            if TimeSteppingMode isa SingleNeighborTimeStepping
+            if TimeSteppingMode isa SingleNeighborTimeStepping && SimMetaData.Iteration == 0
                 @timeit SimMetaData.HourGlass "00 Init Pressure"                          Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
                 @timeit SimMetaData.HourGlass "00a Init MDBC"                             ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
                 @timeit SimMetaData.HourGlass "00b Init NeighborLoop" NeighborLoopPerParticle!(
@@ -741,7 +735,7 @@ using TimerOutputs: @timeit
             end
 
             NextOutputTime = next_output_time(SimMetaData)
-            while SimMetaData.TotalTime <= NextOutputTime
+            while SimMetaData.TotalTime < NextOutputTime
                 dt = SimMetaData.CurrentTimeStep
                 dt₂ = dt * 0.5
 
@@ -918,6 +912,9 @@ using TimerOutputs: @timeit
         _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
 
         SimMetaData.CurrentTimeStep = SimConstants.CFL * (SimKernel.h / SimConstants.c₀)
+        SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace, ParticleRanges, UniqueCells, CellListIndices)
+        UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
+        BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
 
         output = SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
 
