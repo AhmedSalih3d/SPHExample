@@ -719,12 +719,11 @@ using TimerOutputs: @timeit
         ###
         UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
         # This code here is to initialize the first time step for each simulation loop
-        dt = SimConstants.CFL * (SimKernel.h / SimConstants.c₀)
+        dt = SimMetaData.CurrentTimeStep
         TimeSteppingMode = SimMetaData.TimeSteppingMode
 
         @no_escape begin
             AccelerationMax = @alloc(FloatType, length(SimParticles.Position))
-            dt₂ = dt * 0.5
 
             SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace, ParticleRanges, UniqueCells, CellListIndices)
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
@@ -742,6 +741,7 @@ using TimerOutputs: @timeit
 
             NextOutputTime = next_output_time(SimMetaData)
             while SimMetaData.TotalTime <= NextOutputTime
+                dt₂ = dt * 0.5
                 @timeit SimMetaData.HourGlass "01 Calculate IndexCounter"  begin
 
                     SimMetaData.Δx = UpdateΔx!(SimMetaData.Δx, Positionₙ⁺, SimParticles.Position)
@@ -944,6 +944,8 @@ using TimerOutputs: @timeit
 
 
         MotionDefinition = GenerateMotionDetails(SimParticles, SimGeometry, Dimensions, FloatType)
+
+        SimMetaData.CurrentTimeStep = SimConstants.CFL * (SimKernel.h / SimConstants.c₀)
 
         RunWithSimulationFinalizer!(SimMetaData, SimLogger, output) do OutputFinalized
             @inbounds while true
