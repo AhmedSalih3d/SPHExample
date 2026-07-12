@@ -55,6 +55,7 @@ struct SingleNeighborTimeStepping <: TimeSteppingMode end
     ExportGridCellParticleCounts::Bool      = false
     OpenLogFile::Bool                       = true
     Δx::FloatType                           = zero(FloatType)
+    SingleNeighborRefreshΔx::FloatType      = zero(FloatType)
     TimeSteppingMode::TimeSteppingMode      = SingleNeighborTimeStepping()
 end
 SimulationMetaData{D,T,S,K,B}(; kwargs...) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode} =
