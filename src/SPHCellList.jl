@@ -778,7 +778,17 @@ using TimerOutputs: @timeit
                         Velocity = Velocityₙ⁺,
                     )
                 else
-                    @timeit SimMetaData.HourGlass "02 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
+                    if ShouldRebuild
+                        @timeit SimMetaData.HourGlass "02 Refresh Pressure"                   Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
+                        @timeit SimMetaData.HourGlass "03 Refresh MDBC"                       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
+                        @timeit SimMetaData.HourGlass "04 Refresh NeighborLoop" NeighborLoopPerParticle!(
+                            SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                            SimConstants, SimParticles, ParticleRanges, CellListIndices,
+                            NeighborCellLists, dρdtI, SimParticles.Acceleration, ∇Cᵢ, ∇◌rᵢ, AccelerationMax,
+                        )
+                    else
+                        @timeit SimMetaData.HourGlass "02 Apply MDBC before Half TimeStep"   ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
+                    end
 
                     @timeit SimMetaData.HourGlass "03 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
 
