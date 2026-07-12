@@ -15,7 +15,7 @@ using ..OpenExternalPrograms
 using ..SPHKernels
 using ..SPHViscosityModels
 using ..SPHDensityDiffusionModels
-using ..SPHNeighborList: BuildNeighborCellLists!, ComputeCellNeighborCounts, ComputeCellParticleCounts, ConstructStencil, ExtractCells!, FindCellIndex, MapFloor, UpdateNeighbors!, UpdateΔx!
+using ..SPHNeighborList: BuildNeighborCellLists!, ComputeCellNeighborCounts, ComputeCellParticleCounts, ConstructStencil, ExtractCells!, MapFloor, UpdateNeighbors!, UpdateΔx!
 
 using Base.Threads: @threads
 using Bumper: @alloc, @no_escape
@@ -289,16 +289,14 @@ using TimerOutputs: @timeit
         return nothing
     end
 
-    f(SimKernel, GhostPoint) = CartesianIndex(map(x -> MapFloor(x, SimKernel.H⁻¹), Tuple(GhostPoint)))
+    @inline GhostCellIndex(SimKernel, GhostPoint) = CartesianIndex(map(x -> MapFloor(x, SimKernel.H⁻¹), Tuple(GhostPoint)))
     function NeighborLoopMDBC!(SimKernel,
                                SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
-                               SimConstants, ParticleRanges, UniqueCellsView,
-                               SimParticles, bᵧ, Aᵧ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
+                               SimConstants, FullStencil, ParticleRanges,
+                               CellIndexMap, SimParticles, bᵧ, Aᵧ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
 
-        @unpack Position, Density, GhostPoints, GhostNormals = SimParticles
+        @unpack Position, Density, GhostPoints = SimParticles
         ParticleType = SimParticles.Type                       
-
-        FullStencil = ConstructStencil(Val(Dimensions))
 
         @inbounds @threads for iter in eachindex(GhostPoints)
             GhostPoint = GhostPoints[iter]
@@ -309,14 +307,12 @@ using TimerOutputs: @timeit
                 A_acc = zero(Aᵧ[iter])            # an SMatrix{D+1,D+1,FloatType}
             
                 # compute and accumulate into the locals
-                GhostCellIndex = f(SimKernel, GhostPoints[iter])
-                @inbounds for offset ∈ FullStencil
-                    SCellIndex = GhostCellIndex + offset
-
-                    # Returns a range, x>:x for exact match and x=:x for no match
-                    # utilizes that it is a sorted array and requires no isequal constructor,
-                    # so I prefer this for now
-                    NeighborIdx = FindCellIndex(UniqueCellsView, SCellIndex)
+                CellIndex = GhostCellIndex(SimKernel, GhostPoint)
+                @inbounds for Offset ∈ FullStencil
+                    NeighborIdx = get(CellIndexMap, CellIndex + Offset, 0)
+                    if iszero(NeighborIdx)
+                        continue
+                    end
 
                     StartIndex_       = ParticleRanges[NeighborIdx] 
                     EndIndex_         = ParticleRanges[NeighborIdx + 1] - 1
@@ -628,14 +624,13 @@ using TimerOutputs: @timeit
 
     function ApplyMDBCBeforeHalf!(SimMetaData::SimulationMetaData{D,T,S,K,SimpleMDBC,L},
                                   SimKernel, SimConstants, SimParticles,
-                                  ParticleRanges, UniqueCells
+                                  FullStencil, ParticleRanges, CellIndexMap
                                  ) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,L<:LogMode}
         @no_escape begin
             DimensionsPlus = D + 1
             bᵧ = @alloc(SVector{DimensionsPlus, T}, length(SimParticles.Position))
             Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, T, DimensionsPlus*DimensionsPlus}, length(SimParticles.Position))
-            UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-            NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, UniqueCellsView, SimParticles, bᵧ, Aᵧ)
+            NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, FullStencil, ParticleRanges, CellIndexMap, SimParticles, bᵧ, Aᵧ)
             ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
         end
 
@@ -696,7 +691,7 @@ using TimerOutputs: @timeit
                                       SimConstants, SimParticles, FullStencil,
                                       ParticleRanges, UniqueCells, CellListIndices,
                                       SortingScratchSpace,
-                                      NeighborCellLists, dρdtI, Velocityₙ⁺,
+                                      NeighborCellLists, NeighborCellIndexMap, dρdtI, Velocityₙ⁺,
                                       Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ,
                                       MotionDefinition::Union{
                                           Nothing,
@@ -728,11 +723,11 @@ using TimerOutputs: @timeit
 
             SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace, ParticleRanges, UniqueCells, CellListIndices)
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-            BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
+            BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, NeighborCellIndexMap)
 
             if TimeSteppingMode isa SingleNeighborTimeStepping
                 @timeit SimMetaData.HourGlass "00 Init Pressure"                          Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
-                @timeit SimMetaData.HourGlass "00a Init MDBC"                             ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
+                @timeit SimMetaData.HourGlass "00a Init MDBC"                             ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, FullStencil, ParticleRanges, NeighborCellIndexMap)
                 @timeit SimMetaData.HourGlass "00b Init NeighborLoop" NeighborLoopPerParticle!(
                     SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                     SimConstants, SimParticles, ParticleRanges, CellListIndices,
@@ -759,7 +754,7 @@ using TimerOutputs: @timeit
                         @timeit SimMetaData.HourGlass "01a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells, CellListIndices)
                         SimMetaData.Δx    = zero(eltype(dρdtI))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
-                        BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
+                        BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, NeighborCellIndexMap)
                     end
                 end
 
@@ -767,7 +762,7 @@ using TimerOutputs: @timeit
 
                 if TimeSteppingMode isa SymplecticTimeStepping
                     @timeit SimMetaData.HourGlass "02 Pressure"                              Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
-                    @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
+                    @timeit SimMetaData.HourGlass "03 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, FullStencil, ParticleRanges, NeighborCellIndexMap)
 
                     @timeit SimMetaData.HourGlass "04 First NeighborLoop" NeighborLoopPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
@@ -791,7 +786,7 @@ using TimerOutputs: @timeit
                         Velocity = Velocityₙ⁺,
                     )
                 else
-                    @timeit SimMetaData.HourGlass "02 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, ParticleRanges, UniqueCells)
+                    @timeit SimMetaData.HourGlass "02 Apply MDBC before Half TimeStep"       ApplyMDBCBeforeHalf!(SimMetaData, SimKernel, SimConstants, SimParticles, FullStencil, ParticleRanges, NeighborCellIndexMap)
 
                     @timeit SimMetaData.HourGlass "03 Update To Half TimeStep"               HalfTimeStep(SimMetaData, SimConstants, SimParticles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt₂)
 
@@ -912,6 +907,7 @@ using TimerOutputs: @timeit
         CellListIndices        = zeros(Int, NumberOfPoints)
         FullStencil            = ConstructStencil(Val(Dimensions))
         NeighborCellLists      = [Int[] for _ in 1:length(UniqueCells)]
+        NeighborCellIndexMap   = Dict{CartesianIndex{Dimensions}, Int}()
         _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
 
         output = SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
@@ -952,7 +948,7 @@ using TimerOutputs: @timeit
                     SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                     SimConstants, SimParticles, FullStencil, ParticleRanges,
                     UniqueCells, CellListIndices, SortingScratchSpace,
-                    NeighborCellLists, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
+                    NeighborCellLists, NeighborCellIndexMap, dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺,
                     ∇Cᵢ, ∇◌rᵢ, MotionDefinition,
                 )
                 push!(SimMetaData.TimeSteps, SimMetaData.CurrentTimeStep)
