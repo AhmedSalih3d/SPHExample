@@ -15,6 +15,38 @@ using StructArrays
     @test alloc == 0
 end
 
+@testset "single-neighbor Verlet history" begin
+    D = 2
+    T = Float64
+    sc = SimulationConstants{T}(g=0.0, c₀=1.0)
+    ker = SPHKernelInstance{D,T}(WendlandC2(); dx=sc.dx)
+    meta = SimulationMetaData{D,T}(SimulationName="verlet", SaveLocation=".")
+    meta.Iteration = 1
+
+    particles = StructArray((
+        Position=[SVector{D,T}(0, 0), SVector{D,T}(1, 0)],
+        Velocity=[SVector{D,T}(1, 0), SVector{D,T}(2, 0)],
+        Acceleration=[SVector{D,T}(0, 0), SVector{D,T}(0, 0)],
+        Density=[10.0, 20.0],
+        Type=[Fluid, Fluid],
+        ID=[2, 1],
+    ))
+    dρdtI = [1.0, 2.0]
+    Velocityₙ⁻ = [SVector{D,T}(100, 0), SVector{D,T}(200, 0)]
+    ρₙ⁻ = [1000.0, 2000.0]
+    Oldρₙ⁻ = copy(ρₙ⁻)
+    ∇C = [SVector{D,T}(0, 0), SVector{D,T}(0, 0)]
+    ∇r = [0.0, 0.0]
+    dt = 0.1
+
+    SPHExample.TimeStepping.SingleNeighborVerletStep!(meta, ker, sc, particles, dρdtI, Velocityₙ⁻, ρₙ⁻, ∇C, ∇r, dt)
+
+    @test particles.Density[1] == Oldρₙ⁻[2] + 2 * dρdtI[1] * dt
+    @test particles.Density[2] == Oldρₙ⁻[1] + 2 * dρdtI[2] * dt
+    @test Velocityₙ⁻[2] == SVector{D,T}(1, 0)
+    @test Velocityₙ⁻[1] == SVector{D,T}(2, 0)
+end
+
 @testset "isolated particle" begin
     D = 2
     T = Float64
