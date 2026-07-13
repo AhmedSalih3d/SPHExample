@@ -6,6 +6,17 @@ using StaticArrays
 
 const NeighborCellIndexType = UInt32
 
+function SelectNeighborCellIndexType(CellCapacity, FullStencil)
+    MaxNeighborCount = max(length(FullStencil) - 1, 0)
+    MaxStoredIndex = max(CellCapacity, CellCapacity * MaxNeighborCount + 1)
+    if MaxStoredIndex <= typemax(UInt16)
+        return UInt16
+    elseif MaxStoredIndex <= typemax(UInt32)
+        return UInt32
+    end
+    return UInt64
+end
+
 function ConstructStencil(V::Val{d}) where d
     return CartesianIndices(ntuple(_ -> -1:1, V))
 end

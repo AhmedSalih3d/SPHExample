@@ -15,7 +15,7 @@ using ..OpenExternalPrograms
 using ..SPHKernels
 using ..SPHViscosityModels
 using ..SPHDensityDiffusionModels
-using ..SPHNeighborList: BuildNeighborCellLists!, ComputeCellNeighborCounts, ComputeCellParticleCounts, ConstructStencil, ExtractCells!, MapFloor, NeighborCellIndexType, UpdateNeighbors!, UpdateΔx!
+using ..SPHNeighborList: BuildNeighborCellLists!, ComputeCellNeighborCounts, ComputeCellParticleCounts, ConstructStencil, ExtractCells!, MapFloor, SelectNeighborCellIndexType, UpdateNeighbors!, UpdateΔx!
 
 using Base.Threads: @threads
 using Bumper: @alloc, @no_escape
@@ -915,9 +915,10 @@ using TimerOutputs: @timeit
         UniqueCells            = zeros(CartesianIndex{Dimensions}, NumberOfPoints)
         CellListIndices        = zeros(Int, NumberOfPoints)
         FullStencil            = ConstructStencil(Val(Dimensions))
-        NeighborCellListOffsets = zeros(NeighborCellIndexType, length(UniqueCells) + 1)
-        NeighborCellListIndices = NeighborCellIndexType[]
-        NeighborCellIndexMap   = Dict{CartesianIndex{Dimensions}, NeighborCellIndexType}()
+        NeighborIndexType      = SelectNeighborCellIndexType(length(UniqueCells), FullStencil)
+        NeighborCellListOffsets = zeros(NeighborIndexType, length(UniqueCells) + 1)
+        NeighborCellListIndices = NeighborIndexType[]
+        NeighborCellIndexMap   = Dict{CartesianIndex{Dimensions}, NeighborIndexType}()
         _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
 
         output = SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
