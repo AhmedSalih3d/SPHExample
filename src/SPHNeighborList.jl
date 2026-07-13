@@ -4,6 +4,8 @@ export ConstructStencil, ExtractCells!, UpdateNeighbors!, BuildNeighborCellLists
 
 using StaticArrays
 
+const NeighborCellIndexType = UInt32
+
 function ConstructStencil(V::Val{d}) where d
     return CartesianIndices(ntuple(_ -> -1:1, V))
 end
@@ -21,30 +23,89 @@ end
 end
 
 function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
+    CellIndexMap = Dict{eltype(UniqueCellsView), Int}()
+    return BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellIndexMap)
+end
+
+@inline function CompressIndex(::Type{IndexType}, Index) where {IndexType<:Integer}
+    @assert Index <= typemax(IndexType)
+    return IndexType(Index)
+end
+
+function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges,
+                                 CellIndexMap::Dict{CellType, IndexType}) where {CellType, IndexType<:Integer}
     TargetLen   = length(UniqueCellsView)
     OriginalLen = length(NeighborCellLists)
     resize!(NeighborCellLists, TargetLen)
+    MaxNeighborCount = max(length(FullStencil) - 1, 0)
 
     if TargetLen > OriginalLen
         @inbounds for Index in (OriginalLen + 1):TargetLen
             NeighborCellLists[Index] = Int[]
+            sizehint!(NeighborCellLists[Index], MaxNeighborCount)
+        end
+    end
+
+    empty!(CellIndexMap)
+    sizehint!(CellIndexMap, TargetLen)
+    @inbounds for CellIndex in eachindex(UniqueCellsView)
+        if ParticleRanges[CellIndex] < ParticleRanges[CellIndex + 1]
+            CellIndexMap[UniqueCellsView[CellIndex]] = CompressIndex(IndexType, CellIndex)
         end
     end
 
     @inbounds for CellIndex in eachindex(UniqueCellsView)
         Neighbors = NeighborCellLists[CellIndex]
         empty!(Neighbors)
+        if ParticleRanges[CellIndex] >= ParticleRanges[CellIndex + 1]
+            continue
+        end
         Cell = UniqueCellsView[CellIndex]
         for Offset in FullStencil
             NeighborCell = Cell + Offset
-            NeighborIndex = FindCellIndex(UniqueCellsView, NeighborCell)
-            StartIndex = ParticleRanges[NeighborIndex]
-            EndIndex = ParticleRanges[NeighborIndex + 1] - 1
-            if StartIndex <= EndIndex && NeighborIndex != CellIndex
+            NeighborIndexValue = get(CellIndexMap, NeighborCell, zero(IndexType))
+            NeighborIndex = Int(NeighborIndexValue)
+            if !iszero(NeighborIndex) && NeighborIndex != CellIndex
                 push!(Neighbors, NeighborIndex)
             end
         end
     end
+
+    return nothing
+end
+
+function BuildNeighborCellLists!(NeighborCellListOffsets, NeighborCellListIndices,
+                                 FullStencil, UniqueCellsView, ParticleRanges,
+                                 CellIndexMap::Dict{CellType, IndexType}) where {CellType, IndexType<:Integer}
+    TargetLen = length(UniqueCellsView)
+    resize!(NeighborCellListOffsets, TargetLen + 1)
+    MaxNeighborCount = max(length(FullStencil) - 1, 0)
+
+    empty!(CellIndexMap)
+    sizehint!(CellIndexMap, TargetLen)
+    @inbounds for CellIndex in eachindex(UniqueCellsView)
+        if ParticleRanges[CellIndex] < ParticleRanges[CellIndex + 1]
+            CellIndexMap[UniqueCellsView[CellIndex]] = CompressIndex(IndexType, CellIndex)
+        end
+    end
+
+    empty!(NeighborCellListIndices)
+    sizehint!(NeighborCellListIndices, TargetLen * MaxNeighborCount)
+    NeighborCellListOffsets[1] = CompressIndex(eltype(NeighborCellListOffsets), 1)
+    @inbounds for CellIndex in eachindex(UniqueCellsView)
+        NeighborCellListOffsets[CellIndex] = CompressIndex(eltype(NeighborCellListOffsets), length(NeighborCellListIndices) + 1)
+        if ParticleRanges[CellIndex] < ParticleRanges[CellIndex + 1]
+            Cell = UniqueCellsView[CellIndex]
+            for Offset in FullStencil
+                NeighborIndexValue = get(CellIndexMap, Cell + Offset, zero(IndexType))
+                NeighborIndex = Int(NeighborIndexValue)
+                if !iszero(NeighborIndex) && NeighborIndex != CellIndex
+                    push!(NeighborCellListIndices, CompressIndex(eltype(NeighborCellListIndices), NeighborIndex))
+                end
+            end
+        end
+    end
+    NeighborCellListOffsets[TargetLen + 1] = CompressIndex(eltype(NeighborCellListOffsets), length(NeighborCellListIndices) + 1)
 
     return nothing
 end
@@ -129,6 +190,19 @@ function ComputeCellNeighborCounts(ParticleRanges, NeighborCellLists, CellCount)
         NeighborTotal = 0
         for NeighborIndex in NeighborCellLists[Index]
             NeighborTotal += Counts[NeighborIndex]
+        end
+        Neighbors[Index] = max(Counts[Index] - 1, 0) + NeighborTotal
+    end
+    return Neighbors
+end
+
+function ComputeCellNeighborCounts(ParticleRanges, NeighborCellListOffsets, NeighborCellListIndices, CellCount)
+    Counts = ComputeCellParticleCounts(ParticleRanges, CellCount)
+    Neighbors = Vector{Int}(undef, CellCount)
+    @inbounds for Index in 1:CellCount
+        NeighborTotal = 0
+        for Cursor in Int(NeighborCellListOffsets[Index]):(Int(NeighborCellListOffsets[Index + 1]) - 1)
+            NeighborTotal += Counts[Int(NeighborCellListIndices[Cursor])]
         end
         Neighbors[Index] = max(Counts[Index] - 1, 0) + NeighborTotal
     end
