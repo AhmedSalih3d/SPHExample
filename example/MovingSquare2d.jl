@@ -1,4 +1,4 @@
-import StaticArrays: SVector
+using StaticArrays: SVector
 using SPHExample
 
 let
@@ -11,8 +11,8 @@ let
         δᵩ = 0.1,
         g  = 0,
         Cb = 112000,
-        α  = 1e-6,
-        CFL=0.2
+        CFL=0.2,
+        A  = 2 # Manually set value for this parameter
     )
 
     SimMetaDataMovingSquare  = SimulationMetaData{Dimensions,FloatType,PlanarShifting,NoKernelOutput,NoMDBC,StoreLog}(
@@ -24,6 +24,12 @@ let
         ExportSingleVTKHDF=true,
         OpenLogFile=true
     )
+
+    # If save directory is not already made, make it
+    if !isdir(SimMetaDataMovingSquare.SaveLocation)
+        mkdir(SimMetaDataMovingSquare.SaveLocation)
+    end
+
     FixedBoundary = Geometry{Dimensions, FloatType}(
         CSVFile     = "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Fixed.csv",
         GroupMarker = 1,
@@ -49,20 +55,19 @@ let
             Direction = SVector{Dimensions, FloatType}(1.0, 0.0)  # 2D direction vector with Float64 type
         )
     )
-
-    SimulationGeometry = [FixedBoundary;Water;MovingSquare]
-
-    # Load in particles
-    SimParticles = AllocateDataStructures(SimulationGeometry)
     
     # Collect Geometry instances into a vector
     SimulationGeometry = [FixedBoundary, Water, MovingSquare]
+    
+    # Load in particles
+    SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaDataMovingSquare)
+
     # If save directory is not already made, make it
     if !isdir(SimMetaDataMovingSquare.SaveLocation)
         mkdir(SimMetaDataMovingSquare.SaveLocation)
     end
 
-    SimLogger = SimulationLogger(SimMetaDataMovingSquare.SaveLocation; to_console=true)
+    SimLogger = SimulationLogger(SimMetaDataMovingSquare.SaveLocation)
 
     SimKernel = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); dx = SimConstantsMovingSquare.dx, k  = sqrt(2))
 
@@ -75,7 +80,9 @@ let
         SimLogger           = SimLogger,
         SimParticles        = SimParticles,
         SimKernel           = SimKernel,
-        SimViscosity        = LaminarSPS(),
-        SimDensityDiffusion = LinearDensityDiffusion()
+        SimViscosity        = LaminarSPS{FloatType}(),
+        SimDensityDiffusion = LinearDensityDiffusion(),
+        SimTimeStepping     = SingleNeighborTimeStepping()
     )
 end
+

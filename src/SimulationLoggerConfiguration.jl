@@ -7,12 +7,15 @@ module SimulationLoggerConfiguration
     using Logging, LoggingExtras
     using Printf
     using Dates
-    using InteractiveUtils
     using Base.Threads
-
+    using InteractiveUtils
+    using LibGit2
+    using UnicodePlots
     using ..SimulationGeometry
+    using ..SimulationMetaDataConfiguration
 
     export SimulationLogger, generate_format_string, InitializeLogger, LogSimulationDetails, LogStep, LogFinal
+    export InitializeLog!, LogStep!, FinalizeLog!
 
     """
         generate_format_string(values; padding=10)
@@ -37,9 +40,9 @@ module SimulationLoggerConfiguration
     When `to_console` is `false`, the code can instead display a terminal
     progress bar.
     """
-    struct SimulationLogger
+    struct SimulationLogger{L <: AbstractLogger}
         LoggerIo::IOStream           # handle to the log file
-        Logger::AbstractLogger       # may be a TeeLogger or FormatLogger
+        Logger::L                    # may be a TeeLogger or FormatLogger
         FormatStr::String            # format used for progress lines
         ValuesToPrint::String        # header line describing logged values
         ValuesToPrintC::String       # separator line below the header
@@ -48,7 +51,7 @@ module SimulationLoggerConfiguration
         ToConsole::Bool              # whether log output is echoed to REPL
 
 
-        function SimulationLogger(SaveLocation::String; filename="SimulationOutput.log", to_console::Bool=false)
+        function SimulationLogger(SaveLocation::String; filename="SimulationOutput.log", to_console::Bool=true)
             io_logger = open(joinpath(SaveLocation, filename), "w")
             file_logger = FormatLogger(io_logger) do io, args
                 println(io, args.message)
@@ -73,7 +76,7 @@ module SimulationLoggerConfiguration
             CurrentDate    = now()
             CurrentDataStr = Dates.format(CurrentDate, "dd-mm-yyyy HH:MM:SS")
 
-            new(io_logger, logger, format_string, ValuesToPrint, ValuesToPrintC, CurrentDate, CurrentDataStr, to_console)
+            new{typeof(logger)}(io_logger, logger, format_string, ValuesToPrint, ValuesToPrintC, CurrentDate, CurrentDataStr, to_console)
         end
     end
 
@@ -132,7 +135,13 @@ module SimulationLoggerConfiguration
         end
     end
     
-    
+    function git_branch_of_pkg(mod::Module)
+        pkg_path = dirname(dirname(pathof(mod)))
+        repo = LibGit2.GitRepo(pkg_path)
+        head = LibGit2.head(repo)
+        return LibGit2.shortname(head)  # returns nothing if detached
+    end
+
     """
         InitializeLogger(logger, constants, metadata, kernel, viscosity,
                          densitydiffusion, geometry, particles)
@@ -141,10 +150,10 @@ module SimulationLoggerConfiguration
     store the start time. This is typically called once before the time stepping
     loop begins.
     """
-    function InitializeLogger(SimLogger,SimConstants,SimMetaData, SimKernel, SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
+    function InitializeLogger(SimLogger::SimulationLogger, SimConstants, SimMetaData, SimKernel, SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
         with_logger(SimLogger.Logger) do
             @info sprint(InteractiveUtils.versioninfo)
-            @info "Julia threads: $(Threads.nthreads())"
+            @info "Git branch of SPHExample: $(git_branch_of_pkg(@__MODULE__))"
             @info SimConstants
             @info SimMetaData
             @info SimKernel
@@ -168,7 +177,7 @@ module SimulationLoggerConfiguration
     Record information about the current iteration such as physical time,
     wall-clock time and an estimate of the remaining run time.
     """
-    function LogStep(SimLogger, SimMetaData, HourGlass)
+    function LogStep(SimLogger::SimulationLogger, SimMetaData, HourGlass)
         with_logger(SimLogger.Logger) do
             PartNumber               = "Part_" * lpad(SimMetaData.OutputIterationCounter, 4, "0")
             PartTime                 = string(@sprintf("%-.6f", SimMetaData.TotalTime))
@@ -179,16 +188,14 @@ module SimulationLoggerConfiguration
             TimeUptillNow            = string(@sprintf("%-.3f", elapsed_time_))
             TimePerPhysicalSecond    = string(@sprintf("%-.2f", elapsed_time_ / SimMetaData.TotalTime))
     
-            SecondsToFinish          = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (elapsed_time_ / SimMetaData.TotalTime)
-            if isnan(SecondsToFinish)
-                SecondsToFinish = 0.0
-                ExpectedFinishTime       = now() + Second(ceil(Int, SecondsToFinish))
-                ExpectedFinishTimeString = missing
+            SecondsToFinish = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (elapsed_time_ / SimMetaData.TotalTime)
+            ExpectedFinishTimeString::String = if !isfinite(SecondsToFinish) || SecondsToFinish < 0
+                "N/A"
             else
-                ExpectedFinishTime       = now() + Second(ceil(Int, SecondsToFinish))
-                ExpectedFinishTimeString = Dates.format(ExpectedFinishTime, "dd-mm-yyyy HH:MM:SS")
+                ExpectedFinishTime = now() + Second(ceil(Int, SecondsToFinish))
+                Dates.format(ExpectedFinishTime, "dd-mm-yyyy HH:MM:SS")
             end
-            
+             
     
             @info @. $join(cfmt(SimLogger.FormatStr, (PartNumber, PartTime, PartTotalSteps, CurrentSteps, TimeUptillNow, TimePerPhysicalSecond, ExpectedFinishTimeString)))
         end
@@ -201,7 +208,7 @@ module SimulationLoggerConfiguration
     Called once the simulation loop ends. Prints total run time and a summary of
     the collected [`TimerOutput`] information.
     """
-    function LogFinal(SimLogger, HourGlass)
+    function LogFinal(SimLogger::SimulationLogger, HourGlass)
         with_logger(SimLogger.Logger) do
             # Get the current date and time
             current_time = now()
@@ -214,6 +221,62 @@ module SimulationLoggerConfiguration
             @info "\n Sorted by time \n"
             show(SimLogger.LoggerIo, HourGlass)
         end
+    end
+
+    function InitializeLog!(::SimulationMetaData{D,T,S,K,B,NoLog}, _args...) where {D,T,S<:ShiftingMode,
+                                                                                      K<:KernelOutputMode,
+                                                                                      B<:MDBCMode}
+        return nothing
+    end
+    function InitializeLog!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger,
+                             SimConstants, SimKernel, SimViscosity, SimDensityDiffusion,
+                             SimGeometry, SimParticles) where {D,T,S<:ShiftingMode,
+                                                              K<:KernelOutputMode,
+                                                              B<:MDBCMode}
+        InitializeLogger(SimLogger, SimConstants, SimMetaData, SimKernel,
+                         SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
+        LogStep(SimLogger, SimMetaData, SimMetaData.HourGlass)
+        SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
+        return nothing
+    end
+
+    function LogStep!(::SimulationMetaData{D,T,S,K,B,NoLog}, _...) where {D,T,S<:ShiftingMode,
+                                                                           K<:KernelOutputMode,
+                                                                           B<:MDBCMode}
+        return nothing
+    end
+
+    function LogStep!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, B<:MDBCMode}
+        LogStep(SimLogger, SimMetaData, SimMetaData.HourGlass)
+        SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
+        return nothing
+    end
+
+    function FinalizeLog!(::SimulationMetaData{D,T,S,K,B,NoLog}, _...) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, B<:MDBCMode}
+        return nothing
+    end
+    
+    function FinalizeLog!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, B<:MDBCMode}
+        LogFinal(SimLogger, SimMetaData.HourGlass)
+        
+        # Time steps line plot
+        UnicodeTimeStepsGraph = lineplot(
+            1:length(SimMetaData.TimeSteps),
+            SimMetaData.TimeSteps,
+            title="Time Steps [s] as a function of iteration",
+            name="Time Steps",
+            xlabel="Iterations [-]",
+            ylabel="Time Step Size [s]",
+        )
+
+        with_logger(SimLogger.Logger) do
+            @info ""
+            show(SimLogger.LoggerIo, UnicodeTimeStepsGraph)
+        end
+        
+        close(SimLogger.LoggerIo)
+
+        return nothing
     end
 
 end

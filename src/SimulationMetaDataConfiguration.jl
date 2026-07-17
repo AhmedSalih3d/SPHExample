@@ -2,12 +2,13 @@ module SimulationMetaDataConfiguration
 
 using Parameters
 using TimerOutputs
-using ProgressMeter
 
-export SimulationMetaData, ShiftingMode, NoShifting, PlanarShifting,
+
+export SimulationMetaData, UpdateMetaData!, ShiftingMode, NoShifting, PlanarShifting,
        KernelOutputMode, NoKernelOutput, StoreKernelOutput,
-       MDBCMode, NoMDBC, SimpleMDBC,
-       LogMode, NoLog, StoreLog
+       MDBCMode, NoMDBC, SimpleMDBC, UpdatedMDBC,
+       LogMode, NoLog, StoreLog,
+       TimeSteppingMode, SymplecticTimeStepping, SingleNeighborTimeStepping
 
 abstract type ShiftingMode end
 struct NoShifting    <: ShiftingMode end
@@ -20,10 +21,15 @@ struct StoreKernelOutput <: KernelOutputMode end
 abstract type MDBCMode end
 struct NoMDBC    <: MDBCMode end
 struct SimpleMDBC <: MDBCMode end
+struct UpdatedMDBC <: MDBCMode end
 
 abstract type LogMode end
 struct NoLog    <: LogMode end
 struct StoreLog <: LogMode end
+
+abstract type TimeSteppingMode end
+struct SymplecticTimeStepping    <: TimeSteppingMode end
+struct SingleNeighborTimeStepping <: TimeSteppingMode end
 
 @with_kw mutable struct SimulationMetaData{Dimensions,
                                            FloatType <: AbstractFloat,
@@ -42,29 +48,17 @@ struct StoreLog <: LogMode end
     CurrentTimeStep::FloatType              = 0
     TotalTime::FloatType                    = 0
     SimulationTime::FloatType               = 0
+    TimeSteps                               = Vector{FloatType}() 
     IndexCounter::Int                       = 0
-    ProgressSpecification::ProgressUnknown  = ProgressUnknown(desc="Simulation time per output each:", spinner=true, showspeed=true)
     VisualizeInParaview::Bool               = true
     ExportSingleVTKHDF::Bool                = true
     ExportGridCells::Bool                   = false
-    OutputVariables::Vector{String}         = [
-        "ChunkID",
-        "Kernel",
-        "KernelGradient",
-        "Density",
-        "Pressure",
-        "Velocity",
-        "Acceleration",
-        "BoundaryBool",
-        "ID",
-        "Type",
-        "GroupMarker",
-        "GhostPoints",
-        "GhostNormals",
-    ]
+    ExportGridCellParticleCounts::Bool      = false
     OpenLogFile::Bool                       = true
-    ChunkMultiplier::Int                    = 1
-    LocalΔx::Vector{FloatType}              = Vector{FloatType}()
+    PointGaussianRadiusFactor::FloatType    = 0.5 ; @assert PointGaussianRadiusFactor > 0
+    PointGaussianRadius::FloatType          = zero(FloatType)
+    Δx::FloatType                           = zero(FloatType)
+    TimeSteppingMode::TimeSteppingMode      = SingleNeighborTimeStepping()
 end
 SimulationMetaData{D,T,S,K,B}(; kwargs...) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,B<:MDBCMode} =
     SimulationMetaData{D,T,S,K,B,NoLog}(; kwargs...)
@@ -74,5 +68,13 @@ SimulationMetaData{D,T,S}(; kwargs...) where {D,T,S<:ShiftingMode} =
     SimulationMetaData{D,T,S,NoKernelOutput,NoMDBC,NoLog}(; kwargs...)
 SimulationMetaData{D,T}(; kwargs...) where {D,T} =
     SimulationMetaData{D,T,NoShifting,NoKernelOutput,NoMDBC,NoLog}(; kwargs...)
+
+function UpdateMetaData!(SimMetaData, dt)
+    SimMetaData.Iteration      += 1
+    SimMetaData.CurrentTimeStep = dt
+    SimMetaData.TotalTime      += dt
+
+    return nothing
+end
 
 end

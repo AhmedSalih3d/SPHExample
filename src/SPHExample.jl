@@ -3,16 +3,19 @@ module SPHExample
     include("AuxiliaryFunctions.jl");
     include("SPHKernels.jl")
     include("SPHViscosityModels.jl")      
-    include("ProduceHDFVTK.jl")    
-    include("TimeStepping.jl");       
-    include("SimulationEquations.jl");
     include("SimulationGeometry.jl")
+    include("ProduceHDFVTK.jl")    
     include("SimulationMetaDataConfiguration.jl");
+    include("SimulationEquations.jl");
+    include("FluidAcceleration.jl")
+    include("TimeStepping.jl");       
     include("SimulationConstantsConfiguration.jl");
     include("SimulationLoggerConfiguration.jl");
+    include("SPHDensityDiffusionModels.jl")  
+    include("SPHNeighborList.jl")
+    include("SPHMDBC.jl")
     include("PreProcess.jl");
     include("OpenExternalPrograms.jl")
-    include("SPHDensityDiffusionModels.jl")  
     include("SPHCellList.jl") #Must be last    
 
     # Re-export desired functions from each submodule
@@ -29,7 +32,7 @@ module SPHExample
     export SPHDensityDiffusion, ZeroDensityDiffusion, ZeroGravityLinearDensityDiffusion, LinearDensityDiffusion, ZeroGravityComplexDensityDiffusion, ComplexDensityDiffusion, compute_density_diffusion
  
     using .SimulationGeometry
-    export ParticleType, Fixed, Fluid, Moving, Geometry, MotionDetails
+    export ParticleType, Fixed, Fluid, Moving, FixedMoving, Geometry, MotionDetails, MotionPositionFactorValue
 
     using .PreProcess
     export AllocateDataStructures, AllocateSupportDataStructures, AllocateThreadedArrays, LoadBoundaryNormals
@@ -37,8 +40,14 @@ module SPHExample
     using .ProduceHDFVTK
     export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure, AppendVTKHDFData, SaveCellGridVTKHDF, AppendVTKHDFGridData, SetupVTKOutput
 
-    using .TimeStepping: Δt
-    export Δt
+    using .TimeStepping: Δt, FluidAccelerationSeries, FluidAccelerationByGroup, LoadFluidAccelerationSeriesCSV, LoadFluidAccelerationByGroupCSV,
+                         FluidAccelerationInputState, FluidAccelerationInputSeries, FluidAccelerationInputByGroup,
+                         LoadFluidAccelerationInputSeriesCSV, LoadFluidAccelerationInputByGroupCSV, EvaluateFluidAcceleration,
+                         RigidRotationMotionSeries, EvaluateRotationState, ApplyRigidRotationMotion!
+    export Δt, FluidAccelerationSeries, FluidAccelerationByGroup, LoadFluidAccelerationSeriesCSV, LoadFluidAccelerationByGroupCSV,
+                         FluidAccelerationInputState, FluidAccelerationInputSeries, FluidAccelerationInputByGroup,
+                         LoadFluidAccelerationInputSeriesCSV, LoadFluidAccelerationInputByGroupCSV, EvaluateFluidAcceleration,
+           RigidRotationMotionSeries, EvaluateRotationState, ApplyRigidRotationMotion!
 
     using .SimulationEquations
     export EquationOfState, EquationOfStateGamma7, Pressure!, DensityEpsi!, LimitDensityAtBoundary!, ConstructGravitySVector, InverseHydrostaticEquationOfState, Estimate7thRoot
@@ -49,17 +58,20 @@ module SPHExample
     using .SimulationMetaDataConfiguration
     export SimulationMetaData, ShiftingMode, NoShifting, PlanarShifting,
            KernelOutputMode, NoKernelOutput, StoreKernelOutput,
-           MDBCMode, NoMDBC, SimpleMDBC,
-           LogMode, NoLog, StoreLog
+           MDBCMode, NoMDBC, SimpleMDBC, UpdatedMDBC,
+           LogMode, NoLog, StoreLog,
+           TimeSteppingMode, SymplecticTimeStepping, SingleNeighborTimeStepping
 
     using .SimulationConstantsConfiguration
     export SimulationConstants
 
+    using .SPHNeighborList
+    export ConstructStencil, ExtractCells!, UpdateNeighbors!, BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts
+
     using .SPHCellList
-    export ConstructStencil, ExtractCells!, UpdateNeighbors!, NeighborLoop!, ComputeInteractions!, RunSimulation
+    export NeighborLoop!, ComputeInteractions!, RunSimulation
 
     using .OpenExternalPrograms
     export AutoOpenLogFile, AutoOpenParaview
 
 end
-

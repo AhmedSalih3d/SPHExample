@@ -9,10 +9,26 @@ let
     SimConstantsDambreak3D = SimulationConstants{FloatType}(
         dx  = dx,
         c₀  = 33.14,
-        α   = 0.1,
         m₀  = 1000 * dx^3,
         CFL = 0.2
     )
+
+    # --- Simulation metadata & logging ---
+    SimMetaDataDambreak3D = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,NoMDBC,StoreLog}(
+        SimulationName         = "DamBreak3D_Test",
+        SaveLocation           = "E:/SecondApproach/TESTING_CPU_3DDambreak",
+        SimulationTime         = 1.6,
+        OutputTimes            = 0.01,
+        VisualizeInParaview    = true,
+        ExportSingleVTKHDF     = true,
+        ExportGridCells        = true,
+        OpenLogFile            = true
+    )
+
+    # If save directory is not already made, make it
+    if !isdir(SimMetaDataDambreak3D.SaveLocation)
+        mkdir(SimMetaDataDambreak3D.SaveLocation)
+    end
 
     # --- Geometry ---
     FixedBoundary = Geometry{Dimensions, FloatType}(
@@ -30,21 +46,9 @@ let
     SimulationGeometry = [FixedBoundary; Water]
 
     # --- Allocate particles ---
-    SimParticles = AllocateDataStructures(SimulationGeometry)
+    SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaDataDambreak3D)
 
-    # --- Simulation metadata & logging ---
-    SimMetaDataDambreak3D = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,NoMDBC,StoreLog}(
-        SimulationName         = "DamBreak3D_Test",
-        SaveLocation           = "E:/SecondApproach/TESTING_CPU_3DDambreak",
-        SimulationTime         = 1.6,
-        OutputTimes            = 0.01,
-        VisualizeInParaview    = true,
-        ExportSingleVTKHDF     = true,
-        ExportGridCells        = true,
-        OpenLogFile            = true
-    )
-
-    SimLogger = SimulationLogger(SimMetaDataDambreak3D.SaveLocation; to_console=true)
+    SimLogger = SimulationLogger(SimMetaDataDambreak3D.SaveLocation)
 
     @warn("""
     3D mode enabled but lightly tested.
@@ -55,7 +59,7 @@ let
 
     # --- Kernel, viscosity & diffusion ---
     SimKernel = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); h   = 1 * sqrt(3 * dx^2))
-    SimViscosity        = ArtificialViscosity()
+    SimViscosity        = ArtificialViscosity{FloatType}(α = 0.1)
     SimDensityDiffusion = LinearDensityDiffusion()
 
     # --- Run simulation ---
@@ -67,6 +71,8 @@ let
         SimLogger          = SimLogger,
         SimParticles       = SimParticles,
         SimViscosity       = SimViscosity,
-        SimDensityDiffusion= SimDensityDiffusion
+        SimDensityDiffusion= SimDensityDiffusion,
+        SimTimeStepping    = SingleNeighborTimeStepping()
     )
 end
+

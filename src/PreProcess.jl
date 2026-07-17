@@ -1,6 +1,6 @@
 module PreProcess
 
-export LoadBoundaryNormals, AllocateDataStructures, AllocateSupportDataStructures, AllocateThreadedArrays
+export LoadBoundaryNormals, LoadMDBCNormals!, AllocateDataStructures, AllocateSupportDataStructures, AllocateThreadedArrays
 
 using CSV
 using StaticArrays
@@ -8,30 +8,55 @@ using StructArrays
 
 using ..SimulationGeometry
 using ..SimulationMetaDataConfiguration
+using ..SPHMDBC: MDBCGhostData, ResetGhostData!, InitializeGhostData!
+
+@inline function LoadCSVPoint(::Val{2}, ::Type{T}, row) where {T}
+    P1 = getproperty(row, Symbol("Points:0"))
+    P3 = getproperty(row, Symbol("Points:2"))
+    return SVector{2,T}(P1, P3)
+end
+
+@inline function LoadCSVPoint(::Val{3}, ::Type{T}, row) where {T}
+    P1 = getproperty(row, Symbol("Points:0"))
+    P2 = getproperty(row, Symbol("Points:1"))
+    P3 = getproperty(row, Symbol("Points:2"))
+    return SVector{3,T}(P1, P2, P3)
+end
+
+@inline function LoadCSVVelocity(::Val{2}, ::Type{T}, row) where {T}
+    V1 = getproperty(row, Symbol("Vel:0"))
+    V3 = getproperty(row, Symbol("Vel:2"))
+    return SVector{2,T}(V1, V3)
+end
+
+@inline function LoadCSVVelocity(::Val{3}, ::Type{T}, row) where {T}
+    V1 = getproperty(row, Symbol("Vel:0"))
+    V2 = getproperty(row, Symbol("Vel:1"))
+    V3 = getproperty(row, Symbol("Vel:2"))
+    return SVector{3,T}(V1, V2, V3)
+end
 
 function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, particle_group_marker::Int, specific_csv::String) where {D, T}
     csv_file = CSV.File(specific_csv)
 
     nrows = length(csv_file)
+    available_columns = Set(propertynames(csv_file))
+    velocity_symbols = D == 2 ? (Symbol("Vel:0"), Symbol("Vel:2")) : (Symbol("Vel:0"), Symbol("Vel:1"), Symbol("Vel:2"))
+    has_velocity = all(symbol -> symbol in available_columns, velocity_symbols)
+    zero_velocity = zero(SVector{D, T})
 
     points       = Vector{SVector{D,T}}(undef, nrows)
+    velocity     = Vector{SVector{D,T}}(undef, nrows)
     density      = Vector{T}(undef, nrows)
     types        = Vector{ParticleType}(undef, nrows)
     group_marker = Vector{Int}(undef, nrows)
     idp          = Vector{Int}(undef, nrows)
 
     for (i, row) ∈ enumerate(csv_file)
-        P1   = getproperty(row, Symbol("Points:0"))
-        P2   = getproperty(row, Symbol("Points:1"))
-        P3   = getproperty(row, Symbol("Points:2"))
         Rhop = row.Rhop
         Idp  = row.Idp + 1
-
-        points[i] = if D == 3
-            SVector{3,T}(P1, P2, P3)
-        else
-            SVector{2,T}(P1, P3)
-        end
+        points[i] = LoadCSVPoint(Val(D), T, row)
+        velocity[i] = has_velocity ? LoadCSVVelocity(Val(D), T, row) : zero_velocity
 
         density[i]      = Rhop
         types[i]        = particle_type
@@ -39,11 +64,24 @@ function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType, parti
         idp[i]          = Idp
     end
 
-    return points, density, types, group_marker, idp
+    return points, velocity, density, types, group_marker, idp
 end
 
-function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, FloatType}}) where {Dimensions, FloatType}
+@inline function LoadBoundaryNormalPoint(::Val{2}, ::Type{T}, row) where {T}
+    normal = SVector{2,T}(getproperty(row, Symbol("Normal:0")), getproperty(row, Symbol("Normal:2")))
+    point  = SVector{2,T}(getproperty(row, Symbol("Points:0")), getproperty(row, Symbol("Points:2")))
+    return normal, point
+end
+
+@inline function LoadBoundaryNormalPoint(::Val{3}, ::Type{T}, row) where {T}
+    normal = SVector{3,T}(getproperty(row, Symbol("Normal:0")), getproperty(row, Symbol("Normal:1")), getproperty(row, Symbol("Normal:2")))
+    point  = SVector{3,T}(getproperty(row, Symbol("Points:0")), getproperty(row, Symbol("Points:1")), getproperty(row, Symbol("Points:2")))
+    return normal, point
+end
+
+function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, FloatType}}; RequireMDBC::Bool=false, RequireKernelOutput::Bool=false) where {Dimensions, FloatType}
     Position    = Vector{SVector{Dimensions, FloatType}}()
+    Velocity    = Vector{SVector{Dimensions, FloatType}}()
     Density     = Vector{FloatType}()
     Types       = Vector{ParticleType}()
     GroupMarker = Vector{UInt}()
@@ -54,17 +92,19 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
         particle_group_marker = geom.GroupMarker
         specific_csv          = geom.CSVFile
 
-        points, density, types, group_marker, idp =
+        points, velocity, density, types, group_marker, idp =
             LoadSpecificCSV(Val(Dimensions), FloatType, particle_type,
                            particle_group_marker, specific_csv)
 
         sizehint!(Position,    length(Position)    + length(points))
+        sizehint!(Velocity,    length(Velocity)    + length(velocity))
         sizehint!(Density,     length(Density)     + length(density))
         sizehint!(Types,       length(Types)       + length(types))
         sizehint!(GroupMarker, length(GroupMarker) + length(group_marker))
         sizehint!(Idp,         length(Idp)         + length(idp))
 
         append!(Position,    points)
+        append!(Velocity,    velocity)
         append!(Density,     density)
         append!(Types,       types)
         append!(GroupMarker, group_marker)
@@ -75,47 +115,66 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
     PositionType             = eltype(Position)
     PositionUnderlyingType   = eltype(PositionType)
 
-    GravityFactor = similar(Density)
-    for i ∈ eachindex(GravityFactor)
-        fac = 0
-        if     Types[i] == Fluid
-            fac = -1
-        elseif Types[i] == Moving
-            fac =  1
-        end
-        GravityFactor[i] = fac
-    end
-
-    MotionLimiter = similar(Density)
-    for i ∈ eachindex(MotionLimiter)
-        fac = 0
-        if   Types[i] == Fluid
-            fac =  1
-        else Types[i] == Moving
-            fac =  0
-        end
-        MotionLimiter[i] = fac
-    end
-
-    BoundaryBool  = UInt8.(.!Bool.(MotionLimiter))
+    sort_perm = sortperm(Idp)
+    Position = Position[sort_perm]
+    Velocity = Velocity[sort_perm]
+    Density = Density[sort_perm]
+    Types = Types[sort_perm]
+    GroupMarker = GroupMarker[sort_perm]
+    Idp = Idp[sort_perm]
 
     Acceleration    = zeros(PositionType, NumberOfPoints)
-    Velocity        = zeros(PositionType, NumberOfPoints)
-    Kernel          = zeros(PositionUnderlyingType, NumberOfPoints)
-    KernelGradient  = zeros(PositionType, NumberOfPoints)
-    GhostPoints     = zeros(PositionType, NumberOfPoints)
-    GhostNormals    = zeros(PositionType, NumberOfPoints)
-
     Pressureᵢ      = zeros(PositionUnderlyingType, NumberOfPoints)
     
     Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
-    ChunkID        = zeros(Int, NumberOfPoints)
+    
+    ParticleFields = (;
+        Cells = Cells,
+        Position = Position,
+        Acceleration = Acceleration,
+        Velocity = Velocity,
+        Density = Density,
+        Pressure = Pressureᵢ,
+        Type = Types,
+        GroupMarker = GroupMarker,
+    )
+    if RequireKernelOutput
+        Kernel = zeros(PositionUnderlyingType, NumberOfPoints)
+        KernelGradient = zeros(PositionType, NumberOfPoints)
+        ParticleFields = merge(ParticleFields, (; Kernel = Kernel, KernelGradient = KernelGradient))
+    end
+    if RequireMDBC
+        GhostPoints = zeros(PositionType, NumberOfPoints)
+        ParticleFields = merge(ParticleFields, (; GhostPoints = GhostPoints))
+    end
+    if RequireMDBC
+        GhostNormals = zeros(PositionType, NumberOfPoints)
+        ParticleFields = merge(ParticleFields, (; GhostNormals = GhostNormals))
+    end
+    if RequireMDBC
+        MDBCMotionVelocity = zeros(PositionType, NumberOfPoints)
+        MDBCTangentVelocity = zeros(PositionType, NumberOfPoints)
+        MDBCBoundaryFactor = ones(PositionUnderlyingType, NumberOfPoints)
+        ParticleFields = merge(
+            ParticleFields,
+            (;
+                MDBCMotionVelocity = MDBCMotionVelocity,
+                MDBCTangentVelocity = MDBCTangentVelocity,
+                MDBCBoundaryFactor = MDBCBoundaryFactor,
+            ),
+        )
+    end
+    ParticleFields = merge(ParticleFields, (; ID = Idp))
 
-    SimParticles = StructArray((Cells = Cells, ChunkID = ChunkID, Kernel = Kernel, KernelGradient = KernelGradient, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, GravityFactor=GravityFactor, MotionLimiter=MotionLimiter, BoundaryBool = BoundaryBool, ID = Idp , Type = Types, GroupMarker = GroupMarker, GhostPoints = GhostPoints, GhostNormals=GhostNormals))
-
-    sort!(SimParticles, by = p -> p.ID)
+    SimParticles = StructArray(ParticleFields)
 
     return SimParticles
+end
+
+function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, FloatType}}, SimMetaData::SimulationMetaData{Dimensions, FloatType}) where {Dimensions, FloatType}
+    RequireMDBC = !(SimMetaData isa SimulationMetaData{Dimensions, FloatType, SMode, KMode, NoMDBC, LMode} where {SMode, KMode, LMode})
+    RequireKernelOutput = !(SimMetaData isa SimulationMetaData{Dimensions, FloatType, SMode, NoKernelOutput, BMode, LMode} where {SMode, BMode, LMode})
+    return AllocateDataStructures(SimGeometry; RequireMDBC = RequireMDBC, RequireKernelOutput = RequireKernelOutput)
 end
 
 function AllocateSupportDataStructures(::SimulationMetaData{D,T,NoShifting,K,B,L}, Position) where {D,T,K<:KernelOutputMode,
@@ -131,10 +190,11 @@ function AllocateSupportDataStructures(::SimulationMetaData{D,T,NoShifting,K,B,L
     Positionₙ⁺ = zeros(PositionType, NumberOfPoints)
     ρₙ⁺        = zeros(PositionUnderlyingType, NumberOfPoints)
 
+    Cᵢ   = Vector{PositionUnderlyingType}(undef, 0)
     ∇Cᵢ  = Vector{PositionType}(undef, 0)
     ∇◌rᵢ = Vector{PositionUnderlyingType}(undef, 0)
 
-    return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ
+    return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Cᵢ, ∇Cᵢ, ∇◌rᵢ
 end
 
 function AllocateSupportDataStructures(::SimulationMetaData{D,T,S,K,B,L}, Position) where {D,T,S<:ShiftingMode,
@@ -151,91 +211,11 @@ function AllocateSupportDataStructures(::SimulationMetaData{D,T,S,K,B,L}, Positi
     Positionₙ⁺ = zeros(PositionType, NumberOfPoints)
     ρₙ⁺        = zeros(PositionUnderlyingType, NumberOfPoints)
 
+    Cᵢ   = zeros(PositionUnderlyingType, NumberOfPoints)
     ∇Cᵢ  = zeros(PositionType, NumberOfPoints)
     ∇◌rᵢ = zeros(PositionUnderlyingType, NumberOfPoints)
 
-    return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ
-end
-
-function allocate_kernel_arrays(::SimulationMetaData{D,T,S,NoKernelOutput,B,L},
-                                SimParticles, n_copy) where {D,T,S<:ShiftingMode,
-                                                             B<:MDBCMode,
-                                                             L<:LogMode}
-    return NamedTuple()
-end
-function allocate_kernel_arrays(::SimulationMetaData{D,T,S,K,B,L},
-                                SimParticles, n_copy) where {D,T,S<:ShiftingMode,
-                                                             K<:KernelOutputMode,
-                                                             B<:MDBCMode,
-                                                             L<:LogMode}
-    KernelThreaded         = [copy(SimParticles.Kernel) for _ in 1:n_copy]
-    KernelGradientThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
-    KernelTouched          = [Int[] for _ in 1:n_copy]
-    KernelGradientTouched  = [Int[] for _ in 1:n_copy]
-    KernelMask             = [falses(length(SimParticles.Kernel)) for _ in 1:n_copy]
-    KernelGradientMask     = [falses(length(SimParticles.KernelGradient)) for _ in 1:n_copy]
-    return (
-        KernelThreaded = KernelThreaded,
-        KernelGradientThreaded = KernelGradientThreaded,
-        KernelTouched = KernelTouched,
-        KernelGradientTouched = KernelGradientTouched,
-        KernelMask = KernelMask,
-        KernelGradientMask = KernelGradientMask,
-    )
-end
-
-function allocate_shifting_arrays(::SimulationMetaData{D,T,NoShifting,K,B,L},
-                                  ∇Cᵢ, ∇◌rᵢ, n_copy) where {D,T,K<:KernelOutputMode,
-                                                            B<:MDBCMode,
-                                                            L<:LogMode}
-    return NamedTuple()
-end
-function allocate_shifting_arrays(::SimulationMetaData{D,T,S,K,B,L},
-                                  ∇Cᵢ, ∇◌rᵢ, n_copy) where {D,T,S<:ShiftingMode,
-                                                            K<:KernelOutputMode,
-                                                            B<:MDBCMode,
-                                                            L<:LogMode}
-    ∇CᵢThreaded  = [copy(∇Cᵢ) for _ in 1:n_copy]
-    ∇◌rᵢThreaded = [copy(∇◌rᵢ) for _ in 1:n_copy]
-    ∇CᵢTouched   = [Int[] for _ in 1:n_copy]
-    ∇◌rᵢTouched  = [Int[] for _ in 1:n_copy]
-    ∇CᵢMask      = [falses(length(∇Cᵢ)) for _ in 1:n_copy]
-    ∇◌rᵢMask     = [falses(length(∇◌rᵢ)) for _ in 1:n_copy]
-    return (
-        ∇CᵢThreaded  = ∇CᵢThreaded,
-        ∇◌rᵢThreaded = ∇◌rᵢThreaded,
-        ∇CᵢTouched   = ∇CᵢTouched,
-        ∇◌rᵢTouched  = ∇◌rᵢTouched,
-        ∇CᵢMask      = ∇CᵢMask,
-        ∇◌rᵢMask     = ∇◌rᵢMask,
-    )
-end
-
-function AllocateThreadedArrays(SimMetaData::SimulationMetaData{D,T,S,K,B,L},
-                                SimParticles, dρdtI, ∇Cᵢ, ∇◌rᵢ;
-                                n_copy = Base.Threads.nthreads()) where {D,T,S<:ShiftingMode,
-                                                                           K<:KernelOutputMode,
-                                                                           B<:MDBCMode,
-                                                                           L<:LogMode}
-    dρdtIThreaded        = [copy(dρdtI) for _ in 1:n_copy]
-    AccelerationThreaded = [copy(SimParticles.KernelGradient) for _ in 1:n_copy]
-    dρdtITouched         = [Int[] for _ in 1:n_copy]
-    AccelerationTouched  = [Int[] for _ in 1:n_copy]
-    dρdtIMask            = [falses(length(dρdtI)) for _ in 1:n_copy]
-    AccelerationMask     = [falses(length(SimParticles.KernelGradient)) for _ in 1:n_copy]
-    nt = (
-        dρdtIThreaded = dρdtIThreaded,
-        AccelerationThreaded = AccelerationThreaded,
-        dρdtITouched = dρdtITouched,
-        AccelerationTouched = AccelerationTouched,
-        dρdtIMask = dρdtIMask,
-        AccelerationMask = AccelerationMask,
-    )
-
-    nt = merge(nt, allocate_kernel_arrays(SimMetaData, SimParticles, n_copy))
-    nt = merge(nt, allocate_shifting_arrays(SimMetaData, ∇Cᵢ, ∇◌rᵢ, n_copy))
-
-    return StructArray(nt)
+    return dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, Cᵢ, ∇Cᵢ, ∇◌rᵢ
 end
 
 function LoadBoundaryNormals(::Val{D}, ::Type{T}, path_mdbc) where {D, T}
@@ -249,13 +229,7 @@ function LoadBoundaryNormals(::Val{D}, ::Type{T}, path_mdbc) where {D, T}
     # Loop over each row of the file
     for row in csv_file
         # Extract the "Normal" fields into an SVector
-        if D == 3
-            normal = SVector{D,T}(getproperty(row, Symbol("Normal:0")), getproperty(row, Symbol("Normal:1")), getproperty(row, Symbol("Normal:2")))
-            point  = SVector{D,T}(getproperty(row, Symbol("Points:0")), getproperty(row, Symbol("Points:1")), getproperty(row, Symbol("Points:2")))
-        elseif D == 2
-            normal = SVector{D,T}(getproperty(row, Symbol("Normal:0")), getproperty(row, Symbol("Normal:2")))
-            point  = SVector{D,T}(getproperty(row, Symbol("Points:0")), getproperty(row, Symbol("Points:2")))
-        end
+        normal, point = LoadBoundaryNormalPoint(Val(D), T, row)
 
         push!(normals, normal)
         push!(points,  point)
@@ -264,6 +238,33 @@ function LoadBoundaryNormals(::Val{D}, ::Type{T}, path_mdbc) where {D, T}
     end
 
     return points, ghost_points, normals
+end
+
+function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,NoMDBC,L}, SimParticles, path, ::Nothing) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, L<:LogMode}
+    return nothing
+end
+
+function LoadMDBCNormalsImpl!(::Val{D}, ::Type{T}, SimParticles, path, GhostData::MDBCGhostData) where {D,T}
+    if isnothing(path)
+        ResetGhostData!(GhostData)
+        return nothing
+    end
+    _, GhostPoints, GhostNormals = LoadBoundaryNormals(Val(D), T, path)
+    for gi ∈ eachindex(GhostPoints)
+        SimParticles.GhostPoints[gi]  = GhostPoints[gi]
+        SimParticles.GhostNormals[gi] = GhostNormals[gi]
+    end
+    ghost_indices = findall(x -> !iszero(x), SimParticles.GhostPoints)
+    InitializeGhostData!(GhostData, ghost_indices)
+    return nothing
+end
+
+function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,SimpleMDBC,L}, SimParticles, path, GhostData::MDBCGhostData) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, L<:LogMode}
+    return LoadMDBCNormalsImpl!(Val(D), T, SimParticles, path, GhostData)
+end
+
+function LoadMDBCNormals!(::SimulationMetaData{D,T,S,K,UpdatedMDBC,L}, SimParticles, path, GhostData::MDBCGhostData) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, L<:LogMode}
+    return LoadMDBCNormalsImpl!(Val(D), T, SimParticles, path, GhostData)
 end
 
 end

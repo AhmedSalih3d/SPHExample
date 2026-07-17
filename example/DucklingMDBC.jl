@@ -1,10 +1,26 @@
-using SPHExample
+﻿using SPHExample
 
 let
     Dimensions = 3
     FloatType  = Float64
-    
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=23.43842998154953, δᵩ = 0.1, CFL=0.2, α=0.02, m₀=0.001)
+
+    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=23.43842998154953, δᵩ = 0.1, CFL=0.2, m₀=0.001)
+
+    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
+        SimulationName="CaseDuckling",
+        SaveLocation="E:/SecondApproach/TESTING_CPU_Duckling",
+        SimulationTime=1,
+        OutputTimes=0.02,
+        VisualizeInParaview=true,
+        ExportSingleVTKHDF=true,
+        ExportGridCells= true,
+        OpenLogFile=true
+    )
+
+    # If save directory is not already made, make it
+    if !isdir(SimMetaDataWedge.SaveLocation)
+        mkdir(SimMetaDataWedge.SaveLocation)
+    end
 
     # Assuming SimConstantsWedge is defined somewhere else with the field `dx`
     FixedBoundary = Geometry{Dimensions, FloatType}(
@@ -24,21 +40,10 @@ let
     SimulationGeometry = [FixedBoundary;Water]
     
     # Load in particles
-    SimParticles = AllocateDataStructures(SimulationGeometry)
-
-    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
-        SimulationName="CaseDuckling",
-        SaveLocation="E:/SecondApproach/TESTING_CPU_Duckling",
-        SimulationTime=1,
-        OutputTimes=0.02,
-        VisualizeInParaview=true,
-        ExportSingleVTKHDF=true,
-        ExportGridCells= true,
-        OpenLogFile=true
-    )
+    SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaDataWedge)
 
     SimKernel           = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); dx = SimConstantsWedge.dx, k = 1.5)
-    SimViscosity        = ArtificialViscosity()
+    SimViscosity        = ArtificialViscosity{FloatType}(α = 0.02)
     SimDensityDiffusion = LinearDensityDiffusion()
 
     SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
@@ -55,11 +60,10 @@ let
         SimKernel           = SimKernel,
         SimViscosity        = SimViscosity,
         SimDensityDiffusion = SimDensityDiffusion,
+        SimTimeStepping     = SingleNeighborTimeStepping(),
         ParticleNormalsPath = "./input/case_duckling_mdbc/CaseDuckling_Dp$(SimConstantsWedge.dx)_GhostNodes.csv"
     )
 
     return SimParticles
 end
-
-
 

@@ -3,10 +3,28 @@ using SPHExample
 let
     Dimensions = 2
     FloatType  = Float64
+    MDBCImplementation = UpdatedMDBC # Set to SimpleMDBC to run original implementation.
 
+    Artificialα = FloatType(0.01)
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.5)
     # SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=43.4, δᵩ = 0.1, CFL=0.2)
 # 
+    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
+        SimulationName="StillWedge", 
+        SaveLocation="W:/Simulations/StillWedge2D_MDBC",
+        SimulationTime=4.0,
+        OutputTimes=0.01,
+        VisualizeInParaview=true,
+        ExportSingleVTKHDF=true,
+        ExportGridCells=true,
+        OpenLogFile=true,
+    )
+
+    # If save directory is not already made, make it
+    if !isdir(SimMetaDataWedge.SaveLocation)
+        mkdir(SimMetaDataWedge.SaveLocation)
+    end
+
     # Assuming SimConstantsWedge is defined somewhere else with the field `dx`
     FixedBoundary = Geometry{Dimensions, FloatType}(
         CSVFile     = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Bound.csv",
@@ -25,35 +43,9 @@ let
     SimulationGeometry = [FixedBoundary;Water]
     
     # Load in particles
-    SimParticles = AllocateDataStructures(SimulationGeometry)
+    SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaDataWedge)
 
-    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput, NoMDBC,StoreLog}(
-        SimulationName="StillWedge", 
-        SaveLocation="E:/SecondApproach/StillWedge2D_MDBC",
-        SimulationTime=4.0,
-        OutputTimes=0.01,
-        VisualizeInParaview=true,
-        ExportSingleVTKHDF=true,
-        ExportGridCells=true,
-        OpenLogFile=true,
-        # OutputVariables = [
-        #     # "ChunkID",
-        #     # "Kernel",
-        #     # "KernelGradient",
-        #     "Density",
-        #     "Pressure",
-        #     "Velocity",
-        #     "Acceleration",
-        #     # "BoundaryBool",
-        #     # "ID",
-        #     # "Type",
-        #     # "GroupMarker",
-        #     # "GhostPoints",
-        #     # "GhostNormals",
-        # ]
-    )
-
-    SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation; to_console=true)
+    SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
 
     CleanUpSimulationFolder(SimMetaDataWedge.SaveLocation)
 
@@ -66,8 +58,9 @@ let
         SimKernel           = SimKernel,
         SimLogger           = SimLogger,
         SimParticles        = SimParticles,
-        SimViscosity        = ArtificialViscosity(),
+        SimViscosity        = ArtificialViscosity{FloatType}(α = 0.01),
         SimDensityDiffusion = LinearDensityDiffusion(),
+        SimTimeStepping     = SingleNeighborTimeStepping(),
         ParticleNormalsPath = "./input/still_wedge_mdbc/StillWedge_Dp$(SimConstantsWedge.dx)_GhostNodes_Correct.csv"
     )
 
@@ -90,7 +83,7 @@ let
     # pressures = [d.Pressure    for d in fluid_data]  # Extract the pressure
     
     # # Normalize positions and pressures
-    # normalized_positions = [p / max_height for p in positions]  # Normalize height
+    # normalized_positions = [p / max_height for p in positions]  # Normalize height*
     # hydrostatic_pressure = [rho * g * (max_height - h) for h in positions]     # Theoretical hydrostatic pressure
     # normalized_pressures = [p / maximum(hydrostatic_pressure) for p in pressures]  # Normalize pressure
     
@@ -104,9 +97,8 @@ let
     # xlims!((0, 1))
     # ylims!((0, 1))
     
+    
     # display(plt)
 end
 
-
-
-
+     

@@ -4,48 +4,25 @@ using StaticArrays, LinearAlgebra, Parameters
 
 export SPHViscosity, ZeroViscosity, ArtificialViscosity, Laminar, LaminarSPS, compute_viscosity
 
-"""
-    abstract type SPHViscosity end
-
-Abstract supertype for all SPH viscosity models. Concrete models implement
-`compute_viscosity` for their formulation.
-"""
 abstract type SPHViscosity end
 
-"Represents a simulation with no viscous forces."
 struct ZeroViscosity <: SPHViscosity end
 
-"""
-    ArtificialViscosity()
+@with_kw struct ArtificialViscosity{T<:Union{Float32, Float64}} <: SPHViscosity
+    α::T
+end
 
-Monaghan style artificial viscosity for shock capturing and preventing
-particle interpenetration.
-"""
-struct ArtificialViscosity <: SPHViscosity end
-
-"""
-    Laminar()
-
-Standard laminar viscosity governed by the kinematic viscosity `ν₀`.
-"""
-struct Laminar <: SPHViscosity end
-
-"""
-    LaminarSPS()
-
-Hybrid model combining `Laminar` viscosity with a Smagorinsky type
-sub-particle scale turbulence closure.
-"""
-struct LaminarSPS <: SPHViscosity end
+@with_kw struct Laminar{T<:Union{Float32, Float64}} <: SPHViscosity
+    ν::T = 1e-6
+end
 
 
-"""
-    compute_viscosity(model, SimKernel, SimConstants, SimParticles,
-                      xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
+@with_kw struct LaminarSPS{T<:Union{Float32, Float64}} <: SPHViscosity
+    ν::T                   = 1e-6
+    SmagorinskyConstant::T = 0.12
+    BlinConstant::T        = 0.0066
+end
 
-Compute the viscous acceleration between particles `i` and `j` for the
-selected viscosity `model`. Returns `(Πᵢ, Πⱼ)`.
-"""
 
 # No viscosity: return zero contributions.
 @inline function compute_viscosity(::ZeroViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
@@ -53,10 +30,11 @@ selected viscosity `model`. Returns `(Πᵢ, Πⱼ)`.
 end
 
 # Artificial viscosity formulation.
-@inline function compute_viscosity(::ArtificialViscosity, SimKernel, SimConstants, SimParticles,
+@inline function compute_viscosity(SimViscosity::ArtificialViscosity, SimKernel, SimConstants, SimParticles,
                                    xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
-    @unpack m₀, α, c₀ = SimConstants
+    @unpack m₀, c₀ = SimConstants
     @unpack h, η²     = SimKernel
+    α = SimViscosity.α
 
     ρᵢ = SimParticles.Density[i]
     ρⱼ = SimParticles.Density[j]
@@ -74,23 +52,25 @@ end
 end
 
 # Laminar viscosity formulation.
-@inline function compute_viscosity(::Laminar, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
-    @unpack m₀, ν₀ = SimConstants
+@inline function compute_viscosity(SimViscosity::Laminar, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
+    @unpack m₀ = SimConstants
     @unpack η²     = SimKernel
+    ν = SimViscosity.ν
 
     dᵢⱼ =  sqrt(abs(d²))
     ρᵢ  = SimParticles.Density[i]
     ρⱼ  = SimParticles.Density[j]
 
-    term = (4 * m₀ * ν₀ * dot(xᵢⱼ, ∇ᵢWᵢⱼ)) / ((ρᵢ + ρⱼ) + (d² + η²))
+    term = (4 * m₀ * ν * dot(xᵢⱼ, ∇ᵢWᵢⱼ)) / ((ρᵢ + ρⱼ) + (d² + η²))
     return term * vᵢⱼ, -term * vᵢⱼ
 end
 
 # LaminarSPS: with sub-grid scale stresses.
-@inline function compute_viscosity(::LaminarSPS, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
-    @unpack m₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
+@inline function compute_viscosity(SimViscosity::LaminarSPS, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
+    @unpack m₀, dx = SimConstants
+    @unpack ν, SmagorinskyConstant, BlinConstant = SimViscosity
     
-    t1,t2 = compute_viscosity(Laminar(), SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
+    t1,t2 = compute_viscosity(Laminar(ν = ν), SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
     
 
     ρᵢ  = SimParticles.Density[i]

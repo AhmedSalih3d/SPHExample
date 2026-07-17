@@ -19,10 +19,31 @@ The project demonstrates how to assemble a small SPH solver with Julia. It focus
 
 - **Weakly compressible formulation** – density varies ~1 % and pressure is a function of density.
 - **Multi-threaded execution** – achieved by spawning the neighbour loop.
-- **Configurable task granularity** – `ChunkMultiplier` controls load balancing across threads.
+- **Per-particle compute loops** – per-particle loops handle threading without chunk
+  metadata.
 - **Dynamic boundary condition** – inspired by DualSPHysics.
 - **Density diffusion** – based on Fourtakas et al. 2019 to reduce pressure noise.
 - **Wendland quintic kernel** – simple and stable without tensile corrections.
+- **Symplectic time stepping** – choose between symplectic two-loop and single-loop midpoint updates.
+
+Time-stepping behavior is selected via `RunSimulation(..., SimTimeStepping=...)` with either
+`SymplecticTimeStepping()` or `SingleNeighborTimeStepping()` depending on the desired update path.
+For non-inertial tank-frame cases, `RunSimulation(..., FluidAccelerationModel=...)`
+accepts a `FluidAccelerationSeries` time history that applies external acceleration to fluid particles.
+For multiple fluid groups with different prescribed accelerations, pass
+`FluidAccelerationByGroup` where each group marker maps to its own `FluidAccelerationSeries`.
+To build those models directly from CSV files (e.g. DualSPHysics `CaseForcesData_*.csv`),
+use `LoadFluidAccelerationSeriesCSV(path, Val(D), FloatType)` and
+`LoadFluidAccelerationByGroupCSV(Dict(group=>path, ...), max_group, Val(D), FloatType)`.
+Defaults are `LinearAccX/LinearAccZ` in 2D and `LinearAccX/LinearAccY/LinearAccZ` in 3D;
+you can override columns with the `AccelerationColumns=(...)` keyword.
+For full DualSPHysics `accinput` style forcing (linear + angular + centre + per-group gravity flag),
+use `FluidAccelerationInputSeries`/`FluidAccelerationInputByGroup` with
+`LoadFluidAccelerationInputSeriesCSV(...)` and `LoadFluidAccelerationInputByGroupCSV(...)`.
+Those loaders default to `AngularAccX/AngularAccY/AngularAccZ` in 3D
+(`AngularAccX/AngularAccZ` in 2D) and allow per-group centre/gravity overrides.
+For prescribed rigid-body tank rotation in 2D, `RunSimulation(..., RigidMotionModel=...)`
+accepts a `RigidRotationMotionSeries` built from angle-versus-time data.
 
 ## Folder Structure
 
@@ -78,7 +99,32 @@ Pkg.add(url="https://github.com/AhmedSalih3d/SPHExample")
 
 ### Running an Example
 
-Open one of the files in `example/`, for instance `example/StillWedgeMDBC.jl`, and adjust the simulation parameters or the `ComputerInteractions!` function. Run the script to start the simulation. Results are written in `hdfvtk` format which can be loaded with ParaView 5.12 or newer.
+Open one of the files in `example/`, for instance `example/StillWedgeMDBC.jl`,
+and adjust the simulation parameters or the `ComputerInteractions!` function.
+Run the script to start the simulation. Results are written in `hdfvtk` format
+which can be loaded with ParaView 5.12 or newer. Output is written
+asynchronously, so files finish flushing when the simulation completes. The
+`example/LidDrivenCavity2d.jl` script is a lid-driven cavity setup that generates
+its CSV particle layout on first run and then reuses it from `input/`.
+For mDBC runs, toggle `MDBCImplementation` in the example scripts between
+`SimpleMDBC` (original mode) and `UpdatedMDBC` (pressure cloning, no-slip mirror,
+submergence checks, and no-penetration correction).
+The `example/SloshingTank2dAccMDBC.jl` script is the acceleration-frame sloshing case
+with three boundary layers for full kernel support.
+The `example/SloshingTank2dRotMDBC.jl` script is the rigid-rotation sloshing case.
+The `example/CaseForces3dAcc.jl` script is a DualSPHysics ExternalForces-style
+3D two-fluid case using per-group linear and angular acceleration files.
+Velocities provided in CSV inputs (e.g., for moving lids or inflows) are loaded
+into the initial particle state.
+For moving boundaries that should keep a prescribed velocity while staying
+spatially fixed, use the `FixedMoving` particle type.
+ParaView auto-state now defaults `Point Gaussian` radius to
+`PointGaussianRadiusFactor * dx` (default factor `0.5`); override with
+`PointGaussianRadiusFactor` in `SimulationMetaData` when needed.
+To color exported cell grids by particle counts, set
+`ExportGridCellParticleCounts=true` in `SimulationMetaData`. This also adds a
+`ParticleNeighborsPerCell` array that includes each cell's particle count minus
+one plus the particles in its neighbor stencil.
 
 ## Help
 
@@ -92,8 +138,9 @@ Written by Ahmed Salih ([AhmedSalih3d](https://github.com/AhmedSalih3d)).
 
 | Version | Description |
 |---------|-------------|
+| 0.7.0  | Per-particle compute loops, multiple-dispatch main simulation path, and streamlined output metadata |
 | 0.6.12 | Simulation code uses now multiple dispatch procedure in main simulation code instead of `if` coding statements, to increase run time performance |
-| 0.6.11 | Added `ChunkMultiplier` for improved thread load balance and focus on code dependencies |
+| 0.6.11 | Removed chunk metadata after per-particle compute loops landed |
 | 0.6.10 | Implemented concepts of tests, aim is to understand allocations and run time |
 | 0.6.9  | Specify output times via `OutputTimes` (float or vector). |
 | 0.6.8  | Select which variables are written to `vtkhdf` files. |
@@ -121,4 +168,3 @@ This project is licensed under the MIT License – see [LICENSE.md](LICENSE.md) 
 - Thanks to [PharmCat](https://github.com/PharmCat) for suggestions and code contributions.
 
 [![Star History](https://api.star-history.com/svg?repos=AhmedSalih3d/SPHExample)](https://star-history.com/#AhmedSalih3d/SPHExample)
-

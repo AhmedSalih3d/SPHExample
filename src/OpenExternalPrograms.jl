@@ -86,10 +86,10 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData, OutputVariableNames;
                             # import regex library
                             import re
 
-                            # state file generated using paraview version 5.12.0
+                            # state file generated using paraview version 6.0.0
                             import paraview
-                            paraview.compatibility.major = 5
-                            paraview.compatibility.minor = 12
+                            paraview.compatibility.major = 6
+                            paraview.compatibility.minor = 0
                             
                             # Directory containing the .vtkhdf files
                             directory = "$(SimMetaData.SaveLocation)"
@@ -150,9 +150,11 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData, OutputVariableNames;
                             Simulation_vtkhdfDisplay = Show(Simulation_vtkhdf, renderView1, 'GeometryRepresentation')
 
                             Simulation_vtkhdfDisplay.SetRepresentationType('$(representation)')
+                            if "$(representation)" == "Point Gaussian":
+                                Simulation_vtkhdfDisplay.GaussianRadius = $(SimMetaData.PointGaussianRadius)
 
                             # To always load in at correct position
-                            Simulation_vtkhdfDisplay.Position = [0.0, 0.0, 0.0]
+                            # Simulation_vtkhdfDisplay.Position = [0.0, 0.0, 0.0]
 
                             # set scalar coloring
                             ColorBy(Simulation_vtkhdfDisplay, ('POINTS', '$(color_variable)'))
@@ -178,7 +180,7 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData, OutputVariableNames;
             OpenInParaview = `$(paraview_cmd) --state="$(ParaViewStateFileName)"`
             run(OpenInParaview; wait=false)
         catch e
-            @error("You must add Paraview to path as $(paraview_cmd) and use at minimum version 5.12", e)
+            @error("You must add Paraview to path as $(paraview_cmd) and use at minimum version 6.0.0", e)
         end
     end
 
