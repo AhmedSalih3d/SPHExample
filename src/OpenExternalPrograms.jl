@@ -79,8 +79,6 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData, OutputVariableNames;
     ExtractDimensionalityMetaData(::SimulationMetaData{N, FloatType, SMode, KMode, BMode, LMode}) where {N, FloatType, SMode, KMode, BMode, LMode} = N
     ViewDimension = ExtractDimensionalityMetaData(SimMetaData) == 2 ? "2D" : "3D"
 
-    ParaViewStateFile     = open(ParaViewStateFileName, "w")
-
     ParaViewConfig    = 
                             """
                             # import regex library
@@ -171,9 +169,19 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData, OutputVariableNames;
                             Render()
                             """
 
-    write(ParaViewStateFile, ParaViewConfig) 
-
-    close(ParaViewStateFile)
+    try
+        open(ParaViewStateFileName, "w") do ParaViewStateFile
+            write(ParaViewStateFile, ParaViewConfig)
+        end
+    catch e
+        if e isa SystemError && (e.errno == Base.UV_EACCES || e.errno == Base.UV_EBUSY)
+            @warn("ParaView state file is already open; close it to regenerate.",
+                  file=ParaViewStateFileName)
+        else
+            rethrow()
+        end
+        return nothing
+    end
 
     if SimMetaData.VisualizeInParaview && paraview_cmd !== nothing
         try
