@@ -21,6 +21,12 @@ end
 end
 
 function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
+    CellIndexMap = Dict{eltype(UniqueCellsView), Int}()
+    return BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellIndexMap)
+end
+
+function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges,
+                                 CellIndexMap::Dict{CellType, Int}) where {CellType}
     TargetLen   = length(UniqueCellsView)
     OriginalLen = length(NeighborCellLists)
     resize!(NeighborCellLists, TargetLen)
@@ -33,7 +39,7 @@ function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView
         end
     end
 
-    CellIndexMap = Dict{eltype(UniqueCellsView), Int}()
+    empty!(CellIndexMap)
     sizehint!(CellIndexMap, TargetLen)
     @inbounds for CellIndex in eachindex(UniqueCellsView)
         if ParticleRanges[CellIndex] < ParticleRanges[CellIndex + 1]
@@ -56,6 +62,41 @@ function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView
             end
         end
     end
+
+    return nothing
+end
+
+function BuildNeighborCellLists!(NeighborCellListOffsets, NeighborCellListIndices,
+                                 FullStencil, UniqueCellsView, ParticleRanges,
+                                 CellIndexMap::Dict{CellType, Int}) where {CellType}
+    TargetLen = length(UniqueCellsView)
+    resize!(NeighborCellListOffsets, TargetLen + 1)
+    MaxNeighborCount = max(length(FullStencil) - 1, 0)
+
+    empty!(CellIndexMap)
+    sizehint!(CellIndexMap, TargetLen)
+    @inbounds for CellIndex in eachindex(UniqueCellsView)
+        if ParticleRanges[CellIndex] < ParticleRanges[CellIndex + 1]
+            CellIndexMap[UniqueCellsView[CellIndex]] = CellIndex
+        end
+    end
+
+    empty!(NeighborCellListIndices)
+    sizehint!(NeighborCellListIndices, TargetLen * MaxNeighborCount)
+    NeighborCellListOffsets[1] = 1
+    @inbounds for CellIndex in eachindex(UniqueCellsView)
+        NeighborCellListOffsets[CellIndex] = length(NeighborCellListIndices) + 1
+        if ParticleRanges[CellIndex] < ParticleRanges[CellIndex + 1]
+            Cell = UniqueCellsView[CellIndex]
+            for Offset in FullStencil
+                NeighborIndex = get(CellIndexMap, Cell + Offset, 0)
+                if !iszero(NeighborIndex) && NeighborIndex != CellIndex
+                    push!(NeighborCellListIndices, NeighborIndex)
+                end
+            end
+        end
+    end
+    NeighborCellListOffsets[TargetLen + 1] = length(NeighborCellListIndices) + 1
 
     return nothing
 end
@@ -140,6 +181,19 @@ function ComputeCellNeighborCounts(ParticleRanges, NeighborCellLists, CellCount)
         NeighborTotal = 0
         for NeighborIndex in NeighborCellLists[Index]
             NeighborTotal += Counts[NeighborIndex]
+        end
+        Neighbors[Index] = max(Counts[Index] - 1, 0) + NeighborTotal
+    end
+    return Neighbors
+end
+
+function ComputeCellNeighborCounts(ParticleRanges, NeighborCellListOffsets, NeighborCellListIndices, CellCount)
+    Counts = ComputeCellParticleCounts(ParticleRanges, CellCount)
+    Neighbors = Vector{Int}(undef, CellCount)
+    @inbounds for Index in 1:CellCount
+        NeighborTotal = 0
+        for Cursor in NeighborCellListOffsets[Index]:(NeighborCellListOffsets[Index + 1] - 1)
+            NeighborTotal += Counts[NeighborCellListIndices[Cursor]]
         end
         Neighbors[Index] = max(Counts[Index] - 1, 0) + NeighborTotal
     end
