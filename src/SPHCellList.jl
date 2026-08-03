@@ -626,6 +626,23 @@ using TimerOutputs: @timeit
         return nothing
     end
 
+    @inline function PrepareGridExportData(::Val{true}, ParticleRanges, unique_cell_count, NeighborCellLists)
+        cell_particle_counts = ComputeCellParticleCounts(
+            ParticleRanges,
+            unique_cell_count,
+        )
+        cell_neighbor_counts = ComputeCellNeighborCounts(
+            ParticleRanges,
+            NeighborCellLists,
+            unique_cell_count,
+        )
+        return cell_particle_counts, cell_neighbor_counts
+    end
+
+    @inline function PrepareGridExportData(::Val{false}, ParticleRanges, unique_cell_count, NeighborCellLists)
+        return nothing, nothing
+    end
+
     function ApplyMDBCBeforeHalf!(SimMetaData::SimulationMetaData{D,T,S,K,SimpleMDBC,L},
                                   SimKernel, SimConstants, SimParticles,
                                   ParticleRanges, UniqueCells
@@ -921,19 +938,12 @@ using TimerOutputs: @timeit
         output.enqueue_particles(SimMetaData.OutputIterationCounter)
         if SimMetaData.IndexCounter > 0
             unique_cells_view = view(UniqueCells, 1:SimMetaData.IndexCounter)
-            cell_particle_counts = nothing
-            cell_neighbor_counts = nothing
-            if SimMetaData.ExportGridCellParticleCounts
-                cell_particle_counts = ComputeCellParticleCounts(
-                    ParticleRanges,
-                    SimMetaData.IndexCounter,
-                )
-                cell_neighbor_counts = ComputeCellNeighborCounts(
-                    ParticleRanges,
-                    NeighborCellLists,
-                    SimMetaData.IndexCounter,
-                )
-            end
+            cell_particle_counts, cell_neighbor_counts = PrepareGridExportData(
+                Val(SimMetaData.ExportGridCellParticleCounts),
+                ParticleRanges,
+                SimMetaData.IndexCounter,
+                NeighborCellLists,
+            )
             output.enqueue_grid(
                 SimMetaData.OutputIterationCounter,
                 unique_cells_view,
@@ -964,19 +974,12 @@ using TimerOutputs: @timeit
                 SimMetaData.OutputIterationCounter += 1
 
                 UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-                cell_particle_counts = nothing
-                cell_neighbor_counts = nothing
-                if SimMetaData.ExportGridCellParticleCounts
-                    cell_particle_counts = ComputeCellParticleCounts(
-                        ParticleRanges,
-                        length(UniqueCellsView),
-                    )
-                    cell_neighbor_counts = ComputeCellNeighborCounts(
-                        ParticleRanges,
-                        NeighborCellLists,
-                        length(UniqueCellsView),
-                    )
-                end
+                cell_particle_counts, cell_neighbor_counts = PrepareGridExportData(
+                    Val(SimMetaData.ExportGridCellParticleCounts),
+                    ParticleRanges,
+                    length(UniqueCellsView),
+                    NeighborCellLists,
+                )
 
                 @timeit SimMetaData.HourGlass "13 Save Particle Data"  begin
                     output.enqueue_particles(SimMetaData.OutputIterationCounter)
