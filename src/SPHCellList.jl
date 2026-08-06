@@ -925,7 +925,7 @@ using TimerOutputs: @timeit
     
         # Produce sorting related variables
         ParticleRanges         = zeros(Int, NumberOfPoints + 1 + 1) # +1 for the last particle, +1 for dummy entry
-        UniqueCells            = zeros(CartesianIndex{Dimensions}, NumberOfPoints)
+        UniqueCells            = zeros(CartesianIndex{Dimensions}, NumberOfPoints + 1) # +1 for the dummy sentinel cell
         CellListIndices        = zeros(Int, NumberOfPoints)
         FullStencil            = ConstructStencil(Val(Dimensions))
         NeighborCellLists      = [Int[] for _ in 1:length(UniqueCells)]
