@@ -15,6 +15,45 @@ using StructArrays
     @test alloc == 0
 end
 
+
+@testset "SimulationMetaData Float32 keyword conversion" begin
+    meta = SimulationMetaData{2,Float32}(
+        SimulationName="typed",
+        SaveLocation=".",
+        OutputEach=0.05,
+        OutputTimes=[0.05, 0.1],
+        CurrentTimeStep=0.001,
+        TotalTime=1.0,
+        SimulationTime=2.0,
+        TimeSteps=[0.001, 0.002],
+        Δx=0.01,
+    )
+
+    @test meta.OutputEach isa Float32
+    @test meta.OutputTimes isa Vector{Float32}
+    @test meta.CurrentTimeStep isa Float32
+    @test meta.TotalTime isa Float32
+    @test meta.SimulationTime isa Float32
+    @test meta.TimeSteps isa Vector{Float32}
+    @test meta.Δx isa Float32
+    @test meta.OutputEach == Float32(0.05)
+    @test meta.OutputTimes == Float32[0.05, 0.1]
+    @test meta.CurrentTimeStep == Float32(0.001)
+    @test meta.TotalTime == Float32(1.0)
+    @test meta.SimulationTime == Float32(2.0)
+    @test meta.TimeSteps == Float32[0.001, 0.002]
+    @test meta.Δx == Float32(0.01)
+
+    scalar_output_meta = SimulationMetaData{2,Float32}(
+        SimulationName="scalar",
+        SaveLocation=".",
+        OutputTimes=0.2,
+    )
+
+    @test scalar_output_meta.OutputTimes isa Float32
+    @test scalar_output_meta.TimeSteps isa Vector{Float32}
+end
+
 @testset "isolated particle" begin
     D = 2
     T = Float64
