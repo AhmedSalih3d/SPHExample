@@ -1,6 +1,6 @@
 module SPHNeighborList
 
-export ConstructStencil, ExtractCells!, UpdateNeighbors!, BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts, UpdateΔx!, FindCellIndex
+export ConstructStencil, ExtractCells!, UpdateNeighbors!, UpdateNeighborsAligned!, BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts, UpdateΔx!, FindCellIndex
 
 using StaticArrays
 
@@ -103,6 +103,16 @@ function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
     ExtractCells!(Particles, InverseCutOff)
 
     sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
+    return RebuildCellRanges!(Particles, ParticleRanges, UniqueCells, CellListIndices)
+end
+
+@inline function ApplyPermutation!(Array, Permutation)
+    Copy = Array[Permutation]
+    copyto!(Array, Copy)
+    return nothing
+end
+
+function RebuildCellRanges!(Particles, ParticleRanges, UniqueCells, CellListIndices)
     Cells = @views Particles.Cells
     UniqueCells[1] = MinCell(eltype(Cells))
     @. ParticleRanges             = zero(eltype(ParticleRanges))
@@ -123,6 +133,32 @@ function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
     ParticleRanges[IndexCounter + 1]  = length(Cells) + 1
 
     return IndexCounter
+end
+
+"""
+    UpdateNeighborsAligned!(Particles, InverseCutOff, SortingScratchSpace,
+                            ParticleRanges, UniqueCells, CellListIndices,
+                            AlignedArrays...)
+
+Update particle cell assignments, sort `Particles` by cell, and apply the same
+particle permutation to every array in `AlignedArrays`. Use this rebuild path
+when separate per-particle work arrays must remain indexed with `Particles`
+after the neighbor list is rebuilt.
+"""
+function UpdateNeighborsAligned!(Particles, InverseCutOff, SortingScratchSpace,
+                                 ParticleRanges, UniqueCells, CellListIndices,
+                                 AlignedArrays...)
+    ExtractCells!(Particles, InverseCutOff)
+
+    Permutation = sortperm(eachindex(Particles), by = Index -> Particles.Cells[Index])
+    ApplyPermutation!(Particles, Permutation)
+    for Array in AlignedArrays
+        if length(Array) == length(Particles)
+            ApplyPermutation!(Array, Permutation)
+        end
+    end
+
+    return RebuildCellRanges!(Particles, ParticleRanges, UniqueCells, CellListIndices)
 end
 
 function ComputeCellParticleCounts(ParticleRanges, CellCount)
