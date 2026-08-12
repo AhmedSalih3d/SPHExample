@@ -28,7 +28,7 @@ using TimerOutputs: @timeit
 
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{D,T,NoShifting,NoKernelOutput,B,L},
-                                      SimConstants, SimParticles, ParticleRanges,
+                                      SimConstants, SimParticles::SimParticleStructArray{ParticleTuple, FieldArrays, IndexType}, ParticleRanges,
                                       CellListIndices, NeighborCellLists, dρdtI,
                                       Acceleration, ∇Cᵢ,
                                       ∇◌rᵢ, AccelerationMax;
@@ -38,7 +38,8 @@ using TimerOutputs: @timeit
                                       Velocity = SimParticles.Velocity) where {D,T,
                                                   B<:MDBCMode,L<:LogMode,
                                                   SDD<:SPHDensityDiffusion,
-                                                  SV<:SPHViscosity}
+                                                  SV<:SPHViscosity,
+                                                  ParticleTuple, FieldArrays, IndexType}
         ParticleType = SimParticles.Type
         @inbounds @threads for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
@@ -84,7 +85,7 @@ using TimerOutputs: @timeit
 
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{D,T,NoShifting,K,B,L},
-                                      SimConstants, SimParticles, ParticleRanges,
+                                      SimConstants, SimParticles::SimParticleStructArray{ParticleTuple, FieldArrays, IndexType}, ParticleRanges,
                                       CellListIndices, NeighborCellLists, dρdtI,
                                       Acceleration, ∇Cᵢ,
                                       ∇◌rᵢ, AccelerationMax;
@@ -95,7 +96,8 @@ using TimerOutputs: @timeit
                                                   K<:KernelOutputMode,
                                                   B<:MDBCMode,L<:LogMode,
                                                   SDD<:SPHDensityDiffusion,
-                                                  SV<:SPHViscosity}
+                                                  SV<:SPHViscosity,
+                                                  ParticleTuple, FieldArrays, IndexType}
         @unpack Kernel, KernelGradient = SimParticles
         ParticleType = SimParticles.Type
         @inbounds @threads for i in eachindex(Position)
@@ -152,7 +154,7 @@ using TimerOutputs: @timeit
 
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{D,T,S,NoKernelOutput,B,L},
-                                      SimConstants, SimParticles, ParticleRanges,
+                                      SimConstants, SimParticles::SimParticleStructArray{ParticleTuple, FieldArrays, IndexType}, ParticleRanges,
                                       CellListIndices, NeighborCellLists, dρdtI,
                                       Acceleration, ∇Cᵢ,
                                       ∇◌rᵢ, AccelerationMax;
@@ -162,7 +164,8 @@ using TimerOutputs: @timeit
                                       Velocity = SimParticles.Velocity) where {D,T,
                                                   S<:ShiftingMode,B<:MDBCMode,
                                                   L<:LogMode,SDD<:SPHDensityDiffusion,
-                                                  SV<:SPHViscosity}
+                                                  SV<:SPHViscosity,
+                                                  ParticleTuple, FieldArrays, IndexType}
         ParticleType = SimParticles.Type
         @inbounds @threads for i in eachindex(Position)
             dρdt_acc = zero(dρdtI[i])
@@ -218,7 +221,7 @@ using TimerOutputs: @timeit
 
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{D,T,S,K,B,L},
-                                      SimConstants, SimParticles, ParticleRanges,
+                                      SimConstants, SimParticles::SimParticleStructArray{ParticleTuple, FieldArrays, IndexType}, ParticleRanges,
                                       CellListIndices, NeighborCellLists, dρdtI,
                                       Acceleration, ∇Cᵢ,
                                       ∇◌rᵢ, AccelerationMax;
@@ -230,7 +233,8 @@ using TimerOutputs: @timeit
                                                   K<:KernelOutputMode,
                                                   B<:MDBCMode,L<:LogMode,
                                                   SDD<:SPHDensityDiffusion,
-                                                  SV<:SPHViscosity}
+                                                  SV<:SPHViscosity,
+                                                  ParticleTuple, FieldArrays, IndexType}
         @unpack Kernel, KernelGradient = SimParticles
         ParticleType = SimParticles.Type
         @inbounds @threads for i in eachindex(Position)
@@ -378,13 +382,14 @@ using TimerOutputs: @timeit
     @inline function ComputeInteractionsPerParticleNoShiftingCore!(
         SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         SimMetaData::SimulationMetaData{D,T,NoShifting,K,B,L}, SimConstants,
-        SimParticles, Position, Density, Pressure, Velocity, ParticleType,
+        SimParticles::SimParticleStructArray{ParticleTuple, FieldArrays, IndexType}, Position, Density, Pressure, Velocity, ParticleType,
         dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, i, j) where {D,T,
                                                                      K<:KernelOutputMode,
                                                                      B<:MDBCMode,
                                                                      L<:LogMode,
                                                                      SDD<:SPHDensityDiffusion,
-                                                                     SV<:SPHViscosity}
+                                                                     SV<:SPHViscosity,
+                                                                     ParticleTuple, FieldArrays, IndexType}
         @unpack m₀, dx = SimConstants
         @unpack h⁻¹, H², h = SimKernel
 
@@ -430,13 +435,14 @@ using TimerOutputs: @timeit
     Base.@propagate_inbounds function ComputeInteractionsPerParticle!(
         SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         SimMetaData::SimulationMetaData{D,T,NoShifting,K,B,L}, SimConstants,
-        SimParticles, Position, Density, Pressure, Velocity, ParticleType,
+        SimParticles::SimParticleStructArray{ParticleTuple, FieldArrays, IndexType}, Position, Density, Pressure, Velocity, ParticleType,
         dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, i, j) where {D,T,
                                                                      K<:KernelOutputMode,
                                                                      B<:MDBCMode,
                                                                      L<:LogMode,
                                                                      SDD<:SPHDensityDiffusion,
-                                                                     SV<:SPHViscosity}
+                                                                     SV<:SPHViscosity,
+                                        ParticleTuple, FieldArrays, IndexType}
         return ComputeInteractionsPerParticleNoShiftingCore!(
             SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants,
             SimParticles, Position, Density, Pressure, Velocity, ParticleType,
@@ -447,10 +453,11 @@ using TimerOutputs: @timeit
     Base.@propagate_inbounds function ComputeInteractionsPerParticle!(
         SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         SimMetaData::SimulationMetaData{D,T,NoShifting,NoKernelOutput,B,L}, SimConstants,
-        SimParticles, Position, Density, Pressure, Velocity, ParticleType,
+        SimParticles::SimParticleStructArray{ParticleTuple, FieldArrays, IndexType}, Position, Density, Pressure, Velocity, ParticleType,
         dρdt_acc, acc_acc, i, j) where {D,T,B<:MDBCMode,L<:LogMode,
                                         SDD<:SPHDensityDiffusion,
-                                        SV<:SPHViscosity}
+                                        SV<:SPHViscosity,
+                                  ParticleTuple, FieldArrays, IndexType}
         dρdt_acc, acc_acc, _, _ = ComputeInteractionsPerParticleNoShiftingCore!(
             SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData, SimConstants,
             SimParticles, Position, Density, Pressure, Velocity, ParticleType,
@@ -463,14 +470,15 @@ using TimerOutputs: @timeit
     Base.@propagate_inbounds function ComputeInteractionsPerParticle!(
         SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         SimMetaData::SimulationMetaData{D,T,S,K,B,L}, SimConstants,
-        SimParticles, Position, Density, Pressure, Velocity, ParticleType,
+        SimParticles::SimParticleStructArray{ParticleTuple, FieldArrays, IndexType}, Position, Density, Pressure, Velocity, ParticleType,
         dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc,
         shift_r_acc, i, j) where {D,T,S<:ShiftingMode,
                                   K<:KernelOutputMode,
                                   B<:MDBCMode,
                                   L<:LogMode,
                                   SDD<:SPHDensityDiffusion,
-                                  SV<:SPHViscosity}
+                                  SV<:SPHViscosity,
+                                                                  ParticleTuple, FieldArrays, IndexType}
         @unpack m₀, dx = SimConstants
         @unpack h⁻¹, H², h = SimKernel
 
@@ -522,13 +530,14 @@ using TimerOutputs: @timeit
     Base.@propagate_inbounds function ComputeInteractionsPerParticle!(
         SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         SimMetaData::SimulationMetaData{D,T,S,NoKernelOutput,B,L}, SimConstants,
-        SimParticles, Position, Density, Pressure, Velocity, ParticleType,
+        SimParticles::SimParticleStructArray{ParticleTuple, FieldArrays, IndexType}, Position, Density, Pressure, Velocity, ParticleType,
         dρdt_acc, acc_acc, shift_c_acc, shift_r_acc, i, j) where {D,T,
                                                                   S<:ShiftingMode,
                                                                   B<:MDBCMode,
                                                                   L<:LogMode,
                                                                   SDD<:SPHDensityDiffusion,
-                                                                  SV<:SPHViscosity}
+                                                                  SV<:SPHViscosity,
+                                                ParticleTuple, FieldArrays, IndexType}
         @unpack m₀, dx = SimConstants
         @unpack h⁻¹, H², h = SimKernel
 
@@ -710,7 +719,7 @@ using TimerOutputs: @timeit
 
     @inbounds function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
-                                      SimConstants, SimParticles, FullStencil,
+                                      SimConstants, SimParticles::SimParticleStructArray{ParticleTuple, FieldArrays, IndexType}, FullStencil,
                                       ParticleRanges, UniqueCells, CellListIndices,
                                       SortingScratchSpace,
                                       NeighborCellLists, dρdtI, Velocityₙ⁺,
@@ -727,7 +736,8 @@ using TimerOutputs: @timeit
                                                 Dimensions, FloatType, SMode, KMode,
                                                 BMode, LMode,
                                                 SDD<:SPHDensityDiffusion,
-                                                SV<:SPHViscosity}
+                                                SV<:SPHViscosity,
+                                                ParticleTuple, FieldArrays, IndexType}
         ParticleType   = SimParticles.Type
         ParticleMarker = SimParticles.GroupMarker
         GhostPoints    = hasproperty(SimParticles, :GhostPoints) ? SimParticles.GhostPoints : nothing
@@ -904,12 +914,12 @@ using TimerOutputs: @timeit
         SimConstants::SimulationConstants,
         SimKernel::SPHKernelInstance,
         SimLogger::SimulationLogger,
-        SimParticles::StructArray,
+        SimParticles::SimParticleStructArray{ParticleTuple, FieldArrays, IndexType},
         SimViscosity::SV,
         SimDensityDiffusion::SDD,
         SimTimeStepping::TimeSteppingMode,
         ParticleNormalsPath::Union{Nothing,String} = nothing
-        ) where {Dimensions,FloatType,SMode,KMode,BMode,LMode,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
+        ) where {Dimensions,FloatType,SMode,KMode,BMode,LMode,SV<:SPHViscosity,SDD<:SPHDensityDiffusion,ParticleTuple,FieldArrays,IndexType}
 
         NumberOfPoints = length(SimParticles)
 
