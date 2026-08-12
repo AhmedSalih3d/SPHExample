@@ -626,20 +626,30 @@ using TimerOutputs: @timeit
         return nothing
     end
 
-    @inline function PrepareGridExportData(::Val{true}, ParticleRanges, unique_cell_count, NeighborCellLists)
+    # UniqueCells[1] is the neighbor-search sentinel; only the remaining cells
+    # represent physical grid geometry.
+    @inline function PhysicalCellView(UniqueCells, IndexCounter)
+        return view(UniqueCells, 2:IndexCounter)
+    end
+
+    @inline function PrepareGridExportData(::Val{true}, ParticleRanges, IndexCounter, NeighborCellLists)
         cell_particle_counts = ComputeCellParticleCounts(
             ParticleRanges,
-            unique_cell_count,
+            IndexCounter,
         )
         cell_neighbor_counts = ComputeCellNeighborCounts(
             ParticleRanges,
             NeighborCellLists,
-            unique_cell_count,
+            IndexCounter,
         )
-        return cell_particle_counts, cell_neighbor_counts
+        # NeighborCellLists stores indices in the full sentinel-inclusive space,
+        # so compute first and remove the sentinel only at the output boundary.
+        PhysicalCellIndices = 2:IndexCounter
+        return view(cell_particle_counts, PhysicalCellIndices),
+               view(cell_neighbor_counts, PhysicalCellIndices)
     end
 
-    @inline function PrepareGridExportData(::Val{false}, ParticleRanges, unique_cell_count, NeighborCellLists)
+    @inline function PrepareGridExportData(::Val{false}, ParticleRanges, IndexCounter, NeighborCellLists)
         return nothing, nothing
     end
 
@@ -936,8 +946,8 @@ using TimerOutputs: @timeit
         # Save initial state, use 1 else this cannot be used to index fid vector
         SimMetaData.OutputIterationCounter = 1
         output.enqueue_particles(SimMetaData.OutputIterationCounter)
-        if SimMetaData.IndexCounter > 0
-            unique_cells_view = view(UniqueCells, 1:SimMetaData.IndexCounter)
+        if SimMetaData.IndexCounter > 1
+            unique_cells_view = PhysicalCellView(UniqueCells, SimMetaData.IndexCounter)
             cell_particle_counts, cell_neighbor_counts = PrepareGridExportData(
                 Val(SimMetaData.ExportGridCellParticleCounts),
                 ParticleRanges,
@@ -973,11 +983,11 @@ using TimerOutputs: @timeit
 
                 SimMetaData.OutputIterationCounter += 1
 
-                UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
+                UniqueCellsView = PhysicalCellView(UniqueCells, SimMetaData.IndexCounter)
                 cell_particle_counts, cell_neighbor_counts = PrepareGridExportData(
                     Val(SimMetaData.ExportGridCellParticleCounts),
                     ParticleRanges,
-                    length(UniqueCellsView),
+                    SimMetaData.IndexCounter,
                     NeighborCellLists,
                 )
 

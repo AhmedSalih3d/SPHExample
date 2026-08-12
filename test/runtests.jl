@@ -205,6 +205,69 @@ PadTo3D(Data, ::Val{3}) = reduce(hcat, Data)
 
     mktempdir() do Directory
         D = 2
+        T = Float64
+        Dimensions = Val(D)
+        Particles = MakeVTKTestParticles(Dimensions, T)
+        Constants = SimulationConstants{T}()
+        Kernel = SPHKernelInstance{D, T}(WendlandC2(); dx=Constants.dx)
+        MetaData = SimulationMetaData{D, T}(
+            SimulationName="sentinel_free_grid",
+            SaveLocation=Directory,
+            SimulationTime=zero(T),
+            OutputTimes=T[],
+            ExportSingleVTKHDF=true,
+            ExportGridCells=true,
+            ExportGridCellParticleCounts=true,
+            VisualizeInParaview=false,
+            OpenLogFile=false,
+        )
+
+        Sentinel = CartesianIndex(typemin(Int), typemin(Int))
+        UniqueCells = [Sentinel, CartesianIndex(0, 0), CartesianIndex(1, 0)]
+        IndexCounter = length(UniqueCells)
+        ParticleRanges = Int[1, 1, 3, 4]
+        NeighborCellLists = [Int[], Int[3], Int[2]]
+        PhysicalCells = SPHExample.SPHCellList.PhysicalCellView(
+            UniqueCells,
+            IndexCounter,
+        )
+        ParticleCounts, NeighborCounts =
+            SPHExample.SPHCellList.PrepareGridExportData(
+                Val(true),
+                ParticleRanges,
+                IndexCounter,
+                NeighborCellLists,
+            )
+
+        @test collect(PhysicalCells) == UniqueCells[2:IndexCounter]
+        @test collect(ParticleCounts) == [2, 1]
+        @test collect(NeighborCounts) == [2, 2]
+
+        Output = SetupVTKOutput(MetaData, Particles, Kernel, D)
+        Output.enqueue_grid(
+            1,
+            PhysicalCells,
+            cell_particle_counts=ParticleCounts,
+            cell_neighbor_counts=NeighborCounts,
+        )
+        Output.close_files()
+
+        GridPath = joinpath(Directory, "sentinel_free_grid_GridCells.vtkhdf")
+        h5open(GridPath, "r") do File
+            Root = File["VTKHDF"]
+            Points = read(Root["Points"])
+            @test all(isfinite, Points)
+            @test maximum(abs, Points) < one(T)
+            @test size(Points) == (3, 8)
+            @test read(Root["NumberOfCells"]) == Int64[2]
+            @test read(Root["CellData"]["CellData"]) == Int64[1, 2]
+            @test read(Root["CellData"]["ParticleCount"]) == Int64[2, 1]
+            @test read(Root["CellData"]["ParticleNeighborsPerCell"]) == Int64[2, 2]
+        end
+    end
+
+    mktempdir() do Directory
+        D = 2
         T = Float32
         Constants = SimulationConstants{T}()
         Kernel = SPHKernelInstance{D, T}(WendlandC2(); dx=Constants.dx)
