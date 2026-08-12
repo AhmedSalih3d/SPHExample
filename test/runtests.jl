@@ -1,4 +1,5 @@
 using Test
+using HDF5
 using SPHExample
 using StaticArrays
 using StructArrays
@@ -13,6 +14,213 @@ using StructArrays
     @test dt > 0
     alloc = @allocated Δt(pos, vel, acc, sc, ker)
     @test alloc == 0
+end
+
+function MakeVTKTestParticles(::Val{D}, ::Type{T}) where {D, T}
+    Positions = [SVector{D, T}(ntuple(j -> T(10i + j), D)) for i in 1:3]
+    Velocities = [SVector{D, T}(ntuple(j -> T(i + j / 10), D)) for i in 1:3]
+    Cells = [CartesianIndex(ntuple(_ -> i, D)) for i in 1:3]
+    Types = ParticleType[Fluid, Fixed, Moving]
+    return StructArray((
+        Cells = Cells,
+        Position = Positions,
+        Velocity = Velocities,
+        Density = T[1001, 1002, 1003],
+        BoundaryBool = UInt8[9, 9, 9],
+        Type = Types,
+    ))
+end
+
+function SetVTKTestFrame!(Particles, Frame, ::Val{D}, ::Type{T}) where {D, T}
+    for i in eachindex(Particles.Position)
+        Particles.Position[i] = SVector{D, T}(
+            ntuple(j -> T(100Frame + 10i + j), D),
+        )
+        Particles.Velocity[i] = SVector{D, T}(
+            ntuple(j -> T(10Frame + i + j / 10), D),
+        )
+        Particles.Density[i] = T(1000 + 10Frame + i)
+    end
+    return nothing
+end
+
+function PadTo3D(Data, ::Val{2})
+    return reduce(hcat, (SVector(v[1], v[2], zero(eltype(v))) for v in Data))
+end
+
+PadTo3D(Data, ::Val{3}) = reduce(hcat, Data)
+
+@testset "VTKHDF Bumper buffers" begin
+    mktempdir() do Directory
+        D = 2
+        T = Float32
+        Dimensions = Val(D)
+        Particles = MakeVTKTestParticles(Dimensions, T)
+        Constants = SimulationConstants{T}()
+        Kernel = SPHKernelInstance{D, T}(WendlandC2(); dx=Constants.dx)
+        MetaData = SimulationMetaData{D, T}(
+            SimulationName="transient_buffers",
+            SaveLocation=Directory,
+            SimulationTime=zero(T),
+            OutputTimes=T[],
+            ExportSingleVTKHDF=true,
+            VisualizeInParaview=false,
+            OpenLogFile=false,
+        )
+
+        Output = SetupVTKOutput(MetaData, Particles, Kernel, D)
+        ExpectedPositions = Vector{typeof(copy(Particles.Position))}()
+        ExpectedVelocities = Vector{typeof(copy(Particles.Velocity))}()
+        ExpectedDensities = Vector{typeof(copy(Particles.Density))}()
+        ExpectedTimes = T[]
+
+        # Four writes exceed the two-snapshot pool and reuse the same exact-size
+        # Bumper arena for several 3D fields on every frame.
+        for Frame in 1:4
+            SetVTKTestFrame!(Particles, Frame, Dimensions, T)
+            MetaData.TotalTime = T(Frame) / T(10)
+            push!(ExpectedPositions, copy(Particles.Position))
+            push!(ExpectedVelocities, copy(Particles.Velocity))
+            push!(ExpectedDensities, copy(Particles.Density))
+            push!(ExpectedTimes, MetaData.TotalTime)
+            Output.enqueue_particles(Frame)
+
+            # Mutating immediately verifies that queued jobs own a stable snapshot.
+            SetVTKTestFrame!(Particles, -Frame, Dimensions, T)
+            GC.gc(false)
+        end
+        Output.close_files()
+
+        h5open(joinpath(Directory, "transient_buffers.vtkhdf"), "r") do File
+            Root = File["VTKHDF"]
+            Points = read(Root["Points"])
+            Velocities = read(Root["PointData"]["Velocity"])
+            Densities = read(Root["PointData"]["Density"])
+            TypeData = read(Root["PointData"]["Type"])
+            BoundaryData = read(Root["PointData"]["BoundaryBool"])
+            NumberOfParticles = length(Particles)
+
+            for Frame in 1:4
+                Indices = ((Frame - 1) * NumberOfParticles + 1):(Frame * NumberOfParticles)
+                @test Points[:, Indices] == PadTo3D(ExpectedPositions[Frame], Dimensions)
+                @test Velocities[:, Indices] == PadTo3D(ExpectedVelocities[Frame], Dimensions)
+                @test Densities[Indices] == ExpectedDensities[Frame]
+            end
+
+            @test eltype(TypeData) == Int8
+            @test eltype(BoundaryData) == UInt8
+            @test TypeData[1:NumberOfParticles] == Int8[1, 2, 3]
+            @test BoundaryData[1:NumberOfParticles] == UInt8[0, 1, 1]
+            @test read(Root["Steps"]["Values"]) == ExpectedTimes
+            @test read(Root["Steps"]["NumberOfParts"]) == ones(Int64, 4)
+            @test HDF5.read_attribute(Root["Steps"], "NSteps") == 4
+            @test eltype(Points) == T
+            @test eltype(Velocities) == T
+            @test eltype(Densities) == T
+        end
+    end
+
+    mktempdir() do Directory
+        D = 2
+        T = Float64
+        Dimensions = Val(D)
+        Particles = MakeVTKTestParticles(Dimensions, T)
+        Constants = SimulationConstants{T}()
+        Kernel = SPHKernelInstance{D, T}(WendlandC2(); dx=Constants.dx)
+        MetaData = SimulationMetaData{D, T}(
+            SimulationName="static_buffers",
+            SaveLocation=Directory,
+            SimulationTime=zero(T),
+            OutputTimes=T[0.1, 0.2],
+            ExportSingleVTKHDF=false,
+            VisualizeInParaview=false,
+            OpenLogFile=false,
+        )
+
+        SetVTKTestFrame!(Particles, 1, Dimensions, T)
+        Output = SetupVTKOutput(MetaData, Particles, Kernel, D)
+        ExpectedPositions = Vector{typeof(copy(Particles.Position))}()
+        ExpectedVelocities = Vector{typeof(copy(Particles.Velocity))}()
+        for Frame in 1:3
+            SetVTKTestFrame!(Particles, Frame, Dimensions, T)
+            push!(ExpectedPositions, copy(Particles.Position))
+            push!(ExpectedVelocities, copy(Particles.Velocity))
+            Output.enqueue_particles(Frame)
+            SetVTKTestFrame!(Particles, -Frame, Dimensions, T)
+        end
+        Output.close_files()
+
+        for Frame in 1:3
+            FileName = "static_buffers_$(lpad(Frame, 6, '0')).vtkhdf"
+            h5open(joinpath(Directory, FileName), "r") do File
+                Root = File["VTKHDF"]
+                Points = read(Root["Points"])
+                Velocities = read(Root["PointData"]["Velocity"])
+                @test eltype(Points) == T
+                @test eltype(Velocities) == T
+                @test Points == PadTo3D(ExpectedPositions[Frame], Dimensions)
+                @test Velocities == PadTo3D(ExpectedVelocities[Frame], Dimensions)
+            end
+        end
+    end
+
+
+    mktempdir() do Directory
+        D = 3
+        T = Float32
+        Dimensions = Val(D)
+        Particles = MakeVTKTestParticles(Dimensions, T)
+        Constants = SimulationConstants{T}()
+        Kernel = SPHKernelInstance{D, T}(WendlandC2(); dx=Constants.dx)
+        MetaData = SimulationMetaData{D, T}(
+            SimulationName="grid_buffers",
+            SaveLocation=Directory,
+            SimulationTime=zero(T),
+            OutputTimes=T[],
+            ExportSingleVTKHDF=true,
+            ExportGridCells=true,
+            VisualizeInParaview=false,
+            OpenLogFile=false,
+        )
+
+        Cells = [CartesianIndex(0, 0, 0), CartesianIndex(1, 0, 0)]
+        Output = SetupVTKOutput(MetaData, Particles, Kernel, D)
+        Output.enqueue_grid(1, Cells)
+        Output.close_files()
+
+        GridPath = joinpath(Directory, "grid_buffers_GridCells.vtkhdf")
+        h5open(GridPath, "r") do File
+            Root = File["VTKHDF"]
+            Points = read(Root["Points"])
+            @test eltype(Points) == T
+            @test size(Points) == (3, 16)
+            @test read(Root["NumberOfPoints"]) == Int64[16]
+            @test read(Root["NumberOfCells"]) == Int64[2]
+            @test read(Root["NumberOfConnectivityIds"]) == Int64[16]
+            @test read(Root["Offsets"]) == Int64[0, 8, 16]
+            @test read(Root["Types"]) == UInt8[12, 12]
+            @test read(Root["CellData"]["CellData"]) == Int64[1, 2]
+        end
+    end
+
+    mktempdir() do Directory
+        D = 2
+        T = Float32
+        Constants = SimulationConstants{T}()
+        Kernel = SPHKernelInstance{D, T}(WendlandC2(); dx=Constants.dx)
+        Cells = [CartesianIndex(0, 0), CartesianIndex(1, 0)]
+        GridPath = joinpath(Directory, "direct_grid.vtkhdf")
+        SaveCellGridVTKHDF(GridPath, Kernel, Cells)
+
+        h5open(GridPath, "r") do File
+            Root = File["VTKHDF"]
+            @test eltype(read(Root["Points"])) == T
+            @test size(Root["Points"]) == (3, 8)
+            @test read(Root["Connectivity"]) == Int64.(0:7)
+            @test read(Root["Offsets"]) == Int64[0, 4, 8]
+            @test read(Root["Types"]) == UInt8[9, 9]
+        end
+    end
 end
 
 @testset "isolated particle" begin

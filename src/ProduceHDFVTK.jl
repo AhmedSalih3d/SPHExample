@@ -19,6 +19,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
        SetupVTKOutput
 
     using Base.Threads
+    using Bumper: AllocBuffer, @alloc, @no_escape
     using HDF5
     using StaticArrays
 
@@ -28,6 +29,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
     const idType = Int64
     const fType = Float64
+
+    """Schema information needed to create a VTK point-data dataset."""
+    struct VTKFieldSchema{T, N} end
 
     struct ParticleSnapshot{P, V}
         positions::P
@@ -57,85 +61,91 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         HDF5.write_attribute(attr, dtype, value)
     end
 
-    """
-    Compute points and connectivity information for an unstructured grid given
-    `UniqueCells` from the SPH cell list.  Returns `(points, connectivity,
-    offsets, cell_types, cell_ids, dims)` where `dims` is 2 or 3.
-    """
-    function compute_grid_geometry(SimKernel, UniqueCells)
-        ExtractDimensionality(::AbstractVector{CartesianIndex{N}}) where N = N
+    @inline GridPointCount(::Val{2}, CellCount) = 4 * CellCount
+    @inline GridPointCount(::Val{3}, CellCount) = 8 * CellCount
 
-        dims = ExtractDimensionality(UniqueCells)
-
-        dx = dy = dz = SimKernel.H
-
-        if dims == 2
-            minx, maxx = minimum(ci -> ci[1], UniqueCells), maximum(ci -> ci[1], UniqueCells)
-            miny, maxy = minimum(ci -> ci[2], UniqueCells), maximum(ci -> ci[2], UniqueCells)
-            nx = maxx - minx + 1
-        elseif dims == 3
-            minx, maxx = minimum(ci -> ci[1], UniqueCells), maximum(ci -> ci[1], UniqueCells)
-            miny, maxy = minimum(ci -> ci[2], UniqueCells), maximum(ci -> ci[2], UniqueCells)
-            minz, maxz = minimum(ci -> ci[3], UniqueCells), maximum(ci -> ci[3], UniqueCells)
-            nx = maxx - minx + 1
-            ny = maxy - miny + 1
-        else
-            error("Dimensionality of UniqueCells must be 2 or 3, got $dims")
+    function FillGridPoints!(Points, SimKernel, UniqueCells, ::Val{2})
+        H = SimKernel.H
+        HalfH = H / 2
+        T = eltype(eltype(Points))
+        @inbounds for (CellIndex, Cell) in pairs(UniqueCells)
+            xi, yi = Cell.I
+            x = xi * H
+            y = yi * H
+            PointIndex = 4 * (CellIndex - 1)
+            Points[PointIndex + 1] = SVector{3, T}(x - HalfH, y - HalfH, zero(T))
+            Points[PointIndex + 2] = SVector{3, T}(x + HalfH, y - HalfH, zero(T))
+            Points[PointIndex + 3] = SVector{3, T}(x + HalfH, y + HalfH, zero(T))
+            Points[PointIndex + 4] = SVector{3, T}(x - HalfH, y + HalfH, zero(T))
         end
+        return Points
+    end
 
-        points       = Vector{SVector{3, Float64}}()
-        connectivity = Int[]
-        offsets      = Int[0]
-        cell_types   = UInt8[]
-        cell_ids     = Int[]
-
-        vtk_type = dims == 2 ? UInt8(9) : UInt8(12)  # QUAD or HEXADRON
-
-        for cell in UniqueCells
-            id = if dims == 2
-                (cell[2] - miny) * nx + (cell[1] - minx) + 1
-            else
-                (cell[3] - minz) * (nx * ny) + (cell[2] - miny) * nx + (cell[1] - minx) + 1
-            end
-
-            corners = if dims == 2
-                xi, yi = cell.I
-                x_c = xi * dx
-                y_c = yi * dy
-                [
-                    SVector(x_c - dx/2, y_c - dy/2, 0.0),
-                    SVector(x_c + dx/2, y_c - dy/2, 0.0),
-                    SVector(x_c + dx/2, y_c + dy/2, 0.0),
-                    SVector(x_c - dx/2, y_c + dy/2, 0.0),
-                ]
-            else
-                xi, yi, zi = cell.I
-                x_c = xi * dx
-                y_c = yi * dy
-                z_c = zi * dz
-                [
-                    SVector(x_c - dx/2, y_c - dy/2, z_c - dz/2),
-                    SVector(x_c + dx/2, y_c - dy/2, z_c - dz/2),
-                    SVector(x_c + dx/2, y_c + dy/2, z_c - dz/2),
-                    SVector(x_c - dx/2, y_c + dy/2, z_c - dz/2),
-                    SVector(x_c - dx/2, y_c - dy/2, z_c + dz/2),
-                    SVector(x_c + dx/2, y_c - dy/2, z_c + dz/2),
-                    SVector(x_c + dx/2, y_c + dy/2, z_c + dz/2),
-                    SVector(x_c - dx/2, y_c + dy/2, z_c + dz/2),
-                ]
-            end
-
-            n = length(points)
-            append!(points, corners)
-            for j = 0:length(corners)-1
-                push!(connectivity, n + j)
-            end
-            push!(offsets, length(connectivity))
-            push!(cell_types, vtk_type)
-            push!(cell_ids, id)
+    function FillGridPoints!(Points, SimKernel, UniqueCells, ::Val{3})
+        H = SimKernel.H
+        HalfH = H / 2
+        T = eltype(eltype(Points))
+        @inbounds for (CellIndex, Cell) in pairs(UniqueCells)
+            xi, yi, zi = Cell.I
+            x = xi * H
+            y = yi * H
+            z = zi * H
+            PointIndex = 8 * (CellIndex - 1)
+            Points[PointIndex + 1] = SVector{3, T}(x - HalfH, y - HalfH, z - HalfH)
+            Points[PointIndex + 2] = SVector{3, T}(x + HalfH, y - HalfH, z - HalfH)
+            Points[PointIndex + 3] = SVector{3, T}(x + HalfH, y + HalfH, z - HalfH)
+            Points[PointIndex + 4] = SVector{3, T}(x - HalfH, y + HalfH, z - HalfH)
+            Points[PointIndex + 5] = SVector{3, T}(x - HalfH, y - HalfH, z + HalfH)
+            Points[PointIndex + 6] = SVector{3, T}(x + HalfH, y - HalfH, z + HalfH)
+            Points[PointIndex + 7] = SVector{3, T}(x + HalfH, y + HalfH, z + HalfH)
+            Points[PointIndex + 8] = SVector{3, T}(x - HalfH, y + HalfH, z + HalfH)
         end
+        return Points
+    end
 
-        return points, connectivity, offsets, cell_types, cell_ids, dims
+    function GridCellIds(UniqueCells::AbstractVector{CartesianIndex{2}})
+        minx, maxx = extrema(Cell -> Cell[1], UniqueCells)
+        miny = minimum(Cell -> Cell[2], UniqueCells)
+        nx = maxx - minx + 1
+        return [
+            (Cell[2] - miny) * nx + (Cell[1] - minx) + 1
+            for Cell in UniqueCells
+        ]
+    end
+
+    function GridCellIds(UniqueCells::AbstractVector{CartesianIndex{3}})
+        minx, maxx = extrema(Cell -> Cell[1], UniqueCells)
+        miny, maxy = extrema(Cell -> Cell[2], UniqueCells)
+        minz = minimum(Cell -> Cell[3], UniqueCells)
+        nx = maxx - minx + 1
+        ny = maxy - miny + 1
+        return [
+            (Cell[3] - minz) * (nx * ny) + (Cell[2] - miny) * nx + (Cell[1] - minx) + 1
+            for Cell in UniqueCells
+        ]
+    end
+
+    @inline GridVTKType(::Val{2}) = UInt8(9)
+    @inline GridVTKType(::Val{3}) = UInt8(12)
+
+    function RequiredGridBufferBytes(SimKernel, MaximumCellCount, Dimensions)
+        PointType = SVector{3, typeof(SimKernel.H)}
+        return max(
+            Base.checked_mul(GridPointCount(Dimensions, MaximumCellCount), sizeof(PointType)),
+            1,
+        )
+    end
+
+    @inline function ResolveGridBuffer(Buffer, SimKernel, CellCount, Dimensions)
+        return Buffer === nothing ?
+            AllocBuffer(RequiredGridBufferBytes(SimKernel, CellCount, Dimensions)) :
+            Buffer
+    end
+
+    @inline function ResolveParticleBuffer(Buffer, Positions, OutputData, Dimensions)
+        return Buffer === nothing ?
+            AllocBuffer(RequiredVTKBufferBytes(Positions, OutputData, Dimensions)) :
+            Buffer
     end
 
     function cell_data_payload(cell_ids, cell_particle_counts, cell_neighbor_counts)
@@ -157,14 +167,28 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         if eltype(Source) <: StaticVector
             return eltype(eltype(Source))
         elseif eltype(Source) <: CartesianIndex
-            return eltype(first(Source))
+            return eltype(eltype(Source))
         end
         return eltype(Source)
     end
 
-    @inline function AllocateVectorBuffer(Source, n)
-        element_type = VectorElementType(Source)
-        return Vector{SVector{3, element_type}}(undef, n)
+    @inline VTKElementType(::VTKFieldSchema{T, N}) where {T, N} = T
+    @inline VTKComponentCount(::VTKFieldSchema{T, N}) where {T, N} = N
+
+    @inline function VTKElementType(Source)
+        return IsVectorField(Source) ? VectorElementType(Source) : eltype(Source)
+    end
+
+    @inline function VTKComponentCount(Source)
+        return IsVectorField(Source) ? 3 : 1
+    end
+
+    @inline OutputFieldSchema(::Val{:Type}, Source) = VTKFieldSchema{Int8, 1}()
+    @inline OutputFieldSchema(::Val{:BoundaryBool}, Source) = VTKFieldSchema{UInt8, 1}()
+
+    @inline function OutputFieldSchema(::Val{Name}, Source) where {Name}
+        T = VTKElementType(Source)
+        return IsVectorField(Source) ? VTKFieldSchema{T, 3}() : VTKFieldSchema{T, 1}()
     end
 
     function FillVectorBuffer!(Dest, Source, Dimensions)
@@ -216,23 +240,6 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         return getproperty(SimParticles, Name)
     end
 
-    @inline function InitializeOutputData(::Val{:Type}, Source, Dimensions)
-        return Int8.(Source)
-    end
-
-    @inline function InitializeOutputData(::Val{:BoundaryBool}, Source, Dimensions)
-        return UInt8.(Source .!= Fluid)
-    end
-
-    @inline function InitializeOutputData(::Val{Name}, Source, Dimensions) where {Name}
-        if IsVectorField(Source)
-            Dest = AllocateVectorBuffer(Source, length(Source))
-            FillVectorBuffer!(Dest, Source, Dimensions)
-            return Dest
-        end
-        return Source
-    end
-
     @inline function AllocateSnapshotBuffer(::Val{:Type}, Source, n, Dimensions)
         return Vector{Int8}(undef, n)
     end
@@ -242,9 +249,6 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     end
 
     @inline function AllocateSnapshotBuffer(::Val{Name}, Source, n, Dimensions) where {Name}
-        if IsVectorField(Source)
-            return AllocateVectorBuffer(Source, n)
-        end
         return similar(Source, n)
     end
 
@@ -257,22 +261,85 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     end
 
     @inline function FillOutputField!(::Val{Name}, Dest, Source, Dimensions) where {Name}
-        if IsVectorField(Source)
-            FillVectorBuffer!(Dest, Source, Dimensions)
-        else
-            copy!(Dest, Source)
-        end
+        copy!(Dest, Source)
         return Dest
     end
 
-    @inline function ResolveParticleField(Name, SimParticles)
-        FieldSymbol = Symbol(Name)
-        @assert hasproperty(SimParticles, FieldSymbol) "Output field $(Name) does not exist in SimParticles."
-        return FieldSymbol
+    function RequiredVTKBufferBytes(Positions, OutputSources, ::Val{2})
+        PositionType = SVector{3, VectorElementType(Positions)}
+        RequiredBytes = Base.checked_mul(length(Positions), sizeof(PositionType))
+        for Source in OutputSources
+            if IsVectorField(Source)
+                BufferType = SVector{3, VectorElementType(Source)}
+                RequiredBytes = max(
+                    RequiredBytes,
+                    Base.checked_mul(length(Source), sizeof(BufferType)),
+                )
+            end
+        end
+        return max(RequiredBytes, 1)
     end
 
-    function SaveVTKHDF(fid_vector, index, filepath, points, variable_names = String[], args...)
+    @inline RequiredVTKBufferBytes(Positions, OutputSources, ::Val{3}) = 1
+
+    @inline function ThreeDimensionalView(Source)
+        return reinterpret(reshape, VectorElementType(Source), Source)
+    end
+
+    function WriteStaticVectorField!(Group, Name, Source, ::Val{2}, Buffer)
+        T = VectorElementType(Source)
+        @no_escape Buffer begin
+            Data3D = @alloc(SVector{3, T}, length(Source))
+            FillVectorBuffer!(Data3D, Source, 2)
+            Group[Name] = ThreeDimensionalView(Data3D)
+            nothing
+        end
+        return nothing
+    end
+
+    function WriteStaticVectorField!(Group, Name, Source, ::Val{3}, Buffer)
+        Group[Name] = ThreeDimensionalView(Source)
+        return nothing
+    end
+
+    function WriteStaticField!(Group, Name, Source, Dimensions, Buffer)
+        if IsVectorField(Source)
+            WriteStaticVectorField!(Group, Name, Source, Dimensions, Buffer)
+        else
+            Group[Name] = Source
+        end
+        return nothing
+    end
+
+    function WriteTransientVectorField!(Dataset, Columns, Source, ::Val{2}, Buffer)
+        T = VectorElementType(Source)
+        @no_escape Buffer begin
+            Data3D = @alloc(SVector{3, T}, length(Source))
+            FillVectorBuffer!(Data3D, Source, 2)
+            Dataset[:, Columns] = ThreeDimensionalView(Data3D)
+            nothing
+        end
+        return nothing
+    end
+
+    function WriteTransientVectorField!(Dataset, Columns, Source, ::Val{3}, Buffer)
+        Dataset[:, Columns] = ThreeDimensionalView(Source)
+        return nothing
+    end
+
+    function WriteTransientField!(Dataset, Indices, Source, Dimensions, Buffer)
+        if IsVectorField(Source)
+            WriteTransientVectorField!(Dataset, Indices, Source, Dimensions, Buffer)
+        else
+            Dataset[Indices] = Source
+        end
+        return nothing
+    end
+
+    function SaveVTKHDF(fid_vector, index, filepath, points, variable_names = String[], args...;
+                        Dimensions = Val(3), Buffer = nothing)
         @assert length(variable_names) == length(args) "Same number of variable_names as args is necessary"
+        ParticleBuffer = ResolveParticleBuffer(Buffer, points, args, Dimensions)
         io = h5open(filepath, "w")
         gtop = HDF5.create_group(io, "VTKHDF")
 
@@ -282,12 +349,12 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         # Points
         np = length(points)
         gtop["NumberOfPoints"] = [np]
-        gtop["Points"] = reinterpret(reshape, eltype(eltype(points)), points)
+        WriteStaticVectorField!(gtop, "Points", points, Dimensions, ParticleBuffer)
 
         # Point data
         let g = HDF5.create_group(gtop, "PointData")
             for i ∈ eachindex(variable_names)
-                g[variable_names[i]] = reinterpret(reshape, eltype(eltype(args[i])), args[i])
+                WriteStaticField!(g, variable_names[i], args[i], Dimensions, ParticleBuffer)
             end
         end
 
@@ -345,8 +412,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             for i ∈ eachindex(variable_names)
                 var_name = variable_names[i]
                 arg      = args[i]
-                arg_val_type   = eltype(eltype(arg))
-                arg_val_length = length(first(arg)) > 1 ? 3 : 1
+                arg_val_type   = VTKElementType(arg)
+                arg_val_length = VTKComponentCount(arg)
 
                 if arg_val_length == 3
                     HDF5.create_dataset(pData, var_name, arg_val_type, ((3,0),(3,-1)), chunk=(3,chunk_size))
@@ -417,7 +484,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     
     end
 
-    function AppendVTKHDFData(root, newStep, Positions, variable_names, args...)
+    function AppendVTKHDFData(root, newStep, Positions, variable_names, args...;
+                              Dimensions = Val(3), Buffer = nothing)
+        ParticleBuffer = ResolveParticleBuffer(Buffer, Positions, args, Dimensions)
         steps = root["Steps"]
 
         # To update attributes, this is the best way I've found so far
@@ -432,8 +501,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         PointsStartIndex = size(root["Points"])[2] + 1
         PositionLength   = length(Positions)
 
-        HDF5.set_extent_dims(root["Points"], (length(first(Positions)), size(root["Points"])[2] + PositionLength))
-        root["Points"][:, PointsStartIndex:(PointsStartIndex+PositionLength-1)] = stack(Positions)
+        PointIndices = PointsStartIndex:(PointsStartIndex + PositionLength - 1)
+        HDF5.set_extent_dims(root["Points"], (3, size(root["Points"])[2] + PositionLength))
+        WriteTransientVectorField!(root["Points"], PointIndices, Positions, Dimensions, ParticleBuffer)
 
         HDF5.set_extent_dims(steps["PointOffsets"], (length(steps["PointOffsets"]) + 1,))
         steps["PointOffsets"][end] = PointsStartIndex - 1
@@ -458,10 +528,6 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         HDF5.set_extent_dims(steps["ConnectivityIdOffsets"], (4, ConnectivityIdOffsetsStartIndex))
         # steps["ConnectivityIdOffsets"][:, ConnectivityIdOffsetsStartIndex] = zeros(4) # When you extent dimensions, it autofills with zero values
 
-        NumberOfPartsStartIndex = length(steps["NumberOfParts"]) + 1
-        HDF5.set_extent_dims(steps["NumberOfParts"], (length(steps["NumberOfParts"]) + 1,))
-        steps["NumberOfParts"][NumberOfPartsStartIndex] = 1
-
         for point_data_name in keys(steps["PointDataOffsets"])
             HDF5.set_extent_dims(steps["PointDataOffsets"][point_data_name], (length(steps["PointDataOffsets"][point_data_name]) + 1,))
             steps["PointDataOffsets"][point_data_name][end] = Int(PointsStartIndex - 1)
@@ -470,17 +536,14 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         for i ∈ eachindex(variable_names)
             var_name = variable_names[i]
             arg      = args[i]
-            arg_val_type   = eltype(eltype(arg))
-            arg_val_length = length(first(arg)) > 1 ? 3 : 1
-
+            arg_val_length = VTKComponentCount(arg)
 
             if arg_val_length == 3
                 HDF5.set_extent_dims(root["PointData"][var_name], (arg_val_length, size(root["PointData"][var_name], 2) + PositionLength))
-                root["PointData"][var_name][:, PointsStartIndex:(PointsStartIndex + PositionLength - 1)] = stack(arg)
             else
                 HDF5.set_extent_dims(root["PointData"][var_name], (length(root["PointData"][var_name]) + PositionLength,))
-                root["PointData"][var_name][PointsStartIndex:(PointsStartIndex + PositionLength - 1)] = arg
             end
+            WriteTransientField!(root["PointData"][var_name], PointIndices, arg, Dimensions, ParticleBuffer)
         end
         
 
@@ -495,14 +558,16 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
     function AppendVTKHDFGridData(root, newStep, SimKernel, UniqueCells,
                                   cell_particle_counts = nothing,
-                                  cell_neighbor_counts = nothing)
-        points, connectivity, offsets, cell_types, cell_ids, _ =
-            compute_grid_geometry(SimKernel, UniqueCells)
-        vtk_type = first(cell_types)
-
-        
-
-        Positions = points
+                                  cell_neighbor_counts = nothing;
+                                  Dimensions = Val(length(first(UniqueCells))),
+                                  Buffer = nothing)
+        CellCount = length(UniqueCells)
+        PointCount = GridPointCount(Dimensions, CellCount)
+        vtk_type = GridVTKType(Dimensions)
+        cell_ids = GridCellIds(UniqueCells)
+        PointsPerCell = GridPointCount(Dimensions, 1)
+        offsets = 0:PointsPerCell:PointCount
+        GridBuffer = ResolveGridBuffer(Buffer, SimKernel, CellCount, Dimensions)
 
         steps = root["Steps"]
 
@@ -516,11 +581,15 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         steps["Values"][end] = newStep
 
         PointsStartIndex = size(root["Points"])[2] + 1
-        PositionLength   = length(Positions)
-
-        ExtendedPositionLength = size(root["Points"])[2] + PositionLength
-        HDF5.set_extent_dims(root["Points"], (length(first(Positions)), ExtendedPositionLength))
-        root["Points"][:, PointsStartIndex:(PointsStartIndex+PositionLength-1)] = stack(Positions)
+        ExtendedPositionLength = size(root["Points"])[2] + PointCount
+        HDF5.set_extent_dims(root["Points"], (3, ExtendedPositionLength))
+        T = typeof(SimKernel.H)
+        @no_escape GridBuffer begin
+            Points = @alloc(SVector{3, T}, PointCount)
+            FillGridPoints!(Points, SimKernel, UniqueCells, Dimensions)
+            root["Points"][:, PointsStartIndex:ExtendedPositionLength] = ThreeDimensionalView(Points)
+            nothing
+        end
 
         HDF5.set_extent_dims(steps["PointOffsets"], (length(steps["PointOffsets"]) + 1,))
         steps["PointOffsets"][end] = PointsStartIndex - 1
@@ -538,7 +607,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
         ##             
         HDF5.set_extent_dims(root["NumberOfPoints"], (length(root["NumberOfPoints"]) + 1,))
-        root["NumberOfPoints"][end] = PositionLength
+        root["NumberOfPoints"][end] = PointCount
 
         HDF5.set_extent_dims(root["NumberOfCells"], (length(root["NumberOfCells"]) + 1,))
         root["NumberOfCells"][end] = length(UniqueCells)
@@ -548,7 +617,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         root["Connectivity"][PointsStartIndex:end] = (PointsStartIndex:ExtendedPositionLength) .- PointsStartIndex
 
         HDF5.set_extent_dims(root["NumberOfConnectivityIds"], (length(root["NumberOfConnectivityIds"]) + 1,))
-        root["NumberOfConnectivityIds"][end] = PositionLength
+        root["NumberOfConnectivityIds"][end] = PointCount
 
 
 
@@ -605,9 +674,16 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
     function SaveCellGridVTKHDF(FilePath, SimKernel, UniqueCells,
                                 cell_particle_counts = nothing,
-                                cell_neighbor_counts = nothing)
-        points, connectivity, offsets, cell_types, cell_ids, _ =
-            compute_grid_geometry(SimKernel, UniqueCells)
+                                cell_neighbor_counts = nothing;
+                                Dimensions = Val(length(first(UniqueCells))),
+                                Buffer = nothing)
+        CellCount = length(UniqueCells)
+        PointCount = GridPointCount(Dimensions, CellCount)
+        PointsPerCell = GridPointCount(Dimensions, 1)
+        offsets = 0:PointsPerCell:PointCount
+        cell_ids = GridCellIds(UniqueCells)
+        vtk_type = GridVTKType(Dimensions)
+        GridBuffer = ResolveGridBuffer(Buffer, SimKernel, CellCount, Dimensions)
 
         # Open HDF5 file for writing
         io = h5open(FilePath, "w")
@@ -619,17 +695,23 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         write_ascii_attribute(gtop, "Type", "UnstructuredGrid")
 
         # Write Number of Points, Number of Cells, and Number of Connectivity IDs
-        gtop["NumberOfPoints"]          = [length(points)]
-        gtop["NumberOfCells"]           = [length(cell_types)]
-        gtop["NumberOfConnectivityIds"] = [length(connectivity)]
+        gtop["NumberOfPoints"]          = [PointCount]
+        gtop["NumberOfCells"]           = [CellCount]
+        gtop["NumberOfConnectivityIds"] = [PointCount]
 
         # Write Points
-        gtop["Points"] = reinterpret(reshape, eltype(eltype(points)), points)
+        T = typeof(SimKernel.H)
+        @no_escape GridBuffer begin
+            Points = @alloc(SVector{3, T}, PointCount)
+            FillGridPoints!(Points, SimKernel, UniqueCells, Dimensions)
+            gtop["Points"] = ThreeDimensionalView(Points)
+            nothing
+        end
 
         # Write Connectivity, Offsets, and Types
-        gtop["Connectivity"] = connectivity
-        gtop["Offsets"] = offsets
-        gtop["Types"] = fill(first(cell_types), length(cell_types))
+        gtop["Connectivity"] = collect(0:(PointCount - 1))
+        gtop["Offsets"] = collect(offsets)
+        gtop["Types"] = fill(vtk_type, CellCount)
 
         # Write CellData (cell-level variables)
         let cell_group = HDF5.create_group(gtop, "CellData")
@@ -656,8 +738,11 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     Prepare VTK/HDF5 output. Returns a named tuple with `enqueue_particles`,
     `enqueue_grid`, `flush_output`, and `close_files` functions. Output is
     written asynchronously using a background task with double-buffered
-    particle snapshots, and the queue must be flushed before closing files.
-    Uses single or multi-file mode depending on `SimMetaData.ExportSingleVTKHDF`.
+    particle snapshots. Two-dimensional vectors stay two-dimensional in those
+    snapshots; the writer expands them into a reusable, Bumper-backed 3D arena
+    only for the duration of each synchronous HDF5 write. The queue must be
+    flushed before closing files. Uses single or multi-file mode depending on
+    `SimMetaData.ExportSingleVTKHDF`.
     """
     function SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
         # Generate save locations
@@ -679,6 +764,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             Field = output_fields[i]
             ResolveOutputSource(Val(Field), SimParticles)
         end
+        output_schemas = ntuple(Val(n_output_fields)) do i
+            OutputFieldSchema(Val(output_fields[i]), output_sources[i])
+        end
+        DimensionValue = Val(Dimensions)
     
         # Initialize storage for file handles
         file_handles = if !SimMetaData.ExportSingleVTKHDF
@@ -697,14 +786,14 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             OutputVTKHDF = h5open("$(particle_savepath).vtkhdf", "w")
             root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
             
-            output_data_init = ntuple(Val(n_output_fields)) do i
-                Field = output_fields[i]
-                Source = output_sources[i]
-                InitializeOutputData(Val(Field), Source, Dimensions)
-            end
-
-            GenerateGeometryStructure(root, output_var_names, output_data_init...; chunk_size=1024)
-            GenerateStepStructure(root, output_var_names, output_data_init...)
+            GenerateGeometryStructure(
+                root,
+                output_var_names,
+                output_schemas...;
+                chunk_size=1024,
+                fType=VectorElementType(SimParticles.Position),
+            )
+            GenerateStepStructure(root, output_var_names, output_schemas...)
     
             # Initialize grid file if needed
             if SimMetaData.ExportGridCells
@@ -719,6 +808,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     root_grid;
                     vtk_file_type="UnstructuredGrid",
                     cell_data_names=cell_data_names,
+                    fType=typeof(SimKernel.H),
                 )
                 GenerateStepStructure(
                     root_grid;
@@ -732,10 +822,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             end
         end
 
-        T = eltype(eltype(SimParticles.Position))
         function allocate_particle_snapshot()
             n = length(SimParticles.Position)
-            positions = Vector{SVector{3, T}}(undef, n)
+            positions = similar(SimParticles.Position, n)
             output_data = ntuple(Val(n_output_fields)) do i
                 Field = output_fields[i]
                 Source = output_sources[i]
@@ -745,11 +834,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         end
 
         function fill_particle_snapshot!(snapshot)
-            if Dimensions == 2
-                to_3d!(snapshot.positions, SimParticles.Position)
-            else
-                copy!(snapshot.positions, SimParticles.Position)
-            end
+            copy!(snapshot.positions, SimParticles.Position)
 
             # Iterate via `ntuple` to preserve compile-time field information.
             ntuple(Val(n_output_fields)) do i
@@ -770,7 +855,25 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         ParticleJobType = typeof(ParticleWriteJob(0, SimMetaData.TotalTime, snapshot1))
         GridJobType = GridWriteJob{Dimensions, typeof(SimMetaData.TotalTime)}
         job_channel = Channel{Union{ParticleJobType, GridJobType}}(8)
+        vtk_buffer_size = RequiredVTKBufferBytes(
+            SimParticles.Position,
+            output_sources,
+            DimensionValue,
+        )
+        if SimMetaData.ExportGridCells
+            vtk_buffer_size = max(
+                vtk_buffer_size,
+                RequiredGridBufferBytes(
+                    SimKernel,
+                    length(SimParticles.Position),
+                    DimensionValue,
+                ),
+            )
+        end
         writer_task = Threads.@spawn begin
+            # This buffer belongs exclusively to the writer task. Each @no_escape
+            # write restores its checkpoint, so the same storage is reused safely.
+            VTKBuffer = AllocBuffer(vtk_buffer_size)
             for job in job_channel
                 if job isa ParticleJobType
                     snapshot = job.snapshot
@@ -782,6 +885,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                             snapshot.positions,
                             output_var_names,
                             snapshot.output_data...,
+                            Dimensions=DimensionValue,
+                            Buffer=VTKBuffer,
                         )
                     else
                         AppendVTKHDFData(
@@ -790,6 +895,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                             snapshot.positions,
                             output_var_names,
                             snapshot.output_data...,
+                            Dimensions=DimensionValue,
+                            Buffer=VTKBuffer,
                         )
                     end
                     put!(buffer_pool, snapshot)
@@ -801,6 +908,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                             job.cells,
                             job.cell_particle_counts,
                             job.cell_neighbor_counts,
+                            Dimensions=DimensionValue,
+                            Buffer=VTKBuffer,
                         )
                     else
                         AppendVTKHDFGridData(
@@ -810,6 +919,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                             job.cells,
                             job.cell_particle_counts,
                             job.cell_neighbor_counts,
+                            Dimensions=DimensionValue,
+                            Buffer=VTKBuffer,
                         )
                     end
                 end
