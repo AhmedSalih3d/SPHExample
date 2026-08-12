@@ -50,6 +50,28 @@ end
 
 PadTo3D(Data, ::Val{3}) = reduce(hcat, Data)
 
+@testset "ParaView scalar bar formats" begin
+    mktempdir() do Directory
+        MetaData = SimulationMetaData{2, Float64}(
+            SimulationName="scalar_bar_formats",
+            SaveLocation=Directory,
+            VisualizeInParaview=false,
+            OpenLogFile=false,
+        )
+        AutoOpenParaview(MetaData, ["Density"]; paraview_cmd=nothing)
+
+        StatePath = joinpath(
+            Directory,
+            "scalar_bar_formats_SingleVTKHDFStateFile.py",
+        )
+        State = read(StatePath, String)
+        @test occursin("colorLegend.LabelFormat = '{:.0f}'", State)
+        @test occursin("colorLegend.RangeLabelFormat = '{:.0f}'", State)
+        @test occursin("colorLegend.DataRangeLabelFormat = '{:.0f}'", State)
+        @test !occursin("%.0f", State)
+    end
+end
+
 @testset "VTKHDF Bumper buffers" begin
     mktempdir() do Directory
         D = 2

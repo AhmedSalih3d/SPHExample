@@ -166,6 +166,7 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData, OutputVariableNames;
                             colorLegend.AutomaticLabelFormat = 0
                             colorLegend.LabelFormat = '{:.0f}'
                             colorLegend.RangeLabelFormat = '{:.0f}'
+                            colorLegend.DataRangeLabelFormat = '{:.0f}'
                             Simulation_vtkhdfDisplay.SetScalarBarVisibility(renderView1, True)
                             
                             # Focus the camera on the dataset
