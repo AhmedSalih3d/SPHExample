@@ -11,10 +11,249 @@ using TimerOutputs
     acc = [SVector{2,Float64}(0.0, 0.0), SVector{2,Float64}(0.0, -9.81)]
     sc = SimulationConstants{Float64}()
     ker = SPHKernelInstance{2, Float64}(WendlandC2(); dx=sc.dx)
-    dt  = Δt(pos, vel, acc, sc, ker)
+    max_acceleration = maximum(a -> sqrt(sum(abs2, a)), acc)
+    dt  = Δt(max_acceleration, sc, ker)
     @test dt > 0
-    alloc = @allocated Δt(pos, vel, acc, sc, ker)
+    alloc = @allocated Δt(max_acceleration, sc, ker)
     @test alloc == 0
+end
+
+@testset "gravity does not mutate carried acceleration" begin
+    D = 2
+    T = Float64
+    MetaData = SimulationMetaData{D, T}(
+        SimulationName="gravity_state",
+        SaveLocation=".",
+    )
+    Constants = SimulationConstants{T}(g=9.81)
+    Kernel = SPHKernelInstance{D, T}(WendlandC2(); dx=Constants.dx)
+    HydrodynamicAcceleration = SVector{D, T}(0.25, -0.5)
+    Particles = StructArray((
+        Position=[zero(SVector{D, T})],
+        Velocity=[zero(SVector{D, T})],
+        Acceleration=[HydrodynamicAcceleration],
+        Density=T[Constants.ρ₀],
+        Type=ParticleType[Fluid],
+    ))
+    Positionₙ⁺ = similar(Particles.Position)
+    Velocityₙ⁺ = similar(Particles.Velocity)
+    ρₙ⁺ = similar(Particles.Density)
+    dρdtI = zeros(T, 1)
+    dt = T(0.01)
+
+    SPHExample.TimeStepping.HalfTimeStep(
+        MetaData, Constants, Particles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt / 2,
+    )
+    FirstPredictorVelocity = only(Velocityₙ⁺)
+    @test only(Particles.Acceleration) == HydrodynamicAcceleration
+
+    SPHExample.TimeStepping.HalfTimeStep(
+        MetaData, Constants, Particles, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, dρdtI, dt / 2,
+    )
+    @test only(Velocityₙ⁺) == FirstPredictorVelocity
+    @test only(Particles.Acceleration) == HydrodynamicAcceleration
+
+    SPHExample.TimeStepping.FullTimeStep(
+        MetaData, Kernel, Constants, Particles, Velocityₙ⁺, SVector{D, T}[], T[], dt,
+    )
+    @test only(Particles.Acceleration) == HydrodynamicAcceleration
+end
+
+function RunOutputCadenceCase(OutputTimes; SimulationEnd=1 // 4,
+                              Densities=nothing, Velocities=nothing,
+                              Gravity=0, TimeStepping=SingleNeighborTimeStepping())
+    D = 2
+    T = Float64
+    dx = T(1 // 32)
+    SimulationEnd = T(SimulationEnd)
+    Constants = SimulationConstants{T}(dx=dx, c₀=one(T), CFL=T(1 // 2), g=T(Gravity))
+    Kernel = SPHKernelInstance{D, T}(WendlandC2(); dx=dx)
+    MetaData = SimulationMetaData{D, T}(
+        SimulationName="output_cadence",
+        SaveLocation=".",
+        SimulationTime=SimulationEnd,
+        OutputTimes=OutputTimes isa AbstractVector ? T.(OutputTimes) : T(OutputTimes),
+        VisualizeInParaview=false,
+        OpenLogFile=false,
+        TimeSteppingMode=TimeStepping,
+    )
+
+    Positions = SVector{D, T}[
+        (0, 0),
+        (dx, 0),
+        (0, dx),
+        (dx, dx),
+    ]
+    InitialVelocities = Velocities === nothing ? SVector{D, T}[
+        (0.01, 0),
+        (-0.005, 0.002),
+        (0.001, -0.003),
+        (-0.002, 0.004),
+    ] : SVector{D, T}.(Velocities)
+    InitialDensities = Densities === nothing ?
+        T[1000, 1000.02, 999.98, 1000.01] : T.(Densities)
+    Particles = StructArray((
+        Cells=fill(CartesianIndex(0, 0), 4),
+        Position=Positions,
+        Acceleration=fill(zero(SVector{D, T}), 4),
+        Velocity=InitialVelocities,
+        Density=InitialDensities,
+        Pressure=zeros(T, 4),
+        ID=collect(1:4),
+        Type=fill(Fluid, 4),
+        GroupMarker=fill(UInt(1), 4),
+    ))
+
+    dρdtI, Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ =
+        AllocateSupportDataStructures(MetaData, Particles.Position)
+    ParticleRanges = zeros(Int, length(Particles) + 2)
+    UniqueCells = zeros(CartesianIndex{D}, length(Particles) + 1)
+    CellListIndices = zeros(Int, length(Particles))
+    FullStencil = ConstructStencil(Val(D))
+    NeighborCellLists = [Int[] for _ in eachindex(UniqueCells)]
+    _, SortingScratchSpace = Base.Sort.make_scratch(
+        nothing,
+        eltype(Particles),
+        length(Particles),
+    )
+
+    MetaData.OutputIterationCounter = 1
+    MetaData.CurrentTimeStep = Constants.CFL * Kernel.h / Constants.c₀
+    EmittedTimes = T[zero(T)]
+    function RecordOutput!()
+        push!(EmittedTimes, MetaData.TotalTime)
+        return nothing
+    end
+
+    SPHExample.SPHCellList.SimulationLoop(
+        ZeroDensityDiffusion(), ZeroViscosity(), Kernel, MetaData,
+        Constants, Particles, FullStencil, ParticleRanges, UniqueCells,
+        CellListIndices, SortingScratchSpace, NeighborCellLists, dρdtI,
+        Velocityₙ⁺, Positionₙ⁺, ρₙ⁺, ∇Cᵢ, ∇◌rᵢ, nothing, RecordOutput!,
+    )
+
+    Order = sortperm(Particles.ID)
+    State = (
+        Position=copy(Particles.Position[Order]),
+        Velocity=copy(Particles.Velocity[Order]),
+        Density=copy(Particles.Density[Order]),
+        Pressure=copy(Particles.Pressure[Order]),
+        Acceleration=copy(Particles.Acceleration[Order]),
+    )
+    return MetaData, State, EmittedTimes
+end
+
+@testset "output cadence does not restart integration" begin
+    CoarseMetaData, CoarseState, CoarseOutputs = RunOutputCadenceCase(1 // 4)
+    FineMetaData, FineState, FineOutputs = RunOutputCadenceCase(1 // 16)
+
+    @test CoarseMetaData.Iteration == FineMetaData.Iteration == 8
+    @test CoarseMetaData.TotalTime == FineMetaData.TotalTime == 1 / 4
+    @test CoarseMetaData.TimeSteps == FineMetaData.TimeSteps == fill(1 / 32, 8)
+    @test CoarseState == FineState
+    @test CoarseOutputs == [0, 1 / 4]
+    @test FineOutputs == [0, 1 / 16, 1 / 8, 3 / 16, 1 / 4]
+    @test TimerOutputs.ncalls(CoarseMetaData.HourGlass["00 Initialize Neighbor Data"]) == 1
+    @test TimerOutputs.ncalls(FineMetaData.HourGlass["00 Initialize Neighbor Data"]) == 1
+
+    SymplecticCoarseMetaData, SymplecticCoarseState, _ = RunOutputCadenceCase(
+        1 // 4;
+        TimeStepping=SymplecticTimeStepping(),
+    )
+    SymplecticFineMetaData, SymplecticFineState, _ = RunOutputCadenceCase(
+        1 // 16;
+        TimeStepping=SymplecticTimeStepping(),
+    )
+    @test SymplecticCoarseMetaData.TimeSteps == SymplecticFineMetaData.TimeSteps
+    @test SymplecticCoarseState == SymplecticFineState
+
+    GravityCoarseMetaData, GravityCoarseState, _ = RunOutputCadenceCase(
+        1 // 4;
+        Gravity=9.81,
+    )
+    GravityFineMetaData, GravityFineState, _ = RunOutputCadenceCase(
+        1 // 16;
+        Gravity=9.81,
+    )
+    @test GravityCoarseMetaData.TimeSteps == GravityFineMetaData.TimeSteps
+    @test GravityCoarseState == GravityFineState
+
+    @test !SPHExample.SPHCellList.NeedsSingleNeighborCorrection(0, false)
+    @test !SPHExample.SPHCellList.NeedsSingleNeighborCorrection(19, false)
+    @test SPHExample.SPHCellList.NeedsSingleNeighborCorrection(20, false)
+    @test !SPHExample.SPHCellList.NeedsSingleNeighborCorrection(20, true)
+    @test !SPHExample.SPHCellList.NeedsSingleNeighborCorrection(21, false)
+    @test SPHExample.SPHCellList.NeedsSingleNeighborCorrection(40, false)
+
+    CorrectionCoarseMetaData, CorrectionCoarseState, _ = RunOutputCadenceCase(
+        3 // 4;
+        SimulationEnd=3 // 4,
+    )
+    CorrectionFineMetaData, CorrectionFineState, _ = RunOutputCadenceCase(
+        1 // 20;
+        SimulationEnd=3 // 4,
+    )
+    @test CorrectionCoarseMetaData.Iteration == CorrectionFineMetaData.Iteration
+    @test CorrectionCoarseMetaData.Iteration >
+          SPHExample.SPHCellList.SingleNeighborCorrectionInterval
+    @test CorrectionCoarseMetaData.TimeSteps == CorrectionFineMetaData.TimeSteps
+    @test CorrectionCoarseState == CorrectionFineState
+    @test TimerOutputs.ncalls(
+        CorrectionCoarseMetaData.HourGlass["00 Simulation Step"]["04 Periodic Single-Neighbor Correction"],
+    ) == 1
+    @test TimerOutputs.ncalls(
+        CorrectionFineMetaData.HourGlass["00 Simulation Step"]["04 Periodic Single-Neighbor Correction"],
+    ) == 1
+    @test TimerOutputs.ncalls(
+        CorrectionCoarseMetaData.HourGlass["00 Simulation Step"]["04 Periodic Single-Neighbor Correction"]["03 NeighborLoop"],
+    ) == 1
+
+    ScheduleMetaData = SimulationMetaData{2, Float64}(
+        SimulationName="output_schedule",
+        SaveLocation=".",
+        SimulationTime=0.25,
+        OutputTimes=[0.1, 0.2],
+        OutputIterationCounter=1,
+    )
+    @test SPHExample.TimeStepping.next_output_time(ScheduleMetaData) == 0.1
+    ScheduleMetaData.OutputIterationCounter = 2
+    @test SPHExample.TimeStepping.next_output_time(ScheduleMetaData) == 0.2
+    ScheduleMetaData.OutputIterationCounter = 3
+    @test SPHExample.TimeStepping.next_output_time(ScheduleMetaData) == 0.25
+    ScheduleMetaData.OutputTimes = [0.5]
+    ScheduleMetaData.OutputIterationCounter = 1
+    @test SPHExample.TimeStepping.next_output_time(ScheduleMetaData) == 0.25
+
+    VectorMetaData, VectorState, VectorOutputs =
+        RunOutputCadenceCase([0.07, 0.08])
+    @test VectorMetaData.TotalTime == 1 / 4
+    @test VectorMetaData.TimeSteps == CoarseMetaData.TimeSteps
+    @test VectorState == CoarseState
+    @test VectorOutputs == [0, 3 / 32, 3 / 32, 1 / 4]
+
+    @test_throws ArgumentError SPHExample.SPHCellList.ValidateOutputSchedule(0.0)
+    @test_throws ArgumentError SPHExample.SPHCellList.ValidateOutputSchedule(Inf)
+    @test_throws ArgumentError SPHExample.SPHCellList.ValidateOutputSchedule([0.1, 0.1])
+    @test_throws ArgumentError SPHExample.SPHCellList.ValidateOutputSchedule([0.1, NaN])
+
+    AdaptiveDensities = [1000, 1700, 300, 1350]
+    StationaryVelocities = fill(zero(SVector{2, Float64}), 4)
+    AdaptiveCoarseMetaData, AdaptiveCoarseState, _ = RunOutputCadenceCase(
+        0.1;
+        SimulationEnd=0.1,
+        Densities=AdaptiveDensities,
+        Velocities=StationaryVelocities,
+    )
+    AdaptiveFineMetaData, AdaptiveFineState, _ = RunOutputCadenceCase(
+        0.02;
+        SimulationEnd=0.1,
+        Densities=AdaptiveDensities,
+        Velocities=StationaryVelocities,
+    )
+    @test AdaptiveCoarseMetaData.Iteration == AdaptiveFineMetaData.Iteration
+    @test AdaptiveCoarseMetaData.TotalTime == AdaptiveFineMetaData.TotalTime == 0.1
+    @test AdaptiveCoarseMetaData.TimeSteps == AdaptiveFineMetaData.TimeSteps
+    @test AdaptiveCoarseState == AdaptiveFineState
 end
 
 function MakeVTKTestParticles(::Val{D}, ::Type{T}) where {D, T}
@@ -425,15 +664,14 @@ end
 
     for _ in 1:1000
         ResetArrays!(dρdtI, particles.Acceleration)
-        dt = Δt(particles.Position, particles.Velocity, particles.Acceleration,
-                 sc, ker)
+        dt = Δt(zero(T), sc, ker)
         dt2 = dt / 2
 
         SPHExample.SPHCellList.HalfTimeStep(meta, sc, particles, pos_n, vel_n,
                                            ρ_n, dρdtI, dt2)
         LimitDensityAtBoundary!(ρ_n, sc.ρ₀, particles.MotionLimiter)
         Pressure!(press, ρ_n, sc)
-        SPHExample.SPHCellList.FullTimeStep(meta, ker, sc, particles, ∇C, ∇r, dt)
+        SPHExample.SPHCellList.FullTimeStep(meta, ker, sc, particles, vel_n, ∇C, ∇r, dt)
         DensityEpsi!(dens, dρdtI, ρ_n, dt)
         LimitDensityAtBoundary!(dens, sc.ρ₀, particles.MotionLimiter)
         SPHExample.SPHCellList.UpdateMetaData!(meta, dt)

@@ -260,19 +260,20 @@ module SimulationLoggerConfiguration
     function FinalizeLog!(SimMetaData::SimulationMetaData{D,T,S,K,B,StoreLog}, SimLogger; status::String="finished") where {D,T,S<:ShiftingMode, K<:KernelOutputMode, B<:MDBCMode}
         LogFinal(SimLogger, SimMetaData.HourGlass; status=status)
         
-        # Time steps line plot
-        UnicodeTimeStepsGraph = lineplot(
-            1:length(SimMetaData.TimeSteps),
-            SimMetaData.TimeSteps,
-            title="Time Steps [s] as a function of iteration",
-            name="Time Steps",
-            xlabel="Iterations [-]",
-            ylabel="Time Step Size [s]",
-        )
+        if !isempty(SimMetaData.TimeSteps)
+            UnicodeTimeStepsGraph = lineplot(
+                1:length(SimMetaData.TimeSteps),
+                SimMetaData.TimeSteps,
+                title="Time Steps [s] as a function of iteration",
+                name="Time Steps",
+                xlabel="Iterations [-]",
+                ylabel="Time Step Size [s]",
+            )
 
-        with_logger(SimLogger.Logger) do
-            @info ""
-            show(SimLogger.LoggerIo, UnicodeTimeStepsGraph)
+            with_logger(SimLogger.Logger) do
+                @info ""
+                show(SimLogger.LoggerIo, UnicodeTimeStepsGraph)
+            end
         end
         
         close(SimLogger.LoggerIo)

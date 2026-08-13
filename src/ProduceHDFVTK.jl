@@ -337,47 +337,61 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     end
 
     function SaveVTKHDF(fid_vector, index, filepath, points, variable_names = String[], args...;
-                        Dimensions = Val(3), Buffer = nothing)
+                        Dimensions = Val(3), Buffer = nothing, CloseAfterWrite = false)
         @assert length(variable_names) == length(args) "Same number of variable_names as args is necessary"
         ParticleBuffer = ResolveParticleBuffer(Buffer, points, args, Dimensions)
         io = h5open(filepath, "w")
-        gtop = HDF5.create_group(io, "VTKHDF")
+        try
+            gtop = HDF5.create_group(io, "VTKHDF")
 
-        HDF5.attrs(gtop)["Version"] = [2, 3]
-        write_ascii_attribute(gtop, "Type", "PolyData")
+            HDF5.attrs(gtop)["Version"] = [2, 3]
+            write_ascii_attribute(gtop, "Type", "PolyData")
 
-        # Points
-        np = length(points)
-        gtop["NumberOfPoints"] = [np]
-        WriteStaticVectorField!(gtop, "Points", points, Dimensions, ParticleBuffer)
+            # Points
+            np = length(points)
+            gtop["NumberOfPoints"] = [np]
+            WriteStaticVectorField!(gtop, "Points", points, Dimensions, ParticleBuffer)
 
-        # Point data
-        let g = HDF5.create_group(gtop, "PointData")
-            for i ∈ eachindex(variable_names)
-                WriteStaticField!(g, variable_names[i], args[i], Dimensions, ParticleBuffer)
+            # Point data
+            let g = HDF5.create_group(gtop, "PointData")
+                for i ∈ eachindex(variable_names)
+                    WriteStaticField!(g, variable_names[i], args[i], Dimensions, ParticleBuffer)
+                end
+                close(g)
             end
-        end
 
-        # Vertices: 1 point per cell
-        let g = HDF5.create_group(gtop, "Vertices")
-            g["NumberOfCells"] = [np]
-            g["NumberOfConnectivityIds"] = [np]
-            g["Connectivity"] = collect(0:(np - 1))
-            g["Offsets"] = collect(0:np)
-            close(g)
-        end
+            # Vertices: 1 point per cell
+            let g = HDF5.create_group(gtop, "Vertices")
+                g["NumberOfCells"] = [np]
+                g["NumberOfConnectivityIds"] = [np]
+                g["Connectivity"] = collect(0:(np - 1))
+                g["Offsets"] = collect(0:np)
+                close(g)
+            end
 
-        # Empty groups for unused cell types
-        for type ∈ ("Lines", "Polygons", "Strips")
-            gempty = HDF5.create_group(gtop, type)
-            gempty["NumberOfCells"] = [0]
-            gempty["NumberOfConnectivityIds"] = [0]
-            gempty["Connectivity"] = Int[]
-            gempty["Offsets"] = [0]
-            close(gempty)
-        end
+            # Empty groups for unused cell types
+            for type ∈ ("Lines", "Polygons", "Strips")
+                gempty = HDF5.create_group(gtop, type)
+                gempty["NumberOfCells"] = [0]
+                gempty["NumberOfConnectivityIds"] = [0]
+                gempty["Connectivity"] = Int[]
+                gempty["Offsets"] = [0]
+                close(gempty)
+            end
+            close(gtop)
 
-        fid_vector[index] = io
+            if CloseAfterWrite
+                # Static writer jobs are complete after this call. Closing immediately
+                # avoids retaining one HDF5 handle for every requested frame.
+                close(io)
+            else
+                # Preserve the public helper's existing handle-storage behavior.
+                fid_vector[index] = io
+            end
+        catch
+            isopen(io) && close(io)
+            rethrow()
+        end
     end
 
 
@@ -687,49 +701,52 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
         # Open HDF5 file for writing
         io = h5open(FilePath, "w")
+        try
+            # Create top-level group "VTKHDF"
+            gtop = HDF5.create_group(io, "VTKHDF")
 
-        # Create top-level group "VTKHDF"
-        gtop = HDF5.create_group(io, "VTKHDF")
+            HDF5.attrs(gtop)["Version"] = [2, 3]
+            write_ascii_attribute(gtop, "Type", "UnstructuredGrid")
 
-        HDF5.attrs(gtop)["Version"] = [2, 3]
-        write_ascii_attribute(gtop, "Type", "UnstructuredGrid")
+            # Write Number of Points, Number of Cells, and Number of Connectivity IDs
+            gtop["NumberOfPoints"]          = [PointCount]
+            gtop["NumberOfCells"]           = [CellCount]
+            gtop["NumberOfConnectivityIds"] = [PointCount]
 
-        # Write Number of Points, Number of Cells, and Number of Connectivity IDs
-        gtop["NumberOfPoints"]          = [PointCount]
-        gtop["NumberOfCells"]           = [CellCount]
-        gtop["NumberOfConnectivityIds"] = [PointCount]
-
-        # Write Points
-        T = typeof(SimKernel.H)
-        @no_escape GridBuffer begin
-            Points = @alloc(SVector{3, T}, PointCount)
-            FillGridPoints!(Points, SimKernel, UniqueCells, Dimensions)
-            gtop["Points"] = ThreeDimensionalView(Points)
-            nothing
-        end
-
-        # Write Connectivity, Offsets, and Types
-        gtop["Connectivity"] = collect(0:(PointCount - 1))
-        gtop["Offsets"] = collect(offsets)
-        gtop["Types"] = fill(vtk_type, CellCount)
-
-        # Write CellData (cell-level variables)
-        let cell_group = HDF5.create_group(gtop, "CellData")
-            for (name, data) in cell_data_payload(
-                cell_ids,
-                cell_particle_counts,
-                cell_neighbor_counts,
-            )
-                cell_group[name] = data
+            # Write Points
+            T = typeof(SimKernel.H)
+            @no_escape GridBuffer begin
+                Points = @alloc(SVector{3, T}, PointCount)
+                FillGridPoints!(Points, SimKernel, UniqueCells, Dimensions)
+                gtop["Points"] = ThreeDimensionalView(Points)
+                nothing
             end
-            close(cell_group)
-        end
 
-        # Write an empty FieldData group (placeholder for additional data)
-        create_group(gtop, "FieldData")
-        
-        # Close file
-        close(io)
+            # Write Connectivity, Offsets, and Types
+            gtop["Connectivity"] = collect(0:(PointCount - 1))
+            gtop["Offsets"] = collect(offsets)
+            gtop["Types"] = fill(vtk_type, CellCount)
+
+            # Write CellData (cell-level variables)
+            let cell_group = HDF5.create_group(gtop, "CellData")
+                for (name, data) in cell_data_payload(
+                    cell_ids,
+                    cell_particle_counts,
+                    cell_neighbor_counts,
+                )
+                    cell_group[name] = data
+                end
+                close(cell_group)
+            end
+
+            # Write an empty FieldData group (placeholder for additional data)
+            field_group = create_group(gtop, "FieldData")
+            close(field_group)
+            close(gtop)
+        finally
+            isopen(io) && close(io)
+        end
+        return nothing
     end
 
     """
@@ -771,14 +788,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     
         # Initialize storage for file handles
         file_handles = if !SimMetaData.ExportSingleVTKHDF
-            # Multi-file mode: vector for particle files
-            n_outputs = if SimMetaData.OutputTimes isa AbstractVector
-                length(SimMetaData.OutputTimes) + 1
-            else
-                Int(SimMetaData.SimulationTime/SimMetaData.OutputTimes + 1)
-            end
+            # Static files are opened, written, and closed by the writer task.
             (
-                particle_files = Vector{HDF5.File}(undef, n_outputs),
+                particle_files = HDF5.File[],
                 grid_files = nothing,
             )
         else
@@ -877,29 +889,36 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             for job in job_channel
                 if job isa ParticleJobType
                     snapshot = job.snapshot
-                    if !SimMetaData.ExportSingleVTKHDF
-                        SaveVTKHDF(
-                            file_handles.particle_files,
-                            job.iteration,
-                            particle_filename(job.iteration),
-                            snapshot.positions,
-                            output_var_names,
-                            snapshot.output_data...,
-                            Dimensions=DimensionValue,
-                            Buffer=VTKBuffer,
-                        )
-                    else
-                        AppendVTKHDFData(
-                            root,
-                            job.time,
-                            snapshot.positions,
-                            output_var_names,
-                            snapshot.output_data...,
-                            Dimensions=DimensionValue,
-                            Buffer=VTKBuffer,
-                        )
+                    try
+                        if !SimMetaData.ExportSingleVTKHDF
+                            SaveVTKHDF(
+                                file_handles.particle_files,
+                                job.iteration,
+                                particle_filename(job.iteration),
+                                snapshot.positions,
+                                output_var_names,
+                                snapshot.output_data...,
+                                Dimensions=DimensionValue,
+                                Buffer=VTKBuffer,
+                                CloseAfterWrite=true,
+                            )
+                        else
+                            AppendVTKHDFData(
+                                root,
+                                job.time,
+                                snapshot.positions,
+                                output_var_names,
+                                snapshot.output_data...,
+                                Dimensions=DimensionValue,
+                                Buffer=VTKBuffer,
+                            )
+                        end
+                    finally
+                        # Return every borrowed buffer even when HDF5 fails. The
+                        # channel bindings below then wake blocked producers and
+                        # surface the writer-task failure instead of deadlocking.
+                        put!(buffer_pool, snapshot)
                     end
-                    put!(buffer_pool, snapshot)
                 elseif job isa GridJobType
                     if !SimMetaData.ExportSingleVTKHDF
                         SaveCellGridVTKHDF(
@@ -926,12 +945,23 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 end
             end
         end
+        bind(job_channel, writer_task)
+        bind(buffer_pool, writer_task)
 
         function enqueue_particle_data(iteration)
             snapshot = take!(buffer_pool)
-            fill_particle_snapshot!(snapshot)
-            job = ParticleWriteJob(iteration, SimMetaData.TotalTime, snapshot)
-            put!(job_channel, job)
+            Enqueued = false
+            try
+                fill_particle_snapshot!(snapshot)
+                job = ParticleWriteJob(iteration, SimMetaData.TotalTime, snapshot)
+                put!(job_channel, job)
+                Enqueued = true
+            finally
+                if !Enqueued && isopen(buffer_pool)
+                    put!(buffer_pool, snapshot)
+                end
+            end
+            return nothing
         end
 
         function enqueue_cell_grid(iteration, cells;
@@ -963,19 +993,17 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         end
 
         function close_files()
-            flush_output()
-            if !SimMetaData.ExportSingleVTKHDF
-                # Close all particle files in multi-file mode
-                for f in file_handles.particle_files
-                    isopen(f) && close(f)
-                end
-            else
-                # Close single-file handles
-                isopen(file_handles.particle_files) && close(file_handles.particle_files)
-                if file_handles.grid_files !== nothing
-                    isopen(file_handles.grid_files) && close(file_handles.grid_files)
+            try
+                flush_output()
+            finally
+                if SimMetaData.ExportSingleVTKHDF
+                    isopen(file_handles.particle_files) && close(file_handles.particle_files)
+                    if file_handles.grid_files !== nothing
+                        isopen(file_handles.grid_files) && close(file_handles.grid_files)
+                    end
                 end
             end
+            return nothing
         end
     
         # Return interface functions and handles
@@ -984,7 +1012,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             enqueue_grid = enqueue_cell_grid,
             flush_output = flush_output,
             close_files = close_files,
-            file_handles = file_handles,  # For advanced access if needed
+            # Single-file mode exposes live handles until close. Multi-file mode
+            # closes every completed file immediately and therefore returns [].
+            file_handles = file_handles,
             variable_names = output_var_names
         )
     end

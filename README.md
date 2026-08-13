@@ -123,6 +123,39 @@ first so compilation is excluded. The `@profview RunSimulation(...)` form in
 the MDBC examples provides a graphical CPU view when ProfileView tooling is
 available. Use the tables for trustworthy phase-level wall time and allocations.
 
+### Output scheduling and background writes
+
+The solver advances through one continuous timestep loop. `OutputTimes` only
+defines sampling deadlines; it does not restart neighbor construction,
+derivative initialization, or adaptive timestep state. A timestep is shortened
+only at the final `SimulationTime`, so changing visualization cadence does not
+change the integration sequence.
+`SimulationMetaData.TimeSteps` records every accepted physical timestep, rather
+than one sample per output frame.
+
+`SingleNeighborTimeStepping` periodically re-evaluates its carried derivative
+from the accepted full state every 20 physical steps. This suppresses the
+long-time staggered drift without changing the requested simulation inputs, and
+the correction cadence is based only on integration steps, never output events.
+It adds one neighbor evaluation on correction steps (about 5% at this interval);
+a derivative refresh caused by a neighbor-list rebuild satisfies the same
+correction and is not duplicated.
+
+A snapshot is taken from the first completed timestep at or after each deadline.
+The file therefore records the state's actual simulation time, which can be
+slightly later than the requested deadline. If one timestep crosses several
+deadlines, the corresponding frames intentionally contain the same state and
+timestamp; exact-time output would require interpolation.
+
+VTKHDF writes run in one persistent `Threads.@spawn` writer task while the solver
+continues on the other Julia threads. Launch with at least two threads (for
+example, `julia --threads=auto`) to overlap blocking HDF5 work with simulation.
+Particle snapshots use a bounded two-buffer pool: if storage cannot sustain the
+requested output rate, the solver waits instead of dropping frames or allowing
+memory use to grow without bound. Finalization always waits for queued writes to
+finish, so reducing output frequency still reduces total data-copying and HDF5
+work.
+
 ## Help
 
 Questions or issues can be posted on the GitHub issue tracker. Response times may vary but all feedback is welcome.
