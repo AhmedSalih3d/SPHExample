@@ -152,24 +152,45 @@ end
 Increment Δx by twice the maximum ‖posₙ⁺[i] – pos[i]‖, without ever allocating.
 Returns the new Δx.
 """
-@inline function UpdateΔx!(Δx::T,
-                           posₙ⁺::AbstractVector{SVector{D, T}},
-                           pos   ::AbstractVector{SVector{D, T}}) where {D, T<:Real}
-    maxd = zero(T)
+# @inline function UpdateΔx!(Δx::T,
+#                            posₙ⁺::AbstractVector{SVector{D, T}},
+#                            pos   ::AbstractVector{SVector{D, T}}) where {D, T<:Real}
+#     maxd = zero(T)
+#     @inbounds for i in eachindex(posₙ⁺, pos)
+#         # compute squared norm manually
+#         sumsq = zero(T)
+#         @inbounds for j in 1:D
+#             d = posₙ⁺[i][j] - pos[i][j]
+#             sumsq += d*d
+#         end
+#         # sqrt/T is allocation-free on scalars
+#         nrm = sqrt(sumsq)
+#         if nrm > maxd
+#             maxd = nrm
+#         end
+#     end
+#     return Δx + 4 * maxd
+# end
+@inline function UpdateΔx!(
+    Δx::T,
+    posₙ⁺::AbstractVector{SVector{D,T}},
+    pos::AbstractVector{SVector{D,T}},
+) where {D,T<:Real}
+
+    maxd² = zero(T)
+
     @inbounds for i in eachindex(posₙ⁺, pos)
-        # compute squared norm manually
         sumsq = zero(T)
+
         @inbounds for j in 1:D
             d = posₙ⁺[i][j] - pos[i][j]
-            sumsq += d*d
+            sumsq += d * d
         end
-        # sqrt/T is allocation-free on scalars
-        nrm = sqrt(sumsq)
-        if nrm > maxd
-            maxd = nrm
-        end
+
+        maxd² = max(maxd², sumsq)
     end
-    return Δx + 4 * maxd
+
+    return Δx + 4 * sqrt(maxd²)
 end
 
 end
