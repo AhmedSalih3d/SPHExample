@@ -21,6 +21,13 @@ end
 end
 
 function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
+    CellIndexMap = Dict{eltype(UniqueCellsView), Int}()
+    sizehint!(CellIndexMap, length(UniqueCellsView))
+    BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellIndexMap)
+    return nothing
+end
+
+function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges, CellIndexMap)
     TargetLen   = length(UniqueCellsView)
     OriginalLen = length(NeighborCellLists)
     resize!(NeighborCellLists, TargetLen)
@@ -33,7 +40,7 @@ function BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView
         end
     end
 
-    CellIndexMap = Dict{eltype(UniqueCellsView), Int}()
+    empty!(CellIndexMap)
     sizehint!(CellIndexMap, TargetLen)
     @inbounds for CellIndex in eachindex(UniqueCellsView)
         if ParticleRanges[CellIndex] < ParticleRanges[CellIndex + 1]

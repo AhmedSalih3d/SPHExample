@@ -18,6 +18,27 @@ using TimerOutputs
     @test alloc == 0
 end
 
+@testset "neighbor rebuild reuses cell index map" begin
+    UniqueCells = CartesianIndex{2}[
+        CartesianIndex(0, 0),
+        CartesianIndex(1, 0),
+        CartesianIndex(0, 1),
+    ]
+    ParticleRanges = [1, 2, 3, 4]
+    FullStencil = ConstructStencil(Val(2))
+    NeighborCellLists = [Int[] for _ in eachindex(UniqueCells)]
+    CellIndexMap = Dict{CartesianIndex{2}, Int}()
+
+    BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCells, ParticleRanges, CellIndexMap)
+    @test CellIndexMap[CartesianIndex(1, 0)] == 2
+    @test CellIndexMap[CartesianIndex(0, 1)] == 3
+
+    empty!(CellIndexMap)
+    BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCells, ParticleRanges, CellIndexMap)
+    @test CellIndexMap[CartesianIndex(0, 0)] == 1
+    @test get(CellIndexMap, CartesianIndex(2, 2), 1) == 1
+end
+
 @testset "gravity does not mutate carried acceleration" begin
     D = 2
     T = Float64
