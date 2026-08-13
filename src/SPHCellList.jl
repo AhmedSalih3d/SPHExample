@@ -893,7 +893,7 @@ using TimerOutputs: @timeit, flatten
     end
     
     function ShowPerformanceReport(IO, HourGlass)
-        DetailedIO = IOContext(IO, :limit => false)
+        DetailedIO = IOContext(IO, :limit => false, :displaysize => (-1, -1))
         println(DetailedIO, "\nPerformance profile, sorted by elapsed time:")
         show(DetailedIO, HourGlass; sortby=:time, complement=true, gc=true)
         println(DetailedIO, "\n\nRecorded sections, globally sorted by allocations:")
@@ -1019,6 +1019,8 @@ using TimerOutputs: @timeit, flatten
 
         SimMetaData.CurrentTimeStep = SimConstants.CFL * (SimKernel.h / SimConstants.c₀)
 
+        GC.enable(false)
+
         RunWithSimulationFinalizer!(SimMetaData, SimLogger, output) do OutputFinalized
             @inbounds while true
 
@@ -1051,6 +1053,7 @@ using TimerOutputs: @timeit, flatten
                 if SimMetaData.TotalTime > SimMetaData.SimulationTime
 
                     # At end of simulation
+                    GC.enable(true)
                     FinalizeSimulationOutput!(SimMetaData, SimLogger, output)
                     OutputFinalized[] = true
 
