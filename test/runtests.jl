@@ -423,3 +423,26 @@ end
     @test particles.Velocity[1][1] == 0
     @test particles.Velocity[1][2] < 0
 end
+
+@testset "simulation failure finalizes output" begin
+    mktempdir() do dir
+        meta = SimulationMetaData{2,Float64}(
+            SimulationName="failfinalizer",
+            SaveLocation=dir,
+            VisualizeInParaview=false,
+            OpenLogFile=false,
+        )
+        logger = SimulationLogger(dir; to_console=false)
+        closed = Ref(false)
+        output = (
+            close_files = () -> (closed[] = true; nothing),
+            variable_names = String[],
+        )
+
+        @test_throws ErrorException SPHExample.SPHCellList.RunWithSimulationFinalizer!(meta, logger, output) do _
+            error("boom")
+        end
+        @test closed[]
+        close(logger.LoggerIo)
+    end
+end
