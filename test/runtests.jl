@@ -122,12 +122,35 @@ end
     @test TimerOutputs.ncalls(Parent["03 ApplyMDBCCorrection"]) == 1
     @test all(isfinite, Particles.Density)
 
-    Report = sprint(SPHExample.SPHCellList.ShowPerformanceReport, MetaData.HourGlass)
+    VisibleLabels = ["visible timing $(lpad(Index, 2, '0'))" for Index in 1:30]
+    for Label in VisibleLabels
+        @timeit MetaData.HourGlass Label nothing
+    end
+
+    ReportBuffer = IOBuffer()
+    LimitedIO = IOContext(
+        ReportBuffer,
+        :limit => true,
+        :displaysize => (10, 80),
+    )
+    SPHExample.SPHCellList.ShowPerformanceReport(LimitedIO, MetaData.HourGlass)
+    Report = String(take!(ReportBuffer))
     @test occursin("sorted by elapsed time", Report)
     @test occursin("globally sorted by allocations", Report)
     @test occursin("01 Acquire MDBC buffers", Report)
+    @test all(Label -> occursin(Label, Report), VisibleLabels)
     @test !occursin("rows omitted", Report)
     @test !occursin("~Flattened~", Report)
+
+    mktempdir() do Directory
+        SimLogger = SimulationLogger(Directory; to_console=false)
+        LogFinal(SimLogger, MetaData.HourGlass)
+        close(SimLogger.LoggerIo)
+
+        LogReport = read(joinpath(Directory, "SimulationOutput.log"), String)
+        @test all(Label -> occursin(Label, LogReport), VisibleLabels)
+        @test !occursin("rows omitted", LogReport)
+    end
 end
 
 @testset "VTKHDF Bumper buffers" begin
