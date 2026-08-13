@@ -3,6 +3,7 @@ using HDF5
 using SPHExample
 using StaticArrays
 using StructArrays
+using TimerOutputs
 
 @testset "time stepping" begin
     pos = [SVector{2,Float64}(0.0, 0.0), SVector{2,Float64}(1.0, 0.0)]
@@ -70,6 +71,63 @@ PadTo3D(Data, ::Val{3}) = reduce(hcat, Data)
         @test occursin("colorLegend.DataRangeLabelFormat = '{:.0f}'", State)
         @test !occursin("%.0f", State)
     end
+end
+
+@testset "detailed performance timings" begin
+    D = 2
+    T = Float64
+    MetaData = SimulationMetaData{
+        D,
+        T,
+        NoShifting,
+        NoKernelOutput,
+        SimpleMDBC,
+        NoLog,
+    }(
+        SimulationName="detailed_timings",
+        SaveLocation=".",
+        IndexCounter=2,
+        VisualizeInParaview=false,
+        OpenLogFile=false,
+    )
+    Constants = SimulationConstants{T}(dx=0.02)
+    Kernel = SPHKernelInstance{D, T}(WendlandC2(); dx=Constants.dx)
+    Particles = StructArray((
+        Position = [SVector{D, T}(0, 0)],
+        Density = T[1000],
+        GhostPoints = [SVector{D, T}(0.01, 0)],
+        GhostNormals = [SVector{D, T}(1, 0)],
+        Type = ParticleType[Fixed],
+    ))
+    ParticleRanges = Int[1, 1, 2]
+    UniqueCells = [
+        CartesianIndex(typemin(Int), typemin(Int)),
+        CartesianIndex(0, 0),
+    ]
+
+    @timeit MetaData.HourGlass "MDBC parent" begin
+        SPHExample.SPHCellList.ApplyMDBCBeforeHalf!(
+            MetaData,
+            Kernel,
+            Constants,
+            Particles,
+            ParticleRanges,
+            UniqueCells,
+        )
+    end
+
+    Parent = MetaData.HourGlass["MDBC parent"]
+    @test TimerOutputs.ncalls(Parent["01 Acquire MDBC buffers"]) == 1
+    @test TimerOutputs.ncalls(Parent["02 NeighborLoopMDBC!"]) == 1
+    @test TimerOutputs.ncalls(Parent["03 ApplyMDBCCorrection"]) == 1
+    @test all(isfinite, Particles.Density)
+
+    Report = sprint(SPHExample.SPHCellList.ShowPerformanceReport, MetaData.HourGlass)
+    @test occursin("sorted by elapsed time", Report)
+    @test occursin("globally sorted by allocations", Report)
+    @test occursin("01 Acquire MDBC buffers", Report)
+    @test !occursin("rows omitted", Report)
+    @test !occursin("~Flattened~", Report)
 end
 
 @testset "VTKHDF Bumper buffers" begin

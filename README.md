@@ -96,6 +96,33 @@ To color exported cell grids by particle counts, set
 `ParticleNeighborsPerCell` array that includes each cell's particle count minus
 one plus the particles in its neighbor stencil.
 
+### Performance Diagnostics
+
+At shutdown, the solver prints the full hierarchical run sorted by elapsed
+time, followed by a flattened global ranking of recorded sections by allocated
+bytes. Parent rows are inclusive of their children. A gray `~section~` row is
+the time or memory used directly by that section but not yet covered by a named
+child timer; `~untimed~` is work outside all timed sections. The GC column
+reports time spent in garbage collection. Allocation totals around threaded
+sections are process-wide deltas during that wall-time interval, so they
+localize an expensive phase but do not by themselves identify a worker task.
+
+The MDBC rows are divided into reusable-buffer acquisition,
+`NeighborLoopMDBC!`, and `ApplyMDBCCorrection`. Neighbor-data maintenance
+separately reports `UpdateΔx!`, `UpdateNeighbors!`, and
+`BuildNeighborCellLists!`, so hot rows map directly to their Julia functions.
+
+`NeighborLoop` is intentionally a fused, threaded particle-pair kernel. Timing
+its density-diffusion, pressure, viscosity, and kernel formulas individually
+would require a shared timer inside worker tasks and would dominate the very
+small operations being measured. Use Julia's standard `Profile.@profile` for
+portable function- and line-level CPU sampling, and
+`Profile.Allocs.@profile sample_rate=0.1` followed by
+`Profile.Allocs.print()` for allocation stacks. Run a representative warm-up
+first so compilation is excluded. The `@profview RunSimulation(...)` form in
+the MDBC examples provides a graphical CPU view when ProfileView tooling is
+available. Use the tables for trustworthy phase-level wall time and allocations.
+
 ## Help
 
 Questions or issues can be posted on the GitHub issue tracker. Response times may vary but all feedback is welcome.

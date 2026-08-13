@@ -24,7 +24,7 @@ using LinearAlgebra: det, dot, norm
 using Parameters: @unpack
 using StaticArrays: SMatrix, SVector
 using StructArrays: StructArray
-using TimerOutputs: @timeit
+using TimerOutputs: @timeit, flatten
 
     function NeighborLoopPerParticle!(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                                       SimMetaData::SimulationMetaData{D,T,NoShifting,NoKernelOutput,B,L},
@@ -658,12 +658,22 @@ using TimerOutputs: @timeit
                                   ParticleRanges, UniqueCells
                                  ) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,L<:LogMode}
         @no_escape begin
-            DimensionsPlus = D + 1
-            bᵧ = @alloc(SVector{DimensionsPlus, T}, length(SimParticles.Position))
-            Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, T, DimensionsPlus*DimensionsPlus}, length(SimParticles.Position))
+            @timeit SimMetaData.HourGlass "01 Acquire MDBC buffers" begin
+                DimensionsPlus = D + 1
+                bᵧ = @alloc(SVector{DimensionsPlus, T}, length(SimParticles.Position))
+                Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, T, DimensionsPlus*DimensionsPlus}, length(SimParticles.Position))
+            end
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-            NeighborLoopMDBC!(SimKernel, SimMetaData, SimConstants, ParticleRanges, UniqueCellsView, SimParticles, bᵧ, Aᵧ)
-            ApplyMDBCCorrection(SimConstants, SimParticles, bᵧ, Aᵧ)
+            @timeit SimMetaData.HourGlass "02 NeighborLoopMDBC!" NeighborLoopMDBC!(
+                SimKernel, SimMetaData, SimConstants, ParticleRanges,
+                UniqueCellsView, SimParticles, bᵧ, Aᵧ,
+            )
+            @timeit SimMetaData.HourGlass "03 ApplyMDBCCorrection" ApplyMDBCCorrection(
+                SimConstants,
+                SimParticles,
+                bᵧ,
+                Aᵧ,
+            )
         end
 
         return nothing
@@ -752,9 +762,23 @@ using TimerOutputs: @timeit
         @no_escape begin
             AccelerationMax = @alloc(FloatType, length(SimParticles.Position))
 
-            SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace, ParticleRanges, UniqueCells, CellListIndices)
-            UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
-            BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
+            @timeit SimMetaData.HourGlass "00 Initialize Neighbor Data" begin
+                @timeit SimMetaData.HourGlass "01 UpdateNeighbors!" SimMetaData.IndexCounter = UpdateNeighbors!(
+                    SimParticles,
+                    SimKernel.H⁻¹,
+                    SortingScratchSpace,
+                    ParticleRanges,
+                    UniqueCells,
+                    CellListIndices,
+                )
+                UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
+                @timeit SimMetaData.HourGlass "02 BuildNeighborCellLists!" BuildNeighborCellLists!(
+                    NeighborCellLists,
+                    FullStencil,
+                    UniqueCellsView,
+                    ParticleRanges,
+                )
+            end
 
             if TimeSteppingMode isa SingleNeighborTimeStepping
                 @timeit SimMetaData.HourGlass "00 Init Pressure"                          Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
@@ -771,7 +795,11 @@ using TimerOutputs: @timeit
                 dt₂ = dt * 0.5
                 @timeit SimMetaData.HourGlass "01 Calculate IndexCounter"  begin
 
-                    SimMetaData.Δx = UpdateΔx!(SimMetaData.Δx, Positionₙ⁺, SimParticles.Position)
+                    @timeit SimMetaData.HourGlass "01 UpdateΔx!" SimMetaData.Δx = UpdateΔx!(
+                        SimMetaData.Δx,
+                        Positionₙ⁺,
+                        SimParticles.Position,
+                    )
                     ShouldRebuild = SimMetaData.Δx >= SimKernel.h
 
                     # println("Δx: ", Δx, "h: ", SimKernel.h," dt: ", SimMetaData.CurrentTimeStep, " Iteration: ", SimMetaData.Iteration, " TotalTime: ", SimMetaData.TotalTime, " OutputIterationCounter: ", SimMetaData.OutputIterationCounter)
@@ -783,10 +811,22 @@ using TimerOutputs: @timeit
                     # Remove if statement logic if you want to update each iteration
                     # if mod(SimMetaData.Iteration, ceil(Int, SimKernel.H / (SimConstants.c₀ * dt * (1/SimConstants.CFL)) )) == 0 || SimMetaData.Iteration == 1
                     if ShouldRebuild
-                        @timeit SimMetaData.HourGlass "01a Actual Calculate IndexCounter" SimMetaData.IndexCounter = UpdateNeighbors!(SimParticles, SimKernel.H⁻¹, SortingScratchSpace,  ParticleRanges, UniqueCells, CellListIndices)
+                        @timeit SimMetaData.HourGlass "02 UpdateNeighbors!" SimMetaData.IndexCounter = UpdateNeighbors!(
+                            SimParticles,
+                            SimKernel.H⁻¹,
+                            SortingScratchSpace,
+                            ParticleRanges,
+                            UniqueCells,
+                            CellListIndices,
+                        )
                         SimMetaData.Δx    = zero(eltype(dρdtI))
                         UniqueCellsView   = view(UniqueCells, 1:SimMetaData.IndexCounter)
-                        BuildNeighborCellLists!(NeighborCellLists, FullStencil, UniqueCellsView, ParticleRanges)
+                        @timeit SimMetaData.HourGlass "03 BuildNeighborCellLists!" BuildNeighborCellLists!(
+                            NeighborCellLists,
+                            FullStencil,
+                            UniqueCellsView,
+                            ParticleRanges,
+                        )
                     end
                 end
 
@@ -852,11 +892,23 @@ using TimerOutputs: @timeit
         return nothing
     end
     
+    function ShowPerformanceReport(IO, HourGlass)
+        DetailedIO = IOContext(IO, :limit => false)
+        println(DetailedIO, "\nPerformance profile, sorted by elapsed time:")
+        show(DetailedIO, HourGlass; sortby=:time, complement=true, gc=true)
+        println(DetailedIO, "\n\nRecorded sections, globally sorted by allocations:")
+        show(DetailedIO, flatten(HourGlass); sortby=:allocations, complement=false, gc=true)
+        println(DetailedIO)
+
+        return nothing
+    end
+
+    ShowPerformanceReport(HourGlass) = ShowPerformanceReport(stdout, HourGlass)
+
     function FinalizeSimulationOutput!(SimMetaData, SimLogger, output; log_status::String="finished")
         @timeit SimMetaData.HourGlass "13B Close Data Streams" output.close_files()
 
-        show(SimMetaData.HourGlass,sortby=:name)
-        show(SimMetaData.HourGlass)
+        ShowPerformanceReport(SimMetaData.HourGlass)
 
         AutoOpenParaview(SimMetaData, output.variable_names)
 
