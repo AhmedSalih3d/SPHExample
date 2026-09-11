@@ -705,3 +705,28 @@ end
     @test particles.Velocity[1][1] == 0
     @test particles.Velocity[1][2] < 0
 end
+
+@testset "Float32 support" begin
+    D = 2
+    T = Float32
+    sc = SimulationConstants{T}()
+    ker = SPHKernelInstance{D,T}(WendlandC2(); dx=sc.dx)
+
+    @test sc.dx isa T
+    @test ker.h isa T
+    @test Estimate7thRoot(T(1.1)) isa T
+    @test InverseHydrostaticEquationOfState(sc.ρ₀, T(1), sc.Cb⁻¹) isa T
+    @test tensile_correction(ker, T(0), sc.ρ₀, T(0), sc.ρ₀, T(0.5), sc.dx) === zero(T)
+
+    pos2 = [SVector{2,T}(1, 2)]
+    pos3 = to_3d(pos2)
+    @test pos3 isa Vector{SVector{3,T}}
+    @test pos3[1] == SVector{3,T}(1, 2, 0)
+
+    pos = [SVector{D,T}(0, 0), SVector{D,T}(1, 0)]
+    vel = [SVector{D,T}(0, 0), SVector{D,T}(0, 0)]
+    acc = [SVector{D,T}(0, 0), SVector{D,T}(0, -sc.g)]
+    dt = Δt(pos, vel, acc, sc, ker)
+    @test dt isa T
+    @test dt > zero(T)
+end
