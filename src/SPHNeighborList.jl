@@ -370,7 +370,10 @@ end
 """
     UpdateΔx!(Δx, posₙ⁺, pos)
 
-Increment Δx by twice the maximum ‖posₙ⁺[i] – pos[i]‖, without ever allocating.
+Increment Δx by four times the maximum ‖posₙ⁺[i] – pos[i]‖, without allocating.
+Here `posₙ⁺` is the predictor position, not the position at the last rebuild.
+This accumulated motion estimate alone does not guarantee complete neighbor
+coverage when the cached cell search has no extra margin beyond kernel support.
 Returns the new Δx.
 """
 # @inline function UpdateΔx!(Δx::T,

@@ -9,6 +9,8 @@ include("neighbor_sort.jl")
 include("packed_neighbors.jl")
 include("particle_batches.jl")
 include("interaction_reference.jl")
+include("diffusion_boundary.jl")
+include("neighbor_rebuild_coverage.jl")
 
 @testset "time stepping" begin
     pos = [SVector{2,Float64}(0.0, 0.0), SVector{2,Float64}(1.0, 0.0)]

@@ -135,6 +135,52 @@ peak memory still limit practical simulation size.
 See [the reproducible benchmarks](benchmark/README.md) for measured speedups,
 numerical comparisons, and commands for profiling your own machine.
 
+### Neighbor reuse: known coverage limitation
+
+The current rebuild decision is a motion heuristic: it accumulates
+`4 * maximum(norm.(Positionₙ⁺ - Position))` and rebuilds when this reaches `h`.
+`Positionₙ⁺` is the predictor state, rather than the position at the last rebuild.
+The cached cells have width `H` (the interaction radius), and the search visits
+only immediately adjacent cells. There is no extra search margin guaranteeing
+that a previously excluded pair stays outside the interaction radius.
+
+The regression in `test/neighbor_rebuild_coverage.jl` demonstrates the gap:
+particles in cells 0 and 2 can move from separation `1.001953125H` to
+`0.998046875H`, while the motion estimate is only `0.00390625H`, below the
+default `h = 0.5H` threshold. Their speeds can satisfy `c₀ >= 10 * max(speed)`.
+The suite marks this coverage assertion as a known broken test. This limitation
+predates packed neighbor storage and remains unresolved; matching older solver
+states does not establish that every physically interacting pair was included.
+
+A replacement should add an explicit search margin (a neighbor "skin"), track
+movement from the last build, and check validity before every force evaluation,
+including predictor states, moving boundaries, and MDBC ghost interactions.
+For a pair list built to `H + Skin`, keeping twice the largest displacement
+below `Skin` gives the required geometric bound. This is the established
+[skin-based neighbor-list approach](https://docs.lammps.org/Developer_par_neigh.html).
+Changing only the current displacement threshold does not supply that margin.
+
+### Further performance priorities
+
+In a warmed four-thread 3D dam-break run lasting 0.06 s of simulated time,
+interaction evaluation accounts for about 98% of solver time, while neighbor
+maintenance including rebuild-triggered derivative refreshes accounts for about
+0.2%. Reducing the number of unnecessary candidate-pair evaluations is therefore
+a more promising speed target than merely rebuilding less often in this case.
+
+| Candidate | Effort | Main consideration |
+|---|---|---|
+| Explicit neighbor skin and displacement validation | Moderate to large | Correctness prerequisite for safely tuning reuse; storage and search volume must be benchmarked |
+| Tighter bins, pruned cell searches, or explicit particle candidate lists | Moderate to large | Reduce the dominant pair-loop work; explicit particle lists require more memory |
+| Thread-count and batch-size tuning | Low | Measure representative sizes; more threads can add overhead for small cases |
+| SIMD blocks or evaluating pair geometry once for both particles | Large | Requires careful accumulation, thread ownership, and model-specific physics checks |
+
+`ComplexDensityDiffusion` now skips the inverse hydrostatic equation of state
+for boundary pairs whose diffusion is disabled by the existing model. This
+measured about 5.8% less solver time in the 3D benchmark using that model, with
+identical timesteps and roundoff-scale state differences. The default linear model keeps its existing path:
+the analogous shortcut produced small, mixed timing changes.
+
 At shutdown, the solver prints the full hierarchical run sorted by elapsed
 time, followed by a flattened global ranking of recorded sections by allocated
 bytes. Parent rows are inclusive of their children. A gray `~section~` row is

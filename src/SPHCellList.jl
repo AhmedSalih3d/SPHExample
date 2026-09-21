@@ -863,9 +863,11 @@ using TimerOutputs: @timeit, flatten
                         )
                         ShouldRebuild = SimMetaData.Δx >= SimKernel.h
 
-                        # Note: If particles are not inside of the neighbor-list visualization,
-                        # try rebuilding every iteration. The displacement criterion assumes that
-                        # c₀ is at least the maximum particle speed.
+                        # This is a motion heuristic, not a guaranteed validity
+                        # bound: H-wide cells and a one-cell stencil have no
+                        # extra search margin. Pairs in formerly nonadjacent
+                        # cells can enter support before Δx reaches h. See the
+                        # neighbor-reuse limitation documented in README.md.
                         if ShouldRebuild
                             @timeit SimMetaData.HourGlass "02 UpdateNeighbors!" SimMetaData.IndexCounter = UpdateNeighbors!(
                                 SimParticles,

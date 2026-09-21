@@ -148,6 +148,7 @@ end
 
 Uses a 'complex' relationship for the hydrostatic correction. In essence the inverse
 hydrostatic equation of state.
+Use Float64: the current inverse-hydrostatic estimator relies on its bit layout.
 """
 struct ComplexDensityDiffusion <: SPHDensityDiffusion end
 
@@ -163,6 +164,14 @@ Base.@propagate_inbounds function compute_density_diffusion(
         j,
         ParticleType
 )
+
+        # Boundary pairs contribute zero in this model. Skip their expensive
+        # inverse hydrostatic equation of state and divisions altogether.
+        Typeᵢ = ParticleType[i]
+        Typeⱼ = ParticleType[j]
+        if Typeᵢ != Fluid || Typeⱼ != Fluid
+            return zero(d²), -zero(d²)
+        end
 
         @unpack ρ₀, m₀, c₀, δᵩ, Cb, Cb⁻¹, γ, g = SimConstants
         @unpack h, η²                          = SimKernel
