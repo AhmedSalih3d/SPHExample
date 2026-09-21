@@ -17,5 +17,7 @@ julia-*.tar.gz
 *.mem
 # Ignore html files
 *.html
-
+# Ignore output folder
 output/
+# Ignore 
+benchmark/

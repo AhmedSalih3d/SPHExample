@@ -47,13 +47,16 @@ Compute the viscous acceleration between particles `i` and `j` for the
 selected viscosity `model`. Returns `(Πᵢ, Πⱼ)`.
 """
 
+# Propagate the neighbor loop's @inbounds context to particle-array reads.
+# Calls made outside that context retain their ordinary bounds checks.
+
 # No viscosity: return zero contributions.
-@inline function compute_viscosity(::ZeroViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
+Base.@propagate_inbounds function compute_viscosity(::ZeroViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
     return zero(xᵢⱼ), zero(xᵢⱼ)
 end
 
 # Artificial viscosity formulation.
-@inline function compute_viscosity(::ArtificialViscosity, SimKernel, SimConstants, SimParticles,
+Base.@propagate_inbounds function compute_viscosity(::ArtificialViscosity, SimKernel, SimConstants, SimParticles,
                                    xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
     @unpack m₀, α, c₀ = SimConstants
     @unpack h, η²     = SimKernel
@@ -74,7 +77,7 @@ end
 end
 
 # Laminar viscosity formulation.
-@inline function compute_viscosity(::Laminar, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
+Base.@propagate_inbounds function compute_viscosity(::Laminar, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
     @unpack m₀, ν₀ = SimConstants
     @unpack η²     = SimKernel
 
@@ -87,7 +90,7 @@ end
 end
 
 # LaminarSPS: with sub-grid scale stresses.
-@inline function compute_viscosity(::LaminarSPS, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
+Base.@propagate_inbounds function compute_viscosity(::LaminarSPS, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)
     @unpack m₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
     
     t1,t2 = compute_viscosity(Laminar(), SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², i, j)

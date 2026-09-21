@@ -5,6 +5,9 @@ using StaticArrays
 using StructArrays
 using TimerOutputs
 
+include("neighbor_sort.jl")
+include("interaction_reference.jl")
+
 @testset "time stepping" begin
     pos = [SVector{2,Float64}(0.0, 0.0), SVector{2,Float64}(1.0, 0.0)]
     vel = [SVector{2,Float64}(0.0, 0.0), SVector{2,Float64}(0.0, 0.0)]

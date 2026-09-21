@@ -1,8 +1,62 @@
 module SPHNeighborList
 
-export ConstructStencil, ExtractCells!, UpdateNeighbors!, BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts, UpdateΔx!, FindCellIndex
+export ConstructStencil, ExtractCells!, UpdateNeighbors!, BuildNeighborCellLists!, ComputeCellParticleCounts, ComputeCellNeighborCounts, UpdateΔx!, FindCellIndex, NeighborSortScratch
 
 using StaticArrays
+
+"""
+    NeighborSortScratch(ParticleCount)
+
+Reusable integer buffers for sorting particles by cell without repeatedly moving
+complete particle records. Equal-cell particles retain their previous order.
+"""
+struct NeighborSortScratch
+    Permutation::Vector{Int}
+    Sorting::Vector{Int}
+end
+
+function NeighborSortScratch(ParticleCount::Integer)
+    return NeighborSortScratch(Vector{Int}(undef, ParticleCount), Vector{Int}(undef, ParticleCount))
+end
+
+function SortParticlesByCell!(Particles, Scratch::NeighborSortScratch)
+    issorted(Particles.Cells) && return nothing
+    Permutation = Scratch.Permutation
+    resize!(Permutation, length(Particles))
+    # sortperm! resolves equal keys by their original index, preserving the
+    # accumulation order of interactions within each cell.
+    sortperm!(Permutation, Particles.Cells; scratch=Scratch.Sorting)
+
+    # Apply each permutation cycle once to whole rows so every particle field,
+    # including optional boundary and kernel data, remains aligned. Negative
+    # indices mark visited entries; the next sortperm! reinitializes the buffer.
+    @inbounds for StartIndex in eachindex(Permutation)
+        NextIndex = Permutation[StartIndex]
+        NextIndex <= 0 && continue
+        if NextIndex == StartIndex
+            Permutation[StartIndex] = -NextIndex
+            continue
+        end
+
+        SavedParticle = Particles[StartIndex]
+        CurrentIndex = StartIndex
+        while NextIndex != StartIndex
+            Particles[CurrentIndex] = Particles[NextIndex]
+            Permutation[CurrentIndex] = -NextIndex
+            CurrentIndex = NextIndex
+            NextIndex = Permutation[CurrentIndex]
+        end
+        Particles[CurrentIndex] = SavedParticle
+        Permutation[CurrentIndex] = -NextIndex
+    end
+    return nothing
+end
+
+function SortParticlesByCell!(Particles, SortingScratchSpace)
+    # Retain support for callers supplying Base.Sort.make_scratch row buffers.
+    sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
+    return nothing
+end
 
 function ConstructStencil(V::Val{d}) where d
     return CartesianIndices(ntuple(_ -> -1:1, V))
@@ -97,10 +151,11 @@ Updates the neighbor list and sorts particles by their cell indices.
 
 # Arguments
 - `Particles`: The particles whose neighbors are to be updated.
-- `CutOff`: The cutoff value used for cell extraction.
-- `SortingScratchSpace`: Scratch space for sorting.
+- `InverseCutOff`: The inverse cell width used for cell extraction.
+- `SortingScratchSpace`: A `NeighborSortScratch` for reusable index sorting, or a legacy particle-row sorting buffer.
 - `ParticleRanges`: Array to store the ranges of particles in each cell.
 - `UniqueCells`: Array to store the unique cells.
+- `CellListIndices`: Array mapping each sorted particle to its cell range.
 
 # Returns
 - `IndexCounter`: The number of unique cells identified.
@@ -109,7 +164,7 @@ function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
                           ParticleRanges, UniqueCells, CellListIndices)
     ExtractCells!(Particles, InverseCutOff)
 
-    sort!(Particles, by = p -> p.Cells; scratch=SortingScratchSpace)
+    SortParticlesByCell!(Particles, SortingScratchSpace)
     Cells = @views Particles.Cells
     UniqueCells[1] = MinCell(eltype(Cells))
     @. ParticleRanges             = zero(eltype(ParticleRanges))
@@ -119,7 +174,7 @@ function UpdateNeighbors!(Particles, InverseCutOff, SortingScratchSpace,
     UniqueCells[IndexCounter]     = Cells[1]
     CellListIndices[1]            = IndexCounter
 
-    @inbounds @simd ivdep for Index in eachindex(Cells)[2:end]
+    @inbounds for Index in 2:length(Cells)
         if Cells[Index] != Cells[Index - 1] # Equivalent to diff(Cells) != 0
             IndexCounter                 += 1
             ParticleRanges[IndexCounter]  = Index

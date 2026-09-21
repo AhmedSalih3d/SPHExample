@@ -15,7 +15,7 @@ using ..OpenExternalPrograms
 using ..SPHKernels
 using ..SPHViscosityModels
 using ..SPHDensityDiffusionModels
-using ..SPHNeighborList: BuildNeighborCellLists!, ComputeCellNeighborCounts, ComputeCellParticleCounts, ConstructStencil, ExtractCells!, FindCellIndex, MapFloor, UpdateNeighbors!, UpdateΔx!
+using ..SPHNeighborList: BuildNeighborCellLists!, ComputeCellNeighborCounts, ComputeCellParticleCounts, ConstructStencil, ExtractCells!, FindCellIndex, MapFloor, NeighborSortScratch, UpdateNeighbors!, UpdateΔx!
 
 using Base.Threads: @threads
 using Bumper: @alloc, @no_escape
@@ -386,7 +386,9 @@ using TimerOutputs: @timeit, flatten
         return (M0 / RhoJ) * (M0 / RhoI)
     end
 
-    @inline function ComputeInteractionsPerParticleNoShiftingCore!(
+    # Carry the neighbor loop's valid-index guarantee through this extra helper
+    # layer; direct callers still receive normal bounds checks.
+    Base.@propagate_inbounds function ComputeInteractionsPerParticleNoShiftingCore!(
         SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         SimMetaData::SimulationMetaData{D,T,NoShifting,K,B,L}, SimConstants,
         SimParticles, Position, Density, Pressure, Velocity, ParticleType,
@@ -1113,7 +1115,7 @@ using TimerOutputs: @timeit, flatten
         CellListIndices        = zeros(Int, NumberOfPoints)
         FullStencil            = ConstructStencil(Val(Dimensions))
         NeighborCellLists      = [Int[] for _ in 1:length(UniqueCells)]
-        _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
+        SortingScratchSpace = NeighborSortScratch(NumberOfPoints)
 
         output = SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
 

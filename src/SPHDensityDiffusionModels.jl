@@ -20,6 +20,9 @@ export  SPHDensityDiffusion,
 #---------------------------------------------------------------
 abstract type SPHDensityDiffusion end
 
+# Propagate the neighbor loop's @inbounds context to particle-array reads.
+# Calls made outside that context retain their ordinary bounds checks.
+
 #---------------------------------------------------------------
 # 1) ZeroDensityDiffusion(): ignore all diffusion
 #---------------------------------------------------------------
@@ -30,7 +33,7 @@ and ignores all other parameters.
 """
 struct ZeroDensityDiffusion <: SPHDensityDiffusion end
 
-@inline function compute_density_diffusion(
+Base.@propagate_inbounds function compute_density_diffusion(
         ::ZeroDensityDiffusion,
         SimKernel,
         SimConstants,
@@ -54,7 +57,7 @@ term, and we skip ρᵢⱼᴴ enitrely.
 """
 struct ZeroGravityLinearDensityDiffusion <: SPHDensityDiffusion end
 
-@inline function compute_density_diffusion(
+Base.@propagate_inbounds function compute_density_diffusion(
         ::ZeroGravityLinearDensityDiffusion,
         SimKernel,
         SimConstants,
@@ -98,7 +101,7 @@ Uses a linear relationship for the hydrostatic correction.
 """
 struct LinearDensityDiffusion <: SPHDensityDiffusion end
 
-@inline function compute_density_diffusion(
+Base.@propagate_inbounds function compute_density_diffusion(
         ::LinearDensityDiffusion,
         SimKernel,
         SimConstants,
@@ -148,7 +151,7 @@ hydrostatic equation of state.
 """
 struct ComplexDensityDiffusion <: SPHDensityDiffusion end
 
-@inline function compute_density_diffusion(
+Base.@propagate_inbounds function compute_density_diffusion(
         ::ComplexDensityDiffusion,
         SimKernel,
         SimConstants,

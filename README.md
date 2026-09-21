@@ -98,6 +98,16 @@ one plus the particles in its neighbor stencil.
 
 ### Performance Diagnostics
 
+Neighbor rebuilds use a stable index permutation and reusable `NeighborSortScratch`
+buffers, moving each particle record once instead of repeatedly moving all its
+fields during sorting. Equal-cell order is preserved, including optional MDBC
+and kernel-output fields. Interaction helpers also propagate the neighbor loop's
+bounds-check guarantee; direct checked calls retain bounds checks. These changes
+preserve the force formulas, support radius, and integration settings.
+
+See [the reproducible benchmarks](benchmark/README.md) for measured speedups,
+numerical comparisons, and commands for profiling your own machine.
+
 At shutdown, the solver prints the full hierarchical run sorted by elapsed
 time, followed by a flattened global ranking of recorded sections by allocated
 bytes. Parent rows are inclusive of their children. A gray `~section~` row is
