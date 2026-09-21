@@ -15,9 +15,9 @@ using ..OpenExternalPrograms
 using ..SPHKernels
 using ..SPHViscosityModels
 using ..SPHDensityDiffusionModels
-using ..SPHNeighborList: BuildNeighborCellLists!, ComputeCellNeighborCounts, ComputeCellParticleCounts, ConstructStencil, ExtractCells!, FindCellIndex, MapFloor, NeighborSortScratch, UpdateNeighbors!, UpdateΔx!
+using ..SPHNeighborList: BuildNeighborCellLists!, ComputeCellNeighborCounts, ComputeCellParticleCounts, ConstructStencil, ExtractCells!, FindCellIndex, MapFloor, NeighborParticleRanges, NeighborSortScratch, PackedNeighborCellLists, UpdateNeighbors!, UpdateΔx!
 
-using Base.Threads: @threads
+using Base.Threads: @threads, nthreads, Atomic, atomic_add!
 using Bumper: @alloc, @no_escape
 using FastPow: @fastpow
 using LinearAlgebra: det, dot, norm
@@ -33,6 +33,34 @@ using TimerOutputs: @timeit, flatten
     # result; 40 and 80 steps left progressively more drift. This cadence belongs
     # to the integrator and must remain independent of output scheduling.
     const SingleNeighborCorrectionInterval = 20
+
+    const ParticleBatchSize = 64
+
+    # Spatially sorted particles can give contiguous thread partitions very
+    # different amounts of work, especially for MDBC's sparse ghost points.
+    # Workers take small contiguous batches while each particle retains its
+    # original neighbor order and owns all of its accumulator writes.
+    # @threads joins every worker before returning or propagating exceptions,
+    # keeping the caller's Bumper buffers alive for the entire computation.
+    @inline function ForEachParticle!(Body::F, Indices::AbstractUnitRange) where {F}
+        if nthreads(:default) == 1 || length(Indices) <= ParticleBatchSize
+            for Index in Indices
+                Body(Index)
+            end
+        else
+            NextBatch = Atomic{Int}(first(Indices))
+            @threads for Worker in 1:nthreads(:default)
+                BatchStart = atomic_add!(NextBatch, ParticleBatchSize)
+                while BatchStart <= last(Indices)
+                    for Index in BatchStart:min(BatchStart + ParticleBatchSize - 1, last(Indices))
+                        Body(Index)
+                    end
+                    BatchStart = atomic_add!(NextBatch, ParticleBatchSize)
+                end
+            end
+        end
+        return nothing
+    end
 
     @inline function NeedsSingleNeighborCorrection(Iteration::Integer,
                                                     RefreshedAfterRebuild::Bool)
@@ -55,7 +83,7 @@ using TimerOutputs: @timeit, flatten
                                                   SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         ParticleType = SimParticles.Type
-        @inbounds @threads for i in eachindex(Position)
+        @inbounds ForEachParticle!(eachindex(Position)) do i
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
             CellListIndex = CellListIndices[i]
@@ -77,10 +105,8 @@ using TimerOutputs: @timeit, flatten
                     Velocity, ParticleType, dρdt_acc, acc_acc, i, j,
                 )
             end
-            for NeighborIdx in NeighborCellIndices
-                StartIndex_ = ParticleRanges[NeighborIdx]
-                EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
-                @inbounds for j in StartIndex_:EndIndex_
+            for ParticleSpan in NeighborParticleRanges(NeighborCellIndices, ParticleRanges)
+                @inbounds for j in ParticleSpan
                     dρdt_acc, acc_acc = ComputeInteractionsPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                         SimConstants, SimParticles, Position, Density, Pressure,
@@ -113,7 +139,7 @@ using TimerOutputs: @timeit, flatten
                                                   SV<:SPHViscosity}
         @unpack Kernel, KernelGradient = SimParticles
         ParticleType = SimParticles.Type
-        @inbounds @threads for i in eachindex(Position)
+        @inbounds ForEachParticle!(eachindex(Position)) do i
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
             kernel_acc = zero(Kernel[i])
@@ -141,10 +167,8 @@ using TimerOutputs: @timeit, flatten
                         kernel_grad_acc, i, j,
                     )
             end
-            for NeighborIdx in NeighborCellIndices
-                StartIndex_ = ParticleRanges[NeighborIdx]
-                EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
-                @inbounds for j in StartIndex_:EndIndex_
+            for ParticleSpan in NeighborParticleRanges(NeighborCellIndices, ParticleRanges)
+                @inbounds for j in ParticleSpan
                     dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc =
                         ComputeInteractionsPerParticle!(
                             SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
@@ -179,7 +203,7 @@ using TimerOutputs: @timeit, flatten
                                                   L<:LogMode,SDD<:SPHDensityDiffusion,
                                                   SV<:SPHViscosity}
         ParticleType = SimParticles.Type
-        @inbounds @threads for i in eachindex(Position)
+        @inbounds ForEachParticle!(eachindex(Position)) do i
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
             shift_c_acc = zero(∇Cᵢ[i])
@@ -207,10 +231,8 @@ using TimerOutputs: @timeit, flatten
                         shift_r_acc, i, j,
                     )
             end
-            for NeighborIdx in NeighborCellIndices
-                StartIndex_ = ParticleRanges[NeighborIdx]
-                EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
-                @inbounds for j in StartIndex_:EndIndex_
+            for ParticleSpan in NeighborParticleRanges(NeighborCellIndices, ParticleRanges)
+                @inbounds for j in ParticleSpan
                     dρdt_acc, acc_acc, shift_c_acc, shift_r_acc =
                         ComputeInteractionsPerParticle!(
                             SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
@@ -248,7 +270,7 @@ using TimerOutputs: @timeit, flatten
                                                   SV<:SPHViscosity}
         @unpack Kernel, KernelGradient = SimParticles
         ParticleType = SimParticles.Type
-        @inbounds @threads for i in eachindex(Position)
+        @inbounds ForEachParticle!(eachindex(Position)) do i
             dρdt_acc = zero(dρdtI[i])
             acc_acc = zero(Acceleration[i])
             kernel_acc = zero(Kernel[i])
@@ -278,10 +300,8 @@ using TimerOutputs: @timeit, flatten
                     kernel_grad_acc, shift_c_acc, shift_r_acc, i, j,
                 )
             end
-            for NeighborIdx in NeighborCellIndices
-                StartIndex_ = ParticleRanges[NeighborIdx]
-                EndIndex_ = ParticleRanges[NeighborIdx + 1] - 1
-                @inbounds for j in StartIndex_:EndIndex_
+            for ParticleSpan in NeighborParticleRanges(NeighborCellIndices, ParticleRanges)
+                @inbounds for j in ParticleSpan
                     dρdt_acc, acc_acc, kernel_acc, kernel_grad_acc, shift_c_acc,
                         shift_r_acc = ComputeInteractionsPerParticle!(
                         SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
@@ -315,7 +335,7 @@ using TimerOutputs: @timeit, flatten
 
         FullStencil = ConstructStencil(Val(Dimensions))
 
-        @inbounds @threads for iter in eachindex(GhostPoints)
+        @inbounds ForEachParticle!(eachindex(GhostPoints)) do iter
             GhostPoint = GhostPoints[iter]
 
             if !iszero(GhostPoint)
@@ -1114,7 +1134,7 @@ using TimerOutputs: @timeit, flatten
         UniqueCells            = zeros(CartesianIndex{Dimensions}, NumberOfPoints + 1)
         CellListIndices        = zeros(Int, NumberOfPoints)
         FullStencil            = ConstructStencil(Val(Dimensions))
-        NeighborCellLists      = [Int[] for _ in 1:length(UniqueCells)]
+        NeighborCellLists      = PackedNeighborCellLists(length(UniqueCells))
         SortingScratchSpace = NeighborSortScratch(NumberOfPoints)
 
         output = SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)

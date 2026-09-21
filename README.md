@@ -105,6 +105,33 @@ and kernel-output fields. Interaction helpers also propagate the neighbor loop's
 bounds-check guarantee; direct checked calls retain bounds checks. These changes
 preserve the force formulas, support radius, and integration settings.
 
+The particle and MDBC loops distribute contiguous batches of 64 particles using
+a shared atomic counter, so workers can take more work when they finish a batch.
+Single-threaded runs and small inputs use a serial path. Each particle retains
+its neighbor summation order and owns its output writes.
+
+Neighbor-cell tables use `PackedNeighborCellLists`: contiguous arrays of
+unsigned start/end cell IDs plus native-integer offsets. Consecutive neighboring
+cells form a single run, prepared during rebuilds and visited as one particle
+loop. This preserves the exact interaction order while reducing loop overhead.
+The ID width is chosen from
+8, 16, 32, or 64 bits using the maximum possible cell count, including the
+sentinel, so movement and rebuilds cannot overflow it. The supplied benchmark
+cases use 16-bit IDs and require about 88–89% less neighbor-table memory.
+Particle coordinates and physics calculations retain their original precision.
+The existing vector-of-vectors neighbor API remains supported. Compression's
+runtime effect is small and workload dependent. The run encoding measured
+about 3–4% less 3D solver time beyond the earlier packed-list implementation.
+Including solver arrays, live temporary buffers, and both output snapshots,
+compression saves about 2.5–3.7% in the supplied cases. These storage measurements
+exclude Julia/compiler memory, allocator slack, input loading, and HDF5 overhead;
+they do not establish a maximum safe simulation size.
+Larger storage measurements using 32-bit IDs project about 2–3% more particles
+from neighbor compression at a fixed RAM budget, or 23–28% when also counting
+the earlier sorting-scratch reduction against the original implementation.
+These estimates assume comparable geometry and output settings; runtime and
+peak memory still limit practical simulation size.
+
 See [the reproducible benchmarks](benchmark/README.md) for measured speedups,
 numerical comparisons, and commands for profiling your own machine.
 

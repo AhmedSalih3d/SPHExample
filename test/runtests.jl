@@ -6,6 +6,8 @@ using StructArrays
 using TimerOutputs
 
 include("neighbor_sort.jl")
+include("packed_neighbors.jl")
+include("particle_batches.jl")
 include("interaction_reference.jl")
 
 @testset "time stepping" begin
