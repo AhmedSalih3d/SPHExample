@@ -46,21 +46,10 @@ end
     return SVector{N, T}(ntuple(i -> i == N ? value : 0, N))
 end
 
-#https://discourse.julialang.org/t/can-this-be-written-even-faster-cpu/109924/28
-@inline function Estimate7thRoot(x)
-    # todo tune the magic constant
-    # initial guess based on fast inverse sqrt trick but adjusted to compute x^(1/7)
-    t = copysign(reinterpret(Float64, 0x36cd000000000000 + reinterpret(UInt64,abs(x))÷7), x)
-    @fastmath for _ in 1:2
-        # newton's method for t^3 - x/t^4 = 0
-        t2 = t*t
-        t3 = t2*t
-        t4 = t2*t2
-        xot4 = x/t4
-        t = t - t*(t3 - xot4)/(4*t3 + 3*xot4)
-    end
-    t
+@inline function Estimate7thRoot(x::T) where {T<:AbstractFloat}
+    return copysign(abs(x)^(inv(T(7))), x)
 end
-@inline InverseHydrostaticEquationOfState(ρ₀, P, invCb) = ρ₀ * ( Estimate7thRoot( 1 + (P * invCb)) - 1)
+@inline Estimate7thRoot(x::Real) = Estimate7thRoot(float(x))
+@inline InverseHydrostaticEquationOfState(ρ₀, P, invCb) = ρ₀ * (Estimate7thRoot(one(P * invCb) + (P * invCb)) - one(P * invCb))
 
 end
