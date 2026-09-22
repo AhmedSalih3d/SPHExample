@@ -110,6 +110,12 @@ a shared atomic counter, so workers can take more work when they finish a batch.
 Single-threaded runs and small inputs use a serial path. Each particle retains
 its neighbor summation order and owns its output writes.
 
+For fixed MDBC ghost points, neighboring cell indices are cached and only active
+ghosts are scheduled. The cache is refreshed after each neighbor rebuild and
+particle reordering. Moving or fluid ghost points retain the direct lookup path.
+Density and kernel contributions are still evaluated every time, in the original
+neighbor order; the cache does not change the timestep or neighbor-reuse policy.
+
 Neighbor-cell tables use `PackedNeighborCellLists`: contiguous arrays of
 unsigned start/end cell IDs plus native-integer offsets. Consecutive neighboring
 cells form a single run, prepared during rebuilds and visited as one particle
