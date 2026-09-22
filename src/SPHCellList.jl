@@ -353,12 +353,9 @@ using TimerOutputs: @timeit, flatten
                     EndIndex_         = ParticleRanges[NeighborIdx + 1] - 1
 
                     for j in StartIndex_:EndIndex_
-                        # change ComputeInteractions to take & return contributions, e.g.:
-                        bΔ, AΔ = ComputeInteractionsMDBC!(SimKernel, SimMetaData, SimConstants,
+                        b_acc, A_acc = ComputeInteractionsMDBC!(SimKernel, SimMetaData, SimConstants,
                                                         Position, Density, ParticleType,
-                                                        GhostPoints, iter, j)
-                        b_acc += bΔ
-                        A_acc += AΔ
+                                                        GhostPoints, iter, j, b_acc, A_acc)
                     end
                 end
 
@@ -607,16 +604,14 @@ using TimerOutputs: @timeit, flatten
         return dρdt_acc, acc_acc, shift_c_acc, shift_r_acc
     end
 
-    Base.@propagate_inbounds function ComputeInteractionsMDBC!(SimKernel, SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}, SimConstants, Position, Density, ParticleType, GhostPoints, i, j) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
+    Base.@propagate_inbounds function ComputeInteractionsMDBC!(SimKernel, SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}, SimConstants, Position, Density, ParticleType, GhostPoints, i, j,
+                                                              b_acc = zero(SVector{Dimensions + 1, FloatType}),
+                                                              A_acc = zero(SMatrix{Dimensions + 1, Dimensions + 1, FloatType})) where {Dimensions, FloatType, SMode, KMode, BMode, LMode}
         @unpack ρ₀, m₀, α, γ, g, c₀, δᵩ, Cb, Cb⁻¹, ν₀, dx, SmagorinskyConstant, BlinConstant = SimConstants
         
         @unpack h⁻¹, h, η², H², αD = SimKernel 
 
         DimensionsPlus = Dimensions + 1
-        # always zero‐initialize
-        bΔ = zero(SVector{DimensionsPlus,FloatType})
-        AΔ = zero(SMatrix{DimensionsPlus, DimensionsPlus,FloatType})
-
         # ᵢ is ghost node! ⱼ is fluid node
 
         if ParticleType[j] == Fluid
@@ -648,11 +643,14 @@ using TimerOutputs: @timeit, flatten
                     first_column...,
                     ((xⱼᵢ * first_column')')...
                 )
+                # Rejected neighbors leave the accumulators untouched.
+                b_acc += bΔ
+                A_acc += AΔ
             end
         end
         
     
-        return bΔ, AΔ
+        return b_acc, A_acc
     end
 
     function ApplyMDBCBeforeHalf!(::SimulationMetaData{D,T,S,K,NoMDBC,L}, _args...) where {D,T,S<:ShiftingMode, K<:KernelOutputMode, L<:LogMode}

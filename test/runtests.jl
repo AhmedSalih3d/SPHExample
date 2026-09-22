@@ -9,6 +9,7 @@ include("neighbor_sort.jl")
 include("packed_neighbors.jl")
 include("particle_batches.jl")
 include("interaction_reference.jl")
+include("mdbc_accumulation.jl")
 include("diffusion_boundary.jl")
 include("neighbor_rebuild_coverage.jl")
 
