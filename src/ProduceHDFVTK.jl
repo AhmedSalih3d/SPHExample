@@ -22,6 +22,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     using Bumper: AllocBuffer, @alloc, @no_escape
     using HDF5
     using StaticArrays
+    using StructArrays: StructArray
 
     using ..AuxiliaryFunctions: to_3d!
     using ..SimulationGeometry
@@ -761,7 +762,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     flushed before closing files. Uses single or multi-file mode depending on
     `SimMetaData.ExportSingleVTKHDF`.
     """
-    function SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
+    function SetupVTKOutput(SimMetaData, SimParticles::StructArray{ParticleTuple, 1, FieldArrays, IndexType}, SimKernel, Dimensions) where {ParticleTuple, FieldArrays, IndexType}
         # Generate save locations
         particle_savepath = joinpath(SimMetaData.SaveLocation, SimMetaData.SimulationName)
         grid_savepath = joinpath(SimMetaData.SaveLocation, "CellGrid_$(SimMetaData.SimulationName)")
