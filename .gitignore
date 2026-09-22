@@ -7,6 +7,8 @@ particles/
 second_approach/
 # Ignores manifest.toml
 Manifest.toml
+# Ignore profile.html
+profile.html
 # Ignore log files
 *.log
 # Ignore vtkhdf files
