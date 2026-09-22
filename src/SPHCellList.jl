@@ -691,11 +691,10 @@ using TimerOutputs: @timeit, flatten
                                   ParticleRanges, UniqueCells, CellIndexMap = nothing
                                  ) where {D,T,S<:ShiftingMode,K<:KernelOutputMode,L<:LogMode}
         @no_escape begin
-            @timeit SimMetaData.HourGlass "01 Acquire MDBC buffers" begin
-                DimensionsPlus = D + 1
-                bᵧ = @alloc(SVector{DimensionsPlus, T}, length(SimParticles.Position))
-                Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, T, DimensionsPlus*DimensionsPlus}, length(SimParticles.Position))
-            end
+            DimensionsPlus = D + 1
+            bᵧ = @alloc(SVector{DimensionsPlus, T}, length(SimParticles.Position))
+            Aᵧ = @alloc(SMatrix{DimensionsPlus, DimensionsPlus, T, DimensionsPlus*DimensionsPlus}, length(SimParticles.Position))
+            
             UniqueCellsView = view(UniqueCells, 1:SimMetaData.IndexCounter)
             if CellIndexMap === nothing
                 CellIndexMap = Dict{eltype(UniqueCellsView), Int}()
