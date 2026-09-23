@@ -1334,19 +1334,19 @@ using TimerOutputs: @timeit, flatten
             output.enqueue_particles(SimMetaData.OutputIterationCounter)
 
             function SaveCurrentState!()
-                LogStep!(SimMetaData, SimLogger)
-
-                UniqueCellsView = PhysicalCellView(UniqueCells, SimMetaData.IndexCounter)
-                cell_particle_counts, cell_neighbor_counts = PrepareGridExportData(
-                    Val(SimMetaData.ExportGridCellParticleCounts),
-                    ParticleRanges,
-                    SimMetaData.IndexCounter,
-                    NeighborCellLists,
-                )
-
                 @timeit SimMetaData.HourGlass "13 Save Particle Data"  begin
-                    output.enqueue_particles(SimMetaData.OutputIterationCounter)
-                    output.enqueue_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, cell_particle_counts=cell_particle_counts, cell_neighbor_counts=cell_neighbor_counts)
+                    @timeit SimMetaData.HourGlass "01 Log Progress" LogStep!(SimMetaData, SimLogger)
+                    @timeit SimMetaData.HourGlass "02 Prepare Grid Data" begin
+                        UniqueCellsView = PhysicalCellView(UniqueCells, SimMetaData.IndexCounter)
+                        cell_particle_counts, cell_neighbor_counts = PrepareGridExportData(
+                            Val(SimMetaData.ExportGridCellParticleCounts),
+                            ParticleRanges,
+                            SimMetaData.IndexCounter,
+                            NeighborCellLists,
+                        )
+                    end
+                    @timeit SimMetaData.HourGlass "03 Queue Particle Snapshot" output.enqueue_particles(SimMetaData.OutputIterationCounter)
+                    @timeit SimMetaData.HourGlass "04 Queue Grid Snapshot" output.enqueue_grid(SimMetaData.OutputIterationCounter, UniqueCellsView, cell_particle_counts=cell_particle_counts, cell_neighbor_counts=cell_neighbor_counts)
                 end
 
                 return nothing

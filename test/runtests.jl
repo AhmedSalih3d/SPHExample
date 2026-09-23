@@ -14,6 +14,7 @@ include("mdbc_accumulation.jl")
 include("mdbc_neighbor_cache.jl")
 include("diffusion_boundary.jl")
 include("neighbor_rebuild_coverage.jl")
+include("output_writer_cache.jl")
 
 @testset "time stepping" begin
     pos = [SVector{2,Float64}(0.0, 0.0), SVector{2,Float64}(1.0, 0.0)]

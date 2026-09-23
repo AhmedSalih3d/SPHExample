@@ -52,6 +52,55 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         cell_neighbor_counts::Union{Nothing, Vector{Int}}
     end
 
+    # The transient writer is the sole owner of this handle tree. Ordinary HDF5
+    # indexing opens another handle each time; retain one per path until the
+    # writer has joined, then close children before their parent group.
+    struct CachedHDFGroup
+        Root::HDF5.Group
+        Children::Dict{String, Union{HDF5.Dataset, CachedHDFGroup}}
+    end
+
+    function CachedHDFGroup(Root::HDF5.Group)
+        return CachedHDFGroup(Root, Dict{String, Union{HDF5.Dataset, CachedHDFGroup}}())
+    end
+
+    function Base.getindex(Group::CachedHDFGroup, Name::AbstractString)
+        return get!(Group.Children, String(Name)) do
+            Object = Group.Root[Name]
+            if Object isa HDF5.Group
+                return CachedHDFGroup(Object)
+            elseif Object isa HDF5.Dataset
+                return Object
+            end
+            close(Object)
+            throw(ArgumentError("The transient writer only caches groups and datasets"))
+        end
+    end
+
+    Base.keys(Group::CachedHDFGroup) = keys(Group.Root)
+    Base.haskey(Group::CachedHDFGroup, Name::AbstractString) = haskey(Group.Children, Name) || haskey(Group.Root, Name)
+    HDF5.attributes(Group::CachedHDFGroup) = HDF5.attributes(Group.Root)
+    HDF5.read_attribute(Group::CachedHDFGroup, Name::AbstractString) = HDF5.read_attribute(Group.Root, Name)
+    HDF5.open_attribute(Group::CachedHDFGroup, Name::AbstractString) = HDF5.open_attribute(Group.Root, Name)
+
+    function HDF5.create_dataset(Group::CachedHDFGroup, Name::AbstractString, Args...; Kwargs...)
+        Dataset = HDF5.create_dataset(Group.Root, Name, Args...; Kwargs...)
+        Group.Children[String(Name)] = Dataset
+        return Dataset
+    end
+
+    function Base.close(Group::CachedHDFGroup)
+        try
+            for Child in values(Group.Children)
+                close(Child)
+            end
+        finally
+            empty!(Group.Children)
+            close(Group.Root)
+        end
+        return nothing
+    end
+
     """Write an ASCII attribute `name => value` to `grp`."""
     function write_ascii_attribute(grp, name, value)
         dtype = HDF5.datatype(value)
@@ -498,16 +547,22 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     
     end
 
+    function IncrementVTKStep!(Steps)
+        Attribute = HDF5.open_attribute(Steps, "NSteps")
+        try
+            write(Attribute, read(Attribute) + 1)
+        finally
+            close(Attribute)
+        end
+        return nothing
+    end
+
     function AppendVTKHDFData(root, newStep, Positions, variable_names, args...;
                               Dimensions = Val(3), Buffer = nothing)
         ParticleBuffer = ResolveParticleBuffer(Buffer, Positions, args, Dimensions)
         steps = root["Steps"]
 
-        # To update attributes, this is the best way I've found so far
-        old_NSteps = HDF5.read_attribute(steps, "NSteps")
-        steps_attr_dict = attributes(steps)
-        NSteps = steps_attr_dict["NSteps"]
-        write_attribute(NSteps,HDF5.datatype(idType), old_NSteps + 1)
+        IncrementVTKStep!(steps)
 
         HDF5.set_extent_dims(steps["Values"], (length(steps["Values"]) + 1,))
         steps["Values"][end] = newStep
@@ -585,11 +640,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
         steps = root["Steps"]
 
-        # To update attributes, this is the best way I've found so far
-        old_NSteps = HDF5.read_attribute(steps, "NSteps")
-        steps_attr_dict = attributes(steps)
-        NSteps = steps_attr_dict["NSteps"]
-        write_attribute(NSteps,HDF5.datatype(idType), old_NSteps + 1)
+        IncrementVTKStep!(steps)
 
         HDF5.set_extent_dims(steps["Values"], (length(steps["Values"]) + 1,))
         steps["Values"][end] = newStep
@@ -637,11 +688,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
         HDF5.set_extent_dims(steps["CellOffsets"], (length(steps["CellOffsets"]) + 1,)) #For first value, it becomes 0
 
-        if length(steps["CellOffsets"]) == 1
-            LastCellOffset = 0
-        else
-            LastCellOffset = sum(root["NumberOfCells"][:]) - length(UniqueCells)
-        end
+        # Types contains one entry per cell from previous frames. Its extent is
+        # the cumulative offset, without reading the growing cell-count history.
+        LastCellOffset = length(root["Types"])
 
         steps["CellOffsets"][end] = LastCellOffset
 
@@ -806,6 +855,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 fType=VectorElementType(SimParticles.Position),
             )
             GenerateStepStructure(root, output_var_names, output_schemas...)
+            root = CachedHDFGroup(root)
     
             # Initialize grid file if needed
             if SimMetaData.ExportGridCells
@@ -819,6 +869,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 GenerateGeometryStructure(
                     root_grid;
                     vtk_file_type="UnstructuredGrid",
+                    chunk_size=1024,
                     cell_data_names=cell_data_names,
                     fType=typeof(SimKernel.H),
                 )
@@ -827,6 +878,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     vtk_file_type="UnstructuredGrid",
                     cell_data_names=cell_data_names,
                 )
+                root_grid = CachedHDFGroup(root_grid)
                 
                 (particle_files = OutputVTKHDF, grid_files = OutputVTKHDFGrid)
             else
@@ -997,9 +1049,16 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 flush_output()
             finally
                 if SimMetaData.ExportSingleVTKHDF
-                    isopen(file_handles.particle_files) && close(file_handles.particle_files)
-                    if file_handles.grid_files !== nothing
-                        isopen(file_handles.grid_files) && close(file_handles.grid_files)
+                    try
+                        close(root)
+                        if file_handles.grid_files !== nothing
+                            close(root_grid)
+                        end
+                    finally
+                        isopen(file_handles.particle_files) && close(file_handles.particle_files)
+                        if file_handles.grid_files !== nothing
+                            isopen(file_handles.grid_files) && close(file_handles.grid_files)
+                        end
                     end
                 end
             end
