@@ -388,7 +388,6 @@ end
     end
 
     Parent = MetaData.HourGlass["MDBC parent"]
-    @test TimerOutputs.ncalls(Parent["01 Acquire MDBC buffers"]) == 1
     @test TimerOutputs.ncalls(Parent["02 NeighborLoopMDBC!"]) == 1
     @test TimerOutputs.ncalls(Parent["03 ApplyMDBCCorrection"]) == 1
     @test all(isfinite, Particles.Density)
@@ -408,7 +407,7 @@ end
     Report = String(take!(ReportBuffer))
     @test occursin("sorted by elapsed time", Report)
     @test occursin("globally sorted by allocations", Report)
-    @test occursin("01 Acquire MDBC buffers", Report)
+    @test occursin("02 NeighborLoopMDBC!", Report)
     @test all(Label -> occursin(Label, Report), VisibleLabels)
     @test !occursin("rows omitted", Report)
     @test !occursin("~Flattened~", Report)

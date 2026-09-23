@@ -261,11 +261,25 @@ timestamp; exact-time output would require interpolation.
 VTKHDF writes run in one persistent `Threads.@spawn` writer task while the solver
 continues on the other Julia threads. Launch with at least two threads (for
 example, `julia --threads=auto`) to overlap blocking HDF5 work with simulation.
+The transient writer keeps its HDF5 group and dataset handles open across frames,
+uses larger grid chunks, and obtains each grid frame's cell offset from the
+existing extent instead of reading the full history. The output timer now includes
+progress logging and the time spent waiting for a free snapshot buffer.
 Particle snapshots use a bounded two-buffer pool: if storage cannot sustain the
 requested output rate, the solver waits instead of dropping frames or allowing
 memory use to grow without bound. Finalization always waits for queued writes to
 finish, so reducing output frequency still reduces total data-copying and HDF5
 work.
+
+For the four-second StillWedge example with particle and grid output on local
+storage, 32 default threads, and three warmed runs per interval, `OutputTimes=0.01`
+produced 401 frames and took 2.17 s median; `0.1` produced 41 frames and took
+2.02 s. Before the writer changes these were 2.28 s and 2.05 s. Both intervals
+produced identical timesteps and final particle fields. The first measured run
+included compilation and took about 15 s at `0.01` in both versions. Disk and
+console speed can change the size of the remaining output cost. The two VTKHDF
+files total about 201 MB at `0.01` versus 21 MB at `0.1`, so storage throughput
+still matters when asking for ten times as many frames.
 
 ## Help
 

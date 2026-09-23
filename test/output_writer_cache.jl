@@ -45,13 +45,13 @@ end
             Values = CachedSteps["Values"]
             @test Cache["Steps"] === CachedSteps
             @test Cache["Steps"]["Values"] === Values
-            @test isopen(Values)
+            @test isvalid(Values)
             @test read(Values) == [0.1, 0.2]
             close(Cache)
-            @test !isopen(Values)
-            @test !isopen(CachedSteps.Root)
-            @test !isopen(Root)
-            @test isopen(File)
+            @test !isvalid(Values)
+            @test !isvalid(CachedSteps.Root)
+            @test !isvalid(Root)
+            @test isvalid(File)
         end
     end
 end
