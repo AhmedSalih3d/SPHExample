@@ -4,6 +4,25 @@ using StaticArrays
 using StructArrays
 using LinearAlgebra: norm
 
+@testset "laminar viscosity uses density and distance product" begin
+    for T in (Float32, Float64)
+        Kernel = (; η²=T(1//4))
+        Constants = (; m₀=T(2), ν₀=T(1//2))
+        Particles = (; Density=T[4, 6])
+        Displacement = SVector{2,T}(1, 0)
+        VelocityDifference = SVector{2,T}(2, 3)
+        Gradient = SVector{2,T}(-1//2, 0)
+
+        ViscosityI, ViscosityJ = compute_viscosity(
+            Laminar(), Kernel, Constants, Particles, Displacement,
+            VelocityDifference, Gradient, T(1), 1, 2,
+        )
+        Expected = SVector{2,T}(-8//25, -12//25)
+        @test ViscosityI ≈ Expected rtol=8eps(T)
+        @test ViscosityJ == -ViscosityI
+    end
+end
+
 function InteractionReferenceCase(::Val{D}, ::Type{T}, KernelModel,
                                   Shifting, KernelOutput; Midpoint=false, Copies=1, Packed=false) where {D,T}
     dx = T(0.02)

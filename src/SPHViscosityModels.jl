@@ -26,7 +26,8 @@ struct ArtificialViscosity <: SPHViscosity end
 """
     Laminar()
 
-Standard laminar viscosity governed by the kinematic viscosity `ν₀`.
+Laminar viscosity governed by the kinematic viscosity `ν₀`. The pair
+denominator is `(ρᵢ + ρⱼ) * (d² + η²)`.
 """
 struct Laminar <: SPHViscosity end
 
@@ -81,11 +82,10 @@ Base.@propagate_inbounds function compute_viscosity(::Laminar, SimKernel, SimCon
     @unpack m₀, ν₀ = SimConstants
     @unpack η²     = SimKernel
 
-    dᵢⱼ =  sqrt(abs(d²))
     ρᵢ  = SimParticles.Density[i]
     ρⱼ  = SimParticles.Density[j]
 
-    term = (4 * m₀ * ν₀ * dot(xᵢⱼ, ∇ᵢWᵢⱼ)) / ((ρᵢ + ρⱼ) + (d² + η²))
+    term = (4 * m₀ * ν₀ * dot(xᵢⱼ, ∇ᵢWᵢⱼ)) / ((ρᵢ + ρⱼ) * (d² + η²))
     return term * vᵢⱼ, -term * vᵢⱼ
 end
 

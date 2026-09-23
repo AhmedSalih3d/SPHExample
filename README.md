@@ -28,6 +28,11 @@ The project demonstrates how to assemble a small SPH solver with Julia. It focus
 
 Time-stepping behavior is selected via `RunSimulation(..., SimTimeStepping=...)` with either
 `SymplecticTimeStepping()` or `SingleNeighborTimeStepping()` depending on the desired update path.
+`Laminar()` and the laminar part of `LaminarSPS()` use the viscosity pair
+denominator `(ρᵢ + ρⱼ) * (d² + η²)`, following the
+[DualSPHysics formulation](https://github.com/DualSPHysics/DualSPHysics/wiki/3.-SPH-formulation).
+This corrects an earlier addition in that denominator and changes results for
+simulations that select either viscosity model.
 
 ## Folder Structure
 
@@ -104,6 +109,11 @@ fields during sorting. Equal-cell order is preserved, including optional MDBC
 and kernel-output fields. Interaction helpers also propagate the neighbor loop's
 bounds-check guarantee; direct checked calls retain bounds checks. These changes
 preserve the force formulas, support radius, and integration settings.
+The Wendland C2 gradient also uses the kernel's precomputed inverse smoothing
+length, avoiding a division for each accepted particle pair. Linear density
+diffusion skips boundary pairs before evaluating its hydrostatic correction and
+distance reciprocal. In the measured solver cases, these changes preserved the
+timestep sequence and changed final fields only by floating-point roundoff.
 
 The particle and MDBC loops distribute contiguous batches of 64 particles using
 a shared atomic counter, so workers can take more work when they finish a batch.

@@ -79,12 +79,12 @@ end
 end
 
 @inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{<:WendlandC2}, q::T, xᵢⱼ) where {T}
-    @unpack h, αD, η² = kernel
+    @unpack h⁻¹, αD = kernel
     # Subhan Allah, if this math is correct, then η² can be avoided
     # denom = (q * h + η²)
     # factor = αD * 5 * (q - 2)^3 * q / (8 * h * denom)
     qₘ₂ = q - T(2)
-    factor = αD * T(5//8) * qₘ₂ * qₘ₂ * qₘ₂ / (h * h)
+    factor = αD * T(5//8) * qₘ₂ * qₘ₂ * qₘ₂ * (h⁻¹ * h⁻¹)
     return factor * xᵢⱼ
 end
 

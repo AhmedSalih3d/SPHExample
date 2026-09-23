@@ -114,6 +114,14 @@ Base.@propagate_inbounds function compute_density_diffusion(
         ParticleType
 )
 
+        # Only fluid-fluid pairs diffuse in this model. Reject boundary pairs
+        # before evaluating the hydrostatic correction and distance reciprocal.
+        Typeᵢ = ParticleType[i]
+        Typeⱼ = ParticleType[j]
+        if Typeᵢ != Fluid || Typeⱼ != Fluid
+            return zero(d²), -zero(d²)
+        end
+
         @unpack ρ₀, m₀, c₀, δᵩ, Cb, Cb⁻¹, γ, g = SimConstants
         @unpack h, η²                          = SimKernel
 
@@ -131,9 +139,7 @@ Base.@propagate_inbounds function compute_density_diffusion(
         ρⱼᵢ = ρⱼ - ρᵢ
         ψᵢⱼ = 2 * (ρⱼᵢ - ρᵢⱼᴴ)  * (-xᵢⱼ) * invdᵢⱼ²η²
 
-        MotionLimiterCondition = MotionLimiterValue(eltype(ρᵢ), ParticleType[i]) * MotionLimiterValue(eltype(ρᵢ), ParticleType[j])
-
-        Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ) * MotionLimiterCondition
+        Dᵢ  = δᵩ * h * c₀ * (m₀/ρⱼ) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ)
         Dⱼ  = -Dᵢ
 
         return Dᵢ, Dⱼ
