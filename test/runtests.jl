@@ -149,7 +149,7 @@ function RunOutputCadenceCase(OutputTimes; SimulationEnd=1 // 4,
         length(Particles),
     )
 
-    MetaData.OutputIterationCounter = 1
+    MetaData.OutputIterationCounter = 0
     MetaData.CurrentTimeStep = Constants.CFL * Kernel.h / Constants.c₀
     EmittedTimes = T[zero(T)]
     function RecordOutput!()
@@ -245,15 +245,15 @@ end
         SaveLocation=".",
         SimulationTime=0.25,
         OutputTimes=[0.1, 0.2],
-        OutputIterationCounter=1,
+        OutputIterationCounter=0,
     )
     @test SPHExample.TimeStepping.next_output_time(ScheduleMetaData) == 0.1
-    ScheduleMetaData.OutputIterationCounter = 2
+    ScheduleMetaData.OutputIterationCounter = 1
     @test SPHExample.TimeStepping.next_output_time(ScheduleMetaData) == 0.2
-    ScheduleMetaData.OutputIterationCounter = 3
+    ScheduleMetaData.OutputIterationCounter = 2
     @test SPHExample.TimeStepping.next_output_time(ScheduleMetaData) == 0.25
     ScheduleMetaData.OutputTimes = [0.5]
-    ScheduleMetaData.OutputIterationCounter = 1
+    ScheduleMetaData.OutputIterationCounter = 0
     @test SPHExample.TimeStepping.next_output_time(ScheduleMetaData) == 0.25
 
     VectorMetaData, VectorState, VectorOutputs =

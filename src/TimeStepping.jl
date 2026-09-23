@@ -54,11 +54,11 @@ end
 @inline next_output_time(SimMetaData) = next_output_time(SimMetaData.OutputTimes, SimMetaData)
 
 @inline function next_output_time(interval::Real, SimMetaData)
-    return min(interval * SimMetaData.OutputIterationCounter, SimMetaData.SimulationTime)
+    return min(interval * (SimMetaData.OutputIterationCounter + 1), SimMetaData.SimulationTime)
 end
 
 @inline function next_output_time(times::AbstractVector, SimMetaData)
-    idx = SimMetaData.OutputIterationCounter
+    idx = SimMetaData.OutputIterationCounter + 1
     if idx <= length(times)
         return min(times[idx], SimMetaData.SimulationTime)
     else
