@@ -110,6 +110,28 @@ a shared atomic counter, so workers can take more work when they finish a batch.
 Single-threaded runs and small inputs use a serial path. Each particle retains
 its neighbor summation order and owns its output writes.
 
+Three-dimensional runs with `NoShifting` and `NoKernelOutput` also cache
+particle candidates within `1.125H`. Before every force evaluation, including
+predictor states, the solver checks displacement from copied reference positions
+and rebuilds this cache if any particle has moved more than `H/32`. Two particles
+can therefore close by at most `H/16` during reuse, leaving half the `H/8` margin
+unused. Grid rebuilds and particle reordering invalidate the cache as well.
+The force cutoff remains `H`, and retained candidates keep their original order.
+The 2D and optional-output paths keep the original traversal because the measured
+2D benefit did not justify the additional storage.
+
+In the 17,446-particle 3D dam-break benchmark, this reduces initial candidates
+from 13.28 million to 3.93 million per evaluation. Six alternating warmed runs
+on Julia 1.12.7 with 32 default threads reduced median solver time from 0.533 s
+to 0.491 s (8.0% less time, 0.02 s simulated). Timesteps matched exactly and
+maximum scaled final-field error was `6.4e-13`. The compact cache adds about
+16.3 MB of reachable storage (932 bytes per particle in this geometry); capacity
+and rebuild allocations can require more. Gains depend on motion and geometry.
+
+This particle cache filters the existing cell candidates. It preserves the
+cell-grid coverage limitation described below; its distance margin does not
+expand the grid stencil to find previously excluded cells.
+
 For fixed MDBC ghost points, neighboring cell indices are cached and only active
 ghosts are scheduled. The cache is refreshed after each neighbor rebuild and
 particle reordering. Moving or fluid ghost points retain the direct lookup path.
@@ -177,7 +199,7 @@ a more promising speed target than merely rebuilding less often in this case.
 | Candidate | Effort | Main consideration |
 |---|---|---|
 | Explicit neighbor skin and displacement validation | Moderate to large | Correctness prerequisite for safely tuning reuse; storage and search volume must be benchmarked |
-| Tighter bins, pruned cell searches, or explicit particle candidate lists | Moderate to large | Reduce the dominant pair-loop work; explicit particle lists require more memory |
+| Tighter bins or pruned cell searches | Moderate to large | May further reduce pair-loop work; the 3D particle candidate cache above already trades memory for fewer checks |
 | Thread-count and batch-size tuning | Low | Measure representative sizes; more threads can add overhead for small cases |
 | SIMD blocks or evaluating pair geometry once for both particles | Large | Requires careful accumulation, thread ownership, and model-specific physics checks |
 
