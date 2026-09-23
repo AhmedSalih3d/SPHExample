@@ -1330,7 +1330,7 @@ using TimerOutputs: @timeit, flatten
         RunWithSimulationFinalizer!(SimMetaData, SimLogger, output) do OutputFinalized
             # The initial particle frame is the state supplied by the caller,
             # before neighbor sorting or derivative initialization.
-            SimMetaData.OutputIterationCounter = 1
+            SimMetaData.OutputIterationCounter = 0
             output.enqueue_particles(SimMetaData.OutputIterationCounter)
 
             function SaveCurrentState!()
