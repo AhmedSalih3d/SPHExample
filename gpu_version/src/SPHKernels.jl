@@ -1,0 +1,135 @@
+module SPHKernels
+
+using LinearAlgebra
+using FastPow
+using Base: @kwdef
+
+export SPHKernel, SPHKernelInstance, WendlandC2, CubicSpline, Wᵢⱼ, ∇Wᵢⱼ, tensile_correction
+
+# Abstract type for SPH Kernels
+abstract type SPHKernel end
+
+# Specific kernel types
+struct WendlandC2  <: SPHKernel end
+
+struct CubicSpline{T<:AbstractFloat} <: SPHKernel 
+    eps::T
+end
+CubicSpline{T}() where {T} = CubicSpline{T}(one(T))
+
+# Internal normalization constant functions
+# For this Wendland C2 function, there is not a 1D constant
+@inline _αD(::Type{WendlandC2}, ::Val{2}, h) = 7 / (4 * π * h^2)
+@inline _αD(::Type{WendlandC2}, ::Val{3}, h) = 21 / (16 * π * h^3)
+
+@inline _αD(::Type{CubicSpline{T}}, ::Val{1}, h) where {T} = 2 / (3 * h)
+@inline _αD(::Type{CubicSpline{T}}, ::Val{2}, h) where {T} = 10 / (7 * π * h^2)
+@inline _αD(::Type{CubicSpline{T}}, ::Val{3}, h) where {T} = 1 / (π * h^3)
+
+# General SPH Kernel Type
+@kwdef struct SPHKernelInstance{KernelType, Dimensions, FloatType}
+    kernel::KernelType
+    k::FloatType   = 2.0
+    h::FloatType
+    h⁻¹::FloatType = 1 / h
+    H::FloatType   = k * h
+    H⁻¹::FloatType = 1 / H
+    H²::FloatType  = H * H
+    αD::FloatType
+    η²::FloatType  = (0.01 * h)^2
+end
+
+function SPHKernelInstance{D,T}(
+    kernel::KernelType;
+    dx::Union{T,Nothing}=nothing,
+    h::Union{T,Nothing}=nothing,
+    k::T = T(2.0)
+) where {KernelType<:SPHKernel, D, T}
+
+    # pick h
+    h₀ = if dx !== nothing && h === nothing
+        k * dx
+    elseif h !== nothing && dx === nothing
+        h
+    else
+        error("Must provide exactly one of `dx` or `h`")
+    end
+
+    # precompute
+    h₀⁻¹ = inv(h₀)
+    H    = k * h₀
+    H⁻¹  = inv(H)
+    H²   = H * H
+    αD   = _αD(KernelType, Val(D), h₀)
+    η²   = (0.01*h₀)^2
+
+    return SPHKernelInstance{KernelType,D,T}(
+        kernel=kernel, k=k,
+        h=h₀, h⁻¹=h₀⁻¹,
+        H=H, H⁻¹=H⁻¹, H²=H²,
+        αD=αD, η²=η²
+    )
+end
+
+# Kernel Evaluation Functions
+@inline function Wᵢⱼ(kernel::SPHKernelInstance{<:WendlandC2}, q::T) where {T}
+    (; αD) = kernel
+    return αD * (1 - q/2)^4 * (2q + 1)
+end
+
+@inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{<:WendlandC2}, q::T, xᵢⱼ) where {T}
+    (; h, αD, η²) = kernel
+    # Subhan Allah, if this math is correct, then η² can be avoided
+    # denom = (q * h + η²)
+    # factor = αD * 5 * (q - 2)^3 * q / (8 * h * denom)
+    factor = αD * 5 * (q - 2)^3 / (8 * h * h)
+    return factor * xᵢⱼ
+end
+
+@inline function Wᵢⱼ(kernel::SPHKernelInstance{<:CubicSpline}, q::T) where {T}
+    (; αD) = kernel
+    if q <= 1
+        return αD * (1 - (T(3)/2) * q^2 + (T(3)/4) * q^3)
+    elseif q <= 2
+        return αD * (T(1)/4) * (2 - q)^3
+    else
+        return zero(T)
+    end
+end
+
+@inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{<:CubicSpline}, q::T, xᵢⱼ) where {T}
+    (; h, h⁻¹, αD, η²) = kernel
+    # r = norm(xᵢⱼ)
+    # inv_r_h = 1/(r + η²)  # η² is a small regularization to avoid division by zero
+    
+    if 0 <= q <= 1
+        dWdq = αD * (-3*q + (T(9)/4)*q^2)
+    elseif 1 < q <= 2
+        dWdq = αD * (T(-3)/4)*(2 - q)^2
+    else
+        dWdq = zero(T)
+    end
+    
+    # Chain rule: ∇W = (dW/dq) * (∇q)
+    # Where ∇q = xᵢⱼ/(r*h)
+    return dWdq * h⁻¹ * xᵢⱼ / (norm(xᵢⱼ) + η²)
+end
+
+#---------------------------------------------------------------
+# Tensile Corrections for specific kernels
+#---------------------------------------------------------------
+@inline function tensile_correction(instance::SPHKernelInstance{<:WendlandC2}, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
+     return zero(eltype(q))
+end
+
+@inline function tensile_correction(instance::SPHKernelInstance{<:CubicSpline}, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx; n = 4)
+    eps_val = instance.kernel.eps
+
+    Wij_q  = Wᵢⱼ(instance, q)
+    Wij_dx = Wᵢⱼ(instance, dx)
+
+    return eps_val * ( ((Pᵢ/ρᵢ^2) + (Pⱼ/ρⱼ^2)) * (Wij_q / Wij_dx)^n )
+end
+
+
+end # module

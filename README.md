@@ -24,11 +24,26 @@ The project demonstrates how to assemble a small SPH solver with Julia. It focus
 - **Density diffusion** – based on Fourtakas et al. 2019 to reduce pressure noise.
 - **Wendland quintic kernel** – simple and stable without tensile corrections.
 
+## GPU (CUDA) version
+
+`gpu_version/` contains a CUDA port of the solver as a separate package,
+`SPHExampleGPU`, with the same API and example scripts. It runs all of the
+cases above on NVIDIA GPUs in 2D and 3D, reproduces the CPU results in
+`Float64` and is 5-18x faster than 24 CPU threads in `Float32` (measured on a
+small RTX A1000 laptop GPU; larger GPUs gain more). See
+[`gpu_version/README.md`](gpu_version/README.md) for details and benchmarks.
+
+```bash
+julia --project=gpu_version -e 'using Pkg; Pkg.instantiate()'
+julia --project=gpu_version gpu_version/example/Dambreak2dMDBC.jl
+```
+
 ## Folder Structure
 
 ```
 .
 ├── example/          # Ready to run simulations
+├── gpu_version/      # CUDA port (package SPHExampleGPU with examples, tests, benchmarks)
 ├── input/            # Pre-generated particle layouts (.csv)
 ├── src/              # Package source code
 ├── images/           # Images used in this README

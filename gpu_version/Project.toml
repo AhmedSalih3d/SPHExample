@@ -1,0 +1,46 @@
+name = "SPHExampleGPU"
+uuid = "7b9c0f7e-1f0e-4d0c-9c2a-5f5f1c9b8a11"
+version = "0.7.0"
+
+[deps]
+Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
+CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+FastPow = "c0e83750-1142-43a8-81cf-6c956b72b4d1"
+HDF5 = "f67ccb44-e63f-5c2f-98bd-6dc0ccc4ba2f"
+InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
+LoggingExtras = "e6f89c97-d47a-5376-807f-9c37f3926c36"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+StructArrays = "09ab397b-f2b6-538f-b94a-2f83cf4a842a"
+TimerOutputs = "a759f4b9-e2f1-59dc-863e-4aeb61b1ea8f"
+UnicodePlots = "b8865327-cd53-5732-bb35-84acbb429228"
+
+[compat]
+Adapt = "4"
+CSV = "0.10.14"
+CUDA = "5.9, 6"
+Dates = "1.10"
+FastPow = "0.1.0"
+HDF5 = "0.17.2"
+InteractiveUtils = "1.10"
+LinearAlgebra = "1.10"
+Logging = "1.10"
+LoggingExtras = "1.0.3"
+Printf = "1.10"
+ProgressMeter = "1.10.0"
+StaticArrays = "1.9.3"
+StructArrays = "0.7.0"
+TimerOutputs = "0.5.23"
+UnicodePlots = "3.7.2"
+julia = "1.10"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

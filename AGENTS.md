@@ -5,6 +5,8 @@ It may evolve over time, in shaa Allah.
 
 ## Project Structure for OpenAI Codex Navigation
 - `/src`: main Julia source code for the SPH solver
+- `/gpu_version`: CUDA port (`SPHExampleGPU`) with its own `Project.toml`, examples,
+  tests and CPU/GPU benchmarks; see `gpu_version/README.md`
 - `/example`: example scripts demonstrating solver usage
 - `/input`: sample input files used by the examples
 - `/images`: images referenced by `README.md`
@@ -28,8 +30,14 @@ Run the test suite before opening a pull request:
 ```bash
 julia --project=. -e 'using Pkg; Pkg.test()'
 ```
-The repository currently lacks a `test` directory, so this command will report an error.
-Mention this in the PR until tests are added.
+On Julia 1.12 launch the CPU code with `-t N,0` (no interactive thread); `-t auto`
+makes `threadid()` exceed `nthreads()` and the threaded neighbour loop crashes.
+
+The CUDA port in `gpu_version/` is a separate package (`SPHExampleGPU`). Its tests
+need an NVIDIA GPU and compare against the CPU package in a subprocess:
+```bash
+julia --project=gpu_version gpu_version/test/runtests.jl
+```
 
 ## Pull Request Guidelines for OpenAI Codex
 - Reference related issues when applicable
