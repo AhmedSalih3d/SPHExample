@@ -27,7 +27,7 @@ using CUDA
 using StaticArrays
 using ..GPUReductions
 
-export CellGrid, CellListWorkspace, update_cell_list!, unique_cells_host,
+export CellGrid, CellListWorkspace, update_cell_list!, compact_nonzero!, unique_cells_host,
        map_floor, cell_coords, linear_cell, local_coords, row_offsets, row_range, in_grid,
        reach, bin_scale, gather_kernel!, thread_index, load_grid
 
@@ -322,6 +322,28 @@ function gather_kernel!(perm, srcs::Tuple, dsts::Tuple, n::Int32)
     return nothing
 end
 
+# Stream compaction: flag the non-zero entries, rank them with an inclusive
+# scan and scatter every flagged index to its rank.
+function nonzero_flag_kernel!(flags, x, n::Int32)
+    i = thread_index()
+    i > n && return nothing
+    @inbounds flags[i] = Int32(!iszero(x[i]))
+    return nothing
+end
+
+function compact_kernel!(out, flags, ranks, n::Int32)
+    i = thread_index()
+    i > n && return nothing
+    @inbounds flagged = flags[i] != Int32(0)
+    if flagged
+        # bounds checked on purpose: a rank beyond `out` means the caller's
+        # count of non-zero entries is wrong
+        @inbounds r = ranks[i]
+        out[r] = i
+    end
+    return nothing
+end
+
 #---------------------------------------------------------------
 # Host driver
 #---------------------------------------------------------------
@@ -401,6 +423,31 @@ function update_cell_list!(ws::CellListWorkspace{D, T, R}, Position::CuVector{SV
 
     ws.nrebuilds += 1
     return grid
+end
+
+"""
+    compact_nonzero!(ws, x, out) -> out
+
+Write the (1-based, ascending) indices of the non-zero entries of the device
+vector `x` into `out`, an `Int32` vector whose length must equal their
+number. `x` must have one entry per particle. Uses the `Perm` and
+`CellIDScratch` buffers of `ws` as scratch space, so call it only after
+`update_cell_list!` is done with them, i.e. after the reorder. The driver
+uses it to list the boundary particles that own a ghost node in cell order
+after every rebuild, so that the mDBC kernel is launched over those alone.
+"""
+function compact_nonzero!(ws::CellListWorkspace, x::CuVector, out::CuVector{Int32})
+    n = length(x)
+    n == length(ws.Perm) || throw(ArgumentError("`x` must have one entry per particle"))
+    n == 0 && return out
+    flags   = ws.CellIDScratch
+    ranks   = ws.Perm
+    threads = SORT_THREADS
+    blocks  = cld(n, threads)
+    @cuda threads=threads blocks=blocks nonzero_flag_kernel!(flags, x, Int32(n))
+    accumulate!(+, ranks, flags)
+    @cuda threads=threads blocks=blocks compact_kernel!(out, flags, ranks, Int32(n))
+    return out
 end
 
 """

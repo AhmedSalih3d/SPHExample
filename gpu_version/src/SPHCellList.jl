@@ -49,6 +49,9 @@ persistent state, which is physically reordered whenever the cell list is
 rebuilt; the second group is recomputed from scratch every step and therefore
 never needs reordering. `scratch` holds a second set of the persistent arrays
 used as the target of the reordering (the two sets are swapped afterwards).
+`GhostIndex` lists the particles that own a ghost node (non-zero
+`GhostPoints`) in cell order; it is derived from the reordered `GhostPoints`
+after every rebuild and the mDBC kernel is launched over it alone.
 """
 mutable struct GPUParticles{D, T, S}
     Position::CuVector{SVector{D, T}}
@@ -62,6 +65,7 @@ mutable struct GPUParticles{D, T, S}
     Acceleration::CuVector{SVector{D, T}}
     Pressure::CuVector{T}
     CellID::CuVector{Int32}
+    GhostIndex::CuVector{Int32}
 
     Kernel::CuVector{T}
     KernelGradient::CuVector{SVector{D, T}}
@@ -82,7 +86,9 @@ const DOWNLOADABLE_FIELDS = (:Velocity, :Density, :ID, :Type, :GroupMarker, :Gho
 """
     upload_particles(SimParticles::StructArray) -> GPUParticles
 
-Copy every stored field of the host particle array to the GPU.
+Copy every stored field of the host particle array to the GPU. The ghost
+node owners (`GhostIndex`) are listed from the host `GhostPoints`, so set
+those before uploading.
 """
 function upload_particles(SimParticles::StructArray)
     Position = CuArray(SimParticles.Position)
@@ -90,6 +96,7 @@ function upload_particles(SimParticles::StructArray)
     T = eltype(eltype(Position))
     n = length(Position)
 
+    GhostIndex = CuArray(Int32.(findall(!iszero, SimParticles.GhostPoints)))
     scratch = (
         Position      = similar(Position),
         Velocity      = CuVector{SVector{D, T}}(undef, n),
@@ -115,6 +122,7 @@ function upload_particles(SimParticles::StructArray)
         CuArray(SimParticles.Acceleration),
         CuArray(SimParticles.Pressure),
         CUDA.zeros(Int32, n),
+        GhostIndex,
         CuArray(SimParticles.Kernel),
         CuArray(SimParticles.KernelGradient),
         scratch,
@@ -239,6 +247,11 @@ function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCut
     gpu.Acceleration  = s.Acceleration
     gpu.Pressure      = s.Pressure
 
+    # The reorder moved the ghost node owners: relist them in the new (cell)
+    # order. Their number never changes, so the list keeps its length and
+    # device pointer, and captured graphs stay valid.
+    isempty(gpu.GhostIndex) || compact_nonzero!(cl, gpu.GhostPoints, gpu.GhostIndex)
+
     return grid
 end
 
@@ -313,8 +326,8 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
 
     if UseMDBC
         @phase HourGlass mdbc_name timed launch_mdbc!(
-            gpu.Density, gpu.Pressure, gpu.Position, gpu.GhostPoints, gpu.Type, CellStart, grid, step,
-            SimKernel, SimConstants; threads = threads, lanes = lanes)
+            gpu.Density, gpu.Pressure, gpu.Position, gpu.GhostPoints, gpu.GhostIndex, gpu.Type, CellStart,
+            grid, step, SimKernel, SimConstants; threads = threads, lanes = lanes)
     end
 
     @phase HourGlass loop_name timed begin
@@ -370,8 +383,8 @@ function enqueue_step!(ctx, timed::Bool)
         # every step, the carried derivative is kept.
         if UseMDBC
             @phase HourGlass "04a NeighborLoopMDBC before Half TimeStep" timed launch_mdbc!(
-                gpu.Density, gpu.Pressure, gpu.Position, gpu.GhostPoints, gpu.Type, CellStart, grid, state,
-                SimKernel, SimConstants; threads = threads, lanes = lanes)
+                gpu.Density, gpu.Pressure, gpu.Position, gpu.GhostPoints, gpu.GhostIndex, gpu.Type, CellStart,
+                grid, state, SimKernel, SimConstants; threads = threads, lanes = lanes)
         end
     else
         enqueue_state_derivative!(ctx, state, timed, "04a First NeighborLoopMDBC", "04 First NeighborLoop")

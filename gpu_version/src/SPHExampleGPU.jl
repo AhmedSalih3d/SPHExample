@@ -81,7 +81,7 @@ module SPHExampleGPU
     export StepState, HostStep, readback!
 
     using .GPUCellGrid
-    export CellGrid, CellListWorkspace, update_cell_list!, unique_cells_host, map_floor
+    export CellGrid, CellListWorkspace, update_cell_list!, compact_nonzero!, unique_cells_host, map_floor
 
     using .GPUKernels
     export launch_interactions!, launch_mdbc!, launch_motion!, launch_half_step!, launch_final_step!,

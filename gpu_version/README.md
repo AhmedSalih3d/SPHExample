@@ -198,9 +198,16 @@ the standard *gather* formulation:
   the launch sequence of a step changes from step to step, it is captured
   once as a CUDA graph and replayed (`GPUUseGraph`), which removes most of
   the per launch overhead that bounds the small 2D cases on Windows.
-* **mDBC on the GPU.** One thread per boundary particle gathers the fluid
-  neighbours of its ghost node, assembles the `(D+1)×(D+1)` system in
-  registers and solves it with StaticArrays inside the kernel.
+* **mDBC on the GPU.** One thread (or `K` lanes) per boundary particle with
+  a ghost node gathers the fluid neighbours of the node, assembles the
+  `(D+1)×(D+1)` system in registers and solves it with StaticArrays inside
+  the kernel. The launch covers only those particles: the reorder of every
+  cell list rebuild also relists the ghost node owners in cell order
+  (`GhostIndex`, a stream compaction of the non-zero `GhostPoints`), so the
+  warps are dense instead of scattered over the fluid particles that are
+  interleaved with the boundary in cell order and exit at once. The neighbour
+  loop tests the distance before it loads the particle type, so only the
+  candidates inside the support (roughly a third) pay for the second load.
 * **Asynchronous output.** Particle data is downloaded when an output is due
   and written to `vtkhdf` by a Julia task while the GPU already integrates the
   next output interval (`GPUAsyncOutput = false` disables this).

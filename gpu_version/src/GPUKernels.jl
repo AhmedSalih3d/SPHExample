@@ -341,16 +341,18 @@ end
 
 # Accumulate the contributions of the fluid particles in the (1-based) index
 # range `jlo:jhi` (every `K`-th starting at `lane`) to the ghost node `gp`.
+# The distance test comes first: only the roughly 30 % of the candidates
+# inside the support also load `ParticleType`.
 @inline function mdbc_range(b, A, jlo::Int32, jhi::Int32, lane::Int32, ::Val{K}, gp::SVector{D, T},
                             Position, Density, ParticleType, SimKernel, m₀) where {K, D, T}
     (; h⁻¹, H²) = SimKernel
     DP = D + 1
     j = jlo + lane
     @inbounds while j <= jhi
-        if ParticleType[j] == Fluid
-            xᵢⱼ  = gp - Position[j]
-            xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
-            if xᵢⱼ² <= H²
+        xᵢⱼ  = gp - Position[j]
+        xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
+        if xᵢⱼ² <= H²
+            if ParticleType[j] == Fluid
                 dᵢⱼ = sqrt(xᵢⱼ²)
                 q   = dᵢⱼ * h⁻¹ # in [0, 2]: the guard above enforces xᵢⱼ² <= H² = (2h)²
                 ρⱼ  = Density[j]
@@ -421,13 +423,17 @@ end
     return b, A
 end
 
-function mdbc_kernel!(Density, Pressure, Position::AbstractVector{SVector{D, T}}, GhostPoints, ParticleType,
-                      CellStart, gridarg, step,
-                      SimKernel, SimConstants, ::Val{K}, n::Int32) where {D, T, K}
+# Thread group `g` (its `K` lanes) handles the `g`-th ghost node owner of
+# `GhostIndex`, so the launch covers only boundary particles with a ghost
+# node, contiguously: no half empty warps from the fluid particles that are
+# interleaved with them in cell order.
+function mdbc_kernel!(Density, Pressure, Position::AbstractVector{SVector{D, T}}, GhostPoints, GhostIndex,
+                      ParticleType, CellStart, gridarg, step,
+                      SimKernel, SimConstants, ::Val{K}, nghost::Int32) where {D, T, K}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
-    i    = (t - Int32(1)) ÷ Int32(K) + Int32(1)
+    g    = (t - Int32(1)) ÷ Int32(K) + Int32(1)
     lane = (t - Int32(1)) % Int32(K)
 
     DP = D + 1
@@ -436,11 +442,12 @@ function mdbc_kernel!(Density, Pressure, Position::AbstractVector{SVector{D, T}}
     b = zero(SVector{DP, T})
     A = zero(SMatrix{DP, DP, T, DP * DP})
 
-    gp = zero(SVector{D, T})
-    valid = false
-    @inbounds if i <= n
-        gp    = GhostPoints[i]
-        valid = !iszero(gp)
+    i     = Int32(1)
+    gp    = zero(SVector{D, T})
+    valid = g <= nghost
+    @inbounds if valid
+        i  = GhostIndex[g]
+        gp = GhostPoints[i]
     end
 
     @inbounds if valid
@@ -479,21 +486,23 @@ function mdbc_kernel!(Density, Pressure, Position::AbstractVector{SVector{D, T}}
 end
 
 """
-    launch_mdbc!(Density, Pressure, Position, GhostPoints, ParticleType, CellStart, grid, step,
-                 SimKernel, SimConstants; threads, lanes)
+    launch_mdbc!(Density, Pressure, Position, GhostPoints, GhostIndex, ParticleType, CellStart, grid,
+                 step, SimKernel, SimConstants; threads, lanes)
 
 mDBC correction of the density of the boundary particles that own a ghost
-node, and the pressure of the corrected density. `step` gates the kernel
-(see `GPUStepState`).
+node, and the pressure of the corrected density. The launch covers the
+particles listed in `GhostIndex` (the ghost node owners in cell order, see
+`GPUParticles`), `K` lanes each. `step` gates the kernel (see
+`GPUStepState`).
 """
-function launch_mdbc!(Density, Pressure, Position, GhostPoints, ParticleType, CellStart, grid, step, SimKernel,
-                      SimConstants; threads::Integer = 128, lanes::Val = Val(1))
-    n = length(Density)
+function launch_mdbc!(Density, Pressure, Position, GhostPoints, GhostIndex, ParticleType, CellStart, grid, step,
+                      SimKernel, SimConstants; threads::Integer = 128, lanes::Val = Val(1))
+    n = length(GhostIndex)
     n == 0 && return nothing
     K = typeof(lanes).parameters[1]
     @cuda threads=threads blocks=cld(n * K, threads) mdbc_kernel!(
-        Density, Pressure, Position, GhostPoints, ParticleType, CellStart, grid, step, SimKernel, SimConstants,
-        lanes, Int32(n))
+        Density, Pressure, Position, GhostPoints, GhostIndex, ParticleType, CellStart, grid, step, SimKernel,
+        SimConstants, lanes, Int32(n))
     return nothing
 end
 

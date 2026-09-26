@@ -277,6 +277,39 @@ relerr(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), eps(eltype(b))))
         @test !hasproperty(particles, :ChunkID)
     end
 
+    @testset "ghost node owners are relisted in cell order after a rebuild" begin
+        # The mDBC kernel is launched over `GhostIndex` alone, so after every
+        # reorder the list must name exactly the particles whose (reordered)
+        # ghost point is non-zero, ascending, and the length must not change.
+        case = BENCH_CASES[findfirst(c -> c.name == "StillWedge2D_MDBC_dp0.02", BENCH_CASES)]
+        kw   = case.build(Float64, mktempdir())
+        host = AllocateDataStructures(kw.SimGeometry, kw.SimMetaData)
+        _, gp, _ = LoadBoundaryNormals(Val(2), Float64, kw.ParticleNormalsPath)
+        for gi in eachindex(gp)
+            host.GhostPoints[gi] = gp[gi]
+        end
+        device = upload_particles(host)
+        expected = Int32.(findall(!iszero, host.GhostPoints))
+        @test Array(device.GhostIndex) == expected
+        @test 0 < length(expected) < length(host)
+        # scramble the host order before uploading so the rebuild has to move things
+        perm    = sortperm(rand(length(host)))
+        device2 = upload_particles(host[perm])
+        cl      = CellListWorkspace{2, Float64}(length(host))
+        SPHExampleGPU.SPHCellList.rebuild_cell_list!(device2, cl, kw.SimKernel.H⁻¹)
+        idx = Array(device2.GhostIndex)
+        @test length(idx) == length(expected)
+        @test idx == Int32.(findall(!iszero, Array(device2.GhostPoints)))
+        @test issorted(idx)
+        @test all(==(Fixed), Array(device2.Type)[idx])
+        # generic helper: indices of the non-zero entries in order
+        x   = CuArray(Float64[0, 3, 0, 0, 1, 2, 0])
+        ws  = CellListWorkspace{2, Float64}(length(x))
+        out = CuVector{Int32}(undef, 3)
+        @test Array(compact_nonzero!(ws, x, out)) == Int32[2, 5, 6]
+        @test_throws ArgumentError compact_nonzero!(ws, CUDA.zeros(Float64, 2), out)
+    end
+
     @testset "deterministic repeat" begin
         case = BENCH_CASES[findfirst(c -> c.name == "DamBreak2D_MDBC_dp0.01", BENCH_CASES)]
         p1, _ = run_gpu(case, Float64, 0.005)
