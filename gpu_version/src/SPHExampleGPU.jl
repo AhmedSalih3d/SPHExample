@@ -94,4 +94,6 @@ module SPHExampleGPU
     using .OpenExternalPrograms
     export AutoOpenLogFile, AutoOpenParaview
 
+    include("PrecompileWorkload.jl")
+
 end
