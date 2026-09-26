@@ -3,14 +3,7 @@ using StaticArrays
 using Base.Threads
 using HDF5
 
-export ResetArrays!, to_3d, CloseHDFVTKManually, CleanUpSimulationFolder
-
-"""
-    ResetArrays!(arrays...)
-
-Fill each array in `arrays` with zeros in place.
-"""
-@inline ResetArrays!(arrays...) = foreach(a -> fill!(a, zero(eltype(a))), arrays)
+export to_3d, CloseHDFVTKManually, CleanUpSimulationFolder
 
 """
     to_3d(vec_2d)
