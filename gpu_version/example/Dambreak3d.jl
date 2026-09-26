@@ -5,7 +5,9 @@
 #
 # FloatType = Float32 is usually 2-4x faster than Float64 on consumer and
 # laptop GPUs (their double precision throughput is low); Float64 reproduces
-# the CPU results to round-off.
+# the CPU results to round-off. GPUDoublePosition keeps only the positions in
+# Float64 (as DualSPHysics does), which removes the position quantisation of
+# long Float32 runs at no measurable cost.
 using SPHExampleGPU
 
 let
@@ -51,6 +53,7 @@ let
         OpenLogFile            = true,
         GPUCellSubdivision     = 2,
         GPULanesPerParticle    = 1,
+        GPUDoublePosition      = true,
     )
 
     if !isdir(SimMetaDataDambreak3D.SaveLocation)

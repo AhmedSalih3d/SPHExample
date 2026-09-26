@@ -9,7 +9,7 @@ written, so the host arrays always hold the most recently written state.
 module SPHCellList
 
 export GPUParticles, GPUSupportArrays, MotionArrays, upload_particles, download_particles!,
-       RunSimulation, SimulationLoop, enqueue_step!, batch_size
+       RunSimulation, SimulationLoop, enqueue_step!, batch_size, position_type, uses_pos_cells
 
 using CUDA
 using StaticArrays
@@ -52,15 +52,20 @@ used as the target of the reordering (the two sets are swapped afterwards).
 `GhostIndex` lists the particles that own a ghost node (non-zero
 `GhostPoints`) in cell order; it is derived from the reordered `GhostPoints`
 after every rebuild and the mDBC kernel is launched over it alone.
+
+`T` is the working precision, `TP` the precision of the positions and ghost
+node positions (`Float64` with `GPUDoublePosition`, otherwise `T`). Nothing
+else is stored in `TP`: velocities, densities, accelerations and the kernel
+sums stay in `T`, as in DualSPHysics.
 """
-mutable struct GPUParticles{D, T, S}
-    Position::CuVector{SVector{D, T}}
+mutable struct GPUParticles{D, T, TP, S}
+    Position::CuVector{SVector{D, TP}}
     Velocity::CuVector{SVector{D, T}}
     Density::CuVector{T}
     ID::CuVector{Int}
     Type::CuVector{ParticleType}
     GroupMarker::CuVector{UInt}
-    GhostPoints::CuVector{SVector{D, T}}
+    GhostPoints::CuVector{SVector{D, TP}}
     GhostNormals::CuVector{SVector{D, T}}
     Acceleration::CuVector{SVector{D, T}}
     Pressure::CuVector{T}
@@ -75,6 +80,13 @@ end
 
 Base.length(p::GPUParticles) = length(p.Position)
 
+"""
+    position_type(gpu) -> TP
+
+Element precision of the positions stored on the device.
+"""
+position_type(::GPUParticles{D, T, TP}) where {D, T, TP} = TP
+
 const PERSISTENT_FIELDS = (:Position, :Velocity, :Density,
                            :ID, :Type, :GroupMarker, :GhostPoints, :GhostNormals,
                            :Acceleration, :Pressure)
@@ -83,19 +95,26 @@ const PERSISTENT_FIELDS = (:Position, :Velocity, :Density,
 const DOWNLOADABLE_FIELDS = (:Velocity, :Density, :ID, :Type, :GroupMarker, :GhostPoints, :GhostNormals,
                              :Acceleration, :Pressure, :Kernel, :KernelGradient)
 
+# Device copy of a host vector, converted to element type `E` when it differs.
+_upload(::Type{E}, x::AbstractVector) where {E} = CuArray(convert(Vector{E}, x))
+
 """
-    upload_particles(SimParticles::StructArray) -> GPUParticles
+    upload_particles(SimParticles::StructArray; position_type = eltype of the host positions) -> GPUParticles
 
 Copy every stored field of the host particle array to the GPU. The ghost
 node owners (`GhostIndex`) are listed from the host `GhostPoints`, so set
-those before uploading.
+those before uploading. `position_type` is the element precision of the
+device positions and ghost node positions (`Float64` with
+`GPUDoublePosition`); the host arrays are converted when they differ. The
+working precision is that of the host densities.
 """
-function upload_particles(SimParticles::StructArray)
-    Position = CuArray(SimParticles.Position)
-    D = length(eltype(Position))
-    T = eltype(eltype(Position))
-    n = length(Position)
+function upload_particles(SimParticles::StructArray;
+                          position_type::Type{TP} = eltype(eltype(SimParticles.Position))) where {TP}
+    D = length(eltype(SimParticles.Position))
+    T = eltype(SimParticles.Density)
+    n = length(SimParticles)
 
+    Position   = _upload(SVector{D, TP}, SimParticles.Position)
     GhostIndex = CuArray(Int32.(findall(!iszero, SimParticles.GhostPoints)))
     scratch = (
         Position      = similar(Position),
@@ -104,20 +123,20 @@ function upload_particles(SimParticles::StructArray)
         ID            = CuVector{Int}(undef, n),
         Type          = CuVector{ParticleType}(undef, n),
         GroupMarker   = CuVector{UInt}(undef, n),
-        GhostPoints   = CuVector{SVector{D, T}}(undef, n),
+        GhostPoints   = CuVector{SVector{D, TP}}(undef, n),
         GhostNormals  = CuVector{SVector{D, T}}(undef, n),
         Acceleration  = CuVector{SVector{D, T}}(undef, n),
         Pressure      = CuVector{T}(undef, n),
     )
 
-    return GPUParticles{D, T, typeof(scratch)}(
+    return GPUParticles{D, T, TP, typeof(scratch)}(
         Position,
         CuArray(SimParticles.Velocity),
         CuArray(SimParticles.Density),
         CuArray(SimParticles.ID),
         CuArray(SimParticles.Type),
         CuArray(SimParticles.GroupMarker),
-        CuArray(SimParticles.GhostPoints),
+        _upload(SVector{D, TP}, SimParticles.GhostPoints),
         CuArray(SimParticles.GhostNormals),
         CuArray(SimParticles.Acceleration),
         CuArray(SimParticles.Pressure),
@@ -129,6 +148,17 @@ function upload_particles(SimParticles::StructArray)
     )
 end
 
+# Host copy of a device vector; converted element-wise when the host element
+# type differs (positions of a different precision than the host arrays).
+function _download!(dst::AbstractVector, src::CuVector)
+    if eltype(dst) === eltype(src)
+        copyto!(dst, src)
+    else
+        copyto!(dst, Array(src))
+    end
+    return dst
+end
+
 """
     download_particles!(SimParticles, gpu, grid, fields = DOWNLOADABLE_FIELDS; cells = false)
 
@@ -136,13 +166,15 @@ Copy `Position` and the device fields named in `fields` back into the host
 `StructArray`. Host fields that are not listed are left untouched, so pass
 exactly the fields that are written to the output. With `cells = true` the
 cell of every particle is also stored as a `CartesianIndex`. Returns the cell
-ids as a host vector (empty unless `cells = true`).
+ids as a host vector (empty unless `cells = true`). Fields whose host element
+type differs from the device type (positions when the host array was not
+allocated for `GPUDoublePosition`) are converted.
 """
 function download_particles!(SimParticles::StructArray, gpu::GPUParticles{D, T}, grid::CellGrid{D},
                              fields = DOWNLOADABLE_FIELDS; cells::Bool = false) where {D, T}
-    copyto!(SimParticles.Position, gpu.Position)
+    _download!(SimParticles.Position, gpu.Position)
     for f in fields
-        copyto!(getproperty(SimParticles, f), getproperty(gpu, f))
+        _download!(getproperty(SimParticles, f), getproperty(gpu, f))
     end
     cells || return Int32[]
 
@@ -160,31 +192,56 @@ densities and shifting terms). They are never reordered because they are
 overwritten after every cell list update. `InvDensity` holds `1 / Density`
 of the start-of-step state and `InvDensityₙ⁺` that of the predictor state;
 the interaction kernel multiplies by them instead of dividing per pair
-(same as `FillInverseDensity!` of the CPU code).
+(same as `FillInverseDensity!` of the CPU code). `Positionₙ⁺` is in the
+position precision `TP`. When that differs from the working precision `T`,
+`PosCells` and `PosCellsₙ⁺` hold the cell relative form (`PosCell`) of the
+start-of-step and half step positions for the pair loops; otherwise both are
+`nothing` and the pair loops read the positions directly.
 """
-struct GPUSupportArrays{D, T}
+struct GPUSupportArrays{D, T, TP, PC}
     dρdtI::CuVector{T}
     Velocityₙ⁺::CuVector{SVector{D, T}}
-    Positionₙ⁺::CuVector{SVector{D, T}}
+    Positionₙ⁺::CuVector{SVector{D, TP}}
     ρₙ⁺::CuVector{T}
     InvDensity::CuVector{T}
     InvDensityₙ⁺::CuVector{T}
     ∇Cᵢ::CuVector{SVector{D, T}}
     ∇◌rᵢ::CuVector{T}
+    PosCells::PC
+    PosCellsₙ⁺::PC
 end
 
-function GPUSupportArrays{D, T}(n::Integer) where {D, T}
-    return GPUSupportArrays{D, T}(
+"""
+    GPUSupportArrays{D, T}(n; position_type = T)
+
+Support arrays for `n` particles in the working precision `T`, with positions
+of precision `position_type`. The cell relative positions are allocated
+exactly when `position_type !== T`.
+"""
+function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T) where {D, T, TP}
+    pc = TP === T ? nothing : CuVector{PosCell{D, T}}(undef, n)
+    pcₙ⁺ = TP === T ? nothing : CuVector{PosCell{D, T}}(undef, n)
+    return GPUSupportArrays{D, T, TP, typeof(pc)}(
         CUDA.zeros(T, n),
         CUDA.zeros(SVector{D, T}, n),
-        CUDA.zeros(SVector{D, T}, n),
+        CUDA.zeros(SVector{D, TP}, n),
         CUDA.zeros(T, n),
         CUDA.zeros(T, n),
         CUDA.zeros(T, n),
         CUDA.zeros(SVector{D, T}, n),
         CUDA.zeros(T, n),
+        pc,
+        pcₙ⁺,
     )
 end
+
+"""
+    uses_pos_cells(sup) -> Bool
+
+Whether the pair loops read cell relative positions (positions of a higher
+precision than the working precision).
+"""
+uses_pos_cells(sup::GPUSupportArrays) = sup.PosCells !== nothing
 
 """
     MotionArrays(SimGeometry, SimParticles) -> NamedTuple of device arrays
@@ -306,10 +363,29 @@ macro phase(hg, name, timed, ex)
 end
 
 """
+    enqueue_pos_cells!(ctx, step, timed)
+
+Enqueue the cell relative form of the start-of-step positions
+(`launch_pos_cells!`) when the pair loops read it; nothing otherwise. Must
+precede every kernel that scans neighbours of the start-of-step positions
+(the mDBC correction and the first neighbour loop) because the positions
+change between those kernels and the previous ones (final step, motion,
+rebuild).
+"""
+function enqueue_pos_cells!(ctx, step, timed::Bool)
+    (; gpu, cl, sup, SimKernel, HourGlass) = ctx
+    uses_pos_cells(sup) || return nothing
+    @phase HourGlass "03d Cell Relative Positions" timed launch_pos_cells!(
+        sup.PosCells, gpu.Position, gpu.CellID, cl.grid_dev, step, SimKernel)
+    return nothing
+end
+
+"""
     enqueue_state_derivative!(ctx, step, timed, mdbc_name, loop_name)
 
-Enqueue the evaluation of the start-of-step state: the mDBC correction of
-the boundary densities together with the pressure of the corrected density
+Enqueue the evaluation of the start-of-step state: the cell relative
+positions (with `GPUDoublePosition`), the mDBC correction of the boundary
+densities together with the pressure of the corrected density
 (`launch_mdbc!`, with `SimpleMDBC`), the reciprocal densities and the
 neighbour loop that produces `dρdtI` and the acceleration. The symplectic
 scheme runs this at every step as its first neighbour loop. The single
@@ -324,10 +400,12 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
     grid      = cl.grid_dev
     CellStart = cl.CellStart
 
+    enqueue_pos_cells!(ctx, step, timed)
+
     if UseMDBC
         @phase HourGlass mdbc_name timed launch_mdbc!(
             gpu.Density, gpu.Pressure, gpu.Position, gpu.GhostPoints, gpu.GhostIndex, gpu.Type, CellStart,
-            grid, step, SimKernel, SimConstants; threads = threads, lanes = lanes)
+            grid, step, SimKernel, SimConstants; threads = threads, lanes = lanes, pos_cells = sup.PosCells)
     end
 
     @phase HourGlass loop_name timed begin
@@ -337,7 +415,7 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
                              gpu.Velocity, gpu.Type, CellStart, gpu.CellID, grid, step,
                              SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
                              FlagKernel, FlagShift; threads = threads, lanes = lanes,
-                             boundary_forces = bforces)
+                             boundary_forces = bforces, pos_cells = sup.PosCells)
     end
     return nothing
 end
@@ -382,9 +460,10 @@ function enqueue_step!(ctx, timed::Bool)
         # predictor and the final density update start from are corrected
         # every step, the carried derivative is kept.
         if UseMDBC
+            enqueue_pos_cells!(ctx, state, timed)
             @phase HourGlass "04a NeighborLoopMDBC before Half TimeStep" timed launch_mdbc!(
                 gpu.Density, gpu.Pressure, gpu.Position, gpu.GhostPoints, gpu.GhostIndex, gpu.Type, CellStart,
-                grid, state, SimKernel, SimConstants; threads = threads, lanes = lanes)
+                grid, state, SimKernel, SimConstants; threads = threads, lanes = lanes, pos_cells = sup.PosCells)
         end
     else
         enqueue_state_derivative!(ctx, state, timed, "04a First NeighborLoopMDBC", "04 First NeighborLoop")
@@ -393,7 +472,8 @@ function enqueue_step!(ctx, timed::Bool)
     @phase HourGlass "05b Update To Half TimeStep" timed launch_half_step!(
         sup.Positionₙ⁺, sup.Velocityₙ⁺, sup.ρₙ⁺, sup.InvDensityₙ⁺, gpu.Pressure,
         gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Density, sup.dρdtI,
-        gpu.Type, gpu.GroupMarker, motion, state, SimConstants)
+        gpu.Type, gpu.GroupMarker, motion, state, SimConstants;
+        pos_cells = sup.PosCellsₙ⁺, CellID = gpu.CellID, grid = grid, SimKernel = SimKernel)
 
     # Corrector: every term, including the viscosity and density diffusion
     # models, is evaluated at the predictor state.
@@ -403,7 +483,7 @@ function enqueue_step!(ctx, timed::Bool)
         sup.Velocityₙ⁺, gpu.Type, CellStart, gpu.CellID, grid, state,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
         FlagKernel, FlagShift; threads = threads, lanes = lanes,
-        boundary_forces = bforces)
+        boundary_forces = bforces, pos_cells = sup.PosCellsₙ⁺)
 
     @phase HourGlass "11 Update To Final TimeStep" timed launch_final_step!(
         gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Density, gpu.Pressure,
@@ -593,6 +673,13 @@ shifting, kernel output, mDBC and log modes are the type parameters of
 (`SymplecticTimeStepping()` or `SingleNeighborTimeStepping()`). On return the
 host `SimParticles` hold the final state (reordered by cell, like the CPU
 version).
+
+With `SimMetaData.GPUDoublePosition` the positions (and ghost node
+positions) are integrated in `Float64` while everything else stays in
+`FloatType`; the pair loops then work on cell relative positions in
+`FloatType` (see `GPUCellGrid`). Host particle arrays allocated with
+`AllocateDataStructures(SimGeometry, SimMetaData)` already hold `Float64`
+positions; other host arrays are converted on upload and download.
 """
 function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}},
     SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
@@ -612,6 +699,7 @@ function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}},
 
     SimMetaData.TimeSteppingMode = SimTimeStepping
     StoreLogOutput = LMode === StoreLog
+    PositionType   = position_float_type(SimMetaData)
 
     # Only the fields that end up in the output files are copied back from the
     # GPU at every output; the host arrays of the other fields stay untouched.
@@ -622,7 +710,9 @@ function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}},
 
     if BMode === SimpleMDBC
         ParticleNormalsPath === nothing && error("SimpleMDBC requires `ParticleNormalsPath`.")
-        _, GhostPoints, GhostNormals = LoadBoundaryNormals(Val(Dimensions), FloatType, ParticleNormalsPath)
+        # ghost node positions in the position precision; the normals are
+        # directions and stay in the working precision on the device
+        _, GhostPoints, GhostNormals = LoadBoundaryNormals(Val(Dimensions), PositionType, ParticleNormalsPath)
         for gi ∈ eachindex(GhostPoints)
             SimParticles.GhostPoints[gi]  = GhostPoints[gi]
             SimParticles.GhostNormals[gi] = GhostNormals[gi]
@@ -636,6 +726,9 @@ function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}},
             @info "GPU: $(CUDA.name(dev)), compute capability $(CUDA.capability(dev)), " *
                   "$(round(CUDA.totalmem(dev) / 2^30; digits = 1)) GiB, CUDA.jl $(pkgversion(CUDA))"
             @info "GPU float type: $(FloatType)"
+            if PositionType !== FloatType
+                @info "GPU position type: $(PositionType) (pair loops use cell relative positions in $(FloatType))"
+            end
         end
     end
 
@@ -649,10 +742,10 @@ function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}},
 
     # Device side data
     @timeit HourGlass "00a Upload To GPU" begin
-        gpu    = upload_particles(SimParticles)
-        sup    = GPUSupportArrays{Dimensions, FloatType}(NumberOfPoints)
+        gpu    = upload_particles(SimParticles; position_type = PositionType)
+        sup    = GPUSupportArrays{Dimensions, FloatType}(NumberOfPoints; position_type = PositionType)
         red    = ReductionWorkspace{SVector{3, FloatType}}(NumberOfPoints)
-        cl     = CellListWorkspace{Dimensions, FloatType}(NumberOfPoints;
+        cl     = CellListWorkspace{Dimensions, PositionType}(NumberOfPoints;
                      reach = SimMetaData.GPUCellSubdivision, max_cells = SimMetaData.GPUMaxCells,
                      deterministic = SimMetaData.GPUDeterministicSort)
         motion = MotionArrays(SimGeometry, SimParticles)

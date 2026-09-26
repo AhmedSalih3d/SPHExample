@@ -20,6 +20,16 @@ particle scans `(2R+1)^2` ranges (9 for `R = 1`, 25 for `R = 2`).
 
 `CellStart` stores exclusive prefix sums with a leading zero: particles of
 cell `c` occupy the (1-based) index range `CellStart[c]+1 : CellStart[c+1]`.
+
+Positions may be stored in a higher precision than the rest of the state
+(`GPUDoublePosition`: `Float64` positions with `Float32` arithmetic). The pair
+loops then never touch the double positions: every particle carries a
+`PosCell`, its position relative to the anchor of its cell list cell in the
+working precision plus the linear cell index (the `poscell` of DualSPHysics),
+and the pair vector is `(relᵢ - relⱼ) + cellsize * (cellᵢ - cellⱼ)`
+(`pair_vector`). The cell difference is a small integer known from the row
+being scanned, so the pair distance has the precision of the cell edge rather
+than of the distance to the origin.
 """
 module GPUCellGrid
 
@@ -29,7 +39,8 @@ using ..GPUReductions
 
 export CellGrid, CellListWorkspace, update_cell_list!, compact_nonzero!, unique_cells_host,
        map_floor, cell_coords, linear_cell, local_coords, row_offsets, row_range, in_grid,
-       reach, bin_scale, gather_kernel!, thread_index, load_grid
+       reach, bin_scale, gather_kernel!, thread_index, load_grid,
+       PosCell, CellRow, cell_rows, cell_size, cell_anchor, global_coords, pos_cell, pair_vector
 
 const SORT_THREADS = 256
 
@@ -146,47 +157,88 @@ end
 end
 
 """
-Linear index offsets of the neighbouring rows of an interior cell (`2R+1` rows
-in 2D, `(2R+1)^2` in 3D). Each row holds the `2R+1` consecutive cells
-`(cx-R .. cx+R)`; the offset points at the centre cell of the row. For
-`R = 1` a tuple (the kernels' row loops unroll), for `R >= 2` a lazy iterator.
+Global cell coordinates of linear cell index `c`.
 """
-@inline row_offsets(grid::CellGrid{2, 1}) = (-grid.dims[1], Int32(0), grid.dims[1])
-
-@inline function row_offsets(grid::CellGrid{3, 1})
-    n1  = grid.dims[1]
-    n12 = grid.dims[1] * grid.dims[2]
-    return (-n12 - n1, -n12, -n12 + n1, -n1, Int32(0), n1, n12 - n1, n12, n12 + n1)
+@inline function global_coords(grid::CellGrid{D}, c::Int32) where {D}
+    l = local_coords(grid, c)
+    return ntuple(d -> l[d] + grid.origin[d], Val(D))
 end
 
 """
-Lazy row offsets of a grid with reach `R >= 2`: `(2R+1)^(D-1)` offsets in
-the same order as the tuples above (last coordinate outermost). A tuple
-would unroll the pair loop body 25 times in 3D, which costs instruction
-cache; this iterates with a counter instead.
+One row of the neighbour stencil: `off` is the linear index offset of the
+row's centre cell from the particle's own cell, `dy` and `dz` the shifts of
+the row along the second and third axis in cells (`dz = 0` in 2D).
 """
-struct RowOffsets{D, R}
+struct CellRow
+    off::Int32
+    dy::Int32
+    dz::Int32
+end
+
+"""
+    cell_rows(grid)
+
+The neighbouring rows of an interior cell (`2R+1` rows in 2D, `(2R+1)^2` in
+3D). Each row holds the `2R+1` consecutive cells `(cx-R .. cx+R)`; `off`
+points at the centre cell of the row. For `R = 1` a tuple (the kernels' row
+loops unroll), for `R >= 2` a lazy iterator.
+"""
+@inline function cell_rows(grid::CellGrid{2, 1})
+    n1 = grid.dims[1]
+    return (CellRow(-n1, Int32(-1), Int32(0)), CellRow(Int32(0), Int32(0), Int32(0)),
+            CellRow(n1, Int32(1), Int32(0)))
+end
+
+@inline function cell_rows(grid::CellGrid{3, 1})
+    n1  = grid.dims[1]
+    n12 = grid.dims[1] * grid.dims[2]
+    return (CellRow(-n12 - n1, Int32(-1), Int32(-1)), CellRow(-n12, Int32(0), Int32(-1)),
+            CellRow(-n12 + n1, Int32(1), Int32(-1)),
+            CellRow(-n1, Int32(-1), Int32(0)), CellRow(Int32(0), Int32(0), Int32(0)),
+            CellRow(n1, Int32(1), Int32(0)),
+            CellRow(n12 - n1, Int32(-1), Int32(1)), CellRow(n12, Int32(0), Int32(1)),
+            CellRow(n12 + n1, Int32(1), Int32(1)))
+end
+
+"""
+Lazy rows of a grid with reach `R >= 2`: `(2R+1)^(D-1)` rows in the same
+order as the tuples above (last coordinate outermost). A tuple would unroll
+the pair loop body 25 times in 3D, which costs instruction cache; this
+iterates with a counter instead.
+"""
+struct CellRows{D, R}
     n1::Int32
     n12::Int32
 end
 
-Base.length(::RowOffsets{D, R}) where {D, R} = (2R + 1)^(D - 1)
-Base.eltype(::Type{<:RowOffsets}) = Int32
-@inline Base.iterate(r::RowOffsets) = iterate(r, Int32(0))
-@inline function Base.iterate(r::RowOffsets{D, R}, k::Int32) where {D, R}
+Base.length(::CellRows{D, R}) where {D, R} = (2R + 1)^(D - 1)
+Base.eltype(::Type{<:CellRows}) = CellRow
+@inline Base.iterate(r::CellRows) = iterate(r, Int32(0))
+@inline function Base.iterate(r::CellRows{D, R}, k::Int32) where {D, R}
     W = Int32(2R + 1)
     k >= W^(D - 1) && return nothing
-    off = D == 2 ? (k - Int32(R)) * r.n1 : (k ÷ W - Int32(R)) * r.n12 + (k % W - Int32(R)) * r.n1
-    return off, k + Int32(1)
+    dy = D == 2 ? k - Int32(R) : k % W - Int32(R)
+    dz = D == 2 ? Int32(0)     : k ÷ W - Int32(R)
+    return CellRow(dy * r.n1 + dz * r.n12, dy, dz), k + Int32(1)
 end
 
-@inline row_offsets(grid::CellGrid{D, R}) where {D, R} = RowOffsets{D, R}(grid.dims[1], grid.dims[1] * grid.dims[2])
+@inline cell_rows(grid::CellGrid{D, R}) where {D, R} = CellRows{D, R}(grid.dims[1], grid.dims[1] * grid.dims[2])
+
+"""
+    row_offsets(grid)
+
+Linear index offsets of the rows of `cell_rows(grid)` (a tuple for `R = 1`,
+lazy otherwise).
+"""
+@inline row_offsets(grid::CellGrid{D, 1}) where {D} = map(r -> r.off, cell_rows(grid))
+@inline row_offsets(grid::CellGrid) = Iterators.map(r -> r.off, cell_rows(grid))
 
 """
     row_range(grid, CellStart, c, off) -> (jlo, jhi)
 
 The (1-based, inclusive) particle index range of the row of `2R+1` cells
-centred on cell `c + off`, where `off` is one of `row_offsets(grid)`.
+centred on cell `c + off`, where `off` is one of `row_offsets(grid)` or a
+`CellRow` of `cell_rows(grid)`.
 """
 @inline function row_range(grid::CellGrid{D, R}, CellStart, c::Int32, off::Int32) where {D, R}
     row0 = c + off - Int32(R)
@@ -195,11 +247,98 @@ centred on cell `c + off`, where `off` is one of `row_offsets(grid)`.
     return jlo, jhi
 end
 
+@inline row_range(grid::CellGrid, CellStart, c::Int32, row::CellRow) = row_range(grid, CellStart, c, row.off)
+
+#---------------------------------------------------------------
+# Cell relative positions (DualSPHysics `poscell`)
+#---------------------------------------------------------------
+
+"""
+    PosCell{D, T}
+
+Position of a particle relative to the anchor of its cell list cell, in the
+working precision `T`, together with the linear index of that cell. Built
+from the (possibly higher precision) position by `pos_cell`; pair vectors are
+formed with `pair_vector`. The anchor is `cell * cellsize` in the global cell
+coordinates, so the relative position is bounded by the cell edge plus the
+displacement since the last rebuild, and rounding it to `T` costs an ulp of
+the cell edge instead of an ulp of the position itself. In 3D the struct is
+16 bytes, the `float4` of DualSPHysics.
+"""
+struct PosCell{D, T}
+    rel::SVector{D, T}
+    cell::Int32
+end
+
+"""
+    cell_size(grid, H) -> H / R
+
+Edge of a cell of `grid` for the support radius `H` (in the precision of `H`;
+exact for `R = 1, 2, 4`). The pair vectors of `PosCell`s are formed with this
+value, so it must be the same in `pos_cell` and `pair_vector`.
+"""
+@inline cell_size(::CellGrid{D, R}, H::T) where {D, R, T} = H / T(R)
+
+"""
+    cell_anchor(c, s, TP) -> SVector{D, TP}
+
+Anchor point of the cell with global coordinates `c` and edge `s`, in the
+position precision `TP`: `c * s` evaluated in `TP`, exact for the cell counts
+of any realistic grid.
+"""
+@inline cell_anchor(c::NTuple{D, Int32}, s::T, ::Type{TP}) where {D, T, TP} =
+    SVector{D, TP}(ntuple(d -> TP(c[d]) * TP(s), Val(D)))
+
+"""
+    pos_cell(x, c, grid, s) -> PosCell
+    pos_cell(x, cg, s)      -> PosCell
+
+Cell relative form of the position `x` for the linear cell `c` of `grid`
+(the cell the particle was binned into) and cell edge `s`, or, for a point
+that is not a particle (a ghost node), for the global cell coordinates `cg`
+(the stored cell index is then meaningless and set to zero).
+"""
+@inline function pos_cell(x::SVector{D, TP}, c::Int32, grid::CellGrid{D}, s::T) where {D, TP, T}
+    return PosCell{D, T}(SVector{D, T}(x - cell_anchor(global_coords(grid, c), s, TP)), c)
+end
+
+@inline function pos_cell(x::SVector{D, TP}, cg::NTuple{D, Int32}, s::T) where {D, TP, T}
+    return PosCell{D, T}(SVector{D, T}(x - cell_anchor(cg, s, TP)), Int32(0))
+end
+
+@inline cell_shift(::Val{2}, δx::Int32, row::CellRow, ::Type{T}) where {T} = SVector{2, T}(T(δx), T(-row.dy))
+@inline cell_shift(::Val{3}, δx::Int32, row::CellRow, ::Type{T}) where {T} =
+    SVector{3, T}(T(δx), T(-row.dy), T(-row.dz))
+
+"""
+    pair_vector(pos, pᵢ, j, rowcell, row, s) -> xᵢ - xⱼ
+
+Vector from particle `j` to the reference `pᵢ` (`pos[i]` for a particle),
+where `j` lies in the stencil row `row` and `rowcell` is the linear index of
+the cell of that row with the first coordinate of the reference. With plain
+positions this is `pᵢ - pos[j]` (`rowcell`, `row` and `s` are ignored). With
+`PosCell`s it is `(relᵢ - relⱼ) + s * (cellᵢ - cellⱼ)`: the cell difference is
+`(rowcell - cellⱼ, -row.dy, -row.dz)`, at most the reach of the grid per axis,
+so the whole computation stays in the working precision.
+"""
+@inline function pair_vector(Position::AbstractVector{<:SVector}, xᵢ::SVector, j::Int32, rowcell::Int32,
+                             row::CellRow, s)
+    @inbounds return xᵢ - Position[j]
+end
+
+@inline function pair_vector(PosCells::AbstractVector{PosCell{D, T}}, pᵢ::PosCell{D, T}, j::Int32,
+                             rowcell::Int32, row::CellRow, s::T) where {D, T}
+    @inbounds pⱼ = PosCells[j]
+    return (pᵢ.rel - pⱼ.rel) + s * cell_shift(Val(D), rowcell - pⱼ.cell, row, T)
+end
+
 """
 Device side buffers of the cell list. Capacities grow on demand when the
 bounding box of the particles grows; `generation` counts those
 reallocations so that holders of raw device pointers (captured graphs) can
 notice. `grid_dev` is a one element device copy of `grid` for the kernels.
+`T` is the element type of the positions that are binned (`Float64` with
+`GPUDoublePosition`), used by the bounding box reduction.
 """
 mutable struct CellListWorkspace{D, T, R, W <: ReductionWorkspace}
     grid::CellGrid{D, R}
@@ -218,8 +357,9 @@ end
 """
     CellListWorkspace{D, T}(n; reach = 1, max_cells, deterministic)
 
-Cell list buffers for `n` particles. `reach` selects the grid: cells of edge
-`H / reach` and a `(2 reach + 1)^D` stencil (see the module documentation).
+Cell list buffers for `n` particles whose positions are `SVector{D, T}`.
+`reach` selects the grid: cells of edge `H / reach` and a `(2 reach + 1)^D`
+stencil (see the module documentation).
 """
 function CellListWorkspace{D, T}(n::Integer; reach::Integer = 1, max_cells::Integer = 50_000_000,
                                  deterministic::Bool = true) where {D, T}
@@ -368,14 +508,16 @@ in `srcs` into `dsts` by cell. `srcs`/`dsts` are tuples of device arrays of
 equal length; the caller is expected to swap them afterwards. The sorted
 cell id of every particle is written to `dsts[end]` when `srcs[end]` is the
 workspace scratch cell id array, so include `(ws.CellIDScratch => CellID)`
-as the last pair.
+as the last pair. `InverseCutOff` is used in its own precision (the working
+precision), so positions of a higher precision are binned exactly like the
+ghost nodes in the kernels.
 """
 function update_cell_list!(ws::CellListWorkspace{D, T, R}, Position::CuVector{SVector{D, T}},
                            InverseCutOff, srcs::Tuple, dsts::Tuple) where {D, T, R}
     n = length(Position)
 
     # Cells have edge H / R: bin with R / H (exact for R = 1, 2).
-    inv_cell = bin_scale(ws.grid, T(InverseCutOff))
+    inv_cell = bin_scale(ws.grid, InverseCutOff)
 
     # Bounding box of all particles -> grid with an R cell margin.
     init = SVector{2D, T}(ntuple(k -> k <= D ? T(Inf) : T(-Inf), Val(2D)))

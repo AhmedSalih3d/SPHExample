@@ -8,7 +8,7 @@ export SimulationMetaData, UpdateMetaData!, ShiftingMode, NoShifting, PlanarShif
        MDBCMode, NoMDBC, SimpleMDBC,
        LogMode, NoLog, StoreLog,
        TimeSteppingMode, SymplecticTimeStepping, SingleNeighborTimeStepping,
-       OUTPUT_VARIABLES, DEFAULT_OUTPUT_VARIABLES, resolve_output_variables!
+       OUTPUT_VARIABLES, DEFAULT_OUTPUT_VARIABLES, resolve_output_variables!, position_float_type
 
 # Mode types shared with the CPU package. They select code paths at compile
 # time (as type parameters of `SimulationMetaData`) instead of run time flags,
@@ -56,6 +56,13 @@ passed to `RunSimulation` as `SimTimeStepping` and stored in the
 Unlike the CPU version the keyword constructor converts `OutputTimes` (a number
 or a vector of numbers) to `FloatType`, so `OutputTimes = 0.01` also works for
 `FloatType = Float32`.
+
+`GPUDoublePosition = true` stores and integrates the particle positions in
+`Float64` while velocities, densities, forces and all constants stay in
+`FloatType` (the `posdouble` mode of DualSPHysics). The pair loops then read
+cell relative positions in `FloatType`, see `GPUCellGrid.PosCell`. Allocate
+the host particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so
+that they hold `Float64` positions from the input files onwards.
 """
 mutable struct SimulationMetaData{Dimensions,
                                   FloatType <: AbstractFloat,
@@ -93,7 +100,17 @@ mutable struct SimulationMetaData{Dimensions,
     GPUMaxStepsPerSync::Int      # upper bound on the time steps enqueued between two host read backs
     GPUUseGraph::Bool            # replay the launch sequence of a step as a CUDA graph
     GPUCellSubdivision::Int      # cells per support radius H per axis (1: edge H, 3^D stencil; 2: edge H/2, 5^D stencil)
+    GPUDoublePosition::Bool      # integrate positions in Float64 (pair loops use cell relative positions in FloatType)
 end
+
+"""
+    position_float_type(SimMetaData) -> Type
+
+Element precision of the particle positions: `Float64` with
+`GPUDoublePosition`, otherwise the `FloatType` of the meta data. With
+`FloatType = Float64` the option changes nothing.
+"""
+position_float_type(m::SimulationMetaData{D, T}) where {D, T} = m.GPUDoublePosition ? Float64 : T
 
 # Particle fields that can be written to the output files. `Position` is always
 # written as the point coordinates and is not listed. `Kernel` and
@@ -190,6 +207,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUMaxStepsPerSync::Int                 = 32,
         GPUUseGraph::Bool                       = true,
         GPUCellSubdivision::Int                 = 1,
+        GPUDoublePosition::Bool                 = false,
     ) where {Dimensions, FloatType <: AbstractFloat, SMode <: ShiftingMode, KMode <: KernelOutputMode,
              BMode <: MDBCMode, LMode <: LogMode}
     GPUCellSubdivision >= 1 || throw(ArgumentError("GPUCellSubdivision must be at least 1, got $GPUCellSubdivision"))
@@ -202,6 +220,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         OutputVariables, OpenLogFile, TimeSteppingMode,
         GPUSyncTimers, GPUDeterministicSort, GPUMaxCells, GPUInteractionThreads, GPULanesPerParticle,
         GPUBoundaryForces, GPUAsyncOutput, GPUMaxStepsPerSync, GPUUseGraph, GPUCellSubdivision,
+        GPUDoublePosition,
     )
 end
 

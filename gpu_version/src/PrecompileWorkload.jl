@@ -13,6 +13,9 @@
 #   - `precompile_float_types`: float types to precompile, default `["Float32"]`
 #   - `precompile_gpu_lanes`:   lanes per particle compiled for the gather
 #                               kernels, default `[1, 2, 4, 8, 16, 32]`
+#   - `precompile_double_position`: also run every case with
+#                               `GPUDoublePosition = true` (the cell relative
+#                               kernel variants), default `false`
 # `precompile_workload = false` (PrecompileTools) disables the workload.
 
 using PrecompileTools: @setup_workload, @compile_workload
@@ -29,6 +32,8 @@ const _PRECOMPILE_GPU_LANES = let
     lanes = @load_preference("precompile_gpu_lanes", [1, 2, 4, 8, 16, 32])
     Int[k for k in lanes if ispow2(k) && 1 <= k <= 32]
 end
+
+const _PRECOMPILE_DOUBLE_POSITION = @load_preference("precompile_double_position", false)::Bool
 
 # Write a small box of particles in the CSV layout of the files in `input/`: a
 # three layer floor, a fluid block and a block that can be moved. In 2D the
@@ -145,9 +150,10 @@ function _precompile_cases(dir::String, ::Type{T}) where {T}
 end
 
 # Complete run on the GPU, as done by the example scripts.
-function _precompile_run(case, lanes::Int)
+function _precompile_run(case, lanes::Int, double_position::Bool)
     meta = case.SimMetaData
     meta.GPULanesPerParticle = lanes
+    meta.GPUDoublePosition   = double_position
     CleanUpSimulationFolder(meta.SaveLocation)
     particles = AllocateDataStructures(case.SimGeometry, meta)
     logger    = SimulationLogger(meta.SaveLocation; to_console = true)
@@ -187,14 +193,15 @@ end
     # the automatic choice (0) depends on the particle count and the device, so
     # every lane count of the preference is compiled.
     lane_counts = gpu ? [_PRECOMPILE_GPU_LANES; 0] : [0]
+    position_modes = _PRECOMPILE_DOUBLE_POSITION ? (false, true) : (false,)
     @compile_workload begin
         redirect_stdout(devnull) do
-            for T in _PRECOMPILE_FLOAT_TYPES, (n, lanes) in enumerate(lane_counts)
+            for T in _PRECOMPILE_FLOAT_TYPES, (n, lanes) in enumerate(lane_counts), dpos in position_modes
                 # Every run gets fresh meta data and its own save locations.
-                for case in _precompile_cases(mkpath(joinpath(dir, "$(T)_$(n)")), T)
+                for case in _precompile_cases(mkpath(joinpath(dir, "$(T)_$(n)_$(dpos)")), T)
                     if gpu
                         try
-                            _precompile_run(case, lanes)
+                            _precompile_run(case, lanes, dpos)
                         catch err
                             # Never make the package unloadable because of the
                             # GPU (e.g. out of memory); fall back to the host code.

@@ -187,8 +187,18 @@ relerr(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), eps(eltype(b))))
         end
         g1 = CellGrid{3}((Int32(0), Int32(0), Int32(0)), (Int32(10), Int32(8), Int32(6)), Int32(480))
         @test SPHExampleGPU.GPUCellGrid.row_offsets(g1) == (-90, -80, -70, -10, 0, 10, 70, 80, 90)
+        rows = cell_rows(g1)
+        @test rows isa Tuple && length(rows) == 9
+        @test [r.off for r in rows] == [-90, -80, -70, -10, 0, 10, 70, 80, 90]
+        @test [r.dy for r in rows] == [-1, 0, 1, -1, 0, 1, -1, 0, 1]
+        @test [r.dz for r in rows] == [-1, -1, -1, 0, 0, 0, 1, 1, 1]
+        @test all(r.off == r.dy * 10 + r.dz * 80 for r in rows)
+        @test all(r.dz == 0 for r in cell_rows(grid))
         CellStart = Int32.(0:10:1000)
         @test SPHExampleGPU.GPUCellGrid.row_range(g1, CellStart, Int32(50), Int32(0)) == (CellStart[49] + 1, CellStart[52])
+        @test SPHExampleGPU.GPUCellGrid.row_range(g1, CellStart, Int32(50), rows[5]) == (CellStart[49] + 1, CellStart[52])
+        @test cell_size(g1, 0.04f0) === 0.04f0
+        @test SPHExampleGPU.GPUCellGrid.global_coords(g1, SPHExampleGPU.GPUCellGrid.linear_cell(g1, (Int32(3), Int32(4), Int32(3)))) == (3, 4, 3)
     end
 
     @testset "cell grid helpers, half width cells (reach 2)" begin
@@ -204,10 +214,17 @@ relerr(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), eps(eltype(b))))
         @test G.local_coords(grid, G.linear_cell(grid, (Int32(-3), Int32(-2)))) == (2, 2)
         @test G.local_coords(grid, G.linear_cell(grid, (Int32(100), Int32(100)))) == (7, 5)
         @test collect(G.row_offsets(grid)) == [-20, -10, 0, 10, 20]
+        @test [r.dy for r in G.cell_rows(grid)] == [-2, -1, 0, 1, 2]
+        @test G.cell_size(grid, 0.04f0) === 0.02f0
         g3 = CellGrid{3, 2}((Int32(0), Int32(0), Int32(0)), (Int32(10), Int32(8), Int32(6)), Int32(480))
         offs = collect(G.row_offsets(g3))
         @test length(offs) == 25
         @test offs[13] == 0 && offs[1] == -2 * 80 - 2 * 10 && offs[25] == 2 * 80 + 2 * 10
+        rows3 = collect(G.cell_rows(g3))
+        @test length(rows3) == 25 && eltype(rows3) == CellRow
+        @test all(r.off == r.dy * 10 + r.dz * 80 for r in rows3)
+        @test rows3[1].dy == -2 && rows3[1].dz == -2 && rows3[25].dy == 2 && rows3[25].dz == 2
+        @test length(unique((r.dy, r.dz) for r in rows3)) == 25
         CellStart = Int32.(0:10:1000)
         @test G.row_range(g3, CellStart, Int32(50), Int32(0)) == (CellStart[48] + 1, CellStart[53])
         @test_throws ArgumentError SimulationMetaData{2, Float32}(SimulationName = "x", SaveLocation = mktempdir(),
@@ -326,6 +343,198 @@ relerr(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), eps(eltype(b))))
             @test all(isfinite, p.Density)
             @test all(x -> all(isfinite, x), p.Position)
             @test 900 < minimum(p.Density) && maximum(p.Density) < 1100
+        end
+    end
+
+    @testset "cell relative positions form exact pair vectors far from the origin" begin
+        # `pair_vector` on `PosCell`s must reproduce the Float64 pair vector to
+        # an ulp of the cell edge, where the Float32 difference of the rounded
+        # positions carries an ulp of the position (a thousand times larger at
+        # an offset of 1e4 with H = 0.04).
+        G = SPHExampleGPU.GPUCellGrid
+        H = 0.04f0
+        for (D, R) in ((2, 1), (3, 1), (3, 2))
+            offset = SVector{D, Float64}(ntuple(d -> (-1.0)^d * 1e4 + 3.0 * d, D))
+            c0     = G.cell_coords(offset, G.bin_scale(CellGrid{D, R}(), 1 / H))
+            grid   = CellGrid{D, R}(c0 .- Int32(40), ntuple(_ -> Int32(80), D), Int32(80^D))
+            s      = cell_size(grid, H)
+            inv    = G.bin_scale(grid, 1 / H)
+            @test s === H / R
+            n1, n2 = grid.dims[1], grid.dims[2]
+            worst_pc = 0.0; worst_naive = 0.0; tested = 0
+            for _ in 1:2000
+                xi = offset + 0.2 .* randn(SVector{D, Float64})
+                xj = xi + 0.03 .* randn(SVector{D, Float64})
+                gi = G.cell_coords(xi, inv); gj = G.cell_coords(xj, inv)
+                # `linear_cell` clamps into the margin: keep to the interior
+                (G.in_grid(grid, gi .- Int32(R)) && G.in_grid(grid, gi .+ Int32(R)) &&
+                 G.in_grid(grid, gj .- Int32(R)) && G.in_grid(grid, gj .+ Int32(R))) || continue
+                ci = G.linear_cell(grid, gi)
+                cj = G.linear_cell(grid, gj)
+                d  = G.local_coords(grid, cj) .- G.local_coords(grid, ci)
+                all(abs.(d) .<= R) || continue
+                dy = Int32(d[2]); dz = D == 3 ? Int32(d[3]) : Int32(0)
+                row = CellRow(dy * n1 + dz * n1 * n2, dy, dz)
+                pcs = [pos_cell(xi, ci, grid, s), pos_cell(xj, cj, grid, s)]
+                @test all(abs.(pcs[1].rel) .<= s)                    # bounded by the cell edge
+                @test pcs[1].cell == ci && pcs[2].cell == cj
+                v     = pair_vector(pcs, pcs[1], Int32(2), ci + row.off, row, s)
+                exact = xi - xj
+                naive = SVector{D, Float32}(xi) - SVector{D, Float32}(xj)
+                @test v isa SVector{D, Float32}
+                worst_pc    = max(worst_pc, norm(v - exact))
+                worst_naive = max(worst_naive, norm(naive - exact))
+                tested += 1
+            end
+            @test tested > 500
+            @test worst_pc < 1e-5 * H
+            @test worst_naive > 100 * worst_pc
+            # plain positions: the reference is the position itself
+            xs = [offset, offset + SVector{D, Float64}(ntuple(_ -> 0.01, D))]
+            @test pair_vector(xs, xs[1], Int32(2), Int32(0), CellRow(Int32(0), Int32(0), Int32(0)), s) == xs[1] - xs[2]
+            # a point that is not a particle (ghost node) is referred to its own cell
+            cg = G.cell_coords(offset, inv)
+            pg = pos_cell(offset, cg, s)
+            @test pg.cell == 0 && all(abs.(pg.rel) .<= s)
+        end
+    end
+
+    @testset "double positions: allocation, upload and download" begin
+        case = BENCH_CASES[findfirst(c -> c.name == "StillWedge2D_MDBC_dp0.02", BENCH_CASES)]
+        save = mktempdir()
+        kw   = case.build(Float32, save)
+        meta = kw.SimMetaData
+        @test meta.GPUDoublePosition == false
+        @test position_float_type(meta) === Float32
+        meta.GPUDoublePosition = true
+        @test position_float_type(meta) === Float64
+        @test position_float_type(SimulationMetaData{2, Float64}(SimulationName = "m", SaveLocation = save,
+                                                                  GPUDoublePosition = true)) === Float64
+        host = AllocateDataStructures(kw.SimGeometry, meta)
+        # only the positions (and ghost nodes) are Float64, as in DualSPHysics
+        @test eltype(host.Position)    == SVector{2, Float64}
+        @test eltype(host.GhostPoints) == SVector{2, Float64}
+        @test eltype(host.Velocity)    == SVector{2, Float32}
+        @test eltype(host.Density)     == Float32
+        @test eltype(host.Acceleration) == SVector{2, Float32}
+        @test eltype(host.GhostNormals) == SVector{2, Float32}
+        # the input is read with its full precision
+        host32 = AllocateDataStructures(kw.SimGeometry)
+        @test eltype(host32.Position) == SVector{2, Float32}
+        @test host32.ID == host.ID
+        @test maximum(norm.(host32.Position .- host.Position)) < 1e-6
+        @test any(host32.Position .!= host.Position)
+        dev = upload_particles(host; position_type = Float64)
+        @test position_type(dev) === Float64
+        @test eltype(dev.Position) == SVector{2, Float64} && eltype(dev.Velocity) == SVector{2, Float32}
+        @test eltype(dev.scratch.Position) == SVector{2, Float64}
+        # a Float32 host array is converted on upload, and back on download
+        dev2 = upload_particles(host32; position_type = Float64)
+        @test position_type(dev2) === Float64
+        @test Array(dev2.Position) == SVector{2, Float64}.(host32.Position)
+        @test position_type(upload_particles(host32)) === Float32
+        cl = CellListWorkspace{2, Float64}(length(host32))
+        grid = SPHExampleGPU.SPHCellList.rebuild_cell_list!(dev2, cl, kw.SimKernel.H⁻¹)
+        back = deepcopy(host32)
+        download_particles!(back, dev2, grid, (:ID,))
+        @test eltype(back.Position) == SVector{2, Float32}
+        @test back[sortperm(back.ID)].Position == host32.Position    # host32 is in ID order
+        sup = GPUSupportArrays{2, Float32}(length(host); position_type = Float64)
+        @test uses_pos_cells(sup)
+        @test eltype(sup.PosCells) == PosCell{2, Float32} && eltype(sup.Positionₙ⁺) == SVector{2, Float64}
+        @test eltype(sup.Velocityₙ⁺) == SVector{2, Float32}
+        @test !uses_pos_cells(GPUSupportArrays{2, Float32}(4))
+        @test GPUSupportArrays{2, Float32}(4).PosCells === nothing
+    end
+
+    @testset "double positions run and match single precision positions nearby" begin
+        # Near the origin the two representations differ at the Float32 ulp
+        # level only. mDBC (ghost nodes referred to their cell), lanes, the
+        # half width grid, moving bodies and shifting all go through the cell
+        # relative pair vectors.
+        for (name, kwargs) in (("StillWedge2D_MDBC_dp0.02", (;)),
+                               ("DamBreak3D_dp0.02", (;)),
+                               ("DamBreak3D_dp0.02", (; GPUCellSubdivision = 2, GPULanesPerParticle = 1)),
+                               ("MovingSquare2D_dp0.04", (;)))
+            case = BENCH_CASES[findfirst(c -> c.name == name, BENCH_CASES)]
+            p32, m32 = run_gpu(case, Float32, 0.004; kwargs...)
+            pd,  md  = run_gpu(case, Float32, 0.004; GPUDoublePosition = true, kwargs...)
+            @test md.GPUDoublePosition
+            @test eltype(pd.Position) == SVector{case.dims, Float64}
+            @test eltype(pd.Velocity) == SVector{case.dims, Float32}
+            @test eltype(pd.Density)  == Float32
+            @test m32.Iteration == md.Iteration > 1
+            @test pd.ID == p32.ID
+            @test all(isfinite, pd.Density) && all(x -> all(isfinite, x), pd.Position)
+            @test 900 < minimum(pd.Density) && maximum(pd.Density) < 1100
+            # the impulsively started square amplifies any rounding difference
+            tol = name == "MovingSquare2D_dp0.04" ? 1e-2 : 1e-4
+            @test maximum(norm.(pd.Position .- p32.Position)) < tol
+            @test relerr(pd.Density, p32.Density) < tol
+        end
+        # with Float64 arithmetic the option changes nothing at all
+        case = BENCH_CASES[findfirst(c -> c.name == "StillWedge2D_MDBC_dp0.02", BENCH_CASES)]
+        p1, _ = run_gpu(case, Float64, 0.004)
+        p2, m2 = run_gpu(case, Float64, 0.004; GPUDoublePosition = true)
+        @test m2.GPUDoublePosition
+        @test p1.Position == p2.Position && p1.Density == p2.Density && p1.Velocity == p2.Velocity
+    end
+
+    @testset "double positions keep the precision far from the origin" begin
+        # The same still wedge translated by 1e4 in both directions. Float32
+        # positions are then quantised to about 1e-3 (a tenth of dx) and the
+        # run degrades; Float64 positions with Float32 arithmetic on cell
+        # relative coordinates stay as close to the Float64 reference as the
+        # untranslated Float32 run.
+        case = BENCH_CASES[findfirst(c -> c.name == "StillWedge2D_DBC_dp0.01", BENCH_CASES)]
+        off  = SVector(1.0e4, 1.0e4)
+        function run_shifted(::Type{T}, simtime; kwargs...) where {T}
+            save = mktempdir()
+            kw   = case.build(T, save)
+            kw.SimMetaData.SimulationTime = T(simtime)
+            kw.SimMetaData.OutputTimes    = T(simtime)
+            for (k, v) in kwargs
+                setproperty!(kw.SimMetaData, k, v)
+            end
+            particles = AllocateDataStructures(kw.SimGeometry, kw.SimMetaData)
+            particles.Position .+= Ref(eltype(particles.Position)(off))
+            logger = SimulationLogger(save; to_console = false)
+            RunSimulation(; kw..., SimLogger = logger, SimParticles = particles)
+            order = sortperm(particles.ID)
+            return particles[order], kw.SimMetaData, save
+        end
+        simtime = 0.02
+        ref,   mref, _    = run_shifted(Float64, simtime)
+        plain, mp,   _    = run_shifted(Float32, simtime)
+        dbl,   md,   save = run_shifted(Float32, simtime; GPUDoublePosition = true)
+        near,  _          = run_gpu(case, Float32, simtime)
+        ref0,  _          = run_gpu(case, Float64, simtime)
+        @test mref.Iteration == mp.Iteration == md.Iteration > 100
+        @test ref.ID == plain.ID == dbl.ID
+        dx_plain = maximum(norm.(plain.Position .- ref.Position))
+        dx_dbl   = maximum(norm.(dbl.Position .- ref.Position))
+        dx_near  = maximum(norm.(near.Position .- ref0.Position))
+        dρ_plain = relerr(plain.Density, ref.Density)
+        dρ_dbl   = relerr(dbl.Density, ref.Density)
+        dρ_near  = relerr(near.Density, ref0.Density)
+        @info "offset 1e4: max |Δx| plain Float32 = $dx_plain, Float64 positions = $dx_dbl (nearby Float32: $dx_near); " *
+              "max rel Δρ plain = $dρ_plain, Float64 positions = $dρ_dbl (nearby: $dρ_near)"
+        @test dx_plain > 2e-4                     # the Float32 ulp at 1e4 is about 1e-3
+        @test dx_dbl   < 5e-5
+        @test dx_dbl   < dx_plain / 20
+        @test dx_dbl   < 10 * dx_near
+        @test dρ_plain > 5e-4
+        @test dρ_dbl   < 2e-4
+        @test dρ_dbl   < 10 * dρ_near
+        @test all(abs.(first.(dbl.Position) .- 1e4) .< 10)   # the particles stayed where they were put
+        # the positions are written to the file with their Float64 precision
+        h5open(joinpath(save, md.SimulationName * ".vtkhdf"), "r") do fid
+            pts = read(fid["VTKHDF"]["Points"])
+            @test eltype(pts) == Float64
+            n = length(dbl)
+            last_frame = pts[:, end - n + 1:end]
+            @test maximum(abs.(sort(last_frame[1, :]) .- sort(first.(dbl.Position)))) < 1e-9
+            @test eltype(read(fid["VTKHDF"]["PointData"]["Velocity"])) == Float32
         end
     end
 

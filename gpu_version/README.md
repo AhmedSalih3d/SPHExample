@@ -37,6 +37,14 @@ precision with `FloatType = Float32` or `Float64` at the top of a script.
   modern multi core CPU. Datacenter GPUs (A100, H100) have fast `Float64`.
   `Float32` is the precision DualSPHysics uses by default as well; densities
   stay well within the ~1 % variation of weakly compressible SPH.
+* `Float32` with `GPUDoublePosition = true` keeps the positions alone in
+  `Float64`, like the `posdouble` mode of DualSPHysics. A `Float32` position
+  is quantised to an ulp of its distance from the origin (1e-3 at 10 000 m,
+  a tenth of a typical `dx`), and every step adds increments that are far
+  smaller than that ulp; a `Float64` position is not. The pair loops never
+  read the `Float64` positions, they work on cell relative `Float32`
+  coordinates (see "Double positions" below), so the cost is a `Float64`
+  add per particle per step and there is no measurable slowdown.
 
 ### Startup time and precompilation
 
@@ -74,6 +82,8 @@ using Preferences, SPHExampleGPU
 set_preferences!(SPHExampleGPU, "precompile_float_types" => ["Float32", "Float64"])
 # lanes per particle compiled for the gather kernels (default [1, 2, 4, 8, 16, 32])
 set_preferences!(SPHExampleGPU, "precompile_gpu_lanes" => [1])
+# also cache the kernels of GPUDoublePosition = true (cell relative positions)
+set_preferences!(SPHExampleGPU, "precompile_double_position" => true)
 # turn the workload off, e.g. while editing the package source
 set_preferences!(SPHExampleGPU, "precompile_workload" => false; force = true)
 ```
@@ -211,6 +221,35 @@ the standard *gather* formulation:
 * **Asynchronous output.** Particle data is downloaded when an output is due
   and written to `vtkhdf` by a Julia task while the GPU already integrates the
   next output interval (`GPUAsyncOutput = false` disables this).
+* **Double positions (`GPUDoublePosition = true`).** DualSPHysics stores
+  `posxy`/`posz` as doubles and everything else as floats, and hands the
+  interaction kernels a `float4 poscell`: the position relative to the
+  corner of the particle's cell plus the cell index, so that a pair distance
+  is `(poscell₁ - poscell₂) + cellsize * (cell₁ - cell₂)` in single
+  precision. The GPU version does the same. With the option on, `Position`,
+  the half step position and the mDBC ghost node positions are `Float64`
+  arrays on the device (and on the host when the particles are allocated
+  with `AllocateDataStructures(SimGeometry, SimMetaData)`); velocities,
+  densities, pressures, accelerations, the kernel sums and all constants
+  stay `FloatType`. The element-wise kernels add the `Float32` increment to
+  the `Float64` position (one promoted add per particle) and write the
+  `PosCell` of the half step position; a small kernel does the same for the
+  start-of-step position before every neighbour loop that evaluates it. The
+  interaction and mDBC kernels take a *pair source* argument, either the
+  position array (plain mode, unchanged code path and bitwise unchanged
+  results) or the `PosCell` array, and form every pair vector with
+  `pair_vector`: `(relᵢ - relⱼ) + s * (cellᵢ - cellⱼ)` with `s = H / R` the
+  cell edge and the cell difference `(rowcell - cellⱼ, -dy, -dz)` read off
+  the stencil row being scanned. A `PosCell{3, Float32}` is 16 bytes, so the
+  pair loop moves the same data as before instead of the 24 bytes of a
+  `Float64` position and does no `Float64` arithmetic. A ghost node is
+  referred to its own cell in the same way. With `FloatType = Float64` the
+  option is a no-op. Measured on the 2D still wedge (DBC, `dp = 0.01`)
+  translated by 10 000 m in both directions and run for 218 steps: plain
+  `Float32` ends 1.1e-3 from the `Float64` reference with a 2e-3 density and
+  8 % velocity error, `Float32` with double positions 1.7e-6, 1.2e-5 and
+  2e-4, the same as the untranslated `Float32` run; the step time was
+  identical.
 
 Data stays on the GPU for the whole run; the host `StructArray` passed to
 `RunSimulation` holds the state of the last written output (reordered by
@@ -257,8 +296,11 @@ definitions in `benchmark/cases.jl` construct against either package.
 | `GPUMaxStepsPerSync` | `32` | Upper bound on the steps enqueued between two host read backs of the device resident step state. The actual batch is the estimated number of steps until the next cell list rebuild or output. `1` reproduces a synchronization per step. |
 | `GPUUseGraph` | `true` | Capture the launch sequence of a step as a CUDA graph and replay it. Disabled automatically with `GPUSyncTimers`. |
 | `GPUCellSubdivision` | `1` | Cells per support radius `H` along each axis: `1` bins at `H` with a 3^D stencil (the CPU's cells), `2` at `H/2` with a 5^D stencil. Same neighbour pairs, fewer distance checks, more cell ranges per particle. Only `1` reproduces the CPU's orientation of the asymmetric density diffusion term (the results of the two grids differ by that term only). `2` pays off with one lane per particle (large cases); with many lanes it is slower. |
+| `GPUDoublePosition` | `false` | Store and integrate the particle positions (and the mDBC ghost node positions) in `Float64` while everything else stays in `FloatType`; the pair loops use cell relative `FloatType` coordinates (see "Double positions" above). Use it for `Float32` runs of domains far from the origin or with many steps. No effect with `FloatType = Float64`. Allocate the particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so that the input is read in `Float64`. |
 
 `OutputTimes` also accepts `Float64` values or vectors when `FloatType = Float32`.
+The positions of `Float32` runs are written as `Float64` to the output files
+in either case (that is the point precision of the writer).
 
 ## Layout
 
@@ -268,7 +310,7 @@ gpu_version/
 ├── src/
 │   ├── SPHExampleGPU.jl              # module glue, same exports as SPHExample
 │   ├── GPUReductions.jl              # fused SVector block reductions
-│   ├── GPUCellGrid.jl                # dense grid, counting sort, reorder kernel
+│   ├── GPUCellGrid.jl                # dense grid, counting sort, reorder kernel, cell relative positions
 │   ├── GPUKernels.jl                 # interaction, mDBC, half/final step kernels
 │   ├── SPHCellList.jl                # device containers, time loop, RunSimulation
 │   ├── PrecompileWorkload.jl         # tiny example runs cached at precompile time
@@ -290,9 +332,11 @@ julia --project=gpu_version gpu_version/test/runtests.jl
 ```
 
 The suite checks the grid helpers and reductions, bitwise reproducibility,
-`Float32` sanity, and runs four cases (2D mDBC wedge, 2D moving square with
-shifting and SPS turbulence, 3D dam break, 3D duckling with mDBC) with the CPU
-package in a separate process and compares the final state.
+`Float32` sanity, the cell relative pair vectors and the double position
+mode (including a case translated by 10 000 m), and runs four cases (2D
+mDBC wedge, 2D moving square with shifting and SPS turbulence, 3D dam break,
+3D duckling with mDBC) with the CPU package in a separate process and
+compares the final state.
 
 ## Benchmarks
 
@@ -302,6 +346,7 @@ package in a separate process and compares the final state.
 julia -t 24,0 --project=. gpu_version/benchmark/benchmark_cpu.jl
 # GPU
 julia --project=gpu_version gpu_version/benchmark/benchmark_gpu.jl --float32
+julia --project=gpu_version gpu_version/benchmark/benchmark_gpu.jl --float32 --double-position  # Float64 positions
 julia --project=gpu_version gpu_version/benchmark/benchmark_gpu.jl            # Float64
 # kernel level profile of one case
 julia --project=gpu_version gpu_version/benchmark/profile_steps.jl --float32 DamBreak3D_dp0.0085

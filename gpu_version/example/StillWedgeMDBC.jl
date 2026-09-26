@@ -42,6 +42,7 @@ let
         ExportSingleVTKHDF=true,
         ExportGridCells=true,
         OpenLogFile=true,
+        GPUDoublePosition= true,
         # OutputVariables = [
         #     # "ChunkID",
         #     # "Kernel",

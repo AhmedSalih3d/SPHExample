@@ -468,14 +468,16 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
         # Host array written for an output variable. In 2D the vector fields are
         # widened to three components into a buffer, allocated only for the
-        # fields that are actually written.
+        # fields that are actually written, each in the precision of its field
+        # (the positions and ghost nodes may be `Float64` with
+        # `GPUDoublePosition` while the other vector fields are `Float32`).
         vector_fields = ("KernelGradient", "Velocity", "Acceleration", "GhostPoints", "GhostNormals")
-        T = eltype(eltype(SimParticles.Position))
         n = length(SimParticles.Position)
         widen    = Dimensions == 2
-        pos_buf  = widen ? Vector{SVector{3, T}}(undef, n) : nothing
-        vec_bufs = Dict{String, Vector{SVector{3, T}}}(
-            name => Vector{SVector{3, T}}(undef, n) for name in output_vars if widen && name in vector_fields)
+        widened(src) = Vector{SVector{3, eltype(eltype(src))}}(undef, n)
+        pos_buf  = widen ? widened(SimParticles.Position) : nothing
+        vec_bufs = Dict{String, Vector}(
+            name => widened(getproperty(SimParticles, Symbol(name))) for name in output_vars if widen && name in vector_fields)
         function output_field(name)
             name == "Type" && return Int8.(SimParticles.Type)
             src = getproperty(SimParticles, Symbol(name))

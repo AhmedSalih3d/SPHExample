@@ -69,7 +69,7 @@ module SPHExampleGPU
            MDBCMode, NoMDBC, SimpleMDBC,
            LogMode, NoLog, StoreLog,
            TimeSteppingMode, SymplecticTimeStepping, SingleNeighborTimeStepping,
-           OUTPUT_VARIABLES, DEFAULT_OUTPUT_VARIABLES, resolve_output_variables!
+           OUTPUT_VARIABLES, DEFAULT_OUTPUT_VARIABLES, resolve_output_variables!, position_float_type
 
     using .SimulationConstantsConfiguration
     export SimulationConstants
@@ -81,15 +81,16 @@ module SPHExampleGPU
     export StepState, HostStep, readback!
 
     using .GPUCellGrid
-    export CellGrid, CellListWorkspace, update_cell_list!, compact_nonzero!, unique_cells_host, map_floor
+    export CellGrid, CellListWorkspace, update_cell_list!, compact_nonzero!, unique_cells_host, map_floor,
+           PosCell, CellRow, cell_rows, cell_size, pos_cell, pair_vector
 
     using .GPUKernels
     export launch_interactions!, launch_mdbc!, launch_motion!, launch_half_step!, launch_final_step!,
-           launch_finish!, launch_commit!, choose_lanes
+           launch_finish!, launch_commit!, launch_pos_cells!, choose_lanes
 
     using .SPHCellList
     export GPUParticles, GPUSupportArrays, MotionArrays, upload_particles, download_particles!,
-           RunSimulation, SimulationLoop
+           RunSimulation, SimulationLoop, position_type, uses_pos_cells
 
     using .OpenExternalPrograms
     export AutoOpenLogFile, AutoOpenParaview

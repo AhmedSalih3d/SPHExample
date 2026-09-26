@@ -7,15 +7,16 @@ using StaticArrays
 using StructArrays
 
 using ..SimulationGeometry
-using ..SimulationMetaDataConfiguration: SimulationMetaData
+using ..SimulationMetaDataConfiguration: SimulationMetaData, position_float_type
 
-function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType,
+# `T` is the working precision (densities), `TP` the precision of the positions.
+function LoadSpecificCSV(::Val{D}, ::Type{T}, ::Type{TP}, particle_type::ParticleType,
                          particle_group_marker::Int,
-                         specific_csv::String) where {D, T}
+                         specific_csv::String) where {D, T, TP}
     file  = CSV.File(specific_csv)
     nrows = length(file)
 
-    points       = Vector{SVector{D, T}}(undef, nrows)
+    points       = Vector{SVector{D, TP}}(undef, nrows)
     density      = Vector{T}(undef, nrows)
     types        = Vector{ParticleType}(undef, nrows)
     group_marker = Vector{Int}(undef, nrows)
@@ -30,9 +31,9 @@ function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType,
         Idp  = row[Symbol("Idp")] + 1
 
         points[i] = if D == 3
-            SVector{3,T}(P1, P2, P3)
+            SVector{3,TP}(P1, P2, P3)
         else
-            SVector{2,T}(P1, P3)
+            SVector{2,TP}(P1, P3)
         end
 
         density[i]      = Rhop
@@ -45,16 +46,24 @@ function LoadSpecificCSV(::Val{D}, ::Type{T}, particle_type::ParticleType,
     return points, density, types, group_marker, idp
 end
 
-# The device particle container always carries the ghost node and kernel
-# output fields, so the mode types of the meta data do not change the host
-# allocation. The two argument form exists for API parity with the CPU package,
-# which derives the optional fields from the meta data type.
-AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, FloatType}},
-                       ::SimulationMetaData{Dimensions, FloatType}) where {Dimensions, FloatType} =
-    AllocateDataStructures(SimGeometry)
+"""
+    AllocateDataStructures(SimGeometry, SimMetaData)
+    AllocateDataStructures(SimGeometry; position_type = FloatType)
 
-function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, FloatType}}) where {Dimensions, FloatType}
-    Position    = Vector{SVector{Dimensions, FloatType}}()
+Load the particles of every geometry into a host `StructArray`. The device
+particle container always carries the ghost node and kernel output fields,
+so the mode types of the meta data do not change the host allocation; the
+meta data selects the precision of the positions (`Float64` with
+`GPUDoublePosition`, see `position_float_type`). `Position` and
+`GhostPoints` are stored in that precision, every other field in `FloatType`.
+"""
+AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, FloatType}},
+                       SimMetaData::SimulationMetaData{Dimensions, FloatType}) where {Dimensions, FloatType} =
+    AllocateDataStructures(SimGeometry; position_type = position_float_type(SimMetaData))
+
+function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, FloatType}};
+                                position_type::Type{TP} = FloatType) where {Dimensions, FloatType, TP}
+    Position    = Vector{SVector{Dimensions, TP}}()
     Density     = Vector{FloatType}()
     Types       = Vector{ParticleType}()
     GroupMarker = Vector{UInt}()
@@ -66,7 +75,7 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
         specific_csv          = geom.CSVFile
 
         points, density, types, group_marker, idp =
-            LoadSpecificCSV(Val(Dimensions), FloatType, particle_type,
+            LoadSpecificCSV(Val(Dimensions), FloatType, TP, particle_type,
                            particle_group_marker, specific_csv)
 
         sizehint!(Position,    length(Position)    + length(points))
@@ -82,18 +91,18 @@ function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, Float
         append!(Idp,         idp)
     end
 
-    NumberOfPoints           = length(Position)
-    PositionType             = eltype(Position)
-    PositionUnderlyingType   = eltype(PositionType)
+    NumberOfPoints = length(Position)
+    PositionType   = eltype(Position)
+    VectorType     = SVector{Dimensions, FloatType}
 
-    Acceleration    = zeros(PositionType, NumberOfPoints)
-    Velocity        = zeros(PositionType, NumberOfPoints)
-    Kernel          = zeros(PositionUnderlyingType, NumberOfPoints)
-    KernelGradient  = zeros(PositionType, NumberOfPoints)
+    Acceleration    = zeros(VectorType, NumberOfPoints)
+    Velocity        = zeros(VectorType, NumberOfPoints)
+    Kernel          = zeros(FloatType, NumberOfPoints)
+    KernelGradient  = zeros(VectorType, NumberOfPoints)
     GhostPoints     = zeros(PositionType, NumberOfPoints)
-    GhostNormals    = zeros(PositionType, NumberOfPoints)
+    GhostNormals    = zeros(VectorType, NumberOfPoints)
 
-    Pressureᵢ      = zeros(PositionUnderlyingType, NumberOfPoints)
+    Pressureᵢ      = zeros(FloatType, NumberOfPoints)
     
     Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
 

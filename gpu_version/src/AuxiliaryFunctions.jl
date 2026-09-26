@@ -16,9 +16,9 @@ Convert a vector of 2D `SVector`s to 3D by appending a zero z-component.
     to_3d!(dest, src)
 
 Fill the preallocated vector `dest` with 3D versions of the 2D vectors in
-`src`. The resulting `SVector`s share the element type with `src`.
+`src`. The element type of `dest` decides the precision of the result.
 """
-function to_3d!(dest::AbstractVector{SVector{3,T}}, src::AbstractVector{SVector{2,T}}) where T
+function to_3d!(dest::AbstractVector{SVector{3,T}}, src::AbstractVector{SVector{2,S}}) where {T, S}
     @inbounds @simd for i in eachindex(src)
         v = src[i]
         dest[i] = SVector{3,T}(v[1], v[2], zero(T))

@@ -28,6 +28,16 @@ Every kernel of a time step takes the device resident step state (`step`, see
 first thing each kernel does is to return when the stop flag is set. The grid
 description is read from a one element device vector (`load_grid`), so none
 of the launch arguments of a step change between steps.
+
+Positions may be stored in a higher precision than the working precision
+(`GPUDoublePosition`). The pair loops then read cell relative positions
+(`PosCell`, see `GPUCellGrid`) instead of the positions: the interaction and
+mDBC kernels take a *pair source* argument, which is either the position
+array itself or the `PosCell` array, and form every pair vector with
+`pair_vector`. The element-wise kernels update the positions in their own
+precision (the increments are promoted) and write the cell relative form of
+the half step positions; `launch_pos_cells!` does the same for the
+start-of-step positions.
 """
 module GPUKernels
 
@@ -45,7 +55,7 @@ using ..GPUReductions
 using ..GPUStepState
 
 export launch_interactions!, launch_mdbc!, launch_motion!, launch_half_step!, launch_final_step!,
-       launch_inv_density!, launch_finish!, launch_commit!, launch_step_reduction!,
+       launch_inv_density!, launch_finish!, launch_commit!, launch_step_reduction!, launch_pos_cells!,
        step_map, step_reduce, choose_lanes, ELEMENTWISE_THREADS
 
 const ELEMENTWISE_THREADS = REDUCE_THREADS
@@ -157,12 +167,52 @@ function launch_inv_density!(InvDensity, Density, step)
 end
 
 #---------------------------------------------------------------
+# Cell relative positions of the start-of-step state (only with positions of
+# a higher precision than the working precision)
+#---------------------------------------------------------------
+
+# Cell relative form of position `x` of particle `i`, for the cell the
+# particle was binned into. A `nothing` destination (positions in the working
+# precision, no cell relative form needed) compiles to nothing.
+@inline store_pos_cell!(::Nothing, i, x, CellID, gridarg, H) = nothing
+@inline function store_pos_cell!(PosCells, i, x, CellID, gridarg, H)
+    grid = load_grid(gridarg)
+    @inbounds PosCells[i] = pos_cell(x, CellID[i], grid, cell_size(grid, H))
+    return nothing
+end
+
+function pos_cells_kernel!(PosCells, Position, CellID, gridarg, H, step, n::Int32)
+    step_active(step) || return nothing
+    i = thread_index()
+    i > n && return nothing
+    @inbounds store_pos_cell!(PosCells, i, Position[i], CellID, gridarg, H)
+    return nothing
+end
+
+"""
+    launch_pos_cells!(PosCells, Position, CellID, grid, step, SimKernel)
+
+Write the cell relative form (`PosCell`) of every position for the cell list
+whose sorted cell ids are `CellID`. Launched before the neighbour loops that
+evaluate the start-of-step positions when the positions are stored in a
+higher precision than the working precision; the half step kernel writes the
+form of the half step positions itself.
+"""
+function launch_pos_cells!(PosCells, Position, CellID, grid, step, SimKernel)
+    n = length(Position)
+    n == 0 && return nothing
+    @cuda threads=ELEMENTWISE_THREADS blocks=cld(n, ELEMENTWISE_THREADS) pos_cells_kernel!(
+        PosCells, Position, CellID, grid, SimKernel.H, step, Int32(n))
+    return nothing
+end
+
+#---------------------------------------------------------------
 # Particle interactions (gather)
 #---------------------------------------------------------------
 
 function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
-                             Position::AbstractVector{SVector{D, T}}, Density, InvDensity, Pressure,
-                             Velocity, ParticleType, SimParticles,
+                             Pairs, Position, Density, InvDensity, Pressure,
+                             Velocity::AbstractVector{SVector{D, T}}, ParticleType, SimParticles,
                              CellStart, CellID, gridarg, step,
                              SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
                              ::Val{FlagKernel}, ::Val{FlagShift}, ::Val{BoundaryForces}, ::Val{K},
@@ -176,6 +226,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
 
     (; m₀, dx)  = SimConstants
     (; h⁻¹, H²) = SimKernel
+    s = cell_size(grid, SimKernel.H)
 
     dρdt  = zero(T)
     acc   = zero(SVector{D, T})
@@ -185,7 +236,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
     ∇r    = zero(T)
 
     @inbounds if valid
-        xᵢ  = Position[i]
+        pᵢ  = Pairs[i]
         vᵢ  = Velocity[i]
         ρᵢ  = Density[i]
         ρᵢ⁻¹ = InvDensity[i]
@@ -202,12 +253,13 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
         own_lo = CellStart[c] + Int32(1)
         own_hi = CellStart[c + Int32(1)]
 
-        for off in row_offsets(grid)
-            jlo, jhi = row_range(grid, CellStart, c, off)
+        for row in cell_rows(grid)
+            jlo, jhi = row_range(grid, CellStart, c, row)
+            rowcell  = c + row.off
             j = jlo + lane
             while j <= jhi
                 if j != i
-                    xᵢⱼ  = xᵢ - Position[j]
+                    xᵢⱼ  = pair_vector(Pairs, pᵢ, j, rowcell, row, s)
                     xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
                     if xᵢⱼ² <= H²
                         dᵢⱼ   = sqrt(xᵢⱼ²)
@@ -301,7 +353,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
 end
 
 """
-    launch_interactions!(...; threads, lanes)
+    launch_interactions!(...; threads, lanes, boundary_forces, pos_cells)
 
 Launch the gather interaction kernel. `Position`, `Density`, `InvDensity`,
 `Pressure` and `Velocity` are the arrays of the state being evaluated (the
@@ -313,22 +365,26 @@ CPU code. Custom models additionally get the same arrays as the NamedTuple
 `CellGrid` or the device vector holding it, `step` the step state (see
 `GPUStepState`). `lanes` is the number of warp lanes per particle (`Val`).
 With `boundary_forces = Val(false)` the momentum terms are skipped for
-particles with `MotionLimiter == 0`.
+particles with `MotionLimiter == 0`. `pos_cells` is the `PosCell` array of
+`Position` when the positions are stored in a higher precision than the
+working precision (the pair vectors are then formed from it, see
+`GPUCellGrid`); `nothing` forms them from `Position` directly.
 """
 function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
                               Position, Density, InvDensity, Pressure, Velocity, ParticleType,
                               CellStart, CellID, grid, step,
                               SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
                               FlagKernel::Val, FlagShift::Val; threads::Integer = 128, lanes::Val = Val(1),
-                              boundary_forces::Val = Val(true))
+                              boundary_forces::Val = Val(true), pos_cells = nothing)
     n = length(Position)
     n == 0 && return nothing
     K = typeof(lanes).parameters[1]
+    Pairs = pos_cells === nothing ? Position : pos_cells
     SimParticles = (Position = Position, Density = Density, Velocity = Velocity, Pressure = Pressure,
                     Type = ParticleType)
     @cuda threads=threads blocks=cld(n * K, threads) interaction_kernel!(
         dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
-        Position, Density, InvDensity, Pressure, Velocity, ParticleType, SimParticles,
+        Pairs, Position, Density, InvDensity, Pressure, Velocity, ParticleType, SimParticles,
         CellStart, CellID, grid, step,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
         FlagKernel, FlagShift, boundary_forces, lanes, Int32(n))
@@ -339,17 +395,26 @@ end
 # mDBC: ghost node interpolation and density correction
 #---------------------------------------------------------------
 
+# Reference of a ghost node for `pair_vector`: the node itself in the working
+# precision, or its cell relative form for the cell with global coordinates
+# `cg` when the pair source holds `PosCell`s.
+@inline mdbc_reference(::AbstractVector{<:SVector}, gp::SVector{D, TP}, cg, s::T) where {D, TP, T} = SVector{D, T}(gp)
+@inline mdbc_reference(::AbstractVector{<:PosCell}, gp::SVector{D, TP}, cg::NTuple{D, Int32}, s::T) where {D, TP, T} =
+    pos_cell(gp, cg, s)
+
 # Accumulate the contributions of the fluid particles in the (1-based) index
-# range `jlo:jhi` (every `K`-th starting at `lane`) to the ghost node `gp`.
+# range `jlo:jhi` (every `K`-th starting at `lane`) to the ghost node `ref`,
+# which lies in the stencil row `row` with `rowcell` the linear index of the
+# cell of that row with the node's first coordinate (see `pair_vector`).
 # The distance test comes first: only the roughly 30 % of the candidates
 # inside the support also load `ParticleType`.
-@inline function mdbc_range(b, A, jlo::Int32, jhi::Int32, lane::Int32, ::Val{K}, gp::SVector{D, T},
-                            Position, Density, ParticleType, SimKernel, m₀) where {K, D, T}
+@inline function mdbc_range(b::SVector{DP, T}, A, jlo::Int32, jhi::Int32, lane::Int32, ::Val{K}, ref,
+                            Pairs, rowcell::Int32, row::CellRow, s, Density, ParticleType, SimKernel,
+                            m₀) where {K, DP, T}
     (; h⁻¹, H²) = SimKernel
-    DP = D + 1
     j = jlo + lane
     @inbounds while j <= jhi
-        xᵢⱼ  = gp - Position[j]
+        xᵢⱼ  = pair_vector(Pairs, ref, j, rowcell, row, s)
         xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
         if xᵢⱼ² <= H²
             if ParticleType[j] == Fluid
@@ -376,9 +441,12 @@ end
 end
 
 # Visit the (2R+1)^D cells around the ghost node (R the reach of the grid).
-# Ghost nodes may lie outside the particle grid, so every row is range checked.
-@inline function mdbc_rows(b, A, gp::SVector{2, T}, lg, grid::CellGrid{2}, CellStart, Position,
-                           Density, ParticleType, SimKernel, m₀, lane, lanes::Val) where {T}
+# Ghost nodes may lie outside the particle grid, so every row is range
+# checked. `lg` are the local cell coordinates of the node; the row's
+# `rowcell` for `pair_vector` is the (possibly virtual, never dereferenced)
+# linear index of the cell of the row with the node's first coordinate.
+@inline function mdbc_rows(b, A, ref, lg, grid::CellGrid{2}, CellStart, Pairs, s,
+                           Density, ParticleType, SimKernel, m₀, lane, lanes::Val)
     n1, n2 = grid.dims
     R   = reach(grid)
     xlo = max(lg[1] - R, Int32(0))
@@ -387,18 +455,20 @@ end
         for dy in -R:R
             ly = lg[2] + dy
             if (ly >= Int32(0)) & (ly < n2)
-                row0 = Int32(1) + xlo + n1 * ly
-                jlo  = CellStart[row0] + Int32(1)
-                jhi  = CellStart[row0 + (xhi - xlo) + Int32(1)]
-                b, A = mdbc_range(b, A, jlo, jhi, lane, lanes, gp, Position, Density, ParticleType, SimKernel, m₀)
+                row0    = Int32(1) + xlo + n1 * ly
+                jlo     = CellStart[row0] + Int32(1)
+                jhi     = CellStart[row0 + (xhi - xlo) + Int32(1)]
+                rowcell = row0 + (lg[1] - xlo)
+                b, A = mdbc_range(b, A, jlo, jhi, lane, lanes, ref, Pairs, rowcell, CellRow(Int32(0), dy, Int32(0)),
+                                  s, Density, ParticleType, SimKernel, m₀)
             end
         end
     end
     return b, A
 end
 
-@inline function mdbc_rows(b, A, gp::SVector{3, T}, lg, grid::CellGrid{3}, CellStart, Position,
-                           Density, ParticleType, SimKernel, m₀, lane, lanes::Val) where {T}
+@inline function mdbc_rows(b, A, ref, lg, grid::CellGrid{3}, CellStart, Pairs, s,
+                           Density, ParticleType, SimKernel, m₀, lane, lanes::Val)
     n1, n2, n3 = grid.dims
     R   = reach(grid)
     xlo = max(lg[1] - R, Int32(0))
@@ -410,11 +480,12 @@ end
                 for dy in -R:R
                     ly = lg[2] + dy
                     if (ly >= Int32(0)) & (ly < n2)
-                        row0 = Int32(1) + xlo + n1 * (ly + n2 * lz)
-                        jlo  = CellStart[row0] + Int32(1)
-                        jhi  = CellStart[row0 + (xhi - xlo) + Int32(1)]
-                        b, A = mdbc_range(b, A, jlo, jhi, lane, lanes, gp, Position, Density, ParticleType,
-                                          SimKernel, m₀)
+                        row0    = Int32(1) + xlo + n1 * (ly + n2 * lz)
+                        jlo     = CellStart[row0] + Int32(1)
+                        jhi     = CellStart[row0 + (xhi - xlo) + Int32(1)]
+                        rowcell = row0 + (lg[1] - xlo)
+                        b, A = mdbc_range(b, A, jlo, jhi, lane, lanes, ref, Pairs, rowcell, CellRow(Int32(0), dy, dz),
+                                          s, Density, ParticleType, SimKernel, m₀)
                     end
                 end
             end
@@ -426,10 +497,11 @@ end
 # Thread group `g` (its `K` lanes) handles the `g`-th ghost node owner of
 # `GhostIndex`, so the launch covers only boundary particles with a ghost
 # node, contiguously: no half empty warps from the fluid particles that are
-# interleaved with them in cell order.
-function mdbc_kernel!(Density, Pressure, Position::AbstractVector{SVector{D, T}}, GhostPoints, GhostIndex,
-                      ParticleType, CellStart, gridarg, step,
-                      SimKernel, SimConstants, ::Val{K}, nghost::Int32) where {D, T, K}
+# interleaved with them in cell order. `Position` and `GhostPoints` are in the
+# position precision `TP`, `Pairs` is the pair source (see `pair_vector`).
+function mdbc_kernel!(Density::AbstractVector{T}, Pressure, Position::AbstractVector{SVector{D, TP}}, Pairs,
+                      GhostPoints, GhostIndex, ParticleType, CellStart, gridarg, step,
+                      SimKernel, SimConstants, ::Val{K}, nghost::Int32) where {D, T, TP, K}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -438,12 +510,13 @@ function mdbc_kernel!(Density, Pressure, Position::AbstractVector{SVector{D, T}}
 
     DP = D + 1
     (; m₀, ρ₀, c₀) = SimConstants
+    s = cell_size(grid, SimKernel.H)
 
     b = zero(SVector{DP, T})
     A = zero(SMatrix{DP, DP, T, DP * DP})
 
     i     = Int32(1)
-    gp    = zero(SVector{D, T})
+    gp    = zero(SVector{D, TP})
     valid = g <= nghost
     @inbounds if valid
         i  = GhostIndex[g]
@@ -451,9 +524,10 @@ function mdbc_kernel!(Density, Pressure, Position::AbstractVector{SVector{D, T}}
     end
 
     @inbounds if valid
-        cg = cell_coords(gp, bin_scale(grid, SimKernel.H⁻¹))
-        lg = ntuple(d -> cg[d] - grid.origin[d], Val(D))
-        b, A = mdbc_rows(b, A, gp, lg, grid, CellStart, Position, Density, ParticleType, SimKernel, m₀,
+        cg  = cell_coords(gp, bin_scale(grid, SimKernel.H⁻¹))
+        lg  = ntuple(d -> cg[d] - grid.origin[d], Val(D))
+        ref = mdbc_reference(Pairs, gp, cg, s)
+        b, A = mdbc_rows(b, A, ref, lg, grid, CellStart, Pairs, s, Density, ParticleType, SimKernel, m₀,
                          lane, Val(K))
     end
 
@@ -471,7 +545,8 @@ function mdbc_kernel!(Density, Pressure, Position::AbstractVector{SVector{D, T}}
         ρ = Density[i]
         if abs(det(A)) >= 1e-3
             sol  = A \ b
-            diff = Position[i] - gp
+            # in the position precision, then rounded: the two points are close
+            diff = SVector{D, T}(Position[i] - gp)
             grad = SVector{D, T}(ntuple(k -> sol[k + 1], Val(D)))
             v1   = sol[1] + dot(grad, diff)
             ρ    = isnan(v1) ? ρ₀ : v1
@@ -487,33 +562,38 @@ end
 
 """
     launch_mdbc!(Density, Pressure, Position, GhostPoints, GhostIndex, ParticleType, CellStart, grid,
-                 step, SimKernel, SimConstants; threads, lanes)
+                 step, SimKernel, SimConstants; threads, lanes, pos_cells)
 
 mDBC correction of the density of the boundary particles that own a ghost
 node, and the pressure of the corrected density. The launch covers the
 particles listed in `GhostIndex` (the ghost node owners in cell order, see
 `GPUParticles`), `K` lanes each. `step` gates the kernel (see
-`GPUStepState`).
+`GPUStepState`). `pos_cells` is the `PosCell` array of `Position` when the
+positions are stored in a higher precision than the working precision (the
+fluid neighbours of a node are then found through it, see `GPUCellGrid`).
 """
 function launch_mdbc!(Density, Pressure, Position, GhostPoints, GhostIndex, ParticleType, CellStart, grid, step,
-                      SimKernel, SimConstants; threads::Integer = 128, lanes::Val = Val(1))
+                      SimKernel, SimConstants; threads::Integer = 128, lanes::Val = Val(1), pos_cells = nothing)
     n = length(GhostIndex)
     n == 0 && return nothing
     K = typeof(lanes).parameters[1]
+    Pairs = pos_cells === nothing ? Position : pos_cells
     @cuda threads=threads blocks=cld(n * K, threads) mdbc_kernel!(
-        Density, Pressure, Position, GhostPoints, GhostIndex, ParticleType, CellStart, grid, step, SimKernel,
-        SimConstants, lanes, Int32(n))
+        Density, Pressure, Position, Pairs, GhostPoints, GhostIndex, ParticleType, CellStart, grid, step,
+        SimKernel, SimConstants, lanes, Int32(n))
     return nothing
 end
 
 #---------------------------------------------------------------
 # Half step (symplectic predictor) fused with density limiting, motion, the
-# pressure of the half step density and its reciprocal
+# pressure of the half step density and its reciprocal, and the cell relative
+# form of the half step position when the positions are of a higher precision
 #---------------------------------------------------------------
 
 function half_step_kernel!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, InvDensityₙ⁺, Pressure,
                            Position, Velocity, Acceleration, Density, dρdtI,
-                           ParticleType, GroupMarker, motion, step, SimConstants, n::Int32)
+                           ParticleType, GroupMarker, motion, step, SimConstants,
+                           PosCellsₙ⁺, CellID, gridarg, H, n::Int32)
     step_active(step) || return nothing
     i = thread_index()
     i > n && return nothing
@@ -527,12 +607,16 @@ function half_step_kernel!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, InvDensity�
         acc = Acceleration[i]
         acc += ConstructGravitySVector(acc, g * GravityFactorValue(T, type))
         Acceleration[i] = acc
-        Positionₙ⁺[i]   = Position[i] + Velocity[i] * dt₂ * ML
+        # the increment is promoted to the precision of the position
+        xₙ⁺ = Position[i] + Velocity[i] * dt₂ * ML
+        Positionₙ⁺[i]   = xₙ⁺
         Velocityₙ⁺[i]   = Velocity[i] + acc * dt₂ * ML
         ρ = Density[i] + dρdtI[i] * dt₂
         ρ = limit_density(ρ, ρ₀, ML)
         ρₙ⁺[i] = ρ
         InvDensityₙ⁺[i] = inv(ρ)
+
+        store_pos_cell!(PosCellsₙ⁺, i, xₙ⁺, CellID, gridarg, H)
 
         apply_motion!(i, Position, Velocity, ParticleType, GroupMarker, motion, dt₂, TotalTime)
 
@@ -541,15 +625,26 @@ function half_step_kernel!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, InvDensity�
     return nothing
 end
 
+"""
+    launch_half_step!(...; pos_cells, CellID, grid, SimKernel)
+
+Symplectic predictor. With `pos_cells` (the `PosCell` array of the half step
+positions, for positions stored in a higher precision than the working
+precision) the kernel also writes the cell relative form of every half step
+position; `CellID`, `grid` and `SimKernel` are then required.
+"""
 function launch_half_step!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, InvDensityₙ⁺, Pressure,
                            Position, Velocity, Acceleration, Density, dρdtI,
-                           ParticleType, GroupMarker, motion, step, SimConstants)
+                           ParticleType, GroupMarker, motion, step, SimConstants;
+                           pos_cells = nothing, CellID = nothing, grid = nothing, SimKernel = nothing)
     n = length(Position)
     n == 0 && return nothing
+    H = SimKernel === nothing ? zero(eltype(Density)) : SimKernel.H
     @cuda threads=ELEMENTWISE_THREADS blocks=cld(n, ELEMENTWISE_THREADS) half_step_kernel!(
         Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, InvDensityₙ⁺, Pressure,
         Position, Velocity, Acceleration, Density, dρdtI,
-        ParticleType, GroupMarker, motion, step, SimConstants, Int32(n))
+        ParticleType, GroupMarker, motion, step, SimConstants,
+        pos_cells, CellID, grid, H, Int32(n))
     return nothing
 end
 
@@ -566,7 +661,9 @@ end
 """
 Per particle quantities reduced once per step: the viscous time step term,
 the force based time step term and the displacement since the last half step
-(used to decide when the cell list must be rebuilt).
+(used to decide when the cell list must be rebuilt). `r` and `posn` may be
+of a higher precision than the rest; the result is in the working precision
+of `h`.
 """
 @inline function step_map(i, Position, Velocity, Acceleration, Positionₙ⁺, h, η²)
     @inbounds begin
@@ -578,11 +675,13 @@ the force based time step term and the displacement since the last half step
     return step_values(r, v, a, posn, h, η²)
 end
 
-@inline function step_values(r, v, a, posn, h, η²)
-    visc = abs(h * dot(v, r) / (dot(r, r) + η²))
+@inline function step_values(r::SVector{D, TP}, v::SVector{D, T}, a, posn::SVector{D, TP}, h::T,
+                             η²::T) where {D, TP, T}
+    rT   = SVector{D, T}(r)
+    visc = abs(h * dot(v, rT) / (dot(rT, rT) + η²))
     dt1  = sqrt(h / norm(a))
-    disp = norm(posn - r)
-    return SVector(visc, dt1, disp)
+    disp = T(norm(posn - r))   # the difference in the position precision
+    return SVector{3, T}(visc, dt1, disp)
 end
 
 @inline step_reduce(a::SVector{3, T}, b::SVector{3, T}) where {T} =
