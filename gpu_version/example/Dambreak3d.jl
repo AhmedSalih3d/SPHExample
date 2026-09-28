@@ -24,14 +24,14 @@ let
         CFL = 0.2
     )
 
-    # --- Geometry ---
-    FixedBoundary = Geometry{Dimensions, FloatType}(
+    # --- SPHGeometry ---
+    FixedBoundary = SPHGeometry{Dimensions, FloatType}(
         CSVFile     = "./input/dam_break_3d/DamBreak3d_Dp$(dx)_Bound.csv",
         GroupMarker = 1,
         Type        = Fixed,
         Motion      = nothing
     )
-    Water = Geometry{Dimensions, FloatType}(
+    Water = SPHGeometry{Dimensions, FloatType}(
         CSVFile     = "./input/dam_break_3d/DamBreak3d_Dp$(dx)_Fluid.csv",
         GroupMarker = 2,
         Type        = Fluid,

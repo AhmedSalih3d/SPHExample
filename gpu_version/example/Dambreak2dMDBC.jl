@@ -14,22 +14,22 @@ let
 
     SimConstantsDambreak = SimulationConstants{FloatType}(dx=0.01,c₀=88.14487860902641, δᵩ = 0.1, CFL=0.5, α = 0.01)
 
-    # Create Geometry instances
-    FixedBoundary = Geometry{Dimensions, FloatType}(
+    # Create SPHGeometry instances
+    FixedBoundary = SPHGeometry{Dimensions, FloatType}(
         CSVFile     = "./input/dam_break_2d/DamBreak2d_Dp0.02_MDBC_Bound_ThreeLayers.csv",
         GroupMarker = 1,
         Type        = Fixed,   # Using the enum value Fixed
         Motion      = nothing
     )
 
-    Water = Geometry{Dimensions, FloatType}(
+    Water = SPHGeometry{Dimensions, FloatType}(
         CSVFile     = "./input/dam_break_2d/DamBreak2d_Dp0.02_MDBC_Fluid_ThreeLayers.csv",
         GroupMarker = 2,
         Type        = Fluid,   # Using the enum value Fluid
         Motion      = nothing
     )
 
-    # Collect the Geometry instances into a vector
+    # Collect the SPHGeometry instances into a vector
     SimulationGeometry = [FixedBoundary; Water]
 
 

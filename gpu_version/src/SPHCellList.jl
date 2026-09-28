@@ -394,7 +394,7 @@ uses_pos_cells(sup::GPUSupportArrays) = sup.PosCells !== nothing
 
 Prescribed motion parameters indexed by group marker, for use in kernels.
 """
-function MotionArrays(SimGeometry::Vector{Geometry{D, T}}, SimParticles) where {D, T}
+function MotionArrays(SimGeometry::Vector{SPHGeometry{D, T}}, SimParticles) where {D, T}
     ngroups = max(1, Int(maximum(SimParticles.GroupMarker; init = 0)))
     has       = zeros(Bool, ngroups)
     velocity  = zeros(T, ngroups)
@@ -827,7 +827,7 @@ positions) are integrated in `Float64` while everything else stays in
 `AllocateDataStructures(SimGeometry, SimMetaData)` already hold `Float64`
 positions; other host arrays are converted on upload and download.
 """
-function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}},
+function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
     SimConstants::SimulationConstants,
     SimKernel::SPHKernelInstance,

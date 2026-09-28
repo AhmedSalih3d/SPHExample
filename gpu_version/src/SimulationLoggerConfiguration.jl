@@ -84,14 +84,14 @@ module SimulationLoggerConfiguration
     summary of particle counts per type. The optional `sort_by` argument controls
     how the group marker statistics are ordered.
     """
-    function LogSimulationDetails(SimLogger::SimulationLogger, SimGeometry::Vector{Geometry{Dimensions, FloatType}}, SimParticles; sort_by=:GroupMarker) where {Dimensions, FloatType}
+    function LogSimulationDetails(SimLogger::SimulationLogger, SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}}, SimParticles; sort_by=:GroupMarker) where {Dimensions, FloatType}
         with_logger(SimLogger.Logger) do
             # Calculate the maximum lengths for alignment
             max_csv_len = maximum(length(geom.CSVFile) for geom in SimGeometry) + 2
             max_group_marker_len = maximum(length(string(geom.GroupMarker)) for geom in SimGeometry) + 2
             max_type_len = maximum(length(string(geom.Type)) for geom in SimGeometry) + 2
     
-            @info "Simulation Geometry Details:"
+            @info "Simulation SPHGeometry Details:"
             for geom in SimGeometry
                 csv_file = geom.CSVFile
                 group_marker = geom.GroupMarker
@@ -135,7 +135,7 @@ module SimulationLoggerConfiguration
     
     """
         InitializeLogger(logger, constants, metadata, kernel, viscosity,
-                         densitydiffusion, geometry, particles)
+                         densitydiffusion, SPHGeometry, particles)
 
     Write a short summary of the simulation configuration to the log file and
     store the start time. This is typically called once before the time stepping

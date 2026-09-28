@@ -50,18 +50,18 @@ end
     AllocateDataStructures(SimGeometry, SimMetaData)
     AllocateDataStructures(SimGeometry; position_type = FloatType)
 
-Load the particles of every geometry into a host `StructArray`. The device
+Load the particles of every SPHGeometry into a host `StructArray`. The device
 particle container always carries the ghost node and kernel output fields,
 so the mode types of the meta data do not change the host allocation; the
 meta data selects the precision of the positions (`Float64` with
 `GPUDoublePosition`, see `position_float_type`). `Position` and
 `GhostPoints` are stored in that precision, every other field in `FloatType`.
 """
-AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, FloatType}},
+AllocateDataStructures(SimGeometry::Vector{<:SPHGeometry{Dimensions, FloatType}},
                        SimMetaData::SimulationMetaData{Dimensions, FloatType}) where {Dimensions, FloatType} =
     AllocateDataStructures(SimGeometry; position_type = position_float_type(SimMetaData))
 
-function AllocateDataStructures(SimGeometry::Vector{<:Geometry{Dimensions, FloatType}};
+function AllocateDataStructures(SimGeometry::Vector{<:SPHGeometry{Dimensions, FloatType}};
                                 position_type::Type{TP} = FloatType) where {Dimensions, FloatType, TP}
     Position    = Vector{SVector{Dimensions, TP}}()
     Density     = Vector{FloatType}()

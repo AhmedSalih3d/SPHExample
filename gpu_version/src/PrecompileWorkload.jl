@@ -84,8 +84,8 @@ function _precompile_cases(dir::String, ::Type{T}) where {T}
     # example/Dambreak2dMDBC.jl, StillWedgeMDBC.jl
     c2mdbc = SimulationConstants{T}(dx = dx, c₀ = 88.14487860902641, δᵩ = 0.1, CFL = 0.5, α = 0.01)
     mdbc_2d = (
-        SimGeometry  = [Geometry{2, T}(CSVFile = g2.bound, GroupMarker = 1, Type = Fixed),
-                        Geometry{2, T}(CSVFile = g2.fluid, GroupMarker = 2, Type = Fluid)],
+        SimGeometry  = [SPHGeometry{2, T}(CSVFile = g2.bound, GroupMarker = 1, Type = Fixed),
+                        SPHGeometry{2, T}(CSVFile = g2.fluid, GroupMarker = 2, Type = Fluid)],
         SimMetaData  = SimulationMetaData{2, T, NoShifting, NoKernelOutput, SimpleMDBC, StoreLog}(;
                            SimulationName = "MDBC2D", SaveLocation = save("MDBC2D"),
                            OutputTimes = collect(1e-3:1e-3:2e-3), ExportGridCells = true, time...),
@@ -99,9 +99,9 @@ function _precompile_cases(dir::String, ::Type{T}) where {T}
     # example/MovingSquare2d.jl
     c2move = SimulationConstants{T}(dx = dx, c₀ = 28, δᵩ = 0.1, g = 0, Cb = 112000, α = 1e-6, CFL = 0.2)
     moving_2d = (
-        SimGeometry  = [Geometry{2, T}(CSVFile = g2.bound, GroupMarker = 1, Type = Fixed),
-                        Geometry{2, T}(CSVFile = g2.fluid, GroupMarker = 2, Type = Fluid),
-                        Geometry{2, T}(CSVFile = g2.solid, GroupMarker = 3, Type = Moving,
+        SimGeometry  = [SPHGeometry{2, T}(CSVFile = g2.bound, GroupMarker = 1, Type = Fixed),
+                        SPHGeometry{2, T}(CSVFile = g2.fluid, GroupMarker = 2, Type = Fluid),
+                        SPHGeometry{2, T}(CSVFile = g2.solid, GroupMarker = 3, Type = Moving,
                                        Motion = MotionDetails{2, T}(Velocity = 2.8, StartTime = 0.0,
                                                                     Duration = 3.0,
                                                                     Direction = SVector{2, T}(1, 0)))],
@@ -119,8 +119,8 @@ function _precompile_cases(dir::String, ::Type{T}) where {T}
     c3mdbc = SimulationConstants{T}(dx = dx, c₀ = 23.43842998154953, δᵩ = 0.1, CFL = 0.2, α = 0.02,
                                     m₀ = 1000 * dx^3)
     mdbc_3d = (
-        SimGeometry  = [Geometry{3, T}(CSVFile = g3.bound, GroupMarker = 1, Type = Fixed),
-                        Geometry{3, T}(CSVFile = g3.fluid, GroupMarker = 2, Type = Fluid)],
+        SimGeometry  = [SPHGeometry{3, T}(CSVFile = g3.bound, GroupMarker = 1, Type = Fixed),
+                        SPHGeometry{3, T}(CSVFile = g3.fluid, GroupMarker = 2, Type = Fluid)],
         SimMetaData  = SimulationMetaData{3, T, NoShifting, NoKernelOutput, SimpleMDBC, StoreLog}(;
                            SimulationName = "MDBC3D", SaveLocation = save("MDBC3D"),
                            OutputTimes = 1e-3, time...),
@@ -134,8 +134,8 @@ function _precompile_cases(dir::String, ::Type{T}) where {T}
     # example/Dambreak3d.jl
     c3dbc = SimulationConstants{T}(dx = dx, c₀ = 33.14, α = 0.1, m₀ = 1000 * dx^3, CFL = 0.2)
     dbc_3d = (
-        SimGeometry  = [Geometry{3, T}(CSVFile = g3.bound, GroupMarker = 1, Type = Fixed),
-                        Geometry{3, T}(CSVFile = g3.fluid, GroupMarker = 2, Type = Fluid)],
+        SimGeometry  = [SPHGeometry{3, T}(CSVFile = g3.bound, GroupMarker = 1, Type = Fixed),
+                        SPHGeometry{3, T}(CSVFile = g3.fluid, GroupMarker = 2, Type = Fluid)],
         SimMetaData  = SimulationMetaData{3, T, NoShifting, NoKernelOutput, NoMDBC, StoreLog}(;
                            SimulationName = "DBC3D", SaveLocation = save("DBC3D"),
                            OutputTimes = 1e-3, ExportGridCells = true, GPUCellSubdivision = 2, time...),

@@ -4,7 +4,7 @@ using StaticArrays
 using Base: @kwdef
 
 # Export relevant types and structs
-export ParticleType, Geometry, Fluid, Fixed, Moving, MotionDetails,
+export ParticleType, SPHGeometry, Fluid, Fixed, Moving, MotionDetails,
        GravityFactorValue, MotionLimiterValue
 
 # Use the existing @enum for ParticleType
@@ -28,8 +28,8 @@ end
     Direction::SVector{D, T}  # Direction vector is now parametric based on dimensions D and FloatType T
 end
 
-# Define the Geometry struct to store the ParticleType enum and Motion details
-@kwdef struct Geometry{D, T}
+# Define the SPHGeometry struct to store the ParticleType enum and Motion details
+@kwdef struct SPHGeometry{D, T}
     CSVFile::String
     GroupMarker::Int
     Type::ParticleType

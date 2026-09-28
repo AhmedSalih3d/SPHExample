@@ -46,7 +46,7 @@ module SPHExampleGPU
     export SPHDensityDiffusion, ZeroDensityDiffusion, ZeroGravityLinearDensityDiffusion, LinearDensityDiffusion, ZeroGravityComplexDensityDiffusion, ComplexDensityDiffusion, compute_density_diffusion
 
     using .SimulationGeometry
-    export ParticleType, Fixed, Fluid, Moving, Geometry, MotionDetails,
+    export ParticleType, Fixed, Fluid, Moving, SPHGeometry, MotionDetails,
            GravityFactorValue, MotionLimiterValue
 
     using .PreProcess
@@ -94,6 +94,8 @@ module SPHExampleGPU
     using .SPHCellList
     export GPUParticles, GPUSupportArrays, MotionArrays, upload_particles, download_particles!,
            RunSimulation, SimulationLoop, position_type, uses_pos_cells
+
+    using .ParticleGenerator
 
     using .OpenExternalPrograms
     export AutoOpenLogFile, AutoOpenParaview

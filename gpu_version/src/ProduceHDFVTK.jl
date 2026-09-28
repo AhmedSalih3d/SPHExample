@@ -552,7 +552,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     frames_pending(w::PolyDataFrameWriter) = w.pending
 
     """
-    Preallocated geometry of one cell grid frame in the layout of the file
+    Preallocated SPHGeometry of one cell grid frame in the layout of the file
     (see `fill_grid_geometry!`): the corner points as a `3 × (corners · cells)`
     matrix, the connectivity, the cell offsets, the VTK cell types and the
     cell ids. The arrays are resized per frame and only grow.
@@ -569,7 +569,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     """
         fill_grid_geometry!(buf, cell_edge, UniqueCells) -> npoints
 
-    Fill `buf` with the geometry of the cells `UniqueCells` (edge length
+    Fill `buf` with the SPHGeometry of the cells `UniqueCells` (edge length
     `cell_edge`): the same corners, connectivity, offsets, types and ids as
     `compute_grid_geometry`, without allocating per cell. Returns the number
     of corner points; `buf.points` has exactly that many columns.
@@ -626,8 +626,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
     """
     Buffered writer of cell grid frames to the transient (single file) grid
-    output. Holds the dataset handles, the geometry buffers of the frame being
-    appended and up to `capacity` pending frames (their geometry appended to
+    output. Holds the dataset handles, the SPHGeometry buffers of the frame being
+    appended and up to `capacity` pending frames (their SPHGeometry appended to
     growing host arrays, since the cell count varies per frame) together with
     the totals of the file (the `PointOffsets` and `CellOffsets` of the next
     frame). Produces the same file as `AppendVTKHDFGridData` called once per
@@ -650,9 +650,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         const part_offsets::HDF5.Dataset
         const cell_offsets::HDF5.Dataset
         const connectivity_id_offsets::HDF5.Dataset
-        const buf::GridGeometryBuffers      # geometry of the frame being appended
+        const buf::GridGeometryBuffers      # SPHGeometry of the frame being appended
         const capacity::Int                 # frames held before a flush
-        # pending frames: per frame values and the concatenated geometry
+        # pending frames: per frame values and the concatenated SPHGeometry
         const times::Vector{Float64}
         const frame_npts::Vector{Int}
         const frame_ncells::Vector{Int}

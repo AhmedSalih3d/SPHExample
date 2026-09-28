@@ -52,9 +52,9 @@ function still_wedge_mdbc(::Type{T}, save; dx = 0.02) where {T}
     D = 2
     consts = SimulationConstants{T}(dx=dx, c₀=42.48576250492629, δᵩ=0.1, CFL=0.5)
     geom = [
-        Geometry{D,T}(CSVFile=inputpath("still_wedge_mdbc", "StillWedge_Dp$(dx)_Bound.csv"),
+        SPHGeometry{D,T}(CSVFile=inputpath("still_wedge_mdbc", "StillWedge_Dp$(dx)_Bound.csv"),
                       GroupMarker=1, Type=Fixed),
-        Geometry{D,T}(CSVFile=inputpath("still_wedge_mdbc", "StillWedge_Dp$(dx)_Fluid.csv"),
+        SPHGeometry{D,T}(CSVFile=inputpath("still_wedge_mdbc", "StillWedge_Dp$(dx)_Fluid.csv"),
                       GroupMarker=2, Type=Fluid),
     ]
     meta = SimulationMetaData{D,T,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(SimulationName="StillWedgeMDBC", SaveLocation=save,
@@ -71,9 +71,9 @@ function still_wedge_dbc(::Type{T}, save; dx = 0.01) where {T}
     D = 2
     consts = SimulationConstants{T}(dx=dx, c₀=43.4, δᵩ=0.1, CFL=0.2)
     geom = [
-        Geometry{D,T}(CSVFile=inputpath("still_wedge", "StillWedge_Dp$(dx)_Bound.csv"),
+        SPHGeometry{D,T}(CSVFile=inputpath("still_wedge", "StillWedge_Dp$(dx)_Bound.csv"),
                       GroupMarker=1, Type=Fixed),
-        Geometry{D,T}(CSVFile=inputpath("still_wedge", "StillWedge_Dp$(dx)_Fluid.csv"),
+        SPHGeometry{D,T}(CSVFile=inputpath("still_wedge", "StillWedge_Dp$(dx)_Fluid.csv"),
                       GroupMarker=2, Type=Fluid),
     ]
     meta = SimulationMetaData{D,T,NoShifting,NoKernelOutput,NoMDBC,StoreLog}(SimulationName="StillWedgeDBC", SaveLocation=save,
@@ -90,9 +90,9 @@ function dambreak_2d_mdbc(::Type{T}, save) where {T}
     D = 2
     consts = SimulationConstants{T}(dx=0.01, c₀=88.14487860902641, δᵩ=0.1, CFL=0.5, α=0.01)
     geom = [
-        Geometry{D,T}(CSVFile=inputpath("dam_break_2d", "DamBreak2d_Dp0.02_MDBC_Bound_ThreeLayers.csv"),
+        SPHGeometry{D,T}(CSVFile=inputpath("dam_break_2d", "DamBreak2d_Dp0.02_MDBC_Bound_ThreeLayers.csv"),
                       GroupMarker=1, Type=Fixed),
-        Geometry{D,T}(CSVFile=inputpath("dam_break_2d", "DamBreak2d_Dp0.02_MDBC_Fluid_ThreeLayers.csv"),
+        SPHGeometry{D,T}(CSVFile=inputpath("dam_break_2d", "DamBreak2d_Dp0.02_MDBC_Fluid_ThreeLayers.csv"),
                       GroupMarker=2, Type=Fluid),
     ]
     meta = SimulationMetaData{D,T,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(SimulationName="DamBreak2DMDBC", SaveLocation=save,
@@ -109,11 +109,11 @@ function moving_square_2d(::Type{T}, save; dx = 0.04) where {T}
     D = 2
     consts = SimulationConstants{T}(dx=dx, c₀=28, δᵩ=0.1, g=0, Cb=112000, α=1e-6, CFL=0.2)
     geom = [
-        Geometry{D,T}(CSVFile=inputpath("moving_square_2d", "MovingSquare_Dp$(dx)_Fixed.csv"),
+        SPHGeometry{D,T}(CSVFile=inputpath("moving_square_2d", "MovingSquare_Dp$(dx)_Fixed.csv"),
                       GroupMarker=1, Type=Fixed),
-        Geometry{D,T}(CSVFile=inputpath("moving_square_2d", "MovingSquare_Dp$(dx)_Fluid.csv"),
+        SPHGeometry{D,T}(CSVFile=inputpath("moving_square_2d", "MovingSquare_Dp$(dx)_Fluid.csv"),
                       GroupMarker=2, Type=Fluid),
-        Geometry{D,T}(CSVFile=inputpath("moving_square_2d", "MovingSquare_Dp$(dx)_Square.csv"),
+        SPHGeometry{D,T}(CSVFile=inputpath("moving_square_2d", "MovingSquare_Dp$(dx)_Square.csv"),
                       GroupMarker=3, Type=Moving,
                       Motion=MotionDetails{D,T}(Velocity=2.8, StartTime=0.0, Duration=3.0,
                                                  Direction=SVector{D,T}(1.0, 0.0))),
@@ -132,9 +132,9 @@ function dambreak_3d(::Type{T}, save; dx = 0.02) where {T}
     D = 3
     consts = SimulationConstants{T}(dx=dx, c₀=33.14, α=0.1, m₀=1000*dx^3, CFL=0.2)
     geom = [
-        Geometry{D,T}(CSVFile=inputpath("dam_break_3d", "DamBreak3d_Dp$(dx)_Bound.csv"),
+        SPHGeometry{D,T}(CSVFile=inputpath("dam_break_3d", "DamBreak3d_Dp$(dx)_Bound.csv"),
                       GroupMarker=1, Type=Fixed),
-        Geometry{D,T}(CSVFile=inputpath("dam_break_3d", "DamBreak3d_Dp$(dx)_Fluid.csv"),
+        SPHGeometry{D,T}(CSVFile=inputpath("dam_break_3d", "DamBreak3d_Dp$(dx)_Fluid.csv"),
                       GroupMarker=2, Type=Fluid),
     ]
     meta = SimulationMetaData{D,T,NoShifting,NoKernelOutput,NoMDBC,StoreLog}(SimulationName="DamBreak3D", SaveLocation=save,
@@ -152,9 +152,9 @@ function duckling_3d_mdbc(::Type{T}, save; dx = 0.01) where {T}
     consts = SimulationConstants{T}(dx=dx, c₀=23.43842998154953, δᵩ=0.1, CFL=0.2, α=0.02,
                                     m₀=1000*dx^3)
     geom = [
-        Geometry{D,T}(CSVFile=inputpath("case_duckling_mdbc", "CaseDuckling_Dp$(dx)_Bound_MDBC.csv"),
+        SPHGeometry{D,T}(CSVFile=inputpath("case_duckling_mdbc", "CaseDuckling_Dp$(dx)_Bound_MDBC.csv"),
                       GroupMarker=1, Type=Fixed),
-        Geometry{D,T}(CSVFile=inputpath("case_duckling_mdbc", "CaseDuckling_Dp$(dx)_Fluid_MDBC.csv"),
+        SPHGeometry{D,T}(CSVFile=inputpath("case_duckling_mdbc", "CaseDuckling_Dp$(dx)_Fluid_MDBC.csv"),
                       GroupMarker=2, Type=Fluid),
     ]
     meta = SimulationMetaData{D,T,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(SimulationName="Duckling3DMDBC", SaveLocation=save,
