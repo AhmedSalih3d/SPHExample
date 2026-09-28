@@ -171,6 +171,220 @@ relerr(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), eps(eltype(b))))
         @test length(unique(particles.ID)) == n
     end
 
+    @testset "buffered grid frame writer matches the reference append" begin
+        # The buffered writer (`append_grid_frame!`) must produce the same file
+        # content as the allocating reference (`AppendVTKHDFGridData`), for
+        # every number of frames held before a flush (including a final
+        # partial flush by `flush_frames!`).
+        function write_grid(dir, frames, append!, finish = _ -> nothing)
+            h5open(joinpath(dir, "grid.vtkhdf"), "w") do fid
+                root = HDF5.create_group(fid, "VTKHDF")
+                GenerateGeometryStructure(root; vtk_file_type = "UnstructuredGrid", chunk_size = 64)
+                GenerateStepStructure(root; vtk_file_type = "UnstructuredGrid")
+                for (k, cells) in enumerate(frames)
+                    append!(root, 0.01 * k, cells)
+                end
+                finish(root)
+            end
+            return h5open(joinpath(dir, "grid.vtkhdf"), "r") do fid
+                root = fid["VTKHDF"]
+                names = ["Points", "Connectivity", "Offsets", "Types", "NumberOfPoints", "NumberOfCells", "NumberOfConnectivityIds"]
+                d = Dict{String, Any}(n => read(root[n]) for n in names)
+                d["CellData"] = read(root["CellData"]["CellData"])
+                for n in ("Values", "PointOffsets", "NumberOfParts", "PartOffsets", "CellOffsets", "ConnectivityIdOffsets")
+                    d["Steps/" * n] = read(root["Steps"][n])
+                end
+                d["NSteps"] = HDF5.read_attribute(root["Steps"], "NSteps")
+                d
+            end
+        end
+        for D in (2, 3)
+            frames = [unique([CartesianIndex(ntuple(_ -> rand(-5:12), D)) for _ in 1:n]) for n in (7, 40, 1, 25, 12)]
+            ref = write_grid(mktempdir(), frames, (root, t, cells) -> AppendVTKHDFGridData(root, t, 0.05, cells, nothing))
+            for capacity in (1, 2, 5, MAX_BUFFERED_FRAMES)
+                w   = nothing
+                buf = write_grid(mktempdir(), frames, (root, t, cells) -> begin
+                    w === nothing && (w = GridFrameWriter(root; capacity))
+                    append_grid_frame!(w, t, 0.05, cells)
+                end, _ -> begin
+                    @test frames_pending(w) == length(frames) % capacity
+                    flush_frames!(w)
+                    @test frames_pending(w) == 0 && frames_written(w) == length(frames)
+                end)
+                @test sort(collect(keys(ref))) == sort(collect(keys(buf)))
+                for k in keys(ref)
+                    @test ref[k] == buf[k]
+                end
+                @test buf["NSteps"] == length(frames)
+                @test buf["Steps/CellOffsets"] == cumsum([0; length.(frames[1:end-1])])
+            end
+        end
+        # the buffers only grow and keep the exact column count of the frame
+        g = GridGeometryBuffers()
+        @test fill_grid_geometry!(g, 0.1, [CartesianIndex(1, 2), CartesianIndex(3, 4)]) == 8
+        @test size(g.points) == (3, 8) && g.offsets == [0, 4, 8] && g.connectivity == 0:7
+        @test fill_grid_geometry!(g, 0.1, CartesianIndex{2}[]) == 0
+        @test size(g.points, 2) == 0 && g.offsets == [0]
+    end
+
+    @testset "buffered particle frame writer matches the reference append" begin
+        # `PolyDataFrameWriter` must produce the same transient PolyData file
+        # as `AppendVTKHDFData` called once per frame, for every capacity.
+        n     = 17
+        names = ["Velocity", "Density", "ID", "Type", "GhostPoints"]
+        types = [Fixed, Fluid, Moving]
+        frames = [(pos = [SVector{2, Float32}(rand(2)...) for _ in 1:n],
+                   vel = [SVector{2, Float32}(rand(2)...) for _ in 1:n],
+                   rho = rand(Float32, n), id = rand(Int, n), typ = rand(types, n),
+                   gp  = [SVector{2, Float64}(rand(2)...) for _ in 1:n]) for _ in 1:7]
+        function read_all(path)
+            h5open(path, "r") do fid
+                root = fid["VTKHDF"]
+                d = Dict{String, Any}("Points" => read(root["Points"]), "NumberOfPoints" => read(root["NumberOfPoints"]),
+                                      "NSteps" => HDF5.read_attribute(root["Steps"], "NSteps"))
+                for v in names
+                    d["PointData/" * v] = read(root["PointData"][v])
+                    d["PointDataOffsets/" * v] = read(root["Steps"]["PointDataOffsets"][v])
+                end
+                for s in ("Values", "PointOffsets", "NumberOfParts", "PartOffsets", "CellOffsets", "ConnectivityIdOffsets")
+                    d["Steps/" * s] = read(root["Steps"][s])
+                end
+                for c in ("Vertices", "Lines", "Polygons", "Strips"), s in ("NumberOfCells", "NumberOfConnectivityIds", "Offsets", "Connectivity")
+                    d[c * "/" * s] = read(root[c][s])
+                end
+                d
+            end
+        end
+        function write_particles(capacity)
+            path = joinpath(mktempdir(), "p.vtkhdf")
+            h5open(path, "w") do fid
+                root = HDF5.create_group(fid, "VTKHDF")
+                f1   = frames[1]
+                # arrays with the element types and component counts as written (`Type` as `Int8`)
+                descriptors = (Matrix{Float32}(undef, 3, 0), f1.rho, f1.id, Int8[], Matrix{Float64}(undef, 3, 0))
+                GenerateGeometryStructure(root, names, descriptors...; chunk_size = n)
+                GenerateStepStructure(root, names, descriptors...)
+                if capacity === nothing
+                    for (k, f) in enumerate(frames)
+                        # the reference takes the 3 × N component form for the positions and vector fields and Int8 types
+                        AppendVTKHDFData(root, 0.01 * k, stack(to_3d(f.pos)), names, stack(to_3d(f.vel)), f.rho, f.id, Int8.(f.typ), stack(to_3d(f.gp)))
+                    end
+                else
+                    w = PolyDataFrameWriter(root, f1.pos, names, descriptors...; capacity)
+                    for (k, f) in enumerate(frames)
+                        append_frame!(w, 0.01 * k, f.pos, f.vel, f.rho, f.id, f.typ, f.gp)
+                    end
+                    @test frames_pending(w) == length(frames) % capacity
+                    flush_frames!(w)
+                    @test frames_written(w) == length(frames)
+                    flush_frames!(w)   # nothing pending: no-op
+                    @test frames_written(w) == length(frames)
+                end
+            end
+            return read_all(path)
+        end
+        ref = write_particles(nothing)
+        @test ref["NSteps"] == length(frames)
+        @test size(ref["Points"]) == (3, n * length(frames))
+        @test length(ref["Steps/NumberOfParts"]) == length(frames)
+        @test eltype(ref["PointData/Type"]) == Int8
+        @test eltype(ref["PointData/GhostPoints"]) == Float64
+        for capacity in (1, 3, 7, MAX_BUFFERED_FRAMES)
+            buf = write_particles(capacity)
+            @test sort(collect(keys(ref))) == sort(collect(keys(buf)))
+            for k in keys(ref)
+                @test ref[k] == buf[k]
+            end
+        end
+        @test_throws DimensionMismatch begin
+            h5open(joinpath(mktempdir(), "q.vtkhdf"), "w") do fid
+                root = HDF5.create_group(fid, "VTKHDF")
+                GenerateGeometryStructure(root, ["Density"], frames[1].rho; chunk_size = n)
+                GenerateStepStructure(root, ["Density"], frames[1].rho)
+                w = PolyDataFrameWriter(root, frames[1].pos, ["Density"], frames[1].rho)
+                append_frame!(w, 0.0, frames[1].pos[1:n-1], frames[1].rho[1:n-1])
+            end
+        end
+        # frames per flush from the memory budget: a power of two within the cap
+        @test buffered_frames(100, 1000) == 8
+        @test buffered_frames(100, 700) == 4
+        @test buffered_frames(1000, 100) == 1
+        @test buffered_frames(1, 10^9) == MAX_BUFFERED_FRAMES
+        @test buffered_frames(0, 0) == 1
+        @test ispow2(MAX_BUFFERED_FRAMES)
+    end
+
+    @testset "asynchronous output frames match a synchronous write" begin
+        case = BENCH_CASES[findfirst(c -> c.name == "StillWedge2D_MDBC_dp0.02", BENCH_CASES)]
+        function frames(async; double = false, host32 = false)
+            save = mktempdir()
+            kw   = case.build(Float32, save)
+            meta = kw.SimMetaData
+            meta.SimulationTime    = 0.006f0
+            meta.OutputTimes       = 0.002f0
+            meta.ExportGridCells   = true
+            meta.GPUAsyncOutput    = async
+            meta.GPUDoublePosition = double
+            meta.OutputVariables   = ["Density", "Velocity", "ID", "Type", "GhostPoints"]
+            particles = host32 ? AllocateDataStructures(kw.SimGeometry) : AllocateDataStructures(kw.SimGeometry, meta)
+            logger    = SimulationLogger(save; to_console = false)
+            RunSimulation(; kw..., SimLogger = logger, SimParticles = particles)
+            data = h5open(joinpath(save, meta.SimulationName * ".vtkhdf"), "r") do fid
+                root = fid["VTKHDF"]
+                (Points = read(root["Points"]), Steps = read(root["Steps"]["Values"]),
+                 PointData = Dict(k => read(root["PointData"][k]) for k in keys(root["PointData"])))
+            end
+            grid = h5open(joinpath(save, meta.SimulationName * "_GridCells.vtkhdf"), "r") do fid
+                (NumberOfCells = read(fid["VTKHDF"]["NumberOfCells"]), CellData = read(fid["VTKHDF"]["CellData"]["CellData"]))
+            end
+            log = read(joinpath(save, "SimulationOutput.log"), String)
+            return (; data, grid, particles, log)
+        end
+        sync  = frames(false)
+        async = frames(true)
+        n = length(sync.particles)
+        nframes = length(sync.data.Steps)
+        @test nframes >= 3
+        # deterministic runs: the asynchronously written frames are bitwise identical
+        @test async.data.Steps == sync.data.Steps
+        @test size(sync.data.Points) == (3, nframes * n)
+        @test async.data.Points == sync.data.Points
+        @test sort(collect(keys(sync.data.PointData))) == ["Density", "GhostPoints", "ID", "Type", "Velocity"]
+        for k in keys(sync.data.PointData)
+            @test async.data.PointData[k] == sync.data.PointData[k]
+        end
+        @test eltype(sync.data.PointData["Type"]) == Int8
+        @test size(sync.data.PointData["Velocity"]) == (3, nframes * n)
+        # the initial frame has no cell list yet, so the grid file holds one frame less
+        @test length(sync.grid.NumberOfCells) == nframes - 1
+        @test async.grid.NumberOfCells == sync.grid.NumberOfCells
+        @test async.grid.CellData == sync.grid.CellData
+        # the log line of every frame is printed by the writer as well
+        @test count("Part_", async.log) == count("Part_", sync.log) == nframes
+        # the host arrays hold the final state in both modes
+        order(p) = sortperm(p.ID)
+        @test async.particles[order(async.particles)].Density == sync.particles[order(sync.particles)].Density
+        @test async.particles[order(async.particles)].Cells == sync.particles[order(sync.particles)].Cells
+
+        # Float32 host positions of a double position run are converted on the writer task
+        d64 = frames(true; double = true)
+        d32 = frames(true; double = true, host32 = true)
+        @test eltype(d32.particles.Position) == SVector{2, Float32}
+        @test size(d32.data.Points) == size(d64.data.Points)
+        # the rounded Float32 start can move a particle across a cell boundary and
+        # change the cell order of a frame: compare every frame sorted by ID
+        function by_id(r)
+            ids = r.data.PointData["ID"]
+            perm = reduce(vcat, [(k - 1) * n .+ sortperm(ids[(k - 1) * n + 1:k * n]) for k in 1:nframes])
+            return r.data.Points[:, perm], r.data.PointData["Density"][perm]
+        end
+        p64, ρ64 = by_id(d64)
+        p32, ρ32 = by_id(d32)
+        @test maximum(abs.(p64 .- p32)) < 1e-4
+        @test ρ32 ≈ ρ64 rtol = 1e-3
+        @test all(p -> all(isfinite, p), d32.particles.Position)
+    end
+
     @testset "cell grid helpers" begin
         invH = 1 / 0.04
         @test map_floor(0.0, invH)   == 0

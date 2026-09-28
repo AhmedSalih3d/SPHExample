@@ -11,7 +11,7 @@ module SimulationLoggerConfiguration
 
     using ..SimulationGeometry
 
-    export SimulationLogger, generate_format_string, InitializeLogger, LogSimulationDetails, LogStep, LogFinal
+    export SimulationLogger, generate_format_string, InitializeLogger, LogSimulationDetails, LogStep, step_log_line, log_line, LogFinal
 
     """
         generate_format_string(values; padding=10)
@@ -163,45 +163,61 @@ module SimulationLoggerConfiguration
 
 
     """
-        LogStep(logger, metadata, timer)
+        step_log_line(SimLogger, SimMetaData, HourGlass) -> String
 
-    Record information about the current iteration such as physical time,
-    wall-clock time and an estimate of the remaining run time.
+    The log line of one output ("Part_0001 ..."), formatted from the current
+    meta data and the time measured so far. Formatting is separate from the
+    emission (`log_line`) so that the simulation thread can build the line
+    while the values still belong to the frame and the output writer task can
+    print it later, off the path between two output intervals.
     """
-    function LogStep(SimLogger, SimMetaData, HourGlass)
+    function step_log_line(SimLogger, SimMetaData, HourGlass)
+        PartNumber               = "Part_" * lpad(SimMetaData.OutputIterationCounter, 4, "0")
+        PartTime                 = string(@sprintf("%-.6f", SimMetaData.TotalTime))
+        PartTotalSteps           = string(SimMetaData.Iteration)
+        CurrentSteps             = string(SimMetaData.Iteration - SimMetaData.StepsTakenForLastOutput)
+
+        elapsed_time_            = TimerOutputs.tottime(HourGlass) / 1e9
+        TimeUptillNow            = string(@sprintf("%-.3f", elapsed_time_))
+        TimePerPhysicalSecond    = string(@sprintf("%-.2f", elapsed_time_ / SimMetaData.TotalTime))
+
+        SecondsToFinish          = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (elapsed_time_ / SimMetaData.TotalTime)
+        if isnan(SecondsToFinish)
+            ExpectedFinishTimeString = missing
+        else
+            ExpectedFinishTime       = now() + Second(ceil(Int, SecondsToFinish))
+            ExpectedFinishTimeString = Dates.format(ExpectedFinishTime, "dd-mm-yyyy HH:MM:SS")
+        end
+
+        return Printf.format(
+            Printf.Format(SimLogger.FormatStr),
+            PartNumber,
+            PartTime,
+            PartTotalSteps,
+            CurrentSteps,
+            TimeUptillNow,
+            TimePerPhysicalSecond,
+            ExpectedFinishTimeString,
+        )
+    end
+
+    """
+        log_line(SimLogger, line)
+
+    Emit a preformatted line through the simulation logger.
+    """
+    function log_line(SimLogger, line::AbstractString)
         with_logger(SimLogger.Logger) do
-            PartNumber               = "Part_" * lpad(SimMetaData.OutputIterationCounter, 4, "0")
-            PartTime                 = string(@sprintf("%-.6f", SimMetaData.TotalTime))
-            PartTotalSteps           = string(SimMetaData.Iteration)
-            CurrentSteps             = string(SimMetaData.Iteration - SimMetaData.StepsTakenForLastOutput)
-    
-            elapsed_time_            = TimerOutputs.tottime(HourGlass) / 1e9
-            TimeUptillNow            = string(@sprintf("%-.3f", elapsed_time_))
-            TimePerPhysicalSecond    = string(@sprintf("%-.2f", elapsed_time_ / SimMetaData.TotalTime))
-    
-            SecondsToFinish          = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (elapsed_time_ / SimMetaData.TotalTime)
-            if isnan(SecondsToFinish)
-                SecondsToFinish = 0.0
-                ExpectedFinishTime       = now() + Second(ceil(Int, SecondsToFinish))
-                ExpectedFinishTimeString = missing
-            else
-                ExpectedFinishTime       = now() + Second(ceil(Int, SecondsToFinish))
-                ExpectedFinishTimeString = Dates.format(ExpectedFinishTime, "dd-mm-yyyy HH:MM:SS")
-            end
-            
-            formatted_line = Printf.format(
-                Printf.Format(SimLogger.FormatStr),
-                PartNumber,
-                PartTime,
-                PartTotalSteps,
-                CurrentSteps,
-                TimeUptillNow,
-                TimePerPhysicalSecond,
-                ExpectedFinishTimeString,
-            )
-            @info formatted_line
+            @info line
         end
     end
+
+    """
+        LogStep(SimLogger, SimMetaData, HourGlass)
+
+    Format and emit the log line of the current output (see `step_log_line`).
+    """
+    LogStep(SimLogger, SimMetaData, HourGlass) = log_line(SimLogger, step_log_line(SimLogger, SimMetaData, HourGlass))
     
 
     """

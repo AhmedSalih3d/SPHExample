@@ -179,11 +179,157 @@ function download_particles!(SimParticles::StructArray, gpu::GPUParticles{D, T},
     cells || return Int32[]
 
     cid = Array(gpu.CellID)
+    store_cells!(SimParticles, grid, cid)
+    return cid
+end
+
+# Store the cell of every particle in the host `StructArray` from a host copy
+# of the device cell ids and return the distinct cells in cell order.
+function store_cells!(SimParticles::StructArray, grid::CellGrid{D}, cid::AbstractVector{Int32}) where {D}
     @inbounds for i in eachindex(cid)
         l = local_coords(grid, cid[i])
         SimParticles.Cells[i] = CartesianIndex(ntuple(d -> Int(l[d] + grid.origin[d]), Val(D)))
     end
-    return cid
+    return unique_cells_host(grid, cid)
+end
+
+#---------------------------------------------------------------
+# Asynchronous download of an output frame
+#---------------------------------------------------------------
+
+"""
+Page-locked host staging buffers for the fields of an output frame and the
+event that marks their arrival.
+
+`copyto!(::Array, ::CuArray)` waits for the device before it copies, so a
+download after every output interval drained the GPU pipeline and left the
+GPU idle for the whole host side of an output (copy, cell bookkeeping, log
+line, task spawn), several milliseconds per frame. Instead,
+`enqueue_download!` issues asynchronous device to host copies into these
+buffers on the stream of the step kernels: they read the state at the output
+time, the kernels of the next interval (which overwrite the device arrays)
+queue up behind them and the host continues at once. `finish_download!`,
+called by the output writer, waits on the event and moves the buffers into
+the host `StructArray`, converting fields whose host element type differs
+(`Float32` host positions of a `GPUDoublePosition` run).
+
+Julia arrays are not registered as pinned memory: small arrays share memory
+pages with other objects and CUDA cannot register a page twice. The buffers
+are separate page-locked allocations; release them with `free!`.
+"""
+struct OutputDownload{D}
+    fields::Vector{Symbol}          # `Position` and the downloaded fields, in the order of `buffers`
+    buffers::Vector{Vector}         # pinned staging buffer per field, in the device element type
+    cid::Vector{Int32}              # pinned cell ids (empty unless the cells are exported)
+    memory::Vector{CUDA.HostMemory} # the page-locked allocations behind the buffers
+    event::CuEvent                  # recorded behind the copies of the current frame
+end
+
+function OutputDownload(gpu::GPUParticles{D}, fields; cells::Bool) where {D}
+    memory = CUDA.HostMemory[]
+    function pinned(::Type{T}, n) where {T}
+        n == 0 && return T[]
+        mem = CUDA.alloc(CUDA.HostMemory, n * sizeof(T))
+        push!(memory, mem)
+        return unsafe_wrap(Array, convert(Ptr{T}, mem), n)
+    end
+    names   = Symbol[:Position, fields...]
+    buffers = Vector[pinned(eltype(getproperty(gpu, f)), length(gpu)) for f in names]
+    cid     = cells ? pinned(Int32, length(gpu)) : Int32[]
+    return OutputDownload{D}(names, buffers, cid, memory, CuEvent(CUDA.EVENT_DISABLE_TIMING))
+end
+
+# Asynchronous device to host copy into page-locked memory on the current stream.
+function copy_async!(dst::Vector{T}, src::CuVector{T}) where {T}
+    length(dst) == length(src) || throw(DimensionMismatch("host buffer of length $(length(dst)) for $(length(src)) elements"))
+    GC.@preserve dst src unsafe_copyto!(pointer(dst), pointer(src), length(src); async = true)
+    return dst
+end
+
+"""
+    enqueue_download!(download, gpu)
+
+Enqueue the asynchronous copies of the current device state into the staging
+buffers and record the event behind them. Returns at once; the copies complete
+in stream order, before any kernel enqueued afterwards runs.
+"""
+function enqueue_download!(dl::OutputDownload, gpu::GPUParticles)
+    for (f, buf) in zip(dl.fields, dl.buffers)
+        copy_async!(buf, getproperty(gpu, f))
+    end
+    isempty(dl.cid) || copy_async!(dl.cid, gpu.CellID)
+    CUDA.record(dl.event)
+    return dl
+end
+
+"""
+    finish_download!(download, SimParticles, grid) -> UniqueCells
+
+Wait for the copies of the frame and move them into the host `StructArray`
+(fields with a different host element type are converted). With exported
+cells the particle cells are stored as well and the distinct cells are
+returned; `grid` must be the cell grid at the time of `enqueue_download!`.
+Runs on the writer task.
+"""
+function finish_download!(dl::OutputDownload{D}, SimParticles::StructArray, grid::CellGrid{D}) where {D}
+    CUDA.synchronize(dl.event)
+    for (f, buf) in zip(dl.fields, dl.buffers)
+        copyto!(getproperty(SimParticles, f), buf)
+    end
+    isempty(dl.cid) && return CartesianIndex{D}[]
+    return store_cells!(SimParticles, grid, dl.cid)
+end
+
+"""
+    free!(download)
+
+Release the page-locked staging buffers; the download must not be used afterwards.
+"""
+function free!(dl::OutputDownload)
+    foreach(CUDA.free, dl.memory)
+    empty!(dl.memory)
+    return nothing
+end
+
+"""
+Sets of staging buffers (`OutputDownload`) that rotate between the
+simulation thread and the output writer. With one set the simulation thread
+had to wait for the previous frame to be written before it could enqueue the
+next download; with two, a frame whose write takes longer than an output
+interval (a flush of the buffered file writer, a slow disk) no longer stalls
+the GPU unless the writer falls a whole ring behind.
+"""
+const OUTPUT_STAGING_FRAMES = 2
+
+"""
+One output frame handed from the simulation thread to the writer task: the
+staging buffers that receive its copies, the output counter and time, the
+cell grid at the time of the download (the simulation thread may rebuild the
+cell list while the frame is written) and the formatted log line, if any.
+"""
+struct OutputFrameJob{D}
+    download::OutputDownload{D}
+    counter::Int
+    time::Float64
+    grid::CellGrid{D}
+    line::Union{Nothing, String}
+end
+
+# Spawn the output writer on a thread pool other than the one of the calling
+# thread, so that the file write never shares a thread with the kernel
+# launches. With the default `-t 1,1` of Julia 1.12 the script runs on the
+# interactive thread (thread 1) and the writer goes to the default thread;
+# with `-t N,0` there is no other pool and the writer competes with the
+# simulation for the default threads.
+function spawn_writer(f)
+    here = Threads.threadpool()
+    if here === :interactive && Threads.nthreads(:default) >= 1
+        return Threads.@spawn :default f()
+    elseif here === :default && Threads.nthreads(:interactive) >= 1
+        return Threads.@spawn :interactive f()
+    else
+        return Threads.@spawn f()
+    end
 end
 
 """
@@ -776,52 +922,72 @@ function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}},
         )
     end
 
-    # Output is written by a task so that the GPU can already continue with
-    # the next output interval. The host arrays are only overwritten after
-    # the previous write finished.
-    write_task     = nothing
-    async_write_time = 0.0
-    function wait_for_output()
-        if write_task !== nothing
-            async_write_time += fetch(write_task)::Float64
-            write_task = nothing
-        end
+    # An output frame is copied asynchronously into page-locked staging
+    # buffers on the stream of the step kernels and written to the files by a
+    # writer task, so that the GPU continues with the next output interval at
+    # once (see `OutputDownload`). `OUTPUT_STAGING_FRAMES` sets of staging
+    # buffers rotate through two channels: the simulation thread takes a free
+    # set, enqueues the copies and hands the frame to the writer; the writer
+    # waits for the copies, moves them into the host arrays, returns the set
+    # before it writes the files (so the set is busy for the copy only, not
+    # for the write) and writes the frames in order. The simulation thread
+    # blocks only when every set is in flight. A failure of the writer closes
+    # both channels and surfaces on the simulation thread.
+    staging = OutputDownload{Dimensions}[OutputDownload(gpu, download_fields; cells = SimMetaData.ExportGridCells)
+                                         for _ in 1:(SimMetaData.GPUAsyncOutput ? OUTPUT_STAGING_FRAMES : 1)]
+    free    = Channel{OutputDownload{Dimensions}}(length(staging))
+    jobs    = Channel{OutputFrameJob{Dimensions}}(length(staging))
+    foreach(dl -> put!(free, dl), staging)
+    write_time = Ref(0.0)
+    # Host side of one frame: wait for its copies, move them into the host
+    # arrays, release the staging buffers, write the files and print the log
+    # line. Runs on the writer task (or inline without `GPUAsyncOutput`).
+    function write_frame(job::OutputFrameJob)
+        t0 = time()
+        UniqueCells = finish_download!(job.download, SimParticles, job.grid)
+        put!(free, job.download)
+        SimMetaData.IndexCounter = length(UniqueCells)
+        output.save_particles(job.counter, job.time)
+        output.save_grid(job.counter, UniqueCells, SimParticles, job.time)
+        job.line === nothing || log_line(SimLogger, job.line)
+        write_time[] += time() - t0
         return nothing
     end
+    writer = nothing
+    if SimMetaData.GPUAsyncOutput
+        writer = spawn_writer(() -> foreach(write_frame, jobs))
+        bind(free, writer)
+        bind(jobs, writer)
+    end
 
+    try
     while true
         @timeit HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                                                              SimConstants, gpu, cl, sup, red, motion, state)
         push!(TimeSteps, SimMetaData.CurrentTimeStep)
 
+        # The log line is formatted now (its values belong to this frame) and
+        # printed by the writer, off the path between two output intervals.
+        line = nothing
         if StoreLogOutput
-            LogStep(SimLogger, SimMetaData, HourGlass)
+            line = step_log_line(SimLogger, SimMetaData, HourGlass)
             SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
         end
 
         SimMetaData.OutputIterationCounter += 1
-
-        @timeit HourGlass "13 Download From GPU" begin
-            wait_for_output()
-            cid = download_particles!(SimParticles, gpu, cl.grid, download_fields;
-                                      cells = SimMetaData.ExportGridCells)
-        end
-
-        UniqueCells = SimMetaData.ExportGridCells ? unique_cells_host(cl.grid, cid) : CartesianIndex{Dimensions}[]
-        SimMetaData.IndexCounter = length(UniqueCells)
-
         counter = SimMetaData.OutputIterationCounter
         t_out   = SimMetaData.TotalTime
-        if SimMetaData.GPUAsyncOutput
-            write_task = Threads.@spawn begin
-                t0 = time()
-                output.save_particles(counter, t_out)
-                output.save_grid(counter, UniqueCells, SimParticles, t_out)
-                time() - t0
+        grid    = cl.grid
+
+        @timeit HourGlass "13 Output Frame" begin
+            dl = @timeit HourGlass "13a Wait For Staging Buffers" take!(free)
+            enqueue_download!(dl, gpu)
+            job = OutputFrameJob{Dimensions}(dl, counter, Float64(t_out), grid, line)
+            if SimMetaData.GPUAsyncOutput
+                put!(jobs, job)
+            else
+                @timeit HourGlass "13b Write Frame" write_frame(job)
             end
-        else
-            @timeit HourGlass "13A Save Particle Data" output.save_particles(counter, t_out)
-            @timeit HourGlass "13A Save CellGrid Data" output.save_grid(counter, UniqueCells, SimParticles, t_out)
         end
 
         if !SimLogger.ToConsole
@@ -834,14 +1000,16 @@ function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}},
         end
 
         if SimMetaData.TotalTime > SimMetaData.SimulationTime
-            @timeit HourGlass "13B Close Data Streams" begin
-                wait_for_output()
+            @timeit HourGlass "13c Close Data Streams" begin
+                close(jobs)
+                writer === nothing || wait(writer)
                 output.close_files()
             end
+            foreach(free!, staging)
 
             # Leave the complete final state on the host, not only the output
             # fields, so that callers can inspect every particle field.
-            @timeit HourGlass "13 Download From GPU" download_particles!(SimParticles, gpu, cl.grid; cells = true)
+            @timeit HourGlass "13d Final Download From GPU" download_particles!(SimParticles, gpu, cl.grid; cells = true)
 
             if !SimLogger.ToConsole
                 finish!(SimMetaData.ProgressSpecification)
@@ -859,7 +1027,9 @@ function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}},
                     @info "Cell list rebuilds: $(cl.nrebuilds), grid dims: $(cl.grid.dims)"
                     @info "Host read backs of the step state: $(state.readbacks) for $(SimMetaData.Iteration) steps, " *
                           "captured step graphs: $(length(state.graphs))"
-                    @info @sprintf("Asynchronous output write time (overlapped with GPU work): %.2f [s]", async_write_time)
+                    @info @sprintf("Output frame write time (%s): %.2f [s], %d frames buffered per file flush",
+                                   SimMetaData.GPUAsyncOutput ? "writer task, overlapped with GPU work" : "simulation thread",
+                                   write_time[], output.frames_per_flush)
                 end
                 LogFinal(SimLogger, HourGlass)
 
@@ -874,6 +1044,10 @@ function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}},
 
             break
         end
+    end
+    finally
+        # never leave the writer task blocked on the job channel if the loop throws
+        close(jobs)
     end
 
     return nothing

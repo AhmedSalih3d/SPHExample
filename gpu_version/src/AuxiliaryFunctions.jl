@@ -27,6 +27,24 @@ function to_3d!(dest::AbstractVector{SVector{3,T}}, src::AbstractVector{SVector{
 end
 
 """
+    components!(dest, src)
+
+Fill the preallocated `3 × N` matrix `dest` (the VTK point data layout) with
+the components of the `N` 2D or 3D vectors in `src`; the third row is zero for
+2D vectors. The element type of `dest` decides the precision of the result.
+"""
+function components!(dest::AbstractMatrix{T}, src::AbstractVector{SVector{D, S}}) where {T, D, S}
+    size(dest) == (3, length(src)) || throw(DimensionMismatch("expected a 3 × $(length(src)) matrix, got $(size(dest))"))
+    @inbounds for i in eachindex(src)
+        v = src[i]
+        dest[1, i] = v[1]
+        dest[2, i] = v[2]
+        dest[3, i] = D == 3 ? v[3] : zero(T)
+    end
+    return dest
+end
+
+"""
     CloseHDFVTKManually(directory_path)
 
 Iterate over all `.vtkhdf` files in `directory_path` and close them.
