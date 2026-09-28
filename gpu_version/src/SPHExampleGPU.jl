@@ -27,6 +27,7 @@ module SPHExampleGPU
         "GPUCellGrid.jl",
         "GPUKernels.jl",
         "SPHCellList.jl",
+        "ParticleGenerator.jl",
         "CustomPrettyPrinting.jl",
     ]
     foreach(include, submodules)
