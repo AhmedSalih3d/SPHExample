@@ -15,13 +15,14 @@ data during a simulation run.
 """
 
 export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
-       AppendVTKHDFData, SaveCellGridVTKHDF, AppendVTKHDFGridData,
+       AppendVTKHDFData, SavePolygonVTKHDF, SaveCellGridVTKHDF, AppendVTKHDFGridData,
        GridGeometryBuffers, fill_grid_geometry!, GridFrameWriter, append_grid_frame!,
        PolyDataFrameWriter, append_frame!, flush_frames!, frames_written, frames_pending,
        buffered_frames, MAX_BUFFERED_FRAMES,
        SetupVTKOutput
 
     using HDF5
+    using Meshes
     using StaticArrays
 
     using ..AuxiliaryFunctions: to_3d, to_3d!, components!
@@ -180,6 +181,74 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         end
 
         fid_vector[index] = io
+    end
+
+    """
+        SavePolygonVTKHDF(filepath, regions)
+
+    Write named `PolyArea` regions as static VTKHDF `PolyData`. A region may be
+    a single polygon or a `Multi` of polygons; each is triangulated and labeled
+    in the cell-data array `Region` by its position in the named tuple.
+    """
+    function SavePolygonVTKHDF(filepath::AbstractString, regions::NamedTuple)
+        isempty(regions) && throw(ArgumentError("at least one polygon region is required"))
+
+        points = SVector{3, Float64}[]
+        connectivity = Int64[]
+        offsets = Int64[0]
+        cell_regions = Int32[]
+
+        for (region_id, geometry) in enumerate(values(regions))
+            components = if geometry isa PolyArea
+                (geometry,)
+            elseif geometry isa Multi
+                parent(geometry)
+            else
+                throw(ArgumentError("each region must be a PolyArea or a Multi of PolyAreas"))
+            end
+            isempty(components) && throw(ArgumentError("polygon regions cannot be empty"))
+
+            for polygon in components
+                polygon isa PolyArea ||
+                    throw(ArgumentError("Multi regions may only contain PolyAreas"))
+                mesh = discretize(polygon)
+                point_offset = length(points)
+
+                for vertex in vertices(mesh)
+                    x, y = Meshes.ustrip.(to(vertex))
+                    push!(points, SVector{3, Float64}(x, y, 0.0))
+                end
+                for cell in elements(topology(mesh))
+                    append!(connectivity, point_offset .+ indices(cell) .- 1)
+                    push!(offsets, length(connectivity))
+                    push!(cell_regions, region_id)
+                end
+            end
+        end
+        isempty(points) && throw(ArgumentError("polygon regions have no points"))
+
+        mkpath(dirname(abspath(filepath)))
+        h5open(filepath, "w") do file
+            root = HDF5.create_group(file, "VTKHDF")
+            HDF5.attrs(root)["Version"] = Int32[2, 3]
+            write_ascii_attribute(root, "Type", "PolyData")
+            root["NumberOfPoints"] = Int64[length(points)]
+            root["Points"] = stack(points)
+
+            for cell_type in ("Vertices", "Lines", "Polygons", "Strips")
+                group = HDF5.create_group(root, cell_type)
+                is_polygon                       = cell_type == "Polygons"
+                group["NumberOfCells"]           = Int64[is_polygon ? length(cell_regions) : 0]
+                group["NumberOfConnectivityIds"] = Int64[is_polygon ? length(connectivity) : 0]
+                group["Connectivity"]            = is_polygon ? connectivity : Int64[]
+                group["Offsets"]                 = is_polygon ? offsets : Int64[0]
+            end
+
+            cell_data = HDF5.create_group(root, "CellData")
+            cell_data["Region"] = cell_regions
+        end
+
+        return filepath
     end
 
 

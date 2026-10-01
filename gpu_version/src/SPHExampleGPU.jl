@@ -53,9 +53,12 @@ module SPHExampleGPU
     export AllocateDataStructures, AllocateSupportDataStructures, LoadBoundaryNormals
 
     using .ProduceHDFVTK
-    export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure, AppendVTKHDFData, SaveCellGridVTKHDF, AppendVTKHDFGridData, SetupVTKOutput,
-           GridGeometryBuffers, fill_grid_geometry!, GridFrameWriter, append_grid_frame!,
-           PolyDataFrameWriter, append_frame!, flush_frames!, frames_written, frames_pending, buffered_frames, MAX_BUFFERED_FRAMES
+    export SaveVTKHDF, SavePolygonVTKHDF, GenerateGeometryStructure,
+           GenerateStepStructure, AppendVTKHDFData, SaveCellGridVTKHDF,
+           AppendVTKHDFGridData, SetupVTKOutput, GridGeometryBuffers,
+           fill_grid_geometry!, GridFrameWriter, append_grid_frame!,
+           PolyDataFrameWriter, append_frame!, flush_frames!, frames_written,
+           frames_pending, buffered_frames, MAX_BUFFERED_FRAMES
 
     using .TimeStepping: Δt
     export Δt
