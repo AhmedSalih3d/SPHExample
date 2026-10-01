@@ -26,6 +26,29 @@ julia --project=gpu_version gpu_version/example/Dambreak2dMDBC.jl
 The examples in `gpu_version/example/` mirror those in `example/`. Choose the
 precision with `FloatType = Float32` or `Float64` at the top of a script.
 
+### StillWedge polygon geometry
+
+`example/GenerateStillWedgeMDBC.jl` creates Meshes.jl `PolyArea`s for the fixed
+boundary and water, then exports only their geometry as static VTKHDF PolyData.
+It does not generate particles or run a simulation, and does not need a GPU.
+The polygons follow the `dx = 0.02` reference boundary envelope: a 2.2 m wide
+tank with 0.7 m walls, 0.04 m wall thickness, a wedge peak at `(1.1, 0.26)` m,
+and water up to 0.5 m. The wedge's base runs from x = 0.84 to 1.36 m.
+
+From the repository root:
+
+```bash
+julia --project=gpu_version gpu_version/example/GenerateStillWedgeMDBC.jl
+```
+
+Open `example/StillWedgeMDBC_Geometry.vtkhdf` in ParaView and click **Apply**.
+Use **Surface With Edges** and color by the **Region** cell array
+(`1` = fixed boundary, `2` = water). Coordinates use the solver's XY plane
+with z = 0; the concave polygons are triangulated for visualization.
+An optional command-line argument selects a different output file path.
+The geometry-only tests can also run without a GPU:
+`julia --project=gpu_version gpu_version/test/still_wedge_geometry.jl`.
+
 ### Which precision?
 
 * `Float64` reproduces the CPU results to round-off (the test suite checks

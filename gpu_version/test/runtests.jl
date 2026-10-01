@@ -6,6 +6,7 @@ using StructArrays
 using LinearAlgebra
 using HDF5
 
+include(joinpath(@__DIR__, "still_wedge_geometry.jl"))
 include(joinpath(@__DIR__, "..", "benchmark", "cases.jl"))
 
 # Project of the CPU package used as the reference. Defaults to the repository
