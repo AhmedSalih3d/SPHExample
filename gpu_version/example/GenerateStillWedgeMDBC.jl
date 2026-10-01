@@ -1,58 +1,119 @@
+# Generate the 2D still wedge case from polygons instead of hand made CSV files.
+#
+# The tank (walls, floor and the hollow wedge) and the water are described as
+# Meshes.jl `PolyArea`s. The polygons are written as VTKHDF for ParaView, then
+# sampled on one particle lattice with `RegularSampling`: lattice points on or
+# inside the tank outline become boundary particles, points strictly inside the
+# water become fluid particles, so the two never overlap. The particles are
+# written as CSV input files for `SPHGeometry` and as VTKHDF for ParaView.
+# No simulation is run and no GPU is needed.
+#
+# Run from the repository root with:
+#     julia --project=gpu_version gpu_version/example/GenerateStillWedgeMDBC.jl [output_dir] [dx]
 using SPHExampleGPU
 using Meshes
 
 """
-    still_wedge_polygons()
+    still_wedge_2d_polygons(; tank_width = 2.2, tank_height = 0.7, water_height = 0.5,
+                             wall_thickness = 0.04, wedge_apex = (1.1, 0.26),
+                             wedge_shell = 0.06)
 
-Return the fixed boundary and water as 2D polygon regions, in metres.
-Separate boundary components leave the particle-free region below the wedge open.
+Tank outline and water of the still wedge case as 2D polygons, in metres.
+
+The tank is one polygon: a floor and two side walls of `wall_thickness`
+carrying a hollow wedge with 45° slopes whose tip is `wedge_apex`. The wedge is
+a shell of horizontal thickness `wedge_shell`; its inner V continues through
+the floor, so there is no boundary below the wedge (as in the reference
+`input/still_wedge` particles). The water fills the tank around the wedge up
+to `water_height`.
 """
-function still_wedge_polygons()
-    tank_width = 2.2
-    tank_height = 0.7
-    wall_thickness = 0.04
-    water_height = 0.5
-    wedge_base_left = (0.84, 0.0)
-    wedge_peak = (1.1, 0.26)
-    wedge_base_right = (1.36, 0.0)
+function still_wedge_2d_polygons(; tank_width = 2.2, tank_height = 0.7, water_height = 0.5,
+                                 wall_thickness = 0.04, wedge_apex = (1.1, 0.26),
+                                 wedge_shell = 0.06)
+    apex_x, apex_y = wedge_apex
+    t = wall_thickness
+    outer_half_width = apex_y                   # 45° slopes: half width = height
+    inner_apex_y     = apex_y - wedge_shell
+    inner_half_width = inner_apex_y + t         # inner V where it meets the floor bottom
 
-    left_wall = PolyArea([
-        (-wall_thickness, -wall_thickness),
-        (0.86, -wall_thickness),
-        (0.90, 0.0),
-        (0.0, 0.0),
-        (0.0, tank_height),
-        (-wall_thickness, tank_height),
-    ])
-    wedge = PolyArea([wedge_base_left, wedge_base_right, wedge_peak])
-    right_wall = PolyArea([
-        (1.34, -wall_thickness),
-        (tank_width + wall_thickness, -wall_thickness),
-        (tank_width + wall_thickness, tank_height),
+    wedge_left  = (apex_x - outer_half_width, 0.0)
+    wedge_right = (apex_x + outer_half_width, 0.0)
+
+    # Counter clockwise: along the floor bottom, up the right wall, back along
+    # the wetted surface (floor, wedge, floor) and up the left wall.
+    tank = PolyArea([
+        (-t, -t),
+        (apex_x - inner_half_width, -t),
+        (apex_x, inner_apex_y),                 # inner tip of the hollow wedge
+        (apex_x + inner_half_width, -t),
+        (tank_width + t, -t),
+        (tank_width + t, tank_height),
         (tank_width, tank_height),
         (tank_width, 0.0),
-        (1.30, 0.0),
+        wedge_right,
+        wedge_apex,
+        wedge_left,
+        (0.0, 0.0),
+        (0.0, tank_height),
+        (-t, tank_height),
     ])
-    fixed_boundary = Multi([left_wall, wedge, right_wall])
 
     water = PolyArea([
         (0.0, 0.0),
-        wedge_base_left,
-        wedge_peak,
-        wedge_base_right,
+        wedge_left,
+        wedge_apex,
+        wedge_right,
         (tank_width, 0.0),
         (tank_width, water_height),
         (0.0, water_height),
     ])
 
-    return (; fixed_boundary, water)
+    return (; tank, water)
+end
+
+"""
+    generate_still_wedge_2d_example(output_dir; dx = 0.02, ρ₀ = 1000.0)
+
+Write the polygons (`StillWedge2D_Geometry.vtkhdf`), the particles sampled from
+them (`StillWedge2D_Dp<dx>_Particles.vtkhdf`) and the CSV input files
+(`StillWedge2D_Dp<dx>_Bound.csv`, `..._Fluid.csv`) to `output_dir`. The fluid
+starts with the rest density `ρ₀`. Returns the sampled particles per region.
+"""
+function generate_still_wedge_2d_example(output_dir; dx = 0.02, ρ₀ = 1000.0)
+    polygons = still_wedge_2d_polygons()
+    regions  = [
+        ParticleRegion("Bound", polygons.tank,  Fixed),  # listed first: owns the shared surfaces
+        ParticleRegion("Fluid", polygons.water, Fluid),
+    ]
+    particles = sample_particles(regions, dx)
+
+    mkpath(output_dir)
+    prefix = joinpath(output_dir, "StillWedge2D_Dp$(dx)")
+    SavePolygonVTKHDF(joinpath(output_dir, "StillWedge2D_Geometry.vtkhdf"), polygons)
+
+    next_id = 0
+    for region in particles
+        next_id = write_particle_csv("$(prefix)_$(region.name).csv", region.positions;
+                                     density = ρ₀, first_id = next_id)
+    end
+
+    positions = to_3d(reduce(vcat, region.positions for region in particles))
+    types     = reduce(vcat, fill(Int8(region.type), length(region.positions)) for region in particles)
+    markers   = reduce(vcat, fill(id, length(region.positions)) for (id, region) in enumerate(particles))
+    SaveVTKHDF("$(prefix)_Particles.vtkhdf", positions, ["Type", "GroupMarker"], types, markers)
+
+    return particles
 end
 
 if abspath(PROGRAM_FILE) == abspath(@__FILE__)
-    length(ARGS) <= 1 || throw(ArgumentError("Expected at most one output file path"))
-    output_path = isempty(ARGS) ?
-        joinpath(@__DIR__, "StillWedgeMDBC_Geometry.vtkhdf") : abspath(only(ARGS))
-    polygons = still_wedge_polygons()
-    SavePolygonVTKHDF(output_path, polygons)
-    @info "Saved StillWedge polygon geometry" output_path
+    length(ARGS) <= 2 || throw(ArgumentError("usage: GenerateStillWedgeMDBC.jl [output_dir] [dx]"))
+    output_dir = length(ARGS) >= 1 ? abspath(ARGS[1]) :
+                 normpath(joinpath(@__DIR__, "..", "input", "still_wedge_generated"))
+    dx = length(ARGS) == 2 ? parse(Float64, ARGS[2]) : 0.02
+
+    particles = generate_still_wedge_2d_example(output_dir; dx)
+    for region in particles
+        @info "$(region.name): $(length(region.positions)) particles"
+    end
+    @info "Saved StillWedge2D geometry and particles" output_dir
 end

@@ -184,71 +184,105 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     end
 
     """
+        SaveVTKHDF(filepath, points, variable_names = String[], args...)
+
+    Write one static `PolyData` file of vertices (one cell per point) with the
+    point data `variable_names => args` and close it. Returns `filepath`.
+    """
+    function SaveVTKHDF(filepath::AbstractString, points, variable_names = String[], args...)
+        files = Vector{HDF5.File}(undef, 1)
+        SaveVTKHDF(files, 1, filepath, points, variable_names, args...)
+        close(files[1])
+        return filepath
+    end
+
+    """
         SavePolygonVTKHDF(filepath, regions)
 
-    Write named `PolyArea` regions as static VTKHDF `PolyData`. A region may be
-    a single polygon or a `Multi` of polygons; each is triangulated and labeled
-    in the cell-data array `Region` by its position in the named tuple.
+    Write the polygons of the named tuple `regions` as one static VTKHDF
+    `PolyData` file. Every region is a `PolyArea` or a `Multi` of `PolyArea`s.
+    The polygons are triangulated so that concave shapes render correctly; the
+    triangles carry the position of their region in the tuple in the cell data
+    array `Region`. 2D coordinates are written in the XY plane with `z = 0`.
+    Returns `filepath`.
     """
     function SavePolygonVTKHDF(filepath::AbstractString, regions::NamedTuple)
         isempty(regions) && throw(ArgumentError("at least one polygon region is required"))
+        points, connectivity, offsets, region_ids = triangulate_regions(values(regions))
 
-        points = SVector{3, Float64}[]
-        connectivity = Int64[]
-        offsets = Int64[0]
-        cell_regions = Int32[]
+        mkpath(dirname(abspath(filepath)))
+        h5open(filepath, "w") do io
+            root = HDF5.create_group(io, "VTKHDF")
+            HDF5.attrs(root)["Version"] = Int32[2, 3]
+            write_ascii_attribute(root, "Type", "PolyData")
+            root["NumberOfPoints"] = [length(points)]
+            root["Points"]         = stack(points)
 
-        for (region_id, geometry) in enumerate(values(regions))
-            components = if geometry isa PolyArea
-                (geometry,)
-            elseif geometry isa Multi
-                parent(geometry)
-            else
-                throw(ArgumentError("each region must be a PolyArea or a Multi of PolyAreas"))
+            write_polydata_cells(root, "Polygons", connectivity, offsets)
+            for cell_type in ("Vertices", "Lines", "Strips")
+                write_polydata_cells(root, cell_type, Int64[], Int64[0])
             end
-            isempty(components) && throw(ArgumentError("polygon regions cannot be empty"))
+            HDF5.create_group(root, "CellData")["Region"] = region_ids
+        end
+        return filepath
+    end
 
-            for polygon in components
-                polygon isa PolyArea ||
-                    throw(ArgumentError("Multi regions may only contain PolyAreas"))
-                mesh = discretize(polygon)
-                point_offset = length(points)
+    """
+    Triangulate the polygons of all `regions` into one point list with VTK
+    style (zero based) connectivity and offsets. Triangles are oriented counter
+    clockwise regardless of the orientation of the input rings.
+    """
+    function triangulate_regions(regions)
+        points       = SVector{3, Float64}[]
+        connectivity = Int64[]
+        offsets      = Int64[0]
+        region_ids   = Int32[]
 
-                for vertex in vertices(mesh)
-                    x, y = Meshes.ustrip.(to(vertex))
-                    push!(points, SVector{3, Float64}(x, y, 0.0))
-                end
-                for cell in elements(topology(mesh))
-                    append!(connectivity, point_offset .+ indices(cell) .- 1)
-                    push!(offsets, length(connectivity))
-                    push!(cell_regions, region_id)
-                end
+        for (id, region) in enumerate(regions), polygon in polygons_of(region)
+            mesh        = discretize(polygon)
+            first_point = length(points)
+            for vertex in vertices(mesh)
+                x, y = Meshes.ustrip.(to(vertex))
+                push!(points, SVector(x, y, 0.0))
+            end
+            for triangle in elements(topology(mesh))
+                ids = first_point .+ collect(indices(triangle))
+                append!(connectivity, counter_clockwise(points, ids) .- 1)
+                push!(offsets, length(connectivity))
+                push!(region_ids, id)
             end
         end
         isempty(points) && throw(ArgumentError("polygon regions have no points"))
+        return points, connectivity, offsets, region_ids
+    end
 
-        mkpath(dirname(abspath(filepath)))
-        h5open(filepath, "w") do file
-            root = HDF5.create_group(file, "VTKHDF")
-            HDF5.attrs(root)["Version"] = Int32[2, 3]
-            write_ascii_attribute(root, "Type", "PolyData")
-            root["NumberOfPoints"] = Int64[length(points)]
-            root["Points"] = stack(points)
+    polygons_of(region::PolyArea) = (region,)
+    polygons_of(region::Multi)    = polygons_of_multi(parent(region))
+    polygons_of(region) =
+        throw(ArgumentError("each region must be a PolyArea or a Multi of PolyAreas, got $(typeof(region))"))
 
-            for cell_type in ("Vertices", "Lines", "Polygons", "Strips")
-                group = HDF5.create_group(root, cell_type)
-                is_polygon                       = cell_type == "Polygons"
-                group["NumberOfCells"]           = Int64[is_polygon ? length(cell_regions) : 0]
-                group["NumberOfConnectivityIds"] = Int64[is_polygon ? length(connectivity) : 0]
-                group["Connectivity"]            = is_polygon ? connectivity : Int64[]
-                group["Offsets"]                 = is_polygon ? offsets : Int64[0]
-            end
+    function polygons_of_multi(polygons)
+        isempty(polygons) && throw(ArgumentError("polygon regions cannot be empty"))
+        all(p -> p isa PolyArea, polygons) ||
+            throw(ArgumentError("Multi regions may only contain PolyAreas"))
+        return polygons
+    end
 
-            cell_data = HDF5.create_group(root, "CellData")
-            cell_data["Region"] = cell_regions
-        end
+    # One based triangle `ids` into `points`, reversed if the triangle is clockwise.
+    function counter_clockwise(points, ids)
+        a, b, c = points[ids[1]], points[ids[2]], points[ids[3]]
+        signed_area = (b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1])
+        return signed_area < 0 ? reverse(ids) : ids
+    end
 
-        return filepath
+    """Write one PolyData connectivity group (`Vertices`, `Lines`, `Polygons` or `Strips`)."""
+    function write_polydata_cells(root, name, connectivity, offsets)
+        group = HDF5.create_group(root, name)
+        group["NumberOfCells"]           = [length(offsets) - 1]
+        group["NumberOfConnectivityIds"] = [length(connectivity)]
+        group["Connectivity"]            = connectivity
+        group["Offsets"]                 = offsets
+        return group
     end
 
 

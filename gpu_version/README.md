@@ -26,30 +26,38 @@ julia --project=gpu_version gpu_version/example/Dambreak2dMDBC.jl
 The examples in `gpu_version/example/` mirror those in `example/`. Choose the
 precision with `FloatType = Float32` or `Float64` at the top of a script.
 
-### StillWedge polygon geometry
+### Generating a case from polygons (StillWedge 2D)
 
-`example/GenerateStillWedgeMDBC.jl` creates Meshes.jl polygon regions for the
-fixed boundary and water, then exports only their geometry as static VTKHDF
-PolyData.
-It does not generate particles or run a simulation, and does not need a GPU.
-The polygons follow the `dx = 0.02` reference boundary envelope: a 2.2 m wide
-tank with 0.7 m walls, 0.04 m wall thickness, a wedge peak at `(1.1, 0.26)` m,
-and water up to 0.5 m. The fixed boundary is split into the left wall/floor,
-the wedge, and the right wall/floor so no floor is filled in below the wedge.
-
-From the repository root:
+`example/GenerateStillWedgeMDBC.jl` builds the 2D still wedge case from
+Meshes.jl `PolyArea`s instead of hand made CSV files. It needs no GPU and runs
+no simulation. From the repository root:
 
 ```bash
-julia --project=gpu_version gpu_version/example/GenerateStillWedgeMDBC.jl
+julia --project=gpu_version gpu_version/example/GenerateStillWedgeMDBC.jl [output_dir] [dx]
 ```
 
-Open `example/StillWedgeMDBC_Geometry.vtkhdf` in ParaView and click **Apply**.
-Use **Surface With Edges** and color by the **Region** cell array
-(`1` = fixed boundary, `2` = water). Coordinates use the solver's XY plane
-with z = 0; the polygons are triangulated for visualization. The reusable
-`SavePolygonVTKHDF` writer is defined in `src/ProduceHDFVTK.jl`.
-An optional command-line argument selects a different output file path.
-The geometry-only tests can also run without a GPU:
+The tank is one polygon (floor and walls of 0.04 m carrying a hollow 45°
+wedge with its tip at `(1.1, 0.26)` m; the inner V of the wedge shell continues
+through the floor, so there is no boundary below the wedge), the water a
+second polygon up to 0.5 m. The script writes to `output_dir` (default
+`input/still_wedge_generated/`):
+
+* `StillWedge2D_Geometry.vtkhdf` – the polygons, triangulated, with a
+  `Region` cell array (`1` = tank, `2` = water);
+* `StillWedge2D_Dp<dx>_Bound.csv`, `..._Fluid.csv` – particles in the layout
+  read by `SPHGeometry` (with `dx = 0.02` they reproduce `input/still_wedge/`
+  exactly);
+* `StillWedge2D_Dp<dx>_Particles.vtkhdf` – the same particles with `Type` and
+  `GroupMarker` for ParaView.
+
+The particles come from `ParticleRegion` and `sample_particles`
+(`src/ParticleGenerator.jl`): one lattice of spacing `dx` is laid over all
+regions with `RegularSampling` and each lattice point goes to the first region
+that contains it. Walls are listed first and own their outline, the fluid only
+takes the open interior of its polygon, so boundary and fluid particles never
+overlap and the fluid stops one spacing short of the walls and the free
+surface. `SavePolygonVTKHDF` and the single file `SaveVTKHDF(path, points, ...)`
+live in `src/ProduceHDFVTK.jl`. The geometry tests run without a GPU:
 `julia --project=gpu_version gpu_version/test/still_wedge_geometry.jl`.
 
 ### Which precision?
