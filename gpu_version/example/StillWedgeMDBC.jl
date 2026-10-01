@@ -17,14 +17,16 @@ let
 # 
     # Assuming SimConstantsWedge is defined somewhere else with the field `dx`
     FixedBoundary = SPHGeometry{Dimensions, FloatType}(
-        CSVFile     = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Bound.csv",
+        # CSVFile     = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Bound.csv",
+        CSVFile     = "input/still_wedge_generated/StillWedge2D_Dp$(SimConstantsWedge.dx)_Bound.csv",
         GroupMarker = 1,
         Type        = Fixed,   # Using the enum value Fixed
         Motion      = nothing
     )
 
     Water = SPHGeometry{Dimensions, FloatType}(
-        CSVFile     = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Fluid.csv",
+        # CSVFile     = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Fluid.csv",
+        CSVFile     = "input/still_wedge_generated/StillWedge2D_Dp$(SimConstantsWedge.dx)_Fluid.csv",
         GroupMarker = 2,
         Type        = Fluid,   # Using the enum value Fluid
         Motion      = nothing

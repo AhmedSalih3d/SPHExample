@@ -99,7 +99,7 @@ module SPHExampleGPU
            RunSimulation, SimulationLoop, position_type, uses_pos_cells
 
     using .ParticleGenerator
-    export ParticleRegion, sample_particles, write_particle_csv
+    export ParticleRegion, sample_particles, hydrostatic_density, write_particle_csv
 
     using .OpenExternalPrograms
     export AutoOpenLogFile, AutoOpenParaview

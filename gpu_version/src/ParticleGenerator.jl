@@ -9,7 +9,7 @@ Listing the walls before the fluid therefore guarantees that boundary and
 fluid particles never overlap, without any pairwise distance checks.
 """
 
-export ParticleRegion, sample_particles, write_particle_csv
+export ParticleRegion, sample_particles, hydrostatic_density, write_particle_csv
 
 using Meshes
 using StaticArrays
@@ -102,6 +102,31 @@ function owns(region::ParticleRegion, point::Point, tolerance)
 end
 
 outline_segments(geometry) = (s for ring in rings(geometry) for s in segments(ring))
+
+"""
+    hydrostatic_density(positions, SimConstants; water_level = highest particle)
+
+Initial densities for which the solver's equation of state returns the
+hydrostatic pressure `P = ρ₀ g (water_level - z)`, so a fluid at rest starts
+with the correct pressure profile. `z` is the vertical (last) coordinate, the
+`y` of 2D positions. `ρ₀`, `g` and `c₀` are taken from `SimConstants`.
+
+By default the water level is the height of the highest particle, the
+convention of DualSPHysics that reproduces `input/still_wedge`. Particles above
+`water_level` get `ρ₀`.
+"""
+function hydrostatic_density(positions, SimConstants;
+                             water_level = maximum(last, positions))
+    (; ρ₀, g, c₀) = SimConstants
+    # `Pressure!` uses `EquationOfStateGamma7`, so invert it with γ = 7 as well.
+    # The exact root is used: `Estimate7thRoot` (inside
+    # `InverseHydrostaticEquationOfState`) is ~1e-13 off even at P = 0.
+    invCb = 7 / (c₀^2 * ρ₀)
+    return map(positions) do x
+        depth = max(water_level - last(x), zero(water_level))
+        ρ₀ * (1 + ρ₀ * g * depth * invCb)^(1 / 7)
+    end
+end
 
 """
     write_particle_csv(path, positions; density, first_id = 0)

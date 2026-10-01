@@ -1,6 +1,7 @@
 using Test
 using CSV
 using HDF5
+using StaticArrays
 
 include(joinpath(@__DIR__, "..", "example", "GenerateStillWedgeMDBC.jl"))
 
@@ -11,6 +12,28 @@ function reference_nodes(suffix, dx)
     file = joinpath(@__DIR__, "..", "input", "still_wedge", "StillWedge_Dp$(dx)_$suffix.csv")
     rows = CSV.File(file)
     lattice_nodes([(row[Symbol("Points:0")], row[Symbol("Points:2")]) for row in rows], dx)
+end
+
+function reference_densities(suffix, dx)
+    file = joinpath(@__DIR__, "..", "input", "still_wedge", "StillWedge_Dp$(dx)_$suffix.csv")
+    Dict(Tuple(round.(Int, (row[Symbol("Points:0")], row[Symbol("Points:2")]) ./ dx)) => row.Rhop
+         for row in CSV.File(file))
+end
+
+@testset "hydrostatic density" begin
+    constants = SimulationConstants{Float64}(dx = 0.02, c₀ = 42.48576250492629)
+    (; ρ₀, g, c₀) = constants
+    positions = [SVector(0.3, y) for y in 0.02:0.02:0.48]
+    ρ = hydrostatic_density(positions, constants)
+    @test ρ[end] == ρ₀                        # default level: highest particle
+    @test issorted(ρ; rev = true)             # denser with depth
+    # inverse of the solver's equation of state
+    @test isapprox(EquationOfStateGamma7.(ρ, c₀, ρ₀), ρ₀ * g .* (0.48 .- last.(positions)); atol = 1e-4)
+    ρ₅ = hydrostatic_density(positions, constants; water_level = 0.5)
+    @test isapprox(EquationOfStateGamma7(ρ₅[end], c₀, ρ₀), ρ₀ * g * 0.02; atol = 1e-4)
+    @test hydrostatic_density([SVector(0.0, 0.6)], constants; water_level = 0.5) == [ρ₀]
+    # 3D: the vertical coordinate is z
+    @test hydrostatic_density([SVector(0.0, 5.0, 0.1), SVector(0.0, -5.0, 0.3)], constants)[1] > ρ₀
 end
 
 @testset "StillWedge polygon geometry" begin
@@ -64,8 +87,18 @@ end
             @test length(loaded) == sum(length(p.positions) for p in particles)
             @test loaded.ID == 1:length(loaded)
             @test count(==(Fixed), loaded.Type) == length(particles[1].positions)
-            @test all(==(1000.0), loaded.Density)
             @test lattice_nodes(loaded.Position[loaded.Type .== Fluid], dx) == reference_nodes("Fluid", dx)
+
+            # boundaries at rest density, fluid hydrostatic like the reference (1 decimal)
+            @test all(==(1000.0), loaded.Density[loaded.Type .== Fixed])
+            reference = reference_densities("Fluid", dx)
+            fluid = findall(==(Fluid), loaded.Type)
+            @test all(fluid) do i
+                round(loaded.Density[i]; digits = 1) ==
+                    reference[Tuple(round.(Int, loaded.Position[i] ./ dx))]
+            end
+            @test particles[2].density == hydrostatic_density(particles[2].positions,
+                SimulationConstants{Float64}(dx = dx, c₀ = 42.48576250492629))
 
             h5open(joinpath(directory, "StillWedge2D_Dp0.02_Particles.vtkhdf"), "r") do file
                 root = file["VTKHDF"]
@@ -74,6 +107,9 @@ end
                 @test read(root["Vertices"]["NumberOfCells"]) == [length(loaded)]
                 @test sort(unique(read(root["PointData"]["GroupMarker"]))) == [1, 2]
                 @test sort(unique(read(root["PointData"]["Type"]))) == Int8[Int8(Fluid), Int8(Fixed)]
+                pressure = read(root["PointData"]["Pressure"])
+                @test maximum(pressure) ≈ 1000 * 9.81 * 0.46 rtol = 1e-6
+                @test minimum(pressure) ≈ 0 atol = 1e-6
             end
         end
 

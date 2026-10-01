@@ -46,9 +46,16 @@ second polygon up to 0.5 m. The script writes to `output_dir` (default
   `Region` cell array (`1` = tank, `2` = water);
 * `StillWedge2D_Dp<dx>_Bound.csv`, `..._Fluid.csv` – particles in the layout
   read by `SPHGeometry` (with `dx = 0.02` they reproduce `input/still_wedge/`
-  exactly);
-* `StillWedge2D_Dp<dx>_Particles.vtkhdf` – the same particles with `Type` and
-  `GroupMarker` for ParaView.
+  exactly, densities included);
+* `StillWedge2D_Dp<dx>_Particles.vtkhdf` – the same particles with `Density`,
+  `Pressure`, `Type` and `GroupMarker` for ParaView.
+
+Boundary particles start at `ρ₀`. Fluid particles start in hydrostatic
+equilibrium: `hydrostatic_density` inverts the solver's equation of state
+(`EquationOfStateGamma7`) for `P = ρ₀ g (water_level - y)`. By default the water
+level is the highest fluid particle (the DualSPHysics convention); pass
+`water_level` to override it, and the `SimConstants` of your simulation so that
+`ρ₀`, `g` and `c₀` agree (the default matches `StillWedgeMDBC.jl`).
 
 The particles come from `ParticleRegion` and `sample_particles`
 (`src/ParticleGenerator.jl`): one lattice of spacing `dx` is laid over all
