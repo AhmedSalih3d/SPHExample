@@ -70,6 +70,33 @@ end
         @test minimum(p -> p[1], fluid.positions) == 0.02
     end
 
+    @testset "offset shrinks a region" begin
+        wall  = ParticleRegion("Bound", polygons.tank, Fixed)
+        water = ParticleRegion("Fluid", polygons.water, Fluid)
+        reference = sample_particles([wall, water], dx)[2].positions
+        # the wedge faces are at 45°, so the nearest lattice points are dx/√2 away:
+        # a 0.75dx shrink clears them but keeps the lattice-aligned layers, which
+        # are already one spacing from the walls
+        shrunk = ParticleRegion("Fluid", polygons.water, Fluid; offset = 0.75dx)
+        fluid = sample_particles([wall, shrunk], dx)[2].positions
+        @test fluid ⊆ reference
+        @test length(fluid) < length(reference)
+        @test minimum(p -> p[1], fluid) == 0.02
+        gap = minimum(fluid) do p
+            minimum(Meshes.ustrip(Meshes.evaluate(Meshes.Euclidean(), Point(p...), s))
+                    for ring in rings(polygons.water) for s in segments(ring))
+        end
+        @test gap >= 0.75dx - 1e-9
+        # a full spacing removes the next layer; negative offsets grow the region
+        @test minimum(p -> p[1], sample_particles([wall,
+            ParticleRegion("Fluid", polygons.water, Fluid; offset = dx)], dx)[2].positions) == 0.04
+        grown = sample_particles([ParticleRegion("Fluid", polygons.water, Fluid;
+                                                 offset = -dx, include_surface = true)], dx)
+        @test minimum(p -> p[1], grown[1].positions) == -dx
+        # zero offset is the default and unchanged
+        @test ParticleRegion("Bound", polygons.tank, Fixed).offset == 0
+    end
+
     mktempdir() do directory
         @testset "generated files" begin
             particles = generate_still_wedge_2d_example(directory; dx)

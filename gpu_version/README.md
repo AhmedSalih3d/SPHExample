@@ -63,7 +63,10 @@ regions with `RegularSampling` and each lattice point goes to the first region
 that contains it. Walls are listed first and own their outline, the fluid only
 takes the open interior of its polygon, so boundary and fluid particles never
 overlap and the fluid stops one spacing short of the walls and the free
-surface. `SavePolygonVTKHDF` and the single file `SaveVTKHDF(path, points, ...)`
+surface. Pass `offset` to a `ParticleRegion` to shrink it by that distance (for
+example `ParticleRegion("Fluid", water, Fluid; offset = 0.5dx)` keeps the fluid
+at least half a spacing away from every edge, including slanted ones); a
+negative `offset` grows the region. `SavePolygonVTKHDF` and the single file `SaveVTKHDF(path, points, ...)`
 live in `src/ProduceHDFVTK.jl`. The geometry tests run without a GPU:
 `julia --project=gpu_version gpu_version/test/still_wedge_geometry.jl`.
 

@@ -17,23 +17,30 @@ using StaticArrays
 using ..SimulationGeometry: ParticleType, Fluid
 
 """
-    ParticleRegion(name, geometry, type; include_surface = type != Fluid)
+    ParticleRegion(name, geometry, type; include_surface = type != Fluid, offset = 0)
 
 A `PolyArea` (or `Multi` of `PolyArea`s) to fill with particles of a given
 `ParticleType`. With `include_surface = true` lattice points on the outline
 belong to the region, so walls own their surfaces. With `false` only the open
 interior is filled and the particles stop one lattice spacing short of the
 outline, which is what a fluid resting against a wall or a free surface needs.
+
+`offset` shrinks the region by that distance: only lattice points at least
+`offset` inside the outline are filled, so the particles keep this gap to the
+original edges (a negative `offset` grows the region instead). The surface rule
+then applies to the shrunk outline.
 """
 struct ParticleRegion{G}
     name::String
     geometry::G
     type::ParticleType
     include_surface::Bool
+    offset::Float64
 end
 
-ParticleRegion(name, geometry, type::ParticleType; include_surface = type != Fluid) =
-    ParticleRegion(String(name), geometry, type, include_surface)
+ParticleRegion(name, geometry, type::ParticleType; include_surface = type != Fluid,
+               offset::Real = 0) =
+    ParticleRegion(String(name), geometry, type, include_surface, Float64(offset))
 
 """
     sample_particles(regions, dx; tolerance = 1e-6 * dx)
@@ -75,8 +82,9 @@ function particle_lattice(regions, dx::Real)
     hi = fill(-Inf, D)
     for region in regions
         box = boundingbox(region.geometry)
-        lo .= min.(lo, plain_coordinates(minimum(box)))
-        hi .= max.(hi, plain_coordinates(maximum(box)))
+        growth = max(-region.offset, 0.0)  # a negative offset extends past the outline
+        lo .= min.(lo, plain_coordinates(minimum(box)) .- growth)
+        hi .= max.(hi, plain_coordinates(maximum(box)) .+ growth)
     end
     lo = floor.(lo ./ dx) .* dx
     hi = ceil.(hi ./ dx) .* dx
@@ -92,13 +100,18 @@ plain_coordinates(p::Point) = SVector(Meshes.ustrip.(to(p))...)
 # Round to the nearest lattice node and drop binary noise (0.8600000000000001 → 0.86).
 snap_to_lattice(x, dx) = round.(round.(x ./ dx) .* dx; sigdigits = 12)
 
-"""Whether `region` claims `point`; see `ParticleRegion` for the surface rule."""
+"""
+Whether `region` claims `point`; see `ParticleRegion` for the surface and offset
+rules. The test uses the signed distance to the outline (positive inside), so
+`offset` shrinks or grows the region without rebuilding its polygons.
+"""
 function owns(region::ParticleRegion, point::Point, tolerance)
-    on_outline = any(outline_segments(region.geometry)) do segment
-        Meshes.ustrip(Meshes.evaluate(Meshes.Euclidean(), point, segment)) <= tolerance
+    distance = minimum(outline_segments(region.geometry)) do segment
+        Meshes.ustrip(Meshes.evaluate(Meshes.Euclidean(), point, segment))
     end
-    inside = point in region.geometry
-    return region.include_surface ? (inside || on_outline) : (inside && !on_outline)
+    signed_distance = point in region.geometry ? distance : -distance
+    return region.include_surface ? signed_distance >= region.offset - tolerance :
+                                    signed_distance >  region.offset + tolerance
 end
 
 outline_segments(geometry) = (s for ring in rings(geometry) for s in segments(ring))
