@@ -115,16 +115,15 @@ By default the water level is the height of the highest particle, the
 convention of DualSPHysics that reproduces `input/still_wedge`. Particles above
 `water_level` get `ρ₀`.
 """
-function hydrostatic_density(positions, SimConstants;
-                             water_level = maximum(last, positions))
+function hydrostatic_density(positions, SimConstants; water_level = maximum(last, positions))
     (; ρ₀, g, c₀) = SimConstants
     # `Pressure!` uses `EquationOfStateGamma7`, so invert it with γ = 7 as well.
     # The exact root is used: `Estimate7thRoot` (inside
     # `InverseHydrostaticEquationOfState`) is ~1e-13 off even at P = 0.
-    invCb = 7 / (c₀^2 * ρ₀)
+    invCb = SimConstants.γ / (c₀^2 * ρ₀)
     return map(positions) do x
         depth = max(water_level - last(x), zero(water_level))
-        ρ₀ * (1 + ρ₀ * g * depth * invCb)^(1 / 7)
+        ρ₀ * (1 + ρ₀ * g * depth * invCb)^(1 / SimConstants.γ)
     end
 end
 

@@ -35,10 +35,10 @@ let
     SimulationGeometry = [FixedBoundary;Water]
     
 
-    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
+    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,NoMDBC,StoreLog}(
         SimulationName="StillWedge", 
         SaveLocation="C:/TestSimulations/StillWedge2D_MDBC_GPU",
-        SimulationTime=4.0,
+        SimulationTime=4.00,
         OutputTimes=0.01,
         VisualizeInParaview=true,
         ExportSingleVTKHDF=true,
