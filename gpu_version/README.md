@@ -84,6 +84,24 @@ water column. Output defaults to `gpu_version/input/dam_break_2d_generated/`;
 pass a simulation's `SimConstants` to
 `generate_dam_break_2d_example` when a different `c₀`, `ρ₀`, or `g` is used.
 
+### Generating the 2D MovingSquare case
+
+`example/GenerateMovingSquare2D.jl` builds the closed tank, fluid and moving
+square from `Meshes.jl` polygons. The tank is 10 m × 5 m with 0.04 m walls;
+the 1 m square starts at `(1, 2)` m. The generator needs no GPU and does not
+run a simulation:
+
+```bash
+julia --project=gpu_version gpu_version/example/GenerateMovingSquare2D.jl [output_dir] [dx]
+julia --project=gpu_version gpu_version/example/MovingSquare2d.jl
+```
+
+The first command writes to `gpu_version/input/moving_square_2d_generated/`
+by default. It creates VTKHDF files for the polygons and particles, plus
+`Fixed`, `Fluid` and `Square` CSV files for `SPHGeometry`. Generate the inputs
+with the same `dx` as `MovingSquare2d.jl`; the simulation reads these generated
+files.
+
 ### Which precision?
 
 * `Float64` reproduces the CPU results to round-off (the test suite checks

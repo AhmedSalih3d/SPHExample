@@ -3,6 +3,9 @@
 # Run from the repository root with:
 #     julia --project=gpu_version gpu_version/example/MovingSquare2d.jl
 #
+# Generate the input particles first (no GPU required):
+#     julia --project=gpu_version gpu_version/example/GenerateMovingSquare2D.jl
+#
 # FloatType = Float32 is usually 2-4x faster than Float64 on consumer and
 # laptop GPUs (their double precision throughput is low); Float64 reproduces
 # the CPU results to round-off.
@@ -32,22 +35,27 @@ let
         ExportSingleVTKHDF=true,
         OpenLogFile=true
     )
+    moving_square_input_dir = normpath(joinpath(@__DIR__, "..", "input",
+                                                "moving_square_2d_generated"))
     FixedBoundary = SPHGeometry{Dimensions, FloatType}(
-        CSVFile     = "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Fixed.csv",
+        CSVFile     = joinpath(moving_square_input_dir,
+            "MovingSquare2D_Dp$(SimConstantsMovingSquare.dx)_Fixed.csv"),
         GroupMarker = 1,
         Type        = Fixed,
         Motion      = nothing
     )
     
     Water = SPHGeometry{Dimensions, FloatType}(
-        CSVFile     = "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Fluid.csv",
+        CSVFile     = joinpath(moving_square_input_dir,
+            "MovingSquare2D_Dp$(SimConstantsMovingSquare.dx)_Fluid.csv"),
         GroupMarker = 2,
         Type        = Fluid,
         Motion      = nothing
     )
     
     MovingSquare = SPHGeometry{Dimensions, FloatType}(
-        CSVFile     = "./input/moving_square_2d/MovingSquare_Dp$(SimConstantsMovingSquare.dx)_Square.csv",
+        CSVFile     = joinpath(moving_square_input_dir,
+            "MovingSquare2D_Dp$(SimConstantsMovingSquare.dx)_Square.csv"),
         GroupMarker = 3,
         Type        = Moving,
         Motion      = MotionDetails{Dimensions, FloatType}(
