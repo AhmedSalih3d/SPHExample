@@ -87,19 +87,25 @@ equilibrium: their density is the inverse of the solver's equation of state for
 `P = ρ₀ g (water_level - y)`. `water_level = nothing` uses the highest fluid
 particle. Pass the `SimConstants` of the simulation so that `ρ₀`, `g` and `c₀`
 match; the default uses those of `StillWedgeMDBC.jl`.
+Related cases can reuse the sampling and export pipeline by supplying
+`polygons`, the fixed `boundary` geometry and a `case_name` for the filenames.
 Returns the sampled particles per region, with their densities.
 """
 function generate_still_wedge_2d_example(output_dir; dx = 0.02,
         SimConstants = SimulationConstants{Float64}(; dx, c₀ = 42.48576250492629),
-        water_level = nothing)
-    polygons = still_wedge_2d_polygons()
+        water_level = nothing, polygons = still_wedge_2d_polygons(),
+        boundary = polygons.tank, case_name = "StillWedge2D")
+    isfinite(dx) && dx > 0 ||
+        throw(ArgumentError("particle spacing dx must be finite and positive"))
     regions  = [
-        ParticleRegion("Bound", polygons.tank,  Fixed),  # listed first: owns the shared surfaces
+        ParticleRegion("Bound", boundary, Fixed),  # listed first: owns the shared surfaces
         ParticleRegion("Fluid", polygons.water, Fluid),
     ]
     sampled = sample_particles(regions, dx)
 
     fluid_positions = reduce(vcat, (r.positions for r in sampled if r.type == Fluid))
+    isempty(fluid_positions) &&
+        throw(ArgumentError("particle spacing dx leaves the water region empty"))
     level = something(water_level, maximum(last, fluid_positions))
     particles = map(sampled) do region
         density = region.type == Fluid ?
@@ -109,8 +115,8 @@ function generate_still_wedge_2d_example(output_dir; dx = 0.02,
     end
 
     mkpath(output_dir)
-    prefix = joinpath(output_dir, "StillWedge2D_Dp$(dx)")
-    SavePolygonVTKHDF(joinpath(output_dir, "StillWedge2D_Geometry.vtkhdf"), polygons)
+    prefix = joinpath(output_dir, "$(case_name)_Dp$(dx)")
+    SavePolygonVTKHDF(joinpath(output_dir, "$(case_name)_Geometry.vtkhdf"), polygons)
 
     next_id = 0
     for region in particles
@@ -130,10 +136,13 @@ function generate_still_wedge_2d_example(output_dir; dx = 0.02,
     return particles
 end
 
-output_dir = normpath(joinpath(@__DIR__, "..", "input", "still_wedge_generated"))
-dx = 0.02
-particles = generate_still_wedge_2d_example(output_dir; dx)
-for region in particles
-    @info "$(region.name): $(length(region.positions)) particles"
+if abspath(PROGRAM_FILE) == abspath(@__FILE__)
+    output_dir = isempty(ARGS) ?
+        normpath(joinpath(@__DIR__, "..", "input", "still_wedge_generated")) : ARGS[1]
+    dx = length(ARGS) < 2 ? 0.02 : parse(Float64, ARGS[2])
+    particles = generate_still_wedge_2d_example(output_dir; dx)
+    for region in particles
+        @info "$(region.name): $(length(region.positions)) particles"
+    end
+    @info "Saved StillWedge2D geometry and particles" output_dir
 end
-@info "Saved StillWedge2D geometry and particles" output_dir

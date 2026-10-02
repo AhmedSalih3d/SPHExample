@@ -67,21 +67,37 @@ surface. `SavePolygonVTKHDF` and the single file `SaveVTKHDF(path, points, ...)`
 live in `src/ProduceHDFVTK.jl`. The geometry tests run without a GPU:
 `julia --project=gpu_version gpu_version/test/still_wedge_geometry.jl`.
 
-### Exporting the middle-square still-wedge geometry
+### Generating the middle-square still-wedge geometry
 
-The middle-square MDBC example uses the existing `Bound` and `Fluid` CSV files
-in `input/still_wedge_middle_square_mdbc/`. Export their particles, densities,
-pressures, types and group markers to a ParaView-ready VTKHDF point cloud
-without running a simulation or needing a GPU:
+`example/GenerateStillWedgeMiddleSquareMDBC.jl` builds the tank, hollow wedge,
+water and fixed central block from `Meshes.jl` polygons, then uses the package's
+`ParticleRegion`, `sample_particles` and hydrostatic initialization tools. It
+does not read input CSVs, run a simulation or need a GPU:
 
 ```bash
-julia --project=gpu_version gpu_version/example/GenerateStillWedgeMiddleSquareMDBC.jl
+julia --project=gpu_version gpu_version/example/GenerateStillWedgeMiddleSquareMDBC.jl [output_dir] [dx]
 ```
 
-The file `StillWedge_MiddleSquare_Dp0.02_Particles.vtkhdf` is written beside
-the source CSVs by default. Pass an output directory and optionally `dx` to
-write elsewhere or select another particle spacing, if matching CSVs are
-present. The exporter leaves the simulation input files unchanged.
+The tank and wedge use the StillWedge dimensions above. The fixed block is
+0.4 m wide and 0.5 m high, with its lower-left corner at `(0.9, 0.36)` m; the
+water excludes it. At `dx = 0.02`, sampling reproduces the reference case's
+1,126 boundary and 2,300 fluid positions without copying them.
+
+Output defaults to `gpu_version/input/still_wedge_middle_square_generated/`:
+
+* `StillWedge_MiddleSquare_Geometry.vtkhdf` – triangulated polygons with
+  `Region` labels (`1` = tank/wedge, `2` = water, `3` = fixed block);
+* `StillWedge_MiddleSquare_Dp<dx>_Bound.csv`, `..._Fluid.csv` – sampled
+  particles for `SPHGeometry`, with hydrostatic fluid densities;
+* `StillWedge_MiddleSquare_Dp<dx>_Particles.vtkhdf` – sampled points with
+  density, pressure, type and group marker (`1` = all fixed boundaries,
+  `2` = fluid).
+
+The default generated files are included with the example. Pass an output
+directory and optionally `dx` to regenerate at another resolution. The
+original MDBC simulation inputs and ghost-node data remain unchanged.
+The geometry tests need no GPU:
+`julia --project=gpu_version gpu_version/test/still_wedge_middle_square_geometry.jl`.
 
 ### Generating the 2D DamBreak case
 

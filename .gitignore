@@ -11,5 +11,8 @@ Manifest.toml
 *.log
 # Ignore vtkhdf files
 *.vtkhdf
+# Include the generated middle-square example geometry.
+!gpu_version/input/still_wedge_middle_square_generated/StillWedge_MiddleSquare_Geometry.vtkhdf
+!gpu_version/input/still_wedge_middle_square_generated/StillWedge_MiddleSquare_Dp0.02_Particles.vtkhdf
 # Ignore local Julia archives
 julia-*.tar.gz
