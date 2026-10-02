@@ -67,6 +67,23 @@ surface. `SavePolygonVTKHDF` and the single file `SaveVTKHDF(path, points, ...)`
 live in `src/ProduceHDFVTK.jl`. The geometry tests run without a GPU:
 `julia --project=gpu_version gpu_version/test/still_wedge_geometry.jl`.
 
+### Generating the 2D DamBreak case
+
+`example/GenerateDamBreak2DMDBC.jl` builds the 2D dam-break tank and its
+initial water column from `Meshes.jl` polygons. It uses the same lattice
+sampling and hydrostatic initialization as the StillWedge generator, writes
+CSV files for `SPHGeometry`, and writes VTKHDF files for ParaView. It needs no
+GPU and does not run a simulation:
+
+```bash
+julia --project=gpu_version gpu_version/example/GenerateDamBreak2DMDBC.jl [output_dir] [dx]
+```
+
+The default geometry is a 4 m × 3 m tank with 0.06 m walls and a 1 m × 2 m
+water column. Output defaults to `gpu_version/input/dam_break_2d_generated/`;
+pass a simulation's `SimConstants` to
+`generate_dam_break_2d_example` when a different `c₀`, `ρ₀`, or `g` is used.
+
 ### Which precision?
 
 * `Float64` reproduces the CPU results to round-off (the test suite checks
