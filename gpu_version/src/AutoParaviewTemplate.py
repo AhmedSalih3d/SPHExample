@@ -1,10 +1,10 @@
 # import regex library
 import re
 
-# state file generated using paraview version 5.12.0
+# state file generated using paraview version 6.1.0
 import paraview
-paraview.compatibility.major = 5
-paraview.compatibility.minor = 12
+paraview.compatibility.major = 6
+paraview.compatibility.minor = 1
 
 # Directory containing the .vtkhdf files
 directory = "__SAVE_LOCATION__"
@@ -65,7 +65,7 @@ Simulation_vtkhdfDisplay = Show(Simulation_vtkhdf, renderView1, 'GeometryReprese
 Simulation_vtkhdfDisplay.SetRepresentationType('__REPRESENTATION__')
 
 # To always load in at correct position
-Simulation_vtkhdfDisplay.Position = [0.0, 0.0, 0.0]
+# Simulation_vtkhdfDisplay.Position = [0.0, 0.0, 0.0]
 
 # set scalar coloring
 ColorBy(Simulation_vtkhdfDisplay, ('POINTS', '__COLOR_VAR__'))
@@ -75,6 +75,9 @@ Simulation_vtkhdfDisplay.RescaleTransferFunctionToDataRange(True, False)
 
 # show color bar/color legend
 Simulation_vtkhdfDisplay.SetScalarBarVisibility(renderView1, True)
+
+# set the Gaussian radius for the point representation
+Simulation_vtkhdfDisplay.GaussianRadius = float(__GAUSSIAN_RADIUS__)
 
 # ----------------------------------------------------------------
 # reset view to fit data bounds

@@ -1017,7 +1017,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             show(HourGlass, sortby = :name)
             show(HourGlass)
 
-            AutoOpenParaview(SimMetaData, output.variable_names)
+            AutoOpenParaview(SimMetaData, SimConstants, output.variable_names)
 
             UnicodeTimeStepsGraph = lineplot(1:length(TimeSteps), TimeSteps, title = "Time Steps [s] as a function of iteration",
                                              name = "Time Steps", xlabel = "Iterations [-]", ylabel = "Time Step Size [s]")

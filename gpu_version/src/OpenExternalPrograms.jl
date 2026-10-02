@@ -9,6 +9,7 @@ export AutoOpenLogFile, AutoOpenParaview
 
 using ..SimulationLoggerConfiguration
 using ..SimulationMetaDataConfiguration
+using ..SimulationConstantsConfiguration
 
 """
     _default_open_command(path)
@@ -62,7 +63,9 @@ launch ParaView to visualise the results. `variable_names` should contain the
 point arrays stored in the output files. Pass `paraview_cmd = nothing` to skip
 launching ParaView automatically.
 """
-function AutoOpenParaview(SimMetaData::SimulationMetaData, OutputVariableNames;
+function AutoOpenParaview(SimMetaData::SimulationMetaData, 
+                          SimConstants::SimulationConstants,
+                          OutputVariableNames;
                           paraview_cmd::Union{String,Nothing}="paraview",
                           representation::String="Point Gaussian",
                           color_variable::String="Density")
@@ -89,6 +92,7 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData, OutputVariableNames;
                      "__REPRESENTATION__" => representation,
                      "__COLOR_VAR__" => color_variable,
                      "__VIEW_DIMENSION__" => ViewDimension,
+                     "__GAUSSIAN_RADIUS__" => SimConstants.dx / 2,
                      )
     open(ParaViewStateFileName, "w") do io
         write(io, script)
