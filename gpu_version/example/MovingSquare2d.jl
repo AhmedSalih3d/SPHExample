@@ -35,8 +35,8 @@ let
         ExportSingleVTKHDF=true,
         OpenLogFile=true
     )
-    moving_square_input_dir = normpath(joinpath(@__DIR__, "..", "input",
-                                                "moving_square_2d_generated"))
+    moving_square_input_dir = normpath(joinpath(@__DIR__, "..", "input", "moving_square_2d_generated"))
+    
     FixedBoundary = SPHGeometry{Dimensions, FloatType}(
         CSVFile     = joinpath(moving_square_input_dir,
             "MovingSquare2D_Dp$(SimConstantsMovingSquare.dx)_Fixed.csv"),
