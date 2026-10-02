@@ -130,15 +130,10 @@ function generate_still_wedge_2d_example(output_dir; dx = 0.02,
     return particles
 end
 
-# if abspath(PROGRAM_FILE) == abspath(@__FILE__)
-    length(ARGS) <= 2 || throw(ArgumentError("usage: GenerateStillWedgeMDBC.jl [output_dir] [dx]"))
-    output_dir = length(ARGS) >= 1 ? abspath(ARGS[1]) :
-                 normpath(joinpath(@__DIR__, "..", "input", "still_wedge_generated"))
-    dx = length(ARGS) == 2 ? parse(Float64, ARGS[2]) : 0.02
-
-    particles = generate_still_wedge_2d_example(output_dir; dx)
-    for region in particles
-        @info "$(region.name): $(length(region.positions)) particles"
-    end
-    @info "Saved StillWedge2D geometry and particles" output_dir
-# end
+output_dir = normpath(joinpath(@__DIR__, "..", "input", "still_wedge_generated"))
+dx = 0.02
+particles = generate_still_wedge_2d_example(output_dir; dx)
+for region in particles
+    @info "$(region.name): $(length(region.positions)) particles"
+end
+@info "Saved StillWedge2D geometry and particles" output_dir
