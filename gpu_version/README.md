@@ -67,6 +67,22 @@ surface. `SavePolygonVTKHDF` and the single file `SaveVTKHDF(path, points, ...)`
 live in `src/ProduceHDFVTK.jl`. The geometry tests run without a GPU:
 `julia --project=gpu_version gpu_version/test/still_wedge_geometry.jl`.
 
+### Exporting the middle-square still-wedge geometry
+
+The middle-square MDBC example uses the existing `Bound` and `Fluid` CSV files
+in `input/still_wedge_middle_square_mdbc/`. Export their particles, densities,
+pressures, types and group markers to a ParaView-ready VTKHDF point cloud
+without running a simulation or needing a GPU:
+
+```bash
+julia --project=gpu_version gpu_version/example/GenerateStillWedgeMiddleSquareMDBC.jl
+```
+
+The file `StillWedge_MiddleSquare_Dp0.02_Particles.vtkhdf` is written beside
+the source CSVs by default. Pass an output directory and optionally `dx` to
+write elsewhere or select another particle spacing, if matching CSVs are
+present. The exporter leaves the simulation input files unchanged.
+
 ### Generating the 2D DamBreak case
 
 `example/GenerateDamBreak2DMDBC.jl` builds the 2D dam-break tank and its

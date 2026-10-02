@@ -7,6 +7,7 @@ using LinearAlgebra
 using HDF5
 
 include(joinpath(@__DIR__, "still_wedge_geometry.jl"))
+include(joinpath(@__DIR__, "still_wedge_middle_square_geometry.jl"))
 include(joinpath(@__DIR__, "moving_square_geometry.jl"))
 include(joinpath(@__DIR__, "..", "benchmark", "cases.jl"))
 
