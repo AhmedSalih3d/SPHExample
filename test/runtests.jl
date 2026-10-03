@@ -33,6 +33,38 @@ end
     @test alloc == 0
 end
 
+@testset "wall-wall continuity is excluded" begin
+    T = Float64
+    dx = 0.02
+    constants = SimulationConstants{T}(; dx, c₀ = 20, g = 0)
+    kernel = SPHKernelInstance{2, T}(WendlandC2(); dx)
+    metadata = SimulationMetaData{2, T}(SimulationName = "wall-pairs", SaveLocation = ".")
+    positions = [SVector{2, T}(0, 0), SVector{2, T}(dx, 0)]
+    density = fill(constants.ρ₀, 2)
+    pressure = zeros(T, 2)
+    velocity = [SVector{2, T}(0, 0), SVector{2, T}(1, 0)]
+    scratch = (
+        dρdtIThreaded = [zeros(T, 2)],
+        AccelerationThreaded = [zeros(SVector{2, T}, 2)],
+    )
+
+    # A fixed wall next to a sliding wall: their prescribed velocities differ,
+    # but their positions do not change relative to one another.
+    SPHExample.SPHCellList.ComputeInteractions!(
+        ZeroGravityLinearDensityDiffusion(), ZeroViscosity(), kernel, metadata, constants,
+        (; Density = density), scratch, positions, density, pressure, velocity, 1, 2, T[0, 0], 1,
+    )
+    @test all(iszero, only(scratch.dρdtIThreaded))
+
+    # A wall-fluid pair still participates in continuity.
+    fill!(only(scratch.dρdtIThreaded), 0)
+    SPHExample.SPHCellList.ComputeInteractions!(
+        ZeroGravityLinearDensityDiffusion(), ZeroViscosity(), kernel, metadata, constants,
+        (; Density = density), scratch, positions, density, pressure, velocity, 1, 2, T[0, 1], 1,
+    )
+    @test any(!iszero, only(scratch.dρdtIThreaded))
+end
+
 @testset "prescribed wall velocity without translation" begin
     meta = SimulationMetaData{2,Float64}(SimulationName="motion", SaveLocation=".")
     positions = [SVector{2,Float64}(0.5, 1.0)]

@@ -241,14 +241,16 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
         ρᵢ  = Density[i]
         ρᵢ⁻¹ = InvDensity[i]
         Pᵢ  = Pressure[i]
-        MLᵢ = MotionLimiterValue(T, ParticleType[i])
+        typeᵢ = ParticleType[i]
+        MLᵢ = MotionLimiterValue(T, typeᵢ)
 
         # Boundary particles only need the density rate; their acceleration is
         # never applied (MotionLimiter = 0). Skipping the momentum terms for them
         # is optional because the CPU code includes their acceleration in the
         # force based time step criterion. Floating bodies always need them:
         # their particle accelerations sum to the force on the body.
-        forces = BoundaryForces | (MLᵢ != zero(T)) | (ParticleType[i] == Floating)
+        forces = BoundaryForces | (MLᵢ != zero(T)) | (typeᵢ == Floating)
+        wallᵢ = is_wall(typeᵢ)
 
         c      = CellID[i]
         own_lo = CellStart[c] + Int32(1)
@@ -272,7 +274,11 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         vⱼ   = Velocity[j]
                         vᵢⱼ  = vᵢ - vⱼ
                         density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
-                        dρdt += -ρᵢ * (m₀ * ρⱼ⁻¹) * density_symmetric_term
+                        # DBC walls take density from the fluid, not other walls.
+                        wall_pair = wallᵢ && is_wall(ParticleType[j])
+                        if !wall_pair
+                            dρdt += -ρᵢ * (m₀ * ρⱼ⁻¹) * density_symmetric_term
+                        end
 
                         # Which particle of the pair was `i` on the CPU? Evaluate the
                         # models from that particle's point of view (branch free: the

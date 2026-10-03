@@ -143,22 +143,50 @@ files.
 `example/LidDrivenCavity2d.jl` set up the square, fluid-filled cavity from the
 Rocky 2025 R1 SPH verification manual. The cavity is 1 m × 1 m; the bottom
 and side walls are stationary, while the top boundary moves at 1 m/s in `+x`
-without changing its position. The sample spacing is 0.01 m, wall thickness
-0.05 m, and simulation duration 60 s.
+without changing its position. The lid spans the complete 1.1 m outside width
+of the tank and overlaps both side walls. The sample spacing is 0.01 m, wall
+thickness 0.05 m, and simulation duration 60 s.
 
 The configuration specifies an initial density of 10 kg/m³, dynamic viscosity
 0.1 Pa·s, and sound speed 10 m/s. The solver takes kinematic viscosity, so the
 example sets `ν₀ = μ/ρ₀ = 0.01 m²/s`, which gives `Re = ρ₀ U L/μ = 100`.
-It uses zero gravity, laminar (Morris) viscosity, no density diffusion, no
-shifting and `CFL = 0.2`. The provided ANSYS setup does not specify the SPH
-kernel or smoothing length; this example uses Wendland C2 with
-`h = 1.2√2 dx`. The thermal model and the 3D periodic thickness are not
+It uses zero gravity, laminar (Morris) viscosity, `CFL = 0.2`, and a
+Wendland C2 kernel with `h = 1.2√2 dx` (the manual does not specify a kernel
+or smoothing length). The thermal model and the 3D periodic thickness are not
 represented in this 2D solver case.
 
 The lid uses `MotionDetails(...; MoveParticles = false)`: its boundary
 particles retain their positions while carrying the prescribed velocity used
 in the no-slip viscous interaction. This differs from a moving body, whose
 particles translate with the prescribed velocity.
+
+Three choices stabilize the cavity run:
+
+* **mDBC walls.** The generator writes one ghost node per wall/lid particle in
+  `LidDrivenCavity2D_Dp<dx>_GhostNodes.csv`, mirrored across the wetted face
+  into the fluid; corner particles mirror across both faces. With plain DBC,
+  the sliding lid and fixed side-wall particles have different prescribed
+  velocities, so their wall-wall continuity terms grow corner densities
+  exponentially, over-pressurize the corners, and push fluid out of the
+  cavity. mDBC interpolates boundary density from fluid neighbours and avoids
+  this DBC failure.
+* **Zero-gravity linear density diffusion** (`δᵩ = 0.1`) suppresses density
+  drift and prevents the fluid under the lid from rarefying and seeping into
+  it.
+* **Planar shifting**, the DualSPHysics setting for internal flows, keeps the
+  fluid particles evenly distributed and improves the velocity profiles.
+
+The GPU run disables `GPUBoundaryForces`, since the fixed/prescribed walls do
+not respond to their reaction accelerations. Including those unused
+accelerations in the global time-step constraint shrinks `dt` dramatically.
+It also uses `GPUMaxStepsPerSync = 256` and writes frames every 0.5 s by
+default. Set the `mdbc`, `density_diffusion`, or `shifting` keyword to `false`
+in `run_lid_driven_cavity_2d` to disable each option for comparison.
+
+At `dx = 0.01`, the full 60 s run takes about 54 s on an RTX A1000 laptop GPU
+(176,758 steps). Fluid density stays within about 5% of `ρ₀`. At `t = 60 s`,
+the centreline profiles agree with Ghia, Ghia & Shin (1982) to within
+`0.016 U` for `u(y)` on `x = 0.5` and `0.017 U` for `v(x)` on `y = 0.5`.
 
 ```bash
 julia --project=gpu_version gpu_version/example/GenerateLidDrivenCavity2D.jl
@@ -167,7 +195,8 @@ julia --project=gpu_version gpu_version/example/LidDrivenCavity2d.jl
 
 Both scripts accept an optional output directory and `dx`; the simulation
 script additionally accepts a duration and input directory:
-`[save_dir] [dx] [duration] [input_dir]`. The generated CSV and VTKHDF input files go to
+`[save_dir] [dx] [duration] [input_dir]`. From the Julia REPL, `include` the
+simulation script and call `run_lid_driven_cavity_2d()`. Generated inputs go to
 `gpu_version/input/lid_driven_cavity_2d_generated/` by default. The simulation
 writes velocity, density and pressure frames to
 `C:\TestSimulations\LidDrivenCavity2D_GPU` by default.
@@ -676,7 +705,9 @@ mDBC wedge, 2D moving square with shifting and SPS turbulence, 3D dam break,
 compares the final state. `test/floating_bodies.jl` checks that a floating
 body falls freely and stays rigid in air, without numerical error. It also
 checks that in water a neutrally buoyant body stays put while a heavier one
-sinks.
+sinks. `test/lid_driven_cavity.jl` checks the extended lid geometry, generated
+mDBC ghost nodes, bounded wall/fluid densities in a short cavity run, and the
+wall-wall continuity regression on a fixed wall next to a sliding wall.
 
 ## Benchmarks
 

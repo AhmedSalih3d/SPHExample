@@ -5,7 +5,7 @@ using Base: @kwdef
 
 # Export relevant types and structs
 export ParticleType, SPHGeometry, Fluid, Fixed, Moving, Floating, MotionDetails, FloatingDetails,
-       GravityFactorValue, MotionLimiterValue
+       GravityFactorValue, MotionLimiterValue, is_wall
 
 # Use the existing @enum for ParticleType
 @enum ParticleType::UInt8 begin
@@ -20,6 +20,14 @@ end
 
 @inline MotionLimiterValue(::Type{T}, type::ParticleType) where {T} =
     type == Fluid ? one(T) : zero(T)
+
+"""
+    is_wall(type)
+
+Whether a particle type denotes a prescribed boundary (`Fixed` or `Moving`),
+as opposed to a fluid or force-responsive floating body.
+"""
+@inline is_wall(type::ParticleType) = (type == Fixed) | (type == Moving)
 
 # Define a struct to store motion details, with parametric dimensions and floating point type
 """

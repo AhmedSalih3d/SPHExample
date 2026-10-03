@@ -231,8 +231,11 @@ using Bumper
             vⱼ        = Velocity[j]
             vᵢⱼ       = vᵢ - vⱼ
             density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
-            dρdt⁺          = - ρᵢ * (m₀/ρⱼ) *  density_symmetric_term
-            dρdt⁻          = - ρⱼ * (m₀/ρᵢ) *  density_symmetric_term
+            # Prescribed wall particles can have different velocities but do
+            # not move apart. Do not let wall-wall pairs create density.
+            wall_pair = iszero(MotionLimiter[i]) && iszero(MotionLimiter[j])
+            dρdt⁺          = wall_pair ? zero(ρᵢ) : - ρᵢ * (m₀/ρⱼ) * density_symmetric_term
+            dρdt⁻          = wall_pair ? zero(ρⱼ) : - ρⱼ * (m₀/ρᵢ) * density_symmetric_term
 
             Dᵢ, Dⱼ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ², i, j, MotionLimiter)
 

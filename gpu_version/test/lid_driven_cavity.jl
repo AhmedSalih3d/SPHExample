@@ -14,9 +14,12 @@ include(joinpath(@__DIR__, "..", "example", "LidDrivenCavity2d.jl"))
     @test shapes.lid isa PolyArea
     @test shapes.fluid isa PolyArea
     @test Meshes.ustrip(measure(shapes.fluid)) ≈ 1.0
-    @test Meshes.ustrip(measure(shapes.lid)) ≈ LID_CAVITY_WALL_THICKNESS
+    @test Meshes.ustrip(measure(shapes.lid)) ≈
+          LID_CAVITY_WALL_THICKNESS * (LID_CAVITY_LENGTH + 2LID_CAVITY_WALL_THICKNESS)
     @test Point(0.5, 1.02) in shapes.lid
     @test !(Point(0.5, 0.98) in shapes.lid)
+    @test Point(-0.025, 1.02) in shapes.lid
+    @test Point(1.025, 1.02) in shapes.lid
     @test Point(0.5, 0.5) in shapes.fluid
     @test constants.ρ₀ == 10.0
     @test constants.ν₀ == 0.01
@@ -35,7 +38,7 @@ include(joinpath(@__DIR__, "..", "example", "LidDrivenCavity2d.jl"))
         @test all(r -> all(==(10.0), r.density), regions)
         @test all(isempty(intersect(Set(regions[i].positions), Set(regions[j].positions)))
                   for i in eachindex(regions) for j in (i + 1):length(regions))
-        @test all(p -> -1e-12 <= p[1] <= 1 + 1e-12, lid.positions)
+        @test all(p -> -0.05 - 1e-12 <= p[1] <= 1.05 + 1e-12, lid.positions)
         @test all(p -> 1 - 1e-12 <= p[2] <= 1.05 + 1e-12, lid.positions)
         @test all(p -> 0 < p[1] < 1 && 0 < p[2] < 1, fluid.positions)
         @test all(p -> any(isapprox(p[1] / dx, k; atol = 1e-6) for k in -2:22) &&
@@ -44,6 +47,17 @@ include(joinpath(@__DIR__, "..", "example", "LidDrivenCavity2d.jl"))
         @test isfile(joinpath(input_dir, "LidDrivenCavity2D_Geometry.vtkhdf"))
 
         prefix = joinpath(input_dir, "LidDrivenCavity2D_Dp0.05")
+        walls = vcat(fixed.positions, lid.positions)
+        points, ghosts, normals =
+            LoadBoundaryNormals(Val(2), Float64, "$(prefix)_GhostNodes.csv")
+        @test length(ghosts) == length(walls)
+        @test all(points[k] ≈ SVector(walls[k]...) for k in eachindex(walls))
+        @test all(g -> 0 < g[1] < 1 && 0 < g[2] < 1, ghosts)
+        @test all(k -> ghosts[k] == points[k] + normals[k], eachindex(ghosts))
+        @test lid_driven_cavity_ghost_node((0.0, 0.5), dx) == (dx, 0.5)
+        @test SVector(lid_driven_cavity_ghost_node((1.05, 0.5), dx)...) ≈ SVector(0.9, 0.5)
+        @test SVector(lid_driven_cavity_ghost_node((0.5, 1.0), dx)...) ≈ SVector(0.5, 0.95)
+        @test SVector(lid_driven_cavity_ghost_node((-0.05, -0.05), dx)...) ≈ SVector(0.1, 0.1)
         geometry = [
             SPHGeometry{2, Float32}(CSVFile = "$(prefix)_Fixed.csv",
                                     GroupMarker = 1, Type = Fixed),
@@ -57,37 +71,71 @@ include(joinpath(@__DIR__, "..", "example", "LidDrivenCavity2d.jl"))
                                     GroupMarker = 3, Type = Fluid),
         ]
         save_dir = joinpath(directory, "run")
-        mkpath(save_dir)
+        result = run_lid_driven_cavity_2d(; dx, simulation_time = 0.5,
+            output_interval = 0.5, visualize = false, open_log_file = false,
+            input_dir, save_location = save_dir)
+        particles = result.particles
+
+        lid_indices = findall(==(Moving), particles.Type)
+        @test !isempty(lid_indices)
+        @test all(i -> 1 - 1e-6 <= particles.Position[i][2] <= 1.05 + 1e-6,
+                  lid_indices)
+        @test all(i -> particles.Velocity[i] ≈ SVector(1.0f0, 0.0f0), lid_indices)
+        fluid_indices = findall(==(Fluid), particles.Type)
+        @test maximum(particles.Velocity[i][1] for i in fluid_indices) > 0.3f0
+        @test all(i -> 0 < particles.Position[i][1] < 1 &&
+                       0 < particles.Position[i][2] < 1, fluid_indices)
+        @test all(i -> 8 < particles.Density[i] < 12, fluid_indices)
+        boundary_indices = findall(!=(Fluid), particles.Type)
+        @test all(i -> 10 <= particles.Density[i] < 12, boundary_indices)
+    end
+end
+
+@testset "wall pairs do not change wall densities" begin
+    dx = 0.02
+    mktempdir() do directory
+        regions = [ParticleRegion("Fixed", rectangle((0, 0), 0.2, 0.1), Fixed),
+                   ParticleRegion("Slider", rectangle((0, 0.1), 0.2, 0.1), Moving)]
+        sampled = sample_particles(regions, dx)
+        next_id = 0
+        for region in sampled
+            next_id = write_particle_csv(joinpath(directory, region.name * ".csv"),
+                                         region.positions; density = 1000.0, first_id = next_id)
+        end
+
+        geometry = [
+            SPHGeometry{2, Float32}(CSVFile = joinpath(directory, "Fixed.csv"),
+                                    GroupMarker = 1, Type = Fixed),
+            SPHGeometry{2, Float32}(CSVFile = joinpath(directory, "Slider.csv"),
+                GroupMarker = 2, Type = Moving,
+                Motion = MotionDetails{2, Float32}(
+                    Velocity = 1.0f0, StartTime = 0.0f0, Duration = 1.0f0,
+                    Direction = SVector{2, Float32}(1.0f0, 0.0f0),
+                    MoveParticles = false)),
+        ]
         meta = SimulationMetaData{2, Float32, NoShifting, NoKernelOutput, NoMDBC, StoreLog}(
-            SimulationName = "LidDrivenCavityTest",
-            SaveLocation = save_dir,
-            SimulationTime = 0.03f0,
-            OutputTimes = 0.03f0,
+            SimulationName = "WallPairs",
+            SaveLocation = directory,
+            SimulationTime = 0.05f0,
+            OutputTimes = 0.05f0,
             VisualizeInParaview = false,
-            ExportSingleVTKHDF = true,
             OpenLogFile = false,
+            GPUBoundaryForces = false,
         )
         particles = AllocateDataStructures(geometry, meta)
-        initial_lid = Dict(particles.ID[i] => particles.Position[i]
-                           for i in eachindex(particles.ID) if particles.Type[i] == Moving)
         RunSimulation(
             SimGeometry = geometry,
             SimMetaData = meta,
-            SimConstants = lid_driven_cavity_2d_constants(Float32; dx),
-            SimKernel = SPHKernelInstance{2, Float32}(WendlandC2();
-                h = Float32(1.2 * sqrt(2) * dx)),
-            SimLogger = SimulationLogger(save_dir; to_console = false),
+            SimConstants = SimulationConstants{Float32}(; dx = Float32(dx), c₀ = 20f0, g = 0f0),
+            SimKernel = SPHKernelInstance{2, Float32}(WendlandC2(); dx = Float32(dx)),
+            SimLogger = SimulationLogger(directory; to_console = false),
             SimParticles = particles,
             SimViscosity = Laminar(),
             SimDensityDiffusion = ZeroDensityDiffusion(),
             SimTimeStepping = SymplecticTimeStepping(),
         )
-
-        lid_indices = findall(==(Moving), particles.Type)
-        @test !isempty(lid_indices)
-        @test all(i -> particles.Position[i] == initial_lid[particles.ID[i]], lid_indices)
-        @test all(i -> particles.Velocity[i] ≈ SVector(1.0f0, 0.0f0), lid_indices)
-        fluid_indices = findall(==(Fluid), particles.Type)
-        @test maximum(particles.Velocity[i][1] for i in fluid_indices) > 1f-6
+        @test meta.Iteration > 10
+        @test all(==(1000f0), particles.Density)
+        @test all(iszero, particles.Pressure)
     end
 end

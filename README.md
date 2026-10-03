@@ -20,7 +20,9 @@ The project demonstrates how to assemble a small SPH solver with Julia. It focus
 - **Weakly compressible formulation** – density varies ~1 % and pressure is a function of density.
 - **Multi-threaded execution** – achieved by spawning the neighbour loop.
 - **Configurable task granularity** – `ChunkMultiplier` controls load balancing across threads.
-- **Dynamic boundary condition** – inspired by DualSPHysics.
+- **Dynamic boundary condition** – inspired by DualSPHysics. As there, wall
+  particles take their density from fluid neighbours only; wall-wall pairs do
+  not enter continuity, even when two walls have different prescribed speeds.
 - **Density diffusion** – based on Fourtakas et al. 2019 to reduce pressure noise.
 - **Wendland quintic kernel** – simple and stable without tensile corrections.
 
@@ -135,4 +137,3 @@ This project is licensed under the MIT License – see [LICENSE.md](LICENSE.md) 
 - Thanks to [PharmCat](https://github.com/PharmCat) for suggestions and code contributions.
 
 [![Star History](https://api.star-history.com/svg?repos=AhmedSalih3d/SPHExample)](https://star-history.com/#AhmedSalih3d/SPHExample)
-
