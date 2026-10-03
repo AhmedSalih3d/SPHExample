@@ -35,6 +35,7 @@ using ..GPUReductions
 using ..GPUStepState
 using ..GPUCellGrid
 using ..GPUKernels
+using ..GPUFloating
 
 import StructArrays: StructArray
 import ProgressMeter: next!, finish!
@@ -582,13 +583,18 @@ step. Single neighbour: motion, mDBC correction of the densities the
 predictor starts from, half step, neighbour loop, final step. (The CPU
 additionally re-evaluates the carried derivative every 20 steps; the GPU
 does not, the carried derivative is only re-evaluated after a cell list
-rebuild, see `SimulationLoop`.)
+rebuild, see `SimulationLoop`.) With floating bodies (symplectic only) each
+neighbour loop is followed by the force on the bodies and their predictor or
+corrector update, and the half step and final step by the rigid placement of
+the body particles (see `GPUFloating`).
 """
 function enqueue_step!(ctx, timed::Bool)
     (; gpu, cl, sup, red, motion, state, SimKernel, SimConstants, SimDensityDiffusion, SimViscosity,
        FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, HourGlass) = ctx
     grid      = cl.grid_dev
     CellStart = cl.CellStart
+    floating  = get(ctx, :floating, nothing)
+    floats    = floating !== nothing && floating.active
 
     # dt of this step from the reduction of the previous one; also decides
     # whether the step may run at all (cell list rebuild, output time).
@@ -615,11 +621,25 @@ function enqueue_step!(ctx, timed::Bool)
         enqueue_state_derivative!(ctx, state, timed, "04a First NeighborLoopMDBC", "04 First NeighborLoop")
     end
 
+    if floats
+        @phase HourGlass "05a Floating Predictor" timed begin
+            launch_floating_forces!(floating, gpu.Acceleration, gpu.Position, gpu.Type, gpu.GroupMarker,
+                                    floating.center, SimConstants.m₀, state)
+            launch_floating_update!(floating, state, SimConstants.g, false)
+        end
+    end
+
     @phase HourGlass "05b Update To Half TimeStep" timed launch_half_step!(
         sup.Positionₙ⁺, sup.Velocityₙ⁺, sup.ρₙ⁺, sup.InvDensityₙ⁺, gpu.Pressure,
         gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Density, sup.dρdtI,
         gpu.Type, gpu.GroupMarker, motion, state, SimConstants;
         pos_cells = sup.PosCellsₙ⁺, CellID = gpu.CellID, grid = grid, SimKernel = SimKernel)
+
+    if floats
+        @phase HourGlass "05c Floating Half TimeStep" timed launch_floating_particles!(
+            floating, sup.Positionₙ⁺, sup.Velocityₙ⁺, gpu.Position, gpu.Type, gpu.GroupMarker, state, false;
+            pos_cells = sup.PosCellsₙ⁺, CellID = gpu.CellID, grid = grid, H = SimKernel.H)
+    end
 
     # Corrector: every term, including the viscosity and density diffusion
     # models, is evaluated at the predictor state.
@@ -631,10 +651,23 @@ function enqueue_step!(ctx, timed::Bool)
         FlagKernel, FlagShift; threads = threads, lanes = lanes,
         boundary_forces = bforces, pos_cells = sup.PosCellsₙ⁺)
 
+    if floats
+        @phase HourGlass "10 Floating Corrector" timed begin
+            launch_floating_forces!(floating, gpu.Acceleration, sup.Positionₙ⁺, gpu.Type, gpu.GroupMarker,
+                                    floating.center_half, SimConstants.m₀, state)
+            launch_floating_update!(floating, state, SimConstants.g, true)
+        end
+    end
+
     @phase HourGlass "11 Update To Final TimeStep" timed launch_final_step!(
         gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Density, gpu.Pressure,
         sup.dρdtI, sup.ρₙ⁺, sup.Positionₙ⁺, sup.Velocityₙ⁺, gpu.Type,
         sup.∇Cᵢ, sup.∇◌rᵢ, state, SimKernel, SimConstants, red, FlagShift)
+
+    if floats
+        @phase HourGlass "11b Floating Final TimeStep" timed launch_floating_particles!(
+            floating, gpu.Position, gpu.Velocity, gpu.Position, gpu.Type, gpu.GroupMarker, state, true)
+    end
 
     @phase HourGlass "12 Update MetaData" timed launch_commit!(state)
     return nothing
@@ -716,14 +749,16 @@ when the cell list has to be rebuilt and when the output time is reached; the
 host reacts to the read back state by rebuilding (`rebuild_cell_list!`) or
 returning. With `GPUUseGraph` a step is replayed as a CUDA graph.
 `GPUSyncTimers` forces one step per batch with a synchronization after every
-phase so that the timer output is meaningful.
+phase so that the timer output is meaningful. `floating` is the state of the
+floating bodies (`FloatingArrays`), or `nothing` for a case without them.
 """
 function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                         SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
                         SimConstants, gpu::GPUParticles{Dimensions, FloatType},
                         cl::CellListWorkspace, sup::GPUSupportArrays, red::ReductionWorkspace,
-                        motion, state::StepState{FloatType}) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
-                                                                    SDD <: SPHDensityDiffusion, SV <: SPHViscosity}
+                        motion, state::StepState{FloatType};
+                        floating = nothing) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
+                                                   SDD <: SPHDensityDiffusion, SV <: SPHViscosity}
     HourGlass = SimMetaData.HourGlass
     h = SimKernel.h
 
@@ -743,8 +778,8 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     use_graph = SimMetaData.GPUUseGraph && !timed
     kmax      = timed ? 1 : max(1, SimMetaData.GPUMaxStepsPerSync)
 
-    ctx = (; gpu, cl, sup, red, motion, state, SimKernel, SimConstants, SimDensityDiffusion, SimViscosity,
-             FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, HourGlass)
+    ctx = (; gpu, cl, sup, red, motion, floating, state, SimKernel, SimConstants, SimDensityDiffusion,
+             SimViscosity, FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, HourGlass)
 
     t_out = next_output_time(SimMetaData)
     set_output_time!(state, t_out)
@@ -895,6 +930,10 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                      reach = SimMetaData.GPUCellSubdivision, max_cells = SimMetaData.GPUMaxCells,
                      deterministic = SimMetaData.GPUDeterministicSort)
         motion = MotionArrays(SimGeometry, SimParticles)
+        floating = FloatingArrays(SimGeometry, SimParticles, SimConstants; position_type = PositionType)
+        if floating.active && SimTimeStepping isa SingleNeighborTimeStepping
+            error("Floating bodies need SymplecticTimeStepping().")
+        end
         # Device resident loop state. The displacement bound starts above `h`
         # so that the cell list is built before the first step.
         state  = StepState{FloatType}(; time = SimMetaData.TotalTime, iteration = SimMetaData.Iteration,
@@ -903,6 +942,25 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     end
 
     output = SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
+
+    # Motion of the floating bodies at every output time, one row per body.
+    floating_log = nothing
+    if floating.active
+        floating_log = open(joinpath(SimMetaData.SaveLocation, SimMetaData.SimulationName * "_Floating.csv"), "w")
+        println(floating_log, "Time,Body,GroupMarker,Center:0,Center:1,Velocity:0,Velocity:1,Angle,Omega")
+    end
+    function log_floating(t)
+        floating_log === nothing && return nothing
+        s = floating_state(floating)
+        markers = [geom.GroupMarker for geom in SimGeometry if geom.Type == Floating]
+        for b in 1:Int(floating.nbodies)
+            println(floating_log, join((t, b, markers[b], s.center[b]..., s.velocity[b]..., s.angle[b],
+                                        s.omega[b]), ","))
+        end
+        flush(floating_log)
+        return nothing
+    end
+    log_floating(SimMetaData.TotalTime)
 
     # Save initial state, use 1 else this cannot be used to index fid vector
     SimMetaData.OutputIterationCounter = 1
@@ -963,8 +1021,10 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     try
     while true
         @timeit HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                                                             SimConstants, gpu, cl, sup, red, motion, state)
+                                                             SimConstants, gpu, cl, sup, red, motion, state;
+                                                             floating = floating)
         push!(TimeSteps, SimMetaData.CurrentTimeStep)
+        log_floating(SimMetaData.TotalTime)
 
         # The log line is formatted now (its values belong to this frame) and
         # printed by the writer, off the path between two output intervals.
@@ -1046,6 +1106,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         end
     end
     finally
+        floating_log === nothing || close(floating_log)
         # never leave the writer task blocked on the job channel if the loop throws
         close(jobs)
     end

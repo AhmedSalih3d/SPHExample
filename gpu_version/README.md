@@ -137,6 +137,57 @@ by default. It creates VTKHDF files for the polygons and particles, plus
 with the same `dx` as `MovingSquare2d.jl`; the simulation reads these generated
 files.
 
+### Floating bodies: the 2D falling cylinder
+
+A `Floating` particle group is a rigid body moved by gravity and the forces of
+the surrounding particles (the DualSPHysics "floating" object, `RigidAlgorithm
+= 1`). Give the group `Type = Floating` and its `FloatingDetails`:
+
+```julia
+Cylinder = SPHGeometry{2, FloatType}(CSVFile = "...", GroupMarker = 3, Type = Floating,
+    Floating = FloatingDetails{FloatType}(RelativeWeight = 1.2, PauseTime = 1.0))
+```
+
+`RelativeWeight` is the body density relative to `ρ₀`. The body is held still
+until `PauseTime` (DualSPHysics `FtPause`). Its particles join the neighbour
+loops like boundary particles, but their momentum terms are always evaluated.
+After each neighbour loop, their accelerations are summed into the force
+`m₀ Σ aₖ` and the torque about the body centre. The body mass is
+`RelativeWeight m₀ N`, and its moment of inertia comes from the particle
+positions. The centre, velocity and angular velocity advance with the
+symplectic predictor and corrector, and the particles are then moved rigidly.
+All of this runs on the device, so steps are still batched and replayed as
+CUDA graphs (`src/GPUFloating.jl`). Floating bodies are 2D only and need
+`SymplecticTimeStepping()`. `<SimulationName>_Floating.csv` in the save
+location records the centre, velocity, angle and angular velocity of every
+body at each output time.
+
+`example/GenerateFloatingCylinder2D.jl` and `example/FloatingCylinder2d.jl`
+reproduce DualSPHysics `examples/main/11_Floating/CaseFloatingSphereVal2D`.
+A cylinder of radius 1 m and relative weight 1.2 starts half submerged in a
+10 m wide, 14 m deep tank and sinks after a 1 s pause. The case uses
+`dp = 0.025`, `coefh = 1.2`, laminar + SPS viscosity, density diffusion 0.1,
+`CFL = 0.2` and `c₀ = 30 √(g · 0.8)`. Two things differ from DualSPHysics:
+* The periodic sides are fixed walls.
+* The cylinder is sampled as concentric rings (`sampling = :conforming`)
+  rather than on the lattice.
+
+```bash
+julia --project=gpu_version gpu_version/example/GenerateFloatingCylinder2D.jl [output_dir] [dx]
+julia --project=gpu_version gpu_version/example/FloatingCylinder2d.jl
+```
+
+The validation data of the DualSPHysics case (Fekken 2004; Moyo and Greenhow
+2000) give the sinking distance and velocity against `t* = (t − 1 s) √(g/R)`
+for `t* ≤ 8`. At `dx = 0.025` (about 233 000 particles, 84 000 steps, about
+7 minutes on an RTX A1000 laptop GPU) the GPU run follows Fekken closely up to
+`t* ≈ 3`. After that it lies between the two experiments, ending at a sink
+depth of 3.9 R (Fekken 3.4 R, Moyo and Greenhow below 4 R). Over the window,
+its velocity differs from Fekken's by 0.07 √(gR) on average. Past the window
+(`t > 3.5 s`) the wake loses its symmetry, the cylinder drifts sideways, and
+near the end it touches a side wall; this is where fixed walls differ from
+the periodic sides of the original case.
+
 ### Drawing shapes for particle generation
 
 `src/PolygonDrawing.jl` provides drawing helpers that return Meshes.jl
@@ -562,6 +613,7 @@ gpu_version/
 │   ├── GPUReductions.jl              # fused SVector block reductions
 │   ├── GPUCellGrid.jl                # dense grid, counting sort, reorder kernel, cell relative positions
 │   ├── GPUKernels.jl                 # interaction, mDBC, half/final step kernels
+│   ├── GPUFloating.jl                # floating rigid bodies: force sums, body update, rigid placement
 │   ├── SPHCellList.jl                # device containers, time loop, RunSimulation
 │   ├── PrecompileWorkload.jl         # tiny example runs cached at precompile time
 │   └── ...                           # unchanged host side files from src/
@@ -586,7 +638,10 @@ The suite checks the grid helpers and reductions, bitwise reproducibility,
 mode (including a case translated by 10 000 m), and runs four cases (2D
 mDBC wedge, 2D moving square with shifting and SPS turbulence, 3D dam break,
 3D duckling with mDBC) with the CPU package in a separate process and
-compares the final state.
+compares the final state. `test/floating_bodies.jl` checks that a floating
+body falls freely and stays rigid in air, without numerical error. It also
+checks that in water a neutrally buoyant body stays put while a heavier one
+sinks.
 
 ## Benchmarks
 

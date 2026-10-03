@@ -4,14 +4,15 @@ using StaticArrays
 using Base: @kwdef
 
 # Export relevant types and structs
-export ParticleType, SPHGeometry, Fluid, Fixed, Moving, MotionDetails,
+export ParticleType, SPHGeometry, Fluid, Fixed, Moving, Floating, MotionDetails, FloatingDetails,
        GravityFactorValue, MotionLimiterValue
 
 # Use the existing @enum for ParticleType
 @enum ParticleType::UInt8 begin
-    Fluid  = UInt8(1)
-    Fixed  = UInt8(2)
-    Moving = UInt8(3)
+    Fluid    = UInt8(1)
+    Fixed    = UInt8(2)
+    Moving   = UInt8(3)
+    Floating = UInt8(4)   # rigid body moved by the fluid forces (see `FloatingDetails`)
 end
 
 @inline GravityFactorValue(::Type{T}, type::ParticleType) where {T} =
@@ -28,12 +29,28 @@ end
     Direction::SVector{D, T}  # Direction vector is now parametric based on dimensions D and FloatType T
 end
 
+"""
+    FloatingDetails{T}(; RelativeWeight, PauseTime = 0)
+
+A rigid body (the DualSPHysics "floating" object) whose particles move
+together under gravity and the forces of the surrounding particles.
+`RelativeWeight` is the density of the body relative to `ρ₀`, so each body
+particle weighs `RelativeWeight * m₀`. The body is held still until
+`PauseTime` (DualSPHysics `FtPause`), which lets the fluid settle first.
+Supported in 2D with the symplectic time stepping.
+"""
+@kwdef struct FloatingDetails{T}
+    RelativeWeight::T
+    PauseTime::T = zero(RelativeWeight)
+end
+
 # Define the SPHGeometry struct to store the ParticleType enum and Motion details
 @kwdef struct SPHGeometry{D, T}
     CSVFile::String
     GroupMarker::Int
     Type::ParticleType
     Motion::Union{Nothing, MotionDetails} = nothing  # Motion depends on dimension D and FloatType T
+    Floating::Union{Nothing, FloatingDetails} = nothing  # required exactly when Type == Floating
 end
 
 end # module SimulationGeometry

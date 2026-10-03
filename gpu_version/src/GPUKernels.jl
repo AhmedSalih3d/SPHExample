@@ -246,8 +246,9 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
         # Boundary particles only need the density rate; their acceleration is
         # never applied (MotionLimiter = 0). Skipping the momentum terms for them
         # is optional because the CPU code includes their acceleration in the
-        # force based time step criterion.
-        forces = BoundaryForces | (MLᵢ != zero(T))
+        # force based time step criterion. Floating bodies always need them:
+        # their particle accelerations sum to the force on the body.
+        forces = BoundaryForces | (MLᵢ != zero(T)) | (ParticleType[i] == Floating)
 
         c      = CellID[i]
         own_lo = CellStart[c] + Int32(1)

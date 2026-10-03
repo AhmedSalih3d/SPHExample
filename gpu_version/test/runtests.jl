@@ -1011,6 +1011,8 @@ relerr(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), eps(eltype(b))))
         @test a ≈ 2b
     end
 
+    include(joinpath(@__DIR__, "floating_bodies.jl"))
+
     if HAVE_CPU
         @testset "matches CPU reference: $(name) ($(nameof(typeof(scheme))))" for (name, simtime, scheme) in (
                 ("StillWedge2D_MDBC_dp0.02", 0.02,  SymplecticTimeStepping()),

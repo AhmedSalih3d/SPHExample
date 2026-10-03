@@ -27,6 +27,7 @@ module SPHExampleGPU
         "GPUStepState.jl",
         "GPUCellGrid.jl",
         "GPUKernels.jl",
+        "GPUFloating.jl",
         "SPHCellList.jl",
         "ParticleGenerator.jl",
         "CustomPrettyPrinting.jl",
@@ -47,7 +48,7 @@ module SPHExampleGPU
     export SPHDensityDiffusion, ZeroDensityDiffusion, ZeroGravityLinearDensityDiffusion, LinearDensityDiffusion, ZeroGravityComplexDensityDiffusion, ComplexDensityDiffusion, compute_density_diffusion
 
     using .SimulationGeometry
-    export ParticleType, Fixed, Fluid, Moving, SPHGeometry, MotionDetails,
+    export ParticleType, Fixed, Fluid, Moving, Floating, SPHGeometry, MotionDetails, FloatingDetails,
            GravityFactorValue, MotionLimiterValue
 
     using .PreProcess
@@ -94,6 +95,9 @@ module SPHExampleGPU
     using .GPUKernels
     export launch_interactions!, launch_mdbc!, launch_motion!, launch_half_step!, launch_final_step!,
            launch_finish!, launch_commit!, launch_pos_cells!, choose_lanes
+
+    using .GPUFloating
+    export FloatingArrays, floating_state
 
     using .SPHCellList
     export GPUParticles, GPUSupportArrays, MotionArrays, upload_particles, download_particles!,
