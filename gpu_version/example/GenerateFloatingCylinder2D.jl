@@ -96,9 +96,8 @@ function generate_floating_cylinder_2d(output_dir; dx = 0.025,
 end
 
 
-output_dir = length(ARGS) >= 1 ? ARGS[1] :
-             normpath(joinpath(@__DIR__, "..", "input", "floating_cylinder_2d_generated"))
-dx = length(ARGS) >= 2 ? parse(Float64, ARGS[2]) : 0.025
+output_dir = normpath(joinpath(@__DIR__, "..", "input", "floating_cylinder_2d_generated"))
+dx = 0.025
 particles = generate_floating_cylinder_2d(output_dir; dx)
 for region in particles
     @info "$(region.name): $(length(region.positions)) particles"
