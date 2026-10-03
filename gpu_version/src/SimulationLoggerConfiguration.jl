@@ -167,9 +167,8 @@ module SimulationLoggerConfiguration
 
     The log line of one output ("Part_0001 ..."), formatted from the current
     meta data and the time measured so far. Formatting is separate from the
-    emission (`log_line`) so that the simulation thread can build the line
-    while the values still belong to the frame and the output writer task can
-    print it later, off the path between two output intervals.
+    emission (`log_line`). Progress is emitted by the simulation thread while
+    the values belong to the current frame, independently of disk output.
     """
     function step_log_line(SimLogger, SimMetaData, HourGlass)
         PartNumber               = "Part_" * lpad(SimMetaData.OutputIterationCounter, 4, "0")
@@ -204,12 +203,15 @@ module SimulationLoggerConfiguration
     """
         log_line(SimLogger, line)
 
-    Emit a preformatted line through the simulation logger.
+    Emit a preformatted line and flush the file and optional console output.
     """
     function log_line(SimLogger, line::AbstractString)
         with_logger(SimLogger.Logger) do
             @info line
         end
+        flush(SimLogger.LoggerIo)
+        SimLogger.ToConsole && flush(stdout)
+        return nothing
     end
 
     """

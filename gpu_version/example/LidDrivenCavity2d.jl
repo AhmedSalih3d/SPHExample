@@ -97,7 +97,7 @@ function run_lid_driven_cavity_2d(; FloatType = Float32, dx = 0.01,
     return (; particles, meta)
 end
 
-if abspath(PROGRAM_FILE) == abspath(@__FILE__)
+# if abspath(PROGRAM_FILE) == abspath(@__FILE__)
     save_location = length(ARGS) >= 1 ? ARGS[1] :
                     raw"C:\TestSimulations\LidDrivenCavity2D_GPU"
     dx = length(ARGS) >= 2 ? parse(Float64, ARGS[2]) : 0.01
@@ -105,4 +105,4 @@ if abspath(PROGRAM_FILE) == abspath(@__FILE__)
     input_dir = length(ARGS) >= 4 ? ARGS[4] :
                 normpath(joinpath(@__DIR__, "..", "input", "lid_driven_cavity_2d_generated"))
     run_lid_driven_cavity_2d(; save_location, dx, simulation_time, input_dir)
-end
+# end

@@ -6,6 +6,7 @@ using StructArrays
 using LinearAlgebra
 using HDF5
 
+include(joinpath(@__DIR__, "log_progress.jl"))
 include(joinpath(@__DIR__, "still_wedge_geometry.jl"))
 include(joinpath(@__DIR__, "still_wedge_middle_square_geometry.jl"))
 include(joinpath(@__DIR__, "moving_square_geometry.jl"))
@@ -321,7 +322,7 @@ relerr(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), eps(eltype(b))))
 
     @testset "asynchronous output frames match a synchronous write" begin
         case = BENCH_CASES[findfirst(c -> c.name == "StillWedge2D_MDBC_dp0.02", BENCH_CASES)]
-        function frames(async; double = false, host32 = false)
+        function frames(async; double = false, host32 = false, queue_bytes = 256 * 2^20)
             save = mktempdir()
             kw   = case.build(Float32, save)
             meta = kw.SimMetaData
@@ -329,6 +330,7 @@ relerr(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), eps(eltype(b))))
             meta.OutputTimes       = 0.002f0
             meta.ExportGridCells   = true
             meta.GPUAsyncOutput    = async
+            meta.GPUOutputQueueBytes = queue_bytes
             meta.GPUDoublePosition = double
             meta.OutputVariables   = ["Density", "Velocity", "ID", "Type", "GhostPoints"]
             particles = host32 ? AllocateDataStructures(kw.SimGeometry) : AllocateDataStructures(kw.SimGeometry, meta)
@@ -364,12 +366,17 @@ relerr(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), eps(eltype(b))))
         @test length(sync.grid.NumberOfCells) == nframes - 1
         @test async.grid.NumberOfCells == sync.grid.NumberOfCells
         @test async.grid.CellData == sync.grid.CellData
-        # the log line of every frame is printed by the writer as well
+        # the simulation emits exactly one log line for every frame
         @test count("Part_", async.log) == count("Part_", sync.log) == nframes
         # the host arrays hold the final state in both modes
         order(p) = sortperm(p.ID)
         @test async.particles[order(async.particles)].Density == sync.particles[order(sync.particles)].Density
         @test async.particles[order(async.particles)].Cells == sync.particles[order(sync.particles)].Cells
+
+        # A one-frame queue exercises buffer reuse and bounded backpressure.
+        tiny_queue = frames(true; queue_bytes = 0)
+        @test tiny_queue.data == sync.data
+        @test tiny_queue.grid == sync.grid
 
         # Float32 host positions of a double position run are converted on the writer task
         d64 = frames(true; double = true)

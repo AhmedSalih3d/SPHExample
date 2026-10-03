@@ -306,14 +306,22 @@ const OUTPUT_STAGING_FRAMES = 2
 One output frame handed from the simulation thread to the writer task: the
 staging buffers that receive its copies, the output counter and time, the
 cell grid at the time of the download (the simulation thread may rebuild the
-cell list while the frame is written) and the formatted log line, if any.
+cell list while the frame is written).
 """
 struct OutputFrameJob{D}
     download::OutputDownload{D}
     counter::Int
     time::Float64
     grid::CellGrid{D}
-    line::Union{Nothing, String}
+end
+
+# Keep the lightweight collector with the simulation pool so a blocking disk
+# write on the other pool cannot prevent downloads from being collected.
+function spawn_collector(f)
+    if Threads.threadpool() === :interactive
+        return Threads.@spawn :interactive f()
+    end
+    return Threads.@spawn :default f()
 end
 
 # Spawn the output writer on a thread pool other than the one of the calling
@@ -983,17 +991,10 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         )
     end
 
-    # An output frame is copied asynchronously into page-locked staging
-    # buffers on the stream of the step kernels and written to the files by a
-    # writer task, so that the GPU continues with the next output interval at
-    # once (see `OutputDownload`). `OUTPUT_STAGING_FRAMES` sets of staging
-    # buffers rotate through two channels: the simulation thread takes a free
-    # set, enqueues the copies and hands the frame to the writer; the writer
-    # waits for the copies, moves them into the host arrays, returns the set
-    # before it writes the files (so the set is busy for the copy only, not
-    # for the write) and writes the frames in order. The simulation thread
-    # blocks only when every set is in flight. A failure of the writer closes
-    # both channels and surfaces on the simulation thread.
+    # Two pinned download buffers feed a collector, which copies completed
+    # frames into a reusable, memory-budgeted host queue. The disk writer owns
+    # SimParticles and consumes queued frames in order. Staging buffers return
+    # before any HDF5 work; backpressure occurs only when the host queue fills.
     staging = OutputDownload{Dimensions}[OutputDownload(gpu, download_fields; cells = SimMetaData.ExportGridCells)
                                          for _ in 1:(SimMetaData.GPUAsyncOutput ? OUTPUT_STAGING_FRAMES : 1)]
     free    = Channel{OutputDownload{Dimensions}}(length(staging))
@@ -1001,24 +1002,68 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     foreach(dl -> put!(free, dl), staging)
     write_time = Ref(0.0)
     # Host side of one frame: wait for its copies, move them into the host
-    # arrays, release the staging buffers, write the files and print the log
-    # line. Runs on the writer task (or inline without `GPUAsyncOutput`).
+    # arrays and write the files. Runs on the writer task (or inline without
+    # `GPUAsyncOutput`).
     function write_frame(job::OutputFrameJob)
         t0 = time()
-        UniqueCells = finish_download!(job.download, SimParticles, job.grid)
-        put!(free, job.download)
+        if SimMetaData.GPUAsyncOutput
+            for (f, buf) in zip(job.download.fields, job.download.buffers)
+                copyto!(getproperty(SimParticles, f), buf)
+            end
+            UniqueCells = isempty(job.download.cid) ? CartesianIndex{Dimensions}[] :
+                store_cells!(SimParticles, job.grid, job.download.cid)
+        else
+            UniqueCells = finish_download!(job.download, SimParticles, job.grid)
+            put!(free, job.download)
+        end
         SimMetaData.IndexCounter = length(UniqueCells)
         output.save_particles(job.counter, job.time)
         output.save_grid(job.counter, UniqueCells, SimParticles, job.time)
-        job.line === nothing || log_line(SimLogger, job.line)
         write_time[] += time() - t0
         return nothing
     end
     writer = nothing
+    collector = nothing
     if SimMetaData.GPUAsyncOutput
-        writer = spawn_writer(() -> foreach(write_frame, jobs))
-        bind(free, writer)
-        bind(jobs, writer)
+        prototype = first(staging)
+        frame_bytes = sum(sizeof, prototype.buffers) + sizeof(prototype.cid)
+        queue_frames = max(1, div(SimMetaData.GPUOutputQueueBytes, max(frame_bytes, 1)))
+        host_free = Channel{OutputDownload{Dimensions}}(queue_frames)
+        ready = Channel{OutputFrameJob{Dimensions}}(queue_frames)
+        for _ in 1:queue_frames
+            # Ordinary host memory; the event is unused for collected frames.
+            frame = OutputDownload{Dimensions}(prototype.fields,
+                Vector[similar(buf) for buf in prototype.buffers],
+                similar(prototype.cid), CUDA.HostMemory[], prototype.event)
+            put!(host_free, frame)
+        end
+        writer = spawn_writer() do
+            for job in ready
+                write_frame(job)
+                put!(host_free, job.download)
+            end
+        end
+        bind(host_free, writer)
+        bind(ready, writer)
+        collector = spawn_collector() do
+            try
+                for job in jobs
+                    frame = take!(host_free)
+                    CUDA.synchronize(job.download.event)
+                    for (dst, src) in zip(frame.buffers, job.download.buffers)
+                        copyto!(dst, src)
+                    end
+                    copyto!(frame.cid, job.download.cid)
+                    put!(free, job.download)
+                    put!(ready, OutputFrameJob{Dimensions}(frame, job.counter,
+                        job.time, job.grid))
+                end
+            finally
+                close(ready)
+            end
+        end
+        bind(free, collector)
+        bind(jobs, collector)
     end
 
     try
@@ -1029,11 +1074,9 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         push!(TimeSteps, SimMetaData.CurrentTimeStep)
         log_floating(SimMetaData.TotalTime)
 
-        # The log line is formatted now (its values belong to this frame) and
-        # printed by the writer, off the path between two output intervals.
-        line = nothing
+        # Publish progress immediately, independently of the queued disk writes.
         if StoreLogOutput
-            line = step_log_line(SimLogger, SimMetaData, HourGlass)
+            LogStep(SimLogger, SimMetaData, HourGlass)
             SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
         end
 
@@ -1045,7 +1088,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         @timeit HourGlass "13 Output Frame" begin
             dl = @timeit HourGlass "13a Wait For Staging Buffers" take!(free)
             enqueue_download!(dl, gpu)
-            job = OutputFrameJob{Dimensions}(dl, counter, Float64(t_out), grid, line)
+            job = OutputFrameJob{Dimensions}(dl, counter, Float64(t_out), grid)
             if SimMetaData.GPUAsyncOutput
                 put!(jobs, job)
             else
@@ -1065,10 +1108,10 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         if SimMetaData.TotalTime > SimMetaData.SimulationTime
             @timeit HourGlass "13c Close Data Streams" begin
                 close(jobs)
+                collector === nothing || wait(collector)
                 writer === nothing || wait(writer)
                 output.close_files()
             end
-            foreach(free!, staging)
 
             # Leave the complete final state on the host, not only the output
             # fields, so that callers can inspect every particle field.
@@ -1112,6 +1155,17 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         floating_log === nothing || close(floating_log)
         # never leave the writer task blocked on the job channel if the loop throws
         close(jobs)
+        try
+            collector === nothing || wait(collector)
+        finally
+            try
+                writer === nothing || wait(writer)
+            finally
+                # A failed collector may leave queued DMA copies in flight.
+                CUDA.synchronize()
+                foreach(free!, staging)
+            end
+        end
     end
 
     return nothing

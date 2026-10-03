@@ -546,22 +546,22 @@ the standard *gather* formulation:
   interleaved with the boundary in cell order and exit at once. The neighbour
   loop tests the distance before it loads the particle type, so only the
   candidates inside the support (roughly a third) pay for the second load.
-* **Asynchronous output.** When an output is due, the output fields are
-  copied with asynchronous device to host copies into page-locked staging
-  buffers on the stream of the step kernels, followed by an event; the
-  kernels of the next interval queue up behind the copies and the host
-  continues at once. A writer task waits on the event, moves the buffers
-  into the host arrays, hands the frame to the buffered file writer and
-  prints the log line, while the GPU already integrates the next output
-  interval. With the default `-t 1,1` of Julia 1.12 the task runs on the
-  interactive thread so that it does not share a thread with the kernel
-  launches. A plain `copyto!` from a `CuArray` would instead wait for the
-  device and block the host, which drained the GPU pipeline once per frame.
-  Two sets of staging buffers rotate between the simulation thread and the
-  writer through channels, and the writer returns a set as soon as it has
-  moved the copies out, before it writes the file: the simulation thread
-  only waits when the writer falls two frames behind, not whenever a single
-  frame takes longer than an output interval. The file writes themselves
+* **Asynchronous output.** Output fields are downloaded asynchronously into
+  two pinned staging buffers. A collector copies completed downloads into a
+  reusable host frame queue and immediately returns the staging buffers. A
+  Progress log lines are emitted and flushed at each output interval, independently
+  of queued frame writes. A separate task writes queued frames to disk in order,
+  so HDF5 writes do not
+  prevent the collector from receiving subsequent frames. The collector runs
+  in the simulation's thread pool; the writer prefers the other pool. Use
+  `julia -t 2,1` to give collection and simulation enough CPU threads while
+  disk writes run separately. With only one CPU thread, blocking writes can
+  still interrupt simulation launches.
+  `GPUOutputQueueBytes` budgets the queued frame arrays separately from the
+  file batching budget (at least one frame is allocated). No frames are dropped:
+  sustained disk throughput below frame production eventually fills the queue
+  and makes the simulation wait. GPU downloads still precede subsequent kernels
+  on the simulation stream. File writes
   are batched: appending one frame to the transient `vtkhdf` file costs some
   35 tiny HDF5 operations (extend and write one element of every
   bookkeeping dataset, update the step count), about 20 µs each, which for a
@@ -571,7 +571,8 @@ the standard *gather* formulation:
   fit into `GPUOutputBufferBytes`, then write them with one hyperslab write
   per dataset into chunks that hold exactly one batch. The cell grid frame is
   built in preallocated buffers instead of one array per cell. The
-  measurements (Float32, RTX A1000, cell grid exported, default threads) show
+  measurements of the previous two-staging-buffer pipeline (Float32, RTX A1000,
+  cell grid exported, default threads) show
   the run time has become nearly independent of the number of frames: the
   2D dam break (6 678 particles, 4 448 steps) takes 0.79 s with 2 frames,
   0.82 s with 51 and 0.90 s with 201 frames (1.04 s before batching, 1.63 s
@@ -661,7 +662,8 @@ definitions in `benchmark/cases.jl` construct against either package.
 | `GPUUseGraph` | `true` | Capture the launch sequence of a step as a CUDA graph and replay it. Disabled automatically with `GPUSyncTimers`. |
 | `GPUCellSubdivision` | `1` | Cells per support radius `H` along each axis: `1` bins at `H` with a 3^D stencil (the CPU's cells), `2` at `H/2` with a 5^D stencil. Same neighbour pairs, fewer distance checks, more cell ranges per particle. Only `1` reproduces the CPU's orientation of the asymmetric density diffusion term (the results of the two grids differ by that term only). `2` pays off with one lane per particle (large cases); with many lanes it is slower. |
 | `GPUDoublePosition` | `false` | Store and integrate the particle positions (and the mDBC ghost node positions) in `Float64` while everything else stays in `FloatType`; the pair loops use cell relative `FloatType` coordinates (see "Double positions" above). Use it for `Float32` runs of domains far from the origin or with many steps. No effect with `FloatType = Float64`. Allocate the particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so that the input is read in `Float64`. |
-| `GPUOutputBufferBytes` | `256 * 2^20` | Host memory for output frames that are held before they are written to the single `vtkhdf` file (see "Asynchronous output"). The number of frames per flush is the budget divided by the size of a frame (particle fields plus, with `ExportGridCells`, an upper bound of the grid frame), at least 1 and at most 64. `0` writes every frame at once. |
+| `GPUOutputQueueBytes` | `256 * 2^20` | Separate host memory budget for reusable frames between the download collector and disk writer; at least one frame. Used with `GPUAsyncOutput`. |
+| `GPUOutputBufferBytes` | `256 * 2^20` | Host memory for output frames that are held before they are written to the single `vtkhdf` file (see "Asynchronous output"). The number of frames per flush is the budget divided by the size of a frame (particle fields plus, with `ExportGridCells`, an upper bound of the grid frame), at least 1 and at most 16. `0` writes every frame at once. |
 
 `OutputTimes` also accepts `Float64` values or vectors when `FloatType = Float32`.
 The positions of `Float32` runs are written as `Float64` to the output files

@@ -101,6 +101,7 @@ mutable struct SimulationMetaData{Dimensions,
     GPUUseGraph::Bool            # replay the launch sequence of a step as a CUDA graph
     GPUCellSubdivision::Int      # cells per support radius H per axis (1: edge H, 3^D stencil; 2: edge H/2, 5^D stencil)
     GPUDoublePosition::Bool      # integrate positions in Float64 (pair loops use cell relative positions in FloatType)
+    GPUOutputQueueBytes::Int     # reusable host frames between collector and disk writer
     GPUOutputBufferBytes::Int    # host memory that holds output frames before they are written to the file
 end
 
@@ -209,10 +210,12 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUUseGraph::Bool                       = true,
         GPUCellSubdivision::Int                 = 1,
         GPUDoublePosition::Bool                 = false,
+        GPUOutputQueueBytes::Int                = 256 * 2^20,
         GPUOutputBufferBytes::Int               = 256 * 2^20,
     ) where {Dimensions, FloatType <: AbstractFloat, SMode <: ShiftingMode, KMode <: KernelOutputMode,
              BMode <: MDBCMode, LMode <: LogMode}
     GPUCellSubdivision >= 1 || throw(ArgumentError("GPUCellSubdivision must be at least 1, got $GPUCellSubdivision"))
+    GPUOutputQueueBytes >= 0 || throw(ArgumentError("GPUOutputQueueBytes must be nonnegative"))
     GPUOutputBufferBytes >= 0 || throw(ArgumentError("GPUOutputBufferBytes must not be negative, got $GPUOutputBufferBytes"))
     return SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(
         SimulationName, SaveLocation, HourGlass, Iteration,
@@ -223,7 +226,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         OutputVariables, OpenLogFile, TimeSteppingMode,
         GPUSyncTimers, GPUDeterministicSort, GPUMaxCells, GPUInteractionThreads, GPULanesPerParticle,
         GPUBoundaryForces, GPUAsyncOutput, GPUMaxStepsPerSync, GPUUseGraph, GPUCellSubdivision,
-        GPUDoublePosition, GPUOutputBufferBytes,
+        GPUDoublePosition, GPUOutputQueueBytes, GPUOutputBufferBytes,
     )
 end
 
