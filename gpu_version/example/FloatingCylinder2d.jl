@@ -23,8 +23,7 @@ let
     dx         = 0.025
 
     # coefsound = 30 and hswl = 0.8 of the DualSPHysics case: c₀ = 30 sqrt(g hswl)
-    SimConstantsFloating = SimulationConstants{FloatType}(dx = dx, ρ₀ = 1000, g = 9.81,
-        c₀ = 30 * sqrt(9.81 * 0.8), δᵩ = 0.1, CFL = 0.2, ν₀ = 1e-6)
+    SimConstantsFloating = SimulationConstants{FloatType}(dx = dx, ρ₀ = 1000, g = 9.81, c₀ = 30 * sqrt(9.81 * 0.8), δᵩ = 0.1, CFL = 0.2, ν₀ = 1e-6)
 
     input_dir = normpath(joinpath(@__DIR__, "..", "input", "floating_cylinder_2d_generated"))
     csv(name) = joinpath(input_dir, "FloatingCylinder2D_Dp$(dx)_$(name).csv")
