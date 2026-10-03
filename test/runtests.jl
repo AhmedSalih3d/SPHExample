@@ -33,6 +33,31 @@ end
     @test alloc == 0
 end
 
+@testset "prescribed wall velocity without translation" begin
+    meta = SimulationMetaData{2,Float64}(SimulationName="motion", SaveLocation=".")
+    positions = [SVector{2,Float64}(0.5, 1.0)]
+    velocities = [SVector{2,Float64}(0.0, 0.0)]
+    types = [Moving]
+    groups = UInt[1]
+    stationary = [MotionDetails{2,Float64}(
+        Velocity=1.0, StartTime=0.0, Duration=1.0,
+        Direction=SVector{2,Float64}(1.0, 0.0), MoveParticles=false,
+    )]
+
+    SPHExample.SPHCellList.ProgressMotion(positions, velocities, types, groups,
+                                          0.01, stationary, meta)
+    @test positions[1] == SVector{2,Float64}(0.5, 1.0)
+    @test velocities[1] == SVector{2,Float64}(1.0, 0.0)
+
+    translating = [MotionDetails{2,Float64}(
+        Velocity=1.0, StartTime=0.0, Duration=1.0,
+        Direction=SVector{2,Float64}(1.0, 0.0),
+    )]
+    SPHExample.SPHCellList.ProgressMotion(positions, velocities, types, groups,
+                                          0.01, translating, meta)
+    @test isapprox(positions[1][1], 0.51; atol=eps(Float64))
+end
+
 @testset "isolated particle" begin
     D = 2
     T = Float64

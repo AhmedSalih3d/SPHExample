@@ -13,12 +13,20 @@ export ParticleType, Geometry, Fluid, Fixed, Moving, MotionDetails
     Moving = UInt8(3)
 end
 
-# Define a struct to store motion details, with parametric dimensions and floating point type
+"""
+    MotionDetails{D, T}(; Velocity, StartTime, Duration, Direction,
+                        MoveParticles = true)
+
+Prescribed velocity for a `Moving` particle group. By default the particles
+translate with that velocity. Set `MoveParticles = false` for a stationary
+wall with a prescribed boundary velocity, as in a lid-driven cavity.
+"""
 @kwdef struct MotionDetails{D, T}
     Velocity::T
     StartTime::T
     Duration::T
     Direction::SVector{D, T}  # Direction vector is now parametric based on dimensions D and FloatType T
+    MoveParticles::Bool = true
 end
 
 # Define the Geometry struct to store the ParticleType enum and Motion details

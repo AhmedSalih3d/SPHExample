@@ -403,7 +403,7 @@ using Bumper
     
                     # Update Velocity and Position
                     Velocity[i] = MotionVel * MotionDir * ShouldMove
-                    Position[i] += Velocity[i] * dt₂
+                    motion.MoveParticles && (Position[i] += Velocity[i] * dt₂)
                 end
             end
         end

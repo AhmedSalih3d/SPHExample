@@ -137,6 +137,41 @@ by default. It creates VTKHDF files for the polygons and particles, plus
 with the same `dx` as `MovingSquare2d.jl`; the simulation reads these generated
 files.
 
+### 2D lid-driven cavity (Re = 100)
+
+`example/GenerateLidDrivenCavity2D.jl` and
+`example/LidDrivenCavity2d.jl` set up the square, fluid-filled cavity from the
+Rocky 2025 R1 SPH verification manual. The cavity is 1 m × 1 m; the bottom
+and side walls are stationary, while the top boundary moves at 1 m/s in `+x`
+without changing its position. The sample spacing is 0.01 m, wall thickness
+0.05 m, and simulation duration 60 s.
+
+The configuration specifies an initial density of 10 kg/m³, dynamic viscosity
+0.1 Pa·s, and sound speed 10 m/s. The solver takes kinematic viscosity, so the
+example sets `ν₀ = μ/ρ₀ = 0.01 m²/s`, which gives `Re = ρ₀ U L/μ = 100`.
+It uses zero gravity, laminar (Morris) viscosity, no density diffusion, no
+shifting and `CFL = 0.2`. The provided ANSYS setup does not specify the SPH
+kernel or smoothing length; this example uses Wendland C2 with
+`h = 1.2√2 dx`. The thermal model and the 3D periodic thickness are not
+represented in this 2D solver case.
+
+The lid uses `MotionDetails(...; MoveParticles = false)`: its boundary
+particles retain their positions while carrying the prescribed velocity used
+in the no-slip viscous interaction. This differs from a moving body, whose
+particles translate with the prescribed velocity.
+
+```bash
+julia --project=gpu_version gpu_version/example/GenerateLidDrivenCavity2D.jl
+julia --project=gpu_version gpu_version/example/LidDrivenCavity2d.jl
+```
+
+Both scripts accept an optional output directory and `dx`; the simulation
+script additionally accepts a duration and input directory:
+`[save_dir] [dx] [duration] [input_dir]`. The generated CSV and VTKHDF input files go to
+`gpu_version/input/lid_driven_cavity_2d_generated/` by default. The simulation
+writes velocity, density and pressure frames to
+`C:\TestSimulations\LidDrivenCavity2D_GPU` by default.
+
 ### Floating bodies: the 2D falling cylinder
 
 A `Floating` particle group is a rigid body moved by gravity and the forces of

@@ -402,6 +402,7 @@ function MotionArrays(SimGeometry::Vector{SPHGeometry{D, T}}, SimParticles) wher
     start     = zeros(T, ngroups)
     duration  = zeros(T, ngroups)
     direction = zeros(SVector{D, T}, ngroups)
+    move_particles = ones(Bool, ngroups)
     for geom in SimGeometry
         m = geom.Motion
         if m !== nothing
@@ -411,11 +412,13 @@ function MotionArrays(SimGeometry::Vector{SPHGeometry{D, T}}, SimParticles) wher
             start[g]     = m.StartTime
             duration[g]  = m.Duration
             direction[g] = m.Direction
+            move_particles[g] = m.MoveParticles
         end
     end
     active = any(has) && any(==(Moving), SimParticles.Type)
     return (active = active, has = CuArray(has), velocity = CuArray(velocity), start = CuArray(start),
-            duration = CuArray(duration), direction = CuArray(direction))
+            duration = CuArray(duration), direction = CuArray(direction),
+            move_particles = CuArray(move_particles))
 end
 
 #---------------------------------------------------------------

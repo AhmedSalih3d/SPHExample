@@ -113,7 +113,7 @@ code). `motion` is a NamedTuple of device arrays indexed by group marker.
             ShouldMove = (start <= TotalTime) & (TotalTime <= start + duration)
             v = motion.velocity[g] * motion.direction[g] * ShouldMove
             Velocity[i] = v
-            Position[i] += v * dt₂
+            motion.move_particles[g] && (Position[i] += v * dt₂)
         end
     end
     return nothing
