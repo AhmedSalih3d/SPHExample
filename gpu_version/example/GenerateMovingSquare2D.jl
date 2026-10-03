@@ -17,8 +17,9 @@ using Meshes
                                square_lower_left = (1.0, 2.0), square_size = 1.0)
 
 Return the closed tank, fluid region and initial moving square as `PolyArea`s,
-in metres. The tank wall is a rectangular shell; the fluid polygon has the
-square as a hole so fluid particles do not overlap the moving body.
+in metres. The tank wall is a rectangular shell drawn outside the fluid domain
+with `outline`; the fluid polygon has the square as a hole so fluid particles
+do not overlap the moving body.
 """
 function moving_square_2d_polygons(; tank_width = 10.0, tank_height = 5.0,
                                     wall_thickness = 0.04,
@@ -36,38 +37,12 @@ function moving_square_2d_polygons(; tank_width = 10.0, tank_height = 5.0,
         throw(ArgumentError("the moving square must be strictly inside the tank"))
     end
 
-    t = wall_thickness
-    tank_outer = [
-        (-t, -t),
-        (tank_width + t, -t),
-        (tank_width + t, tank_height + t),
-        (-t, tank_height + t),
-    ]
-    tank_inner = [
-        (0.0, 0.0),
-        (0.0, tank_height),
-        (tank_width, tank_height),
-        (tank_width, 0.0),
-    ]
-    # Meshes expects inner rings clockwise and outer rings counter-clockwise.
-    tank = PolyArea([tank_outer, tank_inner])
+    domain = rectangle((0.0, 0.0), tank_width, tank_height)
+    tank   = outline(domain; thickness = wall_thickness, side = :outward)
+    body   = square(square_lower_left, square_size)
+    water  = polygon(domain; holes = [body])
 
-    square_vertices = [
-        (square_x, square_y),
-        (square_x + square_size, square_y),
-        (square_x + square_size, square_y + square_size),
-        (square_x, square_y + square_size),
-    ]
-    square = PolyArea(square_vertices)
-    water_outer = [
-        (0.0, 0.0),
-        (tank_width, 0.0),
-        (tank_width, tank_height),
-        (0.0, tank_height),
-    ]
-    water = PolyArea([water_outer, reverse(square_vertices)])
-
-    return (; tank, water, square)
+    return (; tank, water, square = body)
 end
 
 """

@@ -10,6 +10,7 @@ module SPHExampleGPU
     # Include submodules in dependency order
     submodules = [
         "AuxiliaryFunctions.jl",
+        "PolygonDrawing.jl",
         "SPHKernels.jl",
         "SPHViscosityModels.jl",
         "ProduceHDFVTK.jl",
@@ -97,6 +98,12 @@ module SPHExampleGPU
     using .SPHCellList
     export GPUParticles, GPUSupportArrays, MotionArrays, upload_particles, download_particles!,
            RunSimulation, SimulationLoop, position_type, uses_pos_cells
+
+    using .PolygonDrawing
+    export polygon, triangle, rectangle, square, regular_polygon, circle, arc,
+           line, polyline, outline, offset_polygon,
+           translate, rotate, mirror,
+           ExtrudedPolygon, prism
 
     using .ParticleGenerator
     export ParticleRegion, sample_particles, hydrostatic_density, write_particle_csv

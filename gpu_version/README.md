@@ -137,6 +137,77 @@ by default. It creates VTKHDF files for the polygons and particles, plus
 with the same `dx` as `MovingSquare2d.jl`; the simulation reads these generated
 files.
 
+### Drawing shapes for particle generation
+
+`src/PolygonDrawing.jl` provides drawing helpers that return Meshes.jl
+`PolyArea`s, which go straight into `ParticleRegion`, `Multi` and
+`SavePolygonVTKHDF`. Points may be tuples, vectors, `SVector`s or `Point`s;
+angles are in radians (use `deg2rad` for degrees). The outer ring of every result
+runs counter-clockwise and its holes clockwise, whatever the input orientation.
+
+| Helper | Draws |
+| --- | --- |
+| `polygon(vertices; holes)` | any simple polygon, optionally with holes (vertex lists or shapes) |
+| `triangle(a, b, c)` | a filled triangle |
+| `rectangle(corner, w, h; angle, centered)`, `square(corner, a; ...)` | rectangles, optionally rotated about the corner or centre |
+| `regular_polygon(center, r, n; angle)`, `circle(center, r; segments = 128)` | regular polygons; a circle is one with its vertices on the circle |
+| `arc(center, r, θ₀, θ₁; segments)` | points along an arc, to build paths or outlines |
+| `line(a, b; thickness, side, offset)` | a straight wall |
+| `polyline(points; thickness, side, offset, closed, miter_limit)` | a wall along a path |
+| `outline(shape; thickness, side, offset, miter_limit)` | a wall around a shape (every ring, holes included) |
+| `offset_polygon(shape, distance)` | the shape grown (or shrunk, `distance < 0`) along its normals |
+| `translate`, `rotate(shape, θ; origin)`, `mirror(shape; origin, direction)` | moved copies |
+| `prism(base, bottom, top)` | a 3D extrusion of a 2D shape along `z` (box, cylinder, wall…) |
+
+Walls are placed relative to the drawn path with `side`. For paths, `:left`,
+`:right` or `:center` are taken looking along the drawing direction. For
+`outline`, `:outward` (default), `:inward` or `:center` are taken relative to
+the shape. `offset` then moves the wall further along the normal: towards the
+left for paths, away from the shape for outlines. It leaves a gap between the
+drawn surface and the wall. Joints are mitred, so straight walls keep sharp
+corners. Convex joints whose miter would exceed `miter_limit` (default 4) times
+the offset are bevelled. A wall too thick for its path throws an
+`ArgumentError` instead of returning an invalid polygon. This happens when an
+inner offset reverses an edge or crosses itself.
+
+```julia
+dx = 0.02
+domain = rectangle((0, 0), 2.0, 1.0)
+tank   = outline(domain; thickness = 3dx)                      # closed tank, walls outside
+open_tank = polyline([(0, 1), (0, 0), (2, 0), (2, 1)];         # wetted surface drawn,
+                     thickness = 3dx, side = :right)           # walls grow outwards
+pipe   = outline(circle((1.0, 0.5), 0.2); thickness = 2dx, side = :inward)
+ramp   = line((1.2, 0.0), (2.0, 0.3); thickness = 3dx, side = :right)
+water  = rectangle((0, 0), 2.0, 0.5)
+regions = [ParticleRegion("Bound", Multi([tank, pipe, ramp]), Fixed),
+           ParticleRegion("Fluid", water, Fluid)]
+```
+
+Shapes listed earlier claim the lattice points first, so obstacles inside the
+water rarely need to be cut out as holes. In 3D, a `ParticleRegion` takes a
+prism or a tuple of prisms, which is filled as their union. `sample_particles`
+then fills a 3D lattice, and `SavePolygonVTKHDF` writes the prism surfaces:
+
+```julia
+interior = rectangle((0, 0), 1.0, 0.6)
+tank  = (prism(outline(interior; thickness = 3dx), -3dx, 0.6),     # walls
+         prism(offset_polygon(interior, 3dx), -3dx, 0.0))          # floor
+water = prism(interior, 0.0, 0.3)
+```
+
+`example/GenerateShapesShowcase.jl` draws a 2D tank with a cylinder, wedge,
+ramp, arc baffle and tilted square, and a 3D tank of prisms. It writes both
+scenes as VTKHDF and CSV files:
+
+```bash
+julia --project=gpu_version gpu_version/example/GenerateShapesShowcase.jl [output_dir] [dx]
+```
+
+The DamBreak and MovingSquare generators above are drawn with `polyline`,
+`outline`, `rectangle` and `polygon`. They reproduce their previous particles
+exactly. The drawing tests need no GPU:
+`julia --project=gpu_version gpu_version/test/polygon_drawing.jl`.
+
 ### Which precision?
 
 * `Float64` reproduces the CPU results to round-off (the test suite checks

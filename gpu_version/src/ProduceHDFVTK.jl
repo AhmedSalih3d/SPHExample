@@ -26,6 +26,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     using StaticArrays
 
     using ..AuxiliaryFunctions: to_3d, to_3d!, components!
+    using ..PolygonDrawing: ExtrudedPolygon
 
 
     const idType = Int64
@@ -200,11 +201,12 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         SavePolygonVTKHDF(filepath, regions)
 
     Write the polygons of the named tuple `regions` as one static VTKHDF
-    `PolyData` file. Every region is a `PolyArea` or a `Multi` of `PolyArea`s.
-    The polygons are triangulated so that concave shapes render correctly; the
-    triangles carry the position of their region in the tuple in the cell data
-    array `Region`. 2D coordinates are written in the XY plane with `z = 0`.
-    Returns `filepath`.
+    `PolyData` file. Every region is a `PolyArea`, a `Multi` of `PolyArea`s, an
+    `ExtrudedPolygon` (see `prism`) or a tuple or vector of those. The polygons
+    are triangulated so that concave shapes render correctly, and prisms are
+    written as their closed surface. The triangles carry the position of their
+    region in the tuple in the cell data array `Region`. 2D coordinates are
+    written in the XY plane with `z = 0`. Returns `filepath`.
     """
     function SavePolygonVTKHDF(filepath::AbstractString, regions::NamedTuple)
         isempty(regions) && throw(ArgumentError("at least one polygon region is required"))
@@ -230,7 +232,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     """
     Triangulate the polygons of all `regions` into one point list with VTK
     style (zero based) connectivity and offsets. Triangles are oriented counter
-    clockwise regardless of the orientation of the input rings.
+    clockwise regardless of the orientation of the input rings; prism sides
+    face outwards for counter clockwise outer rings.
     """
     function triangulate_regions(regions)
         points       = SVector{3, Float64}[]
@@ -238,28 +241,63 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         offsets      = Int64[0]
         region_ids   = Int32[]
 
-        for (id, region) in enumerate(regions), polygon in polygons_of(region)
+        add_triangle!(ids, id) = begin
+            append!(connectivity, ids .- 1)
+            push!(offsets, length(connectivity))
+            push!(region_ids, id)
+        end
+
+        for (id, region) in enumerate(regions), (polygon, z) in surfaces_of(region)
             mesh        = discretize(polygon)
             first_point = length(points)
+            base_z      = z === nothing ? 0.0 : z[1]
             for vertex in vertices(mesh)
                 x, y = Meshes.ustrip.(to(vertex))
-                push!(points, SVector(x, y, 0.0))
+                push!(points, SVector(x, y, base_z))
             end
             for triangle in elements(topology(mesh))
-                ids = first_point .+ collect(indices(triangle))
-                append!(connectivity, counter_clockwise(points, ids) .- 1)
-                push!(offsets, length(connectivity))
-                push!(region_ids, id)
+                ids = counter_clockwise(points, first_point .+ collect(indices(triangle)))
+                # A prism's bottom lid faces down.
+                add_triangle!(z === nothing ? ids : reverse(ids), id)
+            end
+            z === nothing && continue
+
+            # Prism: lid at the top and one quad (two triangles) per outline edge.
+            top_first = length(points)
+            for k in 1:nvertices(mesh)
+                bottom = points[first_point + k]
+                push!(points, SVector(bottom[1], bottom[2], z[2]))
+            end
+            for triangle in elements(topology(mesh))
+                ids = top_first .+ collect(indices(triangle))
+                add_triangle!(counter_clockwise(points, ids), id)
+            end
+            for ring in rings(polygon), segment in segments(ring)
+                a, b = (Meshes.ustrip.(to(v)) for v in vertices(segment))
+                corner = length(points)
+                push!(points, SVector(a[1], a[2], z[1]), SVector(b[1], b[2], z[1]),
+                              SVector(b[1], b[2], z[2]), SVector(a[1], a[2], z[2]))
+                add_triangle!(corner .+ [1, 2, 3], id)
+                add_triangle!(corner .+ [1, 3, 4], id)
             end
         end
         isempty(points) && throw(ArgumentError("polygon regions have no points"))
         return points, connectivity, offsets, region_ids
     end
 
-    polygons_of(region::PolyArea) = (region,)
-    polygons_of(region::Multi)    = polygons_of_multi(parent(region))
-    polygons_of(region) =
-        throw(ArgumentError("each region must be a PolyArea or a Multi of PolyAreas, got $(typeof(region))"))
+    # `(polygon, nothing)` for flat polygons, `(polygon, (bottom, top))` for prisms.
+    surfaces_of(region::PolyArea) = ((region, nothing),)
+    surfaces_of(region::Multi) =
+        ((p, nothing) for p in polygons_of_multi(parent(region)))
+    surfaces_of(region::ExtrudedPolygon) =
+        ((p, (region.bottom, region.top)) for (p, _) in surfaces_of(region.base))
+    function surfaces_of(region::Union{Tuple, AbstractVector})
+        isempty(region) && throw(ArgumentError("polygon regions cannot be empty"))
+        return Iterators.flatten(map(surfaces_of, collect(region)))
+    end
+    surfaces_of(region) =
+        throw(ArgumentError("each region must be a PolyArea, a Multi of PolyAreas, an " *
+                            "ExtrudedPolygon or a tuple or vector of those, got $(typeof(region))"))
 
     function polygons_of_multi(polygons)
         isempty(polygons) && throw(ArgumentError("polygon regions cannot be empty"))

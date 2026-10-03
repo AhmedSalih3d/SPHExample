@@ -9,6 +9,7 @@ using HDF5
 include(joinpath(@__DIR__, "still_wedge_geometry.jl"))
 include(joinpath(@__DIR__, "still_wedge_middle_square_geometry.jl"))
 include(joinpath(@__DIR__, "moving_square_geometry.jl"))
+include(joinpath(@__DIR__, "polygon_drawing.jl"))
 include(joinpath(@__DIR__, "..", "benchmark", "cases.jl"))
 
 # Project of the CPU package used as the reference. Defaults to the repository

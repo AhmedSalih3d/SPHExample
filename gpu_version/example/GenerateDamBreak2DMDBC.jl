@@ -17,9 +17,10 @@ using Meshes
                            wall_thickness = 0.06)
 
 Return the open tank and initial water column of the 2D dam-break case as
-`PolyArea`s, in metres. The tank is a three-sided shell: its floor and side
-walls extend `wall_thickness` outside the fluid domain. The water starts in
-the left corner and is open at the top.
+`PolyArea`s, in metres. The tank is a three-sided shell drawn along the wetted
+surface with `polyline`: its floor and side walls extend `wall_thickness`
+outside the fluid domain. The water starts in the left corner and is open at
+the top.
 """
 function dam_break_2d_polygons(; tank_width = 4.0, tank_height = 3.0,
                                 water_width = 1.0, water_height = 2.0,
@@ -31,24 +32,12 @@ function dam_break_2d_polygons(; tank_width = 4.0, tank_height = 3.0,
                             "and wall thickness"))
     end
 
-    t = wall_thickness
-    tank = PolyArea([
-        (-t, -t),
-        (tank_width + t, -t),
-        (tank_width + t, tank_height),
-        (tank_width, tank_height),
-        (tank_width, 0.0),
-        (0.0, 0.0),
-        (0.0, tank_height),
-        (-t, tank_height),
-    ])
-
-    water = PolyArea([
-        (0.0, 0.0),
-        (water_width, 0.0),
-        (water_width, water_height),
-        (0.0, water_height),
-    ])
+    # Walking down the left wall, along the floor and up the right wall, the
+    # outside of the tank is on the right.
+    wetted_surface = [(0.0, tank_height), (0.0, 0.0),
+                      (tank_width, 0.0), (tank_width, tank_height)]
+    tank  = polyline(wetted_surface; thickness = wall_thickness, side = :right)
+    water = rectangle((0.0, 0.0), water_width, water_height)
 
     return (; tank, water)
 end
