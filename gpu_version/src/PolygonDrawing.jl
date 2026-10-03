@@ -563,6 +563,187 @@ function mirror(shape; origin = (0.0, 0.0), direction = (0.0, 1.0))
     return map_shape(points -> reflect_points(points, as_vec2(origin), u), shape)
 end
 
+#  Layers parallel to an outline (conforming particle sampling)
+
+"""
+    level_ring(ring, depth, max_sagitta)
+
+The exact offset of the closed `ring` by `depth` along its left normal: corners
+turning towards the offset side are mitred (their offset is a corner as well),
+the others get a circular join of radius `depth` around the vertex, drawn with
+chords at most `max_sagitta` from the arc. Nothing is checked: where the
+offset has collapsed through the shape the result is garbage, which the caller
+removes by keeping only points at the right distance from the outline.
+"""
+function level_ring(ring::Ring, depth::Real, max_sagitta::Real)
+    iszero(depth) && return copy(ring)
+    n = length(ring)
+    directions = [unit(ring[mod1(i + 1, n)] - ring[i]) for i in 1:n]
+    max_step = 2 * acos(clamp(1 - max_sagitta / abs(depth), -1.0, 1.0))
+    points = Vec2[]
+    for i in 1:n
+        u1, u2 = directions[mod1(i - 1, n)], directions[i]
+        n1, n2 = left_normal(u1), left_normal(u2)
+        turn = atan(cross2(u1, u2), dot(u1, u2))
+        if depth * turn >= 0
+            denominator = 1 + dot(n1, n2)
+            denominator > 1e-12 && push!(points, ring[i] + depth * (n1 + n2) / denominator)
+        else
+            steps = ceil(Int, abs(turn) / max_step)
+            for k in 0:steps
+                s, c = sincos(turn * k / steps)
+                push!(points, ring[i] + depth * Vec2(c * n1[1] - s * n1[2],
+                                                     s * n1[1] + c * n1[2]))
+            end
+        end
+    end
+    return points
+end
+
+"""
+    shapes_signed_distance(shapes, x)
+
+Distance from the point `x` to the outline of the union of `shapes`, each the
+rings of one polygon, positive inside and negative outside. Where polygons
+overlap it is the depth inside the deepest one.
+"""
+shapes_signed_distance(shapes, x) = maximum(rings -> rings_signed_distance(rings, x), shapes)
+
+function rings_signed_distance(rings, x)
+    distance, inside = Inf, false
+    for ring in rings, i in eachindex(ring)
+        a, b = ring[i], ring[mod1(i + 1, length(ring))]
+        edge = b - a
+        squared = dot(edge, edge)
+        t = squared > 0 ? clamp(dot(x - a, edge) / squared, 0.0, 1.0) : 0.0
+        distance = min(distance, norm(x - (a + t * edge)))
+        if (a[2] > x[2]) != (b[2] > x[2]) && x[1] < a[1] + (x[2] - a[2]) * edge[1] / edge[2]
+            inside = !inside
+        end
+    end
+    return inside ? distance : -distance
+end
+
+"""
+    layer_points(shapes, depth, spacing, corner_angle)
+
+Points about `spacing` apart on the curve at `depth` inside the union of
+`shapes` (each the rings of one polygon), i.e. on the level set
+`shapes_signed_distance == depth`. Every corner where the curve turns by more
+than `corner_angle`, and both ends of a piece cut short where the offset
+collapses, get a point; the stretches between them are split evenly. Points
+may repeat where pieces meet.
+"""
+function layer_points(shapes::Vector{Vector{Ring}}, depth::Real, spacing::Real,
+                      corner_angle::Real)
+    on_layer(x) = abs(shapes_signed_distance(shapes, x) - depth) <= 1e-3 * spacing
+    samples = Vec2[]
+    for rings in shapes, ring in rings
+        offset = clean_points(level_ring(ring, depth, 1e-4 * spacing); closed = true)
+        for (path, closed) in level_pieces(offset, on_layer, spacing / 8, corner_angle)
+            append!(samples, spaced_points(path, spacing; closed))
+        end
+    end
+    return samples
+end
+
+function turn_angle(ring::Ring, i)
+    n = length(ring)
+    u1 = ring[i] - ring[mod1(i - 1, n)]
+    u2 = ring[mod1(i + 1, n)] - ring[i]
+    return atan(cross2(u1, u2), dot(u1, u2))
+end
+
+"""
+    level_pieces(ring, on_layer, step, corner_angle)
+
+The parts of the closed offset `ring` lying on the layer, as `(path, closed)`
+pairs split at corners. The ring is walked in steps of at most `step` and the
+ends of every part are located by bisection, so a part that collapsed through
+the shape is cut off cleanly instead of being folded back over the layer.
+"""
+function level_pieces(ring::Ring, on_layer, step, corner_angle)
+    n = length(ring)
+    n <= 1 && return [(ring, false) for _ in 1:count(on_layer, ring)]
+    corner = [abs(turn_angle(ring, i)) > corner_angle for i in 1:n]
+    dense, dense_corner = Vec2[], Bool[]
+    for i in 1:n
+        a, b = ring[i], ring[mod1(i + 1, n)]
+        m = max(1, ceil(Int, norm(b - a) / step))
+        for k in 0:(m - 1)
+            push!(dense, a + (k / m) * (b - a))
+            push!(dense_corner, k == 0 && corner[i])
+        end
+    end
+    valid = map(on_layer, dense)
+    N = length(dense)
+    pieces = Tuple{Ring, Bool}[]
+    if all(valid)
+        corners = findall(dense_corner)
+        isempty(corners) && return [(dense, true)]
+        for (k, c) in enumerate(corners)
+            stop = k == length(corners) ? first(corners) + N : corners[k + 1]
+            push!(pieces, ([dense[mod1(j, N)] for j in c:stop], false))
+        end
+        return pieces
+    end
+    # Walk once round from an invalid point, so every part has two ends.
+    start = findfirst(!, valid)
+    current = Vec2[]
+    for s in 1:N
+        j, previous = mod1(start + s, N), mod1(start + s - 1, N)
+        if valid[j]
+            isempty(current) && push!(current, layer_end(dense[previous], dense[j], on_layer))
+            push!(current, dense[j])
+            if dense_corner[j]
+                push!(pieces, (current, false))
+                current = Vec2[dense[j]]
+            end
+        elseif !isempty(current)
+            push!(current, layer_end(dense[j], dense[previous], on_layer))
+            push!(pieces, (current, false))
+            current = Vec2[]
+        end
+    end
+    return pieces
+end
+
+"""Point where the layer ends on the straight step from `outside` to `inside`."""
+function layer_end(outside, inside, on_layer)
+    for _ in 1:30
+        middle = (outside + inside) / 2
+        on_layer(middle) ? (inside = middle) : (outside = middle)
+    end
+    return inside
+end
+
+"""
+    spaced_points(path, spacing; closed)
+
+Points splitting the polyline `path` into `round(length / spacing)` (at least
+one) equal parts, both ends included. With `closed = true` the path returns to
+its first point, which is not repeated.
+"""
+function spaced_points(path::Ring, spacing; closed::Bool)
+    loop = closed ? vcat(path, [path[1]]) : path
+    lengths = [norm(loop[i + 1] - loop[i]) for i in 1:(length(loop) - 1)]
+    total = sum(lengths; init = 0.0)
+    total > 0 || return path[1:1]
+    parts = max(1, round(Int, total / spacing))
+    samples = Vec2[]
+    edge, walked = 1, 0.0
+    for k in 0:(closed ? parts - 1 : parts)
+        target = total * k / parts
+        while edge < length(lengths) && walked + lengths[edge] < target
+            walked += lengths[edge]
+            edge += 1
+        end
+        fraction = lengths[edge] > 0 ? clamp((target - walked) / lengths[edge], 0, 1) : 0.0
+        push!(samples, loop[edge] + fraction * (loop[edge + 1] - loop[edge]))
+    end
+    return samples
+end
+
 #  Prisms
 
 """

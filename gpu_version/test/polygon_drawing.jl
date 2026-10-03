@@ -209,6 +209,80 @@ end
         @test_throws ArgumentError sample_particles([ParticleRegion("Box", Box((0, 0), (1, 1)), Fixed)], dx)
     end
 
+    @testset "conforming sampling" begin
+        dx = 0.02
+        min_spacing(ps) = minimum(norm(ps[i] - ps[j]) for i in eachindex(ps)
+                                  for j in (i + 1):lastindex(ps))
+        min_between(a, b) = minimum(norm(x - y) for x in a for y in b)
+        conforming(shape; kwargs...) = only(sample_particles(
+            [ParticleRegion("Shape", shape, Fixed; sampling = :conforming, kwargs...)], dx)).positions
+        # Whether the particles lie on, and fill, circles of the `expected` radii (in dx);
+        # the tolerance covers the sag of the 128 gon (< 0.005 dx here).
+        on_radii(ps, centre, expected) =
+            all(x -> any(r -> abs(norm(x - SVector(centre)) / dx - r) < 0.01, expected), ps) &&
+            all(r -> any(x -> abs(norm(x - SVector(centre)) / dx - r) < 0.01, ps), expected)
+
+        # A disc fills with concentric rings one spacing apart, down to its centre.
+        disc = conforming(circle((0.5, 0.5), 7.5dx))
+        @test on_radii(disc, (0.5, 0.5), 0.5:1.0:7.5)
+        @test min_spacing(disc) > 0.85dx
+        @test length(disc) == sum(round(Int, 2π * (k + 0.5)) for k in 0:7)
+
+        # Straight edges keep their corners; the layers shrink one spacing at a time.
+        tilted = square((0, 0), 5dx; angle = 0.3)
+        tilted_particles = conforming(tilted)
+        @test length(tilted_particles) == 20 + 12 + 4
+        corners = [SVector(Meshes.ustrip.(to(p))...) for p in vertices(tilted)]
+        @test all(c -> any(x -> norm(x - c) < 1e-9, tilted_particles), corners)
+        @test min_spacing(tilted_particles) ≈ dx
+
+        # A centred arc wall two spacings thick gets three evenly spaced layers.
+        r = 15dx
+        baffle = polyline(arc((1, 0.5), r, π, 2π); thickness = 2dx)
+        baffle_particles = conforming(baffle)
+        @test on_radii(baffle_particles, (1, 0.5), [14, 15, 16])
+        @test min_spacing(baffle_particles) > 0.98dx
+        # The ends are square to the first and last arc segments, a little off horizontal.
+        @test all(x -> x[2] <= 0.5 + dx * sin(π / 64), baffle_particles)
+        # Its ends collapse locally and still keep the spacing.
+        thick = conforming(polyline(arc((1, 0.5), r, π, 2π); thickness = 3dx, side = :right))
+        @test min_spacing(thick) > 0.95dx
+
+        # A limited number of layers leaves the core to the lattice regions that follow.
+        water = rectangle((0, 0), 1, 1)
+        shell, fluid = sample_particles(
+            [ParticleRegion("Shell", circle((0.5, 0.5), 0.2), Fixed; sampling = :conforming,
+                            layers = 3),
+             ParticleRegion("Fluid", water, Fluid)], dx)
+        @test on_radii(shell.positions, (0.5, 0.5), [8, 9, 10])
+        @test min_between(shell.positions, fluid.positions) >= dx / 2
+        @test count(x -> norm(x - SVector(0.5, 0.5)) < 7dx, fluid.positions) > 0
+        @test all(x -> !(7.5dx < norm(x - SVector(0.5, 0.5)) < 10.5dx), fluid.positions)
+        @test all(x -> all(abs.(x ./ dx .- round.(x ./ dx)) .< 1e-6), fluid.positions)
+
+        # Without the surface the first layer lies one spacing inside.
+        inner = conforming(circle((0.5, 0.5), 7.5dx); include_surface = false, layers = 1)
+        @test on_radii(inner, (0.5, 0.5), [6.5])
+        @test on_radii(conforming(circle((0.5, 0.5), 7.5dx); offset = dx, layers = 1),
+                       (0.5, 0.5), [6.5])
+
+        # Particles of a conforming region give way to an earlier lattice wall.
+        floor_ = rectangle((0, -3dx), 1, 3dx)
+        wall, cylinder = sample_particles(
+            [ParticleRegion("Floor", floor_, Fixed),
+             ParticleRegion("Cylinder", circle((0.5, 6.5dx), 6.5dx), Fixed;
+                            sampling = :conforming)], dx)
+        @test min_between(wall.positions, cylinder.positions) >= dx / 2
+        @test length(wall.positions) == length(drawn_nodes(floor_, dx))
+
+        @test_throws ArgumentError ParticleRegion("Shape", water, Fixed; sampling = :grid)
+        @test_throws ArgumentError ParticleRegion("Shape", water, Fixed; layers = 2)
+        @test_throws ArgumentError ParticleRegion("Shape", water, Fixed;
+                                                  sampling = :conforming, layers = 0)
+        @test_throws ArgumentError sample_particles(
+            [ParticleRegion("Block", prism(water, 0, 1), Fixed; sampling = :conforming)], dx)
+    end
+
     @testset "prisms" begin
         dx = 0.1
         block = prism(rectangle((0, 0), 1, 0.5), 0, 0.3)
@@ -260,6 +334,10 @@ end
                           for i in eachindex(sets) for j in (i + 1):lastindex(sets))
             end
             @test all(x -> length(x) == 3, first(cases.three_d).positions)
+            # Lattice and conforming regions keep at least half a spacing apart.
+            two_d = [region.positions for region in cases.two_d]
+            @test all(minimum(norm(x - y) for x in two_d[i] for y in two_d[j]) >= dx / 2
+                      for i in eachindex(two_d) for j in (i + 1):lastindex(two_d))
             for case in ("Showcase2D", "Showcase3D")
                 @test isfile(joinpath(directory, "$(case)_Geometry.vtkhdf"))
                 @test isfile(joinpath(directory, "$(case)_Dp$(dx)_Particles.vtkhdf"))

@@ -2,6 +2,8 @@
 .vscode/
 # Ignore particles folder
 particles/
+# Ignore input folder
+input/
 # Ignores .vtp files
 *.vtp
 second_approach/

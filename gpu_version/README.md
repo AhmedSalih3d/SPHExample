@@ -195,9 +195,40 @@ tank  = (prism(outline(interior; thickness = 3dx), -3dx, 0.6),     # walls
 water = prism(interior, 0.0, 0.3)
 ```
 
+#### Sampling a shape along its own outline
+
+On the lattice, a circle or a tilted wall becomes a staircase. For selected 2D
+regions, pass `sampling = :conforming` to place the particles along the shape
+instead. They lie on layers parallel to the outline, at depths `0, dx, 2dx, …`.
+Each layer is split evenly into steps of about `dx`, and every sharp corner
+gets a particle. A circle becomes concentric rings, and an arc wall becomes
+arcs one spacing apart. All other regions stay on the common lattice:
+
+```julia
+regions = [ParticleRegion("Cylinder", circle((1.0, 0.3), 0.15), Fixed;
+                          sampling = :conforming),                # rings to the centre
+           ParticleRegion("Pipe", circle((0.4, 0.5), 0.2), Fixed;
+                          sampling = :conforming, layers = 3),    # hollow: 3 rings
+           ParticleRegion("Baffle", polyline(arc((1.6, 0.7), 0.3, π, 2π);
+                                             thickness = 2dx), Fixed;
+                          sampling = :conforming),                # 3 arcs
+           ParticleRegion("Tank", open_tank, Fixed),              # lattice
+           ParticleRegion("Fluid", water, Fluid)]                 # lattice
+```
+
+The first layer lies on the outline, or one spacing inside it with
+`include_surface = false`; `offset` moves it further in. `layers` limits the
+number of layers, and the core beyond them stays free for later regions (here
+the pipe fills with water). A conforming region claims its particles plus
+`dx / 2` on either side of its first and last layers. Later lattice regions
+skip that band, so lattice particles stay at least half a spacing away from
+conforming ones. Conforming particles in an earlier region, or within `dx / 2`
+of an earlier particle, are dropped, so list conforming boundaries first.
+
 `example/GenerateShapesShowcase.jl` draws a 2D tank with a cylinder, wedge,
-ramp, arc baffle and tilted square, and a 3D tank of prisms. It writes both
-scenes as VTKHDF and CSV files:
+ramp, arc baffle and tilted square, and a 3D tank of prisms. The cylinder,
+baffle and square are sampled along their outlines. It writes both scenes as
+VTKHDF and CSV files:
 
 ```bash
 julia --project=gpu_version gpu_version/example/GenerateShapesShowcase.jl [output_dir] [dx]

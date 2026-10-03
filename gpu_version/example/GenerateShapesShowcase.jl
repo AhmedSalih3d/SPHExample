@@ -2,9 +2,11 @@
 #
 # A 2D tank with a cylinder, a triangular wedge, a ramp, an arc shaped baffle
 # and a tilted floating square, and a 3D tank built from prisms with a pillar
-# and a wedge. Each scene is sampled on one particle lattice and written as
+# and a wedge. Each scene is sampled with particle spacing `dx` and written as
 # polygon and particle VTKHDF files for ParaView plus CSV input files for
-# `SPHGeometry`. No simulation is run and no GPU is needed.
+# `SPHGeometry`. In 2D the round and tilted shapes are sampled along their own
+# outlines (`sampling = :conforming`), the rest on the common lattice. No
+# simulation is run and no GPU is needed.
 #
 # Run from the repository root with:
 #     julia --project=gpu_version gpu_version/example/GenerateShapesShowcase.jl \
@@ -16,7 +18,9 @@ using Meshes
     showcase_2d_shapes(; dx = 0.02)
 
 The 2D scene as named shapes. Walls are three particle layers thick past their
-surface (`3dx`), so the wetted surfaces lie exactly on the drawn paths.
+surface (`3dx`), so the wetted surfaces lie exactly on the drawn paths. The
+straight walls (`boundary`) suit the lattice; the cylinder and the arc baffle
+(`curved`) and the tilted `body` are meant to be sampled along their outlines.
 """
 function showcase_2d_shapes(; dx = 0.02)
     t = 3dx
@@ -35,7 +39,8 @@ function showcase_2d_shapes(; dx = 0.02)
     body     = square((2.55, 0.45), 0.15; angle = π / 4, centered = true)
     water    = rectangle((0, 0), width, depth)
 
-    return (; boundary = Multi([tank, cylinder, wedge, ramp, baffle]), body, water)
+    return (; boundary = Multi([tank, wedge, ramp]), curved = Multi([cylinder, baffle]),
+            body, water)
 end
 
 """
@@ -106,9 +111,11 @@ Build, sample and write both showcase scenes (`Showcase2D_*` and
 function generate_shapes_showcase(output_dir; dx = 0.02,
         SimConstants = SimulationConstants{Float64}(; dx, c₀ = 25.0))
     shapes_2d = showcase_2d_shapes(; dx)
+    # Conforming regions come first, so the lattice keeps half a spacing from them.
     two_d = sample_and_save(output_dir, "Showcase2D", shapes_2d, [
+            ParticleRegion("Curved", shapes_2d.curved, Fixed; sampling = :conforming),
+            ParticleRegion("Body", shapes_2d.body, Moving; sampling = :conforming),
             ParticleRegion("Bound", shapes_2d.boundary, Fixed),
-            ParticleRegion("Body", shapes_2d.body, Moving),
             ParticleRegion("Fluid", shapes_2d.water, Fluid),
         ], dx, SimConstants)
 
