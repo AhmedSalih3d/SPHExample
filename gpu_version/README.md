@@ -26,6 +26,39 @@ julia --project=gpu_version gpu_version/example/Dambreak2dMDBC.jl
 The examples in `gpu_version/example/` mirror those in `example/`. Choose the
 precision with `FloatType = Float32` or `Float64` at the top of a script.
 
+### Using generated particles directly
+
+`SPHGeometry` holds input particles in `geometry.Particles`, a `StructArray`.
+Pass sampled positions directly without writing or reading CSV:
+
+```julia
+sampled = sample_particles(regions, constants.dx)
+geometries = [SPHGeometry{2, Float32}(region.positions;
+    Density = region.type == Fluid ?
+        hydrostatic_density(region.positions, constants) : constants.ρ₀,
+    GroupMarker = marker, Type = region.type)
+    for (marker, region) in enumerate(sampled)]
+particles = AllocateDataStructures(geometries, metadata)
+```
+
+Alternatively, use `Particles = StructArray((Position = positions,
+Density = densities, ID = ids))`. IDs are one based and unique across groups;
+when omitted they are assigned automatically after explicit IDs. Optional
+`Velocity`, `GhostPoints`, and `GhostNormals` fields initialize the solver.
+The group's `Type`, `GroupMarker`, `Motion`, and `Floating` settings still apply.
+Allocation copies inputs and converts them to the simulation precision, so
+geometries can be reused without being changed by a run.
+
+Existing `CSVFile = path` calls remain supported: they load the `StructArray`
+once when constructing the geometry, preserving CSV position precision and
+converting zero based IDs. Allocation no longer reads files. The StillWedge
+and other examples with generators sample particles inside their main run files.
+Their previous `CSVFile` settings remain commented out, and standalone generators
+remain available for CSV/VTKHDF export.
+Boundary normals can still be loaded separately with `ParticleNormalsPath`.
+For `SimpleMDBC`, supplying `GhostPoints` and `GhostNormals` on every boundary
+group also supports a run entirely from memory; cavity and 2D dam break use this.
+
 ### Generating a case from polygons (StillWedge 2D)
 
 `example/GenerateStillWedgeMDBC.jl` builds the 2D still wedge case from
@@ -133,9 +166,8 @@ julia --project=gpu_version gpu_version/example/MovingSquare2d.jl
 
 The first command writes to `gpu_version/input/moving_square_2d_generated/`
 by default. It creates VTKHDF files for the polygons and particles, plus
-`Fixed`, `Fluid` and `Square` CSV files for `SPHGeometry`. Generate the inputs
-with the same `dx` as `MovingSquare2d.jl`; the simulation reads these generated
-files.
+`Fixed`, `Fluid` and `Square` CSV files for optional file input. The simulation
+samples its own particles at its configured `dx`; the export command is optional.
 
 ### 2D lid-driven cavity (Re = 100)
 
@@ -194,9 +226,11 @@ julia --project=gpu_version gpu_version/example/LidDrivenCavity2d.jl
 ```
 
 Both scripts accept an optional output directory and `dx`; the simulation
-script additionally accepts a duration and input directory:
-`[save_dir] [dx] [duration] [input_dir]`. From the Julia REPL, `include` the
-simulation script and call `run_lid_driven_cavity_2d()`. Generated inputs go to
+script additionally accepts a duration:
+`[save_dir] [dx] [duration]`. Its former `input_dir` argument remains available
+for the commented CSV configuration. From the Julia REPL, `include` the
+simulation script and call `run_lid_driven_cavity_2d()`. Particles and ghost nodes
+are sampled in that function; running the export script is optional. Exported inputs go to
 `gpu_version/input/lid_driven_cavity_2d_generated/` by default. The simulation
 writes velocity, density and pressure frames to
 `C:\TestSimulations\LidDrivenCavity2D_GPU` by default.
@@ -704,7 +738,10 @@ The suite checks the grid helpers and reductions, bitwise reproducibility,
 mode (including a case translated by 10 000 m), and runs four cases (2D
 mDBC wedge, 2D moving square with shifting and SPS turbulence, 3D dam break,
 3D duckling with mDBC) with the CPU package in a separate process and
-compares the final state. `test/floating_bodies.jl` checks that a floating
+compares the final state. `test/geometry_particles.jl` checks direct and CSV-backed particle holders,
+precision conversion and reusable allocations. `test/generated_examples.jl`
+checks that all six main examples with generators prepare particles in memory.
+`test/floating_bodies.jl` checks that a floating
 body falls freely and stays rigid in air, without numerical error. It also
 checks that in water a neutrally buoyant body stays put while a heavier one
 sinks. `test/lid_driven_cavity.jl` checks the extended lid geometry, generated

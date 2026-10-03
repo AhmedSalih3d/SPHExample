@@ -1,6 +1,8 @@
 module SimulationGeometry
 
 using StaticArrays
+using StructArrays
+using CSV
 using Base: @kwdef
 
 # Export relevant types and structs
@@ -61,13 +63,77 @@ Supported in 2D with the symplectic time stepping.
     PauseTime::T = zero(RelativeWeight)
 end
 
-# Define the SPHGeometry struct to store the ParticleType enum and Motion details
-@kwdef struct SPHGeometry{D, T}
+"""
+    SPHGeometry{D, T}(; Particles, GroupMarker, Type, Motion = nothing,
+                        Floating = nothing)
+    SPHGeometry{D, T}(positions; Density, kwargs...)
+    SPHGeometry{D, T}(; CSVFile, GroupMarker, Type, kwargs...)
+
+An input particle group held in a `StructArray`. `Particles` requires `Position`
+and `Density` fields; optional `ID` values are one based and must be unique
+across groups. Without `ID`, allocation assigns IDs after the explicitly
+numbered particles. Optional `Velocity`, `GhostPoints`, and `GhostNormals`
+initialize those solver fields. Group `Type` and `GroupMarker` take precedence.
+
+The CSV constructor loads particles once, mapping `(x, z)` in 2D and converting
+zero based CSV IDs to one based IDs. Positions retain their input precision
+until allocation, including for `GPUDoublePosition` runs. Allocation copies the
+stored particles, so the geometry can be reused for independent simulations.
+"""
+struct SPHGeometry{D, T}
+    Particles::StructArray
     CSVFile::String
     GroupMarker::Int
     Type::ParticleType
-    Motion::Union{Nothing, MotionDetails} = nothing  # Motion depends on dimension D and FloatType T
-    Floating::Union{Nothing, FloatingDetails} = nothing  # required exactly when Type == Floating
+    Motion::Union{Nothing, MotionDetails}
+    Floating::Union{Nothing, FloatingDetails}
+end
+
+function SPHGeometry{D, T}(; Particles = nothing, CSVFile = nothing,
+        GroupMarker::Int, Type::ParticleType, Motion = nothing,
+        Floating = nothing) where {D, T}
+    D in (2, 3) || throw(ArgumentError("particle dimension must be 2 or 3"))
+    (Particles === nothing) != (CSVFile === nothing) ||
+        throw(ArgumentError("provide exactly one of Particles or CSVFile"))
+    source = CSVFile === nothing ? "" : String(CSVFile)
+    if Particles === nothing
+        rows = isempty(source) ? () : CSV.File(source)
+        positions = SVector{D, Float64}[]
+        density = T[]
+        ids = Int[]
+        for row in rows
+            xyz = (row[Symbol("Points:0")], row[Symbol("Points:1")],
+                   row[Symbol("Points:2")])
+            push!(positions, D == 2 ? SVector{D, Float64}(xyz[1], xyz[3]) :
+                                     SVector{D, Float64}(xyz))
+            push!(density, row.Rhop)
+            push!(ids, row.Idp + 1)
+        end
+        Particles = StructArray((Position = positions, Density = density, ID = ids))
+    end
+    Particles isa StructArray || throw(ArgumentError("Particles must be a StructArray"))
+    ndims(Particles) == 1 || throw(ArgumentError("Particles must be one dimensional"))
+    for field in (:Position, :Density)
+        hasproperty(Particles, field) || throw(ArgumentError("Particles needs $field"))
+    end
+    all(x -> length(x) == D, Particles.Position) ||
+        throw(DimensionMismatch("particle positions must have $D components"))
+    if hasproperty(Particles, :ID)
+        ids = Particles.ID
+        all(id -> id isa Integer && id > 0, ids) ||
+            throw(ArgumentError("particle IDs must be positive integers"))
+        length(unique(ids)) == length(ids) ||
+            throw(ArgumentError("particle IDs must be unique"))
+    end
+    return SPHGeometry{D, T}(Particles, source, GroupMarker, Type, Motion, Floating)
+end
+
+function SPHGeometry{D, T}(positions::AbstractVector; Density, kwargs...) where {D, T}
+    density = Density isa Number ? fill(T(Density), length(positions)) : T.(Density)
+    length(density) == length(positions) ||
+        throw(DimensionMismatch("one density is required per position"))
+    particles = StructArray((Position = copy(positions), Density = density))
+    return SPHGeometry{D, T}(; Particles = particles, kwargs...)
 end
 
 end # module SimulationGeometry

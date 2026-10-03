@@ -6,7 +6,7 @@
 # second (DualSPHysics `FtPause`) while the water settles, then sinks. The
 # periodic sides of the DualSPHysics case are fixed walls here.
 #
-# Generate the input particles first (no GPU required), then run:
+# Particle generation runs below. Optional CSV export and simulation:
 #     julia --project=gpu_version gpu_version/example/GenerateFloatingCylinder2D.jl
 #     julia --project=gpu_version gpu_version/example/FloatingCylinder2d.jl
 #
@@ -16,6 +16,8 @@
 # Moyo and Greenhow 2000) give the sinking distance and velocity against
 # t* = (t - 1 s) sqrt(g / R) for t* <= 8.
 using SPHExampleGPU
+using StructArrays
+include(joinpath(@__DIR__, "GenerateFloatingCylinder2D.jl"))
 
 let
     Dimensions = 2
@@ -28,18 +30,33 @@ let
     input_dir = normpath(joinpath(@__DIR__, "..", "input", "floating_cylinder_2d_generated"))
     csv(name) = joinpath(input_dir, "FloatingCylinder2D_Dp$(dx)_$(name).csv")
 
+    # Sample particles here; the generator script supplies shape definitions.
+    polygons = floating_cylinder_2d_shapes(; dx)
+    regions = [ParticleRegion("Cylinder", polygons.cylinder, Floating; sampling = :conforming),
+               ParticleRegion("Bound", polygons.tank, Fixed),
+               ParticleRegion("Fluid", polygons.water, Fluid)]
+    sampled = sample_particles(regions, SimConstantsFloating.dx)
+    positions(name) = only(r.positions for r in sampled if r.name == name)
+    water_level = maximum(last, positions("Fluid"))
+
     FixedBoundary = SPHGeometry{Dimensions, FloatType}(
-        CSVFile     = csv("Bound"),
+        Particles = StructArray((Position = positions("Bound"),
+            Density = hydrostatic_density(positions("Bound"), SimConstantsFloating; water_level))),
+        # CSVFile     = csv("Bound"),
         GroupMarker = 1,
         Type        = Fixed,
     )
     Water = SPHGeometry{Dimensions, FloatType}(
-        CSVFile     = csv("Fluid"),
+        Particles = StructArray((Position = positions("Fluid"),
+            Density = hydrostatic_density(positions("Fluid"), SimConstantsFloating; water_level))),
+        # CSVFile     = csv("Fluid"),
         GroupMarker = 2,
         Type        = Fluid,
     )
     Cylinder = SPHGeometry{Dimensions, FloatType}(
-        CSVFile     = csv("Cylinder"),
+        Particles = StructArray((Position = positions("Cylinder"),
+            Density = hydrostatic_density(positions("Cylinder"), SimConstantsFloating; water_level))),
+        # CSVFile     = csv("Cylinder"),
         GroupMarker = 3,
         Type        = Floating,
         Floating    = FloatingDetails{FloatType}(RelativeWeight = 1.2, PauseTime = 1.0),

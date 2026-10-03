@@ -9,48 +9,11 @@ using StructArrays
 using ..SimulationGeometry
 using ..SimulationMetaDataConfiguration: SimulationMetaData, position_float_type
 
-# `T` is the working precision (densities), `TP` the precision of the positions.
-function LoadSpecificCSV(::Val{D}, ::Type{T}, ::Type{TP}, particle_type::ParticleType,
-                         particle_group_marker::Int,
-                         specific_csv::String) where {D, T, TP}
-    file  = CSV.File(specific_csv)
-    nrows = length(file)
-
-    points       = Vector{SVector{D, TP}}(undef, nrows)
-    density      = Vector{T}(undef, nrows)
-    types        = Vector{ParticleType}(undef, nrows)
-    group_marker = Vector{Int}(undef, nrows)
-    idp          = Vector{Int}(undef, nrows)
-
-    i = 1
-    for row ∈ file
-        P1   = row[Symbol("Points:0")]
-        P2   = row[Symbol("Points:1")]
-        P3   = row[Symbol("Points:2")]
-        Rhop = row[Symbol("Rhop")]
-        Idp  = row[Symbol("Idp")] + 1
-
-        points[i] = if D == 3
-            SVector{3,TP}(P1, P2, P3)
-        else
-            SVector{2,TP}(P1, P3)
-        end
-
-        density[i]      = Rhop
-        types[i]        = particle_type
-        group_marker[i] = particle_group_marker
-        idp[i]          = Idp
-        i += 1
-    end
-
-    return points, density, types, group_marker, idp
-end
-
 """
     AllocateDataStructures(SimGeometry, SimMetaData)
     AllocateDataStructures(SimGeometry; position_type = FloatType)
 
-Load the particles of every SPHGeometry into a host `StructArray`. The device
+Copy the stored particles of every SPHGeometry into a host `StructArray`. The device
 particle container always carries the ghost node and kernel output fields,
 so the mode types of the meta data do not change the host allocation; the
 meta data selects the precision of the positions (`Float64` with
@@ -69,26 +32,26 @@ function AllocateDataStructures(SimGeometry::Vector{<:SPHGeometry{Dimensions, Fl
     GroupMarker = Vector{UInt}()
     Idp         = Vector{Int}()
     
+    explicit_ids = Int[]
     for geom in SimGeometry
-        particle_type         = geom.Type
-        particle_group_marker = geom.GroupMarker
-        specific_csv          = geom.CSVFile
-
-        points, density, types, group_marker, idp =
-            LoadSpecificCSV(Val(Dimensions), FloatType, TP, particle_type,
-                           particle_group_marker, specific_csv)
-
-        sizehint!(Position,    length(Position)    + length(points))
-        sizehint!(Density,     length(Density)     + length(density))
-        sizehint!(Types,       length(Types)       + length(types))
-        sizehint!(GroupMarker, length(GroupMarker) + length(group_marker))
-        sizehint!(Idp,         length(Idp)         + length(idp))
-
-        append!(Position,    points)
-        append!(Density,     density)
-        append!(Types,       types)
-        append!(GroupMarker, group_marker)
-        append!(Idp,         idp)
+        hasproperty(geom.Particles, :ID) && append!(explicit_ids, geom.Particles.ID)
+    end
+    length(unique(explicit_ids)) == length(explicit_ids) ||
+        throw(ArgumentError("particle IDs must be unique across geometry groups"))
+    next_id = isempty(explicit_ids) ? 1 : maximum(explicit_ids) + 1
+    for geom in SimGeometry
+        particles = geom.Particles
+        n = length(particles)
+        append!(Position, SVector{Dimensions, TP}.(particles.Position))
+        append!(Density, particles.Density)
+        append!(Types, fill(geom.Type, n))
+        append!(GroupMarker, fill(geom.GroupMarker, n))
+        if hasproperty(particles, :ID)
+            append!(Idp, particles.ID)
+        else
+            append!(Idp, next_id:(next_id + n - 1))
+            next_id += n
+        end
     end
 
     NumberOfPoints = length(Position)
@@ -107,6 +70,18 @@ function AllocateDataStructures(SimGeometry::Vector{<:SPHGeometry{Dimensions, Fl
     Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
 
     SimParticles = StructArray((Cells = Cells, Kernel = Kernel, KernelGradient = KernelGradient, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, ID = Idp , Type = Types, GroupMarker = GroupMarker, GhostPoints = GhostPoints, GhostNormals=GhostNormals))
+
+    offset = 0
+    for geom in SimGeometry
+        n = length(geom.Particles)
+        for field in (:Velocity, :GhostPoints, :GhostNormals)
+            if hasproperty(geom.Particles, field)
+                copyto!(getproperty(SimParticles, field), offset + 1,
+                        getproperty(geom.Particles, field), 1, n)
+            end
+        end
+        offset += n
+    end
 
     sort!(SimParticles, by = p -> p.ID)
 

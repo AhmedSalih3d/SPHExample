@@ -7,6 +7,9 @@
 # laptop GPUs (their double precision throughput is low); Float64 reproduces
 # the CPU results to round-off.
 using SPHExampleGPU
+using StructArrays
+using Meshes: Multi
+include(joinpath(@__DIR__, "GenerateStillWedgeMiddleSquareMDBC.jl"))
 
 let
     Dimensions = 2
@@ -16,15 +19,27 @@ let
     # SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=43.4, δᵩ = 0.1, CFL=0.2)
 
     # Assuming SimConstantsWedge is defined somewhere else with the field `dx`
+    # Sample particles here; the generator script supplies shape definitions.
+    polygons = still_wedge_middle_square_polygons()
+    regions = [ParticleRegion("Bound", Multi([polygons.tank, polygons.square]), Fixed),
+               ParticleRegion("Fluid", polygons.water, Fluid)]
+    sampled = sample_particles(regions, SimConstantsWedge.dx)
+    positions(name) = only(r.positions for r in sampled if r.name == name)
+    water_level = maximum(last, positions("Fluid"))
+
     FixedBoundary = SPHGeometry{Dimensions, FloatType}(
-        CSVFile     = "./input/still_wedge_middle_square_mdbc/StillWedge_MiddleSquare_Dp$(SimConstantsWedge.dx)_Bound.csv",
+        Particles = StructArray((Position = positions("Bound"),
+            Density = fill(SimConstantsWedge.ρ₀, length(positions("Bound"))))),
+        # CSVFile     = "./input/still_wedge_middle_square_mdbc/StillWedge_MiddleSquare_Dp$(SimConstantsWedge.dx)_Bound.csv",
         GroupMarker = 1,
         Type        = Fixed,   # Using the enum value Fixed
         Motion      = nothing
     )
 
     Water = SPHGeometry{Dimensions, FloatType}(
-        CSVFile     = "./input/still_wedge_middle_square_mdbc/StillWedge_MiddleSquare_Dp$(SimConstantsWedge.dx)_Fluid.csv",
+        Particles = StructArray((Position = positions("Fluid"),
+            Density = hydrostatic_density(positions("Fluid"), SimConstantsWedge; water_level))),
+        # CSVFile     = "./input/still_wedge_middle_square_mdbc/StillWedge_MiddleSquare_Dp$(SimConstantsWedge.dx)_Fluid.csv",
         GroupMarker = 2,
         Type        = Fluid,   # Using the enum value Fluid
         Motion      = nothing

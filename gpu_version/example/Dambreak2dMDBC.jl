@@ -7,6 +7,9 @@
 # laptop GPUs (their double precision throughput is low); Float64 reproduces
 # the CPU results to round-off.
 using SPHExampleGPU
+using StructArrays
+using StaticArrays: SVector
+include(joinpath(@__DIR__, "GenerateDamBreak2DMDBC.jl"))
 
 let
     Dimensions = 2
@@ -15,15 +18,34 @@ let
     SimConstantsDambreak = SimulationConstants{FloatType}(dx=0.01,c₀=88.14487860902641, δᵩ = 0.1, CFL=0.5, α = 0.01)
 
     # Create SPHGeometry instances
+    # Sample particles here; the generator script supplies shape definitions.
+    polygons = dam_break_2d_polygons()
+    regions = [ParticleRegion("Bound", polygons.tank, Fixed),
+               ParticleRegion("Fluid", polygons.water, Fluid)]
+    sampled = sample_particles(regions, SimConstantsDambreak.dx)
+    positions(name) = only(r.positions for r in sampled if r.name == name)
+    water_level = maximum(last, positions("Fluid"))
+
+    wall_positions = positions("Bound")
+    dx = SimConstantsDambreak.dx
+    mirror_x(x) = x < dx / 2 ? dx - x : x > 4 - dx / 2 ? 8 - dx - x : x
+    ghosts = [SVector(mirror_x(x[1]), x[2] < dx / 2 ? dx - x[2] : x[2])
+              for x in wall_positions]
+
     FixedBoundary = SPHGeometry{Dimensions, FloatType}(
-        CSVFile     = "./input/dam_break_2d/DamBreak2d_Dp0.02_MDBC_Bound_ThreeLayers.csv",
+        Particles = StructArray((Position = positions("Bound"),
+            Density = fill(SimConstantsDambreak.ρ₀, length(positions("Bound"))),
+            GhostPoints = ghosts, GhostNormals = ghosts .- wall_positions)),
+        # CSVFile     = "./input/dam_break_2d/DamBreak2d_Dp0.02_MDBC_Bound_ThreeLayers.csv",
         GroupMarker = 1,
         Type        = Fixed,   # Using the enum value Fixed
         Motion      = nothing
     )
 
     Water = SPHGeometry{Dimensions, FloatType}(
-        CSVFile     = "./input/dam_break_2d/DamBreak2d_Dp0.02_MDBC_Fluid_ThreeLayers.csv",
+        Particles = StructArray((Position = positions("Fluid"),
+            Density = hydrostatic_density(positions("Fluid"), SimConstantsDambreak; water_level))),
+        # CSVFile     = "./input/dam_break_2d/DamBreak2d_Dp0.02_MDBC_Fluid_ThreeLayers.csv",
         GroupMarker = 2,
         Type        = Fluid,   # Using the enum value Fluid
         Motion      = nothing
@@ -86,6 +108,6 @@ let
         SimViscosity         = ArtificialViscosity(),
         SimDensityDiffusion  = LinearDensityDiffusion(),
         SimTimeStepping      = SymplecticTimeStepping(),
-        ParticleNormalsPath  = "./input/dam_break_2d/DamBreak2d_Dp0.02_MDBC_GhostNodes_ThreeLayers.csv"
+        # ParticleNormalsPath  = "./input/dam_break_2d/DamBreak2d_Dp0.02_MDBC_GhostNodes_ThreeLayers.csv"
     )
 end

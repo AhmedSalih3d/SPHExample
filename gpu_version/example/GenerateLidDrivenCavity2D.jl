@@ -143,7 +143,7 @@ function generate_lid_driven_cavity_2d(output_dir; dx = 0.01,
     return particles
 end
 
-# if abspath(PROGRAM_FILE) == abspath(@__FILE__)
+if abspath(PROGRAM_FILE) == abspath(@__FILE__)
     output_dir = length(ARGS) >= 1 ? ARGS[1] :
                  normpath(joinpath(@__DIR__, "..", "input", "lid_driven_cavity_2d_generated"))
     dx = length(ARGS) >= 2 ? parse(Float64, ARGS[2]) : 0.01
@@ -152,4 +152,4 @@ end
         @info "$(region.name): $(length(region.positions)) particles"
     end
     @info "Saved LidDrivenCavity2D geometry and particles" output_dir
-# end
+end

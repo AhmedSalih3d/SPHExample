@@ -7,6 +7,7 @@
 # laptop GPUs (their double precision throughput is low); Float64 reproduces
 # the CPU results to round-off.
 using SPHExampleGPU
+include(joinpath(@__DIR__, "GenerateStillWedgeMDBC.jl"))
 
 let
     Dimensions = 2
@@ -15,25 +16,20 @@ let
     SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.5)
     # SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=43.4, δᵩ = 0.1, CFL=0.2)
 # 
-    # Assuming SimConstantsWedge is defined somewhere else with the field `dx`
-    FixedBoundary = SPHGeometry{Dimensions, FloatType}(
-        # CSVFile     = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Bound.csv",
-        CSVFile     = "input/still_wedge_generated/StillWedge2D_Dp$(SimConstantsWedge.dx)_Bound.csv",
-        GroupMarker = 1,
-        Type        = Fixed,   # Using the enum value Fixed
-        Motion      = nothing
-    )
-
-    Water = SPHGeometry{Dimensions, FloatType}(
-        # CSVFile     = "./input/still_wedge/StillWedge_Dp$(SimConstantsWedge.dx)_Fluid.csv",
-        CSVFile     = "input/still_wedge_generated/StillWedge2D_Dp$(SimConstantsWedge.dx)_Fluid.csv",
-        GroupMarker = 2,
-        Type        = Fluid,   # Using the enum value Fluid
-        Motion      = nothing
-    )
-
-    SimulationGeometry = [FixedBoundary;Water]
-    
+    polygons = still_wedge_2d_polygons()
+    regions = [ParticleRegion("Bound", polygons.tank, Fixed),
+               ParticleRegion("Fluid", polygons.water, Fluid)]
+    sampled = sample_particles(regions, SimConstantsWedge.dx)
+    boundary, fluid = sampled
+    FixedBoundary = SPHGeometry{Dimensions, FloatType}(boundary.positions;
+        Density = SimConstantsWedge.ρ₀,
+        # CSVFile = "input/still_wedge_generated/StillWedge2D_Dp$(SimConstantsWedge.dx)_Bound.csv",
+        GroupMarker = 1, Type = Fixed)
+    Water = SPHGeometry{Dimensions, FloatType}(fluid.positions;
+        Density = hydrostatic_density(fluid.positions, SimConstantsWedge),
+        # CSVFile = "input/still_wedge_generated/StillWedge2D_Dp$(SimConstantsWedge.dx)_Fluid.csv",
+        GroupMarker = 2, Type = Fluid)
+    SimulationGeometry = [FixedBoundary, Water]
 
     SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,NoMDBC,StoreLog}(
         SimulationName="StillWedge", 

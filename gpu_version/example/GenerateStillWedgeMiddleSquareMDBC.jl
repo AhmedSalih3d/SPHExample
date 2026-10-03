@@ -94,10 +94,12 @@ function generate_still_wedge_middle_square_geometry(output_dir;
 end
 
 
-output_dir = normpath(joinpath(@__DIR__, "..", "input", "still_wedge_middle_square_generated"))
-dx = 0.02
-particles = generate_still_wedge_middle_square_geometry(output_dir; dx)
-for region in particles
-    @info "$(region.name): $(length(region.positions)) particles"
+if abspath(PROGRAM_FILE) == abspath(@__FILE__)
+    output_dir = normpath(joinpath(@__DIR__, "..", "input", "still_wedge_middle_square_generated"))
+    dx = 0.02
+    particles = generate_still_wedge_middle_square_geometry(output_dir; dx)
+    for region in particles
+        @info "$(region.name): $(length(region.positions)) particles"
+    end
+    @info "Saved middle-square StillWedge geometry and particles" output_dir
 end
-@info "Saved middle-square StillWedge geometry and particles" output_dir

@@ -137,10 +137,33 @@ function generate_still_wedge_2d_example(output_dir; dx = 0.02,
 end
     
 
-output_dir = normpath(joinpath(@__DIR__, "..", "input", "still_wedge_generated"))
-dx = 0.02
-particles = generate_still_wedge_2d_example(output_dir; dx)
-for region in particles
-    @info "$(region.name): $(length(region.positions)) particles"
+"""
+    still_wedge_2d_geometry(constants; water_level = nothing)
+
+Generate boundary and fluid `SPHGeometry` groups directly in memory, with
+hydrostatic fluid density. No CSV or visualization files are written.
+"""
+function still_wedge_2d_geometry(constants::SimulationConstants{T};
+                                  water_level = nothing) where {T}
+    polygons = still_wedge_2d_polygons()
+    regions = [ParticleRegion("Bound", polygons.tank, Fixed),
+               ParticleRegion("Fluid", polygons.water, Fluid)]
+    sampled = sample_particles(regions, constants.dx)
+    level = water_level === nothing ? maximum(last, sampled[2].positions) : water_level
+    return [SPHGeometry{2, T}(region.positions;
+                Density = region.type == Fluid ?
+                    hydrostatic_density(region.positions, constants;
+                                        water_level = level) : constants.ρ₀,
+                GroupMarker = marker, Type = region.type)
+            for (marker, region) in enumerate(sampled)]
 end
-@info "Saved StillWedge2D geometry and particles" output_dir
+
+if abspath(PROGRAM_FILE) == @__FILE__
+    output_dir = normpath(joinpath(@__DIR__, "..", "input", "still_wedge_generated"))
+    dx = 0.02
+    particles = generate_still_wedge_2d_example(output_dir; dx)
+    for region in particles
+        @info "$(region.name): $(length(region.positions)) particles"
+    end
+    @info "Saved StillWedge2D geometry and particles" output_dir
+end

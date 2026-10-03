@@ -87,13 +87,14 @@ module SimulationLoggerConfiguration
     function LogSimulationDetails(SimLogger::SimulationLogger, SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}}, SimParticles; sort_by=:GroupMarker) where {Dimensions, FloatType}
         with_logger(SimLogger.Logger) do
             # Calculate the maximum lengths for alignment
-            max_csv_len = maximum(length(geom.CSVFile) for geom in SimGeometry) + 2
+            max_csv_len = maximum(length(isempty(geom.CSVFile) ? "generated particles" : geom.CSVFile)
+                                  for geom in SimGeometry) + 2
             max_group_marker_len = maximum(length(string(geom.GroupMarker)) for geom in SimGeometry) + 2
             max_type_len = maximum(length(string(geom.Type)) for geom in SimGeometry) + 2
     
             @info "Simulation SPHGeometry Details:"
             for geom in SimGeometry
-                csv_file = geom.CSVFile
+                csv_file = isempty(geom.CSVFile) ? "generated particles" : geom.CSVFile
                 group_marker = geom.GroupMarker
                 particle_type = geom.Type
                 motion = if geom.Motion === nothing "None" else string(geom.Motion) end
@@ -103,7 +104,7 @@ module SimulationLoggerConfiguration
                 formatted_type = rpad(string(particle_type), max_type_len)
                 formatted_motion = motion  # No padding necessary if motion detail is to start immediately after type
     
-                @info "CSV File -> $formatted_csv_file, Group Marker -> $formatted_group_marker, Type -> $formatted_type, Motion -> $formatted_motion"
+                @info "Particle Source -> $formatted_csv_file, Group Marker -> $formatted_group_marker, Type -> $formatted_type, Motion -> $formatted_motion"
             end
     
             # Handling particle types and counts

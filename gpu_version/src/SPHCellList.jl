@@ -901,13 +901,33 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     TimeSteps = Vector{FloatType}()
 
     if BMode === SimpleMDBC
-        ParticleNormalsPath === nothing && error("SimpleMDBC requires `ParticleNormalsPath`.")
-        # ghost node positions in the position precision; the normals are
-        # directions and stay in the working precision on the device
-        _, GhostPoints, GhostNormals = LoadBoundaryNormals(Val(Dimensions), PositionType, ParticleNormalsPath)
-        for gi ∈ eachindex(GhostPoints)
-            SimParticles.GhostPoints[gi]  = GhostPoints[gi]
-            SimParticles.GhostNormals[gi] = GhostNormals[gi]
+        if ParticleNormalsPath === nothing
+            all(geom -> !is_wall(geom.Type) ||
+                (hasproperty(geom.Particles, :GhostPoints) &&
+                 hasproperty(geom.Particles, :GhostNormals)), SimGeometry) ||
+                error("SimpleMDBC requires ParticleNormalsPath or geometry ghost fields.")
+        else
+            # Directions use working precision; ghost positions use position precision.
+            points, ghosts, normals = LoadBoundaryNormals(
+                Val(Dimensions), PositionType, ParticleNormalsPath)
+            if all(geom -> isempty(geom.CSVFile), SimGeometry)
+                # Generated particles can have a different order from the CSV normals.
+                tolerance = Float64(SimConstants.dx) * 1e-3
+                key(x) = ntuple(d -> round(Int, x[d] / tolerance), Dimensions)
+                lookup = Dict(key(x) => i for (i, x) in enumerate(points))
+                for i in eachindex(SimParticles.Position)
+                    is_wall(SimParticles.Type[i]) || continue
+                    j = get(lookup, key(SimParticles.Position[i]), 0)
+                    j > 0 || error("Boundary normals do not match generated particles.")
+                    SimParticles.GhostPoints[i] = ghosts[j]
+                    SimParticles.GhostNormals[i] = normals[j]
+                end
+            else
+                for i in eachindex(ghosts)
+                    SimParticles.GhostPoints[i] = ghosts[i]
+                    SimParticles.GhostNormals[i] = normals[i]
+                end
+            end
         end
     end
 

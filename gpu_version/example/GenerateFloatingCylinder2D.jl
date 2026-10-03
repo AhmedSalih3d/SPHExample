@@ -96,10 +96,12 @@ function generate_floating_cylinder_2d(output_dir; dx = 0.025,
 end
 
 
-output_dir = normpath(joinpath(@__DIR__, "..", "input", "floating_cylinder_2d_generated"))
-dx = 0.025
-particles = generate_floating_cylinder_2d(output_dir; dx)
-for region in particles
-    @info "$(region.name): $(length(region.positions)) particles"
+if abspath(PROGRAM_FILE) == abspath(@__FILE__)
+    output_dir = normpath(joinpath(@__DIR__, "..", "input", "floating_cylinder_2d_generated"))
+    dx = 0.025
+    particles = generate_floating_cylinder_2d(output_dir; dx)
+    for region in particles
+        @info "$(region.name): $(length(region.positions)) particles"
+    end
+    @info "Saved FloatingCylinder2D geometry and particles" output_dir
 end
-@info "Saved FloatingCylinder2D geometry and particles" output_dir

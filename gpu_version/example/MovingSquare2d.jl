@@ -3,7 +3,7 @@
 # Run from the repository root with:
 #     julia --project=gpu_version gpu_version/example/MovingSquare2d.jl
 #
-# Generate the input particles first (no GPU required):
+# Particle generation runs below; optional CSV export (no GPU required):
 #     julia --project=gpu_version gpu_version/example/GenerateMovingSquare2D.jl
 #
 # FloatType = Float32 is usually 2-4x faster than Float64 on consumer and
@@ -11,6 +11,8 @@
 # the CPU results to round-off.
 import StaticArrays: SVector
 using SPHExampleGPU
+using StructArrays
+include(joinpath(@__DIR__, "GenerateMovingSquare2D.jl"))
 
 let
     Dimensions = 2
@@ -37,25 +39,39 @@ let
     )
     moving_square_input_dir = normpath(joinpath(@__DIR__, "..", "input", "moving_square_2d_generated"))
     
+    # Sample particles here; the generator script supplies shape definitions.
+    polygons = moving_square_2d_polygons()
+    regions = [ParticleRegion("Fixed", polygons.tank, Fixed),
+               ParticleRegion("Square", polygons.square, Moving),
+               ParticleRegion("Fluid", polygons.water, Fluid)]
+    sampled = sample_particles(regions, SimConstantsMovingSquare.dx)
+    positions(name) = only(r.positions for r in sampled if r.name == name)
+
     FixedBoundary = SPHGeometry{Dimensions, FloatType}(
-        CSVFile     = joinpath(moving_square_input_dir,
-            "MovingSquare2D_Dp$(SimConstantsMovingSquare.dx)_Fixed.csv"),
+        Particles = StructArray((Position = positions("Fixed"),
+            Density = fill(SimConstantsMovingSquare.ρ₀, length(positions("Fixed"))))),
+        # CSVFile     = joinpath(moving_square_input_dir,
+        # "MovingSquare2D_Dp$(SimConstantsMovingSquare.dx)_Fixed.csv"),
         GroupMarker = 1,
         Type        = Fixed,
         Motion      = nothing
     )
     
     Water = SPHGeometry{Dimensions, FloatType}(
-        CSVFile     = joinpath(moving_square_input_dir,
-            "MovingSquare2D_Dp$(SimConstantsMovingSquare.dx)_Fluid.csv"),
+        Particles = StructArray((Position = positions("Fluid"),
+            Density = fill(SimConstantsMovingSquare.ρ₀, length(positions("Fluid"))))),
+        # CSVFile     = joinpath(moving_square_input_dir,
+        # "MovingSquare2D_Dp$(SimConstantsMovingSquare.dx)_Fluid.csv"),
         GroupMarker = 2,
         Type        = Fluid,
         Motion      = nothing
     )
     
     MovingSquare = SPHGeometry{Dimensions, FloatType}(
-        CSVFile     = joinpath(moving_square_input_dir,
-            "MovingSquare2D_Dp$(SimConstantsMovingSquare.dx)_Square.csv"),
+        Particles = StructArray((Position = positions("Square"),
+            Density = fill(SimConstantsMovingSquare.ρ₀, length(positions("Square"))))),
+        # CSVFile     = joinpath(moving_square_input_dir,
+        # "MovingSquare2D_Dp$(SimConstantsMovingSquare.dx)_Square.csv"),
         GroupMarker = 3,
         Type        = Moving,
         Motion      = MotionDetails{Dimensions, FloatType}(
