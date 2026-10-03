@@ -11,36 +11,56 @@ include(joinpath(@__DIR__, "GenerateStillWedgeMDBC.jl"))
 
 let
     Dimensions = 2
-    FloatType  = Float32
+    FloatType = Float32
 
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.5)
+    SimConstantsWedge = SimulationConstants{FloatType}(
+        dx = 0.02,
+        c₀ = 42.48576250492629,
+        δᵩ = 0.1,
+        CFL = 0.5,
+    )
     # SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=43.4, δᵩ = 0.1, CFL=0.2)
-# 
+    #
     polygons = still_wedge_2d_polygons()
-    regions = [ParticleRegion("Bound", polygons.tank, Fixed),
-               ParticleRegion("Fluid", polygons.water, Fluid)]
+    regions = [
+        ParticleRegion("Bound", polygons.tank, Fixed),
+        ParticleRegion("Fluid", polygons.water, Fluid),
+    ]
     sampled = sample_particles(regions, SimConstantsWedge.dx)
     boundary, fluid = sampled
-    FixedBoundary = SPHGeometry{Dimensions, FloatType}(boundary.positions;
+    FixedBoundary = SPHGeometry{Dimensions, FloatType}(
+        boundary.positions;
         Density = SimConstantsWedge.ρ₀,
         # CSVFile = "input/still_wedge_generated/StillWedge2D_Dp$(SimConstantsWedge.dx)_Bound.csv",
-        GroupMarker = 1, Type = Fixed)
-    Water = SPHGeometry{Dimensions, FloatType}(fluid.positions;
+        GroupMarker = 1,
+        Type = Fixed,
+    )
+    Water = SPHGeometry{Dimensions, FloatType}(
+        fluid.positions;
         Density = hydrostatic_density(fluid.positions, SimConstantsWedge),
         # CSVFile = "input/still_wedge_generated/StillWedge2D_Dp$(SimConstantsWedge.dx)_Fluid.csv",
-        GroupMarker = 2, Type = Fluid)
+        GroupMarker = 2,
+        Type = Fluid,
+    )
     SimulationGeometry = [FixedBoundary, Water]
 
-    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,NoMDBC,StoreLog}(
-        SimulationName="StillWedge", 
-        SaveLocation="C:/TestSimulations/StillWedge2D_MDBC_GPU",
-        SimulationTime=4.00,
-        OutputTimes=0.01,
-        VisualizeInParaview=true,
-        ExportSingleVTKHDF=true,
-        ExportGridCells=true,
-        OpenLogFile=true,
-        GPUDoublePosition= true,
+    SimMetaDataWedge = SimulationMetaData{
+        Dimensions,
+        FloatType,
+        NoShifting,
+        NoKernelOutput,
+        NoMDBC,
+        StoreLog,
+    }(
+        SimulationName = "StillWedge",
+        SaveLocation = "C:/TestSimulations/StillWedge2D_MDBC_GPU",
+        SimulationTime = 4.00,
+        OutputTimes = 0.01,
+        VisualizeInParaview = true,
+        ExportSingleVTKHDF = true,
+        ExportGridCells = true,
+        OpenLogFile = true,
+        GPUDoublePosition = true,
         # OutputVariables = [
         #     # "ChunkID",
         #     # "Kernel",
@@ -60,62 +80,60 @@ let
 
     mkpath(SimMetaDataWedge.SaveLocation)
 
-    SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation; to_console=true)
+    SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation; to_console = true)
     SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaDataWedge)
 
     CleanUpSimulationFolder(SimMetaDataWedge.SaveLocation)
 
-    SimKernel = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); dx = SimConstantsWedge.dx)
+    SimKernel =
+        SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); dx = SimConstantsWedge.dx)
 
     RunSimulation(
-        SimGeometry         = SimulationGeometry,
-        SimMetaData         = SimMetaDataWedge,
-        SimConstants        = SimConstantsWedge,
-        SimKernel           = SimKernel,
-        SimLogger           = SimLogger,
-        SimParticles        = SimParticles,
-        SimViscosity        = ArtificialViscosity(),
+        SimGeometry = SimulationGeometry,
+        SimMetaData = SimMetaDataWedge,
+        SimConstants = SimConstantsWedge,
+        SimKernel = SimKernel,
+        SimLogger = SimLogger,
+        SimParticles = SimParticles,
+        SimViscosity = ArtificialViscosity(),
         SimDensityDiffusion = LinearDensityDiffusion(),
-        SimTimeStepping     = SymplecticTimeStepping(),
-        ParticleNormalsPath = "./input/still_wedge_mdbc/StillWedge_Dp$(SimConstantsWedge.dx)_GhostNodes_Correct.csv"
+        SimTimeStepping = SymplecticTimeStepping(),
+        ParticleNormalsPath = "./input/still_wedge_mdbc/StillWedge_Dp$(SimConstantsWedge.dx)_GhostNodes_Correct.csv",
     )
 
     # This can be used to plot pressure profile results after simulation
     # using Plots
     # using StaticArrays
-    
+
     # # Assuming 'data' is a vector of the named tuples containing the data
-    
+
     # # Constants
     # max_height = 0.5             # maximum height in meters
     # rho = SimConstantsWedge.ρ₀   # density in kg/m^3 (adjust if needed)
     # g   = SimConstantsWedge.g    # gravitational acceleration in m/s^2
-    
+
     # # Filter only fluid particles
     # fluid_data = filter(d -> d.Type == Fluid, SimParticles)
-    
+
     # # Extract positions and pressures for fluid particles
     # positions = [d.Position[2] for d in fluid_data]  # Extract the height (y-component)
     # pressures = [d.Pressure    for d in fluid_data]  # Extract the pressure
-    
+
     # # Normalize positions and pressures
     # normalized_positions = [p / max_height for p in positions]  # Normalize height
     # hydrostatic_pressure = [rho * g * (max_height - h) for h in positions]     # Theoretical hydrostatic pressure
     # normalized_pressures = [p / maximum(hydrostatic_pressure) for p in pressures]  # Normalize pressure
-    
+
     # # Create the plot
     # plt = scatter(normalized_pressures, normalized_positions, label="Fluid Pressure", xlabel="Normalized Height", ylabel="Normalized Pressure", linestyle=:auto, marker=:circle, legend=:topright)
-    
+
     # # Plot the theoretical hydrostatic pressure line (with correct flipped axes)
     # plot!(hydrostatic_pressure ./ maximum(hydrostatic_pressure), normalized_positions, label="Theoretical Hydrostatic Pressure", linestyle=:dash)
-    
+
     # # Set fixed axis limits for better comparison
     # xlims!((0, 1))
     # ylims!((0, 1))
-    
+
     # display(plt)
 end
-
-
-
 

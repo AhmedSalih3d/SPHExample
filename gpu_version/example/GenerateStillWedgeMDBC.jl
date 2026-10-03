@@ -29,16 +29,21 @@ the floor, so there is no boundary below the wedge (as in the reference
 `input/still_wedge` particles). The water fills the tank around the wedge up
 to `water_height`.
 """
-function still_wedge_2d_polygons(; tank_width = 2.2, tank_height = 0.7, water_height = 0.5,
-                                 wall_thickness = 0.04, wedge_apex = (1.1, 0.26),
-                                 wedge_shell = 0.06)
+function still_wedge_2d_polygons(;
+    tank_width = 2.2,
+    tank_height = 0.7,
+    water_height = 0.5,
+    wall_thickness = 0.04,
+    wedge_apex = (1.1, 0.26),
+    wedge_shell = 0.06,
+)
     apex_x, apex_y = wedge_apex
     t = wall_thickness
     outer_half_width = apex_y                   # 45° slopes: half width = height
-    inner_apex_y     = apex_y - wedge_shell
+    inner_apex_y = apex_y - wedge_shell
     inner_half_width = inner_apex_y + t         # inner V where it meets the floor bottom
 
-    wedge_left  = (apex_x - outer_half_width, 0.0)
+    wedge_left = (apex_x - outer_half_width, 0.0)
     wedge_right = (apex_x + outer_half_width, 0.0)
 
     # Counter clockwise: along the floor bottom, up the right wall, back along
@@ -91,13 +96,18 @@ Related cases can reuse the sampling and export pipeline by supplying
 `polygons`, the fixed `boundary` geometry and a `case_name` for the filenames.
 Returns the sampled particles per region, with their densities.
 """
-function generate_still_wedge_2d_example(output_dir; dx = 0.02,
-        SimConstants = SimulationConstants{Float64}(; dx, c₀ = 42.48576250492629),
-        water_level = nothing, polygons = still_wedge_2d_polygons(),
-        boundary = polygons.tank, case_name = "StillWedge2D")
+function generate_still_wedge_2d_example(
+    output_dir;
+    dx = 0.02,
+    SimConstants = SimulationConstants{Float64}(; dx, c₀ = 42.48576250492629),
+    water_level = nothing,
+    polygons = still_wedge_2d_polygons(),
+    boundary = polygons.tank,
+    case_name = "StillWedge2D",
+)
     isfinite(dx) && dx > 0 ||
         throw(ArgumentError("particle spacing dx must be finite and positive"))
-    regions  = [
+    regions = [
         ParticleRegion("Bound", boundary, Fixed),  # listed first: owns the shared surfaces
         ParticleRegion("Fluid", polygons.water, Fluid),
     ]
@@ -108,7 +118,8 @@ function generate_still_wedge_2d_example(output_dir; dx = 0.02,
         throw(ArgumentError("particle spacing dx leaves the water region empty"))
     level = something(water_level, maximum(last, fluid_positions))
     particles = map(sampled) do region
-        density = region.type == Fluid ?
+        density =
+            region.type == Fluid ?
             hydrostatic_density(region.positions, SimConstants; water_level = level) :
             fill(SimConstants.ρ₀, length(region.positions))
         (; region..., density)
@@ -120,22 +131,38 @@ function generate_still_wedge_2d_example(output_dir; dx = 0.02,
 
     next_id = 0
     for region in particles
-        next_id = write_particle_csv("$(prefix)_$(region.name).csv", region.positions;
-                                     density = region.density, first_id = next_id)
+        next_id = write_particle_csv(
+            "$(prefix)_$(region.name).csv",
+            region.positions;
+            density = region.density,
+            first_id = next_id,
+        )
     end
 
     (; ρ₀, c₀) = SimConstants
     positions = to_3d(reduce(vcat, region.positions for region in particles))
-    density   = reduce(vcat, region.density for region in particles)
-    pressure  = EquationOfStateGamma7.(density, c₀, ρ₀)
-    types     = reduce(vcat, fill(Int8(region.type), length(region.positions)) for region in particles)
-    markers   = reduce(vcat, fill(id, length(region.positions)) for (id, region) in enumerate(particles))
-    SaveVTKHDF("$(prefix)_Particles.vtkhdf", positions,
-               ["Density", "Pressure", "Type", "GroupMarker"], density, pressure, types, markers)
+    density = reduce(vcat, region.density for region in particles)
+    pressure = EquationOfStateGamma7.(density, c₀, ρ₀)
+    types = reduce(
+        vcat,
+        fill(Int8(region.type), length(region.positions)) for region in particles
+    )
+    markers = reduce(
+        vcat,
+        fill(id, length(region.positions)) for (id, region) in enumerate(particles)
+    )
+    SaveVTKHDF(
+        "$(prefix)_Particles.vtkhdf",
+        positions,
+        ["Density", "Pressure", "Type", "GroupMarker"],
+        density,
+        pressure,
+        types,
+        markers,
+    )
 
     return particles
 end
-    
 
 """
     still_wedge_2d_geometry(constants; water_level = nothing)
@@ -143,21 +170,31 @@ end
 Generate boundary and fluid `SPHGeometry` groups directly in memory, with
 hydrostatic fluid density. No CSV or visualization files are written.
 """
-function still_wedge_2d_geometry(constants::SimulationConstants{T};
-                                  water_level = nothing) where {T}
+function still_wedge_2d_geometry(
+    constants::SimulationConstants{T};
+    water_level = nothing,
+) where {T}
     polygons = still_wedge_2d_polygons()
-    regions = [ParticleRegion("Bound", polygons.tank, Fixed),
-               ParticleRegion("Fluid", polygons.water, Fluid)]
+    regions = [
+        ParticleRegion("Bound", polygons.tank, Fixed),
+        ParticleRegion("Fluid", polygons.water, Fluid),
+    ]
     sampled = sample_particles(regions, constants.dx)
     level = water_level === nothing ? maximum(last, sampled[2].positions) : water_level
-    return [SPHGeometry{2, T}(region.positions;
-                Density = region.type == Fluid ?
-                    hydrostatic_density(region.positions, constants;
-                                        water_level = level) : constants.ρ₀,
-                GroupMarker = marker, Type = region.type)
-            for (marker, region) in enumerate(sampled)]
+    return [
+        SPHGeometry{2, T}(
+            region.positions;
+            Density = region.type == Fluid ?
+                      hydrostatic_density(
+                region.positions,
+                constants;
+                water_level = level,
+            ) : constants.ρ₀,
+            GroupMarker = marker,
+            Type = region.type,
+        ) for (marker, region) in enumerate(sampled)
+    ]
 end
-
 
 output_dir = normpath(joinpath(@__DIR__, "..", "input", "still_wedge_generated"))
 dx = 0.02

@@ -27,14 +27,21 @@ Run the Re = 100 cavity with particles and ghost nodes generated in memory. Set 
 `density_diffusion` to false to disable those options. Returns the final
 `particles` and `meta`.
 """
-function run_lid_driven_cavity_2d(; FloatType = Float32, dx = 0.01,
-                                  simulation_time = 60.0, output_interval = 0.5,
-                                  visualize::Bool = true, open_log_file::Bool = true,
-                                  mdbc::Bool = true, shifting::Bool = true,
-                                  density_diffusion::Bool = true,
-                                  input_dir = normpath(joinpath(
-                                      @__DIR__, "..", "input", "lid_driven_cavity_2d_generated")),
-                                  save_location = raw"C:\TestSimulations\LidDrivenCavity2D_GPU")
+function run_lid_driven_cavity_2d(;
+    FloatType = Float32,
+    dx = 0.01,
+    simulation_time = 60.0,
+    output_interval = 0.5,
+    visualize::Bool = true,
+    open_log_file::Bool = true,
+    mdbc::Bool = true,
+    shifting::Bool = true,
+    density_diffusion::Bool = true,
+    input_dir = normpath(
+        joinpath(@__DIR__, "..", "input", "lid_driven_cavity_2d_generated"),
+    ),
+    save_location = raw"C:\TestSimulations\LidDrivenCavity2D_GPU",
+)
     (isfinite(simulation_time) && simulation_time > 0) ||
         throw(ArgumentError("simulation_time must be finite and positive"))
     (isfinite(output_interval) && output_interval > 0) ||
@@ -44,27 +51,41 @@ function run_lid_driven_cavity_2d(; FloatType = Float32, dx = 0.01,
     T = FloatType
     SimConstants = lid_driven_cavity_2d_constants(T; dx)
     shapes = lid_driven_cavity_2d_shapes()
-    regions = [ParticleRegion("Fixed", shapes.walls, Fixed),
-               ParticleRegion("Lid", shapes.lid, Moving),
-               ParticleRegion("Fluid", shapes.fluid, Fluid)]
+    regions = [
+        ParticleRegion("Fixed", shapes.walls, Fixed),
+        ParticleRegion("Lid", shapes.lid, Moving),
+        ParticleRegion("Fluid", shapes.fluid, Fluid),
+    ]
     sampled = sample_particles(regions, dx)
     simulation_geometry = map(enumerate(sampled)) do (marker, region)
         positions = region.positions
-        fields = (Position = positions,
-                  Density = fill(SimConstants.ρ₀, length(positions)))
+        fields =
+            (Position = positions, Density = fill(SimConstants.ρ₀, length(positions)))
         if region.type != Fluid
-            ghosts = [SVector{2, Float64}(lid_driven_cavity_ghost_node(x, dx))
-                      for x in positions]
-            fields = merge(fields, (GhostPoints = ghosts,
-                                    GhostNormals = ghosts .- positions))
+            ghosts = [
+                SVector{2, Float64}(lid_driven_cavity_ghost_node(x, dx)) for x in positions
+            ]
+            fields = merge(
+                fields,
+                (GhostPoints = ghosts, GhostNormals = ghosts .- positions),
+            )
         end
-        motion = region.type == Moving ? MotionDetails{2, T}(
-            Velocity = T(LID_CAVITY_LID_SPEED), StartTime = zero(T),
-            Duration = T(simulation_time), Direction = SVector{2, T}(one(T), zero(T)),
-            MoveParticles = false) : nothing
-        SPHGeometry{2, T}(Particles = StructArray(fields), GroupMarker = marker,
+        motion =
+            region.type == Moving ?
+            MotionDetails{2, T}(
+                Velocity = T(LID_CAVITY_LID_SPEED),
+                StartTime = zero(T),
+                Duration = T(simulation_time),
+                Direction = SVector{2, T}(one(T), zero(T)),
+                MoveParticles = false,
+            ) : nothing
+        SPHGeometry{2, T}(
+            Particles = StructArray(fields),
+            GroupMarker = marker,
             # CSVFile = joinpath(input_dir, "LidDrivenCavity2D_Dp$(dx)_$(region.name).csv"),
-            Type = region.type, Motion = motion)
+            Type = region.type,
+            Motion = motion,
+        )
     end
 
     mkpath(save_location)
@@ -83,8 +104,7 @@ function run_lid_driven_cavity_2d(; FloatType = Float32, dx = 0.01,
     )
     particles = AllocateDataStructures(simulation_geometry, meta)
     logger = SimulationLogger(save_location; to_console = true)
-    kernel = SPHKernelInstance{2, T}(WendlandC2();
-                                     h = T(1.2 * sqrt(2) * dx))
+    kernel = SPHKernelInstance{2, T}(WendlandC2(); h = T(1.2 * sqrt(2) * dx))
 
     RunSimulation(
         SimGeometry = simulation_geometry,
@@ -95,7 +115,7 @@ function run_lid_driven_cavity_2d(; FloatType = Float32, dx = 0.01,
         SimParticles = particles,
         SimViscosity = Laminar(),
         SimDensityDiffusion = density_diffusion ? ZeroGravityLinearDensityDiffusion() :
-                                                  ZeroDensityDiffusion(),
+                              ZeroDensityDiffusion(),
         SimTimeStepping = SymplecticTimeStepping(),
         # ParticleNormalsPath = joinpath(input_dir, "LidDrivenCavity2D_Dp$(dx)_GhostNodes.csv"),
     )
@@ -103,11 +123,12 @@ function run_lid_driven_cavity_2d(; FloatType = Float32, dx = 0.01,
 end
 
 if abspath(PROGRAM_FILE) == abspath(@__FILE__)
-    save_location = length(ARGS) >= 1 ? ARGS[1] :
-                    raw"C:\TestSimulations\LidDrivenCavity2D_GPU"
+    save_location =
+        length(ARGS) >= 1 ? ARGS[1] : raw"C:\TestSimulations\LidDrivenCavity2D_GPU"
     dx = length(ARGS) >= 2 ? parse(Float64, ARGS[2]) : 0.01
     simulation_time = length(ARGS) >= 3 ? parse(Float64, ARGS[3]) : 60.0
-    input_dir = length(ARGS) >= 4 ? ARGS[4] :
-                normpath(joinpath(@__DIR__, "..", "input", "lid_driven_cavity_2d_generated"))
+    input_dir =
+        length(ARGS) >= 4 ? ARGS[4] :
+        normpath(joinpath(@__DIR__, "..", "input", "lid_driven_cavity_2d_generated"))
     run_lid_driven_cavity_2d(; save_location, dx, simulation_time, input_dir)
 end

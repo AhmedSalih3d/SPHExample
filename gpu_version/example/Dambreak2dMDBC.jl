@@ -13,15 +13,23 @@ include(joinpath(@__DIR__, "GenerateDamBreak2DMDBC.jl"))
 
 let
     Dimensions = 2
-    FloatType  = Float32
+    FloatType = Float32
 
-    SimConstantsDambreak = SimulationConstants{FloatType}(dx=0.01,c₀=88.14487860902641, δᵩ = 0.1, CFL=0.5, α = 0.01)
+    SimConstantsDambreak = SimulationConstants{FloatType}(
+        dx = 0.01,
+        c₀ = 88.14487860902641,
+        δᵩ = 0.1,
+        CFL = 0.5,
+        α = 0.01,
+    )
 
     # Create SPHGeometry instances
     # Sample particles here; the generator script supplies shape definitions.
     polygons = dam_break_2d_polygons()
-    regions = [ParticleRegion("Bound", polygons.tank, Fixed),
-               ParticleRegion("Fluid", polygons.water, Fluid)]
+    regions = [
+        ParticleRegion("Bound", polygons.tank, Fixed),
+        ParticleRegion("Fluid", polygons.water, Fluid),
+    ]
     sampled = sample_particles(regions, SimConstantsDambreak.dx)
     positions(name) = only(r.positions for r in sampled if r.name == name)
     water_level = maximum(last, positions("Fluid"))
@@ -29,41 +37,56 @@ let
     wall_positions = positions("Bound")
     dx = SimConstantsDambreak.dx
     mirror_x(x) = x < dx / 2 ? dx - x : x > 4 - dx / 2 ? 8 - dx - x : x
-    ghosts = [SVector(mirror_x(x[1]), x[2] < dx / 2 ? dx - x[2] : x[2])
-              for x in wall_positions]
+    ghosts =
+        [SVector(mirror_x(x[1]), x[2] < dx / 2 ? dx - x[2] : x[2]) for x in wall_positions]
 
     FixedBoundary = SPHGeometry{Dimensions, FloatType}(
-        Particles = StructArray((Position = positions("Bound"),
+        Particles = StructArray((
+            Position = positions("Bound"),
             Density = fill(SimConstantsDambreak.ρ₀, length(positions("Bound"))),
-            GhostPoints = ghosts, GhostNormals = ghosts .- wall_positions)),
+            GhostPoints = ghosts,
+            GhostNormals = ghosts .- wall_positions,
+        )),
         # CSVFile     = "./input/dam_break_2d/DamBreak2d_Dp0.02_MDBC_Bound_ThreeLayers.csv",
         GroupMarker = 1,
-        Type        = Fixed,   # Using the enum value Fixed
-        Motion      = nothing
+        Type = Fixed,   # Using the enum value Fixed
+        Motion = nothing,
     )
 
     Water = SPHGeometry{Dimensions, FloatType}(
-        Particles = StructArray((Position = positions("Fluid"),
-            Density = hydrostatic_density(positions("Fluid"), SimConstantsDambreak; water_level))),
+        Particles = StructArray((
+            Position = positions("Fluid"),
+            Density = hydrostatic_density(
+                positions("Fluid"),
+                SimConstantsDambreak;
+                water_level,
+            ),
+        )),
         # CSVFile     = "./input/dam_break_2d/DamBreak2d_Dp0.02_MDBC_Fluid_ThreeLayers.csv",
         GroupMarker = 2,
-        Type        = Fluid,   # Using the enum value Fluid
-        Motion      = nothing
+        Type = Fluid,   # Using the enum value Fluid
+        Motion = nothing,
     )
 
     # Collect the SPHGeometry instances into a vector
     SimulationGeometry = [FixedBoundary; Water]
 
-
-    SimMetaDataDambreak  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
-        SimulationName="DamBreak2D", 
-        SaveLocation="C:/TestSimulations/DamBreak2D_MDBC_GPU/",
-        SimulationTime=2,
-        OutputTimes=collect(0.01:0.01:2),
-        VisualizeInParaview=true,
-        ExportSingleVTKHDF=true,
-        ExportGridCells=true,
-        OpenLogFile=true
+    SimMetaDataDambreak = SimulationMetaData{
+        Dimensions,
+        FloatType,
+        NoShifting,
+        NoKernelOutput,
+        SimpleMDBC,
+        StoreLog,
+    }(
+        SimulationName = "DamBreak2D",
+        SaveLocation = "C:/TestSimulations/DamBreak2D_MDBC_GPU/",
+        SimulationTime = 2,
+        OutputTimes = collect(0.01:0.01:2),
+        VisualizeInParaview = true,
+        ExportSingleVTKHDF = true,
+        ExportGridCells = true,
+        OpenLogFile = true,
     )
 
     # If save directory is not already made, make it
@@ -94,20 +117,23 @@ let
     # Load in particles
     SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaDataDambreak)
 
-    SimLogger = SimulationLogger(SimMetaDataDambreak.SaveLocation; to_console=true)
+    SimLogger = SimulationLogger(SimMetaDataDambreak.SaveLocation; to_console = true)
 
     CleanUpSimulationFolder(SimMetaDataDambreak.SaveLocation)
 
     RunSimulation(
-        SimGeometry          = SimulationGeometry,
-        SimMetaData          = SimMetaDataDambreak,
-        SimConstants         = SimConstantsDambreak,
-        SimKernel            = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); dx = SimConstantsDambreak.dx),
-        SimLogger            = SimLogger,
-        SimParticles         = SimParticles,
-        SimViscosity         = ArtificialViscosity(),
-        SimDensityDiffusion  = LinearDensityDiffusion(),
-        SimTimeStepping      = SymplecticTimeStepping(),
+        SimGeometry = SimulationGeometry,
+        SimMetaData = SimMetaDataDambreak,
+        SimConstants = SimConstantsDambreak,
+        SimKernel = SPHKernelInstance{Dimensions, FloatType}(
+            WendlandC2();
+            dx = SimConstantsDambreak.dx,
+        ),
+        SimLogger = SimLogger,
+        SimParticles = SimParticles,
+        SimViscosity = ArtificialViscosity(),
+        SimDensityDiffusion = LinearDensityDiffusion(),
+        SimTimeStepping = SymplecticTimeStepping(),
         # ParticleNormalsPath  = "./input/dam_break_2d/DamBreak2d_Dp0.02_MDBC_GhostNodes_ThreeLayers.csv"
     )
 end

@@ -16,75 +16,91 @@ include(joinpath(@__DIR__, "GenerateMovingSquare2D.jl"))
 
 let
     Dimensions = 2
-    FloatType  = Float32
+    FloatType = Float32
 
     # ViscoBoundFactor should be 1, but need to understand how to implement it
-    SimConstantsMovingSquare = SimulationConstants{FloatType}(dx=0.02,
-        c₀=28, 
+    SimConstantsMovingSquare = SimulationConstants{FloatType}(
+        dx = 0.02,
+        c₀ = 28,
         δᵩ = 0.1,
-        g  = 0,
+        g = 0,
         Cb = 112000,
-        α  = 1e-6,
-        CFL=0.2
+        α = 1e-6,
+        CFL = 0.2,
     )
 
-    SimMetaDataMovingSquare  = SimulationMetaData{Dimensions,FloatType,PlanarShifting,NoKernelOutput,NoMDBC,StoreLog}(
-        SimulationName="MovingSquare2D", 
-        SaveLocation="C:/TestSimulations/MovingSquare2D_GPU",
-        SimulationTime=2.5,
-        OutputTimes=0.01,
-        VisualizeInParaview=true,
-        ExportSingleVTKHDF=true,
-        OpenLogFile=true
+    SimMetaDataMovingSquare = SimulationMetaData{
+        Dimensions,
+        FloatType,
+        PlanarShifting,
+        NoKernelOutput,
+        NoMDBC,
+        StoreLog,
+    }(
+        SimulationName = "MovingSquare2D",
+        SaveLocation = "C:/TestSimulations/MovingSquare2D_GPU",
+        SimulationTime = 2.5,
+        OutputTimes = 0.01,
+        VisualizeInParaview = true,
+        ExportSingleVTKHDF = true,
+        OpenLogFile = true,
     )
-    moving_square_input_dir = normpath(joinpath(@__DIR__, "..", "input", "moving_square_2d_generated"))
-    
+    moving_square_input_dir =
+        normpath(joinpath(@__DIR__, "..", "input", "moving_square_2d_generated"))
+
     # Sample particles here; the generator script supplies shape definitions.
     polygons = moving_square_2d_polygons()
-    regions = [ParticleRegion("Fixed", polygons.tank, Fixed),
-               ParticleRegion("Square", polygons.square, Moving),
-               ParticleRegion("Fluid", polygons.water, Fluid)]
+    regions = [
+        ParticleRegion("Fixed", polygons.tank, Fixed),
+        ParticleRegion("Square", polygons.square, Moving),
+        ParticleRegion("Fluid", polygons.water, Fluid),
+    ]
     sampled = sample_particles(regions, SimConstantsMovingSquare.dx)
     positions(name) = only(r.positions for r in sampled if r.name == name)
 
     FixedBoundary = SPHGeometry{Dimensions, FloatType}(
-        Particles = StructArray((Position = positions("Fixed"),
-            Density = fill(SimConstantsMovingSquare.ρ₀, length(positions("Fixed"))))),
+        Particles = StructArray((
+            Position = positions("Fixed"),
+            Density = fill(SimConstantsMovingSquare.ρ₀, length(positions("Fixed"))),
+        )),
         # CSVFile     = joinpath(moving_square_input_dir,
         # "MovingSquare2D_Dp$(SimConstantsMovingSquare.dx)_Fixed.csv"),
         GroupMarker = 1,
-        Type        = Fixed,
-        Motion      = nothing
+        Type = Fixed,
+        Motion = nothing,
     )
-    
+
     Water = SPHGeometry{Dimensions, FloatType}(
-        Particles = StructArray((Position = positions("Fluid"),
-            Density = fill(SimConstantsMovingSquare.ρ₀, length(positions("Fluid"))))),
+        Particles = StructArray((
+            Position = positions("Fluid"),
+            Density = fill(SimConstantsMovingSquare.ρ₀, length(positions("Fluid"))),
+        )),
         # CSVFile     = joinpath(moving_square_input_dir,
         # "MovingSquare2D_Dp$(SimConstantsMovingSquare.dx)_Fluid.csv"),
         GroupMarker = 2,
-        Type        = Fluid,
-        Motion      = nothing
+        Type = Fluid,
+        Motion = nothing,
     )
-    
+
     MovingSquare = SPHGeometry{Dimensions, FloatType}(
-        Particles = StructArray((Position = positions("Square"),
-            Density = fill(SimConstantsMovingSquare.ρ₀, length(positions("Square"))))),
+        Particles = StructArray((
+            Position = positions("Square"),
+            Density = fill(SimConstantsMovingSquare.ρ₀, length(positions("Square"))),
+        )),
         # CSVFile     = joinpath(moving_square_input_dir,
         # "MovingSquare2D_Dp$(SimConstantsMovingSquare.dx)_Square.csv"),
         GroupMarker = 3,
-        Type        = Moving,
-        Motion      = MotionDetails{Dimensions, FloatType}(
-            Velocity  = 2.8,
+        Type = Moving,
+        Motion = MotionDetails{Dimensions, FloatType}(
+            Velocity = 2.8,
             StartTime = 0.0,
-            Duration  = 3.0,
-            Direction = SVector{Dimensions, FloatType}(1.0, 0.0)  # 2D direction vector with Float64 type
-        )
+            Duration = 3.0,
+            Direction = SVector{Dimensions, FloatType}(1.0, 0.0),  # 2D direction vector with Float64 type
+        ),
     )
 
-    SimulationGeometry = [FixedBoundary;Water;MovingSquare]
+    SimulationGeometry = [FixedBoundary; Water; MovingSquare]
 
-    
     # Collect SPHGeometry instances into a vector
     SimulationGeometry = [FixedBoundary, Water, MovingSquare]
     # If save directory is not already made, make it
@@ -92,22 +108,26 @@ let
         mkpath(SimMetaDataMovingSquare.SaveLocation)
     end
 
-    SimLogger = SimulationLogger(SimMetaDataMovingSquare.SaveLocation; to_console=true)
+    SimLogger = SimulationLogger(SimMetaDataMovingSquare.SaveLocation; to_console = true)
     SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaDataMovingSquare)
 
-    SimKernel = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); dx = SimConstantsMovingSquare.dx, k  = FloatType(sqrt(2)))
+    SimKernel = SPHKernelInstance{Dimensions, FloatType}(
+        WendlandC2();
+        dx = SimConstantsMovingSquare.dx,
+        k = FloatType(sqrt(2)),
+    )
 
     CleanUpSimulationFolder(SimMetaDataMovingSquare.SaveLocation)
 
     RunSimulation(
-        SimGeometry         = SimulationGeometry,
-        SimMetaData         = SimMetaDataMovingSquare,
-        SimConstants        = SimConstantsMovingSquare,
-        SimLogger           = SimLogger,
-        SimParticles        = SimParticles,
-        SimKernel           = SimKernel,
-        SimViscosity        = LaminarSPS(),
+        SimGeometry = SimulationGeometry,
+        SimMetaData = SimMetaDataMovingSquare,
+        SimConstants = SimConstantsMovingSquare,
+        SimLogger = SimLogger,
+        SimParticles = SimParticles,
+        SimKernel = SimKernel,
+        SimViscosity = LaminarSPS(),
         SimDensityDiffusion = ZeroGravityLinearDensityDiffusion(),
-        SimTimeStepping     = SymplecticTimeStepping()
+        SimTimeStepping = SymplecticTimeStepping(),
     )
 end

@@ -25,12 +25,20 @@ and the cylinder, centred on the free surface in the middle of the tank. The
 water reaches half a spacing above `depth`, so its top particle layer lies at
 `depth` like the DualSPHysics case.
 """
-function floating_cylinder_2d_shapes(; dx = 0.025, width = 10.0, depth = 14.0,
-                                     tank_height = 16.0, radius = 1.0)
+function floating_cylinder_2d_shapes(;
+    dx = 0.025,
+    width = 10.0,
+    depth = 14.0,
+    tank_height = 16.0,
+    radius = 1.0,
+)
     half = width / 2
-    tank = polyline([(-half, tank_height), (-half, 0.0), (half, 0.0), (half, tank_height)];
-                    thickness = 3dx, side = :right)
-    water    = rectangle((-half, 0.0), width, depth + dx / 2)
+    tank = polyline(
+        [(-half, tank_height), (-half, 0.0), (half, 0.0), (half, tank_height)];
+        thickness = 3dx,
+        side = :right,
+    )
+    water = rectangle((-half, 0.0), width, depth + dx / 2)
     cylinder = circle((0.0, depth), radius; segments = 256)
     return (; tank, water, cylinder)
 end
@@ -42,8 +50,15 @@ Constants of the DualSPHysics case: `c₀ = coefsound * sqrt(g * hswl)` with
 `coefsound = 30` and `hswl = 0.8`, `ρ₀ = 1000`, `g = 9.81`, `CFL = 0.2`.
 """
 floating_cylinder_simulation_constants(FloatType = Float64; dx = 0.025) =
-    SimulationConstants{FloatType}(; dx, ρ₀ = 1000, g = 9.81, c₀ = 30 * sqrt(9.81 * 0.8),
-                                   δᵩ = 0.1, CFL = 0.2, ν₀ = 1e-6)
+    SimulationConstants{FloatType}(;
+        dx,
+        ρ₀ = 1000,
+        g = 9.81,
+        c₀ = 30 * sqrt(9.81 * 0.8),
+        δᵩ = 0.1,
+        CFL = 0.2,
+        ν₀ = 1e-6,
+    )
 
 """
     generate_floating_cylinder_2d(output_dir; dx = 0.025,
@@ -55,8 +70,11 @@ and the CSV files `FloatingCylinder2D_Dp<dx>_<Cylinder|Bound|Fluid>.csv` to
 density of its depth, the others `ρ₀`. Returns the sampled regions with their
 densities.
 """
-function generate_floating_cylinder_2d(output_dir; dx = 0.025,
-        SimConstants = floating_cylinder_simulation_constants(; dx))
+function generate_floating_cylinder_2d(
+    output_dir;
+    dx = 0.025,
+    SimConstants = floating_cylinder_simulation_constants(; dx),
+)
     dx > 0 || throw(ArgumentError("particle spacing dx must be positive"))
     shapes = floating_cylinder_2d_shapes(; dx)
     # The conforming cylinder comes first: the lattice keeps half a spacing from it.
@@ -77,25 +95,37 @@ function generate_floating_cylinder_2d(output_dir; dx = 0.025,
     prefix = joinpath(output_dir, "FloatingCylinder2D_Dp$(dx)")
     next_id = 0
     for region in particles
-        next_id = write_particle_csv("$(prefix)_$(region.name).csv", region.positions;
-                                     density = region.density, first_id = next_id)
+        next_id = write_particle_csv(
+            "$(prefix)_$(region.name).csv",
+            region.positions;
+            density = region.density,
+            first_id = next_id,
+        )
     end
 
     (; ρ₀, c₀) = SimConstants
     positions = to_3d(reduce(vcat, region.positions for region in particles))
-    density   = reduce(vcat, region.density for region in particles)
-    pressure  = EquationOfStateGamma7.(density, c₀, ρ₀)
-    types     = reduce(vcat, (fill(Int8(region.type), length(region.positions))
-                              for region in particles))
-    markers   = reduce(vcat, (fill(k, length(region.positions))
-                              for (k, region) in enumerate(particles)))
-    SaveVTKHDF("$(prefix)_Particles.vtkhdf", positions,
-               ["Density", "Pressure", "Type", "GroupMarker"],
-               density, pressure, types, markers)
+    density = reduce(vcat, region.density for region in particles)
+    pressure = EquationOfStateGamma7.(density, c₀, ρ₀)
+    types = reduce(
+        vcat,
+        (fill(Int8(region.type), length(region.positions)) for region in particles),
+    )
+    markers = reduce(
+        vcat,
+        (fill(k, length(region.positions)) for (k, region) in enumerate(particles)),
+    )
+    SaveVTKHDF(
+        "$(prefix)_Particles.vtkhdf",
+        positions,
+        ["Density", "Pressure", "Type", "GroupMarker"],
+        density,
+        pressure,
+        types,
+        markers,
+    )
     return particles
 end
-
-
 
 output_dir = normpath(joinpath(@__DIR__, "..", "input", "floating_cylinder_2d_generated"))
 dx = 0.025

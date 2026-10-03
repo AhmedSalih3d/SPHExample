@@ -22,21 +22,28 @@ surface with `polyline`: its floor and side walls extend `wall_thickness`
 outside the fluid domain. The water starts in the left corner and is open at
 the top.
 """
-function dam_break_2d_polygons(; tank_width = 4.0, tank_height = 3.0,
-                                water_width = 1.0, water_height = 2.0,
-                                wall_thickness = 0.06)
+function dam_break_2d_polygons(;
+    tank_width = 4.0,
+    tank_height = 3.0,
+    water_width = 1.0,
+    water_height = 2.0,
+    wall_thickness = 0.06,
+)
     if !(0 < water_width <= tank_width) ||
        !(0 < water_height <= tank_height) ||
        !(wall_thickness > 0)
-        throw(ArgumentError("water dimensions must fit in a positive tank " *
-                            "and wall thickness"))
+        throw(
+            ArgumentError(
+                "water dimensions must fit in a positive tank " * "and wall thickness",
+            ),
+        )
     end
 
     # Walking down the left wall, along the floor and up the right wall, the
     # outside of the tank is on the right.
-    wetted_surface = [(0.0, tank_height), (0.0, 0.0),
-                      (tank_width, 0.0), (tank_width, tank_height)]
-    tank  = polyline(wetted_surface; thickness = wall_thickness, side = :right)
+    wetted_surface =
+        [(0.0, tank_height), (0.0, 0.0), (tank_width, 0.0), (tank_width, tank_height)]
+    tank = polyline(wetted_surface; thickness = wall_thickness, side = :right)
     water = rectangle((0.0, 0.0), water_width, water_height)
 
     return (; tank, water)
@@ -58,11 +65,14 @@ fluid particle. Pass the `SimConstants` of the simulation so that `ρ₀`, `g`
 and `c₀` match the case.
 Returns the sampled particles per region, with their densities.
 """
-function generate_dam_break_2d_example(output_dir; dx = 0.02,
-        SimConstants = SimulationConstants{Float64}(; dx, c₀ = 88.14487860902641),
-        water_level = nothing)
+function generate_dam_break_2d_example(
+    output_dir;
+    dx = 0.02,
+    SimConstants = SimulationConstants{Float64}(; dx, c₀ = 88.14487860902641),
+    water_level = nothing,
+)
     polygons = dam_break_2d_polygons()
-    regions  = [
+    regions = [
         ParticleRegion("Bound", polygons.tank, Fixed),
         ParticleRegion("Fluid", polygons.water, Fluid),
     ]
@@ -71,7 +81,8 @@ function generate_dam_break_2d_example(output_dir; dx = 0.02,
     fluid_positions = reduce(vcat, (r.positions for r in sampled if r.type == Fluid))
     level = something(water_level, maximum(last, fluid_positions))
     particles = map(sampled) do region
-        density = region.type == Fluid ?
+        density =
+            region.type == Fluid ?
             hydrostatic_density(region.positions, SimConstants; water_level = level) :
             fill(SimConstants.ρ₀, length(region.positions))
         (; region..., density)
@@ -83,25 +94,38 @@ function generate_dam_break_2d_example(output_dir; dx = 0.02,
 
     next_id = 0
     for region in particles
-        next_id = write_particle_csv("$(prefix)_$(region.name).csv", region.positions;
-                                     density = region.density, first_id = next_id)
+        next_id = write_particle_csv(
+            "$(prefix)_$(region.name).csv",
+            region.positions;
+            density = region.density,
+            first_id = next_id,
+        )
     end
 
     (; ρ₀, c₀) = SimConstants
     positions = to_3d(reduce(vcat, region.positions for region in particles))
-    density   = reduce(vcat, region.density for region in particles)
-    pressure  = EquationOfStateGamma7.(density, c₀, ρ₀)
-    types     = reduce(vcat, (fill(Int8(region.type), length(region.positions))
-                              for region in particles))
-    markers   = reduce(vcat, (fill(id, length(region.positions))
-                              for (id, region) in enumerate(particles)))
-    SaveVTKHDF("$(prefix)_Particles.vtkhdf", positions,
-               ["Density", "Pressure", "Type", "GroupMarker"],
-               density, pressure, types, markers)
+    density = reduce(vcat, region.density for region in particles)
+    pressure = EquationOfStateGamma7.(density, c₀, ρ₀)
+    types = reduce(
+        vcat,
+        (fill(Int8(region.type), length(region.positions)) for region in particles),
+    )
+    markers = reduce(
+        vcat,
+        (fill(id, length(region.positions)) for (id, region) in enumerate(particles)),
+    )
+    SaveVTKHDF(
+        "$(prefix)_Particles.vtkhdf",
+        positions,
+        ["Density", "Pressure", "Type", "GroupMarker"],
+        density,
+        pressure,
+        types,
+        markers,
+    )
 
     return particles
 end
-
 
 output_dir = normpath(joinpath(@__DIR__, "..", "input", "dam_break_2d_generated"))
 dx = 0.02

@@ -13,50 +13,71 @@ include(joinpath(@__DIR__, "GenerateStillWedgeMiddleSquareMDBC.jl"))
 
 let
     Dimensions = 2
-    FloatType  = Float32
+    FloatType = Float32
 
-    SimConstantsWedge = SimulationConstants{FloatType}(dx=0.02,c₀=42.48576250492629, δᵩ = 0.1, CFL=0.5)
+    SimConstantsWedge = SimulationConstants{FloatType}(
+        dx = 0.02,
+        c₀ = 42.48576250492629,
+        δᵩ = 0.1,
+        CFL = 0.5,
+    )
     # SimConstantsWedge = SimulationConstants{FloatType}(dx=0.01,c₀=43.4, δᵩ = 0.1, CFL=0.2)
 
     # Assuming SimConstantsWedge is defined somewhere else with the field `dx`
     # Sample particles here; the generator script supplies shape definitions.
     polygons = still_wedge_middle_square_polygons()
-    regions = [ParticleRegion("Bound", Multi([polygons.tank, polygons.square]), Fixed),
-               ParticleRegion("Fluid", polygons.water, Fluid)]
+    regions = [
+        ParticleRegion("Bound", Multi([polygons.tank, polygons.square]), Fixed),
+        ParticleRegion("Fluid", polygons.water, Fluid),
+    ]
     sampled = sample_particles(regions, SimConstantsWedge.dx)
     positions(name) = only(r.positions for r in sampled if r.name == name)
     water_level = maximum(last, positions("Fluid"))
 
     FixedBoundary = SPHGeometry{Dimensions, FloatType}(
-        Particles = StructArray((Position = positions("Bound"),
-            Density = fill(SimConstantsWedge.ρ₀, length(positions("Bound"))))),
+        Particles = StructArray((
+            Position = positions("Bound"),
+            Density = fill(SimConstantsWedge.ρ₀, length(positions("Bound"))),
+        )),
         # CSVFile     = "./input/still_wedge_middle_square_mdbc/StillWedge_MiddleSquare_Dp$(SimConstantsWedge.dx)_Bound.csv",
         GroupMarker = 1,
-        Type        = Fixed,   # Using the enum value Fixed
-        Motion      = nothing
+        Type = Fixed,   # Using the enum value Fixed
+        Motion = nothing,
     )
 
     Water = SPHGeometry{Dimensions, FloatType}(
-        Particles = StructArray((Position = positions("Fluid"),
-            Density = hydrostatic_density(positions("Fluid"), SimConstantsWedge; water_level))),
+        Particles = StructArray((
+            Position = positions("Fluid"),
+            Density = hydrostatic_density(
+                positions("Fluid"),
+                SimConstantsWedge;
+                water_level,
+            ),
+        )),
         # CSVFile     = "./input/still_wedge_middle_square_mdbc/StillWedge_MiddleSquare_Dp$(SimConstantsWedge.dx)_Fluid.csv",
         GroupMarker = 2,
-        Type        = Fluid,   # Using the enum value Fluid
-        Motion      = nothing
+        Type = Fluid,   # Using the enum value Fluid
+        Motion = nothing,
     )
-# 
-    SimulationGeometry = [FixedBoundary;Water]
-    
+    #
+    SimulationGeometry = [FixedBoundary; Water]
 
-    SimMetaDataWedge  = SimulationMetaData{Dimensions,FloatType,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
-        SimulationName="StillWedge", 
-        SaveLocation="C:/TestSimulations/StillWedgeMiddleSquare2D_MDBC_GPU",
-        SimulationTime=4,
-        OutputTimes=0.01,
-        VisualizeInParaview=true,
-        ExportSingleVTKHDF=true,
-        ExportGridCells=true,
-        OpenLogFile=true
+    SimMetaDataWedge = SimulationMetaData{
+        Dimensions,
+        FloatType,
+        NoShifting,
+        NoKernelOutput,
+        SimpleMDBC,
+        StoreLog,
+    }(
+        SimulationName = "StillWedge",
+        SaveLocation = "C:/TestSimulations/StillWedgeMiddleSquare2D_MDBC_GPU",
+        SimulationTime = 4,
+        OutputTimes = 0.01,
+        VisualizeInParaview = true,
+        ExportSingleVTKHDF = true,
+        ExportGridCells = true,
+        OpenLogFile = true,
     )
 
     # If save directory is not already made, make it
@@ -69,57 +90,55 @@ let
 
     CleanUpSimulationFolder(SimMetaDataWedge.SaveLocation)
 
-    SimKernel = SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); dx = SimConstantsWedge.dx)
+    SimKernel =
+        SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); dx = SimConstantsWedge.dx)
 
     RunSimulation(
-        SimGeometry         = SimulationGeometry,
-        SimMetaData         = SimMetaDataWedge,
-        SimConstants        = SimConstantsWedge,
-        SimKernel           = SimKernel,
-        SimLogger           = SimLogger,
-        SimParticles        = SimParticles,
-        SimViscosity        = ArtificialViscosity(),
+        SimGeometry = SimulationGeometry,
+        SimMetaData = SimMetaDataWedge,
+        SimConstants = SimConstantsWedge,
+        SimKernel = SimKernel,
+        SimLogger = SimLogger,
+        SimParticles = SimParticles,
+        SimViscosity = ArtificialViscosity(),
         SimDensityDiffusion = LinearDensityDiffusion(),
-        SimTimeStepping     = SymplecticTimeStepping(),
-        ParticleNormalsPath = "./input/still_wedge_middle_square_mdbc/StillWedge_MiddleSquare_Dp$(SimConstantsWedge.dx)_GhostNodes.csv"
+        SimTimeStepping = SymplecticTimeStepping(),
+        ParticleNormalsPath = "./input/still_wedge_middle_square_mdbc/StillWedge_MiddleSquare_Dp$(SimConstantsWedge.dx)_GhostNodes.csv",
     )
 
     # This can be used to plot pressure profile results after simulation
     # using Plots
     # using StaticArrays
-    
+
     # # Assuming 'data' is a vector of the named tuples containing the data
-    
+
     # # Constants
     # max_height = 0.5             # maximum height in meters
     # rho = SimConstantsWedge.ρ₀   # density in kg/m^3 (adjust if needed)
     # g   = SimConstantsWedge.g    # gravitational acceleration in m/s^2
-    
+
     # # Filter only fluid particles
     # fluid_data = filter(d -> d.Type == Fluid, SimParticles)
-    
+
     # # Extract positions and pressures for fluid particles
     # positions = [d.Position[2] for d in fluid_data]  # Extract the height (y-component)
     # pressures = [d.Pressure    for d in fluid_data]  # Extract the pressure
-    
+
     # # Normalize positions and pressures
     # normalized_positions = [p / max_height for p in positions]  # Normalize height
     # hydrostatic_pressure = [rho * g * (max_height - h) for h in positions]     # Theoretical hydrostatic pressure
     # normalized_pressures = [p / maximum(hydrostatic_pressure) for p in pressures]  # Normalize pressure
-    
+
     # # Create the plot
     # plt = scatter(normalized_pressures, normalized_positions, label="Fluid Pressure", xlabel="Normalized Height", ylabel="Normalized Pressure", linestyle=:auto, marker=:circle, legend=:topright)
-    
+
     # # Plot the theoretical hydrostatic pressure line (with correct flipped axes)
     # plot!(hydrostatic_pressure ./ maximum(hydrostatic_pressure), normalized_positions, label="Theoretical Hydrostatic Pressure", linestyle=:dash)
-    
+
     # # Set fixed axis limits for better comparison
     # xlims!((0, 1))
     # ylims!((0, 1))
-    
+
     # display(plt)
 end
-
-
-
 
