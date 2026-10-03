@@ -158,12 +158,12 @@ function still_wedge_2d_geometry(constants::SimulationConstants{T};
             for (marker, region) in enumerate(sampled)]
 end
 
-if abspath(PROGRAM_FILE) == @__FILE__
-    output_dir = normpath(joinpath(@__DIR__, "..", "input", "still_wedge_generated"))
-    dx = 0.02
-    particles = generate_still_wedge_2d_example(output_dir; dx)
-    for region in particles
-        @info "$(region.name): $(length(region.positions)) particles"
-    end
-    @info "Saved StillWedge2D geometry and particles" output_dir
+
+output_dir = normpath(joinpath(@__DIR__, "..", "input", "still_wedge_generated"))
+dx = 0.02
+particles = generate_still_wedge_2d_example(output_dir; dx)
+for region in particles
+    @info "$(region.name): $(length(region.positions)) particles"
 end
+@info "Saved StillWedge2D geometry and particles" output_dir
+

@@ -102,12 +102,11 @@ function generate_dam_break_2d_example(output_dir; dx = 0.02,
     return particles
 end
 
-if abspath(PROGRAM_FILE) == abspath(@__FILE__)
-    output_dir = normpath(joinpath(@__DIR__, "..", "input", "dam_break_2d_generated"))
-    dx = 0.02
-    particles = generate_dam_break_2d_example(output_dir; dx)
-    for region in particles
-        @info "$(region.name): $(length(region.positions)) particles"
-    end
-    @info "Saved DamBreak2D geometry and particles" output_dir
+
+output_dir = normpath(joinpath(@__DIR__, "..", "input", "dam_break_2d_generated"))
+dx = 0.02
+particles = generate_dam_break_2d_example(output_dir; dx)
+for region in particles
+    @info "$(region.name): $(length(region.positions)) particles"
 end
+@info "Saved DamBreak2D geometry and particles" output_dir

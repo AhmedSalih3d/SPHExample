@@ -100,12 +100,11 @@ function generate_moving_square_2d_example(output_dir; dx = 0.02,
 end
 
 
-if abspath(PROGRAM_FILE) == abspath(@__FILE__)
-    output_dir = normpath(joinpath(@__DIR__, "..", "input", "moving_square_2d_generated"))
-    dx = 0.02
-    particles = generate_moving_square_2d_example(output_dir; dx)
-    for region in particles
-        @info "$(region.name): $(length(region.positions)) particles"
-    end
-    @info "Saved MovingSquare2D geometry and particles" output_dir
+output_dir = normpath(joinpath(@__DIR__, "..", "input", "moving_square_2d_generated"))
+dx = 0.02
+particles = generate_moving_square_2d_example(output_dir; dx)
+for region in particles
+    @info "$(region.name): $(length(region.positions)) particles"
 end
+@info "Saved MovingSquare2D geometry and particles" output_dir
+
