@@ -224,17 +224,18 @@ module SimulationLoggerConfiguration
     
 
     """
-        LogFinal(logger, timer)
+        LogFinal(logger, timer; status="finished")
 
-    Called once the simulation loop ends. Prints total run time and a summary of
-    the collected [`TimerOutput`] information.
+    Print the simulation status, total run time and collected [`TimerOutput`]
+    information when output is finalized.
     """
-    function LogFinal(SimLogger, HourGlass)
+    function LogFinal(SimLogger, HourGlass; status::String = "finished")
         with_logger(SimLogger.Logger) do
             # Get the current date and time
             current_time = now()
             # Format the current date and time
-            formatted_time = "\n Simulation finished at: " * Dates.format(current_time, "dd-mm-yyyy HH:MM:SS")
+            formatted_time = "\n Simulation $(status) at: " *
+                             Dates.format(current_time, "dd-mm-yyyy HH:MM:SS")
 
             @info formatted_time
             @info "\n Simulation took " * @sprintf("%-.2f", TimerOutputs.tottime(HourGlass)/1e9) * "[s]"

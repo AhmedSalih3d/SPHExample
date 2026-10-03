@@ -978,15 +978,26 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     floating_log = nothing
     if floating.active
         floating_log = open(joinpath(SimMetaData.SaveLocation, SimMetaData.SimulationName * "_Floating.csv"), "w")
-        println(floating_log, "Time,Body,GroupMarker,Center:0,Center:1,Velocity:0,Velocity:1,Angle,Omega")
+        if Dimensions == 2
+            println(floating_log, "Time,Body,GroupMarker,Center:0,Center:1,Velocity:0,Velocity:1,Angle,Omega")
+        else
+            println(floating_log, "Time,Body,GroupMarker,Center:0,Center:1,Center:2," *
+                                "Velocity:0,Velocity:1,Velocity:2,Orientation:0,Orientation:1," *
+                                "Orientation:2,Orientation:3,Omega:0,Omega:1,Omega:2")
+        end
     end
     function log_floating(t)
         floating_log === nothing && return nothing
         s = floating_state(floating)
         markers = [geom.GroupMarker for geom in SimGeometry if geom.Type == Floating]
         for b in 1:Int(floating.nbodies)
-            println(floating_log, join((t, b, markers[b], s.center[b]..., s.velocity[b]..., s.angle[b],
-                                        s.omega[b]), ","))
+            if Dimensions == 2
+                println(floating_log, join((t, b, markers[b], s.center[b]..., s.velocity[b]...,
+                                            s.angle[b], s.omega[b]), ","))
+            else
+                println(floating_log, join((t, b, markers[b], s.center[b]..., s.velocity[b]...,
+                                            s.orientation[b]..., s.omega[b]...), ","))
+            end
         end
         flush(floating_log)
         return nothing
@@ -1086,94 +1097,14 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         bind(jobs, collector)
     end
 
-    try
-    while true
-        @timeit HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
-                                                             SimConstants, gpu, cl, sup, red, motion, state;
-                                                             floating = floating)
-        push!(TimeSteps, SimMetaData.CurrentTimeStep)
-        log_floating(SimMetaData.TotalTime)
+    output_workers_stopped = Ref(false)
+    output_streams_closed = Ref(false)
+    output_finalized = Ref(false)
+    exit_finalizer = Ref{Union{Nothing, Function}}(nothing)
 
-        # Publish progress immediately, independently of the queued disk writes.
-        if StoreLogOutput
-            LogStep(SimLogger, SimMetaData, HourGlass)
-            SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
-        end
-
-        SimMetaData.OutputIterationCounter += 1
-        counter = SimMetaData.OutputIterationCounter
-        t_out   = SimMetaData.TotalTime
-        grid    = cl.grid
-
-        @timeit HourGlass "13 Output Frame" begin
-            dl = @timeit HourGlass "13a Wait For Staging Buffers" take!(free)
-            enqueue_download!(dl, gpu)
-            job = OutputFrameJob{Dimensions}(dl, counter, Float64(t_out), grid)
-            if SimMetaData.GPUAsyncOutput
-                put!(jobs, job)
-            else
-                @timeit HourGlass "13b Write Frame" write_frame(job)
-            end
-        end
-
-        if !SimLogger.ToConsole
-            TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) *
-                                (TimerOutputs.tottime(HourGlass) / 1e9 / SimMetaData.TotalTime)
-            @timeit HourGlass "14 Next TimeStep" next!(
-                SimMetaData.ProgressSpecification;
-                showvalues = generate_showvalues(SimMetaData.Iteration, SimMetaData.TotalTime, TimeLeftInSeconds),
-            )
-        end
-
-        if SimMetaData.TotalTime > SimMetaData.SimulationTime
-            @timeit HourGlass "13c Close Data Streams" begin
-                close(jobs)
-                collector === nothing || wait(collector)
-                writer === nothing || wait(writer)
-                output.close_files()
-            end
-
-            # Leave the complete final state on the host, not only the output
-            # fields, so that callers can inspect every particle field.
-            @timeit HourGlass "13d Final Download From GPU" download_particles!(SimParticles, gpu, cl.grid; cells = true)
-
-            if !SimLogger.ToConsole
-                finish!(SimMetaData.ProgressSpecification)
-            end
-            show(HourGlass, sortby = :name)
-            show(HourGlass)
-
-            AutoOpenParaview(SimMetaData, SimConstants, output.variable_names)
-
-            UnicodeTimeStepsGraph = lineplot(1:length(TimeSteps), TimeSteps, title = "Time Steps [s] as a function of iteration",
-                                             name = "Time Steps", xlabel = "Iterations [-]", ylabel = "Time Step Size [s]")
-
-            if StoreLogOutput
-                with_logger(SimLogger.Logger) do
-                    @info "Cell list rebuilds: $(cl.nrebuilds), grid dims: $(cl.grid.dims)"
-                    @info "Host read backs of the step state: $(state.readbacks) for $(SimMetaData.Iteration) steps, " *
-                          "captured step graphs: $(length(state.graphs))"
-                    @info @sprintf("Output frame write time (%s): %.2f [s], %d frames buffered per file flush",
-                                   SimMetaData.GPUAsyncOutput ? "writer task, overlapped with GPU work" : "simulation thread",
-                                   write_time[], output.frames_per_flush)
-                end
-                LogFinal(SimLogger, HourGlass)
-
-                with_logger(SimLogger.Logger) do
-                    @info ""
-                    show(SimLogger.LoggerIo, UnicodeTimeStepsGraph)
-                end
-
-                close(SimLogger.LoggerIo)
-                AutoOpenLogFile(SimLogger, SimMetaData)
-            end
-
-            break
-        end
-    end
-    finally
-        floating_log === nothing || close(floating_log)
-        # never leave the writer task blocked on the job channel if the loop throws
+    function stop_output_workers!()
+        output_workers_stopped[] && return nothing
+        output_workers_stopped[] = true
         close(jobs)
         try
             collector === nothing || wait(collector)
@@ -1181,11 +1112,146 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             try
                 writer === nothing || wait(writer)
             finally
-                # A failed collector may leave queued DMA copies in flight.
-                CUDA.synchronize()
-                foreach(free!, staging)
+                try
+                    CUDA.synchronize()
+                    foreach(free!, staging)
+                finally
+                    floating_log === nothing || close(floating_log)
+                end
             end
         end
+        return nothing
+    end
+
+    function close_output_streams!()
+        output_streams_closed[] && return nothing
+        @timeit HourGlass "13c Close Data Streams" begin
+            try
+                stop_output_workers!()
+            finally
+                output.close_files()
+            end
+        end
+        output_streams_closed[] = true
+        return nothing
+    end
+
+    function finalize_output!(status::String)
+        output_finalized[] && return nothing
+        close_output_streams!()
+
+        show(HourGlass, sortby = :name)
+        show(HourGlass)
+        AutoOpenParaview(SimMetaData, SimConstants, output.variable_names)
+
+        if StoreLogOutput
+            with_logger(SimLogger.Logger) do
+                @info "Cell list rebuilds: $(cl.nrebuilds), grid dims: $(cl.grid.dims)"
+                @info "Host read backs of the step state: $(state.readbacks) for $(SimMetaData.Iteration) steps, " *
+                      "captured step graphs: $(length(state.graphs))"
+                @info @sprintf("Output frame write time (%s): %.2f [s], %d frames buffered per file flush",
+                               SimMetaData.GPUAsyncOutput ? "writer task, overlapped with GPU work" : "simulation thread",
+                               write_time[], output.frames_per_flush)
+            end
+            LogFinal(SimLogger, HourGlass; status = status)
+
+            if !isempty(TimeSteps)
+                time_steps_graph = lineplot(1:length(TimeSteps), TimeSteps,
+                                            title = "Time Steps [s] as a function of iteration",
+                                            name = "Time Steps", xlabel = "Iterations [-]",
+                                            ylabel = "Time Step Size [s]")
+                with_logger(SimLogger.Logger) do
+                    @info ""
+                    show(SimLogger.LoggerIo, time_steps_graph)
+                end
+            end
+
+            close(SimLogger.LoggerIo)
+            AutoOpenLogFile(SimLogger, SimMetaData)
+        end
+
+        output_finalized[] = true
+        exit_finalizer[] = nothing
+        return nothing
+    end
+
+    exit_finalizer[] = () -> begin
+        if !output_finalized[]
+            @warn "Julia is exiting before the simulation completed; closing VTKHDF output, " *
+                  "finalizing the log, and opening ParaView for the data written so far."
+            finalize_output!("stopped as Julia exited")
+        end
+    end
+    atexit() do
+        finalizer = exit_finalizer[]
+        finalizer === nothing || finalizer()
+    end
+    Base.exit_on_sigint(false)
+
+    run_status = "finished"
+    try
+        while true
+            @timeit HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
+                                                                 SimConstants, gpu, cl, sup, red, motion, state;
+                                                                 floating = floating)
+            push!(TimeSteps, SimMetaData.CurrentTimeStep)
+            log_floating(SimMetaData.TotalTime)
+
+            # Publish progress immediately, independently of the queued disk writes.
+            if StoreLogOutput
+                LogStep(SimLogger, SimMetaData, HourGlass)
+                SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
+            end
+
+            SimMetaData.OutputIterationCounter += 1
+            counter = SimMetaData.OutputIterationCounter
+            t_out   = SimMetaData.TotalTime
+            grid    = cl.grid
+
+            @timeit HourGlass "13 Output Frame" begin
+                dl = @timeit HourGlass "13a Wait For Staging Buffers" take!(free)
+                enqueue_download!(dl, gpu)
+                job = OutputFrameJob{Dimensions}(dl, counter, Float64(t_out), grid)
+                if SimMetaData.GPUAsyncOutput
+                    put!(jobs, job)
+                else
+                    @timeit HourGlass "13b Write Frame" write_frame(job)
+                end
+            end
+
+            if !SimLogger.ToConsole
+                TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) *
+                                    (TimerOutputs.tottime(HourGlass) / 1e9 / SimMetaData.TotalTime)
+                @timeit HourGlass "14 Next TimeStep" next!(
+                    SimMetaData.ProgressSpecification;
+                    showvalues = generate_showvalues(SimMetaData.Iteration, SimMetaData.TotalTime, TimeLeftInSeconds),
+                )
+            end
+
+            if SimMetaData.TotalTime > SimMetaData.SimulationTime
+                close_output_streams!()
+
+                # Leave the complete final state on the host, not only the output
+                # fields, so that callers can inspect every particle field.
+                @timeit HourGlass "13d Final Download From GPU" download_particles!(SimParticles, gpu, cl.grid; cells = true)
+
+                if !SimLogger.ToConsole
+                    finish!(SimMetaData.ProgressSpecification)
+                end
+                break
+            end
+        end
+    catch e
+        if e isa InterruptException
+            @warn "Simulation interrupted; closing VTKHDF output, finalizing the log, " *
+                  "and opening ParaView for the data written so far."
+            run_status = "interrupted"
+        else
+            run_status = "failed"
+            rethrow()
+        end
+    finally
+        finalize_output!(run_status)
     end
 
     return nothing

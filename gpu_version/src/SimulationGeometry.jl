@@ -56,7 +56,7 @@ together under gravity and the forces of the surrounding particles.
 `RelativeWeight` is the density of the body relative to `ρ₀`, so each body
 particle weighs `RelativeWeight * m₀`. The body is held still until
 `PauseTime` (DualSPHysics `FtPause`), which lets the fluid settle first.
-Supported in 2D with the symplectic time stepping.
+Supported in 2D and 3D with the symplectic time stepping.
 """
 @kwdef struct FloatingDetails{T}
     RelativeWeight::T

@@ -235,7 +235,7 @@ are sampled in that function; running the export script is optional. Exported in
 writes velocity, density and pressure frames to
 `C:\TestSimulations\LidDrivenCavity2D_GPU` by default.
 
-### Floating bodies: the 2D falling cylinder
+### Floating bodies: the 2D falling cylinder and 3D rigid bodies
 
 A `Floating` particle group is a rigid body moved by gravity and the forces of
 the surrounding particles (the DualSPHysics "floating" object, `RigidAlgorithm
@@ -254,11 +254,14 @@ After each neighbour loop, their accelerations are summed into the force
 `RelativeWeight m₀ N`, and its moment of inertia comes from the particle
 positions. The centre, velocity and angular velocity advance with the
 symplectic predictor and corrector, and the particles are then moved rigidly.
-All of this runs on the device, so steps are still batched and replayed as
-CUDA graphs (`src/GPUFloating.jl`). Floating bodies are 2D only and need
-`SymplecticTimeStepping()`. `<SimulationName>_Floating.csv` in the save
-location records the centre, velocity, angle and angular velocity of every
-body at each output time.
+The same `FloatingDetails` also works with `SPHGeometry{3, FloatType}`:
+3D bodies use a full inertia tensor, vector angular velocity and quaternion
+orientation. All of this runs on the device, so steps are still batched and
+replayed as CUDA graphs (`src/GPUFloating.jl`). Floating bodies need
+`SymplecticTimeStepping()`. `<SimulationName>_Floating.csv` records the centre
+and velocity at each output time; its 2D angle/omega columns remain unchanged,
+while 3D output includes the scalar-first quaternion (`Orientation:0` through
+`Orientation:3`) and the three angular-velocity components.
 
 `example/GenerateFloatingCylinder2D.jl` and `example/FloatingCylinder2d.jl`
 reproduce DualSPHysics `examples/main/11_Floating/CaseFloatingSphereVal2D`.
@@ -620,6 +623,10 @@ the standard *gather* formulation:
   asynchronous). `benchmark/bench_output_interval.jl` measures the run time
   as a function of the output interval; its `--buffer-mib` option sets the
   frame buffer.
+  Pressing `Ctrl+C` during `RunSimulation` drains queued downloads, flushes and
+  closes VTKHDF and log files, then opens the results written so far in
+  ParaView. A Julia exit while the simulation is running triggers the same
+  finalization.
 * **Double positions (`GPUDoublePosition = true`).** DualSPHysics stores
   `posxy`/`posz` as doubles and everything else as floats, and hands the
   interaction kernels a `float4 poscell`: the position relative to the

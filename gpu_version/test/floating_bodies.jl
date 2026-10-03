@@ -89,6 +89,103 @@ body_distances(p) = (x = p.Position[p.Type .== Floating];
         @test abs(heavy[end].Angle) < 0.05
     end
 
+    @testset "3D floating bodies use vector rotation and double positions" begin
+        T = Float32
+        positions = SVector{3, Float64}[
+            SVector{3, Float64}(1, 0, 0), SVector{3, Float64}(-1, 0, 0),
+            SVector{3, Float64}(0, 1, 0), SVector{3, Float64}(0, -1, 0),
+            SVector{3, Float64}(0, 0, 1), SVector{3, Float64}(0, 0, -1),
+        ]
+        geometry = [SPHGeometry{3, T}(
+            Particles = StructArray((Position = positions, Density = fill(T(1000), length(positions)))),
+            GroupMarker = 1, Type = Floating,
+            Floating = FloatingDetails{T}(RelativeWeight = one(T)))]
+        constants = SimulationConstants{T}(; dx = T(0.2), c₀ = T(20))
+        particles = AllocateDataStructures(geometry; position_type = Float64)
+        floating = FloatingArrays(geometry, particles, constants; position_type = Float64)
+
+        torque_axis = SVector{3, T}(T(0.3), T(-0.4), one(T))
+        acceleration = [SVector{3, T}(cross(torque_axis, SVector{3, T}(x)))
+                        for x in positions]
+        device_positions = CUDA.CuArray(particles.Position)
+        device_acceleration = CUDA.CuArray(acceleration)
+        device_type = CUDA.CuArray(particles.Type)
+        device_group = CUDA.CuArray(particles.GroupMarker)
+        step = SPHExampleGPU.GPUStepState.HostStep(T(0.1), zero(T))
+        floating_gpu = SPHExampleGPU.GPUFloating
+
+        floating_gpu.launch_floating_forces!(floating, device_acceleration, device_positions,
+            device_type, device_group, floating.center, constants.m₀, step)
+        floating_gpu.launch_floating_update!(floating, step, zero(T), false)
+        floating_gpu.launch_floating_forces!(floating, device_acceleration, device_positions,
+            device_type, device_group, floating.center_half, constants.m₀, step)
+        floating_gpu.launch_floating_update!(floating, step, zero(T), true)
+
+        device_positions_out = CUDA.zeros(SVector{3, Float64}, length(positions))
+        device_velocity_out = CUDA.zeros(SVector{3, T}, length(positions))
+        floating_gpu.launch_floating_particles!(floating, device_positions_out, device_velocity_out,
+            device_positions, device_type, device_group, step, true)
+
+        state = floating_state(floating)
+        turn = torque_axis * T(0.005)
+        angle = norm(turn)
+        axis = SVector{3, Float64}(turn) / Float64(angle)
+        q_vector = (sin(angle / 2) / angle) * turn
+        @test state.center[1] ≈ SVector{3, Float64}(0, 0, 0) atol = 1e-12
+        @test state.omega[1] ≈ torque_axis * T(0.1) atol = 1e-6
+        @test state.orientation[1] ≈
+              SVector{4, T}(cos(angle / 2), q_vector...) atol = 1e-6
+        initial_position = positions[1]
+        expected_position = cos(Float64(angle)) * initial_position +
+            sin(Float64(angle)) * cross(axis, initial_position) +
+            (1 - cos(Float64(angle))) * dot(axis, initial_position) * axis
+        @test Array(device_positions_out)[1] ≈ expected_position atol = 1e-6
+        @test Array(device_velocity_out)[1] ≈
+              cross(state.omega[1], SVector{3, T}(expected_position)) atol = 1e-6
+    end
+
+    @testset "3D simulation logs quaternion floating state" begin
+        T = Float64
+        dx = 0.2
+        dir = mktempdir()
+        offsets = SVector{3, T}[
+            SVector{3, T}(dx / 2, 0, 0), SVector{3, T}(-dx / 2, 0, 0),
+            SVector{3, T}(0, dx / 2, 0), SVector{3, T}(0, -dx / 2, 0),
+            SVector{3, T}(0, 0, dx / 2), SVector{3, T}(0, 0, -dx / 2),
+        ]
+        body_positions = [x + SVector{3, T}(0, 0, 0.5) for x in offsets]
+        fluid_positions = [SVector{3, T}(0, 0, 0.5)]
+        geometry = [
+            SPHGeometry{3, T}(
+                Particles = StructArray((Position = body_positions,
+                                         Density = fill(T(1000), length(body_positions)))),
+                GroupMarker = 1, Type = Floating,
+                Floating = FloatingDetails{T}(RelativeWeight = one(T))),
+            SPHGeometry{3, T}(
+                Particles = StructArray((Position = fluid_positions,
+                                         Density = fill(T(1000), length(fluid_positions)))),
+                GroupMarker = 2, Type = Fluid),
+        ]
+        meta = SimulationMetaData{3, T, NoShifting, NoKernelOutput, NoMDBC, NoLog}(
+            SimulationName = "Floating3D", SaveLocation = dir,
+            SimulationTime = T(1e-4), OutputTimes = T(1e-4))
+        particles = AllocateDataStructures(geometry, meta)
+        RunSimulation(
+            SimGeometry = geometry, SimMetaData = meta,
+            SimConstants = SimulationConstants{T}(; dx, c₀ = 20.0),
+            SimKernel = SPHKernelInstance{3, T}(WendlandC2(); dx, k = T(sqrt(3))),
+            SimLogger = SimulationLogger(dir; to_console = false), SimParticles = particles,
+            SimViscosity = Laminar(), SimDensityDiffusion = LinearDensityDiffusion(),
+            SimTimeStepping = SymplecticTimeStepping())
+
+        rows = CSV.File(joinpath(dir, "Floating3D_Floating.csv"))
+        @test Symbol("Center:2") in propertynames(rows)
+        @test Symbol("Orientation:3") in propertynames(rows)
+        @test Symbol("Omega:2") in propertynames(rows)
+        @test rows[1][Symbol("Center:2")] ≈ 0.5
+        @test rows[1][Symbol("Orientation:0")] ≈ 1.0
+    end
+
     @testset "floating bodies need the symplectic scheme and the details" begin
         @test_throws ErrorException FloatingArrays(
             [SPHGeometry{2, Float64}(CSVFile = "", GroupMarker = 1, Type = Floating)],
