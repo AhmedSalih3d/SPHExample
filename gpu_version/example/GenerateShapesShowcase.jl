@@ -121,13 +121,11 @@ function generate_shapes_showcase(output_dir; dx = 0.02,
     return (; two_d, three_d)
 end
 
-if abspath(PROGRAM_FILE) == @__FILE__
-    output_dir = length(ARGS) >= 1 ? ARGS[1] :
-                 normpath(joinpath(@__DIR__, "..", "input", "shapes_showcase_generated"))
-    dx = length(ARGS) >= 2 ? parse(Float64, ARGS[2]) : 0.02
-    cases = generate_shapes_showcase(output_dir; dx)
-    for (scene, particles) in pairs(cases), region in particles
-        @info "$(scene) $(region.name): $(length(region.positions)) particles"
-    end
-    @info "Saved the shapes showcase" output_dir
+
+output_dir = normpath(joinpath(@__DIR__, "..", "input", "shapes_showcase_generated"))
+dx = 0.02
+cases = generate_shapes_showcase(output_dir; dx)
+for (scene, particles) in pairs(cases), region in particles
+    @info "$(scene) $(region.name): $(length(region.positions)) particles"
 end
+@info "Saved the shapes showcase" output_dir
