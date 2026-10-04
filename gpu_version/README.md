@@ -103,7 +103,10 @@ overlap and the fluid stops one spacing short of the walls and the free
 surface. Pass `offset` to a `ParticleRegion` to shrink it by that distance (for
 example `ParticleRegion("Fluid", water, Fluid; offset = 0.5dx)` keeps the fluid
 at least half a spacing away from every edge, including slanted ones); a
-negative `offset` grows the region. `SavePolygonVTKHDF` and the single file `SaveVTKHDF(path, points, ...)`
+negative `offset` grows the region. A `Float32` spacing such as
+`SimConstants.dx` is sampled as the decimal it represents (`0.02f0` → `0.02`):
+widening it to `0.019999999552965164` would drift the lattice off the wall
+outlines and drop wall particles. `SavePolygonVTKHDF` and the single file `SaveVTKHDF(path, points, ...)`
 live in `src/ProduceHDFVTK.jl`. The geometry tests run without a GPU:
 `julia --project=gpu_version gpu_version/test/still_wedge_geometry.jl`.
 
