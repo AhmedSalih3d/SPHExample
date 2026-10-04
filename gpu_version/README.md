@@ -423,27 +423,32 @@ exactly. The drawing tests need no GPU:
 The package ships a [PrecompileTools](https://github.com/JuliaLang/PrecompileTools.jl)
 workload (`src/PrecompileWorkload.jl`). When the package is precompiled it
 writes tiny versions of the example cases (2D/3D, mDBC and DBC, a moving body
-with planar shifting) and runs them. The host code (CSV input, logging, VTKHDF
-output, the time loop) is then cached in the package image. If a working GPU is
-present during precompilation, so are the CUDA kernels. On an RTX A1000 laptop
-GPU the first 2D dam break run in a new session drops from about 45 s to about
-1 s. Loading the package (`using SPHExampleGPU`, about 5 s, mostly CUDA.jl)
-stays the same, and no sysimage is needed.
+with planar shifting) for one short output interval. This exercises the solver
+and output paths without simulating extra physical time. The host code (CSV
+input, logging, VTKHDF output, the time loop) is then cached in the package
+image. If a working GPU is present during precompilation, so are the CUDA
+kernels for one lane and the automatic lane choice. On an RTX A1000 laptop GPU
+the first 2D dam break run in a new session drops from about 45 s to about 1 s.
+Loading the package (`using SPHExampleGPU`, about 5 s, mostly CUDA.jl) stays the
+same, and no sysimage is needed.
 
 This has a cost and some limits:
 
-* Precompilation takes longer: about 2 minutes with a GPU and 30 s without one
-  on the machine above. It runs once per package or dependency change, not once
+* With dependencies already precompiled, the package takes about 90 s to
+  precompile on the RTX A1000 above, and about 30 s without a working GPU. A
+  clean setup also needs to precompile dependencies, which adds to this time.
+  Package precompilation runs once per package or dependency change, not once
   per session.
 * Kernels are cached only for the GPU architecture present during
   precompilation. Without a GPU (for example on an HPC login node) only the host
   code is cached, and kernels compile on the first run. Precompile on a GPU node
   to cache them as well.
-* Only the precompiled types are cached. Other types still work but compile on
-  first use. By default that means `Float32`, the `WendlandC2` kernel,
-  `SymplecticTimeStepping`, and the viscosity and density diffusion models of
-  the examples. Keep `FloatType` and the models consistent between runs to
-  benefit.
+* Only the precompiled types and lane counts are cached. Other types and
+  explicit lane counts still work but compile on first use. By default that
+  means `Float32`, the `WendlandC2` kernel, `SymplecticTimeStepping`, the
+  viscosity and density diffusion models of the examples, and one-lane plus
+  automatic gather kernels. Keep `FloatType`, the models and (for explicit
+  tuning) `GPULanesPerParticle` consistent between runs to benefit.
 
 The following preferences, stored in `LocalPreferences.toml`, change the
 workload. Restart Julia after setting them; the package then precompiles again.
@@ -452,8 +457,8 @@ workload. Restart Julia after setting them; the package then precompiles again.
 using Preferences, SPHExampleGPU
 # also cache Float64 (the test suite and CPU parity runs use it)
 set_preferences!(SPHExampleGPU, "precompile_float_types" => ["Float32", "Float64"])
-# lanes per particle compiled for the gather kernels (default [1, 2, 4, 8, 16, 32])
-set_preferences!(SPHExampleGPU, "precompile_gpu_lanes" => [1])
+# also cache every supported explicit gather lane count (default [1], plus automatic)
+set_preferences!(SPHExampleGPU, "precompile_gpu_lanes" => [1, 2, 4, 8, 16, 32])
 # also cache the kernels of GPUDoublePosition = true (cell relative positions)
 set_preferences!(SPHExampleGPU, "precompile_double_position" => true)
 # turn the workload off, e.g. while editing the package source

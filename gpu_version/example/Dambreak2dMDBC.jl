@@ -25,6 +25,9 @@ let
 
     # Create SPHGeometry instances
     # Sample particles here; the generator script supplies shape definitions.
+    # The commented CSV inputs below are the DualSPHysics Dp0.02 files: set
+    # dx = 0.02 when using them. Compare generated and CSV runs at the same dx;
+    # at dx = 0.01 the flow develops cavities that dx = 0.02 smooths out.
     polygons = dam_break_2d_polygons()
     regions = [
         ParticleRegion("Bound", polygons.tank, Fixed),
@@ -76,7 +79,7 @@ let
         FloatType,
         NoShifting,
         NoKernelOutput,
-        SimpleMDBC,
+        NoMDBC,
         StoreLog,
     }(
         SimulationName = "DamBreak2D",
