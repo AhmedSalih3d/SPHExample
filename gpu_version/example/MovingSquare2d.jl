@@ -119,7 +119,7 @@ let
 
     CleanUpSimulationFolder(SimMetaDataMovingSquare.SaveLocation)
 
-    motion_preview = joinpath(moving_square_input_dir, "MovingSquare2D_Motion.vtkhdf")
+    motion_preview = joinpath(SimMetaDataMovingSquare.SaveLocation, "MovingSquare2D_Motion.vtkhdf")
     SavePolygonMotionSequence(
         motion_preview,
         (; polygons.tank, polygons.square);
