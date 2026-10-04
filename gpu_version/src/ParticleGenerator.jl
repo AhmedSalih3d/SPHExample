@@ -367,8 +367,10 @@ end
 Write particles in the CSV layout read by `SPHGeometry` (`Idp`, `Vel:0..2`,
 `Rhop`, `Points:0..2`). 2D positions are stored as `(x, 0, y)` because the
 loader reads `Points:0` and `Points:2` in 2D. `density` is a number or one
-value per particle. Returns the id following the last particle written, so
-consecutive files can continue the numbering.
+value per particle. Coordinates and densities are written as `Float64`, the
+precision used by the CSV loader, so `Float32` inputs round-trip exactly when
+promoted for double-position simulations. Returns the id following the last
+particle written, so consecutive files can continue the numbering.
 """
 function write_particle_csv(path::AbstractString, positions; density, first_id::Integer = 0)
     densities = density isa Number ? Iterators.repeated(density) : density
@@ -376,8 +378,10 @@ function write_particle_csv(path::AbstractString, positions; density, first_id::
     open(path, "w") do io
         println(io, join("\"" .* header .* "\"", ","))
         for (k, (x, ρ)) in enumerate(zip(positions, densities))
-            xyz = length(x) == 2 ? (x[1], 0.0, x[2]) : (x[1], x[2], x[3])
-            println(io, first_id + k - 1, ",0,0,0,", ρ, ",", join(xyz, ","))
+            xyz = length(x) == 2 ? (Float64(x[1]), 0.0, Float64(x[2])) :
+                                   Float64.(x)
+            println(io, first_id + k - 1, ",0,0,0,", Float64(ρ), ",",
+                    join(xyz, ","))
         end
     end
     return first_id + length(positions)

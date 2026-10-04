@@ -79,6 +79,8 @@ The CSV constructor loads particles once, mapping `(x, z)` in 2D and converting
 zero based CSV IDs to one based IDs. Positions retain their input precision
 until allocation, including for `GPUDoublePosition` runs. Allocation copies the
 stored particles, so the geometry can be reused for independent simulations.
+Coincident positions remain separate particles; CSV loading does not deduplicate
+rows.
 """
 struct SPHGeometry{D, T}
     Particles::StructArray

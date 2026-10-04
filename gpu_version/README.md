@@ -55,6 +55,10 @@ converting zero based IDs. Allocation no longer reads files. The StillWedge
 and other examples with generators sample particles inside their main run files.
 Their previous `CSVFile` settings remain commented out, and standalone generators
 remain available for CSV/VTKHDF export.
+The first-region ownership rule applies only when all regions are passed to
+`sample_particles` together; CSV loading preserves every row, including
+coincident positions. `write_particle_csv` writes coordinates and densities as
+`Float64`, preserving `Float32` values when promoted for double-position runs.
 Boundary normals can still be loaded separately with `ParticleNormalsPath`.
 For `SimpleMDBC`, supplying `GhostPoints` and `GhostNormals` on every boundary
 group also supports a run entirely from memory; cavity and 2D dam break use this.

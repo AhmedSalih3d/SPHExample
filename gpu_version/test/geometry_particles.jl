@@ -33,9 +33,36 @@ using Meshes
                 SVector{d, Float32}
         end
 
+        for d in (2, 3)
+            positions = [SVector{d, Float32}(ntuple(k -> Float32(k) * 0.1f0, d)),
+                         SVector{d, Float32}(ntuple(k -> Float32(k + 1) * 0.1f0, d)),
+                         SVector{d, Float32}(ntuple(k -> Float32(k) * 0.1f0, d))]
+            density = Float32[1000.1, 1000.2, 1000.3]
+            path = joinpath(dir, "float32_particles$(d).csv")
+            write_particle_csv(path, positions; density)
+            loaded = SPHGeometry{d, Float32}(CSVFile = path,
+                GroupMarker = 1, Type = Fluid)
+            direct = SPHGeometry{d, Float32}(Particles = StructArray((
+                Position = positions, Density = density, ID = [1, 2, 3])),
+                GroupMarker = 1, Type = Fluid)
+            meta = SimulationMetaData{d, Float32}(SimulationName = "geometry",
+                SaveLocation = dir, GPUDoublePosition = true)
+            loaded_particles = AllocateDataStructures([loaded], meta)
+            direct_particles = AllocateDataStructures([direct], meta)
+            @test loaded_particles == direct_particles
+            @test loaded_particles.Position[1] == loaded_particles.Position[3]
+        end
+
         regions = [ParticleRegion("wall", PolyArea([(0., 0.), (1., 0.),
                     (1., 1.), (0., 1.)]), Fixed)]
         region = only(sample_particles(regions, 0.5))
+        overlapping = sample_particles([
+            ParticleRegion("first", regions[1].geometry, Fixed),
+            ParticleRegion("second", regions[1].geometry, Fluid),
+        ], 0.5)
+        @test !isempty(overlapping[1].positions)
+        @test isempty(overlapping[2].positions)
+
         geometry = SPHGeometry{2, Float32}(region.positions;
             Density = 1000, GroupMarker = 1, Type = region.type)
         fluid = SPHGeometry{2, Float32}([SVector(2., 2.)];
