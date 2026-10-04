@@ -10,6 +10,7 @@
 #         [output_dir] [dx]
 using SPHExampleGPU
 using Meshes
+using StaticArrays: SVector
 
 """
     moving_square_2d_polygons(; tank_width = 10.0, tank_height = 5.0,
@@ -59,8 +60,8 @@ end
         SimConstants = SimulationConstants{Float64}(; dx, c₀ = 28, g = 0))
 
 Write the polygons (`MovingSquare2D_Geometry.vtkhdf`), sampled particles
-(`MovingSquare2D_Dp<dx>_Particles.vtkhdf`) and CSV input files
-(`MovingSquare2D_Dp<dx>_<Fixed|Fluid|Square>.csv`) to `output_dir`.
+(`MovingSquare2D_Dp<dx>_Particles.vtkhdf`), CSV input files and a ParaView
+motion preview (`MovingSquare2D_Motion.vtkhdf`) to `output_dir`.
 
 All particles start at `ρ₀`, matching the zero-gravity moving-square case.
 Pass the simulation's `SimConstants` to use its reference density.
@@ -125,14 +126,29 @@ function generate_moving_square_2d_example(
         markers,
     )
 
+    preview_motion = MotionDetails{2, Float64}(
+        Velocity = 2.8,
+        StartTime = 0.0,
+        Duration = 3.0,
+        Direction = SVector{2, Float64}(1.0, 0.0),
+    )
+    SavePolygonMotionSequence(
+        joinpath(output_dir, "MovingSquare2D_Motion.vtkhdf"),
+        (; tank = polygons.tank, square = polygons.square);
+        motions = (; square = preview_motion),
+        times = 0.0:0.1:3.0,
+    )
+
     return particles
 end
 
-output_dir = normpath(joinpath(@__DIR__, "..", "input", "moving_square_2d_generated"))
-dx = 0.02
-particles = generate_moving_square_2d_example(output_dir; dx)
-for region in particles
-    @info "$(region.name): $(length(region.positions)) particles"
+if abspath(PROGRAM_FILE) == abspath(@__FILE__)
+    output_dir = normpath(joinpath(@__DIR__, "..", "input", "moving_square_2d_generated"))
+    dx = 0.02
+    particles = generate_moving_square_2d_example(output_dir; dx)
+    for region in particles
+        @info "$(region.name): $(length(region.positions)) particles"
+    end
+    @info "Saved MovingSquare2D geometry, particles and motion preview" output_dir
+    OpenParaviewFile(joinpath(output_dir, "MovingSquare2D_Motion.vtkhdf"))
 end
-@info "Saved MovingSquare2D geometry and particles" output_dir
-

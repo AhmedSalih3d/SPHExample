@@ -18,18 +18,31 @@ function moving_square_reference_nodes(name, dx)
     return moving_square_lattice_nodes(positions, dx)
 end
 
-function polygon_motion_region_bounds(path, region_id, axis)
+function polygon_motion_region_bounds(path, region_id, axis, step = 1)
     return h5open(path, "r") do file
         root = file["VTKHDF"]
-        regions = read(root["CellData/Region"])
+        npoints = read(root["NumberOfPoints"])[step]
+        point_start = read(root["Steps/PointOffsets"])[step]
+        points = read(root["Points"])[:, point_start + 1:point_start + npoints]
+
+        ncells = read(root["Polygons/NumberOfCells"])[step]
+        region_start = read(root["Steps/CellDataOffsets/Region"])[step]
+        regions = read(root["CellData/Region"])[region_start + 1:region_start + ncells]
+        offsets_start = (step - 1) * (ncells + 1)
         offsets = read(root["Polygons/Offsets"])
+        offsets = offsets[offsets_start + 1:offsets_start + ncells + 1]
+
+        connectivity_start = read(root["Steps/ConnectivityIdOffsets"])[3, step]
+        nconnectivity = read(root["Polygons/NumberOfConnectivityIds"])[step]
         connectivity = read(root["Polygons/Connectivity"])
+        connectivity =
+            connectivity[(connectivity_start + 1):(connectivity_start + nconnectivity)]
         point_ids = Int[]
         for cell in eachindex(regions)
             regions[cell] == region_id || continue
             append!(point_ids, connectivity[offsets[cell] + 1:offsets[cell + 1]] .+ 1)
         end
-        return extrema(read(root["Points"])[axis, unique(point_ids)])
+        return extrema(points[axis, unique(point_ids)])
     end
 end
 
@@ -54,26 +67,28 @@ end
             ),
         )
         times = [0.0, 0.5, 1.0, 1.5, 2.0]
-        path = joinpath(directory, "preview.pvd")
+        path = joinpath(directory, "preview.vtkhdf")
 
         @test SavePolygonMotionSequence(path, regions; motions, times) == path
         @test isfile(path)
-        collection = replace(read(path, String), "\\" => "/")
-        @test count("<DataSet ", collection) == length(times)
-        @test occursin("timestep=\"0.0\"", collection)
-        @test occursin("preview_frames/frame_000001.vtkhdf", collection)
-        @test all(isfile(joinpath(directory, "preview_frames",
-                                 "frame_$(lpad(string(i), 6, '0')).vtkhdf"))
-                  for i in eachindex(times))
+        h5open(path, "r") do file
+            root = file["VTKHDF"]
+            steps = root["Steps"]
+            @test attrs(root)["Type"] == "PolyData"
+            @test attrs(root)["Version"] == Int64[2, 5]
+            @test read(steps["Values"]) == times
+            @test HDF5.read_attribute(steps, "NSteps") == length(times)
+            @test read(root["Polygons/NumberOfCells"]) == fill(2, length(times))
+            @test read(steps["ConnectivityIdOffsets"])[3, :] ==
+                  collect(0:8:8 * (length(times) - 1))
+        end
 
         expected_x = [(1.0, 2.0), (1.0, 2.0), (2.0, 3.0),
                       (3.0, 4.0), (3.0, 4.0)]
-        for (i, bounds) in enumerate(expected_x)
-            frame = joinpath(directory, "preview_frames",
-                             "frame_$(lpad(string(i), 6, '0')).vtkhdf")
-            @test polygon_motion_region_bounds(frame, 1, 1) == (0.0, 0.5)
-            @test collect(polygon_motion_region_bounds(frame, 2, 1)) ≈ collect(bounds)
-            @test polygon_motion_region_bounds(frame, 2, 2) == (2.0, 3.0)
+        for (step, bounds) in enumerate(expected_x)
+            @test polygon_motion_region_bounds(path, 1, 1, step) == (0.0, 0.5)
+            @test collect(polygon_motion_region_bounds(path, 2, 1, step)) ≈ collect(bounds)
+            @test polygon_motion_region_bounds(path, 2, 2, step) == (2.0, 3.0)
         end
 
         @test_throws ArgumentError SavePolygonMotionSequence(
@@ -91,13 +106,12 @@ end
                 Duration = 1.0,
                 Direction = SVector{3, Float64}(0.0, 0.0, 1.0),
             )
-            path = joinpath(directory, "block.pvd")
+            path = joinpath(directory, "block.vtkhdf")
             SavePolygonMotionSequence(path, (; block); motions = (; block = motion),
                                       times = [0.0, 1.0])
 
             @test polygon_motion_region_bounds(
-                joinpath(directory, "block_frames", "frame_000002.vtkhdf"), 1, 3) ==
-                  (1.0, 2.0)
+                path, 1, 3, 2) == (1.0, 2.0)
         end
     end
 end
@@ -148,6 +162,7 @@ end
         generated = generate_moving_square_2d_example(directory; dx)
         prefix = joinpath(directory, "MovingSquare2D_Dp0.02")
         @test isfile(joinpath(directory, "MovingSquare2D_Geometry.vtkhdf"))
+        @test isfile(joinpath(directory, "MovingSquare2D_Motion.vtkhdf"))
         @test isfile("$(prefix)_Particles.vtkhdf")
         @test all(name -> isfile("$(prefix)_$(name).csv"), ("Fixed", "Fluid", "Square"))
         @test all(region -> all(==(1000.0), region.density), generated)

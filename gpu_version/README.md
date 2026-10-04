@@ -176,13 +176,16 @@ julia --project=gpu_version gpu_version/example/MovingSquare2d.jl
 ```
 
 The first command writes to `gpu_version/input/moving_square_2d_generated/`
-by default. It creates VTKHDF files for the polygons and particles, plus
-`Fixed`, `Fluid` and `Square` CSV files for optional file input. The simulation
-samples its own particles at its configured `dx`; the export command is optional.
+by default. It creates VTKHDF files for the polygons, particles and prescribed
+motion sequence, plus `Fixed`, `Fluid` and `Square` CSV files for optional file
+input. It opens the motion preview in ParaView when `paraview` is on `PATH`.
+This generator does not run the
+simulation or need a GPU. The simulation samples its own particles at its
+configured `dx`; the CSV export is optional.
 
-To preview a prescribed motion before running the simulation, export a ParaView
-`.pvd` collection of polygon frames. `motions` maps region names to
-`MotionDetails`, and `times` gives the frame times in seconds:
+To preview a prescribed motion before running the simulation, write a temporal
+VTKHDF `PolyData` file. `motions` maps region names to `MotionDetails`, and
+`times` gives the frame times in seconds:
 
 ```julia
 using SPHExampleGPU
@@ -198,15 +201,15 @@ motion = MotionDetails{2, Float64}(
     Direction = SVector{2, Float64}(1.0, 0.0),
 )
 SavePolygonMotionSequence(
-    "MovingSquare2D_Motion.pvd",
+    "MovingSquare2D_Motion.vtkhdf",
     (; tank, square);
     motions = (; square = motion),
     times = 0.0:0.1:3.0,
 )
 ```
 
-This writes the `.pvd` file and a `MovingSquare2D_Motion_frames/` directory of
-static VTKHDF snapshots that ParaView can animate. Regions omitted from
+This writes a single temporal VTKHDF `PolyData` file with the polygon geometry
+and time steps. Regions omitted from
 `motions` remain fixed, as do regions whose `MotionDetails` has
 `MoveParticles = false`. The preview follows the prescribed translation only;
 it does not predict fluid interactions.

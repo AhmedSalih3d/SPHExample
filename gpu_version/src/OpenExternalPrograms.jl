@@ -5,7 +5,7 @@ simulation run to quickly inspect the produced output.
 """
 module OpenExternalPrograms
 
-export AutoOpenLogFile, AutoOpenParaview
+export AutoOpenLogFile, AutoOpenParaview, OpenParaviewFile
 
 using ..SimulationLoggerConfiguration
 using ..SimulationMetaDataConfiguration
@@ -25,6 +25,30 @@ function _default_open_command(path::AbstractString)
     else
         return `xdg-open $(path)`
     end
+end
+
+"""
+    OpenParaviewFile(filepath; paraview_cmd = "paraview")
+
+Open an existing VTK or VTKHDF file in ParaView. Pass `paraview_cmd = nothing`
+to skip launching ParaView.
+"""
+function OpenParaviewFile(filepath::AbstractString;
+                          paraview_cmd::Union{String,Nothing}="paraview")
+    isfile(filepath) ||
+        throw(ArgumentError("ParaView input file does not exist: $filepath"))
+    paraview_cmd === nothing && return nothing
+    if isnothing(Sys.which(paraview_cmd))
+        @warn("ParaView command $(paraview_cmd) not found; skipping visualisation")
+        return nothing
+    end
+
+    try
+        run(`$(paraview_cmd) $(abspath(filepath))`; wait=false)
+    catch e
+        @error("Unable to open $(filepath) in ParaView", e)
+    end
+    return nothing
 end
 
 

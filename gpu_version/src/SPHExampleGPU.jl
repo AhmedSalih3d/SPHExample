@@ -114,7 +114,7 @@ module SPHExampleGPU
     export ParticleRegion, sample_particles, hydrostatic_density, write_particle_csv
 
     using .OpenExternalPrograms
-    export AutoOpenLogFile, AutoOpenParaview
+    export AutoOpenLogFile, AutoOpenParaview, OpenParaviewFile
 
     include("PrecompileWorkload.jl")
 

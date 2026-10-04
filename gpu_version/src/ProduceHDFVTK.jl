@@ -237,8 +237,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     """
         SavePolygonMotionSequence(filepath, regions; motions, times)
 
-    Write a ParaView `.pvd` time collection of polygon regions at `times`.
-    Each frame is a static VTKHDF file in a sibling `<name>_frames` directory.
+    Write a transient VTKHDF `PolyData` file containing polygon regions at
+    `times`. `filepath` must end in `.vtkhdf`.
     `regions` is a named tuple of polygon geometries accepted by
     `SavePolygonVTKHDF`; `motions` maps the names of translating regions to
     `MotionDetails`. Unmapped regions remain fixed.
@@ -255,8 +255,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                                        times::AbstractVector{<:Real})
         isempty(regions) && throw(ArgumentError("at least one polygon region is required"))
         isempty(motions) && throw(ArgumentError("at least one moving region is required"))
-        lowercase(splitext(filepath)[2]) == ".pvd" ||
-            throw(ArgumentError("motion sequence filepath must have a .pvd extension"))
+        lowercase(splitext(filepath)[2]) == ".vtkhdf" ||
+            throw(ArgumentError("motion sequence filepath must have a .vtkhdf extension"))
 
         frame_times = Float64.(times)
         length(frame_times) >= 2 ||
@@ -280,33 +280,77 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             validate_preview_motion(name, motion)
         end
 
-        output_path = abspath(filepath)
-        output_dir = dirname(output_path)
-        name = first(splitext(basename(output_path)))
-        frames_dir_name = "$(name)_frames"
-        frames_dir = joinpath(output_dir, frames_dir_name)
-        mkpath(frames_dir)
+        points, connectivity, offsets, region_ids = polygonal_regions(values(regions))
+        npoints = length(points)
+        ncells = length(region_ids)
+        nconnectivity = length(connectivity)
+        nsteps = length(frame_times)
+        positions = Matrix{Float64}(undef, 3, npoints * nsteps)
+        step_connectivity = Vector{Int64}(undef, nconnectivity * nsteps)
+        step_offsets = Vector{Int64}(undef, length(offsets) * nsteps)
+        step_regions = Vector{Int32}(undef, ncells * nsteps)
 
-        frame_paths = String[]
-        for (index, time) in enumerate(frame_times)
-            frame_name = "frame_$(lpad(string(index), 6, '0')).vtkhdf"
-            frame_path = joinpath(frames_dir, frame_name)
+        for (step, time) in enumerate(frame_times)
             frame_regions = polygon_regions_at_time(regions, motions, time)
-            SavePolygonVTKHDF(frame_path, frame_regions)
-            push!(frame_paths, replace(relpath(frame_path, output_dir), "\\" => "/"))
+            frame_points, frame_connectivity, frame_offsets, frame_region_ids =
+                polygonal_regions(values(frame_regions))
+            if length(frame_points) != npoints ||
+               length(frame_connectivity) != nconnectivity ||
+               frame_offsets != offsets || length(frame_region_ids) != ncells
+                throw(ArgumentError("polygon topology changed at frame time $time"))
+            end
+
+            point_columns = ((step - 1) * npoints + 1):(step * npoints)
+            connectivity_rows = ((step - 1) * nconnectivity + 1):(step * nconnectivity)
+            offset_rows = ((step - 1) * length(offsets) + 1):(step * length(offsets))
+            region_rows = ((step - 1) * ncells + 1):(step * ncells)
+            positions[:, point_columns] = stack(frame_points)
+            step_connectivity[connectivity_rows] = frame_connectivity
+            step_offsets[offset_rows] = frame_offsets
+            step_regions[region_rows] = frame_region_ids
         end
 
-        open(output_path, "w") do io
-            println(io, "<?xml version=\"1.0\"?>")
-            println(io, "<VTKFile type=\"Collection\" version=\"0.1\" byte_order=\"LittleEndian\">")
-            println(io, "  <Collection>")
-            for (time, frame_path) in zip(frame_times, frame_paths)
-                escaped_path = escape_xml_attribute(frame_path)
-                println(io, "    <DataSet timestep=\"$time\" group=\"\" part=\"0\" " *
-                            "file=\"$escaped_path\"/>")
+        output_path = abspath(filepath)
+        mkpath(dirname(output_path))
+        h5open(output_path, "w") do io
+            root = HDF5.create_group(io, "VTKHDF")
+            HDF5.attrs(root)["Version"] = Int64[2, 5]
+            write_ascii_attribute(root, "Type", "PolyData")
+            root["Points"] = positions
+            root["NumberOfPoints"] = fill(Int64(npoints), nsteps)
+
+            empty_offsets = zeros(Int64, nsteps)
+            write_temporal_polydata_cells(
+                root, "Vertices", 0, 0, Int64[], empty_offsets, nsteps,
+            )
+            write_temporal_polydata_cells(
+                root, "Lines", 0, 0, Int64[], empty_offsets, nsteps,
+            )
+            write_temporal_polydata_cells(
+                root, "Polygons", ncells, nconnectivity, step_connectivity,
+                step_offsets, nsteps,
+            )
+            write_temporal_polydata_cells(
+                root, "Strips", 0, 0, Int64[], empty_offsets, nsteps,
+            )
+
+            cell_data = HDF5.create_group(root, "CellData")
+            cell_data["Region"] = step_regions
+
+            steps = HDF5.create_group(root, "Steps")
+            HDF5.attrs(steps)["NSteps"] = Int64(nsteps)
+            steps["Values"] = frame_times
+            steps["PointOffsets"] = Int64.(0:npoints:(nsteps - 1) * npoints)
+            steps["PartOffsets"] = zeros(Int64, nsteps)
+            steps["CellOffsets"] = zeros(Int64, 4, nsteps)
+            connectivity_offsets = zeros(Int64, 4, nsteps)
+            for step in 1:nsteps
+                connectivity_offsets[3, step] = (step - 1) * nconnectivity
             end
-            println(io, "  </Collection>")
-            println(io, "</VTKFile>")
+            steps["ConnectivityIdOffsets"] = connectivity_offsets
+
+            cell_data_offsets = HDF5.create_group(steps, "CellDataOffsets")
+            cell_data_offsets["Region"] = Int64.(0:ncells:(nsteps - 1) * ncells)
         end
         return filepath
     end
@@ -343,6 +387,17 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         return NamedTuple{keys(regions)}(shapes)
     end
 
+    function write_temporal_polydata_cells(
+        root, name, ncells, nconnectivity, connectivity, offsets, nsteps,
+    )
+        group = HDF5.create_group(root, name)
+        group["NumberOfCells"] = fill(Int64(ncells), nsteps)
+        group["NumberOfConnectivityIds"] = fill(Int64(nconnectivity), nsteps)
+        group["Connectivity"] = connectivity
+        group["Offsets"] = offsets
+        return group
+    end
+
     function preview_displacement(motion::MotionDetails, time)
         start_time = Float64(motion.StartTime)
         end_time = start_time + Float64(motion.Duration)
@@ -357,10 +412,6 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         end
         return translate(region, displacement)
     end
-
-    escape_xml_attribute(value::AbstractString) =
-        replace(value, "&" => "&amp;", "\"" => "&quot;", "<" => "&lt;",
-                ">" => "&gt;", "'" => "&apos;")
 
     """
     Convert the polygons of all `regions` into one point list with VTK style
