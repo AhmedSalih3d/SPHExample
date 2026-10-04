@@ -12,7 +12,8 @@
 # `Preferences.set_preferences!(SPHExampleGPU, ...)` and restart Julia):
 #   - `precompile_float_types`: float types to precompile, default `["Float32"]`
 #   - `precompile_gpu_lanes`:   lanes per particle compiled for the gather
-#                               kernels, default `[1, 2, 4, 8, 16, 32]`
+#                               kernels, default `[1]`; automatic selection
+#                               is also compiled
 #   - `precompile_double_position`: also run every case with
 #                               `GPUDoublePosition = true` (the cell relative
 #                               kernel variants), default `false`
@@ -29,7 +30,7 @@ const _PRECOMPILE_FLOAT_TYPES = let
 end
 
 const _PRECOMPILE_GPU_LANES = let
-    lanes = @load_preference("precompile_gpu_lanes", [1, 2, 4, 8, 16, 32])
+    lanes = @load_preference("precompile_gpu_lanes", [1])
     Int[k for k in lanes if ispow2(k) && 1 <= k <= 32]
 end
 
@@ -79,7 +80,9 @@ function _precompile_cases(dir::String, ::Type{T}) where {T}
     g2 = _write_precompile_geometry(dir, 2, dx)
     g3 = _write_precompile_geometry(dir, 3, dx)
     save(name) = mkpath(joinpath(dir, "$(name)_$(T)"))
-    time = (SimulationTime = 2e-3, VisualizeInParaview = false, OpenLogFile = false)
+    # One short output interval exercises stepping and output without
+    # simulating physical time that adds no further specializations.
+    time = (SimulationTime = 1e-4, VisualizeInParaview = false, OpenLogFile = false)
 
     # example/Dambreak2dMDBC.jl, StillWedgeMDBC.jl
     c2mdbc = SimulationConstants{T}(dx = dx, c₀ = 88.14487860902641, δᵩ = 0.1, CFL = 0.5, α = 0.01)
@@ -88,7 +91,7 @@ function _precompile_cases(dir::String, ::Type{T}) where {T}
                         SPHGeometry{2, T}(CSVFile = g2.fluid, GroupMarker = 2, Type = Fluid)],
         SimMetaData  = SimulationMetaData{2, T, NoShifting, NoKernelOutput, SimpleMDBC, StoreLog}(;
                            SimulationName = "MDBC2D", SaveLocation = save("MDBC2D"),
-                           OutputTimes = collect(1e-3:1e-3:2e-3), ExportGridCells = true, time...),
+                           OutputTimes = [time.SimulationTime], ExportGridCells = true, time...),
         SimConstants = c2mdbc,
         SimKernel    = SPHKernelInstance{2, T}(WendlandC2(); dx = c2mdbc.dx),
         SimViscosity = ArtificialViscosity(),
@@ -107,7 +110,7 @@ function _precompile_cases(dir::String, ::Type{T}) where {T}
                                                                     Direction = SVector{2, T}(1, 0)))],
         SimMetaData  = SimulationMetaData{2, T, PlanarShifting, NoKernelOutput, NoMDBC, StoreLog}(;
                            SimulationName = "Moving2D", SaveLocation = save("Moving2D"),
-                           OutputTimes = 1e-3, time...),
+                           OutputTimes = time.SimulationTime, time...),
         SimConstants = c2move,
         SimKernel    = SPHKernelInstance{2, T}(WendlandC2(); dx = c2move.dx, k = T(sqrt(2))),
         SimViscosity = LaminarSPS(),
@@ -123,7 +126,7 @@ function _precompile_cases(dir::String, ::Type{T}) where {T}
                         SPHGeometry{3, T}(CSVFile = g3.fluid, GroupMarker = 2, Type = Fluid)],
         SimMetaData  = SimulationMetaData{3, T, NoShifting, NoKernelOutput, SimpleMDBC, StoreLog}(;
                            SimulationName = "MDBC3D", SaveLocation = save("MDBC3D"),
-                           OutputTimes = 1e-3, time...),
+                           OutputTimes = time.SimulationTime, time...),
         SimConstants = c3mdbc,
         SimKernel    = SPHKernelInstance{3, T}(WendlandC2(); dx = c3mdbc.dx, k = T(1.5)),
         SimViscosity = ArtificialViscosity(),
@@ -138,7 +141,8 @@ function _precompile_cases(dir::String, ::Type{T}) where {T}
                         SPHGeometry{3, T}(CSVFile = g3.fluid, GroupMarker = 2, Type = Fluid)],
         SimMetaData  = SimulationMetaData{3, T, NoShifting, NoKernelOutput, NoMDBC, StoreLog}(;
                            SimulationName = "DBC3D", SaveLocation = save("DBC3D"),
-                           OutputTimes = 1e-3, ExportGridCells = true, GPUCellSubdivision = 2, time...),
+                           OutputTimes = time.SimulationTime, ExportGridCells = true,
+                           GPUCellSubdivision = 2, time...),
         SimConstants = c3dbc,
         SimKernel    = SPHKernelInstance{3, T}(WendlandC2(); h = T(sqrt(3 * dx^2))),
         SimViscosity = ArtificialViscosity(),
