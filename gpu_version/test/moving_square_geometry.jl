@@ -18,6 +18,90 @@ function moving_square_reference_nodes(name, dx)
     return moving_square_lattice_nodes(positions, dx)
 end
 
+function polygon_motion_region_bounds(path, region_id, axis)
+    return h5open(path, "r") do file
+        root = file["VTKHDF"]
+        regions = read(root["CellData/Region"])
+        offsets = read(root["Polygons/Offsets"])
+        connectivity = read(root["Polygons/Connectivity"])
+        point_ids = Int[]
+        for cell in eachindex(regions)
+            regions[cell] == region_id || continue
+            append!(point_ids, connectivity[offsets[cell] + 1:offsets[cell + 1]] .+ 1)
+        end
+        return extrema(read(root["Points"])[axis, unique(point_ids)])
+    end
+end
+
+@testset "Polygon motion sequence export" begin
+    mktempdir() do directory
+        stationary = rectangle((0.0, 0.0), 0.5, 0.5)
+        square = rectangle((1.0, 2.0), 1.0, 1.0)
+        regions = (; stationary, square)
+        motions = (
+            stationary = MotionDetails{2, Float64}(
+                Velocity = 9.0,
+                StartTime = 0.0,
+                Duration = 1.0,
+                Direction = SVector{2, Float64}(1.0, 0.0),
+                MoveParticles = false,
+            ),
+            square = MotionDetails{2, Float64}(
+                Velocity = 2.0,
+                StartTime = 0.5,
+                Duration = 1.0,
+                Direction = SVector{2, Float64}(1.0, 0.0),
+            ),
+        )
+        times = [0.0, 0.5, 1.0, 1.5, 2.0]
+        path = joinpath(directory, "preview.pvd")
+
+        @test SavePolygonMotionSequence(path, regions; motions, times) == path
+        @test isfile(path)
+        collection = replace(read(path, String), "\\" => "/")
+        @test count("<DataSet ", collection) == length(times)
+        @test occursin("timestep=\"0.0\"", collection)
+        @test occursin("preview_frames/frame_000001.vtkhdf", collection)
+        @test all(isfile(joinpath(directory, "preview_frames",
+                                 "frame_$(lpad(string(i), 6, '0')).vtkhdf"))
+                  for i in eachindex(times))
+
+        expected_x = [(1.0, 2.0), (1.0, 2.0), (2.0, 3.0),
+                      (3.0, 4.0), (3.0, 4.0)]
+        for (i, bounds) in enumerate(expected_x)
+            frame = joinpath(directory, "preview_frames",
+                             "frame_$(lpad(string(i), 6, '0')).vtkhdf")
+            @test polygon_motion_region_bounds(frame, 1, 1) == (0.0, 0.5)
+            @test collect(polygon_motion_region_bounds(frame, 2, 1)) ≈ collect(bounds)
+            @test polygon_motion_region_bounds(frame, 2, 2) == (2.0, 3.0)
+        end
+
+        @test_throws ArgumentError SavePolygonMotionSequence(
+            path, regions; motions, times = [0.0, 0.0])
+        @test_throws ArgumentError SavePolygonMotionSequence(
+            path, regions; motions = (; missing = only(values(motions))), times)
+    end
+
+    @testset "3D polygon motion" begin
+        mktempdir() do directory
+            block = prism(rectangle((0.0, 0.0), 1.0, 1.0), 0.0, 1.0)
+            motion = MotionDetails{3, Float64}(
+                Velocity = 1.0,
+                StartTime = 0.0,
+                Duration = 1.0,
+                Direction = SVector{3, Float64}(0.0, 0.0, 1.0),
+            )
+            path = joinpath(directory, "block.pvd")
+            SavePolygonMotionSequence(path, (; block); motions = (; block = motion),
+                                      times = [0.0, 1.0])
+
+            @test polygon_motion_region_bounds(
+                joinpath(directory, "block_frames", "frame_000002.vtkhdf"), 1, 3) ==
+                  (1.0, 2.0)
+        end
+    end
+end
+
 @testset "MovingSquare polygon geometry" begin
     dx = 0.02
     polygons = moving_square_2d_polygons()

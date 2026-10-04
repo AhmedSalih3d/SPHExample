@@ -15,7 +15,8 @@ data during a simulation run.
 """
 
 export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
-       AppendVTKHDFData, SavePolygonVTKHDF, SaveCellGridVTKHDF, AppendVTKHDFGridData,
+       AppendVTKHDFData, SavePolygonVTKHDF, SavePolygonMotionSequence,
+       SaveCellGridVTKHDF, AppendVTKHDFGridData,
        GridGeometryBuffers, fill_grid_geometry!, GridFrameWriter, append_grid_frame!,
        PolyDataFrameWriter, append_frame!, flush_frames!, frames_written, frames_pending,
        buffered_frames, MAX_BUFFERED_FRAMES,
@@ -26,7 +27,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     using StaticArrays
 
     using ..AuxiliaryFunctions: to_3d, to_3d!, components!
-    using ..PolygonDrawing: ExtrudedPolygon
+    using ..PolygonDrawing: ExtrudedPolygon, translate
+    using ..SimulationGeometry: MotionDetails
 
 
     const idType = Int64
@@ -231,6 +233,134 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         end
         return filepath
     end
+
+    """
+        SavePolygonMotionSequence(filepath, regions; motions, times)
+
+    Write a ParaView `.pvd` time collection of polygon regions at `times`.
+    Each frame is a static VTKHDF file in a sibling `<name>_frames` directory.
+    `regions` is a named tuple of polygon geometries accepted by
+    `SavePolygonVTKHDF`; `motions` maps the names of translating regions to
+    `MotionDetails`. Unmapped regions remain fixed.
+
+    Positions follow the prescribed constant velocity from simulation time
+    zero, clipped to each motion's start time and duration. Regions whose
+    motion has `MoveParticles = false` remain stationary. This previews the
+    commanded geometry motion without running the solver or predicting fluid
+    interactions. `times` must contain at least two finite, nonnegative,
+    strictly increasing simulation times. Returns `filepath`.
+    """
+    function SavePolygonMotionSequence(filepath::AbstractString, regions::NamedTuple;
+                                       motions::NamedTuple,
+                                       times::AbstractVector{<:Real})
+        isempty(regions) && throw(ArgumentError("at least one polygon region is required"))
+        isempty(motions) && throw(ArgumentError("at least one moving region is required"))
+        lowercase(splitext(filepath)[2]) == ".pvd" ||
+            throw(ArgumentError("motion sequence filepath must have a .pvd extension"))
+
+        frame_times = Float64.(times)
+        length(frame_times) >= 2 ||
+            throw(ArgumentError("at least two frame times are required"))
+        previous_time = -Inf
+        for time in frame_times
+            isfinite(time) ||
+                throw(ArgumentError("frame times must be finite, got $time"))
+            time >= 0 ||
+                throw(ArgumentError("frame times must be nonnegative, got $time"))
+            time > previous_time ||
+                throw(ArgumentError("frame times must be strictly increasing"))
+            previous_time = time
+        end
+
+        for (name, motion) in pairs(motions)
+            hasproperty(regions, name) ||
+                throw(ArgumentError("motion refers to unknown region `$(name)`"))
+            motion isa MotionDetails ||
+                throw(ArgumentError("motion for region `$(name)` must be a MotionDetails"))
+            validate_preview_motion(name, motion)
+        end
+
+        output_path = abspath(filepath)
+        output_dir = dirname(output_path)
+        name = first(splitext(basename(output_path)))
+        frames_dir_name = "$(name)_frames"
+        frames_dir = joinpath(output_dir, frames_dir_name)
+        mkpath(frames_dir)
+
+        frame_paths = String[]
+        for (index, time) in enumerate(frame_times)
+            frame_name = "frame_$(lpad(string(index), 6, '0')).vtkhdf"
+            frame_path = joinpath(frames_dir, frame_name)
+            frame_regions = polygon_regions_at_time(regions, motions, time)
+            SavePolygonVTKHDF(frame_path, frame_regions)
+            push!(frame_paths, replace(relpath(frame_path, output_dir), "\\" => "/"))
+        end
+
+        open(output_path, "w") do io
+            println(io, "<?xml version=\"1.0\"?>")
+            println(io, "<VTKFile type=\"Collection\" version=\"0.1\" byte_order=\"LittleEndian\">")
+            println(io, "  <Collection>")
+            for (time, frame_path) in zip(frame_times, frame_paths)
+                escaped_path = escape_xml_attribute(frame_path)
+                println(io, "    <DataSet timestep=\"$time\" group=\"\" part=\"0\" " *
+                            "file=\"$escaped_path\"/>")
+            end
+            println(io, "  </Collection>")
+            println(io, "</VTKFile>")
+        end
+        return filepath
+    end
+
+    function validate_preview_motion(name, motion::MotionDetails)
+        velocity = Float64(motion.Velocity)
+        start_time = Float64(motion.StartTime)
+        duration = Float64(motion.Duration)
+        all(isfinite, (velocity, start_time, duration)) ||
+            throw(ArgumentError("motion for region `$(name)` must use finite values"))
+        duration >= 0 ||
+            throw(ArgumentError("motion duration for region `$(name)` must be nonnegative"))
+        isfinite(start_time + duration) ||
+            throw(ArgumentError("motion end time for region `$(name)` must be finite"))
+        length(motion.Direction) in (2, 3) ||
+            throw(ArgumentError("motion direction for region `$(name)` must have 2 or 3 components"))
+        all(component -> isfinite(Float64(component)), motion.Direction) ||
+            throw(ArgumentError("motion direction for region `$(name)` must be finite"))
+        return nothing
+    end
+
+    function polygon_regions_at_time(regions::NamedTuple, motions::NamedTuple, time)
+        shapes = map(keys(regions)) do name
+            shape = getproperty(regions, name)
+            if !hasproperty(motions, name)
+                shape
+            else
+                motion = getproperty(motions, name)
+                motion.MoveParticles ?
+                    translate_polygon_region(shape, preview_displacement(motion, time)) :
+                    shape
+            end
+        end
+        return NamedTuple{keys(regions)}(shapes)
+    end
+
+    function preview_displacement(motion::MotionDetails, time)
+        start_time = Float64(motion.StartTime)
+        end_time = start_time + Float64(motion.Duration)
+        active_start = max(start_time, 0.0)
+        elapsed = max(0.0, min(time, end_time) - active_start)
+        return (Float64(motion.Velocity) * elapsed) .* Float64.(motion.Direction)
+    end
+
+    function translate_polygon_region(region, displacement)
+        if region isa Tuple || region isa AbstractVector
+            return map(shape -> translate_polygon_region(shape, displacement), region)
+        end
+        return translate(region, displacement)
+    end
+
+    escape_xml_attribute(value::AbstractString) =
+        replace(value, "&" => "&amp;", "\"" => "&quot;", "<" => "&lt;",
+                ">" => "&gt;", "'" => "&apos;")
 
     """
     Convert the polygons of all `regions` into one point list with VTK style

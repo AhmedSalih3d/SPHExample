@@ -11,12 +11,12 @@ module SPHExampleGPU
     submodules = [
         "AuxiliaryFunctions.jl",
         "PolygonDrawing.jl",
+        "SimulationGeometry.jl",
         "SPHKernels.jl",
         "SPHViscosityModels.jl",
         "ProduceHDFVTK.jl",
         "TimeStepping.jl",
         "SimulationEquations.jl",
-        "SimulationGeometry.jl",
         "SimulationMetaDataConfiguration.jl",
         "SimulationConstantsConfiguration.jl",
         "SimulationLoggerConfiguration.jl",
@@ -55,7 +55,8 @@ module SPHExampleGPU
     export AllocateDataStructures, AllocateSupportDataStructures, LoadBoundaryNormals
 
     using .ProduceHDFVTK
-    export SaveVTKHDF, SavePolygonVTKHDF, GenerateGeometryStructure,
+    export SaveVTKHDF, SavePolygonVTKHDF, SavePolygonMotionSequence,
+           GenerateGeometryStructure,
            GenerateStepStructure, AppendVTKHDFData, SaveCellGridVTKHDF,
            AppendVTKHDFGridData, SetupVTKOutput, GridGeometryBuffers,
            fill_grid_geometry!, GridFrameWriter, append_grid_frame!,

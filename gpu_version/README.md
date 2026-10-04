@@ -180,6 +180,37 @@ by default. It creates VTKHDF files for the polygons and particles, plus
 `Fixed`, `Fluid` and `Square` CSV files for optional file input. The simulation
 samples its own particles at its configured `dx`; the export command is optional.
 
+To preview a prescribed motion before running the simulation, export a ParaView
+`.pvd` collection of polygon frames. `motions` maps region names to
+`MotionDetails`, and `times` gives the frame times in seconds:
+
+```julia
+using SPHExampleGPU
+using StaticArrays: SVector
+
+tank = outline(rectangle((0.0, 0.0), 10.0, 5.0);
+               thickness = 0.04, side = :outward)
+square = rectangle((1.0, 2.0), 1.0, 1.0)
+motion = MotionDetails{2, Float64}(
+    Velocity = 2.8,
+    StartTime = 0.0,
+    Duration = 3.0,
+    Direction = SVector{2, Float64}(1.0, 0.0),
+)
+SavePolygonMotionSequence(
+    "MovingSquare2D_Motion.pvd",
+    (; tank, square);
+    motions = (; square = motion),
+    times = 0.0:0.1:3.0,
+)
+```
+
+This writes the `.pvd` file and a `MovingSquare2D_Motion_frames/` directory of
+static VTKHDF snapshots that ParaView can animate. Regions omitted from
+`motions` remain fixed, as do regions whose `MotionDetails` has
+`MoveParticles = false`. The preview follows the prescribed translation only;
+it does not predict fluid interactions.
+
 ### 2D lid-driven cavity (Re = 100)
 
 `example/GenerateLidDrivenCavity2D.jl` and
