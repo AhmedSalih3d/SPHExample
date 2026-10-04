@@ -21,6 +21,7 @@ The 2D scene as named shapes. Walls are three particle layers thick past their
 surface (`3dx`), so the wetted surfaces lie exactly on the drawn paths. The
 straight walls (`boundary`) suit the lattice; the cylinder and the arc baffle
 (`curved`) and the tilted `body` are meant to be sampled along their outlines.
+The water polygon excludes the portions occupied by the obstacles.
 """
 function showcase_2d_shapes(; dx = 0.02)
     t = 3dx
@@ -40,7 +41,12 @@ function showcase_2d_shapes(; dx = 0.02)
     # A U shaped baffle hanging into the water, centred on its arc.
     baffle = polyline(arc((1.85, 0.75), 0.3, π, 2π); thickness = 2dx)
     body = square((2.55, 0.45), 0.15; angle = π / 4, centered = true)
-    water = rectangle((0, 0), width, depth)
+    water_outline = rectangle((0, 0), width, depth)
+    water = water_with_cutouts(
+        water_outline,
+        (cylinder, wedge, ramp, baffle, body);
+        clearance = 1e-6 * max(width, depth),
+    )
 
     return (;
         boundary = Multi([tank, wedge, ramp]),
@@ -48,6 +54,17 @@ function showcase_2d_shapes(; dx = 0.02)
         body,
         water,
     )
+end
+
+function water_with_cutouts(water, obstacles; clearance)
+    clipping = SutherlandHodgmanClipping()
+    holes = PolyArea[]
+    for obstacle in obstacles
+        clipped = clip(obstacle, water, clipping)
+        clipped === nothing && continue
+        push!(holes, offset_polygon(clipped, -clearance))
+    end
+    return polygon(water; holes = holes)
 end
 
 """

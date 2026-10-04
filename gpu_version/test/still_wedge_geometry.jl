@@ -158,20 +158,21 @@ end
                 connectivity = read(cells["Connectivity"])
                 offsets      = read(cells["Offsets"])
                 regions      = read(root["CellData/Region"])
-                ntriangles   = (14 - 2) + (7 - 2)
-                @test read(cells["NumberOfCells"]) == [ntriangles]
-                @test read(cells["NumberOfConnectivityIds"]) == [3 * ntriangles]
-                @test offsets == collect(0:3:(3 * ntriangles))
+                @test read(cells["NumberOfCells"]) == [2]
+                @test read(cells["NumberOfConnectivityIds"]) == [21]
+                @test offsets == [0, 14, 21]
                 @test all(id -> 0 <= id < 21, connectivity)
-                @test count(==(1), regions) == 12
-                @test count(==(2), regions) == 5
+                @test count(==(1), regions) == 1
+                @test count(==(2), regions) == 1
 
                 areas = zeros(2)
                 for cell in eachindex(regions)
                     ids = connectivity[offsets[cell] + 1:offsets[cell + 1]] .+ 1
-                    a, b, c = eachcol(points[1:2, ids])
-                    signed_area = ((b[1] - a[1]) * (c[2] - a[2]) -
-                                   (b[2] - a[2]) * (c[1] - a[1])) / 2
+                    signed_area = sum(
+                        points[1, ids[i]] * points[2, ids[mod1(i + 1, length(ids))]] -
+                        points[1, ids[mod1(i + 1, length(ids))]] * points[2, ids[i]]
+                        for i in eachindex(ids)
+                    ) / 2
                     @test signed_area > 0
                     areas[regions[cell]] += signed_area
                 end

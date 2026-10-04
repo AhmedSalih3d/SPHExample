@@ -203,14 +203,16 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     Write the polygons of the named tuple `regions` as one static VTKHDF
     `PolyData` file. Every region is a `PolyArea`, a `Multi` of `PolyArea`s, an
     `ExtrudedPolygon` (see `prism`) or a tuple or vector of those. The polygons
-    are triangulated so that concave shapes render correctly, and prisms are
-    written as their closed surface. The triangles carry the position of their
-    region in the tuple in the cell data array `Region`. 2D coordinates are
-    written in the XY plane with `z = 0`. Returns `filepath`.
-    """
-    function SavePolygonVTKHDF(filepath::AbstractString, regions::NamedTuple)
-        isempty(regions) && throw(ArgumentError("at least one polygon region is required"))
-        points, connectivity, offsets, region_ids = triangulate_regions(values(regions))
+        without holes are written as polygon cells; polygons with holes are
+        triangulated because a VTK polygon cell cannot encode interior rings.
+        Prisms are written as closed surfaces, with polygonal caps and quad sides
+        when possible. The cells carry the position of their region in the tuple
+        in the cell data array `Region`. 2D coordinates are written in the XY
+        plane with `z = 0`. Returns `filepath`.
+        """
+        function SavePolygonVTKHDF(filepath::AbstractString, regions::NamedTuple)
+            isempty(regions) && throw(ArgumentError("at least one polygon region is required"))
+            points, connectivity, offsets, region_ids = polygonal_regions(values(regions))
 
         mkpath(dirname(abspath(filepath)))
         h5open(filepath, "w") do io
@@ -230,27 +232,51 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     end
 
     """
-    Triangulate the polygons of all `regions` into one point list with VTK
-    style (zero based) connectivity and offsets. Triangles are oriented counter
-    clockwise regardless of the orientation of the input rings; prism sides
-    face outwards for counter clockwise outer rings.
+    Convert the polygons of all `regions` into one point list with VTK style
+    (zero based) connectivity and offsets. Simple polygons are kept as single
+    cells, while polygons with holes are triangulated. Prism caps are
+    triangulated only when their base has holes; prism sides are quads.
     """
-    function triangulate_regions(regions)
+    function polygonal_regions(regions)
         points       = SVector{3, Float64}[]
         connectivity = Int64[]
         offsets      = Int64[0]
         region_ids   = Int32[]
 
-        add_triangle!(ids, id) = begin
+        add_cell!(ids, id) = begin
             append!(connectivity, ids .- 1)
             push!(offsets, length(connectivity))
             push!(region_ids, id)
         end
 
         for (id, region) in enumerate(regions), (polygon, z) in surfaces_of(region)
+            polygon_rings = collect(rings(polygon))
+            base_z      = z === nothing ? 0.0 : z[1]
+
+            if length(polygon_rings) == 1
+                ring = only(polygon_rings)
+                if z === nothing
+                    ids = append_ring_points!(points, ring, base_z)
+                    add_cell!(counter_clockwise(points, ids), id)
+                    continue
+                end
+
+                bottom_ids = append_ring_points!(points, ring, z[1])
+                top_ids = append_ring_points!(points, ring, z[2])
+                add_cell!(reverse(counter_clockwise(points, bottom_ids)), id)
+                add_cell!(counter_clockwise(points, top_ids), id)
+                for i in eachindex(bottom_ids)
+                    next = mod1(i + 1, length(bottom_ids))
+                    add_cell!([bottom_ids[i], bottom_ids[next], top_ids[next],
+                               top_ids[i]], id)
+                end
+                continue
+            end
+
+            # VTK polygon cells have a single ring, so preserve holes by
+            # triangulating only these faces.
             mesh        = discretize(polygon)
             first_point = length(points)
-            base_z      = z === nothing ? 0.0 : z[1]
             for vertex in vertices(mesh)
                 x, y = Meshes.ustrip.(to(vertex))
                 push!(points, SVector(x, y, base_z))
@@ -258,11 +284,11 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             for triangle in elements(topology(mesh))
                 ids = counter_clockwise(points, first_point .+ collect(indices(triangle)))
                 # A prism's bottom lid faces down.
-                add_triangle!(z === nothing ? ids : reverse(ids), id)
+                add_cell!(z === nothing ? ids : reverse(ids), id)
             end
             z === nothing && continue
 
-            # Prism: lid at the top and one quad (two triangles) per outline edge.
+            # Prism: a triangulated top lid and one quad per outline edge.
             top_first = length(points)
             for k in 1:nvertices(mesh)
                 bottom = points[first_point + k]
@@ -270,19 +296,27 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             end
             for triangle in elements(topology(mesh))
                 ids = top_first .+ collect(indices(triangle))
-                add_triangle!(counter_clockwise(points, ids), id)
+                add_cell!(counter_clockwise(points, ids), id)
             end
             for ring in rings(polygon), segment in segments(ring)
                 a, b = (Meshes.ustrip.(to(v)) for v in vertices(segment))
                 corner = length(points)
                 push!(points, SVector(a[1], a[2], z[1]), SVector(b[1], b[2], z[1]),
                               SVector(b[1], b[2], z[2]), SVector(a[1], a[2], z[2]))
-                add_triangle!(corner .+ [1, 2, 3], id)
-                add_triangle!(corner .+ [1, 3, 4], id)
+                add_cell!(corner .+ [1, 2, 3, 4], id)
             end
         end
         isempty(points) && throw(ArgumentError("polygon regions have no points"))
         return points, connectivity, offsets, region_ids
+    end
+
+    function append_ring_points!(points, ring, z)
+        first_point = length(points)
+        for vertex in vertices(ring)
+            x, y = Meshes.ustrip.(to(vertex))
+            push!(points, SVector(x, y, z))
+        end
+        return collect((first_point + 1):length(points))
     end
 
     # `(polygon, nothing)` for flat polygons, `(polygon, (bottom, top))` for prisms.
@@ -306,11 +340,14 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         return polygons
     end
 
-    # One based triangle `ids` into `points`, reversed if the triangle is clockwise.
+    # One based polygon `ids` into `points`, reversed if its XY area is clockwise.
     function counter_clockwise(points, ids)
-        a, b, c = points[ids[1]], points[ids[2]], points[ids[3]]
-        signed_area = (b[1] - a[1]) * (c[2] - a[2]) - (b[2] - a[2]) * (c[1] - a[1])
-        return signed_area < 0 ? reverse(ids) : ids
+        twice_area = sum(
+            points[ids[i]][1] * points[ids[mod1(i + 1, length(ids))]][2] -
+            points[ids[mod1(i + 1, length(ids))]][1] * points[ids[i]][2]
+            for i in eachindex(ids)
+        )
+        return twice_area < 0 ? reverse(ids) : ids
     end
 
     """Write one PolyData connectivity group (`Vertices`, `Lines`, `Polygons` or `Strips`)."""

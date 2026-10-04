@@ -326,6 +326,15 @@ end
     @testset "shapes showcase example" begin
         mktempdir() do directory
             dx = 0.04
+            shapes_2d = showcase_2d_shapes(; dx)
+            @test length(rings(shapes_2d.water)) == 6
+            @test !(Point(0.5, 0.3) in shapes_2d.water)
+            @test !(Point(1.2, 0.1) in shapes_2d.water)
+            @test !(Point(2.6, 0.15) in shapes_2d.water)
+            @test !(Point(1.85, 0.45) in shapes_2d.water)
+            @test !(Point(2.55, 0.45) in shapes_2d.water)
+            @test Point(2.8, 0.55) in shapes_2d.water
+
             cases = generate_shapes_showcase(directory; dx)
             for (scene, particles) in pairs(cases)
                 @test all(region -> !isempty(region.positions), particles)
@@ -343,6 +352,14 @@ end
                 @test isfile(joinpath(directory, "$(case)_Dp$(dx)_Particles.vtkhdf"))
                 @test isfile(joinpath(directory, "$(case)_Dp$(dx)_Fluid.csv"))
             end
+            h5open(joinpath(directory, "Showcase2D_Geometry.vtkhdf"), "r") do file
+                root = file["VTKHDF"]
+                regions = read(root["CellData/Region"])
+                offsets = read(root["Polygons/Offsets"])
+                cell_sizes = diff(offsets)
+                @test all(==(3), cell_sizes[regions .== 4])
+                @test any(>(3), cell_sizes[regions .!= 4])
+            end
         end
     end
 
@@ -350,16 +367,49 @@ end
         mktempdir() do directory
             path = joinpath(directory, "shapes.vtkhdf")
             block = prism(rectangle((0, 0), 1, 0.5), 0, 0.3)
+            holed = polygon(rectangle((5, 0), 2, 1);
+                            holes = [circle((5.5, 0.5), 0.2; segments = 8)])
+            holed_prism = prism(holed, 0, 0.5)
             SavePolygonVTKHDF(path, (; flat = circle((3, 0), 0.5; segments = 16),
-                                       block, union = (block, prism(square((2, 2), 1), 0, 1))))
+                                       block, union = (block, prism(square((2, 2), 1), 0, 1)),
+                                       holed, holed_prism))
             h5open(path, "r") do file
                 root = file["VTKHDF"]
                 regions = read(root["CellData/Region"])
-                # Circle: 14 triangles. Block: 2 lids of 2 triangles and 4 sides of 2.
-                @test count(==(1), regions) == 14
-                @test count(==(2), regions) == 12
-                @test count(==(3), regions) == 24
+                offsets = read(root["Polygons/Offsets"])
+                cell_sizes = diff(offsets)
+                @test count(==(1), regions) == 1
+                @test only(cell_sizes[regions .== 1]) == 16
+                @test count(==(2), regions) == 6
+                @test all(==(4), cell_sizes[regions .== 2])
+                @test count(==(3), regions) == 12
+                @test all(==(4), cell_sizes[regions .== 3])
+
+                holed_mesh = discretize(holed)
+                ntriangles = length(elements(topology(holed_mesh)))
+                sides = sum(length(vertices(ring)) for ring in rings(holed))
+                @test count(==(4), regions) == ntriangles
+                @test all(==(3), cell_sizes[regions .== 4])
+                prism_sizes = cell_sizes[regions .== 5]
+                @test count(==(3), prism_sizes) == 2 * ntriangles
+                @test count(==(4), prism_sizes) == sides
+
                 points = read(root["Points"])
+                connectivity = read(root["Polygons/Connectivity"])
+                holed_area = 0.0
+                for cell in eachindex(regions)
+                    regions[cell] == 4 || continue
+                    ids = connectivity[offsets[cell] + 1:offsets[cell + 1]] .+ 1
+                    signed_area = sum(
+                        points[1, ids[i]] * points[2, ids[mod1(i + 1, length(ids))]] -
+                        points[1, ids[mod1(i + 1, length(ids))]] * points[2, ids[i]]
+                        for i in eachindex(ids)
+                    ) / 2
+                    @test signed_area > 0
+                    holed_area += signed_area
+                end
+                @test isapprox(holed_area, Meshes.ustrip(measure(holed)))
+
                 @test extrema(points[3, :]) == (0.0, 1.0)
             end
         end
