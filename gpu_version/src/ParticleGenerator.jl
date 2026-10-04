@@ -95,9 +95,13 @@ lattice points in that band, so they keep at least half a spacing from these
 particles. Its own particles are dropped where an earlier region owns the
 point or within `dx / 2` of an earlier particle. List conforming boundaries
 before the fluid and the walls around them.
+
+A lower precision `dx` such as `SimConstants.dx` with `Float32` is used as the
+decimal it represents (`0.02f0` → `0.02`), see `lattice_spacing`.
 """
 function sample_particles(regions::AbstractVector{<:ParticleRegion}, dx::Real;
-                          tolerance::Real = 1e-6 * dx)
+                          tolerance::Real = 1e-6 * lattice_spacing(dx))
+    dx = lattice_spacing(dx)
     lattice = particle_lattice(regions, dx)
     claimed = falses(length(lattice))
     placed = PointHash{length(eltype(lattice))}(dx)
@@ -115,6 +119,19 @@ function sample_particles(regions::AbstractVector{<:ParticleRegion}, dx::Real;
         (; region.name, region.type, positions)
     end
 end
+
+"""
+    lattice_spacing(dx) -> Float64
+
+The particle spacing in `Float64`. Lower precision floats are widened to their
+shortest decimal form, because `Float64(0.02f0) = 0.019999999552965164` would
+shift lattice point `k` by `k * 4.5e-10` from the `Float64` outlines. Points on
+the walls then miss the outline tolerance, so walls lose particles and the
+fluid takes their places.
+"""
+lattice_spacing(dx::Float64) = dx
+lattice_spacing(dx::Union{Float16, Float32}) = parse(Float64, string(dx))
+lattice_spacing(dx::Real) = Float64(dx)
 
 """Unclaimed lattice points owned by `region`, which are marked as claimed."""
 function lattice_positions!(claimed, lattice, region, tolerance)

@@ -74,6 +74,8 @@ end
         @test middle_square_lattice_nodes(region.positions, dx) ==
               middle_square_lattice_nodes(reference_positions, dx)
     end
+    # Examples pass `SimConstants.dx`, a Float32 with FloatType = Float32.
+    @test sample_particles(regions, Float32(dx)) == sampled
 
     mktempdir() do directory
         @testset "generated files without input CSVs" begin
