@@ -357,8 +357,33 @@ end
                 regions = read(root["CellData/Region"])
                 offsets = read(root["Polygons/Offsets"])
                 cell_sizes = diff(offsets)
+                boundary_shapes = collect(parent(shapes_2d.boundary))
+                tank_triangles = length(elements(topology(
+                    discretize(boundary_shapes[1], DelaunayTriangulation()))))
+                @test !isconvex(boundary_shapes[1])
+                @test count(==(3), cell_sizes[regions .== 1]) == tank_triangles + 1
+                @test count(==(4), cell_sizes[regions .== 1]) == 1
                 @test all(==(3), cell_sizes[regions .== 4])
                 @test any(>(3), cell_sizes[regions .!= 4])
+
+                points = read(root["Points"])
+                connectivity = read(root["Polygons/Connectivity"])
+                geometry_areas = zeros(4)
+                for cell in eachindex(regions)
+                    ids = connectivity[offsets[cell] + 1:offsets[cell + 1]] .+ 1
+                    signed_area = sum(
+                        points[1, ids[i]] * points[2, ids[mod1(i + 1, length(ids))]] -
+                        points[1, ids[mod1(i + 1, length(ids))]] * points[2, ids[i]]
+                        for i in eachindex(ids)
+                    ) / 2
+                    @test signed_area > 0
+                    geometry_areas[regions[cell]] += signed_area
+                end
+                expected_areas = Meshes.ustrip.(
+                    measure.([shapes_2d.boundary, shapes_2d.curved, shapes_2d.body,
+                              shapes_2d.water])
+                )
+                @test isapprox(geometry_areas, expected_areas)
             end
         end
     end
@@ -370,9 +395,11 @@ end
             holed = polygon(rectangle((5, 0), 2, 1);
                             holes = [circle((5.5, 0.5), 0.2; segments = 8)])
             holed_prism = prism(holed, 0, 0.5)
+            concave = polygon([(8, 0), (10, 0), (10, 2), (9, 1), (8, 2)])
+            concave_prism = prism(concave, 0, 0.25)
             SavePolygonVTKHDF(path, (; flat = circle((3, 0), 0.5; segments = 16),
                                        block, union = (block, prism(square((2, 2), 1), 0, 1)),
-                                       holed, holed_prism))
+                                       holed, holed_prism, concave, concave_prism))
             h5open(path, "r") do file
                 root = file["VTKHDF"]
                 regions = read(root["CellData/Region"])
@@ -385,7 +412,7 @@ end
                 @test count(==(3), regions) == 12
                 @test all(==(4), cell_sizes[regions .== 3])
 
-                holed_mesh = discretize(holed)
+                holed_mesh = discretize(holed, DelaunayTriangulation())
                 ntriangles = length(elements(topology(holed_mesh)))
                 sides = sum(length(vertices(ring)) for ring in rings(holed))
                 @test count(==(4), regions) == ntriangles
@@ -394,21 +421,34 @@ end
                 @test count(==(3), prism_sizes) == 2 * ntriangles
                 @test count(==(4), prism_sizes) == sides
 
+                concave_mesh = discretize(concave, DelaunayTriangulation())
+                nconcave = length(elements(topology(concave_mesh)))
+                @test count(==(6), regions) == nconcave
+                @test all(==(3), cell_sizes[regions .== 6])
+                concave_prism_sizes = cell_sizes[regions .== 7]
+                @test count(==(3), concave_prism_sizes) == 2 * nconcave
+                @test count(==(4), concave_prism_sizes) ==
+                      sum(length(vertices(ring)) for ring in rings(concave))
+
                 points = read(root["Points"])
                 connectivity = read(root["Polygons/Connectivity"])
-                holed_area = 0.0
-                for cell in eachindex(regions)
-                    regions[cell] == 4 || continue
+                polygon_cell_area = function(cell)
                     ids = connectivity[offsets[cell] + 1:offsets[cell + 1]] .+ 1
-                    signed_area = sum(
+                    return sum(
                         points[1, ids[i]] * points[2, ids[mod1(i + 1, length(ids))]] -
                         points[1, ids[mod1(i + 1, length(ids))]] * points[2, ids[i]]
                         for i in eachindex(ids)
                     ) / 2
-                    @test signed_area > 0
-                    holed_area += signed_area
                 end
-                @test isapprox(holed_area, Meshes.ustrip(measure(holed)))
+                areas = zeros(7)
+                for cell in eachindex(regions)
+                    regions[cell] in (4, 6) || continue
+                    area = polygon_cell_area(cell)
+                    @test area > 0
+                    areas[regions[cell]] += area
+                end
+                @test isapprox(areas[4], Meshes.ustrip(measure(holed)))
+                @test isapprox(areas[6], Meshes.ustrip(measure(concave)))
 
                 @test extrema(points[3, :]) == (0.0, 1.0)
             end

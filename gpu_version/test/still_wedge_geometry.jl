@@ -158,12 +158,13 @@ end
                 connectivity = read(cells["Connectivity"])
                 offsets      = read(cells["Offsets"])
                 regions      = read(root["CellData/Region"])
-                @test read(cells["NumberOfCells"]) == [2]
-                @test read(cells["NumberOfConnectivityIds"]) == [21]
-                @test offsets == [0, 14, 21]
+                ntriangles = (14 - 2) + (7 - 2)
+                @test read(cells["NumberOfCells"]) == [ntriangles]
+                @test read(cells["NumberOfConnectivityIds"]) == [3 * ntriangles]
+                @test offsets == collect(0:3:(3 * ntriangles))
                 @test all(id -> 0 <= id < 21, connectivity)
-                @test count(==(1), regions) == 1
-                @test count(==(2), regions) == 1
+                @test count(==(1), regions) == 12
+                @test count(==(2), regions) == 5
 
                 areas = zeros(2)
                 for cell in eachindex(regions)

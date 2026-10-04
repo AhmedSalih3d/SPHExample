@@ -80,7 +80,7 @@ second polygon up to 0.5 m. The script writes to `output_dir` (default
 `input/still_wedge_generated/`):
 
 * `StillWedge2D_Geometry.vtkhdf` – polygon cells with a `Region` cell array
-  (`1` = tank, `2` = water); polygons with holes are triangulated;
+  (`1` = tank, `2` = water); concave and holed faces are triangulated;
 * `StillWedge2D_Dp<dx>_Bound.csv`, `..._Fluid.csv` – particles in the layout
   read by `SPHGeometry` (with `dx = 0.02` they reproduce `input/still_wedge/`
   exactly, densities included);
@@ -106,9 +106,10 @@ at least half a spacing away from every edge, including slanted ones); a
 negative `offset` grows the region. A `Float32` spacing such as
 `SimConstants.dx` is sampled as the decimal it represents (`0.02f0` → `0.02`):
 widening it to `0.019999999552965164` would drift the lattice off the wall
-outlines and drop wall particles. `SavePolygonVTKHDF` writes simple polygons
-as n-sided cells; polygons with holes are triangulated because VTK polygon
-cells cannot encode interior rings. The single file `SaveVTKHDF(path, points, ...)`
+outlines and drop wall particles. `SavePolygonVTKHDF` writes convex polygons
+without holes as n-sided cells; concave or holed faces use constrained
+Delaunay triangulation to preserve their actual area. The single file
+`SaveVTKHDF(path, points, ...)`
 lives in `src/ProduceHDFVTK.jl`. The geometry tests run without a GPU:
 `julia --project=gpu_version gpu_version/test/still_wedge_geometry.jl`.
 
@@ -131,8 +132,8 @@ water excludes it. At `dx = 0.02`, sampling reproduces the reference case's
 Output defaults to `gpu_version/input/still_wedge_middle_square_generated/`:
 
 * `StillWedge_MiddleSquare_Geometry.vtkhdf` – polygon cells with `Region`
-  labels (`1` = tank/wedge, `2` = water, `3` = fixed block); the water's hole
-  around the fixed block is triangulated;
+  labels (`1` = tank/wedge, `2` = water, `3` = fixed block); concave and
+  holed faces are triangulated;
 * `StillWedge_MiddleSquare_Dp<dx>_Bound.csv`, `..._Fluid.csv` – sampled
   particles for `SPHGeometry`, with hydrostatic fluid densities;
 * `StillWedge_MiddleSquare_Dp<dx>_Particles.vtkhdf` – sampled points with
@@ -398,7 +399,8 @@ julia --project=gpu_version gpu_version/example/GenerateShapesShowcase.jl [outpu
 
 The 2D water polygon excludes the portions occupied by the cylinder, wedge,
 ramp, baffle and square, including cutouts where shapes cross the waterline.
-This keeps the overlapping obstacle geometry visible in ParaView.
+Concave polygons are triangulated with constrained Delaunay so empty regions
+such as the open tank interior are not filled in ParaView.
 
 The DamBreak and MovingSquare generators above are drawn with `polyline`,
 `outline`, `rectangle` and `polygon`. They reproduce their previous particles

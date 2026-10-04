@@ -202,17 +202,18 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
     Write the polygons of the named tuple `regions` as one static VTKHDF
     `PolyData` file. Every region is a `PolyArea`, a `Multi` of `PolyArea`s, an
-    `ExtrudedPolygon` (see `prism`) or a tuple or vector of those. The polygons
-        without holes are written as polygon cells; polygons with holes are
-        triangulated because a VTK polygon cell cannot encode interior rings.
-        Prisms are written as closed surfaces, with polygonal caps and quad sides
-        when possible. The cells carry the position of their region in the tuple
-        in the cell data array `Region`. 2D coordinates are written in the XY
-        plane with `z = 0`. Returns `filepath`.
-        """
-        function SavePolygonVTKHDF(filepath::AbstractString, regions::NamedTuple)
-            isempty(regions) && throw(ArgumentError("at least one polygon region is required"))
-            points, connectivity, offsets, region_ids = polygonal_regions(values(regions))
+    `ExtrudedPolygon` (see `prism`) or a tuple or vector of those. Convex
+    polygons without holes are written as single polygon cells. Concave
+    polygons and polygons with holes are triangulated with constrained
+    Delaunay to preserve their actual area. Prisms are written as closed
+    surfaces with polygonal caps when convex, triangulated caps otherwise, and
+    quad sides. The cells carry the position of their region in the tuple in
+    the cell data array `Region`. 2D coordinates are written in the XY plane
+    with `z = 0`. Returns `filepath`.
+    """
+    function SavePolygonVTKHDF(filepath::AbstractString, regions::NamedTuple)
+        isempty(regions) && throw(ArgumentError("at least one polygon region is required"))
+        points, connectivity, offsets, region_ids = polygonal_regions(values(regions))
 
         mkpath(dirname(abspath(filepath)))
         h5open(filepath, "w") do io
@@ -233,9 +234,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
     """
     Convert the polygons of all `regions` into one point list with VTK style
-    (zero based) connectivity and offsets. Simple polygons are kept as single
-    cells, while polygons with holes are triangulated. Prism caps are
-    triangulated only when their base has holes; prism sides are quads.
+    (zero based) connectivity and offsets. Convex polygons without holes are
+    kept as single cells; concave or holed polygons are triangulated with
+    constrained Delaunay. Convex prism caps are single cells, while concave or
+    holed caps are triangulated; prism sides are quads.
     """
     function polygonal_regions(regions)
         points       = SVector{3, Float64}[]
@@ -253,7 +255,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             polygon_rings = collect(rings(polygon))
             base_z      = z === nothing ? 0.0 : z[1]
 
-            if length(polygon_rings) == 1
+            if length(polygon_rings) == 1 && isconvex(polygon)
                 ring = only(polygon_rings)
                 if z === nothing
                     ids = append_ring_points!(points, ring, base_z)
@@ -273,16 +275,17 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 continue
             end
 
-            # VTK polygon cells have a single ring, so preserve holes by
-            # triangulating only these faces.
-            mesh        = discretize(polygon)
+            # Constrained triangulation keeps concavities and holes empty.
+            mesh        = discretize(polygon, DelaunayTriangulation())
             first_point = length(points)
             for vertex in vertices(mesh)
                 x, y = Meshes.ustrip.(to(vertex))
                 push!(points, SVector(x, y, base_z))
             end
             for triangle in elements(topology(mesh))
-                ids = counter_clockwise(points, first_point .+ collect(indices(triangle)))
+                ids = first_point .+ collect(indices(triangle))
+                nondegenerate_cell(points, ids) || continue
+                ids = counter_clockwise(points, ids)
                 # A prism's bottom lid faces down.
                 add_cell!(z === nothing ? ids : reverse(ids), id)
             end
@@ -296,6 +299,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             end
             for triangle in elements(topology(mesh))
                 ids = top_first .+ collect(indices(triangle))
+                nondegenerate_cell(points, ids) || continue
                 add_cell!(counter_clockwise(points, ids), id)
             end
             for ring in rings(polygon), segment in segments(ring)
@@ -340,13 +344,25 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         return polygons
     end
 
-    # One based polygon `ids` into `points`, reversed if its XY area is clockwise.
-    function counter_clockwise(points, ids)
-        twice_area = sum(
+    function twice_signed_area(points, ids)
+        return sum(
             points[ids[i]][1] * points[ids[mod1(i + 1, length(ids))]][2] -
             points[ids[mod1(i + 1, length(ids))]][1] * points[ids[i]][2]
             for i in eachindex(ids)
         )
+    end
+
+    # Bridge triangulation can leave zero-area slivers that are not valid VTK cells.
+    function nondegenerate_cell(points, ids)
+        twice_area = twice_signed_area(points, ids)
+        origin = points[first(ids)][1:2]
+        scale = maximum(maximum(abs, points[id][1:2] - origin) for id in ids)
+        return abs(twice_area) > 64 * eps(Float64) * scale^2
+    end
+
+    # One based polygon `ids` into `points`, reversed if its XY area is clockwise.
+    function counter_clockwise(points, ids)
+        twice_area = twice_signed_area(points, ids)
         return twice_area < 0 ? reverse(ids) : ids
     end
 
