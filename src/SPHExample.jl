@@ -3,6 +3,7 @@ module SPHExample
     # Include submodules in dependency order
     submodules = [
         "AuxiliaryFunctions.jl",
+        "SPHMeasurements.jl",
         "SPHKernels.jl",
         "SPHViscosityModels.jl",
         "ProduceHDFVTK.jl",
@@ -23,6 +24,10 @@ module SPHExample
     # Re-export desired functions from each submodule
     using .AuxiliaryFunctions
     export ResetArrays!, to_3d, CloseHDFVTKManually, CleanUpSimulationFolder
+
+    using .SPHMeasurements
+    export SPHMeasurements, MeasurementProbe, WaterColumnProbe,
+           FreeSurfaceDomain, MeasurementConfig
 
     using .SPHKernels
     export SPHKernel, SPHKernelInstance, WendlandC2, CubicSpline, Wᵢⱼ, ∇Wᵢⱼ, tensile_correction
@@ -64,4 +69,3 @@ module SPHExample
     export AutoOpenLogFile, AutoOpenParaview
 
 end
-

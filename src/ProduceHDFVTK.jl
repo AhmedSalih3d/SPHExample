@@ -22,6 +22,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     using StaticArrays
 
     using ..AuxiliaryFunctions: to_3d, to_3d!
+    using ..SPHMeasurements: MeasurementConfig, has_measurements,
+        resolve_measurements, MeasurementWriter, append_measurements!,
+        flush_measurements!
 
 
     const idType = Int64
@@ -452,13 +455,34 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     end
 
     """
-        SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
+        SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions;
+                       measurements = nothing, fluid_type = nothing)
 
     Prepare VTK/HDF5 output. Returns a named tuple with `save_particles`,
     `save_grid` and `close_files` functions. Uses single or multi-file mode
     depending on `SimMetaData.ExportSingleVTKHDF`.
+    Optional measurements are stored under `/Measurements` in the combined
+    file; measurements cannot be requested in multi-file mode.
     """
-    function SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
+    function SetupVTKOutput(
+            SimMetaData, SimParticles, SimKernel, Dimensions;
+            measurements::Union{Nothing, MeasurementConfig} = nothing,
+            fluid_type = nothing,
+        )
+        measurement_plan = if measurements === nothing ||
+                              !has_measurements(measurements)
+            nothing
+        else
+            SimMetaData.ExportSingleVTKHDF ||
+                throw(ArgumentError(
+                    "SPH measurements require ExportSingleVTKHDF = true so " *
+                    "they can be stored in the combined VTKHDF file",
+                ))
+            fluid_type === nothing &&
+                throw(ArgumentError("SPH measurements require a fluid particle type"))
+            resolve_measurements(measurements, Dimensions, SimKernel.H)
+        end
+
         # Generate save locations
         particle_savepath = joinpath(SimMetaData.SaveLocation, SimMetaData.SimulationName)
         grid_savepath = joinpath(SimMetaData.SaveLocation, "CellGrid_$(SimMetaData.SimulationName)")
@@ -470,6 +494,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         output_vars = SimMetaData.OutputVariables
     
         # Initialize storage for file handles
+        measurement_writer = nothing
         file_handles = if !SimMetaData.ExportSingleVTKHDF
             # Multi-file mode: vector for particle files
             n_outputs = if SimMetaData.OutputTimes isa AbstractVector
@@ -505,7 +530,12 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
             GenerateGeometryStructure(root, output_vars, output_data_init...; chunk_size=1024)
             GenerateStepStructure(root, output_vars, output_data_init...)
-    
+            if measurement_plan !== nothing
+                measurement_writer = MeasurementWriter(
+                    OutputVTKHDF, measurement_plan, fluid_type,
+                )
+            end
+
             # Initialize grid file if needed
             if SimMetaData.ExportGridCells
                 OutputVTKHDFGrid = h5open("$(particle_savepath)_GridCells.vtkhdf", "w")
@@ -583,6 +613,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 AppendVTKHDFData(root, SimMetaData.TotalTime, pos, output_vars,
                                 output_data...)
             end
+            measurement_writer === nothing ||
+                append_measurements!(
+                    measurement_writer, SimMetaData.TotalTime, SimParticles,
+                )
         end
     
         function save_cell_grid(iteration, cells, SimParticles)
@@ -603,6 +637,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 end
             else
                 # Close single-file handles
+                measurement_writer === nothing ||
+                    flush_measurements!(measurement_writer)
                 isopen(file_handles.particle_files) && close(file_handles.particle_files)
                 if file_handles.grid_files !== nothing
                     isopen(file_handles.grid_files) && close(file_handles.grid_files)

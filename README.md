@@ -61,6 +61,7 @@ src/
 ├── OpenExternalPrograms.jl          # Convenience wrappers for logs and ParaView
 ├── PreProcess.jl                    # Load inputs and allocate arrays
 ├── ProduceHDFVTK.jl                 # Write simulation data in HDF5/VTK format
+├── SPHMeasurements.jl               # Optional pressure, velocity and surface measurements
 ├── SPHCellList.jl                   # Custom neighbour search and time stepping
 ├── SPHDensityDiffusionModels.jl     # Density diffusion implementations
 ├── SPHExample.jl                    # Glue module re-exporting all functions
@@ -96,6 +97,39 @@ Pkg.add(url="https://github.com/AhmedSalih3d/SPHExample")
 ### Running an Example
 
 Open one of the files in `example/`, for instance `example/StillWedgeMDBC.jl`, and adjust the simulation parameters or the `ComputerInteractions!` function. Run the script to start the simulation. Results are written in `hdfvtk` format which can be loaded with ParaView 5.12 or newer.
+
+### Measuring a simulation
+
+Measurements are optional and are sampled at existing output times. Configure
+only the probes you need, then pass the config as `SimMeasurements` to
+`RunSimulation`:
+
+```julia
+measurements = MeasurementConfig(
+    pressure_probes = [MeasurementProbe("gauge", (0.25, 0.5))],
+    velocity_probes = [MeasurementProbe("outlet", (1.0, 0.1))],
+    water_column_probes = [WaterColumnProbe("column", (0.25, 0.0))],
+    free_surface = FreeSurfaceDomain((0.0, 0.0), (1.2, 0.0), 0.02),
+    sample_every = 1,
+)
+
+RunSimulation(;
+    SimGeometry, SimMetaData, SimConstants, SimKernel, SimLogger, SimParticles,
+    SimViscosity, SimDensityDiffusion, SimMeasurements = measurements,
+)
+```
+
+With the combined-file setting (`ExportSingleVTKHDF = true`, the default), the
+selected time series are stored in the same `.vtkhdf` file under
+`/Measurements`. Pressure and velocity use the nearest fluid particle;
+water-column height is the nonnegative height above the probe's vertical
+coordinate within its radius (the kernel support radius by default; zero means
+the surface is below the probe and `NaN` means no particle was found). Free
+surface values are the highest fluid-particle coordinate in each horizontal
+bin; empty bins contain `NaN`. Set `vertical_axis` to override the default
+(axis 2 in 2D and axis 3 in 3D). `sample_every` skips output frames, starting
+with the initial frame. No measurements are computed when `SimMeasurements`
+is omitted.
 
 ## Help
 

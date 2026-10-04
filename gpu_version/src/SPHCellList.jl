@@ -27,6 +27,8 @@ using ..SimulationConstantsConfiguration
 using ..SimulationLoggerConfiguration
 using ..PreProcess
 using ..ProduceHDFVTK
+using ..SPHMeasurements: MeasurementConfig, has_measurements,
+    required_particle_fields
 using ..OpenExternalPrograms
 using ..SPHKernels
 using ..SPHViscosityModels
@@ -857,7 +859,7 @@ end
 """
     RunSimulation(; SimGeometry, SimMetaData, SimConstants, SimKernel, SimLogger,
                     SimParticles, SimViscosity, SimDensityDiffusion, SimTimeStepping,
-                    ParticleNormalsPath)
+                    ParticleNormalsPath, SimMeasurements = nothing)
 
 Run a complete simulation on the GPU. Same interface as the CPU version: the
 shifting, kernel output, mDBC and log modes are the type parameters of
@@ -872,6 +874,10 @@ positions) are integrated in `Float64` while everything else stays in
 `FloatType` (see `GPUCellGrid`). Host particle arrays allocated with
 `AllocateDataStructures(SimGeometry, SimMetaData)` already hold `Float64`
 positions; other host arrays are converted on upload and download.
+
+`SimMeasurements` optionally records selected pressure, velocity, water-column
+and free-surface series at output times. With asynchronous output, samples are
+computed by the output worker rather than the timestep kernels.
 """
 function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
@@ -882,7 +888,8 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     SimViscosity::SV,
     SimDensityDiffusion::SDD,
     SimTimeStepping::TimeSteppingMode,
-    ParticleNormalsPath::Union{Nothing, String} = nothing
+    ParticleNormalsPath::Union{Nothing, String} = nothing,
+    SimMeasurements::Union{Nothing, MeasurementConfig} = nothing,
     ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SV <: SPHViscosity, SDD <: SPHDensityDiffusion}
 
     CUDA.functional() || error("CUDA is not functional on this machine; use the CPU package SPHExample instead.")
@@ -894,9 +901,17 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     PositionType   = position_float_type(SimMetaData)
 
     # Only the fields that end up in the output files are copied back from the
-    # GPU at every output; the host arrays of the other fields stay untouched.
+    # GPU at every output, plus any fields needed by the optional measurements.
+    # The host arrays of all other fields stay untouched.
     output_vars     = resolve_output_variables!(SimMetaData)
-    download_fields = Tuple(Symbol.(output_vars))
+    download_fields = if SimMeasurements === nothing ||
+                         !has_measurements(SimMeasurements)
+        Tuple(Symbol.(output_vars))
+    else
+        Tuple(unique(vcat(
+            Symbol.(output_vars), required_particle_fields(SimMeasurements),
+        )))
+    end
 
     TimeSteps = Vector{FloatType}()
 
@@ -972,7 +987,10 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         CUDA.synchronize()
     end
 
-    output = SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
+    output = SetupVTKOutput(
+        SimMetaData, SimParticles, SimKernel, Dimensions;
+        measurements = SimMeasurements, fluid_type = Fluid,
+    )
 
     # Motion of the floating bodies at every output time, one row per body.
     floating_log = nothing

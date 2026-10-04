@@ -4,6 +4,9 @@ using StaticArrays
 using StructArrays
 using LinearAlgebra
 
+include("measurements.jl")
+measurement_output_tests(SPHExample)
+
 @testset "laminar viscosity" begin
     T = Float64
     sc = SimulationConstants{T}(m₀=2, ν₀=0.3)

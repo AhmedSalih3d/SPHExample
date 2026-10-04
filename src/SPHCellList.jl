@@ -12,6 +12,7 @@ using ..SimulationConstantsConfiguration
 using ..SimulationLoggerConfiguration
 using ..PreProcess
 using ..ProduceHDFVTK
+using ..SPHMeasurements: MeasurementConfig
 using ..TimeStepping
 using ..OpenExternalPrograms
 using ..SPHKernels
@@ -633,6 +634,14 @@ using Bumper
     end
     
     ###===
+    """
+        RunSimulation(; SimGeometry, SimMetaData, SimConstants, SimKernel,
+                        SimLogger, SimParticles, SimViscosity,
+                        SimDensityDiffusion, SimMeasurements = nothing)
+
+    Run the CPU simulation. Optional `SimMeasurements` are sampled at output
+    times and stored in the combined VTKHDF file.
+    """
     function RunSimulation(;SimGeometry::Vector{Geometry{Dimensions, FloatType}}, #Don't further specify type for now
         SimMetaData::SimulationMetaData{Dimensions, FloatType},
         SimConstants::SimulationConstants,
@@ -641,7 +650,8 @@ using Bumper
         SimParticles::StructArray,
         SimViscosity::SV,
         SimDensityDiffusion::SDD,
-        ParticleNormalsPath::Union{Nothing,String} = nothing
+        ParticleNormalsPath::Union{Nothing,String} = nothing,
+        SimMeasurements::Union{Nothing, MeasurementConfig} = nothing
         ) where {Dimensions,FloatType,SV<:SPHViscosity,SDD<:SPHDensityDiffusion}
 
         # Unpack the relevant simulation meta data
@@ -693,7 +703,10 @@ using Bumper
         Stencil                = ConstructStencil(Val(Dimensions))
         _, SortingScratchSpace = Base.Sort.make_scratch(nothing, eltype(SimParticles), NumberOfPoints)
 
-        output = SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
+        output = SetupVTKOutput(
+            SimMetaData, SimParticles, SimKernel, Dimensions;
+            measurements = SimMeasurements, fluid_type = Fluid,
+        )
 
         # Save initial state, use 1 else this cannot be used to index fid vector
         SimMetaData.OutputIterationCounter = 1

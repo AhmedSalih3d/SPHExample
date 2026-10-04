@@ -29,6 +29,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     using ..AuxiliaryFunctions: to_3d, to_3d!, components!
     using ..PolygonDrawing: ExtrudedPolygon, translate
     using ..SimulationGeometry: MotionDetails
+    using ..SPHMeasurements: MeasurementConfig, has_measurements,
+        resolve_measurements, MeasurementWriter, append_measurements!,
+        flush_measurements!
 
 
     const idType = Int64
@@ -1237,7 +1240,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     end
 
     """
-        SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
+        SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions;
+                       measurements = nothing, fluid_type = nothing)
 
     Prepare VTK/HDF5 output. Returns a named tuple with `save_particles`,
     `save_grid` and `close_files` functions. Uses single or multi-file mode
@@ -1248,8 +1252,28 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     held in host memory and written together, the number following from
     `SimMetaData.GPUOutputBufferBytes` and the size of a frame (see
     `buffered_frames`). `close_files` writes the frames still pending.
+    Optional measurements are stored under `/Measurements` in the combined
+    file; measurements cannot be requested in multi-file mode.
     """
-    function SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions)
+    function SetupVTKOutput(
+            SimMetaData, SimParticles, SimKernel, Dimensions;
+            measurements::Union{Nothing, MeasurementConfig} = nothing,
+            fluid_type = nothing,
+        )
+        measurement_plan = if measurements === nothing ||
+                              !has_measurements(measurements)
+            nothing
+        else
+            SimMetaData.ExportSingleVTKHDF ||
+                throw(ArgumentError(
+                    "SPH measurements require ExportSingleVTKHDF = true so " *
+                    "they can be stored in the combined VTKHDF file",
+                ))
+            fluid_type === nothing &&
+                throw(ArgumentError("SPH measurements require a fluid particle type"))
+            resolve_measurements(measurements, Dimensions, SimKernel.H)
+        end
+
         # Generate save locations
         particle_savepath = joinpath(SimMetaData.SaveLocation, SimMetaData.SimulationName)
         grid_savepath = joinpath(SimMetaData.SaveLocation, "CellGrid_$(SimMetaData.SimulationName)")
@@ -1298,6 +1322,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         # Initialize storage for file handles and the frame writers of the single file mode
         frame_writer = nothing
         grid_writer  = nothing
+        measurement_writer = nothing
         frames_per_flush = 1
         file_handles = if multi_file
             # Multi-file mode: vector for particle files
@@ -1343,6 +1368,14 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             GenerateGeometryStructure(root, output_vars, descriptors...; chunk_size = frames_per_flush * n)
             GenerateStepStructure(root, output_vars, descriptors...)
             frame_writer = PolyDataFrameWriter(root, SimParticles.Position, output_vars, descriptors...; capacity = frames_per_flush)
+            if measurement_plan !== nothing
+                measurement_writer = MeasurementWriter(
+                    OutputVTKHDF,
+                    measurement_plan,
+                    fluid_type;
+                    capacity = min(frames_per_flush, 4),
+                )
+            end
 
             # Initialize grid file if needed
             if SimMetaData.ExportGridCells
@@ -1368,6 +1401,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             else
                 append_frame!(frame_writer, time, SimParticles.Position, (field_source(name) for name in output_vars)...)
             end
+            measurement_writer === nothing ||
+                append_measurements!(measurement_writer, time, SimParticles)
         end
 
         function save_cell_grid(iteration, cells, SimParticles, time = SimMetaData.TotalTime)
@@ -1394,6 +1429,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 # Write the pending frames and close the single-file handles
                 if isopen(file_handles.particle_files)
                     flush_frames!(frame_writer)
+                    measurement_writer === nothing ||
+                        flush_measurements!(measurement_writer)
                     close(file_handles.particle_files)
                 end
                 if file_handles.grid_files !== nothing && isopen(file_handles.grid_files)

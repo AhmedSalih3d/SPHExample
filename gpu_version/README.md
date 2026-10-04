@@ -716,6 +716,47 @@ Data stays on the GPU for the whole run; the host `StructArray` passed to
 `RunSimulation` holds the state of the last written output (reordered by
 cell, like the CPU version) when the function returns.
 
+### Measurements
+
+Use `MeasurementConfig` to opt into pressure and velocity probes, water-column
+heights, free-surface tracking, or any combination. Each probe uses the
+simulation's coordinate dimension; in 2D the vertical axis defaults to 2 and
+in 3D it defaults to 3.
+
+```julia
+measurements = MeasurementConfig(
+    pressure_probes = [MeasurementProbe("gauge", (0.25, 0.5))],
+    velocity_probes = [MeasurementProbe("outlet", (1.0, 0.1))],
+    water_column_probes = [WaterColumnProbe("column", (0.25, 0.0))],
+    free_surface = FreeSurfaceDomain((0.0, 0.0), (1.2, 0.0), 0.02),
+    sample_every = 1,
+)
+
+RunSimulation(;
+    SimGeometry, SimMetaData, SimConstants, SimKernel, SimLogger, SimParticles,
+    SimViscosity, SimDensityDiffusion, SimTimeStepping,
+    SimMeasurements = measurements,
+)
+```
+
+The default combined output stores all selected series in the same
+`<SimulationName>.vtkhdf` file under `/Measurements`; set
+`ExportSingleVTKHDF = true` when constructing the metadata. Samples share the
+particle output times, and `sample_every` can reduce their frequency without
+changing the simulation step. The GPU computes and writes measurements on its
+existing output worker, not in the timestep kernels. Pressure and velocity use
+the nearest fluid particle. Water-column height is the nonnegative height above
+the probe's vertical coordinate within its radius (the kernel support radius by
+default; zero means the surface is below the probe and `NaN` means no particle
+was found).
+Free-surface values are the highest fluid-particle coordinate in each
+horizontal bin; empty bins contain `NaN`. `Locations`, `Names`, `Values`,
+`Radii`, `GridShape`, `HorizontalAxes`, and the shared `Time` dataset describe
+the measurement groups.
+Omitting `SimMeasurements` creates no measurement datasets or extra downloads.
+Fields omitted from `OutputVariables` are added only to the existing GPU output
+staging when the selected measurements need them.
+
 ### Modes are type parameters
 
 As in the CPU package, the optional features of a run are type parameters of
@@ -777,6 +818,7 @@ gpu_version/
 │   ├── GPUKernels.jl                 # interaction, mDBC, half/final step kernels
 │   ├── GPUFloating.jl                # floating rigid bodies: force sums, body update, rigid placement
 │   ├── SPHCellList.jl                # device containers, time loop, RunSimulation
+│   ├── SPHMeasurements.jl            # output-time pressure, velocity and surface samples
 │   ├── PrecompileWorkload.jl         # tiny example runs cached at precompile time
 │   └── ...                           # unchanged host side files from src/
 ├── example/              # GPU versions of the example scripts
