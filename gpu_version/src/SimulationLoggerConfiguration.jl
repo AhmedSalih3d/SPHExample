@@ -48,6 +48,7 @@ module SimulationLoggerConfiguration
         function SimulationLogger(SaveLocation::String; filename="SimulationOutput.log")
             io_logger = open(joinpath(SaveLocation, filename), "w")
             file_logger = FormatLogger(io_logger) do io, args
+                println(stdout, args.message)
                 println(io, args.message)
             end
 
