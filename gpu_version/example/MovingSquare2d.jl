@@ -59,10 +59,7 @@ let
     positions(name) = only(r.positions for r in sampled if r.name == name)
 
     FixedBoundary = SPHGeometry{Dimensions, FloatType}(
-        Particles = StructArray((
-            Position = positions("Fixed"),
-            Density = fill(SimConstantsMovingSquare.ρ₀, length(positions("Fixed"))),
-        )),
+        Particles = StructArray(positions("Fixed"), SimConstantsMovingSquare.ρ₀),
         # CSVFile     = joinpath(moving_square_input_dir,
         # "MovingSquare2D_Dp$(SimConstantsMovingSquare.dx)_Fixed.csv"),
         GroupMarker = 1,
@@ -71,10 +68,7 @@ let
     )
 
     Water = SPHGeometry{Dimensions, FloatType}(
-        Particles = StructArray((
-            Position = positions("Fluid"),
-            Density = fill(SimConstantsMovingSquare.ρ₀, length(positions("Fluid"))),
-        )),
+        Particles = StructArray(positions("Fluid"), SimConstantsMovingSquare.ρ₀),
         # CSVFile     = joinpath(moving_square_input_dir,
         # "MovingSquare2D_Dp$(SimConstantsMovingSquare.dx)_Fluid.csv"),
         GroupMarker = 2,
@@ -83,10 +77,7 @@ let
     )
 
     MovingSquare = SPHGeometry{Dimensions, FloatType}(
-        Particles = StructArray((
-            Position = positions("Square"),
-            Density = fill(SimConstantsMovingSquare.ρ₀, length(positions("Square"))),
-        )),
+        Particles = StructArray(positions("Square"), SimConstantsMovingSquare.ρ₀),
         # CSVFile     = joinpath(moving_square_input_dir,
         # "MovingSquare2D_Dp$(SimConstantsMovingSquare.dx)_Square.csv"),
         GroupMarker = 3,
