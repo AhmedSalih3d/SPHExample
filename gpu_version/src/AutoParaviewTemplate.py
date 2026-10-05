@@ -11,8 +11,19 @@ directory = "__SAVE_LOCATION__"
 
 # List all .vtkhdf files in the directory
 import os
-regex = r"__PY_REGEX__"  # Regular expression to match the .vtkhdf files
-file_list = [os.path.join(directory, f) for f in os.listdir(directory) if re.search(regex, f)]
+single_file = __SINGLE_FILE__
+export_grid = __EXPORT_GRID__
+simulation_name = '__SIM_NAME__'
+if single_file:
+    regex = re.escape(simulation_name + '.vtkhdf')
+    grid_regex = re.escape(simulation_name + '_GridCells.vtkhdf')
+else:
+    regex = re.escape(simulation_name) + r'_\d+\.vtkhdf'
+    grid_regex = re.escape('CellGrid_' + simulation_name) + r'_\d+\.vtkhdf'
+file_list = sorted(os.path.join(directory, f) for f in os.listdir(directory)
+                   if re.fullmatch(regex, f))
+grid_files = sorted(os.path.join(directory, f) for f in os.listdir(directory)
+                    if re.fullmatch(grid_regex, f)) if export_grid else []
 
 #### import the simple module from the paraview
 from paraview.simple import *
@@ -78,6 +89,19 @@ Simulation_vtkhdfDisplay.SetScalarBarVisibility(renderView1, True)
 
 # set the Gaussian radius for the point representation
 Simulation_vtkhdfDisplay.GaussianRadius = float(__GAUSSIAN_RADIUS__)
+
+# Load the exported grid in the same session without obscuring the particles.
+if grid_files:
+    grid_reader = VTKHDFReader(registrationName='Cell grid', FileName=grid_files)
+    grid_display = Show(grid_reader, renderView1, 'GeometryRepresentation')
+    grid_display.SetRepresentationType('Wireframe')
+    grid_display.ColorArrayName = ['CELLS', '']
+    grid_display.DiffuseColor = [0.35, 0.35, 0.35]
+elif export_grid:
+    print('No exported cell grid files found for ' + simulation_name)
+
+GetAnimationScene().UpdateAnimationUsingDataTimeSteps()
+SetActiveSource(Simulation_vtkhdf)
 
 # ----------------------------------------------------------------
 # reset view to fit data bounds

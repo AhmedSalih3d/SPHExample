@@ -77,7 +77,7 @@ function AutoOpenLogFile(SimLogger::SimulationLogger,
 end
 
 """
-    AutoOpenParaview(metadata, variable_names;
+    AutoOpenParaview(metadata, constants, variable_names;
                      paraview_cmd="paraview",
                      representation="Point Gaussian",
                      color_variable="Density")
@@ -85,7 +85,8 @@ end
 Write a ParaView state file for the given simulation and optionally
 launch ParaView to visualise the results. `variable_names` should contain the
 point arrays stored in the output files. Pass `paraview_cmd = nothing` to skip
-launching ParaView automatically.
+launching ParaView automatically. With `ExportGridCells = true`, load the cell
+grid alongside the particles in the same view, displayed as a wireframe.
 """
 function AutoOpenParaview(SimMetaData::SimulationMetaData, 
                           SimConstants::SimulationConstants,
@@ -97,10 +98,8 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData,
 
     if SimMetaData.ExportSingleVTKHDF
         ParaViewStateFileName = joinpath(SimMetaData.SaveLocation, SimMetaData.SimulationName) * "_SingleVTKHDFStateFile.py"
-        py_regex = "$(SimMetaData.SimulationName).vtkhdf"
     else
         ParaViewStateFileName = joinpath(SimMetaData.SaveLocation, SimMetaData.SimulationName) * "_StateFile.py"
-        py_regex = "^$(SimMetaData.SimulationName)_(\\d+).vtk" #^ means to anchor the regex to the start of the string
     end
 
     ExtractDimensionalityMetaData(::SimulationMetaData{N, FloatType}) where {N, FloatType} = N
@@ -109,8 +108,10 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData,
     template_path = joinpath(@__DIR__, "AutoParaviewTemplate.py")
     template = read(template_path, String)
     script = replace(template,
-                     "__SAVE_LOCATION__" => SimMetaData.SaveLocation,
-                     "__PY_REGEX__" => py_regex,
+                     "__SAVE_LOCATION__" => replace(abspath(SimMetaData.SaveLocation),
+                                                   '\\' => '/'),
+                     "__SINGLE_FILE__" => (SimMetaData.ExportSingleVTKHDF ? "True" : "False"),
+                     "__EXPORT_GRID__" => (SimMetaData.ExportGridCells ? "True" : "False"),
                      "__SIM_NAME__" => SimMetaData.SimulationName,
                      "__OUTPUT_VARIABLES__" => "['" * join(OutputVariableNames, "', '") * "']",
                      "__REPRESENTATION__" => representation,
