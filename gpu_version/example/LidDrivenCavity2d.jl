@@ -59,16 +59,18 @@ function run_lid_driven_cavity_2d(;
     sampled = sample_particles(regions, dx)
     simulation_geometry = map(enumerate(sampled)) do (marker, region)
         positions = region.positions
-        fields =
-            (Position = positions, Density = fill(SimConstants.ρ₀, length(positions)))
-        if region.type != Fluid
+        particles = if region.type != Fluid
             ghosts = [
                 SVector{2, Float64}(lid_driven_cavity_ghost_node(x, dx)) for x in positions
             ]
-            fields = merge(
-                fields,
-                (GhostPoints = ghosts, GhostNormals = ghosts .- positions),
+            StructArray(
+                positions,
+                SimConstants.ρ₀;
+                GhostPoints = ghosts,
+                GhostNormals = ghosts .- positions,
             )
+        else
+            StructArray(positions, SimConstants.ρ₀)
         end
         motion =
             region.type == Moving ?
@@ -80,7 +82,7 @@ function run_lid_driven_cavity_2d(;
                 MoveParticles = false,
             ) : nothing
         SPHGeometry{2, T}(
-            Particles = StructArray(fields),
+            Particles = particles,
             GroupMarker = marker,
             # CSVFile = joinpath(input_dir, "LidDrivenCavity2D_Dp$(dx)_$(region.name).csv"),
             Type = region.type,

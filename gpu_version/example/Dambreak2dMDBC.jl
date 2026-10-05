@@ -44,12 +44,10 @@ let
         [SVector(mirror_x(x[1]), x[2] < dx / 2 ? dx - x[2] : x[2]) for x in wall_positions]
 
     FixedBoundary = SPHGeometry{Dimensions, FloatType}(
-        Particles = StructArray((
-            Position = positions("Bound"),
-            Density = fill(SimConstantsDambreak.ρ₀, length(positions("Bound"))),
+        Particles = StructArray(positions("Bound"), SimConstantsDambreak.ρ₀;
             GhostPoints = ghosts,
             GhostNormals = ghosts .- wall_positions,
-        )),
+        ),
         # CSVFile     = "./input/dam_break_2d/DamBreak2d_Dp0.02_MDBC_Bound_ThreeLayers.csv",
         GroupMarker = 1,
         Type = Fixed,   # Using the enum value Fixed
