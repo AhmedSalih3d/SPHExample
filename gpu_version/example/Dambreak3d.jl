@@ -67,7 +67,7 @@ let
         mkpath(SimMetaDataDambreak3D.SaveLocation)
     end
 
-    SimLogger = SimulationLogger(SimMetaDataDambreak3D.SaveLocation; to_console = true)
+    SimLogger = SimulationLogger(SimMetaDataDambreak3D.SaveLocation)
     SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaDataDambreak3D)
 
     @warn("""

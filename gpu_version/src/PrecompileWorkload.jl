@@ -160,7 +160,7 @@ function _precompile_run(case, lanes::Int, double_position::Bool)
     meta.GPUDoublePosition   = double_position
     CleanUpSimulationFolder(meta.SaveLocation)
     particles = AllocateDataStructures(case.SimGeometry, meta)
-    logger    = SimulationLogger(meta.SaveLocation; to_console = true)
+    logger    = SimulationLogger(meta.SaveLocation)
     RunSimulation(; case..., SimLogger = logger, SimParticles = particles,
                     SimTimeStepping = SymplecticTimeStepping())
     return nothing
@@ -176,7 +176,7 @@ function _precompile_host(case)
     if case.ParticleNormalsPath !== nothing
         LoadBoundaryNormals(Val(D), eltype(particles.Density), case.ParticleNormalsPath)
     end
-    logger = SimulationLogger(meta.SaveLocation; to_console = true)
+    logger = SimulationLogger(meta.SaveLocation)
     resolve_output_variables!(meta)
     InitializeLogger(logger, SimConstants, meta, SimKernel, SimViscosity, SimDensityDiffusion,
                      SimGeometry, particles)

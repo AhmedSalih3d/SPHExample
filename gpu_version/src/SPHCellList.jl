@@ -40,7 +40,6 @@ using ..GPUKernels
 using ..GPUFloating
 
 import StructArrays: StructArray
-import ProgressMeter: next!, finish!
 
 #---------------------------------------------------------------
 # Device data containers
@@ -1033,13 +1032,6 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         (:(TimeLeftInSeconds), @sprintf("%3.1f [s]", TimeLeftInSeconds)),
     ]
 
-    if !SimLogger.ToConsole
-        @timeit HourGlass "14 Next TimeStep" next!(
-            SimMetaData.ProgressSpecification;
-            showvalues = generate_showvalues(SimMetaData.Iteration, SimMetaData.TotalTime, 1e6),
-        )
-    end
-
     # Two pinned download buffers feed a collector, which copies completed
     # frames into a reusable, memory-budgeted host queue. The disk writer owns
     # SimParticles and consumes queued frames in order. Staging buffers return
@@ -1237,25 +1229,13 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                 end
             end
 
-            if !SimLogger.ToConsole
-                TimeLeftInSeconds = (SimMetaData.SimulationTime - SimMetaData.TotalTime) *
-                                    (TimerOutputs.tottime(HourGlass) / 1e9 / SimMetaData.TotalTime)
-                @timeit HourGlass "14 Next TimeStep" next!(
-                    SimMetaData.ProgressSpecification;
-                    showvalues = generate_showvalues(SimMetaData.Iteration, SimMetaData.TotalTime, TimeLeftInSeconds),
-                )
-            end
-
             if SimMetaData.TotalTime > SimMetaData.SimulationTime
                 close_output_streams!()
 
                 # Leave the complete final state on the host, not only the output
                 # fields, so that callers can inspect every particle field.
                 @timeit HourGlass "13d Final Download From GPU" download_particles!(SimParticles, gpu, cl.grid; cells = true)
-
-                if !SimLogger.ToConsole
-                    finish!(SimMetaData.ProgressSpecification)
-                end
+                
                 break
             end
         end

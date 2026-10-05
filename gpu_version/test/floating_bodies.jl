@@ -42,7 +42,7 @@ function run_floating_case(; FloatType = Float64, relative_weight, pause = 0.0, 
     RunSimulation(SimGeometry = geometry, SimMetaData = meta,
                   SimConstants = SimulationConstants{T}(; dx = T(dx), c₀ = T(20)),
                   SimKernel = SPHKernelInstance{2, T}(WendlandC2(); dx = T(dx), k = T(sqrt(2))),
-                  SimLogger = SimulationLogger(dir; to_console = false), SimParticles = particles,
+                  SimLogger = SimulationLogger(dir), SimParticles = particles,
                   SimViscosity = Laminar(), SimDensityDiffusion = LinearDensityDiffusion(),
                   SimTimeStepping = SymplecticTimeStepping())
     rows = CSV.File(joinpath(dir, "Floating_Floating.csv"))
@@ -174,7 +174,7 @@ body_distances(p) = (x = p.Position[p.Type .== Floating];
             SimGeometry = geometry, SimMetaData = meta,
             SimConstants = SimulationConstants{T}(; dx, c₀ = 20.0),
             SimKernel = SPHKernelInstance{3, T}(WendlandC2(); dx, k = T(sqrt(3))),
-            SimLogger = SimulationLogger(dir; to_console = false), SimParticles = particles,
+            SimLogger = SimulationLogger(dir), SimParticles = particles,
             SimViscosity = Laminar(), SimDensityDiffusion = LinearDensityDiffusion(),
             SimTimeStepping = SymplecticTimeStepping())
 

@@ -112,7 +112,7 @@ let
     )
     mkpath(SimMetaDataFloating.SaveLocation)
 
-    SimLogger = SimulationLogger(SimMetaDataFloating.SaveLocation; to_console = true)
+    SimLogger = SimulationLogger(SimMetaDataFloating.SaveLocation)
     SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaDataFloating)
     CleanUpSimulationFolder(SimMetaDataFloating.SaveLocation)
 

@@ -103,7 +103,7 @@ function run_lid_driven_cavity_2d(;
         GPUMaxStepsPerSync = 256,
     )
     particles = AllocateDataStructures(simulation_geometry, meta)
-    logger = SimulationLogger(save_location; to_console = true)
+    logger = SimulationLogger(save_location)
     kernel = SPHKernelInstance{2, T}(WendlandC2(); h = T(1.2 * sqrt(2) * dx))
 
     RunSimulation(

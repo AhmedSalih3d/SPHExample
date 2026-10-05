@@ -80,7 +80,7 @@ let
 
     mkpath(SimMetaDataWedge.SaveLocation)
 
-    SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation; to_console = true)
+    SimLogger = SimulationLogger(SimMetaDataWedge.SaveLocation)
     SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaDataWedge)
 
     CleanUpSimulationFolder(SimMetaDataWedge.SaveLocation)

@@ -1,7 +1,6 @@
 module CustomPrettyPrinting
 
 using TimerOutputs
-using ProgressMeter
 import Base: show
 
 using ..SimulationConstantsConfiguration: SimulationConstants
@@ -13,7 +12,6 @@ _val_repr(val) = string(val)
 _val_repr(val::AbstractString) = string('"', val, '"')
 _val_repr(val::AbstractArray) = string("Array{", eltype(val), "}(", size(val), ")")
 _val_repr(::TimerOutput) = ""
-_val_repr(::ProgressMeter.AbstractProgress) = ""
 
 function show(io::IO, sc::SimulationConstants{T}) where {T}
     println(io, "SimulationConstants{$T}")

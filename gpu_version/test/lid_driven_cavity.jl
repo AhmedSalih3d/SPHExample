@@ -128,7 +128,7 @@ end
             SimMetaData = meta,
             SimConstants = SimulationConstants{Float32}(; dx = Float32(dx), c₀ = 20f0, g = 0f0),
             SimKernel = SPHKernelInstance{2, Float32}(WendlandC2(); dx = Float32(dx)),
-            SimLogger = SimulationLogger(directory; to_console = false),
+            SimLogger = SimulationLogger(directory),
             SimParticles = particles,
             SimViscosity = Laminar(),
             SimDensityDiffusion = ZeroDensityDiffusion(),

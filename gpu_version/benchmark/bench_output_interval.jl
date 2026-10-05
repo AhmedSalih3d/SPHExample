@@ -29,7 +29,7 @@ function run_case(case::BenchCase, ::Type{T}, sim_time, interval; grid = false, 
     kw.SimMetaData.GPUAsyncOutput  = async
     buffer_bytes === nothing || (kw.SimMetaData.GPUOutputBufferBytes = buffer_bytes)
     particles = AllocateDataStructures(kw.SimGeometry, kw.SimMetaData)
-    logger    = SimulationLogger(save; to_console = false)
+    logger    = SimulationLogger(save)
     gc0 = Base.gc_num()
     t0  = time_ns()
     redirect_stdout(devnull) do

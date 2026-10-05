@@ -3,7 +3,7 @@ using SPHExampleGPU
 
 @testset "progress log lines are immediately visible" begin
     mktempdir() do dir
-        logger = SimulationLogger(dir; to_console = false)
+        logger = SimulationLogger(dir)
         try
             for frame in 1:3
                 log_line(logger, "Part_$(frame)")

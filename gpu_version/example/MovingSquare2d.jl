@@ -108,7 +108,7 @@ let
         mkpath(SimMetaDataMovingSquare.SaveLocation)
     end
 
-    SimLogger = SimulationLogger(SimMetaDataMovingSquare.SaveLocation; to_console = true)
+    SimLogger = SimulationLogger(SimMetaDataMovingSquare.SaveLocation)
     SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaDataMovingSquare)
 
     SimKernel = SPHKernelInstance{Dimensions, FloatType}(

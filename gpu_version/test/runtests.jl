@@ -45,7 +45,7 @@ function run_gpu(case::BenchCase, ::Type{T}, simtime; time_stepping = nothing, k
         setproperty!(kw.SimMetaData, k, v)
     end
     particles = AllocateDataStructures(kw.SimGeometry, kw.SimMetaData)
-    logger    = SimulationLogger(save; to_console = false)
+    logger    = SimulationLogger(save)
     RunSimulation(; kw..., SimLogger = logger, SimParticles = particles)
     order = sortperm(particles.ID)
     return particles[order], kw.SimMetaData
@@ -159,7 +159,7 @@ relerr(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), eps(eltype(b))))
         meta.ExportGridCells = true
         meta.OutputVariables = ["Density", "Velocity", "ID", "Acceleration", "GhostPoints", "Kernel"]
         particles = AllocateDataStructures(kw.SimGeometry, meta)
-        logger    = SimulationLogger(save; to_console = false)
+        logger    = SimulationLogger(save)
         RunSimulation(; kw..., SimLogger = logger, SimParticles = particles)
         kernel_mode = meta isa SimulationMetaData{2, Float32, S, StoreKernelOutput} where {S}
         expected = kernel_mode ? ["Density", "Velocity", "ID", "Acceleration", "GhostPoints", "Kernel"] :
@@ -346,7 +346,7 @@ relerr(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), eps(eltype(b))))
             meta.GPUDoublePosition = double
             meta.OutputVariables   = ["Density", "Velocity", "ID", "Type", "GhostPoints"]
             particles = host32 ? AllocateDataStructures(kw.SimGeometry) : AllocateDataStructures(kw.SimGeometry, meta)
-            logger    = SimulationLogger(save; to_console = false)
+            logger    = SimulationLogger(save)
             RunSimulation(; kw..., SimLogger = logger, SimParticles = particles)
             data = h5open(joinpath(save, meta.SimulationName * ".vtkhdf"), "r") do fid
                 root = fid["VTKHDF"]
@@ -740,7 +740,7 @@ relerr(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), eps(eltype(b))))
             end
             particles = AllocateDataStructures(kw.SimGeometry, kw.SimMetaData)
             particles.Position .+= Ref(eltype(particles.Position)(off))
-            logger = SimulationLogger(save; to_console = false)
+            logger = SimulationLogger(save)
             RunSimulation(; kw..., SimLogger = logger, SimParticles = particles)
             order = sortperm(particles.ID)
             return particles[order], kw.SimMetaData, save

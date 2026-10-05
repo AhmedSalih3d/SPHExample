@@ -120,7 +120,7 @@ let
     # Load in particles
     SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaDataDambreak)
 
-    SimLogger = SimulationLogger(SimMetaDataDambreak.SaveLocation; to_console = true)
+    SimLogger = SimulationLogger(SimMetaDataDambreak.SaveLocation)
 
     CleanUpSimulationFolder(SimMetaDataDambreak.SaveLocation)
 

@@ -27,7 +27,7 @@ function run_case(case::BenchCase, ::Type{T}; sync = false, warmup = false, doub
     kw.SimMetaData.GPUSyncTimers     = sync
     kw.SimMetaData.GPUDoublePosition = double_position
     particles = AllocateDataStructures(kw.SimGeometry, kw.SimMetaData)
-    logger    = SimulationLogger(save; to_console = false)
+    logger    = SimulationLogger(save)
     RunSimulation(; kw..., SimLogger = logger, SimParticles = particles)
     hg    = kw.SimMetaData.HourGlass
     loop  = loop_time(hg)

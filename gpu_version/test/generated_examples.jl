@@ -48,7 +48,7 @@ using CUDA
                 meta.OutputTimes = 0.002f0
                 meta.VisualizeInParaview = false
                 meta.OpenLogFile = false
-                logger = SimulationLogger(dir; to_console = false)
+                logger = SimulationLogger(dir)
                 SPHExampleGPU.RunSimulation(; merge(inputs, (; SimLogger = logger))...)
                 @test meta.TotalTime >= meta.SimulationTime
                 @test all(isfinite, inputs.SimParticles.Density)

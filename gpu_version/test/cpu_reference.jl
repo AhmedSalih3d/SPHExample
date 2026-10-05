@@ -39,7 +39,7 @@ function main(args)
     kw.SimMetaData.SimulationTime = simtime
     kw.SimMetaData.OutputTimes    = simtime
     particles = AllocateDataStructures(kw.SimGeometry, kw.SimMetaData)
-    logger    = SimulationLogger(save; to_console = false)
+    logger    = SimulationLogger(save)
     RunSimulation(; kw..., SimLogger = logger, SimParticles = particles)
 
     order = sortperm(particles.ID)

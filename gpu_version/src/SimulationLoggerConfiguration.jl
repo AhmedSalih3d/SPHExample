@@ -44,21 +44,11 @@ module SimulationLoggerConfiguration
         ValuesToPrintC::String       # separator line below the header
         CurrentDate::DateTime        # start time of the simulation
         CurrentDataStr::String       # preformatted start time string
-        ToConsole::Bool              # whether log output is echoed to REPL
 
-
-        function SimulationLogger(SaveLocation::String; filename="SimulationOutput.log", to_console::Bool=false)
+        function SimulationLogger(SaveLocation::String; filename="SimulationOutput.log")
             io_logger = open(joinpath(SaveLocation, filename), "w")
             file_logger = FormatLogger(io_logger) do io, args
                 println(io, args.message)
-            end
-            logger = if to_console
-                console_logger = FormatLogger(stdout) do io, args
-                    println(io, args.message)
-                end
-                TeeLogger(file_logger, console_logger)
-            else
-                file_logger
             end
 
             values        = ("PART [-]", "PartTime [s]", "TotalSteps [-] ", "Steps  [-] ", "Run Time [s]", "Time/Sec [-]", "Remaining Time [Date]")
@@ -73,7 +63,7 @@ module SimulationLoggerConfiguration
             CurrentDate    = now()
             CurrentDataStr = Dates.format(CurrentDate, "dd-mm-yyyy HH:MM:SS")
 
-            new(io_logger, logger, format_string, ValuesToPrint, ValuesToPrintC, CurrentDate, CurrentDataStr, to_console)
+            new(io_logger, file_logger, format_string, ValuesToPrint, ValuesToPrintC, CurrentDate, CurrentDataStr)
         end
     end
 
@@ -211,7 +201,6 @@ module SimulationLoggerConfiguration
             @info line
         end
         flush(SimLogger.LoggerIo)
-        SimLogger.ToConsole && flush(stdout)
         return nothing
     end
 

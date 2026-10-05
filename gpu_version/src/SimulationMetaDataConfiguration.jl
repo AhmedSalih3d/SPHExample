@@ -1,7 +1,6 @@
 module SimulationMetaDataConfiguration
 
 using TimerOutputs
-using ProgressMeter
 
 export SimulationMetaData, UpdateMetaData!, ShiftingMode, NoShifting, PlanarShifting,
        KernelOutputMode, NoKernelOutput, StoreKernelOutput,
@@ -82,7 +81,6 @@ mutable struct SimulationMetaData{Dimensions,
     TotalTime::FloatType
     SimulationTime::FloatType
     IndexCounter::Int
-    ProgressSpecification::ProgressUnknown
     VisualizeInParaview::Bool
     ExportSingleVTKHDF::Bool
     ExportGridCells::Bool
@@ -192,7 +190,6 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         TotalTime                               = 0,
         SimulationTime                          = 0,
         IndexCounter::Int                       = 0,
-        ProgressSpecification::ProgressUnknown  = ProgressUnknown(desc = "Simulation time per output each:", spinner = true, showspeed = true),
         VisualizeInParaview::Bool               = true,
         ExportSingleVTKHDF::Bool                = true,
         ExportGridCells::Bool                   = false,
@@ -222,7 +219,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         FloatType(OutputEach), _output_times(FloatType, OutputTimes),
         OutputIterationCounter, StepsTakenForLastOutput,
         FloatType(CurrentTimeStep), FloatType(TotalTime), FloatType(SimulationTime),
-        IndexCounter, ProgressSpecification, VisualizeInParaview, ExportSingleVTKHDF, ExportGridCells,
+        IndexCounter, VisualizeInParaview, ExportSingleVTKHDF, ExportGridCells,
         OutputVariables, OpenLogFile, TimeSteppingMode,
         GPUSyncTimers, GPUDeterministicSort, GPUMaxCells, GPUInteractionThreads, GPULanesPerParticle,
         GPUBoundaryForces, GPUAsyncOutput, GPUMaxStepsPerSync, GPUUseGraph, GPUCellSubdivision,
