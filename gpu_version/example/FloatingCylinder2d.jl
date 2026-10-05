@@ -106,6 +106,7 @@ let
         OutputTimes = 0.02,
         VisualizeInParaview = true,
         ExportSingleVTKHDF = true,
+        ExportGridCells = true,
         OpenLogFile = true,
         # positions up to 16 m: integrate them in Float64, the rest in Float32
         GPUDoublePosition = true,

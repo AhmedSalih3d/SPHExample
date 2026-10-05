@@ -1,0 +1,19 @@
+# Editor settings
+.vscode/
+
+# Generated particles and simulation inputs
+particles/
+input/
+
+# Visualization output
+*.vtp
+*.vtkhdf
+
+second_approach/
+
+# Julia environment and local archives
+Manifest.toml
+julia-*.tar.gz
+
+# Logs
+*.log
