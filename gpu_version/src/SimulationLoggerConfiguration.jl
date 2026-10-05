@@ -228,8 +228,6 @@ module SimulationLoggerConfiguration
 
             @info formatted_time
             @info "\n Simulation took " * @sprintf("%-.2f", TimerOutputs.tottime(HourGlass)/1e9) * "[s]"
-            show(SimLogger.LoggerIo, HourGlass,sortby=:name)
-            @info "\n Sorted by time \n"
             show(SimLogger.LoggerIo, HourGlass)
         end
     end
