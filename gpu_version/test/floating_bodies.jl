@@ -36,7 +36,8 @@ function run_floating_case(; FloatType = Float64, relative_weight, pause = 0.0, 
                                                Type = Fluid))
     meta = SimulationMetaData{2, T, NoShifting, NoKernelOutput, NoMDBC, NoLog}(
         SimulationName = "Floating", SaveLocation = dir, SimulationTime = simtime,
-        OutputTimes = simtime / 5, GPUDoublePosition = double)
+        OutputTimes = simtime / 5, GPUDoublePosition = double,
+        VisualizeInParaview = false, OpenLogFile = false)
     particles = AllocateDataStructures(geometry, meta)
     initial   = deepcopy(particles)
     RunSimulation(SimGeometry = geometry, SimMetaData = meta,
@@ -53,6 +54,59 @@ body_distances(p) = (x = p.Position[p.Type .== Floating];
                      [norm(x[i] - x[j]) for i in eachindex(x) for j in (i + 1):lastindex(x)])
 
 @testset "floating bodies" begin
+    @testset "compact membership survives sorting and graph replay" begin
+        for D in (2, 3), T in (Float32, Float64)
+            corners = [SVector{D, T}(ntuple(d -> T((i >> (d - 1)) & 1), D))
+                for i in 0:(2^D - 1)]
+            geometry = [SPHGeometry{D, T}(corners;
+                Density = 1000, Type = Floating, GroupMarker = 1,
+                Floating = FloatingDetails{T}(RelativeWeight = 1.2)),
+                SPHGeometry{D, T}(corners .+ Ref(SVector{D, T}(ntuple(_ -> T(4), D)));
+                    Density = 1000, Type = Floating, GroupMarker = 2,
+                    Floating = FloatingDetails{T}(RelativeWeight = 1.5)),
+                SPHGeometry{D, T}([SVector{D, T}(ntuple(_ -> T(i / 3), D))
+                    for i in 1:37]; Density = 1000, Type = Fluid, GroupMarker = 3)]
+            particles = AllocateDataStructures(geometry)
+            constants = SimulationConstants{T}()
+            gpu = upload_particles(particles)
+            floating = FloatingArrays(geometry, particles, constants)
+            workspace = CellListWorkspace{D, T}(length(gpu))
+            step = StepState{T}(dt = T(0.01))
+            mod = SPHExampleGPU.GPUFloating
+            indices_pointer = pointer(floating.indices)
+            for _ in 1:2
+                SPHExampleGPU.SPHCellList.rebuild_cell_list!(gpu, workspace, T(2))
+                mod.update_floating_indices!(floating, gpu.Type, workspace)
+                @test Array(floating.indices) == findall(==(Floating), Array(gpu.Type))
+                @test pointer(floating.indices) == indices_pointer
+                acceleration = [SVector{D, T}(ntuple(d -> T(d * g), D))
+                    for g in Array(gpu.GroupMarker)]
+                copyto!(gpu.Acceleration, acceleration)
+                reduce_forces() = begin
+                    fill!(floating.force, zero(T))
+                    mod.launch_floating_forces!(floating, gpu.Acceleration, gpu.Position,
+                        gpu.Type, gpu.GroupMarker, floating.center, constants.m₀, step)
+                end
+                reduce_forces()
+                CUDA.synchronize()
+                graph = CUDA.instantiate(CUDA.capture(reduce_forces))
+                CUDA.launch(graph)
+                forces = Array(floating.force)
+                stride = D == 2 ? 3 : 6
+                for b in 1:2
+                    expected = constants.m₀ * length(corners) *
+                        SVector{D, T}(ntuple(d -> T(d * b), D))
+                    @test forces[((b - 1) * stride + 1):((b - 1) * stride + D)] ≈
+                        expected rtol = 1e-5
+                    @test maximum(abs, forces[((b - 1) * stride + D + 1):(b * stride)]) <
+                        T(1e-5)
+                end
+                # Change the spatial ordering before the second rebuild.
+                gpu.Position .= .-gpu.Position
+                floating.center .= .-floating.center
+            end
+        end
+    end
     @testset "free fall in air is exact and rigid" begin
         g, pause = 9.81, 0.02
         p, rows, initial = run_floating_case(; relative_weight = 1.2, pause, water = false, simtime = 0.1)
@@ -168,7 +222,8 @@ body_distances(p) = (x = p.Position[p.Type .== Floating];
         ]
         meta = SimulationMetaData{3, T, NoShifting, NoKernelOutput, NoMDBC, NoLog}(
             SimulationName = "Floating3D", SaveLocation = dir,
-            SimulationTime = T(1e-4), OutputTimes = T(1e-4))
+            SimulationTime = T(1e-4), OutputTimes = T(1e-4),
+            VisualizeInParaview = false, OpenLogFile = false)
         particles = AllocateDataStructures(geometry, meta)
         RunSimulation(
             SimGeometry = geometry, SimMetaData = meta,

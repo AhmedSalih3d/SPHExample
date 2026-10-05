@@ -24,14 +24,14 @@ device, so the step stays capturable as a CUDA graph.
 module GPUFloating
 
 export FloatingArrays, launch_floating_forces!, launch_floating_update!,
-       launch_floating_particles!, floating_state
+       launch_floating_particles!, floating_state, update_floating_indices!
 
 using CUDA
 using LinearAlgebra: cross, det, dot
 using StaticArrays
 
 using ..SimulationGeometry
-using ..GPUCellGrid: thread_index
+using ..GPUCellGrid: thread_index, compact_nonzero!
 using ..GPUStepState
 using ..GPUKernels: lanes_sum, store_pos_cell!, ELEMENTWISE_THREADS
 
@@ -109,10 +109,12 @@ function FloatingArrays(SimGeometry::Vector{SPHGeometry{D, T}}, SimParticles, Si
               center = CuArray(center), center_n = CuArray(center),
               center_half = CuArray(center), velocity = zv(SVector{D, T}),
               velocity_half = zv(SVector{D, T}),
+              indices = CuArray(Int32.(findall(==(Floating), SimParticles.Type))),
               force = CUDA.zeros(T, (D == 2 ? 3 : 6) * nstate))
     if D == 2
         return merge(common, (omega = zv(T), omega_half = zv(T),
-                              angle = zv(T), turn = zv(T)))
+                              angle = zv(T), turn = zv(T),
+                              rotation = CuArray(fill(SVector{2, T}(0, 1), nstate))))
     end
 
     identity_orientation = SVector{4, T}(one(T), zero(T), zero(T), zero(T))
@@ -121,7 +123,23 @@ function FloatingArrays(SimGeometry::Vector{SPHGeometry{D, T}}, SimParticles, Si
                           omega_half = zv(SVector{3, T}),
                           orientation = CuArray(orientation),
                           orientation_half = CuArray(orientation),
-                          turn = zv(SVector{3, T})))
+                          turn = zv(SVector{3, T}),
+                          rotation = CuArray(fill(SVector{5, promote_type(T, TP)}(
+                              0, 0, 0, 1, 0.5), nstate))))
+end
+
+"""
+    update_floating_indices!(floating, particle_types, cell_workspace)
+
+Refresh the compact floating-particle list after cell sorting. Reuses the cell
+workspace scratch arrays and preserves the index buffer's device pointer for
+CUDA graphs. Call after reordering, before launching floating-body kernels.
+"""
+function update_floating_indices!(floating, particle_types, cell_workspace)
+    floating.active || return nothing
+    compact_nonzero!(cell_workspace, particle_types, floating.indices;
+        predicate = ==(Floating))
+    return nothing
 end
 
 """
@@ -151,27 +169,30 @@ floating_state(f, ::Val{3}) = (center = Array(f.center), velocity = Array(f.velo
 function floating_force_kernel!(force::AbstractVector{T},
                                 Acceleration::AbstractVector{SVector{D, T}},
                                 Position::AbstractVector{SVector{D, TP}},
-                                ParticleType, GroupMarker, body,
+                                indices, GroupMarker, body,
                                 center::AbstractVector{SVector{D, TP}},
                                 m₀::T, step, nbodies::Int32, n::Int32) where {D, T, TP}
     step_active(step) || return nothing
-    i = thread_index()
+    j = thread_index()
     a = zero(SVector{D, T})
     r = zero(SVector{D, T})
     τ = zero(D == 2 ? T : SVector{3, T})
     b = Int32(0)
-    @inbounds if i <= n && ParticleType[i] == Floating
+    @inbounds if j <= n
+        i = indices[j]
         b = body[GroupMarker[i]]
         a = Acceleration[i]
         r = SVector{D, T}(Position[i] - center[b])
         τ = floating_torque(r, a)
     end
-    # Every lane of the warp takes part in the shuffles; one atomic per warp
-    # and body remains.
+    # Every lane takes part, including padding lanes in the last warp.
     lane = (threadIdx().x - Int32(1)) % Int32(32)
     stride = Int32(D == 2 ? 3 : 6)
     torque_components = D == 2 ? 1 : 3
-    for k in Int32(1):nbodies
+    # Reduce only bodies represented in this warp, not every body in the case.
+    remaining = CUDA.vote_ballot_sync(0xffffffff, b != Int32(0))
+    while remaining != UInt32(0)
+        k = CUDA.shfl_sync(0xffffffff, b, trailing_zeros(remaining) + 1)
         mine = b == k
         base = (k - Int32(1)) * stride
         for d in 1:D
@@ -186,6 +207,7 @@ function floating_force_kernel!(force::AbstractVector{T},
                 @inbounds CUDA.@atomic force[base + Int32(D + d)] += τd
             end
         end
+        remaining &= ~CUDA.vote_ballot_sync(0xffffffff, mine)
     end
     return nothing
 end
@@ -197,11 +219,11 @@ Add the force and the torque about `center` (a vector of body centres) of the
 accelerations of every body's particles to `floating.force`.
 """
 function launch_floating_forces!(floating, Acceleration, Position, ParticleType, GroupMarker, center, m₀, step)
-    n = length(Position)
+    n = length(floating.indices)
     n == 0 && return nothing
     T = eltype(floating.force)
     @cuda threads=ELEMENTWISE_THREADS blocks=cld(n, ELEMENTWISE_THREADS) floating_force_kernel!(
-        floating.force, Acceleration, Position, ParticleType, GroupMarker, floating.body, center,
+        floating.force, Acceleration, Position, floating.indices, GroupMarker, floating.body, center,
         T(m₀), step, floating.nbodies, Int32(n))
     return nothing
 end
@@ -256,6 +278,8 @@ function floating_update_kernel!(f, step, g::T, ::Val{2}, ::Val{Final}) where {T
                 f.angle[b]   += f.turn[b]
             end
         end
+        s, c = sincos(f.turn[b])
+        f.rotation[b] = SVector{2, T}(s, c)
     end
     return nothing
 end
@@ -296,10 +320,7 @@ end
     return updated / sqrt(dot(updated, updated))
 end
 
-@inline function rotate_offset(r::SVector{3, TP}, turn::SVector{3, T}) where {TP, T}
-    U = promote_type(TP, T)
-    rᵤ = SVector{3, U}(r)
-    turnᵤ = SVector{3, U}(turn)
+@inline function rotation_coefficients(turnᵤ::SVector{3, U}) where {U}
     turn² = dot(turnᵤ, turnᵤ)
     if turn² < sqrt(eps(U))
         sine_scale = one(U) - turn² / U(6) + turn² * turn² / U(120)
@@ -310,8 +331,19 @@ end
         sine_scale = s / angle
         cosine_scale = (one(U) - c) / turn²
     end
-    return rᵤ + sine_scale * cross(turnᵤ, rᵤ) +
-           cosine_scale * cross(turnᵤ, cross(turnᵤ, rᵤ))
+    return SVector{5, U}(turnᵤ..., sine_scale, cosine_scale)
+end
+
+@inline function rotate_offset(r::SVector{3, TP}, rotation::SVector{5, U}) where {TP, U}
+    rᵤ = SVector{3, U}(r)
+    turnᵤ = SVector{3, U}(rotation[1], rotation[2], rotation[3])
+    return rᵤ + rotation[4] * cross(turnᵤ, rᵤ) +
+           rotation[5] * cross(turnᵤ, cross(turnᵤ, rᵤ))
+end
+
+@inline function rotate_offset(r::SVector{3, TP}, turn::SVector{3, T}) where {TP, T}
+    U = promote_type(TP, T)
+    return rotate_offset(r, rotation_coefficients(SVector{3, U}(turn)))
 end
 
 @inline function angular_acceleration(q::SVector{4, T}, omega::SVector{3, T},
@@ -331,6 +363,7 @@ function floating_update_kernel!(f, step, g::T, ::Val{3}, ::Val{Final}) where {T
     dt   = step_dt(step)
     time = step_time(step)
     gvec = SVector{3, T}(zero(T), zero(T), -g)
+    U = eltype(eltype(f.rotation))
     @inbounds for b in 1:Int(f.nbodies)
         base = 6 * (b - 1)
         F = SVector{3, T}(f.force[base + 1], f.force[base + 2], f.force[base + 3])
@@ -377,6 +410,7 @@ function floating_update_kernel!(f, step, g::T, ::Val{3}, ::Val{Final}) where {T
                 f.orientation[b] = advance_orientation(qₙ, f.turn[b])
             end
         end
+        f.rotation[b] = rotation_coefficients(SVector{3, U}(f.turn[b]))
     end
     return nothing
 end
@@ -396,7 +430,7 @@ function launch_floating_update!(floating, step, g, final::Bool, ::Val{2})
     T = eltype(floating.force)
     f = floating
     device = (; f.nbodies, f.force, f.pause, f.mass, f.inertia, f.center, f.center_n, f.center_half,
-                f.velocity, f.velocity_half, f.omega, f.omega_half, f.angle, f.turn)
+                f.velocity, f.velocity_half, f.omega, f.omega_half, f.angle, f.turn, f.rotation)
     @cuda threads=1 blocks=1 floating_update_kernel!(device, step, T(g), Val(2), Val(final))
     return nothing
 end
@@ -406,7 +440,7 @@ function launch_floating_update!(floating, step, g, final::Bool, ::Val{3})
     f = floating
     device = (; f.nbodies, f.force, f.pause, f.mass, f.inertia, f.inertia_inv,
                 f.center, f.center_n, f.center_half, f.velocity, f.velocity_half,
-                f.omega, f.omega_half, f.orientation, f.orientation_half, f.turn)
+                f.omega, f.omega_half, f.orientation, f.orientation_half, f.turn, f.rotation)
     @cuda threads=1 blocks=1 floating_update_kernel!(device, step, T(g), Val(3), Val(final))
     return nothing
 end
@@ -415,16 +449,17 @@ end
 # Rigid placement of the body particles
 #---------------------------------------------------------------
 
-function floating_particles_kernel!(PosOut, VelOut, PosIn, ParticleType, GroupMarker, body, origin,
-                                    center, velocity, omega, turn, step, PosCellsOut, CellID, gridarg, H,
+function floating_particles_kernel!(PosOut, VelOut, PosIn, indices, GroupMarker, body, origin,
+                                    center, velocity, omega, rotation, step, PosCellsOut, CellID, gridarg, H,
                                     ::Val{2}, n::Int32)
     step_active(step) || return nothing
-    i = thread_index()
-    i > n && return nothing
-    @inbounds if ParticleType[i] == Floating
+    j = thread_index()
+    j > n && return nothing
+    @inbounds begin
+        i = indices[j]
         b = body[GroupMarker[i]]
         r = PosIn[i] - origin[b]
-        s, c = sincos(turn[b])
+        s, c = rotation[b]
         r = typeof(r)(c * r[1] - s * r[2], s * r[1] + c * r[2])
         x = center[b] + r
         PosOut[i] = x
@@ -438,20 +473,21 @@ end
 function floating_particles_kernel!(PosOut::AbstractVector{SVector{3, TP}},
                                     VelOut::AbstractVector{SVector{3, T}},
                                     PosIn::AbstractVector{SVector{3, TP}},
-                                    ParticleType, GroupMarker, body, origin,
+                                    indices, GroupMarker, body, origin,
                                     center::AbstractVector{SVector{3, TP}},
                                     velocity::AbstractVector{SVector{3, T}},
                                     omega::AbstractVector{SVector{3, T}},
-                                    turn::AbstractVector{SVector{3, T}},
+                                    rotation::AbstractVector{SVector{5, U}},
                                     step, PosCellsOut, CellID, gridarg, H,
-                                    ::Val{3}, n::Int32) where {T, TP}
+                                    ::Val{3}, n::Int32) where {T, TP, U}
     step_active(step) || return nothing
-    i = thread_index()
-    i > n && return nothing
-    @inbounds if ParticleType[i] == Floating
+    j = thread_index()
+    j > n && return nothing
+    @inbounds begin
+        i = indices[j]
         b = body[GroupMarker[i]]
         r = SVector{3, TP}(PosIn[i] - origin[b])
-        rotated_r = rotate_offset(r, turn[b])
+        rotated_r = rotate_offset(r, rotation[b])
         x = center[b] + rotated_r
         PosOut[i] = x
         VelOut[i] = velocity[b] + cross(omega[b], SVector{3, T}(rotated_r))
@@ -473,13 +509,13 @@ corrector the start-of-step arrays of the next step.
 function launch_floating_particles!(floating, PosOut, VelOut, PosIn, ParticleType, GroupMarker, step,
                                     final::Bool; pos_cells = nothing, CellID = nothing, grid = nothing,
                                     H = zero(eltype(floating.force)))
-    n = length(PosIn)
+    n = length(floating.indices)
     n == 0 && return nothing
     center, velocity, omega = final ? (floating.center, floating.velocity, floating.omega) :
                                       (floating.center_half, floating.velocity_half, floating.omega_half)
     @cuda threads=ELEMENTWISE_THREADS blocks=cld(n, ELEMENTWISE_THREADS) floating_particles_kernel!(
-        PosOut, VelOut, PosIn, ParticleType, GroupMarker, floating.body, floating.center_n,
-        center, velocity, omega, floating.turn, step, pos_cells, CellID, grid, H,
+        PosOut, VelOut, PosIn, floating.indices, GroupMarker, floating.body, floating.center_n,
+        center, velocity, omega, floating.rotation, step, pos_cells, CellID, grid, H,
         Val(floating_dimension(floating.center)), Int32(n))
     return nothing
 end

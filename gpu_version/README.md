@@ -327,6 +327,24 @@ and velocity at each output time; its 2D angle/omega columns remain unchanged,
 while 3D output includes the scalar-first quaternion (`Orientation:0` through
 `Orientation:3`) and the three angular-velocity components.
 
+Force reduction and rigid placement use a compact list of floating particles,
+refreshed after cell sorting without changing its device address. Each warp
+reduces only the bodies it contains. Rotation coefficients are computed once
+per body and stage, including the promoted precision used for 3D double
+positions. These changes preserve CUDA graph replay and the rigid-body scheme;
+force summation order can differ slightly due to floating-point rounding.
+
+On an RTX 5080, a warmed GPU benchmark with 250,000 particles (5,000 floating,
+`Float32` physics and `Float64` positions) measured 1.5 times faster floating
+stages for eight 2D bodies and 2.5 times faster 3D particle placement. These are
+floating-kernel gains, not whole-simulation speedups: a single 2D cylinder's
+complete timestep remained approximately unchanged because fluid interactions
+dominate. Run `benchmark/floating_kernels.jl` for device timings or
+`benchmark/floating_steps.jl` for the complete cylinder timestep, supplying a
+saved baseline `GPUFloating.jl`; the latter also accepts its Git revision.
+The focused physics checks run with `julia --project=. -t 1,0 test/run_floating.jl`
+from `gpu_version/`.
+
 `example/GenerateFloatingCylinder2D.jl` and `example/FloatingCylinder2d.jl`
 reproduce DualSPHysics `examples/main/11_Floating/CaseFloatingSphereVal2D`.
 A cylinder of radius 1 m and relative weight 1.2 starts half submerged in a

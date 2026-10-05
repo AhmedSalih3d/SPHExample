@@ -825,6 +825,8 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         if stop == STOP_REBUILD
             @timeit HourGlass "02a Actual Calculate IndexCounter" begin
                 rebuild_cell_list!(gpu, cl, SimKernel.H⁻¹)
+                floating === nothing ||
+                    update_floating_indices!(floating, gpu.Type, cl)
                 if cl.generation != generation
                     # the cell start buffer was reallocated: cached graphs point at the old one
                     invalidate_graphs!(state)

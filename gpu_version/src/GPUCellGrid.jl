@@ -464,10 +464,10 @@ end
 
 # Stream compaction: flag the non-zero entries, rank them with an inclusive
 # scan and scatter every flagged index to its rank.
-function nonzero_flag_kernel!(flags, x, n::Int32)
+function nonzero_flag_kernel!(flags, x, predicate, n::Int32)
     i = thread_index()
     i > n && return nothing
-    @inbounds flags[i] = Int32(!iszero(x[i]))
+    @inbounds flags[i] = Int32(predicate(x[i]))
     return nothing
 end
 
@@ -568,7 +568,7 @@ function update_cell_list!(ws::CellListWorkspace{D, T, R}, Position::CuVector{SV
 end
 
 """
-    compact_nonzero!(ws, x, out) -> out
+    compact_nonzero!(ws, x, out; predicate = !iszero) -> out
 
 Write the (1-based, ascending) indices of the non-zero entries of the device
 vector `x` into `out`, an `Int32` vector whose length must equal their
@@ -577,8 +577,10 @@ number. `x` must have one entry per particle. Uses the `Perm` and
 `update_cell_list!` is done with them, i.e. after the reorder. The driver
 uses it to list the boundary particles that own a ghost node in cell order
 after every rebuild, so that the mDBC kernel is launched over those alone.
+Pass `predicate` to select entries by a different condition.
 """
-function compact_nonzero!(ws::CellListWorkspace, x::CuVector, out::CuVector{Int32})
+function compact_nonzero!(ws::CellListWorkspace, x::CuVector, out::CuVector{Int32};
+                          predicate = !iszero)
     n = length(x)
     n == length(ws.Perm) || throw(ArgumentError("`x` must have one entry per particle"))
     n == 0 && return out
@@ -586,7 +588,7 @@ function compact_nonzero!(ws::CellListWorkspace, x::CuVector, out::CuVector{Int3
     ranks   = ws.Perm
     threads = SORT_THREADS
     blocks  = cld(n, threads)
-    @cuda threads=threads blocks=blocks nonzero_flag_kernel!(flags, x, Int32(n))
+    @cuda threads=threads blocks=blocks nonzero_flag_kernel!(flags, x, predicate, Int32(n))
     accumulate!(+, ranks, flags)
     @cuda threads=threads blocks=blocks compact_kernel!(out, flags, ranks, Int32(n))
     return out
