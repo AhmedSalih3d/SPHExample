@@ -33,6 +33,18 @@ opening loads both the particles and cell grid in the same session and view.
 The grid appears as a wireframe. This works with single-file VTKHDF output and
 numbered VTKHDF file series; the generated state script can also be opened later.
 
+Particles are colored by pressure when `Pressure` is exported, otherwise density.
+`RunSimulation` fixes the pressure color range to `0` through `ρ₀ g h` Pa, where
+`h` is the initial fluid height plus one particle spacing (`y` in 2D, `z` in 3D).
+The fixed scale makes colors comparable across timesteps. For impact pressures
+or a different scale, pass `ParaviewPressureRange = (0.0, 20000.0)` to
+`RunSimulation`; negative lower limits are also supported. Values outside the
+range use the endpoint colors. With zero gravity or no fluid, the state uses
+the initial pressure data range, with a nonzero fallback for uniform data.
+When generating a state directly, use
+`AutoOpenParaview(metadata, constants, variables; pressure_range = (0.0, 20000.0))`.
+The generated Python state's `pressure_range` can also be edited before opening.
+
 ### Using generated particles directly
 
 `SPHGeometry` holds input particles in `geometry.Particles`, a `StructArray`.

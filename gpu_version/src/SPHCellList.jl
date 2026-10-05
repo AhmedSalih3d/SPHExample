@@ -858,7 +858,8 @@ end
 """
     RunSimulation(; SimGeometry, SimMetaData, SimConstants, SimKernel, SimLogger,
                     SimParticles, SimViscosity, SimDensityDiffusion, SimTimeStepping,
-                    ParticleNormalsPath, SimMeasurements = nothing)
+                    ParticleNormalsPath, SimMeasurements = nothing,
+                    ParaviewPressureRange = nothing)
 
 Run a complete simulation on the GPU. Same interface as the CPU version: the
 shifting, kernel output, mDBC and log modes are the type parameters of
@@ -877,6 +878,11 @@ positions; other host arrays are converted on upload and download.
 `SimMeasurements` optionally records selected pressure, velocity, water-column
 and free-surface series at output times. With asynchronous output, samples are
 computed by the output worker rather than the timestep kernels.
+
+`ParaviewPressureRange = (min, max)` fixes the generated ParaView pressure color
+scale in Pa. By default use zero through the hydrostatic pressure of the initial
+fluid height plus one particle spacing. This scale stays fixed across frames;
+use an explicit range for impacts or negative pressures.
 """
 function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode},
@@ -889,6 +895,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     SimTimeStepping::TimeSteppingMode,
     ParticleNormalsPath::Union{Nothing, String} = nothing,
     SimMeasurements::Union{Nothing, MeasurementConfig} = nothing,
+    ParaviewPressureRange = nothing,
     ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SV <: SPHViscosity, SDD <: SPHDensityDiffusion}
 
     CUDA.functional() || error("CUDA is not functional on this machine; use the CPU package SPHExample instead.")
@@ -898,6 +905,9 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     SimMetaData.TimeSteppingMode = SimTimeStepping
     StoreLogOutput = LMode === StoreLog
     PositionType   = position_float_type(SimMetaData)
+    paraview_pressure_range = ParaviewPressureRange === nothing ?
+        OpenExternalPrograms.hydrostatic_pressure_range(SimParticles, SimConstants) :
+        ParaviewPressureRange
 
     # Only the fields that end up in the output files are copied back from the
     # GPU at every output, plus any fields needed by the optional measurements.
@@ -1151,7 +1161,8 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         close_output_streams!()
 
         show(HourGlass, sortby = :name)
-        AutoOpenParaview(SimMetaData, SimConstants, output.variable_names)
+        AutoOpenParaview(SimMetaData, SimConstants, output.variable_names;
+            pressure_range = paraview_pressure_range)
 
         if StoreLogOutput
             with_logger(SimLogger.Logger) do

@@ -84,6 +84,23 @@ ColorBy(Simulation_vtkhdfDisplay, ('POINTS', '__COLOR_VAR__'))
 # rescale color and/or opacity maps used to include current data range
 Simulation_vtkhdfDisplay.RescaleTransferFunctionToDataRange(True, False)
 
+# Keep the pressure scale fixed so colors remain comparable across timesteps.
+pressure_range = __PRESSURE_RANGE__
+if 'Pressure' in __OUTPUT_VARIABLES__:
+    Simulation_vtkhdf.UpdatePipeline()
+    if pressure_range is None:
+        pressure_range = list(Simulation_vtkhdf.PointData['Pressure'].GetRange())
+        if pressure_range[0] == pressure_range[1]:
+            pressure_range = [min(0.0, pressure_range[0]),
+                              max(1.0, pressure_range[1])]
+    pressure_lut = GetColorTransferFunction('Pressure')
+    pressure_lut.RescaleTransferFunction(*pressure_range)
+    pressure_lut.AutomaticRescaleRangeMode = 'Never'
+    GetOpacityTransferFunction('Pressure').RescaleTransferFunction(*pressure_range)
+    pressure_bar = GetScalarBar(pressure_lut, renderView1)
+    pressure_bar.Title = 'Pressure [Pa]'
+    pressure_bar.ComponentTitle = ''
+
 # show color bar/color legend
 Simulation_vtkhdfDisplay.SetScalarBarVisibility(renderView1, True)
 
