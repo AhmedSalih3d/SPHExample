@@ -26,6 +26,13 @@ julia --project=gpu_version gpu_version/example/Dambreak2dMDBC.jl
 The examples in `gpu_version/example/` mirror those in `example/`. Choose the
 precision with `FloatType = Float32` or `Float64` at the top of a script.
 
+### Automatic ParaView visualization
+
+With `VisualizeInParaview = true` and `ExportGridCells = true`, automatic ParaView
+opening loads both the particles and cell grid in the same session and view.
+The grid appears as a wireframe. This works with single-file VTKHDF output and
+numbered VTKHDF file series; the generated state script can also be opened later.
+
 ### Using generated particles directly
 
 `SPHGeometry` holds input particles in `geometry.Particles`, a `StructArray`.
