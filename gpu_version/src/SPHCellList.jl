@@ -1151,7 +1151,6 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         close_output_streams!()
 
         show(HourGlass, sortby = :name)
-        show(HourGlass)
         AutoOpenParaview(SimMetaData, SimConstants, output.variable_names)
 
         if StoreLogOutput
