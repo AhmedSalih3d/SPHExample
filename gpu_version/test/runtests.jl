@@ -8,8 +8,6 @@ using HDF5
 
 include(joinpath(@__DIR__, "..", "..", "test", "measurements.jl"))
 measurement_output_tests(SPHExampleGPU)
-include(joinpath(@__DIR__, "..", "example", "measurements_standalone.jl"))
-
 include(joinpath(@__DIR__, "geometry_particles.jl"))
 include(joinpath(@__DIR__, "generated_examples.jl"))
 include(joinpath(@__DIR__, "log_progress.jl"))
