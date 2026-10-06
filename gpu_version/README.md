@@ -301,6 +301,18 @@ writes velocity, density and pressure frames to
 
 ### Floating bodies: the 2D falling cylinder and 3D rigid bodies
 
+Run a four-cylinder example with relative densities 0.7, 1.0, 1.2 and 1.5:
+
+```powershell
+julia --project=. -t 1,0 example/MultipleFloatingCylinders2d.jl
+julia --project=. example/PreviewMultipleFloatingCylinders2d.jl <output_dir>
+```
+
+The first command runs two seconds of motion and prints its output directory
+under `particles/`. The second requires `pvpython` on PATH and creates
+`motion.gif`, `initial.png`, `final.png`, `displacement.png` and a colored
+`PreviewState.py` for ParaView. Generated outputs are Git ignored.
+
 A `Floating` particle group is a rigid body moved by gravity and the forces of
 the surrounding particles (the DualSPHysics "floating" object, `RigidAlgorithm
 = 1`). Give the group `Type = Floating` and its `FloatingDetails`:
