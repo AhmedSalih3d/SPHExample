@@ -75,6 +75,13 @@ Simulation_vtkhdfDisplay = Show(Simulation_vtkhdf, renderView1, 'GeometryReprese
 
 Simulation_vtkhdfDisplay.SetRepresentationType('__REPRESENTATION__')
 
+# Show only particles in composite measurement files. Measurement blocks stay
+# available in the composite block selectors and can be enabled as needed.
+Simulation_vtkhdf.UpdatePipeline()
+data_type = Simulation_vtkhdf.GetDataInformation().GetDataSetTypeAsString()
+if data_type == 'vtkMultiBlockDataSet':
+    Simulation_vtkhdfDisplay.BlockSelectors = ['/Root/Particles']
+
 # To always load in at correct position
 # Simulation_vtkhdfDisplay.Position = [0.0, 0.0, 0.0]
 

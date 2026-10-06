@@ -53,6 +53,7 @@ using StaticArrays
                     write(io, "\nassert len(GetSources()) == $(export_grid ? 2 : 1)\n")
                     write(io, "assert file_list == sorted(file_list)\n")
                     write(io, "assert len(file_list) == $(length(suffixes))\n")
+                    write(io, "assert Simulation_vtkhdfDisplay.BlockSelectors == ['/']\n")
                     write(io, "assert Simulation_vtkhdfDisplay.ColorArrayName[1] == " *
                         "'$(single_file ? "Pressure" : "Density")'\n")
                     expected_range = single_file ? [-1000.0, 20000.0] : [0.0, 1.0]
