@@ -24,11 +24,14 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     using ..AuxiliaryFunctions: to_3d, to_3d!
     using ..SPHMeasurements: MeasurementConfig, has_measurements,
         resolve_measurements, MeasurementWriter, append_measurements!,
-        flush_measurements!
+        flush_measurements!, measurement_block_names
 
 
     const idType = Int64
     const fType = Float64
+
+    # Name of the particle block when the file is a composite dataset.
+    const PARTICLE_BLOCK = "Particles"
 
     """Write an ASCII attribute `name => value` to `grp`."""
     function write_ascii_attribute(grp, name, value)
@@ -37,6 +40,75 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         dspace = HDF5.dataspace(value)
         attr = HDF5.create_attribute(grp, name, dtype, dspace)
         HDF5.write_attribute(attr, dtype, value)
+    end
+
+    #---------------------------------------------------------------
+    # Composite (MultiBlockDataSet) files
+    #---------------------------------------------------------------
+    #
+    # With measurements the file holds several datasets, so `/VTKHDF` becomes
+    # a `MultiBlockDataSet`: every dataset is a block group directly below
+    # `/VTKHDF` with its own `Type` and `Version` attributes, and the
+    # `Assembly` group describes the hierarchy with soft links to the blocks
+    # (a plain subgroup is a nested multiblock). The specification requires
+    # `/VTKHDF`, `Assembly` and its nodes to track link creation order, which
+    # the reader uses to order the blocks. `MultiBlockDataSet` is used rather
+    # than `PartitionedDataSetCollection` because ParaView 6.1's reader
+    # produces an empty `Plot Data Over Time` for temporal collections.
+
+    """
+        create_collection_root(file) -> HDF5.Group
+
+    Create `/VTKHDF` as a `MultiBlockDataSet` in `file`.
+    """
+    function create_collection_root(file::HDF5.File)
+        root = HDF5.create_group(file, "VTKHDF"; track_order = true)
+        HDF5.attrs(root)["Version"] = Int32.([2, 3])
+        write_ascii_attribute(root, "Type", "MultiBlockDataSet")
+        return root
+    end
+
+    """
+        create_block(root, name) -> HDF5.Group
+
+    Create the block group `name` in the composite `root`. The caller writes
+    the `Type` and `Version` attributes of the block (see
+    `GenerateGeometryStructure`).
+    """
+    function create_block(root::HDF5.Group, name::AbstractString)
+        return HDF5.create_group(root, name)
+    end
+
+    # Soft link `name` in the assembly node `node` to the block `/VTKHDF/name`.
+    function link_block!(node::HDF5.Group, name::AbstractString)
+        HDF5.API.h5l_create_soft(
+            "/VTKHDF/" * name, node, name, HDF5.API.H5P_DEFAULT, HDF5.API.H5P_DEFAULT,
+        )
+        return node
+    end
+
+    """
+        write_assembly!(root, particle_block, measurement_blocks)
+
+    Write the `Assembly` of the collection `root`: the particle block at the
+    top level and the measurement blocks below a `Measurements` node.
+    """
+    function write_assembly!(root::HDF5.Group, particle_block::AbstractString,
+                             measurement_blocks)
+        assembly = HDF5.create_group(root, "Assembly"; track_order = true)
+        try
+            link_block!(assembly, particle_block)
+            isempty(measurement_blocks) && return root
+            node = HDF5.create_group(assembly, "Measurements"; track_order = true)
+            try
+                foreach(name -> link_block!(node, name), measurement_blocks)
+            finally
+                close(node)
+            end
+        finally
+            close(assembly)
+        end
+        return root
     end
 
     """
@@ -461,8 +533,13 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     Prepare VTK/HDF5 output. Returns a named tuple with `save_particles`,
     `save_grid` and `close_files` functions. Uses single or multi-file mode
     depending on `SimMetaData.ExportSingleVTKHDF`.
-    Optional measurements are stored under `/Measurements` in the combined
-    file; measurements cannot be requested in multi-file mode.
+
+    Without measurements the combined file is a temporal `PolyData` at
+    `/VTKHDF`. With measurements it is a `MultiBlockDataSet`: the particles
+    become the block `/VTKHDF/Particles` and every measurement category a
+    block next to it (see `SPHMeasurements`), all sharing the same time steps
+    and linked from `/VTKHDF/Assembly`. Measurements cannot be requested in
+    multi-file mode.
     """
     function SetupVTKOutput(
             SimMetaData, SimParticles, SimKernel, Dimensions;
@@ -507,9 +584,17 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 grid_files = nothing,
             )
         else
-            # Single-file mode: handles for both files
+            # Single-file mode: handles for both files. With measurements the
+            # particles are one block of a multiblock, otherwise the file is
+            # the PolyData itself.
             OutputVTKHDF = h5open("$(particle_savepath).vtkhdf", "w")
-            root = HDF5.create_group(OutputVTKHDF, "VTKHDF")
+            collection = nothing
+            root = if measurement_plan === nothing
+                HDF5.create_group(OutputVTKHDF, "VTKHDF")
+            else
+                collection = create_collection_root(OutputVTKHDF)
+                create_block(collection, PARTICLE_BLOCK)
+            end
             
             available_init = Dict(
                 "ChunkID" => SimParticles.ChunkID,
@@ -532,7 +617,11 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             GenerateStepStructure(root, output_vars, output_data_init...)
             if measurement_plan !== nothing
                 measurement_writer = MeasurementWriter(
-                    OutputVTKHDF, measurement_plan, fluid_type,
+                    collection, measurement_plan, fluid_type,
+                )
+                write_assembly!(
+                    collection, PARTICLE_BLOCK,
+                    measurement_block_names(measurement_plan),
                 )
             end
 

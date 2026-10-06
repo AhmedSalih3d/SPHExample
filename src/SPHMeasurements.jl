@@ -163,37 +163,6 @@ struct ResolvedMeasurements
     surface_locations::Matrix{Float64}
 end
 
-struct ScalarSeries
-    dataset::HDF5.Dataset
-    buffer::Matrix{Float64}
-end
-
-struct VectorSeries
-    dataset::HDF5.Dataset
-    buffer::Array{Float64, 3}
-end
-
-mutable struct MeasurementWriter{F}
-    plan::ResolvedMeasurements
-    fluid_type::F
-    time_dataset::HDF5.Dataset
-    time_buffer::Vector{Float64}
-    pressure::Union{Nothing, ScalarSeries}
-    velocity::Union{Nothing, VectorSeries}
-    column_height::Union{Nothing, ScalarSeries}
-    surface_height::Union{Nothing, ScalarSeries}
-    pressure_nearest::Vector{Int}
-    pressure_distance²::Vector{Float64}
-    velocity_nearest::Vector{Int}
-    velocity_distance²::Vector{Float64}
-    column_maximum::Vector{Float64}
-    surface_maximum::Vector{Float64}
-    capacity::Int
-    pending::Int
-    frames_written::Int
-    output_frames_seen::Int
-end
-
 function _measurement_name(name::AbstractString)
     value = String(name)
     isempty(strip(value)) && throw(ArgumentError("measurement names cannot be empty"))
@@ -364,152 +333,452 @@ function _strides(shape)
     return strides
 end
 
-function _scalar_series(group, count, capacity)
-    dataset = HDF5.create_dataset(
-        group,
-        "Values",
-        Float64,
-        ((count, 0), (count, -1)),
-        chunk = (count, capacity),
+
+# ---------------------------------------------------------------------------
+# VTKHDF output
+# ---------------------------------------------------------------------------
+#
+# Measurements are stored in the particle `.vtkhdf` file as blocks of a
+# `MultiBlockDataSet` (VTKHDF specification, section
+# "PartitionedDataSetCollection and MultiBlockDataSet"). Every measurement
+# category is one temporal `PolyData` block of vertices with one point per
+# probe (or free-surface bin), so the standard VTKHDF reader loads it next to
+# the particle block (`ProduceHDFVTK` links the blocks into the `Assembly`):
+#
+#   /VTKHDF/PressureProbes     PointData: Pressure, Sampled, SampleTime
+#   /VTKHDF/VelocityProbes     PointData: Velocity, Sampled, SampleTime
+#   /VTKHDF/WaterColumnProbes  PointData: WaterColumnHeight, Radius, Sampled, SampleTime
+#   /VTKHDF/FreeSurface        PointData: FreeSurfaceHeight, Sampled, SampleTime
+#
+# The reader requires every block of a temporal composite to have the same
+# number of steps and the same time values, so a block receives one frame per
+# output frame of the particles even when `sample_every > 1`: frames between
+# samples repeat the previous sample with `Sampled == 0` and `SampleTime`
+# equal to the time of that sample; sampled frames carry `Sampled == 1`.
+#
+# The geometry (points, vertex cells) and the static arrays (`Radius`, the
+# `FieldData` with the probe names and the free-surface grid) are written
+# once; their step offsets stay zero, as the specification allows for static
+# data. The probe names are also kept in a `Names` attribute of the block.
+# Frame data are buffered in host memory and written `capacity` frames at a
+# time by `flush_measurements!`.
+
+const BLOCK_VERSION = Int32[2, 3]
+const IdType = Int64
+
+const PRESSURE_BLOCK = "PressureProbes"
+const VELOCITY_BLOCK = "VelocityProbes"
+const WATER_COLUMN_BLOCK = "WaterColumnProbes"
+const FREE_SURFACE_BLOCK = "FreeSurface"
+
+"""
+    measurement_block_names(plan) -> Vector{String}
+
+Names of the VTKHDF blocks written for `plan`, in writing order.
+"""
+function measurement_block_names(plan::ResolvedMeasurements)
+    names = String[]
+    isempty(plan.pressure_names) || push!(names, PRESSURE_BLOCK)
+    isempty(plan.velocity_names) || push!(names, VELOCITY_BLOCK)
+    isempty(plan.column_names) || push!(names, WATER_COLUMN_BLOCK)
+    isempty(plan.surface_axes) || push!(names, FREE_SURFACE_BLOCK)
+    return names
+end
+
+function _write_ascii_attribute(group, name, value::AbstractString)
+    dtype = HDF5.datatype(value)
+    HDF5.API.h5t_set_cset(dtype.id, HDF5.API.H5T_CSET_ASCII)
+    attribute = HDF5.create_attribute(group, name, dtype, HDF5.dataspace(value))
+    HDF5.write_attribute(attribute, dtype, value)
+    return group
+end
+
+function _write_attribute(group, name, value::AbstractString)
+    return _write_ascii_attribute(group, name, value)
+end
+
+function _write_attribute(group, name, value)
+    HDF5.attrs(group)[name] = value
+    return group
+end
+
+# Append `count` entries to the one dimensional dataset `ds` and return the
+# (one based) index of the first new entry. New entries read as zero.
+function _extend!(ds::HDF5.Dataset, count::Integer)
+    len = length(ds)
+    HDF5.set_extent_dims(ds, (len + count,))
+    return len + 1
+end
+
+function _append!(ds::HDF5.Dataset, data::AbstractVector)
+    isempty(data) && return ds
+    first = _extend!(ds, length(data))
+    ds[first:(first + length(data) - 1)] = data
+    return ds
+end
+
+# Append `count` zero columns to the `rows × M` dataset `ds`.
+function _extend_columns!(ds::HDF5.Dataset, count::Integer)
+    rows, cols = size(ds)
+    HDF5.set_extent_dims(ds, (rows, cols + count))
+    return cols + 1
+end
+
+function _append_columns!(ds::HDF5.Dataset, data::AbstractMatrix)
+    size(data, 2) == 0 && return ds
+    first = _extend_columns!(ds, size(data, 2))
+    ds[:, first:(first + size(data, 2) - 1)] = data
+    return ds
+end
+
+_step_dataset(group, name, ::Type{T}, capacity) where {T} =
+    HDF5.create_dataset(group, name, T, ((0,), (-1,)), chunk = (capacity,))
+
+_step_columns(group, name, rows, capacity) =
+    HDF5.create_dataset(
+        group, name, IdType, ((rows, 0), (rows, -1)), chunk = (rows, capacity),
     )
-    return ScalarSeries(dataset, Matrix{Float64}(undef, count, capacity))
+
+"""
+A temporal point data array of a block: the dataset, its step offsets and the
+frame buffer (`n × capacity` for scalars, `3 × n × capacity` for vectors).
+"""
+struct FrameArray{A <: AbstractArray}
+    dataset::HDF5.Dataset
+    offsets::HDF5.Dataset
+    buffer::A
 end
 
-function _scalar_group(root, name, locations, names, capacity)
-    group = HDF5.create_group(root, name)
-    try
-        group["Locations"] = locations
-        HDF5.attrs(group)["Names"] = join(names, "\n")
-        return _scalar_series(group, length(names), capacity)
-    finally
-        close(group)
+frame_slot(array::FrameArray{<:AbstractMatrix}, slot) = view(array.buffer, :, slot)
+frame_slot(array::FrameArray{<:AbstractArray{<:Any, 3}}, slot) =
+    view(array.buffer, :, :, slot)
+
+_flush!(array::FrameArray{<:AbstractMatrix}, count) =
+    _append!(array.dataset, vec(array.buffer[:, 1:count]))
+
+function _flush!(array::FrameArray{<:AbstractArray{<:Any, 3}}, count)
+    npoints = size(array.buffer, 2)
+    return _append_columns!(
+        array.dataset, reshape(array.buffer[:, :, 1:count], 3, npoints * count),
+    )
+end
+
+"""
+One measurement block: a temporal vertex `PolyData` under `/VTKHDF/<name>`
+with one point per probe. Holds the handles of the datasets that grow by one
+entry per frame, grouped by the value they receive.
+"""
+struct MeasurementBlock
+    name::String
+    npoints::Int
+    nsteps::HDF5.Attribute
+    step_values::HDF5.Dataset           # Steps/Values: the frame times
+    part_offsets::HDF5.Dataset          # Steps/PartOffsets: the frame index
+    point_counts::Vector{HDF5.Dataset}  # `npoints` points and vertices per frame
+    part_counts::Vector{HDF5.Dataset}   # Steps/NumberOfParts: one part per frame
+    zero_entries::Vector{HDF5.Dataset}  # offsets into static data, empty topologies
+    zero_columns::Vector{HDF5.Dataset}  # Steps/CellOffsets, ConnectivityIdOffsets
+    field_sizes::Vector{Pair{HDF5.Dataset, Vector{IdType}}} # Steps/FieldDataSizes
+    frame_arrays::Vector{FrameArray}    # values, Sampled, SampleTime
+end
+
+"""
+    MeasurementBlock(root, name, points, arrays, static_arrays, field_arrays,
+                     attributes, capacity)
+
+Create the block `name` in the composite group `root`. `points` (`3 x n`) are
+the probe locations. `arrays` lists the temporal point arrays as
+`name => (eltype, components)`, `static_arrays` the point arrays and
+`field_arrays` the field arrays written once as `name => values`.
+`attributes` are descriptive HDF5 attributes of the block group.
+"""
+function MeasurementBlock(
+        root::HDF5.Group, name::AbstractString, points::AbstractMatrix{Float64},
+        arrays, static_arrays, field_arrays, attributes, capacity::Integer,
+    )
+    size(points, 1) == 3 || throw(ArgumentError("block points must be 3 x n"))
+    npoints = size(points, 2)
+    npoints >= 1 || throw(ArgumentError("block `$name` needs at least one point"))
+
+    block = HDF5.create_group(root, name)
+    HDF5.attrs(block)["Version"] = BLOCK_VERSION
+    _write_ascii_attribute(block, "Type", "PolyData")
+    for (key, value) in attributes
+        _write_attribute(block, key, value)
     end
-end
 
-function _vector_group(root, name, locations, names, dimension, capacity)
-    group = HDF5.create_group(root, name)
-    try
-        group["Locations"] = locations
-        HDF5.attrs(group)["Names"] = join(names, "\n")
-        HDF5.attrs(group)["Components"] = Int32(dimension)
-        dataset = HDF5.create_dataset(
-            group,
-            "Values",
-            Float64,
-            ((dimension, length(names), 0), (dimension, length(names), -1)),
-            chunk = (dimension, length(names), capacity),
-        )
-        buffer = Array{Float64, 3}(
-            undef, dimension, length(names), capacity,
-        )
-        return VectorSeries(dataset, buffer)
-    finally
-        close(group)
+    block["Points"] = Matrix{Float64}(points)
+    point_counts = HDF5.Dataset[_step_dataset(block, "NumberOfPoints", IdType, capacity)]
+    zero_entries = HDF5.Dataset[]
+    for topology in ("Vertices", "Lines", "Polygons", "Strips")
+        group = HDF5.create_group(block, topology)
+        cells = _step_dataset(group, "NumberOfCells", IdType, capacity)
+        ids = _step_dataset(group, "NumberOfConnectivityIds", IdType, capacity)
+        if topology == "Vertices"
+            group["Connectivity"] = collect(IdType, 0:(npoints - 1))
+            group["Offsets"] = collect(IdType, 0:npoints)
+            push!(point_counts, cells, ids)
+        else
+            group["Connectivity"] = IdType[]
+            group["Offsets"] = IdType[0]
+            push!(zero_entries, cells, ids)
+        end
     end
+
+    steps = HDF5.create_group(block, "Steps")
+    nsteps, _ = HDF5.create_attribute(steps, "NSteps", Int32)
+    HDF5.write_attribute(nsteps, HDF5.datatype(Int32), Int32(0))
+    step_values = _step_dataset(steps, "Values", Float64, capacity)
+    part_offsets = _step_dataset(steps, "PartOffsets", IdType, capacity)
+    part_counts = HDF5.Dataset[_step_dataset(steps, "NumberOfParts", IdType, capacity)]
+    push!(zero_entries, _step_dataset(steps, "PointOffsets", IdType, capacity))
+    zero_columns = HDF5.Dataset[
+        _step_columns(steps, "CellOffsets", 4, capacity),
+        _step_columns(steps, "ConnectivityIdOffsets", 4, capacity),
+    ]
+
+    point_data = HDF5.create_group(block, "PointData")
+    point_offsets = HDF5.create_group(steps, "PointDataOffsets")
+    frame_arrays = FrameArray[]
+    for (array_name, (T, components)) in arrays
+        components in (1, 3) ||
+            throw(ArgumentError("point arrays must have 1 or 3 components"))
+        dataset, buffer = if components == 1
+            HDF5.create_dataset(
+                point_data, array_name, T, ((0,), (-1,)),
+                chunk = (npoints * capacity,),
+            ), Matrix{T}(undef, npoints, capacity)
+        else
+            HDF5.create_dataset(
+                point_data, array_name, T, ((3, 0), (3, -1)),
+                chunk = (3, npoints * capacity),
+            ), Array{T, 3}(undef, 3, npoints, capacity)
+        end
+        offsets = _step_dataset(point_offsets, array_name, IdType, capacity)
+        push!(frame_arrays, FrameArray(dataset, offsets, buffer))
+    end
+    for (array_name, values) in static_arrays
+        length(values) == npoints ||
+            throw(DimensionMismatch("static array `$array_name` needs one value per point"))
+        point_data[array_name] = values
+        push!(zero_entries, _step_dataset(point_offsets, array_name, IdType, capacity))
+    end
+
+    field_sizes = Pair{HDF5.Dataset, Vector{IdType}}[]
+    if !isempty(field_arrays)
+        field_data = HDF5.create_group(block, "FieldData")
+        field_offsets = HDF5.create_group(steps, "FieldDataOffsets")
+        sizes = HDF5.create_group(steps, "FieldDataSizes")
+        for (array_name, values) in field_arrays
+            field_data[array_name] = values
+            push!(zero_entries, _step_dataset(field_offsets, array_name, IdType, capacity))
+            push!(
+                field_sizes,
+                _step_columns(sizes, array_name, 2, capacity) =>
+                    IdType[1, length(values)],
+            )
+        end
+    end
+
+    return MeasurementBlock(
+        String(name), npoints, nsteps, step_values, part_offsets, point_counts,
+        part_counts, zero_entries, zero_columns, field_sizes, frame_arrays,
+    )
 end
 
-function MeasurementWriter(file::HDF5.File, plan::ResolvedMeasurements, fluid_type;
+# Write `count` buffered frames with the times `times` to the block, the
+# first being frame `first_frame` (zero based) of the file.
+function _flush_block!(block::MeasurementBlock, times::AbstractVector{Float64},
+                       first_frame::Integer)
+    count = length(times)
+    frames = collect(IdType, first_frame:(first_frame + count - 1))
+    _append!(block.step_values, times)
+    _append!(block.part_offsets, frames)
+    foreach(ds -> _append!(ds, fill(IdType(block.npoints), count)), block.point_counts)
+    foreach(ds -> _append!(ds, ones(IdType, count)), block.part_counts)
+    foreach(ds -> _extend!(ds, count), block.zero_entries)
+    foreach(ds -> _extend_columns!(ds, count), block.zero_columns)
+    for (ds, column) in block.field_sizes
+        _append_columns!(ds, repeat(column, 1, count))
+    end
+    for array in block.frame_arrays
+        _append!(array.offsets, frames .* block.npoints)
+        _flush!(array, count)
+    end
+    HDF5.write_attribute(block.nsteps, HDF5.datatype(Int32), Int32(first_frame + count))
+    return block
+end
+
+# The `3 × n` point coordinates of probe `locations` (`dimension × n`).
+function _points3d(locations::AbstractMatrix)
+    points = zeros(Float64, 3, size(locations, 2))
+    points[1:size(locations, 1), :] = locations
+    return points
+end
+
+# The `3 × n` coordinates of the free-surface bins: bin centres on the
+# horizontal axes and the lower domain bound on the vertical axis.
+function _surface_points3d(plan::ResolvedMeasurements)
+    points = zeros(Float64, 3, size(plan.surface_locations, 2))
+    for axis in 1:plan.dimension
+        if axis == plan.vertical_axis
+            points[axis, :] .= plan.surface_lower[axis]
+        else
+            horizontal = findfirst(==(axis), plan.surface_axes)
+            points[axis, :] = plan.surface_locations[horizontal, :]
+        end
+    end
+    return points
+end
+
+"""
+Writer of the measurement blocks (see the section comment above). Keeps the
+latest sample of every series so that output frames between samples repeat
+it, and buffers `capacity` frames before writing.
+"""
+mutable struct MeasurementWriter{F}
+    plan::ResolvedMeasurements
+    fluid_type::F
+    blocks::Vector{MeasurementBlock}
+    pressure::Union{Nothing, MeasurementBlock}
+    velocity::Union{Nothing, MeasurementBlock}
+    column_height::Union{Nothing, MeasurementBlock}
+    surface_height::Union{Nothing, MeasurementBlock}
+    pressure_values::Vector{Float64}   # latest sample per probe
+    velocity_values::Matrix{Float64}   # `3 × probes`, latest sample
+    column_values::Vector{Float64}
+    surface_values::Vector{Float64}
+    pressure_nearest::Vector{Int}
+    pressure_distance²::Vector{Float64}
+    velocity_nearest::Vector{Int}
+    velocity_distance²::Vector{Float64}
+    column_maximum::Vector{Float64}
+    surface_maximum::Vector{Float64}
+    time_buffer::Vector{Float64}
+    capacity::Int
+    last_sample_time::Float64
+    pending::Int
+    frames_written::Int
+    output_frames_seen::Int
+end
+
+"""
+    MeasurementWriter(root, plan, fluid_type; capacity = 4)
+
+Create the measurement blocks of `plan` in the `MultiBlockDataSet` group
+`root` (`/VTKHDF`) and buffer `capacity` frames before a write. The caller
+links the blocks named by `measurement_block_names(plan)` into the `Assembly`
+group.
+"""
+function MeasurementWriter(root::HDF5.Group, plan::ResolvedMeasurements, fluid_type;
                            capacity::Integer = 4)
     capacity >= 1 ||
         throw(ArgumentError("measurement buffer capacity must be at least 1"))
-    group = HDF5.create_group(file, "Measurements")
-    time_dataset = nothing
-    pressure = nothing
-    velocity = nothing
-    column_height = nothing
-    surface_height = nothing
-    try
-        HDF5.attrs(group)["Version"] = Int32(1)
-        HDF5.attrs(group)["CoordinateDimension"] = Int32(plan.dimension)
-        HDF5.attrs(group)["VerticalAxis"] = Int32(plan.vertical_axis)
-        HDF5.attrs(group)["SampleEveryOutputFrames"] = Int32(plan.sample_every)
-        time_dataset = HDF5.create_dataset(
-            group, "Time", Float64, ((0,), (-1,)), chunk = (capacity,),
-        )
 
-        if !isempty(plan.pressure_names)
-            pressure = _scalar_group(
-                group, "Pressure", plan.pressure_locations,
-                plan.pressure_names, capacity,
-            )
-            pressure_group = group["Pressure"]
-            try
-                HDF5.attrs(pressure_group)["Sampling"] =
-                    "nearest fluid particle"
-            finally
-                close(pressure_group)
-            end
-        end
-        if !isempty(plan.velocity_names)
-            velocity = _vector_group(
-                group, "Velocity", plan.velocity_locations,
-                plan.velocity_names, plan.dimension, capacity,
-            )
-            velocity_group = group["Velocity"]
-            try
-                HDF5.attrs(velocity_group)["Sampling"] =
-                    "nearest fluid particle"
-            finally
-                close(velocity_group)
-            end
-        end
-        if !isempty(plan.column_names)
-            column_height = _scalar_group(
-                group, "WaterColumnHeight", plan.column_locations,
-                plan.column_names, capacity,
-            )
-            column_group = group["WaterColumnHeight"]
-            try
-                column_group["Radii"] = plan.column_radii
-                HDF5.attrs(column_group)["Definition"] =
-                    "maximum fluid-particle height minus probe height"
-            finally
-                close(column_group)
-            end
-        end
-        if !isempty(plan.surface_axes)
-            surface_group = HDF5.create_group(group, "FreeSurface")
-            try
-                surface_group["Locations"] = plan.surface_locations
-                surface_group["GridShape"] = Int64.(plan.surface_shape)
-                surface_group["HorizontalAxes"] = Int32.(plan.surface_axes)
-                HDF5.attrs(surface_group)["Spacing"] = plan.surface_spacing
-                HDF5.attrs(surface_group)["Ordering"] =
-                    "first horizontal axis varies fastest"
-                HDF5.attrs(surface_group)["Definition"] =
-                    "maximum fluid-particle height in each horizontal bin"
-                surface_height = _scalar_series(
-                    surface_group, size(plan.surface_locations, 2), capacity,
-                )
-            finally
-                close(surface_group)
-            end
-        end
-    finally
-        close(group)
+    common = Pair{String, Any}[
+        "SampleEveryOutputFrames" => Int32(plan.sample_every),
+        "UnsampledFrames" => "repeat previous sample (Sampled = 0)",
+        "CoordinateDimension" => Int32(plan.dimension),
+        "VerticalAxis" => Int32(plan.vertical_axis),
+    ]
+    probe_attributes(names, extra...) =
+        [common; "Names" => join(names, "\n"); extra...]
+    sampled_arrays = ["Sampled" => (UInt8, 1), "SampleTime" => (Float64, 1)]
+    none = Pair{String, Vector{Float64}}[]
+
+    blocks = MeasurementBlock[]
+    pressure = velocity = column_height = surface_height = nothing
+    if !isempty(plan.pressure_names)
+        pressure = MeasurementBlock(
+            root, PRESSURE_BLOCK, _points3d(plan.pressure_locations),
+            ["Pressure" => (Float64, 1); sampled_arrays], none,
+            ["Names" => plan.pressure_names],
+            probe_attributes(
+                plan.pressure_names, "Sampling" => "nearest fluid particle",
+            ),
+            capacity,
+        )
+        push!(blocks, pressure)
+    end
+    if !isempty(plan.velocity_names)
+        velocity = MeasurementBlock(
+            root, VELOCITY_BLOCK, _points3d(plan.velocity_locations),
+            ["Velocity" => (Float64, 3); sampled_arrays], none,
+            ["Names" => plan.velocity_names],
+            probe_attributes(
+                plan.velocity_names, "Sampling" => "nearest fluid particle",
+            ),
+            capacity,
+        )
+        push!(blocks, velocity)
+    end
+    if !isempty(plan.column_names)
+        column_height = MeasurementBlock(
+            root, WATER_COLUMN_BLOCK, _points3d(plan.column_locations),
+            ["WaterColumnHeight" => (Float64, 1); sampled_arrays],
+            ["Radius" => plan.column_radii],
+            ["Names" => plan.column_names],
+            probe_attributes(
+                plan.column_names,
+                "Definition" => "maximum fluid-particle height minus probe height",
+            ),
+            capacity,
+        )
+        push!(blocks, column_height)
+    end
+    if !isempty(plan.surface_axes)
+        surface_height = MeasurementBlock(
+            root, FREE_SURFACE_BLOCK, _surface_points3d(plan),
+            ["FreeSurfaceHeight" => (Float64, 1); sampled_arrays], none,
+            [
+                "GridShape" => Int64.(plan.surface_shape),
+                "HorizontalAxes" => Int32.(plan.surface_axes),
+                "Spacing" => [plan.surface_spacing],
+                "DomainLower" => plan.surface_lower,
+                "DomainUpper" => plan.surface_upper,
+            ],
+            [
+                common
+                "Ordering" => "first horizontal axis varies fastest"
+                "Definition" => "maximum fluid-particle height in each horizontal bin"
+            ],
+            capacity,
+        )
+        push!(blocks, surface_height)
     end
 
     return MeasurementWriter(
         plan,
         fluid_type,
-        time_dataset,
-        Vector{Float64}(undef, capacity),
+        blocks,
         pressure,
         velocity,
         column_height,
         surface_height,
+        fill(NaN, length(plan.pressure_names)),
+        fill(NaN, 3, length(plan.velocity_names)),
+        fill(NaN, length(plan.column_names)),
+        fill(NaN, size(plan.surface_locations, 2)),
         zeros(Int, length(plan.pressure_names)),
         Vector{Float64}(undef, length(plan.pressure_names)),
         zeros(Int, length(plan.velocity_names)),
         Vector{Float64}(undef, length(plan.velocity_names)),
         Vector{Float64}(undef, length(plan.column_names)),
         Vector{Float64}(undef, size(plan.surface_locations, 2)),
+        Vector{Float64}(undef, capacity),
         Int(capacity),
+        NaN,
         0,
         0,
         0,
     )
 end
+
+"""Number of frames written to the file so far."""
+frames_written(writer::MeasurementWriter) = writer.frames_written
+
+"""Number of frames buffered and not yet written."""
+frames_pending(writer::MeasurementWriter) = writer.pending
 
 function _nearest_indices!(writer, positions, particle_types)
     fill!(writer.pressure_nearest, 0)
@@ -595,18 +864,14 @@ function _nearest_indices!(writer, positions, particle_types)
     return nothing
 end
 
-function append_measurements!(writer::MeasurementWriter, time, particles)
-    writer.output_frames_seen += 1
-    mod(writer.output_frames_seen - 1, writer.plan.sample_every) == 0 ||
-        return writer
 
+function _validate_particles(writer::MeasurementWriter, particles)
     hasproperty(particles, :Position) ||
         throw(ArgumentError("measurements require particle positions"))
     hasproperty(particles, :Type) ||
         throw(ArgumentError("measurements require particle types"))
     positions = particles.Position
-    particle_types = particles.Type
-    length(positions) == length(particle_types) ||
+    length(positions) == length(particles.Type) ||
         throw(DimensionMismatch("particle positions and types must have matching lengths"))
     if !isempty(positions) &&
        length(positions[firstindex(positions)]) != writer.plan.dimension
@@ -630,99 +895,103 @@ function append_measurements!(writer::MeasurementWriter, time, particles)
                 "particle velocity and positions must have matching lengths",
             ))
     end
+    return nothing
+end
 
-    _nearest_indices!(writer, positions, particle_types)
+# Sample every series from `particles` into the writer's latest-value arrays.
+function _sample!(writer::MeasurementWriter, particles)
+    _nearest_indices!(writer, particles.Position, particles.Type)
+    plan = writer.plan
+
+    values = writer.pressure_values
+    fill!(values, NaN)
+    for probe in eachindex(writer.pressure_nearest)
+        particle = writer.pressure_nearest[probe]
+        particle == 0 || (values[probe] = Float64(particles.Pressure[particle]))
+    end
+
+    velocity = writer.velocity_values
+    fill!(velocity, NaN)
+    for probe in eachindex(writer.velocity_nearest)
+        particle = writer.velocity_nearest[probe]
+        particle == 0 && continue
+        for axis in 1:plan.dimension
+            velocity[axis, probe] = Float64(particles.Velocity[particle][axis])
+        end
+        for axis in (plan.dimension + 1):3
+            velocity[axis, probe] = 0.0
+        end
+    end
+
+    heights = writer.column_values
+    fill!(heights, NaN)
+    for probe in eachindex(writer.column_maximum)
+        height = writer.column_maximum[probe]
+        isfinite(height) &&
+            (heights[probe] = max(
+                0.0, height - plan.column_locations[plan.vertical_axis, probe],
+            ))
+    end
+
+    surface = writer.surface_values
+    for bin in eachindex(writer.surface_maximum)
+        height = writer.surface_maximum[bin]
+        surface[bin] = isfinite(height) ? height : NaN
+    end
+    return nothing
+end
+
+"""
+    append_measurements!(writer, time, particles)
+
+Record the output frame at `time`. The frame is sampled from `particles` when
+it is the first frame or `sample_every` frames after the previous sample;
+otherwise the previous sample is repeated with `Sampled = 0`. Every frame is
+written to all blocks so that they share the time steps of the particles.
+"""
+function append_measurements!(writer::MeasurementWriter, time, particles)
+    writer.output_frames_seen += 1
+    sampled = mod(writer.output_frames_seen - 1, writer.plan.sample_every) == 0
+    if sampled
+        _validate_particles(writer, particles)
+        _sample!(writer, particles)
+        writer.last_sample_time = Float64(time)
+    end
+
     slot = writer.pending + 1
     writer.time_buffer[slot] = Float64(time)
-
-    if writer.pressure !== nothing
-        values = view(writer.pressure.buffer, :, slot)
-        fill!(values, NaN)
-        for probe in eachindex(writer.pressure_nearest)
-            particle = writer.pressure_nearest[probe]
-            particle == 0 ||
-                (values[probe] = Float64(particles.Pressure[particle]))
-        end
+    flag = UInt8(sampled)
+    for block in writer.blocks
+        fill!(frame_slot(block.frame_arrays[2], slot), flag)
+        fill!(frame_slot(block.frame_arrays[3], slot), writer.last_sample_time)
     end
-    if writer.velocity !== nothing
-        values = view(writer.velocity.buffer, :, :, slot)
-        fill!(values, NaN)
-        for probe in eachindex(writer.velocity_nearest)
-            particle = writer.velocity_nearest[probe]
-            particle == 0 && continue
-            for axis in 1:writer.plan.dimension
-                values[axis, probe] = Float64(particles.Velocity[particle][axis])
-            end
-        end
-    end
-    if writer.column_height !== nothing
-        values = view(writer.column_height.buffer, :, slot)
-        fill!(values, NaN)
-        for probe in eachindex(writer.column_maximum)
-            height = writer.column_maximum[probe]
-            isfinite(height) &&
-                (values[probe] =
-                    max(
-                        0.0,
-                        height - writer.plan.column_locations[
-                            writer.plan.vertical_axis, probe
-                        ],
-                    ))
-        end
-    end
-    if writer.surface_height !== nothing
-        values = view(writer.surface_height.buffer, :, slot)
-        for bin in eachindex(writer.surface_maximum)
-            height = writer.surface_maximum[bin]
-            values[bin] = isfinite(height) ? height : NaN
-        end
-    end
+    # The first frame array of a block holds the measured values.
+    store!(block, values) = copyto!(frame_slot(block.frame_arrays[1], slot), values)
+    writer.pressure === nothing || store!(writer.pressure, writer.pressure_values)
+    writer.velocity === nothing || store!(writer.velocity, writer.velocity_values)
+    writer.column_height === nothing ||
+        store!(writer.column_height, writer.column_values)
+    writer.surface_height === nothing ||
+        store!(writer.surface_height, writer.surface_values)
 
     writer.pending += 1
     writer.pending == writer.capacity && flush_measurements!(writer)
     return writer
 end
 
-function _flush_scalar!(series::ScalarSeries, frames_written, count)
-    old_frames = frames_written
-    total_frames = old_frames + count
-    HDF5.set_extent_dims(
-        series.dataset, (size(series.dataset, 1), total_frames),
-    )
-    series.dataset[:, (old_frames + 1):total_frames] =
-        view(series.buffer, :, 1:count)
-    return nothing
-end
+"""
+    flush_measurements!(writer)
 
-function _flush_vector!(series::VectorSeries, frames_written, count)
-    old_frames = frames_written
-    total_frames = old_frames + count
-    HDF5.set_extent_dims(
-        series.dataset,
-        (size(series.dataset, 1), size(series.dataset, 2), total_frames),
-    )
-    series.dataset[:, :, (old_frames + 1):total_frames] =
-        view(series.buffer, :, :, 1:count)
-    return nothing
-end
-
+Write the buffered frames to every measurement block.
+"""
 function flush_measurements!(writer::MeasurementWriter)
     count = writer.pending
     count == 0 && return writer
-    first_frame = writer.frames_written
-    total_frames = first_frame + count
-    HDF5.set_extent_dims(writer.time_dataset, (total_frames,))
-    writer.time_dataset[(first_frame + 1):total_frames] =
-        view(writer.time_buffer, 1:count)
-    writer.pressure === nothing ||
-        _flush_scalar!(writer.pressure, first_frame, count)
-    writer.velocity === nothing ||
-        _flush_vector!(writer.velocity, first_frame, count)
-    writer.column_height === nothing ||
-        _flush_scalar!(writer.column_height, first_frame, count)
-    writer.surface_height === nothing ||
-        _flush_scalar!(writer.surface_height, first_frame, count)
-    writer.frames_written = total_frames
+    times = writer.time_buffer[1:count]
+    for block in writer.blocks
+        _flush_block!(block, times, writer.frames_written)
+    end
+    writer.frames_written += count
     writer.pending = 0
     return writer
 end

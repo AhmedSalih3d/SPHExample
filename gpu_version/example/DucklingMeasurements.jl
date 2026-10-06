@@ -4,8 +4,10 @@
 # Run from the repository root with:
 #     julia --project=gpu_version gpu_version/example/DucklingMeasurements.jl
 #
-# Pressure, velocity, water-column and free-surface data are written under
-# `/Measurements` in the combined VTKHDF output.
+# Pressure, velocity, water-column and free-surface data are written as
+# blocks next to the particles in the combined VTKHDF output (a
+# MultiBlockDataSet; see the `Measurements` node of the block hierarchy in
+# ParaView).
 using SPHExampleGPU
 
 let
