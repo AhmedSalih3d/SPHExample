@@ -29,20 +29,23 @@ function check_soft_link(group, name)
     @test HDF5.attrs(group[name])["Type"] == "PolyData"
 end
 
-# The temporal bookkeeping of a measurement block with static geometry of
-# `npoints` vertices over `times`.
-function check_block_steps(block, npoints, times)
+# The temporal bookkeeping of a measurement block with `npoints` vertices
+# over `times`.
+function check_block_steps(block, npoints, times; dynamic_points = false)
     nsteps = length(times)
     steps = block["Steps"]
     @test HDF5.attrs(steps)["NSteps"] == nsteps
     @test read(steps["Values"]) ≈ times
     @test read(steps["PartOffsets"]) == 0:(nsteps - 1)
     @test read(steps["NumberOfParts"]) == ones(nsteps)
-    @test read(steps["PointOffsets"]) == zeros(nsteps)
+    expected_point_offsets = dynamic_points ?
+        npoints .* (0:(nsteps - 1)) : zeros(nsteps)
+    @test read(steps["PointOffsets"]) == expected_point_offsets
     @test read(steps["CellOffsets"]) == zeros(4, nsteps)
     @test read(steps["ConnectivityIdOffsets"]) == zeros(4, nsteps)
     @test read(block["NumberOfPoints"]) == fill(npoints, nsteps)
-    @test size(read(block["Points"])) == (3, npoints)
+    point_columns = dynamic_points ? npoints * nsteps : npoints
+    @test size(read(block["Points"])) == (3, point_columns)
     @test read(block["Vertices/NumberOfCells"]) == fill(npoints, nsteps)
     @test read(block["Vertices/NumberOfConnectivityIds"]) == fill(npoints, nsteps)
     @test read(block["Vertices/Connectivity"]) == 0:(npoints - 1)
@@ -139,10 +142,14 @@ function measurement_output_tests(SPH)
             for (iteration, time) in enumerate(output_times)
                 metadata.TotalTime = time
                 particles.Pressure[1] = 4 + iteration
+                particles.Position[2] = SVector(
+                    0.25, 1.2 + 0.1 * (iteration - 1),
+                )
                 output.save_particles(iteration)
             end
             output.close_files()
             particles.Pressure[1] = 4
+            particles.Position[2] = positions[2]
 
             nsteps = length(output_times)
             sampled = UInt8[1, 0, 1, 0, 1, 0, 1]
@@ -203,8 +210,16 @@ function measurement_output_tests(SPH)
                 @test vec(series(velocity, "Sampled", 1)) == sampled
 
                 column = check_block(root, "WaterColumnProbes")
-                check_block_steps(column, 3, output_times)
-                @test read(column["Points"]) ≈ [0.25 0.25 10.0; 0.0 1.5 0.0; 0.0 0.0 0.0]
+                check_block_steps(column, 3, output_times; dynamic_points = true)
+                column_points = reshape(read(column["Points"]), 3, 3, nsteps)
+                @test column_points[1, :, :] ≈ repeat(
+                    reshape([0.25, 0.25, 10.0], 3, 1), 1, nsteps,
+                )
+                @test column_points[2, 1, :] ≈
+                      [1.2, 1.2, 1.4, 1.4, 1.6, 1.6, 1.8]
+                @test column_points[2, 2, :] ≈
+                      [1.5, 1.5, 1.5, 1.5, 1.6, 1.6, 1.8]
+                @test column_points[2, 3, :] == zeros(nsteps)
                 @test read(column["FieldData/Names"]) == ["column", "above", "empty"]
                 @test HDF5.attrs(column)["Names"] == "column\nabove\nempty"
                 @test read(column["PointData/Radius"]) ≈ [0.05, 0.05, 0.05]
@@ -212,14 +227,23 @@ function measurement_output_tests(SPH)
                 @test read(column["Steps/PointDataOffsets/WaterColumnHeight"]) ==
                       3 .* (0:(nsteps - 1))
                 water_height = series(column, "WaterColumnHeight", 3)
-                @test water_height[1:2, :] ≈ [fill(1.2, 1, nsteps); zeros(1, nsteps)]
+                @test water_height[1, :] ≈
+                      [1.2, 1.2, 1.4, 1.4, 1.6, 1.6, 1.8]
+                @test water_height[2, :] ≈
+                      [0.0, 0.0, 0.0, 0.0, 0.1, 0.1, 0.3]
                 @test all(isnan, water_height[3, :])
                 @test series(column, "Sampled", 3) == repeat(sampled', 3, 1)
                 @test series(column, "SampleTime", 3) ≈ repeat(sample_times', 3, 1)
 
                 surface = check_block(root, "FreeSurface")
-                check_block_steps(surface, 3, output_times)
-                @test read(surface["Points"]) ≈ [0.5 1.5 2.5; 0.0 0.0 0.0; 0.0 0.0 0.0]
+                check_block_steps(surface, 3, output_times; dynamic_points = true)
+                surface_points = reshape(read(surface["Points"]), 3, 3, nsteps)
+                @test surface_points[1, :, :] ≈
+                      repeat(reshape([0.5, 1.5, 2.5], 3, 1), 1, nsteps)
+                @test surface_points[2, 1, :] ≈
+                      [1.2, 1.2, 1.4, 1.4, 1.6, 1.6, 1.8]
+                @test surface_points[2, 2, :] == fill(0.4, nsteps)
+                @test surface_points[2, 3, :] == zeros(nsteps)
                 @test read(surface["FieldData/GridShape"]) == [3]
                 @test read(surface["FieldData/HorizontalAxes"]) == [1]
                 @test read(surface["FieldData/Spacing"]) ≈ [1.0]
@@ -228,7 +252,8 @@ function measurement_output_tests(SPH)
                 @test read(surface["Steps/FieldDataSizes/DomainLower"]) ==
                       repeat([1, 2], 1, nsteps)
                 free_surface = series(surface, "FreeSurfaceHeight", 3)
-                @test free_surface[1, :] ≈ fill(1.2, nsteps)
+                @test free_surface[1, :] ≈
+                      [1.2, 1.2, 1.4, 1.4, 1.6, 1.6, 1.8]
                 @test free_surface[2, :] ≈ fill(0.4, nsteps)
                 @test all(isnan, free_surface[3, :])
                 @test HDF5.attrs(surface)["Ordering"] ==
@@ -373,10 +398,12 @@ function measurement_output_tests(SPH)
                 column = check_block(root, "WaterColumnProbes")
                 @test vec(read(column["PointData/WaterColumnHeight"])) == [0.2]
                 @test read(column["PointData/Radius"]) == [0.1]
+                @test read(column["Points"]) ≈ [0.25; 0.25; 0.2;;]
                 surface = check_block(root, "FreeSurface")
-                @test read(surface["Points"]) ≈ [0.5 1.5 0.5 1.5; 0.5 0.5 1.5 1.5; 0 0 0 0]
                 surface_height = read(surface["PointData/FreeSurfaceHeight"])
                 @test vec(surface_height) ≈ [0.2, 0.6, 0.8, 1.0]
+                @test read(surface["Points"]) ≈
+                      [0.5 1.5 0.5 1.5; 0.5 0.5 1.5 1.5; 0.2 0.6 0.8 1.0]
                 @test read(surface["FieldData/GridShape"]) == [2, 2]
                 @test read(surface["FieldData/HorizontalAxes"]) == [1, 2]
             end
@@ -393,18 +420,27 @@ function measurement_output_tests(SPH)
                 )
                 nsteps(name) = HDF5.attrs(root[name]["Steps"])["NSteps"]
                 pressure = root["PressureProbes"]
+                moving_column = root["WaterColumnProbes"]
+                moving_points_offsets = moving_column["Steps/PointOffsets"]
                 column_offsets = root["WaterColumnProbes/Steps/PointDataOffsets"]
                 for (frame, time) in enumerate([0.0, 0.5, 1.0])
                     particles.Pressure[1] = 4 + frame
+                    particles.Position[2] = SVector(
+                        0.25, 1.2 + 0.1 * (frame - 1),
+                    )
                     Measurements.append_measurements!(writer, time, particles)
                 end
                 particles.Pressure[1] = 4
+                particles.Position[2] = positions[2]
                 @test Measurements.frames_written(writer) == 2
                 @test Measurements.frames_pending(writer) == 1
                 @test nsteps("PressureProbes") == 2
                 @test nsteps("FreeSurface") == 2
                 @test read(pressure["Steps/Values"]) == [0.0, 0.5]
                 @test vec(read(pressure["PointData/Pressure"])) == [5.0, 5.0]
+                @test read(moving_points_offsets) == [0, 3]
+                @test reshape(read(moving_column["Points"]), 3, 3, 2)[2, 1, :] ==
+                      [1.2, 1.2]
                 @test read(column_offsets["WaterColumnHeight"]) == [0, 3]
                 Measurements.flush_measurements!(writer)
                 @test Measurements.frames_written(writer) == 3
@@ -419,6 +455,9 @@ function measurement_output_tests(SPH)
                 @test vec(read(pressure["PointData/Pressure"])) == [5.0, 5.0, 7.0]
                 @test vec(read(pressure["PointData/Sampled"])) == [1, 0, 1]
                 @test vec(read(pressure["PointData/SampleTime"])) == [0.0, 0.0, 1.0]
+                @test read(moving_points_offsets) == [0, 3, 6]
+                @test reshape(read(moving_column["Points"]), 3, 3, 3)[2, 1, :] ==
+                      [1.2, 1.2, 1.4]
                 @test read(column_offsets["WaterColumnHeight"]) == [0, 3, 6]
                 @test read(root["FreeSurface/Steps/FieldDataSizes/GridShape"]) ==
                       [1 1 1; 1 1 1]
