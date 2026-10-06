@@ -100,6 +100,7 @@ if 'Pressure' in __OUTPUT_VARIABLES__:
     pressure_bar = GetScalarBar(pressure_lut, renderView1)
     pressure_bar.Title = 'Pressure [Pa]'
     pressure_bar.ComponentTitle = ''
+    pressure_bar.Visibility = 0
 
 # show color bar/color legend
 Simulation_vtkhdfDisplay.SetScalarBarVisibility(renderView1, True)

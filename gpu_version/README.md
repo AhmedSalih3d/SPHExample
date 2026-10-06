@@ -44,6 +44,7 @@ the initial pressure data range, with a nonzero fallback for uniform data.
 When generating a state directly, use
 `AutoOpenParaview(metadata, constants, variables; pressure_range = (0.0, 20000.0))`.
 The generated Python state's `pressure_range` can also be edited before opening.
+The pressure legend is visible only when Pressure is selected for coloring.
 
 ### Using generated particles directly
 

@@ -43,7 +43,8 @@ using StaticArrays
                 touch(joinpath(output, name * "_old.vtkhdf"))
                 pressure_range = single_file ? (-1000.0, 20000.0) : nothing
                 AutoOpenParaview(metadata, constants, ["Density", "Pressure"];
-                    paraview_cmd = nothing, pressure_range = pressure_range)
+                    paraview_cmd = nothing, pressure_range = pressure_range,
+                    color_variable = single_file ? "Pressure" : "Density")
                 @test_throws ArgumentError AutoOpenParaview(metadata, constants,
                     ["Pressure"]; paraview_cmd = nothing, pressure_range = (1.0, 0.0))
                 state_suffix = single_file ? "_SingleVTKHDFStateFile.py" : "_StateFile.py"
@@ -53,12 +54,19 @@ using StaticArrays
                     write(io, "assert file_list == sorted(file_list)\n")
                     write(io, "assert len(file_list) == $(length(suffixes))\n")
                     write(io, "assert Simulation_vtkhdfDisplay.ColorArrayName[1] == " *
-                        "'Pressure'\n")
+                        "'$(single_file ? "Pressure" : "Density")'\n")
                     expected_range = single_file ? [-1000.0, 20000.0] : [0.0, 1.0]
                     write(io, "assert pressure_lut.RGBPoints[0] == $(expected_range[1])\n")
                     write(io, "assert pressure_lut.RGBPoints[-4] == $(expected_range[2])\n")
                     write(io, "assert pressure_lut.AutomaticRescaleRangeMode == 'Never'\n")
                     write(io, "assert pressure_bar.Title == 'Pressure [Pa]'\n")
+                    write(io, "assert pressure_bar.Visibility == $(single_file ? 1 : 0)\n")
+                    write(io, "ColorBy(Simulation_vtkhdfDisplay, ('POINTS', 'Pressure'))\n")
+                    write(io, "Simulation_vtkhdfDisplay.SetScalarBarVisibility(renderView1, True)\n")
+                    write(io, "assert pressure_bar.Visibility == 1\n")
+                    write(io, "ColorBy(Simulation_vtkhdfDisplay, ('POINTS', 'Density'))\n")
+                    write(io, "HideScalarBarIfNotNeeded(pressure_lut, renderView1)\n")
+                    write(io, "assert pressure_bar.Visibility == 0\n")
                     if export_grid
                         write(io, "assert grid_display.Representation == 'Wireframe'\n")
                         write(io, "assert grid_display.Visibility == 1\n")
