@@ -6,7 +6,6 @@ module SPHExampleGPU
     # only copied back for output. All time stepping runs on the GPU.
 
     using CUDA
-    import StructArrays: StructArray
 
     # Include submodules in dependency order
     submodules = [
@@ -55,7 +54,7 @@ module SPHExampleGPU
 
     using .SimulationGeometry
     export ParticleType, Fixed, Fluid, Moving, Floating, SPHGeometry, MotionDetails, FloatingDetails,
-           GravityFactorValue, MotionLimiterValue
+           GravityFactorValue, MotionLimiterValue, particle_struct_array
 
     using .PreProcess
     export AllocateDataStructures, AllocateSupportDataStructures, LoadBoundaryNormals
@@ -88,22 +87,6 @@ module SPHExampleGPU
 
     using .SimulationConstantsConfiguration
     export SimulationConstants
-
-    """
-        particle_struct_array(positions, ρ::Real; fields...)
-
-    Build a particle `StructArray` with the given `Position` values and a
-    constant `Density` filled with `ρ`. Additional particle fields can be
-    supplied as keywords.
-    """
-    function particle_struct_array(positions::AbstractVector, ρ::Real; fields...)
-        columns = merge(
-            (Position = positions, Density = fill(ρ, length(positions))),
-            (; fields...),
-        )
-        return StructArray(columns)
-    end
-    export particle_struct_array
 
     using .GPUReductions
     export ReductionWorkspace, reduce_svector

@@ -6,8 +6,8 @@ using CSV
 using Base: @kwdef
 
 # Export relevant types and structs
-export ParticleType, SPHGeometry, Fluid, Fixed, Moving, Floating, MotionDetails, FloatingDetails,
-       GravityFactorValue, MotionLimiterValue, is_wall
+export ParticleType, SPHGeometry, particle_struct_array, Fluid, Fixed, Moving, Floating,
+       MotionDetails, FloatingDetails, GravityFactorValue, MotionLimiterValue, is_wall
 
 # Use the existing @enum for ParticleType
 @enum ParticleType::UInt8 begin
@@ -89,6 +89,21 @@ struct SPHGeometry{D, T}
     Type::ParticleType
     Motion::Union{Nothing, MotionDetails}
     Floating::Union{Nothing, FloatingDetails}
+end
+
+"""
+    particle_struct_array(positions, ρ::Real; fields...)
+
+Build a particle `StructArray` with the given `Position` values and a
+constant `Density` filled with `ρ`. Additional particle fields can be
+supplied as keywords.
+"""
+function particle_struct_array(positions::AbstractVector, ρ::Real; fields...)
+    columns = merge(
+        (Position = positions, Density = fill(ρ, length(positions))),
+        (; fields...),
+    )
+    return StructArray(columns)
 end
 
 function SPHGeometry{D, T}(; Particles = nothing, CSVFile = nothing,
