@@ -77,7 +77,7 @@ let
         SaveLocation = joinpath(@__DIR__, "..", "output", "DucklingMeasurements"),
         SimulationTime = 1.0,
         OutputTimes = 0.02,
-        VisualizeInParaview = false,
+        VisualizeInParaview = true,
         ExportSingleVTKHDF = true,
         ExportGridCells = false,
         OpenLogFile = false,
