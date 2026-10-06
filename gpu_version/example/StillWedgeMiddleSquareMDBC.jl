@@ -35,7 +35,7 @@ let
     water_level = maximum(last, positions("Fluid"))
 
     FixedBoundary = SPHGeometry{Dimensions, FloatType}(
-        Particles = StructArray(positions("Bound"), SimConstantsWedge.ρ₀),
+        Particles = particle_struct_array(positions("Bound"), SimConstantsWedge.ρ₀),
         # CSVFile     = "./input/still_wedge_middle_square_mdbc/StillWedge_MiddleSquare_Dp$(SimConstantsWedge.dx)_Bound.csv",
         GroupMarker = 1,
         Type = Fixed,   # Using the enum value Fixed

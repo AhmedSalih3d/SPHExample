@@ -44,7 +44,7 @@ let
         [SVector(mirror_x(x[1]), x[2] < dx / 2 ? dx - x[2] : x[2]) for x in wall_positions]
 
     FixedBoundary = SPHGeometry{Dimensions, FloatType}(
-        Particles = StructArray(positions("Bound"), SimConstantsDambreak.ρ₀;
+        Particles = particle_struct_array(positions("Bound"), SimConstantsDambreak.ρ₀;
             GhostPoints = ghosts,
             GhostNormals = ghosts .- wall_positions,
         ),

@@ -4,6 +4,19 @@ using StaticArrays
 using StructArrays
 using Meshes
 
+@testset "particle_struct_array builds particle fields" begin
+    positions = [SVector(1.0, 2.0), SVector(3.0, 4.0)]
+    particles = particle_struct_array(positions, 1000.0; GroupMarker = [1, 2])
+    @test particles isa StructArray
+    @test particles.Position == positions
+    @test particles.Density == fill(1000.0, length(positions))
+    @test particles.GroupMarker == [1, 2]
+    @test !any(
+        method -> method.module === SPHExampleGPU,
+        methods(StructArray, Tuple{typeof(positions), Float64}),
+    )
+end
+
 @testset "SPHGeometry holds input particles" begin
     mktempdir() do dir
         for d in (2, 3)

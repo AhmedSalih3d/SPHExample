@@ -63,14 +63,14 @@ function run_lid_driven_cavity_2d(;
             ghosts = [
                 SVector{2, Float64}(lid_driven_cavity_ghost_node(x, dx)) for x in positions
             ]
-            StructArray(
+            particle_struct_array(
                 positions,
                 SimConstants.ρ₀;
                 GhostPoints = ghosts,
                 GhostNormals = ghosts .- positions,
             )
         else
-            StructArray(positions, SimConstants.ρ₀)
+            particle_struct_array(positions, SimConstants.ρ₀)
         end
         motion =
             region.type == Moving ?

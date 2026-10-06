@@ -90,19 +90,20 @@ module SPHExampleGPU
     export SimulationConstants
 
     """
-        StructArray(positions, ρ::Real; fields...)
+        particle_struct_array(positions, ρ::Real; fields...)
 
     Build a particle `StructArray` with the given `Position` values and a
     constant `Density` filled with `ρ`. Additional particle fields can be
     supplied as keywords.
     """
-    function StructArray(positions::AbstractVector, ρ::Real; fields...)
+    function particle_struct_array(positions::AbstractVector, ρ::Real; fields...)
         columns = merge(
             (Position = positions, Density = fill(ρ, length(positions))),
             (; fields...),
         )
         return StructArray(columns)
     end
+    export particle_struct_array
 
     using .GPUReductions
     export ReductionWorkspace, reduce_svector
