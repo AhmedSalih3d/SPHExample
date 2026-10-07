@@ -125,15 +125,19 @@ end
                 connectivity = read(cells["Connectivity"])
                 offsets = read(cells["Offsets"])
                 region_ids = read(root["CellData/Region"])
-                @test read(cells["NumberOfCells"]) == [23]
-                @test offsets == collect(0:3:69)
+                @test read(cells["NumberOfCells"]) == [22]
+                @test offsets == vcat(collect(0:3:63), 67)
                 @test sort(unique(region_ids)) == [1, 2, 3]
                 areas = zeros(3)
                 for cell in eachindex(region_ids)
                     ids = connectivity[offsets[cell] + 1:offsets[cell + 1]] .+ 1
-                    a, b, c = eachcol(points[1:2, ids])
-                    area = ((b[1] - a[1]) * (c[2] - a[2]) -
-                            (b[2] - a[2]) * (c[1] - a[1])) / 2
+                    cell_points = points[1:2, ids]
+                    twice_area = sum(eachindex(ids)) do i
+                        next = mod1(i + 1, length(ids))
+                        cell_points[1, i] * cell_points[2, next] -
+                        cell_points[1, next] * cell_points[2, i]
+                    end
+                    area = twice_area / 2
                     @test area > 0
                     areas[region_ids[cell]] += area
                 end

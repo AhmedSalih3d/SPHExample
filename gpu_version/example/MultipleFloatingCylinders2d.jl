@@ -55,10 +55,10 @@ function run_multiple_floating_cylinders(output_dir; simtime = 2.0, dx = 0.05)
     return metadata
 end
 
-# if abspath(PROGRAM_FILE) == @__FILE__
+if abspath(PROGRAM_FILE) == @__FILE__
     output = isempty(ARGS) ? joinpath(@__DIR__, "..", "particles",
         "MultipleFloatingCylinders2D_" * Dates.format(now(), "yyyymmdd_HHMMSS")) : ARGS[1]
     simtime = length(ARGS) >= 2 ? parse(Float64, ARGS[2]) : 2.0
     spacing = length(ARGS) >= 3 ? parse(Float64, ARGS[3]) : 0.05
     run_multiple_floating_cylinders(output; simtime, dx = spacing)
-# end
+end
