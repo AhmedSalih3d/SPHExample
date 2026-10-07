@@ -1,62 +1,79 @@
-# Project Agents.md Guide for OpenAI Codex
+# Agent Guide for SPHExample
 
-This file describes how OpenAI Codex and other AI agents should work with this repository.
-It may evolve over time, in shaa Allah.
+This repository contains two related Julia packages for weakly-compressible
+smoothed particle hydrodynamics (SPH): the multithreaded CPU package
+`SPHExample` at the repository root and the CUDA package `SPHExampleGPU` in
+`gpu_version/`. The GPU package has its own dependencies, examples, tests, and
+benchmarks. Its API is designed to mirror the CPU package, with additional
+GPU-specific geometry, particle generation, and simulation support.
 
-## Project Structure for OpenAI Codex Navigation
-- `/src`: main Julia source code for the SPH solver
-- `/gpu_version`: CUDA port (`SPHExampleGPU`) with its own `Project.toml`, examples,
-  tests and CPU/GPU benchmarks; see `gpu_version/README.md`
-- `/example`: example scripts demonstrating solver usage
-- `/input`: sample input files used by the examples
-- `/images`: images referenced by `README.md`
-- `Project.toml`/`Manifest.toml`: dependency declarations
-  (do not modify without instruction)
-- `README.md`: high level project overview and instructions
+The packages cover 2D and 3D simulations, configurable SPH kernels, boundary
+conditions, viscosity and density-diffusion models, prescribed motion, and
+simulation output and measurements. The GPU package also supports floating
+bodies and polygon-based particle generation. Output includes HDF5/VTKHDF
+data and ParaView workflows.
 
-## Coding Conventions for OpenAI Codex
-- Use Julia for all new code
-- Indent with four spaces
-- Keep lines under 92 characters where practical
-- Use snake_case for functions and variables and CamelCase for types
-- Document public functions with docstrings and comment complex logic
+## Project layout
 
-## Documentation Standards for OpenAI Codex
-- Update `README.md` or example docs when behaviour changes
-- Keep explanations concise and clear
+- `src/`: CPU package implementation and public `SPHExample` module.
+- `example/`: CPU simulation examples.
+- `input/`: particle layouts and other example inputs.
+- `test/`: CPU package tests.
+- `gpu_version/`: independent CUDA package, with its own `src/`, `example/`,
+  `test/`, `benchmark/`, `Project.toml`, `Manifest.toml`, and `README.md`.
+- `README.md`: repository overview and CPU package guidance.
+- `gpu_version/README.md`: CUDA package usage, features, and benchmarks.
+- `images/`: images used by the repository README.
 
-## Testing Requirements for OpenAI Codex
-Run the test suite before opening a pull request:
+## Coding conventions
+
+- Use Julia for new implementation code and follow the surrounding patterns.
+- Use four-space indentation. Prefer `snake_case` for new internal functions
+  and variables, and CamelCase for types. Preserve established public API
+  names.
+- Do not impose a fixed source-code line-length limit, including the old
+  92-character guideline. On wide displays, keep related code together when
+  that improves readability; wrap lines when it makes the structure clearer.
+- Keep comments focused on non-obvious logic. Document public APIs with
+  docstrings where appropriate.
+- Preserve intended CPU/GPU behavior and numerical results. Keep CUDA kernel
+  code compatible with device execution and the package's supported numeric
+  types.
+
+## Documentation and dependencies
+
+- Update the README or example documentation for the package whose behavior
+  or usage has changed.
+- The root and CUDA packages have separate dependency files. Change a
+  package's `Project.toml` or `Manifest.toml` only when the task requires a
+  dependency change, and validate that package after the change.
+
+## Testing
+
+Run the CPU package tests from the repository root:
+
 ```bash
 julia --project=. -e 'using Pkg; Pkg.test()'
 ```
-On Julia 1.12 launch the CPU code with `-t N,0` (no interactive thread); `-t auto`
-makes `threadid()` exceed `nthreads()` and the threaded neighbour loop crashes.
 
-The CUDA port in `gpu_version/` is a separate package (`SPHExampleGPU`). Its tests
-need an NVIDIA GPU and compare against the CPU package in a subprocess:
+Run the CUDA package tests from the repository root:
+
 ```bash
 julia --project=gpu_version gpu_version/test/runtests.jl
 ```
 
-## Pull Request Guidelines for OpenAI Codex
-- Reference related issues when applicable
-- Keep changes focused on a single concern
-- List commands you executed (tests, scripts) in the PR description
-- Follow commit message conventions: short imperative summary (≤50 chars)
-  Provide details in the body if needed
-- Do not amend or rebase pushed commits
+The full CUDA suite requires an NVIDIA GPU and compares selected behavior with
+the CPU package in a subprocess. Some geometry tests can run without a GPU;
+see `gpu_version/README.md` for focused commands. When dependencies change,
+instantiate the affected package before testing.
 
-## Programmatic Checks for OpenAI Codex
-Before submitting a PR run:
-```bash
-julia --project=. -e 'using Pkg; Pkg.test()'
-```
-If dependencies changed, also run:
-```bash
-julia --project=. -e 'using Pkg; Pkg.instantiate()'
-```
+On Julia 1.12, launch direct multithreaded CPU runs with an explicit compute
+thread count and no interactive thread, for example `-t N,0`. Avoid `-t auto`:
+the interactive thread can make `threadid()` exceed `nthreads()` in the
+current threaded neighbor loop.
 
-## Evolution of Agents.md
-These instructions may change as the project grows.
-Feel free to open an issue or PR proposing improvements.
+## Change and pull request guidance
+
+- Keep changes focused and check both packages when shared behavior is affected.
+- Do not amend or rewrite commits that have already been published.
+- Include the relevant validation commands in pull request descriptions.
