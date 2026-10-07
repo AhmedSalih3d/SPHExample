@@ -26,6 +26,69 @@ julia --project=gpu_version gpu_version/example/Dambreak2dMDBC.jl
 The examples in `gpu_version/example/` mirror those in `example/`. Choose the
 precision with `FloatType = Float32` or `Float64` at the top of a script.
 
+### Choosing the mDBC formulation
+
+The fifth `SimulationMetaData` type parameter selects the boundary formulation:
+
+| Mode | Behavior |
+| --- | --- |
+| `NoMDBC` | Original dynamic boundary conditions (default). |
+| `SimpleMDBC` | Existing mDBC density extrapolation and determinant/Shepard fallback, unchanged. |
+| `UpdatedMDBC` | Aaron English's *Updates on modified Dynamic Boundary Conditions (mDBC)*, 7th DualSPHysics Workshop, 20 March 2024, slides 13–17. |
+
+For example, select the updated formulation with:
+
+```julia
+SimMetaData = SimulationMetaData{2, Float32, NoShifting, NoKernelOutput, UpdatedMDBC, StoreLog}(
+    SimulationName = "UpdatedMDBC", SaveLocation = "output/updated_mdbc",
+    SimulationTime = 1.0, OutputTimes = 0.02,
+)
+```
+
+Use `SimpleMDBC` in the same position to retain the original method. Existing
+examples continue to select their original mode. Both mDBC modes accept
+`ParticleNormalsPath`, or generated `GhostPoints` and `GhostNormals`. The updated
+mode requires valid ghost data for every wall particle. As elsewhere in this
+package, `GhostNormals` stores the displacement from boundary to ghost, not just
+a unit direction. Translating walls reconstruct their ghosts from that displacement.
+
+`UpdatedMDBC` provides:
+
+* Divergence-of-position detection; an unsubmerged ghost switches off the wall's
+  contributions to fluid interactions.
+* Kernel support, determinant and condition-number checks, with Shepard fallback.
+  The details omitted by the slides follow the
+  [DualSPHysics mDBC2 implementation](https://github.com/DualSPHysics/DualSPHysics/blob/master/src/source/JSphCpu_mdbc.cpp):
+  support threshold `0.1`, determinant threshold `0.001`, and scaled infinity-norm
+  condition number `dx² ‖A‖∞ ‖A⁻¹‖∞ ≤ 50`. Very low support uses a reference-density
+  floor on the Shepard estimate before cloning.
+* Pressure cloning from ghost density and the normal component of gravity minus
+  prescribed wall acceleration. Displacement is `xb - xg`, as in the reference
+  implementation, so pressure increases towards a submerged bottom wall.
+* Mirrored no-slip velocity `2U - ug` for continuity, with its tangential component
+  used for viscosity. Physical wall velocity remains separate, including in output.
+  Viscosity uses the usual coefficient (boundary factor one).
+* Corrections before both interaction stages, including with CUDA graphs, both
+  time-stepping schemes, 2D/3D, either precision, and double-position storage.
+  Cloned boundary density is not advanced through continuity or clamped by the
+  time-step kernels, preserving negative boundary pressure.
+
+The boundary cloning law is the presentation's linear law
+`P = c₀² (ρ - ρ₀)`; fluid pressure retains the solver's existing gamma-seven EOS.
+Prescribed translation uses the existing piecewise-constant `MotionDetails` API;
+wall acceleration at a velocity jump is a backward difference over the current
+step. Velocity-only walls have zero geometric acceleration. Floating bodies are
+rejected in this mode: their coupling is listed as future work in the presentation.
+This implements the formulation; it does not reproduce the presentation's full
+experimental validation campaign. To display negative pressures, pass a suitable
+`ParaviewPressureRange`, for example `(-1000.0, 20000.0)`.
+
+Focused analytical and CUDA regression tests (from the repository root):
+
+```bash
+julia --project=gpu_version gpu_version/test/updated_mdbc.jl
+```
+
 ### Automatic ParaView visualization
 
 With `VisualizeInParaview = true` and `ExportGridCells = true`, automatic ParaView
@@ -80,7 +143,7 @@ The first-region ownership rule applies only when all regions are passed to
 coincident positions. `write_particle_csv` writes coordinates and densities as
 `Float64`, preserving `Float32` values when promoted for double-position runs.
 Boundary normals can still be loaded separately with `ParticleNormalsPath`.
-For `SimpleMDBC`, supplying `GhostPoints` and `GhostNormals` on every boundary
+For `SimpleMDBC` or `UpdatedMDBC`, supplying `GhostPoints` and `GhostNormals` on every boundary
 group also supports a run entirely from memory; cavity and 2D dam break use this.
 
 ### Generating a case from polygons (StillWedge 2D)
@@ -847,7 +910,7 @@ than boolean flags, so the fused kernels are specialised at compile time:
 |-----------|-------|---------|
 | `SMode` | `NoShifting`, `PlanarShifting` | particle shifting |
 | `KMode` | `NoKernelOutput`, `StoreKernelOutput` | store the kernel and kernel gradient sums for output |
-| `BMode` | `NoMDBC`, `SimpleMDBC` | mDBC boundary condition (needs `ParticleNormalsPath`) |
+| `BMode` | `NoMDBC`, `SimpleMDBC`, `UpdatedMDBC` | Boundary formulation (mDBC needs `ParticleNormalsPath` or generated ghost fields; see "Choosing the mDBC formulation") |
 | `LMode` | `NoLog`, `StoreLog` | write the simulation log file |
 
 Trailing parameters can be omitted, `SimulationMetaData{2, Float32}(...)`

@@ -6,6 +6,8 @@ using StructArrays
 using LinearAlgebra
 using HDF5
 
+include(joinpath(@__DIR__, "updated_mdbc.jl"))
+
 include(joinpath(@__DIR__, "..", "..", "test", "measurements.jl"))
 measurement_output_tests(SPHExampleGPU)
 include(joinpath(@__DIR__, "geometry_particles.jl"))

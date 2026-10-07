@@ -132,7 +132,7 @@ let
         ),
         SimLogger = SimLogger,
         SimParticles = SimParticles,
-        SimViscosity = ArtificialViscosity(),
+        SimViscosity = ZeroViscosity(),
         SimDensityDiffusion = LinearDensityDiffusion(),
         SimTimeStepping = SymplecticTimeStepping(),
         # ParticleNormalsPath  = "./input/dam_break_2d/DamBreak2d_Dp0.02_MDBC_GhostNodes_ThreeLayers.csv"

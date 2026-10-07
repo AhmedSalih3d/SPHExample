@@ -354,7 +354,7 @@ position precision `TP`. When that differs from the working precision `T`,
 start-of-step and half step positions for the pair loops; otherwise both are
 `nothing` and the pair loops read the positions directly.
 """
-struct GPUSupportArrays{D, T, TP, PC}
+struct GPUSupportArrays{D, T, TP, PC, BD}
     dρdtI::CuVector{T}
     Velocityₙ⁺::CuVector{SVector{D, T}}
     Positionₙ⁺::CuVector{SVector{D, TP}}
@@ -365,19 +365,24 @@ struct GPUSupportArrays{D, T, TP, PC}
     ∇◌rᵢ::CuVector{T}
     PosCells::PC
     PosCellsₙ⁺::PC
+    boundary_data::BD
 end
 
 """
-    GPUSupportArrays{D, T}(n; position_type = T)
+    GPUSupportArrays{D, T}(n; position_type = T, updated_mdbc = false)
 
 Support arrays for `n` particles in the working precision `T`, with positions
 of precision `position_type`. The cell relative positions are allocated
-exactly when `position_type !== T`.
+exactly when `position_type !== T`. `updated_mdbc` allocates the boundary
+activation mask and mirrored/tangential interaction velocities; these are
+scratch fields recomputed after sorting and before each interaction stage.
 """
-function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T) where {D, T, TP}
+function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T, updated_mdbc::Bool = false) where {D, T, TP}
     pc = TP === T ? nothing : CuVector{PosCell{D, T}}(undef, n)
     pcₙ⁺ = TP === T ? nothing : CuVector{PosCell{D, T}}(undef, n)
-    return GPUSupportArrays{D, T, TP, typeof(pc)}(
+    boundary_data = updated_mdbc ? (; active = CUDA.ones(Bool, n), velocity = CUDA.zeros(SVector{D, T}, n),
+                                    tangent_velocity = CUDA.zeros(SVector{D, T}, n)) : nothing
+    return GPUSupportArrays{D, T, TP, typeof(pc), typeof(boundary_data)}(
         CUDA.zeros(T, n),
         CUDA.zeros(SVector{D, T}, n),
         CUDA.zeros(SVector{D, TP}, n),
@@ -388,6 +393,7 @@ function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T) where {
         CUDA.zeros(T, n),
         pc,
         pcₙ⁺,
+        boundary_data,
     )
 end
 
@@ -539,6 +545,25 @@ function enqueue_pos_cells!(ctx, step, timed::Bool)
     return nothing
 end
 
+# Recompute scratch boundary data after every reorder and at both evaluated states.
+function enqueue_boundary_correction!(ctx, step, half::Bool)
+    (; gpu, sup, cl, SimKernel, SimConstants, threads, lanes) = ctx
+    density = half ? sup.ρₙ⁺ : gpu.Density
+    position = half ? sup.Positionₙ⁺ : gpu.Position
+    velocity = half ? sup.Velocityₙ⁺ : gpu.Velocity
+    pairs = half ? sup.PosCellsₙ⁺ : sup.PosCells
+    if get(ctx, :boundary_mode, SimpleMDBC()) isa UpdatedMDBC
+        GPUKernels.launch_updated_mdbc!(density, gpu.Pressure, position, velocity,
+            gpu.GhostPoints, gpu.GhostNormals, gpu.GhostIndex, gpu.Type, cl.CellStart, cl.grid_dev,
+            step, SimKernel, SimConstants, sup.boundary_data; threads, lanes, pos_cells = pairs,
+            motion = get(ctx, :motion, nothing), groups = gpu.GroupMarker)
+    else
+        launch_mdbc!(density, gpu.Pressure, position, gpu.GhostPoints, gpu.GhostIndex, gpu.Type,
+            cl.CellStart, cl.grid_dev, step, SimKernel, SimConstants; threads, lanes, pos_cells = pairs)
+    end
+    return nothing
+end
+
 """
     enqueue_state_derivative!(ctx, step, timed, mdbc_name, loop_name)
 
@@ -561,9 +586,7 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
 
     if UseMDBC
         enqueue_pos_cells!(ctx, step, timed)
-        @phase HourGlass mdbc_name timed launch_mdbc!(
-            gpu.Density, gpu.Pressure, gpu.Position, gpu.GhostPoints, gpu.GhostIndex, gpu.Type, CellStart,
-            grid, step, SimKernel, SimConstants; threads = threads, lanes = lanes, pos_cells = sup.PosCells)
+        @phase HourGlass mdbc_name timed enqueue_boundary_correction!(ctx, step, false)
     end
 
     @phase HourGlass loop_name timed begin
@@ -581,7 +604,7 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
                              gpu.Velocity, gpu.Type, CellStart, gpu.CellID, grid, step,
                              SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
                              FlagKernel, FlagShift; threads = threads, lanes = lanes,
-                             boundary_forces = bforces, pos_cells = sup.PosCells)
+                             boundary_forces = bforces, pos_cells = sup.PosCells, boundary_data = sup.boundary_data)
     end
     return nothing
 end
@@ -632,9 +655,7 @@ function enqueue_step!(ctx, timed::Bool)
         # every step, the carried derivative is kept.
         if UseMDBC
             enqueue_pos_cells!(ctx, state, timed)
-            @phase HourGlass "04a NeighborLoopMDBC before Half TimeStep" timed launch_mdbc!(
-                gpu.Density, gpu.Pressure, gpu.Position, gpu.GhostPoints, gpu.GhostIndex, gpu.Type, CellStart,
-                grid, state, SimKernel, SimConstants; threads = threads, lanes = lanes, pos_cells = sup.PosCells)
+            @phase HourGlass "04a NeighborLoopMDBC before Half TimeStep" timed enqueue_boundary_correction!(ctx, state, false)
         end
     else
         enqueue_state_derivative!(ctx, state, timed, "04a First NeighborLoopMDBC", "04 First NeighborLoop")
@@ -652,12 +673,20 @@ function enqueue_step!(ctx, timed::Bool)
         sup.Positionₙ⁺, sup.Velocityₙ⁺, sup.ρₙ⁺, sup.InvDensityₙ⁺, gpu.Pressure,
         gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Density, sup.dρdtI,
         gpu.Type, gpu.GroupMarker, motion, state, SimConstants;
-        pos_cells = sup.PosCellsₙ⁺, CellID = gpu.CellID, grid = grid, SimKernel = SimKernel)
+        pos_cells = sup.PosCellsₙ⁺, CellID = gpu.CellID, grid = grid, SimKernel = SimKernel,
+        boundary_mode = get(ctx, :boundary_mode, SimpleMDBC()))
 
     if floats
         @phase HourGlass "05c Floating Half TimeStep" timed launch_floating_particles!(
             floating, sup.Positionₙ⁺, sup.Velocityₙ⁺, gpu.Position, gpu.Type, gpu.GroupMarker, state, false;
             pos_cells = sup.PosCellsₙ⁺, CellID = gpu.CellID, grid = grid, H = SimKernel.H)
+    end
+
+    if get(ctx, :boundary_mode, SimpleMDBC()) isa UpdatedMDBC
+        @phase HourGlass "07 Updated mDBC corrector" timed begin
+            enqueue_boundary_correction!(ctx, state, true)
+            launch_inv_density!(sup.InvDensityₙ⁺, sup.ρₙ⁺, state)
+        end
     end
 
     # Corrector: every term, including the viscosity and density diffusion
@@ -668,7 +697,7 @@ function enqueue_step!(ctx, timed::Bool)
         sup.Velocityₙ⁺, gpu.Type, CellStart, gpu.CellID, grid, state,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
         FlagKernel, FlagShift; threads = threads, lanes = lanes,
-        boundary_forces = bforces, pos_cells = sup.PosCellsₙ⁺)
+        boundary_forces = bforces, pos_cells = sup.PosCellsₙ⁺, boundary_data = sup.boundary_data)
 
     if floats
         @phase HourGlass "10 Floating Corrector" timed begin
@@ -681,7 +710,9 @@ function enqueue_step!(ctx, timed::Bool)
     @phase HourGlass "11 Update To Final TimeStep" timed launch_final_step!(
         gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Density, gpu.Pressure,
         sup.dρdtI, sup.ρₙ⁺, sup.Positionₙ⁺, sup.Velocityₙ⁺, gpu.Type,
-        sup.∇Cᵢ, sup.∇◌rᵢ, state, SimKernel, SimConstants, red, FlagShift)
+        sup.∇Cᵢ, sup.∇◌rᵢ, state, SimKernel, SimConstants, red, FlagShift;
+        boundary_mode = get(ctx, :boundary_mode, SimpleMDBC()),
+        ghost_points = gpu.GhostPoints, ghost_normals = gpu.GhostNormals)
 
     if floats
         @phase HourGlass "11b Floating Final TimeStep" timed launch_floating_particles!(
@@ -795,7 +826,8 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     # `RunSimulation`.
     FlagKernel     = Val(KMode === StoreKernelOutput)
     FlagShift      = Val(SMode === PlanarShifting)
-    UseMDBC        = BMode === SimpleMDBC
+    UseMDBC        = BMode !== NoMDBC
+    boundary_mode = BMode()
     SingleNeighbor = SimMetaData.TimeSteppingMode isa SingleNeighborTimeStepping
     threads    = SimMetaData.GPUInteractionThreads
     nlanes     = SimMetaData.GPULanesPerParticle
@@ -807,7 +839,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     kmax      = timed ? 1 : max(1, SimMetaData.GPUMaxStepsPerSync)
 
     ctx = (; gpu, cl, sup, red, motion, floating, state, SimKernel, SimConstants, SimDensityDiffusion,
-             SimViscosity, FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, HourGlass)
+             SimViscosity, FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, HourGlass, boundary_mode)
 
     t_out = next_output_time(SimMetaData)
     set_output_time!(state, t_out)
@@ -951,12 +983,12 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
 
     TimeSteps = Vector{FloatType}()
 
-    if BMode === SimpleMDBC
+    if BMode !== NoMDBC
         if ParticleNormalsPath === nothing
             all(geom -> !is_wall(geom.Type) ||
                 (hasproperty(geom.Particles, :GhostPoints) &&
                  hasproperty(geom.Particles, :GhostNormals)), SimGeometry) ||
-                error("SimpleMDBC requires ParticleNormalsPath or geometry ghost fields.")
+                error("$(BMode) requires ParticleNormalsPath or geometry ghost fields.")
         else
             # Directions use working precision; ghost positions use position precision.
             points, ghosts, normals = LoadBoundaryNormals(
@@ -979,6 +1011,17 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                     SimParticles.GhostNormals[i] = normals[i]
                 end
             end
+        end
+    end
+
+    if BMode === UpdatedMDBC
+        any(==(Floating), SimParticles.Type) && error("UpdatedMDBC does not support floating bodies (future work in the 2024 presentation).")
+        for i in eachindex(SimParticles.Type)
+            is_wall(SimParticles.Type[i]) || continue
+            normal = SimParticles.GhostNormals[i]
+            ghost = SimParticles.GhostPoints[i]
+            all(isfinite, normal) && norm(normal) > zero(FloatType) && all(isfinite, ghost) && !iszero(ghost) ||
+                error("UpdatedMDBC requires a finite nonzero normal and ghost point for every wall particle (particle $i).")
         end
     end
 
@@ -1006,7 +1049,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     # Device side data
     @timeit HourGlass "00a Upload To GPU" begin
         gpu    = upload_particles(SimParticles; position_type = PositionType)
-        sup    = GPUSupportArrays{Dimensions, FloatType}(NumberOfPoints; position_type = PositionType)
+        sup    = GPUSupportArrays{Dimensions, FloatType}(NumberOfPoints; position_type = PositionType, updated_mdbc = BMode === UpdatedMDBC)
         red    = ReductionWorkspace{SVector{3, FloatType}}(NumberOfPoints)
         cl     = CellListWorkspace{Dimensions, PositionType}(NumberOfPoints;
                      reach = SimMetaData.GPUCellSubdivision, max_cells = SimMetaData.GPUMaxCells,

@@ -4,7 +4,7 @@ using TimerOutputs
 
 export SimulationMetaData, UpdateMetaData!, ShiftingMode, NoShifting, PlanarShifting,
        KernelOutputMode, NoKernelOutput, StoreKernelOutput,
-       MDBCMode, NoMDBC, SimpleMDBC,
+       MDBCMode, NoMDBC, SimpleMDBC, UpdatedMDBC,
        LogMode, NoLog, StoreLog,
        TimeSteppingMode, SymplecticTimeStepping, SingleNeighborTimeStepping,
        OUTPUT_VARIABLES, DEFAULT_OUTPUT_VARIABLES, resolve_output_variables!, position_float_type
@@ -23,6 +23,8 @@ struct StoreKernelOutput <: KernelOutputMode end
 abstract type MDBCMode end
 struct NoMDBC     <: MDBCMode end
 struct SimpleMDBC <: MDBCMode end
+"The 2024 mDBC update: numerical checks, pressure cloning and mirrored no-slip velocity."
+struct UpdatedMDBC <: MDBCMode end
 
 abstract type LogMode end
 struct NoLog    <: LogMode end
@@ -43,7 +45,7 @@ The mode parameters select code paths at compile time:
 * `SMode <: ShiftingMode`: `NoShifting` (default) or `PlanarShifting`
 * `KMode <: KernelOutputMode`: `NoKernelOutput` (default) or `StoreKernelOutput`
   (also store the kernel sum and kernel gradient sum of every particle)
-* `BMode <: MDBCMode`: `NoMDBC` (default) or `SimpleMDBC` (requires
+* `BMode <: MDBCMode`: `NoMDBC` (default), `SimpleMDBC`, or `UpdatedMDBC` (requires
   `ParticleNormalsPath` in `RunSimulation`)
 * `LMode <: LogMode`: `NoLog` (default) or `StoreLog`
 
@@ -115,7 +117,7 @@ position_float_type(m::SimulationMetaData{D, T}) where {D, T} = m.GPUDoublePosit
 # Particle fields that can be written to the output files. `Position` is always
 # written as the point coordinates and is not listed. `Kernel` and
 # `KernelGradient` are only computed with `KMode = StoreKernelOutput`, the mDBC
-# ghost data only exists with `BMode = SimpleMDBC`; in every other mode these
+# ghost data only exists with `BMode = SimpleMDBC` or `UpdatedMDBC`; in every other mode these
 # fields would be written as zeros, so `resolve_output_variables!` drops them.
 const OUTPUT_VARIABLES = [
     "Velocity",
@@ -147,7 +149,7 @@ const DEFAULT_OUTPUT_VARIABLES = [
 
 Validate `SimMetaData.OutputVariables` against the mode type parameters and
 drop, with a warning, the variables this run never fills with data (the kernel
-sums without `StoreKernelOutput`, the ghost data without `SimpleMDBC`). Unknown
+sums without `StoreKernelOutput`, the ghost data without an mDBC mode). Unknown
 names are an error. The trimmed list is stored back into the meta data so that
 the writer, the GPU download and the ParaView state file all agree on it.
 """
@@ -164,8 +166,8 @@ function resolve_output_variables!(SimMetaData::SimulationMetaData{D, T, SMode, 
     for name in unique(requested)
         if name in ("Kernel", "KernelGradient") && KMode !== StoreKernelOutput
             @warn "Output variable `$name` is only computed with the `StoreKernelOutput` kernel mode and is not written."
-        elseif name in ("GhostPoints", "GhostNormals") && BMode !== SimpleMDBC
-            @warn "Output variable `$name` only exists with the `SimpleMDBC` boundary mode and is not written."
+        elseif name in ("GhostPoints", "GhostNormals") && BMode === NoMDBC
+            @warn "Output variable `$name` only exists with an mDBC boundary mode and is not written."
         else
             push!(keep, name)
         end

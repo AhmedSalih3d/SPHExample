@@ -53,6 +53,7 @@ using ..SimulationGeometry
 using ..GPUCellGrid
 using ..GPUReductions
 using ..GPUStepState
+using ..SimulationMetaDataConfiguration: SimpleMDBC, UpdatedMDBC
 
 export launch_interactions!, launch_mdbc!, launch_motion!, launch_half_step!, launch_final_step!,
        launch_inv_density!, launch_finish!, launch_commit!, launch_step_reduction!, launch_pos_cells!,
@@ -224,7 +225,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                              CellStart, CellID, gridarg, step,
                              SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
                              ::Val{FlagKernel}, ::Val{FlagShift}, ::Val{BoundaryForces}, ::Val{K},
-                             n::Int32) where {D, T, FlagKernel, FlagShift, BoundaryForces, K}
+                             boundary_data, n::Int32) where {D, T, FlagKernel, FlagShift, BoundaryForces, K}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -243,9 +244,9 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
     ∇C    = zero(SVector{D, T})
     ∇r    = zero(T)
 
-    @inbounds if valid
+    @inbounds if valid && boundary_enabled(boundary_data, ParticleType, i)
         pᵢ  = Pairs[i]
-        vᵢ  = Velocity[i]
+        vᵢ  = boundary_velocity(boundary_data, Velocity, ParticleType, i)
         ρᵢ  = Density[i]
         ρᵢ⁻¹ = InvDensity[i]
         Pᵢ  = Pressure[i]
@@ -272,14 +273,14 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                 if j != i
                     xᵢⱼ  = pair_vector(Pairs, pᵢ, j, rowcell, row, s)
                     xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
-                    if xᵢⱼ² <= H²
+                    if xᵢⱼ² <= H² && boundary_enabled(boundary_data, ParticleType, j)
                         dᵢⱼ   = sqrt(xᵢⱼ²)
                         q     = dᵢⱼ * h⁻¹ # in [0, 2]: the guard above enforces xᵢⱼ² <= H² = (2h)²
                         ∇ᵢWᵢⱼ = ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
 
                         ρⱼ   = Density[j]
                         ρⱼ⁻¹ = InvDensity[j]
-                        vⱼ   = Velocity[j]
+                        vⱼ   = boundary_velocity(boundary_data, Velocity, ParticleType, j)
                         vᵢⱼ  = vᵢ - vⱼ
                         density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
                         # DBC walls take density from the fluid, not other walls.
@@ -308,8 +309,10 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         dρdt += i_first ? D1 : D2
 
                         if forces
+                            viscous_velocity = boundary_viscous_velocity(boundary_data, Velocity, ParticleType, i) -
+                                               boundary_viscous_velocity(boundary_data, Velocity, ParticleType, j)
                             v1, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles,
-                                                      sgn * xᵢⱼ, sgn * vᵢⱼ, sgn * ∇ᵢWᵢⱼ, xᵢⱼ²,
+                                                      sgn * xᵢⱼ, sgn * viscous_velocity, sgn * ∇ᵢWᵢⱼ, xᵢⱼ²,
                                                       ρa, ρb, ρa⁻¹, ρb⁻¹, ia, ja)
                             visc  = sgn * v1
 
@@ -390,7 +393,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
                               CellStart, CellID, grid, step,
                               SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
                               FlagKernel::Val, FlagShift::Val; threads::Integer = 128, lanes::Val = Val(1),
-                              boundary_forces::Val = Val(true), pos_cells = nothing)
+                              boundary_forces::Val = Val(true), pos_cells = nothing, boundary_data = nothing)
     n = length(Position)
     n == 0 && return nothing
     K = typeof(lanes).parameters[1]
@@ -402,7 +405,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
         Pairs, Position, Density, InvDensity, Pressure, Velocity, ParticleType, SimParticles,
         CellStart, CellID, grid, step,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-        FlagKernel, FlagShift, boundary_forces, lanes, Int32(n))
+        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, Int32(n))
     return nothing
 end
 
@@ -423,9 +426,9 @@ end
 # cell of that row with the node's first coordinate (see `pair_vector`).
 # The distance test comes first: only the roughly 30 % of the candidates
 # inside the support also load `ParticleType`.
-@inline function mdbc_range(b::SVector{DP, T}, A, jlo::Int32, jhi::Int32, lane::Int32, ::Val{K}, ref,
+@inline function mdbc_range(b, A::SMatrix{DP, DP, T}, jlo::Int32, jhi::Int32, lane::Int32, ::Val{K}, ref,
                             Pairs, rowcell::Int32, row::CellRow, s, Density, ParticleType, SimKernel,
-                            m₀) where {K, DP, T}
+                            m₀, Velocity = nothing) where {K, DP, T}
     (; h⁻¹, H²) = SimKernel
     j = jlo + lane
     @inbounds while j <= jhi
@@ -443,7 +446,7 @@ end
                 Vⱼ    = m₀ / ρⱼ
                 VⱼWᵢⱼ = Vⱼ * Wᵢⱼ
 
-                b += SVector{DP, T}(m₀ * Wᵢⱼ, (m₀ * ∇ᵢWᵢⱼ)...)
+                b = mdbc_accumulate(b, m₀, Wᵢⱼ, ∇ᵢWᵢⱼ, VⱼWᵢⱼ, Velocity, j)
 
                 xⱼᵢ          = -xᵢⱼ
                 first_column = SVector{DP, T}(VⱼWᵢⱼ, (Vⱼ * ∇ᵢWᵢⱼ)...)
@@ -461,7 +464,7 @@ end
 # `rowcell` for `pair_vector` is the (possibly virtual, never dereferenced)
 # linear index of the cell of the row with the node's first coordinate.
 @inline function mdbc_rows(b, A, ref, lg, grid::CellGrid{2}, CellStart, Pairs, s,
-                           Density, ParticleType, SimKernel, m₀, lane, lanes::Val)
+                           Density, ParticleType, SimKernel, m₀, lane, lanes::Val, Velocity = nothing)
     n1, n2 = grid.dims
     R   = reach(grid)
     xlo = max(lg[1] - R, Int32(0))
@@ -475,7 +478,7 @@ end
                 jhi     = CellStart[row0 + (xhi - xlo) + Int32(1)]
                 rowcell = row0 + (lg[1] - xlo)
                 b, A = mdbc_range(b, A, jlo, jhi, lane, lanes, ref, Pairs, rowcell, CellRow(Int32(0), dy, Int32(0)),
-                                  s, Density, ParticleType, SimKernel, m₀)
+                                  s, Density, ParticleType, SimKernel, m₀, Velocity)
             end
         end
     end
@@ -483,7 +486,7 @@ end
 end
 
 @inline function mdbc_rows(b, A, ref, lg, grid::CellGrid{3}, CellStart, Pairs, s,
-                           Density, ParticleType, SimKernel, m₀, lane, lanes::Val)
+                           Density, ParticleType, SimKernel, m₀, lane, lanes::Val, Velocity = nothing)
     n1, n2, n3 = grid.dims
     R   = reach(grid)
     xlo = max(lg[1] - R, Int32(0))
@@ -500,7 +503,7 @@ end
                         jhi     = CellStart[row0 + (xhi - xlo) + Int32(1)]
                         rowcell = row0 + (lg[1] - xlo)
                         b, A = mdbc_range(b, A, jlo, jhi, lane, lanes, ref, Pairs, rowcell, CellRow(Int32(0), dy, dz),
-                                          s, Density, ParticleType, SimKernel, m₀)
+                                          s, Density, ParticleType, SimKernel, m₀, Velocity)
                     end
                 end
             end
@@ -600,6 +603,8 @@ function launch_mdbc!(Density, Pressure, Position, GhostPoints, GhostIndex, Part
 end
 
 #---------------------------------------------------------------
+include("UpdatedMDBC.jl")
+
 # Half step (symplectic predictor) fused with density limiting, motion, the
 # pressure of the half step density and its reciprocal, and the cell relative
 # form of the half step position when the positions are of a higher precision
@@ -608,7 +613,7 @@ end
 function half_step_kernel!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, InvDensityₙ⁺, Pressure,
                            Position, Velocity, Acceleration, Density, dρdtI,
                            ParticleType, GroupMarker, motion, step, SimConstants,
-                           PosCellsₙ⁺, CellID, gridarg, H, n::Int32)
+                           PosCellsₙ⁺, CellID, gridarg, H, boundary_mode, n::Int32)
     step_active(step) || return nothing
     i = thread_index()
     i > n && return nothing
@@ -627,7 +632,7 @@ function half_step_kernel!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, InvDensity�
         Positionₙ⁺[i]   = xₙ⁺
         Velocityₙ⁺[i]   = Velocity[i] + acc * dt₂ * ML
         ρ = Density[i] + dρdtI[i] * dt₂
-        ρ = limit_density(ρ, ρ₀, ML)
+        ρ = boundary_mode isa UpdatedMDBC && is_wall(type) ? Density[i] : limit_density(ρ, ρ₀, ML)
         ρₙ⁺[i] = ρ
         InvDensityₙ⁺[i] = inv(ρ)
 
@@ -651,7 +656,8 @@ position; `CellID`, `grid` and `SimKernel` are then required.
 function launch_half_step!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, InvDensityₙ⁺, Pressure,
                            Position, Velocity, Acceleration, Density, dρdtI,
                            ParticleType, GroupMarker, motion, step, SimConstants;
-                           pos_cells = nothing, CellID = nothing, grid = nothing, SimKernel = nothing)
+                           pos_cells = nothing, CellID = nothing, grid = nothing, SimKernel = nothing,
+                           boundary_mode = SimpleMDBC())
     n = length(Position)
     n == 0 && return nothing
     H = SimKernel === nothing ? zero(eltype(Density)) : SimKernel.H
@@ -659,7 +665,7 @@ function launch_half_step!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, InvDensity�
         Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, InvDensityₙ⁺, Pressure,
         Position, Velocity, Acceleration, Density, dρdtI,
         ParticleType, GroupMarker, motion, step, SimConstants,
-        pos_cells, CellID, grid, H, Int32(n))
+        pos_cells, CellID, grid, H, boundary_mode, Int32(n))
     return nothing
 end
 
@@ -704,7 +710,7 @@ end
 
 function final_step_kernel!(Position, Velocity, Acceleration, Density, Pressure, dρdtI, ρₙ⁺, Positionₙ⁺,
                             Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
-                            partial, ::Val{FlagShift}, n::Int32) where {FlagShift}
+                            partial, ::Val{FlagShift}, boundary_mode, GhostPoints, GhostNormals, n::Int32) where {FlagShift}
     step_active(step) || return nothing
     dt = step_dt(step)
     (; g, ρ₀, c₀) = SimConstants
@@ -722,9 +728,9 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, Pressure,
         ρ    = Density[i]
         epsi = -(dρdtI[i] / ρₙ⁺[i]) * dt
         ρ   *= (2 - epsi) / (2 + epsi)
-        ρ    = limit_density(ρ, ρ₀, ML)
+        ρ    = boundary_mode isa UpdatedMDBC && is_wall(type) ? ρₙ⁺[i] : limit_density(ρ, ρ₀, ML)
         Density[i]  = ρ
-        Pressure[i] = EquationOfStateGamma7(ρ, c₀, ρ₀)
+        Pressure[i] = boundary_mode isa UpdatedMDBC && is_wall(type) ? c₀^2 * (ρ - ρ₀) : EquationOfStateGamma7(ρ, c₀, ρ₀)
 
         # FullTimeStep
         acc = Acceleration[i]
@@ -748,6 +754,9 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, Pressure,
             x += (vₙ⁺ * dt) * ML
         end
         Position[i] = x
+        if boundary_mode isa UpdatedMDBC && type == Moving && GhostPoints !== nothing
+            GhostPoints[i] = x + GhostNormals[i]
+        end
 
         # Values for the time step and cell list update decision of the next step
         acc_red = step_reduce(acc_red, step_values(x, v, acc, Positionₙ⁺[i], SimKernel.h, SimKernel.η²))
@@ -767,13 +776,14 @@ per block reduction results fit the reduction workspace; they are consumed by
 """
 function launch_final_step!(Position, Velocity, Acceleration, Density, Pressure, dρdtI, ρₙ⁺, Positionₙ⁺,
                             Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
-                            red::ReductionWorkspace, FlagShift::Val)
+                            red::ReductionWorkspace, FlagShift::Val; boundary_mode = SimpleMDBC(),
+                            ghost_points = nothing, ghost_normals = nothing)
     n = length(Position)
     n == 0 && return nothing
     @cuda threads=ELEMENTWISE_THREADS blocks=red.nblocks final_step_kernel!(
         Position, Velocity, Acceleration, Density, Pressure, dρdtI, ρₙ⁺, Positionₙ⁺,
         Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
-        red.partial, FlagShift, Int32(n))
+        red.partial, FlagShift, boundary_mode, ghost_points, ghost_normals, Int32(n))
     return nothing
 end
 
