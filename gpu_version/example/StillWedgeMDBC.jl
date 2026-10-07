@@ -61,6 +61,8 @@ let
         ExportGridCells = true,
         OpenLogFile = true,
         GPUDoublePosition = true,
+        # This small case needs only a few queued frames to overlap disk output.
+        GPUOutputQueueBytes = 8 * 1024^2,
         # OutputVariables = [
         #     # "ChunkID",
         #     # "Kernel",
@@ -127,7 +129,7 @@ let
     # # Create the plot
     # plt = scatter(normalized_pressures, normalized_positions, label="Fluid Pressure", xlabel="Normalized Height", ylabel="Normalized Pressure", linestyle=:auto, marker=:circle, legend=:topright)
 
-    # # Plot the theoretical hydrostatic pressure line (with correct flipped axes)
+    # # Plot the theoretical hydrostatic pressure line (with correct flipped axes)'
     # plot!(hydrostatic_pressure ./ maximum(hydrostatic_pressure), normalized_positions, label="Theoretical Hydrostatic Pressure", linestyle=:dash)
 
     # # Set fixed axis limits for better comparison

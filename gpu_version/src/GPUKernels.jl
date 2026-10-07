@@ -150,19 +150,27 @@ end
 # reordering by a cell list rebuild)
 #---------------------------------------------------------------
 
-function inv_density_kernel!(InvDensity, Density, step, n::Int32)
+function inv_density_kernel!(InvDensity, Density, step, n::Int32,
+                             PosCells, Position, CellID, grid, H)
     step_active(step) || return nothing
     i = thread_index()
     i > n && return nothing
-    @inbounds InvDensity[i] = inv(Density[i])
+    @inbounds begin
+        InvDensity[i] = inv(Density[i])
+        if PosCells !== nothing
+            store_pos_cell!(PosCells, i, Position[i], CellID, grid, H)
+        end
+    end
     return nothing
 end
 
-function launch_inv_density!(InvDensity, Density, step)
+function launch_inv_density!(InvDensity, Density, step;
+                             pos_cells = nothing, Position = nothing,
+                             CellID = nothing, grid = nothing, H = nothing)
     n = length(Density)
     n == 0 && return nothing
     @cuda threads=ELEMENTWISE_THREADS blocks=cld(n, ELEMENTWISE_THREADS) inv_density_kernel!(
-        InvDensity, Density, step, Int32(n))
+        InvDensity, Density, step, Int32(n), pos_cells, Position, CellID, grid, H)
     return nothing
 end
 

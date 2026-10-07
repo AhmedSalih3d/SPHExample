@@ -559,16 +559,23 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
     grid      = cl.grid_dev
     CellStart = cl.CellStart
 
-    enqueue_pos_cells!(ctx, step, timed)
-
     if UseMDBC
+        enqueue_pos_cells!(ctx, step, timed)
         @phase HourGlass mdbc_name timed launch_mdbc!(
             gpu.Density, gpu.Pressure, gpu.Position, gpu.GhostPoints, gpu.GhostIndex, gpu.Type, CellStart,
             grid, step, SimKernel, SimConstants; threads = threads, lanes = lanes, pos_cells = sup.PosCells)
     end
 
     @phase HourGlass loop_name timed begin
-        launch_inv_density!(sup.InvDensity, gpu.Density, step)
+        if UseMDBC || !uses_pos_cells(sup)
+            launch_inv_density!(sup.InvDensity, gpu.Density, step)
+        else
+            # DBC has no boundary correction between these preparations, so
+            # compute both in one pass before the first neighbour loop.
+            launch_inv_density!(sup.InvDensity, gpu.Density, step;
+                pos_cells = sup.PosCells, Position = gpu.Position,
+                CellID = gpu.CellID, grid = grid, H = SimKernel.H)
+        end
         launch_interactions!(sup.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient, sup.∇Cᵢ, sup.∇◌rᵢ,
                              gpu.Position, gpu.Density, sup.InvDensity, gpu.Pressure,
                              gpu.Velocity, gpu.Type, CellStart, gpu.CellID, grid, step,
@@ -686,24 +693,33 @@ function enqueue_step!(ctx, timed::Bool)
 end
 
 """
-    launch_step_graph!(ctx)
+    launch_step_graph!(ctx, steps = 1)
 
-Replay the launch sequence of a step as a CUDA graph. The graph bakes in the
+Replay the launch sequence of a step batch as a CUDA graph. The graph bakes in the
 device pointers of its arguments, and the persistent particle arrays are
 swapped with their scratch copies at every cell list rebuild, so one graph
-is kept per set of pointers (normally two, keyed by the position array and
-the reallocation generation of the cell list). The first call for a key
+is kept per set of pointers and batch length, keyed by the position array,
+the reallocation generation of the cell list and the number of steps. The first call
 captures and instantiates the graph; a capture that fails (kernels that
-still have to be compiled) falls back to direct launches for that step.
+still have to be compiled) falls back to direct launches for that batch.
 """
-function launch_step_graph!(ctx)
+function launch_step_graph!(ctx, steps::Int = 1)
     state = ctx.state
-    key   = (UInt(pointer(ctx.gpu.Position)), ctx.cl.generation)
+    key   = (UInt(pointer(ctx.gpu.Position)), ctx.cl.generation, steps)
     exec  = get(state.graphs, key, nothing)
     if exec === nothing
-        graph = CUDA.capture(() -> enqueue_step!(ctx, false); throw_error = false)
+        # Output workers query events recorded outside this capture on their
+        # own streams. Global capture mode would reject those concurrent calls.
+        graph = CUDA.capture(; flags = CUDA.STREAM_CAPTURE_MODE_RELAXED,
+                               throw_error = false) do
+            for _ in 1:steps
+                enqueue_step!(ctx, false)
+            end
+        end
         if graph === nothing
-            enqueue_step!(ctx, false)
+            for _ in 1:steps
+                enqueue_step!(ctx, false)
+            end
             return nothing
         end
         exec = CUDA.instantiate(graph)
@@ -808,11 +824,20 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     generation = cl.generation
     while true
         K = batch_size(state, h, t_out, kmax)
-        @timeit HourGlass "03 Launch Steps" for _ in 1:K
+        @timeit HourGlass "03 Launch Steps" begin
             if use_graph
-                launch_step_graph!(ctx)
+                # Reuse a small set of graph sizes instead of launching one graph
+                # per step. Device stop flags still guard every individual step.
+                remaining = K
+                while remaining > 0
+                    steps = prevpow(2, min(remaining, 8))
+                    launch_step_graph!(ctx, steps)
+                    remaining -= steps
+                end
             else
-                enqueue_step!(ctx, timed)
+                for _ in 1:K
+                    enqueue_step!(ctx, timed)
+                end
             end
         end
 

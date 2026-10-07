@@ -52,9 +52,9 @@ const PHASE_DT_READY = Int32(1)  # `dt` is stored, the step itself has not run y
     StepState{T}(; dt, time, dx, iteration)
 
 Device state of the time loop plus a pinned host mirror that `readback!`
-fills. `graphs` caches the instantiated CUDA graph of one time step per set
-of device pointers (the persistent particle arrays are swapped at every cell
-list rebuild, so there are normally two entries).
+fills. `graphs` caches CUDA graphs of power-of-two step batches per set of
+device pointers. The persistent particle arrays are swapped at every cell
+list rebuild; the batch length is also part of the cache key.
 """
 mutable struct StepState{T}
     f::CuVector{T}
@@ -63,7 +63,7 @@ mutable struct StepState{T}
     ih::Vector{Int32}
     primed::Bool        # the reduction workspace holds a valid reduction for the next `dt`
     readbacks::Int      # number of host read backs (device synchronizations of the loop)
-    graphs::Dict{Tuple{UInt, Int}, CUDA.CuGraphExec}
+    graphs::Dict{Tuple{UInt, Int, Int}, CUDA.CuGraphExec}
 end
 
 function StepState{T}(; dt = zero(T), time = zero(T), dx = zero(T), iteration::Integer = 0) where {T}
@@ -81,7 +81,7 @@ function StepState{T}(; dt = zero(T), time = zero(T), dx = zero(T), iteration::I
         # pinning is an optimisation only
     end
     return StepState{T}(CuArray(fh), CuArray(ih), fh, ih, false, 0,
-                        Dict{Tuple{UInt, Int}, CUDA.CuGraphExec}())
+                        Dict{Tuple{UInt, Int, Int}, CUDA.CuGraphExec}())
 end
 
 """

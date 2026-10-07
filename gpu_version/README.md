@@ -166,6 +166,36 @@ original MDBC simulation inputs and ghost-node data remain unchanged.
 The geometry tests need no GPU:
 `julia --project=gpu_version gpu_version/test/still_wedge_middle_square_geometry.jl`.
 
+### StillWedge performance
+
+The StillWedge example keeps Float64 positions, Float32 force calculations,
+the symplectic scheme, boundary forces, and its 0.01 s output interval. Its
+8 MB output queue avoids allocating the default 256 MB for this small case.
+Importing `GenerateStillWedgeMDBC.jl` loads its helpers without writing input
+files; run that script directly when you want the geometry exports.
+
+With `GPUUseGraph = true`, the solver caches graphs of 1, 2, 4, and 8 steps
+and composes each host batch from them. Each step still checks the device stop
+flag, so output deadlines and cell-list rebuilds use the same decisions.
+For DBC with double positions, reciprocal densities and cell-relative
+positions are prepared in one kernel. The package also precompiles this
+StillWedge configuration to reduce compilation on the first run of a session.
+
+Benchmark the generated case with its normal particle and grid outputs:
+
+```bash
+julia -t 8,0 --project=gpu_version gpu_version/benchmark/still_wedge_speed.jl
+julia -t 8,0 --project=gpu_version gpu_version/test/gpu_execution.jl
+```
+
+The benchmark warms each setting before measuring three interleaved repeats
+and reports particle-state differences from the automatic kernel settings.
+Use warmed timings to compare stepping performance; launching Julia and
+compiling a changed package are separate costs.
+
+See [the StillWedge benchmark report](benchmark/still_wedge_performance.md) for
+measurements and validation on an RTX 5080.
+
 ### Generating the 2D DamBreak case
 
 `example/GenerateDamBreak2DMDBC.jl` builds the 2D dam-break tank and its
@@ -676,7 +706,7 @@ the standard *gather* formulation:
   read back, at most `GPUMaxStepsPerSync`), reads the state back once, and
   only then rebuilds the cell list or writes an output. Because nothing in
   the launch sequence of a step changes from step to step, it is captured
-  once as a CUDA graph and replayed (`GPUUseGraph`), which removes most of
+  as graphs of up to eight steps and replayed (`GPUUseGraph`), which removes most of
   the per launch overhead that bounds the small 2D cases on Windows.
 * **mDBC on the GPU.** One thread (or `K` lanes) per boundary particle with
   a ghost node gathers the fluid neighbours of the node, assembles the
@@ -846,7 +876,7 @@ definitions in `benchmark/cases.jl` construct against either package.
 | `GPUBoundaryForces` | `true` | Evaluate the momentum equation for boundary particles too, as the CPU does (their acceleration only enters the force based time step limit). `false` skips it and saves 10-20 % in cases with many boundary particles, at the price of a slightly different adaptive time step. |
 | `GPUAsyncOutput` | `true` | Write output files on a task while the GPU continues (see "Asynchronous output"). |
 | `GPUMaxStepsPerSync` | `32` | Upper bound on the steps enqueued between two host read backs of the device resident step state. The actual batch is the estimated number of steps until the next cell list rebuild or output. `1` reproduces a synchronization per step. |
-| `GPUUseGraph` | `true` | Capture the launch sequence of a step as a CUDA graph and replay it. Disabled automatically with `GPUSyncTimers`. |
+| `GPUUseGraph` | `true` | Cache CUDA graphs of 1, 2, 4, and 8 steps and compose each host batch from them. Disabled automatically with `GPUSyncTimers`. |
 | `GPUCellSubdivision` | `1` | Cells per support radius `H` along each axis: `1` bins at `H` with a 3^D stencil (the CPU's cells), `2` at `H/2` with a 5^D stencil. Same neighbour pairs, fewer distance checks, more cell ranges per particle. Only `1` reproduces the CPU's orientation of the asymmetric density diffusion term (the results of the two grids differ by that term only). `2` pays off with one lane per particle (large cases); with many lanes it is slower. |
 | `GPUDoublePosition` | `false` | Store and integrate the particle positions (and the mDBC ghost node positions) in `Float64` while everything else stays in `FloatType`; the pair loops use cell relative `FloatType` coordinates (see "Double positions" above). Use it for `Float32` runs of domains far from the origin or with many steps. No effect with `FloatType = Float64`. Allocate the particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so that the input is read in `Float64`. |
 | `GPUOutputQueueBytes` | `256 * 2^20` | Separate host memory budget for reusable frames between the download collector and disk writer; at least one frame. Used with `GPUAsyncOutput`. |

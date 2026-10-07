@@ -16,7 +16,8 @@
 #                               is also compiled
 #   - `precompile_double_position`: also run every case with
 #                               `GPUDoublePosition = true` (the cell relative
-#                               kernel variants), default `false`
+#                               kernel variants), default `false`; the 2D
+#                               StillWedge DBC case always caches this mode
 # `precompile_workload = false` (PrecompileTools) disables the workload.
 
 using PrecompileTools: @setup_workload, @compile_workload
@@ -84,7 +85,7 @@ function _precompile_cases(dir::String, ::Type{T}) where {T}
     # simulating physical time that adds no further specializations.
     time = (SimulationTime = 1e-4, VisualizeInParaview = false, OpenLogFile = false)
 
-    # example/Dambreak2dMDBC.jl, StillWedgeMDBC.jl
+    # example/Dambreak2dMDBC.jl
     c2mdbc = SimulationConstants{T}(dx = dx, c₀ = 88.14487860902641, δᵩ = 0.1, CFL = 0.5, α = 0.01)
     mdbc_2d = (
         SimGeometry  = [SPHGeometry{2, T}(CSVFile = g2.bound, GroupMarker = 1, Type = Fixed),
@@ -98,6 +99,17 @@ function _precompile_cases(dir::String, ::Type{T}) where {T}
         SimDensityDiffusion = LinearDensityDiffusion(),
         ParticleNormalsPath = g2.ghost,
     )
+
+    # StillWedge uses DBC with Float64 positions and Float32 pair arithmetic.
+    # Cache this exact mode even when double positions are not requested for
+    # every other case, avoiding first-run compilation of the fused kernels.
+    dbc_2d = merge(mdbc_2d, (
+        SimMetaData = SimulationMetaData{2, T, NoShifting, NoKernelOutput, NoMDBC, StoreLog}(;
+            SimulationName = "DBC2D", SaveLocation = save("DBC2D"),
+            OutputTimes = time.SimulationTime, ExportGridCells = true,
+            GPUDoublePosition = true, GPUOutputQueueBytes = 8 * 1024^2, time...),
+        ParticleNormalsPath = nothing,
+    ))
 
     # example/MovingSquare2d.jl
     c2move = SimulationConstants{T}(dx = dx, c₀ = 28, δᵩ = 0.1, g = 0, Cb = 112000, α = 1e-6, CFL = 0.2)
@@ -150,14 +162,14 @@ function _precompile_cases(dir::String, ::Type{T}) where {T}
         ParticleNormalsPath = nothing,
     )
 
-    return (mdbc_2d, moving_2d, mdbc_3d, dbc_3d)
+    return (mdbc_2d, dbc_2d, moving_2d, mdbc_3d, dbc_3d)
 end
 
 # Complete run on the GPU, as done by the example scripts.
 function _precompile_run(case, lanes::Int, double_position::Bool)
     meta = case.SimMetaData
     meta.GPULanesPerParticle = lanes
-    meta.GPUDoublePosition   = double_position
+    meta.GPUDoublePosition   = double_position || meta.GPUDoublePosition
     CleanUpSimulationFolder(meta.SaveLocation)
     particles = AllocateDataStructures(case.SimGeometry, meta)
     logger    = SimulationLogger(meta.SaveLocation)

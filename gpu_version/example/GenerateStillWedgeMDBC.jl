@@ -196,11 +196,14 @@ function still_wedge_2d_geometry(
     ]
 end
 
-output_dir = normpath(joinpath(@__DIR__, "..", "input", "still_wedge_generated"))
-dx = 0.02
-particles = generate_still_wedge_2d_example(output_dir; dx)
-for region in particles
-    @info "$(region.name): $(length(region.positions)) particles"
+if abspath(PROGRAM_FILE) == @__FILE__
+    output_dir = isempty(ARGS) ?
+        normpath(joinpath(@__DIR__, "..", "input", "still_wedge_generated")) : ARGS[1]
+    dx = length(ARGS) > 1 ? parse(Float64, ARGS[2]) : 0.02
+    particles = generate_still_wedge_2d_example(output_dir; dx)
+    for region in particles
+        @info "$(region.name): $(length(region.positions)) particles"
+    end
+    @info "Saved StillWedge2D geometry and particles" output_dir
 end
-@info "Saved StillWedge2D geometry and particles" output_dir
 

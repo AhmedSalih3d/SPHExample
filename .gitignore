@@ -18,3 +18,4 @@ Manifest.toml
 !gpu_version/input/still_wedge_middle_square_generated/StillWedge_MiddleSquare_Dp0.02_Particles.vtkhdf
 # Ignore local Julia archives
 julia-*.tar.gz
+/gpu_version/output
