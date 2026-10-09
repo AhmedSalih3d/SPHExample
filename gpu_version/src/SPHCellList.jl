@@ -578,7 +578,7 @@ the predictor instead and only runs this to start that derivative: before
 the first step and after a cell list rebuild (`SimulationLoop`). `step`
 gates every kernel; `mdbc_name` and `loop_name` are the timer labels.
 """
-function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractString, loop_name::AbstractString)
+function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractString, loop_name::AbstractString; prepare_motion::Bool = false)
     (; gpu, cl, sup, SimKernel, SimConstants, SimDensityDiffusion, SimViscosity,
        FlagKernel, FlagShift, UseMDBC, threads, lanes, bforces, HourGlass) = ctx
     grid      = cl.grid_dev
@@ -590,14 +590,16 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
     end
 
     @phase HourGlass loop_name timed begin
-        if UseMDBC || !uses_pos_cells(sup)
+        if UseMDBC
             launch_inv_density!(sup.InvDensity, gpu.Density, step)
         else
             # DBC has no boundary correction between these preparations, so
             # compute both in one pass before the first neighbour loop.
             launch_inv_density!(sup.InvDensity, gpu.Density, step;
                 pos_cells = sup.PosCells, Position = gpu.Position,
-                CellID = gpu.CellID, grid = grid, H = SimKernel.H)
+                CellID = gpu.CellID, grid = grid, H = SimKernel.H,
+                Velocity = gpu.Velocity, ParticleType = gpu.Type, GroupMarker = gpu.GroupMarker,
+                motion = prepare_motion ? ctx.motion : nothing)
         end
         launch_interactions!(sup.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient, sup.∇Cᵢ, sup.∇◌rᵢ,
                              gpu.Position, gpu.Density, sup.InvDensity, gpu.Pressure,
@@ -654,7 +656,10 @@ function enqueue_step!(ctx, timed::Bool)
 
     # The pressure of the start-of-step density was already computed by the
     # final kernel of the previous step (and on the host before the first).
-    if motion.active
+    # DBC has no neighbor evaluation between motion and per-particle preparation.
+    # mDBC needs the moved geometry before its separate boundary correction.
+    fused_motion = !UseMDBC
+    if motion.active && !fused_motion
         @phase HourGlass "Motion" timed launch_motion!(gpu.Position, gpu.Velocity, gpu.Type, gpu.GroupMarker,
                                                        motion, state)
     end
@@ -668,7 +673,8 @@ function enqueue_step!(ctx, timed::Bool)
             @phase HourGlass "04a NeighborLoopMDBC before Half TimeStep" timed enqueue_boundary_correction!(ctx, state, false)
         end
     else
-        enqueue_state_derivative!(ctx, state, timed, "04a First NeighborLoopMDBC", "04 First NeighborLoop")
+        enqueue_state_derivative!(ctx, state, timed, "04a First NeighborLoopMDBC", "04 First NeighborLoop";
+            prepare_motion = fused_motion && motion.active)
     end
 
     if floats
@@ -686,7 +692,8 @@ function enqueue_step!(ctx, timed::Bool)
         gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Density, sup.dρdtI,
         gpu.Type, gpu.GroupMarker, motion, state, SimConstants;
         pos_cells = sup.PosCellsₙ⁺, CellID = gpu.CellID, grid = grid, SimKernel = SimKernel,
-        boundary_mode = get(ctx, :boundary_mode, SimpleMDBC()))
+        boundary_mode = get(ctx, :boundary_mode, SimpleMDBC()),
+        first_motion = SingleNeighbor && fused_motion && motion.active)
 
     if floats
         @phase HourGlass "05c Floating Half TimeStep" timed launch_floating_particles!(
@@ -724,14 +731,19 @@ function enqueue_step!(ctx, timed::Bool)
         sup.dρdtI, sup.ρₙ⁺, sup.Positionₙ⁺, sup.Velocityₙ⁺, gpu.Type,
         sup.∇Cᵢ, sup.∇◌rᵢ, state, SimKernel, SimConstants, red, FlagShift;
         boundary_mode = get(ctx, :boundary_mode, SimpleMDBC()),
-        ghost_points = gpu.GhostPoints, ghost_normals = gpu.GhostNormals)
+        ghost_points = gpu.GhostPoints, ghost_normals = gpu.GhostNormals,
+        commit_step = red.nblocks == 1)
 
+    # Rigid final placement reads neither time nor phase, so a one-block
+    # integration may commit before this launch without changing body placement.
     if floats
         @phase HourGlass "11b Floating Final TimeStep" timed launch_floating_particles!(
             floating, gpu.Position, gpu.Velocity, gpu.Position, gpu.Type, gpu.GroupMarker, state, true)
     end
 
-    @phase HourGlass "12 Update MetaData" timed launch_commit!(state)
+    if red.nblocks != 1
+        @phase HourGlass "12 Update MetaData" timed launch_commit!(state)
+    end
     return nothing
 end
 
@@ -874,7 +886,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                 # per step. Device stop flags still guard every individual step.
                 remaining = K
                 while remaining > 0
-                    steps = prevpow(2, min(remaining, 8))
+                    steps = prevpow(2, min(remaining, 32))
                     launch_step_graph!(ctx, steps)
                     remaining -= steps
                 end

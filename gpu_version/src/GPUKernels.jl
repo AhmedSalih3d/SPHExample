@@ -152,11 +152,14 @@ end
 #---------------------------------------------------------------
 
 function inv_density_kernel!(InvDensity, Density, step, n::Int32,
-                             PosCells, Position, CellID, grid, H)
+                             PosCells, Position, CellID, grid, H, Velocity, ParticleType, GroupMarker, motion)
     step_active(step) || return nothing
     i = thread_index()
     i > n && return nothing
     @inbounds begin
+        if motion !== nothing
+            apply_motion!(i, Position, Velocity, ParticleType, GroupMarker, motion, step_dt(step) / 2, step_time(step))
+        end
         InvDensity[i] = inv(Density[i])
         if PosCells !== nothing
             store_pos_cell!(PosCells, i, Position[i], CellID, grid, H)
@@ -167,11 +170,12 @@ end
 
 function launch_inv_density!(InvDensity, Density, step;
                              pos_cells = nothing, Position = nothing,
-                             CellID = nothing, grid = nothing, H = nothing)
+                             CellID = nothing, grid = nothing, H = nothing,
+                             Velocity = nothing, ParticleType = nothing, GroupMarker = nothing, motion = nothing)
     n = length(Density)
     n == 0 && return nothing
     @cuda threads=ELEMENTWISE_THREADS blocks=cld(n, ELEMENTWISE_THREADS) inv_density_kernel!(
-        InvDensity, Density, step, Int32(n), pos_cells, Position, CellID, grid, H)
+        InvDensity, Density, step, Int32(n), pos_cells, Position, CellID, grid, H, Velocity, ParticleType, GroupMarker, motion)
     return nothing
 end
 
@@ -613,12 +617,13 @@ include("UpdatedMDBC.jl")
 function half_step_kernel!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, InvDensityₙ⁺, Pressure,
                            Position, Velocity, Acceleration, Density, dρdtI,
                            ParticleType, GroupMarker, motion, step, SimConstants,
-                           PosCellsₙ⁺, CellID, gridarg, H, boundary_mode, n::Int32)
+                           PosCellsₙ⁺, CellID, gridarg, H, boundary_mode, ::Val{FirstMotion}, n::Int32) where {FirstMotion}
     step_active(step) || return nothing
     i = thread_index()
     i > n && return nothing
     dt₂       = step_dt(step) / 2
     TotalTime = step_time(step)
+    FirstMotion && apply_motion!(i, Position, Velocity, ParticleType, GroupMarker, motion, dt₂, TotalTime)
     (; g, ρ₀, c₀) = SimConstants
     T = eltype(Density)
     @inbounds begin
@@ -652,12 +657,14 @@ Symplectic predictor. With `pos_cells` (the `PosCell` array of the half step
 positions, for positions stored in a higher precision than the working
 precision) the kernel also writes the cell relative form of every half step
 position; `CellID`, `grid` and `SimKernel` are then required.
+`first_motion = true` also applies the first prescribed-motion half increment
+before constructing the predictor, for single-neighbor DBC steps.
 """
 function launch_half_step!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, InvDensityₙ⁺, Pressure,
                            Position, Velocity, Acceleration, Density, dρdtI,
                            ParticleType, GroupMarker, motion, step, SimConstants;
                            pos_cells = nothing, CellID = nothing, grid = nothing, SimKernel = nothing,
-                           boundary_mode = SimpleMDBC())
+                           boundary_mode = SimpleMDBC(), first_motion::Bool = false)
     n = length(Position)
     n == 0 && return nothing
     H = SimKernel === nothing ? zero(eltype(Density)) : SimKernel.H
@@ -665,7 +672,7 @@ function launch_half_step!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, InvDensity�
         Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, InvDensityₙ⁺, Pressure,
         Position, Velocity, Acceleration, Density, dρdtI,
         ParticleType, GroupMarker, motion, step, SimConstants,
-        pos_cells, CellID, grid, H, boundary_mode, Int32(n))
+        pos_cells, CellID, grid, H, boundary_mode, Val(first_motion), Int32(n))
     return nothing
 end
 
@@ -710,7 +717,7 @@ end
 
 function final_step_kernel!(Position, Velocity, Acceleration, Density, Pressure, dρdtI, ρₙ⁺, Positionₙ⁺,
                             Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
-                            partial, ::Val{FlagShift}, boundary_mode, GhostPoints, GhostNormals, n::Int32) where {FlagShift}
+                            partial, ::Val{FlagShift}, boundary_mode, GhostPoints, GhostNormals, ::Val{CommitStep}, n::Int32) where {FlagShift, CommitStep}
     step_active(step) || return nothing
     dt = step_dt(step)
     (; g, ρ₀, c₀) = SimConstants
@@ -765,6 +772,8 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, Pressure,
     end
 
     block_reduce_store!(partial, acc_red, step_reduce)
+    # A single block has completed every particle write at the reduction barrier.
+    CommitStep && threadIdx().x == 1 && commit_kernel!(step)
     return nothing
 end
 
@@ -773,17 +782,20 @@ Launch the final step. Uses `red.nblocks` blocks in a grid stride loop so the
 per block reduction results fit the reduction workspace; they are consumed by
 `launch_finish!` (device) or `finish_reduction(red, step_reduce, init)` (host).
 `step` is a `StepState` or a `HostStep` with a fixed `dt`.
+`commit_step = true` commits the device step after the reduction barrier and
+requires a single reduction block; multiple blocks need a separate commit launch.
 """
 function launch_final_step!(Position, Velocity, Acceleration, Density, Pressure, dρdtI, ρₙ⁺, Positionₙ⁺,
                             Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
                             red::ReductionWorkspace, FlagShift::Val; boundary_mode = SimpleMDBC(),
-                            ghost_points = nothing, ghost_normals = nothing)
+                            ghost_points = nothing, ghost_normals = nothing, commit_step::Bool = false)
+    commit_step && red.nblocks != 1 && throw(ArgumentError("fused commit requires one reduction block"))
     n = length(Position)
     n == 0 && return nothing
     @cuda threads=ELEMENTWISE_THREADS blocks=red.nblocks final_step_kernel!(
         Position, Velocity, Acceleration, Density, Pressure, dρdtI, ρₙ⁺, Positionₙ⁺,
         Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
-        red.partial, FlagShift, boundary_mode, ghost_points, ghost_normals, Int32(n))
+        red.partial, FlagShift, boundary_mode, ghost_points, ghost_normals, Val(commit_step), Int32(n))
     return nothing
 end
 

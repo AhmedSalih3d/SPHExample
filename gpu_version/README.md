@@ -237,12 +237,57 @@ the symplectic scheme, boundary forces, and its 0.01 s output interval. Its
 Importing `GenerateStillWedgeMDBC.jl` loads its helpers without writing input
 files; run that script directly when you want the geometry exports.
 
-With `GPUUseGraph = true`, the solver caches graphs of 1, 2, 4, and 8 steps
+With `GPUUseGraph = true`, the solver caches graphs of 1, 2, 4, 8, 16, and 32 steps
 and composes each host batch from them. Each step still checks the device stop
 flag, so output deadlines and cell-list rebuilds use the same decisions.
 For DBC with double positions, reciprocal densities and cell-relative
 positions are prepared in one kernel. The package also precompiles this
 StillWedge configuration to reduce compilation on the first run of a session.
+
+For DBC, prescribed motion shares start-state density preparation in the
+symplectic scheme and the half-step predictor in the single-neighbor scheme.
+The order of the two motion increments is preserved. mDBC retains its separate
+motion launch because boundary correction needs the moved geometry first.
+With at most 256 particles, final integration and timestep metadata commit
+share one block; its reduction barrier completes all particle writes before
+committing. Larger grids retain a separate commit launch, and timestep
+finalization remains separate because it consumes all blocks' reductions.
+Floating bodies remain supported in both schemes: final rigid placement
+finishes before the next timestep kernel runs.
+
+Reproduce the warm complete-loop benchmark, including rebuild checks and
+host synchronization, with:
+
+```bash
+julia --project=. benchmark/orchestration.jl
+```
+
+It compares the original driver at `c47b34b` (or a revision supplied as the
+first argument) with the current driver, using 128 and 1,024 particles,
+prescribed motion, both schemes, and host batch limits of 8, 32, and 128.
+Graph batches are capped at 32 steps to bound capture size; host batches can
+compose several graphs. Output deadlines and estimated rebuild intervals
+still bound the usable batch. A second measurement uses a short output
+interval to show that requesting a larger batch does not override a deadline.
+
+On an RTX 5080 with Float32 physics and Float64 positions, the warm medians
+were as follows (microseconds per step). The baseline uses a host batch of
+32 and the original eight-step graph cap.
+
+| Particles | Scheme | Baseline | New, host batch 32 | New, host batch 128 |
+| --- | --- | ---: | ---: | ---: |
+| 128 | Symplectic | 22.00 | 19.61 | 18.57 |
+| 128 | Single neighbor | 16.05 | 14.22 | 13.00 |
+| 1,024 | Symplectic | 30.42 | 28.44 | 26.02 |
+| 1,024 | Single neighbor | 19.52 | 18.97 | 17.20 |
+
+These runs had identical particle states, step counts, and rebuild counts.
+With the short 0.001 s deadline, the largest captured graph was only two
+steps even when the host batch limit was 128. Results exclude compilation,
+initial graph capture, and file output; larger graphs add startup work, and
+benefits depend on the particle count and intervals. Full timings and actual
+graph sizes are in `benchmark/orchestration_results.txt`.
+
 
 Benchmark the generated case with its normal particle and grid outputs:
 
@@ -818,7 +863,7 @@ the standard *gather* formulation:
   read back, at most `GPUMaxStepsPerSync`), reads the state back once, and
   only then rebuilds the cell list or writes an output. Because nothing in
   the launch sequence of a step changes from step to step, it is captured
-  as graphs of up to eight steps and replayed (`GPUUseGraph`), which removes most of
+  as graphs of up to 32 steps and replayed (`GPUUseGraph`), which removes most of
   the per launch overhead that bounds the small 2D cases on Windows.
 * **mDBC on the GPU.** One thread (or `K` lanes) per boundary particle with
   a ghost node gathers the fluid neighbours of the node, assembles the
@@ -988,7 +1033,7 @@ definitions in `benchmark/cases.jl` construct against either package.
 | `GPUBoundaryForces` | `true` | Evaluate the momentum equation for boundary particles too, as the CPU does (their acceleration only enters the force based time step limit). `false` skips it and saves 10-20 % in cases with many boundary particles, at the price of a slightly different adaptive time step. |
 | `GPUAsyncOutput` | `true` | Write output files on a task while the GPU continues (see "Asynchronous output"). |
 | `GPUMaxStepsPerSync` | `32` | Upper bound on the steps enqueued between two host read backs of the device resident step state. The actual batch is the estimated number of steps until the next cell list rebuild or output. `1` reproduces a synchronization per step. |
-| `GPUUseGraph` | `true` | Cache CUDA graphs of 1, 2, 4, and 8 steps and compose each host batch from them. Disabled automatically with `GPUSyncTimers`. |
+| `GPUUseGraph` | `true` | Cache CUDA graphs of 1, 2, 4, 8, 16, and 32 steps and compose each host batch from them. Disabled automatically with `GPUSyncTimers`. |
 | `GPUCellSubdivision` | `1` | Cells per support radius `H` along each axis: `1` bins at `H` with a 3^D stencil (the CPU's cells), `2` at `H/2` with a 5^D stencil. Same neighbour pairs, fewer distance checks, more cell ranges per particle. Only `1` reproduces the CPU's orientation of the asymmetric density diffusion term (the results of the two grids differ by that term only). `2` pays off with one lane per particle (large cases); with many lanes it is slower. |
 | `GPUDoublePosition` | `false` | Store and integrate the particle positions (and the mDBC ghost node positions) in `Float64` while everything else stays in `FloatType`; the pair loops use cell relative `FloatType` coordinates (see "Double positions" above). Use it for `Float32` runs of domains far from the origin or with many steps. No effect with `FloatType = Float64`. Allocate the particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so that the input is read in `Float64`. |
 | `GPUOutputQueueBytes` | `256 * 2^20` | Separate host memory budget for reusable frames between the download collector and disk writer; at least one frame. Used with `GPUAsyncOutput`. |

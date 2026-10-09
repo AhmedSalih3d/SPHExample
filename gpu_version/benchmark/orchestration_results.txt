@@ -1,0 +1,36 @@
+Baseline driver revision: c47b34b; baseline host batch=32; original graph cap=8
+RTX benchmark: median warm microseconds/step; stationary fluid and prescribed motion; sparse rebuilds; output interval 0.02 s
+  OrchestrationBaseline n=128 batch=32: readbacks=23 largest_graph=8
+  SPHCellList n=128 batch=8: readbacks=73 largest_graph=8
+n=128 SymplecticTimeStepping batch=8 baseline=21.998 candidate=24.446 speedup=0.900x steps=501 rebuilds=1
+  SPHCellList n=128 batch=32: readbacks=23 largest_graph=32
+n=128 SymplecticTimeStepping batch=32 baseline=21.998 candidate=19.612 speedup=1.122x steps=501 rebuilds=1
+  SPHCellList n=128 batch=128: readbacks=13 largest_graph=32
+n=128 SymplecticTimeStepping batch=128 baseline=21.998 candidate=18.570 speedup=1.185x steps=501 rebuilds=1
+  OrchestrationBaseline n=128 batch=32: readbacks=23 largest_graph=8
+  SPHCellList n=128 batch=8: readbacks=73 largest_graph=8
+n=128 SingleNeighborTimeStepping batch=8 baseline=16.052 candidate=18.266 speedup=0.879x steps=501 rebuilds=1
+  SPHCellList n=128 batch=32: readbacks=23 largest_graph=32
+n=128 SingleNeighborTimeStepping batch=32 baseline=16.052 candidate=14.218 speedup=1.129x steps=501 rebuilds=1
+  SPHCellList n=128 batch=128: readbacks=13 largest_graph=32
+n=128 SingleNeighborTimeStepping batch=128 baseline=16.052 candidate=13.004 speedup=1.234x steps=501 rebuilds=1
+  OrchestrationBaseline n=1024 batch=32: readbacks=23 largest_graph=8
+  SPHCellList n=1024 batch=8: readbacks=73 largest_graph=8
+n=1024 SymplecticTimeStepping batch=8 baseline=30.418 candidate=41.248 speedup=0.737x steps=501 rebuilds=1
+  SPHCellList n=1024 batch=32: readbacks=23 largest_graph=32
+n=1024 SymplecticTimeStepping batch=32 baseline=30.418 candidate=28.442 speedup=1.069x steps=501 rebuilds=1
+  SPHCellList n=1024 batch=128: readbacks=13 largest_graph=32
+n=1024 SymplecticTimeStepping batch=128 baseline=30.418 candidate=26.016 speedup=1.169x steps=501 rebuilds=1
+  OrchestrationBaseline n=1024 batch=32: readbacks=23 largest_graph=8
+  SPHCellList n=1024 batch=8: readbacks=73 largest_graph=8
+n=1024 SingleNeighborTimeStepping batch=8 baseline=19.522 candidate=23.268 speedup=0.839x steps=501 rebuilds=1
+  SPHCellList n=1024 batch=32: readbacks=23 largest_graph=32
+n=1024 SingleNeighborTimeStepping batch=32 baseline=19.522 candidate=18.968 speedup=1.029x steps=501 rebuilds=1
+  SPHCellList n=1024 batch=128: readbacks=13 largest_graph=32
+n=1024 SingleNeighborTimeStepping batch=128 baseline=19.522 candidate=17.196 speedup=1.135x steps=501 rebuilds=1
+  OrchestrationBaseline n=128 batch=32: readbacks=13 largest_graph=2
+  SPHCellList n=128 batch=32: readbacks=13 largest_graph=2
+short deadline=0.001s n=128 SingleNeighborTimeStepping batch=32 baseline=33.733 candidate=28.800 speedup=1.171x steps=26 rebuilds=1
+  OrchestrationBaseline n=128 batch=128: readbacks=13 largest_graph=2
+  SPHCellList n=128 batch=128: readbacks=13 largest_graph=2
+short deadline=0.001s n=128 SingleNeighborTimeStepping batch=128 baseline=38.850 candidate=33.767 speedup=1.151x steps=26 rebuilds=1
