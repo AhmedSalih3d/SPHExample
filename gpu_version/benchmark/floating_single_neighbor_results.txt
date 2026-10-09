@@ -1,0 +1,4 @@
+GPU: NVIDIA GeForce RTX 5080; Float32 physics, Float64 positions
+SPHCellList (SymplecticTimeStepping): 232715 particles, 5152 floating, median 0.290 ms/step, 23 rebuilds
+SPHCellList (SingleNeighborTimeStepping): 232715 particles, 5152 floating, median 0.165 ms/step, 23 rebuilds
+Complete timestep speedup 1.760x; final centre difference 0.000377571 m

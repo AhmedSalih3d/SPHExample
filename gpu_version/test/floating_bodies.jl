@@ -11,7 +11,7 @@ when `water` is set. Returns the final particles (sorted by ID) and the rows of
 the floating body log, and the particles as loaded (sorted by ID).
 """
 function run_floating_case(; FloatType = Float64, relative_weight, pause = 0.0, water = true,
-                           simtime, double = false)
+                           simtime, double = false, scheme = SymplecticTimeStepping(), graph = true)
     T  = FloatType
     dx = 0.02
     dir = mktempdir()
@@ -36,7 +36,7 @@ function run_floating_case(; FloatType = Float64, relative_weight, pause = 0.0, 
                                                Type = Fluid))
     meta = SimulationMetaData{2, T, NoShifting, NoKernelOutput, NoMDBC, NoLog}(
         SimulationName = "Floating", SaveLocation = dir, SimulationTime = simtime,
-        OutputTimes = simtime / 5, GPUDoublePosition = double,
+        OutputTimes = simtime / 5, GPUDoublePosition = double, GPUUseGraph = graph,
         VisualizeInParaview = false, OpenLogFile = false)
     particles = AllocateDataStructures(geometry, meta)
     initial   = deepcopy(particles)
@@ -45,7 +45,7 @@ function run_floating_case(; FloatType = Float64, relative_weight, pause = 0.0, 
                   SimKernel = SPHKernelInstance{2, T}(WendlandC2(); dx = T(dx), k = T(sqrt(2))),
                   SimLogger = SimulationLogger(dir), SimParticles = particles,
                   SimViscosity = Laminar(), SimDensityDiffusion = LinearDensityDiffusion(),
-                  SimTimeStepping = SymplecticTimeStepping())
+                  SimTimeStepping = scheme)
     rows = CSV.File(joinpath(dir, "Floating_Floating.csv"))
     return particles[sortperm(particles.ID)], rows, initial[sortperm(initial.ID)]
 end
@@ -107,9 +107,9 @@ body_distances(p) = (x = p.Position[p.Type .== Floating];
             end
         end
     end
-    @testset "free fall in air is exact and rigid" begin
+    @testset "free fall in air is exact and rigid" for scheme in (SymplecticTimeStepping(), SingleNeighborTimeStepping())
         g, pause = 9.81, 0.02
-        p, rows, initial = run_floating_case(; relative_weight = 1.2, pause, water = false, simtime = 0.1)
+        p, rows, initial = run_floating_case(; relative_weight = 1.2, pause, water = false, simtime = 0.1, scheme)
         y0 = rows[1][Symbol("Center:1")]
         @test y0 ≈ 0.4 atol = 1e-12
         held = [r for r in rows if r.Time <= pause]
@@ -130,12 +130,12 @@ body_distances(p) = (x = p.Position[p.Type .== Floating];
               SVector(last_row[Symbol("Center:0")], last_row[Symbol("Center:1")]) atol = 1e-12
     end
 
-    @testset "buoyancy: a neutral body stays, a heavy one sinks (Float32, double positions)" begin
+    @testset "buoyancy: $(nameof(typeof(scheme))) (Float32, double positions)" for scheme in (SymplecticTimeStepping(), SingleNeighborTimeStepping())
         sink(rows) = rows[1][Symbol("Center:1")] - rows[end][Symbol("Center:1")]
         _, neutral, _ = run_floating_case(FloatType = Float32, relative_weight = 1.0, pause = 0.1,
-                                          simtime = 0.3, double = true)
+                                          simtime = 0.3, double = true, scheme = scheme)
         heavy_particles, heavy, _ = run_floating_case(FloatType = Float32, relative_weight = 2.0,
-                                                      pause = 0.1, simtime = 0.3, double = true)
+                                                      pause = 0.1, simtime = 0.3, double = true, scheme = scheme)
         # a cylinder of twice the density of water sinks with about g/3 (added mass)
         @test 0.03 < sink(heavy) < 0.1
         @test abs(sink(neutral)) < 0.2 * sink(heavy)
@@ -198,7 +198,7 @@ body_distances(p) = (x = p.Position[p.Type .== Floating];
               cross(state.omega[1], SVector{3, T}(expected_position)) atol = 1e-6
     end
 
-    @testset "3D simulation logs quaternion floating state" begin
+    @testset "3D simulation logs quaternion floating state: $(nameof(typeof(scheme)))" for scheme in (SymplecticTimeStepping(), SingleNeighborTimeStepping())
         T = Float64
         dx = 0.2
         dir = mktempdir()
@@ -222,7 +222,7 @@ body_distances(p) = (x = p.Position[p.Type .== Floating];
         ]
         meta = SimulationMetaData{3, T, NoShifting, NoKernelOutput, NoMDBC, NoLog}(
             SimulationName = "Floating3D", SaveLocation = dir,
-            SimulationTime = T(1e-4), OutputTimes = T(1e-4),
+            SimulationTime = T(0.003), OutputTimes = T(0.001),
             VisualizeInParaview = false, OpenLogFile = false)
         particles = AllocateDataStructures(geometry, meta)
         RunSimulation(
@@ -231,7 +231,7 @@ body_distances(p) = (x = p.Position[p.Type .== Floating];
             SimKernel = SPHKernelInstance{3, T}(WendlandC2(); dx, k = T(sqrt(3))),
             SimLogger = SimulationLogger(dir), SimParticles = particles,
             SimViscosity = Laminar(), SimDensityDiffusion = LinearDensityDiffusion(),
-            SimTimeStepping = SymplecticTimeStepping())
+            SimTimeStepping = scheme)
 
         rows = CSV.File(joinpath(dir, "Floating3D_Floating.csv"))
         @test Symbol("Center:2") in propertynames(rows)
@@ -241,10 +241,12 @@ body_distances(p) = (x = p.Position[p.Type .== Floating];
         @test rows[1][Symbol("Orientation:0")] ≈ 1.0
     end
 
-    @testset "floating bodies need the symplectic scheme and the details" begin
+    @testset "floating bodies need their details" begin
         @test_throws ErrorException FloatingArrays(
             [SPHGeometry{2, Float64}(CSVFile = "", GroupMarker = 1, Type = Floating)],
             StructArray((Position = [SVector(0.0, 0.0)], GroupMarker = UInt[1], Type = [Floating])),
             SimulationConstants{Float64}())
     end
 end
+
+include("floating_single_neighbor.jl")

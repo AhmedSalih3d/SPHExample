@@ -5,7 +5,7 @@ The particles of a body (`Type == Floating`) take part in the neighbour loops
 like boundary particles, but their momentum terms are always evaluated. After
 each neighbour loop the accelerations of a body's particles are summed into
 the force and the torque about its centre (`launch_floating_forces!`), the
-body is advanced by one stage of the symplectic scheme
+body is advanced by one stage of the predictor/corrector scheme
 (`launch_floating_update!`) and its particles are placed rigidly
 (`launch_floating_particles!`):
 
@@ -13,6 +13,12 @@ body is advanced by one stage of the symplectic scheme
   `C½ = Cₙ + Vₙ dt/2`, particles turned by `ωₙ dt/2` about the centre;
 * corrector: `Vₙ₊₁ = Vₙ + (F½/M + g) dt`, `ωₙ₊₁ = ωₙ + τ½/I dt`,
   `Cₙ₊₁ = Cₙ + V½ dt`, particles turned by `ω½ dt`.
+
+With `SingleNeighborTimeStepping`, the predictor reuses the linear and
+angular acceleration cached at the previous corrector's half state. Startup
+and cell-list rebuilds initialize that cache at the accepted full state.
+This includes the 3D gyroscopic acceleration at the evaluated orientation,
+so the carried torque is never reduced about an updated body centre.
 
 The force on a body is `m₀ Σ aₖ` over its particles, `m₀` being the particle
 mass the neighbour loops use for every neighbour, so the fluid and the body
@@ -24,7 +30,7 @@ device, so the step stays capturable as a CUDA graph.
 module GPUFloating
 
 export FloatingArrays, launch_floating_forces!, launch_floating_update!,
-       launch_floating_particles!, floating_state, update_floating_indices!
+       launch_floating_particles!, launch_floating_derivative!, floating_state, update_floating_indices!
 
 using CUDA
 using LinearAlgebra: cross, det, dot
@@ -109,6 +115,8 @@ function FloatingArrays(SimGeometry::Vector{SPHGeometry{D, T}}, SimParticles, Si
               center = CuArray(center), center_n = CuArray(center),
               center_half = CuArray(center), velocity = zv(SVector{D, T}),
               velocity_half = zv(SVector{D, T}),
+              acceleration = zv(SVector{D, T}),
+              angular_acceleration = zv(D == 2 ? T : SVector{3, T}),
               indices = CuArray(Int32.(findall(==(Floating), SimParticles.Type))),
               force = CUDA.zeros(T, (D == 2 ? 3 : 6) * nstate))
     if D == 2
@@ -232,7 +240,7 @@ end
 # Rigid body update (one thread)
 #---------------------------------------------------------------
 
-function floating_update_kernel!(f, step, g::T, ::Val{2}, ::Val{Final}) where {T, Final}
+function floating_update_kernel!(f, step, g::T, ::Val{2}, ::Val{Final}, ::Val{Carried}) where {T, Final, Carried}
     step_active(step) || return nothing
     thread_index() == 1 || return nothing
     dt   = step_dt(step)
@@ -247,8 +255,12 @@ function floating_update_kernel!(f, step, g::T, ::Val{2}, ::Val{Final}) where {T
         held = time < f.pause[b]
         Vₙ = f.velocity[b]
         ωₙ = f.omega[b]
-        a  = F / f.mass[b] + gvec
-        α  = τ / f.inertia[b]
+        a  = Carried && !Final ? f.acceleration[b] : F / f.mass[b] + gvec
+        α  = Carried && !Final ? f.angular_acceleration[b] : τ / f.inertia[b]
+        if Final
+            f.acceleration[b] = a
+            f.angular_acceleration[b] = α
+        end
         if !Final
             Cₙ = f.center[b]
             f.center_n[b] = Cₙ
@@ -357,7 +369,7 @@ end
     return rotate_vector(q, alpha_body)
 end
 
-function floating_update_kernel!(f, step, g::T, ::Val{3}, ::Val{Final}) where {T, Final}
+function floating_update_kernel!(f, step, g::T, ::Val{3}, ::Val{Final}, ::Val{Carried}) where {T, Final, Carried}
     step_active(step) || return nothing
     thread_index() == 1 || return nothing
     dt   = step_dt(step)
@@ -375,7 +387,18 @@ function floating_update_kernel!(f, step, g::T, ::Val{3}, ::Val{Final}) where {T
         Vₙ = f.velocity[b]
         ωₙ = f.omega[b]
         qₙ = f.orientation[b]
-        a  = F / f.mass[b] + gvec
+        a = Carried && !Final ? f.acceleration[b] : F / f.mass[b] + gvec
+        α = if Carried && !Final
+            f.angular_acceleration[b]
+        elseif Final
+            angular_acceleration(f.orientation_half[b], f.omega_half[b], τ, f.inertia[b], f.inertia_inv[b])
+        else
+            angular_acceleration(qₙ, ωₙ, τ, f.inertia[b], f.inertia_inv[b])
+        end
+        if Final
+            f.acceleration[b] = a
+            f.angular_acceleration[b] = α
+        end
         if !Final
             Cₙ = f.center[b]
             f.center_n[b] = Cₙ
@@ -386,7 +409,6 @@ function floating_update_kernel!(f, step, g::T, ::Val{3}, ::Val{Final}) where {T
                 f.orientation_half[b] = qₙ
                 f.turn[b]          = zero(ωₙ)
             else
-                α = angular_acceleration(qₙ, ωₙ, τ, f.inertia[b], f.inertia_inv[b])
                 f.velocity_half[b] = Vₙ + a * (dt / 2)
                 f.omega_half[b]    = ωₙ + α * (dt / 2)
                 f.center_half[b]   = Cₙ + Vₙ * (dt / 2)
@@ -401,8 +423,6 @@ function floating_update_kernel!(f, step, g::T, ::Val{3}, ::Val{Final}) where {T
                 f.center[b]   = Cₙ
                 f.turn[b]     = zero(ωₙ)
             else
-                α = angular_acceleration(f.orientation_half[b], f.omega_half[b], τ,
-                                         f.inertia[b], f.inertia_inv[b])
                 f.velocity[b] = Vₙ + a * dt
                 f.omega[b]    = ωₙ + α * dt
                 f.center[b]   = Cₙ + f.velocity_half[b] * dt
@@ -416,32 +436,81 @@ function floating_update_kernel!(f, step, g::T, ::Val{3}, ::Val{Final}) where {T
 end
 
 """
-    launch_floating_update!(floating, step, g, final::Bool)
+    launch_floating_update!(floating, step, g, final::Bool; carried = false)
 
 Advance every body by the predictor (`final = false`) or the corrector stage
-from the force accumulated since the last update, and clear the force.
+from the force accumulated since the last update, and clear the force. With
+`carried = true`, the predictor uses the cached linear/angular acceleration;
+the corrector still evaluates and caches its half-state derivative.
 """
-function launch_floating_update!(floating, step, g, final::Bool)
+function launch_floating_update!(floating, step, g, final::Bool; carried::Bool = false)
     return launch_floating_update!(floating, step, g, final,
-                                   Val(floating_dimension(floating.center)))
+                                   Val(floating_dimension(floating.center)); carried)
 end
 
-function launch_floating_update!(floating, step, g, final::Bool, ::Val{2})
+function launch_floating_update!(floating, step, g, final::Bool, ::Val{2}; carried::Bool = false)
     T = eltype(floating.force)
     f = floating
     device = (; f.nbodies, f.force, f.pause, f.mass, f.inertia, f.center, f.center_n, f.center_half,
-                f.velocity, f.velocity_half, f.omega, f.omega_half, f.angle, f.turn, f.rotation)
-    @cuda threads=1 blocks=1 floating_update_kernel!(device, step, T(g), Val(2), Val(final))
+                f.velocity, f.velocity_half, f.omega, f.omega_half, f.angle, f.turn, f.rotation,
+                f.acceleration, f.angular_acceleration)
+    @cuda threads=1 blocks=1 floating_update_kernel!(device, step, T(g), Val(2), Val(final), Val(carried))
     return nothing
 end
 
-function launch_floating_update!(floating, step, g, final::Bool, ::Val{3})
+function launch_floating_update!(floating, step, g, final::Bool, ::Val{3}; carried::Bool = false)
     T = eltype(floating.force)
     f = floating
     device = (; f.nbodies, f.force, f.pause, f.mass, f.inertia, f.inertia_inv,
                 f.center, f.center_n, f.center_half, f.velocity, f.velocity_half,
-                f.omega, f.omega_half, f.orientation, f.orientation_half, f.turn, f.rotation)
-    @cuda threads=1 blocks=1 floating_update_kernel!(device, step, T(g), Val(3), Val(final))
+                f.omega, f.omega_half, f.orientation, f.orientation_half, f.turn, f.rotation,
+                f.acceleration, f.angular_acceleration)
+    @cuda threads=1 blocks=1 floating_update_kernel!(device, step, T(g), Val(3), Val(final), Val(carried))
+    return nothing
+end
+
+# Bootstrap/rebuild derivatives are evaluated at the accepted full state.
+# Ordinary single-neighbor predictors reuse the previous half-state derivative.
+function floating_derivative_kernel!(f, step, g::T, ::Val{D}) where {T, D}
+    step_active(step) || return nothing
+    thread_index() == 1 || return nothing
+    gvec = SVector{D, T}(ntuple(d -> d == D ? -g : zero(T), Val(D)))
+    stride = D == 2 ? 3 : 6
+    @inbounds for b in 1:Int(f.nbodies)
+        base = stride * (b - 1)
+        force = SVector{D, T}(ntuple(d -> f.force[base + d], Val(D)))
+        f.acceleration[b] = force / f.mass[b] + gvec
+        if D == 2
+            f.angular_acceleration[b] = f.force[base + 3] / f.inertia[b]
+        else
+            torque = SVector{3, T}(f.force[base + 4], f.force[base + 5], f.force[base + 6])
+            f.angular_acceleration[b] = angular_acceleration(f.orientation[b], f.omega[b], torque,
+                                                           f.inertia[b], f.inertia_inv[b])
+        end
+        for d in 1:stride
+            f.force[base + d] = zero(T)
+        end
+    end
+    return nothing
+end
+
+"""
+    launch_floating_derivative!(floating, step, g)
+
+Cache the linear and angular acceleration from the accumulated full-state
+force/torque, and clear the force. Use after startup or rebuild evaluation in
+the single-neighbor scheme. Corrector updates refresh the cache at the half state.
+"""
+function launch_floating_derivative!(floating, step, g)
+    f = floating
+    D = floating_dimension(f.center)
+    device = if D == 2
+        (; f.nbodies, f.force, f.mass, f.inertia, f.acceleration, f.angular_acceleration)
+    else
+        (; f.nbodies, f.force, f.mass, f.inertia, f.inertia_inv, f.orientation, f.omega,
+           f.acceleration, f.angular_acceleration)
+    end
+    @cuda threads=1 blocks=1 floating_derivative_kernel!(device, step, eltype(f.force)(g), Val(D))
     return nothing
 end
 

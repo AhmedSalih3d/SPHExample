@@ -25,13 +25,13 @@ function cylinder_case()
     return geometry, constants
 end
 
-function step_benchmark(driver, floating_mod, geometry, constants)
+function step_benchmark(driver, floating_mod, geometry, constants; scheme = SymplecticTimeStepping())
     T = Float32
     meta = SimulationMetaData{2, T, NoShifting, NoKernelOutput, NoMDBC, NoLog}(
         SimulationName = "FloatingBenchmark", SaveLocation = tempdir(),
         SimulationTime = 1.0, OutputTimes = 0.02, GPUDoublePosition = true,
         VisualizeInParaview = false, OpenLogFile = false)
-    meta.TimeSteppingMode = SymplecticTimeStepping()
+    meta.TimeSteppingMode = scheme
     particles = AllocateDataStructures(geometry, meta)
     Pressure!(particles.Pressure, particles.Density, constants)
     gpu = driver.upload_particles(particles)
@@ -63,8 +63,8 @@ function step_benchmark(driver, floating_mod, geometry, constants)
     end
     sort!(milliseconds)
     ms = milliseconds[4]
-    @printf("%s: %d particles, %d floating, median %.3f ms/step, %d rebuilds\n",
-        nameof(driver), n, sum(floating.count), ms, cells.nrebuilds)
+    @printf("%s (%s): %d particles, %d floating, median %.3f ms/step, %d rebuilds\n",
+        nameof(driver), nameof(typeof(scheme)), n, sum(floating.count), ms, cells.nrebuilds)
     return ms, floating_state(floating)
 end
 
@@ -90,4 +90,6 @@ function main_steps(args)
         before / after, maximum(norm.(old_state.center .- new_state.center)))
 end
 
-main_steps(ARGS)
+if abspath(PROGRAM_FILE) == @__FILE__
+    main_steps(ARGS)
+end

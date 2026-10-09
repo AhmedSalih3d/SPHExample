@@ -460,8 +460,16 @@ symplectic predictor and corrector, and the particles are then moved rigidly.
 The same `FloatingDetails` also works with `SPHGeometry{3, FloatType}`:
 3D bodies use a full inertia tensor, vector angular velocity and quaternion
 orientation. All of this runs on the device, so steps are still batched and
-replayed as CUDA graphs (`src/GPUFloating.jl`). Floating bodies need
-`SymplecticTimeStepping()`. `<SimulationName>_Floating.csv` records the centre
+replayed as CUDA graphs (`src/GPUFloating.jl`). Floating bodies support both
+`SymplecticTimeStepping()` and `SingleNeighborTimeStepping()`. The latter
+reuses cached body linear and angular acceleration from the previous
+corrector in its predictor, then evaluates fluid/body interactions once at
+the half state. Startup and cell-list rebuilds evaluate fresh derivatives at
+the accepted full state. In 3D the cached angular acceleration includes the
+half-state orientation, inertia tensor, and gyroscopic term; torque is never
+recomputed from old particle accelerations at new particle positions.
+Pause/release, rigid placement, and body output remain supported. Select this scheme with
+`SimTimeStepping = SingleNeighborTimeStepping()` in `RunSimulation`. `<SimulationName>_Floating.csv` records the centre
 and velocity at each output time; its 2D angle/omega columns remain unchanged,
 while 3D output includes the scalar-first quaternion (`Orientation:0` through
 `Orientation:3`) and the three angular-velocity components.
@@ -483,6 +491,14 @@ dominate. Run `benchmark/floating_kernels.jl` for device timings or
 saved baseline `GPUFloating.jl`; the latter also accepts its Git revision.
 The focused physics checks run with `julia --project=. -t 1,0 test/run_floating.jl`
 from `gpu_version/`.
+
+`benchmark/floating_single_neighbor.jl` compares complete warmed timesteps for
+both schemes, including rebuilds and excluding file output. On the RTX 5080,
+with 232,715 particles (5,152 floating), Float32 physics and Float64 positions,
+the median timestep fell from 0.290 ms to 0.165 ms, a 1.76 times speedup.
+Both runs rebuilt 23 times; the final body centres differed by 0.000378 m
+at 0.2 s simulated time. The physics and graph tests cover both schemes, including
+pause/release, buoyancy, rigid placement, and 3D gyroscopic derivatives.
 
 `example/GenerateFloatingCylinder2D.jl` and `example/FloatingCylinder2d.jl`
 reproduce DualSPHysics `examples/main/11_Floating/CaseFloatingSphereVal2D`.

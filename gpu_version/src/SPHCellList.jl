@@ -606,6 +606,14 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
                              FlagKernel, FlagShift; threads = threads, lanes = lanes,
                              boundary_forces = bforces, pos_cells = sup.PosCells, boundary_data = sup.boundary_data)
     end
+    floating = get(ctx, :floating, nothing)
+    if get(ctx, :SingleNeighbor, false) && floating !== nothing && floating.active
+        @phase HourGlass "02d Rebuild Floating Derivative" timed begin
+            launch_floating_forces!(floating, gpu.Acceleration, gpu.Position, gpu.Type, gpu.GroupMarker,
+                                    floating.center, SimConstants.m₀, step)
+            launch_floating_derivative!(floating, step, SimConstants.g)
+        end
+    end
     return nothing
 end
 
@@ -625,10 +633,12 @@ step. Single neighbour: motion, mDBC correction of the densities the
 predictor starts from, half step, neighbour loop, final step. (The CPU
 additionally re-evaluates the carried derivative every 20 steps; the GPU
 does not, the carried derivative is only re-evaluated after a cell list
-rebuild, see `SimulationLoop`.) With floating bodies (symplectic only) each
+rebuild, see `SimulationLoop`.) With floating bodies, each evaluated
 neighbour loop is followed by the force on the bodies and their predictor or
 corrector update, and the half step and final step by the rigid placement of
-the body particles (see `GPUFloating`).
+the body particles (see `GPUFloating`). The single-neighbor predictor uses
+cached body linear/angular acceleration from the previous corrector; startup
+and rebuild evaluations refresh that cache at the accepted full state.
 """
 function enqueue_step!(ctx, timed::Bool)
     (; gpu, cl, sup, red, motion, state, SimKernel, SimConstants, SimDensityDiffusion, SimViscosity,
@@ -663,9 +673,11 @@ function enqueue_step!(ctx, timed::Bool)
 
     if floats
         @phase HourGlass "05a Floating Predictor" timed begin
-            launch_floating_forces!(floating, gpu.Acceleration, gpu.Position, gpu.Type, gpu.GroupMarker,
-                                    floating.center, SimConstants.m₀, state)
-            launch_floating_update!(floating, state, SimConstants.g, false)
+            if !SingleNeighbor
+                launch_floating_forces!(floating, gpu.Acceleration, gpu.Position, gpu.Type, gpu.GroupMarker,
+                                        floating.center, SimConstants.m₀, state)
+            end
+            launch_floating_update!(floating, state, SimConstants.g, false; carried = SingleNeighbor)
         end
     end
 
@@ -1063,9 +1075,6 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                      deterministic = SimMetaData.GPUDeterministicSort)
         motion = MotionArrays(SimGeometry, SimParticles)
         floating = FloatingArrays(SimGeometry, SimParticles, SimConstants; position_type = PositionType)
-        if floating.active && SimTimeStepping isa SingleNeighborTimeStepping
-            error("Floating bodies need SymplecticTimeStepping().")
-        end
         # Device resident loop state. The displacement bound starts above `h`
         # so that the cell list is built before the first step.
         state  = StepState{FloatType}(; time = SimMetaData.TotalTime, iteration = SimMetaData.Iteration,
