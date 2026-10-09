@@ -259,6 +259,39 @@ compiling a changed package are separate costs.
 See [the StillWedge benchmark report](benchmark/still_wedge_performance.md) for
 measurements and validation on an RTX 5080.
 
+### Device-resident cell-list rebuilds
+
+Cell-list bounding boxes and dynamic grid metadata are reduced and validated
+on the GPU. Conditional preparation after a timestep batch returns its grid
+header through the existing timestep readback. The simulation driver performs
+no separate bounding-box or grid-status readback. Standalone
+`update_cell_list!` calls still synchronize to read a small status/header.
+Nonfinite positions, coordinate/cell-count overflow, and `GPUMaxCells`
+violations stop before histogram/scatter/gather launches.
+
+Reduction and scan storage is preallocated for normal rebuilds. Capacity
+growth allocates replacement buffers on the host and invalidates cached step
+graphs before continuing. Host launch allocations, timestep stop-state
+readbacks, resume/output slot writes, and output transfers remain. Dynamic
+origins/dimensions, rounding, stencil margins, deterministic sorting, and
+asymmetric density-diffusion orientation retain the original semantics.
+
+Step graphs support alternating particle buffers. Conditional preparation,
+capacity handling, rebuilding, and ghost/floating index compaction remain
+outside production step graph capture. Tests also cover capturing only the
+prevalidated rebuild enqueue phase with fixed dimensions and stable pointers;
+dimension/capacity changes require recapture.
+
+On the measured RTX 5080, repeated rebuilds sharing the timestep readback were
+23–31% faster, while complete moving-square runs improved by about 3% in paired
+medians. A Float64 3D complete run was 0.4% slower, and the stationary control's
+standalone rebuild was 3.3% slower. See the
+[validation and performance report](benchmark/cell_list_rebuild_performance.md)
+for configurations, raw results, synchronization evidence, allocation limits,
+and untested comparisons. Run focused GPU checks with
+`julia --project=. test/cell_list_rebuild.jl`, or reproduce interleaved baseline
+comparisons with `julia --project=. benchmark/cell_list_rebuild.jl --profile`.
+
 ### Generating the 2D DamBreak case
 
 `example/GenerateDamBreak2DMDBC.jl` builds the 2D dam-break tank and its

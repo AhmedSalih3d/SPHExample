@@ -35,14 +35,19 @@ module GPUCellGrid
 
 using CUDA
 using StaticArrays
-using ..GPUReductions
+using ..GPUStepState: DeviceStep, StepState, I_STOP, STOP_REBUILD,
+                      I_GRID_STATUS, I_GRID_ORIGIN, I_GRID_DIMS, I_GRID_NCELLS
 
 export CellGrid, CellListWorkspace, update_cell_list!, compact_nonzero!, unique_cells_host,
        map_floor, cell_coords, linear_cell, local_coords, row_offsets, row_range, in_grid,
        reach, bin_scale, gather_kernel!, thread_index, load_grid,
-       PosCell, CellRow, cell_rows, cell_size, cell_anchor, global_coords, pos_cell, pair_vector
+       PosCell, CellRow, cell_rows, cell_size, cell_anchor, global_coords, pos_cell, pair_vector,
+       prepare_cell_grid!, sync_cell_grid!, consume_cell_grid!, GRID_OK, GRID_NOT_NEEDED, GRID_CAPACITY,
+       GRID_NONFINITE, GRID_COORD_OVERFLOW, GRID_CELL_OVERFLOW, GRID_MAX_CELLS
 
 const SORT_THREADS = 256
+# Padded launch indices and the final, one-based cell boundary must fit Int32.
+const CELL_INDEX_LIMIT = Int(typemax(Int32)) - SORT_THREADS
 
 """
 Return the global 1D thread index as an `Int32`.
@@ -70,6 +75,34 @@ struct CellGrid{D, R}
     origin::NTuple{D, Int32}
     dims::NTuple{D, Int32}
     ncells::Int32
+end
+
+# The grid is built on the device. Simulations return this header through the
+# timestep state; standalone rebuilds copy it separately. Bounding-box partials
+# stay on the device. GRID_NOT_NEEDED marks skipped conditional preparation.
+const GRID_OK             = Int32(0)
+const GRID_NOT_NEEDED     = Int32(1)
+const GRID_CAPACITY       = Int32(2)
+const GRID_NONFINITE      = Int32(3)
+const GRID_COORD_OVERFLOW = Int32(4)
+const GRID_CELL_OVERFLOW  = Int32(5)
+const GRID_MAX_CELLS      = Int32(6)
+
+struct GridBuildState{D, R}
+    grid::CellGrid{D, R}
+    status::Int32
+end
+
+struct BoundingBoxWorkspace{D, T}
+    partial::CuVector{T}
+    invalid::CuVector{Int32}
+    nblocks::Int
+end
+
+function BoundingBoxWorkspace{D, T}(n::Integer) where {D, T}
+    nblocks = max(1, min(512, cld(n, 256)))
+    return BoundingBoxWorkspace{D, T}(CuVector{T}(undef, 2D * nblocks),
+                                      CuVector{Int32}(undef, nblocks), nblocks)
 end
 
 (::Type{CellGrid{D}})(origin, dims, ncells) where {D} = CellGrid{D, 1}(origin, dims, ncells)
@@ -102,6 +135,56 @@ of its launch arguments.
 """
 @inline load_grid(g::CellGrid) = g
 @inline load_grid(v::AbstractVector{<:CellGrid}) = @inbounds v[1]
+
+#---------------------------------------------------------------
+# Preallocated Int32 prefix scan
+#---------------------------------------------------------------
+
+const SCAN_THREADS = 256
+
+"""
+    IntScanWorkspace(n)
+
+Scratch storage for the block-hierarchical exclusive/inclusive `Int32` scan
+used by the cell histogram and stream compaction. CUDA.jl's generic scan
+allocates an aggregate vector for long inputs; keeping those vectors here
+avoids temporary device allocations during steady-state rebuilds and leaves
+all scan pointers stable between graph replays. Host launches still allocate.
+"""
+mutable struct IntScanWorkspace
+    capacity::Int
+    sums::Vector{CuVector{Int32}}
+    offsets::Vector{CuVector{Int32}}
+end
+
+function IntScanWorkspace(n::Integer)
+    capacity = max(1, Int(n))
+    sums = CuVector{Int32}[]
+    offsets = CuVector{Int32}[]
+    level_n = capacity
+    while true
+        nb = cld(level_n, SCAN_THREADS)
+        push!(sums, CuVector{Int32}(undef, max(1, nb)))
+        push!(offsets, CuVector{Int32}(undef, max(1, nb)))
+        nb <= 1 && break
+        level_n = nb
+    end
+    return IntScanWorkspace(capacity, sums, offsets)
+end
+
+function ensure_scan_capacity!(ws::IntScanWorkspace, n::Integer)
+    n <= ws.capacity && return nothing
+    newcap = max(Int(n), max(ws.capacity + 1, (3 * ws.capacity) ÷ 2))
+    old_sums = ws.sums
+    old_offsets = ws.offsets
+    fresh = IntScanWorkspace(newcap)
+    ws.capacity = fresh.capacity
+    ws.sums = fresh.sums
+    ws.offsets = fresh.offsets
+    foreach(CUDA.unsafe_free!, old_sums)
+    foreach(CUDA.unsafe_free!, old_offsets)
+    return nothing
+end
 
 @inline function cell_coords(pos::SVector{D, T}, InverseCutOff) where {D, T}
     return ntuple(d -> map_floor(pos[d], InverseCutOff), Val(D))
@@ -337,21 +420,31 @@ Device side buffers of the cell list. Capacities grow on demand when the
 bounding box of the particles grows; `generation` counts those
 reallocations so that holders of raw device pointers (captured graphs) can
 notice. `grid_dev` is a one element device copy of `grid` for the kernels.
+The bounding-box reduction and grid validation finish on the device; the host
+consumes the status/header through the necessary timestep readback, or through
+a dedicated header read for standalone calls, before launching the histogram.
 `T` is the element type of the positions that are binned (`Float64` with
 `GPUDoublePosition`), used by the bounding box reduction.
 """
-mutable struct CellListWorkspace{D, T, R, W <: ReductionWorkspace}
+mutable struct CellListWorkspace{D, T, R}
     grid::CellGrid{D, R}
     grid_dev::CuVector{CellGrid{D, R}}
+    grid_state_dev::CuVector{GridBuildState{D, R}}
+    grid_state_host::Vector{GridBuildState{D, R}}
+    grid_prepared::Bool
     generation::Int
     CellStart::CuVector{Int32}       # capacity >= ncells + 1
     Counts::CuVector{Int32}          # capacity >= ncells
     Perm::CuVector{Int32}            # length n, new index -> old index
     CellIDScratch::CuVector{Int32}   # length n, cell of particle (old order)
-    bbox_ws::W
+    bbox_ws::BoundingBoxWorkspace{D, T}
+    scan_ws::IntScanWorkspace
     max_cells::Int
     deterministic::Bool
     nrebuilds::Int
+    grid_status_readbacks::Int
+    capacity_growths::Int
+    bbox_host_readbacks::Int
 end
 
 """
@@ -364,19 +457,32 @@ stencil (see the module documentation).
 function CellListWorkspace{D, T}(n::Integer; reach::Integer = 1, max_cells::Integer = 50_000_000,
                                  deterministic::Bool = true) where {D, T}
     reach >= 1 || throw(ArgumentError("the cell list reach must be at least 1, got $reach"))
+    reach <= typemax(Int32) || throw(ArgumentError("the cell list reach is too large: $reach"))
+    0 <= n <= CELL_INDEX_LIMIT || throw(ArgumentError("the cell-list particle count must be between 0 and $CELL_INDEX_LIMIT, got $n"))
+    max_cells >= 1 || throw(ArgumentError("GPUMaxCells must be at least 1, got $max_cells"))
     R = Int(reach)
-    bbox_ws = ReductionWorkspace{SVector{2D, T}}(n)
-    return CellListWorkspace{D, T, R, typeof(bbox_ws)}(
-        CellGrid{D, R}(),
-        CuArray([CellGrid{D, R}()]),
+    bbox_ws = BoundingBoxWorkspace{D, T}(n)
+    grid = CellGrid{D, R}()
+    counts_capacity = 1024
+    grid_state = GridBuildState{D, R}(grid, GRID_NOT_NEEDED)
+    return CellListWorkspace{D, T, R}(
+        grid,
+        CuArray([grid]),
+        CuArray([grid_state]),
+        [grid_state],
+        false,
         0,
-        CuVector{Int32}(undef, 1024),
-        CuVector{Int32}(undef, 1024),
+        CuVector{Int32}(undef, counts_capacity + 1),
+        CuVector{Int32}(undef, counts_capacity),
         CuVector{Int32}(undef, n),
         CuVector{Int32}(undef, n),
         bbox_ws,
+        IntScanWorkspace(max(n, counts_capacity)),
         Int(max_cells),
         deterministic,
+        0,
+        0,
+        0,
         0,
     )
 end
@@ -385,21 +491,396 @@ end
 # Kernels
 #---------------------------------------------------------------
 
-@inline function bbox_map(i, Position)
-    @inbounds p = Position[i]
-    return vcat(p, p)
+@inline function rounded_coordinate_valid(x, inv_cell)
+    q = muladd(abs(x), inv_cell, typeof(x)(0.5))
+    q_limit = typeof(q)(typemax(Int32)) + one(q)
+    return isfinite(q) & (q >= zero(q)) & (q < q_limit)
 end
 
-@inline function bbox_reduce(a::SVector{N, T}, b::SVector{N, T}) where {N, T}
-    D = N ÷ 2
-    return SVector{N, T}(ntuple(k -> k <= D ? min(a[k], b[k]) : max(a[k], b[k]), Val(N)))
+@inline bbox_finite(b::SVector{4, T}) where {T} =
+    isfinite(b[1]) & isfinite(b[2]) & isfinite(b[3]) & isfinite(b[4])
+@inline bbox_finite(b::SVector{6, T}) where {T} =
+    isfinite(b[1]) & isfinite(b[2]) & isfinite(b[3]) &
+    isfinite(b[4]) & isfinite(b[5]) & isfinite(b[6])
+@inline bbox_finite(b::NTuple{4, T}) where {T} =
+    isfinite(b[1]) & isfinite(b[2]) & isfinite(b[3]) & isfinite(b[4])
+@inline bbox_finite(b::NTuple{6, T}) where {T} =
+    isfinite(b[1]) & isfinite(b[2]) & isfinite(b[3]) &
+    isfinite(b[4]) & isfinite(b[5]) & isfinite(b[6])
+
+@inline publish_grid_state!(::Nothing, state) = nothing
+@inline function publish_grid_state!(step::DeviceStep, state::GridBuildState{D}) where {D}
+    @inbounds begin
+        step.i[I_GRID_STATUS] = state.status
+        for d in 1:3
+            step.i[I_GRID_ORIGIN + d - 1] = d <= D ? state.grid.origin[d] : Int32(0)
+            step.i[I_GRID_DIMS + d - 1] = d <= D ? state.grid.dims[d] : Int32(1)
+        end
+        step.i[I_GRID_NCELLS] = state.grid.ncells
+    end
+    return nothing
+end
+
+@inline function store_grid_state!(state_dev, grid, status, step)
+    state = GridBuildState(grid, status)
+    @inbounds state_dev[1] = state
+    publish_grid_state!(step, state)
+    return nothing
+end
+
+@inline function write_grid_result!(grid_dev, state_dev, bbox,
+                                    inv_cell, max_cells::Int64, capacity::Int64,
+                                    reach_i::Int32, step, ::Val{D}, ::Val{R}) where {D, R}
+    old_grid = load_grid(grid_dev)
+    status = GRID_OK
+
+    if !bbox_finite(bbox)
+        status = GRID_NONFINITE
+        store_grid_state!(state_dev, old_grid, status, step)
+        return nothing
+    end
+
+    valid = isfinite(inv_cell) & (inv_cell > zero(inv_cell))
+    for d in 1:D
+        valid &= rounded_coordinate_valid(bbox[d], inv_cell)
+        valid &= rounded_coordinate_valid(bbox[D + d], inv_cell)
+    end
+    if !valid
+        store_grid_state!(state_dev, old_grid, GRID_COORD_OVERFLOW, step)
+        return nothing
+    end
+
+    cmin = ntuple(d -> Int64(map_floor(bbox[d], inv_cell)) - Int64(R), Val(D))
+    cmax = ntuple(d -> Int64(map_floor(bbox[D + d], inv_cell)) + Int64(R), Val(D))
+    coord_limit_lo = Int64(typemin(Int32)) + Int64(R)
+    coord_limit_hi = Int64(typemax(Int32)) - Int64(R)
+    for d in 1:D
+        valid &= (cmin[d] >= coord_limit_lo) & (cmax[d] <= coord_limit_hi)
+    end
+    if !valid
+        store_grid_state!(state_dev, old_grid, GRID_COORD_OVERFLOW, step)
+        return nothing
+    end
+
+    dims64 = ntuple(d -> cmax[d] - cmin[d] + Int64(1), Val(D))
+    ncells64 = Int64(1)
+    overflow = false
+    int32_limit = Int64(CELL_INDEX_LIMIT)
+    for d in 1:D
+        dim = dims64[d]
+        if dim <= Int64(0) || dim > int32_limit || ncells64 > int32_limit ÷ dim
+            overflow = true
+        else
+            ncells64 *= dim
+        end
+    end
+    if overflow
+        store_grid_state!(state_dev, old_grid, GRID_CELL_OVERFLOW, step)
+        return nothing
+    end
+    if ncells64 > max_cells
+        store_grid_state!(state_dev, old_grid, GRID_MAX_CELLS, step)
+        return nothing
+    end
+
+    dims = ntuple(d -> Int32(dims64[d]), Val(D))
+    origin = ntuple(d -> Int32(cmin[d]), Val(D))
+    grid = CellGrid{D, R}(origin, dims, Int32(ncells64))
+    status = ncells64 > capacity ? GRID_CAPACITY : GRID_OK
+    @inbounds grid_dev[1] = grid
+    store_grid_state!(state_dev, grid, status, step)
+    return nothing
+end
+
+@inline grid_build_needed(::Nothing) = true
+@inline grid_build_needed(step::DeviceStep) = @inbounds step.i[I_STOP] == STOP_REBUILD
+
+function bbox_reduce_scalar_kernel!(partial, invalid, Position, n::Int32,
+                                    lo_init::T, hi_init::T, step, ::Val{2}) where {T}
+    grid_build_needed(step) || return nothing
+    i = Int64(thread_index())
+    stride = Int64(blockDim().x) * Int64(gridDim().x)
+    lo1 = lo_init; lo2 = lo_init; hi1 = hi_init; hi2 = hi_init
+    bad = zero(T)
+    @inbounds while i <= n
+        j = Int64(2) * (i - Int64(1)) + Int64(1)
+        x = Position[j]; y = Position[j + Int64(1)]
+        bad = (isfinite(x) & isfinite(y)) ? bad : one(T)
+        lo1 = min(lo1, x); lo2 = min(lo2, y)
+        hi1 = max(hi1, x); hi2 = max(hi2, y)
+        i += stride
+    end
+    tid = threadIdx().x
+    B = 256
+    shared = CuStaticSharedArray(T, 5 * B)
+    @inbounds begin
+        shared[tid] = lo1; shared[B + tid] = lo2
+        shared[2B + tid] = hi1; shared[3B + tid] = hi2
+        shared[4B + tid] = bad
+    end
+    sync_threads()
+    s = Int32(B ÷ 2)
+    while s >= Int32(1)
+        if tid <= s
+            @inbounds begin
+                shared[tid] = min(shared[tid], shared[tid + s])
+                shared[B + tid] = min(shared[B + tid], shared[B + tid + s])
+                shared[2B + tid] = max(shared[2B + tid], shared[2B + tid + s])
+                shared[3B + tid] = max(shared[3B + tid], shared[3B + tid + s])
+                shared[4B + tid] = max(shared[4B + tid], shared[4B + tid + s])
+            end
+        end
+        sync_threads()
+        s ÷= Int32(2)
+    end
+    if tid == Int32(1)
+        base = (blockIdx().x - Int32(1)) * Int32(4)
+        @inbounds begin
+            partial[base + 1] = shared[1]; partial[base + 2] = shared[B + 1]
+            partial[base + 3] = shared[2B + 1]; partial[base + 4] = shared[3B + 1]
+            invalid[blockIdx().x] = Int32(shared[4B + 1])
+        end
+    end
+    return nothing
+end
+
+function bbox_reduce_scalar_kernel!(partial, invalid, Position, n::Int32,
+                                    lo_init::T, hi_init::T, step, ::Val{3}) where {T}
+    grid_build_needed(step) || return nothing
+    i = Int64(thread_index())
+    stride = Int64(blockDim().x) * Int64(gridDim().x)
+    lo1 = lo_init; lo2 = lo_init; lo3 = lo_init
+    hi1 = hi_init; hi2 = hi_init; hi3 = hi_init
+    bad = zero(T)
+    @inbounds while i <= n
+        j = Int64(3) * (i - Int64(1)) + Int64(1)
+        x = Position[j]; y = Position[j + Int64(1)]; z = Position[j + Int64(2)]
+        bad = (isfinite(x) & isfinite(y) & isfinite(z)) ? bad : one(T)
+        lo1 = min(lo1, x); lo2 = min(lo2, y); lo3 = min(lo3, z)
+        hi1 = max(hi1, x); hi2 = max(hi2, y); hi3 = max(hi3, z)
+        i += stride
+    end
+    tid = threadIdx().x
+    B = 256
+    shared = CuStaticSharedArray(T, 7 * B)
+    @inbounds begin
+        shared[tid] = lo1; shared[B + tid] = lo2; shared[2B + tid] = lo3
+        shared[3B + tid] = hi1; shared[4B + tid] = hi2; shared[5B + tid] = hi3
+        shared[6B + tid] = bad
+    end
+    sync_threads()
+    s = Int32(B ÷ 2)
+    while s >= Int32(1)
+        if tid <= s
+            @inbounds begin
+                shared[tid] = min(shared[tid], shared[tid + s])
+                shared[B + tid] = min(shared[B + tid], shared[B + tid + s])
+                shared[2B + tid] = min(shared[2B + tid], shared[2B + tid + s])
+                shared[3B + tid] = max(shared[3B + tid], shared[3B + tid + s])
+                shared[4B + tid] = max(shared[4B + tid], shared[4B + tid + s])
+                shared[5B + tid] = max(shared[5B + tid], shared[5B + tid + s])
+                shared[6B + tid] = max(shared[6B + tid], shared[6B + tid + s])
+            end
+        end
+        sync_threads()
+        s ÷= Int32(2)
+    end
+    if tid == Int32(1)
+        base = (blockIdx().x - Int32(1)) * Int32(6)
+        @inbounds begin
+            partial[base + 1] = shared[1]; partial[base + 2] = shared[B + 1]
+            partial[base + 3] = shared[2B + 1]; partial[base + 4] = shared[3B + 1]
+            partial[base + 5] = shared[4B + 1]; partial[base + 6] = shared[5B + 1]
+            invalid[blockIdx().x] = Int32(shared[6B + 1])
+        end
+    end
+    return nothing
+end
+
+function finish_grid_metadata_kernel!(grid_dev, state_dev, partial, invalid, nblocks::Int32,
+                                      lo_init::T, hi_init::T, inv_cell,
+                                      max_cells::Int64, capacity::Int64, reach_i::Int32,
+                                      step, ::Val{2}, ::Val{R}) where {T, R}
+    tid = threadIdx().x
+    if !grid_build_needed(step)
+        if tid == Int32(1)
+            store_grid_state!(state_dev, load_grid(grid_dev), GRID_NOT_NEEDED, step)
+        end
+        return nothing
+    end
+    lo1 = lo_init; lo2 = lo_init; hi1 = hi_init; hi2 = hi_init
+    b = tid
+    @inbounds while b <= nblocks
+        base = (b - Int32(1)) * Int32(4)
+        lo1 = min(lo1, partial[base + 1]); lo2 = min(lo2, partial[base + 2])
+        hi1 = max(hi1, partial[base + 3]); hi2 = max(hi2, partial[base + 4])
+        b += blockDim().x
+    end
+    B = 256
+    shared = CuStaticSharedArray(T, 4 * B)
+    @inbounds begin
+        shared[tid] = lo1; shared[B + tid] = lo2
+        shared[2B + tid] = hi1; shared[3B + tid] = hi2
+    end
+    sync_threads()
+    s = Int32(B ÷ 2)
+    while s >= Int32(1)
+        if tid <= s
+            @inbounds begin
+                shared[tid] = min(shared[tid], shared[tid + s])
+                shared[B + tid] = min(shared[B + tid], shared[B + tid + s])
+                shared[2B + tid] = max(shared[2B + tid], shared[2B + tid + s])
+                shared[3B + tid] = max(shared[3B + tid], shared[3B + tid + s])
+            end
+        end
+        sync_threads()
+        s ÷= Int32(2)
+    end
+    tid == Int32(1) || return nothing
+    @inbounds for b in Int32(1):nblocks
+        if invalid[b] != Int32(0)
+            store_grid_state!(state_dev, load_grid(grid_dev), GRID_NONFINITE, step)
+            return nothing
+        end
+    end
+    bbox = (shared[1], shared[B + 1], shared[2B + 1], shared[3B + 1])
+    write_grid_result!(grid_dev, state_dev, bbox, inv_cell, max_cells,
+                       capacity, reach_i, step, Val(2), Val(R))
+    return nothing
+end
+
+function finish_grid_metadata_kernel!(grid_dev, state_dev, partial, invalid, nblocks::Int32,
+                                      lo_init::T, hi_init::T, inv_cell,
+                                      max_cells::Int64, capacity::Int64, reach_i::Int32,
+                                      step, ::Val{3}, ::Val{R}) where {T, R}
+    tid = threadIdx().x
+    if !grid_build_needed(step)
+        if tid == Int32(1)
+            store_grid_state!(state_dev, load_grid(grid_dev), GRID_NOT_NEEDED, step)
+        end
+        return nothing
+    end
+    lo1 = lo_init; lo2 = lo_init; lo3 = lo_init
+    hi1 = hi_init; hi2 = hi_init; hi3 = hi_init
+    b = tid
+    @inbounds while b <= nblocks
+        base = (b - Int32(1)) * Int32(6)
+        lo1 = min(lo1, partial[base + 1]); lo2 = min(lo2, partial[base + 2]); lo3 = min(lo3, partial[base + 3])
+        hi1 = max(hi1, partial[base + 4]); hi2 = max(hi2, partial[base + 5]); hi3 = max(hi3, partial[base + 6])
+        b += blockDim().x
+    end
+    B = 256
+    shared = CuStaticSharedArray(T, 6 * B)
+    @inbounds begin
+        shared[tid] = lo1; shared[B + tid] = lo2; shared[2B + tid] = lo3
+        shared[3B + tid] = hi1; shared[4B + tid] = hi2; shared[5B + tid] = hi3
+    end
+    sync_threads()
+    s = Int32(B ÷ 2)
+    while s >= Int32(1)
+        if tid <= s
+            @inbounds begin
+                shared[tid] = min(shared[tid], shared[tid + s])
+                shared[B + tid] = min(shared[B + tid], shared[B + tid + s])
+                shared[2B + tid] = min(shared[2B + tid], shared[2B + tid + s])
+                shared[3B + tid] = max(shared[3B + tid], shared[3B + tid + s])
+                shared[4B + tid] = max(shared[4B + tid], shared[4B + tid + s])
+                shared[5B + tid] = max(shared[5B + tid], shared[5B + tid + s])
+            end
+        end
+        sync_threads()
+        s ÷= Int32(2)
+    end
+    tid == Int32(1) || return nothing
+    @inbounds for b in Int32(1):nblocks
+        if invalid[b] != Int32(0)
+            store_grid_state!(state_dev, load_grid(grid_dev), GRID_NONFINITE, step)
+            return nothing
+        end
+    end
+    bbox = (shared[1], shared[B + 1], shared[2B + 1], shared[3B + 1],
+            shared[4B + 1], shared[5B + 1])
+    write_grid_result!(grid_dev, state_dev, bbox, inv_cell, max_cells,
+                       capacity, reach_i, step, Val(3), Val(R))
+    return nothing
+end
+
+# One block scans 256 values, stores the block totals, and writes either the
+# exclusive or inclusive result.  A second scan over the block totals supplies
+# the offsets for all following blocks.
+function scan_block_kernel!(out, input, sums, n::Int32, inclusive::Bool)
+    tid = threadIdx().x
+    i = (blockIdx().x - Int32(1)) * blockDim().x + tid
+    value = Int32(0)
+    if i <= n
+        @inbounds value = input[i]
+    end
+    shared = CuStaticSharedArray(Int32, SCAN_THREADS)
+    @inbounds shared[tid] = value
+    sync_threads()
+
+    offset = Int32(1)
+    while offset < Int32(SCAN_THREADS)
+        add = Int32(0)
+        if tid > offset
+            @inbounds add = shared[tid - offset]
+        end
+        sync_threads()
+        @inbounds shared[tid] += add
+        sync_threads()
+        offset <<= Int32(1)
+    end
+
+    if i <= n
+        if inclusive
+            @inbounds out[i] = shared[tid]
+        else
+            @inbounds out[i] = shared[tid] - value
+        end
+    end
+    if tid == Int32(SCAN_THREADS)
+        @inbounds sums[blockIdx().x] = shared[tid]
+    end
+    return nothing
+end
+
+function scan_add_offsets_kernel!(out, offsets, n::Int32)
+    i = thread_index()
+    i > n && return nothing
+    block = (i - Int32(1)) ÷ Int32(SCAN_THREADS) + Int32(1)
+    @inbounds out[i] += offsets[block]
+    return nothing
+end
+
+function scan_level!(ws::IntScanWorkspace, out, input, n::Int, level::Int, inclusive::Bool)
+    n == 0 && return nothing
+    blocks = cld(n, SCAN_THREADS)
+    sums = ws.sums[level]
+    @cuda threads=SCAN_THREADS blocks=blocks scan_block_kernel!(out, input, sums,
+                                                                Int32(n), inclusive)
+    if blocks > 1
+        offsets = ws.offsets[level]
+        scan_level!(ws, offsets, sums, blocks, level + 1, false)
+        @cuda threads=SCAN_THREADS blocks=blocks scan_add_offsets_kernel!(out, offsets, Int32(n))
+    end
+    return nothing
+end
+
+function scan_int32!(ws::IntScanWorkspace, out, input; inclusive::Bool = false)
+    n = length(input)
+    length(out) == n || throw(DimensionMismatch("scan input and output lengths differ"))
+    n == 0 && return out
+    ensure_scan_capacity!(ws, n)
+    scan_level!(ws, out, input, n, 1, inclusive)
+    return out
 end
 
 # Cell of every particle and histogram of cell occupation.
-function cellid_hist_kernel!(CellIDScratch, Counts, Position, InverseCutOff, grid, n::Int32)
+function cellid_hist_kernel!(CellIDScratch, Counts, Position, InverseCutOff, gridarg, n::Int32)
     i = thread_index()
     i > n && return nothing
     @inbounds begin
+        grid = load_grid(gridarg)
         c = linear_cell(grid, cell_coords(Position[i], InverseCutOff))
         CellIDScratch[i] = c
         CUDA.atomic_add!(pointer(Counts, c), Int32(1))
@@ -423,9 +904,10 @@ end
 # Insertion sort of the particle indices inside every cell. This makes the
 # ordering independent of the (non deterministic) order in which atomics
 # were served, so repeated runs produce bit identical results.
-function cell_sort_kernel!(Perm, CellStart, ncells::Int32)
+function cell_sort_kernel!(Perm, CellStart, gridarg)
+    grid = load_grid(gridarg)
     c = thread_index()
-    c > ncells && return nothing
+    c > grid.ncells && return nothing
     @inbounds begin
         lo = CellStart[c] + Int32(1)
         hi = CellStart[c + Int32(1)]
@@ -489,19 +971,117 @@ end
 #---------------------------------------------------------------
 
 function ensure_capacity!(ws::CellListWorkspace, ncells::Integer)
-    if length(ws.CellStart) < ncells + 1
-        newlen = max(ncells + 1, ceil(Int, 1.5 * length(ws.CellStart)))
-        CUDA.unsafe_free!(ws.CellStart)
-        CUDA.unsafe_free!(ws.Counts)
-        ws.CellStart = CuVector{Int32}(undef, newlen)
-        ws.Counts    = CuVector{Int32}(undef, newlen)
+    1 <= ncells <= min(ws.max_cells, CELL_INDEX_LIMIT) ||
+        throw(ArgumentError("cell capacity must be between 1 and $(min(ws.max_cells, CELL_INDEX_LIMIT)), got $ncells"))
+    if length(ws.Counts) < ncells
+        old_capacity = length(ws.Counts)
+        new_capacity = min(CELL_INDEX_LIMIT, max(Int(ncells), max(old_capacity + 1, (3 * old_capacity) ÷ 2)))
+        # The caller has synchronized the previous users. Allocate replacements
+        # before releasing the current buffers so allocation failure is safe.
+        cell_start = CuVector{Int32}(undef, new_capacity + 1)
+        counts = CuVector{Int32}(undef, new_capacity)
+        ensure_scan_capacity!(ws.scan_ws, max(length(ws.Perm), new_capacity))
+        old_start, old_counts = ws.CellStart, ws.Counts
+        ws.CellStart, ws.Counts = cell_start, counts
         ws.generation += 1
+        ws.capacity_growths += 1
+        CUDA.unsafe_free!(old_start)
+        CUDA.unsafe_free!(old_counts)
     end
     return nothing
 end
 
+function grid_build_error(ws::CellListWorkspace, state::GridBuildState)
+    status = state.status
+    if status == GRID_NONFINITE
+        error("Non-finite particle position encountered while building the cell list.")
+    elseif status == GRID_COORD_OVERFLOW
+        error("Particle position is outside the representable cell-coordinate range while building the cell list.")
+    elseif status == GRID_CELL_OVERFLOW
+        error("Cell grid dimensions or cell count overflow the Int32 cell-list index range.")
+    elseif status == GRID_MAX_CELLS
+        error("Cell grid would need more than the allowed $(ws.max_cells) cells. " *
+              "A particle probably escaped the domain. Increase `GPUMaxCells` if this is expected.")
+    end
+    error("Unknown device cell-grid status $(status).")
+end
+
 """
-    update_cell_list!(ws, Position, InverseCutOff, srcs, dsts) -> grid
+    prepare_cell_grid!(ws, Position, InverseCutOff; step = nothing)
+
+Launch the device bounding-box reduction and grid calculation. No host data is
+read here. With `step`, preparation runs only when the timestep stop flag asks
+for a rebuild and publishes the status/header into its existing integer state.
+"""
+function prepare_cell_grid!(ws::CellListWorkspace{D, T, R},
+                            Position::CuVector{SVector{D, T}}, InverseCutOff;
+                            step::Union{Nothing, StepState} = nothing) where {D, T, R}
+    n = length(Position)
+    1 <= n <= CELL_INDEX_LIMIT || error("The cell-list particle count must be between 1 and $CELL_INDEX_LIMIT.")
+    n == length(ws.Perm) || throw(DimensionMismatch("positions and cell-list workspace particle counts differ"))
+    ws.grid_prepared = false
+    inv_cell = bin_scale(CellGrid{D, R}(), InverseCutOff)
+    PositionScalar = reinterpret(T, Position)
+    lo = T(Inf)
+    hi = T(-Inf)
+    @cuda threads=256 blocks=ws.bbox_ws.nblocks bbox_reduce_scalar_kernel!(
+        ws.bbox_ws.partial, ws.bbox_ws.invalid, PositionScalar, Int32(n), lo, hi, step, Val(D))
+    @cuda threads=256 blocks=1 finish_grid_metadata_kernel!(
+        ws.grid_dev, ws.grid_state_dev, ws.bbox_ws.partial, ws.bbox_ws.invalid,
+        Int32(ws.bbox_ws.nblocks), lo, hi, inv_cell, Int64(ws.max_cells),
+        Int64(length(ws.Counts)), Int32(R), step, Val(D), Val(R))
+    return nothing
+end
+
+"""
+    sync_cell_grid!(ws) -> Bool
+
+Copy and consume the one-element device grid status after a standalone
+preparation launch. This adds a dedicated synchronization; the simulation
+driver instead uses `consume_cell_grid!` after its necessary timestep readback.
+"""
+function sync_cell_grid!(ws::CellListWorkspace{D, T, R}) where {D, T, R}
+    copyto!(ws.grid_state_host, ws.grid_state_dev)
+    ws.grid_status_readbacks += 1
+    state = @inbounds ws.grid_state_host[1]
+    return consume_cell_grid!(ws, state)
+end
+
+function consume_cell_grid!(ws::CellListWorkspace, state::GridBuildState)
+    ws.grid_prepared = false
+    status = state.status
+    status == GRID_NOT_NEEDED && return false
+    if status == GRID_OK || status == GRID_CAPACITY
+        1 <= Int(state.grid.ncells) <= min(ws.max_cells, CELL_INDEX_LIMIT) ||
+            error("The prepared cell grid has an invalid cell count.")
+        status == GRID_CAPACITY && ensure_capacity!(ws, Int(state.grid.ncells))
+        Int(state.grid.ncells) <= length(ws.Counts) || error("The prepared cell grid exceeds the allocated capacity.")
+        ws.grid = state.grid
+        ws.grid_prepared = true
+        return true
+    end
+    grid_build_error(ws, state)
+end
+
+"""
+    consume_cell_grid!(ws, host_step_integers) -> Bool
+
+Validate and consume the header returned by the existing timestep readback,
+updating host geometry and growing capacity before histogram/scatter launches.
+The caller must have completed `readback!(step)` after conditional preparation.
+This function does not transfer data or synchronize the device. Capacity
+growth changes `generation`; callers must invalidate their captured graphs.
+"""
+function consume_cell_grid!(ws::CellListWorkspace{D, T, R}, ih::AbstractVector{Int32}) where {D, T, R}
+    length(ih) >= I_GRID_NCELLS || throw(DimensionMismatch("the timestep header has no cell-grid state"))
+    origin = ntuple(d -> ih[I_GRID_ORIGIN + d - 1], Val(D))
+    dims = ntuple(d -> ih[I_GRID_DIMS + d - 1], Val(D))
+    grid = CellGrid{D, R}(origin, dims, ih[I_GRID_NCELLS])
+    return consume_cell_grid!(ws, GridBuildState{D, R}(grid, ih[I_GRID_STATUS]))
+end
+
+"""
+    update_cell_list!(ws, Position, InverseCutOff, srcs, dsts; prepared = false) -> grid
 
 Rebuild the cell list from `Position` (device array) and reorder the arrays
 in `srcs` into `dsts` by cell. `srcs`/`dsts` are tuples of device arrays of
@@ -511,54 +1091,48 @@ workspace scratch cell id array, so include `(ws.CellIDScratch => CellID)`
 as the last pair. `InverseCutOff` is used in its own precision (the working
 precision), so positions of a higher precision are binned exactly like the
 ghost nodes in the kernels.
+
+With `prepared = true`, the caller has already prepared and consumed a valid
+grid header, so no dedicated grid-status synchronization is performed. The
+enqueue phase can be captured with fixed grid dimensions and stable buffers;
+conditional preparation and host capacity growth remain outside that capture.
 """
 function update_cell_list!(ws::CellListWorkspace{D, T, R}, Position::CuVector{SVector{D, T}},
-                           InverseCutOff, srcs::Tuple, dsts::Tuple) where {D, T, R}
+                           InverseCutOff, srcs::Tuple, dsts::Tuple; prepared::Bool = false) where {D, T, R}
     n = length(Position)
+    n == length(ws.Perm) || throw(DimensionMismatch("positions and cell-list workspace particle counts differ"))
 
-    # Cells have edge H / R: bin with R / H (exact for R = 1, 2).
-    inv_cell = bin_scale(ws.grid, InverseCutOff)
-
-    # Bounding box of all particles -> grid with an R cell margin.
-    init = SVector{2D, T}(ntuple(k -> k <= D ? T(Inf) : T(-Inf), Val(2D)))
-    bbox = reduce_svector(ws.bbox_ws, bbox_map, bbox_reduce, init, n, Position)
-    all(isfinite, bbox) || error("Non-finite particle position encountered while building the cell list.")
-
-    cmin = ntuple(d -> map_floor(bbox[d],     inv_cell) - Int32(R), Val(D))
-    cmax = ntuple(d -> map_floor(bbox[D + d], inv_cell) + Int32(R), Val(D))
-    dims = ntuple(d -> cmax[d] - cmin[d] + Int32(1), Val(D))
-    ncells_big = prod(Int64.(dims))
-    if ncells_big > ws.max_cells
-        error("Cell grid would need $(ncells_big) cells (dims = $(dims)), more than the " *
-              "allowed $(ws.max_cells). A particle probably escaped the domain. " *
-              "Increase `GPUMaxCells` in SimulationMetaData if this is expected.")
+    if !prepared
+        prepare_cell_grid!(ws, Position, InverseCutOff)
+        sync_cell_grid!(ws)
     end
-    ncells = Int32(ncells_big)
-    grid   = CellGrid{D, R}(cmin, dims, ncells)
-    ws.grid = grid
-    fill!(ws.grid_dev, grid)
+    ws.grid_prepared || error("The cell grid must be prepared and its valid status consumed before rebuilding.")
+    ws.grid_prepared = false
 
-    ensure_capacity!(ws, ncells)
+    grid = ws.grid
+    ncells = grid.ncells
+    ncells > Int32(0) || error("The device returned an empty cell grid.")
+    inv_cell = bin_scale(grid, InverseCutOff)
     Counts    = view(ws.Counts, 1:ncells)
-    CellStart = view(ws.CellStart, 1:(ncells + 1))
 
     threads = SORT_THREADS
     blocks  = cld(n, threads)
 
     fill!(Counts, Int32(0))
     @cuda threads=threads blocks=blocks cellid_hist_kernel!(ws.CellIDScratch, ws.Counts, Position,
-                                                             inv_cell, grid, Int32(n))
+                                                             inv_cell, ws.grid_dev, Int32(n))
 
     # Exclusive prefix sum with leading zero.
     fill!(view(ws.CellStart, 1:1), Int32(0))
-    accumulate!(+, view(ws.CellStart, 2:(ncells + 1)), Counts)
+    scan_int32!(ws.scan_ws, view(ws.CellStart, 2:(ncells + 1)), Counts; inclusive = true)
 
     fill!(Counts, Int32(0))
     @cuda threads=threads blocks=blocks scatter_kernel!(ws.Perm, ws.Counts, ws.CellStart,
                                                          ws.CellIDScratch, Int32(n))
 
     if ws.deterministic
-        @cuda threads=threads blocks=cld(ncells, threads) cell_sort_kernel!(ws.Perm, ws.CellStart, ncells)
+        @cuda threads=threads blocks=cld(ncells, threads) cell_sort_kernel!(ws.Perm, ws.CellStart,
+                                                                               ws.grid_dev)
     end
 
     @cuda threads=threads blocks=blocks gather_kernel!(ws.Perm, srcs, dsts, Int32(n))
@@ -589,7 +1163,7 @@ function compact_nonzero!(ws::CellListWorkspace, x::CuVector, out::CuVector{Int3
     threads = SORT_THREADS
     blocks  = cld(n, threads)
     @cuda threads=threads blocks=blocks nonzero_flag_kernel!(flags, x, predicate, Int32(n))
-    accumulate!(+, ranks, flags)
+    scan_int32!(ws.scan_ws, ranks, flags; inclusive = true)
     @cuda threads=threads blocks=blocks compact_kernel!(out, flags, ranks, Int32(n))
     return out
 end

@@ -440,7 +440,7 @@ end
 # Cell list rebuild with reordering of the persistent fields
 #---------------------------------------------------------------
 
-function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCutOff)
+function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCutOff; prepared::Bool = false)
     s = gpu.scratch
     srcs = (gpu.Position, gpu.Velocity, gpu.Density,
             gpu.ID, gpu.Type, gpu.GroupMarker, gpu.GhostPoints, gpu.GhostNormals,
@@ -449,7 +449,7 @@ function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCut
             s.ID, s.Type, s.GroupMarker, s.GhostPoints, s.GhostNormals,
             s.Acceleration, s.Pressure, gpu.CellID)
 
-    grid = update_cell_list!(cl, gpu.Position, InverseCutOff, srcs, dsts)
+    grid = update_cell_list!(cl, gpu.Position, InverseCutOff, srcs, dsts; prepared)
 
     # Swap the two sets of persistent arrays.
     gpu.scratch = (
@@ -873,6 +873,11 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
             end
         end
 
+        # A stopped batch has stable positions. Prepare only for STOP_REBUILD
+        # and publish its grid header in the integer timestep state, which is
+        # about to be read anyway. No extra header transfer or wait is needed.
+        @timeit HourGlass "02a Prepare Cell Grid" prepare_cell_grid!(cl, gpu.Position, SimKernel.H⁻¹; step = state)
+
         @timeit HourGlass "13 Read Back State" begin
             readback!(state)
             sync_meta_data!(SimMetaData, state)
@@ -881,14 +886,16 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         stop = state.ih[I_STOP]
         if stop == STOP_REBUILD
             @timeit HourGlass "02a Actual Calculate IndexCounter" begin
-                rebuild_cell_list!(gpu, cl, SimKernel.H⁻¹)
-                floating === nothing ||
-                    update_floating_indices!(floating, gpu.Type, cl)
+                consume_cell_grid!(cl, state.ih) || error("A requested cell-list rebuild has no prepared grid.")
                 if cl.generation != generation
-                    # the cell start buffer was reallocated: cached graphs point at the old one
+                    # Capacity growth changed device pointers. Drop cached
+                    # graphs before any subsequent launches or replay.
                     invalidate_graphs!(state)
                     generation = cl.generation
                 end
+                rebuild_cell_list!(gpu, cl, SimKernel.H⁻¹; prepared = true)
+                floating === nothing ||
+                    update_floating_indices!(floating, gpu.Type, cl)
                 resume_after_rebuild!(state)
 
                 # The single neighbour scheme carries `dρdtI` and the
@@ -1237,6 +1244,8 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         if StoreLogOutput
             with_logger(SimLogger.Logger) do
                 @info "Cell list rebuilds: $(cl.nrebuilds), grid dims: $(cl.grid.dims)"
+                @info "Device grid status reads: $(cl.grid_status_readbacks), capacity growths: $(cl.capacity_growths), " *
+                      "bounding-box host partial reads: $(cl.bbox_host_readbacks)"
                 @info "Host read backs of the step state: $(state.readbacks) for $(SimMetaData.Iteration) steps, " *
                       "captured step graphs: $(length(state.graphs))"
                 @info @sprintf("Output frame write time (%s): %.2f [s], %d frames buffered per file flush",

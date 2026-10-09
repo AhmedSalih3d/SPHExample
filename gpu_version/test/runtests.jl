@@ -21,6 +21,7 @@ include(joinpath(@__DIR__, "moving_square_geometry.jl"))
 include(joinpath(@__DIR__, "polygon_drawing.jl"))
 include(joinpath(@__DIR__, "lid_driven_cavity.jl"))
 include(joinpath(@__DIR__, "..", "benchmark", "cases.jl"))
+include(joinpath(@__DIR__, "cell_list_rebuild.jl"))
 
 # Project of the CPU package used as the reference. Defaults to the repository
 # containing `gpu_version`; set `SPHEXAMPLE_CPU_REF` to compare against another

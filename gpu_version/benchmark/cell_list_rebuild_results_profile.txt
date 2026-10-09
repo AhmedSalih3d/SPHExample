@@ -1,0 +1,203 @@
+CUDA CUPTI reports; baseline 3f4aaca66a86f14667c3388c062fe11d9ccf9462; GPU NVIDIA GeForce RTX 5080; Julia 1.12.7; CUDA.jl 6.4.2
+
+Case MovingSquare2D_dp0.04: 10 warmed shared rebuilds, baseline 3f4aaca66a86f14667c3388c062fe11d9ccf9462
+Counts below exclude the profiler's start/end cuCtxSynchronize sentinels and warmup copy; the benchmark's final CUDA.synchronize remains included.
+
+baseline
+Profiler ran for 10.73 ms, capturing 4437 events.
+
+Host-side activity: calling CUDA APIs took 3.67 ms (34.20% of the trace)
+┌──────────┬────────────┬───────┬───────────────────────────────────────┬──────────────────────────────────┐
+│ Time (%) │ Total time │ Calls │ Time distribution                     │ Name                             │
+├──────────┼────────────┼───────┼───────────────────────────────────────┼──────────────────────────────────┤
+│   34.20% │    3.67 ms │     1 │                                       │ cuStreamSynchronize              │
+│   15.20% │    1.63 ms │   100 │  16.31 µs ± 90.03  (   3.2 ‥ 905.7)   │ cuLaunchKernelEx                 │
+│    2.98% │   320.0 µs │    40 │    8.0 µs ± 10.61  (   3.0 ‥ 61.3)    │ cuMemsetD32Async                 │
+│    2.62% │   280.8 µs │    30 │   9.36 µs ± 13.6   (   3.7 ‥ 68.2)    │ cuMemcpyDtoHAsync                │
+│    1.25% │   134.5 µs │  1622 │  82.92 ns ± 119.11 (   0.0 ‥ 4100.03) │ cuStreamQuery                    │
+│    0.54% │    58.1 µs │  2024 │  28.71 ns ± 47.9   (   0.0 ‥ 600.0)   │ cuCtxGetCurrent                  │
+│    0.21% │    22.0 µs │    10 │    2.2 µs ± 2.69   (   1.1 ‥ 9.8)     │ cuMemAllocFromPoolAsync          │
+│    0.15% │    16.6 µs │    10 │   1.66 µs ± 0.97   (   1.0 ‥ 4.2)     │ cuMemFreeAsync                   │
+│    0.12% │    12.7 µs │    40 │  317.5 ns ± 444.27 ( 100.0 ‥ 2899.96) │ cuOccupancyMaxPotentialBlockSize │
+│    0.08% │     9.1 µs │   220 │  41.36 ns ± 70.01  (   0.0 ‥ 699.95)  │ cuDeviceGetAttribute             │
+│    0.07% │     7.2 µs │   170 │  42.35 ns ± 57.31  (   0.0 ‥ 400.0)   │ cuStreamIsCapturing              │
+└──────────┴────────────┴───────┴───────────────────────────────────────┴──────────────────────────────────┘
+
+Device-side activity: GPU was busy for 185.06 µs (1.72% of the trace)
+┌──────────┬────────────┬───────┬───────────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Time (%) │ Total time │ Calls │ Time distribution                     │ Name                                                                                                                                                                                                                                                                                                                                                                                    │
+├──────────┼────────────┼───────┼───────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│    0.24% │   25.47 µs │    30 │ 849.06 ns ± 434.53 (639.99 ‥ 2975.98) │ [copy device to pinned memory]\r                                                                                                                                                                                                                                                                                                                                                        │
+│    0.21% │   22.14 µs │    10 │   2.21 µs ± 0.17   (  1.98 ‥ 2.4)     │ cell_sort_kernel_(CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, Int32)\r                                                                                                                                                                                                                                                                                                      │
+│    0.19% │   20.83 µs │    40 │ 520.86 ns ± 259.51 (224.04 ‥ 832.02)  │ [set device memory]\r                                                                                                                                                                                                                                                                                                                                                                   │
+│    0.19% │   20.57 µs │    10 │   2.06 µs ± 0.02   (  2.05 ‥ 2.08)    │ partial_scan(_, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, CartesianIndices<1, Tuple<OneTo<Int64>>>, CartesianIndices<0, Tuple<>>, CartesianIndices<0, Tuple<>>, CartesianIndices<2, Tuple<OneTo<Int64>, OneTo<Int64>>>, Int32, void, Val<true>)\r                                                                                                                         │
+│    0.14% │   15.26 µs │    10 │   1.53 µs ± 0.08   (  1.47 ‥ 1.76)    │ scan\r                                                                                                                                                                                                                                                                                                                                                                                  │
+│    0.14% │   14.91 µs │    10 │   1.49 µs ± 0.04   (  1.44 ‥ 1.6)     │ cellid_hist_kernel_(CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<SArray<Tuple<2>, Float32, 1, 2>, 1, 1>, Float32, CellGrid<2, 1>, Int32)\r                                                                                                                                                                                                                     │
+│    0.13% │    13.6 µs │    10 │   1.36 µs ± 0.38   (  1.22 ‥ 2.43)    │ reduce_kernel_(CuDeviceArray<SArray<Tuple<4>, Float32, 1, 4>, 1, 1>, bbox_map, bbox_reduce, SArray<Tuple<4>, Float32, 1, 4>, Int32, CuDeviceArray<SArray<Tuple<2>, Float32, 1, 2>, 1, 1>)\r                                                                                                                                                                                             │
+│    0.12% │   13.18 µs │    10 │   1.32 µs ± 0.01   (  1.31 ‥ 1.34)    │ scatter_kernel_(CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, Int32)\r                                                                                                                                                                                                                                                │
+│    0.11% │   11.94 µs │     9 │   1.33 µs ± 0.19   (  1.25 ‥ 1.82)    │ gather_kernel_(CuDeviceArray<Int32, 1, 1>, Tuple<CuDeviceArray<SArray<Tuple<2>, Float32, 1, 2>, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>>, Tuple<CuDeviceArray<SArray<Tuple<2>, Float32, 1, 2>, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>>, Int32)\r                                                                                           │
+│    0.08% │    9.02 µs │    10 │ 902.41 ns ± 13.49  (895.99 ‥ 928.0)   │ gpu_linear_copy_kernel_(CompilerMetadata<DynamicSize, DynamicCheck, void, CartesianIndices<1, Tuple<OneTo<Int64>>>, NDRange<1, DynamicSize, DynamicSize, CartesianIndices<1, Tuple<OneTo<Int64>>>, CartesianIndices<1, Tuple<OneTo<Int64>>>>>, CuDeviceArray<Int32, 1, 1>, Int64, SubArray<Int32, 1, CuDeviceArray<Int32, 1, 1>, Tuple<StepRange<Int64, Int64>>, true>, Int64, Int64)\r │
+│    0.08% │    8.99 µs │    10 │  899.1 ns ± 79.08  (862.99 ‥ 1119.97) │ aggregate_partial_scan(_, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, CartesianIndices<1, Tuple<OneTo<Int64>>>, CartesianIndices<0, Tuple<>>, CartesianIndices<0, Tuple<>>, CartesianIndices<2, Tuple<OneTo<Int64>, OneTo<Int64>>>, void)\r                                                                                                                                 │
+│    0.07% │    7.84 µs │    10 │  784.0 ns ± 16.87  (767.99 ‥ 800.01)  │ gpu_fill_kernel_(CompilerMetadata<DynamicSize, DynamicCheck, void, CartesianIndices<1, Tuple<OneTo<Int64>>>, NDRange<1, DynamicSize, DynamicSize, CartesianIndices<1, Tuple<OneTo<Int64>>>, CartesianIndices<1, Tuple<OneTo<Int64>>>>>, CuDeviceArray<CellGrid<2, 1>, 1, 1>, CellGrid<2, 1>)\r                                                                                          │
+│    0.01% │    1.28 µs │     1 │                                       │ gather_kernel_(CuDeviceArray<Int32, 1, 1>, Tuple<CuDeviceArray<SArray<Tuple<2>, Float32, 1, 2>, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>>, Tuple<CuDeviceArray<SArray<Tuple<2>, Float32, 1, 2>, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>>, Int32)                                                                                             │
+└──────────┴────────────┴───────┴───────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+MovingSquare2D_dp0.04 baseline: profiled_rebuilds=10 synchronize_API_calls=1 query_API_calls=1622 D2H_copies=30 D2H_bytes=20960
+Captured host API counts:
+  cuCtxGetCurrent: 2024
+  cuDeviceGetAttribute: 220
+  cuLaunchKernelEx: 100
+  cuMemAllocFromPoolAsync: 10
+  cuMemFreeAsync: 10
+  cuMemcpyDtoHAsync_v2: 30
+  cuMemsetD32Async: 40
+  cuOccupancyMaxPotentialBlockSize: 40
+  cuStreamIsCapturing: 170
+  cuStreamQuery: 1622
+  cuStreamSynchronize: 1
+MovingSquare2D_dp0.04 baseline: allocation_rebuilds=10 device_allocated_bytes=720
+
+candidate
+Profiler ran for 6.96 ms, capturing 3889 events.
+
+Host-side activity: calling CUDA APIs took 1.47 ms (21.09% of the trace)
+┌──────────┬────────────┬───────┬───────────────────────────────────────┬──────────────────────┐
+│ Time (%) │ Total time │ Calls │ Time distribution                     │ Name                 │
+├──────────┼────────────┼───────┼───────────────────────────────────────┼──────────────────────┤
+│   11.94% │   830.8 µs │    90 │   9.23 µs ± 9.88   (   3.2 ‥ 54.0)    │ cuLaunchKernelEx     │
+│    3.95% │   274.8 µs │    20 │  13.74 µs ± 19.9   (   4.2 ‥ 88.1)    │ cuMemcpyDtoHAsync    │
+│    2.47% │   171.8 µs │    30 │   5.73 µs ± 5.51   (   2.4 ‥ 26.5)    │ cuMemsetD32Async     │
+│    1.79% │   124.3 µs │  1504 │  82.65 ns ± 86.47  (   0.0 ‥ 1899.96) │ cuStreamQuery        │
+│    0.74% │    51.7 µs │  1785 │  28.96 ns ± 47.31  (   0.0 ‥ 600.0)   │ cuCtxGetCurrent      │
+│    0.12% │     8.1 µs │   180 │   45.0 ns ± 93.52  (   0.0 ‥ 1099.95) │ cuDeviceGetAttribute │
+│    0.08% │     5.8 µs │   140 │  41.43 ns ± 73.93  (   0.0 ‥ 700.01)  │ cuStreamIsCapturing  │
+└──────────┴────────────┴───────┴───────────────────────────────────────┴──────────────────────┘
+
+Device-side activity: GPU was busy for 250.18 µs (3.60% of the trace)
+┌──────────┬────────────┬───────┬───────────────────────────────────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Time (%) │ Total time │ Calls │ Time distribution                     │ Name                                                                                                                                                                                                                                                                                                                           │
+├──────────┼────────────┼───────┼───────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│    1.21% │   84.07 µs │    10 │   8.41 µs ± 0.85   (  8.13 ‥ 10.82)   │ finish_grid_metadata_kernel_(CuDeviceArray<CellGrid<2, 1>, 1, 1>, CuDeviceArray<GridBuildState<2, 1>, 1, 1>, CuDeviceArray<Float32, 1, 1>, CuDeviceArray<Int32, 1, 1>, Int32, Float32, Float32, Float32, Int64, Int64, Int32, DeviceStep<Float32, CuDeviceArray<Float32, 1, 1>, CuDeviceArray<Int32, 1, 1>>, Val<2>, Val<1>)\r │
+│    0.50% │   34.88 µs │    10 │   3.49 µs ± 4.97   (  1.89 ‥ 17.63)   │ bbox_reduce_scalar_kernel_(CuDeviceArray<Float32, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Float32, 1, 1>, Int32, Float32, Float32, DeviceStep<Float32, CuDeviceArray<Float32, 1, 1>, CuDeviceArray<Int32, 1, 1>>, Val<2>)\r                                                                                           │
+│    0.35% │   24.45 µs │    10 │   2.44 µs ± 0.16   (  2.11 ‥ 2.62)    │ cell_sort_kernel_(CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<CellGrid<2, 1>, 1, 1>)\r                                                                                                                                                                                                               │
+│    0.34% │   23.33 µs │    20 │   1.17 µs ± 0.03   (  1.12 ‥ 1.22)    │ scan_block_kernel_(CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, Int32, Bool)\r                                                                                                                                                                                                          │
+│    0.26% │   18.08 µs │    30 │ 602.67 ns ± 249.59 ( 256.0 ‥ 800.01)  │ [set device memory]\r                                                                                                                                                                                                                                                                                                          │
+│    0.23% │   15.81 µs │    10 │   1.58 µs ± 0.04   (  1.54 ‥ 1.7)     │ cellid_hist_kernel_(CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<SArray<Tuple<2>, Float32, 1, 2>, 1, 1>, Float32, CuDeviceArray<CellGrid<2, 1>, 1, 1>, Int32)\r                                                                                                                                       │
+│    0.20% │   14.05 µs │    20 │  702.4 ns ± 123.92 (607.98 ‥ 1056.0)  │ [copy device to pinned memory]\r                                                                                                                                                                                                                                                                                               │
+│    0.20% │   13.76 µs │    10 │   1.38 µs ± 0.0    (  1.38 ‥ 1.38)    │ scatter_kernel_(CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, Int32)\r                                                                                                                                                                                       │
+│    0.17% │   12.03 µs │     9 │   1.34 µs ± 0.18   (  1.25 ‥ 1.82)    │ gather_kernel_(CuDeviceArray<Int32, 1, 1>, Tuple<CuDeviceArray<SArray<Tuple<2>, Float32, 1, 2>, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>>, Tuple<CuDeviceArray<SArray<Tuple<2>, Float32, 1, 2>, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>>, Int32)\r                                  │
+│    0.12% │    8.45 µs │    10 │  844.8 ns ± 90.76  (800.01 ‥ 1088.02) │ scan_add_offsets_kernel_(CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, Int32)\r                                                                                                                                                                                                                                      │
+│    0.02% │    1.28 µs │     1 │                                       │ gather_kernel_(CuDeviceArray<Int32, 1, 1>, Tuple<CuDeviceArray<SArray<Tuple<2>, Float32, 1, 2>, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>>, Tuple<CuDeviceArray<SArray<Tuple<2>, Float32, 1, 2>, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>>, Int32)                                    │
+└──────────┴────────────┴───────┴───────────────────────────────────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+MovingSquare2D_dp0.04 candidate: profiled_rebuilds=10 synchronize_API_calls=0 query_API_calls=1504 D2H_copies=20 D2H_bytes=640
+Captured host API counts:
+  cuCtxGetCurrent: 1785
+  cuDeviceGetAttribute: 180
+  cuLaunchKernelEx: 90
+  cuMemcpyDtoHAsync_v2: 20
+  cuMemsetD32Async: 30
+  cuStreamIsCapturing: 140
+  cuStreamQuery: 1504
+MovingSquare2D_dp0.04 candidate: allocation_rebuilds=10 device_allocated_bytes=0
+
+Case MovingSquare2D_dp0.02: 10 warmed shared rebuilds, baseline 3f4aaca66a86f14667c3388c062fe11d9ccf9462
+Counts below exclude the profiler's start/end cuCtxSynchronize sentinels and warmup copy; the benchmark's final CUDA.synchronize remains included.
+
+baseline
+Profiler ran for 2.21 ms, capturing 4855 events.
+
+Host-side activity: calling CUDA APIs took 1.27 ms (57.63% of the trace)
+┌──────────┬────────────┬───────┬───────────────────────────────────────┬──────────────────────────────────┐
+│ Time (%) │ Total time │ Calls │ Time distribution                     │ Name                             │
+├──────────┼────────────┼───────┼───────────────────────────────────────┼──────────────────────────────────┤
+│   26.37% │   582.5 µs │   100 │   5.82 µs ± 6.32   (   2.9 ‥ 53.8)    │ cuLaunchKernelEx                 │
+│   10.31% │   227.7 µs │    40 │   5.69 µs ± 5.56   (   2.6 ‥ 27.3)    │ cuMemsetD32Async                 │
+│    8.42% │   185.9 µs │    30 │    6.2 µs ± 5.3    (   3.4 ‥ 23.6)    │ cuMemcpyDtoHAsync                │
+│    7.05% │   155.7 µs │  1832 │  84.99 ns ± 142.03 (   0.0 ‥ 5700.04) │ cuStreamQuery                    │
+│    2.97% │    65.5 µs │  2233 │  29.33 ns ± 45.54  (   0.0 ‥ 100.0)   │ cuCtxGetCurrent                  │
+│    0.71% │    15.6 µs │    10 │   1.56 µs ± 0.91   (   0.9 ‥ 3.9)     │ cuMemAllocFromPoolAsync          │
+│    0.67% │    14.7 µs │    10 │   1.47 µs ± 0.91   (   0.9 ‥ 4.0)     │ cuMemFreeAsync                   │
+│    0.52% │    11.5 µs │    40 │  287.5 ns ± 209.01 ( 100.0 ‥ 1400.01) │ cuOccupancyMaxPotentialBlockSize │
+│    0.38% │     8.4 µs │   220 │  38.18 ns ± 49.62  (   0.0 ‥ 200.0)   │ cuDeviceGetAttribute             │
+│    0.24% │     5.3 µs │   170 │  31.18 ns ± 46.46  (   0.0 ‥ 100.0)   │ cuStreamIsCapturing              │
+└──────────┴────────────┴───────┴───────────────────────────────────────┴──────────────────────────────────┘
+
+Device-side activity: GPU was busy for 216.73 µs (9.81% of the trace)
+┌──────────┬────────────┬───────┬──────────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Time (%) │ Total time │ Calls │ Time distribution                    │ Name                                                                                                                                                                                                                                                                                                                                                                                    │
+├──────────┼────────────┼───────┼──────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│    1.34% │    29.7 µs │    10 │   2.97 µs ± 0.19   (  2.66 ‥ 3.23)   │ cell_sort_kernel_(CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, Int32)\r                                                                                                                                                                                                                                                                                                      │
+│    0.99% │   21.76 µs │    30 │ 725.34 ns ± 120.46 (639.99 ‥ 1184.0) │ [copy device to pinned memory]\r                                                                                                                                                                                                                                                                                                                                                        │
+│    0.96% │   21.12 µs │    10 │   2.11 µs ± 0.03   (  2.08 ‥ 2.14)   │ scatter_kernel_(CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, Int32)\r                                                                                                                                                                                                                                                │
+│    0.95% │   21.02 µs │    40 │  525.5 ns ± 254.09 (255.01 ‥ 801.0)  │ [set device memory]\r                                                                                                                                                                                                                                                                                                                                                                   │
+│    0.94% │   20.67 µs │    10 │   2.07 µs ± 0.02   (  2.05 ‥ 2.08)   │ partial_scan(_, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, CartesianIndices<1, Tuple<OneTo<Int64>>>, CartesianIndices<0, Tuple<>>, CartesianIndices<0, Tuple<>>, CartesianIndices<2, Tuple<OneTo<Int64>, OneTo<Int64>>>, Int32, void, Val<true>)\r                                                                                                                         │
+│    0.93% │   20.45 µs │    10 │   2.04 µs ± 0.02   (  2.02 ‥ 2.08)   │ cellid_hist_kernel_(CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<SArray<Tuple<2>, Float32, 1, 2>, 1, 1>, Float32, CellGrid<2, 1>, Int32)\r                                                                                                                                                                                                                     │
+│    0.92% │   20.32 µs │    10 │   2.03 µs ± 0.02   (  2.02 ‥ 2.08)   │ reduce_kernel_(CuDeviceArray<SArray<Tuple<4>, Float32, 1, 4>, 1, 1>, bbox_map, bbox_reduce, SArray<Tuple<4>, Float32, 1, 4>, Int32, CuDeviceArray<SArray<Tuple<2>, Float32, 1, 2>, 1, 1>)\r                                                                                                                                                                                             │
+│    0.84% │   18.59 µs │     9 │   2.07 µs ± 0.03   (  2.02 ‥ 2.11)   │ gather_kernel_(CuDeviceArray<Int32, 1, 1>, Tuple<CuDeviceArray<SArray<Tuple<2>, Float32, 1, 2>, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>>, Tuple<CuDeviceArray<SArray<Tuple<2>, Float32, 1, 2>, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>>, Int32)\r                                                                                           │
+│    0.71% │   15.78 µs │    10 │   1.58 µs ± 0.09   (  1.54 ‥ 1.82)   │ scan\r                                                                                                                                                                                                                                                                                                                                                                                  │
+│    0.40% │     8.9 µs │    10 │  889.6 ns ± 13.49  (863.98 ‥ 896.05) │ aggregate_partial_scan(_, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, CartesianIndices<1, Tuple<OneTo<Int64>>>, CartesianIndices<0, Tuple<>>, CartesianIndices<0, Tuple<>>, CartesianIndices<2, Tuple<OneTo<Int64>, OneTo<Int64>>>, void)\r                                                                                                                                 │
+│    0.39% │    8.61 µs │    10 │  860.8 ns ± 10.12  (832.02 ‥ 864.97) │ gpu_linear_copy_kernel_(CompilerMetadata<DynamicSize, DynamicCheck, void, CartesianIndices<1, Tuple<OneTo<Int64>>>, NDRange<1, DynamicSize, DynamicSize, CartesianIndices<1, Tuple<OneTo<Int64>>>, CartesianIndices<1, Tuple<OneTo<Int64>>>>>, CuDeviceArray<Int32, 1, 1>, Int64, SubArray<Int32, 1, CuDeviceArray<Int32, 1, 1>, Tuple<StepRange<Int64, Int64>>, true>, Int64, Int64)\r │
+│    0.35% │    7.74 µs │    10 │  774.4 ns ± 13.5   (767.99 ‥ 800.01) │ gpu_fill_kernel_(CompilerMetadata<DynamicSize, DynamicCheck, void, CartesianIndices<1, Tuple<OneTo<Int64>>>, NDRange<1, DynamicSize, DynamicSize, CartesianIndices<1, Tuple<OneTo<Int64>>>, CartesianIndices<1, Tuple<OneTo<Int64>>>>>, CuDeviceArray<CellGrid<2, 1>, 1, 1>, CellGrid<2, 1>)\r                                                                                          │
+│    0.09% │    2.08 µs │     1 │                                      │ gather_kernel_(CuDeviceArray<Int32, 1, 1>, Tuple<CuDeviceArray<SArray<Tuple<2>, Float32, 1, 2>, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>>, Tuple<CuDeviceArray<SArray<Tuple<2>, Float32, 1, 2>, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>>, Int32)                                                                                             │
+└──────────┴────────────┴───────┴──────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+MovingSquare2D_dp0.02 baseline: profiled_rebuilds=10 synchronize_API_calls=0 query_API_calls=1832 D2H_copies=30 D2H_bytes=80960
+Captured host API counts:
+  cuCtxGetCurrent: 2233
+  cuDeviceGetAttribute: 220
+  cuLaunchKernelEx: 100
+  cuMemAllocFromPoolAsync: 10
+  cuMemFreeAsync: 10
+  cuMemcpyDtoHAsync_v2: 30
+  cuMemsetD32Async: 40
+  cuOccupancyMaxPotentialBlockSize: 40
+  cuStreamIsCapturing: 170
+  cuStreamQuery: 1832
+MovingSquare2D_dp0.02 baseline: allocation_rebuilds=10 device_allocated_bytes=2600
+
+candidate
+Profiler ran for 2.08 ms, capturing 3881 events.
+
+Host-side activity: calling CUDA APIs took 1.23 ms (59.20% of the trace)
+┌──────────┬────────────┬───────┬──────────────────────────────────────┬──────────────────────┐
+│ Time (%) │ Total time │ Calls │ Time distribution                    │ Name                 │
+├──────────┼────────────┼───────┼──────────────────────────────────────┼──────────────────────┤
+│   35.53% │   740.1 µs │    90 │   8.22 µs ± 7.6    (   3.7 ‥ 34.8)   │ cuLaunchKernelEx     │
+│    8.05% │   167.6 µs │    30 │   5.59 µs ± 3.4    (   3.2 ‥ 17.5)   │ cuMemsetD32Async     │
+│    6.62% │   138.0 µs │    20 │    6.9 µs ± 5.31   (   4.0 ‥ 22.3)   │ cuMemcpyDtoHAsync    │
+│    5.88% │   122.5 µs │  1499 │  81.72 ns ± 58.11  (   0.0 ‥ 800.01) │ cuStreamQuery        │
+│    2.50% │    52.1 µs │  1781 │  29.25 ns ± 48.84  (   0.0 ‥ 700.01) │ cuCtxGetCurrent      │
+│    1.74% │    36.2 µs │     1 │                                      │ cuStreamSynchronize  │
+│    0.36% │     7.4 µs │   180 │  41.11 ns ± 52.63  (   0.0 ‥ 200.0)  │ cuDeviceGetAttribute │
+│    0.30% │     6.3 µs │   140 │   45.0 ns ± 69.25  (   0.0 ‥ 500.0)  │ cuStreamIsCapturing  │
+└──────────┴────────────┴───────┴──────────────────────────────────────┴──────────────────────┘
+
+Device-side activity: GPU was busy for 607.72 µs (29.17% of the trace)
+┌──────────┬────────────┬───────┬───────────────────────────────────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Time (%) │ Total time │ Calls │ Time distribution                     │ Name                                                                                                                                                                                                                                                                                                                           │
+├──────────┼────────────┼───────┼───────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│   20.42% │  425.35 µs │    10 │  42.53 µs ± 53.65  ( 25.54 ‥ 195.24)  │ finish_grid_metadata_kernel_(CuDeviceArray<CellGrid<2, 1>, 1, 1>, CuDeviceArray<GridBuildState<2, 1>, 1, 1>, CuDeviceArray<Float32, 1, 1>, CuDeviceArray<Int32, 1, 1>, Int32, Float32, Float32, Float32, Int64, Int64, Int32, DeviceStep<Float32, CuDeviceArray<Float32, 1, 1>, CuDeviceArray<Int32, 1, 1>>, Val<2>, Val<1>)\r │
+│    1.41% │   29.41 µs │    10 │   2.94 µs ± 0.14   (  2.82 ‥ 3.23)    │ cell_sort_kernel_(CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<CellGrid<2, 1>, 1, 1>)\r                                                                                                                                                                                                               │
+│    1.22% │   25.34 µs │    10 │   2.53 µs ± 0.22   (  2.43 ‥ 3.17)    │ bbox_reduce_scalar_kernel_(CuDeviceArray<Float32, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Float32, 1, 1>, Int32, Float32, Float32, DeviceStep<Float32, CuDeviceArray<Float32, 1, 1>, CuDeviceArray<Int32, 1, 1>>, Val<2>)\r                                                                                           │
+│    1.12% │   23.23 µs │    20 │   1.16 µs ± 0.02   (  1.15 ‥ 1.18)    │ scan_block_kernel_(CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, Int32, Bool)\r                                                                                                                                                                                                          │
+│    1.03% │    21.5 µs │    10 │   2.15 µs ± 0.04   (  2.08 ‥ 2.21)    │ cellid_hist_kernel_(CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<SArray<Tuple<2>, Float32, 1, 2>, 1, 1>, Float32, CuDeviceArray<CellGrid<2, 1>, 1, 1>, Int32)\r                                                                                                                                       │
+│    0.99% │   20.67 µs │    10 │   2.07 µs ± 0.03   (  2.02 ‥ 2.11)    │ scatter_kernel_(CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, Int32)\r                                                                                                                                                                                       │
+│    0.91% │   18.88 µs │     9 │    2.1 µs ± 0.07   (  2.05 ‥ 2.27)    │ gather_kernel_(CuDeviceArray<Int32, 1, 1>, Tuple<CuDeviceArray<SArray<Tuple<2>, Float32, 1, 2>, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>>, Tuple<CuDeviceArray<SArray<Tuple<2>, Float32, 1, 2>, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>>, Int32)\r                                  │
+│    0.86% │   18.02 µs │    30 │ 600.56 ns ± 245.63 ( 256.0 ‥ 800.01)  │ [set device memory]\r                                                                                                                                                                                                                                                                                                          │
+│    0.72% │   14.91 µs │    20 │ 745.65 ns ± 151.96 (639.99 ‥ 1088.02) │ [copy device to pinned memory]\r                                                                                                                                                                                                                                                                                               │
+│    0.40% │    8.29 µs │    10 │  828.8 ns ± 10.12  (800.01 ‥ 832.02)  │ scan_add_offsets_kernel_(CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>, Int32)\r                                                                                                                                                                                                                                      │
+│    0.10% │    2.11 µs │     1 │                                       │ gather_kernel_(CuDeviceArray<Int32, 1, 1>, Tuple<CuDeviceArray<SArray<Tuple<2>, Float32, 1, 2>, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>>, Tuple<CuDeviceArray<SArray<Tuple<2>, Float32, 1, 2>, 1, 1>, CuDeviceArray<Int32, 1, 1>, CuDeviceArray<Int32, 1, 1>>, Int32)                                    │
+└──────────┴────────────┴───────┴───────────────────────────────────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+MovingSquare2D_dp0.02 candidate: profiled_rebuilds=10 synchronize_API_calls=1 query_API_calls=1499 D2H_copies=20 D2H_bytes=640
+Captured host API counts:
+  cuCtxGetCurrent: 1781
+  cuDeviceGetAttribute: 180
+  cuLaunchKernelEx: 90
+  cuMemcpyDtoHAsync_v2: 20
+  cuMemsetD32Async: 30
+  cuStreamIsCapturing: 140
+  cuStreamQuery: 1499
+  cuStreamSynchronize: 1
+MovingSquare2D_dp0.02 candidate: allocation_rebuilds=10 device_allocated_bytes=0
