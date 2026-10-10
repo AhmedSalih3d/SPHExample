@@ -41,6 +41,8 @@ function main(args)
     case  = first(select_cases(names))
     kw, gpu, sup, red, cl, mot, st = setup(case, T)
     meta = kw.SimMetaData
+    # The third interval is profiled, so it must remain inside the simulation.
+    meta.SimulationTime = max(meta.SimulationTime, 4 * meta.OutputTimes)
     loop() = SimulationLoop(kw.SimDensityDiffusion, kw.SimViscosity, kw.SimKernel, meta, kw.SimConstants,
                             gpu, cl, sup, red, mot, st)
     # warm up / compile: one output interval
@@ -53,7 +55,9 @@ function main(args)
             steps, 1e3 * t / steps, cl.grid.dims, cl.nrebuilds)
     k = SPHExampleGPU.GPUKernels
     meta.OutputIterationCounter += 1
+    it0 = meta.Iteration
     prof = CUDA.@profile loop()
+    @assert meta.Iteration > it0 "the profiled interval must execute solver steps"
     display(prof)
     println()
 end

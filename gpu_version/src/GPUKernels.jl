@@ -62,6 +62,11 @@ export launch_interactions!, launch_mdbc!, launch_motion!, launch_half_step!, la
 const ELEMENTWISE_THREADS = REDUCE_THREADS
 const FULL_MASK = 0xffffffff
 
+# Use counter-based row iteration even for the 3/9-row stencil at reach one.
+# It preserves the same neighbor order as the tuple returned by cell_rows.
+@inline interaction_rows(grid::CellGrid{D, R}) where {D, R} =
+    GPUCellGrid.CellRows{D, R}(grid.dims[1], grid.dims[1] * grid.dims[2])
+
 #---------------------------------------------------------------
 # Helpers shared by the kernels
 #---------------------------------------------------------------
@@ -284,7 +289,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
         own_lo = CellStart[c] + Int32(1)
         own_hi = CellStart[c + Int32(1)]
 
-        for row in cell_rows(grid)
+        for row in interaction_rows(grid)
             jlo, jhi = row_range(grid, CellStart, c, row)
             rowcell  = c + row.off
             j = jlo + lane
@@ -443,8 +448,8 @@ end
 # range `jlo:jhi` (every `K`-th starting at `lane`) to the ghost node `ref`,
 # which lies in the stencil row `row` with `rowcell` the linear index of the
 # cell of that row with the node's first coordinate (see `pair_vector`).
-# The distance test comes first: only the roughly 30 % of the candidates
-# inside the support also load `ParticleType`.
+# Testing the fluid type before the support predicate lets the compiler
+# schedule the type load independently of the distance calculation.
 @inline function mdbc_range(b, A::SMatrix{DP, DP, T}, jlo::Int32, jhi::Int32, lane::Int32, ::Val{K}, ref,
                             Pairs, rowcell::Int32, row::CellRow, s, Density, ParticleType, SimKernel,
                             m₀, Velocity = nothing) where {K, DP, T}
@@ -453,8 +458,8 @@ end
     @inbounds while j <= jhi
         xᵢⱼ  = pair_vector(Pairs, ref, j, rowcell, row, s)
         xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
-        if xᵢⱼ² <= H²
-            if ParticleType[j] == Fluid
+        if ParticleType[j] == Fluid
+            if xᵢⱼ² <= H²
                 dᵢⱼ = sqrt(xᵢⱼ²)
                 q   = dᵢⱼ * h⁻¹ # in [0, 2]: the guard above enforces xᵢⱼ² <= H² = (2h)²
                 ρⱼ  = Density[j]
