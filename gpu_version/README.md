@@ -830,9 +830,10 @@ the standard *gather* formulation:
   because a small case has too few particles to fill the GPU: an RTX A1000
   holds roughly 16 000 resident threads per pass, so a 3 000 particle 2D
   case with one lane leaves most of the chip idle. The automatic choice
-  (`0`) picks `K` such that at least four times the resident thread capacity
-  is launched, which gives 32 lanes to a 6 700 particle 2D case, 4 to a
-  55 000 particle 3D case and 1 above roughly 100 000 particles. Lanes
+  (`0`) is dimension-aware: it targets roughly one resident thread per
+  particle-lane in 3D and one quarter of that target in 2D, where neighborhoods
+  generally contain fewer candidates. This avoids assigning large lane groups
+  solely because the particle count is low. Lanes
   interact badly with half width cells: they stride within one row range and
   only finish together when the range holds many candidates. With `H/2`
   cells there are 25 rows per particle, each about five times shorter, so
@@ -1029,7 +1030,7 @@ definitions in `benchmark/cases.jl` construct against either package.
 | `GPUDeterministicSort` | `true` | Sort particles inside each cell after the counting sort; results become bitwise reproducible between runs. |
 | `GPUMaxCells` | `50_000_000` | Abort with a clear message if the neighbour grid would need more cells (a particle escaped). |
 | `GPUInteractionThreads` | `128` | Threads per block of the interaction and mDBC kernels. |
-| `GPULanesPerParticle` | `0` (auto) | Warp lanes that share one particle's neighbour loop (1, 2, 4, ... 32). Small cases cannot fill the GPU with one thread per particle, so the automatic choice launches at least four times the resident thread capacity of the device and lets several lanes scan alternating neighbours, combined with warp shuffles. Use `1` for large cases and together with `GPUCellSubdivision = 2` (see "Lanes per particle" above). |
+| `GPULanesPerParticle` | `0` (auto) | Warp lanes that share one particle's neighbour loop (1, 2, 4, ... 32). The automatic choice targets roughly one resident thread per particle-lane in 3D and one quarter of that in 2D, where neighborhoods generally contain fewer candidates; it caps lanes at 32 and combines them with warp shuffles. Explicit settings are unchanged. Use `1` for large cases and together with `GPUCellSubdivision = 2` (see "Lanes per particle" above). |
 | `GPUBoundaryForces` | `true` | Evaluate the momentum equation for boundary particles too, as the CPU does (their acceleration only enters the force based time step limit). `false` skips it and saves 10-20 % in cases with many boundary particles, at the price of a slightly different adaptive time step. |
 | `GPUAsyncOutput` | `true` | Write output files on a task while the GPU continues (see "Asynchronous output"). |
 | `GPUMaxStepsPerSync` | `32` | Upper bound on the steps enqueued between two host read backs of the device resident step state. The actual batch is the estimated number of steps until the next cell list rebuild or output. `1` reproduces a synchronization per step. |

@@ -76,6 +76,16 @@ relerr(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), eps(eltype(b))))
 @testset "SPHExampleGPU" begin
     @test CUDA.functional()
 
+    @testset "dimension-aware automatic gather lanes" begin
+        target = 4 * CUDA.attribute(CUDA.device(), CUDA.DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT) * 2048
+        @test choose_lanes(3_027, Val(2); target) == 16
+        @test choose_lanes(33_020, Val(2); target) == 2
+        @test choose_lanes(17_446, Val(3); target) == 16
+        @test choose_lanes(54_817, Val(3); target) == 4
+        @test choose_lanes(0, Val(2); target) == 1
+        @test_throws ArgumentError choose_lanes(1_000, Val(1); target)
+    end
+
     @testset "mode types mirror the CPU API" begin
         save = mktempdir()
         meta = SimulationMetaData{2, Float32}(SimulationName = "m", SaveLocation = save)

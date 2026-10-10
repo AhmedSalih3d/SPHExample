@@ -80,6 +80,21 @@ function choose_lanes(n::Integer; target::Integer = 4 * CUDA.attribute(CUDA.devi
     return clamp(k, 1, 32)
 end
 
+"""
+    choose_lanes(n, ::Val{D}; target = 4 * resident threads of the device) -> K
+
+Choose gather lanes using a smaller occupancy target than the legacy
+dimension-independent selector. Three-dimensional neighborhoods use one
+resident thread's worth of particle-lanes; two-dimensional neighborhoods use
+one quarter, reflecting their lower candidate count.
+"""
+function choose_lanes(n::Integer, ::Val{D}; target::Integer = 4 * CUDA.attribute(CUDA.device(),
+                                                                       CUDA.DEVICE_ATTRIBUTE_MULTIPROCESSOR_COUNT) * 2048) where {D}
+    D in (2, 3) || throw(ArgumentError("automatic GPU lane selection supports 2D and 3D, got $D"))
+    scale = D == 2 ? 16 : 4
+    return choose_lanes(n; target = cld(target, scale))
+end
+
 # Warp shuffle reduction of the `K` consecutive lanes of a particle. All
 # lanes of the warp must execute this (no early return before it).
 @inline function lanes_sum(x::T, ::Val{K}) where {T <: Real, K}

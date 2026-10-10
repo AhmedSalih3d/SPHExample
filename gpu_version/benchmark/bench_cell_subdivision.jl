@@ -149,7 +149,7 @@ function main(args)
 
         n = length(variants[1].gpu)
         @printf("\n%s: %d particles, steps per round ≈ %d, lanes %s\n", case.name, n, steps[1] ÷ rounds,
-                lanes == 0 ? "auto=$(choose_lanes(n))" : string(lanes))
+                lanes == 0 ? "auto=$(choose_lanes(n, Val(case.dims)))" : string(lanes))
         @printf("%-8s %-14s %9s %8s %8s %9s %9s %9s %9s %9s %9s %9s\n", "subdiv", "grid", "cells", "cand/p", "acc/p",
                 "hit %", "inter", "mdbc", "cellist", "total", "ratio_i", "ratio_t")
         for (k, v) in enumerate(variants)

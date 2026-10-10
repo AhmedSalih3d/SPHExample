@@ -48,10 +48,10 @@ function main(args)
         [(lanes = 0, threads = 128, bforces = true), (lanes = 0, threads = 128, bforces = false),
          (lanes = 2, threads = 128, bforces = true), (lanes = 2, threads = 128, bforces = false)]
     else
-        [(lanes = 1, threads = 128, bforces = true), (lanes = 0, threads = 128, bforces = true),
-         (lanes = 2, threads = 128, bforces = true), (lanes = 1, threads = 256, bforces = true),
+        vcat([(lanes = k, threads = 128, bforces = true) for k in (1, 2, 4, 8, 16, 32)],
+             [(lanes = 0, threads = 128, bforces = true), (lanes = 1, threads = 256, bforces = true),
          (lanes = 0, threads = 256, bforces = true), (lanes = 2, threads = 256, bforces = true),
-         (lanes = 1, threads = 64, bforces = true), (lanes = 0, threads = 128, bforces = false)]
+          (lanes = 1, threads = 64, bforces = true), (lanes = 0, threads = 128, bforces = false)])
     end
     @printf("%-32s %8s %8s %6s %8s %8s %12s %12s\n", "case ($T, best of $repeat)", "N", "lanes", "thr",
             "bforces", "steps", "ms/step", "worst")
@@ -72,7 +72,7 @@ function main(args)
             GC.gc(); CUDA.reclaim()
         end
         for (k, s) in enumerate(settings)
-            auto = s.lanes == 0 ? choose_lanes(n) : s.lanes
+            auto = s.lanes == 0 ? choose_lanes(n, Val(c.dims)) : s.lanes
             @printf("%-32s %8d %8s %6d %8s %8d %12.3f %12.3f\n", c.name, n,
                     s.lanes == 0 ? "auto=$auto" : string(s.lanes), s.threads, s.bforces, iters, best[k], worst[k])
         end

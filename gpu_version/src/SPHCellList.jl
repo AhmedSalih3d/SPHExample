@@ -855,7 +855,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     SingleNeighbor = SimMetaData.TimeSteppingMode isa SingleNeighborTimeStepping
     threads    = SimMetaData.GPUInteractionThreads
     nlanes     = SimMetaData.GPULanesPerParticle
-    lanes      = Val(nlanes <= 0 ? choose_lanes(length(gpu)) : nlanes)
+    lanes      = Val(nlanes <= 0 ? choose_lanes(length(gpu), Val(Dimensions)) : nlanes)
     bforces    = Val(SimMetaData.GPUBoundaryForces)
 
     timed     = SimMetaData.GPUSyncTimers
