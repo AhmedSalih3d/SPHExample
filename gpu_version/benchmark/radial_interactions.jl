@@ -97,6 +97,10 @@ function measure_radial_run(case, variant; baseline = nothing, duration, subdivi
                 meta.GPUCellSubdivision = subdivision
                 meta.GPULanesPerParticle = case.dims == 3 ? 1 : 0
                 meta.GPURadialInteractions = variant === :radial
+                if variant in (:scalar_sps, :radial_scalar_sps)
+                    meta.GPUScalarSPSViscosity = true
+                    meta.GPURadialInteractions = variant === :radial_scalar_sps
+                end
                 meta.GPUMaxStepsPerSync = 32
                 meta.GPUUseGraph = true
                 meta.GPUOutputQueueBytes = 8 * 1024^2
@@ -250,14 +254,14 @@ function streamed_output_differences(original_folder, radial_folder, name)
     return merge(data, (; exact_output = data.exact_output && grid_exact))
 end
 
-function long_radial_comparison(case, duration, subdivision)
+function long_radial_comparison(case, duration, subdivision; variant = :radial)
     return mktempdir() do folder
         original_folder, radial_folder = joinpath(folder, "reference"), joinpath(folder, "radial")
         mkpath(original_folder)
         mkpath(radial_folder)
         reference = measure_radial_run(case, :reference; duration, subdivision,
             save_location = original_folder, retain_output = false)
-        radial = measure_radial_run(case, :radial; duration, subdivision,
+        radial = measure_radial_run(case, variant; duration, subdivision,
             save_location = radial_folder, retain_output = false)
         output = streamed_output_differences(original_folder, radial_folder, radial.name)
         delta = merge(radial_state_differences(radial, reference), output)
@@ -268,8 +272,14 @@ end
 function check_radial_accuracy(delta, maximum_position_dx)
     maximum_position_dx === nothing && return nothing
     delta.position_dx <= maximum_position_dx ||
-        error("radial maximum position difference $(delta.position_dx) dx exceeds the required $maximum_position_dx dx")
+        error("optimized interaction maximum position difference $(delta.position_dx) dx exceeds the required $maximum_position_dx dx")
     return nothing
+end
+
+function with_benchmark_viscosity(case, viscosity)
+    viscosity === nothing && return case
+    build(T, save) = merge(case.build(T, save), (; SimViscosity = viscosity))
+    return BenchCase(case.name * "_" * string(nameof(typeof(viscosity))), case.dims, build)
 end
 
 """
@@ -277,10 +287,18 @@ Compare baseline, default and opt-in radial interactions at identical physics,
 precision, integration and output settings. Complete warm wall time includes
 input/allocation, upload, graph construction, simulation, all particle/grid output
 and file closing. Verification and Julia/package loading are excluded.
+`scalar_sps=true` also compares the independently selected SPS contraction and
+both stages together; the speed assertion then applies to scalar SPS alone.
+A viscosity override is applied identically to every variant and labeled in
+the case name; it must not be interpreted as speeding up the original example
+with a different viscosity. Long-run comparisons use scalar SPS alone when
+selected. Accuracy assertions apply to every optimized variant.
 """
 function benchmark_radial(; rounds = 5, duration = 0.03,
                           names = ["DamBreak3D_dp0.0085"], long_time = nothing,
                           minimum_reduction = nothing, maximum_position_dx = nothing,
+                          viscosity::Union{Nothing,SPHViscosity} = nothing,
+                          scalar_sps::Bool = false,
                           output_path = joinpath(@__DIR__, "radial_interactions_results.csv"))
     rounds >= 3 || throw(ArgumentError("at least three alternating rounds are required"))
     isfinite(duration) && duration > 0 || throw(ArgumentError("duration must be finite and positive"))
@@ -293,13 +311,15 @@ function benchmark_radial(; rounds = 5, duration = 0.03,
     cases = [BENCH_CASES; BenchCase("GeneratedStillWedge", 2, generated_wedge_case)]
     selected = filter(case -> any(name -> occursin(name, case.name), names), cases)
     isempty(selected) && throw(ArgumentError("no matching benchmark case"))
+    selected = map(case -> with_benchmark_viscosity(case, viscosity), selected)
     baseline = load_radial_baseline()
     println("Baseline ", RADIAL_BASELINE_REVISION, "; GPU ", CUDA.name(CUDA.device()), "; Julia ", VERSION)
     open(output_path, "w") do out
         println(out, "case,duration,round,variant,total_s,loop_s,steps,final_time,exact_state,exact_output,position_abs,position_dx,position_rms_dx,velocity_abs,velocity_rms,density_abs,density_rms,pressure_abs,acceleration_abs,output_position_abs,output_density_abs,output_time_abs")
         for case in selected
             subdivision = case.dims == 3 ? 2 : 1
-            variants = case.name == "GeneratedStillWedge" ? (:baseline, :reference) : (:baseline, :reference, :radial)
+            variants = startswith(case.name, "GeneratedStillWedge") ? (:baseline, :reference) :
+                scalar_sps ? (:baseline, :reference, :radial, :scalar_sps, :radial_scalar_sps) : (:baseline, :reference, :radial)
             times = [Float64[] for _ in variants]
             for variant in variants
                 Base.invokelatest(measure_radial_run, case, variant; baseline, duration, subdivision)
@@ -313,7 +333,7 @@ function benchmark_radial(; rounds = 5, duration = 0.03,
                 for index in eachindex(variants)
                     result = results[index]
                     delta = radial_differences(result, reference)
-                    if variants[index] !== :radial
+                    if variants[index] in (:baseline, :reference)
                         delta.exact_state && delta.exact_output || error("default path changed the baseline state or output")
                     end
                     push!(times[index], result.seconds)
@@ -323,7 +343,7 @@ function benchmark_radial(; rounds = 5, duration = 0.03,
                         delta.density, delta.density_rms, delta.pressure, delta.acceleration,
                         delta.output_position, delta.output_density, delta.output_time), ','))
                     flush(out)
-                    variants[index] === :radial && check_radial_accuracy(delta, maximum_position_dx)
+                    variants[index] in (:baseline, :reference) || check_radial_accuracy(delta, maximum_position_dx)
                 end
                 flush(out)
             end
@@ -333,16 +353,17 @@ function benchmark_radial(; rounds = 5, duration = 0.03,
                     case.name, string(variants[index]), median(times[index]), ratio, 100 * (1 - ratio))
             end
             if minimum_reduction !== nothing && :radial in variants
-                radial_index = findfirst(==(:radial), variants)
+                radial_index = findfirst(==(scalar_sps ? :scalar_sps : :radial), variants)
                 ratio = median(times[radial_index] ./ times[2])
                 ratio <= 1 - minimum_reduction ||
-                    error("radial total-time reduction is below $(100 * minimum_reduction)% for $(case.name); measurements saved to $output_path")
+                    error("$(variants[radial_index]) total-time reduction is below $(100 * minimum_reduction)% for $(case.name); measurements saved to $output_path")
             end
-            if long_time !== nothing && case.name != "GeneratedStillWedge"
-                comparison = Base.invokelatest(long_radial_comparison, case, long_time, subdivision)
+            if long_time !== nothing && !startswith(case.name, "GeneratedStillWedge")
+                optimized_variant = scalar_sps ? :scalar_sps : :radial
+                comparison = Base.invokelatest(long_radial_comparison, case, long_time, subdivision; variant = optimized_variant)
                 (; reference, radial) = comparison
-                for (variant, result) in ((:reference, reference), (:radial, radial))
-                    delta = variant === :radial ? comparison.delta :
+                for (variant, result) in ((:reference, reference), (optimized_variant, radial))
+                    delta = variant === optimized_variant ? comparison.delta :
                         merge(radial_state_differences(reference, reference),
                             (; exact_output = true, output_position = 0.0, output_density = 0.0, output_time = 0.0))
                     println(out, join((case.name, long_time, 0, variant, result.seconds, result.loop,
@@ -361,17 +382,19 @@ function benchmark_radial(; rounds = 5, duration = 0.03,
             flush(stdout)
         end
     end
-    println("Results: ", output_path, ". Radial arithmetic is not bitwise equivalent; validate accuracy for the intended case.")
+    println("Results: ", output_path, ". Reassociated arithmetic is not bitwise equivalent; validate accuracy for the intended case.")
 end
 
 function main_radial(args)
     rounds, duration, long_time, minimum_reduction, maximum_position_dx = 5, 0.03, nothing, nothing, nothing
+    viscosity = nothing
+    scalar_sps = false
     names = String[]
     output_path = joinpath(@__DIR__, "radial_interactions_results.csv")
     index = 1
     while index <= length(args)
         arg = args[index]
-        if arg in ("--rounds", "--time", "--long-time", "--assert-min-reduction", "--assert-max-position-dx", "--output")
+        if arg in ("--rounds", "--time", "--long-time", "--assert-min-reduction", "--assert-max-position-dx", "--viscosity", "--output")
             index < length(args) || throw(ArgumentError("missing value for $arg"))
             value = args[index + 1]
             if arg == "--rounds"
@@ -384,10 +407,16 @@ function main_radial(args)
                 minimum_reduction = parse(Float64, value)
             elseif arg == "--assert-max-position-dx"
                 maximum_position_dx = parse(Float64, value)
+            elseif arg == "--viscosity"
+                value == "laminar-sps" || throw(ArgumentError("expected --viscosity laminar-sps"))
+                viscosity = LaminarSPS()
             else
                 output_path = value
             end
             index += 2
+        elseif arg == "--scalar-sps"
+            scalar_sps = true
+            index += 1
         elseif startswith(arg, "--")
             throw(ArgumentError("unknown option $arg"))
         else
@@ -396,7 +425,7 @@ function main_radial(args)
         end
     end
     isempty(names) && push!(names, "DamBreak3D_dp0.0085")
-    return benchmark_radial(; rounds, duration, long_time, minimum_reduction, maximum_position_dx, names, output_path)
+    return benchmark_radial(; rounds, duration, long_time, minimum_reduction, maximum_position_dx, viscosity, scalar_sps, names, output_path)
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

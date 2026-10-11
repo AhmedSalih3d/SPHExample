@@ -43,10 +43,31 @@ end
     @test_throws ArgumentError benchmark_radial(maximum_position_dx = -1.0)
     @test_throws ArgumentError main_radial(["--unknown"])
     @test_throws ArgumentError main_radial(["--time"])
+    @test_throws ArgumentError main_radial(["--viscosity"])
+    @test_throws ArgumentError main_radial(["--viscosity", "unknown"])
     @test check_radial_accuracy((; position_dx = 0.05), 0.1) === nothing
     @test check_radial_accuracy((; position_dx = 0.1), 0.1) === nothing
     @test_throws r"maximum position difference.*exceeds" check_radial_accuracy((; position_dx = 0.11), 0.1)
     @test_throws r"maximum position difference.*exceeds" check_radial_accuracy((; position_dx = 215.85), 0.1)
+end
+
+@testset "SPS benchmark overrides both compared variants consistently" begin
+    original = only(select_cases(["DamBreak3D_dp0.0085"]))
+    @test with_benchmark_viscosity(original, nothing) === original
+    viscosity = LaminarSPS()
+    case = with_benchmark_viscosity(original, viscosity)
+    @test case.name == original.name * "_LaminarSPS"
+    @test case.dims == original.dims
+    mktempdir() do save
+        expected = original.build(Float32, save)
+        kwargs = case.build(Float32, save)
+        @test kwargs.SimViscosity === viscosity
+        @test kwargs.SimDensityDiffusion === expected.SimDensityDiffusion
+        @test kwargs.SimConstants == expected.SimConstants
+        @test kwargs.SimKernel == expected.SimKernel
+        @test kwargs.SimTimeStepping === expected.SimTimeStepping
+        @test [geom.CSVFile for geom in kwargs.SimGeometry] == [geom.CSVFile for geom in expected.SimGeometry]
+    end
 end
 
 @testset "streamed radial output comparison reports differences" begin

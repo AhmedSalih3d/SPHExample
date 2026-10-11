@@ -1079,7 +1079,8 @@ definitions in `benchmark/cases.jl` construct against either package.
 | `GPUMaxCells` | `50_000_000` | Abort with a clear message if the neighbour grid would need more cells (a particle escaped). |
 | `GPUInteractionThreads` | `128` | Threads per block of the interaction and mDBC kernels. |
 | `GPULanesPerParticle` | `0` (auto) | Warp lanes that share one particle's neighbour loop (1, 2, 4, ... 32). The automatic choice targets roughly one resident thread per particle-lane in 3D and one quarter of that in 2D, where neighborhoods generally contain fewer candidates; it caps lanes at 32 and combines them with warp shuffles. Explicit settings are unchanged. Use `1` for large cases and together with `GPUCellSubdivision = 2` (see "Lanes per particle" above). |
-| `GPURadialInteractions` | `false` | **Experimental** scalar Wendland C2 contractions and direct symmetric viscosity. Supported with `ZeroDensityDiffusion`, `LinearDensityDiffusion` or `ZeroGravityLinearDensityDiffusion`, and `ZeroViscosity`, `ArtificialViscosity` or `Laminar`, in 2D/3D Float32/Float64. Other combinations warn and use reference interactions. Changes floating-point rounding; full-duration 3D validation showed large trajectory differences. See below before opting in. |
+| `GPURadialInteractions` | `false` | **Experimental** scalar Wendland C2 contractions. Supported with `ZeroDensityDiffusion`, `LinearDensityDiffusion` or `ZeroGravityLinearDensityDiffusion`, and `ZeroViscosity`, `ArtificialViscosity`, `Laminar` or `LaminarSPS`, in 2D/3D Float32/Float64. SPS retains its original ordered tensor calculation; the other supported viscosities use direct symmetric evaluation. Other combinations warn and use reference interactions. Changes floating-point rounding; see below before opting in. |
+| `GPUScalarSPSViscosity` | `false` | **Experimental**, separately selectable rank-one SPS stress contraction with `LaminarSPS` in 2D/3D Float32/Float64. Preserves the closure and CPU pair ordering, but changes rounding. Does not require `GPURadialInteractions`. Other viscosities warn and use their existing path. |
 | `GPUBoundaryForces` | `true` | Evaluate the momentum equation for boundary particles too, as the CPU does (their acceleration only enters the force based time step limit). `false` skips it and saves 10-20 % in cases with many boundary particles, at the price of a slightly different adaptive time step. |
 | `GPUAsyncOutput` | `true` | Write output files on a task while the GPU continues (see "Asynchronous output"). |
 | `GPUMaxStepsPerSync` | `32` | Upper bound on the steps enqueued between two host read backs of the device resident step state. The actual batch is the estimated number of steps until the next cell list rebuild or output. `1` reproduces a synchronization per step. |
@@ -1096,14 +1097,16 @@ in either case (that is the point precision of the writer).
 ### Experimental radial interaction arithmetic
 
 `GPURadialInteractions = true` enables an explicitly experimental interaction
-specialization; no example enables it by default. With Wendland C2,
+specialization; the package default is `false`. With Wendland C2,
 `grad(W) = factor * separation`, allowing continuity and linear diffusion
 contractions to use scalar dot products and the already-computed squared
 distance. Diffusion and viscosity share the reciprocal of `distance^2 + eta^2`.
 Zero/artificial/laminar viscosity is evaluated directly from the target
 particle's viewpoint instead of converting to and from the CPU pair orientation.
-Diffusion still uses its original pair orientation and fluid gating. SPS,
-nonlinear diffusion, custom models and other kernels retain reference arithmetic.
+Diffusion still uses its original pair orientation and fluid gating. With SPS,
+continuity and linear diffusion can now use the radial identities while viscosity
+retains its original tensor arithmetic and pair ordering. Nonlinear diffusion,
+custom models and other kernels retain reference interactions.
 
 The option does not change precision, physics parameters, the timestep scheme,
 neighbor selection, boundary forces, shifting or output fields. It introduces
@@ -1112,6 +1115,81 @@ kernel, so default-off runs retain reference arithmetic. Changing the option
 between timestep intervals invalidates cached graphs. mDBC interpolation is
 unchanged, including Updated mDBC boundary activation and tangential velocity.
 Direct kernel callers can use `launch_interactions!(...; radial = Val(true))`.
+
+`GPUScalarSPSViscosity = true` is a separate second stage for `LaminarSPS`.
+It contracts the existing stress tensors using the rank-one identities
+`(u * g') * g = u * dot(g, g)` and
+`sum(abs2, u * g') = dot(u, u) * dot(g, g)`. Shear and isotropic stress terms
+remain present; the force is not assumed radial. The original laminar term,
+SPS coefficients and CPU pair orientation are preserved. There is no direct
+pair-order simplification or changed turbulence closure. This option has its
+own graph-cache invalidation and introduces no extra device buffers or launches.
+
+The stages are independently selectable:
+
+```julia
+# Stage one: radial continuity/diffusion, original SPS viscosity.
+meta.GPURadialInteractions = true
+meta.GPUScalarSPSViscosity = false
+
+# Stage two only: original continuity/diffusion, rank-one SPS stress.
+meta.GPURadialInteractions = false
+meta.GPUScalarSPSViscosity = true
+```
+
+Both flags default to `false`; the existing solver remains the reference.
+Direct kernel callers select the second stage with `scalar_sps = Val(true)`.
+Both reassociations warn explicitly and need case-specific accuracy/convergence
+validation. The default kernels and custom viscosity models are unchanged.
+
+#### SPS measurements
+
+Measured on 2026-10-11 with Julia 1.12.7 and an RTX A1000 Laptop GPU. Five warmed
+rounds alternated baseline, reference, radial-only, scalar-SPS-only and both
+stages. Complete wall time includes input preparation, upload, graph construction,
+simulation, logging, particle/grid output and file closing. Output verification
+and Julia/package loading are excluded.
+
+| SPS workload | Reference total | Scalar SPS total | Median paired time reduction |
+| --- | ---: | ---: | ---: |
+| 171,496-particle 3D dam-break geometry, **SPS on both sides**, 0.03 s simulated | 18.222 s | 3.833 s | **79.0%** |
+| 128,775-particle MovingSquare with its native SPS/shifting, 0.15 s simulated | 1.106 s | 1.073 s | 4.8% |
+
+The 3D case is an explicitly labeled viscosity override, not a comparison of
+SPS against artificial viscosity. Both variants took 339 steps with identical
+settings. Scalar-SPS-only/reference ratios ranged from 0.208 to 0.222; the
+unchanged baseline/reference ratio was 1.003. Radial continuity/diffusion alone
+was about 1.1% slower in this SPS case, so the gain comes from the separate
+stress contraction, not stage one. The native 2D timing was noisier; combining
+both stages measured 7.5% less total time, but individual rounds regressed.
+Do not infer a universal 79% speedup from these results.
+
+**These are arithmetic performance measurements, not a claim of identical
+long-run physics.** A single longer 0.3 s SPS 3D comparison retained 3,385 steps
+on both sides and took 196.905 s reference versus 39.997 s scalar SPS, but final
+positions differed by up to **0.0174 m** (2.05 spacings), RMS 0.0289 spacings.
+Maximum velocity/density differences were 0.264 m/s and 6.03 kg/m^3. For the
+moving/shifting case at 0.5 s, position differences reached **0.930 m**, velocity
+6.36 m/s and density 87.6 kg/m^3. Thus the latter does **not** establish equivalent
+trajectories. Use both experimental flags only after case-specific accuracy
+and convergence checks. The baseline/default-off outputs remained bitwise equal,
+and the small default-off StillWedge comparison was within timing noise.
+
+Reproduce the separate-stage comparison:
+
+```bash
+# Same 3D geometry and SPS model for all variants; assert >=5% total gain:
+julia --project=. -t 4,0 benchmark/radial_interactions.jl --time 0.03 --long-time 0.3 --viscosity laminar-sps --scalar-sps --assert-min-reduction 0.05 --output benchmark/sps_interactions_3d_results.csv DamBreak3D_dp0.0085
+# Native SPS/shifting case:
+julia --project=. -t 4,0 benchmark/radial_interactions.jl --time 0.15 --long-time 0.5 --scalar-sps --output benchmark/sps_interactions_moving_results.csv MovingSquare2D_dp0.02
+```
+
+With `--scalar-sps`, the speed assertion checks scalar SPS alone and the
+long-run comparison uses that same option without radial continuity/diffusion.
+`--assert-max-position-dx` independently rejects excessive position differences.
+Raw results: [3D SPS](benchmark/sps_interactions_3d_results.csv),
+[MovingSquare SPS](benchmark/sps_interactions_moving_results.csv) and
+[small default control](benchmark/sps_small_default_results.csv).
 
 **Mathematical equivalence is not validated trajectory equivalence.** The
 reassociated products change rounding and FMA opportunities. Five warmed

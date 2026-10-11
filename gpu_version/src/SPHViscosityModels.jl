@@ -143,4 +143,26 @@ end
     return t1 + dτdtᵢ, t2 + dτdtⱼ
 end
 
+@inline function scalar_sps_viscosity(kernel, constants, x, v, gradient, d², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹)
+    laminar, _ = compute_viscosity(Laminar(), kernel, constants, nothing,
+        x, v, gradient, d², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹, 1, 2)
+    T = eltype(x)
+    ci = constants.m₀ * ρⱼ⁻¹
+    cj = constants.m₀ * ρᵢ⁻¹
+    vv = dot(v, v)
+    gg = dot(gradient, gradient)
+    vg = dot(v, gradient)
+    # S_i = -ci * v * gradient': use its Frobenius norm and action on gradient.
+    norm_i = sqrt(T(2) * (ci * ci) * vv * gg)
+    norm_j = sqrt(T(2) * (cj * cj) * vv * gg)
+    smagorinsky = (constants.SmagorinskyConstant * constants.dx)^2
+    νti = smagorinsky * norm_i
+    νtj = smagorinsky * norm_j
+    shear = T(2) * (νti * ρᵢ * ci + νtj * ρⱼ * cj)
+    isotropic = (T(1) / T(3)) * shear * vg -
+        (T(2) / T(3)) * constants.BlinConstant * constants.dx^2 * (ρᵢ * norm_i^2 + ρⱼ * norm_j^2)
+    stress_gradient = (-shear * gg) * v + isotropic * gradient
+    return laminar + (constants.m₀ * ρᵢ⁻¹ * ρⱼ⁻¹) * stress_gradient
+end
+
 end  # module SPHViscosityModels

@@ -43,7 +43,12 @@ end
         kernel = SPHKernelInstance{D,T}(WendlandC2(); dx = constants.dx)
         @test GK.radial_interactions_supported(kernel, LinearDensityDiffusion(), ArtificialViscosity())
         @test !GK.radial_interactions_supported(kernel, ComplexDensityDiffusion(), ArtificialViscosity())
-        @test !GK.radial_interactions_supported(kernel, LinearDensityDiffusion(), LaminarSPS())
+        @test GK.radial_interactions_supported(kernel, LinearDensityDiffusion(), LaminarSPS())
+        @test GK.radial_interactions_supported(kernel, ZeroGravityLinearDensityDiffusion(), LaminarSPS())
+        @test !GK.radial_interactions_supported(kernel, ComplexDensityDiffusion(), LaminarSPS())
+        @test GK.scalar_sps_supported(kernel, LaminarSPS())
+        @test !GK.scalar_sps_supported(kernel, ArtificialViscosity())
+        @test !GK.scalar_sps_supported(kernel, OrderedViscosity())
         @test !GK.radial_interactions_supported(kernel, OrderedDiffusion(), ArtificialViscosity())
         @test !GK.radial_interactions_supported(kernel, LinearDensityDiffusion(), OrderedViscosity())
         cubic = SPHKernelInstance{D,T}(CubicSpline{T}(); dx = constants.dx)
@@ -90,9 +95,38 @@ end
         mktempdir() do save
             default = SimulationMetaData{D,T}(SimulationName = "Default", SaveLocation = save)
             @test !default.GPURadialInteractions
+            @test !default.GPUScalarSPSViscosity
             enabled = SimulationMetaData{D,T}(SimulationName = "Radial", SaveLocation = save,
                 GPURadialInteractions = true)
             @test enabled.GPURadialInteractions
+        end
+    end
+end
+
+@testset "rank-one SPS contraction preserves the modeled stress" begin
+    rng = MersenneTwister(9137)
+    for T in (Float32, Float64), D in (2, 3)
+        constants = SimulationConstants{T}(dx = T(0.02), m₀ = T(1000 * 0.02^D), ν₀ = T(1e-4))
+        for kind in (WendlandC2(), CubicSpline{T}())
+            kernel = SPHKernelInstance{D,T}(kind; dx = constants.dx)
+            @test GK.scalar_sps_supported(kernel, LaminarSPS())
+            for index in 1:100
+                x = SVector{D,T}(randn(rng, T, D)) * T(0.01)
+                v = index % 10 == 0 ? zero(x) : SVector{D,T}(randn(rng, T, D))
+                # Nonradial gradients verify that the stress is not reduced to a radial force.
+                gradient = SVector{D,T}(randn(rng, T, D)) * T(100)
+                ρᵢ, ρⱼ = T(900) + T(200) * rand(rng, T), T(900) + T(200) * rand(rng, T)
+                for sign in (one(T), -one(T))
+                    reference, _ = compute_viscosity(LaminarSPS(), kernel, constants, nothing,
+                        sign * x, sign * v, sign * gradient, dot(x, x),
+                        ρᵢ, ρⱼ, inv(ρᵢ), inv(ρⱼ), 1, 2)
+                    scalar = VM.scalar_sps_viscosity(kernel, constants, sign * x, sign * v,
+                        sign * gradient, dot(x, x), ρᵢ, ρⱼ, inv(ρᵢ), inv(ρⱼ))
+                    @test isapprox(scalar, reference; rtol = T === Float32 ? 8e-6 : 8e-14,
+                        atol = T === Float32 ? 1e-9 : 1e-18)
+                    @test all(isfinite, scalar)
+                end
+            end
         end
     end
 end
@@ -129,15 +163,16 @@ function interaction_fixture(D, T, TP; reach = 1, kernel_type = WendlandC2())
 end
 
 function interaction_fields(f, diffusion, viscosity; radial = nothing, lanes = 1, boundary_forces = true,
-                            boundary_data = nothing, step = f.step)
+                            boundary_data = nothing, step = f.step, scalar_sps = nothing)
     (; gpu, cells, support) = f
     extra = radial === nothing ? (;) : (; radial = Val(radial))
+    scalar_extra = scalar_sps === nothing ? (;) : (; scalar_sps = Val(scalar_sps))
     GK.launch_interactions!(support.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient,
         support.∇Cᵢ, support.∇◌rᵢ, gpu.Position, gpu.Density, support.InvDensity, gpu.Pressure,
         gpu.Velocity, gpu.Type, cells.CellStart, gpu.CellID, cells.grid_dev, step,
         diffusion, viscosity, f.kernel, f.constants, Val(true), Val(true);
         lanes = Val(lanes), boundary_forces = Val(boundary_forces), pos_cells = support.PosCells,
-        boundary_data, extra...)
+        boundary_data, extra..., scalar_extra...)
     return map(Array, (support.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient, support.∇Cᵢ, support.∇◌rᵢ))
 end
 
@@ -165,7 +200,7 @@ function simulation_fixture(D, T, TP, boundary_mode; floating = false)
 end
 
 function simulate(f; radial, graph, scheme, precision = Float32, position_type = Float64,
-                  diffusion = LinearDensityDiffusion(), viscosity = ArtificialViscosity())
+                  diffusion = LinearDensityDiffusion(), viscosity = ArtificialViscosity(), scalar_sps = false)
     return mktempdir() do save
         D = length(eltype(f.geometry[1].Particles.Position))
         T = precision
@@ -174,6 +209,7 @@ function simulate(f; radial, graph, scheme, precision = Float32, position_type =
             SimulationName = "Radial", SaveLocation = save, SimulationTime = T(0.003),
             OutputTimes = T(0.001), GPUDoublePosition = position_type !== T, GPUUseGraph = graph,
             GPUMaxStepsPerSync = 8, GPURadialInteractions = radial, OutputVariables = fields,
+            GPUScalarSPSViscosity = scalar_sps,
             GPUOutputQueueBytes = 1024^2, VisualizeInParaview = false, OpenLogFile = false, ExportGridCells = true)
         host = AllocateDataStructures(f.geometry, meta)
         logger = SimulationLogger(save)
@@ -196,12 +232,12 @@ function simulate(f; radial, graph, scheme, precision = Float32, position_type =
     end
 end
 
-function mode_switch_run(graph)
+function mode_switch_run(graph; scalar_sps = false)
     D, T, TP = 2, Float32, Float64
     f = simulation_fixture(D, T, TP, NoMDBC)
     return mktempdir() do save
         meta = SimulationMetaData{D,T}(SimulationName = "Switch", SaveLocation = save,
-            SimulationTime = T(0.009), OutputTimes = T(0.003), OutputIterationCounter = 1,
+            SimulationTime = T(scalar_sps ? 0.015 : 0.009), OutputTimes = T(0.003), OutputIterationCounter = 1,
             GPUDoublePosition = true, GPUUseGraph = graph, GPUMaxStepsPerSync = 8)
         meta.TimeSteppingMode = SymplecticTimeStepping()
         host = AllocateDataStructures(f.geometry, meta)
@@ -213,11 +249,16 @@ function mode_switch_run(graph)
         motion = MotionArrays(f.geometry, host)
         state = StepState{T}(dx = one(T) + f.kernel.h)
         old_graphs = CUDA.CuGraphExec[]
-        for mode in (false, true, false)
+        modes = scalar_sps ? ((false, false), (true, false), (false, true), (true, true), (false, false)) :
+            ((false, false), (true, false), (false, false))
+        viscosity = scalar_sps ? LaminarSPS() : ArtificialViscosity()
+        for (mode, scalar_mode) in modes
             meta.GPURadialInteractions = mode
-            SimulationLoop(LinearDensityDiffusion(), ArtificialViscosity(), f.kernel,
+            meta.GPUScalarSPSViscosity = scalar_mode
+            SimulationLoop(LinearDensityDiffusion(), viscosity, f.kernel,
                 meta, f.constants, gpu, cells, support, reduction, motion, state)
             @test state.radial_interactions == mode
+            @test state.scalar_sps_viscosity == scalar_mode
             if graph
                 @test !isempty(state.graphs)
                 @test all(exec -> all(old -> exec !== old, old_graphs), values(state.graphs))
@@ -238,7 +279,8 @@ if CUDA.functional()
             f = interaction_fixture(D, T, TP; reach)
             tolerance = T === Float32 ? 8e-6 : 3e-13
             for (diffusion, viscosity) in ((LinearDensityDiffusion(), ArtificialViscosity()),
-                (ZeroGravityLinearDensityDiffusion(), Laminar()), (ZeroDensityDiffusion(), ZeroViscosity()))
+                (ZeroGravityLinearDensityDiffusion(), Laminar()), (ZeroDensityDiffusion(), ZeroViscosity()),
+                (LinearDensityDiffusion(), LaminarSPS()), (ZeroGravityLinearDensityDiffusion(), LaminarSPS()))
                 for boundary in (nothing, f.support.boundary_data), forces in (false, true)
                     reference = interaction_fields(f, diffusion, viscosity; lanes, boundary_data = boundary, boundary_forces = forces)
                     explicit = interaction_fields(f, diffusion, viscosity; radial = false, lanes,
@@ -247,11 +289,22 @@ if CUDA.functional()
                     optimized = interaction_fields(f, diffusion, viscosity; radial = true, lanes,
                         boundary_data = boundary, boundary_forces = forces)
                     test_fields_close(optimized, reference, tolerance)
+                    if viscosity isa LaminarSPS
+                        @test optimized[2] == reference[2]
+                        for radial_mode in (false, true)
+                            scalar = interaction_fields(f, diffusion, viscosity; radial = radial_mode, scalar_sps = true,
+                                lanes, boundary_data = boundary, boundary_forces = forces)
+                            test_fields_close(scalar, radial_mode ? optimized : reference, tolerance)
+                        end
+                    else
+                        @test interaction_fields(f, diffusion, viscosity; scalar_sps = true, lanes,
+                            boundary_data = boundary, boundary_forces = forces) == reference
+                    end
                 end
             end
             for (diffusion, viscosity) in ((OrderedDiffusion(), ArtificialViscosity()),
                 (LinearDensityDiffusion(), OrderedViscosity()), (ComplexDensityDiffusion(), Laminar()),
-                (ZeroGravityLinearDensityDiffusion(), LaminarSPS()))
+                (ComplexDensityDiffusion(), LaminarSPS()))
                 reference = interaction_fields(f, diffusion, viscosity; lanes)
                 @test interaction_fields(f, diffusion, viscosity; radial = true, lanes) == reference
             end
@@ -264,6 +317,10 @@ if CUDA.functional()
         interaction_fields(f, LinearDensityDiffusion(), ArtificialViscosity(); radial = true)
         @test CUDA.@allocated(interaction_fields(f, LinearDensityDiffusion(), ArtificialViscosity(); radial = false)) == 0
         @test CUDA.@allocated(interaction_fields(f, LinearDensityDiffusion(), ArtificialViscosity(); radial = true)) == 0
+        interaction_fields(f, LinearDensityDiffusion(), LaminarSPS(); scalar_sps = true)
+        @test CUDA.@allocated(interaction_fields(f, LinearDensityDiffusion(), LaminarSPS(); scalar_sps = true)) == 0
+        interaction_fields(f, LinearDensityDiffusion(), LaminarSPS(); radial = true, scalar_sps = true)
+        @test CUDA.@allocated(interaction_fields(f, LinearDensityDiffusion(), LaminarSPS(); radial = true, scalar_sps = true)) == 0
         before = interaction_fields(f, LinearDensityDiffusion(), ArtificialViscosity())
         state = StepState{Float32}()
         SPHExampleGPU.GPUStepState.set_slot!(state.i, state.ih, SPHExampleGPU.GPUStepState.I_STOP, SPHExampleGPU.GPUStepState.STOP_OUTPUT)
@@ -289,10 +346,43 @@ if CUDA.functional()
             end
         end
         @test mode_switch_run(true) == mode_switch_run(false)
+        @test mode_switch_run(false; scalar_sps = true) == mode_switch_run(true; scalar_sps = true)
+        for (D, T, TP, B) in ((2, Float32, Float32, NoMDBC),
+                              (2, Float32, Float64, SimpleMDBC),
+                              (2, Float64, Float64, UpdatedMDBC),
+                              (3, Float32, Float64, NoMDBC))
+            f = simulation_fixture(D, T, TP, B)
+            for scheme in (SymplecticTimeStepping(), SingleNeighborTimeStepping())
+                reference = simulate(f; radial = false, graph = false, scheme,
+                    precision = T, position_type = TP, viscosity = LaminarSPS())
+                optimized = simulate(f; radial = true, graph = false, scheme,
+                    precision = T, position_type = TP, viscosity = LaminarSPS())
+                replay = simulate(f; radial = true, graph = true, scheme,
+                    precision = T, position_type = TP, viscosity = LaminarSPS())
+                @test replay == optimized
+                @test optimized.steps == reference.steps
+                @test optimized.output.fields == reference.output.fields
+                @test optimized.time ≈ reference.time rtol = T === Float32 ? 2e-5 : 2e-13
+                test_fields_close(optimized.state, reference.state, T === Float32 ? 5e-5 : 2e-12)
+                for radial_mode in (false, true)
+                    scalar = simulate(f; radial = radial_mode, scalar_sps = true, graph = false, scheme,
+                        precision = T, position_type = TP, viscosity = LaminarSPS())
+                    scalar_replay = simulate(f; radial = radial_mode, scalar_sps = true, graph = true, scheme,
+                        precision = T, position_type = TP, viscosity = LaminarSPS())
+                    @test scalar_replay == scalar
+                    @test scalar.steps == reference.steps
+                    @test scalar.output.fields == reference.output.fields
+                    test_fields_close(scalar.state, reference.state, T === Float32 ? 5e-5 : 2e-12)
+                end
+            end
+        end
         f = simulation_fixture(2, Float32, Float64, NoMDBC)
         reference = simulate(f; radial = false, graph = true, scheme = SymplecticTimeStepping(), viscosity = OrderedViscosity())
         result = @test_logs (:warn, r"GPURadialInteractions.*reference interactions") simulate(f;
             radial = true, graph = true, scheme = SymplecticTimeStepping(), viscosity = OrderedViscosity())
+        @test result == reference
+        result = @test_logs (:warn, r"GPUScalarSPSViscosity.*reference viscosity") simulate(f;
+            radial = false, scalar_sps = true, graph = true, scheme = SymplecticTimeStepping(), viscosity = OrderedViscosity())
         @test result == reference
     end
 else

@@ -66,10 +66,16 @@ the host particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so
 that they hold `Float64` positions from the input files onwards.
 
 `GPURadialInteractions = true` opts into experimental scalar Wendland C2 pair contractions
-for supported linear diffusion and symmetric viscosity models. The default is
-`false`, preserving the reference arithmetic. Opting in changes rounding and
-can amplify trajectory differences, so accuracy and convergence must be
-validated for the intended simulation; unsupported models use the reference path.
+for supported linear diffusion and built-in viscosity models. SPS keeps its
+original viscosity arithmetic and pair ordering. The default is `false`,
+preserving the reference arithmetic. Opting in changes rounding and can amplify
+trajectory differences, so accuracy and convergence must be validated for the
+intended simulation; unsupported models use the reference path.
+
+`GPUScalarSPSViscosity = true` separately opts into a rank-one contraction of
+the existing SPS stress tensors. Pair orientation and the closure are unchanged,
+but rounding can differ. It defaults to `false` and does not require radial
+continuity/diffusion. Other viscosity models retain their existing path.
 """
 mutable struct SimulationMetaData{Dimensions,
                                   FloatType <: AbstractFloat,
@@ -102,6 +108,7 @@ mutable struct SimulationMetaData{Dimensions,
     GPUInteractionThreads::Int   # threads per block for the interaction kernels
     GPULanesPerParticle::Int     # warp lanes per particle in the gather kernels (0 = automatic)
     GPURadialInteractions::Bool  # opt-in scalar Wendland pair arithmetic (changes rounding)
+    GPUScalarSPSViscosity::Bool   # separate opt-in rank-one SPS stress arithmetic (changes rounding)
     GPUBoundaryForces::Bool      # also evaluate the momentum equation for boundary particles (CPU parity)
     GPUAsyncOutput::Bool         # write output files on a Julia task while the GPU continues
     GPUMaxStepsPerSync::Int      # upper bound on the time steps enqueued between two host read backs
@@ -211,6 +218,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUInteractionThreads::Int              = 128,
         GPULanesPerParticle::Int                = 0,
         GPURadialInteractions::Bool             = false,
+        GPUScalarSPSViscosity::Bool              = false,
         GPUBoundaryForces::Bool                 = true,
         GPUAsyncOutput::Bool                    = true,
         GPUMaxStepsPerSync::Int                 = 32,
@@ -231,7 +239,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         FloatType(CurrentTimeStep), FloatType(TotalTime), FloatType(SimulationTime),
         IndexCounter, VisualizeInParaview, ExportSingleVTKHDF, ExportGridCells,
         OutputVariables, OpenLogFile, TimeSteppingMode,
-        GPUSyncTimers, GPUDeterministicSort, GPUMaxCells, GPUInteractionThreads, GPULanesPerParticle, GPURadialInteractions,
+        GPUSyncTimers, GPUDeterministicSort, GPUMaxCells, GPUInteractionThreads, GPULanesPerParticle, GPURadialInteractions, GPUScalarSPSViscosity,
         GPUBoundaryForces, GPUAsyncOutput, GPUMaxStepsPerSync, GPUUseGraph, GPUCellSubdivision,
         GPUDoublePosition, GPUOutputQueueBytes, GPUOutputBufferBytes,
     )

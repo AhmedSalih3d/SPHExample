@@ -57,7 +57,7 @@ using ..SimulationMetaDataConfiguration: SimpleMDBC, UpdatedMDBC
 
 export launch_interactions!, launch_mdbc!, launch_motion!, launch_half_step!, launch_final_step!,
        launch_inv_density!, launch_finish!, launch_commit!, launch_step_reduction!, launch_pos_cells!,
-       step_map, step_reduce, choose_lanes, radial_interactions_supported, ELEMENTWISE_THREADS
+       step_map, step_reduce, choose_lanes, radial_interactions_supported, scalar_sps_supported, ELEMENTWISE_THREADS
 
 const ELEMENTWISE_THREADS = REDUCE_THREADS
 const FULL_MASK = 0xffffffff
@@ -72,13 +72,27 @@ const FULL_MASK = 0xffffffff
 
 Whether the opt-in radial specialization is implemented for this combination:
 2D/3D Float32/Float64 Wendland C2, zero/linear density diffusion, and
-zero/artificial/laminar viscosity. This is a capability check, not an accuracy
-or performance guarantee. Unsupported combinations use reference interactions.
+zero/artificial/laminar/SPS viscosity. SPS retains its original tensor
+calculation and CPU pair orientation; only continuity and diffusion use radial
+contractions. This is a capability check, not an accuracy or performance
+guarantee. Unsupported combinations use reference interactions.
 """
 radial_interactions_supported(kernel, diffusion, viscosity) = false
 function radial_interactions_supported(::SPHKernelInstance{<:WendlandC2, D, T},
                                        ::Union{ZeroDensityDiffusion, LinearDensityDiffusion, ZeroGravityLinearDensityDiffusion},
-                                       ::Union{ZeroViscosity, ArtificialViscosity, Laminar}) where {D, T}
+                                       ::Union{ZeroViscosity, ArtificialViscosity, Laminar, LaminarSPS}) where {D, T}
+    return D in (2, 3) && T in (Float32, Float64)
+end
+
+"""
+    scalar_sps_supported(kernel, viscosity) -> Bool
+
+Whether the separate opt-in rank-one SPS stress contraction is implemented:
+2D/3D Float32/Float64 with `LaminarSPS`. The original pair orientation and
+closure are retained, but reassociated arithmetic can change rounding.
+"""
+scalar_sps_supported(kernel, viscosity) = false
+function scalar_sps_supported(::SPHKernelInstance{K, D, T}, ::LaminarSPS) where {K, D, T}
     return D in (2, 3) && T in (Float32, Float64)
 end
 
@@ -264,7 +278,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                              CellStart, CellID, gridarg, step,
                              SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
                              ::Val{FlagKernel}, ::Val{FlagShift}, ::Val{BoundaryForces}, ::Val{K},
-                             boundary_data, n::Int32, ::Val{Radial} = Val(false)) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial}
+                             boundary_data, n::Int32, ::Val{Radial} = Val(false), ::Val{ScalarSPS} = Val(false)) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -362,7 +376,12 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         if forces
                             viscous_velocity = boundary_viscous_velocity(boundary_data, Velocity, ParticleType, i) -
                                                boundary_viscous_velocity(boundary_data, Velocity, ParticleType, j)
-                            if Radial
+                            if ScalarSPS
+                                v1 = SPHViscosityModels.scalar_sps_viscosity(SimKernel, SimConstants,
+                                    sgn * xᵢⱼ, sgn * viscous_velocity, sgn * ∇ᵢWᵢⱼ, xᵢⱼ²,
+                                    ρa, ρb, ρa⁻¹, ρb⁻¹)
+                                visc = sgn * v1
+                            elseif Radial && !(SimViscosity isa LaminarSPS)
                                 visc = SPHViscosityModels.radial_viscosity(SimViscosity, SimKernel, SimConstants,
                                     xᵢⱼ, viscous_velocity, ∇ᵢWᵢⱼ, ρᵢ, ρⱼ, inverse_distance)
                             else
@@ -427,7 +446,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
 end
 
 """
-    launch_interactions!(...; threads, lanes, boundary_forces, pos_cells, radial)
+    launch_interactions!(...; threads, lanes, boundary_forces, pos_cells, radial, scalar_sps)
 
 Launch the gather interaction kernel. `Position`, `Density`, `InvDensity`,
 `Pressure` and `Velocity` are the arrays of the state being evaluated (the
@@ -445,8 +464,13 @@ working precision (the pair vectors are then formed from it, see
 `GPUCellGrid`); `nothing` forms them from `Position` directly.
 `radial = Val(true)` opts into scalar Wendland contractions and direct
 symmetric viscosity. It changes floating-point rounding, not the equations
-or pair ordering of density diffusion. Unsupported kernel/model combinations
-use the reference specialization; the default is `Val(false)`.
+or pair ordering of density diffusion. SPS viscosity retains the original
+tensor arithmetic and pair ordering while continuity and diffusion are
+optimized. Unsupported kernel/model combinations use the reference
+specialization; the default is `Val(false)`.
+`scalar_sps = Val(true)` separately opts into the rank-one SPS stress
+contraction while retaining its pair orientation and closure. It can be
+selected without radial continuity/diffusion, and changes rounding.
 """
 function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
                               Position, Density, InvDensity, Pressure, Velocity, ParticleType,
@@ -454,7 +478,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
                               SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
                               FlagKernel::Val, FlagShift::Val; threads::Integer = 128, lanes::Val = Val(1),
                               boundary_forces::Val = Val(true), pos_cells = nothing, boundary_data = nothing,
-                              radial::Val = Val(false))
+                              radial::Val = Val(false), scalar_sps::Val = Val(false))
     n = length(Position)
     n == 0 && return nothing
     K = typeof(lanes).parameters[1]
@@ -462,12 +486,13 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
     SimParticles = (Position = Position, Density = Density, Velocity = Velocity, Pressure = Pressure,
                     Type = ParticleType)
     use_radial = Val(typeof(radial).parameters[1] && radial_interactions_supported(SimKernel, SimDensityDiffusion, SimViscosity))
+    use_scalar_sps = Val(typeof(scalar_sps).parameters[1] && scalar_sps_supported(SimKernel, SimViscosity))
     @cuda threads=threads blocks=cld(n * K, threads) interaction_kernel!(
         dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
         Pairs, Position, Density, InvDensity, Pressure, Velocity, ParticleType, SimParticles,
         CellStart, CellID, grid, step,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, Int32(n), use_radial)
+        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, Int32(n), use_radial, use_scalar_sps)
     return nothing
 end
 

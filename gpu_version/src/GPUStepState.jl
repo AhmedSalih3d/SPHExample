@@ -72,6 +72,7 @@ mutable struct StepState{T}
     primed::Bool        # the reduction workspace holds a valid reduction for the next `dt`
     readbacks::Int      # number of host read backs (device synchronizations of the loop)
     radial_interactions::Bool
+    scalar_sps_viscosity::Bool
     graphs::Dict{Tuple{UInt, Int, Int}, CUDA.CuGraphExec}
 end
 
@@ -89,7 +90,7 @@ function StepState{T}(; dt = zero(T), time = zero(T), dx = zero(T), iteration::I
     catch
         # pinning is an optimisation only
     end
-    return StepState{T}(CuArray(fh), CuArray(ih), fh, ih, false, 0, false,
+    return StepState{T}(CuArray(fh), CuArray(ih), fh, ih, false, 0, false, false,
                         Dict{Tuple{UInt, Int, Int}, CUDA.CuGraphExec}())
 end
 

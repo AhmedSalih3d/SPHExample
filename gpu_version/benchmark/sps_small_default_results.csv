@@ -1,0 +1,11 @@
+case,duration,round,variant,total_s,loop_s,steps,final_time,exact_state,exact_output,position_abs,position_dx,position_rms_dx,velocity_abs,velocity_rms,density_abs,density_rms,pressure_abs,acceleration_abs,output_position_abs,output_density_abs,output_time_abs
+GeneratedStillWedge,4.0,1,baseline,0.803584,0.6828449,8500,4.000394,true,true,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+GeneratedStillWedge,4.0,1,reference,0.8126385,0.6883154,8500,4.000394,true,true,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+GeneratedStillWedge,4.0,2,baseline,0.8087972,0.6834404,8500,4.000394,true,true,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+GeneratedStillWedge,4.0,2,reference,0.807374,0.6850461,8500,4.000394,true,true,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+GeneratedStillWedge,4.0,3,baseline,0.8145594,0.6878875,8500,4.000394,true,true,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+GeneratedStillWedge,4.0,3,reference,0.8183781,0.690515,8500,4.000394,true,true,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+GeneratedStillWedge,4.0,4,baseline,0.8102538,0.6871647,8500,4.000394,true,true,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+GeneratedStillWedge,4.0,4,reference,0.8137729,0.6859103,8500,4.000394,true,true,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+GeneratedStillWedge,4.0,5,baseline,0.8084651,0.6850505,8500,4.000394,true,true,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0
+GeneratedStillWedge,4.0,5,reference,0.8127604,0.6897302,8500,4.000394,true,true,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0

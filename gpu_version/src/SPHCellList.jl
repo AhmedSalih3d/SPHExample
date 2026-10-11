@@ -607,7 +607,8 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
                              SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
                              FlagKernel, FlagShift; threads = threads, lanes = lanes,
                              boundary_forces = bforces, pos_cells = sup.PosCells, boundary_data = sup.boundary_data,
-                             radial = get(ctx, :radial, Val(false)))
+                             radial = get(ctx, :radial, Val(false)),
+                             scalar_sps = get(ctx, :scalar_sps, Val(false)))
     end
     floating = get(ctx, :floating, nothing)
     if get(ctx, :SingleNeighbor, false) && floating !== nothing && floating.active
@@ -718,7 +719,8 @@ function enqueue_step!(ctx, timed::Bool)
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
         FlagKernel, FlagShift; threads = threads, lanes = lanes,
         boundary_forces = bforces, pos_cells = sup.PosCellsₙ⁺, boundary_data = sup.boundary_data,
-        radial = get(ctx, :radial, Val(false)))
+        radial = get(ctx, :radial, Val(false)),
+        scalar_sps = get(ctx, :scalar_sps, Val(false)))
 
     if floats
         @phase HourGlass "10 Floating Corrector" timed begin
@@ -860,18 +862,21 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     lanes      = Val(nlanes <= 0 ? choose_lanes(length(gpu), Val(Dimensions)) : nlanes)
     bforces    = Val(SimMetaData.GPUBoundaryForces)
     use_radial = SimMetaData.GPURadialInteractions && radial_interactions_supported(SimKernel, SimDensityDiffusion, SimViscosity)
-    if state.radial_interactions != use_radial
+    use_scalar_sps = SimMetaData.GPUScalarSPSViscosity && scalar_sps_supported(SimKernel, SimViscosity)
+    if state.radial_interactions != use_radial || state.scalar_sps_viscosity != use_scalar_sps
         invalidate_graphs!(state)
         state.radial_interactions = use_radial
+        state.scalar_sps_viscosity = use_scalar_sps
     end
     radial = Val(use_radial)
+    scalar_sps = Val(use_scalar_sps)
 
     timed     = SimMetaData.GPUSyncTimers
     use_graph = SimMetaData.GPUUseGraph && !timed
     kmax      = timed ? 1 : max(1, SimMetaData.GPUMaxStepsPerSync)
 
     ctx = (; gpu, cl, sup, red, motion, floating, state, SimKernel, SimConstants, SimDensityDiffusion,
-             SimViscosity, FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, radial, HourGlass, boundary_mode)
+             SimViscosity, FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, radial, scalar_sps, HourGlass, boundary_mode)
 
     t_out = next_output_time(SimMetaData)
     set_output_time!(state, t_out)
@@ -1003,6 +1008,13 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             @warn "GPURadialInteractions uses experimental reassociated arithmetic; rounding differences can amplify during a simulation. Validate accuracy and convergence for this case."
         else
             @warn "GPURadialInteractions does not support this kernel/model combination; using reference interactions." kernel = typeof(SimKernel) diffusion = typeof(SimDensityDiffusion) viscosity = typeof(SimViscosity)
+        end
+    end
+    if SimMetaData.GPUScalarSPSViscosity
+        if scalar_sps_supported(SimKernel, SimViscosity)
+            @warn "GPUScalarSPSViscosity uses experimental reassociated SPS stress arithmetic; validate accuracy and convergence for this case."
+        else
+            @warn "GPUScalarSPSViscosity requires a supported LaminarSPS configuration; using reference viscosity." kernel = typeof(SimKernel) viscosity = typeof(SimViscosity)
         end
     end
 
