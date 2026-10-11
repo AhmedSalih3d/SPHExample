@@ -22,7 +22,11 @@ using CUDA
             source = replace(source, r"SaveLocation\s*=\s*\x22[^\x22]*\x22" =>
                 "SaveLocation = " * repr(dir))
             Base.include_string(scope, source, path)
-            if name == "LidDrivenCavity2d"
+            if name == "StillWedgeMDBC"
+                @test Base.invokelatest(getproperty, scope, :captured)[] === nothing
+                Base.invokelatest(Base.invokelatest(getproperty, scope, :run_still_wedge);
+                    save_location = dir, visualize = false, open_log_file = false)
+            elseif name == "LidDrivenCavity2d"
                 Base.invokelatest(Base.invokelatest(getproperty, scope, :run_lid_driven_cavity_2d);
                     dx = 0.05, simulation_time = 0.01,
                     visualize = false, open_log_file = false, save_location = dir,
@@ -35,6 +39,20 @@ using CUDA
             @test all(isfinite, inputs.SimParticles.Density)
             @test length(unique(inputs.SimParticles.ID)) == length(inputs.SimParticles)
             @test occursin("# CSVFile", source)
+            if name == "StillWedgeMDBC"
+                @test inputs.SimTimeStepping isa SymplecticTimeStepping
+                @test inputs.SimMetaData.GPUDoublePosition
+                @test inputs.SimMetaData.OutputTimes == 0.01f0
+                @test inputs.SimMetaData.ExportGridCells
+                @test eltype(eltype(inputs.SimParticles.Position)) === Float64
+                @test eltype(inputs.SimParticles.Density) === Float32
+                Base.invokelatest(Base.invokelatest(getproperty, scope, :run_still_wedge);
+                    time_stepping = SingleNeighborTimeStepping(), simulation_time = 0.01,
+                    save_location = dir, visualize = false, open_log_file = false)
+                original_inputs = Base.invokelatest(getproperty, scope, :captured)[]
+                @test original_inputs.SimTimeStepping isa SingleNeighborTimeStepping
+                @test original_inputs.SimMetaData.SimulationTime == 0.01f0
+            end
             if name in ("Dambreak2dMDBC", "LidDrivenCavity2d")
                 walls = filter(geom -> geom.Type != Fluid, inputs.SimGeometry)
                 @test all(geom -> hasproperty(geom.Particles, :GhostPoints), walls)

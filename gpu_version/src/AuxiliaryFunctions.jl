@@ -69,11 +69,22 @@ end
     CleanUpSimulationFolder(FilePath)
 
 Remove stale `.vtkhdf` files from `FilePath`.
+If deletion is blocked by an open file, collect unreachable file handles and retry.
 """
 function CleanUpSimulationFolder(FilePath)
-    GC.gc()
     try
-        foreach(rm, filter(endswith(".vtkhdf"), readdir(FilePath, join=true)))
+        for file_path in filter(endswith(".vtkhdf"), readdir(FilePath, join=true))
+            try
+                rm(file_path)
+            catch err
+                if err isa Base.IOError && err.code in (Base.UV_EACCES, Base.UV_EBUSY, Base.UV_EPERM)
+                    GC.gc()
+                    rm(file_path)
+                else
+                    rethrow()
+                end
+            end
+        end
     catch err
         @warn("File could not be deleted, manually delete else program cannot conclude.")
         display(err)

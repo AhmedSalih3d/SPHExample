@@ -231,11 +231,58 @@ The geometry tests need no GPU:
 
 ### StillWedge performance
 
-The StillWedge example keeps Float64 positions, Float32 force calculations,
-the symplectic scheme, boundary forces, and its 0.01 s output interval. Its
+The StillWedge example uses the original **symplectic** timestep scheme,
+Float64 positions, Float32 force calculations, boundary forces, and its
+0.01 s particle and grid output interval. Both neighbor evaluations are
+retained. Despite the filename, this generated example selects `NoMDBC`
+(the DBC path). Its
 8 MB output queue avoids allocating the default 256 MB for this small case.
 Importing `GenerateStillWedgeMDBC.jl` loads its helpers without writing input
 files; run that script directly when you want the geometry exports.
+
+Including `example/StillWedgeMDBC.jl` defines `run_still_wedge` without starting
+a simulation. Running that script directly uses the symplectic default:
+
+```julia
+include("gpu_version/example/StillWedgeMDBC.jl")
+run_still_wedge()
+```
+
+The same-workload benchmark compares the original example, cleanup, interaction
+kernels and driver at revision `2167212` with the current example. It includes
+input preparation, cleanup, upload, stepping, logging, all particle/grid output
+and closing. Julia/package loading, warmup, output verification and viewers are
+excluded; unchanged geometry/physics helpers and installed dependencies are shared.
+An identical-original control exposes timing noise. Final state and every exported
+particle/grid dataset must match exactly, with 8,500 steps, 401 particle frames
+and 400 nonempty grid frames.
+
+Five paired runs on an RTX A1000 Laptop GPU measured about **1.004 s original
+versus 0.808 s current**, a median paired **19.5% reduction**. This reflects the
+retained cleanup improvement, not a faster interaction algorithm. The original
+cleanup forces full garbage collection even for a fresh output folder; the current
+cleanup only collects when a blocked deletion needs a retry. **The requested
+50% runtime reduction was not achieved.** Experimental caches, cell tiling and
+constant specialization did not justify a solver change.
+
+Run from `gpu_version/`:
+
+```bash
+julia --project=. -t 4,0 benchmark/still_wedge_same_work.jl
+# Fails unless current/original total runtime is at most 0.5:
+julia --project=. -t 4,0 benchmark/still_wedge_same_work.jl --assert-half-runtime
+```
+
+Results are saved in `benchmark/still_wedge_same_work_results.csv`.
+`run_still_wedge` also accepts `save_location`, `simulation_time`, `visualize`,
+and `open_log_file` for noninteractive runs.
+
+`SingleNeighborTimeStepping()` remains an explicitly selected alternative:
+it changes integration and must not count as an equivalent-workload speedup.
+The earlier scheme comparison measured about 1.52x throughput, but changed final
+positions by up to 0.021 m and pressure by 521 Pa. To reproduce that separate
+comparison, use `benchmark/still_wedge_speed.jl --compare-schemes`; its optional
+`--assert-1.5x-throughput` flag checks throughput only, not a 50% runtime reduction.
 
 With `GPUUseGraph = true`, the solver caches graphs of 1, 2, 4, 8, 16, and 32 steps
 and composes each host batch from them. Each step still checks the device stop
@@ -296,13 +343,14 @@ julia -t 8,0 --project=gpu_version gpu_version/benchmark/still_wedge_speed.jl
 julia -t 8,0 --project=gpu_version gpu_version/test/gpu_execution.jl
 ```
 
-The benchmark warms each setting before measuring three interleaved repeats
+Without `--compare-schemes`, the benchmark retains its symplectic tuning sweep.
+It warms each setting before measuring three interleaved repeats
 and reports particle-state differences from the automatic kernel settings.
 Use warmed timings to compare stepping performance; launching Julia and
 compiling a changed package are separate costs.
 
 See [the StillWedge benchmark report](benchmark/still_wedge_performance.md) for
-measurements and validation on an RTX 5080.
+historical symplectic measurements and validation on an RTX 5080.
 
 ### Device-resident cell-list rebuilds
 

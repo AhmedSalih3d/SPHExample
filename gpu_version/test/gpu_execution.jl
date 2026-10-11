@@ -18,9 +18,13 @@ function simulate(case; graph, batch, double_position, scheme)
         meta.GPUOutputQueueBytes = 1024^2
         particles = AllocateDataStructures(kwargs.SimGeometry, meta)
         logger = SimulationLogger(save)
-        redirect_stdout(devnull) do
-            RunSimulation(; merge(kwargs, (; SimTimeStepping = scheme))...,
-                SimLogger = logger, SimParticles = particles)
+        try
+            redirect_stdout(devnull) do
+                RunSimulation(; merge(kwargs, (; SimTimeStepping = scheme))...,
+                    SimLogger = logger, SimParticles = particles)
+            end
+        finally
+            close(logger.LoggerIo)
         end
         order = sortperm(particles.ID)
         output = h5open(joinpath(save, meta.SimulationName * ".vtkhdf"), "r") do file
