@@ -79,16 +79,17 @@ end
     return αD * s² * s² * muladd(T(2), q, one(T))
 end
 
-@inline function ∇Wᵢⱼ(kernel::SPHKernelInstance{<:WendlandC2}, q::T, xᵢⱼ) where {T}
+@inline function radial_gradient_factor(kernel::SPHKernelInstance{<:WendlandC2}, q::T) where {T}
     (; h⁻¹, αD) = kernel
     # Subhan Allah, if this math is correct, then η² can be avoided
     # denom = (q * h + η²)
     # factor = αD * 5 * (q - 2)^3 * q / (8 * h * denom)
     # αD * 5 * (q - 2)^3 / (8 h²) written without a division: h⁻² = h⁻¹ * h⁻¹
     qₘ₂    = q - T(2)
-    factor = αD * T(5//8) * qₘ₂ * qₘ₂ * qₘ₂ * (h⁻¹ * h⁻¹)
-    return factor * xᵢⱼ
+    return αD * T(5//8) * qₘ₂ * qₘ₂ * qₘ₂ * (h⁻¹ * h⁻¹)
 end
+
+@inline ∇Wᵢⱼ(kernel::SPHKernelInstance{<:WendlandC2}, q, xᵢⱼ) = radial_gradient_factor(kernel, q) * xᵢⱼ
 
 @inline function Wᵢⱼ(kernel::SPHKernelInstance{<:CubicSpline}, q::T) where {T}
     (; αD) = kernel

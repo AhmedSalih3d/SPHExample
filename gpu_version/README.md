@@ -1079,6 +1079,7 @@ definitions in `benchmark/cases.jl` construct against either package.
 | `GPUMaxCells` | `50_000_000` | Abort with a clear message if the neighbour grid would need more cells (a particle escaped). |
 | `GPUInteractionThreads` | `128` | Threads per block of the interaction and mDBC kernels. |
 | `GPULanesPerParticle` | `0` (auto) | Warp lanes that share one particle's neighbour loop (1, 2, 4, ... 32). The automatic choice targets roughly one resident thread per particle-lane in 3D and one quarter of that in 2D, where neighborhoods generally contain fewer candidates; it caps lanes at 32 and combines them with warp shuffles. Explicit settings are unchanged. Use `1` for large cases and together with `GPUCellSubdivision = 2` (see "Lanes per particle" above). |
+| `GPURadialInteractions` | `false` | **Experimental** scalar Wendland C2 contractions and direct symmetric viscosity. Supported with `ZeroDensityDiffusion`, `LinearDensityDiffusion` or `ZeroGravityLinearDensityDiffusion`, and `ZeroViscosity`, `ArtificialViscosity` or `Laminar`, in 2D/3D Float32/Float64. Other combinations warn and use reference interactions. Changes floating-point rounding; full-duration 3D validation showed large trajectory differences. See below before opting in. |
 | `GPUBoundaryForces` | `true` | Evaluate the momentum equation for boundary particles too, as the CPU does (their acceleration only enters the force based time step limit). `false` skips it and saves 10-20 % in cases with many boundary particles, at the price of a slightly different adaptive time step. |
 | `GPUAsyncOutput` | `true` | Write output files on a task while the GPU continues (see "Asynchronous output"). |
 | `GPUMaxStepsPerSync` | `32` | Upper bound on the steps enqueued between two host read backs of the device resident step state. The actual batch is the estimated number of steps until the next cell list rebuild or output. `1` reproduces a synchronization per step. |
@@ -1091,6 +1092,75 @@ definitions in `benchmark/cases.jl` construct against either package.
 `OutputTimes` also accepts `Float64` values or vectors when `FloatType = Float32`.
 The positions of `Float32` runs are written as `Float64` to the output files
 in either case (that is the point precision of the writer).
+
+### Experimental radial interaction arithmetic
+
+`GPURadialInteractions = true` enables an explicitly experimental interaction
+specialization; no example enables it by default. With Wendland C2,
+`grad(W) = factor * separation`, allowing continuity and linear diffusion
+contractions to use scalar dot products and the already-computed squared
+distance. Diffusion and viscosity share the reciprocal of `distance^2 + eta^2`.
+Zero/artificial/laminar viscosity is evaluated directly from the target
+particle's viewpoint instead of converting to and from the CPU pair orientation.
+Diffusion still uses its original pair orientation and fluid gating. SPS,
+nonlinear diffusion, custom models and other kernels retain reference arithmetic.
+
+The option does not change precision, physics parameters, the timestep scheme,
+neighbor selection, boundary forces, shifting or output fields. It introduces
+no extra device arrays or timestep launches. The host selects a `Val`-specialized
+kernel, so default-off runs retain reference arithmetic. Changing the option
+between timestep intervals invalidates cached graphs. mDBC interpolation is
+unchanged, including Updated mDBC boundary activation and tangential velocity.
+Direct kernel callers can use `launch_interactions!(...; radial = Val(true))`.
+
+**Mathematical equivalence is not validated trajectory equivalence.** The
+reassociated products change rounding and FMA opportunities. Five warmed
+171,496-particle 3D dam-break comparisons on an RTX A1000 Laptop GPU measured
+about **12.4% less complete runtime** at 0.03 seconds simulated: median
+reference 3.194 s versus radial 2.800 s. These timings include preparation,
+upload, stepping, logging, particle/grid output and closing, excluding warmup
+and result verification. The step loop decreased about 11.5%; startup noise
+affects these short whole-run timings. A separate three-round threshold
+recheck measured about 6.1% less total time, so the observed gain is not a
+universal 12.4%. All runs took 339 steps with tiny
+early position differences (about `1e-7 m`).
+
+However, at 0.3 seconds the maximum position difference reached about **0.79
+particle spacings**, and at the full 1.6 seconds it reached **1.83 m** for a few
+particles, with RMS about **5.46 particle spacings**. Full-run maximum velocity
+and density differences were about **5.94 m/s** and **6.24 kg/m^3**; exported
+densities differed by up to **46.4 kg/m^3** during the run. Both versions remained
+finite and took 18,056 steps, but this does **not** establish equivalent physical
+results. **Do not treat this as a validated production speedup for that case.**
+Opting in emits an explicit warning; accuracy and convergence need independent
+case-specific validation. Small default-off StillWedge runs matched the baseline
+bitwise, including output; paired default timings were within roughly 1% of
+the baseline in the measured repeats.
+
+From `gpu_version/`, reproduce the short performance measurement or examine a
+longer trajectory:
+
+```bash
+julia --project=. -t 4,0 benchmark/radial_interactions.jl --time 0.03 --assert-min-reduction 0.05 DamBreak3D_dp0.0085
+julia --project=. -t 4,0 benchmark/radial_interactions.jl --time 0.03 --long-time 1.6 DamBreak3D_dp0.0085
+```
+
+`--assert-max-position-dx <limit>` optionally enforces a maximum position
+difference in units of particle spacing. A speed assertion alone is not an
+accuracy check. For example, `--long-time 1.6 --assert-max-position-dx 0.1`
+rejects the measured full-duration result rather than treating finite output
+as success. Long-run verification reads particle frames and hashes grid datasets
+in bounded chunks, rather than holding all output in RAM.
+
+The baseline is `911a76c`, with unchanged physics/input helpers and dependencies
+shared. Raw measurements are in
+[radial_interactions_full_duration.csv](benchmark/radial_interactions_full_duration.csv)
+and [radial_small_default_results.csv](benchmark/radial_small_default_results.csv).
+Pair-level algebra, graph/fallback behavior and boundary tests run with:
+
+```bash
+julia --project=. -t 4,0 test/radial_interactions.jl
+```
 
 ## Layout
 

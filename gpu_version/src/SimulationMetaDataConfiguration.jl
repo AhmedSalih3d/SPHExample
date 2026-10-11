@@ -64,6 +64,12 @@ or a vector of numbers) to `FloatType`, so `OutputTimes = 0.01` also works for
 cell relative positions in `FloatType`, see `GPUCellGrid.PosCell`. Allocate
 the host particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so
 that they hold `Float64` positions from the input files onwards.
+
+`GPURadialInteractions = true` opts into experimental scalar Wendland C2 pair contractions
+for supported linear diffusion and symmetric viscosity models. The default is
+`false`, preserving the reference arithmetic. Opting in changes rounding and
+can amplify trajectory differences, so accuracy and convergence must be
+validated for the intended simulation; unsupported models use the reference path.
 """
 mutable struct SimulationMetaData{Dimensions,
                                   FloatType <: AbstractFloat,
@@ -95,6 +101,7 @@ mutable struct SimulationMetaData{Dimensions,
     GPUMaxCells::Int             # safety limit for the size of the neighbour grid
     GPUInteractionThreads::Int   # threads per block for the interaction kernels
     GPULanesPerParticle::Int     # warp lanes per particle in the gather kernels (0 = automatic)
+    GPURadialInteractions::Bool  # opt-in scalar Wendland pair arithmetic (changes rounding)
     GPUBoundaryForces::Bool      # also evaluate the momentum equation for boundary particles (CPU parity)
     GPUAsyncOutput::Bool         # write output files on a Julia task while the GPU continues
     GPUMaxStepsPerSync::Int      # upper bound on the time steps enqueued between two host read backs
@@ -203,6 +210,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUMaxCells::Int                        = 50_000_000,
         GPUInteractionThreads::Int              = 128,
         GPULanesPerParticle::Int                = 0,
+        GPURadialInteractions::Bool             = false,
         GPUBoundaryForces::Bool                 = true,
         GPUAsyncOutput::Bool                    = true,
         GPUMaxStepsPerSync::Int                 = 32,
@@ -223,7 +231,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         FloatType(CurrentTimeStep), FloatType(TotalTime), FloatType(SimulationTime),
         IndexCounter, VisualizeInParaview, ExportSingleVTKHDF, ExportGridCells,
         OutputVariables, OpenLogFile, TimeSteppingMode,
-        GPUSyncTimers, GPUDeterministicSort, GPUMaxCells, GPUInteractionThreads, GPULanesPerParticle,
+        GPUSyncTimers, GPUDeterministicSort, GPUMaxCells, GPUInteractionThreads, GPULanesPerParticle, GPURadialInteractions,
         GPUBoundaryForces, GPUAsyncOutput, GPUMaxStepsPerSync, GPUUseGraph, GPUCellSubdivision,
         GPUDoublePosition, GPUOutputQueueBytes, GPUOutputBufferBytes,
     )

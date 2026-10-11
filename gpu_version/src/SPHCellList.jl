@@ -606,7 +606,8 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
                              gpu.Velocity, gpu.Type, CellStart, gpu.CellID, grid, step,
                              SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
                              FlagKernel, FlagShift; threads = threads, lanes = lanes,
-                             boundary_forces = bforces, pos_cells = sup.PosCells, boundary_data = sup.boundary_data)
+                             boundary_forces = bforces, pos_cells = sup.PosCells, boundary_data = sup.boundary_data,
+                             radial = get(ctx, :radial, Val(false)))
     end
     floating = get(ctx, :floating, nothing)
     if get(ctx, :SingleNeighbor, false) && floating !== nothing && floating.active
@@ -716,7 +717,8 @@ function enqueue_step!(ctx, timed::Bool)
         sup.Velocityₙ⁺, gpu.Type, CellStart, gpu.CellID, grid, state,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
         FlagKernel, FlagShift; threads = threads, lanes = lanes,
-        boundary_forces = bforces, pos_cells = sup.PosCellsₙ⁺, boundary_data = sup.boundary_data)
+        boundary_forces = bforces, pos_cells = sup.PosCellsₙ⁺, boundary_data = sup.boundary_data,
+        radial = get(ctx, :radial, Val(false)))
 
     if floats
         @phase HourGlass "10 Floating Corrector" timed begin
@@ -857,13 +859,19 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     nlanes     = SimMetaData.GPULanesPerParticle
     lanes      = Val(nlanes <= 0 ? choose_lanes(length(gpu), Val(Dimensions)) : nlanes)
     bforces    = Val(SimMetaData.GPUBoundaryForces)
+    use_radial = SimMetaData.GPURadialInteractions && radial_interactions_supported(SimKernel, SimDensityDiffusion, SimViscosity)
+    if state.radial_interactions != use_radial
+        invalidate_graphs!(state)
+        state.radial_interactions = use_radial
+    end
+    radial = Val(use_radial)
 
     timed     = SimMetaData.GPUSyncTimers
     use_graph = SimMetaData.GPUUseGraph && !timed
     kmax      = timed ? 1 : max(1, SimMetaData.GPUMaxStepsPerSync)
 
     ctx = (; gpu, cl, sup, red, motion, floating, state, SimKernel, SimConstants, SimDensityDiffusion,
-             SimViscosity, FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, HourGlass, boundary_mode)
+             SimViscosity, FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, radial, HourGlass, boundary_mode)
 
     t_out = next_output_time(SimMetaData)
     set_output_time!(state, t_out)
@@ -989,6 +997,14 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SV <: SPHViscosity, SDD <: SPHDensityDiffusion}
 
     CUDA.functional() || error("CUDA is not functional on this machine; use the CPU package SPHExample instead.")
+
+    if SimMetaData.GPURadialInteractions
+        if radial_interactions_supported(SimKernel, SimDensityDiffusion, SimViscosity)
+            @warn "GPURadialInteractions uses experimental reassociated arithmetic; rounding differences can amplify during a simulation. Validate accuracy and convergence for this case."
+        else
+            @warn "GPURadialInteractions does not support this kernel/model combination; using reference interactions." kernel = typeof(SimKernel) diffusion = typeof(SimDensityDiffusion) viscosity = typeof(SimViscosity)
+        end
+    end
 
     (; HourGlass) = SimMetaData
 

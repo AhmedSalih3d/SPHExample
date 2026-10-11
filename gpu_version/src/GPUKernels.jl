@@ -57,7 +57,7 @@ using ..SimulationMetaDataConfiguration: SimpleMDBC, UpdatedMDBC
 
 export launch_interactions!, launch_mdbc!, launch_motion!, launch_half_step!, launch_final_step!,
        launch_inv_density!, launch_finish!, launch_commit!, launch_step_reduction!, launch_pos_cells!,
-       step_map, step_reduce, choose_lanes, ELEMENTWISE_THREADS
+       step_map, step_reduce, choose_lanes, radial_interactions_supported, ELEMENTWISE_THREADS
 
 const ELEMENTWISE_THREADS = REDUCE_THREADS
 const FULL_MASK = 0xffffffff
@@ -66,6 +66,21 @@ const FULL_MASK = 0xffffffff
 # It preserves the same neighbor order as the tuple returned by cell_rows.
 @inline interaction_rows(grid::CellGrid{D, R}) where {D, R} =
     GPUCellGrid.CellRows{D, R}(grid.dims[1], grid.dims[1] * grid.dims[2])
+
+"""
+    radial_interactions_supported(kernel, diffusion, viscosity) -> Bool
+
+Whether the opt-in radial specialization is implemented for this combination:
+2D/3D Float32/Float64 Wendland C2, zero/linear density diffusion, and
+zero/artificial/laminar viscosity. This is a capability check, not an accuracy
+or performance guarantee. Unsupported combinations use reference interactions.
+"""
+radial_interactions_supported(kernel, diffusion, viscosity) = false
+function radial_interactions_supported(::SPHKernelInstance{<:WendlandC2, D, T},
+                                       ::Union{ZeroDensityDiffusion, LinearDensityDiffusion, ZeroGravityLinearDensityDiffusion},
+                                       ::Union{ZeroViscosity, ArtificialViscosity, Laminar}) where {D, T}
+    return D in (2, 3) && T in (Float32, Float64)
+end
 
 #---------------------------------------------------------------
 # Helpers shared by the kernels
@@ -249,7 +264,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                              CellStart, CellID, gridarg, step,
                              SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
                              ::Val{FlagKernel}, ::Val{FlagShift}, ::Val{BoundaryForces}, ::Val{K},
-                             boundary_data, n::Int32) where {D, T, FlagKernel, FlagShift, BoundaryForces, K}
+                             boundary_data, n::Int32, ::Val{Radial} = Val(false)) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -300,13 +315,19 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                     if xᵢⱼ² <= H² && boundary_enabled(boundary_data, ParticleType, j)
                         dᵢⱼ   = sqrt(xᵢⱼ²)
                         q     = dᵢⱼ * h⁻¹ # in [0, 2]: the guard above enforces xᵢⱼ² <= H² = (2h)²
-                        ∇ᵢWᵢⱼ = ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
+                        if Radial
+                            radial_factor = SPHKernels.radial_gradient_factor(SimKernel, q)
+                            ∇ᵢWᵢⱼ = radial_factor * xᵢⱼ
+                            inverse_distance = inv(xᵢⱼ² + SimKernel.η²)
+                        else
+                            ∇ᵢWᵢⱼ = ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
+                        end
 
                         ρⱼ   = Density[j]
                         ρⱼ⁻¹ = InvDensity[j]
                         vⱼ   = boundary_velocity(boundary_data, Velocity, ParticleType, j)
                         vᵢⱼ  = vᵢ - vⱼ
-                        density_symmetric_term = dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
+                        density_symmetric_term = Radial ? -radial_factor * dot(vᵢⱼ, xᵢⱼ) : dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
                         # DBC walls take density from the fluid, not other walls.
                         wall_pair = wallᵢ && is_wall(ParticleType[j])
                         if !wall_pair
@@ -327,18 +348,29 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         ρb   = i_first ? ρⱼ : ρᵢ
                         ρa⁻¹ = i_first ? ρᵢ⁻¹ : ρⱼ⁻¹
                         ρb⁻¹ = i_first ? ρⱼ⁻¹ : ρᵢ⁻¹
-                        D1, D2 = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants,
-                                                           SimParticles, sgn * xᵢⱼ, sgn * ∇ᵢWᵢⱼ, xᵢⱼ²,
-                                                           ρa, ρb, ρa⁻¹, ρb⁻¹, ia, ja, ParticleType)
+                        if Radial
+                            D1, D2 = SPHDensityDiffusionModels.radial_density_diffusion(SimDensityDiffusion,
+                                SimKernel, SimConstants, sgn * xᵢⱼ, xᵢⱼ², ρa, ρb, ρb⁻¹,
+                                ia, ja, ParticleType, radial_factor, inverse_distance)
+                        else
+                            D1, D2 = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants,
+                                                               SimParticles, sgn * xᵢⱼ, sgn * ∇ᵢWᵢⱼ, xᵢⱼ²,
+                                                               ρa, ρb, ρa⁻¹, ρb⁻¹, ia, ja, ParticleType)
+                        end
                         dρdt += i_first ? D1 : D2
 
                         if forces
                             viscous_velocity = boundary_viscous_velocity(boundary_data, Velocity, ParticleType, i) -
                                                boundary_viscous_velocity(boundary_data, Velocity, ParticleType, j)
-                            v1, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles,
-                                                      sgn * xᵢⱼ, sgn * viscous_velocity, sgn * ∇ᵢWᵢⱼ, xᵢⱼ²,
-                                                      ρa, ρb, ρa⁻¹, ρb⁻¹, ia, ja)
-                            visc  = sgn * v1
+                            if Radial
+                                visc = SPHViscosityModels.radial_viscosity(SimViscosity, SimKernel, SimConstants,
+                                    xᵢⱼ, viscous_velocity, ∇ᵢWᵢⱼ, ρᵢ, ρⱼ, inverse_distance)
+                            else
+                                v1, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles,
+                                                          sgn * xᵢⱼ, sgn * viscous_velocity, sgn * ∇ᵢWᵢⱼ, xᵢⱼ²,
+                                                          ρa, ρb, ρa⁻¹, ρb⁻¹, ia, ja)
+                                visc  = sgn * v1
+                            end
 
                             Pⱼ   = Pressure[j]
                             Pfac = (Pᵢ + Pⱼ) * (ρᵢ⁻¹ * ρⱼ⁻¹)
@@ -395,7 +427,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
 end
 
 """
-    launch_interactions!(...; threads, lanes, boundary_forces, pos_cells)
+    launch_interactions!(...; threads, lanes, boundary_forces, pos_cells, radial)
 
 Launch the gather interaction kernel. `Position`, `Density`, `InvDensity`,
 `Pressure` and `Velocity` are the arrays of the state being evaluated (the
@@ -411,25 +443,31 @@ particles with `MotionLimiter == 0`. `pos_cells` is the `PosCell` array of
 `Position` when the positions are stored in a higher precision than the
 working precision (the pair vectors are then formed from it, see
 `GPUCellGrid`); `nothing` forms them from `Position` directly.
+`radial = Val(true)` opts into scalar Wendland contractions and direct
+symmetric viscosity. It changes floating-point rounding, not the equations
+or pair ordering of density diffusion. Unsupported kernel/model combinations
+use the reference specialization; the default is `Val(false)`.
 """
 function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
                               Position, Density, InvDensity, Pressure, Velocity, ParticleType,
                               CellStart, CellID, grid, step,
                               SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
                               FlagKernel::Val, FlagShift::Val; threads::Integer = 128, lanes::Val = Val(1),
-                              boundary_forces::Val = Val(true), pos_cells = nothing, boundary_data = nothing)
+                              boundary_forces::Val = Val(true), pos_cells = nothing, boundary_data = nothing,
+                              radial::Val = Val(false))
     n = length(Position)
     n == 0 && return nothing
     K = typeof(lanes).parameters[1]
     Pairs = pos_cells === nothing ? Position : pos_cells
     SimParticles = (Position = Position, Density = Density, Velocity = Velocity, Pressure = Pressure,
                     Type = ParticleType)
+    use_radial = Val(typeof(radial).parameters[1] && radial_interactions_supported(SimKernel, SimDensityDiffusion, SimViscosity))
     @cuda threads=threads blocks=cld(n * K, threads) interaction_kernel!(
         dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
         Pairs, Position, Density, InvDensity, Pressure, Velocity, ParticleType, SimParticles,
         CellStart, CellID, grid, step,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, Int32(n))
+        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, Int32(n), use_radial)
     return nothing
 end
 

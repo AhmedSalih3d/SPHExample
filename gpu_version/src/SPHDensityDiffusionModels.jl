@@ -74,6 +74,8 @@ term, and we skip ρᵢⱼᴴ enitrely.
 """
 struct ZeroGravityLinearDensityDiffusion <: SPHDensityDiffusion end
 
+@inline linear_density_difference(::ZeroGravityLinearDensityDiffusion, constants, x, ρᵢ, ρⱼ) = ρⱼ - ρᵢ
+
 @inline function compute_density_diffusion(
         ::ZeroGravityLinearDensityDiffusion,
         SimKernel,
@@ -98,8 +100,8 @@ struct ZeroGravityLinearDensityDiffusion <: SPHDensityDiffusion end
         
         invdᵢⱼ²η² = one(eltype(ρᵢ)) / (d² + η²)
 
-        ρⱼᵢ = ρⱼ - ρᵢ
-        ψᵢⱼ = 2 * ρⱼᵢ * (-xᵢⱼ) * invdᵢⱼ²η²
+        difference = linear_density_difference(ZeroGravityLinearDensityDiffusion(), SimConstants, xᵢⱼ, ρᵢ, ρⱼ)
+        ψᵢⱼ = 2 * difference * (-xᵢⱼ) * invdᵢⱼ²η²
 
         Dᵢ  = δᵩ * h * c₀ * (m₀ * ρⱼ⁻¹) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ)
         Dⱼ  = -Dᵢ
@@ -118,6 +120,14 @@ end
 Uses a linear relationship for the hydrostatic correction.
 """
 struct LinearDensityDiffusion <: SPHDensityDiffusion end
+
+@inline function linear_density_difference(::LinearDensityDiffusion, constants, x, ρᵢ, ρⱼ)
+    (; Cb, γ, ρ₀, g) = constants
+    factor = (1 / (Cb * γ)) * ρ₀
+    pressure = ρ₀ * (-g) * -x[end]
+    hydrostatic = pressure * factor
+    return (ρⱼ - ρᵢ) - hydrostatic
+end
 
 @inline function compute_density_diffusion(
         ::LinearDensityDiffusion,
@@ -139,16 +149,10 @@ struct LinearDensityDiffusion <: SPHDensityDiffusion end
         (; ρ₀, m₀, c₀, δᵩ, Cb, Cb⁻¹, γ, g) = SimConstants
         (; h, η²) = SimKernel
 
-        Linear_ρ_factor = (1/(Cb*γ))*ρ₀
-
-        Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
-        ρᵢⱼᴴ  = Pᵢⱼᴴ * Linear_ρ_factor
-
-        
         invdᵢⱼ²η² = one(eltype(ρᵢ)) / (d² + η²)
 
-        ρⱼᵢ = ρⱼ - ρᵢ
-        ψᵢⱼ = 2 * (ρⱼᵢ - ρᵢⱼᴴ)  * (-xᵢⱼ) * invdᵢⱼ²η²
+        difference = linear_density_difference(LinearDensityDiffusion(), SimConstants, xᵢⱼ, ρᵢ, ρⱼ)
+        ψᵢⱼ = 2 * difference * (-xᵢⱼ) * invdᵢⱼ²η²
 
         # The term only acts between two fluid particles. Gate it with a select
         # rather than an early `return` at the top of the function: measured on an
@@ -163,6 +167,23 @@ struct LinearDensityDiffusion <: SPHDensityDiffusion end
         Dⱼ  = -Dᵢ
 
         return Dᵢ, Dⱼ
+end
+
+@inline function radial_density_diffusion(::ZeroDensityDiffusion, kernel, constants,
+                                         x, d², ρᵢ, ρⱼ, ρⱼ⁻¹, i, j, types, factor, inverse_distance)
+    return zero(d²), zero(d²)
+end
+
+@inline function radial_density_diffusion(model::Union{LinearDensityDiffusion, ZeroGravityLinearDensityDiffusion},
+                                         kernel, constants, x, d²::T, ρᵢ, ρⱼ, ρⱼ⁻¹, i, j,
+                                         types, factor, inverse_distance) where {T}
+    difference = linear_density_difference(model, constants, x, ρᵢ, ρⱼ)
+    # Both vectors are multiples of x: psi dot grad(W) = -A * factor * |x|^2.
+    contraction = -(T(2) * difference * inverse_distance) * factor * d²
+    value = constants.δᵩ * kernel.h * constants.c₀ * (constants.m₀ * ρⱼ⁻¹) * contraction
+    enabled = !(model isa LinearDensityDiffusion) || ((types[i] == Fluid) & (types[j] == Fluid))
+    Dᵢ = enabled ? value : zero(T)
+    return Dᵢ, -Dᵢ
 end
 
 #---------------------------------------------------------------

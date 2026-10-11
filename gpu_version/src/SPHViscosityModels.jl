@@ -89,6 +89,23 @@ end
     return term * vᵢⱼ, -term * vᵢⱼ
 end
 
+@inline radial_viscosity(::ZeroViscosity, kernel, constants, x, v, gradient, ρᵢ, ρⱼ, inverse_distance) = zero(x)
+
+@inline function radial_viscosity(::ArtificialViscosity, kernel, constants, x, v, gradient, ρᵢ, ρⱼ, inverse_distance)
+    v_dot_x = dot(v, x)
+    if v_dot_x < 0
+        mean_density = (ρᵢ + ρⱼ) / 2
+        μ = kernel.h * v_dot_x * inverse_distance
+        return -constants.m₀ * (-constants.α * constants.c₀ * μ) / mean_density * gradient
+    end
+    return zero(x)
+end
+
+@inline function radial_viscosity(::Laminar, kernel, constants, x, v, gradient, ρᵢ, ρⱼ, inverse_distance)
+    term = (4 * constants.m₀ * constants.ν₀ * dot(x, gradient)) * inverse_distance / (ρᵢ + ρⱼ)
+    return term * v
+end
+
 # LaminarSPS: with sub-grid scale stresses.
 @inline function compute_viscosity(::LaminarSPS, SimKernel, SimConstants, SimParticles,
                                    xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹, i, j)
