@@ -65,6 +65,11 @@ cell relative positions in `FloatType`, see `GPUCellGrid.PosCell`. Allocate
 the host particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so
 that they hold `Float64` positions from the input files onwards.
 
+`GPUCompactBuffers = true` omits unused ghost, kernel-output and shifting
+buffers, and stores GPU IDs/group markers in 32 bits when every value fits.
+Host fields and exported types are unchanged; out-of-range metadata retains
+its original width. `false` keeps the previous full GPU allocation layout.
+
 `GPURadialInteractions = true` opts into experimental scalar Wendland C2 pair contractions
 for supported linear diffusion and built-in viscosity models. SPS keeps its
 original viscosity arithmetic and pair ordering. The default is `false`,
@@ -115,6 +120,7 @@ mutable struct SimulationMetaData{Dimensions,
     GPUUseGraph::Bool            # replay the launch sequence of a step as a CUDA graph
     GPUCellSubdivision::Int      # cells per support radius H per axis (1: edge H, 3^D stencil; 2: edge H/2, 5^D stencil)
     GPUDoublePosition::Bool      # integrate positions in Float64 (pair loops use cell relative positions in FloatType)
+    GPUCompactBuffers::Bool      # omit unused buffers and narrow GPU-only metadata when lossless
     GPUOutputQueueBytes::Int     # reusable host frames between collector and disk writer
     GPUOutputBufferBytes::Int    # host memory that holds output frames before they are written to the file
 end
@@ -225,6 +231,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUUseGraph::Bool                       = true,
         GPUCellSubdivision::Int                 = 1,
         GPUDoublePosition::Bool                 = false,
+        GPUCompactBuffers::Bool                 = true,
         GPUOutputQueueBytes::Int                = 256 * 2^20,
         GPUOutputBufferBytes::Int               = 256 * 2^20,
     ) where {Dimensions, FloatType <: AbstractFloat, SMode <: ShiftingMode, KMode <: KernelOutputMode,
@@ -241,7 +248,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         OutputVariables, OpenLogFile, TimeSteppingMode,
         GPUSyncTimers, GPUDeterministicSort, GPUMaxCells, GPUInteractionThreads, GPULanesPerParticle, GPURadialInteractions, GPUScalarSPSViscosity,
         GPUBoundaryForces, GPUAsyncOutput, GPUMaxStepsPerSync, GPUUseGraph, GPUCellSubdivision,
-        GPUDoublePosition, GPUOutputQueueBytes, GPUOutputBufferBytes,
+        GPUDoublePosition, GPUCompactBuffers, GPUOutputQueueBytes, GPUOutputBufferBytes,
     )
 end
 

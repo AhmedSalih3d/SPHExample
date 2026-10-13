@@ -59,14 +59,18 @@ after every rebuild and the mDBC kernel is launched over it alone.
 node positions (`Float64` with `GPUDoublePosition`, otherwise `T`). Nothing
 else is stored in `TP`: velocities, densities, accelerations and the kernel
 sums stay in `T`, as in DualSPHysics.
+
+Unused ghost and kernel-output fields may be empty device vectors. IDs and
+group markers may use lossless 32-bit device storage; host and output fields
+retain their original types.
 """
-mutable struct GPUParticles{D, T, TP, S}
+mutable struct GPUParticles{D, T, TP, S, I <: Integer, G <: Unsigned}
     Position::CuVector{SVector{D, TP}}
     Velocity::CuVector{SVector{D, T}}
     Density::CuVector{T}
-    ID::CuVector{Int}
+    ID::CuVector{I}
     Type::CuVector{ParticleType}
-    GroupMarker::CuVector{UInt}
+    GroupMarker::CuVector{G}
     GhostPoints::CuVector{SVector{D, TP}}
     GhostNormals::CuVector{SVector{D, T}}
     Acceleration::CuVector{SVector{D, T}}
@@ -78,6 +82,15 @@ mutable struct GPUParticles{D, T, TP, S}
     KernelGradient::CuVector{SVector{D, T}}
 
     scratch::S
+end
+
+function GPUParticles{D, T, TP, S}(Position, Velocity, Density, ID::CuVector{I}, Type,
+                                  GroupMarker::CuVector{G}, GhostPoints, GhostNormals,
+                                  Acceleration, Pressure, CellID, GhostIndex, Kernel,
+                                  KernelGradient, scratch::S) where {D, T, TP, S, I <: Integer, G <: Unsigned}
+    return GPUParticles{D, T, TP, S, I, G}(Position, Velocity, Density, ID, Type,
+        GroupMarker, GhostPoints, GhostNormals, Acceleration, Pressure, CellID,
+        GhostIndex, Kernel, KernelGradient, scratch)
 end
 
 Base.length(p::GPUParticles) = length(p.Position)
@@ -96,12 +109,22 @@ const PERSISTENT_FIELDS = (:Position, :Velocity, :Density,
 # Device fields that can be copied back into the host `StructArray`.
 const DOWNLOADABLE_FIELDS = (:Velocity, :Density, :ID, :Type, :GroupMarker, :GhostPoints, :GhostNormals,
                              :Acceleration, :Pressure, :Kernel, :KernelGradient)
+const OPTIONAL_PARTICLE_FIELDS = (:GhostPoints, :GhostNormals, :Kernel, :KernelGradient)
+
+allocated_download_fields(gpu::GPUParticles) =
+    filter(f -> !(f in OPTIONAL_PARTICLE_FIELDS && isempty(getproperty(gpu, f))), DOWNLOADABLE_FIELDS)
 
 # Device copy of a host vector, converted to element type `E` when it differs.
 _upload(::Type{E}, x::AbstractVector) where {E} = CuArray(convert(Vector{E}, x))
 
+function metadata_storage_type(::Type{N}, ::Type{W}, values) where {N <: Integer, W <: Integer}
+    return sizeof(N) < sizeof(W) && all(x -> typemin(N) <= x <= typemax(N), values) ? N : W
+end
+
 """
-    upload_particles(SimParticles::StructArray; position_type = eltype of the host positions) -> GPUParticles
+    upload_particles(SimParticles::StructArray; position_type = eltype of the host positions,
+                     compact_metadata = false, kernel_output = true, ghost_data = true) -> GPUParticles
+    upload_particles(SimParticles::StructArray, SimMetaData) -> GPUParticles
 
 Copy every stored field of the host particle array to the GPU. The ghost
 node owners (`GhostIndex`) are listed from the host `GhostPoints`, so set
@@ -109,24 +132,40 @@ those before uploading. `position_type` is the element precision of the
 device positions and ghost node positions (`Float64` with
 `GPUDoublePosition`); the host arrays are converted when they differ. The
 working precision is that of the host densities.
+
+The one-argument form retains full buffers and host-width metadata by default.
+`compact_metadata` selects `Int32` IDs and `UInt32` group markers only when
+every value fits; otherwise each field independently retains its host width.
+`kernel_output = false` or `ghost_data = false` omits those fields and their
+reorder scratch. The metadata form selects these options from the simulation
+modes and `GPUCompactBuffers`, and uses `position_float_type(SimMetaData)`.
 """
 function upload_particles(SimParticles::StructArray;
-                          position_type::Type{TP} = eltype(eltype(SimParticles.Position))) where {TP}
+                          position_type::Type{TP} = eltype(eltype(SimParticles.Position)),
+                          compact_metadata::Bool = false, kernel_output::Bool = true,
+                          ghost_data::Bool = true) where {TP}
     D = length(eltype(SimParticles.Position))
     T = eltype(SimParticles.Density)
     n = length(SimParticles)
 
     Position   = _upload(SVector{D, TP}, SimParticles.Position)
-    GhostIndex = CuArray(Int32.(findall(!iszero, SimParticles.GhostPoints)))
+    I = compact_metadata ? metadata_storage_type(Int32, Int, SimParticles.ID) : Int
+    G = compact_metadata ? metadata_storage_type(UInt32, UInt, SimParticles.GroupMarker) : UInt
+    GhostIndex = ghost_data ? CuArray(Int32.(findall(!iszero, SimParticles.GhostPoints))) :
+                             CuVector{Int32}(undef, 0)
+    GhostPoints = ghost_data ? _upload(SVector{D, TP}, SimParticles.GhostPoints) :
+                               CuVector{SVector{D, TP}}(undef, 0)
+    GhostNormals = ghost_data ? CuArray(SimParticles.GhostNormals) :
+                                CuVector{SVector{D, T}}(undef, 0)
     scratch = (
         Position      = similar(Position),
         Velocity      = CuVector{SVector{D, T}}(undef, n),
         Density       = CuVector{T}(undef, n),
-        ID            = CuVector{Int}(undef, n),
+        ID            = CuVector{I}(undef, n),
         Type          = CuVector{ParticleType}(undef, n),
-        GroupMarker   = CuVector{UInt}(undef, n),
-        GhostPoints   = CuVector{SVector{D, TP}}(undef, n),
-        GhostNormals  = CuVector{SVector{D, T}}(undef, n),
+        GroupMarker   = CuVector{G}(undef, n),
+        GhostPoints   = similar(GhostPoints),
+        GhostNormals  = similar(GhostNormals),
         Acceleration  = CuVector{SVector{D, T}}(undef, n),
         Pressure      = CuVector{T}(undef, n),
     )
@@ -135,19 +174,26 @@ function upload_particles(SimParticles::StructArray;
         Position,
         CuArray(SimParticles.Velocity),
         CuArray(SimParticles.Density),
-        CuArray(SimParticles.ID),
+        _upload(I, SimParticles.ID),
         CuArray(SimParticles.Type),
-        CuArray(SimParticles.GroupMarker),
-        _upload(SVector{D, TP}, SimParticles.GhostPoints),
-        CuArray(SimParticles.GhostNormals),
+        _upload(G, SimParticles.GroupMarker),
+        GhostPoints,
+        GhostNormals,
         CuArray(SimParticles.Acceleration),
         CuArray(SimParticles.Pressure),
         CUDA.zeros(Int32, n),
         GhostIndex,
-        CuArray(SimParticles.Kernel),
-        CuArray(SimParticles.KernelGradient),
+        kernel_output ? CuArray(SimParticles.Kernel) : CuVector{T}(undef, 0),
+        kernel_output ? CuArray(SimParticles.KernelGradient) : CuVector{SVector{D, T}}(undef, 0),
         scratch,
     )
+end
+
+function upload_particles(SimParticles::StructArray, meta::SimulationMetaData{D, T, S, K, B}) where {D, T, S, K, B}
+    compact = meta.GPUCompactBuffers
+    return upload_particles(SimParticles; position_type = position_float_type(meta),
+        compact_metadata = compact, kernel_output = !compact || K === StoreKernelOutput,
+        ghost_data = !compact || B !== NoMDBC)
 end
 
 # Host copy of a device vector; converted element-wise when the host element
@@ -162,7 +208,7 @@ function _download!(dst::AbstractVector, src::CuVector)
 end
 
 """
-    download_particles!(SimParticles, gpu, grid, fields = DOWNLOADABLE_FIELDS; cells = false)
+    download_particles!(SimParticles, gpu, grid, fields = allocated downloadable fields; cells = false)
 
 Copy `Position` and the device fields named in `fields` back into the host
 `StructArray`. Host fields that are not listed are left untouched, so pass
@@ -171,9 +217,13 @@ cell of every particle is also stored as a `CartesianIndex`. Returns the cell
 ids as a host vector (empty unless `cells = true`). Fields whose host element
 type differs from the device type (positions when the host array was not
 allocated for `GPUDoublePosition`) are converted.
+Omitted device fields are excluded from the default field list; requesting
+one explicitly throws `ArgumentError`.
 """
 function download_particles!(SimParticles::StructArray, gpu::GPUParticles{D, T}, grid::CellGrid{D},
-                             fields = DOWNLOADABLE_FIELDS; cells::Bool = false) where {D, T}
+                             fields = allocated_download_fields(gpu);
+                             cells::Bool = false) where {D, T}
+    foreach(f -> require_particle_field(gpu, f), fields)
     _download!(SimParticles.Position, gpu.Position)
     for f in fields
         _download!(getproperty(SimParticles, f), getproperty(gpu, f))
@@ -183,6 +233,13 @@ function download_particles!(SimParticles::StructArray, gpu::GPUParticles{D, T},
     cid = Array(gpu.CellID)
     store_cells!(SimParticles, grid, cid)
     return cid
+end
+
+function require_particle_field(gpu::GPUParticles, field::Symbol)
+    array = getproperty(gpu, field)
+    length(array) == length(gpu) ||
+        throw(ArgumentError("GPU particle field $field was not allocated; enable its buffer when uploading particles."))
+    return array
 end
 
 # Store the cell of every particle in the host `StructArray` from a host copy
@@ -228,6 +285,7 @@ struct OutputDownload{D}
 end
 
 function OutputDownload(gpu::GPUParticles{D}, fields; cells::Bool) where {D}
+    foreach(f -> require_particle_field(gpu, f), fields)
     memory = CUDA.HostMemory[]
     function pinned(::Type{T}, n) where {T}
         n == 0 && return T[]
@@ -369,15 +427,20 @@ struct GPUSupportArrays{D, T, TP, PC, BD}
 end
 
 """
-    GPUSupportArrays{D, T}(n; position_type = T, updated_mdbc = false)
+    GPUSupportArrays{D, T}(n; position_type = T, updated_mdbc = false, shifting = true)
+    GPUSupportArrays{D, T}(n, SimMetaData)
 
 Support arrays for `n` particles in the working precision `T`, with positions
 of precision `position_type`. The cell relative positions are allocated
 exactly when `position_type !== T`. `updated_mdbc` allocates the boundary
 activation mask and mirrored/tangential interaction velocities; these are
 scratch fields recomputed after sorting and before each interaction stage.
+`shifting = false` omits the two shifting work arrays. The metadata form
+selects the position precision, updated-mDBC and shifting buffers from the
+simulation modes and `GPUCompactBuffers`.
 """
-function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T, updated_mdbc::Bool = false) where {D, T, TP}
+function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T, updated_mdbc::Bool = false,
+                              shifting::Bool = true) where {D, T, TP}
     pc = TP === T ? nothing : CuVector{PosCell{D, T}}(undef, n)
     pcₙ⁺ = TP === T ? nothing : CuVector{PosCell{D, T}}(undef, n)
     boundary_data = updated_mdbc ? (; active = CUDA.ones(Bool, n), velocity = CUDA.zeros(SVector{D, T}, n),
@@ -389,12 +452,17 @@ function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T, updated
         CUDA.zeros(T, n),
         CUDA.zeros(T, n),
         CUDA.zeros(T, n),
-        CUDA.zeros(SVector{D, T}, n),
-        CUDA.zeros(T, n),
+        CUDA.zeros(SVector{D, T}, shifting ? n : 0),
+        CUDA.zeros(T, shifting ? n : 0),
         pc,
         pcₙ⁺,
         boundary_data,
     )
+end
+
+function GPUSupportArrays{D, T}(n::Integer, meta::SimulationMetaData{D, T, S, K, B}) where {D, T, S, K, B}
+    return GPUSupportArrays{D, T}(n; position_type = position_float_type(meta),
+        updated_mdbc = B === UpdatedMDBC, shifting = !meta.GPUCompactBuffers || S === PlanarShifting)
 end
 
 """
@@ -442,12 +510,10 @@ end
 
 function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCutOff; prepared::Bool = false)
     s = gpu.scratch
-    srcs = (gpu.Position, gpu.Velocity, gpu.Density,
-            gpu.ID, gpu.Type, gpu.GroupMarker, gpu.GhostPoints, gpu.GhostNormals,
-            gpu.Acceleration, gpu.Pressure, cl.CellIDScratch)
-    dsts = (s.Position, s.Velocity, s.Density,
-            s.ID, s.Type, s.GroupMarker, s.GhostPoints, s.GhostNormals,
-            s.Acceleration, s.Pressure, gpu.CellID)
+    fields = isempty(gpu.GhostPoints) ?
+        filter(f -> f !== :GhostPoints && f !== :GhostNormals, PERSISTENT_FIELDS) : PERSISTENT_FIELDS
+    srcs = (map(f -> getproperty(gpu, f), fields)..., cl.CellIDScratch)
+    dsts = (map(f -> getproperty(s, f), fields)..., gpu.CellID)
 
     grid = update_cell_list!(cl, gpu.Position, InverseCutOff, srcs, dsts; prepared)
 
@@ -855,6 +921,18 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     FlagKernel     = Val(KMode === StoreKernelOutput)
     FlagShift      = Val(SMode === PlanarShifting)
     UseMDBC        = BMode !== NoMDBC
+    if KMode === StoreKernelOutput
+        require_particle_field(gpu, :Kernel)
+        require_particle_field(gpu, :KernelGradient)
+    end
+    if UseMDBC
+        require_particle_field(gpu, :GhostPoints)
+        require_particle_field(gpu, :GhostNormals)
+    end
+    if SMode === PlanarShifting
+        length(sup.∇Cᵢ) == length(gpu) && length(sup.∇◌rᵢ) == length(gpu) ||
+            throw(ArgumentError("GPU shifting buffers were not allocated; enable shifting when allocating support arrays."))
+    end
     boundary_mode = BMode()
     SingleNeighbor = SimMetaData.TimeSteppingMode isa SingleNeighborTimeStepping
     threads    = SimMetaData.GPUInteractionThreads
@@ -1107,8 +1185,8 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
 
     # Device side data
     @timeit HourGlass "00a Upload To GPU" begin
-        gpu    = upload_particles(SimParticles; position_type = PositionType)
-        sup    = GPUSupportArrays{Dimensions, FloatType}(NumberOfPoints; position_type = PositionType, updated_mdbc = BMode === UpdatedMDBC)
+        gpu    = upload_particles(SimParticles, SimMetaData)
+        sup    = GPUSupportArrays{Dimensions, FloatType}(NumberOfPoints, SimMetaData)
         red    = ReductionWorkspace{SVector{3, FloatType}}(NumberOfPoints)
         cl     = CellListWorkspace{Dimensions, PositionType}(NumberOfPoints;
                      reach = SimMetaData.GPUCellSubdivision, max_cells = SimMetaData.GPUMaxCells,

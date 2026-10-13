@@ -1087,12 +1087,62 @@ definitions in `benchmark/cases.jl` construct against either package.
 | `GPUUseGraph` | `true` | Cache CUDA graphs of 1, 2, 4, 8, 16, and 32 steps and compose each host batch from them. Disabled automatically with `GPUSyncTimers`. |
 | `GPUCellSubdivision` | `1` | Cells per support radius `H` along each axis: `1` bins at `H` with a 3^D stencil (the CPU's cells), `2` at `H/2` with a 5^D stencil. Same neighbour pairs, fewer distance checks, more cell ranges per particle. Only `1` reproduces the CPU's orientation of the asymmetric density diffusion term (the results of the two grids differ by that term only). `2` pays off with one lane per particle (large cases); with many lanes it is slower. |
 | `GPUDoublePosition` | `false` | Store and integrate the particle positions (and the mDBC ghost node positions) in `Float64` while everything else stays in `FloatType`; the pair loops use cell relative `FloatType` coordinates (see "Double positions" above). Use it for `Float32` runs of domains far from the origin or with many steps. No effect with `FloatType = Float64`. Allocate the particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so that the input is read in `Float64`. |
+| `GPUCompactBuffers` | `true` | Omit unused ghost, kernel-output and shifting buffers, including ghost reorder scratch. GPU IDs use `Int32` and group markers `UInt32` only when every value fits; otherwise each field independently retains its original width. Host particle fields, output types, precision and neighbor ranges are unchanged. `false` restores the previous full allocation layout. |
 | `GPUOutputQueueBytes` | `256 * 2^20` | Separate host memory budget for reusable frames between the download collector and disk writer; at least one frame. Used with `GPUAsyncOutput`. |
 | `GPUOutputBufferBytes` | `256 * 2^20` | Host memory for output frames that are held before they are written to the single `vtkhdf` file (see "Asynchronous output"). The number of frames per flush is the budget divided by the size of a frame (particle fields plus, with `ExportGridCells`, an upper bound of the grid frame), at least 1 and at most 16. `0` writes every frame at once. |
 
 `OutputTimes` also accepts `Float64` values or vectors when `FloatType = Float32`.
 The positions of `Float32` runs are written as `Float64` to the output files
 in either case (that is the point precision of the writer).
+
+### Compact GPU buffers
+
+The default `GPUCompactBuffers = true` reduces device storage without changing
+the simulation equations, particle order or implicit cell-range neighbor search:
+
+* `NoMDBC` does not allocate ghost positions, normals, owner indices or their
+  reorder buffers.
+* `NoKernelOutput` does not allocate kernel sums or kernel-gradient sums.
+* `NoShifting` does not allocate the two shifting work arrays.
+* GPU-only IDs and group markers, including their reorder buffers, use 32-bit
+  storage after checking every value. An out-of-range value keeps that entire
+  field wide; there is no truncation. Host IDs remain `Int`, group markers remain
+  `UInt`, and synchronous and asynchronous downloads restore these types before
+  exporting data.
+
+For `Float32` physics with double positions, no mDBC, no kernel output, no
+shifting and metadata that fits 32 bits, this removes **88 bytes per particle
+in 2D** or **120 bytes per particle in 3D** from particle/reorder/support storage.
+Enabled modes keep their required buffers. Output, cell-grid, reduction and
+floating-body storage still consume memory, so particle-capacity gains depend
+on the case and available VRAM; this is not a universal speedup guarantee.
+The existing `Int32` cell/particle-index limits are unchanged.
+
+Measured live buffers on an RTX A1000 Laptop GPU (`Float32` physics,
+`Float64` positions, default cell subdivision), including the rebuilt cell-grid
+workspace but excluding output, motion, reductions and allocator-pool reserves:
+
+| Case | Particles | Full buffers (MiB) | Compact buffers (MiB) | Saved |
+| --- | ---: | ---: | ---: | ---: |
+| Generated StillWedge, `dx = 0.02` | 3,027 | 0.7647 | 0.5107 | 33.22% |
+| Generated StillWedge, `dx = 0.005` | 47,790 | 11.9845 | 7.9738 | 33.47% |
+| Synthetic uniform 3D cube, `64^3` | 262,144 | 86.5856 | 56.5856 | 34.65% |
+
+Low-level `upload_particles(particles)` and `GPUSupportArrays{D,T}(n)` retain
+their previous full-buffer defaults. For mode-aware allocation, use
+`upload_particles(particles, metadata)` and
+`GPUSupportArrays{D,T}(n, metadata)`. Omitted fields are empty device vectors and
+are not reordered or downloaded by default. Explicitly requesting an omitted
+field for download, or running a mode without its required buffers, throws an
+error instead of returning incomplete data.
+
+Reproduce allocation measurements and focused correctness/output tests from
+the repository root:
+
+```bash
+julia --project=gpu_version gpu_version/benchmark/memory_buffers.jl
+julia --project=gpu_version gpu_version/test/gpu_memory.jl
+```
 
 ### Experimental radial interaction arithmetic
 
