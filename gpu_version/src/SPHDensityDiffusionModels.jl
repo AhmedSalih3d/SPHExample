@@ -169,18 +169,27 @@ end
         return Dᵢ, Dⱼ
 end
 
+"""
+    radial_density_diffusion(model, kernel, constants, x, d², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹, i, j, types, factor, inverse_distance)
+
+Scalar diffusion using the symmetric reciprocal-density weight
+`(ρᵢ⁻¹ + ρⱼ⁻¹) / 2`. Swapping particle roles reverses the returned pair
+contributions. This symmetrizes the reference linear diffusion operator;
+it is not only a reassociation of its floating-point arithmetic.
+"""
 @inline function radial_density_diffusion(::ZeroDensityDiffusion, kernel, constants,
-                                         x, d², ρᵢ, ρⱼ, ρⱼ⁻¹, i, j, types, factor, inverse_distance)
+                                         x, d², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹, i, j, types, factor, inverse_distance)
     return zero(d²), zero(d²)
 end
 
 @inline function radial_density_diffusion(model::Union{LinearDensityDiffusion, ZeroGravityLinearDensityDiffusion},
-                                         kernel, constants, x, d²::T, ρᵢ, ρⱼ, ρⱼ⁻¹, i, j,
+                                         kernel, constants, x, d²::T, ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹, i, j,
                                          types, factor, inverse_distance) where {T}
     difference = linear_density_difference(model, constants, x, ρᵢ, ρⱼ)
     # Both vectors are multiples of x: psi dot grad(W) = -A * factor * |x|^2.
     contraction = -(T(2) * difference * inverse_distance) * factor * d²
-    value = constants.δᵩ * kernel.h * constants.c₀ * (constants.m₀ * ρⱼ⁻¹) * contraction
+    inverse_density = T(1//2) * (ρᵢ⁻¹ + ρⱼ⁻¹)
+    value = constants.δᵩ * kernel.h * constants.c₀ * (constants.m₀ * inverse_density) * contraction
     enabled = !(model isa LinearDensityDiffusion) || ((types[i] == Fluid) & (types[j] == Fluid))
     Dᵢ = enabled ? value : zero(T)
     return Dᵢ, -Dᵢ

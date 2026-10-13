@@ -941,7 +941,8 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     bforces    = Val(SimMetaData.GPUBoundaryForces)
     use_radial = SimMetaData.GPURadialInteractions && radial_interactions_supported(SimKernel, SimDensityDiffusion, SimViscosity)
     use_scalar_sps = SimMetaData.GPUScalarSPSViscosity && scalar_sps_supported(SimKernel, SimViscosity)
-    if state.radial_interactions != use_radial || state.scalar_sps_viscosity != use_scalar_sps
+    interaction_mode_changed = state.radial_interactions != use_radial || state.scalar_sps_viscosity != use_scalar_sps
+    if interaction_mode_changed
         invalidate_graphs!(state)
         state.radial_interactions = use_radial
         state.scalar_sps_viscosity = use_scalar_sps
@@ -958,6 +959,12 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
 
     t_out = next_output_time(SimMetaData)
     set_output_time!(state, t_out)
+
+    if SingleNeighbor && interaction_mode_changed && state.primed && cl.nrebuilds > 0
+        # The carried derivative belongs to the previous interaction operator.
+        step = HostStep(state.fh[F_DT], state.fh[F_TIME])
+        enqueue_state_derivative!(ctx, step, timed, "00a Refresh Interaction MDBC", "00b Refresh Interaction Derivative")
+    end
 
     if !state.primed
         # No final step kernel has run yet: reduce the initial state for the
@@ -1083,7 +1090,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
 
     if SimMetaData.GPURadialInteractions
         if radial_interactions_supported(SimKernel, SimDensityDiffusion, SimViscosity)
-            @warn "GPURadialInteractions uses experimental reassociated arithmetic; rounding differences can amplify during a simulation. Validate accuracy and convergence for this case."
+            @warn "GPURadialInteractions uses symmetric reciprocal-density weighting for linear diffusion, changing the reference diffusion operator as well as rounding. Validate accuracy and convergence for this case."
         else
             @warn "GPURadialInteractions does not support this kernel/model combination; using reference interactions." kernel = typeof(SimKernel) diffusion = typeof(SimDensityDiffusion) viscosity = typeof(SimViscosity)
         end

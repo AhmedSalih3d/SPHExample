@@ -61,6 +61,7 @@ let
         ExportGridCells = true,
         OpenLogFile = true,
         GPUDoublePosition = true,
+        GPURadialInteractions = true,
         # This small case needs only a few queued frames to overlap disk output.
         GPUOutputQueueBytes = 8 * 1024^2,
         # OutputVariables = [

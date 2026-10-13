@@ -1079,13 +1079,13 @@ definitions in `benchmark/cases.jl` construct against either package.
 | `GPUMaxCells` | `50_000_000` | Abort with a clear message if the neighbour grid would need more cells (a particle escaped). |
 | `GPUInteractionThreads` | `128` | Threads per block of the interaction and mDBC kernels. |
 | `GPULanesPerParticle` | `0` (auto) | Warp lanes that share one particle's neighbour loop (1, 2, 4, ... 32). The automatic choice targets roughly one resident thread per particle-lane in 3D and one quarter of that in 2D, where neighborhoods generally contain fewer candidates; it caps lanes at 32 and combines them with warp shuffles. Explicit settings are unchanged. Use `1` for large cases and together with `GPUCellSubdivision = 2` (see "Lanes per particle" above). |
-| `GPURadialInteractions` | `false` | **Experimental** scalar Wendland C2 contractions. Supported with `ZeroDensityDiffusion`, `LinearDensityDiffusion` or `ZeroGravityLinearDensityDiffusion`, and `ZeroViscosity`, `ArtificialViscosity`, `Laminar` or `LaminarSPS`, in 2D/3D Float32/Float64. SPS retains its original ordered tensor calculation; the other supported viscosities use direct symmetric evaluation. Other combinations warn and use reference interactions. Changes floating-point rounding; see below before opting in. |
+| `GPURadialInteractions` | `false` | **Experimental** scalar Wendland C2 contractions and symmetric linear diffusion using `(ρᵢ⁻¹ + ρⱼ⁻¹) / 2`. Supported with `ZeroDensityDiffusion`, `LinearDensityDiffusion` or `ZeroGravityLinearDensityDiffusion`, and `ZeroViscosity`, `ArtificialViscosity`, `Laminar` or `LaminarSPS`, in 2D/3D Float32/Float64. SPS retains its original ordered tensor calculation; the other supported viscosities use direct symmetric evaluation. Other combinations warn and use reference interactions. Changes the reference diffusion operator as well as rounding; see below before opting in. |
 | `GPUScalarSPSViscosity` | `false` | **Experimental**, separately selectable rank-one SPS stress contraction with `LaminarSPS` in 2D/3D Float32/Float64. Preserves the closure and CPU pair ordering, but changes rounding. Does not require `GPURadialInteractions`. Other viscosities warn and use their existing path. |
 | `GPUBoundaryForces` | `true` | Evaluate the momentum equation for boundary particles too, as the CPU does (their acceleration only enters the force based time step limit). `false` skips it and saves 10-20 % in cases with many boundary particles, at the price of a slightly different adaptive time step. |
 | `GPUAsyncOutput` | `true` | Write output files on a task while the GPU continues (see "Asynchronous output"). |
 | `GPUMaxStepsPerSync` | `32` | Upper bound on the steps enqueued between two host read backs of the device resident step state. The actual batch is the estimated number of steps until the next cell list rebuild or output. `1` reproduces a synchronization per step. |
 | `GPUUseGraph` | `true` | Cache CUDA graphs of 1, 2, 4, 8, 16, and 32 steps and compose each host batch from them. Disabled automatically with `GPUSyncTimers`. |
-| `GPUCellSubdivision` | `1` | Cells per support radius `H` along each axis: `1` bins at `H` with a 3^D stencil (the CPU's cells), `2` at `H/2` with a 5^D stencil. Same neighbour pairs, fewer distance checks, more cell ranges per particle. Only `1` reproduces the CPU's orientation of the asymmetric density diffusion term (the results of the two grids differ by that term only). `2` pays off with one lane per particle (large cases); with many lanes it is slower. |
+| `GPUCellSubdivision` | `1` | Cells per support radius `H` along each axis: `1` bins at `H` with a 3^D stencil (the CPU's cells), `2` at `H/2` with a 5^D stencil. Same neighbour pairs, fewer distance checks, more cell ranges per particle. With reference interactions, only `1` reproduces the CPU's density-diffusion pair orientation. Radial symmetric diffusion removes that orientation dependence; accumulation and SPS rounding can still differ between grids. `2` pays off with one lane per particle (large cases); with many lanes it is slower. |
 | `GPUDoublePosition` | `false` | Store and integrate the particle positions (and the mDBC ghost node positions) in `Float64` while everything else stays in `FloatType`; the pair loops use cell relative `FloatType` coordinates (see "Double positions" above). Use it for `Float32` runs of domains far from the origin or with many steps. No effect with `FloatType = Float64`. Allocate the particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so that the input is read in `Float64`. |
 | `GPUCompactBuffers` | `true` | Omit unused ghost, kernel-output and shifting buffers, including ghost reorder scratch. GPU IDs use `Int32` and group markers `UInt32` only when every value fits; otherwise each field independently retains its original width. Host particle fields, output types, precision and neighbor ranges are unchanged. `false` restores the previous full allocation layout. |
 | `GPUOutputQueueBytes` | `256 * 2^20` | Separate host memory budget for reusable frames between the download collector and disk writer; at least one frame. Used with `GPUAsyncOutput`. |
@@ -1153,16 +1153,29 @@ contractions to use scalar dot products and the already-computed squared
 distance. Diffusion and viscosity share the reciprocal of `distance^2 + eta^2`.
 Zero/artificial/laminar viscosity is evaluated directly from the target
 particle's viewpoint instead of converting to and from the CPU pair orientation.
-Diffusion still uses its original pair orientation and fluid gating. With SPS,
-continuity and linear diffusion can now use the radial identities while viscosity
-retains its original tensor arithmetic and pair ordering. Nonlinear diffusion,
-custom models and other kernels retain reference interactions.
+Linear diffusion uses the symmetric volume weight
+`m₀ * (ρᵢ⁻¹ + ρⱼ⁻¹) / 2` instead of the reference pair owner's `m₀ * ρⱼ⁻¹`.
+It is evaluated directly from the target particle's viewpoint: swapping both
+particle roles and the separation reverses the diffusion contribution, so the
+two assigned terms are equal and opposite without choosing a canonical owner.
+This applies to both linear diffusion models; their existing fluid gating and
+hydrostatic correction are unchanged. With SPS, continuity and diffusion use
+the radial path while viscosity retains its original tensor arithmetic and pair
+ordering. Nonlinear diffusion, custom models and other kernels retain reference
+interactions.
+
+**Symmetrizing this density weight changes the diffusion operator, not just its
+floating-point evaluation.** It agrees with the old weight at equal densities
+and averages the two possible oriented weights otherwise. Validate the modified
+operator for the intended simulation; it is not a reference-equivalent speedup.
+The default-off path retains the original oriented diffusion.
 
 The option does not change precision, physics parameters, the timestep scheme,
 neighbor selection, boundary forces, shifting or output fields. It introduces
-no extra device arrays or timestep launches. The host selects a `Val`-specialized
+no extra device arrays or per-step launches with a fixed interaction mode. The host selects a `Val`-specialized
 kernel, so default-off runs retain reference arithmetic. Changing the option
-between timestep intervals invalidates cached graphs. mDBC interpolation is
+between timestep intervals invalidates cached graphs and refreshes the carried
+derivative when using single-neighbor stepping. mDBC interpolation is
 unchanged, including Updated mDBC boundary activation and tangential velocity.
 Direct kernel callers can use `launch_interactions!(...; radial = Val(true))`.
 
@@ -1189,16 +1202,22 @@ meta.GPUScalarSPSViscosity = true
 
 Both flags default to `false`; the existing solver remains the reference.
 Direct kernel callers select the second stage with `scalar_sps = Val(true)`.
-Both reassociations warn explicitly and need case-specific accuracy/convergence
-validation. The default kernels and custom viscosity models are unchanged.
+Both options warn explicitly and need case-specific accuracy/convergence
+validation. Radial diffusion changes its density weighting; scalar SPS only
+reassociates the existing closure. The default kernels and custom viscosity
+models are unchanged.
 
 #### SPS measurements
 
-Measured on 2026-10-11 with Julia 1.12.7 and an RTX A1000 Laptop GPU. Five warmed
+Measured on 2026-10-11, before radial DDT symmetrization, with Julia 1.12.7 and an RTX A1000 Laptop GPU. Five warmed
 rounds alternated baseline, reference, radial-only, scalar-SPS-only and both
 stages. Complete wall time includes input preparation, upload, graph construction,
 simulation, logging, particle/grid output and file closing. Output verification
 and Julia/package loading are excluded.
+
+These are historical measurements of the earlier oriented radial DDT.
+Radial-enabled rows do not measure the new symmetric diffusion operator.
+Scalar-SPS-only/reference rows keep radial mode off and retain reference DDT.
 
 | SPS workload | Reference total | Scalar SPS total | Median paired time reduction |
 | --- | ---: | ---: | ---: |
@@ -1240,6 +1259,12 @@ long-run comparison uses that same option without radial continuity/diffusion.
 Raw results: [3D SPS](benchmark/sps_interactions_3d_results.csv),
 [MovingSquare SPS](benchmark/sps_interactions_moving_results.csv) and
 [small default control](benchmark/sps_small_default_results.csv).
+
+#### Historical radial measurements (before symmetric DDT)
+
+The following comparisons used the earlier oriented radial diffusion, which
+only reassociated the reference formula. They do not establish the performance
+or accuracy of the new symmetric density weighting.
 
 **Mathematical equivalence is not validated trajectory equivalence.** The
 reassociated products change rounding and FMA opportunities. Five warmed

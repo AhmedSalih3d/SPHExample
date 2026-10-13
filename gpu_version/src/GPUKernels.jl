@@ -12,16 +12,18 @@ a warp (`K` a power of two up to 32): lane `k` visits every `K`-th candidate
 of each cell row and the partial sums are combined with warp shuffles.
 
 The CPU code evaluates every pair once and assigns the two halves of a pair
-to `i` and `j`. For the built in models most terms are antisymmetric, but the
-density diffusion term is deliberately not (`Dⱼ = -Dᵢ` is used as a cheap
-approximation) and a user supplied model may not be either. To reproduce the
-CPU results exactly the gather kernel reconstructs which particle of a pair
+to `i` and `j`. Reference density diffusion assigns equal-and-opposite terms,
+but its neighbor reciprocal-density weight makes their magnitude depend on
+which particle is chosen first. A user supplied model may also depend on that
+choice. To reproduce the CPU results exactly the gather kernel reconstructs which particle of a pair
 was the CPU's `i`: for pairs inside one cell the lower index, for pairs in
 different cells the particle in the cell that is processed (the higher index,
 because the CPU stencil only visits cells with a lower linear index). Both
 particles of a pair reach the same decision, so the rule stays consistent for
 any grid; it only reproduces the CPU's choice with the CPU's cells of edge
-`H` (`GPUCellSubdivision = 1`).
+`H` (`GPUCellSubdivision = 1`). Opt-in radial linear diffusion instead
+averages the two reciprocal-density weights and evaluates from the target
+particle's viewpoint, removing that diffusion term's orientation dependence.
 
 Every kernel of a time step takes the device resident step state (`step`, see
 `GPUStepState`) and reads the step size and the simulated time from it; the
@@ -73,9 +75,10 @@ const FULL_MASK = 0xffffffff
 Whether the opt-in radial specialization is implemented for this combination:
 2D/3D Float32/Float64 Wendland C2, zero/linear density diffusion, and
 zero/artificial/laminar/SPS viscosity. SPS retains its original tensor
-calculation and CPU pair orientation; only continuity and diffusion use radial
-contractions. This is a capability check, not an accuracy or performance
-guarantee. Unsupported combinations use reference interactions.
+calculation and CPU pair orientation. Linear diffusion uses a symmetric
+reciprocal-density average, changing the reference diffusion operator in
+addition to rounding. This is a capability check, not an accuracy or
+performance guarantee. Unsupported combinations use reference interactions.
 """
 radial_interactions_supported(kernel, diffusion, viscosity) = false
 function radial_interactions_supported(::SPHKernelInstance{<:WendlandC2, D, T},
@@ -348,9 +351,8 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                             dρdt += -ρᵢ * (m₀ * ρⱼ⁻¹) * density_symmetric_term
                         end
 
-                        # Which particle of the pair was `i` on the CPU? Evaluate the
-                        # models from that particle's point of view (branch free: the
-                        # sign flip and the swaps of index and density are selects).
+                        # Reference diffusion and ordered/SPS viscosity use the CPU
+                        # pair orientation. The sign flip and swaps are selects.
                         # The densities handed to the models are those of the arrays
                         # being evaluated (the predictor state in the corrector loop).
                         same_cell = (j >= own_lo) & (j <= own_hi)
@@ -363,15 +365,16 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         ρa⁻¹ = i_first ? ρᵢ⁻¹ : ρⱼ⁻¹
                         ρb⁻¹ = i_first ? ρⱼ⁻¹ : ρᵢ⁻¹
                         if Radial
-                            D1, D2 = SPHDensityDiffusionModels.radial_density_diffusion(SimDensityDiffusion,
-                                SimKernel, SimConstants, sgn * xᵢⱼ, xᵢⱼ², ρa, ρb, ρb⁻¹,
-                                ia, ja, ParticleType, radial_factor, inverse_distance)
+                            D1, _ = SPHDensityDiffusionModels.radial_density_diffusion(SimDensityDiffusion,
+                                SimKernel, SimConstants, xᵢⱼ, xᵢⱼ², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹,
+                                i, j, ParticleType, radial_factor, inverse_distance)
+                            dρdt += D1
                         else
                             D1, D2 = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants,
                                                                SimParticles, sgn * xᵢⱼ, sgn * ∇ᵢWᵢⱼ, xᵢⱼ²,
                                                                ρa, ρb, ρa⁻¹, ρb⁻¹, ia, ja, ParticleType)
+                            dρdt += i_first ? D1 : D2
                         end
-                        dρdt += i_first ? D1 : D2
 
                         if forces
                             viscous_velocity = boundary_viscous_velocity(boundary_data, Velocity, ParticleType, i) -
@@ -462,12 +465,13 @@ particles with `MotionLimiter == 0`. `pos_cells` is the `PosCell` array of
 `Position` when the positions are stored in a higher precision than the
 working precision (the pair vectors are then formed from it, see
 `GPUCellGrid`); `nothing` forms them from `Position` directly.
-`radial = Val(true)` opts into scalar Wendland contractions and direct
-symmetric viscosity. It changes floating-point rounding, not the equations
-or pair ordering of density diffusion. SPS viscosity retains the original
-tensor arithmetic and pair ordering while continuity and diffusion are
-optimized. Unsupported kernel/model combinations use the reference
-specialization; the default is `Val(false)`.
+`radial = Val(true)` opts into scalar Wendland contractions, direct symmetric
+viscosity, and linear diffusion weighted by `(InvDensity[i] + InvDensity[j]) / 2`.
+Diffusion is evaluated directly from the target particle's viewpoint. This
+changes the reference diffusion operator as well as floating-point rounding.
+SPS viscosity retains the original tensor arithmetic and pair ordering.
+Unsupported kernel/model combinations use the reference specialization;
+the default is `Val(false)`.
 `scalar_sps = Val(true)` separately opts into the rank-one SPS stress
 contraction while retaining its pair orientation and closure. It can be
 selected without radial continuity/diffusion, and changes rounding.

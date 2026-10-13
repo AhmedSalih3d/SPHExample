@@ -7,9 +7,13 @@ const SK = SPHExampleGPU.SPHKernels
 const DD = SPHExampleGPU.SPHDensityDiffusionModels
 const VM = SPHExampleGPU.SPHViscosityModels
 const CL = SPHExampleGPU.SPHCellList
+const GS = SPHExampleGPU.GPUStepState
 
 struct OrderedViscosity <: SPHViscosity end
 struct OrderedDiffusion <: SPHDensityDiffusion end
+struct SymmetricReferenceDiffusion{M<:SPHDensityDiffusion} <: SPHDensityDiffusion
+    model::M
+end
 
 @inline function VM.compute_viscosity(::OrderedViscosity, kernel, constants, particles,
                                      x, v, gradient, d², ρᵢ, ρⱼ, invρᵢ, invρⱼ, i, j)
@@ -22,6 +26,16 @@ end
                                              x, gradient, d², ρᵢ, ρⱼ, invρᵢ, invρⱼ, i, j, types)
     value = (ρⱼ - ρᵢ) * dot(x, gradient) * invρⱼ + particles.Density[i] * invρᵢ
     return value, value / 2
+end
+
+@inline function DD.compute_density_diffusion(model::SymmetricReferenceDiffusion, kernel, constants, particles,
+                                             x, gradient, d², ρᵢ, ρⱼ, invρᵢ, invρⱼ, i, j, types)
+    forward, _ = DD.compute_density_diffusion(model.model, kernel, constants, particles,
+        x, gradient, d², ρᵢ, ρⱼ, invρᵢ, invρⱼ, i, j, types)
+    backward, _ = DD.compute_density_diffusion(model.model, kernel, constants, particles,
+        -x, -gradient, d², ρⱼ, ρᵢ, invρⱼ, invρᵢ, j, i, types)
+    value = eltype(x)(1//2) * (forward - backward)
+    return value, -value
 end
 
 function maximum_difference(actual, expected)
@@ -65,18 +79,26 @@ end
             inverse_distance = inv(d² + kernel.η²)
             for types in ([Fluid, Fluid], [Fluid, Fixed], [Fixed, Fluid], [Floating, Fluid], [Moving, Fixed])
                 for model in (ZeroDensityDiffusion(), LinearDensityDiffusion(), ZeroGravityLinearDensityDiffusion())
-                    for reverse_pair in (false, true)
+                    for densities in ((T(1007), T(995)), (T(1000), T(1000))), reverse_pair in (false, true)
                         r = reverse_pair ? -x : x
                         g = reverse_pair ? -gradient : gradient
                         i, j = reverse_pair ? (2, 1) : (1, 2)
-                        ρᵢ, ρⱼ = reverse_pair ? (T(995), T(1007)) : (T(1007), T(995))
-                        expected = compute_density_diffusion(model, kernel, constants, nothing,
+                        ρᵢ, ρⱼ = reverse_pair ? reverse(densities) : densities
+                        expected = compute_density_diffusion(SymmetricReferenceDiffusion(model), kernel, constants, nothing,
                             r, g, d², ρᵢ, ρⱼ, inv(ρᵢ), inv(ρⱼ), i, j, types)
                         actual = DD.radial_density_diffusion(model, kernel, constants,
-                            r, d², ρᵢ, ρⱼ, inv(ρⱼ), i, j, types, factor, inverse_distance)
+                            r, d², ρᵢ, ρⱼ, inv(ρᵢ), inv(ρⱼ), i, j, types, factor, inverse_distance)
+                        swapped = DD.radial_density_diffusion(model, kernel, constants,
+                            -r, d², ρⱼ, ρᵢ, inv(ρⱼ), inv(ρᵢ), j, i, types, factor, inverse_distance)
                         @test isapprox(actual[1], expected[1]; rtol = tolerance, atol = tolerance)
                         @test actual[2] == -actual[1]
+                        @test swapped == reverse(actual)
                         @test all(isfinite, actual)
+                        if ρᵢ == ρⱼ
+                            reference = compute_density_diffusion(model, kernel, constants, nothing,
+                                r, g, d², ρᵢ, ρⱼ, inv(ρᵢ), inv(ρⱼ), i, j, types)
+                            @test isapprox(actual[1], reference[1]; rtol = tolerance, atol = tolerance)
+                        end
                     end
                 end
             end
@@ -145,6 +167,12 @@ function interaction_fixture(D, T, TP; reach = 1, kernel_type = WendlandC2())
         host.Velocity[i] = SVector{D,T}(ntuple(d -> T(0.04) * sin(T(i * d)), D))
         host.Type[i] = i <= 2 ? Fixed : i <= 4 ? Moving : i <= 6 ? Floating : Fluid
     end
+    return upload_interaction_fixture(host, constants, kernel, TP; reach)
+end
+
+function upload_interaction_fixture(host, constants, kernel, TP; reach)
+    D = length(eltype(host.Position))
+    T = eltype(host.Density)
     Pressure!(host.Pressure, host.Density, constants)
     gpu = upload_particles(host; position_type = TP)
     cells = CellListWorkspace{D,TP}(length(gpu); reach)
@@ -160,6 +188,16 @@ function interaction_fixture(D, T, TP; reach = 1, kernel_type = WendlandC2())
     copyto!(boundary.velocity, -velocity)
     copyto!(boundary.tangent_velocity, velocity / 2)
     return (; constants, kernel, gpu, cells, support, step)
+end
+
+function diffusion_pair_fixture(D, T, TP; reach)
+    constants = SimulationConstants{T}(dx = T(0.02), c₀ = T(35), m₀ = T(1000 * 0.02^D))
+    kernel = SPHKernelInstance{D,T}(WendlandC2(); dx = constants.dx)
+    points = [SVector{D,TP}(ntuple(d -> TP(d == 1 ? 0.05 : 0.03), D)),
+        SVector{D,TP}(ntuple(d -> TP(d == 1 ? 0.01 : d == 2 ? 0.05 : 0.03), D))]
+    geometry = [SPHGeometry{D,T}(points; Density = T[995, 1007], GroupMarker = 1, Type = Fluid)]
+    host = AllocateDataStructures(geometry; position_type = TP)
+    return upload_interaction_fixture(host, constants, kernel, TP; reach)
 end
 
 function interaction_fields(f, diffusion, viscosity; radial = nothing, lanes = 1, boundary_forces = true,
@@ -232,14 +270,14 @@ function simulate(f; radial, graph, scheme, precision = Float32, position_type =
     end
 end
 
-function mode_switch_run(graph; scalar_sps = false)
+function mode_switch_run(graph; scalar_sps = false, scheme = SymplecticTimeStepping(), refresh_control = false)
     D, T, TP = 2, Float32, Float64
     f = simulation_fixture(D, T, TP, NoMDBC)
     return mktempdir() do save
         meta = SimulationMetaData{D,T}(SimulationName = "Switch", SaveLocation = save,
             SimulationTime = T(scalar_sps ? 0.015 : 0.009), OutputTimes = T(0.003), OutputIterationCounter = 1,
             GPUDoublePosition = true, GPUUseGraph = graph, GPUMaxStepsPerSync = 8)
-        meta.TimeSteppingMode = SymplecticTimeStepping()
+        meta.TimeSteppingMode = scheme
         host = AllocateDataStructures(f.geometry, meta)
         Pressure!(host.Pressure, host.Density, f.constants)
         gpu = upload_particles(host; position_type = TP)
@@ -255,6 +293,24 @@ function mode_switch_run(graph; scalar_sps = false)
         for (mode, scalar_mode) in modes
             meta.GPURadialInteractions = mode
             meta.GPUScalarSPSViscosity = scalar_mode
+            if refresh_control && state.primed &&
+               (state.radial_interactions != mode || state.scalar_sps_viscosity != scalar_mode)
+                # Supply the new full-state derivative explicitly in the control.
+                step = HostStep(state.fh[GS.F_DT], state.fh[GS.F_TIME])
+                GK.launch_inv_density!(support.InvDensity, gpu.Density, step;
+                    pos_cells = support.PosCells, Position = gpu.Position,
+                    CellID = gpu.CellID, grid = cells.grid_dev, H = f.kernel.H,
+                    Velocity = gpu.Velocity, ParticleType = gpu.Type, GroupMarker = gpu.GroupMarker)
+                GK.launch_interactions!(support.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient,
+                    support.∇Cᵢ, support.∇◌rᵢ, gpu.Position, gpu.Density, support.InvDensity, gpu.Pressure,
+                    gpu.Velocity, gpu.Type, cells.CellStart, gpu.CellID, cells.grid_dev, step,
+                    LinearDensityDiffusion(), viscosity, f.kernel, f.constants, Val(false), Val(false);
+                    lanes = Val(choose_lanes(length(gpu), Val(D))), pos_cells = support.PosCells,
+                    radial = Val(mode), scalar_sps = Val(scalar_mode))
+                GS.invalidate_graphs!(state)
+                state.radial_interactions = mode
+                state.scalar_sps_viscosity = scalar_mode
+            end
             SimulationLoop(LinearDensityDiffusion(), viscosity, f.kernel,
                 meta, f.constants, gpu, cells, support, reduction, motion, state)
             @test state.radial_interactions == mode
@@ -273,6 +329,36 @@ function mode_switch_run(graph; scalar_sps = false)
 end
 
 if CUDA.functional()
+    @testset "radial DDT is conservative and independent of cell pair orientation" begin
+        for D in (2, 3), (T, TP) in ((Float32, Float32), (Float32, Float64), (Float64, Float64))
+            full = diffusion_pair_fixture(D, T, TP; reach = 1)
+            half = diffusion_pair_fixture(D, T, TP; reach = 2)
+            full_ids, half_ids = Array(full.gpu.ID), Array(half.gpu.ID)
+            @test full_ids == [1, 2]
+            @test half_ids == [2, 1]
+            full_order, half_order = sortperm(full_ids), sortperm(half_ids)
+            full_cells, half_cells = Array(full.gpu.CellID), Array(half.gpu.CellID)
+            @test full_cells[1] < full_cells[2]
+            @test half_cells[1] < half_cells[2]
+            tolerance = T === Float32 ? 8e-6 : 4e-13
+            for diffusion in (LinearDensityDiffusion(), ZeroGravityLinearDensityDiffusion())
+                reference_full = first(interaction_fields(full, diffusion, ZeroViscosity(); radial = false))[full_order]
+                reference_half = first(interaction_fields(half, diffusion, ZeroViscosity(); radial = false))[half_order]
+                @test !isapprox(reference_full, reference_half; rtol = tolerance, atol = tolerance)
+                for lanes in (1, 4)
+                    rate_full = first(interaction_fields(full, diffusion, ZeroViscosity(); radial = true, lanes))[full_order]
+                    rate_half = first(interaction_fields(half, diffusion, ZeroViscosity(); radial = true, lanes))[half_order]
+                    @test isapprox(rate_full, rate_half; rtol = tolerance, atol = tolerance)
+                    @test maximum(abs, rate_full) > tolerance
+                    @test isapprox(sum(rate_full), zero(T); atol = tolerance * maximum(abs, rate_full))
+                    @test isapprox(sum(rate_half), zero(T); atol = tolerance * maximum(abs, rate_half))
+                    expected = first(interaction_fields(full, SymmetricReferenceDiffusion(diffusion), ZeroViscosity(); lanes))[full_order]
+                    @test isapprox(rate_full, expected; rtol = tolerance, atol = tolerance)
+                end
+            end
+        end
+    end
+
     @testset "radial GPU interactions preserve gating, state and reference fallbacks" begin
         for (D, T, TP, reach, lanes) in ((2, Float32, Float32, 1, 4), (3, Float32, Float64, 2, 1),
                                        (3, Float64, Float64, 1, 4), (2, Float64, Float64, 2, 32))
@@ -288,7 +374,9 @@ if CUDA.functional()
                     @test reference == explicit
                     optimized = interaction_fields(f, diffusion, viscosity; radial = true, lanes,
                         boundary_data = boundary, boundary_forces = forces)
-                    test_fields_close(optimized, reference, tolerance)
+                    symmetric_reference = interaction_fields(f, SymmetricReferenceDiffusion(diffusion), viscosity; lanes,
+                        boundary_data = boundary, boundary_forces = forces)
+                    test_fields_close(optimized, symmetric_reference, tolerance)
                     if viscosity isa LaminarSPS
                         @test optimized[2] == reference[2]
                         for radial_mode in (false, true)
@@ -334,7 +422,8 @@ if CUDA.functional()
                                        (3, Float32, Float64, NoMDBC, false))
             f = simulation_fixture(D, T, TP, B; floating)
             for scheme in (SymplecticTimeStepping(), SingleNeighborTimeStepping())
-                reference = simulate(f; radial = false, graph = false, scheme, precision = T, position_type = TP)
+                reference = simulate(f; radial = false, graph = false, scheme, precision = T, position_type = TP,
+                    diffusion = SymmetricReferenceDiffusion(LinearDensityDiffusion()))
                 optimized = simulate(f; radial = true, graph = false, scheme, precision = T, position_type = TP)
                 replay = simulate(f; radial = true, graph = true, scheme, precision = T, position_type = TP)
                 @test replay == optimized
@@ -347,6 +436,12 @@ if CUDA.functional()
         end
         @test mode_switch_run(true) == mode_switch_run(false)
         @test mode_switch_run(false; scalar_sps = true) == mode_switch_run(true; scalar_sps = true)
+        for scalar_sps in (false, true)
+            scheme = SingleNeighborTimeStepping()
+            control = mode_switch_run(false; scalar_sps, scheme, refresh_control = true)
+            @test mode_switch_run(false; scalar_sps, scheme) == control
+            @test mode_switch_run(true; scalar_sps, scheme) == control
+        end
         for (D, T, TP, B) in ((2, Float32, Float32, NoMDBC),
                               (2, Float32, Float64, SimpleMDBC),
                               (2, Float64, Float64, UpdatedMDBC),
@@ -355,24 +450,28 @@ if CUDA.functional()
             for scheme in (SymplecticTimeStepping(), SingleNeighborTimeStepping())
                 reference = simulate(f; radial = false, graph = false, scheme,
                     precision = T, position_type = TP, viscosity = LaminarSPS())
+                symmetric_reference = simulate(f; radial = false, graph = false, scheme,
+                    precision = T, position_type = TP, viscosity = LaminarSPS(),
+                    diffusion = SymmetricReferenceDiffusion(LinearDensityDiffusion()))
                 optimized = simulate(f; radial = true, graph = false, scheme,
                     precision = T, position_type = TP, viscosity = LaminarSPS())
                 replay = simulate(f; radial = true, graph = true, scheme,
                     precision = T, position_type = TP, viscosity = LaminarSPS())
                 @test replay == optimized
-                @test optimized.steps == reference.steps
-                @test optimized.output.fields == reference.output.fields
-                @test optimized.time ≈ reference.time rtol = T === Float32 ? 2e-5 : 2e-13
-                test_fields_close(optimized.state, reference.state, T === Float32 ? 5e-5 : 2e-12)
+                @test optimized.steps == symmetric_reference.steps
+                @test optimized.output.fields == symmetric_reference.output.fields
+                @test optimized.time ≈ symmetric_reference.time rtol = T === Float32 ? 2e-5 : 2e-13
+                test_fields_close(optimized.state, symmetric_reference.state, T === Float32 ? 5e-5 : 2e-12)
                 for radial_mode in (false, true)
                     scalar = simulate(f; radial = radial_mode, scalar_sps = true, graph = false, scheme,
                         precision = T, position_type = TP, viscosity = LaminarSPS())
                     scalar_replay = simulate(f; radial = radial_mode, scalar_sps = true, graph = true, scheme,
                         precision = T, position_type = TP, viscosity = LaminarSPS())
                     @test scalar_replay == scalar
-                    @test scalar.steps == reference.steps
-                    @test scalar.output.fields == reference.output.fields
-                    test_fields_close(scalar.state, reference.state, T === Float32 ? 5e-5 : 2e-12)
+                    expected = radial_mode ? symmetric_reference : reference
+                    @test scalar.steps == expected.steps
+                    @test scalar.output.fields == expected.output.fields
+                    test_fields_close(scalar.state, expected.state, T === Float32 ? 5e-5 : 2e-12)
                 end
             end
         end

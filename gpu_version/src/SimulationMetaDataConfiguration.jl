@@ -71,10 +71,11 @@ Host fields and exported types are unchanged; out-of-range metadata retains
 its original width. `false` keeps the previous full GPU allocation layout.
 
 `GPURadialInteractions = true` opts into experimental scalar Wendland C2 pair contractions
-for supported linear diffusion and built-in viscosity models. SPS keeps its
-original viscosity arithmetic and pair ordering. The default is `false`,
-preserving the reference arithmetic. Opting in changes rounding and can amplify
-trajectory differences, so accuracy and convergence must be validated for the
+for supported linear diffusion and built-in viscosity models. Linear diffusion
+uses the symmetric reciprocal-density average `(ρᵢ⁻¹ + ρⱼ⁻¹) / 2`, changing
+the reference diffusion operator, not just rounding. SPS keeps its original
+viscosity arithmetic and pair ordering. The default is `false`, preserving
+the reference arithmetic. Accuracy and convergence must be validated for the
 intended simulation; unsupported models use the reference path.
 
 `GPUScalarSPSViscosity = true` separately opts into a rank-one contraction of
@@ -112,7 +113,7 @@ mutable struct SimulationMetaData{Dimensions,
     GPUMaxCells::Int             # safety limit for the size of the neighbour grid
     GPUInteractionThreads::Int   # threads per block for the interaction kernels
     GPULanesPerParticle::Int     # warp lanes per particle in the gather kernels (0 = automatic)
-    GPURadialInteractions::Bool  # opt-in scalar Wendland pair arithmetic (changes rounding)
+    GPURadialInteractions::Bool  # opt-in scalar Wendland arithmetic and symmetric linear diffusion
     GPUScalarSPSViscosity::Bool   # separate opt-in rank-one SPS stress arithmetic (changes rounding)
     GPUBoundaryForces::Bool      # also evaluate the momentum equation for boundary particles (CPU parity)
     GPUAsyncOutput::Bool         # write output files on a Julia task while the GPU continues
