@@ -59,12 +59,14 @@ if CUDA.functional()
     @testset "Updated mDBC CUDA ghost correction" begin
         GK = SPHExampleGPU.GPUKernels
         CL = SPHExampleGPU.SPHCellList
-        for D in (2, 3), (T, TP) in ((Float32, Float32), (Float32, Float64), (Float64, Float64)), dry in (false, true)
+        for D in (2, 3), (T, TP) in ((Float32, Float32), (Float32, Float64), (Float64, Float64)),
+            dry in (false, true), compact in (false, true)
             f = updated_mdbc_fixture(Val(D), T, TP; dry)
-            gpu = upload_particles(f.host; position_type = TP)
+            gpu = upload_particles(f.host; position_type = TP, boundary_only = compact)
             cl = CellListWorkspace{D, TP}(length(gpu))
             CL.rebuild_cell_list!(gpu, cl, f.kernel.H⁻¹)
-            sup = GPUSupportArrays{D, T}(length(gpu); position_type = TP, updated_mdbc = true)
+            sup = GPUSupportArrays{D, T}(length(gpu); position_type = TP, updated_mdbc = true,
+                boundary_slots = gpu.BoundarySlot, boundary_count = compact ? length(gpu.GhostIndex) : length(gpu))
             step = HostStep(T(1e-4), zero(T))
             if TP !== T
                 launch_pos_cells!(sup.PosCells, gpu.Position, gpu.CellID, cl.grid_dev, step, f.kernel)
@@ -72,14 +74,16 @@ if CUDA.functional()
             for K in (1, 4, 32)
                 GK.launch_updated_mdbc!(gpu.Density, gpu.Pressure, gpu.Position, gpu.Velocity,
                     gpu.GhostPoints, gpu.GhostNormals, gpu.GhostIndex, gpu.Type, cl.CellStart,
-                    cl.grid_dev, step, f.kernel, f.constants, sup.boundary_data; lanes = Val(K), pos_cells = sup.PosCells)
+                    cl.grid_dev, step, f.kernel, f.constants, sup.boundary_data; lanes = Val(K), pos_cells = sup.PosCells,
+                    compact_ghosts = Val(compact))
                 idx = only(Array(gpu.GhostIndex))
-                @test Array(sup.boundary_data.active)[idx] == !dry
+                slot = compact ? 1 : idx
+                @test Array(sup.boundary_data.active)[slot] == !dry
                 @test Array(gpu.Density)[idx] ≈ (dry ? T(1000) : T(999)) rtol = 1e-5
                 @test Array(gpu.Pressure)[idx] ≈ (dry ? zero(T) : -T(400)) atol = T(0.5)
                 @test Array(gpu.Velocity)[idx] == zero(SVector{D, T})
-                @test Array(sup.boundary_data.velocity)[idx] ≈ (dry ? zero(SVector{D, T}) : SVector{D, T}(ntuple(_ -> -T(0.2), D)))
-                tangent = Array(sup.boundary_data.tangent_velocity)[idx]
+                @test Array(sup.boundary_data.velocity)[slot] ≈ (dry ? zero(SVector{D, T}) : SVector{D, T}(ntuple(_ -> -T(0.2), D)))
+                tangent = Array(sup.boundary_data.tangent_velocity)[slot]
                 @test tangent[D] ≈ zero(T) atol = eps(T)
                 @test tangent[1] ≈ (dry ? zero(T) : -T(0.2))
             end
@@ -88,24 +92,27 @@ if CUDA.functional()
 
     @testset "Inactive boundaries contribute no mass or forces" begin
         f = updated_mdbc_fixture(Val(2), Float64, Float64)
-        gpu = upload_particles(f.host[[1, 2]])
-        cl = CellListWorkspace{2, Float64}(2)
-        SPHExampleGPU.SPHCellList.rebuild_cell_list!(gpu, cl, f.kernel.H⁻¹)
-        sup = GPUSupportArrays{2, Float64}(2; updated_mdbc = true)
-        fill!(gpu.Density, 1000)
-        fill!(gpu.Pressure, 100)
-        step = HostStep(1e-4, 0.0)
-        fluid = findfirst(==(Fluid), Array(gpu.Type))
-        for active in (true, false)
-            fill!(sup.boundary_data.active, active)
-            launch_interactions!(sup.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient, sup.∇Cᵢ, sup.∇◌rᵢ,
-                gpu.Position, gpu.Density, gpu.Pressure, gpu.Velocity, gpu.Type,
-                cl.CellStart, gpu.CellID, cl.grid_dev, step, ZeroDensityDiffusion(), ZeroViscosity(),
-                f.kernel, f.constants, Val(false), Val(false); boundary_data = sup.boundary_data)
-            acceleration = Array(gpu.Acceleration)[fluid]
-            rate = Array(sup.dρdtI)[fluid]
-            @test iszero(acceleration) == !active
-            @test iszero(rate) == !active
+        for compact in (false, true)
+            gpu = upload_particles(f.host[[1, 2]]; boundary_only = compact)
+            cl = CellListWorkspace{2, Float64}(2)
+            SPHExampleGPU.SPHCellList.rebuild_cell_list!(gpu, cl, f.kernel.H⁻¹)
+            sup = GPUSupportArrays{2, Float64}(2; updated_mdbc = true, boundary_slots = gpu.BoundarySlot,
+                boundary_count = compact ? length(gpu.GhostIndex) : length(gpu))
+            fill!(gpu.Density, 1000)
+            fill!(gpu.Pressure, 100)
+            step = HostStep(1e-4, 0.0)
+            fluid = findfirst(==(Fluid), Array(gpu.Type))
+            for active in (true, false)
+                fill!(sup.boundary_data.active, active)
+                launch_interactions!(sup.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient, sup.∇Cᵢ, sup.∇◌rᵢ,
+                    gpu.Position, gpu.Density, gpu.Pressure, gpu.Velocity, gpu.Type,
+                    cl.CellStart, gpu.CellID, cl.grid_dev, step, ZeroDensityDiffusion(), ZeroViscosity(),
+                    f.kernel, f.constants, Val(false), Val(false); boundary_data = sup.boundary_data)
+                acceleration = Array(gpu.Acceleration)[fluid]
+                rate = Array(sup.dρdtI)[fluid]
+                @test iszero(acceleration) == !active
+                @test iszero(rate) == !active
+            end
         end
     end
 

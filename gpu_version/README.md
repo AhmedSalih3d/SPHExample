@@ -940,7 +940,7 @@ the standard *gather* formulation:
   `(D+1)×(D+1)` system in registers and solves it with StaticArrays inside
   the kernel. The launch covers only those particles: the reorder of every
   cell list rebuild also relists the ghost node owners in cell order
-  (`GhostIndex`, a stream compaction of the non-zero `GhostPoints`), so the
+  (`GhostIndex`, mapping ghost slots to current particle indices), so the
   warps are dense instead of scattered over the fluid particles that are
   interleaved with the boundary in cell order and exit at once. The neighbour
   loop tests the distance before it loads the particle type, so only the
@@ -1108,7 +1108,7 @@ definitions in `benchmark/cases.jl` construct against either package.
 | `GPUUseGraph` | `true` | Cache CUDA graphs of 1, 2, 4, 8, 16, and 32 steps and compose each host batch from them. Disabled automatically with `GPUSyncTimers`. |
 | `GPUCellSubdivision` | `1` | Positive integer `R`: cells of edge `H/R`, a `(2R+1)^D` stencil, and `(2R+1)^(D-1)` contiguous row ranges. `1` reproduces the CPU grid, `2` uses half-width cells, and `4` uses quarter-width cells. Finer grids reduce candidates but increase dense-grid memory, row overhead and mDBC work. With reference interactions, only `1` reproduces the CPU's density-diffusion pair orientation. Radial symmetric diffusion removes that orientation dependence; accumulation and SPS rounding can still differ. Benchmark the intended precision, lane count and boundary mode before changing it. |
 | `GPUDoublePosition` | `false` | Store and integrate the particle positions (and the mDBC ghost node positions) in `Float64` while everything else stays in `FloatType`; the pair loops use cell relative `FloatType` coordinates (see "Double positions" above). Use it for `Float32` runs of domains far from the origin or with many steps. No effect with `FloatType = Float64`. Allocate the particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so that the input is read in `Float64`. |
-| `GPUCompactBuffers` | `true` | Omit unused ghost, kernel-output and shifting buffers, including ghost reorder scratch, share position/velocity predictors with existing reorder scratch, and remove acceleration/pressure sorting shadows. Pressure is reconstructed from sorted density with the selected EOS; acceleration is refreshed before post-rebuild readers. Fixed predictor writes are skipped; boundary density and requested force calculations are retained. GPU IDs use `Int32` and group markers `UInt32` only when every value fits; otherwise each field independently retains its original width. Host particle fields, output types, precision and neighbor ranges are unchanged. `false` restores the previous full allocation layout. |
+| `GPUCompactBuffers` | `true` | Omit unused ghost, kernel-output and shifting buffers; store enabled mDBC ghosts and Updated mDBC state only for ghost-owning boundaries, without ghost reorder scratch; share position/velocity predictors with existing reorder scratch; and remove acceleration/pressure sorting shadows. Pressure is reconstructed from sorted density with the selected EOS; acceleration is refreshed before post-rebuild readers. Fixed predictor writes are skipped; boundary density and requested force calculations are retained. GPU IDs use `Int32` and group markers `UInt32` only when every value fits; otherwise each field independently retains its original width. Host particle fields, output types, precision and neighbor ranges are unchanged. `false` restores the previous full allocation layout. |
 | `GPUOutputQueueBytes` | `256 * 2^20` | Separate host memory budget for reusable frames between the download collector and disk writer; at least one frame. Used with `GPUAsyncOutput`. |
 | `GPUOutputBufferBytes` | `256 * 2^20` | Host memory for output frames that are held before they are written to the single `vtkhdf` file (see "Asynchronous output"). The number of frames per flush uses the particle fields plus an initial grid-size estimate, at least 1 and at most 16. Dense grid frames are checked against the remaining byte budget and can flush sooner; a frame larger than the budget is written immediately. `0` writes every frame at once. |
 
@@ -1123,6 +1123,18 @@ the simulation equations, particle order or implicit cell-range neighbor search:
 
 * `NoMDBC` does not allocate ghost positions, normals, owner indices or their
   reorder buffers.
+* Enabled mDBC stores ghost positions and displacements only for ghost owners,
+  in stable boundary slots with no ghost sorting copies. Updated mDBC stores
+  activation and mirrored/tangential interaction velocities in those slots too.
+  A particle-to-slot `Int32` map and its sorting scratch cost 8 bytes per
+  particle; the existing `GhostIndex` maps slots back to current particle indices.
+  Rebuilds update these maps without sorting the boundary vectors or scanning
+  ghost positions. Simple mDBC adds no map access to ordinary interactions.
+  Updated mDBC reads a slot only for a wall within the cutoff, reusing it for
+  activation and both velocities; fluid-fluid pairs do not read the map.
+  Synchronous/asynchronous output expands compact ghosts back to full host
+  fields, with zeros for fluid particles. Asynchronous frames retain their own
+  owner indices, so later rebuilds cannot corrupt an earlier frame.
 * `NoKernelOutput` does not allocate kernel sums or kernel-gradient sums.
 * `NoShifting` does not allocate the two shifting work arrays.
 * Acceleration and pressure retain their ordinary device arrays but have no
@@ -1178,7 +1190,8 @@ workspace but excluding output, motion, reductions and allocator-pool reserves:
 Low-level `upload_particles(particles)` and `GPUSupportArrays{D,T}(n)` retain
 their previous full-buffer defaults. For mode-aware allocation, use
 `upload_particles(particles, metadata)` and
-`GPUSupportArrays{D,T}(n, metadata)`. To also compact stationary predictors, use
+`GPUSupportArrays{D,T}(n, metadata)`. To also compact stationary predictors and
+Updated mDBC boundary state, use
 `GPUSupportArrays{D,T}(gpu, metadata)` and pass
 `support = support_arrays` (and `floating = floating_arrays` when applicable)
 to `SPHExampleGPU.SPHCellList.rebuild_cell_list!` to refresh fixed scratch entries.
@@ -1192,6 +1205,12 @@ guaranteed before any reader. `preserve_pressure = true` retains an existing
 pressure field using idle density scratch, as at startup. Low-level
 `upload_particles(...; reconstruct_fields = true)` opts into the same shadow
 removal without changing other allocation options.
+Low-level `upload_particles(...; boundary_only = true)` independently opts into
+compact ghost storage. Pass `compact_ghosts = Val(true)` to direct mDBC kernel
+launches and `boundary_slots = gpu.BoundarySlot` to a direct updated-mDBC final
+step. `RunSimulation` wires these arguments automatically. Integer-count
+support constructors cannot infer ghost owners and retain dense boundary state;
+use the device-particle constructor for boundary-only Updated mDBC state.
 `RunSimulation` handles this automatically. Omitted fields are empty device vectors and
 are not reordered or downloaded by default. Explicitly requesting an omitted
 field for download, or running a mode without its required buffers, throws an
@@ -1208,6 +1227,71 @@ julia --project=gpu_version -t 2,0 gpu_version/test/sorting_shadows.jl
 julia --project=gpu_version -t 2,0 gpu_version/benchmark/sorting_shadows.jl
 julia --project=gpu_version -t 2,0 gpu_version/benchmark/stationary_predictors.jl
 ```
+
+#### Boundary-only mDBC memory and performance
+
+Let `N` be all particles, `B` ghost-owning boundaries, `D` the dimension,
+`T` the physics type and `TP` the position type. Define
+`G = D * (sizeof(TP) + sizeof(T))` and
+`U = sizeof(Bool) + 2 * D * sizeof(T)`.
+Compared with dense ghost arrays and their sorting copies, boundary-only
+storage saves exactly:
+
+* Simple mDBC: `(2N - B) * G - 8N` bytes.
+* Updated mDBC: `(2N - B) * G + (N - B) * U - 8N` bytes.
+
+These formulas include both slot-map buffers; the unchanged `4B`-byte
+`GhostIndex` cancels. They describe live device buffers, not CUDA allocator-pool
+reserves. Host particle storage, cell grids, reductions, floating data and other
+compact-buffer optimizations are separate.
+
+For **3D Float32 physics / Float64 positions**, this is **64 bytes per fluid
+particle plus 28 per boundary** with Simple mDBC, or **89 bytes per fluid
+particle plus 28 per boundary** with Updated mDBC. Thus one million particles
+with 10% ghost-owning boundaries save **57.60 MiB** or **79.06 MiB** respectively.
+The mDBC auxiliary allocation itself falls from 69.05 to 11.44 MiB (83.4%) for
+Simple mDBC, or from 92.89 to 13.83 MiB (85.1%) for Updated mDBC, including maps
+and owner indices. These percentages are not whole-solver VRAM savings.
+
+Reproduce a comparison that changes **only boundary storage**, keeping all
+other compact-buffer choices identical:
+
+```bash
+julia --project=gpu_version -t 2,0 gpu_version/benchmark/boundary_storage.jl
+```
+
+The benchmark checks exact particle states and identical step/rebuild/readback
+counts, warms both variants, alternates measurement order, and reports paired
+solver-time ratios for both stepping schemes. Output writing is excluded;
+interval-start rebuilds are forced to include the mapping maintenance cost.
+
+Measured on an **RTX A1000 Laptop GPU**, Julia 1.12.7, Float32 physics /
+Float64 positions, graph batches and 15 alternating rounds:
+
+| Case | Particles / ghost owners | Dense live buffers (MiB) | Boundary-only (MiB) | Saved |
+| --- | ---: | ---: | ---: | ---: |
+| StillWedge2D, Simple mDBC | 3,027 / 580 | 0.5244 | 0.4222 | 19.49% |
+| Synthetic 3D cube, Simple mDBC | 33,792 / 1,024 | 7.6932 | 5.6658 | 26.35% |
+| Synthetic 3D cube, Updated mDBC | 33,792 / 1,024 | 8.4988 | 5.6902 | 33.05% |
+
+Live buffers include particles, sorting scratch, support arrays and the rebuilt
+cell-grid workspace; output, motion, reductions and allocator reserves are
+excluded. These savings are incremental to the other compact-buffer options.
+
+| Case | Symplectic paired time ratio | Single-neighbor paired time ratio |
+| --- | ---: | ---: |
+| StillWedge2D, Simple mDBC | 1.0568 | 0.9608 |
+| Synthetic 3D cube, Simple mDBC | 1.0036 | 1.0046 |
+| Synthetic 3D cube, Updated mDBC | 1.0085 | 1.0030 |
+
+A ratio below 1 means faster. The 3D medians differed by only **0.3-0.9%**,
+with individual paired ratios spanning approximately 0.97-1.04: treat speed as
+effectively unchanged, not a demonstrated speedup. The small 2D case was
+noisier (approximately 0.84-1.11 across pairs); its medians ranged from 3.9%
+faster to 5.7% slower. A reasonable planning estimate is **near-neutral solver
+performance**, with a few percent of case/hardware-dependent variation, while
+the device-buffer savings are exact. The synthetic cube is a stationary
+bottom-wall case, not a representative benchmark of every 3D flow.
 
 The sorting-shadow benchmark isolates only these two destinations, keeping
 predictor sharing and all other compact-buffer choices identical. It warms

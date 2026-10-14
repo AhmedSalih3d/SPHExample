@@ -306,9 +306,11 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
     ∇C    = zero(SVector{D, T})
     ∇r    = zero(T)
 
-    @inbounds if valid && boundary_enabled(boundary_data, ParticleType, i)
+    slotᵢ = valid ? boundary_slot(boundary_data, ParticleType, i) : Int32(0)
+    @inbounds if valid && boundary_enabled(boundary_data, slotᵢ)
         pᵢ  = Pairs[i]
-        vᵢ  = boundary_velocity(boundary_data, Velocity, ParticleType, i)
+        vᵢ  = boundary_velocity(boundary_data, Velocity, ParticleType, i, slotᵢ)
+        viscous_vᵢ = boundary_viscous_velocity(boundary_data, Velocity, ParticleType, i, slotᵢ)
         ρᵢ  = Density[i]
         ρᵢ⁻¹ = inv(ρᵢ)
         Pᵢ  = Pressure[i]
@@ -335,7 +337,8 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                 if j != i
                     xᵢⱼ  = pair_vector(Pairs, pᵢ, j, rowcell, row, s)
                     xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
-                    if xᵢⱼ² <= H² && boundary_enabled(boundary_data, ParticleType, j)
+                    slotⱼ = xᵢⱼ² <= H² ? boundary_slot(boundary_data, ParticleType, j) : Int32(0)
+                    if xᵢⱼ² <= H² && boundary_enabled(boundary_data, slotⱼ)
                         dᵢⱼ   = sqrt(xᵢⱼ²)
                         q     = dᵢⱼ * h⁻¹ # in [0, 2]: the guard above enforces xᵢⱼ² <= H² = (2h)²
                         if Radial
@@ -348,7 +351,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
 
                         ρⱼ   = Density[j]
                         ρⱼ⁻¹ = inv(ρⱼ)
-                        vⱼ   = boundary_velocity(boundary_data, Velocity, ParticleType, j)
+                        vⱼ   = boundary_velocity(boundary_data, Velocity, ParticleType, j, slotⱼ)
                         vᵢⱼ  = vᵢ - vⱼ
                         density_symmetric_term = Radial ? -radial_factor * dot(vᵢⱼ, xᵢⱼ) : dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
                         # DBC walls take density from the fluid, not other walls.
@@ -383,8 +386,8 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         end
 
                         if forces
-                            viscous_velocity = boundary_viscous_velocity(boundary_data, Velocity, ParticleType, i) -
-                                               boundary_viscous_velocity(boundary_data, Velocity, ParticleType, j)
+                            viscous_velocity = viscous_vᵢ -
+                                               boundary_viscous_velocity(boundary_data, Velocity, ParticleType, j, slotⱼ)
                             if ScalarSPS
                                 v1 = SPHViscosityModels.scalar_sps_viscosity(SimKernel, SimConstants,
                                     sgn * xᵢⱼ, sgn * viscous_velocity, sgn * ∇ᵢWᵢⱼ, xᵢⱼ²,
@@ -616,7 +619,7 @@ end
 # position precision `TP`, `Pairs` is the pair source (see `pair_vector`).
 function mdbc_kernel!(Density::AbstractVector{T}, Pressure, Position::AbstractVector{SVector{D, TP}}, Pairs,
                       GhostPoints, GhostIndex, ParticleType, CellStart, gridarg, step,
-                      SimKernel, SimConstants, ::Val{K}, nghost::Int32) where {D, T, TP, K}
+                      SimKernel, SimConstants, ::Val{K}, ::Val{Compact}, nghost::Int32) where {D, T, TP, K, Compact}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -635,7 +638,7 @@ function mdbc_kernel!(Density::AbstractVector{T}, Pressure, Position::AbstractVe
     valid = g <= nghost
     @inbounds if valid
         i  = GhostIndex[g]
-        gp = GhostPoints[i]
+        gp = GhostPoints[Compact ? g : i]
     end
 
     @inbounds if valid
@@ -681,21 +684,25 @@ end
 
 mDBC correction of the density of the boundary particles that own a ghost
 node, and the pressure of the corrected density. The launch covers the
-particles listed in `GhostIndex` (the ghost node owners in cell order, see
+particles listed in `GhostIndex` (the ghost node owners, see
 `GPUParticles`), `K` lanes each. `step` gates the kernel (see
 `GPUStepState`). `pos_cells` is the `PosCell` array of `Position` when the
 positions are stored in a higher precision than the working precision (the
 fluid neighbours of a node are then found through it, see `GPUCellGrid`).
+
+With `compact_ghosts = Val(true)`, `GhostPoints` is indexed by owner slot
+rather than particle index; otherwise the full-particle layout is retained.
 """
 function launch_mdbc!(Density, Pressure, Position, GhostPoints, GhostIndex, ParticleType, CellStart, grid, step,
-                      SimKernel, SimConstants; threads::Integer = 128, lanes::Val = Val(1), pos_cells = nothing)
+                      SimKernel, SimConstants; threads::Integer = 128, lanes::Val = Val(1), pos_cells = nothing,
+                      compact_ghosts::Val = Val(false))
     n = length(GhostIndex)
     n == 0 && return nothing
     K = typeof(lanes).parameters[1]
     Pairs = pos_cells === nothing ? Position : pos_cells
     @cuda threads=threads blocks=cld(n * K, threads) mdbc_kernel!(
         Density, Pressure, Position, Pairs, GhostPoints, GhostIndex, ParticleType, CellStart, grid, step,
-        SimKernel, SimConstants, lanes, Int32(n))
+        SimKernel, SimConstants, lanes, compact_ghosts, Int32(n))
     return nothing
 end
 
@@ -820,7 +827,8 @@ end
 
 function final_step_kernel!(Position, Velocity, Acceleration, Density, Pressure, dρdtI, ρₙ⁺, Positionₙ⁺,
                             Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
-                            partial, ::Val{FlagShift}, boundary_mode, GhostPoints, GhostNormals, ::Val{CommitStep}, n::Int32) where {FlagShift, CommitStep}
+                            partial, ::Val{FlagShift}, boundary_mode, GhostPoints, GhostNormals, BoundarySlots,
+                            ::Val{CommitStep}, n::Int32) where {FlagShift, CommitStep}
     step_active(step) || return nothing
     dt = step_dt(step)
     (; g, ρ₀, c₀) = SimConstants
@@ -865,7 +873,8 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, Pressure,
         end
         Position[i] = x
         if boundary_mode isa UpdatedMDBC && type == Moving && GhostPoints !== nothing
-            GhostPoints[i] = x + GhostNormals[i]
+            slot = BoundarySlots === nothing ? i : BoundarySlots[i]
+            slot == 0 || (GhostPoints[slot] = x + GhostNormals[slot])
         end
 
         # Values for the time step and cell list update decision of the next step
@@ -891,14 +900,15 @@ requires a single reduction block; multiple blocks need a separate commit launch
 function launch_final_step!(Position, Velocity, Acceleration, Density, Pressure, dρdtI, ρₙ⁺, Positionₙ⁺,
                             Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
                             red::ReductionWorkspace, FlagShift::Val; boundary_mode = SimpleMDBC(),
-                            ghost_points = nothing, ghost_normals = nothing, commit_step::Bool = false)
+                            ghost_points = nothing, ghost_normals = nothing, boundary_slots = nothing,
+                            commit_step::Bool = false)
     commit_step && red.nblocks != 1 && throw(ArgumentError("fused commit requires one reduction block"))
     n = length(Position)
     n == 0 && return nothing
     @cuda threads=ELEMENTWISE_THREADS blocks=red.nblocks final_step_kernel!(
         Position, Velocity, Acceleration, Density, Pressure, dρdtI, ρₙ⁺, Positionₙ⁺,
         Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
-        red.partial, FlagShift, boundary_mode, ghost_points, ghost_normals, Val(commit_step), Int32(n))
+        red.partial, FlagShift, boundary_mode, ghost_points, ghost_normals, boundary_slots, Val(commit_step), Int32(n))
     return nothing
 end
 

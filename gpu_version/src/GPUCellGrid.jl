@@ -1149,7 +1149,7 @@ vector `x` into `out`, an `Int32` vector whose length must equal their
 number. `x` must have one entry per particle. Uses the `Perm` and
 `CellIDScratch` buffers of `ws` as scratch space, so call it only after
 `update_cell_list!` is done with them, i.e. after the reorder. The driver
-uses it to list the boundary particles that own a ghost node in cell order
+uses it in full-buffer mode to list ghost-owning boundary particles in cell order
 after every rebuild, so that the mDBC kernel is launched over those alone.
 Pass `predicate` to select entries by a different condition.
 """

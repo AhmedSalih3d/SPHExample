@@ -166,15 +166,83 @@ end
             f = fixture(D, T; double_position = true, shifting = PlanarShifting,
                 kernel_output = StoreKernelOutput, boundary)
             gpu = upload_particles(f.host, f.metadata)
-            support = GPUSupportArrays{D, T}(length(f.host), f.metadata)
-            for field in (:GhostPoints, :GhostNormals, :Kernel, :KernelGradient)
+            support = GPUSupportArrays{D, T}(gpu, f.metadata)
+            for field in (:Kernel, :KernelGradient)
                 @test length(getproperty(gpu, field)) == length(f.host)
             end
-            @test length(gpu.scratch.GhostPoints) == length(f.host)
-            @test length(gpu.scratch.GhostNormals) == length(f.host)
+            @test isempty(gpu.GhostPoints) && isempty(gpu.GhostNormals)
+            @test isempty(gpu.scratch.GhostPoints) && isempty(gpu.scratch.GhostNormals)
+            @test length(gpu.BoundarySlot) == length(f.host)
+            @test all(iszero, Array(gpu.BoundarySlot))
             @test length(support.∇Cᵢ) == length(f.host)
             @test length(support.∇◌rᵢ) == length(f.host)
             @test (support.boundary_data !== nothing) == (boundary === UpdatedMDBC)
+            if boundary === UpdatedMDBC
+                @test isempty(support.boundary_data.active)
+                @test isempty(support.boundary_data.velocity)
+                @test isempty(support.boundary_data.tangent_velocity)
+                @test support.boundary_data.slots === gpu.BoundarySlot
+            end
+        end
+    end
+
+    @testset "boundary slots, exact savings and frame-local ghost downloads" begin
+        for D in (2, 3), T in (Float32, Float64), TP in unique((T, Float64)),
+            updated in (false, true)
+            V = SVector{D, TP}
+            normal = SVector{D, T}(ntuple(d -> d == D ? T(0.1) : zero(T), D))
+            points = [V(ntuple(d -> d == 1 ? TP(k) / 10 : zero(TP), D)) for k in 10:-1:1]
+            geometry = [SPHGeometry{D, T}(points; Density = 1000, GroupMarker = 1, Type = Fluid)]
+            metadata = SimulationMetaData{D, T}(SimulationName = "BoundarySlots",
+                SaveLocation = tempdir(), GPUDoublePosition = TP !== T)
+            host = AllocateDataStructures(geometry, metadata)
+            host.Type[[2, 7, 9]] .= Fixed
+            host.GhostPoints[[2, 7, 9]] = points[[2, 7, 9]] .+ Ref(V(normal))
+            host.GhostNormals[[2, 7, 9]] .= Ref(normal)
+            full = upload_particles(host; position_type = TP)
+            gpu = upload_particles(host; position_type = TP, boundary_only = true)
+            dense_support = GPUSupportArrays{D, T}(length(host); position_type = TP, updated_mdbc = updated)
+            support = GPUSupportArrays{D, T}(length(host); position_type = TP, updated_mdbc = updated,
+                boundary_slots = gpu.BoundarySlot, boundary_count = length(gpu.GhostIndex))
+            n, b = length(host), length(gpu.GhostIndex)
+            ghost_bytes = sizeof(V) + sizeof(normal)
+            state_bytes = updated ? sizeof(Bool) + 2 * sizeof(normal) : 0
+            expected = (2n - b) * ghost_bytes + (n - b) * state_bytes - 2n * sizeof(Int32)
+            @test GPUMemoryBenchmark.device_buffer_bytes((full, dense_support)) -
+                GPUMemoryBenchmark.device_buffer_bytes((gpu, support)) == expected
+            @test length(gpu.GhostPoints) == b == 3
+            @test isempty(gpu.scratch.GhostPoints) && isempty(gpu.scratch.GhostNormals)
+            map_pointer = UInt(pointer(gpu.BoundarySlot))
+            ghost_pointer = UInt(pointer(gpu.GhostPoints))
+            owner_pointer = UInt(pointer(gpu.GhostIndex))
+            cells = CellListWorkspace{D, TP}(n)
+            for _ in 1:3
+                grid = DRIVER.rebuild_cell_list!(gpu, cells, T(2))
+                owners, slots = Array(gpu.GhostIndex), Array(gpu.BoundarySlot)
+                @test slots[owners] == Int32.(1:b)
+                @test all(iszero, slots[Array(gpu.Type) .== Fluid])
+                @test UInt(pointer(gpu.BoundarySlot)) == map_pointer
+                @test UInt(pointer(gpu.GhostPoints)) == ghost_pointer
+                @test UInt(pointer(gpu.GhostIndex)) == owner_pointer
+                back = deepcopy(host)
+                download_particles!(back, gpu, grid)
+                @test back.GhostPoints[sortperm(back.ID)] == host.GhostPoints[sortperm(host.ID)]
+                @test back.GhostNormals[sortperm(back.ID)] == host.GhostNormals[sortperm(host.ID)]
+                download = DRIVER.OutputDownload(gpu, (:ID, :GhostPoints, :GhostNormals); cells = false)
+                try
+                    DRIVER.enqueue_download!(download, gpu)
+                    # Mutate/rebuild after capture: the writer must use this frame's owners.
+                    copyto!(gpu.Position, reverse(Array(gpu.Position)))
+                    DRIVER.rebuild_cell_list!(gpu, cells, T(2))
+                    async_back = deepcopy(host)
+                    DRIVER.finish_download!(download, async_back, grid)
+                    @test async_back.ID == back.ID
+                    @test async_back.GhostPoints == back.GhostPoints
+                    @test async_back.GhostNormals == back.GhostNormals
+                finally
+                    DRIVER.free!(download)
+                end
+            end
         end
     end
 

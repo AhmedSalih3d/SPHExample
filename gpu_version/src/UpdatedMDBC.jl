@@ -10,12 +10,18 @@ end
     return b + hcat(density, speed)
 end
 
-@inline boundary_enabled(::Nothing, types, i) = true
-@inline boundary_enabled(data, types, i) = @inbounds !is_wall(types[i]) || data.active[i]
-@inline boundary_velocity(::Nothing, velocity, types, i) = @inbounds velocity[i]
-@inline boundary_velocity(data, velocity, types, i) = @inbounds is_wall(types[i]) ? data.velocity[i] : velocity[i]
-@inline boundary_viscous_velocity(::Nothing, velocity, types, i) = @inbounds velocity[i]
-@inline boundary_viscous_velocity(data, velocity, types, i) = @inbounds is_wall(types[i]) ? data.tangent_velocity[i] : velocity[i]
+@inline boundary_slot(::Nothing, types, i) = Int32(0)
+@inline function boundary_slot(data, types, i)
+    @inbounds return is_wall(types[i]) ? (data.slots === nothing ? i : data.slots[i]) : Int32(0)
+end
+@inline boundary_enabled(::Nothing, slot) = true
+@inline boundary_enabled(data, slot) = @inbounds slot == 0 || data.active[slot]
+@inline boundary_velocity(::Nothing, velocity, types, i, slot) = @inbounds velocity[i]
+@inline boundary_velocity(data, velocity, types, i, slot) = @inbounds is_wall(types[i]) ?
+    (slot == 0 ? zero(eltype(velocity)) : data.velocity[slot]) : velocity[i]
+@inline boundary_viscous_velocity(::Nothing, velocity, types, i, slot) = @inbounds velocity[i]
+@inline boundary_viscous_velocity(data, velocity, types, i, slot) = @inbounds is_wall(types[i]) ?
+    (slot == 0 ? zero(eltype(velocity)) : data.tangent_velocity[slot]) : velocity[i]
 
 # An infinity-norm condition estimate uses only fixed-size arithmetic, including
 # on CUDA (no LAPACK/SVD). DualSPHysics uses dx^2 * norm(A, Inf) * norm(inv(A), Inf).
@@ -74,7 +80,7 @@ end
 function updated_mdbc_kernel!(Density::AbstractVector{T}, Pressure, Position::AbstractVector{SVector{D, TP}},
                               Pairs, Velocity, GhostPoints, GhostNormals, GhostIndex, ParticleType,
                               CellStart, gridarg, step, SimKernel, SimConstants, data, motion, groups,
-                              ::Val{K}, nghost::Int32) where {T, D, TP, K}
+                              ::Val{K}, ::Val{Compact}, nghost::Int32) where {T, D, TP, K, Compact}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t = thread_index()
@@ -85,14 +91,16 @@ function updated_mdbc_kernel!(Density::AbstractVector{T}, Pressure, Position::Ab
     A = zero(SMatrix{N, N, T, N * N})
     b = zero(SMatrix{N, 2, T, N * 2})
     i = Int32(1)
+    slot = Int32(1)
     gp = zero(SVector{D, TP})
     @inbounds if valid
         i = GhostIndex[owner]
-        gp = GhostPoints[i]
+        slot = Compact ? owner : i
+        gp = GhostPoints[slot]
         # Normals in this package store the boundary-to-ghost displacement.
         # Reconstruct translating ghosts from the evaluated particle position.
         if ParticleType[i] == Moving
-            gp = Position[i] + SVector{D, TP}(GhostNormals[i])
+            gp = Position[i] + SVector{D, TP}(GhostNormals[slot])
         end
         cg = cell_coords(gp, bin_scale(grid, SimKernel.H⁻¹))
         lg = ntuple(d -> cg[d] - grid.origin[d], Val(D))
@@ -113,9 +121,10 @@ function updated_mdbc_kernel!(Density::AbstractVector{T}, Pressure, Position::Ab
             divergence += A[k, k]
         end
         active = isfinite(divergence) && divergence > zero(T) && A[1, 1] > zero(T)
-        data.active[i] = active
+        state_slot = data.slots === nothing ? i : owner
+        data.active[state_slot] = active
         density = updated_ghost_density(A, b[:, 1], ρ₀, SimConstants.dx)
-        normal = GhostNormals[i]
+        normal = GhostNormals[slot]
         normal /= norm(normal)
         gravity = ConstructGravitySVector(normal, -g)
         # Interaction acceleration is not the prescribed wall acceleration.
@@ -128,22 +137,23 @@ function updated_mdbc_kernel!(Density::AbstractVector{T}, Pressure, Position::Ab
             active ? SVector{D, T}(ntuple(k -> rhs[k + 1, 2] / weight, Val(D))) : zero(normal)
         end
         mirrored = active ? 2 * Velocity[i] - ghost_velocity : Velocity[i]
-        data.velocity[i] = mirrored
-        data.tangent_velocity[i] = mirrored - dot(mirrored, normal) * normal
-        ParticleType[i] == Moving && (GhostPoints[i] = gp)
+        data.velocity[state_slot] = mirrored
+        data.tangent_velocity[state_slot] = mirrored - dot(mirrored, normal) * normal
+        ParticleType[i] == Moving && (GhostPoints[slot] = gp)
     end
     return nothing
 end
 
 function launch_updated_mdbc!(Density, Pressure, Position, Velocity, GhostPoints, GhostNormals,
                                GhostIndex, ParticleType, CellStart, grid, step, SimKernel, SimConstants,
-                               data; threads = 128, lanes = Val(1), pos_cells = nothing, motion = nothing, groups = nothing)
+                               data; threads = 128, lanes = Val(1), pos_cells = nothing, motion = nothing, groups = nothing,
+                               compact_ghosts::Val = Val(false))
     n = length(GhostIndex)
     n == 0 && return nothing
     K = typeof(lanes).parameters[1]
     pairs = pos_cells === nothing ? Position : pos_cells
     @cuda threads=threads blocks=cld(n * K, threads) updated_mdbc_kernel!(
         Density, Pressure, Position, pairs, Velocity, GhostPoints, GhostNormals, GhostIndex, ParticleType,
-        CellStart, grid, step, SimKernel, SimConstants, data, motion, groups, lanes, Int32(n))
+        CellStart, grid, step, SimKernel, SimConstants, data, motion, groups, lanes, compact_ghosts, Int32(n))
     return nothing
 end

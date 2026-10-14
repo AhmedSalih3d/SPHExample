@@ -51,9 +51,11 @@ persistent state, which is physically reordered whenever the cell list is
 rebuilt; the second group is recomputed from scratch every step and therefore
 never needs reordering. `scratch` holds a second set of the persistent arrays
 used as the target of the reordering (the two sets are swapped afterwards).
-`GhostIndex` lists the particles that own a ghost node (non-zero
-`GhostPoints`) in cell order; it is derived from the reordered `GhostPoints`
-after every rebuild and the mDBC kernel is launched over it alone.
+`GhostIndex` lists the particles that own a ghost node. With boundary-only
+storage it maps stable boundary slots to current particle indices, while
+`BoundarySlot` maps particle indices back to slots (zero for non-owners).
+Ghost fields then have one entry per owner and no reorder scratch. Full
+storage instead relists owners in cell order after every rebuild.
 
 `T` is the working precision, `TP` the precision of the positions and ghost
 node positions (`Float64` with `GPUDoublePosition`, otherwise `T`). Nothing
@@ -80,6 +82,7 @@ mutable struct GPUParticles{D, T, TP, S, I <: Integer, G <: Unsigned}
     Pressure::CuVector{T}
     CellID::CuVector{Int32}
     GhostIndex::CuVector{Int32}
+    BoundarySlot::Union{Nothing, CuVector{Int32}}
 
     Kernel::CuVector{T}
     KernelGradient::CuVector{SVector{D, T}}
@@ -89,11 +92,11 @@ end
 
 function GPUParticles{D, T, TP, S}(Position, Velocity, Density, ID::CuVector{I}, Type,
                                   GroupMarker::CuVector{G}, GhostPoints, GhostNormals,
-                                  Acceleration, Pressure, CellID, GhostIndex, Kernel,
+                                  Acceleration, Pressure, CellID, GhostIndex, BoundarySlot, Kernel,
                                   KernelGradient, scratch::S) where {D, T, TP, S, I <: Integer, G <: Unsigned}
     return GPUParticles{D, T, TP, S, I, G}(Position, Velocity, Density, ID, Type,
         GroupMarker, GhostPoints, GhostNormals, Acceleration, Pressure, CellID,
-        GhostIndex, Kernel, KernelGradient, scratch)
+        GhostIndex, BoundarySlot, Kernel, KernelGradient, scratch)
 end
 
 Base.length(p::GPUParticles) = length(p.Position)
@@ -115,7 +118,8 @@ const DOWNLOADABLE_FIELDS = (:Velocity, :Density, :ID, :Type, :GroupMarker, :Gho
 const OPTIONAL_PARTICLE_FIELDS = (:GhostPoints, :GhostNormals, :Kernel, :KernelGradient)
 
 allocated_download_fields(gpu::GPUParticles) =
-    filter(f -> !(f in OPTIONAL_PARTICLE_FIELDS && isempty(getproperty(gpu, f))), DOWNLOADABLE_FIELDS)
+    filter(f -> !(f in OPTIONAL_PARTICLE_FIELDS && isempty(getproperty(gpu, f)) &&
+        !(f in (:GhostPoints, :GhostNormals) && gpu.BoundarySlot !== nothing)), DOWNLOADABLE_FIELDS)
 
 # Device copy of a host vector, converted to element type `E` when it differs.
 _upload(::Type{E}, x::AbstractVector) where {E} = CuArray(convert(Vector{E}, x))
@@ -127,7 +131,7 @@ end
 """
     upload_particles(SimParticles::StructArray; position_type = eltype of the host positions,
                      compact_metadata = false, kernel_output = true, ghost_data = true,
-                     reconstruct_fields = false) -> GPUParticles
+                     reconstruct_fields = false, boundary_only = false) -> GPUParticles
     upload_particles(SimParticles::StructArray, SimMetaData) -> GPUParticles
 
 Copy every stored field of the host particle array to the GPU. The ghost
@@ -145,11 +149,14 @@ reorder scratch. The metadata form selects these options from the simulation
 modes and `GPUCompactBuffers`, and uses `position_float_type(SimMetaData)`.
 `reconstruct_fields = true` omits acceleration and pressure reorder scratch;
 rebuilds then require simulation constants to reconstruct pressure.
+`boundary_only = true` stores ghost fields only for ghost owners, without
+sorting copies. The metadata form enables it with `GPUCompactBuffers`.
 """
 function upload_particles(SimParticles::StructArray;
                           position_type::Type{TP} = eltype(eltype(SimParticles.Position)),
                           compact_metadata::Bool = false, kernel_output::Bool = true,
-                          ghost_data::Bool = true, reconstruct_fields::Bool = false) where {TP}
+                          ghost_data::Bool = true, reconstruct_fields::Bool = false,
+                          boundary_only::Bool = false) where {TP}
     D = length(eltype(SimParticles.Position))
     T = eltype(SimParticles.Density)
     n = length(SimParticles)
@@ -157,11 +164,18 @@ function upload_particles(SimParticles::StructArray;
     Position   = _upload(SVector{D, TP}, SimParticles.Position)
     I = compact_metadata ? metadata_storage_type(Int32, Int, SimParticles.ID) : Int
     G = compact_metadata ? metadata_storage_type(UInt32, UInt, SimParticles.GroupMarker) : UInt
-    GhostIndex = ghost_data ? CuArray(Int32.(findall(!iszero, SimParticles.GhostPoints))) :
-                             CuVector{Int32}(undef, 0)
-    GhostPoints = ghost_data ? _upload(SVector{D, TP}, SimParticles.GhostPoints) :
+    owners = ghost_data ? findall(!iszero, SimParticles.GhostPoints) : Int[]
+    GhostIndex = CuArray(Int32.(owners))
+    compact_ghosts = ghost_data && boundary_only
+    slots = compact_ghosts ? zeros(Int32, n) : nothing
+    if compact_ghosts
+        slots[owners] = Int32.(eachindex(owners))
+    end
+    BoundarySlot = compact_ghosts ? CuArray(slots) : nothing
+    selected = compact_ghosts ? owners : eachindex(SimParticles)
+    GhostPoints = ghost_data ? _upload(SVector{D, TP}, SimParticles.GhostPoints[selected]) :
                                CuVector{SVector{D, TP}}(undef, 0)
-    GhostNormals = ghost_data ? CuArray(SimParticles.GhostNormals) :
+    GhostNormals = ghost_data ? CuArray(SimParticles.GhostNormals[selected]) :
                                 CuVector{SVector{D, T}}(undef, 0)
     scratch = (
         Position      = similar(Position),
@@ -170,8 +184,9 @@ function upload_particles(SimParticles::StructArray;
         ID            = CuVector{I}(undef, n),
         Type          = CuVector{ParticleType}(undef, n),
         GroupMarker   = CuVector{G}(undef, n),
-        GhostPoints   = similar(GhostPoints),
-        GhostNormals  = similar(GhostNormals),
+        GhostPoints   = similar(GhostPoints, compact_ghosts ? 0 : length(GhostPoints)),
+        GhostNormals  = similar(GhostNormals, compact_ghosts ? 0 : length(GhostNormals)),
+        BoundarySlot  = CuVector{Int32}(undef, compact_ghosts ? n : 0),
         Acceleration  = CuVector{SVector{D, T}}(undef, reconstruct_fields ? 0 : n),
         Pressure      = CuVector{T}(undef, reconstruct_fields ? 0 : n),
     )
@@ -189,6 +204,7 @@ function upload_particles(SimParticles::StructArray;
         CuArray(SimParticles.Pressure),
         CUDA.zeros(Int32, n),
         GhostIndex,
+        BoundarySlot,
         kernel_output ? CuArray(SimParticles.Kernel) : CuVector{T}(undef, 0),
         kernel_output ? CuArray(SimParticles.KernelGradient) : CuVector{SVector{D, T}}(undef, 0),
         scratch,
@@ -199,7 +215,7 @@ function upload_particles(SimParticles::StructArray, meta::SimulationMetaData{D,
     compact = meta.GPUCompactBuffers
     return upload_particles(SimParticles; position_type = position_float_type(meta),
         compact_metadata = compact, kernel_output = !compact || K === StoreKernelOutput,
-        ghost_data = !compact || B !== NoMDBC, reconstruct_fields = compact)
+        ghost_data = !compact || B !== NoMDBC, reconstruct_fields = compact, boundary_only = compact)
 end
 
 # Host copy of a device vector; converted element-wise when the host element
@@ -231,8 +247,14 @@ function download_particles!(SimParticles::StructArray, gpu::GPUParticles{D, T},
                              cells::Bool = false) where {D, T}
     foreach(f -> require_particle_field(gpu, f), fields)
     _download!(SimParticles.Position, gpu.Position)
+    owners = gpu.BoundarySlot !== nothing && any(f -> f in (:GhostPoints, :GhostNormals), fields) ?
+        Array(gpu.GhostIndex) : nothing
     for f in fields
-        _download!(getproperty(SimParticles, f), getproperty(gpu, f))
+        if owners !== nothing && f in (:GhostPoints, :GhostNormals)
+            expand_boundary_field!(getproperty(SimParticles, f), Array(getproperty(gpu, f)), owners)
+        else
+            _download!(getproperty(SimParticles, f), getproperty(gpu, f))
+        end
     end
     cells || return Int32[]
 
@@ -243,9 +265,22 @@ end
 
 function require_particle_field(gpu::GPUParticles, field::Symbol)
     array = getproperty(gpu, field)
+    if field in (:GhostPoints, :GhostNormals) && gpu.BoundarySlot !== nothing
+        length(array) == length(gpu.GhostIndex) ||
+            throw(ArgumentError("GPU boundary field $field must have one entry per ghost owner."))
+        return array
+    end
     length(array) == length(gpu) ||
         throw(ArgumentError("GPU particle field $field was not allocated; enable its buffer when uploading particles."))
     return array
+end
+
+function expand_boundary_field!(dst, src, owners)
+    fill!(dst, zero(eltype(dst)))
+    @inbounds for slot in eachindex(owners)
+        dst[owners[slot]] = src[slot]
+    end
+    return dst
 end
 
 # Store the cell of every particle in the host `StructArray` from a host copy
@@ -286,6 +321,7 @@ struct OutputDownload{D}
     fields::Vector{Symbol}          # `Position` and the downloaded fields, in the order of `buffers`
     buffers::Vector{Vector}         # pinned staging buffer per field, in the device element type
     cid::Vector{Int32}              # pinned cell ids (empty unless the cells are exported)
+    ghost_index::Union{Nothing, Vector{Int32}}
     memory::Vector{CUDA.HostMemory} # the page-locked allocations behind the buffers
     event::CuEvent                  # recorded behind the copies of the current frame
 end
@@ -300,9 +336,11 @@ function OutputDownload(gpu::GPUParticles{D}, fields; cells::Bool) where {D}
         return unsafe_wrap(Array, convert(Ptr{T}, mem), n)
     end
     names   = Symbol[:Position, fields...]
-    buffers = Vector[pinned(eltype(getproperty(gpu, f)), length(gpu)) for f in names]
+    buffers = Vector[pinned(eltype(getproperty(gpu, f)), length(getproperty(gpu, f))) for f in names]
     cid     = cells ? pinned(Int32, length(gpu)) : Int32[]
-    return OutputDownload{D}(names, buffers, cid, memory, CuEvent(CUDA.EVENT_DISABLE_TIMING))
+    ghost_index = gpu.BoundarySlot !== nothing && any(f -> f in (:GhostPoints, :GhostNormals), fields) ?
+        pinned(Int32, length(gpu.GhostIndex)) : nothing
+    return OutputDownload{D}(names, buffers, cid, ghost_index, memory, CuEvent(CUDA.EVENT_DISABLE_TIMING))
 end
 
 # Asynchronous device to host copy into page-locked memory on the current stream.
@@ -324,6 +362,7 @@ function enqueue_download!(dl::OutputDownload, gpu::GPUParticles)
         copy_async!(buf, getproperty(gpu, f))
     end
     isempty(dl.cid) || copy_async!(dl.cid, gpu.CellID)
+    dl.ghost_index === nothing || copy_async!(dl.ghost_index, gpu.GhostIndex)
     CUDA.record(dl.event)
     return dl
 end
@@ -340,7 +379,11 @@ Runs on the writer task.
 function finish_download!(dl::OutputDownload{D}, SimParticles::StructArray, grid::CellGrid{D}) where {D}
     CUDA.synchronize(dl.event)
     for (f, buf) in zip(dl.fields, dl.buffers)
-        copyto!(getproperty(SimParticles, f), buf)
+        if dl.ghost_index !== nothing && f in (:GhostPoints, :GhostNormals)
+            expand_boundary_field!(getproperty(SimParticles, f), buf, dl.ghost_index)
+        else
+            copyto!(getproperty(SimParticles, f), buf)
+        end
     end
     isempty(dl.cid) && return CartesianIndex{D}[]
     return store_cells!(SimParticles, grid, dl.cid)
@@ -443,6 +486,9 @@ of precision `position_type`. The cell relative positions are allocated
 exactly when `position_type !== T`. `updated_mdbc` allocates the boundary
 activation mask and mirrored/tangential interaction velocities; these are
 scratch fields recomputed after sorting and before each interaction stage.
+The device-particle form stores these fields per ghost owner when ghosts are
+compact, sharing the particle slot map. Integer-count forms retain dense
+boundary state because they do not know which particles own ghosts.
 `shifting = false` omits the two shifting work arrays. The metadata form
 selects the position precision, updated-mDBC and shifting buffers from the
 simulation modes and `GPUCompactBuffers`.
@@ -452,11 +498,15 @@ entries in the reorder scratch after sorting. Density predictors remain allocate
 for all particles.
 """
 function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T, updated_mdbc::Bool = false,
-                              shifting::Bool = true, reuse_predictors::Bool = false) where {D, T, TP}
+                              shifting::Bool = true, reuse_predictors::Bool = false,
+                              boundary_slots = nothing, boundary_count::Integer = n) where {D, T, TP}
     pc = TP === T ? nothing : CuVector{PosCell{D, T}}(undef, n)
     pcₙ⁺ = TP === T ? nothing : CuVector{PosCell{D, T}}(undef, n)
-    boundary_data = updated_mdbc ? (; active = CUDA.ones(Bool, n), velocity = CUDA.zeros(SVector{D, T}, n),
-                                    tangent_velocity = CUDA.zeros(SVector{D, T}, n)) : nothing
+    boundary_slots === nothing || length(boundary_slots) == n ||
+        throw(DimensionMismatch("boundary slot map must have one entry per particle"))
+    boundary_data = updated_mdbc ? (; active = CUDA.ones(Bool, boundary_count),
+        velocity = CUDA.zeros(SVector{D, T}, boundary_count),
+        tangent_velocity = CUDA.zeros(SVector{D, T}, boundary_count), slots = boundary_slots) : nothing
     return GPUSupportArrays{D, T, TP, typeof(pc), typeof(boundary_data)}(
         CUDA.zeros(T, n),
         CUDA.zeros(SVector{D, T}, reuse_predictors ? 0 : n),
@@ -476,7 +526,8 @@ function GPUSupportArrays{D, T}(gpu::GPUParticles{D, T}, meta::SimulationMetaDat
         throw(ArgumentError("GPU positions and support-array metadata must use the same precision"))
     return GPUSupportArrays{D, T}(length(gpu); position_type = position_type(gpu),
         updated_mdbc = B === UpdatedMDBC, shifting = !meta.GPUCompactBuffers || S === PlanarShifting,
-        reuse_predictors = meta.GPUCompactBuffers)
+        reuse_predictors = meta.GPUCompactBuffers, boundary_slots = gpu.BoundarySlot,
+        boundary_count = gpu.BoundarySlot === nothing ? length(gpu) : length(gpu.GhostIndex))
 end
 
 @inline function predictor_arrays(sup::GPUSupportArrays, gpu::GPUParticles)
@@ -552,6 +603,17 @@ end
 # Cell list rebuild with reordering of the persistent fields
 #---------------------------------------------------------------
 
+function boundary_indices_kernel!(slots, owners, sorted_slots, n::Int32)
+    i = thread_index()
+    i > n && return nothing
+    @inbounds begin
+        slot = sorted_slots[i]
+        slots[i] = slot
+        slot == 0 || (owners[slot] = i)
+    end
+    return nothing
+end
+
 function reconstruct_fields_kernel!(Pressure, Acceleration, acceleration_sorted, pressure_sorted, Density, types,
                                     constants, boundary_mode, ::Val{PreserveAcceleration},
                                     ::Val{PreservePressure}, n::Int32) where {PreserveAcceleration, PreservePressure}
@@ -592,16 +654,27 @@ function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCut
     reconstruct && constants === nothing &&
         throw(ArgumentError("Rebuilding without pressure reorder scratch requires simulation constants."))
     fields = filter(f -> !isempty(getproperty(s, f)), PERSISTENT_FIELDS)
-    srcs = (map(f -> getproperty(gpu, f), fields)..., cl.CellIDScratch)
-    dsts = (map(f -> getproperty(s, f), fields)..., gpu.CellID)
+    compact_ghosts = gpu.BoundarySlot !== nothing
+    srcs = (map(f -> getproperty(gpu, f), fields)...,
+        (compact_ghosts ? (gpu.BoundarySlot,) : ())..., cl.CellIDScratch)
+    dsts = (map(f -> getproperty(s, f), fields)...,
+        (compact_ghosts ? (s.BoundarySlot,) : ())..., gpu.CellID)
 
     grid = update_cell_list!(cl, gpu.Position, InverseCutOff, srcs, dsts; prepared)
+    if compact_ghosts
+        n = length(gpu)
+        @cuda threads=ELEMENTWISE_THREADS blocks=cld(n, ELEMENTWISE_THREADS) boundary_indices_kernel!(
+            gpu.BoundarySlot, gpu.GhostIndex, s.BoundarySlot, Int32(n))
+    end
 
     # Swap the two sets of persistent arrays.
     gpu.scratch = (
         Position = gpu.Position, Velocity = gpu.Velocity, Density = gpu.Density,
         ID = gpu.ID, Type = gpu.Type,
-        GroupMarker = gpu.GroupMarker, GhostPoints = gpu.GhostPoints, GhostNormals = gpu.GhostNormals,
+        GroupMarker = gpu.GroupMarker,
+        GhostPoints = compact_ghosts ? s.GhostPoints : gpu.GhostPoints,
+        GhostNormals = compact_ghosts ? s.GhostNormals : gpu.GhostNormals,
+        BoundarySlot = s.BoundarySlot,
         Acceleration = reconstruct ? s.Acceleration : gpu.Acceleration,
         Pressure = reconstruct ? s.Pressure : gpu.Pressure,
     )
@@ -611,8 +684,10 @@ function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCut
     gpu.ID            = s.ID
     gpu.Type          = s.Type
     gpu.GroupMarker   = s.GroupMarker
-    gpu.GhostPoints   = s.GhostPoints
-    gpu.GhostNormals  = s.GhostNormals
+    if !compact_ghosts
+        gpu.GhostPoints = s.GhostPoints
+        gpu.GhostNormals = s.GhostNormals
+    end
     if reconstruct
         # The old velocity buffer is idle until fixed predictors are initialized.
         preserve = !discard_acceleration
@@ -634,7 +709,7 @@ function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCut
     # The reorder moved the ghost node owners: relist them in the new (cell)
     # order. Their number never changes, so the list keeps its length and
     # device pointer, and captured graphs stay valid.
-    isempty(gpu.GhostIndex) || compact_nonzero!(cl, gpu.GhostPoints, gpu.GhostIndex)
+    compact_ghosts || isempty(gpu.GhostIndex) || compact_nonzero!(cl, gpu.GhostPoints, gpu.GhostIndex)
     floating === nothing || update_floating_indices!(floating, gpu.Type, cl)
     support === nothing || initialize_fixed_predictors!(support, gpu)
 
@@ -719,10 +794,12 @@ function enqueue_boundary_correction!(ctx, step, half::Bool)
         GPUKernels.launch_updated_mdbc!(density, gpu.Pressure, position, velocity,
             gpu.GhostPoints, gpu.GhostNormals, gpu.GhostIndex, gpu.Type, cl.CellStart, cl.grid_dev,
             step, SimKernel, SimConstants, sup.boundary_data; threads, lanes, pos_cells = pairs,
-            motion = get(ctx, :motion, nothing), groups = gpu.GroupMarker)
+            motion = get(ctx, :motion, nothing), groups = gpu.GroupMarker,
+            compact_ghosts = Val(gpu.BoundarySlot !== nothing))
     else
         launch_mdbc!(density, gpu.Pressure, position, gpu.GhostPoints, gpu.GhostIndex, gpu.Type,
-            cl.CellStart, cl.grid_dev, step, SimKernel, SimConstants; threads, lanes, pos_cells = pairs)
+            cl.CellStart, cl.grid_dev, step, SimKernel, SimConstants; threads, lanes, pos_cells = pairs,
+            compact_ghosts = Val(gpu.BoundarySlot !== nothing))
     end
     return nothing
 end
@@ -895,7 +972,7 @@ function enqueue_step!(ctx, timed::Bool)
         sup.dρdtI, sup.ρₙ⁺, position_half, velocity_half, gpu.Type,
         sup.∇Cᵢ, sup.∇◌rᵢ, state, SimKernel, SimConstants, red, FlagShift;
         boundary_mode = get(ctx, :boundary_mode, SimpleMDBC()),
-        ghost_points = gpu.GhostPoints, ghost_normals = gpu.GhostNormals,
+        ghost_points = gpu.GhostPoints, ghost_normals = gpu.GhostNormals, boundary_slots = gpu.BoundarySlot,
         commit_step = red.nblocks == 1)
 
     # Rigid final placement reads neither time nor phase, so a one-block
@@ -1386,7 +1463,8 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     collector = nothing
     if SimMetaData.GPUAsyncOutput
         prototype = first(staging)
-        frame_bytes = sum(sizeof, prototype.buffers) + sizeof(prototype.cid)
+        frame_bytes = sum(sizeof, prototype.buffers) + sizeof(prototype.cid) +
+            (prototype.ghost_index === nothing ? 0 : sizeof(prototype.ghost_index))
         queue_frames = max(1, div(SimMetaData.GPUOutputQueueBytes, max(frame_bytes, 1)))
         host_free = Channel{OutputDownload{Dimensions}}(queue_frames)
         ready = Channel{OutputFrameJob{Dimensions}}(queue_frames)
@@ -1394,7 +1472,8 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             # Ordinary host memory; the event is unused for collected frames.
             frame = OutputDownload{Dimensions}(prototype.fields,
                 Vector[similar(buf) for buf in prototype.buffers],
-                similar(prototype.cid), CUDA.HostMemory[], prototype.event)
+                similar(prototype.cid), prototype.ghost_index === nothing ? nothing : similar(prototype.ghost_index),
+                CUDA.HostMemory[], prototype.event)
             put!(host_free, frame)
         end
         writer = spawn_writer() do
@@ -1414,6 +1493,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                         copyto!(dst, src)
                     end
                     copyto!(frame.cid, job.download.cid)
+                    frame.ghost_index === nothing || copyto!(frame.ghost_index, job.download.ghost_index)
                     put!(free, job.download)
                     put!(ready, OutputFrameJob{Dimensions}(frame, job.counter,
                         job.time, job.grid))
