@@ -40,6 +40,56 @@ data and ParaView workflows.
   code compatible with device execution and the package's supported numeric
   types.
 
+## GPU optimization learnings
+
+- **Mode-aware allocation:** Use metadata/device-particle constructors when
+  omitting inactive GPU fields, while preserving full-buffer defaults for
+  low-level APIs. Unavailable downloads and modes missing required buffers
+  must fail explicitly, not return incomplete data.
+- **Dense inputs and scratch lifetimes:** Keep interaction inputs dense;
+  per-neighbor predictor indirection can erase the benefit of smaller buffers.
+  Share reorder scratch only when predictor and rebuild lifetimes do not
+  overlap. Refresh fixed entries after sorting and preserve updates for fluid,
+  moving, velocity-only and floating particles.
+- **Derived fields:** Reconstruct pressure with the appropriate EOS, including
+  negative Updated-mDBC wall pressure, and preserve startup rounding. Only the
+  simulation driver may discard acceleration when every entry is overwritten
+  before any reader; standalone rebuilds must preserve reductions, floating
+  forces and downloads. Compute reciprocal density from the state being
+  evaluated, including predictor and mDBC-corrected densities.
+- **Boundary ownership:** Keep compact mDBC auxiliaries in stable boundary
+  slots and refresh both owner mappings after particle reordering. Asynchronous
+  frames must retain their own owner-index snapshot; expand compact ghost data
+  to full host fields with zeros for fluid particles when exporting.
+- **Grid export contract:** Export only cells occupied by the current output
+  frame's positions, with edge length `H / GPUCellSubdivision`, not stale
+  neighbor-list occupancy or stencil margins. Adjacent occupied cells must
+  share identical faces; do not fill genuinely empty cells to hide gaps.
+  Preserve this contract for both single-file and numbered VTKHDF output.
+- **Numerical tuning:** Cell subdivision and opt-in radial arithmetic are not
+  interchangeable, accuracy-preserving speed knobs. Equal accepted-neighbor
+  counts do not prove identical pairs or trajectories; reference density
+  diffusion depends on pair orientation. Keep subdivision `R = 1` when
+  reproducing CPU reference behavior and validate long-run behavior before
+  changing search settings or operators.
+- **Performance evidence:** Isolate one change, warm kernels/CUDA graphs,
+  alternate variant order and compare paired, unprofiled whole-solver timings
+  with matching step/rebuild/readback counts and particle-state checks.
+  Kernel-duration sums and rejection rates do not establish elapsed solver
+  speed or memory-bandwidth saturation. Report memory savings separately from
+  speedups, especially when small laptop cases are within timing noise.
+- **Memory accounting:** Distinguish CPU/host particle storage, live GPU/device
+  buffers and CUDA allocator reservations. Count aliased scratch once, use
+  actual element types and state whether support/reorder buffers, cell grids,
+  output, motion, reductions and floating-body arrays are included. Comparisons
+  with solvers such as DualSPHysics need particle/boundary counts, dimensionality,
+  precision and CUDA/device information; auxiliary-buffer savings are not
+  whole-solver VRAM savings.
+
+See the [GPU README](gpu_version/README.md#compact-gpu-buffers) for allocation
+contracts and the [memory benchmark](gpu_version/benchmark/memory_buffers.jl)
+for alias-aware live-device-buffer accounting.
+
 ## Documentation and dependencies
 
 - Update the README or example documentation for the package whose behavior
@@ -66,6 +116,14 @@ The full CUDA suite requires an NVIDIA GPU and compares selected behavior with
 the CPU package in a subprocess. Some geometry tests can run without a GPU;
 see `gpu_version/README.md` for focused commands. When dependencies change,
 instantiate the affected package before testing.
+
+Select focused GPU regressions for the changed contract:
+[gpu_memory.jl](gpu_version/test/gpu_memory.jl) for allocation,
+[stationary_predictors.jl](gpu_version/test/stationary_predictors.jl) for scratch
+sharing, [sorting_shadows.jl](gpu_version/test/sorting_shadows.jl) for derived
+fields and downloads, [updated_mdbc.jl](gpu_version/test/updated_mdbc.jl) for
+boundary slots, and [grid_export.jl](gpu_version/test/grid_export.jl) for output.
+See the [GPU README](gpu_version/README.md#tests) for commands and requirements.
 
 On Julia 1.12, launch direct multithreaded CPU runs with an explicit compute
 thread count and no interactive thread, for example `-t N,0`. Avoid `-t auto`:
