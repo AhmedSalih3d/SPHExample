@@ -17,7 +17,7 @@ Fill each array in `arrays` with zeros in place.
 
 Convert a vector of 2D `SVector`s to 3D by appending a zero z-component.
 """
-@inline to_3d(vec_2d) = [SVector(v..., 0.0) for v in vec_2d]
+@inline to_3d(vec_2d) = [SVector{3,eltype(v)}(v[1], v[2], zero(eltype(v))) for v in vec_2d]
 
 """
     to_3d!(dest, src)
