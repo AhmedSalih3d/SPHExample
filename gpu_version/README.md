@@ -96,6 +96,23 @@ opening loads both the particles and cell grid in the same session and view.
 The grid appears as a wireframe. This works with single-file VTKHDF output and
 numbered VTKHDF file series; the generated state script can also be opened later.
 
+Exported cells have edge length `H / GPUCellSubdivision` and cover the complete
+dense neighbor-search grid, including empty cells and its stencil margin.
+Exporting only occupied cells would leave holes between particles when the grid
+is finer than the particle spacing. Adjacent exported cells share identical face
+coordinates, giving a continuous wireframe in both single-file and numbered
+output. This visualization does not change neighbor-search rebuilds or SPH
+results. Fine grids contain more exported cells and can produce larger files;
+the grid writer flushes early when its pending frames reach the output memory
+budget.
+
+Focused grid export tests (including ParaView reader checks when `pvpython` is
+on PATH):
+
+```bash
+julia --project=gpu_version -t 2,0 gpu_version/test/grid_export.jl
+```
+
 Particles are colored by pressure when `Pressure` is exported, otherwise density.
 `RunSimulation` fixes the pressure color range to `0` through `ρ₀ g h` Pa, where
 `h` is the initial fluid height plus one particle spacing (`y` in 2D, `z` in 3D).
@@ -1094,7 +1111,7 @@ definitions in `benchmark/cases.jl` construct against either package.
 | `GPUDoublePosition` | `false` | Store and integrate the particle positions (and the mDBC ghost node positions) in `Float64` while everything else stays in `FloatType`; the pair loops use cell relative `FloatType` coordinates (see "Double positions" above). Use it for `Float32` runs of domains far from the origin or with many steps. No effect with `FloatType = Float64`. Allocate the particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so that the input is read in `Float64`. |
 | `GPUCompactBuffers` | `true` | Omit unused ghost, kernel-output and shifting buffers, including ghost reorder scratch. GPU IDs use `Int32` and group markers `UInt32` only when every value fits; otherwise each field independently retains its original width. Host particle fields, output types, precision and neighbor ranges are unchanged. `false` restores the previous full allocation layout. |
 | `GPUOutputQueueBytes` | `256 * 2^20` | Separate host memory budget for reusable frames between the download collector and disk writer; at least one frame. Used with `GPUAsyncOutput`. |
-| `GPUOutputBufferBytes` | `256 * 2^20` | Host memory for output frames that are held before they are written to the single `vtkhdf` file (see "Asynchronous output"). The number of frames per flush is the budget divided by the size of a frame (particle fields plus, with `ExportGridCells`, an upper bound of the grid frame), at least 1 and at most 16. `0` writes every frame at once. |
+| `GPUOutputBufferBytes` | `256 * 2^20` | Host memory for output frames that are held before they are written to the single `vtkhdf` file (see "Asynchronous output"). The number of frames per flush uses the particle fields plus an initial grid-size estimate, at least 1 and at most 16. Dense grid frames are checked against the remaining byte budget and can flush sooner; a frame larger than the budget is written immediately. `0` writes every frame at once. |
 
 `OutputTimes` also accepts `Float64` values or vectors when `FloatType = Float32`.
 The positions of `Float32` runs are written as `Float64` to the output files

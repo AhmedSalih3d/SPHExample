@@ -1269,7 +1269,11 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         end
         SimMetaData.IndexCounter = length(UniqueCells)
         output.save_particles(job.counter, job.time)
-        output.save_grid(job.counter, UniqueCells, SimParticles, job.time)
+        if SimMetaData.ExportGridCells
+            # Empty fine-grid cells must be drawn too, otherwise the lattice has holes.
+            grid_cells = grid_cells_host(job.grid)
+            output.save_grid(job.counter, grid_cells, SimParticles, job.time)
+        end
         write_time[] += time() - t0
         return nothing
     end

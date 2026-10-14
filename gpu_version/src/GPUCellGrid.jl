@@ -38,7 +38,7 @@ using StaticArrays
 using ..GPUStepState: DeviceStep, StepState, I_STOP, STOP_REBUILD,
                       I_GRID_STATUS, I_GRID_ORIGIN, I_GRID_DIMS, I_GRID_NCELLS
 
-export CellGrid, CellListWorkspace, update_cell_list!, compact_nonzero!, unique_cells_host,
+export CellGrid, CellListWorkspace, update_cell_list!, compact_nonzero!, unique_cells_host, grid_cells_host,
        map_floor, cell_coords, linear_cell, local_coords, row_offsets, row_range, in_grid,
        reach, bin_scale, gather_kernel!, thread_index, load_grid,
        PosCell, CellRow, cell_rows, cell_size, cell_anchor, global_coords, pos_cell, pair_vector,
@@ -1172,8 +1172,8 @@ end
     unique_cells_host(grid, CellID_host) -> Vector{CartesianIndex{D}}
 
 Global cell coordinates of the occupied cells, in ascending linear order, from
-the (sorted) per particle cell ids copied to the host. Used for the optional
-cell grid export.
+the (sorted) per particle cell ids copied to the host. These describe the last
+cell-list rebuild, not necessarily the current particle positions.
 """
 function unique_cells_host(grid::CellGrid{D}, CellID_host::AbstractVector{Int32}) where {D}
     cells = CartesianIndex{D}[]
@@ -1187,6 +1187,18 @@ function unique_cells_host(grid::CellGrid{D}, CellID_host::AbstractVector{Int32}
         end
     end
     return cells
+end
+
+"""
+    grid_cells_host(grid) -> AbstractVector{CartesianIndex{D}}
+
+All cells of the dense grid, including empty cells and the neighbour-stencil
+margin, in ascending linear order. The coordinates are generated lazily so grid
+export does not allocate a separate array of cell indices.
+"""
+function grid_cells_host(grid::CellGrid{D}) where {D}
+    ranges = ntuple(d -> Int(grid.origin[d]):(Int(grid.origin[d]) + Int(grid.dims[d]) - 1), Val(D))
+    return vec(CartesianIndices(ranges))
 end
 
 end # module

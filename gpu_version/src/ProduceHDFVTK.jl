@@ -148,7 +148,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
         dims = ExtractDimensionality(UniqueCells)
 
-        dx = dy = dz = cell_edge
+        dx = dy = dz = Float64(cell_edge)
 
         if dims == 2
             minx, maxx = minimum(ci -> ci[1], UniqueCells), maximum(ci -> ci[1], UniqueCells)
@@ -181,28 +181,28 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
             corners = if dims == 2
                 xi, yi = cell.I
-                x_c = xi * dx
-                y_c = yi * dy
+                xmin, xmax = (xi - 0.5) * dx, (xi + 0.5) * dx
+                ymin, ymax = (yi - 0.5) * dy, (yi + 0.5) * dy
                 [
-                    SVector(x_c - dx/2, y_c - dy/2, 0.0),
-                    SVector(x_c + dx/2, y_c - dy/2, 0.0),
-                    SVector(x_c + dx/2, y_c + dy/2, 0.0),
-                    SVector(x_c - dx/2, y_c + dy/2, 0.0),
+                    SVector(xmin, ymin, 0.0),
+                    SVector(xmax, ymin, 0.0),
+                    SVector(xmax, ymax, 0.0),
+                    SVector(xmin, ymax, 0.0),
                 ]
             else
                 xi, yi, zi = cell.I
-                x_c = xi * dx
-                y_c = yi * dy
-                z_c = zi * dz
+                xmin, xmax = (xi - 0.5) * dx, (xi + 0.5) * dx
+                ymin, ymax = (yi - 0.5) * dy, (yi + 0.5) * dy
+                zmin, zmax = (zi - 0.5) * dz, (zi + 0.5) * dz
                 [
-                    SVector(x_c - dx/2, y_c - dy/2, z_c - dz/2),
-                    SVector(x_c + dx/2, y_c - dy/2, z_c - dz/2),
-                    SVector(x_c + dx/2, y_c + dy/2, z_c - dz/2),
-                    SVector(x_c - dx/2, y_c + dy/2, z_c - dz/2),
-                    SVector(x_c - dx/2, y_c - dy/2, z_c + dz/2),
-                    SVector(x_c + dx/2, y_c - dy/2, z_c + dz/2),
-                    SVector(x_c + dx/2, y_c + dy/2, z_c + dz/2),
-                    SVector(x_c - dx/2, y_c + dy/2, z_c + dz/2),
+                    SVector(xmin, ymin, zmin),
+                    SVector(xmax, ymin, zmin),
+                    SVector(xmax, ymax, zmin),
+                    SVector(xmin, ymax, zmin),
+                    SVector(xmin, ymin, zmax),
+                    SVector(xmax, ymin, zmax),
+                    SVector(xmax, ymax, zmax),
+                    SVector(xmin, ymax, zmax),
                 ]
             end
 
@@ -1042,7 +1042,6 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         nx   = maxs[1] - mins[1] + 1
         ny   = D == 3 ? maxs[2] - mins[2] + 1 : 1
         edge = Float64(cell_edge)
-        h    = edge / 2
         vtk_type = D == 2 ? UInt8(9) : UInt8(12)   # QUAD or HEXAHEDRON
 
         @inbounds for c in 1:ncells
@@ -1053,18 +1052,18 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             else
                 (cell[3] - mins[3]) * (nx * ny) + (cell[2] - mins[2]) * nx + (cell[1] - mins[1]) + 1
             end
-            xc = cell[1] * edge
-            yc = cell[2] * edge
-            zc = D == 3 ? cell[3] * edge : 0.0
+            # Shared faces use the same half-integer coordinate in adjacent cells.
+            xmin, xmax = (cell[1] - 0.5) * edge, (cell[1] + 0.5) * edge
+            ymin, ymax = (cell[2] - 0.5) * edge, (cell[2] + 0.5) * edge
+            zmin = D == 3 ? (cell[3] - 0.5) * edge : 0.0
+            zmax = D == 3 ? (cell[3] + 0.5) * edge : 0.0
             # corner order per layer: (-,-), (+,-), (+,+), (-,+); the second layer (3D) is at z+
             for k in 0:ncorners - 1
                 kk = k & 3
-                sx = (kk == 1 || kk == 2) ? h : -h
-                sy = kk >= 2 ? h : -h
                 pt = base + k + 1
-                buf.points[1, pt] = xc + sx
-                buf.points[2, pt] = yc + sy
-                buf.points[3, pt] = D == 3 ? zc + (k >= 4 ? h : -h) : 0.0
+                buf.points[1, pt] = (kk == 1 || kk == 2) ? xmax : xmin
+                buf.points[2, pt] = kk >= 2 ? ymax : ymin
+                buf.points[3, pt] = k >= 4 ? zmax : zmin
                 buf.connectivity[pt] = pt - 1
             end
             buf.offsets[c + 1] = base + ncorners
@@ -1074,6 +1073,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         return npts
     end
 
+    grid_frame_bytes(ncells, dimensions) =
+        ncells * (2^dimensions * (3 * sizeof(Float64) + sizeof(Int)) + 2 * sizeof(Int) + sizeof(UInt8)) +
+        3 * sizeof(Int) + sizeof(Float64)
+
     """
     Buffered writer of cell grid frames to the transient (single file) grid
     output. Holds the dataset handles, the SPHGeometry buffers of the frame being
@@ -1082,6 +1085,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     the totals of the file (the `PointOffsets` and `CellOffsets` of the next
     frame). Produces the same file as `AppendVTKHDFGridData` called once per
     frame, without allocating per cell or re-reading previous frames.
+    `budget_bytes` also limits pending frame data: a frame larger than the
+    budget is written immediately instead of accumulating several dense grids.
     """
     mutable struct GridFrameWriter
         const root::HDF5.Group
@@ -1102,6 +1107,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         const connectivity_id_offsets::HDF5.Dataset
         const buf::GridGeometryBuffers      # SPHGeometry of the frame being appended
         const capacity::Int                 # frames held before a flush
+        const budget_bytes::Int
         # pending frames: per frame values and the concatenated SPHGeometry
         const times::Vector{Float64}
         const frame_npts::Vector{Int}
@@ -1112,20 +1118,22 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         const typ::Vector{UInt8}
         const cdata::Vector{Int}
         pending::Int                        # frames in the buffers
+        pending_bytes::Int
         nframes::Int                        # frames in the file
         npts_total::Int                     # points in the file
         ncells_total::Int                   # cells in the file
     end
 
-    function GridFrameWriter(root::HDF5.Group; capacity::Integer = 1)
+    function GridFrameWriter(root::HDF5.Group; capacity::Integer = 1, budget_bytes::Integer = typemax(Int))
         capacity >= 1 || throw(ArgumentError("capacity must be at least 1, got $capacity"))
+        budget_bytes >= 0 || throw(ArgumentError("budget_bytes must be nonnegative, got $budget_bytes"))
         steps = root["Steps"]
         return GridFrameWriter(root, attributes(steps)["NSteps"], root["Points"], root["NumberOfPoints"], root["NumberOfCells"],
                                root["NumberOfConnectivityIds"], root["Connectivity"], root["Offsets"], root["Types"],
                                root["CellData"]["CellData"], steps["Values"], steps["PointOffsets"], steps["NumberOfParts"],
                                steps["PartOffsets"], steps["CellOffsets"], steps["ConnectivityIdOffsets"],
-                               GridGeometryBuffers(), capacity,
-                               Float64[], Int[], Int[], Float64[], Int[], Int[], UInt8[], Int[], 0, 0, 0, 0)
+                               GridGeometryBuffers(), capacity, budget_bytes,
+                               Float64[], Int[], Int[], Float64[], Int[], Int[], UInt8[], Int[], 0, 0, 0, 0, 0)
     end
 
     """
@@ -1133,9 +1141,14 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
     Buffer the cells `UniqueCells` at time `newStep` as one frame of the
     transient grid file (same layout as `AppendVTKHDFGridData`) and write the
-    buffered frames once `capacity` frames are pending.
+    buffered frames once `capacity` frames are pending or their data reaches
+    `budget_bytes`.
     """
-    function append_grid_frame!(w::GridFrameWriter, newStep, cell_edge::Real, UniqueCells)
+    function append_grid_frame!(w::GridFrameWriter, newStep, cell_edge::Real, UniqueCells::AbstractVector{CartesianIndex{D}}) where {D}
+        frame_bytes = grid_frame_bytes(length(UniqueCells), D)
+        if w.pending > 0 && frame_bytes > w.budget_bytes - w.pending_bytes
+            flush_frames!(w)
+        end
         npts = fill_grid_geometry!(w.buf, cell_edge, UniqueCells)
         append!(w.pts,   vec(w.buf.points))
         append!(w.conn,  w.buf.connectivity)
@@ -1146,7 +1159,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         push!(w.frame_npts, npts)
         push!(w.frame_ncells, length(UniqueCells))
         w.pending += 1
-        w.pending == w.capacity && flush_frames!(w)
+        w.pending_bytes += frame_bytes
+        (w.pending == w.capacity || w.pending_bytes >= w.budget_bytes) && flush_frames!(w)
         return nothing
     end
 
@@ -1182,6 +1196,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         w.npts_total   += sum(w.frame_npts)
         w.ncells_total += sum(w.frame_ncells)
         w.pending = 0
+        w.pending_bytes = 0
         foreach(empty!, (w.times, w.frame_npts, w.frame_ncells, w.pts, w.conn, w.offs, w.typ, w.cdata))
         return w
     end
@@ -1320,10 +1335,12 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     depending on `SimMetaData.ExportSingleVTKHDF`.
 
     In single file mode the frames pass through the buffered writers
-    (`PolyDataFrameWriter`, `GridFrameWriter`): `frames_per_flush` frames are
+    (`PolyDataFrameWriter`, `GridFrameWriter`): up to `frames_per_flush` frames are
     held in host memory and written together, the number following from
     `SimMetaData.GPUOutputBufferBytes` and the size of a frame (see
-    `buffered_frames`). `close_files` writes the frames still pending.
+    `buffered_frames`). Dense grid frames are also checked against their
+    remaining byte budget and may flush sooner. `close_files` writes the
+    frames still pending.
 
     Without measurements the combined file is a temporal `PolyData` at
     `/VTKHDF`. With measurements it is a `MultiBlockDataSet`: the particles
@@ -1424,13 +1441,14 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
             # Frames held in host memory before a flush: the memory budget
             # divided by the size of a frame. A particle frame holds the
-            # positions and the output variables; a grid frame is bounded by
-            # every particle sitting in its own cell (corner points and
-            # connectivity per corner, offset, type and id per cell).
-            frame_bytes = n * (3 * sizeof(component_type(SimParticles.Position)) +
+            # positions and the output variables. The grid estimate uses one
+            # cell per particle; its writer also checks the actual frame bytes
+            # because a dense subdivided grid can contain many empty cells.
+            particle_frame_bytes = n * (3 * sizeof(component_type(SimParticles.Position)) +
                                sum(d -> ncomponents(d) * sizeof(component_type(d)), descriptors; init = 0))
+            frame_bytes = particle_frame_bytes
             if SimMetaData.ExportGridCells
-                frame_bytes += n * (2^Dimensions * (3 * sizeof(Float64) + sizeof(Int)) + 2 * sizeof(Int) + sizeof(UInt8))
+                frame_bytes += grid_frame_bytes(n, Dimensions)
             end
             frames_per_flush = buffered_frames(frame_bytes, SimMetaData.GPUOutputBufferBytes)
 
@@ -1471,7 +1489,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 root_grid = HDF5.create_group(OutputVTKHDFGrid, "VTKHDF")
                 GenerateGeometryStructure(root_grid; vtk_file_type="UnstructuredGrid", chunk_size = 2^13)
                 GenerateStepStructure(root_grid; vtk_file_type="UnstructuredGrid")
-                grid_writer = GridFrameWriter(root_grid; capacity = frames_per_flush)
+                grid_budget = max(0, SimMetaData.GPUOutputBufferBytes - frames_per_flush * particle_frame_bytes)
+                grid_writer = GridFrameWriter(root_grid; capacity = frames_per_flush, budget_bytes = grid_budget)
 
                 (particle_files = OutputVTKHDF, grid_files = OutputVTKHDFGrid)
             else
