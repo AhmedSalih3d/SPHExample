@@ -1109,7 +1109,7 @@ definitions in `benchmark/cases.jl` construct against either package.
 | `GPUUseGraph` | `true` | Cache CUDA graphs of 1, 2, 4, 8, 16, and 32 steps and compose each host batch from them. Disabled automatically with `GPUSyncTimers`. |
 | `GPUCellSubdivision` | `1` | Positive integer `R`: cells of edge `H/R`, a `(2R+1)^D` stencil, and `(2R+1)^(D-1)` contiguous row ranges. `1` reproduces the CPU grid, `2` uses half-width cells, and `4` uses quarter-width cells. Finer grids reduce candidates but increase dense-grid memory, row overhead and mDBC work. With reference interactions, only `1` reproduces the CPU's density-diffusion pair orientation. Radial symmetric diffusion removes that orientation dependence; accumulation and SPS rounding can still differ. Benchmark the intended precision, lane count and boundary mode before changing it. |
 | `GPUDoublePosition` | `false` | Store and integrate the particle positions (and the mDBC ghost node positions) in `Float64` while everything else stays in `FloatType`; the pair loops use cell relative `FloatType` coordinates (see "Double positions" above). Use it for `Float32` runs of domains far from the origin or with many steps. No effect with `FloatType = Float64`. Allocate the particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so that the input is read in `Float64`. |
-| `GPUCompactBuffers` | `true` | Omit unused ghost, kernel-output and shifting buffers, including ghost reorder scratch. GPU IDs use `Int32` and group markers `UInt32` only when every value fits; otherwise each field independently retains its original width. Host particle fields, output types, precision and neighbor ranges are unchanged. `false` restores the previous full allocation layout. |
+| `GPUCompactBuffers` | `true` | Omit unused ghost, kernel-output and shifting buffers, including ghost reorder scratch, and share position/velocity predictors with existing reorder scratch. Fixed predictor writes are skipped; boundary density and requested force calculations are retained. GPU IDs use `Int32` and group markers `UInt32` only when every value fits; otherwise each field independently retains its original width. Host particle fields, output types, precision and neighbor ranges are unchanged. `false` restores the previous full allocation layout. |
 | `GPUOutputQueueBytes` | `256 * 2^20` | Separate host memory budget for reusable frames between the download collector and disk writer; at least one frame. Used with `GPUAsyncOutput`. |
 | `GPUOutputBufferBytes` | `256 * 2^20` | Host memory for output frames that are held before they are written to the single `vtkhdf` file (see "Asynchronous output"). The number of frames per flush uses the particle fields plus an initial grid-size estimate, at least 1 and at most 16. Dense grid frames are checked against the remaining byte budget and can flush sooner; a frame larger than the budget is written immediately. `0` writes every frame at once. |
 
@@ -1126,6 +1126,14 @@ the simulation equations, particle order or implicit cell-range neighbor search:
   reorder buffers.
 * `NoKernelOutput` does not allocate kernel sums or kernel-gradient sums.
 * `NoShifting` does not allocate the two shifting work arrays.
+* Position/velocity predictors share the existing reorder scratch, which is idle
+  between cell-list rebuilds. Fixed entries are initialized once after sorting
+  and left untouched by the predictor kernel; only fluid, moving (including
+  velocity-only walls) and floating entries are rewritten each step.
+  No separate predictor vectors or per-neighbor index map are needed. Density predictors,
+  ordinary DBC wall-density evolution and requested boundary-force calculations
+  remain unchanged. Double-position cell-relative data is still prepared for
+  every particle.
 * GPU-only IDs and group markers, including their reorder buffers, use 32-bit
   storage after checking every value. An out-of-range value keeps that entire
   field wide; there is no truncation. Host IDs remain `Int`, group markers remain
@@ -1133,8 +1141,11 @@ the simulation equations, particle order or implicit cell-range neighbor search:
   exporting data.
 
 For `Float32` physics with double positions, no mDBC, no kernel output, no
-shifting and metadata that fits 32 bits, this removes **88 bytes per particle
+shifting and metadata that fits 32 bits, inactive fields and narrow metadata remove **88 bytes per particle
 in 2D** or **120 bytes per particle in 3D** from particle/reorder/support storage.
+Sharing position/velocity predictors additionally saves **24 bytes per particle
+in 2D** or **36 bytes per particle in 3D**, including every fixed particle, in
+this precision configuration.
 Enabled modes keep their required buffers. Output, cell-grid, reduction and
 floating-body storage still consume memory, so particle-capacity gains depend
 on the case and available VRAM; this is not a universal speedup guarantee.
@@ -1146,14 +1157,19 @@ workspace but excluding output, motion, reductions and allocator-pool reserves:
 
 | Case | Particles | Full buffers (MiB) | Compact buffers (MiB) | Saved |
 | --- | ---: | ---: | ---: | ---: |
-| Generated StillWedge, `dx = 0.02` | 3,027 | 0.7416 | 0.4876 | 34.25% |
-| Generated StillWedge, `dx = 0.005` | 47,790 | 11.6199 | 7.6092 | 34.52% |
-| Synthetic uniform 3D cube, `64^3` | 262,144 | 84.5856 | 54.5856 | 35.47% |
+| Generated StillWedge, `dx = 0.02` | 3,027 | 0.7416 | 0.4183 | 43.60% |
+| Generated StillWedge, `dx = 0.005` | 47,790 | 11.6199 | 6.5154 | 43.93% |
+| Synthetic uniform 3D cube, `64^3` | 262,144 | 84.5856 | 45.5856 | 46.11% |
 
 Low-level `upload_particles(particles)` and `GPUSupportArrays{D,T}(n)` retain
 their previous full-buffer defaults. For mode-aware allocation, use
 `upload_particles(particles, metadata)` and
-`GPUSupportArrays{D,T}(n, metadata)`. Omitted fields are empty device vectors and
+`GPUSupportArrays{D,T}(n, metadata)`. To also compact stationary predictors, use
+`GPUSupportArrays{D,T}(gpu, metadata)` and pass
+`support = support_arrays` (and `floating = floating_arrays` when applicable)
+to `SPHExampleGPU.SPHCellList.rebuild_cell_list!` to refresh fixed scratch entries.
+`RunSimulation` handles this
+automatically. Omitted fields are empty device vectors and
 are not reordered or downloaded by default. Explicitly requesting an omitted
 field for download, or running a mode without its required buffers, throws an
 error instead of returning incomplete data.
@@ -1164,7 +1180,31 @@ the repository root:
 ```bash
 julia --project=gpu_version gpu_version/benchmark/memory_buffers.jl
 julia --project=gpu_version gpu_version/test/gpu_memory.jl
+julia --project=gpu_version gpu_version/test/stationary_predictors.jl
+julia --project=gpu_version -t 2,0 gpu_version/benchmark/stationary_predictors.jl
 ```
+
+The stationary-predictor benchmark compares the pre-sharing solver at `7966a05`,
+the current solver with full predictors, and scratch sharing in one process.
+It warms kernels/graphs, alternates measurement order over 21 rounds, checks
+identical particle states and measured step/rebuild/readback counts, and reports
+paired-median solver time per step. Output and visualization are excluded.
+Cases cover the generated 3,027-particle wedge at `R = 8` with radial
+interactions (`user`), the same wedge at `R = 1` (`default`), and the
+47,790-particle wedge at `R = 1` (`large`). Pass case names to select them;
+set `SPH_PREDICTOR_BASELINE` to compare against a different compatible revision.
+Isolated CUDA phases use graph batches targeting 20 ms (capped at 4,096
+launches), rather than interpreting individual microsecond launches as a
+performance result. Laptop/desktop outliers can still be substantial.
+
+Keeping neighbor reads dense is important: a tested index-mapped predictor
+layout saved memory but slowed solver time by roughly 9–19% on the RTX A1000,
+with 25–41% slower corrector interactions. Reorder-scratch sharing removes that
+per-neighbor indirection without extra accepted-state copies.
+In a 21-round scratch-sharing comparison against `7966a05`, paired-median
+solver-time ratios were `0.9978` (`user`), `0.9997` (`default`) and `1.0024`
+(`large`): effectively baseline speed within measurement noise, rather than a
+universal speedup claim. Particle states and measured work counts matched exactly.
 
 ### On-demand reciprocal density
 

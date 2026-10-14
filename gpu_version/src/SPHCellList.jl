@@ -409,6 +409,10 @@ position precision `TP`. When that differs from the working precision `T`,
 `PosCells` and `PosCellsₙ⁺` hold the cell relative form (`PosCell`) of the
 start-of-step and half step positions for the pair loops; otherwise both are
 `nothing` and the pair loops read the positions directly.
+With `ReusePredictors`, the half-step position/velocity arrays are omitted.
+The driver instead uses the existing reorder scratch, which is idle between
+rebuilds. Fixed entries are initialized after sorting and left untouched during
+steps. Neighbor reads remain dense, without an index map or extra allocation.
 """
 struct GPUSupportArrays{D, T, TP, PC, BD}
     dρdtI::CuVector{T}
@@ -420,11 +424,13 @@ struct GPUSupportArrays{D, T, TP, PC, BD}
     PosCells::PC
     PosCellsₙ⁺::PC
     boundary_data::BD
+    ReusePredictors::Bool
 end
 
 """
     GPUSupportArrays{D, T}(n; position_type = T, updated_mdbc = false, shifting = true)
     GPUSupportArrays{D, T}(n, SimMetaData)
+    GPUSupportArrays{D, T}(gpu, SimMetaData)
 
 Support arrays for `n` particles in the working precision `T`, with positions
 of precision `position_type`. The cell relative positions are allocated
@@ -434,24 +440,62 @@ scratch fields recomputed after sorting and before each interaction stage.
 `shifting = false` omits the two shifting work arrays. The metadata form
 selects the position precision, updated-mDBC and shifting buffers from the
 simulation modes and `GPUCompactBuffers`.
+The device-particle form omits separate position/velocity predictors when compact
+buffers are enabled. Pass `support` to `rebuild_cell_list!` to initialize fixed
+entries in the reorder scratch after sorting. Density predictors remain allocated
+for all particles.
 """
 function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T, updated_mdbc::Bool = false,
-                              shifting::Bool = true) where {D, T, TP}
+                              shifting::Bool = true, reuse_predictors::Bool = false) where {D, T, TP}
     pc = TP === T ? nothing : CuVector{PosCell{D, T}}(undef, n)
     pcₙ⁺ = TP === T ? nothing : CuVector{PosCell{D, T}}(undef, n)
     boundary_data = updated_mdbc ? (; active = CUDA.ones(Bool, n), velocity = CUDA.zeros(SVector{D, T}, n),
                                     tangent_velocity = CUDA.zeros(SVector{D, T}, n)) : nothing
     return GPUSupportArrays{D, T, TP, typeof(pc), typeof(boundary_data)}(
         CUDA.zeros(T, n),
-        CUDA.zeros(SVector{D, T}, n),
-        CUDA.zeros(SVector{D, TP}, n),
+        CUDA.zeros(SVector{D, T}, reuse_predictors ? 0 : n),
+        CUDA.zeros(SVector{D, TP}, reuse_predictors ? 0 : n),
         CUDA.zeros(T, n),
         CUDA.zeros(SVector{D, T}, shifting ? n : 0),
         CUDA.zeros(T, shifting ? n : 0),
         pc,
         pcₙ⁺,
         boundary_data,
+        reuse_predictors,
     )
+end
+
+function GPUSupportArrays{D, T}(gpu::GPUParticles{D, T}, meta::SimulationMetaData{D, T, S, K, B}) where {D, T, S, K, B}
+    position_type(gpu) === position_float_type(meta) ||
+        throw(ArgumentError("GPU positions and support-array metadata must use the same precision"))
+    return GPUSupportArrays{D, T}(length(gpu); position_type = position_type(gpu),
+        updated_mdbc = B === UpdatedMDBC, shifting = !meta.GPUCompactBuffers || S === PlanarShifting,
+        reuse_predictors = meta.GPUCompactBuffers)
+end
+
+@inline function predictor_arrays(sup::GPUSupportArrays, gpu::GPUParticles)
+    return sup.ReusePredictors ? (gpu.scratch.Position, gpu.scratch.Velocity) :
+                                (sup.Positionₙ⁺, sup.Velocityₙ⁺)
+end
+
+function fixed_predictors_kernel!(Positionₙ⁺, Velocityₙ⁺, Position, Velocity, types, n::Int32)
+    i = thread_index()
+    i > n && return nothing
+    @inbounds if types[i] == Fixed
+        Positionₙ⁺[i] = Position[i]
+        Velocityₙ⁺[i] = Velocity[i]
+    end
+    return nothing
+end
+
+function initialize_fixed_predictors!(sup::GPUSupportArrays, gpu::GPUParticles)
+    sup.ReusePredictors || return nothing
+    n = length(gpu)
+    n == 0 && return nothing
+    position_half, velocity_half = predictor_arrays(sup, gpu)
+    @cuda threads=ELEMENTWISE_THREADS blocks=cld(n, ELEMENTWISE_THREADS) fixed_predictors_kernel!(
+        position_half, velocity_half, gpu.Position, gpu.Velocity, gpu.Type, Int32(n))
+    return nothing
 end
 
 function GPUSupportArrays{D, T}(n::Integer, meta::SimulationMetaData{D, T, S, K, B}) where {D, T, S, K, B}
@@ -502,7 +546,8 @@ end
 # Cell list rebuild with reordering of the persistent fields
 #---------------------------------------------------------------
 
-function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCutOff; prepared::Bool = false)
+function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCutOff;
+                            prepared::Bool = false, support = nothing, floating = nothing)
     s = gpu.scratch
     fields = isempty(gpu.GhostPoints) ?
         filter(f -> f !== :GhostPoints && f !== :GhostNormals, PERSISTENT_FIELDS) : PERSISTENT_FIELDS
@@ -533,6 +578,8 @@ function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCut
     # order. Their number never changes, so the list keeps its length and
     # device pointer, and captured graphs stay valid.
     isempty(gpu.GhostIndex) || compact_nonzero!(cl, gpu.GhostPoints, gpu.GhostIndex)
+    floating === nothing || update_floating_indices!(floating, gpu.Type, cl)
+    support === nothing || initialize_fixed_predictors!(support, gpu)
 
     return grid
 end
@@ -609,8 +656,7 @@ end
 function enqueue_boundary_correction!(ctx, step, half::Bool)
     (; gpu, sup, cl, SimKernel, SimConstants, threads, lanes) = ctx
     density = half ? sup.ρₙ⁺ : gpu.Density
-    position = half ? sup.Positionₙ⁺ : gpu.Position
-    velocity = half ? sup.Velocityₙ⁺ : gpu.Velocity
+    position, velocity = half ? predictor_arrays(sup, gpu) : (gpu.Position, gpu.Velocity)
     pairs = half ? sup.PosCellsₙ⁺ : sup.PosCells
     if get(ctx, :boundary_mode, SimpleMDBC()) isa UpdatedMDBC
         GPUKernels.launch_updated_mdbc!(density, gpu.Pressure, position, velocity,
@@ -707,6 +753,7 @@ function enqueue_step!(ctx, timed::Bool)
     CellStart = cl.CellStart
     floating  = get(ctx, :floating, nothing)
     floats    = floating !== nothing && floating.active
+    position_half, velocity_half = predictor_arrays(sup, gpu)
 
     # dt of this step from the reduction of the previous one; also decides
     # whether the step may run at all (cell list rebuild, output time).
@@ -746,16 +793,17 @@ function enqueue_step!(ctx, timed::Bool)
     end
 
     @phase HourGlass "05b Update To Half TimeStep" timed launch_half_step!(
-        sup.Positionₙ⁺, sup.Velocityₙ⁺, sup.ρₙ⁺, gpu.Pressure,
+        position_half, velocity_half, sup.ρₙ⁺, gpu.Pressure,
         gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Density, sup.dρdtI,
         gpu.Type, gpu.GroupMarker, motion, state, SimConstants;
         pos_cells = sup.PosCellsₙ⁺, CellID = gpu.CellID, grid = grid, SimKernel = SimKernel,
         boundary_mode = get(ctx, :boundary_mode, SimpleMDBC()),
+        reuse_predictors = sup.ReusePredictors,
         first_motion = SingleNeighbor && fused_motion && motion.active)
 
     if floats
         @phase HourGlass "05c Floating Half TimeStep" timed launch_floating_particles!(
-            floating, sup.Positionₙ⁺, sup.Velocityₙ⁺, gpu.Position, gpu.Type, gpu.GroupMarker, state, false;
+            floating, position_half, velocity_half, gpu.Position, gpu.Type, gpu.GroupMarker, state, false;
             pos_cells = sup.PosCellsₙ⁺, CellID = gpu.CellID, grid = grid, H = SimKernel.H)
     end
 
@@ -769,8 +817,8 @@ function enqueue_step!(ctx, timed::Bool)
     # models, is evaluated at the predictor state.
     @phase HourGlass "08 Second NeighborLoop" timed launch_interactions!(
         sup.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient, sup.∇Cᵢ, sup.∇◌rᵢ,
-        sup.Positionₙ⁺, sup.ρₙ⁺, gpu.Pressure,
-        sup.Velocityₙ⁺, gpu.Type, CellStart, gpu.CellID, grid, state,
+        position_half, sup.ρₙ⁺, gpu.Pressure,
+        velocity_half, gpu.Type, CellStart, gpu.CellID, grid, state,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
         FlagKernel, FlagShift; threads = threads, lanes = lanes,
         boundary_forces = bforces, pos_cells = sup.PosCellsₙ⁺, boundary_data = sup.boundary_data,
@@ -779,7 +827,7 @@ function enqueue_step!(ctx, timed::Bool)
 
     if floats
         @phase HourGlass "10 Floating Corrector" timed begin
-            launch_floating_forces!(floating, gpu.Acceleration, sup.Positionₙ⁺, gpu.Type, gpu.GroupMarker,
+            launch_floating_forces!(floating, gpu.Acceleration, position_half, gpu.Type, gpu.GroupMarker,
                                     floating.center_half, SimConstants.m₀, state)
             launch_floating_update!(floating, state, SimConstants.g, true)
         end
@@ -787,7 +835,7 @@ function enqueue_step!(ctx, timed::Bool)
 
     @phase HourGlass "11 Update To Final TimeStep" timed launch_final_step!(
         gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Density, gpu.Pressure,
-        sup.dρdtI, sup.ρₙ⁺, sup.Positionₙ⁺, sup.Velocityₙ⁺, gpu.Type,
+        sup.dρdtI, sup.ρₙ⁺, position_half, velocity_half, gpu.Type,
         sup.∇Cᵢ, sup.∇◌rᵢ, state, SimKernel, SimConstants, red, FlagShift;
         boundary_mode = get(ctx, :boundary_mode, SimpleMDBC()),
         ghost_points = gpu.GhostPoints, ghost_normals = gpu.GhostNormals,
@@ -957,10 +1005,10 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
 
     if !state.primed
         # No final step kernel has run yet: reduce the initial state for the
-        # first time step. (`Positionₙ⁺` is still zero, so the displacement
-        # term is meaningless, but the initial displacement bound already
-        # forces a cell list rebuild before the first step.)
-        launch_step_reduction!(red, gpu.Position, gpu.Velocity, gpu.Acceleration, sup.Positionₙ⁺, SimKernel)
+        # first time step. There is no half state yet; the initial displacement
+        # bound already forces a cell list rebuild before the first step.
+        position_half = sup.ReusePredictors ? gpu.Position : sup.Positionₙ⁺
+        launch_step_reduction!(red, gpu.Position, gpu.Velocity, gpu.Acceleration, position_half, SimKernel)
         state.primed = true
     end
 
@@ -1004,9 +1052,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                     invalidate_graphs!(state)
                     generation = cl.generation
                 end
-                rebuild_cell_list!(gpu, cl, SimKernel.H⁻¹; prepared = true)
-                floating === nothing ||
-                    update_floating_indices!(floating, gpu.Type, cl)
+                rebuild_cell_list!(gpu, cl, SimKernel.H⁻¹; prepared = true, support = sup, floating)
                 resume_after_rebuild!(state)
 
                 # The single neighbour scheme carries `dρdtI` and the
@@ -1182,11 +1228,11 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     # Device side data
     @timeit HourGlass "00a Upload To GPU" begin
         gpu    = upload_particles(SimParticles, SimMetaData)
-        sup    = GPUSupportArrays{Dimensions, FloatType}(NumberOfPoints, SimMetaData)
         red    = ReductionWorkspace{SVector{3, FloatType}}(NumberOfPoints)
         cl     = CellListWorkspace{Dimensions, PositionType}(NumberOfPoints;
                      reach = SimMetaData.GPUCellSubdivision, max_cells = SimMetaData.GPUMaxCells,
                      deterministic = SimMetaData.GPUDeterministicSort)
+        sup    = GPUSupportArrays{Dimensions, FloatType}(gpu, SimMetaData)
         motion = MotionArrays(SimGeometry, SimParticles)
         floating = FloatingArrays(SimGeometry, SimParticles, SimConstants; position_type = PositionType)
         # Device resident loop state. The displacement bound starts above `h`

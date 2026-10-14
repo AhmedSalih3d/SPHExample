@@ -710,7 +710,8 @@ include("UpdatedMDBC.jl")
 function half_step_kernel!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, Pressure,
                            Position, Velocity, Acceleration, Density, dρdtI,
                            ParticleType, GroupMarker, motion, step, SimConstants,
-                           PosCellsₙ⁺, CellID, gridarg, H, boundary_mode, ::Val{FirstMotion}, n::Int32) where {FirstMotion}
+                           PosCellsₙ⁺, CellID, gridarg, H, boundary_mode,
+                           ::Val{ReusePredictors}, ::Val{FirstMotion}, n::Int32) where {ReusePredictors, FirstMotion}
     step_active(step) || return nothing
     i = thread_index()
     i > n && return nothing
@@ -726,9 +727,12 @@ function half_step_kernel!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, Pressure,
         acc += ConstructGravitySVector(acc, g * GravityFactorValue(T, type))
         Acceleration[i] = acc
         # the increment is promoted to the precision of the position
-        xₙ⁺ = Position[i] + Velocity[i] * dt₂ * ML
-        Positionₙ⁺[i]   = xₙ⁺
-        Velocityₙ⁺[i]   = Velocity[i] + acc * dt₂ * ML
+        xₙ⁺ = Position[i]
+        if !ReusePredictors || type != Fixed
+            xₙ⁺ += Velocity[i] * dt₂ * ML
+            Positionₙ⁺[i] = xₙ⁺
+            Velocityₙ⁺[i] = Velocity[i] + acc * dt₂ * ML
+        end
         ρ = Density[i] + dρdtI[i] * dt₂
         ρ = boundary_mode isa UpdatedMDBC && is_wall(type) ? Density[i] : limit_density(ρ, ρ₀, ML)
         ρₙ⁺[i] = ρ
@@ -751,12 +755,16 @@ precision) the kernel also writes the cell relative form of every half step
 position; `CellID`, `grid` and `SimKernel` are then required.
 `first_motion = true` also applies the first prescribed-motion half increment
 before constructing the predictor, for single-neighbor DBC steps.
+`reuse_predictors = true` uses the reorder scratch as dense predictor outputs.
+Fixed position/velocity entries must be initialized after every rebuild; this
+kernel leaves them untouched. Density and cell-relative preparation still cover
+every particle.
 """
 function launch_half_step!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, Pressure,
                            Position, Velocity, Acceleration, Density, dρdtI,
                            ParticleType, GroupMarker, motion, step, SimConstants;
                            pos_cells = nothing, CellID = nothing, grid = nothing, SimKernel = nothing,
-                           boundary_mode = SimpleMDBC(), first_motion::Bool = false)
+                           boundary_mode = SimpleMDBC(), first_motion::Bool = false, reuse_predictors::Bool = false)
     n = length(Position)
     n == 0 && return nothing
     H = SimKernel === nothing ? zero(eltype(Density)) : SimKernel.H
@@ -764,7 +772,7 @@ function launch_half_step!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, Pressure,
         Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, Pressure,
         Position, Velocity, Acceleration, Density, dρdtI,
         ParticleType, GroupMarker, motion, step, SimConstants,
-        pos_cells, CellID, grid, H, boundary_mode, Val(first_motion), Int32(n))
+        pos_cells, CellID, grid, H, boundary_mode, Val(reuse_predictors), Val(first_motion), Int32(n))
     return nothing
 end
 

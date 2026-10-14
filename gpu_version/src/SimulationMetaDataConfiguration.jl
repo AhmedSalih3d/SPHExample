@@ -66,7 +66,10 @@ the host particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so
 that they hold `Float64` positions from the input files onwards.
 
 `GPUCompactBuffers = true` omits unused ghost, kernel-output and shifting
-buffers, and stores GPU IDs/group markers in 32 bits when every value fits.
+buffers, shares position/velocity predictors with reorder scratch, and stores
+GPU IDs/group markers in 32 bits when every value fits. Fixed predictor entries
+are initialized after sorting and not rewritten each step. Boundary density
+updates and requested boundary-force calculations are unchanged.
 Host fields and exported types are unchanged; out-of-range metadata retains
 its original width. `false` keeps the previous full GPU allocation layout.
 
