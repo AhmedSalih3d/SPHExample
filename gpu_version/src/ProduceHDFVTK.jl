@@ -1442,8 +1442,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             # Frames held in host memory before a flush: the memory budget
             # divided by the size of a frame. A particle frame holds the
             # positions and the output variables. The grid estimate uses one
-            # cell per particle; its writer also checks the actual frame bytes
-            # because a dense subdivided grid can contain many empty cells.
+            # occupied cell per particle; its writer also checks actual frame
+            # bytes against the remaining grid output budget.
             particle_frame_bytes = n * (3 * sizeof(component_type(SimParticles.Position)) +
                                sum(d -> ncomponents(d) * sizeof(component_type(d)), descriptors; init = 0))
             frame_bytes = particle_frame_bytes

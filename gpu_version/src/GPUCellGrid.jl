@@ -38,7 +38,7 @@ using StaticArrays
 using ..GPUStepState: DeviceStep, StepState, I_STOP, STOP_REBUILD,
                       I_GRID_STATUS, I_GRID_ORIGIN, I_GRID_DIMS, I_GRID_NCELLS
 
-export CellGrid, CellListWorkspace, update_cell_list!, compact_nonzero!, unique_cells_host, grid_cells_host,
+export CellGrid, CellListWorkspace, update_cell_list!, compact_nonzero!, unique_cells_host, occupied_cells_host,
        map_floor, cell_coords, linear_cell, local_coords, row_offsets, row_range, in_grid,
        reach, bin_scale, gather_kernel!, thread_index, load_grid,
        PosCell, CellRow, cell_rows, cell_size, cell_anchor, global_coords, pos_cell, pair_vector,
@@ -1190,15 +1190,18 @@ function unique_cells_host(grid::CellGrid{D}, CellID_host::AbstractVector{Int32}
 end
 
 """
-    grid_cells_host(grid) -> AbstractVector{CartesianIndex{D}}
+    occupied_cells_host(positions, inverse_cell) -> Vector{CartesianIndex{D}}
 
-All cells of the dense grid, including empty cells and the neighbour-stencil
-margin, in ascending linear order. The coordinates are generated lazily so grid
-export does not allocate a separate array of cell indices.
+Occupied cells at the downloaded frame's positions, in ascending cell order.
+Unlike `unique_cells_host`, this does not use potentially stale cell-list bins.
+`inverse_cell` must use the same subdivision and precision as the cell list.
 """
-function grid_cells_host(grid::CellGrid{D}) where {D}
-    ranges = ntuple(d -> Int(grid.origin[d]):(Int(grid.origin[d]) + Int(grid.dims[d]) - 1), Val(D))
-    return vec(CartesianIndices(ranges))
+function occupied_cells_host(positions::AbstractVector{<:SVector{D}}, inverse_cell) where {D}
+    cells = Set{CartesianIndex{D}}()
+    for position in positions
+        push!(cells, CartesianIndex(cell_coords(position, inverse_cell)))
+    end
+    return sort!(collect(cells))
 end
 
 end # module

@@ -1375,8 +1375,8 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         SimMetaData.IndexCounter = length(UniqueCells)
         output.save_particles(job.counter, job.time)
         if SimMetaData.ExportGridCells
-            # Empty fine-grid cells must be drawn too, otherwise the lattice has holes.
-            grid_cells = grid_cells_host(job.grid)
+            # Bin the downloaded positions, not the cells from the last neighbor rebuild.
+            grid_cells = occupied_cells_host(first(job.download.buffers), bin_scale(job.grid, SimKernel.H⁻¹))
             output.save_grid(job.counter, grid_cells, SimParticles, job.time)
         end
         write_time[] += time() - t0

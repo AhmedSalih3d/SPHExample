@@ -8,16 +8,31 @@ using HDF5
 
 const GRID = SPHExampleGPU.GPUCellGrid
 
-@testset "complete grid geometry has no gaps between adjacent cells" begin
+@testset "occupied cells use current positions and cell-list rounding" begin
+    for D in (2, 3), R in (1, 2, 8), T in (Float32, Float64), TP in (Float32, Float64)
+        inverse_cell = T(R) * inv(T(0.08))
+        expected = [CartesianIndex(ntuple(d -> sign * d, D)) for sign in (-1, 0, 1)]
+        positions = [SVector{D, TP}(Tuple(cell)) / TP(inverse_cell)
+                     for cell in expected[[3, 1, 3, 2, 1]]]
+        @test GRID.occupied_cells_host(positions, inverse_cell) == expected
+        @test isempty(GRID.occupied_cells_host(SVector{D, TP}[], inverse_cell))
+        shifted = positions .+ Ref(SVector{D, TP}(ntuple(_ -> TP(4) / TP(inverse_cell), D)))
+        @test GRID.occupied_cells_host(shifted, inverse_cell) ==
+              [cell + CartesianIndex(ntuple(_ -> 4, D)) for cell in expected]
+
+        ties = [SVector{D, TP}(ntuple(_ -> sign * TP(0.25), D)) for sign in (-1, 1)]
+        @test GRID.occupied_cells_host(ties, T(2)) ==
+              [CartesianIndex(ntuple(_ -> sign, D)) for sign in (-1, 1)]
+    end
+end
+
+@testset "grid geometry has no gaps between adjacent occupied cells" begin
     for D in (2, 3), R in (1, 2, 8), T in (Float32, Float64)
         ranges = ntuple(d -> (-3 - d):(3 + d), D)
         origin = Int32.(first.(ranges))
         dims = Int32.(length.(ranges))
         grid = CellGrid{D, R}(origin, dims, Int32(prod(dims)))
-        cells = GRID.grid_cells_host(grid)
-        @test cells == vec(collect(CartesianIndices(ranges)))
-        @test length(cells) == grid.ncells
-        @test all(Tuple(cells[i]) == GRID.global_coords(grid, Int32(i)) for i in eachindex(cells))
+        cells = filter(cell -> cell[1] != 0 || cell[2] == 0, vec(collect(CartesianIndices(ranges))))
         geometry = SPHExampleGPU.ProduceHDFVTK
         points, connectivity, offsets, types, data, dims =
             geometry.compute_grid_geometry(T(0.08) / R, cells)
@@ -29,7 +44,9 @@ const GRID = SPHExampleGPU.GPUCellGrid
         @test types == buffers.types
         @test data == buffers.cell_data
         @test dims == D
-        @test data == collect(1:Int(grid.ncells))
+        expected_ids = [LinearIndices(Int.(grid.dims))[ntuple(d -> cell[d] - grid.origin[d] + 1, D)...]
+                        for cell in cells]
+        @test data == expected_ids
 
         ncorners = 2^D
         lookup = Dict(cell => i for (i, cell) in enumerate(cells))
@@ -116,11 +133,8 @@ function check_grid_file(path, positions, expected_time, edge, inverse_cell, D; 
             for i in axes(positions, 2)])
         actual = [CartesianIndex(ntuple(d -> round(Int, centers[d, i] / edge), D))
                   for i in axes(centers, 2)]
-        ranges = ntuple(d -> minimum(c -> c[d], actual):maximum(c -> c[d], actual), D)
-        expected = vec(CartesianIndices(ranges))
+        expected = sort(occupied)
         @test actual == expected
-        @test issubset(occupied, Set(actual))
-        @test length(actual) > length(occupied)
         @test read(root["NumberOfCells"])[frame] == length(expected)
         for d in 1:D
             widths = [maximum(points[d, i:i + ncorners - 1]) -
@@ -128,7 +142,8 @@ function check_grid_file(path, positions, expected_time, edge, inverse_cell, D; 
             @test all(w -> isapprox(w, edge; rtol = 1e-12), widths)
         end
         D == 2 && @test all(iszero, points[3, :])
-        return (path, frame - 1, npoints, length(expected), D, edge)
+        return (; path, step = frame - 1, npoints, ncells = length(expected),
+                dimension = D, edge, cells = Tuple.(expected))
     end
 end
 
@@ -165,12 +180,12 @@ function simulate_grid(save, D, R; async, single_file, double_position, export_g
     return (; particles, meta, kernel)
 end
 
-@testset "GPU grid export includes empty cells without wireframe gaps" begin
+@testset "GPU grid export includes only cells occupied in each output frame" begin
     if !CUDA.functional()
         @test_skip false
     else
         mktempdir() do directory
-            reader_frames = Tuple{String, Int, Int, Int, Int, Float64}[]
+            reader_frames = NamedTuple[]
             for D in (2, 3), R in (1, 2, 8), async in (false, true), single_file in (false, true)
                 save = mkpath(joinpath(directory, "$(D)_$(R)_$(async)_$(single_file)"))
                 result = simulate_grid(save, D, R; async, single_file, double_position = async)
@@ -217,10 +232,9 @@ end
                 script = joinpath(directory, "check_grid_reader.py")
                 open(script, "w") do io
                     write(io, """
-                    from math import prod
                     from vtkmodules.vtkIOHDF import vtkHDFReader
 
-                    def check_grid(path, step, npoints, ncells, dimension, edge):
+                    def check_grid(path, step, npoints, ncells, dimension, edge, expected_cells):
                         reader = vtkHDFReader()
                         reader.SetFileName(path)
                         reader.UpdateInformation()
@@ -238,15 +252,15 @@ end
                             key = tuple(round((box[2*d] + box[2*d+1]) / (2*edge)) for d in range(dimension))
                             bounds[key] = box
                         assert len(bounds) == ncells
-                        assert prod(max(k[d] for k in bounds) - min(k[d] for k in bounds) + 1 for d in range(dimension)) == ncells
+                        assert set(bounds) == set(expected_cells)
                         for key, box in bounds.items():
                             for d in range(dimension):
                                 neighbor = tuple(k + (axis == d) for axis, k in enumerate(key))
                                 if neighbor in bounds:
                                     assert box[2*d+1] == bounds[neighbor][2*d], (key, neighbor, box, bounds[neighbor])
                     """)
-                    for (path, step, npoints, ncells, D, edge) in reader_frames
-                        println(io, "check_grid(", repr(path), ", $step, $npoints, $ncells, $D, $edge)")
+                    for (; path, step, npoints, ncells, dimension, edge, cells) in reader_frames
+                        println(io, "check_grid(", repr(path), ", $step, $npoints, $ncells, $dimension, $edge, ", repr(cells), ")")
                     end
                 end
                 process = run(pipeline(ignorestatus(`$pvpython $script`); stdout, stderr))

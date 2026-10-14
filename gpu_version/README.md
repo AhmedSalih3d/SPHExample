@@ -96,15 +96,14 @@ opening loads both the particles and cell grid in the same session and view.
 The grid appears as a wireframe. This works with single-file VTKHDF output and
 numbered VTKHDF file series; the generated state script can also be opened later.
 
-Exported cells have edge length `H / GPUCellSubdivision` and cover the complete
-dense neighbor-search grid, including empty cells and its stencil margin.
-Exporting only occupied cells would leave holes between particles when the grid
-is finer than the particle spacing. Adjacent exported cells share identical face
-coordinates, giving a continuous wireframe in both single-file and numbered
-output. This visualization does not change neighbor-search rebuilds or SPH
-results. Fine grids contain more exported cells and can produce larger files;
-the grid writer flushes early when its pending frames reach the output memory
-budget.
+Exported cells have edge length `H / GPUCellSubdivision` and include only cells
+containing particles at each output frame, not empty cells or the neighbor-search
+grid's stencil margin. Occupancy is computed from that frame's downloaded
+positions, even between neighbor-list rebuilds. Adjacent occupied cells share
+identical face coordinates in both single-file and numbered output; gaps appear
+only where cells are empty. This visualization does not change neighbor-search
+rebuilds or SPH results. The grid writer flushes early when its pending frames
+reach the output memory budget.
 
 Focused grid export tests (including ParaView reader checks when `pvpython` is
 on PATH):
