@@ -1109,7 +1109,7 @@ definitions in `benchmark/cases.jl` construct against either package.
 | `GPUUseGraph` | `true` | Cache CUDA graphs of 1, 2, 4, 8, 16, and 32 steps and compose each host batch from them. Disabled automatically with `GPUSyncTimers`. |
 | `GPUCellSubdivision` | `1` | Positive integer `R`: cells of edge `H/R`, a `(2R+1)^D` stencil, and `(2R+1)^(D-1)` contiguous row ranges. `1` reproduces the CPU grid, `2` uses half-width cells, and `4` uses quarter-width cells. Finer grids reduce candidates but increase dense-grid memory, row overhead and mDBC work. With reference interactions, only `1` reproduces the CPU's density-diffusion pair orientation. Radial symmetric diffusion removes that orientation dependence; accumulation and SPS rounding can still differ. Benchmark the intended precision, lane count and boundary mode before changing it. |
 | `GPUDoublePosition` | `false` | Store and integrate the particle positions (and the mDBC ghost node positions) in `Float64` while everything else stays in `FloatType`; the pair loops use cell relative `FloatType` coordinates (see "Double positions" above). Use it for `Float32` runs of domains far from the origin or with many steps. No effect with `FloatType = Float64`. Allocate the particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so that the input is read in `Float64`. |
-| `GPUCompactBuffers` | `true` | Omit unused ghost, kernel-output and shifting buffers, including ghost reorder scratch, and share position/velocity predictors with existing reorder scratch. Fixed predictor writes are skipped; boundary density and requested force calculations are retained. GPU IDs use `Int32` and group markers `UInt32` only when every value fits; otherwise each field independently retains its original width. Host particle fields, output types, precision and neighbor ranges are unchanged. `false` restores the previous full allocation layout. |
+| `GPUCompactBuffers` | `true` | Omit unused ghost, kernel-output and shifting buffers, including ghost reorder scratch, share position/velocity predictors with existing reorder scratch, and remove acceleration/pressure sorting shadows. Pressure is reconstructed from sorted density with the selected EOS; acceleration is refreshed before post-rebuild readers. Fixed predictor writes are skipped; boundary density and requested force calculations are retained. GPU IDs use `Int32` and group markers `UInt32` only when every value fits; otherwise each field independently retains its original width. Host particle fields, output types, precision and neighbor ranges are unchanged. `false` restores the previous full allocation layout. |
 | `GPUOutputQueueBytes` | `256 * 2^20` | Separate host memory budget for reusable frames between the download collector and disk writer; at least one frame. Used with `GPUAsyncOutput`. |
 | `GPUOutputBufferBytes` | `256 * 2^20` | Host memory for output frames that are held before they are written to the single `vtkhdf` file (see "Asynchronous output"). The number of frames per flush uses the particle fields plus an initial grid-size estimate, at least 1 and at most 16. Dense grid frames are checked against the remaining byte budget and can flush sooner; a frame larger than the budget is written immediately. `0` writes every frame at once. |
 
@@ -1126,6 +1126,17 @@ the simulation equations, particle order or implicit cell-range neighbor search:
   reorder buffers.
 * `NoKernelOutput` does not allocate kernel sums or kernel-gradient sums.
 * `NoShifting` does not allocate the two shifting work arrays.
+* Acceleration and pressure retain their ordinary device arrays but have no
+  full-size sorting destinations. Pressure is reconstructed from sorted density:
+  gamma-seven for fluid, DBC and simple mDBC, and linear for updated-mDBC walls,
+  including negative boundary pressure. The initial host-computed pressure is
+  reordered through idle density scratch to preserve host EOS rounding exactly.
+  Initial acceleration is reduced for the first timestep before sorting.
+  The driver then overwrites every acceleration entry before the next reader:
+  symplectic stepping does so in its first interaction, while single-neighbor
+  stepping explicitly refreshes carried derivatives and floating-body
+  acceleration caches after each rebuild. A pending step completes before output,
+  so synchronous/asynchronous downloads retain valid acceleration and pressure.
 * Position/velocity predictors share the existing reorder scratch, which is idle
   between cell-list rebuilds. Fixed entries are initialized once after sorting
   and left untouched by the predictor kernel; only fluid, moving (including
@@ -1146,6 +1157,10 @@ in 2D** or **120 bytes per particle in 3D** from particle/reorder/support storag
 Sharing position/velocity predictors additionally saves **24 bytes per particle
 in 2D** or **36 bytes per particle in 3D**, including every fixed particle, in
 this precision configuration.
+Removing acceleration/pressure sorting shadows additionally saves
+**12 bytes per particle in 2D** or **16 bytes per particle in 3D** with
+`Float32` physics, regardless of position precision (24 or 32 bytes with `Float64`
+physics). This saving applies to all boundary, shifting and kernel-output modes.
 Enabled modes keep their required buffers. Output, cell-grid, reduction and
 floating-body storage still consume memory, so particle-capacity gains depend
 on the case and available VRAM; this is not a universal speedup guarantee.
@@ -1157,9 +1172,9 @@ workspace but excluding output, motion, reductions and allocator-pool reserves:
 
 | Case | Particles | Full buffers (MiB) | Compact buffers (MiB) | Saved |
 | --- | ---: | ---: | ---: | ---: |
-| Generated StillWedge, `dx = 0.02` | 3,027 | 0.7416 | 0.4183 | 43.60% |
-| Generated StillWedge, `dx = 0.005` | 47,790 | 11.6199 | 6.5154 | 43.93% |
-| Synthetic uniform 3D cube, `64^3` | 262,144 | 84.5856 | 45.5856 | 46.11% |
+| Generated StillWedge, `dx = 0.02` | 3,027 | 0.7416 | 0.3836 | 48.27% |
+| Generated StillWedge, `dx = 0.005` | 47,790 | 11.6199 | 5.9685 | 48.64% |
+| Synthetic uniform 3D cube, `64^3` | 262,144 | 84.5856 | 41.5856 | 50.84% |
 
 Low-level `upload_particles(particles)` and `GPUSupportArrays{D,T}(n)` retain
 their previous full-buffer defaults. For mode-aware allocation, use
@@ -1168,8 +1183,17 @@ their previous full-buffer defaults. For mode-aware allocation, use
 `GPUSupportArrays{D,T}(gpu, metadata)` and pass
 `support = support_arrays` (and `floating = floating_arrays` when applicable)
 to `SPHExampleGPU.SPHCellList.rebuild_cell_list!` to refresh fixed scratch entries.
-`RunSimulation` handles this
-automatically. Omitted fields are empty device vectors and
+Compact rebuilds also require `constants = simulation_constants` and the matching
+`boundary_mode` (`UpdatedMDBC()` for its linear wall EOS; otherwise gamma-seven).
+Standalone rebuilds preserve acceleration by temporarily reordering it into
+idle velocity scratch before initializing fixed predictors; immediate reductions,
+floating-force calculations and downloads remain valid. Only the simulation
+driver passes `discard_acceleration = true`, where a derivative overwrite is
+guaranteed before any reader. `preserve_pressure = true` retains an existing
+pressure field using idle density scratch, as at startup. Low-level
+`upload_particles(...; reconstruct_fields = true)` opts into the same shadow
+removal without changing other allocation options.
+`RunSimulation` handles this automatically. Omitted fields are empty device vectors and
 are not reordered or downloaded by default. Explicitly requesting an omitted
 field for download, or running a mode without its required buffers, throws an
 error instead of returning incomplete data.
@@ -1181,8 +1205,19 @@ the repository root:
 julia --project=gpu_version gpu_version/benchmark/memory_buffers.jl
 julia --project=gpu_version gpu_version/test/gpu_memory.jl
 julia --project=gpu_version gpu_version/test/stationary_predictors.jl
+julia --project=gpu_version -t 2,0 gpu_version/test/sorting_shadows.jl
+julia --project=gpu_version -t 2,0 gpu_version/benchmark/sorting_shadows.jl
 julia --project=gpu_version -t 2,0 gpu_version/benchmark/stationary_predictors.jl
 ```
+
+The sorting-shadow benchmark isolates only these two destinations, keeping
+predictor sharing and all other compact-buffer choices identical. It warms
+CUDA graphs, forces an interval-start rebuild, alternates measurement order
+over 11 paired rounds, and checks bitwise-identical particle state and matching
+step/rebuild/readback counts. On the RTX A1000, the 47,790-particle 2D wedge
+had median removed/full solver-time ratios of roughly `0.998`–`1.010` across
+repeat runs of both time-stepping schemes; the 3,027-particle case was noisy. This is a confirmed memory saving,
+not a demonstrated general speedup.
 
 The stationary-predictor benchmark compares the pre-sharing solver at `7966a05`,
 the current solver with full predictors, and scratch sharing in one process.

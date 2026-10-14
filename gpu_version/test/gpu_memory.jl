@@ -129,6 +129,10 @@ end
             @test isempty(compact.GhostIndex)
             @test isempty(compact.scratch.GhostPoints)
             @test isempty(compact.scratch.GhostNormals)
+            @test isempty(compact.scratch.Acceleration)
+            @test isempty(compact.scratch.Pressure)
+            @test length(full.scratch.Acceleration) == length(f.host)
+            @test length(full.scratch.Pressure) == length(f.host)
             @test isempty(support.∇Cᵢ) && isempty(support.∇◌rᵢ)
             @test length(full_support.∇Cᵢ) == length(f.host)
             @test length(full_support.∇◌rᵢ) == length(f.host)
@@ -144,7 +148,8 @@ end
             @test GPUMemoryBenchmark.device_buffer_bytes(support) == support_bytes
             expected = n * (2 * sizeof(eltype(full.GhostPoints)) + 2 * sizeof(eltype(full.GhostNormals)) +
                 sizeof(T) + sizeof(SVector{D, T}) + sizeof(T) + sizeof(SVector{D, T}) +
-                2 * (sizeof(Int) - sizeof(Int32)) + 2 * (sizeof(UInt) - sizeof(UInt32)))
+                2 * (sizeof(Int) - sizeof(Int32)) + 2 * (sizeof(UInt) - sizeof(UInt32)) +
+                sizeof(T) + sizeof(SVector{D, T}))
             full_bytes = GPUMemoryBenchmark.device_buffer_bytes((full, full_support))
             compact_bytes = GPUMemoryBenchmark.device_buffer_bytes((compact, support))
             @test full_bytes - compact_bytes == expected
@@ -185,7 +190,7 @@ end
             @test eltype(gpu.scratch.GroupMarker) === eltype(gpu.GroupMarker)
             cells = CellListWorkspace{2, Float64}(length(f.host))
             for _ in 1:2
-                grid = DRIVER.rebuild_cell_list!(gpu, cells, 10f0)
+                grid = DRIVER.rebuild_cell_list!(gpu, cells, 10f0; constants = SimulationConstants{Float32}(dx = 0.02))
                 back = deepcopy(f.host)
                 download_particles!(back, gpu, grid)
                 original_order, order = sortperm(f.host.ID), sortperm(back.ID)

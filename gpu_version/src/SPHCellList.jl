@@ -60,6 +60,9 @@ node positions (`Float64` with `GPUDoublePosition`, otherwise `T`). Nothing
 else is stored in `TP`: velocities, densities, accelerations and the kernel
 sums stay in `T`, as in DualSPHysics.
 
+Compact buffers omit acceleration/pressure reorder destinations: pressure is
+reconstructed from sorted density, and acceleration is either overwritten by
+the next derivative evaluation or reordered using idle velocity scratch.
 Unused ghost and kernel-output fields may be empty device vectors. IDs and
 group markers may use lossless 32-bit device storage; host and output fields
 retain their original types.
@@ -123,7 +126,8 @@ end
 
 """
     upload_particles(SimParticles::StructArray; position_type = eltype of the host positions,
-                     compact_metadata = false, kernel_output = true, ghost_data = true) -> GPUParticles
+                     compact_metadata = false, kernel_output = true, ghost_data = true,
+                     reconstruct_fields = false) -> GPUParticles
     upload_particles(SimParticles::StructArray, SimMetaData) -> GPUParticles
 
 Copy every stored field of the host particle array to the GPU. The ghost
@@ -139,11 +143,13 @@ every value fits; otherwise each field independently retains its host width.
 `kernel_output = false` or `ghost_data = false` omits those fields and their
 reorder scratch. The metadata form selects these options from the simulation
 modes and `GPUCompactBuffers`, and uses `position_float_type(SimMetaData)`.
+`reconstruct_fields = true` omits acceleration and pressure reorder scratch;
+rebuilds then require simulation constants to reconstruct pressure.
 """
 function upload_particles(SimParticles::StructArray;
                           position_type::Type{TP} = eltype(eltype(SimParticles.Position)),
                           compact_metadata::Bool = false, kernel_output::Bool = true,
-                          ghost_data::Bool = true) where {TP}
+                          ghost_data::Bool = true, reconstruct_fields::Bool = false) where {TP}
     D = length(eltype(SimParticles.Position))
     T = eltype(SimParticles.Density)
     n = length(SimParticles)
@@ -166,8 +172,8 @@ function upload_particles(SimParticles::StructArray;
         GroupMarker   = CuVector{G}(undef, n),
         GhostPoints   = similar(GhostPoints),
         GhostNormals  = similar(GhostNormals),
-        Acceleration  = CuVector{SVector{D, T}}(undef, n),
-        Pressure      = CuVector{T}(undef, n),
+        Acceleration  = CuVector{SVector{D, T}}(undef, reconstruct_fields ? 0 : n),
+        Pressure      = CuVector{T}(undef, reconstruct_fields ? 0 : n),
     )
 
     return GPUParticles{D, T, TP, typeof(scratch)}(
@@ -193,7 +199,7 @@ function upload_particles(SimParticles::StructArray, meta::SimulationMetaData{D,
     compact = meta.GPUCompactBuffers
     return upload_particles(SimParticles; position_type = position_float_type(meta),
         compact_metadata = compact, kernel_output = !compact || K === StoreKernelOutput,
-        ghost_data = !compact || B !== NoMDBC)
+        ghost_data = !compact || B !== NoMDBC, reconstruct_fields = compact)
 end
 
 # Host copy of a device vector; converted element-wise when the host element
@@ -546,11 +552,46 @@ end
 # Cell list rebuild with reordering of the persistent fields
 #---------------------------------------------------------------
 
+function reconstruct_fields_kernel!(Pressure, Acceleration, acceleration_sorted, pressure_sorted, Density, types,
+                                    constants, boundary_mode, ::Val{PreserveAcceleration},
+                                    ::Val{PreservePressure}, n::Int32) where {PreserveAcceleration, PreservePressure}
+    i = thread_index()
+    i > n && return nothing
+    @inbounds begin
+        Pressure[i] = PreservePressure ? pressure_sorted[i] :
+            GPUKernels.particle_pressure(Density[i], types[i], constants.c₀, constants.ρ₀, boundary_mode)
+        if PreserveAcceleration
+            Acceleration[i] = acceleration_sorted[i]
+        end
+    end
+    return nothing
+end
+
+"""
+    rebuild_cell_list!(gpu, cl, InverseCutOff; constants = nothing, boundary_mode = NoMDBC(),
+                       discard_acceleration = false, preserve_pressure = false,
+                       prepared = false, support = nothing, floating = nothing)
+
+Sort persistent particle state. When pressure reorder scratch is omitted,
+`constants` is required and `boundary_mode` selects the EOS (linear for
+UpdatedMDBC walls, gamma-seven otherwise). Acceleration is preserved by default,
+using idle velocity reorder scratch when its own destination is omitted.
+`discard_acceleration = true` leaves acceleration in the old order: only use it
+when a derivative evaluation will overwrite every entry before any reader,
+including timestep reductions, floating forces and downloads. Single-neighbor
+carried derivatives and body acceleration caches must also be refreshed.
+`preserve_pressure = true` instead reorders pressure using idle density scratch,
+as used at startup to preserve the host EOS rounding before the first step.
+"""
 function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCutOff;
-                            prepared::Bool = false, support = nothing, floating = nothing)
+                            prepared::Bool = false, support = nothing, floating = nothing,
+                            constants = nothing, boundary_mode = NoMDBC(), discard_acceleration::Bool = false,
+                            preserve_pressure::Bool = false)
     s = gpu.scratch
-    fields = isempty(gpu.GhostPoints) ?
-        filter(f -> f !== :GhostPoints && f !== :GhostNormals, PERSISTENT_FIELDS) : PERSISTENT_FIELDS
+    reconstruct = isempty(s.Pressure) && !isempty(gpu.Pressure)
+    reconstruct && constants === nothing &&
+        throw(ArgumentError("Rebuilding without pressure reorder scratch requires simulation constants."))
+    fields = filter(f -> !isempty(getproperty(s, f)), PERSISTENT_FIELDS)
     srcs = (map(f -> getproperty(gpu, f), fields)..., cl.CellIDScratch)
     dsts = (map(f -> getproperty(s, f), fields)..., gpu.CellID)
 
@@ -561,7 +602,8 @@ function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCut
         Position = gpu.Position, Velocity = gpu.Velocity, Density = gpu.Density,
         ID = gpu.ID, Type = gpu.Type,
         GroupMarker = gpu.GroupMarker, GhostPoints = gpu.GhostPoints, GhostNormals = gpu.GhostNormals,
-        Acceleration = gpu.Acceleration, Pressure = gpu.Pressure,
+        Acceleration = reconstruct ? s.Acceleration : gpu.Acceleration,
+        Pressure = reconstruct ? s.Pressure : gpu.Pressure,
     )
     gpu.Position      = s.Position
     gpu.Velocity      = s.Velocity
@@ -571,8 +613,23 @@ function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCut
     gpu.GroupMarker   = s.GroupMarker
     gpu.GhostPoints   = s.GhostPoints
     gpu.GhostNormals  = s.GhostNormals
-    gpu.Acceleration  = s.Acceleration
-    gpu.Pressure      = s.Pressure
+    if reconstruct
+        # The old velocity buffer is idle until fixed predictors are initialized.
+        preserve = !discard_acceleration
+        n = Int32(length(gpu))
+        sources = ((preserve ? (gpu.Acceleration,) : ())..., (preserve_pressure ? (gpu.Pressure,) : ())...)
+        destinations = ((preserve ? (gpu.scratch.Velocity,) : ())..., (preserve_pressure ? (gpu.scratch.Density,) : ())...)
+        if preserve || preserve_pressure
+            @cuda threads=ELEMENTWISE_THREADS blocks=cld(n, ELEMENTWISE_THREADS) gather_kernel!(
+                cl.Perm, sources, destinations, n)
+        end
+        @cuda threads=ELEMENTWISE_THREADS blocks=cld(n, ELEMENTWISE_THREADS) reconstruct_fields_kernel!(
+            gpu.Pressure, gpu.Acceleration, gpu.scratch.Velocity, gpu.scratch.Density, gpu.Density, gpu.Type,
+            constants, boundary_mode, Val(preserve), Val(preserve_pressure), n)
+    else
+        gpu.Acceleration = s.Acceleration
+        gpu.Pressure = s.Pressure
+    end
 
     # The reorder moved the ghost node owners: relist them in the new (cell)
     # order. Their number never changes, so the list keeps its length and
@@ -1052,7 +1109,9 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                     invalidate_graphs!(state)
                     generation = cl.generation
                 end
-                rebuild_cell_list!(gpu, cl, SimKernel.H⁻¹; prepared = true, support = sup, floating)
+                rebuild_cell_list!(gpu, cl, SimKernel.H⁻¹; prepared = true, support = sup, floating,
+                    constants = SimConstants, boundary_mode, discard_acceleration = true,
+                    preserve_pressure = cl.nrebuilds == 0)
                 resume_after_rebuild!(state)
 
                 # The single neighbour scheme carries `dρdtI` and the

@@ -33,24 +33,24 @@ function generated_wedge_case(::Type{T}, save; dx = 0.02) where {T}
         ParticleNormalsPath = nothing)
 end
 
-function allocation_bytes(geometry::Vector{SPHGeometry{D, T}}, metadata, kernel) where {D, T}
+function allocation_bytes(geometry::Vector{SPHGeometry{D, T}}, metadata, kernel, constants) where {D, T}
     host = AllocateDataStructures(geometry, metadata)
     gpu = upload_particles(host, metadata)
     cells = CellListWorkspace{D, position_float_type(metadata)}(length(host))
     support = GPUSupportArrays{D, T}(gpu, metadata)
-    SPHExampleGPU.SPHCellList.rebuild_cell_list!(gpu, cells, kernel.H⁻¹; support)
+    SPHExampleGPU.SPHCellList.rebuild_cell_list!(gpu, cells, kernel.H⁻¹; support, constants)
     CUDA.synchronize()
     return (; particles = length(host), bytes = device_buffer_bytes((gpu, support, cells)))
 end
 
-function report(geometry, metadata, kernel, label)
+function report(geometry, metadata, kernel, constants, label)
     metadata.GPUDoublePosition = true
     metadata.GPUCompactBuffers = false
-    full = allocation_bytes(geometry, metadata, kernel)
+    full = allocation_bytes(geometry, metadata, kernel, constants)
     GC.gc()
     CUDA.reclaim()
     metadata.GPUCompactBuffers = true
-    compact = allocation_bytes(geometry, metadata, kernel)
+    compact = allocation_bytes(geometry, metadata, kernel, constants)
     GC.gc()
     CUDA.reclaim()
     @printf("%-28s %9d %12.4f %12.4f %9.2f\n", label, full.particles,
@@ -63,14 +63,14 @@ function main()
     @printf("%-28s %9s %12s %12s %9s\n", "case", "particles", "full MiB", "compact MiB", "saved %")
     for dx in (0.02, 0.005)
         case = generated_wedge_case(Float32, tempdir(); dx)
-        report(case.SimGeometry, case.SimMetaData, case.SimKernel, "StillWedge dx=$dx")
+        report(case.SimGeometry, case.SimMetaData, case.SimKernel, case.SimConstants, "StillWedge dx=$dx")
     end
     points = vec([SVector{3, Float32}(0.02f0 * i, 0.02f0 * j, 0.02f0 * k)
                   for i in 0:63, j in 0:63, k in 0:63])
     geometry = [SPHGeometry{3, Float32}(points; Density = 1000, GroupMarker = 1, Type = Fluid)]
     metadata = SimulationMetaData{3, Float32}(SimulationName = "Memory3D", SaveLocation = tempdir())
     kernel = SPHKernelInstance{3, Float32}(WendlandC2(); dx = 0.02f0)
-    report(geometry, metadata, kernel, "Uniform3D 64^3")
+    report(geometry, metadata, kernel, SimulationConstants{Float32}(dx = 0.02), "Uniform3D 64^3")
 end
 
 end

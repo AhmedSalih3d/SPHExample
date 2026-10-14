@@ -66,8 +66,11 @@ the host particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so
 that they hold `Float64` positions from the input files onwards.
 
 `GPUCompactBuffers = true` omits unused ghost, kernel-output and shifting
-buffers, shares position/velocity predictors with reorder scratch, and stores
-GPU IDs/group markers in 32 bits when every value fits. Fixed predictor entries
+buffers, shares position/velocity predictors with reorder scratch, omits
+acceleration/pressure sorting shadows, and stores GPU IDs/group markers in
+32 bits when every value fits. Pressure is reconstructed with the selected EOS;
+startup retains host pressure rounding using idle density scratch. The driver
+overwrites acceleration before any post-rebuild reader. Fixed predictor entries
 are initialized after sorting and not rewritten each step. Boundary density
 updates and requested boundary-force calculations are unchanged.
 Host fields and exported types are unchanged; out-of-range metadata retains

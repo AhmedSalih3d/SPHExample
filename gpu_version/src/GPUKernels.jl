@@ -815,6 +815,9 @@ end
 @inline step_reduce(a::SVector{3, T}, b::SVector{3, T}) where {T} =
     SVector{3, T}(max(a[1], b[1]), min(a[2], b[2]), max(a[3], b[3]))
 
+@inline particle_pressure(ρ, type, c₀, ρ₀, boundary_mode) =
+    boundary_mode isa UpdatedMDBC && is_wall(type) ? c₀^2 * (ρ - ρ₀) : EquationOfStateGamma7(ρ, c₀, ρ₀)
+
 function final_step_kernel!(Position, Velocity, Acceleration, Density, Pressure, dρdtI, ρₙ⁺, Positionₙ⁺,
                             Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
                             partial, ::Val{FlagShift}, boundary_mode, GhostPoints, GhostNormals, ::Val{CommitStep}, n::Int32) where {FlagShift, CommitStep}
@@ -837,7 +840,7 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, Pressure,
         ρ   *= (2 - epsi) / (2 + epsi)
         ρ    = boundary_mode isa UpdatedMDBC && is_wall(type) ? ρₙ⁺[i] : limit_density(ρ, ρ₀, ML)
         Density[i]  = ρ
-        Pressure[i] = boundary_mode isa UpdatedMDBC && is_wall(type) ? c₀^2 * (ρ - ρ₀) : EquationOfStateGamma7(ρ, c₀, ρ₀)
+        Pressure[i] = particle_pressure(ρ, type, c₀, ρ₀, boundary_mode)
 
         # FullTimeStep
         acc = Acceleration[i]
