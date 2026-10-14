@@ -164,7 +164,7 @@ end
 if CUDA.functional()
     @testset "device-resident cell-list rebuild" begin
         @testset "host reference: D=$D T=$T TP=$TP reach=$reach" for D in (2, 3),
-                (T, TP) in ((Float32, Float32), (Float64, Float64), (Float32, Float64)), reach in (1, 2, 3)
+                (T, TP) in ((Float32, Float32), (Float64, Float64), (Float32, Float64)), reach in (1, 2, 3, 4)
             fixture = cell_rebuild_fixture(Val(D), T, TP; reach)
             inverse_cutoff = T(10)
             first_grid = check_cell_rebuild!(fixture, inverse_cutoff).grid

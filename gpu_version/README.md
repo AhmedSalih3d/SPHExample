@@ -862,9 +862,8 @@ the standard *gather* formulation:
   stride each of the 25 short row ranges separately, and the mDBC kernel
   time roughly doubles. The default therefore stays 1, the grid whose pair
   orientation reproduces the CPU results; use 2 for large cases that run with
-  one lane per particle. Splitting the rows rather than the candidates of a
-  row over the lanes, and merging the fluid ranges of a row in the mDBC
-  kernel, are the obvious follow ups. A full run of the 3D dam break at
+  one lane per particle. A row-per-lane prototype did not improve the measured
+  3D cases; shorter ranges alone do not justify changing scheduling. A full run of the 3D dam break at
   `dp = 0.0085` (1.6 s simulated, `GPUCellSubdivision = 2`,
   `GPULanesPerParticle = 1`) finished 40 s sooner than with the `H` grid.
 * **Lanes per particle (`GPULanesPerParticle`).** With one lane, particle
@@ -895,6 +894,11 @@ the standard *gather* formulation:
   on the small cases is worth doing. Rule of thumb: large cases run with 1
   lane and `GPUCellSubdivision = 2`; small cases keep both defaults unless
   measured otherwise.
+* **Finer cells need measurement, not a lower rejection rate alone.** The
+  existing grid also supports `GPUCellSubdivision = 3, 4, ...`; cells have
+  edge `H/R`, with `(2R+1)^(D-1)` contiguous row ranges. The traversal
+  investigation below measures `R = 1, 2, 4`, including cell-list rebuilding,
+  mDBC and host orchestration, without changing the defaults or equations.
 * **Fused element-wise kernels.** Half step, density limiting, prescribed
   motion and pressure are one kernel; the final step also computes the
   pressure for the next step and the block wise reduction of the time step
@@ -1085,7 +1089,7 @@ definitions in `benchmark/cases.jl` construct against either package.
 | `GPUAsyncOutput` | `true` | Write output files on a task while the GPU continues (see "Asynchronous output"). |
 | `GPUMaxStepsPerSync` | `32` | Upper bound on the steps enqueued between two host read backs of the device resident step state. The actual batch is the estimated number of steps until the next cell list rebuild or output. `1` reproduces a synchronization per step. |
 | `GPUUseGraph` | `true` | Cache CUDA graphs of 1, 2, 4, 8, 16, and 32 steps and compose each host batch from them. Disabled automatically with `GPUSyncTimers`. |
-| `GPUCellSubdivision` | `1` | Cells per support radius `H` along each axis: `1` bins at `H` with a 3^D stencil (the CPU's cells), `2` at `H/2` with a 5^D stencil. Same neighbour pairs, fewer distance checks, more cell ranges per particle. With reference interactions, only `1` reproduces the CPU's density-diffusion pair orientation. Radial symmetric diffusion removes that orientation dependence; accumulation and SPS rounding can still differ between grids. `2` pays off with one lane per particle (large cases); with many lanes it is slower. |
+| `GPUCellSubdivision` | `1` | Positive integer `R`: cells of edge `H/R`, a `(2R+1)^D` stencil, and `(2R+1)^(D-1)` contiguous row ranges. `1` reproduces the CPU grid, `2` uses half-width cells, and `4` uses quarter-width cells. Finer grids reduce candidates but increase dense-grid memory, row overhead and mDBC work. With reference interactions, only `1` reproduces the CPU's density-diffusion pair orientation. Radial symmetric diffusion removes that orientation dependence; accumulation and SPS rounding can still differ. Benchmark the intended precision, lane count and boundary mode before changing it. |
 | `GPUDoublePosition` | `false` | Store and integrate the particle positions (and the mDBC ghost node positions) in `Float64` while everything else stays in `FloatType`; the pair loops use cell relative `FloatType` coordinates (see "Double positions" above). Use it for `Float32` runs of domains far from the origin or with many steps. No effect with `FloatType = Float64`. Allocate the particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so that the input is read in `Float64`. |
 | `GPUCompactBuffers` | `true` | Omit unused ghost, kernel-output and shifting buffers, including ghost reorder scratch. GPU IDs use `Int32` and group markers `UInt32` only when every value fits; otherwise each field independently retains its original width. Host particle fields, output types, precision and neighbor ranges are unchanged. `false` restores the previous full allocation layout. |
 | `GPUOutputQueueBytes` | `256 * 2^20` | Separate host memory budget for reusable frames between the download collector and disk writer; at least one frame. Used with `GPUAsyncOutput`. |
@@ -1361,6 +1365,19 @@ sinks. `test/lid_driven_cavity.jl` checks the extended lid geometry, generated
 mDBC ghost nodes, bounded wall/fluid densities in a short cavity run, and the
 wall-wall continuity regression on a fixed wall next to a sliding wall.
 
+`test/cell_subdivision_benchmark.jl` checks candidate accounting against the
+device, self exclusion versus coincident particles, inclusive support cutoffs,
+retained cell assignments after motion, and exact frozen-state neighbor IDs
+for subdivisions 1, 2, 3 and 4 in 2D/3D and native/mixed precision, including
+positions translated by 10 000 m. Short Float64 trajectories with zero
+density diffusion also agree across subdivisions 1, 2 and 4. These checks
+do not promise bitwise trajectory equality with asymmetric reference
+diffusion or at floating-point cutoff ties.
+
+```bash
+julia --project=gpu_version -L gpu_version/test/cell_subdivision_benchmark.jl gpu_version/test/cell_list_rebuild.jl
+```
+
 ## Benchmarks
 
 ```bash
@@ -1376,6 +1393,88 @@ julia --project=gpu_version gpu_version/benchmark/profile_steps.jl --float32 Dam
 # run time as a function of the output interval (frames written)
 julia --project=gpu_version gpu_version/benchmark/bench_output_interval.jl --float32 --time 0.5 --intervals 0.0025,0.01,0.05,0.5 --grid DamBreak2D_MDBC
 ```
+
+### Neighbor traversal investigation
+
+The large 3D dam-break snapshot reproduces the reported search overhead:
+about **767 candidates per particle, 137 inside the support**, so roughly
+**82% fail the distance check**. A cubic stencil encloses far more volume
+than the spherical support; this is not evidence that the GPU has saturated
+memory bandwidth. Establishing that would require hardware traffic,
+throughput and stall measurements, not just candidate counts.
+
+Use the subdivision benchmark to compare the existing search strategies:
+
+```bash
+julia --project=gpu_version gpu_version/benchmark/bench_cell_subdivision.jl --rounds 9 --subdiv 1,2,4 --lanes 1 --double-position --output gpu_version/benchmark/neighbor_traversal_results.csv StillWedge2D_MDBC_dp0.02 DamBreak3D_dp0.0085 Duckling3D_MDBC_dp0.01
+# Match an opt-in simulation's arithmetic instead of benchmarking a different path:
+julia --project=gpu_version gpu_version/benchmark/bench_cell_subdivision.jl --rounds 9 --subdiv 1,2,4 --lanes 1 --double-position --radial DamBreak3D_dp0.0085
+```
+
+`--float64`, `--scalar-sps` and `--lanes 0` select Float64 physics, the
+opt-in scalar SPS contraction and automatic lanes respectively. All variants
+start from the same inputs and warm up for three output intervals. Measured
+rounds rotate which variant starts first. Every sample contains an
+unprofiled wall-time interval and a separate profiled interval, with their
+actual adaptive step counts. Wall time includes rebuilds and orchestration
+but excludes output writing; device time is the sum of kernel durations,
+not elapsed solver time. Ratios are paired by round; the wall-ratio IQR helps
+expose timing variability. `--output` persists every raw round as CSV.
+
+Candidate counts are a **post-warmup snapshot**, not a full-run average.
+They exclude self, retain coincident particles, include the support boundary,
+and test distance only, before boundary activation or model-specific gating.
+Mixed-precision snapshots reconstruct current `PosCell`s using the retained
+cell assignments, rather than reading stale predictor/start-state buffers.
+The report also includes the 95th-percentile and maximum candidates and
+empty-row fraction. Evolved states can differ between grid variants;
+similar accepted counts alone do not prove neighbor-set or trajectory parity.
+
+Measured on 2026-10-14 with Julia 1.12.7 and an RTX A1000 Laptop GPU, Float32
+physics/Float64 positions, reference interactions, one lane per particle,
+symplectic stepping and nine rotating rounds. The recorded solver was
+revision `d4ae12b` with cached reciprocal densities; later reciprocal-density
+changes require a fresh timing run. Raw rounds are in
+[neighbor_traversal_results.csv](benchmark/neighbor_traversal_results.csv).
+
+| Large DamBreak3D, 171,496 particles | `R=1` | `R=2` | `R=4` |
+| --- | ---: | ---: | ---: |
+| Candidates per particle | 766.7 | 464.0 | 345.7 |
+| Accepted per particle | 136.9 | 136.9 | 136.9 |
+| Rejected by distance | 82.1% | 70.5% | 60.4% |
+| Row ranges per particle | 9 | 25 | 81 |
+| Dense-grid cells | 26,676 | 209,304 | 1,582,000 |
+| Median unprofiled loop ms/step | 12.862 | 9.658 | 8.943 |
+| Paired-median wall ratio to `R=1` | 1.000 | 0.747 | 0.694 |
+| Wall-ratio interquartile range | 1.000-1.000 | 0.742-0.756 | 0.693-0.700 |
+
+Quarter-width cells remove about **55% of candidates** and reduce measured
+loop time by about **31%** here, without a new traversal algorithm. The
+logical histogram/prefix storage grows from about 0.20 MiB to 1.60 MiB and
+12.07 MiB; allocated capacity, scan scratch and exported-grid storage can be
+larger. The 3D duckling with mDBC instead has wall ratios **0.706 / 0.706**
+for `R=2 / 4`: more pruning brings almost no additional whole-loop benefit,
+and mDBC device time grows from about 0.179 to 0.250 ms/step.
+
+**Reflection and recommendation:** tune the existing subdivision first,
+keeping `R=1` when reproducing reference CPU pair orientation matters.
+`R=2` is a lower-memory alternative; consider `R=4` for large measured cases
+without assuming it helps mDBC, other GPUs, later states or output-heavy runs.
+Reference density diffusion can change with grid-dependent pair orientation.
+Radial diffusion removes that dependence but changes the reference operator,
+so it is not an accuracy-preserving shortcut. Validate long-run numerical
+behavior for the intended case before adopting a different grid.
+
+The rejected prototypes explain why fewer candidates are not sufficient:
+fresh 8/16/32-particle bounding boxes reduced the large-case candidates to
+about 332/386/448, but preparation and traversal made isolated interactions
+**27-29% slower**. Global cell-relative-envelope row clipping was also slower
+despite pruning; row-per-lane traversal regressed the measured 3D cases,
+and merging self/distance guards had no robust gain. None were installed.
+Static cell-box pruning was avoided because particles move between rebuilds.
+No solver defaults, physics or CPU code changed in this investigation.
+
+### CPU/GPU timing baseline
 
 Each case runs the same physics as the corresponding example script for a
 few hundred steps after a warm up run that compiles everything. Results
