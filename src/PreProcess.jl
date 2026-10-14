@@ -1,10 +1,13 @@
 module PreProcess
 
-export LoadBoundaryNormals, LoadMDBCNormals!, AllocateDataStructures, AllocateSupportDataStructures, AllocateThreadedArrays
+export LoadBoundaryNormals, LoadMDBCNormals!, AllocateDataStructures, AllocateSupportDataStructures, AllocateThreadedArrays, SimParticleStructArray
 
 using CSV
 using StaticArrays
 using StructArrays
+
+"""Concrete one-dimensional StructArray shape used for simulation particles."""
+const SimParticleStructArray{ParticleTuple, FieldArrays, IndexType} = StructArray{ParticleTuple, 1, FieldArrays, IndexType}
 
 using ..SimulationGeometry
 using ..SimulationMetaDataConfiguration
