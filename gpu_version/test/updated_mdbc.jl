@@ -95,12 +95,11 @@ if CUDA.functional()
         fill!(gpu.Density, 1000)
         fill!(gpu.Pressure, 100)
         step = HostStep(1e-4, 0.0)
-        SPHExampleGPU.GPUKernels.launch_inv_density!(sup.InvDensity, gpu.Density, step)
         fluid = findfirst(==(Fluid), Array(gpu.Type))
         for active in (true, false)
             fill!(sup.boundary_data.active, active)
             launch_interactions!(sup.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient, sup.∇Cᵢ, sup.∇◌rᵢ,
-                gpu.Position, gpu.Density, sup.InvDensity, gpu.Pressure, gpu.Velocity, gpu.Type,
+                gpu.Position, gpu.Density, gpu.Pressure, gpu.Velocity, gpu.Type,
                 cl.CellStart, gpu.CellID, cl.grid_dev, step, ZeroDensityDiffusion(), ZeroViscosity(),
                 f.kernel, f.constants, Val(false), Val(false); boundary_data = sup.boundary_data)
             acceleration = Array(gpu.Acceleration)[fluid]

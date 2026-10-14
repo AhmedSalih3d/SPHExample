@@ -11,6 +11,7 @@ const GS = SPHExampleGPU.GPUStepState
 
 struct OrderedViscosity <: SPHViscosity end
 struct OrderedDiffusion <: SPHDensityDiffusion end
+struct ReciprocalProbeDiffusion <: SPHDensityDiffusion end
 struct SymmetricReferenceDiffusion{M<:SPHDensityDiffusion} <: SPHDensityDiffusion
     model::M
 end
@@ -26,6 +27,12 @@ end
                                              x, gradient, d², ρᵢ, ρⱼ, invρᵢ, invρⱼ, i, j, types)
     value = (ρⱼ - ρᵢ) * dot(x, gradient) * invρⱼ + particles.Density[i] * invρᵢ
     return value, value / 2
+end
+
+@inline function DD.compute_density_diffusion(::ReciprocalProbeDiffusion, kernel, constants, particles,
+                                             x, gradient, d², ρᵢ, ρⱼ, invρᵢ, invρⱼ, i, j, types)
+    value = invρᵢ + invρⱼ
+    return value, value
 end
 
 @inline function DD.compute_density_diffusion(model::SymmetricReferenceDiffusion, kernel, constants, particles,
@@ -179,7 +186,6 @@ function upload_interaction_fixture(host, constants, kernel, TP; reach)
     CL.rebuild_cell_list!(gpu, cells, kernel.H⁻¹)
     support = GPUSupportArrays{D,T}(length(gpu); position_type = TP, updated_mdbc = true)
     step = HostStep(T(1e-4), zero(T))
-    GK.launch_inv_density!(support.InvDensity, gpu.Density, step)
     support.PosCells === nothing || GK.launch_pos_cells!(support.PosCells, gpu.Position,
         gpu.CellID, cells.grid_dev, step, kernel)
     boundary = support.boundary_data
@@ -206,7 +212,7 @@ function interaction_fields(f, diffusion, viscosity; radial = nothing, lanes = 1
     extra = radial === nothing ? (;) : (; radial = Val(radial))
     scalar_extra = scalar_sps === nothing ? (;) : (; scalar_sps = Val(scalar_sps))
     GK.launch_interactions!(support.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient,
-        support.∇Cᵢ, support.∇◌rᵢ, gpu.Position, gpu.Density, support.InvDensity, gpu.Pressure,
+        support.∇Cᵢ, support.∇◌rᵢ, gpu.Position, gpu.Density, gpu.Pressure,
         gpu.Velocity, gpu.Type, cells.CellStart, gpu.CellID, cells.grid_dev, step,
         diffusion, viscosity, f.kernel, f.constants, Val(true), Val(true);
         lanes = Val(lanes), boundary_forces = Val(boundary_forces), pos_cells = support.PosCells,
@@ -297,12 +303,12 @@ function mode_switch_run(graph; scalar_sps = false, scheme = SymplecticTimeStepp
                (state.radial_interactions != mode || state.scalar_sps_viscosity != scalar_mode)
                 # Supply the new full-state derivative explicitly in the control.
                 step = HostStep(state.fh[GS.F_DT], state.fh[GS.F_TIME])
-                GK.launch_inv_density!(support.InvDensity, gpu.Density, step;
-                    pos_cells = support.PosCells, Position = gpu.Position,
+                GK.launch_prepare_interactions!(gpu.Position, step;
+                    pos_cells = support.PosCells,
                     CellID = gpu.CellID, grid = cells.grid_dev, H = f.kernel.H,
                     Velocity = gpu.Velocity, ParticleType = gpu.Type, GroupMarker = gpu.GroupMarker)
                 GK.launch_interactions!(support.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient,
-                    support.∇Cᵢ, support.∇◌rᵢ, gpu.Position, gpu.Density, support.InvDensity, gpu.Pressure,
+                    support.∇Cᵢ, support.∇◌rᵢ, gpu.Position, gpu.Density, gpu.Pressure,
                     gpu.Velocity, gpu.Type, cells.CellStart, gpu.CellID, cells.grid_dev, step,
                     LinearDensityDiffusion(), viscosity, f.kernel, f.constants, Val(false), Val(false);
                     lanes = Val(choose_lanes(length(gpu), Val(D))), pos_cells = support.PosCells,
@@ -329,6 +335,18 @@ function mode_switch_run(graph; scalar_sps = false, scheme = SymplecticTimeStepp
 end
 
 if CUDA.functional()
+    @testset "reciprocal densities follow the evaluated state without preparation" begin
+        for D in (2, 3), (T, TP) in ((Float32, Float32), (Float32, Float64), (Float64, Float64))
+            f = diffusion_pair_fixture(D, T, TP; reach = 1)
+            fill!(f.gpu.Pressure, zero(T))
+            for densities in (T[995, 1007], T[1043, 981])
+                copyto!(f.gpu.Density, densities)
+                rate = first(interaction_fields(f, ReciprocalProbeDiffusion(), ZeroViscosity()))
+                @test rate ≈ fill(sum(inv, densities), 2) rtol = eps(T) * 4
+            end
+        end
+    end
+
     @testset "radial DDT is conservative and independent of cell pair orientation" begin
         for D in (2, 3), (T, TP) in ((Float32, Float32), (Float32, Float64), (Float64, Float64))
             full = diffusion_pair_fixture(D, T, TP; reach = 1)

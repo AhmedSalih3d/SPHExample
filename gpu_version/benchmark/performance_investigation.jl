@@ -124,9 +124,12 @@ function launch_probe(kernels, kind, v; threads = 128)
             step, kw.SimKernel, kw.SimConstants; threads, lanes, pos_cells = sup.PosCells)
     end
     shift = Val(kw.SimMetaData isa SimulationMetaData{D,T,PlanarShifting} where {D,T})
+    # Historical kernel variants still take a cached reciprocal vector.
+    density_args = isdefined(kernels, :launch_inv_density!) ?
+        (gpu.Density, inv.(gpu.Density), gpu.Pressure) : (gpu.Density, gpu.Pressure)
     return () -> kernels.launch_interactions!(sup.dρdtI, gpu.Acceleration, gpu.Kernel,
-        gpu.KernelGradient, sup.∇Cᵢ, sup.∇◌rᵢ, gpu.Position, gpu.Density, sup.InvDensity,
-        gpu.Pressure, gpu.Velocity, gpu.Type, cl.CellStart, gpu.CellID, cl.grid_dev, step,
+        gpu.KernelGradient, sup.∇Cᵢ, sup.∇◌rᵢ, gpu.Position, density_args...,
+        gpu.Velocity, gpu.Type, cl.CellStart, gpu.CellID, cl.grid_dev, step,
         kw.SimDensityDiffusion, kw.SimViscosity, kw.SimKernel, kw.SimConstants,
         Val(false), shift; threads, lanes, pos_cells = sup.PosCells)
 end
@@ -172,7 +175,6 @@ function measure_kernel_screen(cases, variants)
             end
             SPHExampleGPU.GPUKernels.launch_pos_cells!(v.sup.PosCells, v.gpu.Position,
                 v.gpu.CellID, v.cl.grid_dev, HostStep(0f0, 0f0), v.kw.SimKernel)
-            SPHExampleGPU.GPUKernels.launch_inv_density!(v.sup.InvDensity, v.gpu.Density, HostStep(0f0, 0f0))
             original_density, original_pressure = copy(v.gpu.Density), copy(v.gpu.Pressure)
             for kind in (:interaction, :mdbc)
                 kind === :mdbc && isempty(v.gpu.GhostIndex) && continue

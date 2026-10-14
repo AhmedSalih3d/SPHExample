@@ -401,12 +401,10 @@ function spawn_writer(f)
 end
 
 """
-Device arrays that are recomputed every step (half step state, reciprocal
-densities and shifting terms). They are never reordered because they are
-overwritten after every cell list update. `InvDensity` holds `1 / Density`
-of the start-of-step state and `InvDensityₙ⁺` that of the predictor state;
-the interaction kernel multiplies by them instead of dividing per pair
-(same as `FillInverseDensity!` of the CPU code). `Positionₙ⁺` is in the
+Device arrays that are recomputed every step (half step state and shifting
+terms). They are never reordered because they are overwritten after every
+cell list update. Reciprocal densities are computed on demand by the
+interaction kernel, without cached vectors. `Positionₙ⁺` is in the
 position precision `TP`. When that differs from the working precision `T`,
 `PosCells` and `PosCellsₙ⁺` hold the cell relative form (`PosCell`) of the
 start-of-step and half step positions for the pair loops; otherwise both are
@@ -417,8 +415,6 @@ struct GPUSupportArrays{D, T, TP, PC, BD}
     Velocityₙ⁺::CuVector{SVector{D, T}}
     Positionₙ⁺::CuVector{SVector{D, TP}}
     ρₙ⁺::CuVector{T}
-    InvDensity::CuVector{T}
-    InvDensityₙ⁺::CuVector{T}
     ∇Cᵢ::CuVector{SVector{D, T}}
     ∇◌rᵢ::CuVector{T}
     PosCells::PC
@@ -449,8 +445,6 @@ function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T, updated
         CUDA.zeros(T, n),
         CUDA.zeros(SVector{D, T}, n),
         CUDA.zeros(SVector{D, TP}, n),
-        CUDA.zeros(T, n),
-        CUDA.zeros(T, n),
         CUDA.zeros(T, n),
         CUDA.zeros(SVector{D, T}, shifting ? n : 0),
         CUDA.zeros(T, shifting ? n : 0),
@@ -636,7 +630,7 @@ end
 Enqueue the evaluation of the start-of-step state: the cell relative
 positions (with `GPUDoublePosition`), the mDBC correction of the boundary
 densities together with the pressure of the corrected density
-(`launch_mdbc!`, with `SimpleMDBC`), the reciprocal densities and the
+(`launch_mdbc!`, with `SimpleMDBC`) and the
 neighbour loop that produces `dρdtI` and the acceleration. The symplectic
 scheme runs this at every step as its first neighbour loop. The single
 neighbour scheme carries the corrector derivative of the previous step into
@@ -656,19 +650,15 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
     end
 
     @phase HourGlass loop_name timed begin
-        if UseMDBC
-            launch_inv_density!(sup.InvDensity, gpu.Density, step)
-        else
-            # DBC has no boundary correction between these preparations, so
-            # compute both in one pass before the first neighbour loop.
-            launch_inv_density!(sup.InvDensity, gpu.Density, step;
-                pos_cells = sup.PosCells, Position = gpu.Position,
+        if !UseMDBC
+            launch_prepare_interactions!(gpu.Position, step;
+                pos_cells = sup.PosCells,
                 CellID = gpu.CellID, grid = grid, H = SimKernel.H,
                 Velocity = gpu.Velocity, ParticleType = gpu.Type, GroupMarker = gpu.GroupMarker,
                 motion = prepare_motion ? ctx.motion : nothing)
         end
         launch_interactions!(sup.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient, sup.∇Cᵢ, sup.∇◌rᵢ,
-                             gpu.Position, gpu.Density, sup.InvDensity, gpu.Pressure,
+                             gpu.Position, gpu.Density, gpu.Pressure,
                              gpu.Velocity, gpu.Type, CellStart, gpu.CellID, grid, step,
                              SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
                              FlagKernel, FlagShift; threads = threads, lanes = lanes,
@@ -756,7 +746,7 @@ function enqueue_step!(ctx, timed::Bool)
     end
 
     @phase HourGlass "05b Update To Half TimeStep" timed launch_half_step!(
-        sup.Positionₙ⁺, sup.Velocityₙ⁺, sup.ρₙ⁺, sup.InvDensityₙ⁺, gpu.Pressure,
+        sup.Positionₙ⁺, sup.Velocityₙ⁺, sup.ρₙ⁺, gpu.Pressure,
         gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Density, sup.dρdtI,
         gpu.Type, gpu.GroupMarker, motion, state, SimConstants;
         pos_cells = sup.PosCellsₙ⁺, CellID = gpu.CellID, grid = grid, SimKernel = SimKernel,
@@ -772,7 +762,6 @@ function enqueue_step!(ctx, timed::Bool)
     if get(ctx, :boundary_mode, SimpleMDBC()) isa UpdatedMDBC
         @phase HourGlass "07 Updated mDBC corrector" timed begin
             enqueue_boundary_correction!(ctx, state, true)
-            launch_inv_density!(sup.InvDensityₙ⁺, sup.ρₙ⁺, state)
         end
     end
 
@@ -780,7 +769,7 @@ function enqueue_step!(ctx, timed::Bool)
     # models, is evaluated at the predictor state.
     @phase HourGlass "08 Second NeighborLoop" timed launch_interactions!(
         sup.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient, sup.∇Cᵢ, sup.∇◌rᵢ,
-        sup.Positionₙ⁺, sup.ρₙ⁺, sup.InvDensityₙ⁺, gpu.Pressure,
+        sup.Positionₙ⁺, sup.ρₙ⁺, gpu.Pressure,
         sup.Velocityₙ⁺, gpu.Type, CellStart, gpu.CellID, grid, state,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
         FlagKernel, FlagShift; threads = threads, lanes = lanes,

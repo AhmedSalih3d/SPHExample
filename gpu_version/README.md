@@ -287,11 +287,12 @@ comparison, use `benchmark/still_wedge_speed.jl --compare-schemes`; its optional
 With `GPUUseGraph = true`, the solver caches graphs of 1, 2, 4, 8, 16, and 32 steps
 and composes each host batch from them. Each step still checks the device stop
 flag, so output deadlines and cell-list rebuilds use the same decisions.
-For DBC with double positions, reciprocal densities and cell-relative
-positions are prepared in one kernel. The package also precompiles this
+For DBC with double positions, cell-relative positions and prescribed motion
+are prepared in one kernel. Reciprocal densities are computed on demand in
+the interaction kernel. The package also precompiles this
 StillWedge configuration to reduce compilation on the first run of a session.
 
-For DBC, prescribed motion shares start-state density preparation in the
+For DBC, prescribed motion shares start-state position preparation in the
 symplectic scheme and the half-step predictor in the single-neighbor scheme.
 The order of the two motion increments is preserved. mDBC retains its separate
 motion launch because boundary correction needs the moved geometry first.
@@ -1128,9 +1129,9 @@ workspace but excluding output, motion, reductions and allocator-pool reserves:
 
 | Case | Particles | Full buffers (MiB) | Compact buffers (MiB) | Saved |
 | --- | ---: | ---: | ---: | ---: |
-| Generated StillWedge, `dx = 0.02` | 3,027 | 0.7647 | 0.5107 | 33.22% |
-| Generated StillWedge, `dx = 0.005` | 47,790 | 11.9845 | 7.9738 | 33.47% |
-| Synthetic uniform 3D cube, `64^3` | 262,144 | 86.5856 | 56.5856 | 34.65% |
+| Generated StillWedge, `dx = 0.02` | 3,027 | 0.7416 | 0.4876 | 34.25% |
+| Generated StillWedge, `dx = 0.005` | 47,790 | 11.6199 | 7.6092 | 34.52% |
+| Synthetic uniform 3D cube, `64^3` | 262,144 | 84.5856 | 54.5856 | 35.47% |
 
 Low-level `upload_particles(particles)` and `GPUSupportArrays{D,T}(n)` retain
 their previous full-buffer defaults. For mode-aware allocation, use
@@ -1147,6 +1148,54 @@ the repository root:
 julia --project=gpu_version gpu_version/benchmark/memory_buffers.jl
 julia --project=gpu_version gpu_version/test/gpu_memory.jl
 ```
+
+### On-demand reciprocal density
+
+The interaction kernel computes `inv(ρᵢ)` once per target particle and
+`inv(ρⱼ)` for each accepted neighbor, reusing those scalar values for
+continuity, pressure, density diffusion, viscosity and shifting. Reciprocals
+always come from the density of the state being evaluated, including
+predictor densities and densities corrected by Updated mDBC. There are no
+start-state or predictor reciprocal-density vectors and no density-cache
+refresh launches. Position/motion preparation remains fused where needed.
+Precision, reciprocal arithmetic, pair ordering and physics are unchanged.
+
+Removing the two vectors saves **8 bytes per particle with Float32 physics**
+or **16 bytes with Float64 physics**, in both compact and full-buffer modes:
+approximately **7.63 MiB** or **15.26 MiB** per million particles.
+
+An RTX A1000 Laptop GPU investigation (Julia 1.12.7, CUDA.jl 6.4.2) found only
+a modest benefit from caching. In the symplectic comparisons,
+computing reciprocals on demand increased paired-median solver time by about
+**0–3% for Float32** and **3–5% for Float64**. Isolated interactions typically
+benefited more than the entire solver; preparation costs reduced or erased
+that advantage in some cases. Desktop/laptop timing outliers were substantial,
+especially for small cases, so these are indicative results, not a guaranteed
+speedup or regression. The default favors lower memory use rather than
+retaining two arrays for this small measured benefit.
+
+The reproducible benchmark compares the current solver with a pinned
+cached-density baseline and an experimental one-vector shared-cache variant.
+It checks exact particle states and timestep/rebuild/readback counts, verifies
+the exact allocation difference, and measures both isolated interactions
+(with and without start-state preparation) and solver intervals. Nine paired,
+alternating samples are taken after warmup; kernel samples replay CUDA graphs.
+Solver timings include orchestration and rebuilds but not output-file writing.
+CSV results are written to a unique temporary path printed by the script, or
+to the path supplied with `--output=...`. The cached baseline requires its git
+history to be available.
+
+```bash
+julia --project=gpu_version gpu_version/benchmark/inverse_density.jl
+julia --project=gpu_version gpu_version/benchmark/inverse_density.jl GeneratedWedge DamBreak3D --float64
+julia --project=gpu_version gpu_version/benchmark/inverse_density.jl GeneratedWedge DamBreak3D --native-positions
+julia --project=gpu_version gpu_version/benchmark/inverse_density.jl StillWedge2D_MDBC MovingSquare --single-neighbor --subdivision=2
+```
+
+Low-level callers no longer pass reciprocal vectors to `launch_interactions!`
+or `launch_half_step!`; `GPUSupportArrays` no longer contains `InvDensity` or
+`InvDensityₙ⁺`. For fused DBC position/motion preparation, use
+`launch_prepare_interactions!`. The high-level `RunSimulation` API is unchanged.
 
 ### Experimental radial interaction arithmetic
 

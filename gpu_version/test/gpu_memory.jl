@@ -133,8 +133,15 @@ end
             @test length(full_support.∇Cᵢ) == length(f.host)
             @test length(full_support.∇◌rᵢ) == length(f.host)
             @test support.boundary_data === nothing
+            @test !hasproperty(support, :InvDensity)
+            @test !hasproperty(support, :InvDensityₙ⁺)
             @test uses_pos_cells(support) == (position_float_type(f.metadata) !== T)
             n = length(f.host)
+            support_bytes = n * (2 * sizeof(T) + sizeof(SVector{D, T}) + sizeof(SVector{D, position_float_type(f.metadata)}))
+            if uses_pos_cells(support)
+                support_bytes += 2 * n * sizeof(PosCell{D, T})
+            end
+            @test GPUMemoryBenchmark.device_buffer_bytes(support) == support_bytes
             expected = n * (2 * sizeof(eltype(full.GhostPoints)) + 2 * sizeof(eltype(full.GhostNormals)) +
                 sizeof(T) + sizeof(SVector{D, T}) + sizeof(T) + sizeof(SVector{D, T}) +
                 2 * (sizeof(Int) - sizeof(Int32)) + 2 * (sizeof(UInt) - sizeof(UInt32)))
