@@ -98,6 +98,17 @@ Pkg.add(url="https://github.com/AhmedSalih3d/SPHExample")
 
 Open one of the files in `example/`, for instance `example/StillWedgeMDBC.jl`, and adjust the simulation parameters or the `ComputerInteractions!` function. Run the script to start the simulation. Results are written in `hdfvtk` format which can be loaded with ParaView 5.12 or newer.
 
+### Particle memory in the log
+
+With `FlagLog = true`, the simulation log includes particle counts by type,
+dimensionality, precision and **CPU particle arrays** in exact bytes, MiB
+(`2^20` bytes) and average bytes per particle. This is the payload of the
+host particle `StructArray`, counting shared arrays once. It excludes geometry
+inputs, support/threaded/sorting arrays, output buffers, array headers and spare
+capacity, so it is not total process RAM. The CUDA package also reports device
+buffers and CUDA information; see its [logging guide](gpu_version/README.md#logging-cuda-and-particle-memory)
+before comparing memory figures with DualSPHysics.
+
 ### Measuring a simulation
 
 Measurements are optional and are sampled at existing output times. Configure

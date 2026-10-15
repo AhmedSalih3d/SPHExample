@@ -8,6 +8,7 @@ module SimulationLoggerConfiguration
     using Dates
     using InteractiveUtils
     using Base.Threads
+    using StructArrays: components
 
     using ..SimulationGeometry
 
@@ -77,12 +78,28 @@ module SimulationLoggerConfiguration
         end
     end
 
+    function host_particle_bytes(particles)
+        seen = Base.IdSet()
+        return sum(components(particles); init = 0) do buffer
+            buffer in seen && return 0
+            push!(seen, buffer)
+            return sizeof(buffer)
+        end
+    end
+
+    function memory_usage_line(label, bytes, particles)
+        per_particle = particles == 0 ? "n/a" : @sprintf("%.2f", bytes / particles)
+        return @sprintf("%s: %d bytes (%.4f MiB; %s bytes/particle)",
+            label, bytes, bytes / 2.0^20, per_particle)
+    end
+
     """
         LogSimulationDetails(logger, geometries, particles; sort_by=:GroupMarker)
 
     Print information about all geometries involved in the simulation and a
-    summary of particle counts per type. The optional `sort_by` argument controls
-    how the group marker statistics are ordered.
+    summary of particle counts, precision and host particle-array payload.
+    Shared array objects are counted once. The optional `sort_by` argument
+    controls how the group marker statistics are ordered.
     """
     function LogSimulationDetails(SimLogger::SimulationLogger, SimGeometry::Vector{Geometry{Dimensions, FloatType}}, SimParticles; sort_by=:GroupMarker) where {Dimensions, FloatType}
         with_logger(SimLogger.Logger) do
@@ -118,6 +135,10 @@ module SimulationLoggerConfiguration
     
             total_particles = length(SimParticles.Type)
             @info "Total number of particles: $total_particles"
+            @info "Simulation dimensions: $Dimensions"
+            @info "Particle precision: physics $(eltype(SimParticles.Density)); CPU positions $(eltype(eltype(SimParticles.Position)))"
+            @info memory_usage_line("CPU particle arrays", host_particle_bytes(SimParticles), total_particles)
+            @info "CPU particle memory scope: array payload only; excludes geometry inputs, support/threaded/sorting arrays, output buffers, array headers and unused capacity."
     
             if sort_by == :GroupMarker
                 @info "Group Markers and Counts (Sorted):"

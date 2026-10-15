@@ -4,6 +4,7 @@ using StaticArrays
 using StructArrays
 using LinearAlgebra
 
+include("logging.jl")
 include("measurements.jl")
 measurement_output_tests(SPHExample)
 

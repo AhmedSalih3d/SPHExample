@@ -1,21 +1,9 @@
 module GPUMemoryBenchmark
 
 using SPHExampleGPU, CUDA, StaticArrays, Printf
+using SPHExampleGPU.SimulationLoggerConfiguration: device_buffer_bytes
 
 include(joinpath(@__DIR__, "..", "example", "GenerateStillWedgeMDBC.jl"))
-
-function device_buffer_bytes(x, seen = Base.IdSet())
-    if x isa CuArray
-        x in seen && return 0
-        push!(seen, x)
-        return length(x) * sizeof(eltype(x))
-    elseif x === nothing || isbitstype(typeof(x))
-        return 0
-    elseif x isa AbstractArray || x isa Tuple
-        return sum(v -> device_buffer_bytes(v, seen), x; init = 0)
-    end
-    return sum(name -> device_buffer_bytes(getfield(x, name), seen), fieldnames(typeof(x)); init = 0)
-end
 
 function generated_wedge_case(::Type{T}, save; dx = 0.02) where {T}
     constants = SimulationConstants{T}(; dx, c₀ = 42.48576250492629, δᵩ = 0.1, CFL = 0.5)

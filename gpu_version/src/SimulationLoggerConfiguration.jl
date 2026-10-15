@@ -8,8 +8,11 @@ module SimulationLoggerConfiguration
     using Dates
     using InteractiveUtils
     using Base.Threads
+    using CUDA
+    using StructArrays: components
 
     using ..SimulationGeometry
+    using ..SimulationMetaDataConfiguration: position_float_type
 
     export SimulationLogger, generate_format_string, InitializeLogger, LogSimulationDetails, LogStep, step_log_line, log_line, LogFinal
 
@@ -68,12 +71,71 @@ module SimulationLoggerConfiguration
         end
     end
 
+    function host_particle_bytes(particles)
+        seen = Base.IdSet()
+        return sum(components(particles); init = 0) do buffer
+            buffer in seen && return 0
+            push!(seen, buffer)
+            return sizeof(buffer)
+        end
+    end
+
+    function memory_usage_line(label, bytes, particles)
+        per_particle = particles == 0 ? "n/a" : @sprintf("%.2f", bytes / particles)
+        return @sprintf("%s: %d bytes (%.4f MiB; %s bytes/particle)",
+            label, bytes, bytes / 2.0^20, per_particle)
+    end
+
+    """
+        device_buffer_bytes(x, seen = Base.IdSet())
+
+    Count live `CuArray` payload bytes in data containers without downloading
+    their contents. Shared array objects are counted once; host arrays with
+    inline elements, allocator reservations and allocation overhead are excluded.
+    """
+    function device_buffer_bytes(x, seen = Base.IdSet())
+        (x === nothing || isbitstype(typeof(x))) && return 0
+        x in seen && return 0
+        push!(seen, x)
+        if x isa CuArray
+            return length(x) * sizeof(eltype(x))
+        elseif x isa AbstractArray
+            isbitstype(eltype(x)) && return 0
+            return sum(v -> device_buffer_bytes(v, seen), x; init = 0)
+        end
+        return sum(name -> device_buffer_bytes(getfield(x, name), seen),
+            fieldnames(typeof(x)); init = 0)
+    end
+
+    function gpu_memory_bytes(buffers)
+        seen = Base.IdSet()
+        return (; particles = device_buffer_bytes(buffers.particles, seen),
+            support = device_buffer_bytes(buffers.support, seen),
+            cells = device_buffer_bytes(buffers.cells, seen),
+            auxiliary = device_buffer_bytes(buffers.auxiliary, seen))
+    end
+
+    function log_gpu_memory(logger, buffers, particles; phase)
+        bytes = gpu_memory_bytes(buffers)
+        with_logger(logger.Logger) do
+            @info "GPU live-buffer memory ($phase):"
+            @info memory_usage_line("GPU particle arrays (state + reorder)", bytes.particles, particles)
+            @info memory_usage_line("GPU support arrays", bytes.support, particles)
+            @info memory_usage_line("GPU cell-list workspace", bytes.cells, particles)
+            @info memory_usage_line("GPU auxiliary arrays (motion, reductions, step state, floating)", bytes.auxiliary, particles)
+            @info memory_usage_line("GPU accounted buffers total", sum(bytes), particles)
+            @info "GPU memory scope: live array payload; shared arrays counted once. Excludes output/staging buffers, CUDA context/JIT/graphs, allocator reservations and allocation overhead; not process or peak VRAM."
+        end
+        return nothing
+    end
+
     """
         LogSimulationDetails(logger, geometries, particles; sort_by=:GroupMarker)
 
     Print information about all geometries involved in the simulation and a
-    summary of particle counts per type. The optional `sort_by` argument controls
-    how the group marker statistics are ordered.
+    summary of particle counts, precision and host particle-array payload.
+    Shared array objects are counted once. The optional `sort_by` argument
+    controls how the group marker statistics are ordered.
     """
     function LogSimulationDetails(SimLogger::SimulationLogger, SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}}, SimParticles; sort_by=:GroupMarker) where {Dimensions, FloatType}
         with_logger(SimLogger.Logger) do
@@ -110,6 +172,10 @@ module SimulationLoggerConfiguration
     
             total_particles = length(SimParticles.Type)
             @info "Total number of particles: $total_particles"
+            @info "Simulation dimensions: $Dimensions"
+            @info "Particle precision: physics $(eltype(SimParticles.Density)); CPU positions $(eltype(eltype(SimParticles.Position)))"
+            @info memory_usage_line("CPU particle arrays", host_particle_bytes(SimParticles), total_particles)
+            @info "CPU particle memory scope: array payload only; excludes geometry inputs, output/staging buffers, array headers and unused capacity."
     
             if sort_by == :GroupMarker
                 @info "Group Markers and Counts (Sorted):"
@@ -127,16 +193,29 @@ module SimulationLoggerConfiguration
     
     """
         InitializeLogger(logger, constants, metadata, kernel, viscosity,
-                         densitydiffusion, SPHGeometry, particles)
+                         densitydiffusion, SPHGeometry, particles; gpu_buffers = nothing)
 
-    Write a short summary of the simulation configuration to the log file and
-    store the start time. This is typically called once before the time stepping
-    loop begins.
+    Log the configuration, CUDA toolchain and active device, particle counts,
+    precision and CPU particle-array payload. `RunSimulation` supplies
+    `gpu_buffers = (; particles, support, cells, auxiliary)` for an alias-aware
+    device-buffer breakdown after allocation, before the first cell-list rebuild.
+    Host-only callers may omit these buffers; GPU memory is then explicitly
+    marked as unreported.
     """
-    function InitializeLogger(SimLogger,SimConstants,SimMetaData, SimKernel, SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
+    function InitializeLogger(SimLogger,SimConstants,SimMetaData, SimKernel, SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles; gpu_buffers = nothing)
         with_logger(SimLogger.Logger) do
             @info sprint(InteractiveUtils.versioninfo)
             @info "Julia threads: $(Threads.nthreads())"
+            if CUDA.functional()
+                @info "CUDA information:\n$(sprint(CUDA.versioninfo))"
+                dev = CUDA.device()
+                @info "GPU: $(CUDA.name(dev)), compute capability $(CUDA.capability(dev)), " *
+                      "$(CUDA.totalmem(dev)) bytes total VRAM, CUDA.jl $(pkgversion(CUDA))"
+                @info "GPU float type: $(eltype(SimParticles.Density))"
+                @info "GPU position type: $(position_float_type(SimMetaData))"
+            else
+                @info "CUDA information: unavailable (CUDA is not functional)"
+            end
             @info SimConstants
             @info SimMetaData
             @info SimKernel
@@ -147,6 +226,13 @@ module SimulationLoggerConfiguration
             @info "Logger Start Time: " * SimLogger.CurrentDataStr
 
             LogSimulationDetails(SimLogger, SimGeometry, SimParticles)
+
+            if gpu_buffers === nothing
+                @info "GPU buffer memory: not reported (device buffers not supplied)"
+            else
+                log_gpu_memory(SimLogger, gpu_buffers, length(SimParticles);
+                    phase = "startup, before first cell-list rebuild")
+            end
 
             @info SimLogger.ValuesToPrint
             @info SimLogger.ValuesToPrintC
@@ -173,7 +259,7 @@ module SimulationLoggerConfiguration
         TimePerPhysicalSecond    = string(@sprintf("%-.2f", elapsed_time_ / SimMetaData.TotalTime))
 
         SecondsToFinish          = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (elapsed_time_ / SimMetaData.TotalTime)
-        if isnan(SecondsToFinish)
+        if !isfinite(SecondsToFinish)
             ExpectedFinishTimeString = missing
         else
             ExpectedFinishTime       = now() + Second(ceil(Int, SecondsToFinish))

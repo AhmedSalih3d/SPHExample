@@ -1340,24 +1340,6 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         end
     end
 
-    if StoreLogOutput
-        InitializeLogger(SimLogger, SimConstants, SimMetaData, SimKernel, SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles)
-        with_logger(SimLogger.Logger) do
-            dev = CUDA.device()
-            @info "GPU: $(CUDA.name(dev)), compute capability $(CUDA.capability(dev)), " *
-                  "$(round(CUDA.totalmem(dev) / 2^30; digits = 1)) GiB, CUDA.jl $(pkgversion(CUDA))"
-            @info "GPU float type: $(FloatType)"
-            if PositionType !== FloatType
-                @info "GPU position type: $(PositionType) (pair loops use cell relative positions in $(FloatType))"
-            end
-        end
-    end
-
-    if StoreLogOutput
-        LogStep(SimLogger, SimMetaData, HourGlass)
-        SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
-    end
-
     NumberOfPoints = length(SimParticles)::Int
     Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
 
@@ -1376,6 +1358,15 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         state  = StepState{FloatType}(; time = SimMetaData.TotalTime, iteration = SimMetaData.Iteration,
                                         dx = one(FloatType) + SimKernel.h)
         CUDA.synchronize()
+    end
+
+    gpu_buffers = (; particles = gpu, support = sup, cells = cl,
+        auxiliary = (motion, floating, red.partial, state.f, state.i))
+    if StoreLogOutput
+        InitializeLogger(SimLogger, SimConstants, SimMetaData, SimKernel, SimViscosity,
+            SimDensityDiffusion, SimGeometry, SimParticles; gpu_buffers)
+        LogStep(SimLogger, SimMetaData, HourGlass)
+        SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
     end
 
     output = SetupVTKOutput(
@@ -1564,6 +1555,8 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                                SimMetaData.GPUAsyncOutput ? "writer task, overlapped with GPU work" : "simulation thread",
                                write_time[], output.frames_per_flush)
             end
+            SimulationLoggerConfiguration.log_gpu_memory(SimLogger, gpu_buffers, NumberOfPoints;
+                phase = "final, current cell-list capacity")
             LogFinal(SimLogger, HourGlass; status = status)
 
             if !isempty(TimeSteps)

@@ -1116,6 +1116,46 @@ definitions in `benchmark/cases.jl` construct against either package.
 The positions of `Float32` runs are written as `Float64` to the output files
 in either case (that is the point precision of the writer).
 
+### Logging CUDA and particle memory
+
+With the `StoreLog` mode, the simulation log includes CUDA runtime, driver and
+library information, the active GPU name, compute capability, total VRAM and
+CUDA.jl version. It also records dimensionality, physics/position precision and
+particle counts by type, so fluid and boundary populations can be matched when
+comparing with DualSPHysics.
+
+Memory figures use exact bytes, MiB (`2^20` bytes) and average bytes per total
+particle, using the actual element types and allocated field lengths:
+
+* **CPU particle arrays**: host `SimParticles` array payload, including fields
+  kept for output even when their GPU counterparts are omitted. This excludes
+  geometry inputs, output/staging buffers, array headers and spare capacity;
+  it is not total process RAM.
+* **GPU particle arrays (state + reorder)**: all live device particle fields,
+  including compact boundary fields, metadata and reorder scratch.
+* **GPU support arrays**, **GPU cell-list workspace** and **GPU auxiliary arrays**
+  are separate breakdowns. Auxiliary arrays include prescribed motion,
+  reductions, timestep state and floating bodies. Shared array objects, such as
+  the Updated-mDBC boundary-slot map, are counted only once across the breakdown.
+* **GPU accounted buffers total** sums those device categories. It excludes
+  output/staging buffers, CUDA context/JIT/graph storage, allocator reservations
+  and allocation overhead; it is not total or peak VRAM use.
+
+The startup snapshot is taken after device allocation but **before the first
+cell-list rebuild**. The final snapshot uses the current cell-list capacity,
+including growth during the run; neither snapshot is a high-water measurement.
+Do not compare these payload totals directly with a solver's process RAM or
+allocator-reserved VRAM without matching the accounting scope. Low-level,
+host-only `InitializeLogger` calls explicitly mark GPU memory as unreported
+when no device buffers are supplied, and report unavailable CUDA when appropriate.
+
+Focused logging regressions (host tests also run without a GPU):
+
+```bash
+julia --project=gpu_version -t 2,0 gpu_version/test/logging.jl
+julia --project=. -t 2,0 test/logging.jl
+```
+
 ### Compact GPU buffers
 
 The default `GPUCompactBuffers = true` reduces device storage without changing
