@@ -46,7 +46,7 @@ function context(f, D, T; compact, forces, single, lanes)
     motion = MotionArrays(f.geometry, f.host)
     floating = FLOATING.FloatingArrays(f.geometry, f.host, f.constants;
         position_type = position_float_type(f.metadata))
-    DRIVER.rebuild_cell_list!(gpu, cl, f.kernel.H⁻¹; support = sup, floating,
+    DRIVER.rebuild_cell_list!(gpu, cl, f.kernel.H⁻¹; support = sup, floating, kernel = f.kernel,
         constants = f.constants, preserve_pressure = true)
     state = StepState{T}()
     STEP.set_output_time!(state, one(T))
@@ -123,7 +123,8 @@ end
         cells = CellListWorkspace{3, Float64}(length(particles))
         support = GPUSupportArrays{3, Float32}(gpu, metadata)
         for _ in 1:3
-            DRIVER.rebuild_cell_list!(gpu, cells, 10f0; support, constants = SimulationConstants{Float32}(dx = 0.02))
+            DRIVER.rebuild_cell_list!(gpu, cells, 10f0; support, constants = SimulationConstants{Float32}(dx = 0.02),
+                kernel = (; H = 0.1f0))
             types = Array(gpu.Type)
             position_half, velocity_half = DRIVER.predictor_arrays(support, gpu)
             @test position_half === gpu.scratch.Position
@@ -194,7 +195,7 @@ end
                 @test any(!iszero, result.state.Acceleration[fixed]) == forces
                 for ctx in (full, compact)
                     DRIVER.rebuild_cell_list!(ctx.gpu, ctx.cl, f.kernel.H⁻¹;
-                        support = ctx.sup, floating = ctx.floating, constants = f.constants,
+                        support = ctx.sup, floating = ctx.floating, constants = f.constants, kernel = f.kernel,
                         discard_acceleration = true)
                     if single
                         DRIVER.enqueue_state_derivative!(ctx, ctx.state, false, "mdbc", "rebuild")

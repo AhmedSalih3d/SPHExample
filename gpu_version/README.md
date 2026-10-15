@@ -303,8 +303,9 @@ comparison, use `benchmark/still_wedge_speed.jl --compare-schemes`; its optional
 With `GPUUseGraph = true`, the solver caches graphs of 1, 2, 4, 8, 16, and 32 steps
 and composes each host batch from them. Each step still checks the device stop
 flag, so output deadlines and cell-list rebuilds use the same decisions.
-For DBC with double positions, cell-relative positions and prescribed motion
-are prepared in one kernel. Reciprocal densities are computed on demand in
+With double positions, the final step writes the cell-relative positions of
+the next step; for DBC, prescribed motion refreshes those of the moved
+particles in its preparation kernel. Reciprocal densities are computed on demand in
 the interaction kernel. The package also precompiles this
 StillWedge configuration to reduce compilation on the first run of a session.
 
@@ -1001,8 +1002,11 @@ the standard *gather* formulation:
   densities, pressures, accelerations, the kernel sums and all constants
   stay `FloatType`. The element-wise kernels add the `Float32` increment to
   the `Float64` position (one promoted add per particle) and write the
-  `PosCell` of the half step position; a small kernel does the same for the
-  start-of-step position before every neighbour loop that evaluates it. The
+  `PosCell` of the half step position. The final step kernel writes the
+  `PosCell` of the start-of-step position of the next step, so no separate
+  pass over the particles is needed; prescribed motion and the floating body
+  placement refresh the particles they move, and a cell list rebuild
+  rewrites every `PosCell` for the new order and cells. The
   interaction and mDBC kernels take a *pair source* argument, either the
   position array (plain mode, unchanged code path and bitwise unchanged
   results) or the `PosCell` array, and form every pair vector with

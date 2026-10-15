@@ -632,7 +632,7 @@ end
 """
     rebuild_cell_list!(gpu, cl, InverseCutOff; constants = nothing, boundary_mode = NoMDBC(),
                        discard_acceleration = false, preserve_pressure = false,
-                       prepared = false, support = nothing, floating = nothing)
+                       prepared = false, support = nothing, floating = nothing, kernel = nothing)
 
 Sort persistent particle state. When pressure reorder scratch is omitted,
 `constants` is required and `boundary_mode` selects the EOS (linear for
@@ -644,11 +644,16 @@ including timestep reductions, floating forces and downloads. Single-neighbor
 carried derivatives and body acceleration caches must also be refreshed.
 `preserve_pressure = true` instead reorders pressure using idle density scratch,
 as used at startup to preserve the host EOS rounding before the first step.
+When `support` holds cell relative positions (`uses_pos_cells`), `kernel`
+(the `SPHKernelInstance`) is required and they are rewritten for the new order
+and cells; the time step keeps them current until the next rebuild.
 """
 function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCutOff;
                             prepared::Bool = false, support = nothing, floating = nothing,
                             constants = nothing, boundary_mode = NoMDBC(), discard_acceleration::Bool = false,
-                            preserve_pressure::Bool = false)
+                            preserve_pressure::Bool = false, kernel = nothing)
+    support !== nothing && uses_pos_cells(support) && kernel === nothing &&
+        throw(ArgumentError("Rebuilding with cell relative positions requires the SPH kernel."))
     s = gpu.scratch
     reconstruct = isempty(s.Pressure) && !isempty(gpu.Pressure)
     reconstruct && constants === nothing &&
@@ -712,6 +717,10 @@ function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCut
     compact_ghosts || isempty(gpu.GhostIndex) || compact_nonzero!(cl, gpu.GhostPoints, gpu.GhostIndex)
     floating === nothing || update_floating_indices!(floating, gpu.Type, cl)
     support === nothing || initialize_fixed_predictors!(support, gpu)
+    if support !== nothing && uses_pos_cells(support)
+        launch_pos_cells!(support.PosCells, gpu.Position, gpu.CellID, cl.grid_dev,
+            HostStep(zero(eltype(gpu.Density)), zero(eltype(gpu.Density))), kernel)
+    end
 
     return grid
 end
@@ -766,24 +775,6 @@ macro phase(hg, name, timed, ex)
     end
 end
 
-"""
-    enqueue_pos_cells!(ctx, step, timed)
-
-Enqueue the cell relative form of the start-of-step positions
-(`launch_pos_cells!`) when the pair loops read it; nothing otherwise. Must
-precede every kernel that scans neighbours of the start-of-step positions
-(the mDBC correction and the first neighbour loop) because the positions
-change between those kernels and the previous ones (final step, motion,
-rebuild).
-"""
-function enqueue_pos_cells!(ctx, step, timed::Bool)
-    (; gpu, cl, sup, SimKernel, HourGlass) = ctx
-    uses_pos_cells(sup) || return nothing
-    @phase HourGlass "03d Cell Relative Positions" timed launch_pos_cells!(
-        sup.PosCells, gpu.Position, gpu.CellID, cl.grid_dev, step, SimKernel)
-    return nothing
-end
-
 # Recompute scratch boundary data after every reorder and at both evaluated states.
 function enqueue_boundary_correction!(ctx, step, half::Bool)
     (; gpu, sup, cl, SimKernel, SimConstants, threads, lanes) = ctx
@@ -807,11 +798,13 @@ end
 """
     enqueue_state_derivative!(ctx, step, timed, mdbc_name, loop_name)
 
-Enqueue the evaluation of the start-of-step state: the cell relative
-positions (with `GPUDoublePosition`), the mDBC correction of the boundary
-densities together with the pressure of the corrected density
+Enqueue the evaluation of the start-of-step state: the mDBC correction of
+the boundary densities together with the pressure of the corrected density
 (`launch_mdbc!`, with `SimpleMDBC`) and the
-neighbour loop that produces `dρdtI` and the acceleration. The symplectic
+neighbour loop that produces `dρdtI` and the acceleration. With
+`GPUDoublePosition` the cell relative positions must be current: the final
+step and `rebuild_cell_list!` write them, and the prescribed motion fused into
+the DBC preparation (`prepare_motion`) refreshes the moved particles. The symplectic
 scheme runs this at every step as its first neighbour loop. The single
 neighbour scheme carries the corrector derivative of the previous step into
 the predictor instead and only runs this to start that derivative: before
@@ -825,17 +818,16 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
     CellStart = cl.CellStart
 
     if UseMDBC
-        enqueue_pos_cells!(ctx, step, timed)
         @phase HourGlass mdbc_name timed enqueue_boundary_correction!(ctx, step, false)
     end
 
     @phase HourGlass loop_name timed begin
-        if !UseMDBC
+        if !UseMDBC && prepare_motion
             launch_prepare_interactions!(gpu.Position, step;
                 pos_cells = sup.PosCells,
                 CellID = gpu.CellID, grid = grid, H = SimKernel.H,
                 Velocity = gpu.Velocity, ParticleType = gpu.Type, GroupMarker = gpu.GroupMarker,
-                motion = prepare_motion ? ctx.motion : nothing)
+                motion = ctx.motion)
         end
         launch_interactions!(sup.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient, sup.∇Cᵢ, sup.∇◌rᵢ,
                              gpu.Position, gpu.Density, gpu.Pressure,
@@ -900,7 +892,8 @@ function enqueue_step!(ctx, timed::Bool)
     fused_motion = !UseMDBC
     if motion.active && !fused_motion
         @phase HourGlass "Motion" timed launch_motion!(gpu.Position, gpu.Velocity, gpu.Type, gpu.GroupMarker,
-                                                       motion, state)
+                                                       motion, state; pos_cells = sup.PosCells,
+                                                       CellID = gpu.CellID, grid = grid, H = SimKernel.H)
     end
 
     if SingleNeighbor
@@ -908,7 +901,6 @@ function enqueue_step!(ctx, timed::Bool)
         # predictor and the final density update start from are corrected
         # every step, the carried derivative is kept.
         if UseMDBC
-            enqueue_pos_cells!(ctx, state, timed)
             @phase HourGlass "04a NeighborLoopMDBC before Half TimeStep" timed enqueue_boundary_correction!(ctx, state, false)
         end
     else
@@ -973,13 +965,14 @@ function enqueue_step!(ctx, timed::Bool)
         sup.∇Cᵢ, sup.∇◌rᵢ, state, SimKernel, SimConstants, red, FlagShift;
         boundary_mode = get(ctx, :boundary_mode, SimpleMDBC()),
         ghost_points = gpu.GhostPoints, ghost_normals = gpu.GhostNormals, boundary_slots = gpu.BoundarySlot,
-        commit_step = red.nblocks == 1)
+        pos_cells = sup.PosCells, CellID = gpu.CellID, grid = grid, commit_step = red.nblocks == 1)
 
     # Rigid final placement reads neither time nor phase, so a one-block
     # integration may commit before this launch without changing body placement.
     if floats
         @phase HourGlass "11b Floating Final TimeStep" timed launch_floating_particles!(
-            floating, gpu.Position, gpu.Velocity, gpu.Position, gpu.Type, gpu.GroupMarker, state, true)
+            floating, gpu.Position, gpu.Velocity, gpu.Position, gpu.Type, gpu.GroupMarker, state, true;
+            pos_cells = sup.PosCells, CellID = gpu.CellID, grid = grid, H = SimKernel.H)
     end
 
     if red.nblocks != 1
@@ -1188,7 +1181,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                 end
                 rebuild_cell_list!(gpu, cl, SimKernel.H⁻¹; prepared = true, support = sup, floating,
                     constants = SimConstants, boundary_mode, discard_acceleration = true,
-                    preserve_pressure = cl.nrebuilds == 0)
+                    preserve_pressure = cl.nrebuilds == 0, kernel = SimKernel)
                 resume_after_rebuild!(state)
 
                 # The single neighbour scheme carries `dρdtI` and the

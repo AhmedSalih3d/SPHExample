@@ -88,7 +88,7 @@ end
                 ids_before = Array(gpu.ID)
                 fill!(gpu.Pressure, T(NaN))
                 grid = DRIVER.rebuild_cell_list!(gpu, cl, f.kernel.H⁻¹;
-                    constants = f.constants, boundary_mode = mode, support)
+                    constants = f.constants, boundary_mode = mode, support, kernel = f.kernel)
                 ids = Array(gpu.ID)
                 expected_acceleration = before[indexin(ids, ids_before)]
                 @test pointer(gpu.Acceleration) == acceleration_pointer

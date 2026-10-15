@@ -38,8 +38,11 @@ mDBC kernels take a *pair source* argument, which is either the position
 array itself or the `PosCell` array, and form every pair vector with
 `pair_vector`. The element-wise kernels update the positions in their own
 precision (the increments are promoted) and write the cell relative form of
-the half step positions; `launch_pos_cells!` does the same for the
-start-of-step positions.
+the positions they produce: the half step kernel for the half step positions,
+the final step kernel for the start-of-step positions of the next step. The
+kernels that move particles between two final steps (prescribed motion,
+floating body placement) refresh the form of the particles they move, and a
+cell list rebuild refreshes it for every particle (`launch_pos_cells!`).
 """
 module GPUKernels
 
@@ -180,21 +183,38 @@ end
 # Prescribed motion of moving bodies (only launched when a case has them)
 #---------------------------------------------------------------
 
-function motion_kernel!(Position, Velocity, ParticleType, GroupMarker, motion, step, n::Int32)
+# Only `Moving` particles change position; the cell relative form of every
+# other particle is kept current by the final step and the cell list rebuild.
+@inline function store_moved_pos_cell!(PosCells, i, Position, ParticleType, CellID, gridarg, H)
+    PosCells === nothing && return nothing
+    @inbounds ParticleType[i] == Moving && store_pos_cell!(PosCells, i, Position[i], CellID, gridarg, H)
+    return nothing
+end
+
+function motion_kernel!(Position, Velocity, ParticleType, GroupMarker, motion, step,
+                        PosCells, CellID, gridarg, H, n::Int32)
     step_active(step) || return nothing
     i = thread_index()
     i > n && return nothing
     dt₂       = step_dt(step) / 2
     TotalTime = step_time(step)
     apply_motion!(i, Position, Velocity, ParticleType, GroupMarker, motion, dt₂, TotalTime)
+    store_moved_pos_cell!(PosCells, i, Position, ParticleType, CellID, gridarg, H)
     return nothing
 end
 
-function launch_motion!(Position, Velocity, ParticleType, GroupMarker, motion, step)
+"""
+    launch_motion!(Position, Velocity, ParticleType, GroupMarker, motion, step; pos_cells, CellID, grid, H)
+
+Apply the first prescribed-motion half increment. With `pos_cells` the cell
+relative form of the `Moving` particles is refreshed as well.
+"""
+function launch_motion!(Position, Velocity, ParticleType, GroupMarker, motion, step;
+                        pos_cells = nothing, CellID = nothing, grid = nothing, H = nothing)
     n = length(Position)
     n == 0 && return nothing
     @cuda threads=ELEMENTWISE_THREADS blocks=cld(n, ELEMENTWISE_THREADS) motion_kernel!(
-        Position, Velocity, ParticleType, GroupMarker, motion, step, Int32(n))
+        Position, Velocity, ParticleType, GroupMarker, motion, step, pos_cells, CellID, grid, H, Int32(n))
     return nothing
 end
 
@@ -210,8 +230,8 @@ function prepare_interactions_kernel!(Position, step, n::Int32,
     @inbounds begin
         if motion !== nothing
             apply_motion!(i, Position, Velocity, ParticleType, GroupMarker, motion, step_dt(step) / 2, step_time(step))
-        end
-        if PosCells !== nothing
+            store_moved_pos_cell!(PosCells, i, Position, ParticleType, CellID, grid, H)
+        elseif PosCells !== nothing
             store_pos_cell!(PosCells, i, Position[i], CellID, grid, H)
         end
     end
@@ -223,8 +243,11 @@ end
                                  Velocity, ParticleType, GroupMarker, motion)
 
 Prepare cell relative positions and optionally apply prescribed motion in one
-pass before DBC interactions. No kernel is launched when neither preparation
-is needed. Reciprocal densities are evaluated inside the interaction kernel.
+pass before DBC interactions. With `motion`, only the cell relative positions
+of the `Moving` particles are refreshed (the final step and the cell list
+rebuild keep the others current); without, those of every particle. No kernel
+is launched when neither preparation is needed. Reciprocal densities are
+evaluated inside the interaction kernel.
 """
 function launch_prepare_interactions!(Position, step;
                                       pos_cells = nothing, CellID = nothing, grid = nothing, H = nothing,
@@ -238,8 +261,8 @@ function launch_prepare_interactions!(Position, step;
 end
 
 #---------------------------------------------------------------
-# Cell relative positions of the start-of-step state (only with positions of
-# a higher precision than the working precision)
+# Cell relative positions of every particle after a cell list rebuild (only
+# with positions of a higher precision than the working precision)
 #---------------------------------------------------------------
 
 # Cell relative form of position `x` of particle `i`, for the cell the
@@ -264,10 +287,11 @@ end
     launch_pos_cells!(PosCells, Position, CellID, grid, step, SimKernel)
 
 Write the cell relative form (`PosCell`) of every position for the cell list
-whose sorted cell ids are `CellID`. Launched before the neighbour loops that
-evaluate the start-of-step positions when the positions are stored in a
-higher precision than the working precision; the half step kernel writes the
-form of the half step positions itself.
+whose sorted cell ids are `CellID`. Needed when the positions are stored in a
+higher precision than the working precision and the particles were reordered
+or binned anew (`rebuild_cell_list!` with `support`). Within the time step the
+final step kernel writes the form of the start-of-step positions of the next
+step and the half step kernel that of the half step positions.
 """
 function launch_pos_cells!(PosCells, Position, CellID, grid, step, SimKernel)
     n = length(Position)
@@ -828,7 +852,7 @@ end
 function final_step_kernel!(Position, Velocity, Acceleration, Density, Pressure, dρdtI, ρₙ⁺, Positionₙ⁺,
                             Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
                             partial, ::Val{FlagShift}, boundary_mode, GhostPoints, GhostNormals, BoundarySlots,
-                            ::Val{CommitStep}, n::Int32) where {FlagShift, CommitStep}
+                            PosCells, CellID, gridarg, ::Val{CommitStep}, n::Int32) where {FlagShift, CommitStep}
     step_active(step) || return nothing
     dt = step_dt(step)
     (; g, ρ₀, c₀) = SimConstants
@@ -872,6 +896,7 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, Pressure,
             x += (vₙ⁺ * dt) * ML
         end
         Position[i] = x
+        store_pos_cell!(PosCells, i, x, CellID, gridarg, SimKernel.H)
         if boundary_mode isa UpdatedMDBC && type == Moving && GhostPoints !== nothing
             slot = BoundarySlots === nothing ? i : BoundarySlots[i]
             slot == 0 || (GhostPoints[slot] = x + GhostNormals[slot])
@@ -896,19 +921,24 @@ per block reduction results fit the reduction workspace; they are consumed by
 `step` is a `StepState` or a `HostStep` with a fixed `dt`.
 `commit_step = true` commits the device step after the reduction barrier and
 requires a single reduction block; multiple blocks need a separate commit launch.
+With `pos_cells` (the `PosCell` array of the start-of-step positions) the
+kernel also writes the cell relative form of the new positions for the cell
+list whose sorted cell ids are `CellID`, so the next step needs no separate
+pass; `CellID` and `grid` are then required.
 """
 function launch_final_step!(Position, Velocity, Acceleration, Density, Pressure, dρdtI, ρₙ⁺, Positionₙ⁺,
                             Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
                             red::ReductionWorkspace, FlagShift::Val; boundary_mode = SimpleMDBC(),
                             ghost_points = nothing, ghost_normals = nothing, boundary_slots = nothing,
-                            commit_step::Bool = false)
+                            pos_cells = nothing, CellID = nothing, grid = nothing, commit_step::Bool = false)
     commit_step && red.nblocks != 1 && throw(ArgumentError("fused commit requires one reduction block"))
     n = length(Position)
     n == 0 && return nothing
     @cuda threads=ELEMENTWISE_THREADS blocks=red.nblocks final_step_kernel!(
         Position, Velocity, Acceleration, Density, Pressure, dρdtI, ρₙ⁺, Positionₙ⁺,
         Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
-        red.partial, FlagShift, boundary_mode, ghost_points, ghost_normals, boundary_slots, Val(commit_step), Int32(n))
+        red.partial, FlagShift, boundary_mode, ghost_points, ghost_normals, boundary_slots,
+        pos_cells, CellID, grid, Val(commit_step), Int32(n))
     return nothing
 end
 

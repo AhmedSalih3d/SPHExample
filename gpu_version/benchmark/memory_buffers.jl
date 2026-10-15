@@ -26,7 +26,7 @@ function allocation_bytes(geometry::Vector{SPHGeometry{D, T}}, metadata, kernel,
     gpu = upload_particles(host, metadata)
     cells = CellListWorkspace{D, position_float_type(metadata)}(length(host))
     support = GPUSupportArrays{D, T}(gpu, metadata)
-    SPHExampleGPU.SPHCellList.rebuild_cell_list!(gpu, cells, kernel.H⁻¹; support, constants)
+    SPHExampleGPU.SPHCellList.rebuild_cell_list!(gpu, cells, kernel.H⁻¹; support, constants, kernel)
     CUDA.synchronize()
     return (; particles = length(host), bytes = device_buffer_bytes((gpu, support, cells)))
 end
