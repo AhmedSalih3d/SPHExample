@@ -3,6 +3,13 @@ using Test, SPHExampleGPU, CUDA, StaticArrays, LinearAlgebra
 @testset "Updated mDBC numerical checks and cloning" begin
     GK = SPHExampleGPU.GPUKernels
     for T in (Float32, Float64), D in (2, 3)
+        cubic = SPHKernelInstance{D, T}(CubicSpline{T}(); dx = T(0.04))
+        for pressures in ((T(-100), T(200)), (T(300), T(400)))
+            pi, pj = pressures
+            reference = tensile_correction(cubic, pi, T(997), pj, T(1005), T(0.7), T(0.04))
+            cached = tensile_correction(cubic, pi, T(997), pj, T(1005), T(0.7), T(0.04), inv(T(997)), inv(T(1005)))
+            @test cached ≈ reference rtol = 5eps(T)
+        end
         N = D + 1
         A = SMatrix{N, N, T}(I)
         b = SVector{N, T}(ntuple(k -> k == 1 ? 999 : 2, N))
@@ -56,26 +63,69 @@ function updated_mdbc_fixture(::Val{D}, ::Type{T}, ::Type{TP}; dry = false) wher
 end
 
 if CUDA.functional()
+    @testset "cached ghost mass/density weights and corrected reciprocals" begin
+        GK = SPHExampleGPU.GPUKernels
+        CL = SPHExampleGPU.SPHCellList
+        for D in (2, 3), T in (Float32, Float64), updated in (false, true)
+            f = updated_mdbc_fixture(Val(D), T, T)
+            gpu = upload_particles(f.host; boundary_only = true)
+            cl = CellListWorkspace{D, T}(length(gpu))
+            CL.rebuild_cell_list!(gpu, cl, f.kernel.H⁻¹)
+            sup = GPUSupportArrays{D, T}(length(gpu); updated_mdbc = true,
+                cache_interaction_fields = true, boundary_slots = gpu.BoundarySlot,
+                boundary_count = length(gpu.GhostIndex))
+            step = HostStep(T(1e-4), zero(T))
+            original = copy(gpu.Density)
+            function correct(cache)
+                if updated
+                    GK.launch_updated_mdbc!(gpu.Density, gpu.Pressure, gpu.Position, gpu.Velocity,
+                        gpu.GhostPoints, gpu.GhostNormals, gpu.GhostIndex, gpu.Type, cl.CellStart,
+                        cl.grid_dev, step, f.kernel, f.constants, sup.boundary_data;
+                        compact_ghosts = Val(true), inverse_density = cache)
+                else
+                    GK.launch_mdbc!(gpu.Density, gpu.Pressure, gpu.Position,
+                        gpu.GhostPoints, gpu.GhostIndex, gpu.Type, cl.CellStart, cl.grid_dev,
+                        step, f.kernel, f.constants; compact_ghosts = Val(true), inverse_density = cache)
+                end
+                return Array(gpu.Density), Array(gpu.Pressure)
+            end
+            reference = correct(nothing)
+            copyto!(gpu.Density, original)
+            GK.launch_prepare_interactions!(gpu.Position, step;
+                inverse_density = sup.InvDensity, Density = gpu.Density)
+            cached = correct(sup.InvDensity)
+            @test cached[1] ≈ reference[1] rtol = 20eps(T)
+            @test cached[2] ≈ reference[2] rtol = 100eps(T) atol = T(0.5)
+            @test Array(sup.InvDensity) ≈ inv.(cached[1]) rtol = 2eps(T)
+        end
+    end
+
     @testset "Updated mDBC CUDA ghost correction" begin
         GK = SPHExampleGPU.GPUKernels
         CL = SPHExampleGPU.SPHCellList
         for D in (2, 3), (T, TP) in ((Float32, Float32), (Float32, Float64), (Float64, Float64)),
-            dry in (false, true), compact in (false, true)
+            dry in (false, true), compact in (false, true), cache in (false, true)
             f = updated_mdbc_fixture(Val(D), T, TP; dry)
             gpu = upload_particles(f.host; position_type = TP, boundary_only = compact)
             cl = CellListWorkspace{D, TP}(length(gpu))
             CL.rebuild_cell_list!(gpu, cl, f.kernel.H⁻¹)
             sup = GPUSupportArrays{D, T}(length(gpu); position_type = TP, updated_mdbc = true,
+                cache_interaction_fields = cache,
                 boundary_slots = gpu.BoundarySlot, boundary_count = compact ? length(gpu.GhostIndex) : length(gpu))
             step = HostStep(T(1e-4), zero(T))
             if TP !== T
                 launch_pos_cells!(sup.PosCells, gpu.Position, gpu.CellID, cl.grid_dev, step, f.kernel)
             end
             for K in (1, 4, 32)
+                GK.launch_prepare_interactions!(gpu.Position, step;
+                    inverse_density = sup.InvDensity, Density = gpu.Density)
                 GK.launch_updated_mdbc!(gpu.Density, gpu.Pressure, gpu.Position, gpu.Velocity,
                     gpu.GhostPoints, gpu.GhostNormals, gpu.GhostIndex, gpu.Type, cl.CellStart,
                     cl.grid_dev, step, f.kernel, f.constants, sup.boundary_data; lanes = Val(K), pos_cells = sup.PosCells,
-                    compact_ghosts = Val(compact))
+                    compact_ghosts = Val(compact), inverse_density = sup.InvDensity)
+                if cache
+                    @test Array(sup.InvDensity) ≈ inv.(Array(gpu.Density)) rtol = 2eps(T)
+                end
                 idx = only(Array(gpu.GhostIndex))
                 slot = compact ? 1 : idx
                 @test Array(sup.boundary_data.active)[slot] == !dry
@@ -117,9 +167,10 @@ if CUDA.functional()
     end
 
     @testset "Updated mDBC simulation stages and graph replay" begin
-        for graph in (false, true), scheme in (SymplecticTimeStepping(), SingleNeighborTimeStepping())
+        for graph in (false, true), scheme in (SymplecticTimeStepping(), SingleNeighborTimeStepping()), cache in (false, true)
             f = updated_mdbc_fixture(Val(2), Float32, Float64)
             f.metadata.GPUUseGraph = graph
+            f.metadata.GPUCacheInteractionFields = cache
             RunSimulation(SimGeometry = f.geometry, SimMetaData = f.metadata, SimConstants = f.constants,
                 SimKernel = f.kernel, SimParticles = f.host, SimLogger = SimulationLogger(f.metadata.SaveLocation),
                 SimViscosity = Laminar(), SimDensityDiffusion = ZeroDensityDiffusion(), SimTimeStepping = scheme)

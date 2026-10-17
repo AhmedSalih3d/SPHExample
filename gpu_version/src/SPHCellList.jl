@@ -452,8 +452,8 @@ end
 """
 Device arrays that are recomputed every step (half step state and shifting
 terms). They are never reordered because they are overwritten after every
-cell list update. Reciprocal densities are computed on demand by the
-interaction kernel, without cached vectors. `Positionₙ⁺` is in the
+cell list update. `InvDensity` optionally caches reciprocals for the state
+being evaluated; otherwise it is `nothing` and interactions compute them on demand. `Positionₙ⁺` is in the
 position precision `TP`. When that differs from the working precision `T`,
 `PosCells` and `PosCellsₙ⁺` hold the cell relative form (`PosCell`) of the
 start-of-step and half step positions for the pair loops; otherwise both are
@@ -463,11 +463,12 @@ The driver instead uses the existing reorder scratch, which is idle between
 rebuilds. Fixed entries are initialized after sorting and left untouched during
 steps. Neighbor reads remain dense, without an index map or extra allocation.
 """
-struct GPUSupportArrays{D, T, TP, PC, BD}
+struct GPUSupportArrays{D, T, TP, PC, BD, IC}
     dρdtI::CuVector{T}
     Velocityₙ⁺::CuVector{SVector{D, T}}
     Positionₙ⁺::CuVector{SVector{D, TP}}
     ρₙ⁺::CuVector{T}
+    InvDensity::IC
     ∇Cᵢ::CuVector{SVector{D, T}}
     ∇◌rᵢ::CuVector{T}
     PosCells::PC
@@ -495,10 +496,12 @@ simulation modes and `GPUCompactBuffers`.
 The device-particle form omits separate position/velocity predictors when compact
 buffers are enabled. Pass `support` to `rebuild_cell_list!` to initialize fixed
 entries in the reorder scratch after sorting. Density predictors remain allocated
-for all particles.
+for all particles. `cache_interaction_fields = true` allocates one reciprocal
+density buffer; metadata constructors select it with `GPUCacheInteractionFields`.
 """
 function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T, updated_mdbc::Bool = false,
                               shifting::Bool = true, reuse_predictors::Bool = false,
+                              cache_interaction_fields::Bool = false,
                               boundary_slots = nothing, boundary_count::Integer = n) where {D, T, TP}
     pc = TP === T ? nothing : CuVector{PosCell{D, T}}(undef, n)
     pcₙ⁺ = TP === T ? nothing : CuVector{PosCell{D, T}}(undef, n)
@@ -507,11 +510,13 @@ function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T, updated
     boundary_data = updated_mdbc ? (; active = CUDA.ones(Bool, boundary_count),
         velocity = CUDA.zeros(SVector{D, T}, boundary_count),
         tangent_velocity = CUDA.zeros(SVector{D, T}, boundary_count), slots = boundary_slots) : nothing
-    return GPUSupportArrays{D, T, TP, typeof(pc), typeof(boundary_data)}(
+    inverse_density = cache_interaction_fields ? CUDA.zeros(T, n) : nothing
+    return GPUSupportArrays{D, T, TP, typeof(pc), typeof(boundary_data), typeof(inverse_density)}(
         CUDA.zeros(T, n),
         CUDA.zeros(SVector{D, T}, reuse_predictors ? 0 : n),
         CUDA.zeros(SVector{D, TP}, reuse_predictors ? 0 : n),
         CUDA.zeros(T, n),
+        inverse_density,
         CUDA.zeros(SVector{D, T}, shifting ? n : 0),
         CUDA.zeros(T, shifting ? n : 0),
         pc,
@@ -526,6 +531,7 @@ function GPUSupportArrays{D, T}(gpu::GPUParticles{D, T}, meta::SimulationMetaDat
         throw(ArgumentError("GPU positions and support-array metadata must use the same precision"))
     return GPUSupportArrays{D, T}(length(gpu); position_type = position_type(gpu),
         updated_mdbc = B === UpdatedMDBC, shifting = !meta.GPUCompactBuffers || S === PlanarShifting,
+        cache_interaction_fields = meta.GPUCacheInteractionFields,
         reuse_predictors = meta.GPUCompactBuffers, boundary_slots = gpu.BoundarySlot,
         boundary_count = gpu.BoundarySlot === nothing ? length(gpu) : length(gpu.GhostIndex))
 end
@@ -557,7 +563,8 @@ end
 
 function GPUSupportArrays{D, T}(n::Integer, meta::SimulationMetaData{D, T, S, K, B}) where {D, T, S, K, B}
     return GPUSupportArrays{D, T}(n; position_type = position_float_type(meta),
-        updated_mdbc = B === UpdatedMDBC, shifting = !meta.GPUCompactBuffers || S === PlanarShifting)
+        updated_mdbc = B === UpdatedMDBC, shifting = !meta.GPUCompactBuffers || S === PlanarShifting,
+        cache_interaction_fields = meta.GPUCacheInteractionFields)
 end
 
 """
@@ -781,16 +788,21 @@ function enqueue_boundary_correction!(ctx, step, half::Bool)
     density = half ? sup.ρₙ⁺ : gpu.Density
     position, velocity = half ? predictor_arrays(sup, gpu) : (gpu.Position, gpu.Velocity)
     pairs = half ? sup.PosCellsₙ⁺ : sup.PosCells
+    # Ghost interpolation reads only fluid neighbors, whose densities are unchanged
+    # by correction. Each corrected wall refreshes its own cache entry in the kernel.
+    if !half
+        launch_prepare_interactions!(position, step; inverse_density = sup.InvDensity, Density = density)
+    end
     if get(ctx, :boundary_mode, SimpleMDBC()) isa UpdatedMDBC
         GPUKernels.launch_updated_mdbc!(density, gpu.Pressure, position, velocity,
             gpu.GhostPoints, gpu.GhostNormals, gpu.GhostIndex, gpu.Type, cl.CellStart, cl.grid_dev,
             step, SimKernel, SimConstants, sup.boundary_data; threads, lanes, pos_cells = pairs,
             motion = get(ctx, :motion, nothing), groups = gpu.GroupMarker,
-            compact_ghosts = Val(gpu.BoundarySlot !== nothing))
+            compact_ghosts = Val(gpu.BoundarySlot !== nothing), inverse_density = sup.InvDensity)
     else
         launch_mdbc!(density, gpu.Pressure, position, gpu.GhostPoints, gpu.GhostIndex, gpu.Type,
             cl.CellStart, cl.grid_dev, step, SimKernel, SimConstants; threads, lanes, pos_cells = pairs,
-            compact_ghosts = Val(gpu.BoundarySlot !== nothing))
+            compact_ghosts = Val(gpu.BoundarySlot !== nothing), inverse_density = sup.InvDensity)
     end
     return nothing
 end
@@ -822,12 +834,13 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
     end
 
     @phase HourGlass loop_name timed begin
-        if !UseMDBC && prepare_motion
+        if !UseMDBC && (sup.InvDensity !== nothing || prepare_motion)
             launch_prepare_interactions!(gpu.Position, step;
-                pos_cells = sup.PosCells,
+                pos_cells = !UseMDBC && prepare_motion ? sup.PosCells : nothing,
                 CellID = gpu.CellID, grid = grid, H = SimKernel.H,
                 Velocity = gpu.Velocity, ParticleType = gpu.Type, GroupMarker = gpu.GroupMarker,
-                motion = ctx.motion)
+                motion = !UseMDBC && prepare_motion ? ctx.motion : nothing,
+                inverse_density = sup.InvDensity, Density = gpu.Density)
         end
         launch_interactions!(sup.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient, sup.∇Cᵢ, sup.∇◌rᵢ,
                              gpu.Position, gpu.Density, gpu.Pressure,
@@ -835,6 +848,7 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
                              SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
                              FlagKernel, FlagShift; threads = threads, lanes = lanes,
                              boundary_forces = bforces, pos_cells = sup.PosCells, boundary_data = sup.boundary_data,
+                             inverse_density = sup.InvDensity,
                              radial = get(ctx, :radial, Val(false)),
                              scalar_sps = get(ctx, :scalar_sps, Val(false)))
     end
@@ -924,7 +938,7 @@ function enqueue_step!(ctx, timed::Bool)
         gpu.Type, gpu.GroupMarker, motion, state, SimConstants;
         pos_cells = sup.PosCellsₙ⁺, CellID = gpu.CellID, grid = grid, SimKernel = SimKernel,
         boundary_mode = get(ctx, :boundary_mode, SimpleMDBC()),
-        reuse_predictors = sup.ReusePredictors,
+        reuse_predictors = sup.ReusePredictors, inverse_density = sup.InvDensity,
         first_motion = SingleNeighbor && fused_motion && motion.active)
 
     if floats
@@ -948,6 +962,7 @@ function enqueue_step!(ctx, timed::Bool)
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
         FlagKernel, FlagShift; threads = threads, lanes = lanes,
         boundary_forces = bforces, pos_cells = sup.PosCellsₙ⁺, boundary_data = sup.boundary_data,
+        inverse_density = sup.InvDensity,
         radial = get(ctx, :radial, Val(false)),
         scalar_sps = get(ctx, :scalar_sps, Val(false)))
 
@@ -965,7 +980,8 @@ function enqueue_step!(ctx, timed::Bool)
         sup.∇Cᵢ, sup.∇◌rᵢ, state, SimKernel, SimConstants, red, FlagShift;
         boundary_mode = get(ctx, :boundary_mode, SimpleMDBC()),
         ghost_points = gpu.GhostPoints, ghost_normals = gpu.GhostNormals, boundary_slots = gpu.BoundarySlot,
-        pos_cells = sup.PosCells, CellID = gpu.CellID, grid = grid, commit_step = red.nblocks == 1)
+        pos_cells = sup.PosCells, CellID = gpu.CellID, grid = grid, commit_step = red.nblocks == 1,
+        inverse_density = sup.InvDensity)
 
     # Rigid final placement reads neither time nor phase, so a one-block
     # integration may commit before this launch without changing body placement.
@@ -1085,6 +1101,8 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     FlagKernel     = Val(KMode === StoreKernelOutput)
     FlagShift      = Val(SMode === PlanarShifting)
     UseMDBC        = BMode !== NoMDBC
+    SimMetaData.GPUCacheInteractionFields == (sup.InvDensity !== nothing) ||
+        throw(ArgumentError("GPUCacheInteractionFields must match the allocated support arrays; reallocate support arrays after changing this option."))
     if KMode === StoreKernelOutput
         require_particle_field(gpu, :Kernel)
         require_particle_field(gpu, :KernelGradient)

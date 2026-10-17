@@ -137,7 +137,8 @@ end
             @test length(full_support.∇Cᵢ) == length(f.host)
             @test length(full_support.∇◌rᵢ) == length(f.host)
             @test support.boundary_data === nothing
-            @test !hasproperty(support, :InvDensity)
+            @test support.InvDensity === nothing
+            @test full_support.InvDensity === nothing
             @test !hasproperty(support, :InvDensityₙ⁺)
             @test uses_pos_cells(support) == (position_float_type(f.metadata) !== T)
             n = length(f.host)

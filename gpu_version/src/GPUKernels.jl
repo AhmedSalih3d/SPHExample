@@ -222,12 +222,25 @@ end
 # Fused prescribed motion and cell relative positions before DBC interactions
 #---------------------------------------------------------------
 
+@inline store_inverse_density!(::Nothing, i, density) = nothing
+@inline function store_inverse_density!(cache, i, density)
+    @inbounds cache[i] = inv(density)
+    return nothing
+end
+
+@inline interaction_inverse_density(::Nothing, i, density) = inv(density)
+@inline interaction_inverse_density(cache, i, density) = @inbounds cache[i]
+
+@inline divide_by_density(value, ::Nothing, i, density) = value / density
+@inline divide_by_density(value, cache, i, density) = value * interaction_inverse_density(cache, i, density)
+
 function prepare_interactions_kernel!(Position, step, n::Int32,
-                                      PosCells, CellID, grid, H, Velocity, ParticleType, GroupMarker, motion)
+                                      PosCells, CellID, grid, H, Velocity, ParticleType, GroupMarker, motion, InvDensity, Density)
     step_active(step) || return nothing
     i = thread_index()
     i > n && return nothing
     @inbounds begin
+        InvDensity === nothing || store_inverse_density!(InvDensity, i, Density[i])
         if motion !== nothing
             apply_motion!(i, Position, Velocity, ParticleType, GroupMarker, motion, step_dt(step) / 2, step_time(step))
             store_moved_pos_cell!(PosCells, i, Position, ParticleType, CellID, grid, H)
@@ -246,17 +259,20 @@ Prepare cell relative positions and optionally apply prescribed motion in one
 pass before DBC interactions. With `motion`, only the cell relative positions
 of the `Moving` particles are refreshed (the final step and the cell list
 rebuild keep the others current); without, those of every particle. No kernel
-is launched when neither preparation is needed. Reciprocal densities are
-evaluated inside the interaction kernel.
+is launched when no preparation is needed. With `inverse_density` and `Density`,
+refresh the reciprocal cache from the evaluated state in the same pass.
 """
 function launch_prepare_interactions!(Position, step;
                                       pos_cells = nothing, CellID = nothing, grid = nothing, H = nothing,
-                                      Velocity = nothing, ParticleType = nothing, GroupMarker = nothing, motion = nothing)
-    pos_cells === nothing && motion === nothing && return nothing
+                                      Velocity = nothing, ParticleType = nothing, GroupMarker = nothing, motion = nothing,
+                                      inverse_density = nothing, Density = nothing)
+    inverse_density === nothing || (Density !== nothing && length(inverse_density) == length(Density) == length(Position)) ||
+        throw(DimensionMismatch("Reciprocal cache and evaluated density must have one entry per particle"))
+    pos_cells === nothing && motion === nothing && inverse_density === nothing && return nothing
     n = length(Position)
     n == 0 && return nothing
     @cuda threads=ELEMENTWISE_THREADS blocks=cld(n, ELEMENTWISE_THREADS) prepare_interactions_kernel!(
-        Position, step, Int32(n), pos_cells, CellID, grid, H, Velocity, ParticleType, GroupMarker, motion)
+        Position, step, Int32(n), pos_cells, CellID, grid, H, Velocity, ParticleType, GroupMarker, motion, inverse_density, Density)
     return nothing
 end
 
@@ -311,7 +327,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                              CellStart, CellID, gridarg, step,
                              SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
                              ::Val{FlagKernel}, ::Val{FlagShift}, ::Val{BoundaryForces}, ::Val{K},
-                             boundary_data, n::Int32, ::Val{Radial} = Val(false), ::Val{ScalarSPS} = Val(false)) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS}
+                             boundary_data, InvDensity, n::Int32, ::Val{Radial} = Val(false), ::Val{ScalarSPS} = Val(false)) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -336,7 +352,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
         vᵢ  = boundary_velocity(boundary_data, Velocity, ParticleType, i, slotᵢ)
         viscous_vᵢ = boundary_viscous_velocity(boundary_data, Velocity, ParticleType, i, slotᵢ)
         ρᵢ  = Density[i]
-        ρᵢ⁻¹ = inv(ρᵢ)
+        ρᵢ⁻¹ = interaction_inverse_density(InvDensity, i, ρᵢ)
         Pᵢ  = Pressure[i]
         typeᵢ = ParticleType[i]
         MLᵢ = MotionLimiterValue(T, typeᵢ)
@@ -374,7 +390,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         end
 
                         ρⱼ   = Density[j]
-                        ρⱼ⁻¹ = inv(ρⱼ)
+                        ρⱼ⁻¹ = interaction_inverse_density(InvDensity, j, ρⱼ)
                         vⱼ   = boundary_velocity(boundary_data, Velocity, ParticleType, j, slotⱼ)
                         vᵢⱼ  = vᵢ - vⱼ
                         density_symmetric_term = Radial ? -radial_factor * dot(vᵢⱼ, xᵢⱼ) : dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
@@ -429,7 +445,8 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
 
                             Pⱼ   = Pressure[j]
                             Pfac = (Pᵢ + Pⱼ) * (ρᵢ⁻¹ * ρⱼ⁻¹)
-                            f_ab = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
+                            f_ab = InvDensity === nothing ? tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx) :
+                                tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx, ρᵢ⁻¹, ρⱼ⁻¹)
                             dvdt = -m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
                             acc += dvdt + visc
                         end
@@ -487,7 +504,8 @@ end
 Launch the gather interaction kernel. `Position`, `Density`, `Pressure` and
 `Velocity` are the arrays of the state being evaluated (the half step arrays
 for the second neighbour loop). Reciprocal densities are computed on demand
-from that state, once per target and once per accepted neighbor. The viscosity and diffusion models
+from that state, once per target and once per accepted neighbor, unless
+`inverse_density` supplies a cache refreshed from exactly that state. The viscosity and diffusion models
 receive the densities and reciprocals of this state as arguments, like the
 CPU code. Custom models additionally get the same arrays as the NamedTuple
 `SimParticles`, so nothing in the kernel can read a stale state. `grid` is a
@@ -515,7 +533,9 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
                               SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
                               FlagKernel::Val, FlagShift::Val; threads::Integer = 128, lanes::Val = Val(1),
                               boundary_forces::Val = Val(true), pos_cells = nothing, boundary_data = nothing,
-                              radial::Val = Val(false), scalar_sps::Val = Val(false))
+                              radial::Val = Val(false), scalar_sps::Val = Val(false), inverse_density = nothing)
+    inverse_density === nothing || length(inverse_density) == length(Density) ||
+        throw(DimensionMismatch("Reciprocal cache must have one entry per evaluated density"))
     n = length(Position)
     n == 0 && return nothing
     K = typeof(lanes).parameters[1]
@@ -529,7 +549,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
         Pairs, Position, Density, Pressure, Velocity, ParticleType, SimParticles,
         CellStart, CellID, grid, step,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, Int32(n), use_radial, use_scalar_sps)
+        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, Int32(n), use_radial, use_scalar_sps)
     return nothing
 end
 
@@ -552,7 +572,7 @@ end
 # schedule the type load independently of the distance calculation.
 @inline function mdbc_range(b, A::SMatrix{DP, DP, T}, jlo::Int32, jhi::Int32, lane::Int32, ::Val{K}, ref,
                             Pairs, rowcell::Int32, row::CellRow, s, Density, ParticleType, SimKernel,
-                            m₀, Velocity = nothing) where {K, DP, T}
+                            m₀, Velocity = nothing, InvDensity = nothing) where {K, DP, T}
     (; h⁻¹, H²) = SimKernel
     j = jlo + lane
     @inbounds while j <= jhi
@@ -567,7 +587,7 @@ end
                 Wᵢⱼ   = SPHKernels.Wᵢⱼ(SimKernel, q)
                 ∇ᵢWᵢⱼ = ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
 
-                Vⱼ    = m₀ / ρⱼ
+                Vⱼ    = divide_by_density(m₀, InvDensity, j, ρⱼ)
                 VⱼWᵢⱼ = Vⱼ * Wᵢⱼ
 
                 b = mdbc_accumulate(b, m₀, Wᵢⱼ, ∇ᵢWᵢⱼ, VⱼWᵢⱼ, Velocity, j)
@@ -588,7 +608,7 @@ end
 # `rowcell` for `pair_vector` is the (possibly virtual, never dereferenced)
 # linear index of the cell of the row with the node's first coordinate.
 @inline function mdbc_rows(b, A, ref, lg, grid::CellGrid{2}, CellStart, Pairs, s,
-                           Density, ParticleType, SimKernel, m₀, lane, lanes::Val, Velocity = nothing)
+                           Density, ParticleType, SimKernel, m₀, lane, lanes::Val, Velocity = nothing, InvDensity = nothing)
     n1, n2 = grid.dims
     R   = reach(grid)
     xlo = max(lg[1] - R, Int32(0))
@@ -602,7 +622,7 @@ end
                 jhi     = CellStart[row0 + (xhi - xlo) + Int32(1)]
                 rowcell = row0 + (lg[1] - xlo)
                 b, A = mdbc_range(b, A, jlo, jhi, lane, lanes, ref, Pairs, rowcell, CellRow(Int32(0), dy, Int32(0)),
-                                  s, Density, ParticleType, SimKernel, m₀, Velocity)
+                                  s, Density, ParticleType, SimKernel, m₀, Velocity, InvDensity)
             end
         end
     end
@@ -610,7 +630,7 @@ end
 end
 
 @inline function mdbc_rows(b, A, ref, lg, grid::CellGrid{3}, CellStart, Pairs, s,
-                           Density, ParticleType, SimKernel, m₀, lane, lanes::Val, Velocity = nothing)
+                           Density, ParticleType, SimKernel, m₀, lane, lanes::Val, Velocity = nothing, InvDensity = nothing)
     n1, n2, n3 = grid.dims
     R   = reach(grid)
     xlo = max(lg[1] - R, Int32(0))
@@ -627,7 +647,7 @@ end
                         jhi     = CellStart[row0 + (xhi - xlo) + Int32(1)]
                         rowcell = row0 + (lg[1] - xlo)
                         b, A = mdbc_range(b, A, jlo, jhi, lane, lanes, ref, Pairs, rowcell, CellRow(Int32(0), dy, dz),
-                                          s, Density, ParticleType, SimKernel, m₀, Velocity)
+                                          s, Density, ParticleType, SimKernel, m₀, Velocity, InvDensity)
                     end
                 end
             end
@@ -643,7 +663,7 @@ end
 # position precision `TP`, `Pairs` is the pair source (see `pair_vector`).
 function mdbc_kernel!(Density::AbstractVector{T}, Pressure, Position::AbstractVector{SVector{D, TP}}, Pairs,
                       GhostPoints, GhostIndex, ParticleType, CellStart, gridarg, step,
-                      SimKernel, SimConstants, ::Val{K}, ::Val{Compact}, nghost::Int32) where {D, T, TP, K, Compact}
+                      SimKernel, SimConstants, InvDensity, ::Val{K}, ::Val{Compact}, nghost::Int32) where {D, T, TP, K, Compact}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -670,7 +690,7 @@ function mdbc_kernel!(Density::AbstractVector{T}, Pressure, Position::AbstractVe
         lg  = ntuple(d -> cg[d] - grid.origin[d], Val(D))
         ref = mdbc_reference(Pairs, gp, cg, s)
         b, A = mdbc_rows(b, A, ref, lg, grid, CellStart, Pairs, s, Density, ParticleType, SimKernel, m₀,
-                         lane, Val(K))
+                         lane, Val(K), nothing, InvDensity)
     end
 
     if K > 1
@@ -697,6 +717,7 @@ function mdbc_kernel!(Density::AbstractVector{T}, Pressure, Position::AbstractVe
             ρ = isnan(v) ? ρ₀ : v
         end
         Density[i]  = ρ
+        store_inverse_density!(InvDensity, i, ρ)
         Pressure[i] = EquationOfStateGamma7(ρ, c₀, ρ₀)
     end
     return nothing
@@ -716,17 +737,19 @@ fluid neighbours of a node are then found through it, see `GPUCellGrid`).
 
 With `compact_ghosts = Val(true)`, `GhostPoints` is indexed by owner slot
 rather than particle index; otherwise the full-particle layout is retained.
+`inverse_density` must contain the current fluid reciprocals before launch;
+corrected boundary entries are refreshed by this kernel.
 """
 function launch_mdbc!(Density, Pressure, Position, GhostPoints, GhostIndex, ParticleType, CellStart, grid, step,
                       SimKernel, SimConstants; threads::Integer = 128, lanes::Val = Val(1), pos_cells = nothing,
-                      compact_ghosts::Val = Val(false))
+                      compact_ghosts::Val = Val(false), inverse_density = nothing)
     n = length(GhostIndex)
     n == 0 && return nothing
     K = typeof(lanes).parameters[1]
     Pairs = pos_cells === nothing ? Position : pos_cells
     @cuda threads=threads blocks=cld(n * K, threads) mdbc_kernel!(
         Density, Pressure, Position, Pairs, GhostPoints, GhostIndex, ParticleType, CellStart, grid, step,
-        SimKernel, SimConstants, lanes, compact_ghosts, Int32(n))
+        SimKernel, SimConstants, inverse_density, lanes, compact_ghosts, Int32(n))
     return nothing
 end
 
@@ -741,7 +764,7 @@ include("UpdatedMDBC.jl")
 function half_step_kernel!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, Pressure,
                            Position, Velocity, Acceleration, Density, dρdtI,
                            ParticleType, GroupMarker, motion, step, SimConstants,
-                           PosCellsₙ⁺, CellID, gridarg, H, boundary_mode,
+                           PosCellsₙ⁺, CellID, gridarg, H, boundary_mode, InvDensity,
                            ::Val{ReusePredictors}, ::Val{FirstMotion}, n::Int32) where {ReusePredictors, FirstMotion}
     step_active(step) || return nothing
     i = thread_index()
@@ -767,6 +790,7 @@ function half_step_kernel!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, Pressure,
         ρ = Density[i] + dρdtI[i] * dt₂
         ρ = boundary_mode isa UpdatedMDBC && is_wall(type) ? Density[i] : limit_density(ρ, ρ₀, ML)
         ρₙ⁺[i] = ρ
+        store_inverse_density!(InvDensity, i, ρ)
 
         store_pos_cell!(PosCellsₙ⁺, i, xₙ⁺, CellID, gridarg, H)
 
@@ -790,12 +814,14 @@ before constructing the predictor, for single-neighbor DBC steps.
 Fixed position/velocity entries must be initialized after every rebuild; this
 kernel leaves them untouched. Density and cell-relative preparation still cover
 every particle.
+With `inverse_density`, prediction also writes each predictor reciprocal.
 """
 function launch_half_step!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, Pressure,
                            Position, Velocity, Acceleration, Density, dρdtI,
                            ParticleType, GroupMarker, motion, step, SimConstants;
                            pos_cells = nothing, CellID = nothing, grid = nothing, SimKernel = nothing,
-                           boundary_mode = SimpleMDBC(), first_motion::Bool = false, reuse_predictors::Bool = false)
+                           boundary_mode = SimpleMDBC(), first_motion::Bool = false, reuse_predictors::Bool = false,
+                           inverse_density = nothing)
     n = length(Position)
     n == 0 && return nothing
     H = SimKernel === nothing ? zero(eltype(Density)) : SimKernel.H
@@ -803,7 +829,7 @@ function launch_half_step!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, Pressure,
         Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, Pressure,
         Position, Velocity, Acceleration, Density, dρdtI,
         ParticleType, GroupMarker, motion, step, SimConstants,
-        pos_cells, CellID, grid, H, boundary_mode, Val(reuse_predictors), Val(first_motion), Int32(n))
+        pos_cells, CellID, grid, H, boundary_mode, inverse_density, Val(reuse_predictors), Val(first_motion), Int32(n))
     return nothing
 end
 
@@ -852,7 +878,7 @@ end
 function final_step_kernel!(Position, Velocity, Acceleration, Density, Pressure, dρdtI, ρₙ⁺, Positionₙ⁺,
                             Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
                             partial, ::Val{FlagShift}, boundary_mode, GhostPoints, GhostNormals, BoundarySlots,
-                            PosCells, CellID, gridarg, ::Val{CommitStep}, n::Int32) where {FlagShift, CommitStep}
+                            PosCells, CellID, gridarg, InvDensity, ::Val{CommitStep}, n::Int32) where {FlagShift, CommitStep}
     step_active(step) || return nothing
     dt = step_dt(step)
     (; g, ρ₀, c₀) = SimConstants
@@ -868,7 +894,7 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, Pressure,
         # DensityEpsi! followed by LimitDensityAtBoundary! (CPU order: "07
         # Final Density", "08 Final LimitDensityAtBoundary")
         ρ    = Density[i]
-        epsi = -(dρdtI[i] / ρₙ⁺[i]) * dt
+        epsi = -divide_by_density(dρdtI[i], InvDensity, i, ρₙ⁺[i]) * dt
         ρ   *= (2 - epsi) / (2 + epsi)
         ρ    = boundary_mode isa UpdatedMDBC && is_wall(type) ? ρₙ⁺[i] : limit_density(ρ, ρ₀, ML)
         Density[i]  = ρ
@@ -925,12 +951,15 @@ With `pos_cells` (the `PosCell` array of the start-of-step positions) the
 kernel also writes the cell relative form of the new positions for the cell
 list whose sorted cell ids are `CellID`, so the next step needs no separate
 pass; `CellID` and `grid` are then required.
+`inverse_density` must hold the evaluated predictor reciprocals, including any
+boundary corrections, for reuse in the final density update.
 """
 function launch_final_step!(Position, Velocity, Acceleration, Density, Pressure, dρdtI, ρₙ⁺, Positionₙ⁺,
                             Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
                             red::ReductionWorkspace, FlagShift::Val; boundary_mode = SimpleMDBC(),
                             ghost_points = nothing, ghost_normals = nothing, boundary_slots = nothing,
-                            pos_cells = nothing, CellID = nothing, grid = nothing, commit_step::Bool = false)
+                            pos_cells = nothing, CellID = nothing, grid = nothing, commit_step::Bool = false,
+                            inverse_density = nothing)
     commit_step && red.nblocks != 1 && throw(ArgumentError("fused commit requires one reduction block"))
     n = length(Position)
     n == 0 && return nothing
@@ -938,7 +967,7 @@ function launch_final_step!(Position, Velocity, Acceleration, Density, Pressure,
         Position, Velocity, Acceleration, Density, Pressure, dρdtI, ρₙ⁺, Positionₙ⁺,
         Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
         red.partial, FlagShift, boundary_mode, ghost_points, ghost_normals, boundary_slots,
-        pos_cells, CellID, grid, Val(commit_step), Int32(n))
+        pos_cells, CellID, grid, inverse_density, Val(commit_step), Int32(n))
     return nothing
 end
 

@@ -76,6 +76,14 @@ updates and requested boundary-force calculations are unchanged.
 Host fields and exported types are unchanged; out-of-range metadata retains
 its original width. `false` keeps the previous full GPU allocation layout.
 
+`GPUCacheInteractionFields = true` stores reciprocal density per particle for
+reuse by the interaction loops, using an additional `sizeof(FloatType)` bytes
+per particle. Pressure and cell-relative positions are already cached when
+needed. The reciprocal buffer is shared between evaluated states and refreshed
+after density prediction and boundary corrections. This option is independent
+of `GPUCompactBuffers`, defaults to `false`, and trades device memory for fewer
+neighbor-loop divisions; elapsed speed depends on the case and GPU.
+
 `GPURadialInteractions = true` opts into experimental scalar Wendland C2 pair contractions
 for supported linear diffusion and built-in viscosity models. Linear diffusion
 uses the symmetric reciprocal-density average `(ρᵢ⁻¹ + ρⱼ⁻¹) / 2`, changing
@@ -127,6 +135,7 @@ mutable struct SimulationMetaData{Dimensions,
     GPUUseGraph::Bool            # replay the launch sequence of a step as a CUDA graph
     GPUCellSubdivision::Int      # cells per support radius H per axis (1: edge H, 3^D stencil; 2: edge H/2, 5^D stencil)
     GPUDoublePosition::Bool      # integrate positions in Float64 (pair loops use cell relative positions in FloatType)
+    GPUCacheInteractionFields::Bool # cache reciprocal density for interaction loops
     GPUCompactBuffers::Bool      # omit unused buffers and narrow GPU-only metadata when lossless
     GPUOutputQueueBytes::Int     # reusable host frames between collector and disk writer
     GPUOutputBufferBytes::Int    # host memory that holds output frames before they are written to the file
@@ -238,6 +247,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUUseGraph::Bool                       = true,
         GPUCellSubdivision::Int                 = 1,
         GPUDoublePosition::Bool                 = false,
+        GPUCacheInteractionFields::Bool         = false,
         GPUCompactBuffers::Bool                 = true,
         GPUOutputQueueBytes::Int                = 256 * 2^20,
         GPUOutputBufferBytes::Int               = 256 * 2^20,
@@ -255,7 +265,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         OutputVariables, OpenLogFile, TimeSteppingMode,
         GPUSyncTimers, GPUDeterministicSort, GPUMaxCells, GPUInteractionThreads, GPULanesPerParticle, GPURadialInteractions, GPUScalarSPSViscosity,
         GPUBoundaryForces, GPUAsyncOutput, GPUMaxStepsPerSync, GPUUseGraph, GPUCellSubdivision,
-        GPUDoublePosition, GPUCompactBuffers, GPUOutputQueueBytes, GPUOutputBufferBytes,
+        GPUDoublePosition, GPUCacheInteractionFields, GPUCompactBuffers, GPUOutputQueueBytes, GPUOutputBufferBytes,
     )
 end
 

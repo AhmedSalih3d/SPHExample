@@ -37,8 +37,9 @@ function fixture(D, T; double_position = false, types = (Fixed, Fluid, Moving, F
     return (; host, metadata, geometry, constants, kernel)
 end
 
-function context(f, D, T; compact, forces, single, lanes)
+function context(f, D, T; compact, forces, single, lanes, cache = false)
     f.metadata.GPUCompactBuffers = compact
+    f.metadata.GPUCacheInteractionFields = cache
     gpu = upload_particles(f.host, f.metadata)
     cl = CellListWorkspace{D, position_float_type(f.metadata)}(length(f.host))
     sup = GPUSupportArrays{D, T}(gpu, f.metadata)
@@ -74,6 +75,51 @@ function snapshot(ctx)
 end
 
 @testset "stationary boundary predictors" begin
+    @testset "cached reciprocals follow prediction, sorting and graph replay" begin
+        for D in (2, 3), T in (Float32, Float64), double_position in (false, true),
+            compact in (false, true), single in (false, true)
+            f = fixture(D, T; double_position)
+            reference = context(f, D, T; compact, single, forces = true, lanes = 4)
+            cached = context(f, D, T; compact, single, forces = true, lanes = 4, cache = true)
+            @test reference.sup.InvDensity === nothing
+            @test length(cached.sup.InvDensity) == length(f.host)
+            bytes = GPUMemoryBenchmark.device_buffer_bytes
+            @test bytes(cached.sup) - bytes(reference.sup) == length(f.host) * sizeof(T)
+            @test length(GPUSupportArrays{D, T}(length(f.host), f.metadata).InvDensity) == length(f.host)
+            for pass in 1:2
+                for _ in 1:3
+                    DRIVER.launch_step_graph!(reference)
+                    DRIVER.launch_step_graph!(cached)
+                end
+                a, b = snapshot(cached), snapshot(reference)
+                for field in keys(a.state)
+                    if field in (:ID, :Type, :GroupMarker)
+                        @test a.state[field] == b.state[field]
+                    else
+                        @test a.state[field] ≈ b.state[field] rtol = 50eps(T) atol = 50eps(T)
+                    end
+                end
+                @test a.density_rate ≈ b.density_rate rtol = 50eps(T) atol = 50eps(T)
+                for field in keys(a.body)
+                    @test a.body[field] ≈ b.body[field] rtol = 50eps(T) atol = 50eps(T)
+                end
+                @test a.flags == b.flags
+                # The final integration changes full density; the cache still belongs
+                # to the predictor evaluated by the corrector.
+                @test Array(cached.sup.InvDensity) ≈ inv.(Array(cached.sup.ρₙ⁺)) rtol = 2eps(T)
+                for ctx in (reference, cached)
+                    DRIVER.rebuild_cell_list!(ctx.gpu, ctx.cl, f.kernel.H⁻¹;
+                        support = ctx.sup, floating = ctx.floating, constants = f.constants, kernel = f.kernel,
+                        discard_acceleration = true)
+                    if single
+                        DRIVER.enqueue_state_derivative!(ctx, ctx.state, false, "mdbc", "rebuild")
+                    end
+                end
+            end
+            @test !isempty(cached.state.graphs)
+        end
+    end
+
     @testset "exact predictor savings by sharing reorder scratch" begin
         for D in (2, 3), T in (Float32, Float64), double_position in (false, true),
             types in ((Fixed,), (Fluid,), (Moving,), (Fixed, Fluid, Moving, Floating), ())

@@ -141,5 +141,16 @@ end
     return eps_val * ( ((Pᵢ/ρᵢ^2) + (Pⱼ/ρⱼ^2)) * (Wij_q / Wij_dx)^n )
 end
 
+# Keep custom kernels on their established API; built-in cubic splines can
+# reuse the reciprocals already loaded by the cached interaction path.
+@inline tensile_correction(instance, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx, ρᵢ⁻¹, ρⱼ⁻¹) =
+    tensile_correction(instance, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
+
+@inline function tensile_correction(instance::SPHKernelInstance{<:CubicSpline}, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx, ρᵢ⁻¹, ρⱼ⁻¹; n = 4)
+    Wij_q = Wᵢⱼ(instance, q)
+    Wij_dx = Wᵢⱼ(instance, dx)
+    return instance.kernel.eps * ((Pᵢ * ρᵢ⁻¹^2 + Pⱼ * ρⱼ⁻¹^2) * (Wij_q / Wij_dx)^n)
+end
+
 
 end # module

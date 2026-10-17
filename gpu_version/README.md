@@ -1112,6 +1112,7 @@ definitions in `benchmark/cases.jl` construct against either package.
 | `GPUUseGraph` | `true` | Cache CUDA graphs of 1, 2, 4, 8, 16, and 32 steps and compose each host batch from them. Disabled automatically with `GPUSyncTimers`. |
 | `GPUCellSubdivision` | `1` | Positive integer `R`: cells of edge `H/R`, a `(2R+1)^D` stencil, and `(2R+1)^(D-1)` contiguous row ranges. `1` reproduces the CPU grid, `2` uses half-width cells, and `4` uses quarter-width cells. Finer grids reduce candidates but increase dense-grid memory, row overhead and mDBC work. With reference interactions, only `1` reproduces the CPU's density-diffusion pair orientation. Radial symmetric diffusion removes that orientation dependence; accumulation and SPS rounding can still differ. Benchmark the intended precision, lane count and boundary mode before changing it. |
 | `GPUDoublePosition` | `false` | Store and integrate the particle positions (and the mDBC ghost node positions) in `Float64` while everything else stays in `FloatType`; the pair loops use cell relative `FloatType` coordinates (see "Double positions" above). Use it for `Float32` runs of domains far from the origin or with many steps. No effect with `FloatType = Float64`. Allocate the particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so that the input is read in `Float64`. |
+| `GPUCacheInteractionFields` | `false` | Cache inverse density per particle for reuse in neighbor interactions. Adds one `FloatType` scalar per particle (4 bytes with `Float32`, 8 with `Float64`), independently of `GPUCompactBuffers`. Refreshed for each evaluated density state, including predictor and mDBC corrections. Trades memory for fewer divisions; benchmark elapsed solver time for your case. |
 | `GPUCompactBuffers` | `true` | Omit unused ghost, kernel-output and shifting buffers; store enabled mDBC ghosts and Updated mDBC state only for ghost-owning boundaries, without ghost reorder scratch; share position/velocity predictors with existing reorder scratch; and remove acceleration/pressure sorting shadows. Pressure is reconstructed from sorted density with the selected EOS; acceleration is refreshed before post-rebuild readers. Fixed predictor writes are skipped; boundary density and requested force calculations are retained. GPU IDs use `Int32` and group markers `UInt32` only when every value fits; otherwise each field independently retains its original width. Host particle fields, output types, precision and neighbor ranges are unchanged. `false` restores the previous full allocation layout. |
 | `GPUOutputQueueBytes` | `256 * 2^20` | Separate host memory budget for reusable frames between the download collector and disk writer; at least one frame. Used with `GPUAsyncOutput`. |
 | `GPUOutputBufferBytes` | `256 * 2^20` | Host memory for output frames that are held before they are written to the single `vtkhdf` file (see "Asynchronous output"). The number of frames per flush uses the particle fields plus an initial grid-size estimate, at least 1 and at most 16. Dense grid frames are checked against the remaining byte budget and can flush sooner; a frame larger than the budget is written immediately. `0` writes every frame at once. |
@@ -1159,6 +1160,31 @@ Focused logging regressions (host tests also run without a GPU):
 julia --project=gpu_version -t 2,0 gpu_version/test/logging.jl
 julia --project=. -t 2,0 test/logging.jl
 ```
+
+### Cached interaction fields
+
+Set `GPUCacheInteractionFields = true` in `SimulationMetaData` to reuse inverse
+density from device memory instead of recomputing it for every accepted neighbor.
+`example/FloatingCylinder2d.jl` enables this option. Pressure and, with mixed
+position precision, cell-relative positions are already stored per particle.
+The inverse-density cache uses one dense vector shared between the full and
+predictor states. It is refreshed after prediction and boundary corrections,
+and recomputed after sorting before interactions read it. It adds no reorder
+scratch and works with either compact or full buffers, both time stepping
+schemes, prescribed motion, floating bodies, and CUDA graphs.
+
+The stored reciprocals feed continuity, pressure forces, diffusion, shifting,
+SPS stresses, ghost-node `m/ρ` weights, the final density update and cubic-spline
+tensile correction. Existing `m * invρ` terms also reuse the cache. Pair-dependent
+denominators such as `ρᵢ + ρⱼ` are evaluated from the pair densities.
+
+The option preserves the interaction formulas and pair ordering. Separating
+reciprocal calculation from interactions can still change floating-point
+rounding. The extra reads and preparation work mean a speedup is case dependent;
+compare warmed whole-solver runs with matching step and rebuild counts. No fixed
+saving per physical second is guaranteed. Leave it `false` for minimum storage.
+Select it before allocating support arrays; changing it during a run requires
+reallocating those arrays and the step/graph state.
 
 ### Compact GPU buffers
 

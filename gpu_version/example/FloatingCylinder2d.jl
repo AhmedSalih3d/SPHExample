@@ -110,6 +110,8 @@ let
         OpenLogFile = true,
         # positions up to 16 m: integrate them in Float64, the rest in Float32
         GPUDoublePosition = true,
+        # Cache inverse density per particle (4 extra device bytes with Float32).
+        GPUCacheInteractionFields = true,
     )
     mkpath(SimMetaDataFloating.SaveLocation)
 
