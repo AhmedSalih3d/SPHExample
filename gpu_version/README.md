@@ -962,7 +962,9 @@ the standard *gather* formulation:
   disk writes run separately. With only one CPU thread, blocking writes can
   still interrupt simulation launches.
   `GPUOutputQueueBytes` budgets the queued particle and floating-body arrays separately from the
-  file batching budget (at least one frame is allocated). No frames are dropped:
+  file batching budget. Host frames are allocated on demand and reused before
+  the pool grows, up to the budget (with capacity for at least one frame).
+  No frames are dropped:
   sustained disk throughput below frame production eventually fills the queue
   and makes the simulation wait. GPU downloads still precede subsequent kernels
   on the simulation stream. File writes
@@ -1118,7 +1120,7 @@ definitions in `benchmark/cases.jl` construct against either package.
 | `GPUDoublePosition` | `false` | Store and integrate the particle positions (and the mDBC ghost node positions) in `Float64` while everything else stays in `FloatType`; the pair loops use cell relative `FloatType` coordinates (see "Double positions" above). Use it for `Float32` runs of domains far from the origin or with many steps. No effect with `FloatType = Float64`. Allocate the particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so that the input is read in `Float64`. |
 | `GPUCacheInteractionFields` | `false` | Cache inverse density per particle for reuse in neighbor interactions. Adds one `FloatType` scalar per particle (4 bytes with `Float32`, 8 with `Float64`), independently of `GPUCompactBuffers`. Refreshed for each evaluated density state, including predictor and mDBC corrections. Trades memory for fewer divisions; benchmark elapsed solver time for your case. |
 | `GPUCompactBuffers` | `true` | Omit unused ghost, kernel-output and shifting buffers; store enabled mDBC ghosts and Updated mDBC state only for ghost-owning boundaries, without ghost reorder scratch; share position/velocity predictors with existing reorder scratch; and remove acceleration/pressure sorting shadows. Pressure is reconstructed from sorted density with the selected EOS; acceleration is refreshed before post-rebuild readers. Fixed predictor writes are skipped; boundary density and requested force calculations are retained. GPU IDs use `Int32` and group markers `UInt32` only when every value fits; otherwise each field independently retains its original width. Host particle fields, output types, precision and neighbor ranges are unchanged. `false` restores the previous full allocation layout. |
-| `GPUOutputQueueBytes` | `256 * 2^20` | Separate host memory budget for reusable frames between the download collector and disk writer; at least one frame. Used with `GPUAsyncOutput`. |
+| `GPUOutputQueueBytes` | `256 * 2^20` | Separate host memory budget for frames between the download collector and disk writer. Allocated on demand and reused; capacity for at least one frame. Used with `GPUAsyncOutput`. |
 | `GPUOutputBufferBytes` | `256 * 2^20` | Host memory for output frames that are held before they are written to the single `vtkhdf` file (see "Asynchronous output"). The number of frames per flush uses the particle fields plus an initial grid-size estimate, at least 1 and at most 16. Dense grid frames are checked against the remaining byte budget and can flush sooner; a frame larger than the budget is written immediately. `0` writes every frame at once. |
 
 `OutputTimes` also accepts `Float64` values or vectors when `FloatType = Float32`.
@@ -1663,6 +1665,15 @@ checks that in water a neutrally buoyant body stays put while a heavier one
 sinks. `test/lid_driven_cavity.jl` checks the extended lid geometry, generated
 mDBC ghost nodes, bounded wall/fluid densities in a short cavity run, and the
 wall-wall continuity regression on a fixed wall next to a sliding wall.
+
+`test/output_queue.jl` checks lazy frame allocation, reuse, bounded backpressure,
+frame ordering and writer-failure propagation. `test/floating_output.jl` compares
+queued and synchronous floating-body CSV and particle output in 2D/3D and both
+precisions. Run the focused output checks with:
+
+```bash
+julia -t 4,0 --project=gpu_version -L gpu_version/test/output_queue.jl gpu_version/test/floating_output.jl
+```
 
 `test/cell_subdivision_benchmark.jl` checks candidate accounting against the
 device, self exclusion versus coincident particles, inclusive support cutoffs,

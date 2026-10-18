@@ -395,6 +395,29 @@ function host_output_frame(prototype::OutputDownload{D}) where {D}
         CUDA.HostMemory[], prototype.event)
 end
 
+# Only the collector acquires frames and updates `allocated`; the writer returns
+# completed frames through `free`. Capacity includes queued and in-use frames.
+mutable struct OutputFramePool{D}
+    prototype::OutputDownload{D}
+    free::Channel{OutputDownload{D}}
+    capacity::Int
+    allocated::Int
+end
+
+function OutputFramePool(prototype::OutputDownload{D}, capacity::Int) where {D}
+    capacity >= 1 || throw(ArgumentError("Output frame pool capacity must be positive"))
+    return OutputFramePool{D}(prototype, Channel{OutputDownload{D}}(capacity), capacity, 0)
+end
+
+function acquire_output_frame!(pool::OutputFramePool)
+    if isready(pool.free) || pool.allocated >= pool.capacity || !isopen(pool.free)
+        return take!(pool.free)
+    end
+    frame = host_output_frame(pool.prototype)
+    pool.allocated += 1
+    return frame
+end
+
 function collect_download!(frame::OutputDownload, staging::OutputDownload)
     CUDA.synchronize(staging.event)
     for (dst, src) in zip(frame.buffers, staging.buffers)
@@ -1515,23 +1538,20 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             (prototype.ghost_index === nothing ? 0 : sizeof(prototype.ghost_index)) +
             (prototype.floating === nothing ? 0 : sum(sizeof, prototype.floating))
         queue_frames = max(1, div(SimMetaData.GPUOutputQueueBytes, max(frame_bytes, 1)))
-        host_free = Channel{OutputDownload{Dimensions}}(queue_frames)
+        host_frames = OutputFramePool(prototype, queue_frames)
         ready = Channel{OutputFrameJob{Dimensions}}(queue_frames)
-        for _ in 1:queue_frames
-            put!(host_free, host_output_frame(prototype))
-        end
         writer = spawn_writer() do
             for job in ready
                 write_frame(job)
-                put!(host_free, job.download)
+                put!(host_frames.free, job.download)
             end
         end
-        bind(host_free, writer)
+        bind(host_frames.free, writer)
         bind(ready, writer)
         collector = spawn_collector() do
             try
                 for job in jobs
-                    frame = take!(host_free)
+                    frame = acquire_output_frame!(host_frames)
                     collect_download!(frame, job.download)
                     put!(free, job.download)
                     put!(ready, OutputFrameJob{Dimensions}(frame, job.counter,
