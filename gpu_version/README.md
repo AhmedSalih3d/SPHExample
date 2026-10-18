@@ -1140,6 +1140,9 @@ CUDA.jl version. It also records dimensionality, physics/position precision and
 particle counts by type, so fluid and boundary populations can be matched when
 comparing with DualSPHysics.
 
+The timing table appears at the bottom of the console output, after the final
+diagnostics and completion message. With `StoreLog`, it also ends the saved log.
+
 Memory figures use exact bytes, MiB (`2^20` bytes) and average bytes per total
 particle, using the actual element types and allocated field lengths:
 

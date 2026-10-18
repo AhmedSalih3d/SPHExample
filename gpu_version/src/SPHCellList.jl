@@ -1607,7 +1607,6 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         output_finalized[] && return nothing
         close_output_streams!()
 
-        show(HourGlass, sortby = :name)
         AutoOpenParaview(SimMetaData, SimConstants, output.variable_names;
             pressure_range = paraview_pressure_range)
 
@@ -1630,6 +1629,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             AutoOpenLogFile(SimLogger, SimMetaData)
         end
 
+        print_timer(HourGlass; sortby = :name)
         output_finalized[] = true
         exit_finalizer[] = nothing
         return nothing

@@ -103,12 +103,15 @@ if CUDA.functional()
         return mktempdir() do dir
             f = fixture(2, Float32, dir; double_position = true, log_mode, async)
             logger = SimulationLogger(dir)
+            console_path = joinpath(dir, "console.log")
             try
-                redirect_stdout(devnull) do
-                    RunSimulation(; SimGeometry = f.geometry, SimMetaData = f.metadata,
-                        SimConstants = f.constants, SimKernel = f.kernel, SimLogger = logger,
-                        SimParticles = f.host, SimViscosity = ZeroViscosity(),
-                        SimDensityDiffusion = ZeroDensityDiffusion(), SimTimeStepping = scheme)
+                open(console_path, "w") do console
+                    redirect_stdout(console) do
+                        RunSimulation(; SimGeometry = f.geometry, SimMetaData = f.metadata,
+                            SimConstants = f.constants, SimKernel = f.kernel, SimLogger = logger,
+                            SimParticles = f.host, SimViscosity = ZeroViscosity(),
+                            SimDensityDiffusion = ZeroDensityDiffusion(), SimTimeStepping = scheme)
+                    end
                 end
             finally
                 close(logger.LoggerIo)
@@ -118,7 +121,8 @@ if CUDA.functional()
                 position = f.host.Position[order], density = f.host.Density[order],
                 velocity = f.host.Velocity[order], pressure = f.host.Pressure[order],
                 acceleration = f.host.Acceleration[order])
-            return (; state, log = read(joinpath(dir, "SimulationOutput.log"), String))
+            return (; state, log = read(joinpath(dir, "SimulationOutput.log"), String),
+                console = read(console_path, String))
         end
     end
 
@@ -148,6 +152,15 @@ if CUDA.functional()
             totals = collect(eachmatch(r"^GPU accounted buffers total: \d+ bytes \(\d+\.\d{4} MiB; \d+\.\d{2} bytes/particle\)"m, logged.log))
             @test length(totals) == 2
             @test occursin("Simulation finished at:", logged.log)
+            for output in (reference.console, logged.console, logged.log)
+                headers = collect(eachmatch(r"(?m)^\s*Section\s+ncalls\b", output))
+                @test length(headers) == 1
+                @test occursin(r"─{10,}\s*\z", output)
+                if occursin("Simulation finished at:", output)
+                    @test first(findfirst("Simulation took", output)) < only(headers).offset
+                    @test first(findfirst("GPU live-buffer memory (final, current cell-list capacity):", output)) < only(headers).offset
+                end
+            end
         end
     end
 end
