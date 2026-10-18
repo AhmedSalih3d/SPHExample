@@ -13,12 +13,17 @@ supported in 2D and 3D, in `Float64` or `Float32`.
 
 * An NVIDIA GPU with a recent driver (CUDA 12 or newer). The CUDA toolkit is
   downloaded automatically by CUDA.jl, `nvcc` is not needed.
-* Julia 1.10 or newer.
+* Julia 1.12 or later in the 1.x series, matching `julia = "^1.12.0"` in
+  [Project.toml](Project.toml).
 
 ## Getting started
 
+Use a supported Julia installation for both dependency installation and example
+runs. Check the selected version before instantiating the GPU package:
+
 ```bash
 # from the repository root
+julia --version # must report 1.12.x or later in the 1.x series
 julia --project=gpu_version -e 'using Pkg; Pkg.instantiate()'
 julia --project=gpu_version gpu_version/example/Dambreak2dMDBC.jl
 ```
