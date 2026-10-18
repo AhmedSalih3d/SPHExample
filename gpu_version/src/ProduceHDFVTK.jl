@@ -135,89 +135,22 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     component_data(arg::AbstractMatrix) = arg
     component_data(arg::AbstractVector) = ncomponents(arg) == 3 ? stack(arg) : arg
 
-    """
-    Compute points and connectivity information for an unstructured grid given
-    `UniqueCells` from the SPH cell list.  Returns `(points, connectivity,
-    offsets, cell_types, cell_data, dims)` where `dims` is 2 or 3.
-    """
     # Edge length of the exported cells: `H` divided by the number of cells
     # per support radius of the GPU grid (`GPUCellSubdivision`).
     grid_cell_edge(SimKernel, SimMetaData) = SimKernel.H / SimMetaData.GPUCellSubdivision
 
-    function compute_grid_geometry(cell_edge::Real, UniqueCells)
-        ExtractDimensionality(::AbstractVector{CartesianIndex{N}}) where N = N
-
-        dims = ExtractDimensionality(UniqueCells)
-
-        dx = dy = dz = Float64(cell_edge)
-
-        if dims == 2
-            minx, maxx = minimum(ci -> ci[1], UniqueCells), maximum(ci -> ci[1], UniqueCells)
-            miny, maxy = minimum(ci -> ci[2], UniqueCells), maximum(ci -> ci[2], UniqueCells)
-            nx = maxx - minx + 1
-        elseif dims == 3
-            minx, maxx = minimum(ci -> ci[1], UniqueCells), maximum(ci -> ci[1], UniqueCells)
-            miny, maxy = minimum(ci -> ci[2], UniqueCells), maximum(ci -> ci[2], UniqueCells)
-            minz, maxz = minimum(ci -> ci[3], UniqueCells), maximum(ci -> ci[3], UniqueCells)
-            nx = maxx - minx + 1
-            ny = maxy - miny + 1
-        else
-            error("Dimensionality of UniqueCells must be 2 or 3, got $dims")
-        end
-
-        points       = Vector{SVector{3, Float64}}()
-        connectivity = Int[]
-        offsets      = Int[0]
-        cell_types   = UInt8[]
-        cell_data    = Int[]
-
-        vtk_type = dims == 2 ? UInt8(9) : UInt8(12)  # QUAD or HEXADRON
-
-        for cell in UniqueCells
-            id = if dims == 2
-                (cell[2] - miny) * nx + (cell[1] - minx) + 1
-            else
-                (cell[3] - minz) * (nx * ny) + (cell[2] - miny) * nx + (cell[1] - minx) + 1
-            end
-
-            corners = if dims == 2
-                xi, yi = cell.I
-                xmin, xmax = (xi - 0.5) * dx, (xi + 0.5) * dx
-                ymin, ymax = (yi - 0.5) * dy, (yi + 0.5) * dy
-                [
-                    SVector(xmin, ymin, 0.0),
-                    SVector(xmax, ymin, 0.0),
-                    SVector(xmax, ymax, 0.0),
-                    SVector(xmin, ymax, 0.0),
-                ]
-            else
-                xi, yi, zi = cell.I
-                xmin, xmax = (xi - 0.5) * dx, (xi + 0.5) * dx
-                ymin, ymax = (yi - 0.5) * dy, (yi + 0.5) * dy
-                zmin, zmax = (zi - 0.5) * dz, (zi + 0.5) * dz
-                [
-                    SVector(xmin, ymin, zmin),
-                    SVector(xmax, ymin, zmin),
-                    SVector(xmax, ymax, zmin),
-                    SVector(xmin, ymax, zmin),
-                    SVector(xmin, ymin, zmax),
-                    SVector(xmax, ymin, zmax),
-                    SVector(xmax, ymax, zmax),
-                    SVector(xmin, ymax, zmax),
-                ]
-            end
-
-            n = length(points)
-            append!(points, corners)
-            for j = 0:length(corners)-1
-                push!(connectivity, n + j)
-            end
-            push!(offsets, length(connectivity))
-            push!(cell_types, vtk_type)
-            push!(cell_data, id)
-        end
-
-        return points, connectivity, offsets, cell_types, cell_data, dims
+    """
+    Compute points and connectivity for a nonempty vector of 2D or 3D cells.
+    Returns `(points, connectivity, offsets, cell_types, cell_data, dims)`, with
+    `points::Vector{SVector{3, Float64}}`, using `fill_grid_geometry!` for the
+    geometry calculations.
+    """
+    function compute_grid_geometry(cell_edge::Real, UniqueCells::AbstractVector{CartesianIndex{D}}) where {D}
+        isempty(UniqueCells) && throw(ArgumentError("UniqueCells must not be empty"))
+        buf = GridGeometryBuffers()
+        fill_grid_geometry!(buf, cell_edge, UniqueCells)
+        points = collect(reinterpret(SVector{3, Float64}, vec(buf.points)))
+        return points, buf.connectivity, buf.offsets, buf.types, buf.cell_data, D
     end
 
     function SaveVTKHDF(fid_vector, index, filepath, points, variable_names = String[], args...)
