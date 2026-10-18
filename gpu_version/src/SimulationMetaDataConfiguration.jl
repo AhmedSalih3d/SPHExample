@@ -96,6 +96,16 @@ intended simulation; unsupported models use the reference path.
 the existing SPS stress tensors. Pair orientation and the closure are unchanged,
 but rounding can differ. It defaults to `false` and does not require radial
 continuity/diffusion. Other viscosity models retain their existing path.
+
+`GPUFixedGrid = true` retains the neighbour-grid bounds from the initial
+particle geometry. `GPUGridExpansion` selects which sides may grow, as one
+`(negative, positive)` Boolean pair per axis, for example
+`((false, false), (false, true))` allows only upward growth in 2D. All sides
+are locked by default. Bounds never shrink in this mode; particles crossing
+a locked side become permanently `Frozen` at the next batch check, with zero
+velocity/acceleration and no SPH interactions. Their IDs, positions, time and
+crossed limits are logged, even with `NoLog`. Floating bodies freeze as a whole.
+Cell size and particle rebinning are unchanged. Expansion requires `GPUFixedGrid = true`.
 """
 mutable struct SimulationMetaData{Dimensions,
                                   FloatType <: AbstractFloat,
@@ -134,6 +144,8 @@ mutable struct SimulationMetaData{Dimensions,
     GPUMaxStepsPerSync::Int      # upper bound on the time steps enqueued between two host read backs
     GPUUseGraph::Bool            # replay the launch sequence of a step as a CUDA graph
     GPUCellSubdivision::Int      # cells per support radius H per axis (1: edge H, 3^D stencil; 2: edge H/2, 5^D stencil)
+    GPUFixedGrid::Bool           # retain initial grid bounds, growing only on explicitly allowed sides
+    GPUGridExpansion::NTuple{Dimensions, Tuple{Bool, Bool}} # (negative, positive) growth per axis
     GPUDoublePosition::Bool      # integrate positions in Float64 (pair loops use cell relative positions in FloatType)
     GPUCacheInteractionFields::Bool # cache reciprocal density for interaction loops
     GPUCompactBuffers::Bool      # omit unused buffers and narrow GPU-only metadata when lossless
@@ -246,6 +258,8 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUMaxStepsPerSync::Int                 = 32,
         GPUUseGraph::Bool                       = true,
         GPUCellSubdivision::Int                 = 1,
+        GPUFixedGrid::Bool                      = false,
+        GPUGridExpansion::NTuple{Dimensions, Tuple{Bool, Bool}} = ntuple(_ -> (false, false), Dimensions),
         GPUDoublePosition::Bool                 = false,
         GPUCacheInteractionFields::Bool         = false,
         GPUCompactBuffers::Bool                 = true,
@@ -254,6 +268,8 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
     ) where {Dimensions, FloatType <: AbstractFloat, SMode <: ShiftingMode, KMode <: KernelOutputMode,
              BMode <: MDBCMode, LMode <: LogMode}
     GPUCellSubdivision >= 1 || throw(ArgumentError("GPUCellSubdivision must be at least 1, got $GPUCellSubdivision"))
+    GPUFixedGrid || !any(sides -> any(sides), GPUGridExpansion) ||
+        throw(ArgumentError("GPUGridExpansion requires GPUFixedGrid = true"))
     GPUOutputQueueBytes >= 0 || throw(ArgumentError("GPUOutputQueueBytes must be nonnegative"))
     GPUOutputBufferBytes >= 0 || throw(ArgumentError("GPUOutputBufferBytes must not be negative, got $GPUOutputBufferBytes"))
     return SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(
@@ -265,6 +281,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         OutputVariables, OpenLogFile, TimeSteppingMode,
         GPUSyncTimers, GPUDeterministicSort, GPUMaxCells, GPUInteractionThreads, GPULanesPerParticle, GPURadialInteractions, GPUScalarSPSViscosity,
         GPUBoundaryForces, GPUAsyncOutput, GPUMaxStepsPerSync, GPUUseGraph, GPUCellSubdivision,
+        GPUFixedGrid, GPUGridExpansion,
         GPUDoublePosition, GPUCacheInteractionFields, GPUCompactBuffers, GPUOutputQueueBytes, GPUOutputBufferBytes,
     )
 end

@@ -97,6 +97,9 @@ function updated_mdbc_kernel!(Density::AbstractVector{T}, Pressure, Position::Ab
         i = GhostIndex[owner]
         slot = Compact ? owner : i
         gp = GhostPoints[slot]
+        valid = ParticleType[i] != Frozen
+    end
+    @inbounds if valid
         # Normals in this package store the boundary-to-ghost displacement.
         # Reconstruct translating ghosts from the evaluated particle position.
         if ParticleType[i] == Moving

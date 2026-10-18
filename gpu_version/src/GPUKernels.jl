@@ -287,7 +287,10 @@ end
 @inline store_pos_cell!(::Nothing, i, x, CellID, gridarg, H) = nothing
 @inline function store_pos_cell!(PosCells, i, x, CellID, gridarg, H)
     grid = load_grid(gridarg)
-    @inbounds PosCells[i] = pos_cell(x, CellID[i], grid, cell_size(grid, H))
+    @inbounds begin
+        c = CellID[i]
+        PosCells[i] = c == Int32(1) ? eltype(PosCells)(zero(x), c) : pos_cell(x, c, grid, cell_size(grid, H))
+    end
     return nothing
 end
 
@@ -327,7 +330,8 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                              CellStart, CellID, gridarg, step,
                              SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
                              ::Val{FlagKernel}, ::Val{FlagShift}, ::Val{BoundaryForces}, ::Val{K},
-                             boundary_data, InvDensity, n::Int32, ::Val{Radial} = Val(false), ::Val{ScalarSPS} = Val(false)) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS}
+                             boundary_data, InvDensity, n::Int32, ::Val{Radial} = Val(false), ::Val{ScalarSPS} = Val(false),
+                             ::Val{FrozenParticles} = Val(true)) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -347,7 +351,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
     ∇r    = zero(T)
 
     slotᵢ = valid ? boundary_slot(boundary_data, ParticleType, i) : Int32(0)
-    @inbounds if valid && boundary_enabled(boundary_data, slotᵢ)
+    @inbounds if valid && (!FrozenParticles || ParticleType[i] != Frozen) && boundary_enabled(boundary_data, slotᵢ)
         pᵢ  = Pairs[i]
         vᵢ  = boundary_velocity(boundary_data, Velocity, ParticleType, i, slotᵢ)
         viscous_vᵢ = boundary_viscous_velocity(boundary_data, Velocity, ParticleType, i, slotᵢ)
@@ -374,7 +378,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
             rowcell  = c + row.off
             j = jlo + lane
             while j <= jhi
-                if j != i
+                if j != i && (!FrozenParticles || ParticleType[j] != Frozen)
                     xᵢⱼ  = pair_vector(Pairs, pᵢ, j, rowcell, row, s)
                     xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
                     slotⱼ = xᵢⱼ² <= H² ? boundary_slot(boundary_data, ParticleType, j) : Int32(0)
@@ -533,7 +537,8 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
                               SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
                               FlagKernel::Val, FlagShift::Val; threads::Integer = 128, lanes::Val = Val(1),
                               boundary_forces::Val = Val(true), pos_cells = nothing, boundary_data = nothing,
-                              radial::Val = Val(false), scalar_sps::Val = Val(false), inverse_density = nothing)
+                              radial::Val = Val(false), scalar_sps::Val = Val(false), inverse_density = nothing,
+                              frozen_particles::Val = Val(true))
     inverse_density === nothing || length(inverse_density) == length(Density) ||
         throw(DimensionMismatch("Reciprocal cache must have one entry per evaluated density"))
     n = length(Position)
@@ -549,7 +554,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
         Pairs, Position, Density, Pressure, Velocity, ParticleType, SimParticles,
         CellStart, CellID, grid, step,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, Int32(n), use_radial, use_scalar_sps)
+        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, Int32(n), use_radial, use_scalar_sps, frozen_particles)
     return nothing
 end
 
@@ -683,6 +688,7 @@ function mdbc_kernel!(Density::AbstractVector{T}, Pressure, Position::AbstractVe
     @inbounds if valid
         i  = GhostIndex[g]
         gp = GhostPoints[Compact ? g : i]
+        valid = ParticleType[i] != Frozen
     end
 
     @inbounds if valid
@@ -776,6 +782,14 @@ function half_step_kernel!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, Pressure,
     T = eltype(Density)
     @inbounds begin
         type = ParticleType[i]
+        if type == Frozen
+            Positionₙ⁺[i] = Position[i]
+            Velocityₙ⁺[i] = zero(eltype(Velocity))
+            ρₙ⁺[i] = Density[i]
+            store_inverse_density!(InvDensity, i, Density[i])
+            store_pos_cell!(PosCellsₙ⁺, i, Position[i], CellID, gridarg, H)
+            return nothing
+        end
         ML  = MotionLimiterValue(T, type)
         acc = Acceleration[i]
         acc += ConstructGravitySVector(acc, g * GravityFactorValue(T, type))
@@ -889,6 +903,10 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, Pressure,
     stride = blockDim().x * gridDim().x
     @inbounds while i <= n
         type = ParticleType[i]
+        if type == Frozen
+            i += stride
+            continue
+        end
         ML = MotionLimiterValue(T, type)
 
         # DensityEpsi! followed by LimitDensityAtBoundary! (CPU order: "07

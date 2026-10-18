@@ -24,7 +24,7 @@ using Adapt
 
 export StepState, DeviceStep, HostStep, step_active, step_dt, step_time,
        F_DT, F_TIME, F_DX, F_TOUT, F_DISP, I_STOP, I_PHASE, I_ITER,
-       I_GRID_STATUS, I_GRID_ORIGIN, I_GRID_DIMS, I_GRID_NCELLS,
+       I_GRID_STATUS, I_GRID_ORIGIN, I_GRID_DIMS, I_GRID_NCELLS, I_GRID_FROZEN,
        STOP_NONE, STOP_REBUILD, STOP_OUTPUT, PHASE_NEED_DT, PHASE_DT_READY,
        readback!, set_output_time!, resume_after_rebuild!, invalidate_graphs!
 
@@ -46,7 +46,8 @@ const I_GRID_STATUS = 4
 const I_GRID_ORIGIN = 5   # three slots; unused axes are zero
 const I_GRID_DIMS   = 8   # three slots; unused axes are one
 const I_GRID_NCELLS = 11
-const NUM_I   = 11
+const I_GRID_FROZEN = 12
+const NUM_I   = 12
 
 const STOP_NONE    = Int32(0)
 const STOP_REBUILD = Int32(1)  # the cell list must be rebuilt before the step can run

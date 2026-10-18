@@ -35,15 +35,16 @@ module GPUCellGrid
 
 using CUDA
 using StaticArrays
+using ..SimulationGeometry: Frozen, Floating
 using ..GPUStepState: DeviceStep, StepState, I_STOP, STOP_REBUILD,
-                      I_GRID_STATUS, I_GRID_ORIGIN, I_GRID_DIMS, I_GRID_NCELLS
+                      I_GRID_STATUS, I_GRID_ORIGIN, I_GRID_DIMS, I_GRID_NCELLS, I_GRID_FROZEN
 
 export CellGrid, CellListWorkspace, update_cell_list!, compact_nonzero!, unique_cells_host, occupied_cells_host,
        map_floor, cell_coords, linear_cell, local_coords, row_offsets, row_range, in_grid,
        reach, bin_scale, gather_kernel!, thread_index, load_grid,
        PosCell, CellRow, cell_rows, cell_size, cell_anchor, global_coords, pos_cell, pair_vector,
        prepare_cell_grid!, sync_cell_grid!, consume_cell_grid!, GRID_OK, GRID_NOT_NEEDED, GRID_CAPACITY,
-       GRID_NONFINITE, GRID_COORD_OVERFLOW, GRID_CELL_OVERFLOW, GRID_MAX_CELLS
+       GRID_NONFINITE, GRID_COORD_OVERFLOW, GRID_CELL_OVERFLOW, GRID_MAX_CELLS, GRID_FIXED_BOUNDS
 
 const SORT_THREADS = 256
 # Padded launch indices and the final, one-based cell boundary must fit Int32.
@@ -87,11 +88,15 @@ const GRID_NONFINITE      = Int32(3)
 const GRID_COORD_OVERFLOW = Int32(4)
 const GRID_CELL_OVERFLOW  = Int32(5)
 const GRID_MAX_CELLS      = Int32(6)
+const GRID_FIXED_BOUNDS   = Int32(7)
 
 struct GridBuildState{D, R}
     grid::CellGrid{D, R}
     status::Int32
+    nfrozen::Int32
 end
+GridBuildState(grid::CellGrid{D, R}, status) where {D, R} = GridBuildState{D, R}(grid, status, Int32(0))
+GridBuildState{D, R}(grid, status) where {D, R} = GridBuildState{D, R}(grid, status, Int32(0))
 
 struct BoundingBoxWorkspace{D, T}
     partial::CuVector{T}
@@ -425,6 +430,9 @@ consumes the status/header through the necessary timestep readback, or through
 a dedicated header read for standalone calls, before launching the histogram.
 `T` is the element type of the positions that are binned (`Float64` with
 `GPUDoublePosition`), used by the bounding box reduction.
+`fixed_grid` retains the first consumed bounds and `expansion` enables growth
+per side; `grid_initialized` distinguishes those bounds from the placeholder
+header, including when conditional preparation skips the first launch.
 """
 mutable struct CellListWorkspace{D, T, R}
     grid::CellGrid{D, R}
@@ -432,6 +440,12 @@ mutable struct CellListWorkspace{D, T, R}
     grid_state_dev::CuVector{GridBuildState{D, R}}
     grid_state_host::Vector{GridBuildState{D, R}}
     grid_prepared::Bool
+    grid_initialized::Bool
+    fixed_grid::Bool
+    expansion::NTuple{D, Tuple{Bool, Bool}}
+    freeze_count::Union{Nothing, CuVector{Int32}}
+    newly_frozen::Int
+    frozen_total::Int
     generation::Int
     CellStart::CuVector{Int32}       # capacity >= ncells + 1
     Counts::CuVector{Int32}          # capacity >= ncells
@@ -448,18 +462,28 @@ mutable struct CellListWorkspace{D, T, R}
 end
 
 """
-    CellListWorkspace{D, T}(n; reach = 1, max_cells, deterministic)
+    CellListWorkspace{D, T}(n; reach = 1, max_cells, deterministic, fixed_grid = false, expansion)
 
 Cell list buffers for `n` particles whose positions are `SVector{D, T}`.
 `reach` selects the grid: cells of edge `H / reach` and a `(2 reach + 1)^D`
 stencil (see the module documentation).
+With `fixed_grid = true`, the first successfully consumed preparation sets the
+initial bounds. Subsequent rebuilds retain them and grow only on sides enabled
+by `expansion`, a tuple of `(negative, positive)` Boolean pairs in axis order.
+All sides are locked by default. The simulation driver freezes escaped
+particles before reordering. Raw position-only calls cannot freeze particle
+state and report a locked-side error instead. The support radius must remain
+constant for the lifetime of a fixed workspace.
 """
 function CellListWorkspace{D, T}(n::Integer; reach::Integer = 1, max_cells::Integer = 50_000_000,
-                                 deterministic::Bool = true) where {D, T}
+                                 deterministic::Bool = true, fixed_grid::Bool = false,
+                                 expansion::NTuple{D, Tuple{Bool, Bool}} = ntuple(_ -> (false, false), D)) where {D, T}
     reach >= 1 || throw(ArgumentError("the cell list reach must be at least 1, got $reach"))
     reach <= typemax(Int32) || throw(ArgumentError("the cell list reach is too large: $reach"))
     0 <= n <= CELL_INDEX_LIMIT || throw(ArgumentError("the cell-list particle count must be between 0 and $CELL_INDEX_LIMIT, got $n"))
     max_cells >= 1 || throw(ArgumentError("GPUMaxCells must be at least 1, got $max_cells"))
+    fixed_grid || !any(sides -> any(sides), expansion) ||
+        throw(ArgumentError("grid expansion requires fixed_grid = true"))
     R = Int(reach)
     bbox_ws = BoundingBoxWorkspace{D, T}(n)
     grid = CellGrid{D, R}()
@@ -471,6 +495,12 @@ function CellListWorkspace{D, T}(n::Integer; reach::Integer = 1, max_cells::Inte
         CuArray([grid_state]),
         [grid_state],
         false,
+        false,
+        fixed_grid,
+        expansion,
+        fixed_grid ? CUDA.zeros(Int32, 1) : nothing,
+        0,
+        0,
         0,
         CuVector{Int32}(undef, counts_capacity + 1),
         CuVector{Int32}(undef, counts_capacity),
@@ -517,12 +547,13 @@ end
             step.i[I_GRID_DIMS + d - 1] = d <= D ? state.grid.dims[d] : Int32(1)
         end
         step.i[I_GRID_NCELLS] = state.grid.ncells
+        step.i[I_GRID_FROZEN] = state.nfrozen
     end
     return nothing
 end
 
-@inline function store_grid_state!(state_dev, grid, status, step)
-    state = GridBuildState(grid, status)
+@inline function store_grid_state!(state_dev, grid, status, step, nfrozen = Int32(0))
+    state = GridBuildState(grid, status, nfrozen)
     @inbounds state_dev[1] = state
     publish_grid_state!(step, state)
     return nothing
@@ -530,9 +561,18 @@ end
 
 @inline function write_grid_result!(grid_dev, state_dev, bbox,
                                     inv_cell, max_cells::Int64, capacity::Int64,
-                                    reach_i::Int32, step, ::Val{D}, ::Val{R}) where {D, R}
+                                    fixed_grid::Bool, expansion, initialized::Bool,
+                                    step, ::Val{D}, ::Val{R}, nfrozen::Int32) where {D, R}
     old_grid = load_grid(grid_dev)
     status = GRID_OK
+
+    # With every particle frozen, retain the last valid domain. Empty reduction
+    # extrema differ from nonfinite particle input, which the block flags reject.
+    if fixed_grid && initialized && isfinite(inv_cell) && inv_cell > zero(inv_cell) &&
+       all(d -> bbox[d] == Inf && bbox[D + d] == -Inf, 1:D)
+        store_grid_state!(state_dev, old_grid, GRID_OK, step, nfrozen)
+        return nothing
+    end
 
     if !bbox_finite(bbox)
         status = GRID_NONFINITE
@@ -550,18 +590,37 @@ end
         return nothing
     end
 
-    cmin = ntuple(d -> Int64(map_floor(bbox[d], inv_cell)) - Int64(R), Val(D))
-    cmax = ntuple(d -> Int64(map_floor(bbox[D + d], inv_cell)) + Int64(R), Val(D))
+    required_min = ntuple(d -> Int64(map_floor(bbox[d], inv_cell)) - Int64(R), Val(D))
+    required_max = ntuple(d -> Int64(map_floor(bbox[D + d], inv_cell)) + Int64(R), Val(D))
     coord_limit_lo = Int64(typemin(Int32)) + Int64(R)
     coord_limit_hi = Int64(typemax(Int32)) - Int64(R)
     for d in 1:D
-        valid &= (cmin[d] >= coord_limit_lo) & (cmax[d] <= coord_limit_hi)
+        valid &= (required_min[d] >= coord_limit_lo) & (required_max[d] <= coord_limit_hi)
     end
     if !valid
         store_grid_state!(state_dev, old_grid, GRID_COORD_OVERFLOW, step)
         return nothing
     end
 
+    old_max = ntuple(d -> Int64(old_grid.origin[d]) + Int64(old_grid.dims[d]) - Int64(1), Val(D))
+    retain_bounds = fixed_grid && initialized
+    if retain_bounds
+        for d in 1:D
+            if (!expansion[d][1] && required_min[d] < old_grid.origin[d]) ||
+               (!expansion[d][2] && required_max[d] > old_max[d])
+                store_grid_state!(state_dev, old_grid, GRID_FIXED_BOUNDS, step)
+                return nothing
+            end
+        end
+        if all(d -> required_min[d] >= old_grid.origin[d] && required_max[d] <= old_max[d], 1:D)
+            status = Int64(old_grid.ncells) > capacity ? GRID_CAPACITY : GRID_OK
+            store_grid_state!(state_dev, old_grid, status, step, nfrozen)
+            return nothing
+        end
+    end
+
+    cmin = retain_bounds ? ntuple(d -> min(required_min[d], Int64(old_grid.origin[d])), Val(D)) : required_min
+    cmax = retain_bounds ? ntuple(d -> max(required_max[d], old_max[d]), Val(D)) : required_max
     dims64 = ntuple(d -> cmax[d] - cmin[d] + Int64(1), Val(D))
     ncells64 = Int64(1)
     overflow = false
@@ -588,14 +647,70 @@ end
     grid = CellGrid{D, R}(origin, dims, Int32(ncells64))
     status = ncells64 > capacity ? GRID_CAPACITY : GRID_OK
     @inbounds grid_dev[1] = grid
-    store_grid_state!(state_dev, grid, status, step)
+    store_grid_state!(state_dev, grid, status, step, nfrozen)
     return nothing
 end
 
 @inline grid_build_needed(::Nothing) = true
 @inline grid_build_needed(step::DeviceStep) = @inbounds step.i[I_STOP] == STOP_REBUILD
 
-function bbox_reduce_scalar_kernel!(partial, invalid, Position, n::Int32,
+@inline function locked_grid_sides(x, grid::CellGrid{D, R}, inv_cell, expansion) where {D, R}
+    sides = UInt32(0)
+    for d in 1:D
+        # Numerical failures remain explicit grid errors, rather than becoming
+        # frozen positions that the output grid cannot represent.
+        isfinite(x[d]) && rounded_coordinate_valid(x[d], inv_cell) || return UInt32(0)
+        c = Int64(map_floor(x[d], inv_cell))
+        lo = Int64(grid.origin[d]) + R
+        hi = Int64(grid.origin[d]) + grid.dims[d] - R - 1
+        !expansion[d][1] && c < lo && (sides |= UInt32(1) << (2d - 2))
+        !expansion[d][2] && c > hi && (sides |= UInt32(1) << (2d - 1))
+    end
+    return sides
+end
+
+function mark_frozen_bodies_kernel!(Position, types, groups, body, frozen_bodies, grid,
+                                     inv_cell, expansion, step, n::Int32)
+    i = thread_index()
+    i > n && return nothing
+    @inbounds if types[i] == Floating && locked_grid_sides(Position[i], grid, inv_cell, expansion) != 0
+        CUDA.atomic_or!(pointer(frozen_bodies, body[groups[i]]), Int32(1))
+    end
+    return nothing
+end
+
+function freeze_particles_kernel!(Position, state, events, count, grid, inv_cell, expansion, step, n::Int32)
+    i = thread_index()
+    i > n && return nothing
+    @inbounds begin
+        state.types[i] == Frozen && return nothing
+        x = Position[i]
+        all(d -> isfinite(x[d]) && rounded_coordinate_valid(x[d], inv_cell), eachindex(x)) || return nothing
+        body_frozen = state.body !== nothing && state.types[i] == Floating &&
+            state.frozen_bodies[state.body[state.groups[i]]] != 0
+        if body_frozen || locked_grid_sides(x, grid, inv_cell, expansion) != 0
+            state.types[i] = Frozen
+            state.velocity[i] = zero(eltype(state.velocity))
+            state.acceleration[i] = zero(eltype(state.acceleration))
+            rank = CUDA.atomic_add!(pointer(count), Int32(1)) + Int32(1)
+            events[rank] = i
+        end
+    end
+    return nothing
+end
+
+function finish_freeze_kernel!(count, step::DeviceStep)
+    @inbounds count[1] > 0 && (step.i[I_STOP] = STOP_REBUILD)
+    return nothing
+end
+finish_freeze_kernel!(count, ::Nothing) = nothing
+
+@inline live_particle(::Nothing, i) = true
+@inline live_particle(types, i) = @inbounds types[i] != Frozen
+@inline frozen_count(::Nothing) = Int32(0)
+@inline frozen_count(count) = @inbounds count[1]
+
+function bbox_reduce_scalar_kernel!(partial, invalid, Position, types, n::Int32,
                                     lo_init::T, hi_init::T, step, ::Val{2}) where {T}
     grid_build_needed(step) || return nothing
     i = Int64(thread_index())
@@ -605,9 +720,11 @@ function bbox_reduce_scalar_kernel!(partial, invalid, Position, n::Int32,
     @inbounds while i <= n
         j = Int64(2) * (i - Int64(1)) + Int64(1)
         x = Position[j]; y = Position[j + Int64(1)]
-        bad = (isfinite(x) & isfinite(y)) ? bad : one(T)
-        lo1 = min(lo1, x); lo2 = min(lo2, y)
-        hi1 = max(hi1, x); hi2 = max(hi2, y)
+        if live_particle(types, i)
+            bad = (isfinite(x) & isfinite(y)) ? bad : one(T)
+            lo1 = min(lo1, x); lo2 = min(lo2, y)
+            hi1 = max(hi1, x); hi2 = max(hi2, y)
+        end
         i += stride
     end
     tid = threadIdx().x
@@ -644,7 +761,7 @@ function bbox_reduce_scalar_kernel!(partial, invalid, Position, n::Int32,
     return nothing
 end
 
-function bbox_reduce_scalar_kernel!(partial, invalid, Position, n::Int32,
+function bbox_reduce_scalar_kernel!(partial, invalid, Position, types, n::Int32,
                                     lo_init::T, hi_init::T, step, ::Val{3}) where {T}
     grid_build_needed(step) || return nothing
     i = Int64(thread_index())
@@ -655,9 +772,11 @@ function bbox_reduce_scalar_kernel!(partial, invalid, Position, n::Int32,
     @inbounds while i <= n
         j = Int64(3) * (i - Int64(1)) + Int64(1)
         x = Position[j]; y = Position[j + Int64(1)]; z = Position[j + Int64(2)]
-        bad = (isfinite(x) & isfinite(y) & isfinite(z)) ? bad : one(T)
-        lo1 = min(lo1, x); lo2 = min(lo2, y); lo3 = min(lo3, z)
-        hi1 = max(hi1, x); hi2 = max(hi2, y); hi3 = max(hi3, z)
+        if live_particle(types, i)
+            bad = (isfinite(x) & isfinite(y) & isfinite(z)) ? bad : one(T)
+            lo1 = min(lo1, x); lo2 = min(lo2, y); lo3 = min(lo3, z)
+            hi1 = max(hi1, x); hi2 = max(hi2, y); hi3 = max(hi3, z)
+        end
         i += stride
     end
     tid = threadIdx().x
@@ -699,7 +818,8 @@ end
 
 function finish_grid_metadata_kernel!(grid_dev, state_dev, partial, invalid, nblocks::Int32,
                                       lo_init::T, hi_init::T, inv_cell,
-                                      max_cells::Int64, capacity::Int64, reach_i::Int32,
+                                      max_cells::Int64, capacity::Int64,
+                                      fixed_grid::Bool, expansion, initialized::Bool, freeze_count,
                                       step, ::Val{2}, ::Val{R}) where {T, R}
     tid = threadIdx().x
     if !grid_build_needed(step)
@@ -745,13 +865,14 @@ function finish_grid_metadata_kernel!(grid_dev, state_dev, partial, invalid, nbl
     end
     bbox = (shared[1], shared[B + 1], shared[2B + 1], shared[3B + 1])
     write_grid_result!(grid_dev, state_dev, bbox, inv_cell, max_cells,
-                       capacity, reach_i, step, Val(2), Val(R))
+                       capacity, fixed_grid, expansion, initialized, step, Val(2), Val(R), frozen_count(freeze_count))
     return nothing
 end
 
 function finish_grid_metadata_kernel!(grid_dev, state_dev, partial, invalid, nblocks::Int32,
                                       lo_init::T, hi_init::T, inv_cell,
-                                      max_cells::Int64, capacity::Int64, reach_i::Int32,
+                                      max_cells::Int64, capacity::Int64,
+                                      fixed_grid::Bool, expansion, initialized::Bool, freeze_count,
                                       step, ::Val{3}, ::Val{R}) where {T, R}
     tid = threadIdx().x
     if !grid_build_needed(step)
@@ -801,7 +922,7 @@ function finish_grid_metadata_kernel!(grid_dev, state_dev, partial, invalid, nbl
     bbox = (shared[1], shared[B + 1], shared[2B + 1], shared[3B + 1],
             shared[4B + 1], shared[5B + 1])
     write_grid_result!(grid_dev, state_dev, bbox, inv_cell, max_cells,
-                       capacity, reach_i, step, Val(3), Val(R))
+                       capacity, fixed_grid, expansion, initialized, step, Val(3), Val(R), frozen_count(freeze_count))
     return nothing
 end
 
@@ -876,12 +997,14 @@ function scan_int32!(ws::IntScanWorkspace, out, input; inclusive::Bool = false)
 end
 
 # Cell of every particle and histogram of cell occupation.
-function cellid_hist_kernel!(CellIDScratch, Counts, Position, InverseCutOff, gridarg, n::Int32)
+function cellid_hist_kernel!(CellIDScratch, Counts, Position, types, InverseCutOff, gridarg, n::Int32)
     i = thread_index()
     i > n && return nothing
     @inbounds begin
         grid = load_grid(gridarg)
-        c = linear_cell(grid, cell_coords(Position[i], InverseCutOff))
+        # The corner margin cell is reserved for inactive particles. Pair loops
+        # reject their type, including when a stencil touches this cell.
+        c = live_particle(types, i) ? linear_cell(grid, cell_coords(Position[i], InverseCutOff)) : Int32(1)
         CellIDScratch[i] = c
         CUDA.atomic_add!(pointer(Counts, c), Int32(1))
     end
@@ -1002,6 +1125,9 @@ function grid_build_error(ws::CellListWorkspace, state::GridBuildState)
     elseif status == GRID_MAX_CELLS
         error("Cell grid would need more than the allowed $(ws.max_cells) cells. " *
               "A particle probably escaped the domain. Increase `GPUMaxCells` if this is expected.")
+    elseif status == GRID_FIXED_BOUNDS
+        error("A particle crossed a locked side of the fixed cell grid. " *
+              "Enable that side in `GPUGridExpansion` (workspace `expansion`) or use the dynamic grid.")
     end
     error("Unknown device cell-grid status $(status).")
 end
@@ -1012,24 +1138,47 @@ end
 Launch the device bounding-box reduction and grid calculation. No host data is
 read here. With `step`, preparation runs only when the timestep stop flag asks
 for a rebuild and publishes the status/header into its existing integer state.
+Fixed grids retain their bounds and grow only on enabled sides. With the
+driver's `freeze_state`, escaped particles become inactive before the bounds
+reduction. `Perm[1:newly_frozen]` records their original indices until sorting
+or compaction reuses that scratch. Frozen entries use the corner margin bin;
+interactions explicitly exclude them.
 """
 function prepare_cell_grid!(ws::CellListWorkspace{D, T, R},
                             Position::CuVector{SVector{D, T}}, InverseCutOff;
-                            step::Union{Nothing, StepState} = nothing) where {D, T, R}
+                            step::Union{Nothing, StepState} = nothing, freeze_state = nothing) where {D, T, R}
     n = length(Position)
     1 <= n <= CELL_INDEX_LIMIT || error("The cell-list particle count must be between 1 and $CELL_INDEX_LIMIT.")
     n == length(ws.Perm) || throw(DimensionMismatch("positions and cell-list workspace particle counts differ"))
+    ws.frozen_total == 0 || freeze_state !== nothing ||
+        throw(ArgumentError("A workspace with frozen particles requires particle state; use rebuild_cell_list! with GPU particles."))
     ws.grid_prepared = false
     inv_cell = bin_scale(CellGrid{D, R}(), InverseCutOff)
+    ws.freeze_count === nothing || fill!(ws.freeze_count, Int32(0))
+    if ws.fixed_grid && ws.grid_initialized && freeze_state !== nothing && isfinite(inv_cell) && inv_cell > zero(inv_cell)
+        if freeze_state.body !== nothing
+            @cuda threads=256 blocks=cld(n, 256) mark_frozen_bodies_kernel!(
+                Position, freeze_state.types, freeze_state.groups, freeze_state.body,
+                freeze_state.frozen_bodies, ws.grid, inv_cell, ws.expansion, step, Int32(n))
+        end
+        # Perm is idle until histogram/scatter. Consume event indices before the
+        # next rebuild or compaction reuses it; no per-particle event buffer.
+        @cuda threads=256 blocks=cld(n, 256) freeze_particles_kernel!(Position, freeze_state,
+            ws.Perm, ws.freeze_count, ws.grid, inv_cell, ws.expansion, step, Int32(n))
+        # Batches end at accepted full states, including STOP_OUTPUT. A crossing
+        # forces a rebuild now so an output cannot publish an unfrozen escape.
+        step === nothing || @cuda threads=1 blocks=1 finish_freeze_kernel!(ws.freeze_count, step)
+    end
+    types = freeze_state === nothing ? nothing : freeze_state.types
     PositionScalar = reinterpret(T, Position)
     lo = T(Inf)
     hi = T(-Inf)
     @cuda threads=256 blocks=ws.bbox_ws.nblocks bbox_reduce_scalar_kernel!(
-        ws.bbox_ws.partial, ws.bbox_ws.invalid, PositionScalar, Int32(n), lo, hi, step, Val(D))
+        ws.bbox_ws.partial, ws.bbox_ws.invalid, PositionScalar, types, Int32(n), lo, hi, step, Val(D))
     @cuda threads=256 blocks=1 finish_grid_metadata_kernel!(
         ws.grid_dev, ws.grid_state_dev, ws.bbox_ws.partial, ws.bbox_ws.invalid,
         Int32(ws.bbox_ws.nblocks), lo, hi, inv_cell, Int64(ws.max_cells),
-        Int64(length(ws.Counts)), Int32(R), step, Val(D), Val(R))
+        Int64(length(ws.Counts)), ws.fixed_grid, ws.expansion, ws.grid_initialized, ws.freeze_count, step, Val(D), Val(R))
     return nothing
 end
 
@@ -1049,6 +1198,7 @@ end
 
 function consume_cell_grid!(ws::CellListWorkspace, state::GridBuildState)
     ws.grid_prepared = false
+    ws.newly_frozen = 0
     status = state.status
     status == GRID_NOT_NEEDED && return false
     if status == GRID_OK || status == GRID_CAPACITY
@@ -1057,6 +1207,9 @@ function consume_cell_grid!(ws::CellListWorkspace, state::GridBuildState)
         status == GRID_CAPACITY && ensure_capacity!(ws, Int(state.grid.ncells))
         Int(state.grid.ncells) <= length(ws.Counts) || error("The prepared cell grid exceeds the allocated capacity.")
         ws.grid = state.grid
+        ws.grid_initialized = true
+        ws.newly_frozen = Int(state.nfrozen)
+        ws.frozen_total += ws.newly_frozen
         ws.grid_prepared = true
         return true
     end
@@ -1073,11 +1226,11 @@ This function does not transfer data or synchronize the device. Capacity
 growth changes `generation`; callers must invalidate their captured graphs.
 """
 function consume_cell_grid!(ws::CellListWorkspace{D, T, R}, ih::AbstractVector{Int32}) where {D, T, R}
-    length(ih) >= I_GRID_NCELLS || throw(DimensionMismatch("the timestep header has no cell-grid state"))
+    length(ih) >= I_GRID_FROZEN || throw(DimensionMismatch("the timestep header has no cell-grid state"))
     origin = ntuple(d -> ih[I_GRID_ORIGIN + d - 1], Val(D))
     dims = ntuple(d -> ih[I_GRID_DIMS + d - 1], Val(D))
     grid = CellGrid{D, R}(origin, dims, ih[I_GRID_NCELLS])
-    return consume_cell_grid!(ws, GridBuildState{D, R}(grid, ih[I_GRID_STATUS]))
+    return consume_cell_grid!(ws, GridBuildState{D, R}(grid, ih[I_GRID_STATUS], ih[I_GRID_FROZEN]))
 end
 
 """
@@ -1098,12 +1251,14 @@ enqueue phase can be captured with fixed grid dimensions and stable buffers;
 conditional preparation and host capacity growth remain outside that capture.
 """
 function update_cell_list!(ws::CellListWorkspace{D, T, R}, Position::CuVector{SVector{D, T}},
-                           InverseCutOff, srcs::Tuple, dsts::Tuple; prepared::Bool = false) where {D, T, R}
+                           InverseCutOff, srcs::Tuple, dsts::Tuple; prepared::Bool = false, freeze_state = nothing) where {D, T, R}
     n = length(Position)
     n == length(ws.Perm) || throw(DimensionMismatch("positions and cell-list workspace particle counts differ"))
+    ws.frozen_total == 0 || freeze_state !== nothing ||
+        throw(ArgumentError("Frozen particles require their particle state when rebuilding the cell list."))
 
     if !prepared
-        prepare_cell_grid!(ws, Position, InverseCutOff)
+        prepare_cell_grid!(ws, Position, InverseCutOff; freeze_state)
         sync_cell_grid!(ws)
     end
     ws.grid_prepared || error("The cell grid must be prepared and its valid status consumed before rebuilding.")
@@ -1119,7 +1274,8 @@ function update_cell_list!(ws::CellListWorkspace{D, T, R}, Position::CuVector{SV
     blocks  = cld(n, threads)
 
     fill!(Counts, Int32(0))
-    @cuda threads=threads blocks=blocks cellid_hist_kernel!(ws.CellIDScratch, ws.Counts, Position,
+    types = freeze_state === nothing ? nothing : freeze_state.types
+    @cuda threads=threads blocks=blocks cellid_hist_kernel!(ws.CellIDScratch, ws.Counts, Position, types,
                                                              inv_cell, ws.grid_dev, Int32(n))
 
     # Exclusive prefix sum with leading zero.

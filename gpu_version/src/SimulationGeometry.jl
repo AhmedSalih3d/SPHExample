@@ -6,7 +6,7 @@ using CSV
 using Base: @kwdef
 
 # Export relevant types and structs
-export ParticleType, SPHGeometry, particle_struct_array, Fluid, Fixed, Moving, Floating,
+export ParticleType, SPHGeometry, particle_struct_array, Fluid, Fixed, Moving, Floating, Frozen,
        MotionDetails, FloatingDetails, GravityFactorValue, MotionLimiterValue, is_wall
 
 # Use the existing @enum for ParticleType
@@ -15,6 +15,7 @@ export ParticleType, SPHGeometry, particle_struct_array, Fluid, Fixed, Moving, F
     Fixed    = UInt8(2)
     Moving   = UInt8(3)
     Floating = UInt8(4)   # rigid body moved by the fluid forces (see `FloatingDetails`)
+    Frozen   = UInt8(5)   # permanently inactive after crossing a locked GPU grid limit
 end
 
 @inline GravityFactorValue(::Type{T}, type::ParticleType) where {T} =

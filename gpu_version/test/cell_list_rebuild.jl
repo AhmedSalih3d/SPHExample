@@ -108,7 +108,7 @@ function simple_cell_rebuild(points::Vector{SVector{D, T}}; inverse_cutoff = one
     return (; ws, grid, position, ids, sorted_position, sorted_ids, cell_ids, sources, destinations)
 end
 
-function cell_rebuild_driver_growth(use_graph; scheme = SymplecticTimeStepping())
+function cell_rebuild_driver_growth(use_graph; scheme = SymplecticTimeStepping(), fixed_grid = false)
     T = Float64
     points = [SVector{2, T}(T(i) * T(0.02), T(j) * T(0.02)) for j in 0:7 for i in 0:7]
     geometry = [SPHGeometry{2, T}(points; Density = T(1000), GroupMarker = 1, Type = Fluid)]
@@ -123,7 +123,8 @@ function cell_rebuild_driver_growth(use_graph; scheme = SymplecticTimeStepping()
     gpu = upload_particles(particles)
     support = GPUSupportArrays{2, T}(length(gpu))
     reduction = ReductionWorkspace{SVector{3, T}}(length(gpu))
-    cells = CellListWorkspace{2, T}(length(gpu))
+    cells = CellListWorkspace{2, T}(length(gpu); fixed_grid,
+        expansion = ((false, fixed_grid), (false, false)))
     motion = MotionArrays(geometry, particles)
     state = StepState{T}(; dx = one(T) + kernel.h)
     advance!() = SimulationLoop(ZeroDensityDiffusion(), ZeroViscosity(), kernel, metadata,
@@ -369,9 +370,9 @@ if CUDA.functional()
         end
 
         @testset "simulation graphs survive capacity growth" begin
-            for scheme in (SymplecticTimeStepping(), SingleNeighborTimeStepping())
-                captured = cell_rebuild_driver_growth(true; scheme)
-                direct = cell_rebuild_driver_growth(false; scheme)
+            for scheme in (SymplecticTimeStepping(), SingleNeighborTimeStepping()), fixed_grid in (false, true)
+                captured = cell_rebuild_driver_growth(true; scheme, fixed_grid)
+                direct = cell_rebuild_driver_growth(false; scheme, fixed_grid)
                 @test captured.fields == direct.fields
                 @test captured.cell_ids == direct.cell_ids
                 @test captured.grid == direct.grid

@@ -681,6 +681,41 @@ end
 # Cell list rebuild with reordering of the persistent fields
 #---------------------------------------------------------------
 
+function grid_freeze_state(gpu, floating = nothing)
+    bodies = floating !== nothing && floating.active && hasproperty(floating, :frozen)
+    return (; types = gpu.Type, velocity = gpu.Velocity, acceleration = gpu.Acceleration,
+        groups = gpu.GroupMarker, body = bodies ? floating.body : nothing,
+        frozen_bodies = bodies ? floating.frozen : nothing)
+end
+
+function log_frozen_particles!(cl, gpu, inverse_cutoff; logger = nothing, time = 0, iteration = 0)
+    n = cl.newly_frozen
+    n == 0 && return nothing
+    # Event indices refer to the order before histogram/scatter reuses Perm.
+    indices = CuArray(Array(view(cl.Perm, 1:n)))
+    ids = Array(gpu.ID[indices])
+    positions = Array(gpu.Position[indices])
+    groups = Array(gpu.GroupMarker[indices])
+    scale = bin_scale(cl.grid, inverse_cutoff)
+    target = logger === nothing ? current_logger() : logger.Logger
+    with_logger(target) do
+        @warn "Fixed grid: froze $n particle(s) at time=$time s, step=$iteration; total frozen=$(cl.frozen_total)."
+        for i in sortperm(ids)
+            sides = GPUCellGrid.locked_grid_sides(positions[i], cl.grid, scale, cl.expansion)
+            names = String[]
+            for d in eachindex(cl.expansion), side in 1:2
+                (sides & (UInt32(1) << (2d + side - 3))) == 0 && continue
+                push!(names, (side == 1 ? "-" : "+") * ("x", "y", "z")[d])
+            end
+            reason = isempty(names) ? "floating body crossed a locked limit" : "locked limits=" * join(names, ",")
+            @warn "Frozen particle ID=$(ids[i]), group=$(groups[i]), position=$(Tuple(positions[i])); $reason."
+        end
+    end
+    logger === nothing || flush(logger.LoggerIo)
+    cl.newly_frozen = 0
+    return nothing
+end
+
 function boundary_indices_kernel!(slots, owners, sorted_slots, n::Int32)
     i = thread_index()
     i > n && return nothing
@@ -725,13 +760,30 @@ as used at startup to preserve the host EOS rounding before the first step.
 When `support` holds cell relative positions (`uses_pos_cells`), `kernel`
 (the `SPHKernelInstance`) is required and they are rewritten for the new order
 and cells; the time step keeps them current until the next rebuild.
+For fixed grids, escaped particles become `Frozen`. Pass `logger`, `time`
+and `iteration` to record events in a simulation log; without `logger`, events
+use Julia's current logger. Frozen pressure and density remain unchanged.
 """
 function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCutOff;
                             prepared::Bool = false, support = nothing, floating = nothing,
                             constants = nothing, boundary_mode = NoMDBC(), discard_acceleration::Bool = false,
-                            preserve_pressure::Bool = false, kernel = nothing)
+                            preserve_pressure::Bool = false, kernel = nothing,
+                            logger = nothing, time = 0, iteration = 0)
     support !== nothing && uses_pos_cells(support) && kernel === nothing &&
         throw(ArgumentError("Rebuilding with cell relative positions requires the SPH kernel."))
+    freeze_state = cl.fixed_grid ? grid_freeze_state(gpu, floating) : nothing
+    if !prepared
+        prepare_cell_grid!(cl, gpu.Position, InverseCutOff; freeze_state)
+        sync_cell_grid!(cl)
+        prepared = true
+    end
+    if cl.newly_frozen > 0
+        freeze_body_state!(floating)
+        log_frozen_particles!(cl, gpu, InverseCutOff; logger, time, iteration)
+    end
+    # Frozen pressure is an accepted state value, including Updated-mDBC wall
+    # pressure. Retain it rather than reconstructing it using the new type.
+    preserve_pressure |= cl.frozen_total > 0
     s = gpu.scratch
     reconstruct = isempty(s.Pressure) && !isempty(gpu.Pressure)
     reconstruct && constants === nothing &&
@@ -743,7 +795,7 @@ function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCut
     dsts = (map(f -> getproperty(s, f), fields)...,
         (compact_ghosts ? (s.BoundarySlot,) : ())..., gpu.CellID)
 
-    grid = update_cell_list!(cl, gpu.Position, InverseCutOff, srcs, dsts; prepared)
+    grid = update_cell_list!(cl, gpu.Position, InverseCutOff, srcs, dsts; prepared, freeze_state)
     if compact_ghosts
         n = length(gpu)
         @cuda threads=ELEMENTWISE_THREADS blocks=cld(n, ELEMENTWISE_THREADS) boundary_indices_kernel!(
@@ -789,11 +841,13 @@ function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCut
         gpu.Pressure = s.Pressure
     end
 
+    # Floating membership needs the reorder permutation before ghost compaction
+    # reuses it. Retain frozen body members and the existing index-buffer size.
+    floating === nothing || update_floating_indices!(floating, gpu.Type, cl; preserve_membership = true)
     # The reorder moved the ghost node owners: relist them in the new (cell)
     # order. Their number never changes, so the list keeps its length and
     # device pointer, and captured graphs stay valid.
     compact_ghosts || isempty(gpu.GhostIndex) || compact_nonzero!(cl, gpu.GhostPoints, gpu.GhostIndex)
-    floating === nothing || update_floating_indices!(floating, gpu.Type, cl)
     support === nothing || initialize_fixed_predictors!(support, gpu)
     if support !== nothing && uses_pos_cells(support)
         launch_pos_cells!(support.PosCells, gpu.Position, gpu.CellID, cl.grid_dev,
@@ -920,6 +974,7 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
                              FlagKernel, FlagShift; threads = threads, lanes = lanes,
                              boundary_forces = bforces, pos_cells = sup.PosCells, boundary_data = sup.boundary_data,
                              inverse_density = sup.InvDensity,
+                             frozen_particles = get(ctx, :frozen_particles, Val(true)),
                              radial = get(ctx, :radial, Val(false)),
                              scalar_sps = get(ctx, :scalar_sps, Val(false)))
     end
@@ -1034,6 +1089,7 @@ function enqueue_step!(ctx, timed::Bool)
         FlagKernel, FlagShift; threads = threads, lanes = lanes,
         boundary_forces = bforces, pos_cells = sup.PosCellsₙ⁺, boundary_data = sup.boundary_data,
         inverse_density = sup.InvDensity,
+        frozen_particles = get(ctx, :frozen_particles, Val(true)),
         radial = get(ctx, :radial, Val(false)),
         scalar_sps = get(ctx, :scalar_sps, Val(false)))
 
@@ -1161,7 +1217,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                         SimConstants, gpu::GPUParticles{Dimensions, FloatType},
                         cl::CellListWorkspace, sup::GPUSupportArrays, red::ReductionWorkspace,
                         motion, state::StepState{FloatType};
-                        floating = nothing) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
+                        floating = nothing, logger = nothing) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
                                                    SDD <: SPHDensityDiffusion, SV <: SPHViscosity}
     HourGlass = SimMetaData.HourGlass
     h = SimKernel.h
@@ -1208,7 +1264,8 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     kmax      = timed ? 1 : max(1, SimMetaData.GPUMaxStepsPerSync)
 
     ctx = (; gpu, cl, sup, red, motion, floating, state, SimKernel, SimConstants, SimDensityDiffusion,
-             SimViscosity, FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, radial, scalar_sps, HourGlass, boundary_mode)
+             SimViscosity, FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, radial, scalar_sps, HourGlass, boundary_mode,
+             frozen_particles = Val(cl.frozen_total > 0))
 
     t_out = next_output_time(SimMetaData)
     set_output_time!(state, t_out)
@@ -1248,10 +1305,11 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
             end
         end
 
-        # A stopped batch has stable positions. Prepare only for STOP_REBUILD
-        # and publish its grid header in the integer timestep state, which is
-        # about to be read anyway. No extra header transfer or wait is needed.
-        @timeit HourGlass "02a Prepare Cell Grid" prepare_cell_grid!(cl, gpu.Position, SimKernel.H⁻¹; step = state)
+        # Batch ends have accepted full positions. Fixed grids also check for
+        # escapes here and request a rebuild before further steps or output.
+        # Publish the grid header in the existing timestep readback.
+        @timeit HourGlass "02a Prepare Cell Grid" prepare_cell_grid!(cl, gpu.Position, SimKernel.H⁻¹; step = state,
+            freeze_state = cl.fixed_grid ? grid_freeze_state(gpu, floating) : nothing)
 
         @timeit HourGlass "13 Read Back State" begin
             readback!(state)
@@ -1262,6 +1320,13 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         if stop == STOP_REBUILD
             @timeit HourGlass "02a Actual Calculate IndexCounter" begin
                 consume_cell_grid!(cl, state.ih) || error("A requested cell-list rebuild has no prepared grid.")
+                froze_particles = cl.newly_frozen > 0
+                if froze_particles && ctx.frozen_particles isa Val{false}
+                    # Keep the original pair arithmetic until exclusions exist.
+                    # Cached graphs captured that specialization and must change.
+                    invalidate_graphs!(state)
+                    ctx = merge(ctx, (; frozen_particles = Val(true)))
+                end
                 if cl.generation != generation
                     # Capacity growth changed device pointers. Drop cached
                     # graphs before any subsequent launches or replay.
@@ -1270,7 +1335,8 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                 end
                 rebuild_cell_list!(gpu, cl, SimKernel.H⁻¹; prepared = true, support = sup, floating,
                     constants = SimConstants, boundary_mode, discard_acceleration = true,
-                    preserve_pressure = cl.nrebuilds == 0, kernel = SimKernel)
+                    preserve_pressure = cl.nrebuilds == 0, kernel = SimKernel,
+                    logger, time = SimMetaData.TotalTime, iteration = SimMetaData.Iteration)
                 resume_after_rebuild!(state)
 
                 # The single neighbour scheme carries `dρdtI` and the
@@ -1280,8 +1346,14 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                 # CPU does ("03a Rebuild MDBC" .. "03c Rebuild NeighborLoop").
                 # Before the first step this is the CPU "00 Init" evaluation,
                 # because the initial displacement bound forces a rebuild.
-                if SingleNeighbor
+                if SingleNeighbor || froze_particles
                     enqueue_state_derivative!(ctx, state, timed, "02b Rebuild MDBC", "02c Rebuild NeighborLoop")
+                end
+                if froze_particles
+                    # Removal changes the accepted-state forces. Recompute the
+                    # timestep without counting the previous displacement again.
+                    launch_step_reduction!(red, gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Position, SimKernel)
+                    GPUStepState.set_slot!(state.i, state.ih, I_PHASE, PHASE_NEED_DT)
                 end
             end
         elseif stop == STOP_OUTPUT || SimMetaData.TotalTime > t_out
@@ -1432,6 +1504,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         red    = ReductionWorkspace{SVector{3, FloatType}}(NumberOfPoints)
         cl     = CellListWorkspace{Dimensions, PositionType}(NumberOfPoints;
                      reach = SimMetaData.GPUCellSubdivision, max_cells = SimMetaData.GPUMaxCells,
+                     fixed_grid = SimMetaData.GPUFixedGrid, expansion = SimMetaData.GPUGridExpansion,
                      deterministic = SimMetaData.GPUDeterministicSort)
         sup    = GPUSupportArrays{Dimensions, FloatType}(gpu, SimMetaData)
         motion = MotionArrays(SimGeometry, SimParticles)
@@ -1614,6 +1687,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         if StoreLogOutput
             with_logger(SimLogger.Logger) do
                 @info "Cell list rebuilds: $(cl.nrebuilds), grid dims: $(cl.grid.dims)"
+                cl.fixed_grid && @info "Fixed-grid frozen particles (total): $(cl.frozen_total)"
                 @info "Device grid status reads: $(cl.grid_status_readbacks), capacity growths: $(cl.capacity_growths), " *
                       "bounding-box host partial reads: $(cl.bbox_host_readbacks)"
                 @info "Host read backs of the step state: $(state.readbacks) for $(SimMetaData.Iteration) steps, " *
@@ -1654,7 +1728,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         while true
             @timeit HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                                                                  SimConstants, gpu, cl, sup, red, motion, state;
-                                                                 floating = floating)
+                                                                 floating = floating, logger = SimLogger)
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
 
             # Publish progress immediately, independently of the queued disk writes.

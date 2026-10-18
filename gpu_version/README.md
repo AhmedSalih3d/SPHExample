@@ -410,6 +410,94 @@ and untested comparisons. Run focused GPU checks with
 `julia --project=. test/cell_list_rebuild.jl`, or reproduce interleaved baseline
 comparisons with `julia --project=. benchmark/cell_list_rebuild.jl --profile`.
 
+### Fixed grid and directional expansion
+
+Set `GPUFixedGrid = true` in `SimulationMetaData` to keep the neighbour grid
+defined by the initial particle geometry (including fluid, fixed, moving and
+floating particles). The first rebuild runs before time integration and fixes
+the initial cell bounds, with the usual stencil margin. The default remains
+the dynamic grid, `GPUFixedGrid = false`.
+
+```julia
+# Keep all initial bounds fixed in 2D.
+meta = SimulationMetaData{2, Float32}(
+    SimulationName = "FixedTank", SaveLocation = "output",
+    GPUFixedGrid = true,
+)
+
+# Alternatively, allow growth only in +y; keep -x, +x and -y locked.
+meta.GPUGridExpansion = ((false, false), (false, true))
+```
+
+`GPUGridExpansion` contains one `(negative, positive)` Boolean pair per axis,
+in `(x, y)` or `(x, y, z)` order. Its default locks every side. For example,
+`((false, true), (false, false), (true, true))` allows only `+x` and both
+`z` directions in 3D. Expansion requires `GPUFixedGrid = true` and is driven
+by particle positions at rebuild time. Allowed sides grow as needed and never
+shrink, so previously allocated domain cells remain part of the grid.
+
+A particle crossing a locked side becomes permanently `Frozen` at the next
+grid check between timestep batches, before further steps or output. Freezing
+forces a rebuild even when the displacement threshold has not been reached.
+Its detected position, density and pressure are retained. Velocity and
+acceleration become zero, and it no longer contributes to SPH interactions,
+motion or timestep limits. Frozen particles remain in output with `Type = 5`.
+If any particle of a floating body crosses a locked limit, the entire body
+freezes, preserving its rigid shape and stopping its body state.
+
+Each event is written to `SimulationOutput.log`, including with `NoLog`: the
+number of newly frozen particles, cumulative count, simulation time, step,
+particle IDs, group markers, positions and crossed limits. Each particle is
+reported once. Group members frozen along with an escaped floating particle
+are identified as frozen because their body crossed a limit. Routine progress
+logging remains controlled by the existing log mode.
+
+Bounds use the existing rounded cell coordinates with edge
+`H / GPUCellSubdivision`, rather than exact
+position extrema. The stencil margin is reserved for neighbour traversal;
+it is not extra space for particles to escape into. This option constrains
+the search domain and does not add physical walls or remove frozen particles.
+
+Active particles are still rebinned and sorted at rebuilds. Their cell rounding,
+pair order and interaction arithmetic are unchanged. Grid output still includes only
+cells occupied by the current output frame. `GPUMaxCells` also limits
+directional growth, and capacity growth invalidates captured graphs as usual.
+Nonfinite positions and coordinate overflow remain explicit errors rather than
+freeze events.
+
+Fixed bounds avoid repeatedly changing the grid shape; unchanged bounds also
+skip dimension and cell-count calculations. The position bounding-box check
+and dense-grid scans remain necessary. A retained grid can contain more empty
+cells than a shrinking dynamic grid, so this option does not guarantee a speedup.
+
+Low-level callers can use `CellListWorkspace{D, T}(n; fixed_grid = true,
+expansion = ((false, false), (false, true)))` for the 2D example above. The
+first successfully consumed preparation defines the bounds; keep the support
+radius constant for that workspace's lifetime. Position-only cell-list calls
+retain a clear locked-side error because they have no velocity/type state to
+freeze. Use the simulation driver or `rebuild_cell_list!` with GPU particles
+for automatic freezing.
+
+Run focused regressions from the repository root:
+
+```bash
+julia --project=gpu_version -t 2,0 gpu_version/test/fixed_grid.jl
+julia --project=gpu_version -t 2,0 gpu_version/test/frozen_grid.jl
+julia --project=gpu_version -t 2,0 gpu_version/test/cell_list_rebuild.jl
+```
+
+Benchmark warmed solver intervals (setup and output excluded) with:
+
+```bash
+julia --project=gpu_version -t 2,0 gpu_version/benchmark/fixed_grid.jl
+```
+
+The benchmark alternates dynamic/fixed variant order and requires identical
+particle states, steps, rebuilds and readback counts for each measured pair.
+The [initial RTX 5080 measurement](benchmark/fixed_grid_results.md), recorded
+before frozen-particle checks were added, found no clear elapsed speedup in
+MovingSquare2D. Use the benchmark above to measure the current implementation.
+
 ### Generating the 2D DamBreak case
 
 `example/GenerateDamBreak2DMDBC.jl` builds the 2D dam-break tank and its
@@ -1115,6 +1203,8 @@ definitions in `benchmark/cases.jl` construct against either package.
 | `GPUSyncTimers` | `false` | Synchronize after every phase so the `TimerOutputs` table shows real per kernel times (costs a few percent). |
 | `GPUDeterministicSort` | `true` | Sort particles inside each cell after the counting sort; results become bitwise reproducible between runs. |
 | `GPUMaxCells` | `50_000_000` | Abort with a clear message if the neighbour grid would need more cells (a particle escaped). |
+| `GPUFixedGrid` | `false` | Retain the initial particle-grid bounds. Particles crossing locked sides freeze and are logged at rebuilds; allowed sides grow without shrinking. See "Fixed grid and directional expansion". |
+| `GPUGridExpansion` | `((false, false), ...)` | One `(negative, positive)` Boolean pair per axis, selecting which sides of a fixed grid may expand. Requires `GPUFixedGrid = true`. |
 | `GPUInteractionThreads` | `128` | Threads per block of the interaction and mDBC kernels. |
 | `GPULanesPerParticle` | `0` (auto) | Warp lanes that share one particle's neighbour loop (1, 2, 4, ... 32). The automatic choice targets roughly one resident thread per particle-lane in 3D and one quarter of that in 2D, where neighborhoods generally contain fewer candidates; it caps lanes at 32 and combines them with warp shuffles. Explicit settings are unchanged. Use `1` for large cases and together with `GPUCellSubdivision = 2` (see "Lanes per particle" above). |
 | `GPURadialInteractions` | `false` | **Experimental** scalar Wendland C2 contractions and symmetric linear diffusion using `(ρᵢ⁻¹ + ρⱼ⁻¹) / 2`. Supported with `ZeroDensityDiffusion`, `LinearDensityDiffusion` or `ZeroGravityLinearDensityDiffusion`, and `ZeroViscosity`, `ArtificialViscosity`, `Laminar` or `LaminarSPS`, in 2D/3D Float32/Float64. SPS retains its original ordered tensor calculation; the other supported viscosities use direct symmetric evaluation. Other combinations warn and use reference interactions. Changes the reference diffusion operator as well as rounding; see below before opting in. |
