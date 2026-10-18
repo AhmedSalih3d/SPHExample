@@ -103,6 +103,9 @@ if CUDA.functional()
         return mktempdir() do dir
             f = fixture(2, Float32, dir; double_position = true, log_mode, async)
             logger = SimulationLogger(dir)
+            logger.clock.start_ns -= UInt64(60_000_000_000)
+            initial_time = f.metadata.TotalTime
+            before_run = time_ns()
             console_path = joinpath(dir, "console.log")
             try
                 open(console_path, "w") do console
@@ -122,7 +125,8 @@ if CUDA.functional()
                 velocity = f.host.Velocity[order], pressure = f.host.Pressure[order],
                 acceleration = f.host.Acceleration[order])
             return (; state, log = read(joinpath(dir, "SimulationOutput.log"), String),
-                console = read(console_path, String))
+                console = read(console_path, String),
+                clock_restarted = logger.clock.start_ns >= before_run && logger.clock.initial_time == initial_time)
         end
     end
 
@@ -130,6 +134,8 @@ if CUDA.functional()
         for async in (false, true), scheme in (SymplecticTimeStepping(), SingleNeighborTimeStepping())
             reference = simulate(NoLog, async, scheme)
             logged = simulate(StoreLog, async, scheme)
+            @test reference.clock_restarted
+            @test logged.clock_restarted
             @test logged.state == reference.state
             @test logged.state.iteration > 0
             @test logged.state.position[3][1] > 4.02

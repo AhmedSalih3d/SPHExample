@@ -1340,6 +1340,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SV <: SPHViscosity, SDD <: SPHDensityDiffusion}
 
     CUDA.functional() || error("CUDA is not functional on this machine; use the CPU package SPHExample instead.")
+    SimulationLoggerConfiguration.start_runtime!(SimLogger, SimMetaData.TotalTime)
 
     if SimMetaData.GPURadialInteractions
         if radial_interactions_supported(SimKernel, SimDensityDiffusion, SimViscosity)

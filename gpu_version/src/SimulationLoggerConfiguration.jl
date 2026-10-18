@@ -29,6 +29,11 @@ module SimulationLoggerConfiguration
         return join(format_specifiers, " ")
     end
 
+    mutable struct RuntimeClock
+        start_ns::UInt64
+        initial_time::Float64
+    end
+
     """
     `SimulationLogger(save_location; filename="SimulationOutput.log", to_console=false)`
 
@@ -47,6 +52,7 @@ module SimulationLoggerConfiguration
         ValuesToPrintC::String       # separator line below the header
         CurrentDate::DateTime        # start time of the simulation
         CurrentDataStr::String       # preformatted start time string
+        clock::RuntimeClock          # elapsed wall time and physical time at run entry
 
         function SimulationLogger(SaveLocation::String; filename="SimulationOutput.log")
             io_logger = open(joinpath(SaveLocation, filename), "w")
@@ -67,9 +73,18 @@ module SimulationLoggerConfiguration
             CurrentDate    = now()
             CurrentDataStr = Dates.format(CurrentDate, "dd-mm-yyyy HH:MM:SS")
 
-            new(io_logger, file_logger, format_string, ValuesToPrint, ValuesToPrintC, CurrentDate, CurrentDataStr)
+            new(io_logger, file_logger, format_string, ValuesToPrint, ValuesToPrintC,
+                CurrentDate, CurrentDataStr, RuntimeClock(time_ns(), 0.0))
         end
     end
+
+    function start_runtime!(logger::SimulationLogger, initial_time)
+        logger.clock.start_ns = time_ns()
+        logger.clock.initial_time = Float64(initial_time)
+        return nothing
+    end
+
+    elapsed_wall_time(logger::SimulationLogger) = (time_ns() - logger.clock.start_ns) / 1e9
 
     function host_particle_bytes(particles)
         seen = Base.IdSet()
@@ -244,7 +259,7 @@ module SimulationLoggerConfiguration
         step_log_line(SimLogger, SimMetaData, HourGlass) -> String
 
     The log line of one output ("Part_0001 ..."), formatted from the current
-    meta data and the time measured so far. Formatting is separate from the
+    meta data and elapsed wall time from the run's monotonic clock. Formatting is separate from the
     emission (`log_line`). Progress is emitted by the simulation thread while
     the values belong to the current frame, independently of disk output.
     """
@@ -254,11 +269,14 @@ module SimulationLoggerConfiguration
         PartTotalSteps           = string(SimMetaData.Iteration)
         CurrentSteps             = string(SimMetaData.Iteration - SimMetaData.StepsTakenForLastOutput)
 
-        elapsed_time_            = TimerOutputs.tottime(HourGlass) / 1e9
+        elapsed_time_            = elapsed_wall_time(SimLogger)
         TimeUptillNow            = string(@sprintf("%-.3f", elapsed_time_))
-        TimePerPhysicalSecond    = string(@sprintf("%-.2f", elapsed_time_ / SimMetaData.TotalTime))
+        physical_progress        = Float64(SimMetaData.TotalTime) - SimLogger.clock.initial_time
+        time_per_physical_second = physical_progress > 0 ? elapsed_time_ / physical_progress : NaN
+        TimePerPhysicalSecond    = isfinite(time_per_physical_second) ?
+                                   @sprintf("%-.2f", time_per_physical_second) : missing
 
-        SecondsToFinish          = (SimMetaData.SimulationTime - SimMetaData.TotalTime) * (elapsed_time_ / SimMetaData.TotalTime)
+        SecondsToFinish          = max(0.0, Float64(SimMetaData.SimulationTime) - Float64(SimMetaData.TotalTime)) * time_per_physical_second
         if !isfinite(SecondsToFinish)
             ExpectedFinishTimeString = missing
         else
@@ -302,10 +320,11 @@ module SimulationLoggerConfiguration
     """
         LogFinal(logger, timer; status="finished")
 
-    Print the simulation status, total run time and collected [`TimerOutput`]
+    Print the simulation status, elapsed wall time and collected [`TimerOutput`]
     information when output is finalized.
     """
     function LogFinal(SimLogger, HourGlass; status::String = "finished")
+        elapsed = elapsed_wall_time(SimLogger)
         with_logger(SimLogger.Logger) do
             # Get the current date and time
             current_time = now()
@@ -314,7 +333,7 @@ module SimulationLoggerConfiguration
                              Dates.format(current_time, "dd-mm-yyyy HH:MM:SS")
 
             @info formatted_time
-            @info "\n Simulation took " * @sprintf("%-.2f", TimerOutputs.tottime(HourGlass)/1e9) * "[s]"
+            @info "\n Simulation took " * @sprintf("%-.2f", elapsed) * "[s]"
             show(SimLogger.LoggerIo, HourGlass)
         end
     end

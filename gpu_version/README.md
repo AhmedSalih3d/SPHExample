@@ -1143,6 +1143,15 @@ comparing with DualSPHysics.
 The timing table appears at the bottom of the console output, after the final
 diagnostics and completion message. With `StoreLog`, it also ends the saved log.
 
+Progress `Run Time`, `Time/Sec`, estimated finish dates and the final
+`Simulation took` message use elapsed wall time from a monotonic clock started
+when `RunSimulation` begins. This includes setup, untimed work and output waits;
+the final duration includes draining and closing output. For resumed runs, the
+rate uses physical time advanced during the current run. The rate and finish
+date are unavailable until physical time advances. The timing table continues
+to report individual measured sections. Direct logging-helper calls use the
+clock started when the logger was created.
+
 Memory figures use exact bytes, MiB (`2^20` bytes) and average bytes per total
 particle, using the actual element types and allocated field lengths:
 
