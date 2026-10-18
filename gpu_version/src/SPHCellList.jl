@@ -17,7 +17,6 @@ using LinearAlgebra
 using Printf
 using TimerOutputs
 using Logging, LoggingExtras
-using UnicodePlots
 
 using ..SimulationEquations
 using ..SimulationGeometry
@@ -1626,17 +1625,6 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             SimulationLoggerConfiguration.log_gpu_memory(SimLogger, gpu_buffers, NumberOfPoints;
                 phase = "final, current cell-list capacity")
             LogFinal(SimLogger, HourGlass; status = status)
-
-            if !isempty(TimeSteps)
-                time_steps_graph = lineplot(1:length(TimeSteps), TimeSteps,
-                                            title = "Time Steps [s] as a function of iteration",
-                                            name = "Time Steps", xlabel = "Iterations [-]",
-                                            ylabel = "Time Step Size [s]")
-                with_logger(SimLogger.Logger) do
-                    @info ""
-                    show(SimLogger.LoggerIo, time_steps_graph)
-                end
-            end
 
             close(SimLogger.LoggerIo)
             AutoOpenLogFile(SimLogger, SimMetaData)
