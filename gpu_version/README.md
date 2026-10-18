@@ -109,6 +109,8 @@ identical face coordinates in both single-file and numbered output; gaps appear
 only where cells are empty. This visualization does not change neighbor-search
 rebuilds or SPH results. The grid writer flushes early when its pending frames
 reach the output memory budget.
+The buffered grid writer reuses coordinate storage as cell counts change,
+retaining capacity for later frames while exporting only the active coordinates.
 
 Focused grid export tests (including ParaView reader checks when `pvpython` is
 on PATH):

@@ -905,7 +905,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     Preallocated SPHGeometry of one cell grid frame in the layout of the file
     (see `fill_grid_geometry!`): the corner points as a `3 × (corners · cells)`
     matrix, the connectivity, the cell offsets, the VTK cell types and the
-    cell ids. The arrays are resized per frame and only grow.
+    cell ids. Active sizes match each frame; storage capacity is retained for reuse.
     """
     mutable struct GridGeometryBuffers
         points::Matrix{Float64}
@@ -929,7 +929,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         ncells   = length(UniqueCells)
         ncorners = 2^D
         npts     = ncorners * ncells
-        size(buf.points, 2) == npts || (buf.points = Matrix{Float64}(undef, 3, npts))
+        if size(buf.points, 2) != npts
+            # Reshape a resized vector to retain capacity while exposing only active columns.
+            buf.points = reshape(resize!(vec(buf.points), 3 * npts), 3, npts)
+        end
         resize!(buf.connectivity, npts)
         resize!(buf.offsets, ncells + 1)
         resize!(buf.types, ncells)

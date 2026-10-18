@@ -60,6 +60,62 @@ end
     end
 end
 
+function cycle_grid_geometry!(buffers, edge, frames)
+    for cells in frames
+        fill_grid_geometry!(buffers, edge, cells)
+    end
+    return nothing
+end
+
+@testset "grid coordinates reuse capacity across changing and empty frames" begin
+    geometry = SPHExampleGPU.ProduceHDFVTK
+    for D in (2, 3), T in (Float32, Float64)
+        edge = T(0.08) / T(2)
+        cells = [CartesianIndex(ntuple(d -> d == 1 ? i - 5 : -d, D)) for i in 1:4096]
+        counts = (256, 96, 0, 224, 64, 32, 256, 0, 128, 256)
+        frames = [cells[1:n] for n in counts]
+        buffers = GridGeometryBuffers()
+        fill_grid_geometry!(buffers, edge, first(frames))
+        original_points = buffers.points
+        for frame in frames
+            npts = length(frame) * 2^D
+            @test fill_grid_geometry!(buffers, edge, frame) == npts
+            @test buffers.points isa Matrix{Float64}
+            @test size(buffers.points) == (3, npts)
+            @test pointer(buffers.points) == pointer(original_points)
+            if isempty(frame)
+                @test isempty(buffers.connectivity)
+                @test buffers.offsets == [0]
+                @test isempty(buffers.types) && isempty(buffers.cell_data)
+            else
+                points, connectivity, offsets, types, data, _ = geometry.compute_grid_geometry(edge, frame)
+                @test buffers.points == stack(points)
+                @test buffers.connectivity == connectivity
+                @test buffers.offsets == offsets
+                @test buffers.types == types
+                @test buffers.cell_data == data
+            end
+        end
+
+        cycle_grid_geometry!(buffers, edge, frames) # Warm the changing-size path.
+        allocated_bytes = @allocated cycle_grid_geometry!(buffers, edge, frames)
+        @test allocated_bytes < sizeof(original_points) ÷ 2
+
+        # Growth uses new storage; retained matrices must keep owning their old data.
+        retained_points = buffers.points
+        expected_points = copy(retained_points)
+        @test fill_grid_geometry!(buffers, edge, cells) == length(cells) * 2^D
+        @test pointer(buffers.points) != pointer(retained_points)
+        @test retained_points == expected_points
+        large_points = buffers.points
+        @test fill_grid_geometry!(buffers, edge, CartesianIndex{D}[]) == 0
+        @test pointer(buffers.points) == pointer(large_points)
+        @test size(buffers.points) == (3, 0)
+        @test fill_grid_geometry!(buffers, edge, cells) == length(cells) * 2^D
+        @test pointer(buffers.points) == pointer(large_points)
+    end
+end
+
 @testset "dense grid frames respect the pending output budget" begin
     geometry = SPHExampleGPU.ProduceHDFVTK
     function write_frames(path, budget, D; capacity = 4)
