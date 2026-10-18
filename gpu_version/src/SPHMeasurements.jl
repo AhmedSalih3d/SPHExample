@@ -1,6 +1,8 @@
 module SPHMeasurements
 
 using HDF5
+using ..HDF5Append: extend! as _extend!, extend_columns! as _extend_columns!,
+    append_slice! as _append!, append_columns! as _append_columns!
 
 export MeasurementProbe, WaterColumnProbe, FreeSurfaceDomain, MeasurementConfig
 
@@ -400,35 +402,6 @@ end
 function _write_attribute(group, name, value)
     HDF5.attrs(group)[name] = value
     return group
-end
-
-# Append `count` entries to the one dimensional dataset `ds` and return the
-# (one based) index of the first new entry. New entries read as zero.
-function _extend!(ds::HDF5.Dataset, count::Integer)
-    len = length(ds)
-    HDF5.set_extent_dims(ds, (len + count,))
-    return len + 1
-end
-
-function _append!(ds::HDF5.Dataset, data::AbstractVector)
-    isempty(data) && return ds
-    first = _extend!(ds, length(data))
-    ds[first:(first + length(data) - 1)] = data
-    return ds
-end
-
-# Append `count` zero columns to the `rows × M` dataset `ds`.
-function _extend_columns!(ds::HDF5.Dataset, count::Integer)
-    rows, cols = size(ds)
-    HDF5.set_extent_dims(ds, (rows, cols + count))
-    return cols + 1
-end
-
-function _append_columns!(ds::HDF5.Dataset, data::AbstractMatrix)
-    size(data, 2) == 0 && return ds
-    first = _extend_columns!(ds, size(data, 2))
-    ds[:, first:(first + size(data, 2) - 1)] = data
-    return ds
 end
 
 _step_dataset(group, name, ::Type{T}, capacity) where {T} =

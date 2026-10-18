@@ -27,6 +27,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     using StaticArrays
 
     using ..AuxiliaryFunctions: to_3d, to_3d!, components!
+    using ..HDF5Append: extend!, extend_columns!, append_slice!, append_columns!
     using ..PolygonDrawing: ExtrudedPolygon, translate
     using ..SimulationGeometry: MotionDetails
     using ..SPHMeasurements: MeasurementConfig, has_measurements,
@@ -834,40 +835,6 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     """
     buffered_frames(bytes_per_frame::Integer, budget_bytes::Integer) =
         prevpow(2, clamp(budget_bytes ÷ max(bytes_per_frame, 1), 1, MAX_BUFFERED_FRAMES))
-
-    # Append `n` entries to the one dimensional dataset `ds` and return the
-    # (one based) index of the first new entry.
-    function extend!(ds, n::Integer)
-        len = length(ds)
-        HDF5.set_extent_dims(ds, (len + n,))
-        return len + 1
-    end
-
-    # Append `n` columns to the `k × M` dataset `ds` and return the (one
-    # based) index of the first new column.
-    function extend_columns!(ds, n::Integer)
-        rows, cols = size(ds)
-        HDF5.set_extent_dims(ds, (rows, cols + n))
-        return cols + 1
-    end
-
-    # Append the entries of `data` to the one dimensional dataset `ds`.
-    function append_slice!(ds, data::AbstractVector)
-        m = length(data)
-        m == 0 && return ds
-        i = extend!(ds, m)
-        ds[i:(i + m - 1)] = data
-        return ds
-    end
-
-    # Append the columns of `data` to the `k × M` dataset `ds`.
-    function append_columns!(ds, data::AbstractMatrix)
-        m = size(data, 2)
-        m == 0 && return ds
-        i = extend_columns!(ds, m)
-        ds[:, i:(i + m - 1)] = data
-        return ds
-    end
 
     set_nsteps!(attr::HDF5.Attribute, n::Integer) = HDF5.write_attribute(attr, HDF5.datatype(idType), idType(n))
 

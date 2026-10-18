@@ -10,6 +10,7 @@ module SPHExampleGPU
     # Include submodules in dependency order
     submodules = [
         "AuxiliaryFunctions.jl",
+        "HDF5Append.jl",
         "SPHMeasurements.jl",
         "PolygonDrawing.jl",
         "SimulationGeometry.jl",

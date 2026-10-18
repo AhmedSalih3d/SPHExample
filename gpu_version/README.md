@@ -1203,8 +1203,9 @@ the simulation equations, particle order or implicit cell-range neighbor search:
   Updated mDBC reads a slot only for a wall within the cutoff, reusing it for
   activation and both velocities; fluid-fluid pairs do not read the map.
   Synchronous/asynchronous output expands compact ghosts back to full host
-  fields, with zeros for fluid particles. Asynchronous frames retain their own
-  owner indices, so later rebuilds cannot corrupt an earlier frame.
+  fields, with zeros for fluid particles and the original host element types.
+  Both output modes use the frame's own owner indices, so later rebuilds cannot
+  corrupt an earlier frame.
 * `NoKernelOutput` does not allocate kernel sums or kernel-gradient sums.
 * `NoShifting` does not allocate the two shifting work arrays.
 * Acceleration and pressure retain their ordinary device arrays but have no

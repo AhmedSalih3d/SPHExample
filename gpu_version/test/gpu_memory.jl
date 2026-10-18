@@ -39,7 +39,7 @@ function hdf_datasets(path)
     return datasets
 end
 
-function simulate(build, T; compact, double_position, graph, async, scheme)
+function simulate(build, T; compact, double_position, graph, async, scheme, queue_bytes = 1024^2)
     return mktempdir() do save
         kwargs = build(T, save)
         metadata = kwargs.SimMetaData
@@ -47,7 +47,7 @@ function simulate(build, T; compact, double_position, graph, async, scheme)
         metadata.GPUDoublePosition = double_position
         metadata.GPUUseGraph = graph
         metadata.GPUAsyncOutput = async
-        metadata.GPUOutputQueueBytes = 1024^2
+        metadata.GPUOutputQueueBytes = queue_bytes
         metadata.SimulationTime = T(0.006)
         metadata.OutputTimes = T(0.002)
         metadata.ExportGridCells = true
@@ -313,6 +313,33 @@ end
             kernel = SPHKernelInstance{2, Float32}(WendlandC2(); dx = constants.dx)
             @test_throws ArgumentError SimulationLoop(ZeroDensityDiffusion(), ZeroViscosity(),
                 kernel, f.metadata, constants, gpu, cells, support, reduction, motion, StepState{Float32}())
+        end
+    end
+
+    @testset "compact ghost exports match full buffers in both output modes" begin
+        function ghost_output_case(T, save)
+            kwargs = updated_case(T, save)
+            kwargs.SimMetaData.OutputVariables = ["ID", "Type", "GhostPoints", "GhostNormals"]
+            return kwargs
+        end
+        for double_position in (false, true),
+            scheme in (SymplecticTimeStepping(), SingleNeighborTimeStepping())
+            reference = simulate(ghost_output_case, Float32; compact = false,
+                double_position, graph = true, async = false, scheme)
+            for async in (false, true)
+                result = simulate(ghost_output_case, Float32; compact = true,
+                    double_position, graph = true, async, scheme, queue_bytes = 0)
+                @test result == reference
+                types = result.particles["/VTKHDF/PointData/Type"][3]
+                @test length(types) > length(result.position[2])
+                fluid = vec(types .== Int8(Fluid))
+                wall = vec(types .== Int8(Moving))
+                for name in ("GhostPoints", "GhostNormals")
+                    ghosts = result.particles["/VTKHDF/PointData/$name"][3]
+                    @test all(iszero, ghosts[:, fluid])
+                    @test any(!iszero, ghosts[:, wall])
+                end
+            end
         end
     end
 

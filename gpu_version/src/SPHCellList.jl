@@ -378,6 +378,12 @@ Runs on the writer task.
 """
 function finish_download!(dl::OutputDownload{D}, SimParticles::StructArray, grid::CellGrid{D}) where {D}
     CUDA.synchronize(dl.event)
+    return apply_download!(dl, SimParticles, grid)
+end
+
+# Apply a completed frame using its own ghost-owner snapshot. Collected host
+# frames have already been synchronized and must not wait on the staging event.
+function apply_download!(dl::OutputDownload{D}, SimParticles::StructArray, grid::CellGrid{D}) where {D}
     for (f, buf) in zip(dl.fields, dl.buffers)
         if dl.ghost_index !== nothing && f in (:GhostPoints, :GhostNormals)
             expand_boundary_field!(getproperty(SimParticles, f), buf, dl.ghost_index)
@@ -1442,11 +1448,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     function write_frame(job::OutputFrameJob)
         t0 = time()
         if SimMetaData.GPUAsyncOutput
-            for (f, buf) in zip(job.download.fields, job.download.buffers)
-                copyto!(getproperty(SimParticles, f), buf)
-            end
-            UniqueCells = isempty(job.download.cid) ? CartesianIndex{Dimensions}[] :
-                store_cells!(SimParticles, job.grid, job.download.cid)
+            UniqueCells = apply_download!(job.download, SimParticles, job.grid)
         else
             UniqueCells = finish_download!(job.download, SimParticles, job.grid)
             put!(free, job.download)
