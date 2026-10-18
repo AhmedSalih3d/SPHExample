@@ -584,6 +584,10 @@ Pause/release, rigid placement, and body output remain supported. Select this sc
 and velocity at each output time; its 2D angle/omega columns remain unchanged,
 while 3D output includes the scalar-first quaternion (`Orientation:0` through
 `Orientation:3`) and the three angular-velocity components.
+After the initial frame, body state is downloaded with its particle frame.
+With `GPUAsyncOutput = true`, the output worker writes the CSV rows in frame
+order from independent snapshots, so later body updates cannot change queued
+rows. CSV times and column formats are the same in both output modes.
 
 Force reduction and rigid placement use a compact list of floating particles,
 refreshed after cell sorting without changing its device address. Each warp
@@ -957,7 +961,7 @@ the standard *gather* formulation:
   `julia -t 2,1` to give collection and simulation enough CPU threads while
   disk writes run separately. With only one CPU thread, blocking writes can
   still interrupt simulation launches.
-  `GPUOutputQueueBytes` budgets the queued frame arrays separately from the
+  `GPUOutputQueueBytes` budgets the queued particle and floating-body arrays separately from the
   file batching budget (at least one frame is allocated). No frames are dropped:
   sustained disk throughput below frame production eventually fills the queue
   and makes the simulation wait. GPU downloads still precede subsequent kernels

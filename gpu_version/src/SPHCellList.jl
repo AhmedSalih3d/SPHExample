@@ -322,11 +322,12 @@ struct OutputDownload{D}
     buffers::Vector{Vector}         # pinned staging buffer per field, in the device element type
     cid::Vector{Int32}              # pinned cell ids (empty unless the cells are exported)
     ghost_index::Union{Nothing, Vector{Int32}}
+    floating::Union{Nothing, NamedTuple} # body state captured with this particle frame
     memory::Vector{CUDA.HostMemory} # the page-locked allocations behind the buffers
     event::CuEvent                  # recorded behind the copies of the current frame
 end
 
-function OutputDownload(gpu::GPUParticles{D}, fields; cells::Bool) where {D}
+function OutputDownload(gpu::GPUParticles{D}, fields; cells::Bool, floating = nothing) where {D}
     foreach(f -> require_particle_field(gpu, f), fields)
     memory = CUDA.HostMemory[]
     function pinned(::Type{T}, n) where {T}
@@ -340,7 +341,16 @@ function OutputDownload(gpu::GPUParticles{D}, fields; cells::Bool) where {D}
     cid     = cells ? pinned(Int32, length(gpu)) : Int32[]
     ghost_index = gpu.BoundarySlot !== nothing && any(f -> f in (:GhostPoints, :GhostNormals), fields) ?
         pinned(Int32, length(gpu.GhostIndex)) : nothing
-    return OutputDownload{D}(names, buffers, cid, ghost_index, memory, CuEvent(CUDA.EVENT_DISABLE_TIMING))
+    body_fields = D == 2 ? (:center, :velocity, :angle, :omega) : (:center, :velocity, :orientation, :omega)
+    body_state = if floating === nothing || !floating.active
+        nothing
+    else
+        NamedTuple{body_fields}(map(body_fields) do name
+            src = getproperty(floating, name)
+            pinned(eltype(src), length(src))
+        end)
+    end
+    return OutputDownload{D}(names, buffers, cid, ghost_index, body_state, memory, CuEvent(CUDA.EVENT_DISABLE_TIMING))
 end
 
 # Asynchronous device to host copy into page-locked memory on the current stream.
@@ -351,20 +361,53 @@ function copy_async!(dst::Vector{T}, src::CuVector{T}) where {T}
 end
 
 """
-    enqueue_download!(download, gpu)
+    enqueue_download!(download, gpu; floating = nothing)
 
 Enqueue the asynchronous copies of the current device state into the staging
-buffers and record the event behind them. Returns at once; the copies complete
+buffers and record the event behind them, including floating-body state when
+the download was allocated with `floating`. Returns at once; the copies complete
 in stream order, before any kernel enqueued afterwards runs.
 """
-function enqueue_download!(dl::OutputDownload, gpu::GPUParticles)
+function enqueue_download!(dl::OutputDownload, gpu::GPUParticles; floating = nothing)
+    dl.floating !== nothing && floating === nothing &&
+        throw(ArgumentError("This output frame requires floating-body state when enqueuing its download."))
     for (f, buf) in zip(dl.fields, dl.buffers)
         copy_async!(buf, getproperty(gpu, f))
     end
     isempty(dl.cid) || copy_async!(dl.cid, gpu.CellID)
     dl.ghost_index === nothing || copy_async!(dl.ghost_index, gpu.GhostIndex)
+    if dl.floating !== nothing
+        for (name, buf) in pairs(dl.floating)
+            copy_async!(buf, getproperty(floating, name))
+        end
+    end
     CUDA.record(dl.event)
     return dl
+end
+
+# Collected frames own ordinary host arrays. Their event belongs to the pinned
+# staging buffer and must not be used after that buffer returns to the producer.
+function host_output_frame(prototype::OutputDownload{D}) where {D}
+    return OutputDownload{D}(prototype.fields,
+        Vector[similar(buf) for buf in prototype.buffers], similar(prototype.cid),
+        prototype.ghost_index === nothing ? nothing : similar(prototype.ghost_index),
+        prototype.floating === nothing ? nothing : map(similar, prototype.floating),
+        CUDA.HostMemory[], prototype.event)
+end
+
+function collect_download!(frame::OutputDownload, staging::OutputDownload)
+    CUDA.synchronize(staging.event)
+    for (dst, src) in zip(frame.buffers, staging.buffers)
+        copyto!(dst, src)
+    end
+    copyto!(frame.cid, staging.cid)
+    frame.ghost_index === nothing || copyto!(frame.ghost_index, staging.ghost_index)
+    if frame.floating !== nothing
+        for (dst, src) in zip(frame.floating, staging.floating)
+            copyto!(dst, src)
+        end
+    end
+    return frame
 end
 
 """
@@ -1403,23 +1446,22 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                                 "Orientation:2,Orientation:3,Omega:0,Omega:1,Omega:2")
         end
     end
-    function log_floating(t)
+    floating_markers = [geom.GroupMarker for geom in SimGeometry if geom.Type == Floating]
+    function log_floating(t, s)
         floating_log === nothing && return nothing
-        s = floating_state(floating)
-        markers = [geom.GroupMarker for geom in SimGeometry if geom.Type == Floating]
         for b in 1:Int(floating.nbodies)
             if Dimensions == 2
-                println(floating_log, join((t, b, markers[b], s.center[b]..., s.velocity[b]...,
+                println(floating_log, join((t, b, floating_markers[b], s.center[b]..., s.velocity[b]...,
                                             s.angle[b], s.omega[b]), ","))
             else
-                println(floating_log, join((t, b, markers[b], s.center[b]..., s.velocity[b]...,
+                println(floating_log, join((t, b, floating_markers[b], s.center[b]..., s.velocity[b]...,
                                             s.orientation[b]..., s.omega[b]...), ","))
             end
         end
         flush(floating_log)
         return nothing
     end
-    log_floating(SimMetaData.TotalTime)
+    floating.active && log_floating(SimMetaData.TotalTime, floating_state(floating))
 
     # Save initial state, use 1 else this cannot be used to index fid vector
     SimMetaData.OutputIterationCounter = 1
@@ -1436,7 +1478,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     # frames into a reusable, memory-budgeted host queue. The disk writer owns
     # SimParticles and consumes queued frames in order. Staging buffers return
     # before any HDF5 work; backpressure occurs only when the host queue fills.
-    staging = OutputDownload{Dimensions}[OutputDownload(gpu, download_fields; cells = SimMetaData.ExportGridCells)
+    staging = OutputDownload{Dimensions}[OutputDownload(gpu, download_fields; cells = SimMetaData.ExportGridCells, floating)
                                          for _ in 1:(SimMetaData.GPUAsyncOutput ? OUTPUT_STAGING_FRAMES : 1)]
     free    = Channel{OutputDownload{Dimensions}}(length(staging))
     jobs    = Channel{OutputFrameJob{Dimensions}}(length(staging))
@@ -1453,6 +1495,8 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             UniqueCells = finish_download!(job.download, SimParticles, job.grid)
             put!(free, job.download)
         end
+        # Preserve the CSV's working-precision time formatting.
+        log_floating(FloatType(job.time), job.download.floating)
         SimMetaData.IndexCounter = length(UniqueCells)
         output.save_particles(job.counter, job.time)
         if SimMetaData.ExportGridCells
@@ -1468,17 +1512,13 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     if SimMetaData.GPUAsyncOutput
         prototype = first(staging)
         frame_bytes = sum(sizeof, prototype.buffers) + sizeof(prototype.cid) +
-            (prototype.ghost_index === nothing ? 0 : sizeof(prototype.ghost_index))
+            (prototype.ghost_index === nothing ? 0 : sizeof(prototype.ghost_index)) +
+            (prototype.floating === nothing ? 0 : sum(sizeof, prototype.floating))
         queue_frames = max(1, div(SimMetaData.GPUOutputQueueBytes, max(frame_bytes, 1)))
         host_free = Channel{OutputDownload{Dimensions}}(queue_frames)
         ready = Channel{OutputFrameJob{Dimensions}}(queue_frames)
         for _ in 1:queue_frames
-            # Ordinary host memory; the event is unused for collected frames.
-            frame = OutputDownload{Dimensions}(prototype.fields,
-                Vector[similar(buf) for buf in prototype.buffers],
-                similar(prototype.cid), prototype.ghost_index === nothing ? nothing : similar(prototype.ghost_index),
-                CUDA.HostMemory[], prototype.event)
-            put!(host_free, frame)
+            put!(host_free, host_output_frame(prototype))
         end
         writer = spawn_writer() do
             for job in ready
@@ -1492,12 +1532,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             try
                 for job in jobs
                     frame = take!(host_free)
-                    CUDA.synchronize(job.download.event)
-                    for (dst, src) in zip(frame.buffers, job.download.buffers)
-                        copyto!(dst, src)
-                    end
-                    copyto!(frame.cid, job.download.cid)
-                    frame.ghost_index === nothing || copyto!(frame.ghost_index, job.download.ghost_index)
+                    collect_download!(frame, job.download)
                     put!(free, job.download)
                     put!(ready, OutputFrameJob{Dimensions}(frame, job.counter,
                         job.time, job.grid))
@@ -1612,7 +1647,6 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                                                                  SimConstants, gpu, cl, sup, red, motion, state;
                                                                  floating = floating)
             push!(TimeSteps, SimMetaData.CurrentTimeStep)
-            log_floating(SimMetaData.TotalTime)
 
             # Publish progress immediately, independently of the queued disk writes.
             if StoreLogOutput
@@ -1627,7 +1661,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
 
             @timeit HourGlass "13 Output Frame" begin
                 dl = @timeit HourGlass "13a Wait For Staging Buffers" take!(free)
-                enqueue_download!(dl, gpu)
+                enqueue_download!(dl, gpu; floating)
                 job = OutputFrameJob{Dimensions}(dl, counter, Float64(t_out), grid)
                 if SimMetaData.GPUAsyncOutput
                     put!(jobs, job)
