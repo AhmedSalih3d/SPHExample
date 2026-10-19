@@ -19,7 +19,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
        SaveCellGridVTKHDF, AppendVTKHDFGridData,
        GridGeometryBuffers, fill_grid_geometry!, GridFrameWriter, append_grid_frame!,
        PolyDataFrameWriter, append_frame!, flush_frames!, frames_written, frames_pending,
-       buffered_frames, MAX_BUFFERED_FRAMES,
+       buffered_frames, MAX_BUFFERED_FRAMES, fill_field!, fill_boundary_field!,
        SetupVTKOutput
 
     using HDF5
@@ -779,6 +779,28 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     fill_field!(dest::AbstractVector{T}, src::AbstractVector) where {T} = map!(T, dest, src)
 
     """
+        fill_boundary_field!(dest, src, owners)
+
+    Expand a compact boundary-only vector `src` (indexed by `owners`) into the
+    `3 × N` component matrix `dest`, zeroing non-owner columns.
+    """
+    function fill_boundary_field!(dest::AbstractMatrix{T}, src::AbstractVector{SVector{D, S}},
+                                  owners::AbstractVector{<:Integer}) where {T, D, S}
+        size(dest, 1) == 3 || throw(DimensionMismatch("expected a 3 × N matrix, got $(size(dest))"))
+        fill!(dest, zero(T))
+        @inbounds for slot in eachindex(owners)
+            col = owners[slot]
+            v = src[slot]
+            dest[1, col] = v[1]
+            dest[2, col] = v[2]
+            if D == 3
+                dest[3, col] = v[3]
+            end
+        end
+        return dest
+    end
+
+    """
     Buffered writer of particle frames to a transient PolyData file created
     with `GenerateGeometryStructure` and `GenerateStepStructure`. Holds the
     dataset handles and up to `capacity` frames of `n` points each in host
@@ -1409,13 +1431,78 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
         # Main saving functions. `time` is passed explicitly so that a writer
         # running asynchronously stamps the step with the time of the download.
-        function save_particle_data(iteration, time = SimMetaData.TotalTime)
-            if multi_file
-                output_data = [output_field(name) for name in output_vars]
-                SaveVTKHDF(file_handles.particle_files, iteration, particle_filename(iteration),
-                           output_position(), output_vars, output_data...)
+        # `download` optionally supplies a completed `OutputDownload` so that
+        # single-file and multi-file writers can read downloaded buffers directly
+        # without an intermediate copy through `SimParticles`. When `staged_slot`
+        # is true, the collector has already filled `frame_writer`'s current slot.
+        function download_field_index(download)
+            return Dict{Symbol, Int}(name => i for (i, name) in enumerate(download.fields))
+        end
+
+        function stage_particle_slot(download)
+            frame_writer === nothing && return nothing
+            fidx = download_field_index(download)
+            positions = download.buffers[fidx[:Position]]
+            owners = download.ghost_index
+            cols = next_columns(frame_writer)
+            fill_field!(view(frame_writer.positions, :, cols), positions)
+            for (buf, name) in zip(frame_writer.data, output_vars)
+                sym = Symbol(name)
+                src = download.buffers[fidx[sym]]
+                if buf isa AbstractMatrix
+                    dest = view(buf, :, cols)
+                    if owners !== nothing && sym in (:GhostPoints, :GhostNormals)
+                        fill_boundary_field!(dest, src, owners)
+                    else
+                        fill_field!(dest, src)
+                    end
+                else
+                    fill_field!(view(buf, cols), src)
+                end
+            end
+            return nothing
+        end
+
+        function save_particle_data(iteration, time = SimMetaData.TotalTime;
+                                    download = nothing, staged_slot::Bool = false)
+            if staged_slot
+                push!(frame_writer.times, Float64(time))
+                frame_writer.pending += 1
+                frame_writer.pending == frame_writer.capacity && flush_frames!(frame_writer)
+            elseif download === nothing
+                if multi_file
+                    output_data = [output_field(name) for name in output_vars]
+                    SaveVTKHDF(file_handles.particle_files, iteration, particle_filename(iteration),
+                               output_position(), output_vars, output_data...)
+                else
+                    append_frame!(frame_writer, time, SimParticles.Position, (field_source(name) for name in output_vars)...)
+                end
             else
-                append_frame!(frame_writer, time, SimParticles.Position, (field_source(name) for name in output_vars)...)
+                fidx = download_field_index(download)
+                positions = download.buffers[fidx[:Position]]
+                owners = download.ghost_index
+                if multi_file
+                    components!(pos_buf, positions)
+                    output_data = map(output_vars) do name
+                        sym = Symbol(name)
+                        src = download.buffers[fidx[sym]]
+                        name == "Type" && return map!(Int8, type_buf, src)
+                        buf = get(vec_bufs, name, nothing)
+                        buf === nothing && return eltype(src) === eltype(field_source(name)) ? src :
+                            copyto!(field_source(name), src)
+                        if owners !== nothing && sym in (:GhostPoints, :GhostNormals)
+                            return fill_boundary_field!(buf, src, owners)
+                        end
+                        return components!(buf, src)
+                    end
+                    SaveVTKHDF(file_handles.particle_files, iteration, particle_filename(iteration),
+                               pos_buf, output_vars, output_data...)
+                else
+                    stage_particle_slot(download)
+                    push!(frame_writer.times, Float64(time))
+                    frame_writer.pending += 1
+                    frame_writer.pending == frame_writer.capacity && flush_frames!(frame_writer)
+                end
             end
             measurement_writer === nothing ||
                 append_measurements!(measurement_writer, time, SimParticles)
@@ -1459,6 +1546,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         # Return interface functions and handles
         return (
             save_particles = save_particle_data,
+            stage_particles = stage_particle_slot,
+            frame_writer = frame_writer,
             save_grid = save_cell_grid,
             close_files = close_files,
             file_handles = file_handles,  # For advanced access if needed

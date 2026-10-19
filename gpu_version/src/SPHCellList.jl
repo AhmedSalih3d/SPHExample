@@ -407,10 +407,17 @@ end
 
 # Collected frames own ordinary host arrays. Their event belongs to the pinned
 # staging buffer and must not be used after that buffer returns to the producer.
-function host_output_frame(prototype::OutputDownload{D}) where {D}
-    return OutputDownload{D}(prototype.fields,
-        Vector[similar(buf) for buf in prototype.buffers], similar(prototype.cid),
-        prototype.ghost_index === nothing ? nothing : similar(prototype.ghost_index),
+# When `fields` is specified, only those particle buffers are allocated (used
+# when the collector converts particle output fields directly into the HDF5
+# writer's slab buffer and only needs to carry auxiliary/measurement fields).
+function host_output_frame(prototype::OutputDownload{D}; fields = nothing) where {D}
+    selected = fields === nothing ? nothing : Set{Symbol}(fields)
+    buffers = Vector[selected === nothing || f in selected ? similar(buf) : similar(buf, 0)
+                     for (f, buf) in zip(prototype.fields, prototype.buffers)]
+    need_ghosts = prototype.ghost_index !== nothing &&
+        (selected === nothing || any(f -> f in (:GhostPoints, :GhostNormals), selected))
+    return OutputDownload{D}(prototype.fields, buffers, similar(prototype.cid),
+        need_ghosts ? similar(prototype.ghost_index) : nothing,
         prototype.floating === nothing ? nothing : map(similar, prototype.floating),
         CUDA.HostMemory[], prototype.event)
 end
@@ -419,21 +426,25 @@ end
 # completed frames through `free`. Capacity includes queued and in-use frames.
 mutable struct OutputFramePool{D}
     prototype::OutputDownload{D}
+    fields::Union{Nothing, Vector{Symbol}}
     free::Channel{OutputDownload{D}}
     capacity::Int
     allocated::Int
 end
 
-function OutputFramePool(prototype::OutputDownload{D}, capacity::Int) where {D}
+function OutputFramePool(prototype::OutputDownload{D}, capacity::Int;
+                         fields = nothing) where {D}
     capacity >= 1 || throw(ArgumentError("Output frame pool capacity must be positive"))
-    return OutputFramePool{D}(prototype, Channel{OutputDownload{D}}(capacity), capacity, 0)
+    selected = fields === nothing ? nothing : collect(Symbol, fields)
+    return OutputFramePool{D}(prototype, selected,
+        Channel{OutputDownload{D}}(capacity), capacity, 0)
 end
 
 function acquire_output_frame!(pool::OutputFramePool)
     if isready(pool.free) || pool.allocated >= pool.capacity || !isopen(pool.free)
         return take!(pool.free)
     end
-    frame = host_output_frame(pool.prototype)
+    frame = host_output_frame(pool.prototype; fields = pool.fields)
     pool.allocated += 1
     return frame
 end
@@ -441,7 +452,7 @@ end
 function collect_download!(frame::OutputDownload, staging::OutputDownload)
     CUDA.synchronize(staging.event)
     for (dst, src) in zip(frame.buffers, staging.buffers)
-        copyto!(dst, src)
+        isempty(dst) || copyto!(dst, src)
     end
     copyto!(frame.cid, staging.cid)
     frame.ghost_index === nothing || copyto!(frame.ghost_index, staging.ghost_index)
@@ -469,8 +480,10 @@ end
 
 # Apply a completed frame using its own ghost-owner snapshot. Collected host
 # frames have already been synchronized and must not wait on the staging event.
-function apply_download!(dl::OutputDownload{D}, SimParticles::StructArray, grid::CellGrid{D}) where {D}
+function apply_download!(dl::OutputDownload{D}, SimParticles::StructArray, grid::CellGrid{D};
+                         fields = nothing) where {D}
     for (f, buf) in zip(dl.fields, dl.buffers)
+        fields === nothing || f in fields || continue
         if dl.ghost_index !== nothing && f in (:GhostPoints, :GhostNormals)
             expand_boundary_field!(getproperty(SimParticles, f), buf, dl.ghost_index)
         else
@@ -1587,13 +1600,36 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     staging = OutputDownload{Dimensions}[OutputDownload(gpu, download_fields; cells = SimMetaData.ExportGridCells, floating)
                                          for _ in 1:(SimMetaData.GPUAsyncOutput ? OUTPUT_STAGING_FRAMES : 1)]
     prototype = first(staging)
-    frame_bytes = sum(sizeof, prototype.buffers) + sizeof(prototype.cid) +
+    measurement_fields = SimMeasurements === nothing || !has_measurements(SimMeasurements) ?
+        nothing : Tuple(unique(vcat(:Position, required_particle_fields(SimMeasurements))))
+    direct_writer_slabs = SimMetaData.GPUAsyncOutput && output.frame_writer !== nothing
+    has_ghost_measurements = measurement_fields !== nothing &&
+        any(f -> f in (:GhostPoints, :GhostNormals), measurement_fields)
+    pooled_fields = if direct_writer_slabs
+        needed = Symbol[]
+        SimMetaData.ExportGridCells && push!(needed, :Position)
+        measurement_fields === nothing || append!(needed, measurement_fields)
+        unique!(needed)
+    else
+        copy(prototype.fields)
+    end
+    pinned_frame_bytes = sum(sizeof, prototype.buffers) + sizeof(prototype.cid) +
         (prototype.ghost_index === nothing ? 0 : sizeof(prototype.ghost_index)) +
         (prototype.floating === nothing ? 0 : sum(sizeof, prototype.floating))
-    queue_frames = SimMetaData.GPUAsyncOutput ? max(1, div(SimMetaData.GPUOutputQueueBytes, max(frame_bytes, 1))) : 0
+    pooled_frame_bytes = sum(sizeof(buf) for (f, buf) in zip(prototype.fields, prototype.buffers) if f in pooled_fields; init = 0) +
+        sizeof(prototype.cid) +
+        ((!direct_writer_slabs || has_ghost_measurements) && prototype.ghost_index !== nothing ? sizeof(prototype.ghost_index) : 0) +
+        (prototype.floating === nothing ? 0 : sum(sizeof, prototype.floating))
+    queue_frames = if !SimMetaData.GPUAsyncOutput
+        0
+    elseif direct_writer_slabs
+        1
+    else
+        max(1, div(SimMetaData.GPUOutputQueueBytes, max(pooled_frame_bytes, 1)))
+    end
     output_memory = (;
-        pinned_bytes = length(staging) * frame_bytes,
-        queue_bytes = queue_frames * frame_bytes,
+        pinned_bytes = length(staging) * pinned_frame_bytes,
+        queue_bytes = queue_frames * pooled_frame_bytes,
         queue_frames = queue_frames,
         writer_bytes = output.writer_buffer_bytes,
     )
@@ -1614,25 +1650,33 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     jobs    = Channel{OutputFrameJob{Dimensions}}(length(staging))
     foreach(dl -> put!(free, dl), staging)
     write_time = Ref(0.0)
-    # Host side of one frame: wait for its copies, move them into the host
-    # arrays and write the files. Runs on the writer task (or inline without
-    # `GPUAsyncOutput`).
+    # Host side of one frame: wait for its copies, write the files directly from
+    # the downloaded buffers (or commit the pre-filled writer slab slot), and
+    # only update `SimParticles` for measurement fields or cell-grid bookkeeping
+    # when active. Runs on the writer task (or inline without `GPUAsyncOutput`).
     function write_frame(job::OutputFrameJob)
         t0 = time()
-        if SimMetaData.GPUAsyncOutput
-            UniqueCells = apply_download!(job.download, SimParticles, job.grid)
+        dl = job.download
+        if !SimMetaData.GPUAsyncOutput
+            CUDA.synchronize(dl.event)
+        end
+        UniqueCells = if measurement_fields === nothing && isempty(dl.cid)
+            CartesianIndex{Dimensions}[]
         else
-            UniqueCells = finish_download!(job.download, SimParticles, job.grid)
-            put!(free, job.download)
+            apply_download!(dl, SimParticles, job.grid;
+                fields = measurement_fields === nothing ? () : measurement_fields)
         end
         # Preserve the CSV's working-precision time formatting.
-        log_floating(FloatType(job.time), job.download.floating)
+        log_floating(FloatType(job.time), dl.floating)
         SimMetaData.IndexCounter = length(UniqueCells)
-        output.save_particles(job.counter, job.time)
+        output.save_particles(job.counter, job.time; download = dl, staged_slot = direct_writer_slabs)
         if SimMetaData.ExportGridCells
             # Bin the downloaded positions, not the cells from the last neighbor rebuild.
-            grid_cells = occupied_cells_host(first(job.download.buffers), bin_scale(job.grid, SimKernel.H⁻¹))
+            grid_cells = occupied_cells_host(first(dl.buffers), bin_scale(job.grid, SimKernel.H⁻¹))
             output.save_grid(job.counter, grid_cells, SimParticles, job.time)
+        end
+        if !SimMetaData.GPUAsyncOutput
+            put!(free, dl)
         end
         write_time[] += time() - t0
         return nothing
@@ -1640,7 +1684,8 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     writer = nothing
     collector = nothing
     if SimMetaData.GPUAsyncOutput
-        host_frames = OutputFramePool(prototype, queue_frames)
+        host_frames = OutputFramePool(prototype, queue_frames;
+            fields = direct_writer_slabs ? pooled_fields : nothing)
         ready = Channel{OutputFrameJob{Dimensions}}(queue_frames)
         writer = spawn_writer() do
             for job in ready
@@ -1655,6 +1700,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                 for job in jobs
                     frame = acquire_output_frame!(host_frames)
                     collect_download!(frame, job.download)
+                    direct_writer_slabs && output.stage_particles(job.download)
                     put!(free, job.download)
                     put!(ready, OutputFrameJob{Dimensions}(frame, job.counter,
                         job.time, job.grid))

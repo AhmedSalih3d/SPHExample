@@ -28,6 +28,12 @@ end
             @test typeof(frame_buffer) === typeof(source)
             @test length(frame_buffer) == length(source)
         end
+        slim_pool = DRIVER.OutputFramePool(prototype, 2; fields = Symbol[])
+        slim_frame = DRIVER.acquire_output_frame!(slim_pool)
+        @test all(isempty, slim_frame.buffers)
+        @test slim_frame.ghost_index === nothing
+        @test (slim_frame.floating === nothing) == !auxiliaries
+        close(slim_pool.free)
         @test isempty(first_frame.memory)
         @test (first_frame.ghost_index === nothing) == !auxiliaries
         @test (first_frame.floating === nothing) == !auxiliaries

@@ -1046,8 +1046,14 @@ the standard *gather* formulation:
   loop tests the distance before it loads the particle type, so only the
   candidates inside the support (roughly a third) pay for the second load.
 * **Asynchronous output.** Output fields are downloaded asynchronously into
-  two pinned staging buffers. A collector copies completed downloads into a
-  reusable host frame queue and immediately returns the staging buffers. A
+  two pinned staging buffers. In single-file mode (`ExportSingleVTKHDF = true`),
+  the collector converts and writes completed particle downloads directly into
+  the `PolyDataFrameWriter` slab slot, only materializing `SimParticles` fields
+  during intermediate frames when required by `SimMeasurements` or
+  `ExportGridCells` (and once at the end of the run so the final state remains
+  in `SimParticles`). In multi-file mode, the collector copies completed
+  downloads into a reusable host frame queue (`GPUOutputQueueBytes`, allocated
+  on demand and reused) and immediately returns the staging buffers.
   Progress log lines are emitted and flushed at each output interval, independently
   of queued frame writes. A separate task writes queued frames to disk in order,
   so HDF5 writes do not
@@ -1056,9 +1062,6 @@ the standard *gather* formulation:
   `julia -t 2,1` to give collection and simulation enough CPU threads while
   disk writes run separately. With only one CPU thread, blocking writes can
   still interrupt simulation launches.
-  `GPUOutputQueueBytes` budgets the queued particle and floating-body arrays separately from the
-  file batching budget. Host frames are allocated on demand and reused before
-  the pool grows, up to the budget (with capacity for at least one frame).
   No frames are dropped:
   sustained disk throughput below frame production eventually fills the queue
   and makes the simulation wait. GPU downloads still precede subsequent kernels
