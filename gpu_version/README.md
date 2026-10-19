@@ -1219,7 +1219,7 @@ definitions in `benchmark/cases.jl` construct against either package.
 | `GPUCellSubdivision` | `1` | Positive integer `R`: cells of edge `H/R`, a `(2R+1)^D` stencil, and `(2R+1)^(D-1)` contiguous row ranges. `1` reproduces the CPU grid, `2` uses half-width cells, and `4` uses quarter-width cells. Finer grids reduce candidates but increase dense-grid memory, row overhead and mDBC work. With reference interactions, only `1` reproduces the CPU's density-diffusion pair orientation. Radial symmetric diffusion removes that orientation dependence; accumulation and SPS rounding can still differ. Benchmark the intended precision, lane count and boundary mode before changing it. |
 | `GPUDoublePosition` | `false` | Store and integrate the particle positions (and the mDBC ghost node positions) in `Float64` while everything else stays in `FloatType`; the pair loops use cell relative `FloatType` coordinates (see "Double positions" above). Use it for `Float32` runs of domains far from the origin or with many steps. No effect with `FloatType = Float64`. Allocate the particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so that the input is read in `Float64`. |
 | `GPUCacheInteractionFields` | `false` | Cache inverse density per particle for reuse in neighbor interactions. Adds one `FloatType` scalar per particle (4 bytes with `Float32`, 8 with `Float64`), independently of `GPUCompactBuffers`. Refreshed for each evaluated density state, including predictor and mDBC corrections. Trades memory for fewer divisions; benchmark elapsed solver time for your case. |
-| `GPUCompactBuffers` | `true` | Omit unused ghost, kernel-output and shifting buffers on the GPU, and omit inactive `Cells`, `Kernel`, `KernelGradient`, `GhostPoints` and `GhostNormals` columns on the host when allocated with `AllocateDataStructures(SimGeometry, SimMetaData)`; store enabled mDBC ghosts and Updated mDBC state only for ghost-owning boundaries, without ghost reorder scratch; share position/velocity predictors with existing reorder scratch; and remove acceleration/pressure sorting shadows. Pressure is reconstructed from sorted density with the selected EOS; acceleration is refreshed before post-rebuild readers. Fixed predictor writes are skipped; boundary density and requested force calculations are retained. GPU IDs use `Int32` and group markers `UInt32` only when every value fits; otherwise each field independently retains its original width. Allocated host particle fields, output types, precision and neighbor ranges are unchanged. `false` restores the previous full host and GPU allocation layout. |
+| `GPUCompactBuffers` | `true` | Omit unused ghost, kernel-output and shifting buffers on the GPU, and omit inactive `Cells`, `Kernel`, `KernelGradient`, `GhostPoints` and `GhostNormals` columns on the host when allocated with `AllocateDataStructures(SimGeometry, SimMetaData)`; store enabled mDBC ghosts and Updated mDBC state only for ghost-owning boundaries, without ghost reorder scratch; share position/velocity predictors with existing reorder scratch; and remove acceleration/pressure sorting shadows. Pressure is reconstructed from sorted density with the selected EOS; acceleration is refreshed before post-rebuild readers. Fixed predictor writes are skipped; boundary density and requested force calculations are retained. Host and GPU IDs use `Int32` and group markers use `UInt8`, `UInt16` or `UInt32` only when every value fits; otherwise each field independently retains its original width. Precision and neighbor ranges are unchanged. `false` restores the previous full host and GPU allocation layout. |
 | `GPUOutputQueueBytes` | `256 * 2^20` | Separate host memory budget for frames between the download collector and disk writer. Allocated on demand and reused; capacity for at least one frame. Used with `GPUAsyncOutput`. |
 | `GPUOutputBufferBytes` | `256 * 2^20` | Host memory for output frames that are held before they are written to the single `vtkhdf` file (see "Asynchronous output"). The number of frames per flush uses the particle fields plus an initial grid-size estimate, at least 1 and at most 16. Dense grid frames are checked against the remaining byte budget and can flush sooner; a frame larger than the budget is written immediately. `0` writes every frame at once. |
 
@@ -1359,18 +1359,17 @@ the simulation equations, particle order or implicit cell-range neighbor search:
   ordinary DBC wall-density evolution and requested boundary-force calculations
   remain unchanged. Double-position cell-relative data is still prepared for
   every particle.
-* GPU-only IDs and group markers, including their reorder buffers, use 32-bit
-  storage after checking every value. An out-of-range value keeps that entire
-  field wide; there is no truncation. Host IDs remain `Int`, group markers remain
-  `UInt`, and synchronous and asynchronous downloads restore these types before
-  exporting data.
+* Host and GPU IDs (`Int32`) and group markers (`UInt8`, `UInt16`, or `UInt32`),
+  including their GPU reorder buffers, use the narrowest lossless integer type
+  after checking every value. An out-of-range value keeps that entire field wide;
+  there is no truncation. Single-argument `AllocateDataStructures(geometries)` and
+  `GPUCompactBuffers = false` retain `Int` and `UInt`.
 
 For `Float32` physics with double positions, no mDBC, no kernel output, no
-shifting, no grid-cell export and metadata that fits 32 bits, inactive fields
-remove **52 bytes per particle in 2D** (from 109 to 57 bytes, **47.71%**) or
-**76 bytes per particle in 3D** (from 149 to 73 bytes, **51.01%**) from host
-`SimParticles` storage, and inactive fields plus narrow metadata remove **88 bytes per particle
-in 2D** or **120 bytes per particle in 3D** from GPU particle/reorder/support storage.
+shifting, no grid-cell export and metadata that fits `Int32`/`UInt8`, inactive
+fields and narrow metadata remove **63 bytes per particle in 2D** (from 109 to 46 bytes, **57.80%**) or
+**87 bytes per particle in 3D** (from 149 to 62 bytes, **58.39%**) from host
+`SimParticles` storage, and **94 bytes per particle in 2D** or **126 bytes per particle in 3D** from GPU particle/reorder/support storage.
 Sharing position/velocity predictors additionally saves **24 bytes per particle
 in 2D** or **36 bytes per particle in 3D**, including every fixed particle, in
 this precision configuration.
@@ -1389,9 +1388,9 @@ workspace on the GPU but excluding output, motion, reductions and allocator-pool
 
 | Case | Particles | Host full (MiB) | Host compact (MiB) | Host saved | GPU full (MiB) | GPU compact (MiB) | GPU saved |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Generated StillWedge, `dx = 0.02` | 3,027 | 0.3147 | 0.1645 | 47.71% | 0.7416 | 0.3837 | 48.27% |
-| Generated StillWedge, `dx = 0.005` | 47,790 | 4.9678 | 2.5978 | 47.71% | 11.6199 | 5.9685 | 48.64% |
-| Synthetic uniform 3D cube, `64^3` | 262,144 | 37.2500 | 18.2500 | 51.01% | 84.5856 | 41.5856 | 50.84% |
+| Generated StillWedge, `dx = 0.02` | 3,027 | 0.3147 | 0.1328 | 57.80% | 0.7416 | 0.3663 | 50.60% |
+| Generated StillWedge, `dx = 0.005` | 47,790 | 4.9678 | 2.0965 | 57.80% | 11.6199 | 5.6950 | 50.99% |
+| Synthetic uniform 3D cube, `64^3` | 262,144 | 37.2500 | 15.5000 | 58.39% | 84.5856 | 40.0856 | 52.61% |
 
 Low-level `AllocateDataStructures(geometries)`, `upload_particles(particles)` and `GPUSupportArrays{D,T}(n)` retain
 their previous full-buffer defaults. For mode-aware allocation, use

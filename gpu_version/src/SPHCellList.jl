@@ -123,10 +123,6 @@ allocated_download_fields(gpu::GPUParticles) =
 # Device copy of a host vector, converted to element type `E` when it differs.
 _upload(::Type{E}, x::AbstractVector) where {E} = CuArray(convert(Vector{E}, x))
 
-function metadata_storage_type(::Type{N}, ::Type{W}, values) where {N <: Integer, W <: Integer}
-    return sizeof(N) < sizeof(W) && all(x -> typemin(N) <= x <= typemax(N), values) ? N : W
-end
-
 """
     upload_particles(SimParticles::StructArray; position_type = eltype of the host positions,
                      compact_metadata = false, kernel_output = true, ghost_data = true,
@@ -141,8 +137,9 @@ device positions and ghost node positions (`Float64` with
 working precision is that of the host densities.
 
 The one-argument form retains full buffers and host-width metadata by default.
-`compact_metadata` selects `Int32` IDs and `UInt32` group markers only when
-every value fits; otherwise each field independently retains its host width.
+`compact_metadata` selects `Int32` IDs and narrow unsigned group markers
+(`UInt8`, `UInt16`, or `UInt32`) only when every value fits; otherwise each
+field independently retains its wider integer type.
 `kernel_output = false` or `ghost_data = false` omits those fields and their
 reorder scratch. The metadata form selects these options from the simulation
 modes and `GPUCompactBuffers`, and uses `position_float_type(SimMetaData)`.
@@ -162,7 +159,7 @@ function upload_particles(SimParticles::StructArray;
 
     Position   = _upload(SVector{D, TP}, SimParticles.Position)
     I = compact_metadata ? metadata_storage_type(Int32, Int, SimParticles.ID) : Int
-    G = compact_metadata ? metadata_storage_type(UInt32, UInt, SimParticles.GroupMarker) : UInt
+    G = compact_metadata ? group_marker_storage_type(SimParticles.GroupMarker, UInt) : UInt
     has_host_ghosts = hasproperty(SimParticles, :GhostPoints) && hasproperty(SimParticles, :GhostNormals)
     owners = ghost_data && has_host_ghosts ? findall(!iszero, SimParticles.GhostPoints) : Int[]
     GhostIndex = CuArray(Int32.(owners))

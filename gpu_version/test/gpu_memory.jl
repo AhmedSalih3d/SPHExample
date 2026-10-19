@@ -119,7 +119,9 @@ end
             @test eltype(full.ID) === Int
             @test eltype(full.GroupMarker) === UInt
             @test eltype(compact.ID) === Int32
-            @test eltype(compact.GroupMarker) === UInt32
+            @test eltype(compact.GroupMarker) === UInt8
+            @test eltype(f.host.ID) === Int32
+            @test eltype(f.host.GroupMarker) === UInt8
             wrapped = GPUParticles{D, T, position_float_type(f.metadata), typeof(full.scratch)}(
                 (getproperty(full, field) for field in fieldnames(typeof(full)))...)
             @test typeof(wrapped) === typeof(full)
@@ -151,7 +153,7 @@ end
             @test GPUMemoryBenchmark.device_buffer_bytes(support) == support_bytes
             expected = n * (2 * sizeof(eltype(full.GhostPoints)) + 2 * sizeof(eltype(full.GhostNormals)) +
                 sizeof(T) + sizeof(SVector{D, T}) + sizeof(T) + sizeof(SVector{D, T}) +
-                2 * (sizeof(Int) - sizeof(Int32)) + 2 * (sizeof(UInt) - sizeof(UInt32)) +
+                2 * (sizeof(Int) - sizeof(Int32)) + 2 * (sizeof(UInt) - sizeof(UInt8)) +
                 sizeof(T) + sizeof(SVector{D, T}))
             full_bytes = GPUMemoryBenchmark.device_buffer_bytes((full, full_support))
             compact_bytes = GPUMemoryBenchmark.device_buffer_bytes((compact, support))
@@ -159,6 +161,8 @@ end
             @test compact_bytes < 0.75 * full_bytes
             f.metadata.GPUCompactBuffers = false
             full_host = AllocateDataStructures(f.geometry, f.metadata)
+            @test eltype(full_host.ID) === Int
+            @test eltype(full_host.GroupMarker) === UInt
             legacy = upload_particles(full_host, f.metadata)
             legacy_support = GPUSupportArrays{D, T}(n, f.metadata)
             @test GPUMemoryBenchmark.device_buffer_bytes((legacy, legacy_support)) == full_bytes
@@ -170,7 +174,8 @@ end
                 @test hasproperty(full_host, field)
             end
             expected_host_saving = n * (sizeof(CartesianIndex{D}) + sizeof(T) + sizeof(SVector{D, T}) +
-                sizeof(SVector{D, TP}) + sizeof(SVector{D, T}))
+                sizeof(SVector{D, TP}) + sizeof(SVector{D, T}) +
+                (sizeof(Int) - sizeof(Int32)) + (sizeof(UInt) - sizeof(UInt8)))
             @test GPUMemoryBenchmark.host_particle_bytes(full_host) -
                   GPUMemoryBenchmark.host_particle_bytes(f.host) == expected_host_saving
         end
@@ -269,24 +274,30 @@ end
     end
 
     @testset "guarded metadata, reordering and both download paths" begin
-        for wide_id in (false, true), wide_group in (false, true)
+        for wide_id in (false, true), group_type in (UInt8, UInt16, UInt32, UInt)
             f = fixture(2, Float32; double_position = true)
-            f.host.ID[1] = Int(typemax(Int32)) + Int(wide_id)
-            f.host.GroupMarker[1] = UInt(typemax(UInt32)) + UInt(wide_group)
-            gpu = upload_particles(f.host, f.metadata)
+            f.metadata.GPUCompactBuffers = false
+            host = AllocateDataStructures(f.geometry, f.metadata)
+            f.metadata.GPUCompactBuffers = true
+            host.ID[1] = Int(typemax(Int32)) + Int(wide_id)
+            host.GroupMarker[1] = group_type === UInt8  ? UInt(typemax(UInt8)) :
+                                  group_type === UInt16 ? UInt(typemax(UInt8)) + UInt(1) :
+                                  group_type === UInt32 ? UInt(typemax(UInt16)) + UInt(1) :
+                                                          UInt(typemax(UInt32)) + UInt(1)
+            gpu = upload_particles(host, f.metadata)
             @test eltype(gpu.ID) === (wide_id ? Int : Int32)
-            @test eltype(gpu.GroupMarker) === (wide_group ? UInt : UInt32)
+            @test eltype(gpu.GroupMarker) === group_type
             @test eltype(gpu.scratch.ID) === eltype(gpu.ID)
             @test eltype(gpu.scratch.GroupMarker) === eltype(gpu.GroupMarker)
-            cells = CellListWorkspace{2, Float64}(length(f.host))
+            cells = CellListWorkspace{2, Float64}(length(host))
             for _ in 1:2
                 grid = DRIVER.rebuild_cell_list!(gpu, cells, 10f0; constants = SimulationConstants{Float32}(dx = 0.02))
-                back = deepcopy(f.host)
+                back = deepcopy(host)
                 download_particles!(back, gpu, grid)
-                original_order, order = sortperm(f.host.ID), sortperm(back.ID)
+                original_order, order = sortperm(host.ID), sortperm(back.ID)
                 for field in (:ID, :GroupMarker, :Position, :Velocity, :Density)
-                    @test getproperty(back, field)[order] == getproperty(f.host, field)[original_order]
-                    @test eltype(getproperty(back, field)) === eltype(getproperty(f.host, field))
+                    @test getproperty(back, field)[order] == getproperty(host, field)[original_order]
+                    @test eltype(getproperty(back, field)) === eltype(getproperty(host, field))
                 end
                 @test_throws ArgumentError download_particles!(back, gpu, grid, (:Kernel,))
                 @test_throws ArgumentError DRIVER.OutputDownload(gpu, (:GhostPoints,); cells = false)
@@ -304,14 +315,21 @@ end
             end
         end
         f = fixture(2, Float32)
-        f.host.ID[1] = typemax(Int)
-        f.host.GroupMarker[1] = typemax(UInt)
-        gpu = upload_particles(f.host, f.metadata)
-        @test Array(gpu.ID) == f.host.ID
-        @test Array(gpu.GroupMarker) == f.host.GroupMarker
+        f.metadata.GPUCompactBuffers = false
+        host = AllocateDataStructures(f.geometry, f.metadata)
+        f.metadata.GPUCompactBuffers = true
+        host.ID[1] = typemax(Int)
+        host.GroupMarker[1] = typemax(UInt)
+        gpu = upload_particles(host, f.metadata)
+        @test Array(gpu.ID) == host.ID
+        @test Array(gpu.GroupMarker) == host.GroupMarker
         @test DRIVER.metadata_storage_type(Int32, Int, Int[typemin(Int32), typemax(Int32)]) === Int32
         @test DRIVER.metadata_storage_type(Int32, Int, Int[typemin(Int32) - Int(1)]) === Int
         @test DRIVER.metadata_storage_type(Int32, Int, Int[]) === Int32
+        @test DRIVER.group_marker_storage_type(UInt[1, 255]) === UInt8
+        @test DRIVER.group_marker_storage_type(UInt[1, 256]) === UInt16
+        @test DRIVER.group_marker_storage_type(UInt[1, 65536]) === UInt32
+        @test DRIVER.group_marker_storage_type(UInt[UInt(typemax(UInt32)) + UInt(1)]) === UInt
     end
 
     @testset "missing mode buffers fail before launching steps" begin
@@ -350,7 +368,25 @@ end
             for async in (false, true)
                 result = simulate(ghost_output_case, Float32; compact = true,
                     double_position, graph = true, async, scheme, queue_bytes = 0)
-                @test result == reference
+                @test result.steps == reference.steps
+                @test result.time == reference.time
+                @test result.position == reference.position
+                @test result.cells == reference.cells
+                for name in keys(result.fields)
+                    if name in (:ID, :GroupMarker)
+                        @test result.fields[name][2] == reference.fields[name][2]
+                    else
+                        @test result.fields[name] == reference.fields[name]
+                    end
+                end
+                for key in keys(reference.particles)
+                    if key in ("/VTKHDF/PointData/ID", "/VTKHDF/PointData/GroupMarker")
+                        @test result.particles[key][2] == reference.particles[key][2]
+                        @test result.particles[key][3] == reference.particles[key][3]
+                    else
+                        @test result.particles[key] == reference.particles[key]
+                    end
+                end
                 types = result.particles["/VTKHDF/PointData/Type"][3]
                 @test length(types) > length(result.position[2])
                 fluid = vec(types .== Int8(Fluid))
@@ -382,11 +418,22 @@ end
             @test result.steps == reference.steps
             @test result.time == reference.time
             @test result.position == reference.position
-            @test result.particles == reference.particles
             @test result.cells == reference.cells
+            for key in keys(reference.particles)
+                if key in ("/VTKHDF/PointData/ID", "/VTKHDF/PointData/GroupMarker")
+                    @test result.particles[key][2] == reference.particles[key][2]
+                    @test result.particles[key][3] == reference.particles[key][3]
+                else
+                    @test result.particles[key] == reference.particles[key]
+                end
+            end
             @test issubset(keys(result.fields), keys(reference.fields))
             for name in keys(result.fields)
-                @test result.fields[name] == reference.fields[name]
+                if name in (:ID, :GroupMarker)
+                    @test result.fields[name][2] == reference.fields[name][2]
+                else
+                    @test result.fields[name] == reference.fields[name]
+                end
             end
             for name in setdiff(keys(reference.fields), keys(result.fields))
                 @test all(iszero, reference.fields[name][2])
