@@ -1357,8 +1357,10 @@ the simulation equations, particle order or implicit cell-range neighbor search:
   velocity-only walls) and floating entries are rewritten each step.
   No separate predictor vectors or per-neighbor index map are needed. Density predictors,
   ordinary DBC wall-density evolution and requested boundary-force calculations
-  remain unchanged. Double-position cell-relative data is still prepared for
-  every particle.
+  remain unchanged. Double-position cell-relative data (`PosCells` and
+  `PosCellsₙ⁺`) shares a single `PosCell` buffer across the start-of-step and
+  half-step interaction stages, saving an additional **12 bytes per particle in 2D**
+  or **16 bytes per particle in 3D** when `GPUDoublePosition = true`.
 * Host and GPU IDs (`Int32`) and group markers (`UInt8`, `UInt16`, or `UInt32`),
   including their GPU reorder buffers, use the narrowest lossless integer type
   after checking every value. An out-of-range value keeps that entire field wide;
@@ -1369,7 +1371,7 @@ For `Float32` physics with double positions, no mDBC, no kernel output, no
 shifting, no grid-cell export and metadata that fits `Int32`/`UInt8`, inactive
 fields and narrow metadata remove **63 bytes per particle in 2D** (from 109 to 46 bytes, **57.80%**) or
 **87 bytes per particle in 3D** (from 149 to 62 bytes, **58.39%**) from host
-`SimParticles` storage, and **94 bytes per particle in 2D** or **126 bytes per particle in 3D** from GPU particle/reorder/support storage.
+`SimParticles` storage, and **106 bytes per particle in 2D** or **142 bytes per particle in 3D** (including shared `PosCell` storage) from GPU particle/reorder/support storage.
 Sharing position/velocity predictors additionally saves **24 bytes per particle
 in 2D** or **36 bytes per particle in 3D**, including every fixed particle, in
 this precision configuration.
@@ -1388,9 +1390,9 @@ workspace on the GPU but excluding output, motion, reductions and allocator-pool
 
 | Case | Particles | Host full (MiB) | Host compact (MiB) | Host saved | GPU full (MiB) | GPU compact (MiB) | GPU saved |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Generated StillWedge, `dx = 0.02` | 3,027 | 0.3147 | 0.1328 | 57.80% | 0.7416 | 0.3663 | 50.60% |
-| Generated StillWedge, `dx = 0.005` | 47,790 | 4.9678 | 2.0965 | 57.80% | 11.6199 | 5.6950 | 50.99% |
-| Synthetic uniform 3D cube, `64^3` | 262,144 | 37.2500 | 15.5000 | 58.39% | 84.5856 | 40.0856 | 52.61% |
+| Generated StillWedge, `dx = 0.02` | 3,027 | 0.3147 | 0.1328 | 57.80% | 0.7416 | 0.3317 | 55.27% |
+| Generated StillWedge, `dx = 0.005` | 47,790 | 4.9678 | 2.0965 | 57.80% | 11.6199 | 5.1481 | 55.70% |
+| Synthetic uniform 3D cube, `64^3` | 262,144 | 37.2500 | 15.5000 | 58.39% | 84.5856 | 36.0856 | 57.34% |
 
 Low-level `AllocateDataStructures(geometries)`, `upload_particles(particles)` and `GPUSupportArrays{D,T}(n)` retain
 their previous full-buffer defaults. For mode-aware allocation, use

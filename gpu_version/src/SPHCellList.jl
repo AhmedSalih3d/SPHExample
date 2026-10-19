@@ -559,7 +559,10 @@ being evaluated; otherwise it is `nothing` and interactions compute them on dema
 position precision `TP`. When that differs from the working precision `T`,
 `PosCells` and `PosCellsₙ⁺` hold the cell relative form (`PosCell`) of the
 start-of-step and half step positions for the pair loops; otherwise both are
-`nothing` and the pair loops read the positions directly.
+`nothing` and the pair loops read the positions directly. With compact buffers
+or `share_pos_cells = true`, `PosCells` and `PosCellsₙ⁺` alias the same buffer
+(since start-of-step and half-step pair loops do not overlap, and the final
+step refreshes the start-of-step `PosCell`s for the next step).
 With `ReusePredictors`, the half-step position/velocity arrays are omitted.
 The driver instead uses the existing reorder scratch, which is idle between
 rebuilds. Fixed entries are initialized after sorting and left untouched during
@@ -586,7 +589,9 @@ end
 
 Support arrays for `n` particles in the working precision `T`, with positions
 of precision `position_type`. The cell relative positions are allocated
-exactly when `position_type !== T`. `updated_mdbc` allocates the boundary
+exactly when `position_type !== T`; `share_pos_cells = true` (enabled by metadata
+constructors with `GPUCompactBuffers`) shares one `PosCell` buffer between
+`PosCells` and `PosCellsₙ⁺`. `updated_mdbc` allocates the boundary
 activation mask and mirrored/tangential interaction velocities; these are
 scratch fields recomputed after sorting and before each interaction stage.
 The device-particle form stores these fields per ghost owner when ghosts are
@@ -603,10 +608,11 @@ density buffer; metadata constructors select it with `GPUCacheInteractionFields`
 """
 function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T, updated_mdbc::Bool = false,
                               shifting::Bool = true, reuse_predictors::Bool = false,
+                              share_pos_cells::Bool = reuse_predictors,
                               cache_interaction_fields::Bool = false,
                               boundary_slots = nothing, boundary_count::Integer = n) where {D, T, TP}
     pc = TP === T ? nothing : CuVector{PosCell{D, T}}(undef, n)
-    pcₙ⁺ = TP === T ? nothing : CuVector{PosCell{D, T}}(undef, n)
+    pcₙ⁺ = TP === T ? nothing : (share_pos_cells ? pc : CuVector{PosCell{D, T}}(undef, n))
     boundary_slots === nothing || length(boundary_slots) == n ||
         throw(DimensionMismatch("boundary slot map must have one entry per particle"))
     boundary_data = updated_mdbc ? (; active = CUDA.ones(Bool, boundary_count),
@@ -634,7 +640,8 @@ function GPUSupportArrays{D, T}(gpu::GPUParticles{D, T}, meta::SimulationMetaDat
     return GPUSupportArrays{D, T}(length(gpu); position_type = position_type(gpu),
         updated_mdbc = B === UpdatedMDBC, shifting = !meta.GPUCompactBuffers || S === PlanarShifting,
         cache_interaction_fields = meta.GPUCacheInteractionFields,
-        reuse_predictors = meta.GPUCompactBuffers, boundary_slots = gpu.BoundarySlot,
+        reuse_predictors = meta.GPUCompactBuffers, share_pos_cells = meta.GPUCompactBuffers,
+        boundary_slots = gpu.BoundarySlot,
         boundary_count = gpu.BoundarySlot === nothing ? length(gpu) : length(gpu.GhostIndex))
 end
 
@@ -666,6 +673,7 @@ end
 function GPUSupportArrays{D, T}(n::Integer, meta::SimulationMetaData{D, T, S, K, B}) where {D, T, S, K, B}
     return GPUSupportArrays{D, T}(n; position_type = position_float_type(meta),
         updated_mdbc = B === UpdatedMDBC, shifting = !meta.GPUCompactBuffers || S === PlanarShifting,
+        share_pos_cells = meta.GPUCompactBuffers,
         cache_interaction_fields = meta.GPUCacheInteractionFields)
 end
 

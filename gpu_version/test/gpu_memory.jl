@@ -148,13 +148,16 @@ end
             n = length(f.host)
             support_bytes = n * (2 * sizeof(T) + sizeof(SVector{D, T}) + sizeof(SVector{D, position_float_type(f.metadata)}))
             if uses_pos_cells(support)
-                support_bytes += 2 * n * sizeof(PosCell{D, T})
+                @test support.PosCells === support.PosCellsₙ⁺
+                @test full_support.PosCells !== full_support.PosCellsₙ⁺
+                support_bytes += n * sizeof(PosCell{D, T})
             end
             @test GPUMemoryBenchmark.device_buffer_bytes(support) == support_bytes
             expected = n * (2 * sizeof(eltype(full.GhostPoints)) + 2 * sizeof(eltype(full.GhostNormals)) +
                 sizeof(T) + sizeof(SVector{D, T}) + sizeof(T) + sizeof(SVector{D, T}) +
                 2 * (sizeof(Int) - sizeof(Int32)) + 2 * (sizeof(UInt) - sizeof(UInt8)) +
-                sizeof(T) + sizeof(SVector{D, T}))
+                sizeof(T) + sizeof(SVector{D, T}) +
+                (uses_pos_cells(support) ? sizeof(PosCell{D, T}) : 0))
             full_bytes = GPUMemoryBenchmark.device_buffer_bytes((full, full_support))
             compact_bytes = GPUMemoryBenchmark.device_buffer_bytes((compact, support))
             @test full_bytes - compact_bytes == expected
