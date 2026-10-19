@@ -167,6 +167,8 @@ if CUDA.functional()
                 r"^Output staging & buffer capacity: \d+\.\d{4} MiB pinned \+ 0\.0000 MiB queue \(up to 0 frames\) \+ \d+\.\d{4} MiB HDF5 writer buffer"m
             pipelines = collect(eachmatch(pipeline_re, logged.log))
             @test length(pipelines) == 2
+            @test occursin(r"^Solver throughput: \d+\.\d{4} ms/step, \d+\.\d{4} M particle-steps/s, mean dt = \d+\.\d{6}e[+-]\d+ s \(\d+ steps\)"m, logged.log)
+            @test occursin("TimerOutput note: GPUSyncTimers = false;", logged.log)
             @test occursin("Simulation finished at:", logged.log)
             for output in (reference.console, logged.console, logged.log)
                 headers = collect(eachmatch(r"(?m)^\s*Section\s+ncalls\b", output))

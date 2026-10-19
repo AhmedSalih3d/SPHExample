@@ -1346,18 +1346,23 @@ function unique_cells_host(grid::CellGrid{D}, CellID_host::AbstractVector{Int32}
 end
 
 """
-    occupied_cells_host(positions, inverse_cell) -> Vector{CartesianIndex{D}}
+    occupied_cells_host(positions, inverse_cell, scratch = CartesianIndex{D}[]) -> Vector{CartesianIndex{D}}
 
 Occupied cells at the downloaded frame's positions, in ascending cell order.
 Unlike `unique_cells_host`, this does not use potentially stale cell-list bins.
 `inverse_cell` must use the same subdivision and precision as the cell list.
+Passing a reusable `scratch` vector avoids per-frame hash-set and vector allocations.
 """
-function occupied_cells_host(positions::AbstractVector{<:SVector{D}}, inverse_cell) where {D}
-    cells = Set{CartesianIndex{D}}()
-    for position in positions
-        push!(cells, CartesianIndex(cell_coords(position, inverse_cell)))
+function occupied_cells_host(positions::AbstractVector{<:SVector{D}}, inverse_cell,
+                             scratch::Vector{CartesianIndex{D}} = CartesianIndex{D}[]) where {D}
+    n = length(positions)
+    resize!(scratch, n)
+    n == 0 && return scratch
+    @inbounds for i in 1:n
+        scratch[i] = CartesianIndex(cell_coords(positions[i], inverse_cell))
     end
-    return sort!(collect(cells))
+    sort!(scratch)
+    return unique!(scratch)
 end
 
 end # module

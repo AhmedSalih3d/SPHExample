@@ -1485,8 +1485,6 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         )))
     end
 
-    TimeSteps = Vector{FloatType}()
-
     if BMode !== NoMDBC
         if ParticleNormalsPath === nothing
             all(geom -> !is_wall(geom.Type) ||
@@ -1641,6 +1639,8 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
     end
 
+    initial_steps = SimMetaData.Iteration
+
     # Save initial state, use 1 else this cannot be used to index fid vector
     SimMetaData.OutputIterationCounter = 1
     output.save_particles(SimMetaData.OutputIterationCounter)
@@ -1650,6 +1650,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     jobs    = Channel{OutputFrameJob{Dimensions}}(length(staging))
     foreach(dl -> put!(free, dl), staging)
     write_time = Ref(0.0)
+    grid_cells_scratch = CartesianIndex{Dimensions}[]
     # Host side of one frame: wait for its copies, write the files directly from
     # the downloaded buffers (or commit the pre-filled writer slab slot), and
     # only update `SimParticles` for measurement fields or cell-grid bookkeeping
@@ -1672,7 +1673,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         output.save_particles(job.counter, job.time; download = dl, staged_slot = direct_writer_slabs)
         if SimMetaData.ExportGridCells
             # Bin the downloaded positions, not the cells from the last neighbor rebuild.
-            grid_cells = occupied_cells_host(first(dl.buffers), bin_scale(job.grid, SimKernel.H⁻¹))
+            grid_cells = occupied_cells_host(first(dl.buffers), bin_scale(job.grid, SimKernel.H⁻¹), grid_cells_scratch)
             output.save_grid(job.counter, grid_cells, SimParticles, job.time)
         end
         if !SimMetaData.GPUAsyncOutput
@@ -1760,6 +1761,13 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             pressure_range = paraview_pressure_range)
 
         if StoreLogOutput
+            elapsed = SimulationLoggerConfiguration.elapsed_wall_time(SimLogger)
+            steps_taken = max(0, SimMetaData.Iteration - initial_steps)
+            physical_progress = max(0.0, Float64(SimMetaData.TotalTime) - SimLogger.clock.initial_time)
+            ms_per_step = steps_taken > 0 ? 1e3 * elapsed / steps_taken : NaN
+            mparticle_steps_per_s = elapsed > 0 && steps_taken > 0 ?
+                (steps_taken * NumberOfPoints / 1e6) / elapsed : NaN
+            mean_dt = steps_taken > 0 ? physical_progress / steps_taken : NaN
             with_logger(SimLogger.Logger) do
                 @info "Cell list rebuilds: $(cl.nrebuilds), grid dims: $(cl.grid.dims)"
                 cl.fixed_grid && @info "Fixed-grid frozen particles (total): $(cl.frozen_total)"
@@ -1767,6 +1775,13 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                       "bounding-box host partial reads: $(cl.bbox_host_readbacks)"
                 @info "Host read backs of the step state: $(state.readbacks) for $(SimMetaData.Iteration) steps, " *
                       "captured step graphs: $(length(state.graphs))"
+                if steps_taken > 0 && isfinite(ms_per_step) && isfinite(mparticle_steps_per_s)
+                    @info @sprintf("Solver throughput: %.4f ms/step, %.4f M particle-steps/s, mean dt = %.6e s (%d steps)",
+                                   ms_per_step, mparticle_steps_per_s, mean_dt, steps_taken)
+                end
+                if !SimMetaData.GPUSyncTimers
+                    @info "TimerOutput note: GPUSyncTimers = false; phase timings reflect asynchronous host enqueue and readback wait boundaries rather than per-kernel GPU execution time."
+                end
                 @info @sprintf("Output frame write time (%s): %.2f [s], %d frames buffered per file flush",
                                SimMetaData.GPUAsyncOutput ? "writer task, overlapped with GPU work" : "simulation thread",
                                write_time[], output.frames_per_flush)
@@ -1804,7 +1819,6 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             @timeit HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                                                                  SimConstants, gpu, cl, sup, red, motion, state;
                                                                  floating = floating, logger = SimLogger)
-            push!(TimeSteps, SimMetaData.CurrentTimeStep)
 
             # Publish progress immediately, independently of the queued disk writes.
             if StoreLogOutput

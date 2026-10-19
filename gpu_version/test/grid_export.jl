@@ -23,6 +23,10 @@ const GRID = SPHExampleGPU.GPUCellGrid
         ties = [SVector{D, TP}(ntuple(_ -> sign * TP(0.25), D)) for sign in (-1, 1)]
         @test GRID.occupied_cells_host(ties, T(2)) ==
               [CartesianIndex(ntuple(_ -> sign, D)) for sign in (-1, 1)]
+        scratch = CartesianIndex{D}[]
+        @test GRID.occupied_cells_host(positions, inverse_cell, scratch) == expected
+        @test scratch == expected
+        @test isempty(GRID.occupied_cells_host(SVector{D, TP}[], inverse_cell, scratch))
     end
 end
 

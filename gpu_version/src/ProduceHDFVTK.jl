@@ -962,8 +962,15 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         buf.offsets[1] = 0
         ncells == 0 && return 0
 
-        mins = ntuple(d -> minimum(ci -> ci[d], UniqueCells), Val(D))
-        maxs = ntuple(d -> maximum(ci -> ci[d], UniqueCells), Val(D))
+        mins_v = UniqueCells[1].I
+        maxs_v = mins_v
+        @inbounds for c in 2:ncells
+            ci = UniqueCells[c].I
+            mins_v = min.(mins_v, ci)
+            maxs_v = max.(maxs_v, ci)
+        end
+        mins = mins_v
+        maxs = maxs_v
         nx   = maxs[1] - mins[1] + 1
         ny   = D == 3 ? maxs[2] - mins[2] + 1 : 1
         edge = Float64(cell_edge)
