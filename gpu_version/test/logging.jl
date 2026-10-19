@@ -62,6 +62,9 @@ end
     @test LOGGER.host_particle_bytes(StructArray((Density = Float32[],))) == 0
     @test LOGGER.memory_usage_line("GPU accounted buffers total", 16, 0) ==
         "GPU accounted buffers total: 16 bytes (0.0000 MiB; n/a bytes/particle)"
+    @test LOGGER.output_pipeline_memory_line((; pinned_bytes = 2^20, queue_bytes = 2 * 2^20,
+        queue_frames = 4, writer_bytes = 8 * 2^20)) ==
+        "Output staging & buffer capacity: 1.0000 MiB pinned + 2.0000 MiB queue (up to 4 frames) + 8.0000 MiB HDF5 writer buffer"
 end
 
 if CUDA.functional()
@@ -157,6 +160,13 @@ if CUDA.functional()
             @test last(cells) > first(cells)
             totals = collect(eachmatch(r"^GPU accounted buffers total: \d+ bytes \(\d+\.\d{4} MiB; \d+\.\d{2} bytes/particle\)"m, logged.log))
             @test length(totals) == 2
+            pools = collect(eachmatch(r"^CUDA pool: \d+\.\d{4} MiB used / \d+\.\d{4} MiB reserved \(\d+\.\d{4} MiB free device VRAM\)"m, logged.log))
+            @test length(pools) == 2
+            pipeline_re = async ?
+                r"^Output staging & buffer capacity: \d+\.\d{4} MiB pinned \+ \d+\.\d{4} MiB queue \(up to [1-9]\d* frames\) \+ \d+\.\d{4} MiB HDF5 writer buffer"m :
+                r"^Output staging & buffer capacity: \d+\.\d{4} MiB pinned \+ 0\.0000 MiB queue \(up to 0 frames\) \+ \d+\.\d{4} MiB HDF5 writer buffer"m
+            pipelines = collect(eachmatch(pipeline_re, logged.log))
+            @test length(pipelines) == 2
             @test occursin("Simulation finished at:", logged.log)
             for output in (reference.console, logged.console, logged.log)
                 headers = collect(eachmatch(r"(?m)^\s*Section\s+ncalls\b", output))

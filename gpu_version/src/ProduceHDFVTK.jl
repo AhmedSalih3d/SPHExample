@@ -1322,6 +1322,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         grid_writer  = nothing
         measurement_writer = nothing
         frames_per_flush = 1
+        writer_buffer_bytes = multi_file ?
+            (pos_buf === nothing ? 0 : sizeof(pos_buf)) +
+            sum(sizeof, values(vec_bufs); init = 0) +
+            (type_buf === nothing ? 0 : sizeof(type_buf)) : 0
         file_handles = if multi_file
             # Multi-file mode: vector for particle files
             # Frames written: the initial state plus one per output deadline.
@@ -1394,9 +1398,11 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 GenerateStepStructure(root_grid; vtk_file_type="UnstructuredGrid")
                 grid_budget = max(0, SimMetaData.GPUOutputBufferBytes - frames_per_flush * particle_frame_bytes)
                 grid_writer = GridFrameWriter(root_grid; capacity = frames_per_flush, budget_bytes = grid_budget)
+                writer_buffer_bytes = frames_per_flush * particle_frame_bytes + grid_budget
 
                 (particle_files = OutputVTKHDF, grid_files = OutputVTKHDFGrid)
             else
+                writer_buffer_bytes = frames_per_flush * particle_frame_bytes
                 (particle_files = OutputVTKHDF, grid_files = nothing)
             end
         end
@@ -1458,6 +1464,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             file_handles = file_handles,  # For advanced access if needed
             variable_names = output_vars,
             frames_per_flush = frames_per_flush,
+            writer_buffer_bytes = writer_buffer_bytes,
         )
     end
 end

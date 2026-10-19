@@ -1262,6 +1262,13 @@ particle, using the actual element types and allocated field lengths:
 * **GPU accounted buffers total** sums those device categories. It excludes
   output/staging buffers, CUDA context/JIT/graph storage, allocator reservations
   and allocation overhead; it is not total or peak VRAM use.
+* **CUDA pool**: active CUDA memory-pool usage (`CUDA.used_memory()`), reserved
+  pool capacity (`CUDA.cached_memory()`) and current free device VRAM
+  (`CUDA.free_memory()`) at the time of each snapshot.
+* **Output staging & buffer capacity**: page-locked host download staging buffers,
+  asynchronous host output-queue capacity (with its maximum frame count) and
+  the HDF5 writer buffer budget (`PolyDataFrameWriter` / `GridFrameWriter` or
+  multi-file component buffers).
 
 The startup snapshot is taken after device allocation but **before the first
 cell-list rebuild**. The final snapshot uses the current cell-list capacity,

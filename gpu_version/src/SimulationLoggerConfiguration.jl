@@ -130,7 +130,24 @@ module SimulationLoggerConfiguration
             auxiliary = device_buffer_bytes(buffers.auxiliary, seen))
     end
 
-    function log_gpu_memory(logger, buffers, particles; phase)
+    function cuda_pool_memory_line()
+        CUDA.functional() || return "CUDA pool: unavailable (CUDA is not functional)"
+        used = CUDA.used_memory()
+        reserved = CUDA.cached_memory()
+        free_vram = CUDA.free_memory()
+        return @sprintf("CUDA pool: %.4f MiB used / %.4f MiB reserved (%.4f MiB free device VRAM)",
+            used / 2.0^20, reserved / 2.0^20, free_vram / 2.0^20)
+    end
+
+    function output_pipeline_memory_line(output_memory)
+        return @sprintf("Output staging & buffer capacity: %.4f MiB pinned + %.4f MiB queue (up to %d frames) + %.4f MiB HDF5 writer buffer",
+            output_memory.pinned_bytes / 2.0^20,
+            output_memory.queue_bytes / 2.0^20,
+            output_memory.queue_frames,
+            output_memory.writer_bytes / 2.0^20)
+    end
+
+    function log_gpu_memory(logger, buffers, particles; phase, output_memory = nothing)
         bytes = gpu_memory_bytes(buffers)
         with_logger(logger.Logger) do
             @info "GPU live-buffer memory ($phase):"
@@ -139,6 +156,8 @@ module SimulationLoggerConfiguration
             @info memory_usage_line("GPU cell-list workspace", bytes.cells, particles)
             @info memory_usage_line("GPU auxiliary arrays (motion, reductions, step state, floating)", bytes.auxiliary, particles)
             @info memory_usage_line("GPU accounted buffers total", sum(bytes), particles)
+            @info cuda_pool_memory_line()
+            output_memory === nothing || @info output_pipeline_memory_line(output_memory)
             @info "GPU memory scope: live array payload; shared arrays counted once. Excludes output/staging buffers, CUDA context/JIT/graphs, allocator reservations and allocation overhead; not process or peak VRAM."
         end
         return nothing
@@ -208,16 +227,19 @@ module SimulationLoggerConfiguration
     
     """
         InitializeLogger(logger, constants, metadata, kernel, viscosity,
-                         densitydiffusion, SPHGeometry, particles; gpu_buffers = nothing)
+                         densitydiffusion, SPHGeometry, particles;
+                         gpu_buffers = nothing, output_memory = nothing)
 
     Log the configuration, CUDA toolchain and active device, particle counts,
     precision and CPU particle-array payload. `RunSimulation` supplies
     `gpu_buffers = (; particles, support, cells, auxiliary)` for an alias-aware
-    device-buffer breakdown after allocation, before the first cell-list rebuild.
+    device-buffer breakdown after allocation, before the first cell-list rebuild,
+    and `output_memory = (; pinned_bytes, queue_bytes, queue_frames, writer_bytes)`
+    for the host output staging/queue/writer capacity.
     Host-only callers may omit these buffers; GPU memory is then explicitly
     marked as unreported.
     """
-    function InitializeLogger(SimLogger,SimConstants,SimMetaData, SimKernel, SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles; gpu_buffers = nothing)
+    function InitializeLogger(SimLogger,SimConstants,SimMetaData, SimKernel, SimViscosity, SimDensityDiffusion, SimGeometry, SimParticles; gpu_buffers = nothing, output_memory = nothing)
         with_logger(SimLogger.Logger) do
             @info sprint(InteractiveUtils.versioninfo)
             @info "Julia threads: $(Threads.nthreads())"
@@ -246,7 +268,7 @@ module SimulationLoggerConfiguration
                 @info "GPU buffer memory: not reported (device buffers not supplied)"
             else
                 log_gpu_memory(SimLogger, gpu_buffers, length(SimParticles);
-                    phase = "startup, before first cell-list rebuild")
+                    phase = "startup, before first cell-list rebuild", output_memory)
             end
 
             @info SimLogger.ValuesToPrint

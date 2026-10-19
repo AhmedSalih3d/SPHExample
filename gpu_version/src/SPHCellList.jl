@@ -1539,12 +1539,6 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
 
     gpu_buffers = (; particles = gpu, support = sup, cells = cl,
         auxiliary = (motion, floating, red.partial, state.f, state.i))
-    if StoreLogOutput
-        InitializeLogger(SimLogger, SimConstants, SimMetaData, SimKernel, SimViscosity,
-            SimDensityDiffusion, SimGeometry, SimParticles; gpu_buffers)
-        LogStep(SimLogger, SimMetaData, HourGlass)
-        SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
-    end
 
     output = SetupVTKOutput(
         SimMetaData, SimParticles, SimKernel, Dimensions;
@@ -1580,11 +1574,6 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     end
     floating.active && log_floating(SimMetaData.TotalTime, floating_state(floating))
 
-    # Save initial state, use 1 else this cannot be used to index fid vector
-    SimMetaData.OutputIterationCounter = 1
-    output.save_particles(SimMetaData.OutputIterationCounter)
-    output.save_grid(SimMetaData.OutputIterationCounter, CartesianIndex{Dimensions}[], SimParticles)
-
     generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [
         (:(Iteration), string(Iteration)),
         (:(TotalTime), @sprintf("%3.3f", TotalTime)),
@@ -1597,6 +1586,30 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     # before any HDF5 work; backpressure occurs only when the host queue fills.
     staging = OutputDownload{Dimensions}[OutputDownload(gpu, download_fields; cells = SimMetaData.ExportGridCells, floating)
                                          for _ in 1:(SimMetaData.GPUAsyncOutput ? OUTPUT_STAGING_FRAMES : 1)]
+    prototype = first(staging)
+    frame_bytes = sum(sizeof, prototype.buffers) + sizeof(prototype.cid) +
+        (prototype.ghost_index === nothing ? 0 : sizeof(prototype.ghost_index)) +
+        (prototype.floating === nothing ? 0 : sum(sizeof, prototype.floating))
+    queue_frames = SimMetaData.GPUAsyncOutput ? max(1, div(SimMetaData.GPUOutputQueueBytes, max(frame_bytes, 1))) : 0
+    output_memory = (;
+        pinned_bytes = length(staging) * frame_bytes,
+        queue_bytes = queue_frames * frame_bytes,
+        queue_frames = queue_frames,
+        writer_bytes = output.writer_buffer_bytes,
+    )
+
+    if StoreLogOutput
+        InitializeLogger(SimLogger, SimConstants, SimMetaData, SimKernel, SimViscosity,
+            SimDensityDiffusion, SimGeometry, SimParticles; gpu_buffers, output_memory)
+        LogStep(SimLogger, SimMetaData, HourGlass)
+        SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
+    end
+
+    # Save initial state, use 1 else this cannot be used to index fid vector
+    SimMetaData.OutputIterationCounter = 1
+    output.save_particles(SimMetaData.OutputIterationCounter)
+    output.save_grid(SimMetaData.OutputIterationCounter, CartesianIndex{Dimensions}[], SimParticles)
+
     free    = Channel{OutputDownload{Dimensions}}(length(staging))
     jobs    = Channel{OutputFrameJob{Dimensions}}(length(staging))
     foreach(dl -> put!(free, dl), staging)
@@ -1627,11 +1640,6 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     writer = nothing
     collector = nothing
     if SimMetaData.GPUAsyncOutput
-        prototype = first(staging)
-        frame_bytes = sum(sizeof, prototype.buffers) + sizeof(prototype.cid) +
-            (prototype.ghost_index === nothing ? 0 : sizeof(prototype.ghost_index)) +
-            (prototype.floating === nothing ? 0 : sum(sizeof, prototype.floating))
-        queue_frames = max(1, div(SimMetaData.GPUOutputQueueBytes, max(frame_bytes, 1)))
         host_frames = OutputFramePool(prototype, queue_frames)
         ready = Channel{OutputFrameJob{Dimensions}}(queue_frames)
         writer = spawn_writer() do
@@ -1718,7 +1726,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                                write_time[], output.frames_per_flush)
             end
             SimulationLoggerConfiguration.log_gpu_memory(SimLogger, gpu_buffers, NumberOfPoints;
-                phase = "final, current cell-list capacity")
+                phase = "final, current cell-list capacity", output_memory)
             LogFinal(SimLogger, HourGlass; status = status)
 
             close(SimLogger.LoggerIo)
