@@ -1656,6 +1656,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     foreach(dl -> put!(free, dl), staging)
     write_time = Ref(0.0)
     grid_cells_scratch = CartesianIndex{Dimensions}[]
+    grid_cells_seen = Set{CartesianIndex{Dimensions}}()
     # Host side of one frame: wait for its copies, write the files directly from
     # the downloaded buffers (or commit the pre-filled writer slab slot), and
     # only update `SimParticles` for measurement fields or cell-grid bookkeeping
@@ -1678,7 +1679,8 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         output.save_particles(job.counter, job.time; download = dl, staged_slot = direct_writer_slabs)
         if SimMetaData.ExportGridCells
             # Bin the downloaded positions, not the cells from the last neighbor rebuild.
-            grid_cells = occupied_cells_host(first(dl.buffers), bin_scale(job.grid, SimKernel.H⁻¹), grid_cells_scratch)
+            grid_cells = occupied_cells_host(first(dl.buffers), bin_scale(job.grid, SimKernel.H⁻¹),
+                grid_cells_scratch, grid_cells_seen)
             output.save_grid(job.counter, grid_cells, SimParticles, job.time)
         end
         if !SimMetaData.GPUAsyncOutput
