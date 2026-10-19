@@ -163,7 +163,8 @@ function upload_particles(SimParticles::StructArray;
     Position   = _upload(SVector{D, TP}, SimParticles.Position)
     I = compact_metadata ? metadata_storage_type(Int32, Int, SimParticles.ID) : Int
     G = compact_metadata ? metadata_storage_type(UInt32, UInt, SimParticles.GroupMarker) : UInt
-    owners = ghost_data ? findall(!iszero, SimParticles.GhostPoints) : Int[]
+    has_host_ghosts = hasproperty(SimParticles, :GhostPoints) && hasproperty(SimParticles, :GhostNormals)
+    owners = ghost_data && has_host_ghosts ? findall(!iszero, SimParticles.GhostPoints) : Int[]
     GhostIndex = CuArray(Int32.(owners))
     compact_ghosts = ghost_data && boundary_only
     slots = compact_ghosts ? zeros(Int32, n) : nothing
@@ -172,10 +173,20 @@ function upload_particles(SimParticles::StructArray;
     end
     BoundarySlot = compact_ghosts ? CuArray(slots) : nothing
     selected = compact_ghosts ? owners : eachindex(SimParticles)
-    GhostPoints = ghost_data ? _upload(SVector{D, TP}, SimParticles.GhostPoints[selected]) :
-                               CuVector{SVector{D, TP}}(undef, 0)
-    GhostNormals = ghost_data ? CuArray(SimParticles.GhostNormals[selected]) :
-                                CuVector{SVector{D, T}}(undef, 0)
+    GhostPoints = if !ghost_data
+        CuVector{SVector{D, TP}}(undef, 0)
+    elseif has_host_ghosts
+        _upload(SVector{D, TP}, SimParticles.GhostPoints[selected])
+    else
+        CUDA.zeros(SVector{D, TP}, length(selected))
+    end
+    GhostNormals = if !ghost_data
+        CuVector{SVector{D, T}}(undef, 0)
+    elseif has_host_ghosts
+        CuArray(SimParticles.GhostNormals[selected])
+    else
+        CUDA.zeros(SVector{D, T}, length(selected))
+    end
     scratch = (
         Position      = similar(Position),
         Velocity      = CuVector{SVector{D, T}}(undef, n),
@@ -204,8 +215,10 @@ function upload_particles(SimParticles::StructArray;
         CUDA.zeros(Int32, n),
         GhostIndex,
         BoundarySlot,
-        kernel_output ? CuArray(SimParticles.Kernel) : CuVector{T}(undef, 0),
-        kernel_output ? CuArray(SimParticles.KernelGradient) : CuVector{SVector{D, T}}(undef, 0),
+        kernel_output ? (hasproperty(SimParticles, :Kernel) ? CuArray(SimParticles.Kernel) : CUDA.zeros(T, n)) :
+                        CuVector{T}(undef, 0),
+        kernel_output ? (hasproperty(SimParticles, :KernelGradient) ? CuArray(SimParticles.KernelGradient) : CUDA.zeros(SVector{D, T}, n)) :
+                        CuVector{SVector{D, T}}(undef, 0),
         scratch,
     )
 end
@@ -242,9 +255,9 @@ Omitted device fields are excluded from the default field list; requesting
 one explicitly throws `ArgumentError`.
 """
 function download_particles!(SimParticles::StructArray, gpu::GPUParticles{D, T}, grid::CellGrid{D},
-                             fields = allocated_download_fields(gpu);
+                             fields = allocated_download_fields(gpu, SimParticles);
                              cells::Bool = false) where {D, T}
-    foreach(f -> require_particle_field(gpu, f), fields)
+    foreach(f -> require_particle_field(gpu, f, SimParticles), fields)
     _download!(SimParticles.Position, gpu.Position)
     owners = gpu.BoundarySlot !== nothing && any(f -> f in (:GhostPoints, :GhostNormals), fields) ?
         Array(gpu.GhostIndex) : nothing
@@ -262,7 +275,13 @@ function download_particles!(SimParticles::StructArray, gpu::GPUParticles{D, T},
     return cid
 end
 
-function require_particle_field(gpu::GPUParticles, field::Symbol)
+allocated_download_fields(gpu::GPUParticles, SimParticles::StructArray) =
+    filter(f -> hasproperty(SimParticles, f), allocated_download_fields(gpu))
+
+function require_particle_field(gpu::GPUParticles, field::Symbol, SimParticles = nothing)
+    if SimParticles !== nothing && !hasproperty(SimParticles, field)
+        throw(ArgumentError("Host particle field $field was not allocated; enable its mode or set GPUCompactBuffers = false when allocating particles."))
+    end
     array = getproperty(gpu, field)
     if field in (:GhostPoints, :GhostNormals) && gpu.BoundarySlot !== nothing
         length(array) == length(gpu.GhostIndex) ||
@@ -282,12 +301,14 @@ function expand_boundary_field!(dst, src, owners)
     return dst
 end
 
-# Store the cell of every particle in the host `StructArray` from a host copy
-# of the device cell ids and return the distinct cells in cell order.
+# Store the cell of every particle in the host `StructArray` (when allocated) from
+# a host copy of the device cell ids and return the distinct cells in cell order.
 function store_cells!(SimParticles::StructArray, grid::CellGrid{D}, cid::AbstractVector{Int32}) where {D}
-    @inbounds for i in eachindex(cid)
-        l = local_coords(grid, cid[i])
-        SimParticles.Cells[i] = CartesianIndex(ntuple(d -> Int(l[d] + grid.origin[d]), Val(D)))
+    if hasproperty(SimParticles, :Cells)
+        @inbounds for i in eachindex(cid)
+            l = local_coords(grid, cid[i])
+            SimParticles.Cells[i] = CartesianIndex(ntuple(d -> Int(l[d] + grid.origin[d]), Val(D)))
+        end
     end
     return unique_cells_host(grid, cid)
 end
@@ -1757,8 +1778,9 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                 close_output_streams!()
 
                 # Leave the complete final state on the host, not only the output
-                # fields, so that callers can inspect every particle field.
-                @timeit HourGlass "13d Final Download From GPU" download_particles!(SimParticles, gpu, cl.grid; cells = true)
+                # fields, so that callers can inspect every allocated particle field.
+                @timeit HourGlass "13d Final Download From GPU" download_particles!(
+                    SimParticles, gpu, cl.grid; cells = hasproperty(SimParticles, :Cells))
                 
                 break
             end

@@ -203,7 +203,7 @@ function check_grid_file(path, positions, expected_time, edge, inverse_cell, D; 
     end
 end
 
-function simulate_grid(save, D, R; async, single_file, double_position, export_grid = true)
+function simulate_grid(save, D, R; async, single_file, double_position, export_grid = true, compact = true)
     T = Float32
     constants = SimulationConstants{T}(dx = 0.02, c₀ = 20, g = 0, CFL = 0.2)
     kernel = SPHKernelInstance{D, T}(WendlandC2(); dx = constants.dx)
@@ -218,7 +218,7 @@ function simulate_grid(save, D, R; async, single_file, double_position, export_g
         OutputTimes = 0.004, OutputVariables = ["ID"],
         ExportGridCells = export_grid, ExportSingleVTKHDF = single_file,
         GPUCellSubdivision = R, GPUDoublePosition = double_position,
-        GPUAsyncOutput = async, GPUUseGraph = false,
+        GPUCompactBuffers = compact, GPUAsyncOutput = async, GPUUseGraph = false,
         GPUOutputQueueBytes = 4096, GPUOutputBufferBytes = 4096,
         VisualizeInParaview = false, OpenLogFile = false)
     particles = AllocateDataStructures(geometry, meta)
@@ -273,12 +273,15 @@ end
                 # Output must not change the integration or the actual cell-list bins.
                 control = mkpath(joinpath(save, "without_grid"))
                 reference = simulate_grid(control, D, R; async, single_file,
-                    double_position = async, export_grid = false)
-                @test particles.Position == reference.particles.Position
-                @test particles.Velocity == reference.particles.Velocity
-                @test particles.Density == reference.particles.Density
+                    double_position = async, export_grid = false, compact = false)
+                compact_control = simulate_grid(mkpath(joinpath(save, "compact_without_grid")), D, R;
+                    async, single_file, double_position = async, export_grid = false, compact = true)
+                @test particles.Position == reference.particles.Position == compact_control.particles.Position
+                @test particles.Velocity == reference.particles.Velocity == compact_control.particles.Velocity
+                @test particles.Density == reference.particles.Density == compact_control.particles.Density
                 @test particles.Cells == reference.particles.Cells
-                @test meta.Iteration == reference.meta.Iteration
+                @test !hasproperty(compact_control.particles, :Cells)
+                @test meta.Iteration == reference.meta.Iteration == compact_control.meta.Iteration
             end
 
             pvpython = Sys.which("pvpython")

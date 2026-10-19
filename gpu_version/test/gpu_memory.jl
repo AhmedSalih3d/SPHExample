@@ -62,8 +62,10 @@ function simulate(build, T; compact, double_position, graph, async, scheme, queu
             close(logger.LoggerIo)
         end
         order = sortperm(host.ID)
-        fields = map(name -> (eltype(getproperty(host, name)), getproperty(host, name)[order]),
+        active_fields = filter(name -> !(name in DRIVER.OPTIONAL_PARTICLE_FIELDS && !hasproperty(host, name)),
             DRIVER.DOWNLOADABLE_FIELDS)
+        fields = Dict(name => (eltype(getproperty(host, name)), getproperty(host, name)[order])
+            for name in active_fields)
         return (; steps = metadata.Iteration, time = metadata.TotalTime,
             position = (eltype(host.Position), host.Position[order]), fields,
             particles = hdf_datasets(joinpath(save, metadata.SimulationName * ".vtkhdf")),
@@ -156,9 +158,21 @@ end
             @test full_bytes - compact_bytes == expected
             @test compact_bytes < 0.75 * full_bytes
             f.metadata.GPUCompactBuffers = false
-            legacy = upload_particles(f.host, f.metadata)
+            full_host = AllocateDataStructures(f.geometry, f.metadata)
+            legacy = upload_particles(full_host, f.metadata)
             legacy_support = GPUSupportArrays{D, T}(n, f.metadata)
             @test GPUMemoryBenchmark.device_buffer_bytes((legacy, legacy_support)) == full_bytes
+            TP = position_float_type(f.metadata)
+            @test !hasproperty(f.host, :Cells)
+            @test !hasproperty(f.host, :Kernel) && !hasproperty(f.host, :KernelGradient)
+            @test !hasproperty(f.host, :GhostPoints) && !hasproperty(f.host, :GhostNormals)
+            for field in (:Cells, :Kernel, :KernelGradient, :GhostPoints, :GhostNormals)
+                @test hasproperty(full_host, field)
+            end
+            expected_host_saving = n * (sizeof(CartesianIndex{D}) + sizeof(T) + sizeof(SVector{D, T}) +
+                sizeof(SVector{D, TP}) + sizeof(SVector{D, T}))
+            @test GPUMemoryBenchmark.host_particle_bytes(full_host) -
+                  GPUMemoryBenchmark.host_particle_bytes(f.host) == expected_host_saving
         end
     end
 
@@ -166,6 +180,13 @@ end
         for D in (2, 3), T in (Float32, Float64), boundary in (SimpleMDBC, UpdatedMDBC)
             f = fixture(D, T; double_position = true, shifting = PlanarShifting,
                 kernel_output = StoreKernelOutput, boundary)
+            @test !hasproperty(f.host, :Cells)
+            for field in (:Kernel, :KernelGradient, :GhostPoints, :GhostNormals)
+                @test hasproperty(f.host, field)
+            end
+            f.metadata.ExportGridCells = true
+            with_cells = AllocateDataStructures(f.geometry, f.metadata)
+            @test hasproperty(with_cells, :Cells)
             gpu = upload_particles(f.host, f.metadata)
             support = GPUSupportArrays{D, T}(gpu, f.metadata)
             for field in (:Kernel, :KernelGradient)
@@ -194,8 +215,8 @@ end
             normal = SVector{D, T}(ntuple(d -> d == D ? T(0.1) : zero(T), D))
             points = [V(ntuple(d -> d == 1 ? TP(k) / 10 : zero(TP), D)) for k in 10:-1:1]
             geometry = [SPHGeometry{D, T}(points; Density = 1000, GroupMarker = 1, Type = Fluid)]
-            metadata = SimulationMetaData{D, T}(SimulationName = "BoundarySlots",
-                SaveLocation = tempdir(), GPUDoublePosition = TP !== T)
+            metadata = SimulationMetaData{D, T, NoShifting, NoKernelOutput, SimpleMDBC}(
+                SimulationName = "BoundarySlots", SaveLocation = tempdir(), GPUDoublePosition = TP !== T)
             host = AllocateDataStructures(geometry, metadata)
             host.Type[[2, 7, 9]] .= Fixed
             host.GhostPoints[[2, 7, 9]] = points[[2, 7, 9]] .+ Ref(V(normal))
@@ -358,7 +379,18 @@ end
             reference = simulate(build, T; compact = false, double_position, graph, async, scheme)
             result = simulate(build, T; compact = true, double_position, graph, async, scheme)
             @test reference.steps > 1
-            @test result == reference
+            @test result.steps == reference.steps
+            @test result.time == reference.time
+            @test result.position == reference.position
+            @test result.particles == reference.particles
+            @test result.cells == reference.cells
+            @test issubset(keys(result.fields), keys(reference.fields))
+            for name in keys(result.fields)
+                @test result.fields[name] == reference.fields[name]
+            end
+            for name in setdiff(keys(reference.fields), keys(result.fields))
+                @test all(iszero, reference.fields[name][2])
+            end
         end
     end
 end

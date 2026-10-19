@@ -1,7 +1,7 @@
 module GPUMemoryBenchmark
 
 using SPHExampleGPU, CUDA, StaticArrays, Printf
-using SPHExampleGPU.SimulationLoggerConfiguration: device_buffer_bytes
+using SPHExampleGPU.SimulationLoggerConfiguration: device_buffer_bytes, host_particle_bytes
 
 include(joinpath(@__DIR__, "..", "example", "GenerateStillWedgeMDBC.jl"))
 
@@ -28,7 +28,8 @@ function allocation_bytes(geometry::Vector{SPHGeometry{D, T}}, metadata, kernel,
     support = GPUSupportArrays{D, T}(gpu, metadata)
     SPHExampleGPU.SPHCellList.rebuild_cell_list!(gpu, cells, kernel.H⁻¹; support, constants, kernel)
     CUDA.synchronize()
-    return (; particles = length(host), bytes = device_buffer_bytes((gpu, support, cells)))
+    return (; particles = length(host), host_bytes = host_particle_bytes(host),
+        bytes = device_buffer_bytes((gpu, support, cells)))
 end
 
 function report(geometry, metadata, kernel, constants, label)
@@ -41,14 +42,16 @@ function report(geometry, metadata, kernel, constants, label)
     compact = allocation_bytes(geometry, metadata, kernel, constants)
     GC.gc()
     CUDA.reclaim()
-    @printf("%-28s %9d %12.4f %12.4f %9.2f\n", label, full.particles,
+    @printf("%-28s %9d %12.4f %12.4f %9.2f %12.4f %12.4f %9.2f\n", label, full.particles,
+        full.host_bytes / 2.0^20, compact.host_bytes / 2.0^20, 100 * (1 - compact.host_bytes / full.host_bytes),
         full.bytes / 2.0^20, compact.bytes / 2.0^20, 100 * (1 - compact.bytes / full.bytes))
 end
 
 function main()
     println("GPU: ", CUDA.name(CUDA.device()), "; Float32 physics / Float64 positions")
-    println("Live particle, reorder, support and rebuilt cell-grid buffers; excludes output, motion, reductions and allocator pool.")
-    @printf("%-28s %9s %12s %12s %9s\n", "case", "particles", "full MiB", "compact MiB", "saved %")
+    println("Host SimParticles and live GPU particle, reorder, support and rebuilt cell-grid buffers; excludes output, motion, reductions and allocator pool.")
+    @printf("%-28s %9s %12s %12s %9s %12s %12s %9s\n",
+        "case", "particles", "host full", "host comp", "host %", "gpu full", "gpu comp", "gpu %")
     for dx in (0.02, 0.005)
         case = generated_wedge_case(Float32, tempdir(); dx)
         report(case.SimGeometry, case.SimMetaData, case.SimKernel, case.SimConstants, "StillWedge dx=$dx")

@@ -66,15 +66,18 @@ the host particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so
 that they hold `Float64` positions from the input files onwards.
 
 `GPUCompactBuffers = true` omits unused ghost, kernel-output and shifting
-buffers, shares position/velocity predictors with reorder scratch, omits
+buffers (and omits inactive `Cells`, `Kernel`, `KernelGradient`, `GhostPoints`
+and `GhostNormals` columns from host `SimParticles` when allocated with
+`AllocateDataStructures(SimGeometry, SimMetaData)`), shares position/velocity
+predictors with reorder scratch, omits
 acceleration/pressure sorting shadows, and stores GPU IDs/group markers in
 32 bits when every value fits. Pressure is reconstructed with the selected EOS;
 startup retains host pressure rounding using idle density scratch. The driver
 overwrites acceleration before any post-rebuild reader. Fixed predictor entries
 are initialized after sorting and not rewritten each step. Boundary density
 updates and requested boundary-force calculations are unchanged.
-Host fields and exported types are unchanged; out-of-range metadata retains
-its original width. `false` keeps the previous full GPU allocation layout.
+Allocated host fields and exported types are unchanged; out-of-range metadata retains
+its original width. `false` keeps the previous full host and GPU allocation layout.
 
 `GPUCacheInteractionFields = true` stores reciprocal density per particle for
 reuse by the interaction loops, using an additional `sizeof(FloatType)` bytes

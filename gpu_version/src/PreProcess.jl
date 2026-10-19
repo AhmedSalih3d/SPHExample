@@ -7,25 +7,44 @@ using StaticArrays
 using StructArrays
 
 using ..SimulationGeometry
-using ..SimulationMetaDataConfiguration: SimulationMetaData, position_float_type
+using ..SimulationMetaDataConfiguration: SimulationMetaData, StoreKernelOutput, NoMDBC, position_float_type
 
 """
     AllocateDataStructures(SimGeometry, SimMetaData)
-    AllocateDataStructures(SimGeometry; position_type = FloatType)
+    AllocateDataStructures(SimGeometry; position_type = FloatType, cells = true,
+                           kernel_output = true, ghost_data = true)
 
-Copy the stored particles of every SPHGeometry into a host `StructArray`. The device
-particle container always carries the ghost node and kernel output fields,
-so the mode types of the meta data do not change the host allocation; the
-meta data selects the precision of the positions (`Float64` with
-`GPUDoublePosition`, see `position_float_type`). `Position` and
-`GhostPoints` are stored in that precision, every other field in `FloatType`.
+Copy the stored particles of every `SPHGeometry` into a host `StructArray`.
+`Position` and `GhostPoints` use `position_type` (`Float64` with
+`GPUDoublePosition`, see `position_float_type`), and every other float field
+uses `FloatType`.
+
+The single-argument form retains all optional host fields (`Cells`, `Kernel`,
+`KernelGradient`, `GhostPoints`, and `GhostNormals`) by default. With
+`SimMetaData` and `GPUCompactBuffers = true`, inactive optional host columns are
+omitted: `Cells` unless `ExportGridCells` is enabled, `Kernel` and
+`KernelGradient` unless `KMode === StoreKernelOutput`, and `GhostPoints` and
+`GhostNormals` unless `BMode !== NoMDBC` (or an input geometry explicitly
+carries ghost fields). Setting `GPUCompactBuffers = false` retains all host
+columns.
 """
-AllocateDataStructures(SimGeometry::Vector{<:SPHGeometry{Dimensions, FloatType}},
-                       SimMetaData::SimulationMetaData{Dimensions, FloatType}) where {Dimensions, FloatType} =
-    AllocateDataStructures(SimGeometry; position_type = position_float_type(SimMetaData))
+function AllocateDataStructures(SimGeometry::Vector{<:SPHGeometry{Dimensions, FloatType}},
+                                SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode}) where {Dimensions, FloatType, SMode, KMode, BMode}
+    compact = SimMetaData.GPUCompactBuffers
+    has_geom_ghosts = any(geom -> hasproperty(geom.Particles, :GhostPoints) ||
+                                  hasproperty(geom.Particles, :GhostNormals), SimGeometry)
+    return AllocateDataStructures(SimGeometry;
+        position_type = position_float_type(SimMetaData),
+        cells = !compact || SimMetaData.ExportGridCells,
+        kernel_output = !compact || KMode === StoreKernelOutput,
+        ghost_data = !compact || BMode !== NoMDBC || has_geom_ghosts)
+end
 
 function AllocateDataStructures(SimGeometry::Vector{<:SPHGeometry{Dimensions, FloatType}};
-                                position_type::Type{TP} = FloatType) where {Dimensions, FloatType, TP}
+                                position_type::Type{TP} = FloatType,
+                                cells::Bool = true,
+                                kernel_output::Bool = true,
+                                ghost_data::Bool = true) where {Dimensions, FloatType, TP}
     Position    = Vector{SVector{Dimensions, TP}}()
     Density     = Vector{FloatType}()
     Types       = Vector{ParticleType}()
@@ -58,24 +77,33 @@ function AllocateDataStructures(SimGeometry::Vector{<:SPHGeometry{Dimensions, Fl
     PositionType   = eltype(Position)
     VectorType     = SVector{Dimensions, FloatType}
 
-    Acceleration    = zeros(VectorType, NumberOfPoints)
-    Velocity        = zeros(VectorType, NumberOfPoints)
-    Kernel          = zeros(FloatType, NumberOfPoints)
-    KernelGradient  = zeros(VectorType, NumberOfPoints)
-    GhostPoints     = zeros(PositionType, NumberOfPoints)
-    GhostNormals    = zeros(VectorType, NumberOfPoints)
+    Acceleration = zeros(VectorType, NumberOfPoints)
+    Velocity     = zeros(VectorType, NumberOfPoints)
+    Pressureᵢ    = zeros(FloatType, NumberOfPoints)
 
-    Pressureᵢ      = zeros(FloatType, NumberOfPoints)
-    
-    Cells          = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints)
+    columns = (
+        (cells ? (Cells = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints),) : ())...,
+        (kernel_output ? (Kernel = zeros(FloatType, NumberOfPoints),
+                          KernelGradient = zeros(VectorType, NumberOfPoints)) : ())...,
+        Position = Position,
+        Acceleration = Acceleration,
+        Velocity = Velocity,
+        Density = Density,
+        Pressure = Pressureᵢ,
+        ID = Idp,
+        Type = Types,
+        GroupMarker = GroupMarker,
+        (ghost_data ? (GhostPoints = zeros(PositionType, NumberOfPoints),
+                       GhostNormals = zeros(VectorType, NumberOfPoints)) : ())...,
+    )
 
-    SimParticles = StructArray((Cells = Cells, Kernel = Kernel, KernelGradient = KernelGradient, Position=Position, Acceleration=Acceleration, Velocity=Velocity, Density=Density, Pressure=Pressureᵢ, ID = Idp , Type = Types, GroupMarker = GroupMarker, GhostPoints = GhostPoints, GhostNormals=GhostNormals))
+    SimParticles = StructArray(columns)
 
     offset = 0
     for geom in SimGeometry
         n = length(geom.Particles)
         for field in (:Velocity, :GhostPoints, :GhostNormals)
-            if hasproperty(geom.Particles, field)
+            if hasproperty(geom.Particles, field) && hasproperty(SimParticles, field)
                 copyto!(getproperty(SimParticles, field), offset + 1,
                         getproperty(geom.Particles, field), 1, n)
             end
