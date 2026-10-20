@@ -1221,7 +1221,7 @@ definitions in `benchmark/cases.jl` construct against either package.
 | `GPUUseGraph` | `true` | Cache CUDA graphs of 1, 2, 4, 8, 16, and 32 steps and compose each host batch from them. Disabled automatically with `GPUSyncTimers`. |
 | `GPUCellSubdivision` | `1` | Positive integer `R`: cells of edge `H/R`, a `(2R+1)^D` stencil, and `(2R+1)^(D-1)` contiguous row ranges. `1` reproduces the CPU grid, `2` uses half-width cells, and `4` uses quarter-width cells. Finer grids reduce candidates but increase dense-grid memory, row overhead and mDBC work. With reference interactions, only `1` reproduces the CPU's density-diffusion pair orientation. Radial symmetric diffusion removes that orientation dependence; accumulation and SPS rounding can still differ. Benchmark the intended precision, lane count and boundary mode before changing it. |
 | `GPUDoublePosition` | `false` | Store and integrate the particle positions (and the mDBC ghost node positions) in `Float64` while everything else stays in `FloatType`; the pair loops use cell relative `FloatType` coordinates (see "Double positions" above). Use it for `Float32` runs of domains far from the origin or with many steps. No effect with `FloatType = Float64`. Allocate the particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so that the input is read in `Float64`. |
-| `GPUCacheInteractionFields` | `false` | Cache inverse density per particle for reuse in neighbor interactions. Adds one `FloatType` scalar per particle (4 bytes with `Float32`, 8 with `Float64`), independently of `GPUCompactBuffers`. Refreshed for each evaluated density state, including predictor and mDBC corrections. Trades memory for fewer divisions; benchmark elapsed solver time for your case. |
+| `GPUCacheInteractionFields` | `false` | Cache inverse density and pressure per particle for reuse in neighbor interactions. Adds two `FloatType` scalars per particle (8 bytes with `Float32`, 16 with `Float64`), independently of `GPUCompactBuffers`. Refreshed for each evaluated density state, including predictor and mDBC corrections. Trades memory for fewer neighbor-loop divisions and EOS evaluations; benchmark elapsed solver time for your case. |
 | `GPUCompactBuffers` | `true` | Omit unused ghost, kernel-output and shifting buffers on the GPU, and omit inactive `Cells`, `Kernel`, `KernelGradient`, `GhostPoints` and `GhostNormals` columns on the host when allocated with `AllocateDataStructures(SimGeometry, SimMetaData)`; store enabled mDBC ghosts and Updated mDBC state only for ghost-owning boundaries, without ghost reorder scratch; share position/velocity predictors with existing reorder scratch; and remove acceleration sorting shadows. Acceleration is refreshed before post-rebuild readers. Fixed predictor writes are skipped; boundary density and requested force calculations are retained. Host and GPU IDs use `Int32` and group markers use `UInt8`, `UInt16` or `UInt32` only when every value fits; otherwise each field independently retains its original width. Precision and neighbor ranges are unchanged. `false` restores the previous full host and GPU allocation layout. |
 | `GPUOutputQueueBytes` | `256 * 2^20` | Separate host memory budget for frames between the download collector and disk writer. Allocated on demand and reused; capacity for at least one frame. Used with `GPUAsyncOutput`. |
 | `GPUOutputBufferBytes` | `256 * 2^20` | Host memory for output frames that are held before they are written to the single `vtkhdf` file (see "Asynchronous output"). The number of frames per flush uses the particle fields plus an initial grid-size estimate, at least 1 and at most 16. Dense grid frames are checked against the remaining byte budget and can flush sooner; a frame larger than the budget is written immediately. `0` writes every frame at once. |
@@ -1294,15 +1294,17 @@ julia --project=. -t 2,0 test/logging.jl
 ### Cached interaction fields
 
 Set `GPUCacheInteractionFields = true` in `SimulationMetaData` to reuse inverse
-density from device memory instead of recomputing it for every accepted neighbor.
-`example/FloatingCylinder2d.jl` enables this option. With mixed position
-precision, cell-relative positions are already stored per particle, while
-pressure is computed on demand from density.
-The inverse-density cache uses one dense vector shared between the full and
-predictor states. It is refreshed after prediction and boundary corrections,
-and recomputed after sorting before interactions read it. It adds no reorder
-scratch and works with either compact or full buffers, both time stepping
-schemes, prescribed motion, floating bodies, and CUDA graphs.
+density and pressure from device memory instead of recomputing them for every
+accepted neighbor. `example/FloatingCylinder2d.jl` enables this option. With mixed position
+precision, cell-relative positions are already stored per particle; by default
+(`GPUCacheInteractionFields = false`), both inverse density and pressure are
+computed on demand from density.
+The cache uses one dense vector for `InvDensity` and one for `Pressure` in
+`GPUSupportArrays`, shared between the full and predictor states. Both are
+refreshed after prediction and boundary corrections, and recomputed before
+start-of-step interactions read them. It adds no reorder scratch and works with
+either compact or full buffers, both time stepping schemes, prescribed motion,
+floating bodies, and CUDA graphs.
 
 The stored reciprocals feed continuity, pressure forces, diffusion, shifting,
 SPS stresses, ghost-node `m/ρ` weights, the final density update and cubic-spline

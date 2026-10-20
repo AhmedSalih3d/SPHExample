@@ -78,14 +78,16 @@ updates and requested boundary-force calculations are unchanged.
 Out-of-range metadata retains its original width. `false` keeps the previous
 full host and GPU allocation layout.
 
-`GPUCacheInteractionFields = true` stores reciprocal density per particle for
-reuse by the interaction loops, using an additional `sizeof(FloatType)` bytes
-per particle. Cell-relative positions are already cached when needed, while
-pressure is computed on demand from density. The reciprocal buffer is shared
-between evaluated states and refreshed after density prediction and boundary
-corrections. This option is independent of `GPUCompactBuffers`, defaults to
-`false`, and trades device memory for fewer neighbor-loop divisions; elapsed
-speed depends on the case and GPU.
+`GPUCacheInteractionFields = true` stores reciprocal density and pressure per
+particle for reuse by the interaction loops, using an additional
+`2 * sizeof(FloatType)` bytes per particle. Cell-relative positions are already
+cached when needed; with `GPUCacheInteractionFields = false` (default), both
+reciprocal density and pressure are computed on demand from density. The
+reciprocal and pressure buffers are shared between evaluated states and
+refreshed after density prediction and boundary corrections. This option is
+independent of `GPUCompactBuffers`, defaults to `false`, and trades device
+memory for fewer neighbor-loop divisions and EOS evaluations; elapsed speed
+depends on the case and GPU.
 
 `GPURadialInteractions = true` opts into experimental scalar Wendland C2 pair contractions
 for supported linear diffusion and built-in viscosity models. Linear diffusion

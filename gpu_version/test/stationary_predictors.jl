@@ -80,11 +80,13 @@ end
             f = fixture(D, T; double_position)
             reference = context(f, D, T; compact, single, forces = true, lanes = 4)
             cached = context(f, D, T; compact, single, forces = true, lanes = 4, cache = true)
-            @test reference.sup.InvDensity === nothing
+            @test reference.sup.InvDensity === nothing && reference.sup.Pressure === nothing
             @test length(cached.sup.InvDensity) == length(f.host)
+            @test length(cached.sup.Pressure) == length(f.host)
             bytes = GPUMemoryBenchmark.device_buffer_bytes
-            @test bytes(cached.sup) - bytes(reference.sup) == length(f.host) * sizeof(T)
+            @test bytes(cached.sup) - bytes(reference.sup) == 2 * length(f.host) * sizeof(T)
             @test length(GPUSupportArrays{D, T}(length(f.host), f.metadata).InvDensity) == length(f.host)
+            @test length(GPUSupportArrays{D, T}(length(f.host), f.metadata).Pressure) == length(f.host)
             for pass in 1:2
                 for _ in 1:3
                     DRIVER.launch_step_graph!(reference)
@@ -106,6 +108,7 @@ end
                 # The final integration changes full density; the cache still belongs
                 # to the predictor evaluated by the corrector.
                 @test Array(cached.sup.InvDensity) ≈ inv.(Array(cached.sup.ρₙ⁺)) rtol = 2eps(T)
+                @test Array(cached.sup.Pressure) ≈ EquationOfStateGamma7.(Array(cached.sup.ρₙ⁺), f.constants.c₀, f.constants.ρ₀) rtol = 10eps(T) atol = 10eps(T)
                 for ctx in (reference, cached)
                     DRIVER.rebuild_cell_list!(ctx.gpu, ctx.cl, f.kernel.H⁻¹;
                         support = ctx.sup, floating = ctx.floating, constants = f.constants, kernel = f.kernel,

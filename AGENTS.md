@@ -51,13 +51,14 @@ data and ParaView workflows.
   Share reorder scratch only when predictor and rebuild lifetimes do not
   overlap. Refresh fixed entries after sorting and preserve updates for fluid,
   moving, velocity-only and floating particles.
-- **Derived fields:** Compute pressure on demand from density using the
-  appropriate EOS, including negative Updated-mDBC wall pressure, and only
-  materialize it at output intervals. Only the simulation driver may discard
-  acceleration when every entry is overwritten before any reader; standalone
-  rebuilds must preserve reductions, floating forces and downloads. Compute
-  reciprocal density from the state being evaluated, including predictor and
-  mDBC-corrected densities.
+- **Derived fields:** Compute pressure and reciprocal density on demand from
+  the density of the state being evaluated (including predictor and
+  mDBC-corrected densities, and negative Updated-mDBC wall pressure), or cache
+  both in `GPUSupportArrays` when `GPUCacheInteractionFields = true`, and only
+  materialize pressure on the host at output intervals. Only the simulation
+  driver may discard acceleration when every entry is overwritten before any
+  reader; standalone rebuilds must preserve reductions, floating forces and
+  downloads.
 - **Boundary ownership:** Keep compact mDBC auxiliaries in stable boundary
   slots and refresh both owner mappings after particle reordering. Asynchronous
   frames must retain their own owner-index snapshot; expand compact ghost data

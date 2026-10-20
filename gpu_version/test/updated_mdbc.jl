@@ -76,20 +76,20 @@ if CUDA.functional()
                 boundary_count = length(gpu.GhostIndex))
             step = HostStep(T(1e-4), zero(T))
             original = copy(gpu.Density)
-            function correct(cache)
+            mode = updated ? UpdatedMDBC() : SimpleMDBC()
+            function correct(cache, pcache = nothing)
                 if updated
                     GK.launch_updated_mdbc!(gpu.Density, gpu.Position, gpu.Velocity,
                         gpu.GhostPoints, gpu.GhostNormals, gpu.GhostIndex, gpu.Type, cl.CellStart,
                         cl.grid_dev, step, f.kernel, f.constants, sup.boundary_data;
-                        compact_ghosts = Val(true), inverse_density = cache)
+                        compact_ghosts = Val(true), inverse_density = cache, pressure = pcache)
                 else
                     GK.launch_mdbc!(gpu.Density, gpu.Position,
                         gpu.GhostPoints, gpu.GhostIndex, gpu.Type, cl.CellStart, cl.grid_dev,
-                        step, f.kernel, f.constants; compact_ghosts = Val(true), inverse_density = cache)
+                        step, f.kernel, f.constants; compact_ghosts = Val(true), inverse_density = cache, pressure = pcache)
                 end
                 densities = Array(gpu.Density)
                 types = Array(gpu.Type)
-                mode = updated ? UpdatedMDBC() : SimpleMDBC()
                 pressures = [particle_pressure(densities[i], types[i], f.constants.c₀, f.constants.ρ₀, mode)
                     for i in eachindex(densities)]
                 return densities, pressures
@@ -97,11 +97,13 @@ if CUDA.functional()
             reference = correct(nothing)
             copyto!(gpu.Density, original)
             GK.launch_prepare_interactions!(gpu.Position, step;
-                inverse_density = sup.InvDensity, Density = gpu.Density)
-            cached = correct(sup.InvDensity)
+                inverse_density = sup.InvDensity, pressure = sup.Pressure, Density = gpu.Density,
+                ParticleType = gpu.Type, SimConstants = f.constants, boundary_mode = mode)
+            cached = correct(sup.InvDensity, sup.Pressure)
             @test cached[1] ≈ reference[1] rtol = 20eps(T)
             @test cached[2] ≈ reference[2] rtol = 100eps(T) atol = T(0.5)
             @test Array(sup.InvDensity) ≈ inv.(cached[1]) rtol = 2eps(T)
+            @test Array(sup.Pressure) ≈ cached[2] rtol = 100eps(T) atol = T(0.5)
         end
     end
 
@@ -123,13 +125,15 @@ if CUDA.functional()
             end
             for K in (1, 4, 32)
                 GK.launch_prepare_interactions!(gpu.Position, step;
-                    inverse_density = sup.InvDensity, Density = gpu.Density)
+                    inverse_density = sup.InvDensity, pressure = sup.Pressure, Density = gpu.Density,
+                    ParticleType = gpu.Type, SimConstants = f.constants, boundary_mode = UpdatedMDBC())
                 GK.launch_updated_mdbc!(gpu.Density, gpu.Position, gpu.Velocity,
                     gpu.GhostPoints, gpu.GhostNormals, gpu.GhostIndex, gpu.Type, cl.CellStart,
                     cl.grid_dev, step, f.kernel, f.constants, sup.boundary_data; lanes = Val(K), pos_cells = sup.PosCells,
-                    compact_ghosts = Val(compact), inverse_density = sup.InvDensity)
+                    compact_ghosts = Val(compact), inverse_density = sup.InvDensity, pressure = sup.Pressure)
                 if cache
                     @test Array(sup.InvDensity) ≈ inv.(Array(gpu.Density)) rtol = 2eps(T)
+                    @test Array(sup.Pressure)[only(Array(gpu.GhostIndex))] ≈ (dry ? zero(T) : -T(400)) atol = T(0.5)
                 end
                 idx = only(Array(gpu.GhostIndex))
                 slot = compact ? 1 : idx
