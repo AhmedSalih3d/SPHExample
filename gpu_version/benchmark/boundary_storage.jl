@@ -45,7 +45,6 @@ function setup(kw; boundary_only, scheme)
         host.GhostPoints[owners] = ghosts
         host.GhostNormals[owners] = normals
     end
-    Pressure!(host.Pressure, host.Density, kw.SimConstants)
     gpu = upload_particles(host; position_type = Float64, compact_metadata = true,
         kernel_output = false, reconstruct_fields = true, boundary_only)
     cl = CellListWorkspace{D, Float64}(length(host))
@@ -68,7 +67,7 @@ end
 function snapshot(run)
     order = sortperm(Array(run.gpu.ID))
     return (; fields = map(f -> Array(getproperty(run.gpu, f))[order],
-        (:Position, :Velocity, :Density, :Pressure, :Acceleration)),
+        (:Position, :Velocity, :Density, :Acceleration)),
         work = (run.metadata.Iteration, run.cl.nrebuilds, run.state.readbacks))
 end
 

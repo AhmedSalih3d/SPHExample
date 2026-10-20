@@ -193,7 +193,7 @@ function _precompile_host(case)
     InitializeLogger(logger, SimConstants, meta, SimKernel, SimViscosity, SimDensityDiffusion,
                      SimGeometry, particles)
     LogStep(logger, meta, meta.HourGlass)
-    output = SetupVTKOutput(meta, particles, SimKernel, D)
+    output = SetupVTKOutput(meta, particles, SimKernel, D; constants = SimConstants)
     output.save_particles(1)
     output.save_particles(2, meta.TotalTime)
     output.close_files()

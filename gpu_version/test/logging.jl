@@ -125,7 +125,7 @@ if CUDA.functional()
             order = sortperm(f.host.ID)
             state = (; iteration = f.metadata.Iteration, time = f.metadata.TotalTime,
                 position = f.host.Position[order], density = f.host.Density[order],
-                velocity = f.host.Velocity[order], pressure = f.host.Pressure[order],
+                velocity = f.host.Velocity[order],
                 acceleration = f.host.Acceleration[order])
             return (; state, log = read(joinpath(dir, "SimulationOutput.log"), String),
                 console = read(console_path, String),

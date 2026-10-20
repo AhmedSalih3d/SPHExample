@@ -33,7 +33,6 @@ function step_benchmark(driver, floating_mod, geometry, constants; scheme = Symp
         VisualizeInParaview = false, OpenLogFile = false)
     meta.TimeSteppingMode = scheme
     particles = AllocateDataStructures(geometry, meta)
-    Pressure!(particles.Pressure, particles.Density, constants)
     gpu = driver.upload_particles(particles)
     n = length(gpu)
     support = driver.GPUSupportArrays{2, T}(n; position_type = Float64)

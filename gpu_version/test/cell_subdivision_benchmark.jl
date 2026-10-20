@@ -215,7 +215,7 @@ if CUDA.functional()
                 v = B.setup(tiny_case(D), Float64, R; lanes = 1)
                 B.loop!(v)
                 order = sortperm(Array(v.gpu.ID))
-                fields = map(f -> Array(getproperty(v.gpu, f))[order], (:Position, :Velocity, :Density, :Pressure, :Acceleration))
+                fields = map(f -> Array(getproperty(v.gpu, f))[order], (:Position, :Velocity, :Density, :Acceleration))
                 (; fields, steps = v.kw.SimMetaData.Iteration, time = v.kw.SimMetaData.TotalTime)
             end
             for state in states[2:end]

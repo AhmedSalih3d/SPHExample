@@ -3,6 +3,7 @@ module SPHMeasurements
 using HDF5
 using ..HDF5Append: extend! as _extend!, extend_columns! as _extend_columns!,
     append_slice! as _append!, append_columns! as _append_columns!
+using ..SimulationEquations: EquationOfStateGamma7
 
 export MeasurementProbe, WaterColumnProbe, FreeSurfaceDomain, MeasurementConfig
 
@@ -665,6 +666,8 @@ mutable struct MeasurementWriter{F}
     surface_maximum::Vector{Float64}
     time_buffer::Vector{Float64}
     capacity::Int
+    c₀::Float64
+    ρ₀::Float64
     last_sample_time::Float64
     pending::Int
     frames_written::Int
@@ -672,7 +675,7 @@ mutable struct MeasurementWriter{F}
 end
 
 """
-    MeasurementWriter(root, plan, fluid_type; capacity = 4)
+    MeasurementWriter(root, plan, fluid_type; capacity = 4, constants = nothing)
 
 Create the measurement blocks of `plan` in the `MultiBlockDataSet` group
 `root` (`/VTKHDF`) and buffer `capacity` frames before a write. The caller
@@ -680,9 +683,11 @@ links the blocks named by `measurement_block_names(plan)` into the `Assembly`
 group.
 """
 function MeasurementWriter(root::HDF5.Group, plan::ResolvedMeasurements, fluid_type;
-                           capacity::Integer = 4)
+                           capacity::Integer = 4, constants = nothing)
     capacity >= 1 ||
         throw(ArgumentError("measurement buffer capacity must be at least 1"))
+    c₀ = constants === nothing ? sqrt(9.81 * 2) * 20 : Float64(constants.c₀)
+    ρ₀ = constants === nothing ? 1000.0 : Float64(constants.ρ₀)
 
     common = Pair{String, Any}[
         "SampleEveryOutputFrames" => Int32(plan.sample_every),
@@ -778,6 +783,8 @@ function MeasurementWriter(root::HDF5.Group, plan::ResolvedMeasurements, fluid_t
         Vector{Float64}(undef, size(plan.surface_locations, 2)),
         Vector{Float64}(undef, capacity),
         Int(capacity),
+        c₀,
+        ρ₀,
         NaN,
         0,
         0,
@@ -920,12 +927,19 @@ function _validate_particles(writer::MeasurementWriter, particles)
         ))
     end
     if !isempty(writer.pressure_nearest)
-        hasproperty(particles, :Pressure) ||
-            throw(ArgumentError("pressure probes require the Pressure particle field"))
-        length(particles.Pressure) == length(positions) ||
-            throw(DimensionMismatch(
-                "particle pressure and positions must have matching lengths",
-            ))
+        if hasproperty(particles, :Pressure)
+            length(particles.Pressure) == length(positions) ||
+                throw(DimensionMismatch(
+                    "particle pressure and positions must have matching lengths",
+                ))
+        elseif hasproperty(particles, :Density)
+            length(particles.Density) == length(positions) ||
+                throw(DimensionMismatch(
+                    "particle density and positions must have matching lengths",
+                ))
+        else
+            throw(ArgumentError("pressure probes require the Pressure or Density particle field"))
+        end
     end
     if !isempty(writer.velocity_nearest)
         hasproperty(particles, :Velocity) ||
@@ -945,9 +959,17 @@ function _sample!(writer::MeasurementWriter, particles)
 
     values = writer.pressure_values
     fill!(values, NaN)
+    has_pressure = hasproperty(particles, :Pressure)
     for probe in eachindex(writer.pressure_nearest)
         particle = writer.pressure_nearest[probe]
-        particle == 0 || (values[probe] = Float64(particles.Pressure[particle]))
+        particle == 0 && continue
+        values[probe] = if has_pressure
+            Float64(particles.Pressure[particle])
+        else
+            ρ = particles.Density[particle]
+            T = typeof(ρ)
+            Float64(EquationOfStateGamma7(ρ, T(writer.c₀), T(writer.ρ₀)))
+        end
     end
 
     velocity = writer.velocity_values

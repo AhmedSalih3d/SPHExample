@@ -136,6 +136,6 @@ end
         )
         @test meta.Iteration > 10
         @test all(==(1000f0), particles.Density)
-        @test all(iszero, particles.Pressure)
+        @test !hasproperty(particles, :Pressure)
     end
 end

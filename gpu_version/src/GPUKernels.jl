@@ -324,8 +324,12 @@ end
 # Particle interactions (gather)
 #---------------------------------------------------------------
 
+@inline interaction_pressure(ρ, type, c₀, ρ₀, ::Nothing) = EquationOfStateGamma7(ρ, c₀, ρ₀)
+@inline interaction_pressure(ρ, type, c₀, ρ₀, boundary_data) =
+    is_wall(type) ? c₀^2 * (ρ - ρ₀) : EquationOfStateGamma7(ρ, c₀, ρ₀)
+
 function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
-                             Pairs, Position, Density, Pressure,
+                             Pairs, Position, Density,
                              Velocity::AbstractVector{SVector{D, T}}, ParticleType, SimParticles,
                              CellStart, CellID, gridarg, step,
                              SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
@@ -339,7 +343,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
     lane = (t - Int32(1)) % Int32(K)
     valid = i <= n
 
-    (; m₀, dx)  = SimConstants
+    (; m₀, dx, c₀, ρ₀) = SimConstants
     (; h⁻¹, H²) = SimKernel
     s = cell_size(grid, SimKernel.H)
 
@@ -357,7 +361,6 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
         viscous_vᵢ = boundary_viscous_velocity(boundary_data, Velocity, ParticleType, i, slotᵢ)
         ρᵢ  = Density[i]
         ρᵢ⁻¹ = interaction_inverse_density(InvDensity, i, ρᵢ)
-        Pᵢ  = Pressure[i]
         typeᵢ = ParticleType[i]
         MLᵢ = MotionLimiterValue(T, typeᵢ)
 
@@ -367,6 +370,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
         # force based time step criterion. Floating bodies always need them:
         # their particle accelerations sum to the force on the body.
         forces = BoundaryForces | (MLᵢ != zero(T)) | (typeᵢ == Floating)
+        Pᵢ = forces ? interaction_pressure(ρᵢ, typeᵢ, c₀, ρ₀, boundary_data) : zero(T)
         wallᵢ = is_wall(typeᵢ)
 
         c      = CellID[i]
@@ -447,7 +451,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                                 visc  = sgn * v1
                             end
 
-                            Pⱼ   = Pressure[j]
+                            Pⱼ   = interaction_pressure(ρⱼ, ParticleType[j], c₀, ρ₀, boundary_data)
                             Pfac = (Pᵢ + Pⱼ) * (ρᵢ⁻¹ * ρⱼ⁻¹)
                             f_ab = InvDensity === nothing ? tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx) :
                                 tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx, ρᵢ⁻¹, ρⱼ⁻¹)
@@ -505,10 +509,10 @@ end
 """
     launch_interactions!(...; threads, lanes, boundary_forces, pos_cells, radial, scalar_sps)
 
-Launch the gather interaction kernel. `Position`, `Density`, `Pressure` and
+Launch the gather interaction kernel. `Position`, `Density` and
 `Velocity` are the arrays of the state being evaluated (the half step arrays
-for the second neighbour loop). Reciprocal densities are computed on demand
-from that state, once per target and once per accepted neighbor, unless
+for the second neighbour loop). Pressure and reciprocal densities are computed
+on demand from that state, once per target and once per accepted neighbor, unless
 `inverse_density` supplies a cache refreshed from exactly that state. The viscosity and diffusion models
 receive the densities and reciprocals of this state as arguments, like the
 CPU code. Custom models additionally get the same arrays as the NamedTuple
@@ -532,7 +536,7 @@ contraction while retaining its pair orientation and closure. It can be
 selected without radial continuity/diffusion, and changes rounding.
 """
 function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
-                              Position, Density, Pressure, Velocity, ParticleType,
+                              Position, Density, Velocity, ParticleType,
                               CellStart, CellID, grid, step,
                               SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
                               FlagKernel::Val, FlagShift::Val; threads::Integer = 128, lanes::Val = Val(1),
@@ -545,13 +549,13 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
     n == 0 && return nothing
     K = typeof(lanes).parameters[1]
     Pairs = pos_cells === nothing ? Position : pos_cells
-    SimParticles = (Position = Position, Density = Density, Velocity = Velocity, Pressure = Pressure,
+    SimParticles = (Position = Position, Density = Density, Velocity = Velocity,
                     Type = ParticleType)
     use_radial = Val(typeof(radial).parameters[1] && radial_interactions_supported(SimKernel, SimDensityDiffusion, SimViscosity))
     use_scalar_sps = Val(typeof(scalar_sps).parameters[1] && scalar_sps_supported(SimKernel, SimViscosity))
     @cuda threads=threads blocks=cld(n * K, threads) interaction_kernel!(
         dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
-        Pairs, Position, Density, Pressure, Velocity, ParticleType, SimParticles,
+        Pairs, Position, Density, Velocity, ParticleType, SimParticles,
         CellStart, CellID, grid, step,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
         FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, Int32(n), use_radial, use_scalar_sps, frozen_particles)
@@ -666,7 +670,7 @@ end
 # node, contiguously: no half empty warps from the fluid particles that are
 # interleaved with them in cell order. `Position` and `GhostPoints` are in the
 # position precision `TP`, `Pairs` is the pair source (see `pair_vector`).
-function mdbc_kernel!(Density::AbstractVector{T}, Pressure, Position::AbstractVector{SVector{D, TP}}, Pairs,
+function mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVector{SVector{D, TP}}, Pairs,
                       GhostPoints, GhostIndex, ParticleType, CellStart, gridarg, step,
                       SimKernel, SimConstants, InvDensity, ::Val{K}, ::Val{Compact}, nghost::Int32) where {D, T, TP, K, Compact}
     step_active(step) || return nothing
@@ -676,7 +680,7 @@ function mdbc_kernel!(Density::AbstractVector{T}, Pressure, Position::AbstractVe
     lane = (t - Int32(1)) % Int32(K)
 
     DP = D + 1
-    (; m₀, ρ₀, c₀) = SimConstants
+    (; m₀, ρ₀) = SimConstants
     s = cell_size(grid, SimKernel.H)
 
     b = zero(SVector{DP, T})
@@ -706,9 +710,6 @@ function mdbc_kernel!(Density::AbstractVector{T}, Pressure, Position::AbstractVe
 
     # Density correction (mirrors ApplyMDBCCorrection of the CPU code)
     # https://github.com/DualSPHysics/DualSPHysics/blob/f4fa76ad5083873fa1c6dd3b26cdce89c55a9aeb/src/source/JSphCpu_mdbc.cpp#L347
-    # followed by the pressure of the corrected density (the CPU calls
-    # `Pressure!` after the correction; a neighbour loop that reads the
-    # corrected density must see the matching boundary pressure).
     @inbounds if valid & (lane == Int32(0))
         ρ = Density[i]
         if abs(det(A)) >= 1e-3
@@ -724,19 +725,17 @@ function mdbc_kernel!(Density::AbstractVector{T}, Pressure, Position::AbstractVe
         end
         Density[i]  = ρ
         store_inverse_density!(InvDensity, i, ρ)
-        Pressure[i] = EquationOfStateGamma7(ρ, c₀, ρ₀)
     end
     return nothing
 end
 
 """
-    launch_mdbc!(Density, Pressure, Position, GhostPoints, GhostIndex, ParticleType, CellStart, grid,
+    launch_mdbc!(Density, Position, GhostPoints, GhostIndex, ParticleType, CellStart, grid,
                  step, SimKernel, SimConstants; threads, lanes, pos_cells)
 
 mDBC correction of the density of the boundary particles that own a ghost
-node, and the pressure of the corrected density. The launch covers the
-particles listed in `GhostIndex` (the ghost node owners, see
-`GPUParticles`), `K` lanes each. `step` gates the kernel (see
+node. The launch covers the particles listed in `GhostIndex` (the ghost node
+owners, see `GPUParticles`), `K` lanes each. `step` gates the kernel (see
 `GPUStepState`). `pos_cells` is the `PosCell` array of `Position` when the
 positions are stored in a higher precision than the working precision (the
 fluid neighbours of a node are then found through it, see `GPUCellGrid`).
@@ -746,7 +745,7 @@ rather than particle index; otherwise the full-particle layout is retained.
 `inverse_density` must contain the current fluid reciprocals before launch;
 corrected boundary entries are refreshed by this kernel.
 """
-function launch_mdbc!(Density, Pressure, Position, GhostPoints, GhostIndex, ParticleType, CellStart, grid, step,
+function launch_mdbc!(Density, Position, GhostPoints, GhostIndex, ParticleType, CellStart, grid, step,
                       SimKernel, SimConstants; threads::Integer = 128, lanes::Val = Val(1), pos_cells = nothing,
                       compact_ghosts::Val = Val(false), inverse_density = nothing)
     n = length(GhostIndex)
@@ -754,7 +753,7 @@ function launch_mdbc!(Density, Pressure, Position, GhostPoints, GhostIndex, Part
     K = typeof(lanes).parameters[1]
     Pairs = pos_cells === nothing ? Position : pos_cells
     @cuda threads=threads blocks=cld(n * K, threads) mdbc_kernel!(
-        Density, Pressure, Position, Pairs, GhostPoints, GhostIndex, ParticleType, CellStart, grid, step,
+        Density, Position, Pairs, GhostPoints, GhostIndex, ParticleType, CellStart, grid, step,
         SimKernel, SimConstants, inverse_density, lanes, compact_ghosts, Int32(n))
     return nothing
 end
@@ -762,12 +761,12 @@ end
 #---------------------------------------------------------------
 include("UpdatedMDBC.jl")
 
-# Half step (symplectic predictor) fused with density limiting, motion, the
-# pressure of the half step density, and the cell relative
-# form of the half step position when the positions are of a higher precision
+# Half step (symplectic predictor) fused with density limiting, motion, and the
+# cell relative form of the half step position when the positions are of a
+# higher precision
 #---------------------------------------------------------------
 
-function half_step_kernel!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, Pressure,
+function half_step_kernel!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺,
                            Position, Velocity, Acceleration, Density, dρdtI,
                            ParticleType, GroupMarker, motion, step, SimConstants,
                            PosCellsₙ⁺, CellID, gridarg, H, boundary_mode, InvDensity,
@@ -778,7 +777,7 @@ function half_step_kernel!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, Pressure,
     dt₂       = step_dt(step) / 2
     TotalTime = step_time(step)
     FirstMotion && apply_motion!(i, Position, Velocity, ParticleType, GroupMarker, motion, dt₂, TotalTime)
-    (; g, ρ₀, c₀) = SimConstants
+    (; g, ρ₀) = SimConstants
     T = eltype(Density)
     @inbounds begin
         type = ParticleType[i]
@@ -809,8 +808,6 @@ function half_step_kernel!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, Pressure,
         store_pos_cell!(PosCellsₙ⁺, i, xₙ⁺, CellID, gridarg, H)
 
         apply_motion!(i, Position, Velocity, ParticleType, GroupMarker, motion, dt₂, TotalTime)
-
-        Pressure[i] = EquationOfStateGamma7(ρ, c₀, ρ₀)
     end
     return nothing
 end
@@ -830,7 +827,7 @@ kernel leaves them untouched. Density and cell-relative preparation still cover
 every particle.
 With `inverse_density`, prediction also writes each predictor reciprocal.
 """
-function launch_half_step!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, Pressure,
+function launch_half_step!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺,
                            Position, Velocity, Acceleration, Density, dρdtI,
                            ParticleType, GroupMarker, motion, step, SimConstants;
                            pos_cells = nothing, CellID = nothing, grid = nothing, SimKernel = nothing,
@@ -840,7 +837,7 @@ function launch_half_step!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, Pressure,
     n == 0 && return nothing
     H = SimKernel === nothing ? zero(eltype(Density)) : SimKernel.H
     @cuda threads=ELEMENTWISE_THREADS blocks=cld(n, ELEMENTWISE_THREADS) half_step_kernel!(
-        Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, Pressure,
+        Positionₙ⁺, Velocityₙ⁺, ρₙ⁺,
         Position, Velocity, Acceleration, Density, dρdtI,
         ParticleType, GroupMarker, motion, step, SimConstants,
         pos_cells, CellID, grid, H, boundary_mode, inverse_density, Val(reuse_predictors), Val(first_motion), Int32(n))
@@ -886,16 +883,13 @@ end
 @inline step_reduce(a::SVector{3, T}, b::SVector{3, T}) where {T} =
     SVector{3, T}(max(a[1], b[1]), min(a[2], b[2]), max(a[3], b[3]))
 
-@inline particle_pressure(ρ, type, c₀, ρ₀, boundary_mode) =
-    boundary_mode isa UpdatedMDBC && is_wall(type) ? c₀^2 * (ρ - ρ₀) : EquationOfStateGamma7(ρ, c₀, ρ₀)
-
-function final_step_kernel!(Position, Velocity, Acceleration, Density, Pressure, dρdtI, ρₙ⁺, Positionₙ⁺,
+function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, ρₙ⁺, Positionₙ⁺,
                             Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
                             partial, ::Val{FlagShift}, boundary_mode, GhostPoints, GhostNormals, BoundarySlots,
                             PosCells, CellID, gridarg, InvDensity, ::Val{CommitStep}, n::Int32) where {FlagShift, CommitStep}
     step_active(step) || return nothing
     dt = step_dt(step)
-    (; g, ρ₀, c₀) = SimConstants
+    (; g, ρ₀) = SimConstants
     T = eltype(Density)
     acc_red = SVector{3, T}(zero(T), T(Inf), zero(T))
 
@@ -916,7 +910,6 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, Pressure,
         ρ   *= (2 - epsi) / (2 + epsi)
         ρ    = boundary_mode isa UpdatedMDBC && is_wall(type) ? ρₙ⁺[i] : limit_density(ρ, ρ₀, ML)
         Density[i]  = ρ
-        Pressure[i] = particle_pressure(ρ, type, c₀, ρ₀, boundary_mode)
 
         # FullTimeStep
         acc = Acceleration[i]
@@ -972,7 +965,7 @@ pass; `CellID` and `grid` are then required.
 `inverse_density` must hold the evaluated predictor reciprocals, including any
 boundary corrections, for reuse in the final density update.
 """
-function launch_final_step!(Position, Velocity, Acceleration, Density, Pressure, dρdtI, ρₙ⁺, Positionₙ⁺,
+function launch_final_step!(Position, Velocity, Acceleration, Density, dρdtI, ρₙ⁺, Positionₙ⁺,
                             Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
                             red::ReductionWorkspace, FlagShift::Val; boundary_mode = SimpleMDBC(),
                             ghost_points = nothing, ghost_normals = nothing, boundary_slots = nothing,
@@ -982,7 +975,7 @@ function launch_final_step!(Position, Velocity, Acceleration, Density, Pressure,
     n = length(Position)
     n == 0 && return nothing
     @cuda threads=ELEMENTWISE_THREADS blocks=red.nblocks final_step_kernel!(
-        Position, Velocity, Acceleration, Density, Pressure, dρdtI, ρₙ⁺, Positionₙ⁺,
+        Position, Velocity, Acceleration, Density, dρdtI, ρₙ⁺, Positionₙ⁺,
         Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
         red.partial, FlagShift, boundary_mode, ghost_points, ghost_normals, boundary_slots,
         pos_cells, CellID, grid, inverse_density, Val(commit_step), Int32(n))

@@ -78,16 +78,21 @@ if CUDA.functional()
             original = copy(gpu.Density)
             function correct(cache)
                 if updated
-                    GK.launch_updated_mdbc!(gpu.Density, gpu.Pressure, gpu.Position, gpu.Velocity,
+                    GK.launch_updated_mdbc!(gpu.Density, gpu.Position, gpu.Velocity,
                         gpu.GhostPoints, gpu.GhostNormals, gpu.GhostIndex, gpu.Type, cl.CellStart,
                         cl.grid_dev, step, f.kernel, f.constants, sup.boundary_data;
                         compact_ghosts = Val(true), inverse_density = cache)
                 else
-                    GK.launch_mdbc!(gpu.Density, gpu.Pressure, gpu.Position,
+                    GK.launch_mdbc!(gpu.Density, gpu.Position,
                         gpu.GhostPoints, gpu.GhostIndex, gpu.Type, cl.CellStart, cl.grid_dev,
                         step, f.kernel, f.constants; compact_ghosts = Val(true), inverse_density = cache)
                 end
-                return Array(gpu.Density), Array(gpu.Pressure)
+                densities = Array(gpu.Density)
+                types = Array(gpu.Type)
+                mode = updated ? UpdatedMDBC() : SimpleMDBC()
+                pressures = [particle_pressure(densities[i], types[i], f.constants.c₀, f.constants.ρ₀, mode)
+                    for i in eachindex(densities)]
+                return densities, pressures
             end
             reference = correct(nothing)
             copyto!(gpu.Density, original)
@@ -119,7 +124,7 @@ if CUDA.functional()
             for K in (1, 4, 32)
                 GK.launch_prepare_interactions!(gpu.Position, step;
                     inverse_density = sup.InvDensity, Density = gpu.Density)
-                GK.launch_updated_mdbc!(gpu.Density, gpu.Pressure, gpu.Position, gpu.Velocity,
+                GK.launch_updated_mdbc!(gpu.Density, gpu.Position, gpu.Velocity,
                     gpu.GhostPoints, gpu.GhostNormals, gpu.GhostIndex, gpu.Type, cl.CellStart,
                     cl.grid_dev, step, f.kernel, f.constants, sup.boundary_data; lanes = Val(K), pos_cells = sup.PosCells,
                     compact_ghosts = Val(compact), inverse_density = sup.InvDensity)
@@ -130,7 +135,8 @@ if CUDA.functional()
                 slot = compact ? 1 : idx
                 @test Array(sup.boundary_data.active)[slot] == !dry
                 @test Array(gpu.Density)[idx] ≈ (dry ? T(1000) : T(999)) rtol = 1e-5
-                @test Array(gpu.Pressure)[idx] ≈ (dry ? zero(T) : -T(400)) atol = T(0.5)
+                @test particle_pressure(Array(gpu.Density)[idx], Array(gpu.Type)[idx],
+                    f.constants.c₀, f.constants.ρ₀, UpdatedMDBC()) ≈ (dry ? zero(T) : -T(400)) atol = T(0.5)
                 @test Array(gpu.Velocity)[idx] == zero(SVector{D, T})
                 @test Array(sup.boundary_data.velocity)[slot] ≈ (dry ? zero(SVector{D, T}) : SVector{D, T}(ntuple(_ -> -T(0.2), D)))
                 tangent = Array(sup.boundary_data.tangent_velocity)[slot]
@@ -148,14 +154,13 @@ if CUDA.functional()
             SPHExampleGPU.SPHCellList.rebuild_cell_list!(gpu, cl, f.kernel.H⁻¹)
             sup = GPUSupportArrays{2, Float64}(2; updated_mdbc = true, boundary_slots = gpu.BoundarySlot,
                 boundary_count = compact ? length(gpu.GhostIndex) : length(gpu))
-            fill!(gpu.Density, 1000)
-            fill!(gpu.Pressure, 100)
+            fill!(gpu.Density, 1001)
             step = HostStep(1e-4, 0.0)
             fluid = findfirst(==(Fluid), Array(gpu.Type))
             for active in (true, false)
                 fill!(sup.boundary_data.active, active)
                 launch_interactions!(sup.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient, sup.∇Cᵢ, sup.∇◌rᵢ,
-                    gpu.Position, gpu.Density, gpu.Pressure, gpu.Velocity, gpu.Type,
+                    gpu.Position, gpu.Density, gpu.Velocity, gpu.Type,
                     cl.CellStart, gpu.CellID, cl.grid_dev, step, ZeroDensityDiffusion(), ZeroViscosity(),
                     f.kernel, f.constants, Val(false), Val(false); boundary_data = sup.boundary_data)
                 acceleration = Array(gpu.Acceleration)[fluid]
@@ -176,9 +181,11 @@ if CUDA.functional()
                 SimViscosity = Laminar(), SimDensityDiffusion = ZeroDensityDiffusion(), SimTimeStepping = scheme)
             wall = findfirst(==(Fixed), f.host.Type)
             @test all(isfinite, f.host.Density)
-            @test f.host.Pressure[wall] < 0
             @test f.host.Density[wall] < 1000
-            @test f.host.Pressure[wall] ≈ f.constants.c₀^2 * (f.host.Density[wall] - f.constants.ρ₀)
+            wall_pressure = particle_pressure(f.host.Density[wall], f.host.Type[wall],
+                f.constants.c₀, f.constants.ρ₀, UpdatedMDBC())
+            @test wall_pressure < 0
+            @test wall_pressure ≈ f.constants.c₀^2 * (f.host.Density[wall] - f.constants.ρ₀)
             @test f.host.Velocity[wall] == zero(SVector{2, Float32})
             @test f.host.Position[wall] ≈ SVector(0.5, 0.0)
             @test f.metadata.Iteration > 0

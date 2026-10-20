@@ -99,7 +99,7 @@ function measure_same_work(run)
         eltype(particles.Density) === Float32 || error("physics precision changed")
         order = sortperm(particles.ID)
         state = map(name -> getproperty(particles, name)[order],
-            (:Position, :Velocity, :Density, :Pressure, :Acceleration, :ID, :Type, :GroupMarker))
+            (:Position, :Velocity, :Density, :Acceleration, :ID, :Type, :GroupMarker))
         output = wedge_output_fingerprint(save)
         output["StillWedge.vtkhdf/VTKHDF/Steps/Values"][2] == (401,) || error("particle frame count changed")
         output["StillWedge_GridCells.vtkhdf/VTKHDF/Steps/Values"][2] == (400,) || error("grid frame count changed")

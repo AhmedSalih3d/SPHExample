@@ -14,7 +14,6 @@ function setup(kw; reconstruct, scheme)
     metadata.OutputTimes = 0.01f0
     metadata.OutputIterationCounter = 1
     host = AllocateDataStructures(kw.SimGeometry, metadata)
-    Pressure!(host.Pressure, host.Density, kw.SimConstants)
     gpu = upload_particles(host; position_type = Float64, compact_metadata = true,
         kernel_output = false, ghost_data = false, reconstruct_fields = reconstruct)
     cl = CellListWorkspace{2, Float64}(length(host))
@@ -36,7 +35,7 @@ end
 function snapshot(run)
     order = sortperm(Array(run.gpu.ID))
     return (; fields = map(f -> Array(getproperty(run.gpu, f))[order],
-        (:Position, :Velocity, :Density, :Pressure, :Acceleration)),
+        (:Position, :Velocity, :Density, :Acceleration)),
         steps = run.metadata.Iteration, time = run.metadata.TotalTime,
         rebuilds = run.cl.nrebuilds, readbacks = run.state.readbacks)
 end
@@ -67,7 +66,7 @@ function run_pair(dx, scheme)
     end
     bytes(run) = GPUMemoryBenchmark.device_buffer_bytes((run.gpu, run.sup, run.cl))
     saved = bytes(runs[1]) - bytes(runs[2])
-    @assert saved == 12 * length(runs[1].gpu)
+    @assert saved == 8 * length(runs[1].gpu)
     ratios = times[2] ./ times[1]
     @printf("dx=%.3f scheme=%s n=%d shadow_bytes_saved=%d full_us=%.2f removed_us=%.2f median_ratio=%.4f range=[%.4f,%.4f]\n",
         dx, nameof(typeof(scheme)), length(runs[1].gpu), saved, median(times[1]), median(times[2]),

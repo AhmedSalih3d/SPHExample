@@ -32,7 +32,6 @@ function fixture(D, T; double_position = false)
     end
     constants = SimulationConstants{T}(dx = T(0.02), c₀ = T(20), m₀ = T(1000 * 0.02^D))
     kernel = SPHKernelInstance{D, T}(WendlandC2(); dx = constants.dx)
-    Pressure!(host.Pressure, host.Density, constants)
     return (; host, metadata, geometry, constants, kernel)
 end
 
@@ -61,7 +60,7 @@ end
 
 function snapshot(ctx)
     order = sortperm(Array(ctx.gpu.ID))
-    fields = (:Position, :Velocity, :Density, :Pressure, :Acceleration, :Type, :ID, :GroupMarker)
+    fields = (:Position, :Velocity, :Density, :Acceleration, :Type, :ID, :GroupMarker)
     return (; particles = map(f -> Array(getproperty(ctx.gpu, f))[order], fields),
         derivative = Array(ctx.sup.dρdtI)[order], reduction = Array(ctx.red.partial),
         state = Array(ctx.state.f), flags = Array(ctx.state.i),
@@ -78,31 +77,28 @@ end
             support = GPUSupportArrays{D, T}(gpu, f.metadata)
             full = upload_particles(f.host; position_type = position_type(gpu))
             bytes(s) = sum(a -> length(a) * sizeof(eltype(a)), s)
-            @test bytes(full.scratch) - bytes(gpu.scratch) == length(gpu) * (D + 1) * sizeof(T)
-            @test isempty(gpu.scratch.Acceleration) && isempty(gpu.scratch.Pressure)
-            @test_throws ArgumentError DRIVER.rebuild_cell_list!(gpu, cl, f.kernel.H⁻¹)
-            @test cl.nrebuilds == 0
-            acceleration_pointer, pressure_pointer = pointer(gpu.Acceleration), pointer(gpu.Pressure)
+            @test bytes(full.scratch) - bytes(gpu.scratch) == length(gpu) * D * sizeof(T)
+            @test isempty(gpu.scratch.Acceleration) && !hasproperty(gpu.scratch, :Pressure)
+            @test !hasproperty(gpu, :Pressure) && !hasproperty(f.host, :Pressure)
+            acceleration_pointer = pointer(gpu.Acceleration)
             for _ in 1:3
                 before = Array(gpu.Acceleration)
                 ids_before = Array(gpu.ID)
-                fill!(gpu.Pressure, T(NaN))
                 grid = DRIVER.rebuild_cell_list!(gpu, cl, f.kernel.H⁻¹;
                     constants = f.constants, boundary_mode = mode, support, kernel = f.kernel)
                 ids = Array(gpu.ID)
                 expected_acceleration = before[indexin(ids, ids_before)]
                 @test pointer(gpu.Acceleration) == acceleration_pointer
-                @test pointer(gpu.Pressure) == pressure_pointer
                 @test Array(gpu.Acceleration) == expected_acceleration
                 densities, types = Array(gpu.Density), Array(gpu.Type)
                 expected_pressure = [mode isa UpdatedMDBC && types[i] in (Fixed, Moving) ?
                     f.constants.c₀^2 * (densities[i] - f.constants.ρ₀) :
                     EquationOfStateGamma7(densities[i], f.constants.c₀, f.constants.ρ₀) for i in eachindex(ids)]
-                @test Array(gpu.Pressure) ≈ expected_pressure rtol = T(1e-5)
+                @test [particle_pressure(densities[i], types[i], f.constants.c₀, f.constants.ρ₀, mode)
+                    for i in eachindex(ids)] ≈ expected_pressure rtol = T(1e-5)
                 back = deepcopy(f.host)
-                download_particles!(back, gpu, grid, (:ID, :Acceleration, :Pressure))
+                download_particles!(back, gpu, grid, (:ID, :Acceleration))
                 @test back.Acceleration == expected_acceleration
-                @test back.Pressure == Array(gpu.Pressure)
                 fixed = findall(==(Fixed), types)
                 @test Array(gpu.scratch.Velocity)[fixed] == Array(gpu.Velocity)[fixed]
             end
@@ -127,10 +123,9 @@ end
                         ctx.metadata.OutputIterationCounter = interval
                         STEP.set_slot!(ctx.state.f, ctx.state.fh, STEP.F_DX, one(T) + f.kernel.h)
                     end
-                    # The completed-step reduction is valid; these unsorted
-                    # fields must not be read before the rebuild refresh.
+                    # The completed-step reduction is valid; this unsorted
+                    # field must not be read before the rebuild refresh.
                     fill!(compact.gpu.Acceleration, SVector{D, T}(ntuple(_ -> T(NaN), D)))
-                    fill!(compact.gpu.Pressure, T(NaN))
                 end
                 advance!(full, f)
                 advance!(compact, f)

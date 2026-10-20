@@ -205,7 +205,8 @@ relerr(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), eps(eltype(b))))
             @test keys(fid["VTKHDF"]["CellData"]) == ["CellData"]
         end
         # the complete final state is on the host, including fields not written
-        @test all(isfinite, particles.Pressure)
+        @test !hasproperty(particles, :Pressure)
+        @test all(isfinite, particles.Density)
         @test length(unique(particles.ID)) == n
     end
 
@@ -556,11 +557,14 @@ relerr(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), eps(eltype(b))))
         @test all(isfinite, particles.Density)
         @test !hasproperty(particles, :GravityFactor)
         @test !hasproperty(particles, :MotionLimiter)
-        # derived or diagnostic-only fields are neither stored nor written
+        # derived or diagnostic-only fields are neither stored nor written on particles
         @test !hasproperty(device, :BoundaryBool)
         @test !hasproperty(device, :ChunkID)
+        @test !hasproperty(device, :Pressure)
+        @test !hasproperty(device.scratch, :Pressure)
         @test !hasproperty(particles, :BoundaryBool)
         @test !hasproperty(particles, :ChunkID)
+        @test !hasproperty(particles, :Pressure)
     end
 
     @testset "ghost node owners are relisted in cell order after a rebuild" begin
@@ -835,17 +839,16 @@ relerr(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), eps(eltype(b))))
 
             dP  = CuArray(Position);      dV  = CuArray(Velocity)
             dA  = CuArray(Acceleration);  dρ  = CuArray(Density)
-            dPr = CUDA.zeros(T, n);       ddρ = CuArray(dρdtI)
+            ddρ = CuArray(dρdtI)
             dρn = CuArray(ρₙ⁺);           dPn = CuArray(Positionₙ⁺)
             dVn = CuArray(Velocityₙ⁺);    dty = CuArray(types)
             dC  = CuArray(∇Cᵢ);           dr  = CuArray(∇◌rᵢ)
             red = ReductionWorkspace{SVector{3, T}}(n)
-            launch_final_step!(dP, dV, dA, dρ, dPr, ddρ, dρn, dPn, dVn, dty, dC, dr,
+            launch_final_step!(dP, dV, dA, dρ, ddρ, dρn, dPn, dVn, dty, dC, dr,
                                HostStep(dt, zero(T)), kern, consts, red, Val(FlagShift))
             xg = Array(dP)
             vg = Array(dV)
             ρg = Array(dρ)
-            Pg = Array(dPr)
 
             x_ref = similar(Position); v_ref = similar(Velocity); x_avg = similar(Position)
             ρ_ref = similar(Density); ρ_upd = similar(Density)
@@ -871,7 +874,6 @@ relerr(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), eps(eltype(b))))
             @test all(isapprox.(vg, v_ref; rtol = 1e-13, atol = 1e-15))
             @test all(isapprox.(xg, x_ref; rtol = 1e-13, atol = 1e-15))
             @test all(isapprox.(ρg, ρ_ref; rtol = 1e-13))
-            @test all(isapprox.(Pg, EquationOfStateGamma7.(ρg, consts.c₀, consts.ρ₀); rtol = 1e-12, atol = 1e-8))
             # limiting after the update: a boundary particle whose updated
             # density is below ρ₀ ends exactly at ρ₀ (limiting before the
             # update would leave it at ρ₀ * (2 - ϵ) / (2 + ϵ) instead)
@@ -964,14 +966,14 @@ relerr(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), eps(eltype(b))))
         rnd() = V(randn(T), randn(T))
         P = [rnd() for _ in 1:n]
         dP = CuArray(P); dV = CuArray([rnd() for _ in 1:n]); dA = CuArray([rnd() for _ in 1:n])
-        dρ = CuArray(1000 .+ rand(T, n)); dPr = CUDA.zeros(T, n); ddρ = CuArray(randn(T, n))
+        dρ = CuArray(1000 .+ rand(T, n)); ddρ = CuArray(randn(T, n))
         dρn = CuArray(1000 .+ rand(T, n)); dPn = CuArray(P); dVn = CuArray([rnd() for _ in 1:n])
         dty = CuArray(fill(Fluid, n)); dC = CuArray([rnd() for _ in 1:n]); dr = CuArray(rand(T, n))
         red2 = ReductionWorkspace{SVector{3, T}}(n)
-        launch_final_step!(dP, dV, dA, dρ, dPr, ddρ, dρn, dPn, dVn, dty, dC, dr, st, kern, consts, red2, Val(false))
+        launch_final_step!(dP, dV, dA, dρ, ddρ, dρn, dPn, dVn, dty, dC, dr, st, kern, consts, red2, Val(false))
         @test Array(dP) == P
         S.set_output_time!(st, 1.0)
-        launch_final_step!(dP, dV, dA, dρ, dPr, ddρ, dρn, dPn, dVn, dty, dC, dr, st, kern, consts, red2, Val(false))
+        launch_final_step!(dP, dV, dA, dρ, ddρ, dρn, dPn, dVn, dty, dC, dr, st, kern, consts, red2, Val(false))
         @test Array(dP) != P
     end
 
@@ -995,7 +997,7 @@ relerr(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), eps(eltype(b))))
         @test p1.Density  == p2.Density
         bound = p1.Type .== Fixed
         @test any(bound)
-        @test all(isfinite, p1.Density) && all(isfinite, p1.Pressure)
+        @test all(isfinite, p1.Density)
         @test any(abs.(p1.Density[bound] .- 1000) .> 1e-3)
     end
 

@@ -30,6 +30,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     using ..HDF5Append: extend!, extend_columns!, append_slice!, append_columns!
     using ..PolygonDrawing: ExtrudedPolygon, translate
     using ..SimulationGeometry: MotionDetails
+    using ..SimulationMetaDataConfiguration: SimulationMetaData, NoMDBC, UpdatedMDBC
+    using ..SimulationConstantsConfiguration: SimulationConstants
+    using ..SimulationEquations: EquationOfStateGamma7, particle_pressure
     using ..SPHMeasurements: MeasurementConfig, has_measurements,
         resolve_measurements, MeasurementWriter, append_measurements!,
         flush_measurements!, measurement_block_names
@@ -778,6 +781,25 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     fill_field!(dest::AbstractMatrix, src::AbstractMatrix)            = copyto!(dest, src)
     fill_field!(dest::AbstractVector{T}, src::AbstractVector) where {T} = map!(T, dest, src)
 
+    function fill_pressure!(dest::AbstractVector{T}, density::AbstractVector,
+                            c₀::Real, ρ₀::Real, boundary_mode = NoMDBC(), types = nothing) where {T}
+        c0 = T(c₀)
+        rho0 = T(ρ₀)
+        if boundary_mode isa UpdatedMDBC && types !== nothing
+            @inbounds for i in eachindex(dest, density, types)
+                dest[i] = particle_pressure(T(density[i]), types[i], c0, rho0, boundary_mode)
+            end
+        else
+            @inbounds for i in eachindex(dest, density)
+                dest[i] = EquationOfStateGamma7(T(density[i]), c0, rho0)
+            end
+        end
+        return dest
+    end
+
+    _metadata_float_type(::SimulationMetaData{D, T}) where {D, T} = T
+    _metadata_boundary_mode(::SimulationMetaData{D, T, S, K, B}) where {D, T, S, K, B} = B()
+
     """
         fill_boundary_field!(dest, src, owners)
 
@@ -1286,6 +1308,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             SimMetaData, SimParticles, SimKernel, Dimensions;
             measurements::Union{Nothing, MeasurementConfig} = nothing,
             fluid_type = nothing,
+            constants = nothing,
         )
         measurement_plan = if measurements === nothing ||
                               !has_measurements(measurements)
@@ -1312,6 +1335,12 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         output_vars = SimMetaData.OutputVariables
         multi_file  = !SimMetaData.ExportSingleVTKHDF
         n = length(SimParticles.Position)
+        FloatType = _metadata_float_type(SimMetaData)
+        boundary_mode = _metadata_boundary_mode(SimMetaData)
+        has_host_pressure = hasproperty(SimParticles, :Pressure)
+        sim_constants = constants === nothing ? SimulationConstants{FloatType}() : constants
+        c₀ = FloatType(sim_constants.c₀)
+        ρ₀ = FloatType(sim_constants.ρ₀)
 
         # The particle field behind an output variable, and an array with the
         # element type and component count of the variable as it is written
@@ -1320,6 +1349,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         field_source(name) = getproperty(SimParticles, Symbol(name))
         function field_descriptor(name)
             name == "Type" && return Int8[]
+            name == "Pressure" && !has_host_pressure && return FloatType[]
             src = field_source(name)
             return ncomponents(src) == 3 ? Matrix{component_type(src)}(undef, 3, 0) : src
         end
@@ -1335,10 +1365,16 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         component_buffer(src) = Matrix{component_type(src)}(undef, 3, n)
         pos_buf  = multi_file ? component_buffer(SimParticles.Position) : nothing
         vec_bufs = Dict{String, Matrix}(name => component_buffer(field_source(name))
-                                        for name in output_vars if multi_file && ncomponents(field_source(name)) == 3)
+                                        for name in output_vars if multi_file && (name != "Pressure" || has_host_pressure) && ncomponents(field_source(name)) == 3)
         type_buf = multi_file && "Type" in output_vars ? Vector{Int8}(undef, n) : nothing
+        press_buf = multi_file && "Pressure" in output_vars && !has_host_pressure ? Vector{FloatType}(undef, n) : nothing
         function output_field(name)
             name == "Type" && return map!(Int8, type_buf, SimParticles.Type)
+            if name == "Pressure" && !has_host_pressure
+                types = SimMetaData.Iteration > 0 && boundary_mode isa UpdatedMDBC && hasproperty(SimParticles, :Type) ?
+                    SimParticles.Type : nothing
+                return fill_pressure!(press_buf, SimParticles.Density, c₀, ρ₀, boundary_mode, types)
+            end
             src = field_source(name)
             buf = get(vec_bufs, name, nothing)
             buf === nothing && return src
@@ -1354,7 +1390,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         writer_buffer_bytes = multi_file ?
             (pos_buf === nothing ? 0 : sizeof(pos_buf)) +
             sum(sizeof, values(vec_bufs); init = 0) +
-            (type_buf === nothing ? 0 : sizeof(type_buf)) : 0
+            (type_buf === nothing ? 0 : sizeof(type_buf)) +
+            (press_buf === nothing ? 0 : sizeof(press_buf)) : 0
         file_handles = if multi_file
             # Multi-file mode: vector for particle files
             # Frames written: the initial state plus one per output deadline.
@@ -1411,7 +1448,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             if measurement_plan !== nothing
                 measurement_writer = MeasurementWriter(
                     collection, measurement_plan, fluid_type;
-                    capacity = frames_per_flush,
+                    capacity = frames_per_flush, constants = sim_constants,
                 )
                 write_assembly!(
                     collection, PARTICLE_BLOCK,
@@ -1455,6 +1492,12 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             fill_field!(view(frame_writer.positions, :, cols), positions)
             for (buf, name) in zip(frame_writer.data, output_vars)
                 sym = Symbol(name)
+                if sym === :Pressure && !haskey(fidx, :Pressure)
+                    density = download.buffers[fidx[:Density]]
+                    types = boundary_mode isa UpdatedMDBC ? download.buffers[fidx[:Type]] : nothing
+                    fill_pressure!(view(buf, cols), density, c₀, ρ₀, boundary_mode, types)
+                    continue
+                end
                 src = download.buffers[fidx[sym]]
                 if buf isa AbstractMatrix
                     dest = view(buf, :, cols)
@@ -1481,8 +1524,28 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     output_data = [output_field(name) for name in output_vars]
                     SaveVTKHDF(file_handles.particle_files, iteration, particle_filename(iteration),
                                output_position(), output_vars, output_data...)
-                else
+                elseif has_host_pressure || !("Pressure" in output_vars)
                     append_frame!(frame_writer, time, SimParticles.Position, (field_source(name) for name in output_vars)...)
+                else
+                    cols = next_columns(frame_writer)
+                    fill_field!(view(frame_writer.positions, :, cols), SimParticles.Position)
+                    types = SimMetaData.Iteration > 0 && boundary_mode isa UpdatedMDBC && hasproperty(SimParticles, :Type) ?
+                        SimParticles.Type : nothing
+                    for (buf, name) in zip(frame_writer.data, output_vars)
+                        if name == "Pressure"
+                            fill_pressure!(view(buf, cols), SimParticles.Density, c₀, ρ₀, boundary_mode, types)
+                        else
+                            src = field_source(name)
+                            if buf isa AbstractMatrix
+                                fill_field!(view(buf, :, cols), src)
+                            else
+                                fill_field!(view(buf, cols), src)
+                            end
+                        end
+                    end
+                    push!(frame_writer.times, Float64(time))
+                    frame_writer.pending += 1
+                    frame_writer.pending == frame_writer.capacity && flush_frames!(frame_writer)
                 end
             else
                 fidx = download_field_index(download)
@@ -1492,6 +1555,11 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     components!(pos_buf, positions)
                     output_data = map(output_vars) do name
                         sym = Symbol(name)
+                        if sym === :Pressure && !haskey(fidx, :Pressure)
+                            density = download.buffers[fidx[:Density]]
+                            types = boundary_mode isa UpdatedMDBC ? download.buffers[fidx[:Type]] : nothing
+                            return fill_pressure!(press_buf, density, c₀, ρ₀, boundary_mode, types)
+                        end
                         src = download.buffers[fidx[sym]]
                         name == "Type" && return map!(Int8, type_buf, src)
                         buf = get(vec_bufs, name, nothing)

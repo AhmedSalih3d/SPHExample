@@ -180,7 +180,6 @@ end
 function upload_interaction_fixture(host, constants, kernel, TP; reach)
     D = length(eltype(host.Position))
     T = eltype(host.Density)
-    Pressure!(host.Pressure, host.Density, constants)
     gpu = upload_particles(host; position_type = TP)
     cells = CellListWorkspace{D,TP}(length(gpu); reach)
     CL.rebuild_cell_list!(gpu, cells, kernel.H⁻¹)
@@ -212,7 +211,7 @@ function interaction_fields(f, diffusion, viscosity; radial = nothing, lanes = 1
     extra = radial === nothing ? (;) : (; radial = Val(radial))
     scalar_extra = scalar_sps === nothing ? (;) : (; scalar_sps = Val(scalar_sps))
     GK.launch_interactions!(support.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient,
-        support.∇Cᵢ, support.∇◌rᵢ, gpu.Position, gpu.Density, gpu.Pressure,
+        support.∇Cᵢ, support.∇◌rᵢ, gpu.Position, gpu.Density,
         gpu.Velocity, gpu.Type, cells.CellStart, gpu.CellID, cells.grid_dev, step,
         diffusion, viscosity, f.kernel, f.constants, Val(true), Val(true);
         lanes = Val(lanes), boundary_forces = Val(boundary_forces), pos_cells = support.PosCells,
@@ -272,7 +271,7 @@ function simulate(f; radial, graph, scheme, precision = Float32, position_type =
             (; times = read(root["Steps/Values"]), fields = Dict(name => size(root["PointData"][name]) for name in keys(root["PointData"])))
         end
         return (; steps = meta.Iteration, time = meta.TotalTime,
-            state = map(name -> getproperty(host, name)[order], (:Position, :Velocity, :Density, :Pressure, :Acceleration)), output)
+            state = map(name -> getproperty(host, name)[order], (:Position, :Velocity, :Density, :Acceleration)), output)
     end
 end
 
@@ -285,7 +284,6 @@ function mode_switch_run(graph; scalar_sps = false, scheme = SymplecticTimeStepp
             GPUDoublePosition = true, GPUUseGraph = graph, GPUMaxStepsPerSync = 8)
         meta.TimeSteppingMode = scheme
         host = AllocateDataStructures(f.geometry, meta)
-        Pressure!(host.Pressure, host.Density, f.constants)
         gpu = upload_particles(host; position_type = TP)
         support = GPUSupportArrays{D,T}(length(gpu); position_type = TP)
         cells = CellListWorkspace{D,TP}(length(gpu))
@@ -308,7 +306,7 @@ function mode_switch_run(graph; scalar_sps = false, scheme = SymplecticTimeStepp
                     CellID = gpu.CellID, grid = cells.grid_dev, H = f.kernel.H,
                     Velocity = gpu.Velocity, ParticleType = gpu.Type, GroupMarker = gpu.GroupMarker)
                 GK.launch_interactions!(support.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient,
-                    support.∇Cᵢ, support.∇◌rᵢ, gpu.Position, gpu.Density, gpu.Pressure,
+                    support.∇Cᵢ, support.∇◌rᵢ, gpu.Position, gpu.Density,
                     gpu.Velocity, gpu.Type, cells.CellStart, gpu.CellID, cells.grid_dev, step,
                     LinearDensityDiffusion(), viscosity, f.kernel, f.constants, Val(false), Val(false);
                     lanes = Val(choose_lanes(length(gpu), Val(D))), pos_cells = support.PosCells,
@@ -330,7 +328,7 @@ function mode_switch_run(graph; scalar_sps = false, scheme = SymplecticTimeStepp
         end
         order = sortperm(Array(gpu.ID))
         return (; steps = meta.Iteration, time = meta.TotalTime,
-            state = map(name -> Array(getproperty(gpu, name))[order], (:Position, :Velocity, :Density, :Pressure, :Acceleration)))
+            state = map(name -> Array(getproperty(gpu, name))[order], (:Position, :Velocity, :Density, :Acceleration)))
     end
 end
 
@@ -338,7 +336,6 @@ if CUDA.functional()
     @testset "reciprocal densities follow the evaluated state without preparation" begin
         for D in (2, 3), (T, TP) in ((Float32, Float32), (Float32, Float64), (Float64, Float64))
             f = diffusion_pair_fixture(D, T, TP; reach = 1)
-            fill!(f.gpu.Pressure, zero(T))
             for densities in (T[995, 1007], T[1043, 981])
                 copyto!(f.gpu.Density, densities)
                 rate = first(interaction_fields(f, ReciprocalProbeDiffusion(), ZeroViscosity()))

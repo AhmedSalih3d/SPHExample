@@ -78,10 +78,13 @@ function run_example(time_stepping; simtime = 4.0)
             (; times = read(root["Steps/Values"]), points = size(root["Points"]),
                cells = read(root["NumberOfCells"]))
         end
+        c₀ = Float32(42.48576250492629)
+        ρ₀ = 1000f0
+        pressures = [particle_pressure(particles.Density[i], particles.Type[i], c₀, ρ₀) for i in order]
         return (; elapsed, loop = TimerOutputs.time(meta.HourGlass["00 SimulationLoop"]) / 1e9,
             steps = meta.Iteration, time = meta.TotalTime, output, grid_output,
             position = particles.Position[order], density = particles.Density[order],
-            velocity = particles.Velocity[order], pressure = particles.Pressure[order],
+            velocity = particles.Velocity[order], pressure = pressures,
             acceleration = particles.Acceleration[order])
     end
 end

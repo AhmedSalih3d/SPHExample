@@ -101,7 +101,6 @@ function AllocateDataStructures(SimGeometry::Vector{<:SPHGeometry{Dimensions, Fl
 
     Acceleration = zeros(VectorType, NumberOfPoints)
     Velocity     = zeros(VectorType, NumberOfPoints)
-    Pressureᵢ    = zeros(FloatType, NumberOfPoints)
 
     columns = (
         (cells ? (Cells = fill(zero(CartesianIndex{Dimensions}), NumberOfPoints),) : ())...,
@@ -111,7 +110,6 @@ function AllocateDataStructures(SimGeometry::Vector{<:SPHGeometry{Dimensions, Fl
         Acceleration = Acceleration,
         Velocity = Velocity,
         Density = Density,
-        Pressure = Pressureᵢ,
         ID = ids_col,
         Type = Types,
         GroupMarker = groups_col,

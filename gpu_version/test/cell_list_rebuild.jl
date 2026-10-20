@@ -44,7 +44,6 @@ function cell_rebuild_fixture(::Val{D}, ::Type{T}, ::Type{TP}; reach = 1) where 
         GhostPoints = [iszero(i % 3) ? vec_p(i) : zero(SVector{D, TP}) for i in 1:n],
         GhostNormals = [vec_t(-i) for i in 1:n],
         Acceleration = [vec_t(i + n) for i in 1:n],
-        Pressure = T.(1:n) ./ T(8),
         Kernel = zeros(T, n),
         KernelGradient = zeros(SVector{D, T}, n),
         Cells = fill(CartesianIndex(ntuple(_ -> 0, D)), n),

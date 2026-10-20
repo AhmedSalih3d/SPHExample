@@ -262,7 +262,7 @@ function complete_run(package, case, cfg, baseline)
         order = sortperm(particles.ID)
         snapshot = (; ids = particles.ID[order], position = particles.Position[order],
             velocity = particles.Velocity[order], density = particles.Density[order],
-            pressure = particles.Pressure[order], acceleration = particles.Acceleration[order],
+            acceleration = particles.Acceleration[order],
             ghost_points = particles.GhostPoints[order], ghost_normals = particles.GhostNormals[order],
             time = meta.TotalTime, dt = meta.CurrentTimeStep, steps = meta.Iteration,
             output = output_snapshot(save))

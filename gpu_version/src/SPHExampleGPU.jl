@@ -11,16 +11,16 @@ module SPHExampleGPU
     submodules = [
         "AuxiliaryFunctions.jl",
         "HDF5Append.jl",
-        "SPHMeasurements.jl",
         "PolygonDrawing.jl",
         "SimulationGeometry.jl",
         "SPHKernels.jl",
+        "SimulationMetaDataConfiguration.jl",
+        "SimulationConstantsConfiguration.jl",
+        "SimulationEquations.jl",
+        "SPHMeasurements.jl",
         "SPHViscosityModels.jl",
         "ProduceHDFVTK.jl",
         "TimeStepping.jl",
-        "SimulationEquations.jl",
-        "SimulationMetaDataConfiguration.jl",
-        "SimulationConstantsConfiguration.jl",
         "SimulationLoggerConfiguration.jl",
         "PreProcess.jl",
         "OpenExternalPrograms.jl",
@@ -73,7 +73,7 @@ module SPHExampleGPU
     export Δt
 
     using .SimulationEquations
-    export EquationOfState, EquationOfStateGamma7, Pressure!, DensityEpsi!, LimitDensityAtBoundary!, ConstructGravitySVector, InverseHydrostaticEquationOfState, Estimate7thRoot
+    export EquationOfState, EquationOfStateGamma7, Pressure!, particle_pressure, DensityEpsi!, LimitDensityAtBoundary!, ConstructGravitySVector, InverseHydrostaticEquationOfState, Estimate7thRoot
 
     using .SimulationLoggerConfiguration
     export SimulationLogger, generate_format_string, InitializeLogger, LogSimulationDetails, LogStep, step_log_line, log_line, LogFinal

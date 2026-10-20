@@ -1,13 +1,18 @@
 module SimulationEquations
 
-export EquationOfState, EquationOfStateGamma7, Pressure!, DensityEpsi!, LimitDensityAtBoundary!, ConstructGravitySVector, InverseHydrostaticEquationOfState, Estimate7thRoot
+export EquationOfState, EquationOfStateGamma7, Pressure!, particle_pressure, DensityEpsi!, LimitDensityAtBoundary!, ConstructGravitySVector, InverseHydrostaticEquationOfState, Estimate7thRoot
 
 using StaticArrays
 using FastPow
+using ..SimulationGeometry: is_wall
+using ..SimulationMetaDataConfiguration: NoMDBC, UpdatedMDBC
 
 @inline function EquationOfStateGamma7(ρ,c₀,ρ₀)
     return @fastpow ((c₀^2*ρ₀)/7) * ((ρ/ρ₀)^7 - 1)
 end
+
+@inline particle_pressure(ρ, type, c₀, ρ₀, boundary_mode = NoMDBC()) =
+    boundary_mode isa UpdatedMDBC && is_wall(type) ? c₀^2 * (ρ - ρ₀) : EquationOfStateGamma7(ρ, c₀, ρ₀)
 
 # Equation of State in Weakly-Compressible SPH
 function EquationOfState(ρ,c₀,γ,ρ₀)

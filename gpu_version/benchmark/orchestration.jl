@@ -17,7 +17,6 @@ function measure(driver, n, batch, scheme; output_interval = 0.02)
         VisualizeInParaview = false, OpenLogFile = false)
     meta.TimeSteppingMode = scheme
     particles = AllocateDataStructures(geometry, meta)
-    Pressure!(particles.Pressure, particles.Density, constants)
     gpu = driver.upload_particles(particles)
     support = driver.GPUSupportArrays{2,T}(n; position_type = Float64)
     reduction = ReductionWorkspace{SVector{3,T}}(n)

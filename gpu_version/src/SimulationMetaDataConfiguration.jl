@@ -69,10 +69,9 @@ that they hold `Float64` positions from the input files onwards.
 buffers (and omits inactive `Cells`, `Kernel`, `KernelGradient`, `GhostPoints`
 and `GhostNormals` columns from host `SimParticles` when allocated with
 `AllocateDataStructures(SimGeometry, SimMetaData)`), shares position/velocity
-predictors with reorder scratch, omits acceleration/pressure sorting shadows,
+predictors with reorder scratch, omits acceleration sorting shadows,
 and narrows host and GPU IDs (`Int32`) and group markers (`UInt8`, `UInt16` or
-`UInt32`) losslessly when every value fits. Pressure is reconstructed with the selected EOS;
-startup retains host pressure rounding using idle density scratch. The driver
+`UInt32`) losslessly when every value fits. The driver
 overwrites acceleration before any post-rebuild reader. Fixed predictor entries
 are initialized after sorting and not rewritten each step. Boundary density
 updates and requested boundary-force calculations are unchanged.
@@ -81,11 +80,12 @@ full host and GPU allocation layout.
 
 `GPUCacheInteractionFields = true` stores reciprocal density per particle for
 reuse by the interaction loops, using an additional `sizeof(FloatType)` bytes
-per particle. Pressure and cell-relative positions are already cached when
-needed. The reciprocal buffer is shared between evaluated states and refreshed
-after density prediction and boundary corrections. This option is independent
-of `GPUCompactBuffers`, defaults to `false`, and trades device memory for fewer
-neighbor-loop divisions; elapsed speed depends on the case and GPU.
+per particle. Cell-relative positions are already cached when needed, while
+pressure is computed on demand from density. The reciprocal buffer is shared
+between evaluated states and refreshed after density prediction and boundary
+corrections. This option is independent of `GPUCompactBuffers`, defaults to
+`false`, and trades device memory for fewer neighbor-loop divisions; elapsed
+speed depends on the case and GPU.
 
 `GPURadialInteractions = true` opts into experimental scalar Wendland C2 pair contractions
 for supported linear diffusion and built-in viscosity models. Linear diffusion

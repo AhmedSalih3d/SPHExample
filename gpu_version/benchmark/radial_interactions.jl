@@ -119,7 +119,10 @@ function measure_radial_run(case, variant; baseline = nothing, duration, subdivi
             end
         end
         order = sortperm(result.host.ID)
-        state = map(name -> getproperty(result.host, name)[order], (:Position, :Velocity, :Density, :Pressure, :Acceleration))
+        pressures = [particle_pressure(result.host.Density[i], result.host.Type[i],
+            kwargs.SimConstants.c₀, kwargs.SimConstants.ρ₀) for i in order]
+        state = (result.host.Position[order], result.host.Velocity[order],
+            result.host.Density[order], pressures, result.host.Acceleration[order])
         all(field -> all(value -> value isa Number ? isfinite(value) : all(isfinite, value), field), state) ||
             error("nonfinite final particle state")
         all(>(0), result.host.Density) || error("nonpositive final density")

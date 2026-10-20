@@ -62,8 +62,8 @@ else is stored in `TP`: velocities, densities, accelerations and the kernel
 sums stay in `T`, as in DualSPHysics.
 
 Compact buffers omit acceleration/pressure reorder destinations: pressure is
-reconstructed from sorted density, and acceleration is either overwritten by
-the next derivative evaluation or reordered using idle velocity scratch.
+Compact buffers omit the acceleration reorder destination: acceleration is either
+overwritten by the next derivative evaluation or reordered using idle velocity scratch.
 Unused ghost and kernel-output fields may be empty device vectors. IDs and
 group markers may use lossless 32-bit device storage; host and output fields
 retain their original types.
@@ -78,7 +78,6 @@ mutable struct GPUParticles{D, T, TP, S, I <: Integer, G <: Unsigned}
     GhostPoints::CuVector{SVector{D, TP}}
     GhostNormals::CuVector{SVector{D, T}}
     Acceleration::CuVector{SVector{D, T}}
-    Pressure::CuVector{T}
     CellID::CuVector{Int32}
     GhostIndex::CuVector{Int32}
     BoundarySlot::Union{Nothing, CuVector{Int32}}
@@ -91,10 +90,10 @@ end
 
 function GPUParticles{D, T, TP, S}(Position, Velocity, Density, ID::CuVector{I}, Type,
                                   GroupMarker::CuVector{G}, GhostPoints, GhostNormals,
-                                  Acceleration, Pressure, CellID, GhostIndex, BoundarySlot, Kernel,
+                                  Acceleration, CellID, GhostIndex, BoundarySlot, Kernel,
                                   KernelGradient, scratch::S) where {D, T, TP, S, I <: Integer, G <: Unsigned}
     return GPUParticles{D, T, TP, S, I, G}(Position, Velocity, Density, ID, Type,
-        GroupMarker, GhostPoints, GhostNormals, Acceleration, Pressure, CellID,
+        GroupMarker, GhostPoints, GhostNormals, Acceleration, CellID,
         GhostIndex, BoundarySlot, Kernel, KernelGradient, scratch)
 end
 
@@ -109,11 +108,11 @@ position_type(::GPUParticles{D, T, TP}) where {D, T, TP} = TP
 
 const PERSISTENT_FIELDS = (:Position, :Velocity, :Density,
                            :ID, :Type, :GroupMarker, :GhostPoints, :GhostNormals,
-                           :Acceleration, :Pressure)
+                           :Acceleration)
 
 # Device fields that can be copied back into the host `StructArray`.
 const DOWNLOADABLE_FIELDS = (:Velocity, :Density, :ID, :Type, :GroupMarker, :GhostPoints, :GhostNormals,
-                             :Acceleration, :Pressure, :Kernel, :KernelGradient)
+                             :Acceleration, :Kernel, :KernelGradient)
 const OPTIONAL_PARTICLE_FIELDS = (:GhostPoints, :GhostNormals, :Kernel, :KernelGradient)
 
 allocated_download_fields(gpu::GPUParticles) =
@@ -143,8 +142,7 @@ field independently retains its wider integer type.
 `kernel_output = false` or `ghost_data = false` omits those fields and their
 reorder scratch. The metadata form selects these options from the simulation
 modes and `GPUCompactBuffers`, and uses `position_float_type(SimMetaData)`.
-`reconstruct_fields = true` omits acceleration and pressure reorder scratch;
-rebuilds then require simulation constants to reconstruct pressure.
+`reconstruct_fields = true` omits acceleration reorder scratch.
 `boundary_only = true` stores ghost fields only for ghost owners, without
 sorting copies. The metadata form enables it with `GPUCompactBuffers`.
 """
@@ -195,7 +193,6 @@ function upload_particles(SimParticles::StructArray;
         GhostNormals  = similar(GhostNormals, compact_ghosts ? 0 : length(GhostNormals)),
         BoundarySlot  = CuVector{Int32}(undef, compact_ghosts ? n : 0),
         Acceleration  = CuVector{SVector{D, T}}(undef, reconstruct_fields ? 0 : n),
-        Pressure      = CuVector{T}(undef, reconstruct_fields ? 0 : n),
     )
 
     return GPUParticles{D, T, TP, typeof(scratch)}(
@@ -208,7 +205,6 @@ function upload_particles(SimParticles::StructArray;
         GhostPoints,
         GhostNormals,
         CuArray(SimParticles.Acceleration),
-        CuArray(SimParticles.Pressure),
         CUDA.zeros(Int32, n),
         GhostIndex,
         BoundarySlot,
@@ -766,42 +762,23 @@ function boundary_indices_kernel!(slots, owners, sorted_slots, n::Int32)
     return nothing
 end
 
-function reconstruct_fields_kernel!(Pressure, Acceleration, acceleration_sorted, pressure_sorted, Density, types,
-                                    constants, boundary_mode, ::Val{PreserveAcceleration},
-                                    ::Val{PreservePressure}, n::Int32) where {PreserveAcceleration, PreservePressure}
-    i = thread_index()
-    i > n && return nothing
-    @inbounds begin
-        Pressure[i] = PreservePressure ? pressure_sorted[i] :
-            GPUKernels.particle_pressure(Density[i], types[i], constants.c₀, constants.ρ₀, boundary_mode)
-        if PreserveAcceleration
-            Acceleration[i] = acceleration_sorted[i]
-        end
-    end
-    return nothing
-end
-
 """
     rebuild_cell_list!(gpu, cl, InverseCutOff; constants = nothing, boundary_mode = NoMDBC(),
                        discard_acceleration = false, preserve_pressure = false,
                        prepared = false, support = nothing, floating = nothing, kernel = nothing)
 
-Sort persistent particle state. When pressure reorder scratch is omitted,
-`constants` is required and `boundary_mode` selects the EOS (linear for
-UpdatedMDBC walls, gamma-seven otherwise). Acceleration is preserved by default,
+Sort persistent particle state. Acceleration is preserved by default,
 using idle velocity reorder scratch when its own destination is omitted.
 `discard_acceleration = true` leaves acceleration in the old order: only use it
 when a derivative evaluation will overwrite every entry before any reader,
 including timestep reductions, floating forces and downloads. Single-neighbor
 carried derivatives and body acceleration caches must also be refreshed.
-`preserve_pressure = true` instead reorders pressure using idle density scratch,
-as used at startup to preserve the host EOS rounding before the first step.
 When `support` holds cell relative positions (`uses_pos_cells`), `kernel`
 (the `SPHKernelInstance`) is required and they are rewritten for the new order
 and cells; the time step keeps them current until the next rebuild.
 For fixed grids, escaped particles become `Frozen`. Pass `logger`, `time`
 and `iteration` to record events in a simulation log; without `logger`, events
-use Julia's current logger. Frozen pressure and density remain unchanged.
+use Julia's current logger. Frozen density remains unchanged.
 """
 function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCutOff;
                             prepared::Bool = false, support = nothing, floating = nothing,
@@ -820,13 +797,8 @@ function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCut
         freeze_body_state!(floating)
         log_frozen_particles!(cl, gpu, InverseCutOff; logger, time, iteration)
     end
-    # Frozen pressure is an accepted state value, including Updated-mDBC wall
-    # pressure. Retain it rather than reconstructing it using the new type.
-    preserve_pressure |= cl.frozen_total > 0
     s = gpu.scratch
-    reconstruct = isempty(s.Pressure) && !isempty(gpu.Pressure)
-    reconstruct && constants === nothing &&
-        throw(ArgumentError("Rebuilding without pressure reorder scratch requires simulation constants."))
+    reconstruct = isempty(s.Acceleration) && !isempty(gpu.Acceleration)
     fields = filter(f -> !isempty(getproperty(s, f)), PERSISTENT_FIELDS)
     compact_ghosts = gpu.BoundarySlot !== nothing
     srcs = (map(f -> getproperty(gpu, f), fields)...,
@@ -850,7 +822,6 @@ function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCut
         GhostNormals = compact_ghosts ? s.GhostNormals : gpu.GhostNormals,
         BoundarySlot = s.BoundarySlot,
         Acceleration = reconstruct ? s.Acceleration : gpu.Acceleration,
-        Pressure = reconstruct ? s.Pressure : gpu.Pressure,
     )
     gpu.Position      = s.Position
     gpu.Velocity      = s.Velocity
@@ -864,20 +835,14 @@ function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCut
     end
     if reconstruct
         # The old velocity buffer is idle until fixed predictors are initialized.
-        preserve = !discard_acceleration
-        n = Int32(length(gpu))
-        sources = ((preserve ? (gpu.Acceleration,) : ())..., (preserve_pressure ? (gpu.Pressure,) : ())...)
-        destinations = ((preserve ? (gpu.scratch.Velocity,) : ())..., (preserve_pressure ? (gpu.scratch.Density,) : ())...)
-        if preserve || preserve_pressure
+        if !discard_acceleration
+            n = Int32(length(gpu))
             @cuda threads=ELEMENTWISE_THREADS blocks=cld(n, ELEMENTWISE_THREADS) gather_kernel!(
-                cl.Perm, sources, destinations, n)
+                cl.Perm, (gpu.Acceleration,), (gpu.scratch.Velocity,), n)
+            copyto!(gpu.Acceleration, gpu.scratch.Velocity)
         end
-        @cuda threads=ELEMENTWISE_THREADS blocks=cld(n, ELEMENTWISE_THREADS) reconstruct_fields_kernel!(
-            gpu.Pressure, gpu.Acceleration, gpu.scratch.Velocity, gpu.scratch.Density, gpu.Density, gpu.Type,
-            constants, boundary_mode, Val(preserve), Val(preserve_pressure), n)
     else
         gpu.Acceleration = s.Acceleration
-        gpu.Pressure = s.Pressure
     end
 
     # Floating membership needs the reorder permutation before ghost compaction
@@ -958,13 +923,13 @@ function enqueue_boundary_correction!(ctx, step, half::Bool)
         launch_prepare_interactions!(position, step; inverse_density = sup.InvDensity, Density = density)
     end
     if get(ctx, :boundary_mode, SimpleMDBC()) isa UpdatedMDBC
-        GPUKernels.launch_updated_mdbc!(density, gpu.Pressure, position, velocity,
+        GPUKernels.launch_updated_mdbc!(density, position, velocity,
             gpu.GhostPoints, gpu.GhostNormals, gpu.GhostIndex, gpu.Type, cl.CellStart, cl.grid_dev,
             step, SimKernel, SimConstants, sup.boundary_data; threads, lanes, pos_cells = pairs,
             motion = get(ctx, :motion, nothing), groups = gpu.GroupMarker,
             compact_ghosts = Val(gpu.BoundarySlot !== nothing), inverse_density = sup.InvDensity)
     else
-        launch_mdbc!(density, gpu.Pressure, position, gpu.GhostPoints, gpu.GhostIndex, gpu.Type,
+        launch_mdbc!(density, position, gpu.GhostPoints, gpu.GhostIndex, gpu.Type,
             cl.CellStart, cl.grid_dev, step, SimKernel, SimConstants; threads, lanes, pos_cells = pairs,
             compact_ghosts = Val(gpu.BoundarySlot !== nothing), inverse_density = sup.InvDensity)
     end
@@ -975,8 +940,7 @@ end
     enqueue_state_derivative!(ctx, step, timed, mdbc_name, loop_name)
 
 Enqueue the evaluation of the start-of-step state: the mDBC correction of
-the boundary densities together with the pressure of the corrected density
-(`launch_mdbc!`, with `SimpleMDBC`) and the
+the boundary densities (`launch_mdbc!`, with `SimpleMDBC`) and the
 neighbour loop that produces `dρdtI` and the acceleration. With
 `GPUDoublePosition` the cell relative positions must be current: the final
 step and `rebuild_cell_list!` write them, and the prescribed motion fused into
@@ -1007,7 +971,7 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
                 inverse_density = sup.InvDensity, Density = gpu.Density)
         end
         launch_interactions!(sup.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient, sup.∇Cᵢ, sup.∇◌rᵢ,
-                             gpu.Position, gpu.Density, gpu.Pressure,
+                             gpu.Position, gpu.Density,
                              gpu.Velocity, gpu.Type, CellStart, gpu.CellID, grid, step,
                              SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
                              FlagKernel, FlagShift; threads = threads, lanes = lanes,
@@ -1098,7 +1062,7 @@ function enqueue_step!(ctx, timed::Bool)
     end
 
     @phase HourGlass "05b Update To Half TimeStep" timed launch_half_step!(
-        position_half, velocity_half, sup.ρₙ⁺, gpu.Pressure,
+        position_half, velocity_half, sup.ρₙ⁺,
         gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Density, sup.dρdtI,
         gpu.Type, gpu.GroupMarker, motion, state, SimConstants;
         pos_cells = sup.PosCellsₙ⁺, CellID = gpu.CellID, grid = grid, SimKernel = SimKernel,
@@ -1122,7 +1086,7 @@ function enqueue_step!(ctx, timed::Bool)
     # models, is evaluated at the predictor state.
     @phase HourGlass "08 Second NeighborLoop" timed launch_interactions!(
         sup.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient, sup.∇Cᵢ, sup.∇◌rᵢ,
-        position_half, sup.ρₙ⁺, gpu.Pressure,
+        position_half, sup.ρₙ⁺,
         velocity_half, gpu.Type, CellStart, gpu.CellID, grid, state,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
         FlagKernel, FlagShift; threads = threads, lanes = lanes,
@@ -1141,7 +1105,7 @@ function enqueue_step!(ctx, timed::Bool)
     end
 
     @phase HourGlass "11 Update To Final TimeStep" timed launch_final_step!(
-        gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Density, gpu.Pressure,
+        gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Density,
         sup.dρdtI, sup.ρₙ⁺, position_half, velocity_half, gpu.Type,
         sup.∇Cᵢ, sup.∇◌rᵢ, state, SimKernel, SimConstants, red, FlagShift;
         boundary_mode = get(ctx, :boundary_mode, SimpleMDBC()),
@@ -1479,16 +1443,25 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
 
     # Only the fields that end up in the output files are copied back from the
     # GPU at every output, plus any fields needed by the optional measurements.
-    # The host arrays of all other fields stay untouched.
-    output_vars     = resolve_output_variables!(SimMetaData)
-    download_fields = if SimMeasurements === nothing ||
-                         !has_measurements(SimMeasurements)
-        Tuple(Symbol.(output_vars))
-    else
-        Tuple(unique(vcat(
-            Symbol.(output_vars), required_particle_fields(SimMeasurements),
-        )))
+    # Pressure is computed on the host from Density (and Type for UpdatedMDBC)
+    # when writing output frames or sampling pressure probes.
+    output_vars = resolve_output_variables!(SimMetaData)
+    function device_fields_for(vars)
+        fields = Symbol[]
+        for var in vars
+            sym = Symbol(var)
+            if sym === :Pressure
+                push!(fields, :Density)
+                BMode === UpdatedMDBC && push!(fields, :Type)
+            else
+                push!(fields, sym)
+            end
+        end
+        return unique!(fields)
     end
+    measurement_raw = SimMeasurements === nothing || !has_measurements(SimMeasurements) ?
+        Symbol[] : required_particle_fields(SimMeasurements)
+    download_fields = Tuple(device_fields_for(vcat(Symbol.(output_vars), measurement_raw)))
 
     if BMode !== NoMDBC
         if ParticleNormalsPath === nothing
@@ -1533,7 +1506,6 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     end
 
     NumberOfPoints = length(SimParticles)::Int
-    Pressure!(SimParticles.Pressure, SimParticles.Density, SimConstants)
 
     # Device side data
     @timeit HourGlass "00a Upload To GPU" begin
@@ -1559,6 +1531,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     output = SetupVTKOutput(
         SimMetaData, SimParticles, SimKernel, Dimensions;
         measurements = SimMeasurements, fluid_type = Fluid,
+        constants = SimConstants,
     )
 
     # Motion of the floating bodies at every output time, one row per body.
@@ -1603,8 +1576,8 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     staging = OutputDownload{Dimensions}[OutputDownload(gpu, download_fields; cells = SimMetaData.ExportGridCells, floating)
                                          for _ in 1:(SimMetaData.GPUAsyncOutput ? OUTPUT_STAGING_FRAMES : 1)]
     prototype = first(staging)
-    measurement_fields = SimMeasurements === nothing || !has_measurements(SimMeasurements) ?
-        nothing : Tuple(unique(vcat(:Position, required_particle_fields(SimMeasurements))))
+    measurement_fields = isempty(measurement_raw) ?
+        nothing : Tuple(unique(vcat(:Position, device_fields_for(measurement_raw))))
     direct_writer_slabs = SimMetaData.GPUAsyncOutput && output.frame_writer !== nothing
     has_ghost_measurements = measurement_fields !== nothing &&
         any(f -> f in (:GhostPoints, :GhostNormals), measurement_fields)

@@ -122,7 +122,6 @@ if CUDA.functional()
                 metadata = SimulationMetaData{D, T}(SimulationName = "InactiveNeighbors", SaveLocation = save,
                     GPUFixedGrid = true, GPUCompactBuffers = compact, GPUDoublePosition = T === Float32)
                 host = AllocateDataStructures(geometry, metadata)
-                Pressure!(host.Pressure, host.Density, constants)
                 gpu = upload_particles(host, metadata)
                 support = GPUSupportArrays{D, T}(gpu, metadata)
                 cells = CellListWorkspace{D, position_float_type(metadata)}(2; fixed_grid = true)
@@ -148,7 +147,7 @@ if CUDA.functional()
                     step = HostStep(T(0.001), zero(T))
                     # The inactive corner bin is within the live particle's stencil.
                     KERNELS.launch_interactions!(support.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient,
-                        support.∇Cᵢ, support.∇◌rᵢ, gpu.Position, gpu.Density, gpu.Pressure,
+                        support.∇Cᵢ, support.∇◌rᵢ, gpu.Position, gpu.Density,
                         gpu.Velocity, gpu.Type, cells.CellStart, gpu.CellID, cells.grid_dev, step,
                         LinearDensityDiffusion(), ArtificialViscosity(), kernel, constants, Val(false), Val(false);
                         lanes = Val(4), pos_cells = support.PosCells)
@@ -196,31 +195,28 @@ if CUDA.functional()
                     moved = Array(gpu.Position)
                     moved[2] = axis * T(0.51) * kernel.H
                     copyto!(gpu.Position, moved)
-                    copyto!(gpu.Pressure, T[0, -37])
                     redirect_stdout(devnull) do
                         DRIVER.rebuild_cell_list!(gpu, cells, kernel.H⁻¹; constants, support, kernel,
                             boundary_mode = boundary(), logger)
                     end
                     owner = only(Array(gpu.GhostIndex))
                     @test Array(gpu.Type)[owner] == Frozen
-                    before = (Array(gpu.Density), Array(gpu.Pressure))
+                    before = Array(gpu.Density)
                     step = HostStep(T(0.001), zero(T))
                     if boundary === SimpleMDBC
-                        KERNELS.launch_mdbc!(gpu.Density, gpu.Pressure, gpu.Position, gpu.GhostPoints,
+                        KERNELS.launch_mdbc!(gpu.Density, gpu.Position, gpu.GhostPoints,
                             gpu.GhostIndex, gpu.Type, cells.CellStart, cells.grid_dev, step, kernel, constants;
                             lanes = Val(4), pos_cells = support.PosCells,
                             compact_ghosts = Val(gpu.BoundarySlot !== nothing))
                     else
-                        KERNELS.launch_updated_mdbc!(gpu.Density, gpu.Pressure, gpu.Position, gpu.Velocity,
+                        KERNELS.launch_updated_mdbc!(gpu.Density, gpu.Position, gpu.Velocity,
                             gpu.GhostPoints, gpu.GhostNormals, gpu.GhostIndex, gpu.Type, cells.CellStart,
                             cells.grid_dev, step, kernel, constants, support.boundary_data;
                             lanes = Val(4), pos_cells = support.PosCells,
                             compact_ghosts = Val(gpu.BoundarySlot !== nothing))
                     end
-                    @test Array(gpu.Density) == before[1]
-                    @test Array(gpu.Pressure) == before[2]
-                    @test before[1][owner] == T(950)
-                    @test before[2][owner] == T(-37)
+                    @test Array(gpu.Density) == before
+                    @test before[owner] == T(950)
                 finally
                     close(logger.LoggerIo)
                 end

@@ -1016,14 +1016,17 @@ the standard *gather* formulation:
   edge `H/R`, with `(2R+1)^(D-1)` contiguous row ranges. The traversal
   investigation below measures `R = 1, 2, 4`, including cell-list rebuilding,
   mDBC and host orchestration, without changing the defaults or equations.
-* **Fused element-wise kernels.** Half step, density limiting, prescribed
-  motion and pressure are one kernel; the final step also computes the
-  pressure for the next step and the block wise reduction of the time step
-  limits and the maximum displacement. The corrector advances the position
-  with the half step velocity times `dt`, the same symplectic scheme as the
-  CPU `FullTimeStep`. A step therefore consists of 6 kernel launches (8
-  with mDBC and moving bodies), two of which are single block kernels that
-  do the loop control.
+* **Fused element-wise kernels.** Half step, density limiting, and prescribed
+  motion are one kernel; the final step also computes the block wise reduction
+  of the time step limits and the maximum displacement. Pressure is not stored
+  as a particle property on the host or GPU: the interaction kernel evaluates
+  it on demand in registers from the evaluated density, and output intervals
+  compute it on the host from the downloaded density (and particle type for
+  Updated mDBC) when writing VTKHDF files or sampling pressure probes. The
+  corrector advances the position with the half step velocity times `dt`, the
+  same symplectic scheme as the CPU `FullTimeStep`. A step therefore consists
+  of 6 kernel launches (8 with mDBC and moving bodies), two of which are single
+  block kernels that do the loop control.
 * **Device resident time step.** The time step, the simulated time, the
   displacement bound that triggers a cell list rebuild and the loop flags
   live on the device. A single block kernel turns the block wise reduction
@@ -1219,7 +1222,7 @@ definitions in `benchmark/cases.jl` construct against either package.
 | `GPUCellSubdivision` | `1` | Positive integer `R`: cells of edge `H/R`, a `(2R+1)^D` stencil, and `(2R+1)^(D-1)` contiguous row ranges. `1` reproduces the CPU grid, `2` uses half-width cells, and `4` uses quarter-width cells. Finer grids reduce candidates but increase dense-grid memory, row overhead and mDBC work. With reference interactions, only `1` reproduces the CPU's density-diffusion pair orientation. Radial symmetric diffusion removes that orientation dependence; accumulation and SPS rounding can still differ. Benchmark the intended precision, lane count and boundary mode before changing it. |
 | `GPUDoublePosition` | `false` | Store and integrate the particle positions (and the mDBC ghost node positions) in `Float64` while everything else stays in `FloatType`; the pair loops use cell relative `FloatType` coordinates (see "Double positions" above). Use it for `Float32` runs of domains far from the origin or with many steps. No effect with `FloatType = Float64`. Allocate the particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so that the input is read in `Float64`. |
 | `GPUCacheInteractionFields` | `false` | Cache inverse density per particle for reuse in neighbor interactions. Adds one `FloatType` scalar per particle (4 bytes with `Float32`, 8 with `Float64`), independently of `GPUCompactBuffers`. Refreshed for each evaluated density state, including predictor and mDBC corrections. Trades memory for fewer divisions; benchmark elapsed solver time for your case. |
-| `GPUCompactBuffers` | `true` | Omit unused ghost, kernel-output and shifting buffers on the GPU, and omit inactive `Cells`, `Kernel`, `KernelGradient`, `GhostPoints` and `GhostNormals` columns on the host when allocated with `AllocateDataStructures(SimGeometry, SimMetaData)`; store enabled mDBC ghosts and Updated mDBC state only for ghost-owning boundaries, without ghost reorder scratch; share position/velocity predictors with existing reorder scratch; and remove acceleration/pressure sorting shadows. Pressure is reconstructed from sorted density with the selected EOS; acceleration is refreshed before post-rebuild readers. Fixed predictor writes are skipped; boundary density and requested force calculations are retained. Host and GPU IDs use `Int32` and group markers use `UInt8`, `UInt16` or `UInt32` only when every value fits; otherwise each field independently retains its original width. Precision and neighbor ranges are unchanged. `false` restores the previous full host and GPU allocation layout. |
+| `GPUCompactBuffers` | `true` | Omit unused ghost, kernel-output and shifting buffers on the GPU, and omit inactive `Cells`, `Kernel`, `KernelGradient`, `GhostPoints` and `GhostNormals` columns on the host when allocated with `AllocateDataStructures(SimGeometry, SimMetaData)`; store enabled mDBC ghosts and Updated mDBC state only for ghost-owning boundaries, without ghost reorder scratch; share position/velocity predictors with existing reorder scratch; and remove acceleration sorting shadows. Acceleration is refreshed before post-rebuild readers. Fixed predictor writes are skipped; boundary density and requested force calculations are retained. Host and GPU IDs use `Int32` and group markers use `UInt8`, `UInt16` or `UInt32` only when every value fits; otherwise each field independently retains its original width. Precision and neighbor ranges are unchanged. `false` restores the previous full host and GPU allocation layout. |
 | `GPUOutputQueueBytes` | `256 * 2^20` | Separate host memory budget for frames between the download collector and disk writer. Allocated on demand and reused; capacity for at least one frame. Used with `GPUAsyncOutput`. |
 | `GPUOutputBufferBytes` | `256 * 2^20` | Host memory for output frames that are held before they are written to the single `vtkhdf` file (see "Asynchronous output"). The number of frames per flush uses the particle fields plus an initial grid-size estimate, at least 1 and at most 16. Dense grid frames are checked against the remaining byte budget and can flush sooner; a frame larger than the budget is written immediately. `0` writes every frame at once. |
 
@@ -1292,8 +1295,9 @@ julia --project=. -t 2,0 test/logging.jl
 
 Set `GPUCacheInteractionFields = true` in `SimulationMetaData` to reuse inverse
 density from device memory instead of recomputing it for every accepted neighbor.
-`example/FloatingCylinder2d.jl` enables this option. Pressure and, with mixed
-position precision, cell-relative positions are already stored per particle.
+`example/FloatingCylinder2d.jl` enables this option. With mixed position
+precision, cell-relative positions are already stored per particle, while
+pressure is computed on demand from density.
 The inverse-density cache uses one dense vector shared between the full and
 predictor states. It is refreshed after prediction and boundary corrections,
 and recomputed after sorting before interactions read it. It adds no reorder
@@ -1340,17 +1344,15 @@ the simulation equations, particle order or implicit cell-range neighbor search:
 * `ExportGridCells = false` omits the host `Cells` (`CartesianIndex{D}`) column
   when allocating with `SimMetaData`.
 * `NoShifting` does not allocate the two shifting work arrays.
-* Acceleration and pressure retain their ordinary device arrays but have no
-  full-size sorting destinations. Pressure is reconstructed from sorted density:
-  gamma-seven for fluid, DBC and simple mDBC, and linear for updated-mDBC walls,
-  including negative boundary pressure. The initial host-computed pressure is
-  reordered through idle density scratch to preserve host EOS rounding exactly.
-  Initial acceleration is reduced for the first timestep before sorting.
-  The driver then overwrites every acceleration entry before the next reader:
-  symplectic stepping does so in its first interaction, while single-neighbor
-  stepping explicitly refreshes carried derivatives and floating-body
-  acceleration caches after each rebuild. A pending step completes before output,
-  so synchronous/asynchronous downloads retain valid acceleration and pressure.
+* Acceleration retains its ordinary device array but has no full-size sorting
+  destination. (Pressure is not stored as a host or GPU particle property in
+  either mode; it is evaluated on demand in the interaction kernel and computed
+  only at output intervals.) Initial acceleration is reduced for the first
+  timestep before sorting. The driver then overwrites every acceleration entry
+  before the next reader: symplectic stepping does so in its first interaction,
+  while single-neighbor stepping explicitly refreshes carried derivatives and
+  floating-body acceleration caches after each rebuild. A pending step completes
+  before output, so synchronous/asynchronous downloads retain valid acceleration.
 * Position/velocity predictors share the existing reorder scratch, which is idle
   between cell-list rebuilds. Fixed entries are initialized once after sorting
   and left untouched by the predictor kernel; only fluid, moving (including
@@ -1369,15 +1371,15 @@ the simulation equations, particle order or implicit cell-range neighbor search:
 
 For `Float32` physics with double positions, no mDBC, no kernel output, no
 shifting, no grid-cell export and metadata that fits `Int32`/`UInt8`, inactive
-fields and narrow metadata remove **63 bytes per particle in 2D** (from 109 to 46 bytes, **57.80%**) or
-**87 bytes per particle in 3D** (from 149 to 62 bytes, **58.39%**) from host
-`SimParticles` storage, and **106 bytes per particle in 2D** or **142 bytes per particle in 3D** (including shared `PosCell` storage) from GPU particle/reorder/support storage.
+fields and narrow metadata remove **63 bytes per particle in 2D** (from 105 to 42 bytes, **60.00%**) or
+**87 bytes per particle in 3D** (from 145 to 58 bytes, **60.00%**) from host
+`SimParticles` storage, and **102 bytes per particle in 2D** or **138 bytes per particle in 3D** (including shared `PosCell` storage) from GPU particle/reorder/support storage.
 Sharing position/velocity predictors additionally saves **24 bytes per particle
 in 2D** or **36 bytes per particle in 3D**, including every fixed particle, in
 this precision configuration.
-Removing acceleration/pressure sorting shadows additionally saves
-**12 bytes per particle in 2D** or **16 bytes per particle in 3D** with
-`Float32` physics, regardless of position precision (24 or 32 bytes with `Float64`
+Removing the acceleration sorting shadow additionally saves
+**8 bytes per particle in 2D** or **12 bytes per particle in 3D** with
+`Float32` physics, regardless of position precision (16 or 24 bytes with `Float64`
 physics). This saving applies to all boundary, shifting and kernel-output modes.
 Enabled modes keep their required buffers. Output, cell-grid, reduction and
 floating-body storage still consume memory, so particle-capacity gains depend
@@ -1390,9 +1392,9 @@ workspace on the GPU but excluding output, motion, reductions and allocator-pool
 
 | Case | Particles | Host full (MiB) | Host compact (MiB) | Host saved | GPU full (MiB) | GPU compact (MiB) | GPU saved |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Generated StillWedge, `dx = 0.02` | 3,027 | 0.3147 | 0.1328 | 57.80% | 0.7416 | 0.3317 | 55.27% |
-| Generated StillWedge, `dx = 0.005` | 47,790 | 4.9678 | 2.0965 | 57.80% | 11.6199 | 5.1481 | 55.70% |
-| Synthetic uniform 3D cube, `64^3` | 262,144 | 37.2500 | 15.5000 | 58.39% | 84.5856 | 36.0856 | 57.34% |
+| Generated StillWedge, `dx = 0.02` | 3,027 | 0.3031 | 0.1212 | 60.00% | 0.7185 | 0.3201 | 55.44% |
+| Generated StillWedge, `dx = 0.005` | 47,790 | 4.7855 | 1.9142 | 60.00% | 11.2553 | 4.9658 | 55.88% |
+| Synthetic uniform 3D cube, `64^3` | 262,144 | 36.2500 | 14.5000 | 60.00% | 82.5856 | 35.0856 | 57.52% |
 
 Low-level `AllocateDataStructures(geometries)`, `upload_particles(particles)` and `GPUSupportArrays{D,T}(n)` retain
 their previous full-buffer defaults. For mode-aware allocation, use
@@ -1402,14 +1404,11 @@ Updated mDBC boundary state, use
 `GPUSupportArrays{D,T}(gpu, metadata)` and pass
 `support = support_arrays` (and `floating = floating_arrays` when applicable)
 to `SPHExampleGPU.SPHCellList.rebuild_cell_list!` to refresh fixed scratch entries.
-Compact rebuilds also require `constants = simulation_constants` and the matching
-`boundary_mode` (`UpdatedMDBC()` for its linear wall EOS; otherwise gamma-seven).
 Standalone rebuilds preserve acceleration by temporarily reordering it into
 idle velocity scratch before initializing fixed predictors; immediate reductions,
 floating-force calculations and downloads remain valid. Only the simulation
 driver passes `discard_acceleration = true`, where a derivative overwrite is
-guaranteed before any reader. `preserve_pressure = true` retains an existing
-pressure field using idle density scratch, as at startup. Low-level
+guaranteed before any reader. Low-level
 `upload_particles(...; reconstruct_fields = true)` opts into the same shadow
 removal without changing other allocation options.
 Low-level `upload_particles(...; boundary_only = true)` independently opts into

@@ -20,7 +20,6 @@ function setup(case::BenchCase, ::Type{T}) where {T}
             particles.GhostNormals[gi] = gn[gi]
         end
     end
-    Pressure!(particles.Pressure, particles.Density, kw.SimConstants)
     n   = length(particles)
     gpu = upload_particles(particles)
     sup = GPUSupportArrays{case.dims, T}(n)

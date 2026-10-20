@@ -32,7 +32,6 @@ function fixture(D, T; double_position = false, types = (Fixed, Fluid, Moving, F
         GPUDoublePosition = double_position)
     host = AllocateDataStructures(geometry, metadata)
     constants = SimulationConstants{T}(dx = T(0.02), c₀ = T(20), g = zero(T), m₀ = T(1000 * 0.02^D))
-    host.Pressure .= EquationOfStateGamma7.(host.Density, constants.c₀, constants.ρ₀)
     kernel = SPHKernelInstance{D, T}(WendlandC2(); dx = constants.dx)
     return (; host, metadata, geometry, constants, kernel)
 end
@@ -66,7 +65,7 @@ end
 function snapshot(ctx)
     gpu = ctx.gpu
     order = sortperm(Array(gpu.ID))
-    fields = (:Position, :Velocity, :Density, :Acceleration, :Pressure, :Kernel, :KernelGradient,
+    fields = (:Position, :Velocity, :Density, :Acceleration, :Kernel, :KernelGradient,
               :ID, :Type, :GroupMarker)
     state = NamedTuple{fields}(Tuple(Array(getproperty(gpu, field))[order] for field in fields))
     return (; state, density_rate = Array(ctx.sup.dρdtI)[order], density_half = Array(ctx.sup.ρₙ⁺)[order],
@@ -195,7 +194,7 @@ end
         fill!(position_half, sentinel_position)
         fill!(velocity_half, sentinel_velocity)
         fill!(sup.dρdtI, 100f0)
-        DRIVER.launch_half_step!(position_half, velocity_half, sup.ρₙ⁺, gpu.Pressure,
+        DRIVER.launch_half_step!(position_half, velocity_half, sup.ρₙ⁺,
             gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Density, sup.dρdtI,
             gpu.Type, gpu.GroupMarker, motion, HostStep(1f-4, 0f0), f.constants;
             pos_cells = sup.PosCellsₙ⁺, CellID = gpu.CellID, grid = cl.grid_dev, SimKernel = f.kernel,

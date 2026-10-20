@@ -58,7 +58,7 @@ function simulate(case, ::Type{T}; fixed_grid, scheme, double_position = false) 
         order = sortperm(particles.ID)
         return (; steps = metadata.Iteration, time = metadata.TotalTime,
             position = particles.Position[order], velocity = particles.Velocity[order],
-            density = particles.Density[order], pressure = particles.Pressure[order])
+            density = particles.Density[order])
     end
 end
 

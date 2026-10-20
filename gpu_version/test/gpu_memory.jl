@@ -134,9 +134,10 @@ end
             @test isempty(compact.scratch.GhostPoints)
             @test isempty(compact.scratch.GhostNormals)
             @test isempty(compact.scratch.Acceleration)
-            @test isempty(compact.scratch.Pressure)
+            @test !hasproperty(compact, :Pressure) && !hasproperty(full, :Pressure)
+            @test !hasproperty(compact.scratch, :Pressure) && !hasproperty(full.scratch, :Pressure)
+            @test !hasproperty(f.host, :Pressure)
             @test length(full.scratch.Acceleration) == length(f.host)
-            @test length(full.scratch.Pressure) == length(f.host)
             @test isempty(support.∇Cᵢ) && isempty(support.∇◌rᵢ)
             @test length(full_support.∇Cᵢ) == length(f.host)
             @test length(full_support.∇◌rᵢ) == length(f.host)
@@ -156,7 +157,7 @@ end
             expected = n * (2 * sizeof(eltype(full.GhostPoints)) + 2 * sizeof(eltype(full.GhostNormals)) +
                 sizeof(T) + sizeof(SVector{D, T}) + sizeof(T) + sizeof(SVector{D, T}) +
                 2 * (sizeof(Int) - sizeof(Int32)) + 2 * (sizeof(UInt) - sizeof(UInt8)) +
-                sizeof(T) + sizeof(SVector{D, T}) +
+                sizeof(SVector{D, T}) +
                 (uses_pos_cells(support) ? sizeof(PosCell{D, T}) : 0))
             full_bytes = GPUMemoryBenchmark.device_buffer_bytes((full, full_support))
             compact_bytes = GPUMemoryBenchmark.device_buffer_bytes((compact, support))
@@ -440,6 +441,57 @@ end
             end
             for name in setdiff(keys(reference.fields), keys(result.fields))
                 @test all(iszero, reference.fields[name][2])
+            end
+        end
+    end
+
+    @testset "on-demand pressure output and probes without stored Pressure" begin
+        for single_file in (true, false), async in (false, true)
+            mktempdir() do save
+                kwargs = updated_case(Float32, save)
+                meta = kwargs.SimMetaData
+                meta.ExportSingleVTKHDF = single_file
+                meta.GPUAsyncOutput = async
+                meta.SimulationTime = 0.004f0
+                meta.OutputTimes = 0.002f0
+                meta.OutputVariables = ["Pressure"]
+                measurements = single_file ? MeasurementConfig(
+                    pressure_probes = [MeasurementProbe("probe", (0.5, 0.1))],
+                ) : nothing
+                host = AllocateDataStructures(kwargs.SimGeometry, meta)
+                @test !hasproperty(host, :Pressure)
+                logger = SimulationLogger(save)
+                try
+                    redirect_stdout(devnull) do
+                        RunSimulation(; kwargs..., SimTimeStepping = SymplecticTimeStepping(),
+                            SimParticles = host, SimLogger = logger, SimMeasurements = measurements)
+                    end
+                finally
+                    close(logger.LoggerIo)
+                end
+                @test !hasproperty(host, :Pressure)
+                n = length(host)
+                wall = findfirst(==(Moving), host.Type)
+                expected_last = [particle_pressure(host.Density[i], host.Type[i],
+                    kwargs.SimConstants.c₀, kwargs.SimConstants.ρ₀, UpdatedMDBC()) for i in eachindex(host)]
+                if single_file
+                    data = hdf_datasets(joinpath(save, meta.SimulationName * ".vtkhdf"))
+                    pressures = data["/VTKHDF/Particles/PointData/Pressure"][3]
+                    @test length(pressures) >= 2 * n
+                    @test pressures[(end - n + 1):end] ≈ expected_last rtol = 1f-5
+                    @test pressures[end - n + wall] < 0
+                    probe_series = vec(data["/VTKHDF/PressureProbes/PointData/Pressure"][3])
+                    @test length(probe_series) >= 2 && all(isfinite, probe_series)
+                else
+                    files = sort(filter(f -> endswith(f, ".vtkhdf"), readdir(save; join = true)))
+                    @test length(files) >= 2
+                    last_data = hdf_datasets(last(files))
+                    pressures = last_data["/VTKHDF/PointData/Pressure"][3]
+                    @test collect(keys(last_data)) ⊇ ["/VTKHDF/PointData/Pressure"]
+                    @test !haskey(last_data, "/VTKHDF/PointData/Density")
+                    @test pressures ≈ expected_last rtol = 1f-5
+                    @test pressures[wall] < 0
+                end
             end
         end
     end

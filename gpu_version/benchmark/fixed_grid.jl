@@ -14,7 +14,6 @@ function setup(; fixed_grid)
     metadata.OutputTimes = 0.01f0
     metadata.OutputIterationCounter = 1
     host = AllocateDataStructures(kwargs.SimGeometry, metadata)
-    Pressure!(host.Pressure, host.Density, kwargs.SimConstants)
     gpu = upload_particles(host, metadata)
     cells = CellListWorkspace{2, Float64}(length(host); fixed_grid)
     support = GPUSupportArrays{2, Float32}(gpu, metadata)
@@ -38,7 +37,7 @@ work(run) = (run.metadata.Iteration, run.cells.nrebuilds, run.state.readbacks,
 function snapshot(run)
     order = sortperm(Array(run.gpu.ID))
     fields = map(f -> Array(getproperty(run.gpu, f))[order],
-                 (:Position, :Velocity, :Density, :Pressure, :Acceleration))
+                 (:Position, :Velocity, :Density, :Acceleration))
     return (; fields, work = work(run), time = run.metadata.TotalTime)
 end
 
