@@ -867,20 +867,25 @@ exactly. The drawing tests need no GPU:
 
 The package ships a [PrecompileTools](https://github.com/JuliaLang/PrecompileTools.jl)
 workload (`src/PrecompileWorkload.jl`). When the package is precompiled it
-writes tiny versions of the example cases (2D/3D, mDBC and DBC, a moving body
-with planar shifting) for one short output interval. This exercises the solver
-and output paths without simulating extra physical time. The host code (CSV
-input, logging, VTKHDF output, the time loop) is then cached in the package
+exercises the polygon/particle generation tools and runs tiny versions of the
+example configurations (2D/3D, mDBC and DBC, radial and reference interactions,
+moving and floating bodies, planar shifting, single-neighbor and symplectic
+time stepping, and SPH measurements) for one short output interval. The host
+code (polygon drawing, lattice and conforming sampling, CSV input, logging,
+VTKHDF output, measurements, and the time loop) is then cached in the package
 image. If a working GPU is present during precompilation, so are the CUDA
-kernels for one lane and the automatic lane choice. On an RTX A1000 laptop GPU
-the first 2D dam break run in a new session drops from about 45 s to about 1 s.
-Loading the package (`using SPHExampleGPU`, about 5 s, mostly CUDA.jl) stays the
-same, and no sysimage is needed.
+kernels (including both single-block and multi-block final-step variants) for
+one and four lanes plus the automatic lane choice. On an RTX A1000 laptop GPU,
+first-run compilation across the example and generator scripts drops from
+10–25 s to under 1 s (about 0.08–0.67 s total compilation per script, with
+`RunSimulation` compiling in 0.00–0.16 s). Loading the package
+(`using SPHExampleGPU`, about 5–7 s, mostly CUDA.jl) stays the same, and no
+sysimage is needed.
 
 This has a cost and some limits:
 
-* With dependencies already precompiled, the package takes about 90 s to
-  precompile on the RTX A1000 above, and about 30 s without a working GPU. A
+* With dependencies already precompiled, the package takes about 170 s to
+  precompile on the RTX A1000 above, and about 45 s without a working GPU. A
   clean setup also needs to precompile dependencies, which adds to this time.
   Package precompilation runs once per package or dependency change, not once
   per session.
@@ -890,10 +895,11 @@ This has a cost and some limits:
   to cache them as well.
 * Only the precompiled types and lane counts are cached. Other types and
   explicit lane counts still work but compile on first use. By default that
-  means `Float32`, the `WendlandC2` kernel, `SymplecticTimeStepping`, the
-  viscosity and density diffusion models of the examples, and one-lane plus
-  automatic gather kernels. Keep `FloatType`, the models and (for explicit
-  tuning) `GPULanesPerParticle` consistent between runs to benefit.
+  means `Float32`, the `WendlandC2` kernel, both `SymplecticTimeStepping` and
+  `SingleNeighborTimeStepping`, the viscosity and density diffusion models of
+  the examples, and one-lane, four-lane plus automatic gather kernels. Keep
+  `FloatType`, the models and (for explicit tuning) `GPULanesPerParticle`
+  consistent between runs to benefit.
 
 The following preferences, stored in `LocalPreferences.toml`, change the
 workload. Restart Julia after setting them; the package then precompiles again.
@@ -902,9 +908,9 @@ workload. Restart Julia after setting them; the package then precompiles again.
 using Preferences, SPHExampleGPU
 # also cache Float64 (the test suite and CPU parity runs use it)
 set_preferences!(SPHExampleGPU, "precompile_float_types" => ["Float32", "Float64"])
-# also cache every supported explicit gather lane count (default [1], plus automatic)
+# also cache every supported explicit gather lane count (default [1, 4], plus automatic)
 set_preferences!(SPHExampleGPU, "precompile_gpu_lanes" => [1, 2, 4, 8, 16, 32])
-# also cache the kernels of GPUDoublePosition = true (cell relative positions)
+# also cache the kernels of GPUDoublePosition = true for every case
 set_preferences!(SPHExampleGPU, "precompile_double_position" => true)
 # turn the workload off, e.g. while editing the package source
 set_preferences!(SPHExampleGPU, "precompile_workload" => false; force = true)

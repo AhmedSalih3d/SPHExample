@@ -897,6 +897,8 @@ end
 
 @inline maybe_sync(SimMetaData) = (SimMetaData.GPUSyncTimers && CUDA.synchronize(); nothing)
 
+_format_timer_table(io::IO, timer::TimerOutput) = print_timer(io, timer; sortby = :name)
+
 #---------------------------------------------------------------
 # Launch sequence of one time step
 #---------------------------------------------------------------
@@ -1788,7 +1790,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             AutoOpenLogFile(SimLogger, SimMetaData)
         end
 
-        print_timer(HourGlass; sortby = :name)
+        println(stdout, sprint(_format_timer_table, HourGlass))
         output_finalized[] = true
         exit_finalizer[] = nothing
         return nothing

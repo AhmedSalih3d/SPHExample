@@ -14,6 +14,7 @@
 #     julia --project=gpu_version gpu_version/example/GenerateStillWedgeMDBC.jl [output_dir] [dx]
 using SPHExampleGPU
 using Meshes
+using StaticArrays: SVector
 
 """
     still_wedge_2d_polygons(; tank_width = 2.2, tank_height = 0.7, water_height = 0.5,
@@ -113,7 +114,10 @@ function generate_still_wedge_2d_example(
     ]
     sampled = sample_particles(regions, dx)
 
-    fluid_positions = reduce(vcat, (r.positions for r in sampled if r.type == Fluid))
+    fluid_positions = SVector{2, Float64}[]
+    for r in sampled
+        r.type == Fluid && append!(fluid_positions, r.positions)
+    end
     isempty(fluid_positions) &&
         throw(ArgumentError("particle spacing dx leaves the water region empty"))
     level = something(water_level, maximum(last, fluid_positions))
@@ -140,17 +144,17 @@ function generate_still_wedge_2d_example(
     end
 
     (; ρ₀, c₀) = SimConstants
-    positions = to_3d(reduce(vcat, region.positions for region in particles))
-    density = reduce(vcat, region.density for region in particles)
+    positions = SVector{3, Float64}[]
+    density   = Float64[]
+    types     = Int8[]
+    markers   = Int[]
+    for (id, region) in enumerate(particles)
+        append!(positions, to_3d(region.positions))
+        append!(density, region.density)
+        append!(types, fill(Int8(region.type), length(region.positions)))
+        append!(markers, fill(id, length(region.positions)))
+    end
     pressure = EquationOfStateGamma7.(density, c₀, ρ₀)
-    types = reduce(
-        vcat,
-        fill(Int8(region.type), length(region.positions)) for region in particles
-    )
-    markers = reduce(
-        vcat,
-        fill(id, length(region.positions)) for (id, region) in enumerate(particles)
-    )
     SaveVTKHDF(
         "$(prefix)_Particles.vtkhdf",
         positions,

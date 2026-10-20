@@ -101,21 +101,18 @@ function generate_moving_square_2d_example(
     end
 
     (; ρ₀, c₀) = SimConstants
-    positions = to_3d(reduce(vcat, region.positions for region in particles))
-    density = reduce(vcat, region.density for region in particles)
-    pressure = EquationOfStateGamma7.(density, c₀, ρ₀)
-    types = reduce(
-        vcat,
-        (fill(Int8(region.type), length(region.positions)) for region in particles),
-    )
     group_markers = Dict("Fixed" => 1, "Fluid" => 2, "Square" => 3)
-    markers = reduce(
-        vcat,
-        (
-            fill(group_markers[region.name], length(region.positions)) for
-            region in particles
-        ),
-    )
+    positions = SVector{3, Float64}[]
+    density   = Float64[]
+    types     = Int8[]
+    markers   = Int[]
+    for region in particles
+        append!(positions, to_3d(region.positions))
+        append!(density, region.density)
+        append!(types, fill(Int8(region.type), length(region.positions)))
+        append!(markers, fill(group_markers[region.name], length(region.positions)))
+    end
+    pressure = EquationOfStateGamma7.(density, c₀, ρ₀)
     SaveVTKHDF(
         "$(prefix)_Particles.vtkhdf",
         positions,
@@ -143,8 +140,9 @@ function generate_moving_square_2d_example(
 end
 
 if abspath(PROGRAM_FILE) == abspath(@__FILE__)
-    output_dir = normpath(joinpath(@__DIR__, "..", "input", "moving_square_2d_generated"))
-    dx = 0.02
+    output_dir = length(ARGS) >= 1 ? ARGS[1] :
+        normpath(joinpath(@__DIR__, "..", "input", "moving_square_2d_generated"))
+    dx = length(ARGS) >= 2 ? parse(Float64, ARGS[2]) : 0.02
     particles = generate_moving_square_2d_example(output_dir; dx)
     for region in particles
         @info "$(region.name): $(length(region.positions)) particles"

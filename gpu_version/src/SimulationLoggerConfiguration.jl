@@ -57,8 +57,9 @@ module SimulationLoggerConfiguration
         function SimulationLogger(SaveLocation::String; filename="SimulationOutput.log")
             io_logger = open(joinpath(SaveLocation, filename), "w")
             file_logger = FormatLogger(io_logger) do io, args
-                println(stdout, args.message)
-                println(io, args.message)
+                msg = string(args.message)
+                println(stdout, msg)
+                println(io, msg)
             end
 
             values        = ("PART [-]", "PartTime [s]", "TotalSteps [-] ", "Steps  [-] ", "Run Time [s]", "Time/Sec [-]", "Remaining Time [Date]")
@@ -253,11 +254,11 @@ module SimulationLoggerConfiguration
             else
                 @info "CUDA information: unavailable (CUDA is not functional)"
             end
-            @info SimConstants
-            @info SimMetaData
-            @info SimKernel
-            @info SimViscosity
-            @info SimDensityDiffusion
+            @info string(SimConstants)
+            @info string(SimMetaData)
+            @info string(SimKernel)
+            @info string(SimViscosity)
+            @info string(SimDensityDiffusion)
             
             # Print the formatted date and time
             @info "Logger Start Time: " * SimLogger.CurrentDataStr

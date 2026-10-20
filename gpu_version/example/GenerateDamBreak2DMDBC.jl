@@ -10,6 +10,7 @@
 #         [output_dir] [dx]
 using SPHExampleGPU
 using Meshes
+using StaticArrays: SVector
 
 """
     dam_break_2d_polygons(; tank_width = 4.0, tank_height = 3.0,
@@ -78,7 +79,10 @@ function generate_dam_break_2d_example(
     ]
     sampled = sample_particles(regions, dx)
 
-    fluid_positions = reduce(vcat, (r.positions for r in sampled if r.type == Fluid))
+    fluid_positions = SVector{2, Float64}[]
+    for r in sampled
+        r.type == Fluid && append!(fluid_positions, r.positions)
+    end
     level = something(water_level, maximum(last, fluid_positions))
     particles = map(sampled) do region
         density =
@@ -103,17 +107,17 @@ function generate_dam_break_2d_example(
     end
 
     (; ρ₀, c₀) = SimConstants
-    positions = to_3d(reduce(vcat, region.positions for region in particles))
-    density = reduce(vcat, region.density for region in particles)
+    positions = SVector{3, Float64}[]
+    density   = Float64[]
+    types     = Int8[]
+    markers   = Int[]
+    for (id, region) in enumerate(particles)
+        append!(positions, to_3d(region.positions))
+        append!(density, region.density)
+        append!(types, fill(Int8(region.type), length(region.positions)))
+        append!(markers, fill(id, length(region.positions)))
+    end
     pressure = EquationOfStateGamma7.(density, c₀, ρ₀)
-    types = reduce(
-        vcat,
-        (fill(Int8(region.type), length(region.positions)) for region in particles),
-    )
-    markers = reduce(
-        vcat,
-        (fill(id, length(region.positions)) for (id, region) in enumerate(particles)),
-    )
     SaveVTKHDF(
         "$(prefix)_Particles.vtkhdf",
         positions,
@@ -127,10 +131,13 @@ function generate_dam_break_2d_example(
     return particles
 end
 
-output_dir = normpath(joinpath(@__DIR__, "..", "input", "dam_break_2d_generated"))
-dx = 0.02
-particles = generate_dam_break_2d_example(output_dir; dx)
-for region in particles
-    @info "$(region.name): $(length(region.positions)) particles"
+if abspath(PROGRAM_FILE) == abspath(@__FILE__)
+    output_dir = length(ARGS) >= 1 ? ARGS[1] :
+        normpath(joinpath(@__DIR__, "..", "input", "dam_break_2d_generated"))
+    dx = length(ARGS) >= 2 ? parse(Float64, ARGS[2]) : 0.02
+    particles = generate_dam_break_2d_example(output_dir; dx)
+    for region in particles
+        @info "$(region.name): $(length(region.positions)) particles"
+    end
+    @info "Saved DamBreak2D geometry and particles" output_dir
 end
-@info "Saved DamBreak2D geometry and particles" output_dir

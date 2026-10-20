@@ -9,7 +9,13 @@
 using SPHExampleGPU
 include(joinpath(@__DIR__, "GenerateStillWedgeMDBC.jl"))
 
-let
+function run_still_wedge(;
+    time_stepping::TimeSteppingMode = SymplecticTimeStepping(),
+    simulation_time = 4.00,
+    save_location = "C:/TestSimulations/StillWedge2D_MDBC_GPU",
+    visualize::Bool = true,
+    open_log_file::Bool = true,
+)
     Dimensions = 2
     FloatType = Float32
 
@@ -53,15 +59,16 @@ let
         StoreLog,
     }(
         SimulationName = "StillWedge",
-        SaveLocation = "C:/TestSimulations/StillWedge2D_MDBC_GPU",
-        SimulationTime = 4.00,
+        SaveLocation = save_location,
+        SimulationTime = simulation_time,
         OutputTimes = 0.01,
-        VisualizeInParaview = true,
+        VisualizeInParaview = visualize,
         ExportSingleVTKHDF = true,
         ExportGridCells = true,
-        OpenLogFile = true,
+        OpenLogFile = open_log_file,
         GPUDoublePosition = true,
         GPURadialInteractions = true,
+        GPUCacheInteractionFields = true,
         # This small case needs only a few queued frames to overlap disk output.
         GPUOutputQueueBytes = 8 * 1024^2,
         # OutputVariables = [
@@ -100,7 +107,7 @@ let
         SimParticles = SimParticles,
         SimViscosity = ArtificialViscosity(),
         SimDensityDiffusion = LinearDensityDiffusion(),
-        SimTimeStepping = SymplecticTimeStepping(),
+        SimTimeStepping = time_stepping,
         ParticleNormalsPath = "./input/still_wedge_mdbc/StillWedge_Dp$(SimConstantsWedge.dx)_GhostNodes_Correct.csv",
     )
 
@@ -138,5 +145,11 @@ let
     # ylims!((0, 1))
 
     # display(plt)
+    # return (; particles = SimParticles, metadata = SimMetaDataWedge)
 end
 
+if abspath(PROGRAM_FILE) == abspath(@__FILE__)
+    run_still_wedge()
+end
+
+run_still_wedge()

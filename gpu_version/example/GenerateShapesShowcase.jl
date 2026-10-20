@@ -13,6 +13,7 @@
 #         [output_dir] [dx]
 using SPHExampleGPU
 using Meshes
+using StaticArrays: SVector
 
 """
     showcase_2d_shapes(; dx = 0.02)
@@ -115,18 +116,21 @@ function sample_and_save(output_dir, case_name, shapes, regions, dx, SimConstant
     end
 
     (; ρ₀, c₀) = SimConstants
-    positions = reduce(vcat, region.positions for region in particles)
-    positions = length(first(positions)) == 2 ? to_3d(positions) : positions
-    density = reduce(vcat, region.density for region in particles)
+    positions = SVector{3, Float64}[]
+    density   = Float64[]
+    types     = Int8[]
+    markers   = Int[]
+    for (id, region) in enumerate(particles)
+        if length(first(region.positions)) == 2
+            append!(positions, to_3d(region.positions))
+        else
+            append!(positions, region.positions)
+        end
+        append!(density, region.density)
+        append!(types, fill(Int8(region.type), length(region.positions)))
+        append!(markers, fill(id, length(region.positions)))
+    end
     pressure = EquationOfStateGamma7.(density, c₀, ρ₀)
-    types = reduce(
-        vcat,
-        (fill(Int8(region.type), length(region.positions)) for region in particles),
-    )
-    markers = reduce(
-        vcat,
-        (fill(id, length(region.positions)) for (id, region) in enumerate(particles)),
-    )
     SaveVTKHDF(
         "$(prefix)_Particles.vtkhdf",
         positions,
@@ -183,10 +187,13 @@ function generate_shapes_showcase(
     return (; two_d, three_d)
 end
 
-output_dir = normpath(joinpath(@__DIR__, "..", "input", "shapes_showcase_generated"))
-dx = 0.02
-cases = generate_shapes_showcase(output_dir; dx)
-for (scene, particles) in pairs(cases), region in particles
-    @info "$(scene) $(region.name): $(length(region.positions)) particles"
+if abspath(PROGRAM_FILE) == abspath(@__FILE__)
+    output_dir = length(ARGS) >= 1 ? ARGS[1] :
+        normpath(joinpath(@__DIR__, "..", "input", "shapes_showcase_generated"))
+    dx = length(ARGS) >= 2 ? parse(Float64, ARGS[2]) : 0.02
+    cases = generate_shapes_showcase(output_dir; dx)
+    for (scene, particles) in pairs(cases), region in particles
+        @info "$(scene) $(region.name): $(length(region.positions)) particles"
+    end
+    @info "Saved the shapes showcase" output_dir
 end
-@info "Saved the shapes showcase" output_dir

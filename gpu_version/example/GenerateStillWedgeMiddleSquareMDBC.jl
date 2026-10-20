@@ -143,9 +143,9 @@ function generate_still_wedge_middle_square_geometry(
 end
 
 if abspath(PROGRAM_FILE) == abspath(@__FILE__)
-    output_dir =
+    output_dir = length(ARGS) >= 1 ? ARGS[1] :
         normpath(joinpath(@__DIR__, "..", "input", "still_wedge_middle_square_generated"))
-    dx = 0.02
+    dx = length(ARGS) >= 2 ? parse(Float64, ARGS[2]) : 0.02
     particles = generate_still_wedge_middle_square_geometry(output_dir; dx)
     for region in particles
         @info "$(region.name): $(length(region.positions)) particles"
