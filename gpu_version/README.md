@@ -1322,8 +1322,15 @@ precision, cell-relative positions are already stored per particle; by default
 computed on demand from density.
 The cache uses one dense vector for `InvDensity` and one for `Pressure` in
 `GPUSupportArrays`, shared between the full and predictor states. Both are
-refreshed after prediction and boundary corrections, and recomputed before
-start-of-step interactions read them. It adds no reorder scratch and works with
+refreshed after prediction and boundary corrections. For stationary non-mDBC
+runs (no active prescribed motion or floating bodies), final integration
+reads the predictor reciprocal before overwriting the caches with the accepted
+density's reciprocal and pressure. Startup and every cell-list reorder explicitly
+refresh them; steady steps need no separate cache-preparation launch.
+Other paths still recompute caches before start-of-step interactions. Low-level
+`launch_final_step!` callers retain predictor caches unless they supply
+`next_inverse_density` and/or `next_pressure` destinations.
+It adds no reorder scratch and works with
 either compact or full buffers, both time stepping schemes, prescribed motion,
 floating bodies, and CUDA graphs.
 
@@ -1339,6 +1346,33 @@ compare warmed whole-solver runs with matching step and rebuild counts. No fixed
 saving per physical second is guaranteed. Leave it `false` for minimum storage.
 Select it before allocating support arrays; changing it during a run requires
 reallocating those arrays and the step/graph state.
+
+Validate accepted-state cache fusion and compare warmed, alternating complete
+cached runs (including particle/grid output) against the pre-fusion revision:
+
+```bash
+julia --project=gpu_version -t 2,0 gpu_version/test/final_state_caches.jl
+julia --project=gpu_version -t 2,0 gpu_version/benchmark/final_state_caches.jl --profile
+```
+
+The benchmark requires git revision `a2f57c4` locally, checks exact accepted
+states and every exported HDF5 dataset, and matches step/rebuild/readback counts.
+It writes paired unprofiled timings to `final_state_caches_results.csv`; optional
+preparation-entry profiling runs separately and is not included in the timings.
+Use `--rounds=N`, `--duration=seconds`, `--dx=spacing`, or `--output=path` to change
+the run size and result destination.
+
+On an NVIDIA RTX A1000 Laptop GPU with Julia 1.12.7, the default four-second
+generated wedge (`dx = 0.02`, 3,027 particles, Float32 physics / Float64 positions,
+symplectic, `R = 1`) retained exactly 8,500 accepted steps, three rebuilds and
+405 state readbacks. Separate profiling counted 8,503 preparation entries before
+fusion and three afterward; final-integration entries stayed at 8,503 (including
+guarded no-ops). Accepted particle state and every particle/grid HDF5 dataset
+matched exactly. Two independent sets of 21 alternating, unprofiled complete
+runs, including output, measured median paired elapsed-time reductions of 1.27%
+and 1.15%, with the fused driver faster in 19/21 and 18/21 pairs. Individual
+ratios ranged from 0.736 to 1.062 and 0.725 to 1.038, respectively: this is a
+small, noisy, hardware-specific improvement, not a kernel-count-based speedup.
 
 ### Compact GPU buffers
 

@@ -915,7 +915,8 @@ end
 function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, ρₙ⁺, Positionₙ⁺,
                             Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
                             partial, ::Val{FlagShift}, boundary_mode, GhostPoints, GhostNormals, BoundarySlots,
-                            PosCells, CellID, gridarg, InvDensity, ::Val{CommitStep}, n::Int32) where {FlagShift, CommitStep}
+                            PosCells, CellID, gridarg, InvDensity, NextInvDensity, NextPressure,
+                            ::Val{CommitStep}, n::Int32) where {FlagShift, CommitStep}
     step_active(step) || return nothing
     dt = step_dt(step)
     (; g, ρ₀) = SimConstants
@@ -927,6 +928,11 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
     @inbounds while i <= n
         type = ParticleType[i]
         if type == Frozen
+            ρ = Density[i]
+            store_inverse_density!(NextInvDensity, i, ρ)
+            if NextPressure !== nothing
+                store_pressure!(NextPressure, i, particle_pressure(ρ, type, SimConstants.c₀, ρ₀, boundary_mode))
+            end
             i += stride
             continue
         end
@@ -939,6 +945,11 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
         ρ   *= (2 - epsi) / (2 + epsi)
         ρ    = boundary_mode isa UpdatedMDBC && is_wall(type) ? ρₙ⁺[i] : limit_density(ρ, ρ₀, ML)
         Density[i]  = ρ
+        # The predictor reciprocal must be consumed before an aliased cache is overwritten.
+        store_inverse_density!(NextInvDensity, i, ρ)
+        if NextPressure !== nothing
+            store_pressure!(NextPressure, i, particle_pressure(ρ, type, SimConstants.c₀, ρ₀, boundary_mode))
+        end
 
         # FullTimeStep
         acc = Acceleration[i]
@@ -993,21 +1004,30 @@ list whose sorted cell ids are `CellID`, so the next step needs no separate
 pass; `CellID` and `grid` are then required.
 `inverse_density` must hold the evaluated predictor reciprocals, including any
 boundary corrections, for reuse in the final density update.
+With `next_inverse_density` and/or `next_pressure`, also cache the accepted
+density's reciprocal and pressure for the next step. `next_inverse_density`
+may alias `inverse_density`: each predictor reciprocal is read before being
+overwritten. Frozen entries cache their unchanged accepted density.
+Without these destinations, the predictor caches are left unchanged.
 """
 function launch_final_step!(Position, Velocity, Acceleration, Density, dρdtI, ρₙ⁺, Positionₙ⁺,
                             Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
                             red::ReductionWorkspace, FlagShift::Val; boundary_mode = SimpleMDBC(),
                             ghost_points = nothing, ghost_normals = nothing, boundary_slots = nothing,
                             pos_cells = nothing, CellID = nothing, grid = nothing, commit_step::Bool = false,
-                            inverse_density = nothing)
+                            inverse_density = nothing, next_inverse_density = nothing, next_pressure = nothing)
     commit_step && red.nblocks != 1 && throw(ArgumentError("fused commit requires one reduction block"))
+    next_inverse_density === nothing || length(next_inverse_density) == length(Density) ||
+        throw(DimensionMismatch("Next-state reciprocal cache must have one entry per density"))
+    next_pressure === nothing || length(next_pressure) == length(Density) ||
+        throw(DimensionMismatch("Next-state pressure cache must have one entry per density"))
     n = length(Position)
     n == 0 && return nothing
     @cuda threads=ELEMENTWISE_THREADS blocks=red.nblocks final_step_kernel!(
         Position, Velocity, Acceleration, Density, dρdtI, ρₙ⁺, Positionₙ⁺,
         Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
         red.partial, FlagShift, boundary_mode, ghost_points, ghost_normals, boundary_slots,
-        pos_cells, CellID, grid, inverse_density, Val(commit_step), Int32(n))
+        pos_cells, CellID, grid, inverse_density, next_inverse_density, next_pressure, Val(commit_step), Int32(n))
     return nothing
 end
 

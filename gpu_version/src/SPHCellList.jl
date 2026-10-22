@@ -918,6 +918,14 @@ macro phase(hg, name, timed, ex)
     end
 end
 
+function prepare_state_caches!(ctx, step)
+    (; gpu, sup, SimConstants, boundary_mode) = ctx
+    launch_prepare_interactions!(gpu.Position, step; inverse_density = sup.InvDensity,
+        pressure = sup.Pressure, Density = gpu.Density, ParticleType = gpu.Type,
+        SimConstants, boundary_mode)
+    return nothing
+end
+
 # Recompute scratch boundary data after every reorder and at both evaluated states.
 function enqueue_boundary_correction!(ctx, step, half::Bool)
     (; gpu, sup, cl, SimKernel, SimConstants, threads, lanes) = ctx
@@ -974,7 +982,8 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
     end
 
     @phase HourGlass loop_name timed begin
-        if !UseMDBC && (sup.InvDensity !== nothing || sup.Pressure !== nothing || prepare_motion)
+        if !UseMDBC && !get(ctx, :cache_final_state, false) &&
+            (sup.InvDensity !== nothing || sup.Pressure !== nothing || prepare_motion)
             launch_prepare_interactions!(gpu.Position, step;
                 pos_cells = !UseMDBC && prepare_motion ? sup.PosCells : nothing,
                 CellID = gpu.CellID, grid = grid, H = SimKernel.H,
@@ -1042,8 +1051,8 @@ function enqueue_step!(ctx, timed::Bool)
     # whether the step may run at all (cell list rebuild, output time).
     @phase HourGlass "01 Update TimeStep" timed launch_finish!(state, red, SimKernel, SimConstants)
 
-    # The pressure of the start-of-step density was already computed by the
-    # final kernel of the previous step (and on the host before the first).
+    # Stationary cached DBC steps carry the accepted-state caches from final
+    # integration; startup and sorting explicitly refresh them.
     # DBC has no neighbor evaluation between motion and per-particle preparation.
     # mDBC needs the moved geometry before its separate boundary correction.
     fused_motion = !UseMDBC
@@ -1126,7 +1135,9 @@ function enqueue_step!(ctx, timed::Bool)
         boundary_mode = get(ctx, :boundary_mode, SimpleMDBC()),
         ghost_points = gpu.GhostPoints, ghost_normals = gpu.GhostNormals, boundary_slots = gpu.BoundarySlot,
         pos_cells = sup.PosCells, CellID = gpu.CellID, grid = grid, commit_step = red.nblocks == 1,
-        inverse_density = sup.InvDensity)
+        inverse_density = sup.InvDensity,
+        next_inverse_density = get(ctx, :cache_final_state, false) ? sup.InvDensity : nothing,
+        next_pressure = get(ctx, :cache_final_state, false) ? sup.Pressure : nothing)
 
     # Rigid final placement reads neither time nor phase, so a one-block
     # integration may commit before this launch without changing body placement.
@@ -1281,10 +1292,12 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     timed     = SimMetaData.GPUSyncTimers
     use_graph = SimMetaData.GPUUseGraph && !timed
     kmax      = timed ? 1 : max(1, SimMetaData.GPUMaxStepsPerSync)
+    cache_final_state = !UseMDBC && !motion.active && (floating === nothing || !floating.active) &&
+        sup.InvDensity !== nothing && sup.Pressure !== nothing
 
     ctx = (; gpu, cl, sup, red, motion, floating, state, SimKernel, SimConstants, SimDensityDiffusion,
              SimViscosity, FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, radial, scalar_sps, HourGlass, boundary_mode,
-             frozen_particles = Val(cl.frozen_total > 0))
+             frozen_particles = Val(cl.frozen_total > 0), cache_final_state)
 
     t_out = next_output_time(SimMetaData)
     set_output_time!(state, t_out)
@@ -1296,6 +1309,10 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     end
 
     if !state.primed
+        # A caller may supply an already sorted cell list with fresh support arrays.
+        if cache_final_state && cl.nrebuilds > 0
+            prepare_state_caches!(ctx, HostStep(state.fh[F_DT], state.fh[F_TIME]))
+        end
         # No final step kernel has run yet: reduce the initial state for the
         # first time step. There is no half state yet; the initial displacement
         # bound already forces a cell list rebuild before the first step.
@@ -1357,6 +1374,9 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                     preserve_pressure = cl.nrebuilds == 0, kernel = SimKernel,
                     logger, time = SimMetaData.TotalTime, iteration = SimMetaData.Iteration)
                 resume_after_rebuild!(state)
+                if cache_final_state
+                    prepare_state_caches!(ctx, state)
+                end
 
                 # The single neighbour scheme carries `dρdtI` and the
                 # acceleration from the previous step, but the rebuild has
