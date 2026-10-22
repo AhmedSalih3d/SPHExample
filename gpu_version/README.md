@@ -31,6 +31,14 @@ julia --project=gpu_version gpu_version/example/Dambreak2dMDBC.jl
 The examples in `gpu_version/example/` mirror those in `example/`. Choose the
 precision with `FloatType = Float32` or `Float64` at the top of a script.
 
+For a linear, function-by-function explanation of the current StillWedge GPU
+example, including CPU/GPU ownership, neighbor construction, both symplectic
+interaction passes and asynchronous output, see the
+[StillWedge GPU walkthrough](docs/StillWedgeGPUWalkthrough.md) and its
+[top-to-bottom visual](docs/StillWedgeGPUFlow.svg). The companion
+[complete package-function index](docs/StillWedgeGPUFunctionIndex.md) includes
+local subfunctions, callbacks and inactive branches.
+
 ### Choosing the mDBC formulation
 
 The fifth `SimulationMetaData` type parameter selects the boundary formulation:

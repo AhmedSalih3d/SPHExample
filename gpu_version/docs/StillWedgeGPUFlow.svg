@@ -1,0 +1,285 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="4800" viewBox="0 0 1200 4800" role="img" aria-labelledby="title description">
+  <title id="title">StillWedge GPU: a linear execution walkthrough</title>
+  <desc id="description">Twenty-four numbered stages, read top to bottom: CPU geometry and particle setup, upload, GPU cell-list construction, adaptive time step, two symplectic neighbor passes, integration, batched state readback, asynchronous CPU output and finalization. Blue denotes CPU work, green GPU work, amber output work. Repetition is indicated by stage numbers rather than crossing arrows. This is a source-based flow diagram, not a measured timeline or simulation result.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L9,5 L0,10 Z" fill="#64748b"/>
+    </marker>
+    <style>
+      text { font-family: "Segoe UI", Arial, sans-serif; fill: #172b42; }
+      .heading { font-size: 38px; font-weight: 750; }
+      .subtitle { font-size: 19px; fill: #475569; }
+      .small { font-size: 16px; fill: #475569; }
+      .label { font-size: 17px; font-weight: 700; }
+      .stage-title { font-size: 23px; font-weight: 700; }
+      .body { font-size: 18px; }
+      .code { font-family: Consolas, "Courier New", monospace; font-size: 16px; fill: #334155; }
+      .number { font-size: 21px; font-weight: 750; fill: #fff; text-anchor: middle; }
+      .cpu .card { fill: #eff6ff; stroke: #93b5e2; }
+      .cpu .badge { fill: #285f9c; }
+      .gpu .card { fill: #ecfdf5; stroke: #7cbfa5; }
+      .gpu .badge { fill: #087c5b; }
+      .io .card { fill: #fffbeb; stroke: #dab36a; }
+      .io .badge { fill: #946008; }
+      .control .card { fill: #f1f5f9; stroke: #a3b1c2; }
+      .control .badge { fill: #475569; }
+      .card { stroke-width: 1.5; }
+      .connector { stroke: #64748b; stroke-width: 2; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect width="1200" height="4800" fill="#fff"/>
+  <text x="60" y="65" class="heading">StillWedge: what the GPU actually does</text>
+  <text x="60" y="100" class="subtitle">Read straight down. Numbers match the detailed, source-linked walkthrough.</text>
+  <rect x="60" y="128" width="18" height="18" rx="4" fill="#285f9c"/>
+  <text x="88" y="143" class="label">CPU setup / orchestration</text>
+  <rect x="365" y="128" width="18" height="18" rx="4" fill="#087c5b"/>
+  <text x="393" y="143" class="label">GPU computation</text>
+  <rect x="610" y="128" width="18" height="18" rx="4" fill="#946008"/>
+  <text x="638" y="143" class="label">Host output pipeline</text>
+  <rect x="877" y="128" width="18" height="18" rx="4" fill="#475569"/>
+  <text x="905" y="143" class="label">Control / transfer</text>
+  <rect x="60" y="177" width="1080" height="88" rx="12" fill="#fff1f2" stroke="#e5a3ae"/>
+  <text x="80" y="206" class="label">Exact script, not the filename: NoMDBC + symplectic + radial interactions.</text>
+  <text x="80" y="232" class="body">Direct execution currently calls the solver twice. This diagram follows ONE invocation.</text>
+  <text x="80" y="254" class="small">No ghost-node correction, shifting, floating-body physics or kernel-sum output is active.</text>
+
+  <rect x="60" y="292" width="630" height="245" rx="12" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="80" y="322" class="label">The physical case (schematic, not simulation output)</text>
+  <path d="M95,370 L95,497 L270,497 L370,402 L470,497 L650,497 L650,370" fill="#dceffc" stroke="#285f9c" stroke-width="5" stroke-linejoin="round"/>
+  <line x1="98" y1="370" x2="647" y2="370" stroke="#4994c3" stroke-dasharray="6 5" stroke-width="2"/>
+  <path d="M270,497 L370,402 L470,497 L448,497 L370,424 L292,497 Z" fill="#9aadc0"/>
+  <text x="112" y="356" class="small">Nominal water outline: 0.5 m</text>
+  <text x="312" y="391" class="small">Fixed wedge</text>
+  <text x="110" y="430" class="body">Fluid</text>
+  <text x="80" y="525" class="small">580 fixed + 2,447 fluid = 3,027 particles; dx = 0.02 m</text>
+  <rect x="710" y="292" width="430" height="245" rx="12" fill="#f8fafc" stroke="#cbd5e1"/>
+  <text x="730" y="322" class="label">Where the work lives</text>
+  <text x="730" y="355" class="body">CPU: polygons, launches, logging, HDF5</text>
+  <text x="730" y="388" class="body">GPU: neighbors, derivatives, integration</text>
+  <text x="730" y="421" class="body">Positions: Float64; physics: Float32</text>
+  <text x="730" y="454" class="body">h = 0.04 m; support H = 0.08 m</text>
+  <text x="730" y="487" class="body">Only output snapshots download particles</text>
+  <text x="730" y="520" class="small">Plus a small device-control readback per batch</text>
+  <text x="60" y="575" class="subtitle">STARTUP: build the inputs once, then hand the evolving state to the GPU.</text>
+
+  <g id="step-01" class="cpu" transform="translate(0 600)">
+    <rect class="card" x="60" width="1080" height="140" rx="14"/>
+    <circle class="badge" cx="104" cy="38" r="25"/><text class="number" x="104" y="45">01</text>
+    <text class="stage-title" x="150" y="38">Enter the example</text>
+    <text class="body" x="150" y="66">Load the GPU package; include polygon helper definitions; enter one run.</text>
+    <text class="code" x="150" y="94">run_still_wedge(); using SPHExampleGPU; include(...)</text>
+    <text class="small" x="150" y="120">The included generator does not export CSVs or run its own main block.</text>
+  </g>
+  <line class="connector" x1="600" y1="742" x2="600" y2="764"/>
+  <g id="step-02" class="cpu" transform="translate(0 768)">
+    <rect class="card" x="60" width="1080" height="140" rx="14"/>
+    <circle class="badge" cx="104" cy="38" r="25"/><text class="number" x="104" y="45">02</text>
+    <text class="stage-title" x="150" y="38">Construct the physical constants</text>
+    <text class="body" x="150" y="66">Reference density, spacing, sound speed, gravity, viscosity, diffusion and CFL.</text>
+    <text class="code" x="150" y="94">SimulationConstants{Float32}(...)</text>
+    <text class="small" x="150" y="120">CFL = 0.5; c0 approximately 42.48576 m/s; density-diffusion coefficient = 0.1.</text>
+  </g>
+  <line class="connector" x1="600" y1="910" x2="600" y2="932"/>
+  <g id="step-03" class="cpu" transform="translate(0 936)">
+    <rect class="card" x="60" width="1080" height="140" rx="14"/>
+    <circle class="badge" cx="104" cy="38" r="25"/><text class="number" x="104" y="45">03</text>
+    <text class="stage-title" x="150" y="38">Describe tank and water as polygons</text>
+    <text class="body" x="150" y="66">Fixed floor, side walls and hollow wedge shell; water occupies the region around it.</text>
+    <text class="code" x="150" y="94">still_wedge_2d_polygons() -&gt; tank, water</text>
+    <text class="small" x="150" y="120">Meshes.jl PolyArea geometry; no GPU computation yet.</text>
+  </g>
+  <line class="connector" x1="600" y1="1078" x2="600" y2="1100"/>
+  <g id="step-04" class="cpu" transform="translate(0 1104)">
+    <rect class="card" x="60" width="1080" height="140" rx="14"/>
+    <circle class="badge" cx="104" cy="38" r="25"/><text class="number" x="104" y="45">04</text>
+    <text class="stage-title" x="150" y="38">Sample a common particle lattice</text>
+    <text class="body" x="150" y="66">Boundaries claim shared surfaces first; fluid points are strictly inside their polygon.</text>
+    <text class="code" x="150" y="94">ParticleRegion -&gt; sample_particles -&gt; particle_lattice / owns</text>
+    <text class="small" x="150" y="120">Result: 580 fixed and 2,447 fluid positions with no overlap.</text>
+  </g>
+  <line class="connector" x1="600" y1="1246" x2="600" y2="1268"/>
+  <g id="step-05" class="cpu" transform="translate(0 1272)">
+    <rect class="card" x="60" width="1080" height="140" rx="14"/>
+    <circle class="badge" cx="104" cy="38" r="25"/><text class="number" x="104" y="45">05</text>
+    <text class="stage-title" x="150" y="38">Initialize hydrostatic density and particle groups</text>
+    <text class="body" x="150" y="66">Walls start at reference density; deeper fluid starts slightly denser.</text>
+    <text class="code" x="150" y="94">hydrostatic_density(...) -&gt; SPHGeometry{2,Float32}(...)</text>
+    <text class="small" x="150" y="120">Hydrostatic level is the highest fluid center, y = 0.48 m, not the 0.5 m outline.</text>
+  </g>
+  <line class="connector" x1="600" y1="1414" x2="600" y2="1436"/>
+  <g id="step-06" class="cpu" transform="translate(0 1440)">
+    <rect class="card" x="60" width="1080" height="140" rx="14"/>
+    <circle class="badge" cx="104" cy="38" r="25"/><text class="number" x="104" y="45">06</text>
+    <text class="stage-title" x="150" y="38">Configure metadata, host arrays and logging</text>
+    <text class="body" x="150" y="66">Create structure-of-arrays state, one-based IDs, zero velocity and acceleration.</text>
+    <text class="code" x="150" y="94">SimulationMetaData -&gt; SimulationLogger -&gt; AllocateDataStructures</text>
+    <text class="small" x="150" y="120">CleanUpSimulationFolder removes stale VTKHDF output in the selected save directory.</text>
+  </g>
+  <line class="connector" x1="600" y1="1582" x2="600" y2="1604"/>
+  <g id="step-07" class="cpu" transform="translate(0 1608)">
+    <rect class="card" x="60" width="1080" height="140" rx="14"/>
+    <circle class="badge" cx="104" cy="38" r="25"/><text class="number" x="104" y="45">07</text>
+    <text class="stage-title" x="150" y="38">Choose the kernel, models and time integrator</text>
+    <text class="body" x="150" y="66">Wendland C2, artificial viscosity, linear density diffusion, symplectic stepping.</text>
+    <text class="code" x="150" y="94">SPHKernelInstance(...) -&gt; RunSimulation(...)</text>
+    <text class="small" x="150" y="120">The default integrator requires two neighbor evaluations per accepted step.</text>
+  </g>
+  <line class="connector" x1="600" y1="1750" x2="600" y2="1772"/>
+  <g id="step-08" class="cpu" transform="translate(0 1776)">
+    <rect class="card" x="60" width="1080" height="140" rx="14"/>
+    <circle class="badge" cx="104" cy="38" r="25"/><text class="number" x="104" y="45">08</text>
+    <text class="stage-title" x="150" y="38">Validate CUDA and resolve output fields</text>
+    <text class="body" x="150" y="66">Select radial arithmetic; map requested pressure output to a density download.</text>
+    <text class="code" x="150" y="94">start_runtime!; radial_interactions_supported; resolve_output_variables!</text>
+    <text class="small" x="150" y="120">NoMDBC skips the normals-file load and every ghost-node boundary correction.</text>
+  </g>
+  <line class="connector" x1="600" y1="1918" x2="600" y2="1940"/>
+  <g id="step-09" class="control" transform="translate(0 1944)">
+    <rect class="card" x="60" width="1080" height="140" rx="14"/>
+    <circle class="badge" cx="104" cy="38" r="25"/><text class="number" x="104" y="45">09</text>
+    <text class="stage-title" x="150" y="38">Upload once and allocate GPU workspaces</text>
+    <text class="body" x="150" y="66">Particles, sort scratch, density derivatives, predictor density, caches and control state.</text>
+    <text class="code" x="150" y="94">upload_particles; ReductionWorkspace; CellListWorkspace; GPUSupportArrays</text>
+    <text class="small" x="150" y="120">MotionArrays and FloatingArrays are inactive; StepState starts with a forced rebuild.</text>
+  </g>
+  <line class="connector" x1="600" y1="2086" x2="600" y2="2108"/>
+  <g id="step-10" class="io" transform="translate(0 2112)">
+    <rect class="card" x="60" width="1080" height="140" rx="14"/>
+    <circle class="badge" cx="104" cy="38" r="25"/><text class="number" x="104" y="45">10</text>
+    <text class="stage-title" x="150" y="38">Prepare output and save the initial particle frame</text>
+    <text class="body" x="150" y="66">Create particle/grid files, two pinned staging buffers and collector/writer tasks.</text>
+    <text class="code" x="150" y="94">SetupVTKOutput; OutputDownload; InitializeLogger; save_particle_data</text>
+    <text class="small" x="150" y="120">Particle frame at t = 0; the empty initial grid call does not write a grid frame.</text>
+  </g>
+  <line class="connector" x1="600" y1="2254" x2="600" y2="2276"/>
+  <g id="step-11" class="cpu" transform="translate(0 2280)">
+    <rect class="card" x="60" width="1080" height="140" rx="14"/>
+    <circle class="badge" cx="104" cy="38" r="25"/><text class="number" x="104" y="45">11</text>
+    <text class="stage-title" x="150" y="38">Start an output interval</text>
+    <text class="body" x="150" y="66">Set the next physical-time deadline; choose cooperative lanes for each particle.</text>
+    <text class="code" x="150" y="94">SimulationLoop -&gt; choose_lanes; next_output_time; set_output_time!</text>
+    <text class="small" x="150" y="120">Checked GPU: 4 lanes/particle; 95 blocks of 128 threads per neighbor pass.</text>
+  </g>
+  <line class="connector" x1="600" y1="2422" x2="600" y2="2444"/>
+  <g id="step-12" class="gpu" transform="translate(0 2448)">
+    <rect class="card" x="60" width="1080" height="140" rx="14"/>
+    <circle class="badge" cx="104" cy="38" r="25"/><text class="number" x="104" y="45">12</text>
+    <text class="stage-title" x="150" y="38">Prime the reduction; request the first cell-list build</text>
+    <text class="body" x="150" y="66">Initial reduction supplies dt limits; the oversized displacement bound stops integration.</text>
+    <text class="code" x="150" y="94">launch_step_reduction! -&gt; reduce_kernel!; finish_kernel! -&gt; STOP_REBUILD</text>
+    <text class="small" x="150" y="120">Startup only: the first attempt builds infrastructure, not a physical time step.</text>
+  </g>
+  <line class="connector" x1="600" y1="2590" x2="600" y2="2612"/>
+  <g id="step-13" class="gpu" transform="translate(0 2616)">
+    <rect class="card" x="60" width="1080" height="140" rx="14"/>
+    <circle class="badge" cx="104" cy="38" r="25"/><text class="number" x="104" y="45">13</text>
+    <text class="stage-title" x="150" y="38">Bin, prefix-scan, sort and reorder particles</text>
+    <text class="body" x="150" y="66">Build candidate cell ranges; initialize fixed predictors and cell-relative positions.</text>
+    <text class="code" x="150" y="94">prepare_cell_grid! -&gt; rebuild_cell_list! -&gt; update_cell_list!</text>
+    <text class="small" x="150" y="120">Histogram/scatter use atomics. This stage repeats only when a rebuild is requested.</text>
+  </g>
+  <line class="connector" x1="600" y1="2758" x2="600" y2="2780"/>
+  <g id="step-14" class="cpu" transform="translate(0 2784)">
+    <rect class="card" x="60" width="1080" height="140" rx="14"/>
+    <circle class="badge" cx="104" cy="38" r="25"/><text class="number" x="104" y="45">14</text>
+    <text class="stage-title" x="150" y="38">Enqueue a batch, usually by CUDA-graph replay</text>
+    <text class="body" x="150" y="66">Estimate up to 32 attempts; reuse captured launch sequences with stable device inputs.</text>
+    <text class="code" x="150" y="94">batch_size -&gt; launch_step_graph! -&gt; enqueue_step!</text>
+    <text class="small" x="150" y="120">Each accepted step is stages 15-19. Attempts after a device stop are no-ops.</text>
+  </g>
+  <line class="connector" x1="600" y1="2926" x2="600" y2="2948"/>
+  <g id="step-15" class="gpu" transform="translate(0 2952)">
+    <rect class="card" x="60" width="1080" height="140" rx="14"/>
+    <circle class="badge" cx="104" cy="38" r="25"/><text class="number" x="104" y="45">15</text>
+    <text class="stage-title" x="150" y="38">Choose dt and check whether the attempt may run</text>
+    <text class="body" x="150" y="66">Combine previous reductions; check deadline and accumulated displacement.</text>
+    <text class="code" x="150" y="94">launch_finish! -&gt; finish_kernel! -&gt; step_reduce / block_reduce</text>
+    <text class="small" x="150" y="120">May set STOP_REBUILD or STOP_OUTPUT. Otherwise the following kernels are active.</text>
+  </g>
+  <line class="connector" x1="600" y1="3094" x2="600" y2="3116"/>
+  <g id="step-16" class="gpu" transform="translate(0 3120)">
+    <rect class="card" x="60" width="1080" height="140" rx="14"/>
+    <circle class="badge" cx="104" cy="38" r="25"/><text class="number" x="104" y="45">16</text>
+    <text class="stage-title" x="150" y="38">FIRST neighbor pass: accepted full state</text>
+    <text class="body" x="150" y="66">Cache pressure/inverse density; gather continuity, diffusion and acceleration.</text>
+    <text class="code" x="150" y="94">enqueue_state_derivative! -&gt; launch_prepare_interactions! / launch_interactions!</text>
+    <text class="small" x="150" y="120">3 rows x 3 cells; circular support test; lane-local sums; warp shuffle; lane zero writes.</text>
+  </g>
+  <line class="connector" x1="600" y1="3262" x2="600" y2="3284"/>
+  <g id="step-17" class="gpu" transform="translate(0 3288)">
+    <rect class="card" x="60" width="1080" height="140" rx="14"/>
+    <circle class="badge" cx="104" cy="38" r="25"/><text class="number" x="104" y="45">17</text>
+    <text class="stage-title" x="150" y="38">Predict the HALF state</text>
+    <text class="body" x="150" y="66">Add gravity; predict positions, velocities and densities over dt/2.</text>
+    <text class="code" x="150" y="94">launch_half_step! -&gt; half_step_kernel!</text>
+    <text class="small" x="150" y="120">Refresh half-state pressure/inverse density and local positions. Fixed walls do not move.</text>
+  </g>
+  <line class="connector" x1="600" y1="3430" x2="600" y2="3452"/>
+  <g id="step-18" class="gpu" transform="translate(0 3456)">
+    <rect class="card" x="60" width="1080" height="140" rx="14"/>
+    <circle class="badge" cx="104" cy="38" r="25"/><text class="number" x="104" y="45">18</text>
+    <text class="stage-title" x="150" y="38">SECOND neighbor pass: predicted half state</text>
+    <text class="body" x="150" y="66">Repeat the same pair physics using half positions, velocities, densities and caches.</text>
+    <text class="code" x="150" y="94">launch_interactions! -&gt; interaction_kernel!</text>
+    <text class="small" x="150" y="120">Overwrite the derivatives with midpoint values; reuse the candidate cell ranges.</text>
+  </g>
+  <line class="connector" x1="600" y1="3598" x2="600" y2="3620"/>
+  <g id="step-19" class="gpu" transform="translate(0 3624)">
+    <rect class="card" x="60" width="1080" height="140" rx="14"/>
+    <circle class="badge" cx="104" cy="38" r="25"/><text class="number" x="104" y="45">19</text>
+    <text class="stage-title" x="150" y="38">Accept the full step and commit time</text>
+    <text class="body" x="150" y="66">Update density/velocity; move x by v_half*dt; reduce next-step limits and displacement.</text>
+    <text class="code" x="150" y="94">launch_final_step! -&gt; final_step_kernel!; launch_commit! -&gt; commit_kernel!</text>
+    <text class="small" x="150" y="120">The 12-block reduction is fused into integration. Another queued attempt returns to 15.</text>
+  </g>
+  <line class="connector" x1="600" y1="3766" x2="600" y2="3788"/>
+  <g id="step-20" class="control" transform="translate(0 3792)">
+    <rect class="card" x="60" width="1080" height="140" rx="14"/>
+    <circle class="badge" cx="104" cy="38" r="25"/><text class="number" x="104" y="45">20</text>
+    <text class="stage-title" x="150" y="38">Read the small batch state and respond</text>
+    <text class="body" x="150" y="66">Transfer time, dt, flags and conditional grid header, not the full particle arrays.</text>
+    <text class="code" x="150" y="94">prepare_cell_grid! -&gt; readback! -&gt; sync_meta_data!</text>
+    <text class="small" x="150" y="120">Rebuild? Do 13. More work? Do 14. Output deadline crossed? Continue to 21.</text>
+  </g>
+  <line class="connector" x1="600" y1="3934" x2="600" y2="3956"/>
+  <g id="step-21" class="control" transform="translate(0 3960)">
+    <rect class="card" x="60" width="1080" height="140" rx="14"/>
+    <circle class="badge" cx="104" cy="38" r="25"/><text class="number" x="104" y="45">21</text>
+    <text class="stage-title" x="150" y="38">Enqueue an output snapshot</text>
+    <text class="body" x="150" y="66">Download positions, selected particle fields and cell IDs into a pinned staging frame.</text>
+    <text class="code" x="150" y="94">LogStep; enqueue_download! -&gt; copy_async!; OutputFrameJob</text>
+    <text class="small" x="150" y="120">Completion event protects the snapshot. Same-stream copies precede later GPU writes.</text>
+  </g>
+  <line class="connector" x1="600" y1="4102" x2="600" y2="4124"/>
+  <g id="step-22" class="io" transform="translate(0 4128)">
+    <rect class="card" x="60" width="1080" height="140" rx="14"/>
+    <circle class="badge" cx="104" cy="38" r="25"/><text class="number" x="104" y="45">22</text>
+    <text class="stage-title" x="150" y="38">Collect, stage and write particles plus occupied cells</text>
+    <text class="body" x="150" y="66">CPU tasks reconstruct pressure and buffer HDF5 writes while the GPU can continue.</text>
+    <text class="code" x="150" y="94">collect_download! -&gt; stage_particle_slot -&gt; write_frame -&gt; flush_frames!</text>
+    <text class="small" x="150" y="120">Grid export bins current snapshot positions. Backpressure waits; frames are not dropped.</text>
+  </g>
+  <line class="connector" x1="600" y1="4270" x2="600" y2="4292"/>
+  <g id="step-23" class="cpu" transform="translate(0 4296)">
+    <rect class="card" x="60" width="1080" height="140" rx="14"/>
+    <circle class="badge" cx="104" cy="38" r="25"/><text class="number" x="104" y="45">23</text>
+    <text class="stage-title" x="150" y="38">Repeat intervals until accepted time is greater than 4.00 s</text>
+    <text class="body" x="150" y="66">If not finished, return to 11. Reuse GPU arrays, graphs and output buffers.</text>
+    <text class="code" x="150" y="94">RunSimulation loop: TotalTime &gt; SimulationTime ? finish : next interval</text>
+    <text class="small" x="150" y="120">Output deadlines are crossed; adaptive dt is not clipped to hit them exactly.</text>
+  </g>
+  <line class="connector" x1="600" y1="4438" x2="600" y2="4460"/>
+  <g id="step-24" class="io" transform="translate(0 4464)">
+    <rect class="card" x="60" width="1080" height="140" rx="14"/>
+    <circle class="badge" cx="104" cy="38" r="25"/><text class="number" x="104" y="45">24</text>
+    <text class="stage-title" x="150" y="38">Drain output, download the final state and finalize</text>
+    <text class="body" x="150" y="66">Wait for workers; flush/close files; update full host state; write visualization state.</text>
+    <text class="code" x="150" y="94">close_output_streams!; download_particles!; finalize_output!</text>
+    <text class="small" x="150" y="120">AutoOpenParaview, LogFinal and AutoOpenLogFile finish one invocation.</text>
+  </g>
+  <rect x="60" y="4634" width="1080" height="113" rx="12" fill="#172b42"/>
+  <text x="82" y="4667" style="fill:#fff;font-size:21px;font-weight:700">The key idea</text>
+  <text x="82" y="4696" style="fill:#e2e8f0;font-size:18px">CPU organizes and saves. GPU gathers nearby-particle contributions twice per step, then integrates.</text>
+  <text x="82" y="4725" style="fill:#cbd5e1;font-size:16px">All active project functions and small helpers are listed in StillWedgeGPUWalkthrough.md at the matching stage.</text>
+  <text x="60" y="4780" class="small">Source-based flow, not a performance timeline. Lane count is hardware-dependent. Full details and exclusions: companion guide.</text>
+</svg>
