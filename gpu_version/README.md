@@ -342,6 +342,58 @@ finalization remains separate because it consumes all blocks' reductions.
 Floating bodies remain supported in both schemes: final rigid placement
 finishes before the next timestep kernel runs.
 
+Control-state readback queues the floating-point and integer downloads into
+pinned host mirrors on the current CUDA stream, then waits once for both.
+The mirrors and device buffers stay GC-rooted through completion; `readback!`
+still returns a complete host state and preserves timestep/stop-flag decisions.
+Pinning failures now propagate from `StepState` construction rather than
+silently falling back to pageable storage.
+
+Run the focused readback checks (both precisions, stream changes, graph replay,
+and rebuild/output stop transitions) from the repository root:
+
+```bash
+julia --project=gpu_version gpu_version/test/step_state.jl
+```
+
+Compare against the original two synchronized `copyto!` calls, changing only
+readback in an otherwise identical driver:
+
+```bash
+julia --project=gpu_version -t 2,0 gpu_version/benchmark/step_state.jl --rounds=61 --duration=4
+```
+
+This benchmark warms both paths twice, alternates their order, and reports
+idle readback latency separately from complete solver time (including setup,
+uploads, graph construction, stepping, and particle/grid output and closing).
+Geometry sampling, host particle allocation, logger creation/closing, and
+output verification are outside the timed `RunSimulation` call.
+Each pair must have identical accepted particle state, exported datasets,
+accepted time, step/rebuild/readback counts. The solver readback timer also
+includes pending device work, so it is not an isolated transfer-latency metric.
+Results go to `benchmark/step_state_results.csv`; `--float64`,
+`--single-neighbor`, and `--no-graph` select additional validation configurations.
+
+On 2026-10-22, Julia 1.12.7 on an RTX A1000 Laptop GPU (driver 596.58)
+measured the following over 61 warmed, alternating pairs:
+
+| Metric | Two synchronized copies | Queued copies, one wait |
+| --- | ---: | ---: |
+| Median idle readback latency | 30.945 microseconds | 17.254 microseconds |
+| Median complete solver time | 0.776225 s | 0.770100 s |
+
+The median paired idle-latency reduction was **45.6%**; the median paired
+complete-run reduction was **0.65%**, with the queued path faster in 46/61
+pairs. The paired total-time ratio IQR was 0.9863-0.9999, with individual
+ratios ranging from 0.9697 to 1.1171 (all samples retained). This is a small,
+workload-specific end-to-end benefit, not a bandwidth or universal speedup
+claim. Every run used 3,027 particles, Float32 physics, Float64 positions,
+symplectic stepping, CUDA graphs, `R = 1`, and 4 s simulated with 0.01 s
+output intervals. Both variants accepted exactly 8,500 steps, 3 rebuilds,
+and **405 readbacks of 20 + 48 bytes**, with identical final particle fields
+and every exported particle/grid dataset. Raw data:
+[step_state_results.csv](benchmark/step_state_results.csv).
+
 Reproduce the warm complete-loop benchmark, including rebuild checks and
 host synchronization, with:
 

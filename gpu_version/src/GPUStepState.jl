@@ -85,12 +85,8 @@ function StepState{T}(; dt = zero(T), time = zero(T), dx = zero(T), iteration::I
     fh[F_DX]   = dx
     fh[F_TOUT] = time
     ih[I_ITER] = iteration
-    try
-        CUDA.pin(fh)
-        CUDA.pin(ih)
-    catch
-        # pinning is an optimisation only
-    end
+    CUDA.pin(fh)
+    CUDA.pin(ih)
     return StepState{T}(CuArray(fh), CuArray(ih), fh, ih, false, 0, false, false,
                         Dict{Tuple{UInt, Int, Int}, CUDA.CuGraphExec}())
 end
@@ -132,12 +128,25 @@ end
 """
     readback!(state) -> state
 
-Copy the device state into the host mirror (`state.fh`, `state.ih`). Waits
-for all previously enqueued work.
+Queue both device-state downloads into the pinned host mirror (`state.fh`,
+`state.ih`) on the current stream, then wait once for completion. Both mirrors
+are complete on return, including prior work producing the device state.
 """
 function readback!(s::StepState)
-    copyto!(s.fh, s.f)
-    copyto!(s.ih, s.i)
+    checkbounds(s.fh, eachindex(s.f))
+    checkbounds(s.ih, eachindex(s.i))
+    CUDA.context!(CUDA.context(s.f)) do
+        GC.@preserve s begin
+            stream = CUDA.stream()
+            try
+                unsafe_copyto!(pointer(s.fh), pointer(s.f), length(s.f); stream, async = true)
+                unsafe_copyto!(pointer(s.ih), pointer(s.i), length(s.i); stream, async = true)
+            finally
+                # Keep the mirrors pinned and device buffers alive until every queued copy completes.
+                CUDA.synchronize(stream)
+            end
+        end
+    end
     s.readbacks += 1
     return s
 end
