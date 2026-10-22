@@ -1837,6 +1837,50 @@ for small changes that make them precision generic (`Float32` literals), the
 julia --project=gpu_version gpu_version/test/runtests.jl
 ```
 
+The time-step and final-step reductions use warp shuffles for Float32/Float64
+`SVector` accumulators in whole-warp blocks, reducing block-wide barriers from
+ten to three for the standard 256-thread launch. The max/min/max operator,
+including infinite force limits, is unchanged; every thread receives the result,
+and consecutive calls can safely reuse shared storage. Other accumulator types
+and partial-warp blocks retain a shared-memory fallback. Neighbor traversal,
+lanes per particle, and kernel launch counts are unchanged.
+
+Run the focused checks for empty/partial/multiple blocks, both precisions,
+infinities, all-thread broadcast, shared-storage reuse, and generic fallback:
+
+```bash
+julia --project=gpu_version gpu_version/test/reductions.jl
+```
+
+Compare warmed, alternating **complete solver runs** (including particle/grid
+output) against the shared-memory tree, with only the reducer changed:
+
+```bash
+julia --project=gpu_version -t 2,0 gpu_version/benchmark/reductions.jl --rounds=15 --duration=20
+```
+
+This requires git revision `629e972` locally. The benchmark checks exact
+accepted particle states and exported HDF5 datasets, and equal step, rebuild,
+readback and accepted-time counts for every pair. It writes unprofiled timings
+to `reductions_results.csv`. Use `--float64`, `--single-neighbor`, `--no-graph`,
+`--dx=spacing`, or `--output=path` to select other validation paths. A smaller
+isolated reduction time alone does not establish a solver speedup.
+
+On an NVIDIA RTX A1000 Laptop GPU with Julia 1.12.7, a 20-second generated
+wedge (3,027 particles, Float32 physics / Float64 positions, symplectic,
+CUDA graphs, `R = 1`) was **1.20% faster by median paired complete-run time**
+across 15 alternating pairs (warp/tree ratio 0.9880; faster in 13/15 pairs).
+Every pair retained exactly 42,470 accepted steps, six rebuilds, 1,407 state
+readbacks, and identical accepted states and exported datasets. Individual
+ratios ranged from 0.9550 to 1.0238: this is a modest, hardware/workload-specific
+gain, not a guaranteed speedup for every run.
+The corresponding four-second Float64 graph workload remained bitwise
+equivalent, but its median complete-run time was 0.38% slower across seven
+pairs (ratio 1.0038); no Float64 speedup was established on this GPU.
+A short 0.2-second Float64 single-neighbor/direct-launch check also matched
+exactly, but was 1.66% slower by median across three pairs; it is too short to
+establish a reliable performance difference.
+
 The suite checks the grid helpers and reductions, bitwise reproducibility,
 `Float32` sanity, the cell relative pair vectors and the double position
 mode (including a case translated by 10 000 m), and runs four cases (2D

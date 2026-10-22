@@ -50,11 +50,16 @@ end
 """
     block_reduce(acc, op) -> V
 
-Reduce the per thread accumulators `acc` of the current block with `op`
-through shared memory. Must be called by all threads of a block of exactly
-`REDUCE_THREADS` threads; every thread receives the block result.
+Reduce the per thread accumulators `acc` of the current block with an
+associative, commutative `op`. Must be called by all threads of a one-dimensional
+block of at most `REDUCE_THREADS` threads; every thread receives the block
+result. Float32/Float64 `SVector` accumulators use warp shuffles for whole-warp
+blocks; other types and partial-warp blocks use a shared-memory tree.
+Shared storage is safe to reuse immediately after the call.
 """
-@inline function block_reduce(acc::V, op::O) where {V, O}
+@inline block_reduce(acc, op) = block_reduce_shared(acc, op)
+
+@inline function block_reduce_shared(acc::V, op::O) where {V, O}
     tid = threadIdx().x
     shmem = CuStaticSharedArray(V, REDUCE_THREADS)
     @inbounds shmem[tid] = acc
@@ -62,7 +67,7 @@ through shared memory. Must be called by all threads of a block of exactly
 
     s = Int32(REDUCE_THREADS ÷ 2)
     while s >= Int32(1)
-        if tid <= s
+        if tid <= s && tid + s <= blockDim().x
             @inbounds shmem[tid] = op(shmem[tid], shmem[tid + s])
         end
         sync_threads()
@@ -70,6 +75,53 @@ through shared memory. Must be called by all threads of a block of exactly
     end
 
     @inbounds r = shmem[1]
+    sync_threads()
+    return r
+end
+
+@inline warp_shuffle_down(acc::SVector, offset) =
+    map(value -> CUDA.shfl_down_sync(0xffffffff, value, offset), acc)
+
+@inline function warp_reduce(acc::SVector, op::O, lane, count) where {O}
+    offset = Int32(16)
+    while offset >= Int32(1)
+        if offset < count
+            other = warp_shuffle_down(acc, offset)
+            if count == Int32(32) || lane + offset <= count
+                acc = op(acc, other)
+            end
+        end
+        offset ÷= Int32(2)
+    end
+    return acc
+end
+
+@inline function block_reduce(acc::SVector{N,T}, op::O) where {N,T<:Union{Float32,Float64},O}
+    blockDim().x % Int32(32) == Int32(0) || return block_reduce_shared(acc, op)
+    tid = threadIdx().x
+    lane = (tid - Int32(1)) % Int32(32) + Int32(1)
+    warp = (tid - Int32(1)) ÷ Int32(32) + Int32(1)
+    nwarps = blockDim().x ÷ Int32(32)
+    shmem = CuStaticSharedArray(SVector{N,T}, REDUCE_THREADS ÷ 32)
+
+    acc = warp_reduce(acc, op, lane, Int32(32))
+    if lane == Int32(1)
+        @inbounds shmem[warp] = acc
+    end
+    sync_threads()
+
+    if warp == Int32(1)
+        if lane <= nwarps
+            @inbounds acc = shmem[lane]
+        end
+        acc = warp_reduce(acc, op, lane, nwarps)
+        if lane == Int32(1)
+            @inbounds shmem[1] = acc
+        end
+    end
+    sync_threads()
+    @inbounds r = shmem[1]
+    # Every reader must finish before a subsequent reduction reuses this storage.
     sync_threads()
     return r
 end
@@ -89,7 +141,7 @@ end
 end
 
 # Every thread reduces a strided subset of the elements into a register, the
-# block then reduces through shared memory and writes a single value.
+# block then reduces and writes a single value.
 function reduce_kernel!(partial, f::F, op::O, init, n::Int32, args...) where {F, O}
     i = (blockIdx().x - Int32(1)) * blockDim().x + threadIdx().x
     stride = blockDim().x * gridDim().x
