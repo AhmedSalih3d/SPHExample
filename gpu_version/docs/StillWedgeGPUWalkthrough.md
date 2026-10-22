@@ -4,6 +4,12 @@ This guide follows the default call to [`run_still_wedge`](../example/StillWedge
 
 **Visual:** [open the top-to-bottom diagram](StillWedgeGPUFlow.svg).
 
+**Detailed code visual:** [open the execution-backed source view](StillWedgeGPUCodeTrace.html)
+in a browser for the same 24 stages with literal code, source line numbers,
+expandable helpers, CPU instrumentation counters and recorded GPU entries.
+It clearly separates observed execution evidence from source context and
+device branches that were not line-traced.
+
 **Every package subfunction:** the [complete source-definition index](StillWedgeGPUFunctionIndex.md) includes all GPU package source files, local functions, explicit anonymous callbacks, method overloads, macros and type/constructor declarations, including features this example does not activate. The numbered explanation below recursively covers the selected execution path; the index is not a claim that every package feature runs in StillWedge.
 
 ![Linear CPU, GPU and output flow for StillWedge](StillWedgeGPUFlow.svg)
@@ -21,7 +27,8 @@ The diagram is a source-based execution explanation, **not a measured GPU timeli
 * The existing StillWedge geometry/hydrostatic-density tests passed **94 assertions**.
 * An isolated short GPU run of the same 3,027-particle configuration passed **33 assertions**, using a temporary output directory, no external application launches, a 0.002 s end-time target and 0.0005 s output deadlines.
 * That short run accepted five symplectic steps, rebuilt the cell list once into a `32 x 13` grid, cached two step graphs, and wrote five particle frames and four grid frames. Fixed positions/velocities, density floors, IDs, finite state, output variables/times, finalization and the ignored missing normals path were checked.
-* This is **not** a full four-second numerical-validation or performance campaign. The normal example output folder was not used and no simulation implementation was changed.
+* The separate [execution-backed code visual](StillWedgeGPUCodeTrace.html) records one complete 4.00 s invocation with the original physics/output interval: **8,500 accepted steps**, **401 particle frames**, **400 grid frames**, **64,836 GPU device events**, and CPU line counters across 22 source files. It verifies final finite state, fixed particles, IDs, frame data/times, source hashes and kernel-entry count relationships. External application launches are disabled and output goes to a temporary directory.
+* These checks are **not** a numerical-convergence or performance campaign. The normal example output folder was not used and no simulation implementation was changed. Profiler timings and CPU line counters have instrumentation overhead; GPU kernel entries are not per-thread line coverage.
 
 ### Important details of this exact script
 

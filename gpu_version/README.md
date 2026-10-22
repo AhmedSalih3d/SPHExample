@@ -39,6 +39,13 @@ interaction passes and asynchronous output, see the
 [complete package-function index](docs/StillWedgeGPUFunctionIndex.md) includes
 local subfunctions, callbacks and inactive branches.
 
+For literal source code under each stage, CPU line-hit evidence, and a
+chronological recording of GPU kernel entries, open the standalone
+[StillWedge execution-backed code visual](docs/StillWedgeGPUCodeTrace.html)
+in a browser. It includes expandable helper implementations and the complete
+function index. Recorded kernel entries are distinguished from accepted
+physical steps and from unmeasured per-thread GPU branches.
+
 ### Choosing the mDBC formulation
 
 The fifth `SimulationMetaData` type parameter selects the boundary formulation:

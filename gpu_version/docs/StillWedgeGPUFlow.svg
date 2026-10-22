@@ -281,5 +281,7 @@
   <text x="82" y="4667" style="fill:#fff;font-size:21px;font-weight:700">The key idea</text>
   <text x="82" y="4696" style="fill:#e2e8f0;font-size:18px">CPU organizes and saves. GPU gathers nearby-particle contributions twice per step, then integrates.</text>
   <text x="82" y="4725" style="fill:#cbd5e1;font-size:16px">All active project functions and small helpers are listed in StillWedgeGPUWalkthrough.md at the matching stage.</text>
-  <text x="60" y="4780" class="small">Source-based flow, not a performance timeline. Lane count is hardware-dependent. Full details and exclusions: companion guide.</text>
+  <a href="StillWedgeGPUCodeTrace.html" aria-label="Open the detailed execution-backed code visual">
+    <text x="60" y="4780" class="small" style="fill:#155ea2;text-decoration:underline">Open the detailed code visual: literal source, CPU line hits, helper implementations and recorded GPU entries.</text>
+  </a>
 </svg>
