@@ -3,10 +3,16 @@
 # julia --project=. benchmark/performance_investigation.jl profile
 using SPHExampleGPU, CUDA, StaticArrays, LinearAlgebra, Statistics, Printf, HDF5, SHA
 include(joinpath(@__DIR__, "cases.jl"))
-include(joinpath(@__DIR__, "..", "example", "GenerateStillWedgeMDBC.jl"))
-const CYLINDER_GENERATOR = joinpath(@__DIR__, "..", "example", "GenerateFloatingCylinder2D.jl")
-# Load geometry definitions without running the example's file exports.
-include_string(Main, first(split(read(CYLINDER_GENERATOR, String), "\noutput_dir = ")), CYLINDER_GENERATOR)
+let path = joinpath(@__DIR__, "..", "example", "StillWedgeMDBC.jl")
+    source = read(path, String)
+    source = replace(source, r"\r?\n# Including this file starts the simulation\.[\s\S]*\z" => "\n")
+    include_string(@__MODULE__, source, path)
+end
+let path = joinpath(@__DIR__, "..", "example", "FloatingCylinder2d.jl")
+    source = read(path, String)
+    source = replace(source, r"\r?\n# Including this file starts the simulation\.[\s\S]*\z" => "\n")
+    include_string(@__MODULE__, source, path)
+end
 
 function generated_wedge(::Type{T}, save) where {T}
     constants = SimulationConstants{T}(dx = 0.02, c₀ = 42.48576250492629, δᵩ = 0.1, CFL = 0.5)

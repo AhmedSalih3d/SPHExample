@@ -6,7 +6,11 @@ using Statistics
 using Printf
 using TimerOutputs
 
-include(joinpath(@__DIR__, "..", "example", "StillWedgeMDBC.jl"))
+let path = joinpath(@__DIR__, "..", "example", "StillWedgeMDBC.jl")
+    source = read(path, String)
+    source = replace(source, r"\r?\n# Including this file starts the simulation\.[\s\S]*\z" => "\n")
+    include_string(@__MODULE__, source, path)
+end
 
 const ORIGINAL_WEDGE_REVISION = "2167212"
 const WEDGE_SOURCE_DIR = normpath(joinpath(@__DIR__, "..", "src"))

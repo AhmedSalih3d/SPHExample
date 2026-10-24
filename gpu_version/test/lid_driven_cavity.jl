@@ -3,7 +3,11 @@ using SPHExampleGPU
 using Meshes
 using StaticArrays: SVector
 
-include(joinpath(@__DIR__, "..", "example", "LidDrivenCavity2d.jl"))
+let path = joinpath(@__DIR__, "..", "example", "LidDrivenCavity2d.jl")
+    source = read(path, String)
+    source = replace(source, r"\r?\n# Including this file starts the simulation\.[\s\S]*\z" => "\n")
+    include_string(@__MODULE__, source, path)
+end
 
 @testset "Lid-driven cavity" begin
     dx = 0.05

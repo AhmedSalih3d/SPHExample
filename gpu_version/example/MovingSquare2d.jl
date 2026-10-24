@@ -1,20 +1,18 @@
 # GPU version of example/MovingSquare2d.jl. Requires an NVIDIA GPU with CUDA.
 #
-# Run from the repository root with:
+# Particles are generated in this file, then the GPU solver runs.
+# Including or running this file starts the simulation:
 #     julia --project=gpu_version gpu_version/example/MovingSquare2d.jl
-#
-# Particle generation runs below; optional CSV export (no GPU required):
-#     julia --project=gpu_version gpu_version/example/GenerateMovingSquare2D.jl
 #
 # FloatType = Float32 is usually 2-4x faster than Float64 on consumer and
 # laptop GPUs (their double precision throughput is low); Float64 reproduces
 # the CPU results to round-off.
 import StaticArrays: SVector
 using SPHExampleGPU
+using Meshes
 using StructArrays
-include(joinpath(@__DIR__, "GenerateMovingSquare2D.jl"))
 
-let
+function run_moving_square_2d()
     Dimensions = 2
     FloatType = Float32
 
@@ -131,3 +129,133 @@ let
         SimTimeStepping = SymplecticTimeStepping(),
     )
 end
+
+"""
+    moving_square_2d_polygons(; tank_width = 10.0, tank_height = 5.0,
+                               wall_thickness = 0.04,
+                               square_lower_left = (1.0, 2.0), square_size = 1.0)
+
+Return the closed tank, fluid region and initial moving square as `PolyArea`s,
+in metres. The tank wall is a rectangular shell drawn outside the fluid domain
+with `outline`; the fluid polygon has the square as a hole so fluid particles
+do not overlap the moving body.
+"""
+function moving_square_2d_polygons(;
+    tank_width = 10.0,
+    tank_height = 5.0,
+    wall_thickness = 0.04,
+    square_lower_left = (1.0, 2.0),
+    square_size = 1.0,
+)
+    if !(tank_width > 0 && tank_height > 0 && wall_thickness > 0 && square_size > 0)
+        throw(
+            ArgumentError(
+                "tank dimensions, wall thickness, and square size " * "must be positive",
+            ),
+        )
+    end
+
+    square_x, square_y = square_lower_left
+    if !(
+        0 < square_x &&
+        square_x + square_size < tank_width &&
+        0 < square_y &&
+        square_y + square_size < tank_height
+    )
+        throw(ArgumentError("the moving square must be strictly inside the tank"))
+    end
+
+    domain = rectangle((0.0, 0.0), tank_width, tank_height)
+    tank = outline(domain; thickness = wall_thickness, side = :outward)
+    body = square(square_lower_left, square_size)
+    water = polygon(domain; holes = [body])
+
+    return (; tank, water, square = body)
+end
+
+"""
+    generate_moving_square_2d_example(output_dir; dx = 0.02,
+        SimConstants = SimulationConstants{Float64}(; dx, c₀ = 28, g = 0))
+
+Write the polygons (`MovingSquare2D_Geometry.vtkhdf`), sampled particles
+(`MovingSquare2D_Dp<dx>_Particles.vtkhdf`), CSV input files and a ParaView
+motion preview (`MovingSquare2D_Motion.vtkhdf`) to `output_dir`.
+
+All particles start at `ρ₀`, matching the zero-gravity moving-square case.
+Pass the simulation's `SimConstants` to use its reference density.
+Returns the sampled particles per region, with their densities.
+"""
+function generate_moving_square_2d_example(
+    output_dir;
+    dx = 0.02,
+    SimConstants = SimulationConstants{Float64}(; dx, c₀ = 28, g = 0),
+)
+    dx > 0 || throw(ArgumentError("particle spacing dx must be positive"))
+
+    polygons = moving_square_2d_polygons()
+    regions = [
+        ParticleRegion("Fixed", polygons.tank, Fixed),
+        ParticleRegion("Square", polygons.square, Moving),
+        ParticleRegion("Fluid", polygons.water, Fluid),
+    ]
+    sampled = sample_particles(regions, dx)
+    particles = map(sampled) do region
+        density = fill(SimConstants.ρ₀, length(region.positions))
+        (; region..., density)
+    end
+
+    mkpath(output_dir)
+    prefix = joinpath(output_dir, "MovingSquare2D_Dp$(dx)")
+    SavePolygonVTKHDF(joinpath(output_dir, "MovingSquare2D_Geometry.vtkhdf"), polygons)
+
+    next_id = 0
+    for region in particles
+        next_id = write_particle_csv(
+            "$(prefix)_$(region.name).csv",
+            region.positions;
+            density = region.density,
+            first_id = next_id,
+        )
+    end
+
+    (; ρ₀, c₀) = SimConstants
+    group_markers = Dict("Fixed" => 1, "Fluid" => 2, "Square" => 3)
+    positions = SVector{3, Float64}[]
+    density   = Float64[]
+    types     = Int8[]
+    markers   = Int[]
+    for region in particles
+        append!(positions, to_3d(region.positions))
+        append!(density, region.density)
+        append!(types, fill(Int8(region.type), length(region.positions)))
+        append!(markers, fill(group_markers[region.name], length(region.positions)))
+    end
+    pressure = EquationOfStateGamma7.(density, c₀, ρ₀)
+    SaveVTKHDF(
+        "$(prefix)_Particles.vtkhdf",
+        positions,
+        ["Density", "Pressure", "Type", "GroupMarker"],
+        density,
+        pressure,
+        types,
+        markers,
+    )
+
+    preview_motion = MotionDetails{2, Float64}(
+        Velocity = 2.8,
+        StartTime = 0.0,
+        Duration = 3.0,
+        Direction = SVector{2, Float64}(1.0, 0.0),
+    )
+    SavePolygonMotionSequence(
+        joinpath(output_dir, "MovingSquare2D_Motion.vtkhdf"),
+        (; tank = polygons.tank, square = polygons.square);
+        motions = (; square = preview_motion),
+        times = 0.0:0.1:3.0,
+    )
+
+    return particles
+end
+
+# Including this file starts the simulation.
+run_moving_square_2d()

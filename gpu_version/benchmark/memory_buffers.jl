@@ -3,7 +3,11 @@ module GPUMemoryBenchmark
 using SPHExampleGPU, CUDA, StaticArrays, Printf
 using SPHExampleGPU.SimulationLoggerConfiguration: device_buffer_bytes, host_particle_bytes
 
-include(joinpath(@__DIR__, "..", "example", "GenerateStillWedgeMDBC.jl"))
+let path = joinpath(@__DIR__, "..", "example", "StillWedgeMDBC.jl")
+    source = read(path, String)
+    source = replace(source, r"\r?\n# Including this file starts the simulation\.[\s\S]*\z" => "\n")
+    include_string(@__MODULE__, source, path)
+end
 
 function generated_wedge_case(::Type{T}, save; dx = 0.02) where {T}
     constants = SimulationConstants{T}(; dx, c₀ = 42.48576250492629, δᵩ = 0.1, CFL = 0.5)

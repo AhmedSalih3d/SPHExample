@@ -21,17 +21,17 @@ using CUDA
             source = read(path, String)
             source = replace(source, r"SaveLocation\s*=\s*\x22[^\x22]*\x22" =>
                 "SaveLocation = " * repr(dir))
-            Base.include_string(scope, source, path)
             if name == "StillWedgeMDBC"
-                @test Base.invokelatest(getproperty, scope, :captured)[] === nothing
-                Base.invokelatest(Base.invokelatest(getproperty, scope, :run_still_wedge);
-                    save_location = dir, visualize = false, open_log_file = false)
+                source = replace(source, r"run_still_wedge\(\)\s*\z" =>
+                    "run_still_wedge(; save_location = $(repr(dir)), visualize = false, open_log_file = false)\n")
             elseif name == "LidDrivenCavity2d"
-                Base.invokelatest(Base.invokelatest(getproperty, scope, :run_lid_driven_cavity_2d);
-                    dx = 0.05, simulation_time = 0.01,
-                    visualize = false, open_log_file = false, save_location = dir,
-                    input_dir = joinpath(dir, "does_not_exist"))
+                source = replace(source, r"\r?\n# Including this file starts the simulation\.[\s\S]*\z" =>
+                    "\nrun_lid_driven_cavity_2d(; dx = 0.05, simulation_time = 0.01, " *
+                    "visualize = false, open_log_file = false, save_location = $(repr(dir)), " *
+                    "input_dir = $(repr(joinpath(dir, "does_not_exist"))))\n")
             end
+            # Including the example starts its simulation.
+            Base.include_string(scope, source, path)
             inputs = Base.invokelatest(getproperty, scope, :captured)[]
             @test inputs !== nothing
             @test all(geom -> isempty(geom.CSVFile), inputs.SimGeometry)

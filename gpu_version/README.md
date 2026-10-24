@@ -196,9 +196,9 @@ geometries can be reused without being changed by a run.
 Existing `CSVFile = path` calls remain supported: they load the `StructArray`
 once when constructing the geometry, preserving CSV position precision and
 converting zero based IDs. Allocation no longer reads files. The StillWedge
-and other examples with generators sample particles inside their main run files.
-Their previous `CSVFile` settings remain commented out, and standalone generators
-remain available for CSV/VTKHDF export.
+and other generated examples sample particles inside the same file that runs
+the solver. Including or running that file starts the simulation. Their
+previous `CSVFile` settings remain commented out.
 The first-region ownership rule applies only when all regions are passed to
 `sample_particles` together; CSV loading preserves every row, including
 coincident positions. `write_particle_csv` writes coordinates and densities as
@@ -209,19 +209,19 @@ group also supports a run entirely from memory; cavity and 2D dam break use this
 
 ### Generating a case from polygons (StillWedge 2D)
 
-`example/GenerateStillWedgeMDBC.jl` builds the 2D still wedge case from
-Meshes.jl `PolyArea`s instead of hand made CSV files. It needs no GPU and runs
-no simulation. From the repository root:
+`example/StillWedgeMDBC.jl` generates the 2D still-wedge particles in memory and
+runs the GPU solver. Including the file does the same thing. From the
+repository root:
 
 ```bash
-julia --project=gpu_version gpu_version/example/GenerateStillWedgeMDBC.jl [output_dir] [dx]
+julia --project=gpu_version gpu_version/example/StillWedgeMDBC.jl
 ```
 
 The tank is one polygon (floor and walls of 0.04 m carrying a hollow 45°
 wedge with its tip at `(1.1, 0.26)` m; the inner V of the wedge shell continues
 through the floor, so there is no boundary below the wedge), the water a
-second polygon up to 0.5 m. The script writes to `output_dir` (default
-`input/still_wedge_generated/`):
+second polygon up to 0.5 m. The default run keeps those particles in memory.
+`generate_still_wedge_2d_example` can still write them to an output directory:
 
 * `StillWedge2D_Geometry.vtkhdf` – polygon cells with a `Region` cell array
   (`1` = tank, `2` = water); concave and holed faces are triangulated;
@@ -259,13 +259,12 @@ lives in `src/ProduceHDFVTK.jl`. The geometry tests run without a GPU:
 
 ### Generating the middle-square still-wedge geometry
 
-`example/GenerateStillWedgeMiddleSquareMDBC.jl` builds the tank, hollow wedge,
-water and fixed central block from `Meshes.jl` polygons, then uses the package's
-`ParticleRegion`, `sample_particles` and hydrostatic initialization tools. It
-does not read input CSVs, run a simulation or need a GPU:
+`example/StillWedgeMiddleSquareMDBC.jl` generates the tank, hollow wedge,
+water and fixed central block in memory and runs the GPU solver. Including
+the file does the same thing. It does not read input CSVs:
 
 ```bash
-julia --project=gpu_version gpu_version/example/GenerateStillWedgeMiddleSquareMDBC.jl [output_dir] [dx]
+julia --project=gpu_version gpu_version/example/StillWedgeMiddleSquareMDBC.jl
 ```
 
 The tank and wedge use the StillWedge dimensions above. The fixed block is
@@ -298,15 +297,12 @@ Float64 positions, Float32 force calculations, boundary forces, and its
 retained. Despite the filename, this generated example selects `NoMDBC`
 (the DBC path). Its
 8 MB output queue avoids allocating the default 256 MB for this small case.
-Importing `GenerateStillWedgeMDBC.jl` loads its helpers without writing input
-files; run that script directly when you want the geometry exports.
-
-Including `example/StillWedgeMDBC.jl` defines `run_still_wedge` without starting
-a simulation. Running that script directly uses the symplectic default:
+Including or running `example/StillWedgeMDBC.jl` defines `run_still_wedge` and
+starts the symplectic case. Do not call `run_still_wedge()` again after
+`include`; that starts a second run.
 
 ```julia
 include("gpu_version/example/StillWedgeMDBC.jl")
-run_still_wedge()
 ```
 
 The same-workload benchmark compares the original example, cleanup, interaction
@@ -600,14 +596,12 @@ MovingSquare2D. Use the benchmark above to measure the current implementation.
 
 ### Generating the 2D DamBreak case
 
-`example/GenerateDamBreak2DMDBC.jl` builds the 2D dam-break tank and its
-initial water column from `Meshes.jl` polygons. It uses the same lattice
-sampling and hydrostatic initialization as the StillWedge generator, writes
-CSV files for `SPHGeometry`, and writes VTKHDF files for ParaView. It needs no
-GPU and does not run a simulation:
+`example/Dambreak2dMDBC.jl` generates the 2D dam-break particles in memory and
+runs the GPU solver. Including the file does the same thing. It uses the same
+lattice sampling and hydrostatic initialization as the StillWedge example:
 
 ```bash
-julia --project=gpu_version gpu_version/example/GenerateDamBreak2DMDBC.jl [output_dir] [dx]
+julia --project=gpu_version gpu_version/example/Dambreak2dMDBC.jl
 ```
 
 The default geometry is a 4 m × 3 m tank with 0.06 m walls and a 1 m × 2 m
@@ -617,23 +611,17 @@ pass a simulation's `SimConstants` to
 
 ### Generating the 2D MovingSquare case
 
-`example/GenerateMovingSquare2D.jl` builds the closed tank, fluid and moving
-square from `Meshes.jl` polygons. The tank is 10 m × 5 m with 0.04 m walls;
-the 1 m square starts at `(1, 2)` m. The generator needs no GPU and does not
-run a simulation:
+`example/MovingSquare2d.jl` generates the closed tank, fluid and moving square
+in memory and runs the GPU solver. Including the file does the same thing.
+The tank is 10 m × 5 m with 0.04 m walls; the 1 m square starts at `(1, 2)` m:
 
 ```bash
-julia --project=gpu_version gpu_version/example/GenerateMovingSquare2D.jl [output_dir] [dx]
 julia --project=gpu_version gpu_version/example/MovingSquare2d.jl
 ```
 
-The first command writes to `gpu_version/input/moving_square_2d_generated/`
-by default. It creates VTKHDF files for the polygons, particles and prescribed
-motion sequence, plus `Fixed`, `Fluid` and `Square` CSV files for optional file
-input. It opens the motion preview in ParaView when `paraview` is on `PATH`.
-This generator does not run the
-simulation or need a GPU. The simulation samples its own particles at its
-configured `dx`; the CSV export is optional.
+The example samples particles at its configured `dx` and opens a motion preview
+in ParaView when `paraview` is on `PATH`. `generate_moving_square_2d_example`
+can still write CSV and VTKHDF files, but including the example starts the solver.
 
 To preview a prescribed motion before running the simulation, write a temporal
 VTKHDF `PolyData` file. `motions` maps region names to `MotionDetails`, and
@@ -668,8 +656,9 @@ it does not predict fluid interactions.
 
 ### 2D lid-driven cavity (Re = 100)
 
-`example/GenerateLidDrivenCavity2D.jl` and
-`example/LidDrivenCavity2d.jl` set up the square, fluid-filled cavity from the
+`example/LidDrivenCavity2d.jl` generates the cavity particles and ghost nodes
+in memory and runs the GPU solver. Including the file does the same thing.
+It sets up the square, fluid-filled cavity from the
 Rocky 2025 R1 SPH verification manual. The cavity is 1 m × 1 m; the bottom
 and side walls are stationary, while the top boundary moves at 1 m/s in `+x`
 without changing its position. The lid spans the complete 1.1 m outside width
@@ -718,19 +707,13 @@ the centreline profiles agree with Ghia, Ghia & Shin (1982) to within
 `0.016 U` for `u(y)` on `x = 0.5` and `0.017 U` for `v(x)` on `y = 0.5`.
 
 ```bash
-julia --project=gpu_version gpu_version/example/GenerateLidDrivenCavity2D.jl
 julia --project=gpu_version gpu_version/example/LidDrivenCavity2d.jl
 ```
 
-Both scripts accept an optional output directory and `dx`; the simulation
-script additionally accepts a duration:
-`[save_dir] [dx] [duration]`. Its former `input_dir` argument remains available
-for the commented CSV configuration. From the Julia REPL, `include` the
-simulation script and call `run_lid_driven_cavity_2d()`. Particles and ghost nodes
-are sampled in that function; running the export script is optional. Exported inputs go to
-`gpu_version/input/lid_driven_cavity_2d_generated/` by default. The simulation
-writes velocity, density and pressure frames to
-`C:\TestSimulations\LidDrivenCavity2D_GPU` by default.
+Including that file also starts the run. Optional arguments are
+`[save_dir] [dx] [duration] [input_dir]`. Particles and ghost nodes are sampled
+in `run_lid_driven_cavity_2d`. The simulation writes velocity, density and
+pressure frames to `C:\TestSimulations\LidDrivenCavity2D_GPU` by default.
 
 ### Floating bodies: the 2D falling cylinder and 3D rigid bodies
 
@@ -817,8 +800,9 @@ Both runs rebuilt 23 times; the final body centres differed by 0.000378 m
 at 0.2 s simulated time. The physics and graph tests cover both schemes, including
 pause/release, buoyancy, rigid placement, and 3D gyroscopic derivatives.
 
-`example/GenerateFloatingCylinder2D.jl` and `example/FloatingCylinder2d.jl`
-reproduce DualSPHysics `examples/main/11_Floating/CaseFloatingSphereVal2D`.
+`example/FloatingCylinder2d.jl` generates the falling-cylinder particles in
+memory and runs the GPU solver. Including the file does the same thing. It
+reproduces DualSPHysics `examples/main/11_Floating/CaseFloatingSphereVal2D`.
 A cylinder of radius 1 m and relative weight 1.2 starts half submerged in a
 10 m wide, 14 m deep tank and sinks after a 1 s pause. The case uses
 `dp = 0.025`, `coefh = 1.2`, laminar + SPS viscosity, density diffusion 0.1,
@@ -828,7 +812,6 @@ A cylinder of radius 1 m and relative weight 1.2 starts half submerged in a
   rather than on the lattice.
 
 ```bash
-julia --project=gpu_version gpu_version/example/GenerateFloatingCylinder2D.jl [output_dir] [dx]
 julia --project=gpu_version gpu_version/example/FloatingCylinder2d.jl
 ```
 

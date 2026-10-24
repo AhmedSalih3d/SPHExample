@@ -1,7 +1,11 @@
 using SPHExampleGPU, CUDA, StaticArrays, LinearAlgebra, Statistics, Printf, HDF5, SHA, TimerOutputs
 
 include(joinpath(@__DIR__, "cases.jl"))
-include(joinpath(@__DIR__, "..", "example", "GenerateStillWedgeMDBC.jl"))
+let path = joinpath(@__DIR__, "..", "example", "StillWedgeMDBC.jl")
+    source = read(path, String)
+    source = replace(source, r"\r?\n# Including this file starts the simulation\.[\s\S]*\z" => "\n")
+    include_string(@__MODULE__, source, path)
+end
 
 const RADIAL_BASELINE_REVISION = "911a76c"
 

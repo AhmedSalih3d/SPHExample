@@ -34,7 +34,7 @@ The diagram is a source-based execution explanation, **not a measured GPU timeli
 
 * **The filename is not the boundary configuration.** [`StillWedgeMDBC.jl`](../example/StillWedgeMDBC.jl#L54) selects `NoMDBC`. It runs ordinary dynamic boundary conditions (DBC), not ghost-node mDBC. The normals-file argument is consequently ignored.
 * **The default time integrator is symplectic:** two neighbor evaluations per accepted step. Although the metadata constructor has a single-neighbor default, the example passes `SymplecticTimeStepping()` and the driver replaces that metadata field.
-* **Direct execution currently runs the case twice.** The guarded call at the bottom is followed by an unconditional [`run_still_wedge()`](../example/StillWedgeMDBC.jl). Running the script directly executes both; including it executes the unconditional call. The second run reopens the same log and cleans/recreates the VTKHDF outputs. This guide explains one invocation; it does not change the script.
+* **Including or running the file starts the case once.** The bottom call is [`run_still_wedge()`](../example/StillWedgeMDBC.jl#L13). It is not limited to direct execution.
 * **Radial interactions are enabled.** For linear density diffusion, this changes the reference diffusion operator to symmetric reciprocal-density weighting, not just the rounding or speed.
 * **A deadline is crossed, not landed on exactly.** The device tests `time > output_deadline`; it does not shorten `dt` to land on an output time or on the final time.
 
@@ -63,13 +63,13 @@ The fixed wedge does not move or float. "Still" describes an initially resting f
 
 ## 01. Enter the example [CPU, once]
 
-[`SPHExampleGPU`](../src/SPHExampleGPU.jl#L1) is loaded. Its module-level `foreach(include, submodules)` loads the implementation modules, and the example includes the geometry-generator script.
+[`SPHExampleGPU`](../src/SPHExampleGPU.jl#L1) is loaded. Its module-level `foreach(include, submodules)` loads the implementation modules. Polygon sampling lives in this same example file, and the bottom call starts the solver.
 
-[`run_still_wedge`](../example/StillWedgeMDBC.jl#L13) supplies the default symplectic integrator, end time, save location and visualization/log-opening switches. The generator file defines its functions, but its own direct-execution guard is false when included by this example.
+[`run_still_wedge`](../example/StillWedgeMDBC.jl#L13) supplies the default symplectic integrator, end time, save location and visualization/log-opening switches. It samples [`still_wedge_2d_polygons`](../example/StillWedgeMDBC.jl#L166) in memory. [`generate_still_wedge_2d_example`](../example/StillWedgeMDBC.jl#L233) and [`still_wedge_2d_geometry`](../example/StillWedgeMDBC.jl#L310) are defined here but are not called by that default run.
 
-**Functions / constructors encountered:** [`run_still_wedge`, `SymplecticTimeStepping`](../example/StillWedgeMDBC.jl#L13). Loading uses Julia's `using`, `include`, `foreach`, `joinpath` and the `abspath` guard.
+**Functions / constructors encountered:** [`run_still_wedge`, `SymplecticTimeStepping`](../example/StillWedgeMDBC.jl#L13). Loading uses Julia's `using`, `foreach`, `joinpath` and the `abspath` guard.
 
-The generator's [`generate_still_wedge_2d_example`](../example/GenerateStillWedgeMDBC.jl#L100) and [`still_wedge_2d_geometry`](../example/GenerateStillWedgeMDBC.jl#L181) are **not called** by this script. No intermediate particle CSVs or polygon-preview files are generated here.
+[`generate_still_wedge_2d_example`](../example/StillWedgeMDBC.jl#L233) and [`still_wedge_2d_geometry`](../example/StillWedgeMDBC.jl#L310) are defined in this file but are **not called** by `run_still_wedge`. No intermediate particle CSVs or polygon-preview files are generated here.
 
 ## 02. Construct physical constants [CPU, once]
 
@@ -83,14 +83,14 @@ No GPU is doing physics yet.
 
 ## 03. Describe the tank and water as polygons [CPU, once]
 
-[`still_wedge_2d_polygons`](../example/GenerateStillWedgeMDBC.jl#L33) returns two Meshes.jl `PolyArea`s:
+[`still_wedge_2d_polygons`](../example/StillWedgeMDBC.jl#L166) returns two Meshes.jl `PolyArea`s:
 
 1. `tank`: side walls, floor and hollow wedge shell, represented by one outline.
 2. `water`: the water region above the floor and around, not inside, the wedge.
 
 The nominal free-surface outline is at 0.5 m. Sampling below that outline produces a highest fluid-particle center at 0.48 m.
 
-**Function:** [`still_wedge_2d_polygons`](../example/GenerateStillWedgeMDBC.jl#L33). **Library constructor:** `PolyArea`.
+**Function:** [`still_wedge_2d_polygons`](../example/StillWedgeMDBC.jl#L166). **Library constructor:** `PolyArea`.
 
 ## 04. Turn the polygons into particles [CPU, once]
 
@@ -674,7 +674,7 @@ These exclusions prevent a misleading walkthrough of features that the filename 
 
 | Inactive feature | Examples of functions not executed for its computation |
 | --- | --- |
-| CSV particle generation/loading | [`generate_still_wedge_2d_example`, `still_wedge_2d_geometry`](../example/GenerateStillWedgeMDBC.jl#L100), [`write_particle_csv`](../src/ParticleGenerator.jl#L390), CSV branch of [`SPHGeometry`](../src/SimulationGeometry.jl#L110), [`particle_struct_array`](../src/SimulationGeometry.jl#L102). |
+| CSV particle generation/loading | [`generate_still_wedge_2d_example`, `still_wedge_2d_geometry`](../example/StillWedgeMDBC.jl#L233), [`write_particle_csv`](../src/ParticleGenerator.jl#L390), CSV branch of [`SPHGeometry`](../src/SimulationGeometry.jl#L110), [`particle_struct_array`](../src/SimulationGeometry.jl#L102). |
 | Conforming/3D geometry sampling | [`conforming_positions!`, `conforming_layers`, `conforming_polygons`, `isnear`](../src/ParticleGenerator.jl#L178) and 3D geometry overloads. |
 | Ghost-node mDBC | [`LoadBoundaryNormals`](../src/PreProcess.jl#L161), [`enqueue_boundary_correction!`](../src/SPHCellList.jl#L922), [`launch_mdbc!`, `mdbc_kernel!`](../src/GPUKernels.jl#L697), [`launch_updated_mdbc!`, `updated_mdbc_kernel!`](../src/UpdatedMDBC.jl#L84) and their interpolation/cloning helpers. The `nothing` boundary accessors in step 16 are the exception. |
 | Moving walls | [`launch_motion!`, `motion_kernel!`, `store_moved_pos_cell!`](../src/GPUKernels.jl#L188). The half-step kernel's `apply_motion!` call returns without movement. |

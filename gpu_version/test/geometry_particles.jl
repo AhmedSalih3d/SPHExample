@@ -113,7 +113,11 @@ end
     end
 end
 
-include(joinpath(@__DIR__, "..", "example", "GenerateStillWedgeMDBC.jl"))
+let path = joinpath(@__DIR__, "..", "example", "StillWedgeMDBC.jl")
+    source = read(path, String)
+    source = replace(source, r"\r?\n# Including this file starts the simulation\.[\s\S]*\z" => "\n")
+    include_string(@__MODULE__, source, path)
+end
 @testset "StillWedge generates geometry without CSV" begin
     constants = SimulationConstants{Float64}(dx = 0.02)
     geometry = still_wedge_2d_geometry(constants)

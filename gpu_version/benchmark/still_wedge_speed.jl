@@ -6,7 +6,11 @@ using LinearAlgebra
 using Statistics
 using HDF5
 
-include(joinpath(@__DIR__, "..", "example", "StillWedgeMDBC.jl"))
+let path = joinpath(@__DIR__, "..", "example", "StillWedgeMDBC.jl")
+    source = read(path, String)
+    source = replace(source, r"\r?\n# Including this file starts the simulation\.[\s\S]*\z" => "\n")
+    include_string(@__MODULE__, source, path)
+end
 
 """Benchmark the generated StillWedge case without changing its physics or outputs."""
 function run_wedge(; lanes = 0, threads = 128, batch = 32, graph = true,

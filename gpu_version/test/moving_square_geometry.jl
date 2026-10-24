@@ -5,7 +5,11 @@ using HDF5
 using StaticArrays
 using Meshes
 
-include(joinpath(@__DIR__, "..", "example", "GenerateMovingSquare2D.jl"))
+let path = joinpath(@__DIR__, "..", "example", "MovingSquare2d.jl")
+    source = read(path, String)
+    source = replace(source, r"\r?\n# Including this file starts the simulation\.[\s\S]*\z" => "\n")
+    include_string(@__MODULE__, source, path)
+end
 
 moving_square_lattice_nodes(positions, dx) =
     Set(Tuple(round.(Int, collect(position) ./ dx)) for position in positions)

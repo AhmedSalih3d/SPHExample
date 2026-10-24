@@ -3,7 +3,11 @@ using CSV
 using HDF5
 using StaticArrays
 
-include(joinpath(@__DIR__, "..", "example", "GenerateStillWedgeMDBC.jl"))
+let path = joinpath(@__DIR__, "..", "example", "StillWedgeMDBC.jl")
+    source = read(path, String)
+    source = replace(source, r"\r?\n# Including this file starts the simulation\.[\s\S]*\z" => "\n")
+    include_string(@__MODULE__, source, path)
+end
 
 # Lattice indices of 2D positions, for exact set comparisons.
 lattice_nodes(positions, dx) = Set(Tuple(round.(Int, collect(p) ./ dx)) for p in positions)

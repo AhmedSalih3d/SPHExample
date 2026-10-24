@@ -5,8 +5,11 @@ using SPHExampleGPU
 using CSV
 using HDF5
 
-include(joinpath(@__DIR__, "..", "example",
-                 "GenerateStillWedgeMiddleSquareMDBC.jl"))
+let path = joinpath(@__DIR__, "..", "example", "StillWedgeMiddleSquareMDBC.jl")
+    source = read(path, String)
+    source = replace(source, r"\r?\n# Including this file starts the simulation\.[\s\S]*\z" => "\n")
+    include_string(@__MODULE__, source, path)
+end
 
 middle_square_lattice_nodes(positions, dx) =
     Set(Tuple(round.(Int, collect(position) ./ dx)) for position in positions)

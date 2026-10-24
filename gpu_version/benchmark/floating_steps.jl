@@ -4,9 +4,12 @@ include("floating_kernels.jl")
 using LinearAlgebra: norm
 
 function cylinder_case()
-    generator = joinpath(@__DIR__, "..", "example", "GenerateFloatingCylinder2D.jl")
-    definitions = first(split(read(generator, String), "\noutput_dir = "))
-    Base.include_string(Main, definitions, generator)
+    path = joinpath(@__DIR__, "..", "example", "FloatingCylinder2d.jl")
+    if !isdefined(Main, :floating_cylinder_2d_shapes)
+        source = read(path, String)
+        source = replace(source, r"\r?\n# Including this file starts the simulation\.[\s\S]*\z" => "\n")
+        Base.include_string(Main, source, path)
+    end
     build_shapes = Base.invokelatest(getproperty, Main, :floating_cylinder_2d_shapes)
     shapes = Base.invokelatest(build_shapes; dx = 0.025)
     constants = SimulationConstants{Float32}(dx = 0.025,

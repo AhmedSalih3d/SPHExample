@@ -970,13 +970,15 @@ No explicit function/type definitions. This module loads the implementation subm
 
 | # | Definition (source link) | Kind | Enclosing function / type |
 | ---: | --- | --- | --- |
-| 813 | [`run_still_wedge`](../example/StillWedgeMDBC.jl#L12) | function / method | module |
+| 813 | [`run_still_wedge`](../example/StillWedgeMDBC.jl#L13) | function / method | module |
 
-## [GenerateStillWedgeMDBC.jl](../example/GenerateStillWedgeMDBC.jl)
+## [StillWedgeMDBC.jl geometry helpers](../example/StillWedgeMDBC.jl)
+
+These definitions live in the example file. Including that file also starts `run_still_wedge`.
 
 | # | Definition (source link) | Kind | Enclosing function / type |
 | ---: | --- | --- | --- |
-| 814 | [`still_wedge_2d_polygons`](../example/GenerateStillWedgeMDBC.jl#L33) | function / method | module |
-| 815 | [`generate_still_wedge_2d_example`](../example/GenerateStillWedgeMDBC.jl#L100) | function / method | module |
-| 816 | [`(anonymous callback)`](../example/GenerateStillWedgeMDBC.jl#L125) | lambda / do-block | generate_still_wedge_2d_example |
-| 817 | [`still_wedge_2d_geometry`](../example/GenerateStillWedgeMDBC.jl#L177) | function / method | module |
+| 814 | [`still_wedge_2d_polygons`](../example/StillWedgeMDBC.jl#L166) | function / method | module |
+| 815 | [`generate_still_wedge_2d_example`](../example/StillWedgeMDBC.jl#L233) | function / method | module |
+| 816 | [`(anonymous callback)`](../example/StillWedgeMDBC.jl#L257) | lambda / do-block | generate_still_wedge_2d_example |
+| 817 | [`still_wedge_2d_geometry`](../example/StillWedgeMDBC.jl#L310) | function / method | module |
