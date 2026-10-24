@@ -1575,7 +1575,12 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                      deterministic = SimMetaData.GPUDeterministicSort)
         sup    = GPUSupportArrays{Dimensions, FloatType}(gpu, SimMetaData)
         motion = MotionArrays(SimGeometry, SimParticles)
-        floating = FloatingArrays(SimGeometry, SimParticles, SimConstants; position_type = PositionType)
+        floating = FloatingArrays(SimGeometry, SimParticles, SimConstants; position_type = PositionType,
+                                  time = SimMetaData.TotalTime)
+        if floating.constrained
+            initialize_floating_velocities!(floating, gpu)
+            copyto!(SimParticles.Velocity, gpu.Velocity)
+        end
         # Device resident loop state. The displacement bound starts above `h`
         # so that the cell list is built before the first step.
         state  = StepState{FloatType}(; time = SimMetaData.TotalTime, iteration = SimMetaData.Iteration,
