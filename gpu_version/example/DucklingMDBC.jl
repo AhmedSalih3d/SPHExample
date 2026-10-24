@@ -12,13 +12,12 @@ let
     Dimensions = 3
     FloatType = Float32
 
-    SimConstantsWedge = SimulationConstants{FloatType}(
+    SimConstantsWedge = SimulationConstants{FloatType}(Dimensions;
         dx = 0.01,
         c₀ = 23.43842998154953,
         δᵩ = 0.1,
         CFL = 0.2,
         α = 0.02,
-        m₀ = 0.001,
     )
 
     # Assuming SimConstantsWedge is defined somewhere else with the field `dx`

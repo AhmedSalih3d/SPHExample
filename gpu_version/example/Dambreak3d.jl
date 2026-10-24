@@ -16,11 +16,10 @@ let
 
     # --- SPH constants ---
     dx = 0.0085
-    SimConstantsDambreak3D = SimulationConstants{FloatType}(
+    SimConstantsDambreak3D = SimulationConstants{FloatType}(Dimensions;
         dx = dx,
         c₀ = 33.14,
         α = 0.1,
-        m₀ = 1000 * dx^3,
         CFL = 0.2,
     )
 

@@ -6,6 +6,7 @@ using StructArrays
 using LinearAlgebra
 using HDF5
 
+include(joinpath(@__DIR__, "simulation_constants.jl"))
 include(joinpath(@__DIR__, "simulation_result.jl"))
 include(joinpath(@__DIR__, "effective_configuration.jl"))
 

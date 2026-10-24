@@ -6,31 +6,41 @@ using Base: @kwdef
 export SimulationConstants
 
 """
-    struct SimulationConstants{T<:Real, TI<:Integer}
+    SimulationConstants{T}(; kwargs...)
+    SimulationConstants{T}(dimensions::Integer; kwargs...)
 
 SimulationConstants is a parameterized struct representing the constants and parameters used in a simulation. These constants are essential for configuring a Smoothed Particle Hydrodynamics (SPH) simulation.
+
+Pass `2` or `3` as the positional `dimensions` argument to default the particle
+mass to `ρ₀ * dx^dimensions`. In 2D, `ρ₀ * dx^2` assumes unit out-of-plane
+depth (one metre when using SI units). In 3D, the default is `ρ₀ * dx^3`.
+An explicit `m₀` overrides either default. The keyword-only constructor retains
+the 2D default for compatibility. Both constructors return `SimulationConstants{T}`;
+the dimension only selects the default mass.
 
 # Fields
 - `ρ₀::T`: Reference density. Default is 1000.
 - `dx::T`: Initial particle distance (grid spacing). Default is 0.02.
-- `h::T`: Smoothing length. Default is computed as 1.2 times the square root of 2 times `dx`.
-- `m₀::T`: Initial mass of particles. Default is computed as `ρ₀ * dx^2`.
-- `αD::T`: Normalization constant for the SPH kernel. Default is computed as `7 / (4 * π * H^2)`.
+- `m₀::T`: Initial particle mass. Defaults to `ρ₀ * dx^dimensions` with the dimension-aware constructor, or `ρ₀ * dx^2` otherwise.
 - `α::T`: Artificial viscosity parameter. Default is 0.01.
 - `g::T`: Gravitational constant (positive). Default is 9.81.
 - `c₀::T`: Speed of sound (must be at least 10 times the highest velocity in the simulation). Default is computed based on `g`.
-- `γ::TI`: Adiabatic index (positive integer). Default is 7.
-- `dt::T`: Initial time step. Default is 1e-5.
+- `γ::T`: Adiabatic index. Default is 7.
+- `γ⁻¹::T`: Reciprocal of `γ`.
 - `δᵩ::T`: Coefficient for density diffusion. Default is 0.1.
 - `CFL::T`: CFL (Courant-Friedrichs-Lewy) number (positive). Default is 0.2.
-- `η²::T`: Eta squared (positive). Default is computed as `(0.01 * H)^2`.
+- `Cb::T`: Equation-of-state coefficient. Default is `c₀^2 * ρ₀ / γ`.
+- `Cb⁻¹::T`: Reciprocal of `Cb`.
+- `ν₀::T`: Kinematic viscosity. Default is 1e-6.
+- `BlinConstant::T`: Blin model constant. Default is 0.0066.
+- `SmagorinskyConstant::T`: Smagorinsky model constant. Default is 0.12.
 
 # Example
 ```julia
-using SimulationConstantsConfiguration
+using SPHExampleGPU
 
-# Create a SimulationConstants instance with custom parameters
-constants = SimulationConstants(ρ₀=1017, dx=0.03, α=0.02)
+# A 3D simulation, with particle mass computed from the reference density and spacing.
+constants = SimulationConstants{Float32}(3; ρ₀=1017, dx=0.03, α=0.02)
 ```
 """
 @kwdef struct SimulationConstants{T<:AbstractFloat}
@@ -49,5 +59,11 @@ constants = SimulationConstants(ρ₀=1017, dx=0.03, α=0.02)
     ν₀::T  = 1e-6
     BlinConstant::T            = 0.0066
     SmagorinskyConstant::T     = 0.12
+end
+
+function SimulationConstants{T}(dimensions::Integer; ρ₀ = 1000, dx = 0.02, m₀ = nothing, kwargs...) where {T<:AbstractFloat}
+    dimensions in (2, 3) || throw(ArgumentError("SimulationConstants supports only 2D or 3D; got dimensions = $dimensions"))
+    mass = m₀ === nothing ? ρ₀ * dx^dimensions : m₀
+    return SimulationConstants{T}(; ρ₀, dx, m₀ = mass, kwargs...)
 end
 end

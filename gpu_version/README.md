@@ -31,6 +31,29 @@ julia --project=gpu_version gpu_version/example/Dambreak2dMDBC.jl
 The examples in `gpu_version/example/` mirror those in `example/`. Choose the
 precision with `FloatType = Float32` or `Float64` at the top of a script.
 
+### Dimension-aware physical constants
+
+Pass the simulation dimension to set the default particle mass from density
+and spacing:
+
+```julia
+constants_2d = SimulationConstants{Float32}(2; ρ₀ = 1000, dx = 0.02) # m₀ = ρ₀ * dx^2
+constants_3d = SimulationConstants{Float32}(3; ρ₀ = 1000, dx = 0.02) # m₀ = ρ₀ * dx^3
+```
+
+The 2D convention assumes unit out-of-plane depth (one metre in SI units).
+Only dimensions 2 and 3 are supported. An explicit `m₀` overrides the default;
+all other keywords work as before. The existing keyword-only constructor,
+`SimulationConstants{T}(; ...)`, retains its 2D mass default. The dimension-aware
+constructor returns the same `SimulationConstants{T}` type and selects only
+the default mass; use the same dimension for the geometry, kernel and metadata.
+
+Run the constructor regressions without a GPU from the repository root:
+
+```bash
+julia --project=gpu_version gpu_version/test/simulation_constants.jl
+```
+
 For a linear, function-by-function explanation of the current StillWedge GPU
 example, including CPU/GPU ownership, neighbor construction, both symplectic
 interaction passes and asynchronous output, see the

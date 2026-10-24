@@ -15,13 +15,12 @@ let
     FloatType = Float32
     InputDirectory = joinpath(@__DIR__, "..", "..", "input", "case_duckling_mdbc")
 
-    SimConstantsDuckling = SimulationConstants{FloatType}(
+    SimConstantsDuckling = SimulationConstants{FloatType}(Dimensions;
         dx = 0.01,
         c₀ = 23.43842998154953,
         δᵩ = 0.1,
         CFL = 0.2,
         α = 0.02,
-        m₀ = 0.001,
     )
 
     FixedBoundary = SPHGeometry{Dimensions, FloatType}(
