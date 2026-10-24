@@ -310,7 +310,8 @@ function mode_switch_run(graph; scalar_sps = false, scheme = SymplecticTimeStepp
                     gpu.Velocity, gpu.Type, cells.CellStart, gpu.CellID, cells.grid_dev, step,
                     LinearDensityDiffusion(), viscosity, f.kernel, f.constants, Val(false), Val(false);
                     lanes = Val(choose_lanes(length(gpu), Val(D))), pos_cells = support.PosCells,
-                    radial = Val(mode), scalar_sps = Val(scalar_mode))
+                    radial = Val(mode), scalar_sps = Val(scalar_mode),
+                    include_gravity = Val(scheme isa SingleNeighborTimeStepping))
                 GS.invalidate_graphs!(state)
                 state.radial_interactions = mode
                 state.scalar_sps_viscosity = scalar_mode
@@ -319,6 +320,8 @@ function mode_switch_run(graph; scalar_sps = false, scheme = SymplecticTimeStepp
                 meta, f.constants, gpu, cells, support, reduction, motion, state)
             @test state.radial_interactions == mode
             @test state.scalar_sps_viscosity == scalar_mode
+            @test state.configuration.effective.radial_interactions == mode
+            @test state.configuration.effective.scalar_sps_viscosity == scalar_mode
             if graph
                 @test !isempty(state.graphs)
                 @test all(exec -> all(old -> exec !== old, old_graphs), values(state.graphs))
@@ -495,7 +498,7 @@ if CUDA.functional()
         result = @test_logs (:warn, r"GPURadialInteractions.*reference interactions") simulate(f;
             radial = true, graph = true, scheme = SymplecticTimeStepping(), viscosity = OrderedViscosity())
         @test result == reference
-        result = @test_logs (:warn, r"GPUScalarSPSViscosity.*reference viscosity") simulate(f;
+        result = @test_logs (:warn, r"GPUScalarSPSViscosity.*scalar SPS is disabled") simulate(f;
             radial = false, scalar_sps = true, graph = true, scheme = SymplecticTimeStepping(), viscosity = OrderedViscosity())
         @test result == reference
     end

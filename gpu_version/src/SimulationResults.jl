@@ -33,15 +33,27 @@ and files have closed. Its fields are:
   been reached (possibly overshot), or `:interrupted` for a caught
   `InterruptException`. Other errors still propagate after output cleanup;
   they do not return a successful result.
+- `configuration`: host-only `requested`, `capabilities`, `effective`,
+  `fallbacks` and `execution` snapshots. `effective` is the last resolved
+  driver configuration; `execution.path` is `:not_run`, `:direct`, `:cuda_graph`
+  or `:mixed`, based on submitted batches, with graph/direct batch and graph
+  capture-failure counts. Device stop flags may make some submitted steps
+  no-ops. Capture failures remain recorded even if later captures succeed or
+  graph caches are invalidated. Available even with `NoLog`.
 
 The result retains host data only, so it does not extend the lifetime of the
 solver's device buffers. Ignoring the return value preserves existing usage.
 """
-struct SimulationResult{S, P, D}
+struct SimulationResult{S, P, D, C}
     final_state::S
     performance::P
     diagnostics::D
     termination_reason::Symbol
+    configuration::C
 end
+
+# Preserve construction of results by callers using the original four fields.
+SimulationResult(state, performance, diagnostics, reason::Symbol) =
+    SimulationResult(state, performance, diagnostics, reason, nothing)
 
 end # module

@@ -29,6 +29,7 @@ module SPHExampleGPU
         "GPUStepState.jl",
         "GPUCellGrid.jl",
         "GPUKernels.jl",
+        "GPUConfiguration.jl",
         "GPUFloating.jl",
         "SimulationResults.jl",
         "SPHCellList.jl",
@@ -103,6 +104,9 @@ module SPHExampleGPU
     using .GPUKernels
     export launch_interactions!, launch_mdbc!, launch_motion!, launch_half_step!, launch_final_step!,
            launch_finish!, launch_commit!, launch_pos_cells!, launch_prepare_interactions!, choose_lanes
+
+    using .GPUConfiguration
+    export effective_configuration
 
     using .GPUFloating
     export FloatingArrays, floating_state

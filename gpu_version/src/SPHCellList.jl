@@ -36,6 +36,7 @@ using ..GPUReductions
 using ..GPUStepState
 using ..GPUCellGrid
 using ..GPUKernels
+using ..GPUConfiguration: effective_configuration, configuration_snapshot, log_effective_configuration
 using ..GPUFloating
 using ..SimulationResults: SimulationResult
 
@@ -1170,20 +1171,34 @@ the reallocation generation of the cell list and the number of steps. The first 
 captures and instantiates the graph; a capture that fails (kernels that
 still have to be compiled) falls back to direct launches for that batch.
 """
-function launch_step_graph!(ctx, steps::Int = 1)
+function launch_step_graph!(ctx, steps::Int = 1; capture = CUDA.capture)
     state = ctx.state
     key   = (UInt(pointer(ctx.gpu.Position)), ctx.cl.generation, steps)
     exec  = get(state.graphs, key, nothing)
     if exec === nothing
         # Output workers query events recorded outside this capture on their
         # own streams. Global capture mode would reject those concurrent calls.
-        graph = CUDA.capture(; flags = CUDA.STREAM_CAPTURE_MODE_RELAXED,
+        graph = capture(; flags = CUDA.STREAM_CAPTURE_MODE_RELAXED,
                                throw_error = false) do
             for _ in 1:steps
                 enqueue_step!(ctx, false)
             end
         end
         if graph === nothing
+            state.graph_capture_failures += 1
+            state.direct_batches += 1
+            if state.graph_capture_failures == 1
+                message = "CUDA graph capture failed; using direct launches for this batch. " *
+                    "Later batches may retry capture; the final configuration reports both paths and failure counts."
+                logger = hasproperty(ctx, :logger) ? ctx.logger : nothing
+                if logger === nothing
+                    @warn message
+                else
+                    with_logger(logger.Logger) do
+                        @warn message
+                    end
+                end
+            end
             for _ in 1:steps
                 enqueue_step!(ctx, false)
             end
@@ -1193,6 +1208,7 @@ function launch_step_graph!(ctx, steps::Int = 1)
         state.graphs[key] = exec
     end
     CUDA.launch(exec)
+    state.graph_batches += 1
     return nothing
 end
 
@@ -1282,12 +1298,23 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     end
     boundary_mode = BMode()
     SingleNeighbor = SimMetaData.TimeSteppingMode isa SingleNeighborTimeStepping
-    threads    = SimMetaData.GPUInteractionThreads
-    nlanes     = SimMetaData.GPULanesPerParticle
-    lanes      = Val(nlanes <= 0 ? choose_lanes(length(gpu), Val(Dimensions)) : nlanes)
+    configuration = effective_configuration(SimMetaData, SimKernel, SimDensityDiffusion, SimViscosity;
+        particle_count = length(gpu))
+    if state.configuration != configuration
+        if state.configuration !== nothing && state.configuration.effective != configuration.effective
+            invalidate_graphs!(state)
+        end
+        state.configuration = configuration
+        if logger !== nothing && LMode === StoreLog
+            log_effective_configuration(logger, configuration; phase = "resolved before launches")
+        end
+    end
+    effective = configuration.effective
+    threads    = effective.interaction_threads
+    lanes      = Val(effective.lanes_per_particle)
     bforces    = Val(SimMetaData.GPUBoundaryForces)
-    use_radial = SimMetaData.GPURadialInteractions && radial_interactions_supported(SimKernel, SimDensityDiffusion, SimViscosity)
-    use_scalar_sps = SimMetaData.GPUScalarSPSViscosity && scalar_sps_supported(SimKernel, SimViscosity)
+    use_radial = effective.radial_interactions
+    use_scalar_sps = effective.scalar_sps_viscosity
     interaction_mode_changed = state.radial_interactions != use_radial || state.scalar_sps_viscosity != use_scalar_sps
     if interaction_mode_changed
         invalidate_graphs!(state)
@@ -1298,14 +1325,15 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     scalar_sps = Val(use_scalar_sps)
 
     timed     = SimMetaData.GPUSyncTimers
-    use_graph = SimMetaData.GPUUseGraph && !timed
-    kmax      = timed ? 1 : max(1, SimMetaData.GPUMaxStepsPerSync)
+    use_graph = effective.use_graph
+    kmax      = effective.max_steps_per_sync
     cache_final_state = !UseMDBC && !motion.active && (floating === nothing || !floating.active) &&
         sup.InvDensity !== nothing && sup.Pressure !== nothing
 
     ctx = (; gpu, cl, sup, red, motion, floating, state, SimKernel, SimConstants, SimDensityDiffusion,
              SimViscosity, FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, radial, scalar_sps, HourGlass, boundary_mode,
-             frozen_particles = Val(cl.frozen_total > 0), cache_final_state, diagnostics)
+             frozen_particles = Val(cl.frozen_total > 0), cache_final_state, diagnostics,
+             logger = LMode === StoreLog ? logger : nothing)
 
     t_out = next_output_time(SimMetaData)
     set_output_time!(state, t_out; clip_timestep = SimMetaData.GPUClipTimeStepToOutput)
@@ -1344,6 +1372,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                     remaining -= steps
                 end
             else
+                state.direct_batches += 1
                 for _ in 1:K
                     enqueue_step!(ctx, timed)
                 end
@@ -1432,6 +1461,9 @@ version). Returns a [`SimulationResult`](@ref) with final host state,
 performance statistics, diagnostics and a termination reason. Ignoring the
 return value preserves existing usage. Interrupted runs return
 `:interrupted` with `final_state.complete = false`; other errors propagate.
+`result.configuration` reports requested/supported/effective settings and
+fallback reasons, plus observed graph/direct batch counts. It is available
+with `NoLog` too; `StoreLog` also writes startup and final configuration reports.
 
 `SimMetaData.GPUClipTimeStepToOutput = true` clips adaptive steps to output
 deadlines and ends exactly at `SimulationTime` in the metadata's precision.
@@ -1484,7 +1516,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         if scalar_sps_supported(SimKernel, SimViscosity)
             @warn "GPUScalarSPSViscosity uses experimental reassociated SPS stress arithmetic; validate accuracy and convergence for this case."
         else
-            @warn "GPUScalarSPSViscosity requires a supported LaminarSPS configuration; using reference viscosity." kernel = typeof(SimKernel) viscosity = typeof(SimViscosity)
+            @warn "GPUScalarSPSViscosity requires a supported LaminarSPS configuration; scalar SPS is disabled and the supported viscosity path is retained." kernel = typeof(SimKernel) viscosity = typeof(SimViscosity)
         end
     end
 
@@ -1580,6 +1612,8 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         # so that the cell list is built before the first step.
         state  = StepState{FloatType}(; time = SimMetaData.TotalTime, iteration = SimMetaData.Iteration,
                                         dx = one(FloatType) + SimKernel.h)
+        state.configuration = effective_configuration(SimMetaData, SimKernel, SimDensityDiffusion, SimViscosity;
+            particle_count = NumberOfPoints)
         CUDA.synchronize()
     end
 
@@ -1671,6 +1705,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     if StoreLogOutput
         InitializeLogger(SimLogger, SimConstants, SimMetaData, SimKernel, SimViscosity,
             SimDensityDiffusion, SimGeometry, SimParticles; gpu_buffers, output_memory)
+        log_effective_configuration(SimLogger, state.configuration; phase = "startup, resolved before launches")
         LogStep(SimLogger, SimMetaData, HourGlass)
         SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
     end
@@ -1801,6 +1836,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             pressure_range = paraview_pressure_range)
 
         if StoreLogOutput
+            log_effective_configuration(SimLogger, configuration_snapshot(state); phase = "final")
             elapsed = SimulationLoggerConfiguration.elapsed_wall_time(SimLogger)
             steps_taken = max(0, SimMetaData.Iteration - initial_steps)
             physical_progress = max(0.0, Float64(SimMetaData.TotalTime) - SimLogger.clock.initial_time)
@@ -1949,7 +1985,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         grid_status_readbacks = cl.grid_status_readbacks, capacity_growths = cl.capacity_growths,
         bbox_host_readbacks = cl.bbox_host_readbacks, captured_graphs = length(state.graphs))
     termination_reason = run_status == "finished" ? :completed : :interrupted
-    return SimulationResult(final_state, performance, run_diagnostics, termination_reason)
+    return SimulationResult(final_state, performance, run_diagnostics, termination_reason, configuration_snapshot(state))
 end
 
 end # module

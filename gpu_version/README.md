@@ -1231,6 +1231,9 @@ result.performance.wall_time_seconds
 result.performance.mparticle_steps_per_second
 result.diagnostics.cell_list_rebuilds
 result.diagnostics.step_state_readbacks
+result.configuration.effective    # resolved kernel, operators, precision and launch settings
+result.configuration.fallbacks    # requested settings that could not be used, with reasons
+result.configuration.execution    # actual graph/direct batch counts and capture failures
 result.termination_reason          # :completed or :interrupted
 ```
 
@@ -1250,6 +1253,37 @@ timings measure host enqueue/readback boundaries, not GPU kernel durations.
 Diagnostics also include particle and written-frame counts (including the
 initial frame), grid dimensions, frozen particles, grid-status and bounding-box
 readbacks, capacity growths and captured graph count.
+
+`configuration` is available with both `StoreLog` and `NoLog`. It snapshots
+`requested` options, implementation `capabilities`, and the last `effective`
+driver settings. These identify the SPH kernel and interaction specialization,
+diffusion model/operator, viscosity model/arithmetic, precision, pair coordinates,
+time stepping, boundary/shifting modes, cell subdivision, interaction-field cache,
+lane count and graph eligibility. Radial linear diffusion is reported as
+`:symmetric_reciprocal_density`; unsupported combinations report `:reference`
+and a fallback reason. Scalar SPS support is resolved independently. Capability
+support does not establish accuracy or CPU equivalence.
+
+`configuration.execution.path` reports `:direct`, `:cuda_graph`, `:mixed` or
+`:not_run` from submitted batches. Its `graph_batches`, `direct_batches` and
+`graph_capture_failures` counts survive graph-cache invalidation. Batches may
+contain steps gated off by device stop flags, so these are launch counts, not
+accepted-step counts. A failed capture uses direct launches for that batch;
+later batches may capture successfully. `effective.use_graph` describes
+eligibility, while `execution` records what happened. `GPUSyncTimers = true`
+disables graphs and limits batches to one, with an explicit fallback reason if
+graphs were requested. `StoreLog` writes resolved settings at startup, changes
+at output-interval boundaries, and a final summary with observed execution.
+
+To inspect settings before a run, use
+`effective_configuration(meta, kernel, diffusion, viscosity; particle_count = n)`.
+This preview does not execute kernels or attempt graph capture. Automatic lanes
+query the CUDA device; explicit `GPULanesPerParticle` settings can be inspected
+without a GPU. Run the reporting and capture-fallback regressions with:
+
+```bash
+julia --project=. -t 4,0 test/effective_configuration.jl
+```
 
 A caught interrupt returns `termination_reason = :interrupted` after cleanup
 and a final device download. Since it can stop midway through a step,

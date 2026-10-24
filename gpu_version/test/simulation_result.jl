@@ -108,6 +108,15 @@ if CUDA.functional()
                 @test diag.capacity_growths >= 0
                 @test diag.bbox_host_readbacks == 0
                 @test (diag.captured_graphs > 0) == async
+                config = result.configuration
+                @test config.effective.sph_kernel === WendlandC2
+                @test config.effective.time_stepping === typeof(scheme)
+                @test config.effective.position_type === (T === Float32 ? Float64 : T)
+                @test config.effective.density_diffusion_operator === :disabled
+                @test config.effective.viscosity_path === :disabled
+                @test (config.execution.graph_batches > 0) == async
+                @test async || config.execution.path === :direct
+                @test config.execution.graph_batches + config.execution.direct_batches > 0
 
                 # Velocity was omitted from output; the final download must still refresh it.
                 order = sortperm(state.particles.ID)
@@ -128,6 +137,8 @@ if CUDA.functional()
                 @test result.final_state.time == state.time > 0
                 @test result.final_state.iteration == state.iteration > 0
                 @test TimerOutputs.ncalls(perf.phase_timings["00 SimulationLoop"]) == calls > 0
+                meta.GPURadialInteractions = true
+                @test !config.requested.radial_interactions
             end
         end
     end
@@ -148,6 +159,7 @@ if CUDA.functional()
                     @test result.final_state.time > 0
                     @test any(!iszero, result.final_state.particles.Velocity)
                 else
+                    @test result.configuration.execution.path === :not_run
                     @test result.performance.simulated_time == 0
                     @test isnan(result.performance.mean_timestep)
                     @test isnan(result.performance.milliseconds_per_step)

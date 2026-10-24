@@ -104,6 +104,14 @@ function scalar_sps_supported(::SPHKernelInstance{K, D, T}, ::LaminarSPS) where 
     return D in (2, 3) && T in (Float32, Float64)
 end
 
+# Keep previews, the driver and standalone launches on the same capability checks.
+function interaction_options(kernel, diffusion, viscosity; radial::Bool = false, scalar_sps::Bool = false)
+    radial_supported = radial_interactions_supported(kernel, diffusion, viscosity)
+    sps_supported = scalar_sps_supported(kernel, viscosity)
+    return (; radial = radial && radial_supported, scalar_sps = scalar_sps && sps_supported,
+        radial_supported, scalar_sps_supported = sps_supported)
+end
+
 #---------------------------------------------------------------
 # Helpers shared by the kernels
 #---------------------------------------------------------------
@@ -558,7 +566,9 @@ Diffusion is evaluated directly from the target particle's viewpoint. This
 changes the reference diffusion operator as well as floating-point rounding.
 SPS viscosity retains the original tensor arithmetic and pair ordering.
 Unsupported kernel/model combinations use the reference specialization;
-the default is `Val(false)`.
+the default is `Val(false)`. Standalone unsupported requests warn once per
+option with the effective specialization; the driver exposes its full resolved
+settings in `SimulationResult.configuration`.
 `scalar_sps = Val(true)` separately opts into the rank-one SPS stress
 contraction while retaining its pair orientation and closure. It can be
 selected without radial continuity/diffusion, and changes rounding.
@@ -584,8 +594,16 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
     Pairs = pos_cells === nothing ? Position : pos_cells
     SimParticles = (Position = Position, Density = Density, Velocity = Velocity,
                     Type = ParticleType)
-    use_radial = Val(typeof(radial).parameters[1] && radial_interactions_supported(SimKernel, SimDensityDiffusion, SimViscosity))
-    use_scalar_sps = Val(typeof(scalar_sps).parameters[1] && scalar_sps_supported(SimKernel, SimViscosity))
+    options = interaction_options(SimKernel, SimDensityDiffusion, SimViscosity;
+        radial = typeof(radial).parameters[1], scalar_sps = typeof(scalar_sps).parameters[1])
+    if typeof(radial).parameters[1] && !options.radial
+        @warn "Unsupported radial interaction request; interaction_kernel! uses radial=false (reference pair arithmetic)." kernel = typeof(SimKernel) diffusion = typeof(SimDensityDiffusion) viscosity = typeof(SimViscosity) scalar_sps = options.scalar_sps maxlog = 1
+    end
+    if typeof(scalar_sps).parameters[1] && !options.scalar_sps
+        @warn "Unsupported scalar SPS request; interaction_kernel! uses scalar_sps=false with the selected model's viscosity arithmetic." kernel = typeof(SimKernel) viscosity = typeof(SimViscosity) radial = options.radial maxlog = 1
+    end
+    use_radial = Val(options.radial)
+    use_scalar_sps = Val(options.scalar_sps)
     @cuda threads=threads blocks=cld(n * K, threads) interaction_kernel!(
         dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
         Pairs, Position, Density, Velocity, ParticleType, SimParticles,

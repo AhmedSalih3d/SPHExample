@@ -75,6 +75,10 @@ mutable struct StepState{T}
     readbacks::Int      # number of host read backs (device synchronizations of the loop)
     radial_interactions::Bool
     scalar_sps_viscosity::Bool
+    configuration::Union{Nothing, NamedTuple} # last resolved host configuration; never adapted to the GPU
+    graph_batches::Int
+    direct_batches::Int
+    graph_capture_failures::Int
     graphs::Dict{Tuple{UInt, Int, Int}, CUDA.CuGraphExec}
 end
 
@@ -88,7 +92,7 @@ function StepState{T}(; dt = zero(T), time = zero(T), dx = zero(T), iteration::I
     ih[I_ITER] = iteration
     CUDA.pin(fh)
     CUDA.pin(ih)
-    return StepState{T}(CuArray(fh), CuArray(ih), fh, ih, false, 0, false, false,
+    return StepState{T}(CuArray(fh), CuArray(ih), fh, ih, false, 0, false, false, nothing, 0, 0, 0,
                         Dict{Tuple{UInt, Int, Int}, CUDA.CuGraphExec}())
 end
 
