@@ -1096,7 +1096,7 @@ function finish_kernel!(step::DeviceStep{T}, partial, nblocks::Int32, CFL::T, câ
     @inbounds begin
         s[I_STOP] == STOP_NONE || return nothing
         phase = s[I_PHASE]
-        if phase == PHASE_NEED_DT && f[F_TIME] > f[F_TOUT]
+        if phase == PHASE_NEED_DT && GPUStepState.output_time_reached(f[F_TIME], f[F_TOUT], s[I_CLIP_OUTPUT] != 0)
             if threadIdx().x == Int32(1)
                 s[I_STOP] = STOP_OUTPUT
             end
@@ -1120,6 +1120,9 @@ function finish_kernel!(step::DeviceStep{T}, partial, nblocks::Int32, CFL::T, câ
             visc = r[1]
             dt1  = r[2]
             dt   = CFL * min(dt1, h / (câ‚€ + visc))
+            if s[I_CLIP_OUTPUT] != 0
+                dt = min(dt, f[F_TOUT] - f[F_TIME])
+            end
             d4   = 4 * r[3]
             dx   = f[F_DX] + d4
             f[F_DT]   = dt
@@ -1158,7 +1161,12 @@ function commit_kernel!(step::DeviceStep)
     f = step.f
     s = step.i
     @inbounds if s[I_STOP] == STOP_NONE
-        f[F_TIME] += f[F_DT]
+        # Assign the deadline exactly on a clipped step, including when this
+        # commit is fused into the final particle kernel. Do not relabel an
+        # overshooting state: every integrator has already used the clipped dt.
+        time = f[F_TIME]
+        dt = f[F_DT]
+        f[F_TIME] = s[I_CLIP_OUTPUT] != 0 && dt >= f[F_TOUT] - time ? f[F_TOUT] : time + dt
         s[I_ITER] += Int32(1)
         s[I_PHASE] = PHASE_NEED_DT
     end

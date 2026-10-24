@@ -1343,6 +1343,7 @@ definitions in `benchmark/cases.jl` construct against either package.
 | `GPUAsyncOutput` | `true` | Write output files on a task while the GPU continues (see "Asynchronous output"). |
 | `GPUMaxStepsPerSync` | `32` | Upper bound on the steps enqueued between two host read backs of the device resident step state. The actual batch is the estimated number of steps until the next cell list rebuild or output. `1` reproduces a synchronization per step. |
 | `GPUUseGraph` | `true` | Cache CUDA graphs of 1, 2, 4, 8, 16, and 32 steps and compose each host batch from them. Disabled automatically with `GPUSyncTimers`. |
+| `GPUClipTimeStepToOutput` | `false` | Shorten adaptive timesteps to land exactly on output deadlines, including `SimulationTime`. Changes trajectories and potentially step counts; see "Exact output deadlines" below. |
 | `GPUCellSubdivision` | `1` | Positive integer `R`: cells of edge `H/R`, a `(2R+1)^D` stencil, and `(2R+1)^(D-1)` contiguous row ranges. `1` reproduces the CPU grid, `2` uses half-width cells, and `4` uses quarter-width cells. Finer grids reduce candidates but increase dense-grid memory, row overhead and mDBC work. With reference interactions, only `1` reproduces the CPU's density-diffusion pair orientation. Radial symmetric diffusion removes that orientation dependence; accumulation and SPS rounding can still differ. Benchmark the intended precision, lane count and boundary mode before changing it. |
 | `GPUDoublePosition` | `false` | Store and integrate the particle positions (and the mDBC ghost node positions) in `Float64` while everything else stays in `FloatType`; the pair loops use cell relative `FloatType` coordinates (see "Double positions" above). Use it for `Float32` runs of domains far from the origin or with many steps. No effect with `FloatType = Float64`. Allocate the particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so that the input is read in `Float64`. |
 | `GPUCacheInteractionFields` | `false` | Cache inverse density and pressure per particle for reuse in neighbor interactions. Adds two `FloatType` scalars per particle (8 bytes with `Float32`, 16 with `Float64`), independently of `GPUCompactBuffers`. Refreshed for each evaluated density state, including predictor and mDBC corrections. Trades memory for fewer neighbor-loop divisions and EOS evaluations; benchmark elapsed solver time for your case. |
@@ -1354,6 +1355,47 @@ definitions in `benchmark/cases.jl` construct against either package.
 `OutputTimes` also accepts `Float64` values or vectors when `FloatType = Float32`.
 The positions of `Float32` runs are written as `Float64` to the output files
 in either case (that is the point precision of the writer).
+
+### Exact output deadlines
+
+By default the solver takes full adaptive timesteps and saves the first state
+strictly beyond each output deadline. The saved timestamp is the actual
+integration time, so the final state can be up to one adaptive step beyond
+`SimulationTime`. This preserves the existing stepping behavior used for CPU
+reference comparisons.
+
+Set `GPUClipTimeStepToOutput = true` in `SimulationMetaData` to use
+`dt = min(adaptive_dt, next_output_time - current_time)`. For example:
+
+```julia
+meta = SimulationMetaData{2, Float32}(
+    SimulationName = "ExactFrames", SaveLocation = "output",
+    SimulationTime = 0.025, OutputTimes = 0.01,
+    GPUClipTimeStepToOutput = true)
+```
+
+This saves the initial state and integrated states at `0.01`, `0.02`, and
+`0.025`, represented in the metadata's `FloatType`. A vector such as
+`OutputTimes = [0.01, 0.02]` gives the same deadlines; the simulation end is
+included even when absent from the schedule. Clipping applies to both time
+stepping schemes, prescribed motion and floating bodies, with direct launches
+or batched CUDA graphs, and with single-file or numbered VTKHDF output.
+Measurements share these frame times. No interpolation is used, and reaching
+a deadline exactly does not take an extra step.
+
+Shorter steps change the numerical trajectory, subsequent adaptive timesteps
+and potentially cell-list rebuilds. Changing `OutputTimes` with clipping enabled
+can therefore change the trajectory and iteration count. Frequent deadlines
+can add solver steps; compare actual step counts when timing runs. For example,
+with a constant adaptive step of `0.004` and an end time of `0.0131`, deadlines
+at `0.0045` and `0.009` require six clipped steps instead of four full steps
+(which end at `0.016`). Clipping only at the final time takes four steps.
+
+Run the deadline, graph, rebuild and saved-state regressions from the repository root:
+
+```bash
+julia --project=gpu_version -t 2,0 gpu_version/test/output_deadlines.jl
+```
 
 ### Reporting the timestep limiter
 

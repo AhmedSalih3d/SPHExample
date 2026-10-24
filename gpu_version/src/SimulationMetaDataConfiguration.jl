@@ -58,6 +58,13 @@ Unlike the CPU version the keyword constructor converts `OutputTimes` (a number
 or a vector of numbers) to `FloatType`, so `OutputTimes = 0.01` also works for
 `FloatType = Float32`.
 
+`GPUClipTimeStepToOutput = true` clips each adaptive step to the next output
+deadline (including `SimulationTime`). Frames then contain the integrated state
+at that deadline in `FloatType`, without interpolation. The default `false`
+keeps full adaptive steps and writes the first state strictly beyond each
+deadline. Clipping changes the integration trajectory and can change the step
+count; with it enabled, changing `OutputTimes` can also change the trajectory.
+
 `GPUDoublePosition = true` stores and integrates the particle positions in
 `Float64` while velocities, densities, forces and all constants stay in
 `FloatType` (the `posdouble` mode of DualSPHysics). The pair loops then read
@@ -154,6 +161,7 @@ mutable struct SimulationMetaData{Dimensions,
     GPUAsyncOutput::Bool         # write output files on a Julia task while the GPU continues
     GPUMaxStepsPerSync::Int      # upper bound on the time steps enqueued between two host read backs
     GPUUseGraph::Bool            # replay the launch sequence of a step as a CUDA graph
+    GPUClipTimeStepToOutput::Bool # shorten adaptive steps to land exactly on output deadlines
     GPUCellSubdivision::Int      # cells per support radius H per axis (1: edge H, 3^D stencil; 2: edge H/2, 5^D stencil)
     GPUFixedGrid::Bool           # retain initial grid bounds, growing only on explicitly allowed sides
     GPUGridExpansion::NTuple{Dimensions, Tuple{Bool, Bool}} # (negative, positive) growth per axis
@@ -269,6 +277,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUAsyncOutput::Bool                    = true,
         GPUMaxStepsPerSync::Int                 = 32,
         GPUUseGraph::Bool                       = true,
+        GPUClipTimeStepToOutput::Bool            = false,
         GPUCellSubdivision::Int                 = 1,
         GPUFixedGrid::Bool                      = false,
         GPUGridExpansion::NTuple{Dimensions, Tuple{Bool, Bool}} = ntuple(_ -> (false, false), Dimensions),
@@ -294,7 +303,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         IndexCounter, VisualizeInParaview, ExportSingleVTKHDF, ExportGridCells,
         OutputVariables, OpenLogFile, TimeSteppingMode,
         GPUSyncTimers, GPUDeterministicSort, GPUMaxCells, GPUInteractionThreads, GPULanesPerParticle, GPURadialInteractions, GPUScalarSPSViscosity,
-        GPUBoundaryForces, GPUAsyncOutput, GPUMaxStepsPerSync, GPUUseGraph, GPUCellSubdivision,
+        GPUBoundaryForces, GPUAsyncOutput, GPUMaxStepsPerSync, GPUUseGraph, GPUClipTimeStepToOutput, GPUCellSubdivision,
         GPUFixedGrid, GPUGridExpansion,
         GPUDoublePosition, GPUCacheInteractionFields, GPUCompactBuffers, GPUOutputQueueBytes, GPUOutputBufferBytes,
         GPUTimestepDiagnosticsEvery,

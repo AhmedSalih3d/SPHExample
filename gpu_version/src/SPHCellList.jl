@@ -1243,6 +1243,8 @@ resident step state back once per batch (`GPUStepState`). The device decides
 when the cell list has to be rebuilt and when the output time is reached; the
 host reacts to the read back state by rebuilding (`rebuild_cell_list!`) or
 returning. With `GPUUseGraph` a step is replayed as a CUDA graph.
+`GPUClipTimeStepToOutput` shortens steps to reach the deadline exactly;
+otherwise full adaptive steps continue until strictly beyond it.
 `GPUSyncTimers` forces one step per batch with a synchronization after every
 phase so that the timer output is meaningful. `floating` is the state of the
 floating bodies (`FloatingArrays`), or `nothing` for a case without them.
@@ -1306,7 +1308,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
              frozen_particles = Val(cl.frozen_total > 0), cache_final_state, diagnostics)
 
     t_out = next_output_time(SimMetaData)
-    set_output_time!(state, t_out)
+    set_output_time!(state, t_out; clip_timestep = SimMetaData.GPUClipTimeStepToOutput)
 
     if SingleNeighbor && interaction_mode_changed && state.primed && cl.nrebuilds > 0
         # The carried derivative belongs to the previous interaction operator.
@@ -1403,7 +1405,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                     GPUStepState.set_slot!(state.i, state.ih, I_PHASE, PHASE_NEED_DT)
                 end
             end
-        elseif stop == STOP_OUTPUT || SimMetaData.TotalTime > t_out
+        elseif stop == STOP_OUTPUT || GPUStepState.output_time_reached(SimMetaData.TotalTime, t_out, SimMetaData.GPUClipTimeStepToOutput)
             break
         end
     end
@@ -1430,6 +1432,11 @@ version). Returns a [`SimulationResult`](@ref) with final host state,
 performance statistics, diagnostics and a termination reason. Ignoring the
 return value preserves existing usage. Interrupted runs return
 `:interrupted` with `final_state.complete = false`; other errors propagate.
+
+`SimMetaData.GPUClipTimeStepToOutput = true` clips adaptive steps to output
+deadlines and ends exactly at `SimulationTime` in the metadata's precision.
+The default `false` preserves full adaptive steps and strict overshoot.
+Clipping changes trajectories and may change step counts.
 
 With `SimMetaData.GPUDoublePosition` the positions (and ghost node
 positions) are integrated in `Float64` while everything else stays in
@@ -1887,7 +1894,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                 end
             end
 
-            if SimMetaData.TotalTime > SimMetaData.SimulationTime
+            if GPUStepState.output_time_reached(SimMetaData.TotalTime, SimMetaData.SimulationTime, SimMetaData.GPUClipTimeStepToOutput)
                 break
             end
         end
