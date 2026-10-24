@@ -969,7 +969,9 @@ the DBC preparation (`prepare_motion`) refreshes the moved particles. The symple
 scheme runs this at every step as its first neighbour loop. The single
 neighbour scheme carries the corrector derivative of the previous step into
 the predictor instead and only runs this to start that derivative: before
-the first step and after a cell list rebuild (`SimulationLoop`). `step`
+the first step and after a cell list rebuild (`SimulationLoop`). These
+single-neighbor evaluations include gravity so every carried acceleration
+has the same convention as the previous corrector's total acceleration. `step`
 gates every kernel; `mdbc_name` and `loop_name` are the timer labels.
 """
 function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractString, loop_name::AbstractString; prepare_motion::Bool = false)
@@ -1002,6 +1004,7 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
                              boundary_forces = bforces, pos_cells = sup.PosCells, boundary_data = sup.boundary_data,
                              inverse_density = sup.InvDensity, pressure = sup.Pressure,
                              frozen_particles = get(ctx, :frozen_particles, Val(true)),
+                             include_gravity = Val(get(ctx, :SingleNeighbor, false)),
                              radial = get(ctx, :radial, Val(false)),
                              scalar_sps = get(ctx, :scalar_sps, Val(false)))
     end
@@ -1093,7 +1096,7 @@ function enqueue_step!(ctx, timed::Bool)
         pos_cells = sup.PosCellsₙ⁺, CellID = gpu.CellID, grid = grid, SimKernel = SimKernel,
         boundary_mode = get(ctx, :boundary_mode, SimpleMDBC()),
         reuse_predictors = sup.ReusePredictors, inverse_density = sup.InvDensity,
-        pressure = sup.Pressure,
+        pressure = sup.Pressure, carried = SingleNeighbor,
         first_motion = SingleNeighbor && fused_motion && motion.active)
 
     if floats

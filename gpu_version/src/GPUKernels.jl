@@ -359,7 +359,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                              SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
                              ::Val{FlagKernel}, ::Val{FlagShift}, ::Val{BoundaryForces}, ::Val{K},
                              boundary_data, InvDensity, Pressure, n::Int32, ::Val{Radial} = Val(false), ::Val{ScalarSPS} = Val(false),
-                             ::Val{FrozenParticles} = Val(true)) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles}
+                             ::Val{FrozenParticles} = Val(true), ::Val{IncludeGravity} = Val(false)) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -516,6 +516,10 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
     end
 
     @inbounds if valid & (lane == Int32(0))
+        if IncludeGravity
+            # Gravity belongs to the particle, not to each neighbor-gather lane.
+            acc += ConstructGravitySVector(acc, SimConstants.g * GravityFactorValue(T, ParticleType[i]))
+        end
         dρdtI[i]        = dρdt
         Acceleration[i] = acc
         if FlagKernel
@@ -558,6 +562,9 @@ the default is `Val(false)`.
 `scalar_sps = Val(true)` separately opts into the rank-one SPS stress
 contraction while retaining its pair orientation and closure. It can be
 selected without radial continuity/diffusion, and changes rounding.
+`include_gravity = Val(true)` writes total acceleration for startup/rebuild
+evaluations carried into a single-neighbor predictor. The default writes only
+interaction acceleration; the predictor or corrector then adds gravity.
 """
 function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
                               Position, Density, Velocity, ParticleType,
@@ -566,7 +573,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
                               FlagKernel::Val, FlagShift::Val; threads::Integer = 128, lanes::Val = Val(1),
                               boundary_forces::Val = Val(true), pos_cells = nothing, boundary_data = nothing,
                               radial::Val = Val(false), scalar_sps::Val = Val(false), inverse_density = nothing,
-                              pressure = nothing, frozen_particles::Val = Val(true))
+                              pressure = nothing, frozen_particles::Val = Val(true), include_gravity::Val = Val(false))
     inverse_density === nothing || length(inverse_density) == length(Density) ||
         throw(DimensionMismatch("Reciprocal cache must have one entry per evaluated density"))
     pressure === nothing || length(pressure) == length(Density) ||
@@ -584,7 +591,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
         Pairs, Position, Density, Velocity, ParticleType, SimParticles,
         CellStart, CellID, grid, step,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles)
+        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity)
     return nothing
 end
 
@@ -797,7 +804,7 @@ function half_step_kernel!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺,
                            Position, Velocity, Acceleration, Density, dρdtI,
                            ParticleType, GroupMarker, motion, step, SimConstants,
                            PosCellsₙ⁺, CellID, gridarg, H, boundary_mode, InvDensity, Pressure,
-                           ::Val{ReusePredictors}, ::Val{FirstMotion}, n::Int32) where {ReusePredictors, FirstMotion}
+                           ::Val{ReusePredictors}, ::Val{FirstMotion}, ::Val{Carried}, n::Int32) where {ReusePredictors, FirstMotion, Carried}
     step_active(step) || return nothing
     i = thread_index()
     i > n && return nothing
@@ -820,8 +827,10 @@ function half_step_kernel!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺,
         end
         ML  = MotionLimiterValue(T, type)
         acc = Acceleration[i]
-        acc += ConstructGravitySVector(acc, g * GravityFactorValue(T, type))
-        Acceleration[i] = acc
+        if !Carried
+            acc += ConstructGravitySVector(acc, g * GravityFactorValue(T, type))
+            Acceleration[i] = acc
+        end
         # the increment is promoted to the precision of the position
         xₙ⁺ = Position[i]
         if !ReusePredictors || type != Fixed
@@ -857,13 +866,16 @@ kernel leaves them untouched. Density and cell-relative preparation still cover
 every particle.
 With `inverse_density` and/or `pressure`, prediction also writes each predictor
 reciprocal and pressure.
+`carried = true` reuses total acceleration, including gravity, from the previous
+corrector or a startup/rebuild interaction with `include_gravity = Val(true)`.
+The default expects interaction acceleration and adds gravity once.
 """
 function launch_half_step!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺,
                            Position, Velocity, Acceleration, Density, dρdtI,
                            ParticleType, GroupMarker, motion, step, SimConstants;
                            pos_cells = nothing, CellID = nothing, grid = nothing, SimKernel = nothing,
                            boundary_mode = SimpleMDBC(), first_motion::Bool = false, reuse_predictors::Bool = false,
-                           inverse_density = nothing, pressure = nothing)
+                           inverse_density = nothing, pressure = nothing, carried::Bool = false)
     n = length(Position)
     n == 0 && return nothing
     H = SimKernel === nothing ? zero(eltype(Density)) : SimKernel.H
@@ -871,7 +883,7 @@ function launch_half_step!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺,
         Positionₙ⁺, Velocityₙ⁺, ρₙ⁺,
         Position, Velocity, Acceleration, Density, dρdtI,
         ParticleType, GroupMarker, motion, step, SimConstants,
-        pos_cells, CellID, grid, H, boundary_mode, inverse_density, pressure, Val(reuse_predictors), Val(first_motion), Int32(n))
+        pos_cells, CellID, grid, H, boundary_mode, inverse_density, pressure, Val(reuse_predictors), Val(first_motion), Val(carried), Int32(n))
     return nothing
 end
 

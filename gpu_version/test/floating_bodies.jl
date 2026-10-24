@@ -249,4 +249,5 @@ body_distances(p) = (x = p.Position[p.Type .== Floating];
     end
 end
 
+include("fluid_free_fall.jl")
 include("floating_single_neighbor.jl")

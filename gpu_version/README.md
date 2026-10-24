@@ -741,6 +741,10 @@ the half state. Startup and cell-list rebuilds evaluate fresh derivatives at
 the accepted full state. In 3D the cached angular acceleration includes the
 half-state orientation, inertia tensor, and gyroscopic term; torque is never
 recomputed from old particle accelerations at new particle positions.
+Carried fluid acceleration includes gravity exactly once: startup and
+rebuild evaluations include it, and the next single-neighbor predictor reuses
+that total acceleration. Each corrector replaces it with fresh interaction
+acceleration before adding gravity.
 Pause/release, rigid placement, and body output remain supported. Select this scheme with
 `SimTimeStepping = SingleNeighborTimeStepping()` in `RunSimulation`. `<SimulationName>_Floating.csv` records the centre
 and velocity at each output time; its 2D angle/omega columns remain unchanged,
@@ -767,7 +771,10 @@ dominate. Run `benchmark/floating_kernels.jl` for device timings or
 `benchmark/floating_steps.jl` for the complete cylinder timestep, supplying a
 saved baseline `GPUFloating.jl`; the latter also accepts its Git revision.
 The focused physics checks run with `julia --project=. -t 1,0 test/run_floating.jl`
-from `gpu_version/`.
+from `gpu_version/`. These include fluid-only analytical free fall in 2D/3D,
+both precisions and stepping schemes, direct launches and graph replay, and
+multiple cell-list rebuilds. Run just this regression with
+`julia --project=. -t 1,0 test/fluid_free_fall.jl`.
 
 `benchmark/floating_single_neighbor.jl` compares complete warmed timesteps for
 both schemes, including rebuilds and excluding file output. On the RTX 5080,
