@@ -74,6 +74,35 @@ function snapshot(ctx)
 end
 
 @testset "stationary boundary predictors" begin
+    @testset "graph kernel preparation preserves live state, scratch and rigid bodies" begin
+        for D in (2, 3), T in (Float32, Float64), single in (false, true)
+            f = fixture(D, T; double_position = true)
+            ctx = context(f, D, T; compact = true, forces = true, single, lanes = 4, cache = true)
+            seed = SVector{D,T}(ntuple(d -> T(d / 10), D))
+            fill!(ctx.floating.force, T(3))
+            fill!(ctx.floating.acceleration, seed)
+            fill!(ctx.floating.angular_acceleration, D == 2 ? T(2) : seed)
+            STEP.set_slot!(ctx.state.f, ctx.state.fh, STEP.F_DT, T(0.001))
+            STEP.set_slot!(ctx.state.f, ctx.state.fh, STEP.F_TIME, T(0.2))
+            STEP.set_slot!(ctx.state.i, ctx.state.ih, STEP.I_ITER, Int32(17))
+            saved() = (; simulation = snapshot(ctx), inverse = Array(ctx.sup.InvDensity),
+                pressure = Array(ctx.sup.Pressure), force = Array(ctx.floating.force),
+                acceleration = Array(ctx.floating.acceleration), angular = Array(ctx.floating.angular_acceleration))
+            before = saved()
+            for _ in 1:2
+                DRIVER.prepare_step_graph!(ctx)
+                @test isequal(saved(), before)
+                @test ctx.state.graph_kernels_prepared
+                @test ctx.state.graph_batches == ctx.state.direct_batches == ctx.state.graph_capture_failures == 0
+                @test ctx.state.readbacks == 0
+            end
+            STEP.invalidate_graphs!(ctx.state)
+            @test !ctx.state.graph_kernels_prepared
+            DRIVER.prepare_step_graph!(ctx)
+            @test isequal(saved(), before)
+        end
+    end
+
     @testset "cached reciprocals follow prediction, sorting and graph replay" begin
         for D in (2, 3), T in (Float32, Float64), double_position in (false, true),
             compact in (false, true), single in (false, true)

@@ -79,6 +79,8 @@ mutable struct StepState{T}
     graph_batches::Int
     direct_batches::Int
     graph_capture_failures::Int
+    graph_kernels_prepared::Bool
+    graph_capture_error::Union{Nothing, String}
     graphs::Dict{Tuple{UInt, Int, Int}, CUDA.CuGraphExec}
 end
 
@@ -92,7 +94,7 @@ function StepState{T}(; dt = zero(T), time = zero(T), dx = zero(T), iteration::I
     ih[I_ITER] = iteration
     CUDA.pin(fh)
     CUDA.pin(ih)
-    return StepState{T}(CuArray(fh), CuArray(ih), fh, ih, false, 0, false, false, nothing, 0, 0, 0,
+    return StepState{T}(CuArray(fh), CuArray(ih), fh, ih, false, 0, false, false, nothing, 0, 0, 0, false, nothing,
                         Dict{Tuple{UInt, Int, Int}, CUDA.CuGraphExec}())
 end
 
@@ -198,6 +200,10 @@ end
 """
 Drop all cached graphs (after a device buffer they refer to was reallocated).
 """
-invalidate_graphs!(s::StepState) = (empty!(s.graphs); nothing)
+function invalidate_graphs!(s::StepState)
+    empty!(s.graphs)
+    s.graph_kernels_prepared = false
+    return nothing
+end
 
 end # module

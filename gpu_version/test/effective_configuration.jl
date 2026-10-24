@@ -74,7 +74,10 @@ struct CaptureContext{S, G, C}
     state::S
     gpu::G
     cl::C
+    fail_in_capture::Base.RefValue{Bool}
 end
+
+CaptureContext(state, gpu, cl) = CaptureContext(state, gpu, cl, Ref(false))
 
 function increment_kernel!(values)
     values[1] += 1
@@ -82,7 +85,14 @@ function increment_kernel!(values)
 end
 
 function DRIVER.enqueue_step!(ctx::CaptureContext, timed::Bool)
+    ctx.fail_in_capture[] && error("synthetic kernel linkage failure")
     @cuda threads=1 increment_kernel!(ctx.gpu.Position)
+    return nothing
+end
+
+function DRIVER.prepare_step_graph!(ctx::CaptureContext)
+    @cuda launch=false increment_kernel!(ctx.gpu.Position)
+    ctx.state.graph_kernels_prepared = true
     return nothing
 end
 
@@ -165,10 +175,12 @@ if CUDA.functional()
         ctx = CaptureContext(state, (; Position = CUDA.zeros(Int32, 1)), (; generation = 0))
         @test CONFIG.configuration_snapshot(state).execution.path === :not_run
         fail_capture(callback; kwargs...) = nothing
-        @test_logs (:warn, r"CUDA graph capture failed; using direct launches") DRIVER.launch_step_graph!(ctx, 2; capture = fail_capture)
+        @test_logs (:warn, r"CUDA graph capture failed for a 2-step batch.*Graphs remain enabled.*Cause:") DRIVER.launch_step_graph!(ctx, 2; capture = fail_capture)
         first_snapshot = CONFIG.configuration_snapshot(state)
         @test first_snapshot.execution == (; path = :direct, graph_batches = 0, direct_batches = 1, graph_capture_failures = 1)
         @test last(first_snapshot.fallbacks).reason === :graph_capture_failed
+        @test occursin("without exposing an underlying exception", last(first_snapshot.fallbacks).detail)
+        @test state.graph_kernels_prepared
         @test only(Array(ctx.gpu.Position)) == 2
         @test isempty(state.graphs)
         # Repeated failures count every batch and emit only the first warning.
@@ -179,10 +191,39 @@ if CUDA.functional()
         @test only(Array(ctx.gpu.Position)) == 8
         @test length(state.graphs) == 1
         SPHExampleGPU.GPUStepState.invalidate_graphs!(state)
+        @test !state.graph_kernels_prepared
         snapshot = CONFIG.configuration_snapshot(state)
         @test snapshot.execution == (; path = :mixed, graph_batches = 2, direct_batches = 2, graph_capture_failures = 2)
         @test first_snapshot.execution.graph_capture_failures == 1
         @test last(snapshot.fallbacks).reason === :graph_capture_failed
+    end
+
+    @testset "capture invalidation preserves the original exception" begin
+        state = StepState{Float32}()
+        meta = metadata(2, Float32)
+        kernel = SPHKernelInstance{2,Float32}(WendlandC2(); dx = 0.02f0)
+        state.configuration = effective_configuration(meta, kernel, LinearDensityDiffusion(), LaminarSPS(); particle_count = 1)
+        ctx = CaptureContext(state, (; Position = CUDA.zeros(Int32, 1)), (; generation = 0))
+        # Model CUDA.capture's finally block suppressing the callback exception.
+        function suppress_error(callback; kwargs...)
+            ctx.fail_in_capture[] = true
+            try
+                callback()
+            catch
+                return nothing
+            finally
+                ctx.fail_in_capture[] = false
+            end
+        end
+        @test_logs (:warn, r"Cause: synthetic kernel linkage failure") DRIVER.launch_step_graph!(ctx, 2; capture = suppress_error)
+        @test only(Array(ctx.gpu.Position)) == 2
+        first_snapshot = CONFIG.configuration_snapshot(state)
+        @test last(first_snapshot.fallbacks).detail == "synthetic kernel linkage failure"
+        DRIVER.launch_step_graph!(ctx, 2)
+        @test only(Array(ctx.gpu.Position)) == 4
+        SPHExampleGPU.GPUStepState.invalidate_graphs!(state)
+        @test CONFIG.configuration_snapshot(state).execution.path === :mixed
+        @test last(CONFIG.configuration_snapshot(state).fallbacks).detail == "synthetic kernel linkage failure"
     end
 end
 

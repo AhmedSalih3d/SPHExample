@@ -84,7 +84,8 @@ function configuration_snapshot(state)
     fallbacks = configuration.fallbacks
     if state.graph_capture_failures > 0
         fallbacks = (fallbacks..., (; option = :GPUUseGraph, requested = true, effective = :direct_batches,
-            reason = :graph_capture_failed))
+            reason = :graph_capture_failed,
+            detail = something(state.graph_capture_error, "CUDA invalidated capture without exposing an underlying exception.")))
     end
     return merge(configuration, (; fallbacks, execution))
 end
@@ -101,6 +102,9 @@ function log_effective_configuration(logger, configuration; phase)
         @info "Numerical configuration: $(e)"
         for fallback in configuration.fallbacks
             @info "Configuration fallback: $(fallback.option), requested=$(fallback.requested), effective=$(fallback.effective), reason=$(fallback.reason)"
+            if hasproperty(fallback, :detail)
+                @info "Capture failure detail: $(fallback.detail)"
+            end
         end
         if hasproperty(configuration, :execution)
             @info "Observed GPU execution: $(configuration.execution)"

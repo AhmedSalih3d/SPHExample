@@ -39,7 +39,8 @@ and files have closed. Its fields are:
   or `:mixed`, based on submitted batches, with graph/direct batch and graph
   capture-failure counts. Device stop flags may make some submitted steps
   no-ops. Capture failures remain recorded even if later captures succeed or
-  graph caches are invalidated. Available even with `NoLog`.
+  graph caches are invalidated. Capture fallbacks include a `detail` string
+  with the underlying exception when available. Available even with `NoLog`.
 
 The result retains host data only, so it does not extend the lifetime of the
 solver's device buffers. Ignoring the return value preserves existing usage.

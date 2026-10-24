@@ -325,6 +325,16 @@ comparison, use `benchmark/still_wedge_speed.jl --compare-schemes`; its optional
 With `GPUUseGraph = true`, the solver caches graphs of 1, 2, 4, 8, 16, and 32 steps
 and composes each host batch from them. Each step still checks the device stop
 flag, so output deadlines and cell-list rebuilds use the same decisions.
+Before the first capture, the solver launches the exact step kernels with a
+separate inactive device state. This finishes first-use compilation and
+linking without advancing particles, body state, reductions or simulation
+time. Preparation runs again after graph invalidation. In particular, this
+keeps CUDA.jl's synchronous kernel-relocation copies outside capture, avoiding
+the startup `ERROR_STREAM_CAPTURE_IMPLICIT` (906) fallback.
+The [preparation benchmark](benchmark/graph_preparation.md) removed that
+fallback in three fresh-process StillWedge runs; warm complete-run medians
+were 0.328 s without preparation and 0.330 s with it, so this is a startup
+reliability improvement with a small measured overhead in that case.
 With double positions, the final step writes the cell-relative positions of
 the next step; for DBC, prescribed motion refreshes those of the moved
 particles in its preparation kernel. Reciprocal densities are computed on demand in
@@ -1269,7 +1279,12 @@ support does not establish accuracy or CPU equivalence.
 `graph_capture_failures` counts survive graph-cache invalidation. Batches may
 contain steps gated off by device stop flags, so these are launch counts, not
 accepted-step counts. A failed capture uses direct launches for that batch;
-later batches may capture successfully. `effective.use_graph` describes
+later batches may capture successfully. The first failure warning includes
+the underlying CUDA exception when available and states that graphs remain
+enabled. The corresponding `configuration.fallbacks` entry retains its
+`detail` string after successful retries, so use `configuration.execution`
+to distinguish an earlier failure from sustained direct execution.
+`effective.use_graph` describes
 eligibility, while `execution` records what happened. `GPUSyncTimers = true`
 disables graphs and limits batches to one, with an explicit fallback reason if
 graphs were requested. `StoreLog` writes resolved settings at startup, changes

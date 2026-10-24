@@ -1161,6 +1161,29 @@ function enqueue_step!(ctx, timed::Bool)
 end
 
 """
+    prepare_step_graph!(ctx)
+
+Compile and link the current step's exact kernel specializations outside graph
+capture. A separate, stopped device step makes every kernel return before
+reading or changing simulation data. The stream is drained before releasing
+that temporary state. Preparation is repeated after graph invalidation.
+"""
+function prepare_step_graph!(ctx::NamedTuple)
+    state = ctx.state
+    state.graph_kernels_prepared && return nothing
+    stopped = StepState{eltype(state.f)}()
+    stopped.ih[I_STOP] = STOP_OUTPUT
+    copyto!(stopped.i, stopped.ih)
+    try
+        enqueue_step!(merge(ctx, (; state = stopped)), false)
+    finally
+        CUDA.synchronize()
+    end
+    state.graph_kernels_prepared = true
+    return nothing
+end
+
+"""
     launch_step_graph!(ctx, steps = 1)
 
 Replay the launch sequence of a step batch as a CUDA graph. The graph bakes in the
@@ -1168,28 +1191,43 @@ device pointers of its arguments, and the persistent particle arrays are
 swapped with their scratch copies at every cell list rebuild, so one graph
 is kept per set of pointers and batch length, keyed by the position array,
 the reallocation generation of the cell list and the number of steps. The first call
-captures and instantiates the graph; a capture that fails (kernels that
-still have to be compiled) falls back to direct launches for that batch.
+prepares kernels outside capture, then captures and instantiates the graph.
+A capture that fails falls back to direct launches for that batch, retaining
+the underlying error when CUDA invalidation would otherwise suppress it.
 """
 function launch_step_graph!(ctx, steps::Int = 1; capture = CUDA.capture)
     state = ctx.state
     key   = (UInt(pointer(ctx.gpu.Position)), ctx.cl.generation, steps)
     exec  = get(state.graphs, key, nothing)
     if exec === nothing
+        prepare_step_graph!(ctx)
+        capture_error = Ref{Union{Nothing, String}}(nothing)
         # Output workers query events recorded outside this capture on their
         # own streams. Global capture mode would reject those concurrent calls.
         graph = capture(; flags = CUDA.STREAM_CAPTURE_MODE_RELAXED,
                                throw_error = false) do
-            for _ in 1:steps
-                enqueue_step!(ctx, false)
+            try
+                for _ in 1:steps
+                    enqueue_step!(ctx, false)
+                end
+            catch err
+                # CUDA.capture may return from its finally block on invalidation,
+                # suppressing the exception that caused the failure.
+                capture_error[] = sprint(showerror, err)
+                rethrow()
             end
         end
         if graph === nothing
             state.graph_capture_failures += 1
             state.direct_batches += 1
+            if state.graph_capture_error === nothing
+                state.graph_capture_error = capture_error[]
+            end
             if state.graph_capture_failures == 1
-                message = "CUDA graph capture failed; using direct launches for this batch. " *
-                    "Later batches may retry capture; the final configuration reports both paths and failure counts."
+                cause = something(capture_error[], "CUDA invalidated capture without exposing an underlying exception.")
+                message = "CUDA graph capture failed for a $steps-step batch; this batch will use direct kernel launches. " *
+                    "Graphs remain enabled and later batches may capture successfully. Cause: $cause " *
+                    "configuration.fallbacks retains this event; configuration.execution reports actual graph/direct batch counts."
                 logger = hasproperty(ctx, :logger) ? ctx.logger : nothing
                 if logger === nothing
                     @warn message

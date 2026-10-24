@@ -363,9 +363,11 @@ There is no explicit stored list of every accepted particle pair. The grid suppl
 
 More precisely, the power-of-two splitting is done by `SimulationLoop`; `launch_step_graph!` captures/replays each requested size. Graph keys include the position-array pointer, cell-workspace allocation generation and number of steps. Reordering alternates persistent-array pointers, so more than one cached graph can be needed.
 
-If capture cannot yet succeed, for example because a kernel still needs compilation, this function falls back to directly enqueuing that batch.
+Before the first capture, [`prepare_step_graph!`](../src/SPHCellList.jl) launches the exact step kernels with a separate stopped device state, then drains the stream. Every kernel returns without changing the live simulation. This finishes compilation and kernel linking outside capture, including CUDA.jl's synchronous relocation copies that can otherwise cause `ERROR_STREAM_CAPTURE_IMPLICIT` (906). Graph invalidation also resets the preparation flag.
 
-**Functions / macro:** [`batch_size`, `launch_step_graph!`, `enqueue_step!`, `@phase`](../src/SPHCellList.jl#L907); [`predictor_arrays`](../src/SPHCellList.jl#L654); CUDA's `capture`, `instantiate`, `launch`.
+If a capture still fails, this function directly enqueues that batch and keeps graphs enabled for later retries. The first warning reports the underlying exception when available. `configuration.fallbacks` retains the event and its `detail`, while `configuration.execution` reports the observed graph/direct batch counts.
+
+**Functions / macro:** [`prepare_step_graph!`, `batch_size`, `launch_step_graph!`, `enqueue_step!`, `@phase`](../src/SPHCellList.jl); [`predictor_arrays`](../src/SPHCellList.jl#L654); CUDA's `capture`, `instantiate`, `launch`.
 
 `GPUSyncTimers = false` means `@phase` simply enqueues work without a synchronization after each phase. Host timing totals are therefore not a per-kernel GPU profile.
 
