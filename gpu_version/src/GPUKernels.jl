@@ -67,6 +67,8 @@ export launch_interactions!, launch_mdbc!, launch_motion!, launch_half_step!, la
 const ELEMENTWISE_THREADS = REDUCE_THREADS
 const FULL_MASK = 0xffffffff
 
+include("GPUTimestepDiagnostics.jl")
+
 # Use counter-based row iteration even for the 3/9-row stencil at reach one.
 # It preserves the same neighbor order as the tuple returned by cell_rows.
 @inline interaction_rows(grid::CellGrid{D, R}) where {D, R} =
@@ -916,12 +918,13 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
                             Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
                             partial, ::Val{FlagShift}, boundary_mode, GhostPoints, GhostNormals, BoundarySlots,
                             PosCells, CellID, gridarg, InvDensity, NextInvDensity, NextPressure,
-                            ::Val{CommitStep}, n::Int32) where {FlagShift, CommitStep}
+                            diagnostic_partial, particle_ids, ::Val{CommitStep}, n::Int32) where {FlagShift, CommitStep}
     step_active(step) || return nothing
     dt = step_dt(step)
     (; g, ρ₀) = SimConstants
     T = eltype(Density)
     acc_red = SVector{3, T}(zero(T), T(Inf), zero(T))
+    acc_diagnostic = diagnostic_init(diagnostic_partial)
 
     i = thread_index()
     stride = blockDim().x * gridDim().x
@@ -980,12 +983,15 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
         end
 
         # Values for the time step and cell list update decision of the next step
-        acc_red = step_reduce(acc_red, step_values(x, v, acc, Positionₙ⁺[i], SimKernel.h, SimKernel.η²))
+        values = step_values(x, v, acc, Positionₙ⁺[i], SimKernel.h, SimKernel.η²)
+        acc_red = step_reduce(acc_red, values)
+        acc_diagnostic = diagnostic_accumulate(acc_diagnostic, values, particle_ids, i)
 
         i += stride
     end
 
     block_reduce_store!(partial, acc_red, step_reduce)
+    diagnostic_store!(diagnostic_partial, acc_diagnostic)
     # A single block has completed every particle write at the reduction barrier.
     CommitStep && threadIdx().x == 1 && commit_kernel!(step)
     return nothing
@@ -1009,13 +1015,16 @@ density's reciprocal and pressure for the next step. `next_inverse_density`
 may alias `inverse_density`: each predictor reciprocal is read before being
 overwritten. Frozen entries cache their unchanged accepted density.
 Without these destinations, the predictor caches are left unchanged.
+With `diagnostics`, retain the stable `particle_ids` of both timestep limits
+alongside the numerical reduction, excluding the same frozen entries.
 """
 function launch_final_step!(Position, Velocity, Acceleration, Density, dρdtI, ρₙ⁺, Positionₙ⁺,
                             Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
                             red::ReductionWorkspace, FlagShift::Val; boundary_mode = SimpleMDBC(),
                             ghost_points = nothing, ghost_normals = nothing, boundary_slots = nothing,
                             pos_cells = nothing, CellID = nothing, grid = nothing, commit_step::Bool = false,
-                            inverse_density = nothing, next_inverse_density = nothing, next_pressure = nothing)
+                            inverse_density = nothing, next_inverse_density = nothing, next_pressure = nothing,
+                            diagnostics = nothing, particle_ids = nothing)
     commit_step && red.nblocks != 1 && throw(ArgumentError("fused commit requires one reduction block"))
     next_inverse_density === nothing || length(next_inverse_density) == length(Density) ||
         throw(DimensionMismatch("Next-state reciprocal cache must have one entry per density"))
@@ -1023,11 +1032,17 @@ function launch_final_step!(Position, Velocity, Acceleration, Density, dρdtI, �
         throw(DimensionMismatch("Next-state pressure cache must have one entry per density"))
     n = length(Position)
     n == 0 && return nothing
+    if diagnostics !== nothing
+        diagnostics.reduction.nblocks == red.nblocks || throw(DimensionMismatch("Timestep diagnostic reduction must match the step reduction"))
+        particle_ids !== nothing && length(particle_ids) == n || throw(DimensionMismatch("Timestep diagnostics require one stable ID per particle"))
+    end
+    diagnostic_partial = diagnostics === nothing ? nothing : diagnostics.reduction.partial
     @cuda threads=ELEMENTWISE_THREADS blocks=red.nblocks final_step_kernel!(
         Position, Velocity, Acceleration, Density, dρdtI, ρₙ⁺, Positionₙ⁺,
         Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
         red.partial, FlagShift, boundary_mode, ghost_points, ghost_normals, boundary_slots,
-        pos_cells, CellID, grid, inverse_density, next_inverse_density, next_pressure, Val(commit_step), Int32(n))
+        pos_cells, CellID, grid, inverse_density, next_inverse_density, next_pressure,
+        diagnostic_partial, particle_ids, Val(commit_step), Int32(n))
     return nothing
 end
 
@@ -1037,12 +1052,17 @@ end
 Per block partial results of the step reduction for a state that was not
 produced by `launch_final_step!` (the initial state). Consumed by
 `launch_finish!`.
+Pass the same optional `diagnostics` workspace and stable `particle_ids` used
+by final integration to initialize the limiter provenance too.
 """
 function launch_step_reduction!(red::ReductionWorkspace{SVector{3, T}}, Position, Velocity, Acceleration,
-                                Positionₙ⁺, SimKernel) where {T}
+                                Positionₙ⁺, SimKernel; diagnostics = nothing, particle_ids = nothing) where {T}
     init = SVector{3, T}(zero(T), T(Inf), zero(T))
     launch_reduce!(red, step_map, step_reduce, init, length(Position), Position, Velocity, Acceleration,
                    Positionₙ⁺, T(SimKernel.h), T(SimKernel.η²))
+    if diagnostics !== nothing
+        launch_timestep_diagnostic_reduction!(diagnostics, Position, Velocity, Acceleration, Positionₙ⁺, particle_ids, SimKernel)
+    end
     return nothing
 end
 
@@ -1057,7 +1077,8 @@ end
 # `dt = CFL * min(dt1, h / (c₀ + visc))`, `Δx += 4 * maxdisp`. Sets the stop
 # flag when the output time is reached (before computing anything) or when
 # the accumulated displacement bound requires a cell list rebuild.
-function finish_kernel!(step::DeviceStep{T}, partial, nblocks::Int32, CFL::T, c₀::T, h::T) where {T}
+function finish_kernel!(step::DeviceStep{T}, partial, nblocks::Int32, CFL::T, c₀::T, h::T,
+                        diagnostic_partial, diagnostic_result) where {T}
     f = step.f
     s = step.i
     @inbounds begin
@@ -1080,6 +1101,7 @@ function finish_kernel!(step::DeviceStep{T}, partial, nblocks::Int32, CFL::T, c�
         b += blockDim().x
     end
     r = block_reduce(acc, step_reduce)
+    limit = finish_diagnostic(diagnostic_partial, nblocks)
 
     if threadIdx().x == Int32(1)
         @inbounds begin
@@ -1089,6 +1111,7 @@ function finish_kernel!(step::DeviceStep{T}, partial, nblocks::Int32, CFL::T, c�
             d4   = 4 * r[3]
             dx   = f[F_DX] + d4
             f[F_DT]   = dt
+            record_diagnostic!(diagnostic_result, limit, step, dt, CFL * dt1, CFL * (h / (c₀ + visc)), dt1 <= h / (c₀ + visc))
             f[F_DISP] = d4
             f[F_DX]   = dx
             s[I_PHASE] = PHASE_DT_READY
@@ -1105,12 +1128,16 @@ end
 
 Compute the time step of the next step on the device from the reduction in
 `red` (see `finish_kernel!`).
+With `diagnostics`, retain the selected criterion and its particle ID for
+the step being started; a pending step interrupted by a rebuild keeps them.
 """
 function launch_finish!(state::StepState{T}, red::ReductionWorkspace{SVector{3, T}}, SimKernel,
-                        SimConstants) where {T}
+                        SimConstants; diagnostics = nothing) where {T}
+    diagnostic_partial = diagnostics === nothing ? nothing : diagnostics.reduction.partial
+    diagnostic_result = diagnostics === nothing ? nothing : diagnostics.result
     @cuda threads=REDUCE_THREADS blocks=1 finish_kernel!(state, red.partial, Int32(red.nblocks),
                                                         T(SimConstants.CFL), T(SimConstants.c₀),
-                                                        T(SimKernel.h))
+                                                        T(SimKernel.h), diagnostic_partial, diagnostic_result)
     return nothing
 end
 

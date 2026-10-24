@@ -1342,10 +1342,46 @@ definitions in `benchmark/cases.jl` construct against either package.
 | `GPUCompactBuffers` | `true` | Omit unused ghost, kernel-output and shifting buffers on the GPU, and omit inactive `Cells`, `Kernel`, `KernelGradient`, `GhostPoints` and `GhostNormals` columns on the host when allocated with `AllocateDataStructures(SimGeometry, SimMetaData)`; store enabled mDBC ghosts and Updated mDBC state only for ghost-owning boundaries, without ghost reorder scratch; share position/velocity predictors with existing reorder scratch; and remove acceleration sorting shadows. Acceleration is refreshed before post-rebuild readers. Fixed predictor writes are skipped; boundary density and requested force calculations are retained. Host and GPU IDs use `Int32` and group markers use `UInt8`, `UInt16` or `UInt32` only when every value fits; otherwise each field independently retains its original width. Precision and neighbor ranges are unchanged. `false` restores the previous full host and GPU allocation layout. |
 | `GPUOutputQueueBytes` | `256 * 2^20` | Separate host memory budget for frames between the download collector and disk writer. Allocated on demand and reused; capacity for at least one frame. Used with `GPUAsyncOutput`. |
 | `GPUOutputBufferBytes` | `256 * 2^20` | Host memory for output frames that are held before they are written to the single `vtkhdf` file (see "Asynchronous output"). The number of frames per flush uses the particle fields plus an initial grid-size estimate, at least 1 and at most 16. Dense grid frames are checked against the remaining byte budget and can flush sooner; a frame larger than the budget is written immediately. `0` writes every frame at once. |
+| `GPUTimestepDiagnosticsEvery` | `0` | Record the timestep limiter every N output intervals in `<SimulationName>_Timestep.csv`; `0` disables diagnostics. Works with `NoLog`, either integrator, CUDA graphs and asynchronous output. |
 
 `OutputTimes` also accepts `Float64` values or vectors when `FloatType = Float32`.
 The positions of `Float32` runs are written as `Float64` to the output files
 in either case (that is the point precision of the writer).
+
+### Reporting the timestep limiter
+
+Set `GPUTimestepDiagnosticsEvery = 1` in `SimulationMetaData` to record the
+last accepted timestep at every output interval, or use `2`, `10`, etc. to
+sample every second, tenth, etc. interval. `OutputTimes` controls the output
+schedule, including irregular schedules. The initial frame has no accepted
+step and is not sampled. The default `0` allocates no diagnostic buffers and
+creates no diagnostic file; positive values add an ID reduction each step.
+
+`<SimulationName>_Timestep.csv` contains `OutputTime`, the accepted step's
+`Iteration`, its start `Time`, actual `TimeStep`, `Criterion`, `ParticleID`,
+`ForceTimeStep` and `AcousticViscousTimeStep`. Both candidate limits include
+the CFL factor and follow the solver's existing formulas:
+
+```julia
+force_dt = CFL * minimum(sqrt(h / norm(a)) for a in acceleration)
+visc = maximum(abs(h * dot(v, r) / (dot(r, r) + η²)) for (r, v) in zip(position, velocity))
+acoustic_viscous_dt = CFL * (h / (c₀ + visc))
+```
+
+The criterion is `force` or `acoustic_viscous`; its particle ID identifies
+the minimum force limit or maximum viscous term, respectively. These are
+stable input IDs, preserved as integers through cell sorting and compact
+buffer allocation. Equal particle limits choose the lowest ID; equal
+criteria before applying CFL choose `force`. Frozen entries omitted by final integration have no
+contribution. If no particles contributed, `ParticleID` is blank. A step
+shortened below both physical limits is reported as `output`, also with a
+blank ID. Candidate values and IDs come from the same state as the solver's
+reduction, including when a selected step waits for a cell-list rebuild.
+
+Records describe one sampled step per selected interval, not every step or
+the most restrictive step in the interval. Diagnostics retain the original
+timestep calculation and trajectories, with extra GPU reduction work while
+enabled and a small result download at sampled outputs.
 
 ### Logging CUDA and particle memory
 

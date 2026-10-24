@@ -111,6 +111,12 @@ a locked side become permanently `Frozen` at the next batch check, with zero
 velocity/acceleration and no SPH interactions. Their IDs, positions, time and
 crossed limits are logged, even with `NoLog`. Floating bodies freeze as a whole.
 Cell size and particle rebinning are unchanged. Expansion requires `GPUFixedGrid = true`.
+
+`GPUTimestepDiagnosticsEvery = N` records the last accepted step's limiting
+criterion and stable particle ID every `N` output intervals in
+`<SimulationName>_Timestep.csv`. The default `0` disables diagnostics. Positive
+values retain integer IDs alongside the existing timestep reduction without
+changing its arithmetic. Sampling follows `OutputTimes` and works with `NoLog`.
 """
 mutable struct SimulationMetaData{Dimensions,
                                   FloatType <: AbstractFloat,
@@ -156,6 +162,7 @@ mutable struct SimulationMetaData{Dimensions,
     GPUCompactBuffers::Bool      # omit unused buffers and narrow GPU-only metadata when lossless
     GPUOutputQueueBytes::Int     # reusable host frames between collector and disk writer
     GPUOutputBufferBytes::Int    # host memory that holds output frames before they are written to the file
+    GPUTimestepDiagnosticsEvery::Int # record the timestep limiter every N output intervals (0 disables)
 end
 
 """
@@ -270,6 +277,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUCompactBuffers::Bool                 = true,
         GPUOutputQueueBytes::Int                = 256 * 2^20,
         GPUOutputBufferBytes::Int               = 256 * 2^20,
+        GPUTimestepDiagnosticsEvery::Int        = 0,
     ) where {Dimensions, FloatType <: AbstractFloat, SMode <: ShiftingMode, KMode <: KernelOutputMode,
              BMode <: MDBCMode, LMode <: LogMode}
     GPUCellSubdivision >= 1 || throw(ArgumentError("GPUCellSubdivision must be at least 1, got $GPUCellSubdivision"))
@@ -277,6 +285,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         throw(ArgumentError("GPUGridExpansion requires GPUFixedGrid = true"))
     GPUOutputQueueBytes >= 0 || throw(ArgumentError("GPUOutputQueueBytes must be nonnegative"))
     GPUOutputBufferBytes >= 0 || throw(ArgumentError("GPUOutputBufferBytes must not be negative, got $GPUOutputBufferBytes"))
+    GPUTimestepDiagnosticsEvery >= 0 || throw(ArgumentError("GPUTimestepDiagnosticsEvery must be nonnegative"))
     return SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(
         SimulationName, SaveLocation, HourGlass, Iteration,
         FloatType(OutputEach), _output_times(FloatType, OutputTimes),
@@ -288,6 +297,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUBoundaryForces, GPUAsyncOutput, GPUMaxStepsPerSync, GPUUseGraph, GPUCellSubdivision,
         GPUFixedGrid, GPUGridExpansion,
         GPUDoublePosition, GPUCacheInteractionFields, GPUCompactBuffers, GPUOutputQueueBytes, GPUOutputBufferBytes,
+        GPUTimestepDiagnosticsEvery,
     )
 end
 

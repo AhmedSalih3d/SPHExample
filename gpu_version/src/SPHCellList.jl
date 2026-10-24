@@ -1050,7 +1050,8 @@ function enqueue_step!(ctx, timed::Bool)
 
     # dt of this step from the reduction of the previous one; also decides
     # whether the step may run at all (cell list rebuild, output time).
-    @phase HourGlass "01 Update TimeStep" timed launch_finish!(state, red, SimKernel, SimConstants)
+    @phase HourGlass "01 Update TimeStep" timed launch_finish!(state, red, SimKernel, SimConstants;
+        diagnostics = get(ctx, :diagnostics, nothing))
 
     # Stationary cached DBC steps carry the accepted-state caches from final
     # integration; startup and sorting explicitly refresh them.
@@ -1138,7 +1139,8 @@ function enqueue_step!(ctx, timed::Bool)
         pos_cells = sup.PosCells, CellID = gpu.CellID, grid = grid, commit_step = red.nblocks == 1,
         inverse_density = sup.InvDensity,
         next_inverse_density = get(ctx, :cache_final_state, false) ? sup.InvDensity : nothing,
-        next_pressure = get(ctx, :cache_final_state, false) ? sup.Pressure : nothing)
+        next_pressure = get(ctx, :cache_final_state, false) ? sup.Pressure : nothing,
+        diagnostics = get(ctx, :diagnostics, nothing), particle_ids = gpu.ID)
 
     # Rigid final placement reads neither time nor phase, so a one-block
     # integration may commit before this launch without changing body placement.
@@ -1247,7 +1249,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                         SimConstants, gpu::GPUParticles{Dimensions, FloatType},
                         cl::CellListWorkspace, sup::GPUSupportArrays, red::ReductionWorkspace,
                         motion, state::StepState{FloatType};
-                        floating = nothing, logger = nothing) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
+                        floating = nothing, logger = nothing, diagnostics = nothing) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
                                                    SDD <: SPHDensityDiffusion, SV <: SPHViscosity}
     HourGlass = SimMetaData.HourGlass
     h = SimKernel.h
@@ -1298,7 +1300,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
 
     ctx = (; gpu, cl, sup, red, motion, floating, state, SimKernel, SimConstants, SimDensityDiffusion,
              SimViscosity, FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, radial, scalar_sps, HourGlass, boundary_mode,
-             frozen_particles = Val(cl.frozen_total > 0), cache_final_state)
+             frozen_particles = Val(cl.frozen_total > 0), cache_final_state, diagnostics)
 
     t_out = next_output_time(SimMetaData)
     set_output_time!(state, t_out)
@@ -1318,7 +1320,8 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         # first time step. There is no half state yet; the initial displacement
         # bound already forces a cell list rebuild before the first step.
         position_half = sup.ReusePredictors ? gpu.Position : sup.Positionₙ⁺
-        launch_step_reduction!(red, gpu.Position, gpu.Velocity, gpu.Acceleration, position_half, SimKernel)
+        launch_step_reduction!(red, gpu.Position, gpu.Velocity, gpu.Acceleration, position_half, SimKernel;
+            diagnostics, particle_ids = gpu.ID)
         state.primed = true
     end
 
@@ -1392,7 +1395,8 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                 if froze_particles
                     # Removal changes the accepted-state forces. Recompute the
                     # timestep without counting the previous displacement again.
-                    launch_step_reduction!(red, gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Position, SimKernel)
+                    launch_step_reduction!(red, gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Position, SimKernel;
+                        diagnostics, particle_ids = gpu.ID)
                     GPUStepState.set_slot!(state.i, state.ih, I_PHASE, PHASE_NEED_DT)
                 end
             end
@@ -1455,6 +1459,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SV <: SPHViscosity, SDD <: SPHDensityDiffusion}
 
     CUDA.functional() || error("CUDA is not functional on this machine; use the CPU package SPHExample instead.")
+    SimMetaData.GPUTimestepDiagnosticsEvery >= 0 || throw(ArgumentError("GPUTimestepDiagnosticsEvery must be nonnegative"))
     SimulationLoggerConfiguration.start_runtime!(SimLogger, SimMetaData.TotalTime)
     initial_time = SimMetaData.TotalTime
 
@@ -1552,6 +1557,8 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     @timeit HourGlass "00a Upload To GPU" begin
         gpu    = upload_particles(SimParticles, SimMetaData)
         red    = ReductionWorkspace{SVector{3, FloatType}}(NumberOfPoints)
+        diagnostics = SimMetaData.GPUTimestepDiagnosticsEvery == 0 ? nothing :
+            GPUKernels.TimestepDiagnostics{FloatType, eltype(gpu.ID)}(NumberOfPoints)
         cl     = CellListWorkspace{Dimensions, PositionType}(NumberOfPoints;
                      reach = SimMetaData.GPUCellSubdivision, max_cells = SimMetaData.GPUMaxCells,
                      fixed_grid = SimMetaData.GPUFixedGrid, expansion = SimMetaData.GPUGridExpansion,
@@ -1567,7 +1574,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     end
 
     gpu_buffers = (; particles = gpu, support = sup, cells = cl,
-        auxiliary = (motion, floating, red.partial, state.f, state.i))
+        auxiliary = (motion, floating, red.partial, state.f, state.i, diagnostics))
 
     output = SetupVTKOutput(
         SimMetaData, SimParticles, SimKernel, Dimensions;
@@ -1839,10 +1846,16 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     run_status = "finished"
     final_floating = nothing
     try
+        diagnostic_path = joinpath(SimMetaData.SaveLocation, SimMetaData.SimulationName * "_Timestep.csv")
+        if diagnostics !== nothing
+            open(diagnostic_path, "w") do io
+                println(io, "OutputTime,Iteration,Time,TimeStep,Criterion,ParticleID,ForceTimeStep,AcousticViscousTimeStep")
+            end
+        end
         while true
             @timeit HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                                                                  SimConstants, gpu, cl, sup, red, motion, state;
-                                                                 floating = floating, logger = SimLogger)
+                                                                 floating = floating, logger = SimLogger, diagnostics)
 
             # Publish progress immediately, independently of the queued disk writes.
             if StoreLogOutput
@@ -1854,6 +1867,11 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             counter = SimMetaData.OutputIterationCounter
             t_out   = SimMetaData.TotalTime
             grid    = cl.grid
+            if diagnostics !== nothing && (counter - 1) % SimMetaData.GPUTimestepDiagnosticsEvery == 0
+                open(diagnostic_path, "a") do io
+                    GPUKernels.write_timestep_diagnostic!(io, diagnostics, t_out)
+                end
+            end
 
             @timeit HourGlass "13 Output Frame" begin
                 dl = @timeit HourGlass "13a Wait For Staging Buffers" take!(free)
