@@ -29,7 +29,7 @@ device, so the step stays capturable as a CUDA graph.
 """
 module GPUFloating
 
-export FloatingArrays, launch_floating_forces!, launch_floating_update!,
+export FloatingArrays, initialize_floating_velocities!, launch_floating_forces!, launch_floating_update!,
        launch_floating_particles!, launch_floating_derivative!, floating_state, update_floating_indices!, freeze_body_state!
 
 using CUDA
@@ -41,20 +41,24 @@ using ..GPUCellGrid: thread_index, compact_nonzero!
 using ..GPUStepState
 using ..GPUKernels: lanes_sum, store_pos_cell!, ELEMENTWISE_THREADS
 
+include("GPUFloatingConstraints.jl")
+
 """
-    FloatingArrays(SimGeometry, SimParticles, SimConstants; position_type) -> NamedTuple
+    FloatingArrays(SimGeometry, SimParticles, SimConstants; position_type, time = 0) -> NamedTuple
 
 Device state of the floating bodies, one entry per `SPHGeometry` of type
 `Floating`, in the order of `SimGeometry`. Supports both 2D and 3D particle
 vectors. `active` is false when the case has none, in which case nothing is
 launched. `body` maps a group marker to its body (0 for other groups).
+`time` determines whether prescribed initial velocities are paused. After
+construction, `initialize_floating_velocities!` applies them to device particles.
 """
 @inline floating_inertia_type(::Val{2}, ::Type{T}) where {T} = T
 @inline floating_inertia_type(::Val{3}, ::Type{T}) where {T} = SMatrix{3, 3, T, 9}
 @inline floating_dimension(::AbstractVector{SVector{D, T}}) where {D, T} = D
 
 function FloatingArrays(SimGeometry::Vector{SPHGeometry{D, T}}, SimParticles, SimConstants;
-                        position_type::Type{TP} = T) where {D, T, TP}
+                        position_type::Type{TP} = T, time = zero(T)) where {D, T, TP}
     D in (2, 3) || throw(ArgumentError("floating bodies require 2D or 3D particles"))
     floating = filter(geom -> geom.Type == Floating || geom.Floating !== nothing, SimGeometry)
     for geom in floating
@@ -73,6 +77,9 @@ function FloatingArrays(SimGeometry::Vector{SPHGeometry{D, T}}, SimParticles, Si
     inertia_inv = fill(one(InertiaType), nstate)
     pause    = zeros(T, nstate)
     center   = zeros(SVector{D, TP}, nstate)
+    constraints = fill(FloatingConstraints{D,T}(), nstate)
+    velocity = zeros(SVector{D,T}, nstate)
+    omega = zeros(D == 2 ? T : SVector{3,T}, nstate)
     count    = zeros(Int, max(nbodies, 1))
     for (b, geom) in enumerate(floating)
         g = geom.GroupMarker
@@ -106,30 +113,41 @@ function FloatingArrays(SimGeometry::Vector{SPHGeometry{D, T}}, SimParticles, Si
             inertia_inv[b] = inv(Ibody)
         end
         pause[b]   = T(geom.Floating.PauseTime)
+        config = geom.Floating.Constraints
+        if config !== nothing
+            config isa FloatingConstraints{D,T} ||
+                throw(ArgumentError("Floating constraints for group $g must use dimension $D and physics type $T."))
+            constraints[b] = config
+            if time >= pause[b]
+                omega[b] = constrained_omega(zero(eltype(omega)), config, Val(D))
+                velocity[b] = config.hinge ? angular_cross(omega[b], SVector{D,T}(c - typeof(c)(config.point))) : config.velocity
+            end
+        end
     end
 
     zv(E) = CUDA.zeros(E, nstate)
     common = (active = nbodies > 0, nbodies = Int32(nbodies), count = count,
+              constrained = any(c -> c.active, constraints), constraints = CuArray(constraints),
               frozen = CUDA.zeros(Int32, nstate),
               body = CuArray(body), mass = CuArray(mass), inertia = CuArray(inertia),
               inertia_inv = CuArray(inertia_inv), pause = CuArray(pause),
               center = CuArray(center), center_n = CuArray(center),
-              center_half = CuArray(center), velocity = zv(SVector{D, T}),
-              velocity_half = zv(SVector{D, T}),
+              center_half = CuArray(center), velocity = CuArray(velocity),
+              velocity_half = CuArray(velocity),
               acceleration = zv(SVector{D, T}),
               angular_acceleration = zv(D == 2 ? T : SVector{3, T}),
               indices = CuArray(Int32.(findall(==(Floating), SimParticles.Type))),
               force = CUDA.zeros(T, (D == 2 ? 3 : 6) * nstate))
     if D == 2
-        return merge(common, (omega = zv(T), omega_half = zv(T),
+        return merge(common, (omega = CuArray(omega), omega_half = CuArray(omega),
                               angle = zv(T), turn = zv(T),
                               rotation = CuArray(fill(SVector{2, T}(0, 1), nstate))))
     end
 
     identity_orientation = SVector{4, T}(one(T), zero(T), zero(T), zero(T))
     orientation = fill(identity_orientation, nstate)
-    return merge(common, (omega = zv(SVector{3, T}),
-                          omega_half = zv(SVector{3, T}),
+    return merge(common, (omega = CuArray(omega),
+                          omega_half = CuArray(omega),
                           orientation = CuArray(orientation),
                           orientation_half = CuArray(orientation),
                           turn = zv(SVector{3, T}),
@@ -311,6 +329,10 @@ function floating_update_kernel!(f, step, g::T, ::Val{2}, ::Val{Final}, ::Val{Ca
         f.force[3b - 2] = zero(T)
         f.force[3b - 1] = zero(T)
         f.force[3b]     = zero(T)
+        if f.constraints[b].active
+            constrained_floating_update!(f, b, F, τ, gvec, step, Val(Final), Val(Carried), Val(2))
+            continue
+        end
         held = time < f.pause[b]
         Vₙ = f.velocity[b]
         ωₙ = f.omega[b]
@@ -443,6 +465,10 @@ function floating_update_kernel!(f, step, g::T, ::Val{3}, ::Val{Final}, ::Val{Ca
         for d in 1:6
             f.force[base + d] = zero(T)
         end
+        if f.constraints[b].active
+            constrained_floating_update!(f, b, F, τ, gvec, step, Val(Final), Val(Carried), Val(3))
+            continue
+        end
         held = time < f.pause[b]
         Vₙ = f.velocity[b]
         ωₙ = f.omega[b]
@@ -511,7 +537,7 @@ end
 function launch_floating_update!(floating, step, g, final::Bool, ::Val{2}; carried::Bool = false)
     T = eltype(floating.force)
     f = floating
-    device = (; f.nbodies, f.frozen, f.force, f.pause, f.mass, f.inertia, f.center, f.center_n, f.center_half,
+    device = (; f.nbodies, f.frozen, f.constraints, f.force, f.pause, f.mass, f.inertia, f.center, f.center_n, f.center_half,
                 f.velocity, f.velocity_half, f.omega, f.omega_half, f.angle, f.turn, f.rotation,
                 f.acceleration, f.angular_acceleration)
     @cuda threads=1 blocks=1 floating_update_kernel!(device, step, T(g), Val(2), Val(final), Val(carried))
@@ -521,7 +547,7 @@ end
 function launch_floating_update!(floating, step, g, final::Bool, ::Val{3}; carried::Bool = false)
     T = eltype(floating.force)
     f = floating
-    device = (; f.nbodies, f.frozen, f.force, f.pause, f.mass, f.inertia, f.inertia_inv,
+    device = (; f.nbodies, f.frozen, f.constraints, f.force, f.pause, f.mass, f.inertia, f.inertia_inv,
                 f.center, f.center_n, f.center_half, f.velocity, f.velocity_half,
                 f.omega, f.omega_half, f.orientation, f.orientation_half, f.turn, f.rotation,
                 f.acceleration, f.angular_acceleration)
@@ -540,10 +566,21 @@ function floating_derivative_kernel!(f, step, g::T, ::Val{D}) where {T, D}
         f.frozen[b] != 0 && continue
         base = stride * (b - 1)
         force = SVector{D, T}(ntuple(d -> f.force[base + d], Val(D)))
-        f.acceleration[b] = force / f.mass[b] + gvec
-        if D == 2
+        if f.constraints[b].active
+            torque = if D == 2
+                f.force[base + 3]
+            else
+                SVector{3,T}(f.force[base + 4], f.force[base + 5], f.force[base + 6])
+            end
+            q = body_orientation(f, b, Val(D))
+            a, alpha = constrained_derivative(f, b, force, torque, gvec, f.center[b], q, f.omega[b], Val(D))
+            f.acceleration[b] = a
+            f.angular_acceleration[b] = alpha
+        elseif D == 2
+            f.acceleration[b] = force / f.mass[b] + gvec
             f.angular_acceleration[b] = f.force[base + 3] / f.inertia[b]
         else
+            f.acceleration[b] = force / f.mass[b] + gvec
             torque = SVector{3, T}(f.force[base + 4], f.force[base + 5], f.force[base + 6])
             f.angular_acceleration[b] = angular_acceleration(f.orientation[b], f.omega[b], torque,
                                                            f.inertia[b], f.inertia_inv[b])
@@ -566,9 +603,9 @@ function launch_floating_derivative!(floating, step, g)
     f = floating
     D = floating_dimension(f.center)
     device = if D == 2
-        (; f.nbodies, f.frozen, f.force, f.mass, f.inertia, f.acceleration, f.angular_acceleration)
+        (; f.nbodies, f.frozen, f.constraints, f.center, f.omega, f.force, f.mass, f.inertia, f.acceleration, f.angular_acceleration)
     else
-        (; f.nbodies, f.frozen, f.force, f.mass, f.inertia, f.inertia_inv, f.orientation, f.omega,
+        (; f.nbodies, f.frozen, f.constraints, f.center, f.force, f.mass, f.inertia, f.inertia_inv, f.orientation, f.omega,
            f.acceleration, f.angular_acceleration)
     end
     @cuda threads=1 blocks=1 floating_derivative_kernel!(device, step, eltype(f.force)(g), Val(D))

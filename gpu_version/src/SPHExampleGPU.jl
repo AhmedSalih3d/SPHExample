@@ -56,7 +56,7 @@ module SPHExampleGPU
     export SPHDensityDiffusion, ZeroDensityDiffusion, ZeroGravityLinearDensityDiffusion, LinearDensityDiffusion, ZeroGravityComplexDensityDiffusion, ComplexDensityDiffusion, compute_density_diffusion
 
     using .SimulationGeometry
-    export ParticleType, Fixed, Fluid, Moving, Floating, Frozen, SPHGeometry, MotionDetails, FloatingDetails,
+    export ParticleType, Fixed, Fluid, Moving, Floating, Frozen, SPHGeometry, MotionDetails, FloatingDetails, FloatingConstraints,
            GravityFactorValue, MotionLimiterValue, particle_struct_array
 
     using .PreProcess

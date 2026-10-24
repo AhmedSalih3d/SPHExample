@@ -771,6 +771,58 @@ With `GPUAsyncOutput = true`, the output worker writes the CSV rows in frame
 order from independent snapshots, so later body updates cannot change queued
 rows. CSV times and column formats are the same in both output modes.
 
+Constrain a body with `FloatingDetails(..., Constraints = FloatingConstraints{D,T}(...))`.
+All options use fixed world coordinates. Translation tuples have `D` entries;
+rotation tuples have one entry in 2D and three in 3D. For example:
+
+```julia
+# A 2D body that can heave vertically, with horizontal translation and spin locked.
+heave = FloatingConstraints{2,FloatType}(
+    TranslationLocks = (true, false), RotationLocks = (true,))
+
+# Tow horizontally at 0.2 m/s while vertical translation responds to fluid forces.
+tow = FloatingConstraints{2,FloatType}(
+    PrescribedVelocity = (0.2, nothing), RotationLocks = (true,))
+
+# A freely rotating 2D body pinned at an off-centre world-space pivot.
+hinge = FloatingConstraints{2,FloatType}(HingePoint = (0.0, 0.5))
+
+# A 3D hinge about a fixed axis, driven at 0.5 rad/s regardless of applied torque.
+driven_hinge = FloatingConstraints{3,FloatType}(
+    HingePoint = (0.0, 0.0, 0.5), HingeAxis = (0.0, 1.0, 0.0), HingeVelocity = 0.5)
+
+body = FloatingDetails{FloatType}(RelativeWeight = 1.2, Constraints = heave)
+```
+
+`TranslationLocks` and `RotationLocks` default to `false`. A `true` entry
+imposes zero velocity for that component. `PrescribedVelocity` (m/s) and
+`PrescribedOmega` (rad/s) default to `nothing` entries, which remain force
+responsive; numeric entries impose constant velocities. A degree of freedom
+cannot be both locked and prescribed. These prescriptions support constant
+rates; time-varying trajectories are not currently exposed. Rotation locks
+constrain components of world angular velocity, rather than Euler angles.
+In 3D, the angular equations are solved using the inertia tensor restricted
+to the permitted axes, including the gyroscopic term and constraint reactions.
+
+`HingePoint` fixes a pivot and replaces the component options. A 3D hinge
+also needs a nonzero `HingeAxis`, normalized internally; a 2D hinge rotates
+perpendicular to its plane. The centre follows a circular arc about the pivot,
+and particle velocities follow that same rigid motion. Free hinges include
+the parallel-axis inertia and the moment of fluid force and gravity about
+the pivot. `HingeVelocity` optionally imposes a constant angular speed. Hinges
+cannot be combined with component locks or prescriptions. Pivot coordinates
+retain Float64 precision. Constraint dimension and physics type must match
+the geometry; invalid or conflicting options fail before stepping.
+
+Constraints apply to predictor placement, corrector placement and carried
+derivatives in both stepping schemes, including CUDA graphs and cell sorting.
+`PauseTime` holds all motion until release, including prescribed motion;
+crossing a locked grid limit permanently freezes the body. Initial particle
+and body velocities already include any active prescribed rates. No
+constraint-reaction force or torque columns are currently exported.
+Run the focused regressions with
+`julia --project=. -t 1,0 test/floating_constraints.jl`.
+
 Force reduction and rigid placement use a compact list of floating particles,
 refreshed after cell sorting without changing its device address. Each warp
 reduces only the bodies it contains. Rotation coefficients are computed once
