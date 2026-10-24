@@ -1207,6 +1207,50 @@ Data stays on the GPU for the whole run; the host `StructArray` passed to
 `RunSimulation` holds the state of the last written output (reordered by
 cell, like the CPU version) when the function returns.
 
+### Simulation result
+
+`RunSimulation` returns a `SimulationResult` after output has drained and files
+have closed. Existing calls can continue to ignore the return value.
+
+```julia
+result = RunSimulation(; SimGeometry, SimMetaData, SimConstants, SimKernel,
+    SimLogger, SimParticles, SimViscosity, SimDensityDiffusion, SimTimeStepping)
+
+result.final_state.particles       # same host array as SimParticles, in cell order
+result.final_state.floating        # body-state host vectors, or nothing
+result.final_state.time            # actual solver time; may overshoot SimulationTime
+result.performance.steps          # steps taken during this call, including resumed runs
+result.performance.wall_time_seconds
+result.performance.mparticle_steps_per_second
+result.diagnostics.cell_list_rebuilds
+result.diagnostics.step_state_readbacks
+result.termination_reason          # :completed or :interrupted
+```
+
+`final_state` also snapshots `iteration` and `timestep`. Copy its `particles`
+array to keep it independent of later changes to `SimParticles`. Only allocated
+host columns are available; compact-buffer allocation rules still apply. The
+result retains no solver device buffers.
+
+Performance statistics include simulated time advanced, mean timestep,
+milliseconds per step and output writer time. Wall time covers setup, final
+downloads, output draining and finalization. Writer time may overlap GPU work;
+it must not be added to wall time. Rates with no completed steps are `NaN`.
+`performance.phase_timings` is an independent copy of `SimMetaData.HourGlass`,
+including entries from before the call if that timer was reused. Unless
+`performance.phase_timings_synchronized` is true (`GPUSyncTimers`), section
+timings measure host enqueue/readback boundaries, not GPU kernel durations.
+Diagnostics also include particle and written-frame counts (including the
+initial frame), grid dimensions, frozen particles, grid-status and bounding-box
+readbacks, capacity growths and captured graph count.
+
+A caught interrupt returns `termination_reason = :interrupted` after cleanup
+and a final device download. Since it can stop midway through a step,
+`final_state.complete` is false; its time and iteration refer to the last
+committed step, and its particle/body snapshot may contain partly evaluated
+state. Normal completion sets `complete = true`. Other errors still propagate
+after cleanup rather than returning a result.
+
 ### Measurements
 
 Use `MeasurementConfig` to opt into pressure and velocity probes, water-column

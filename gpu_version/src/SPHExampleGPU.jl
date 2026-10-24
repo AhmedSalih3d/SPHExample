@@ -30,6 +30,7 @@ module SPHExampleGPU
         "GPUCellGrid.jl",
         "GPUKernels.jl",
         "GPUFloating.jl",
+        "SimulationResults.jl",
         "SPHCellList.jl",
         "ParticleGenerator.jl",
         "CustomPrettyPrinting.jl",
@@ -109,6 +110,9 @@ module SPHExampleGPU
     using .SPHCellList
     export GPUParticles, GPUSupportArrays, MotionArrays, upload_particles, download_particles!,
            RunSimulation, SimulationLoop, position_type, uses_pos_cells
+
+    using .SimulationResults
+    export SimulationResult
 
     using .PolygonDrawing
     export polygon, triangle, rectangle, square, regular_polygon, circle, arc,

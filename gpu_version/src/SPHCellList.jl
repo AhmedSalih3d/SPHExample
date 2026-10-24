@@ -37,6 +37,7 @@ using ..GPUStepState
 using ..GPUCellGrid
 using ..GPUKernels
 using ..GPUFloating
+using ..SimulationResults: SimulationResult
 
 import StructArrays: StructArray
 
@@ -1418,7 +1419,10 @@ shifting, kernel output, mDBC and log modes are the type parameters of
 `SimMetaData`, the time stepping scheme is `SimTimeStepping`
 (`SymplecticTimeStepping()` or `SingleNeighborTimeStepping()`). On return the
 host `SimParticles` hold the final state (reordered by cell, like the CPU
-version).
+version). Returns a [`SimulationResult`](@ref) with final host state,
+performance statistics, diagnostics and a termination reason. Ignoring the
+return value preserves existing usage. Interrupted runs return
+`:interrupted` with `final_state.complete = false`; other errors propagate.
 
 With `SimMetaData.GPUDoublePosition` the positions (and ghost node
 positions) are integrated in `Float64` while everything else stays in
@@ -1452,6 +1456,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
 
     CUDA.functional() || error("CUDA is not functional on this machine; use the CPU package SPHExample instead.")
     SimulationLoggerConfiguration.start_runtime!(SimLogger, SimMetaData.TotalTime)
+    initial_time = SimMetaData.TotalTime
 
     if SimMetaData.GPURadialInteractions
         if radial_interactions_supported(SimKernel, SimDensityDiffusion, SimViscosity)
@@ -1664,6 +1669,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     jobs    = Channel{OutputFrameJob{Dimensions}}(length(staging))
     foreach(dl -> put!(free, dl), staging)
     write_time = Ref(0.0)
+    output_frames = Ref(1)
     grid_cells_scratch = CartesianIndex{Dimensions}[]
     grid_cells_seen = Set{CartesianIndex{Dimensions}}()
     # Host side of one frame: wait for its copies, write the files directly from
@@ -1696,6 +1702,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             put!(free, dl)
         end
         write_time[] += time() - t0
+        output_frames[] += 1
         return nothing
     end
     writer = nothing
@@ -1830,6 +1837,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     Base.exit_on_sigint(false)
 
     run_status = "finished"
+    final_floating = nothing
     try
         while true
             @timeit HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
@@ -1859,13 +1867,6 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             end
 
             if SimMetaData.TotalTime > SimMetaData.SimulationTime
-                close_output_streams!()
-
-                # Leave the complete final state on the host, not only the output
-                # fields, so that callers can inspect every allocated particle field.
-                @timeit HourGlass "13d Final Download From GPU" download_particles!(
-                    SimParticles, gpu, cl.grid; cells = hasproperty(SimParticles, :Cells))
-                
                 break
             end
         end
@@ -1879,10 +1880,48 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             rethrow()
         end
     finally
-        finalize_output!(run_status)
+        try
+            if run_status != "failed"
+                close_output_streams!()
+                if run_status == "interrupted"
+                    # Work queued before the interrupt may have committed more steps.
+                    readback!(state)
+                    sync_meta_data!(SimMetaData, state)
+                end
+                # Drain writers before refreshing all allocated host particle fields.
+                @timeit HourGlass "13d Final Download From GPU" begin
+                    download_particles!(SimParticles, gpu, cl.grid;
+                        cells = hasproperty(SimParticles, :Cells) && cl.nrebuilds > 0)
+                    final_floating = floating.active ? floating_state(floating) : nothing
+                end
+            end
+        catch
+            run_status = "failed"
+            rethrow()
+        finally
+            finalize_output!(run_status)
+        end
     end
 
-    return nothing
+    elapsed = SimulationLoggerConfiguration.elapsed_wall_time(SimLogger)
+    steps = max(0, SimMetaData.Iteration - initial_steps)
+    simulated_time = max(0.0, Float64(SimMetaData.TotalTime) - Float64(initial_time))
+    final_state = (; particles = SimParticles, floating = final_floating,
+        time = SimMetaData.TotalTime, iteration = SimMetaData.Iteration,
+        timestep = SimMetaData.CurrentTimeStep, complete = run_status == "finished")
+    performance = (; steps, simulated_time, wall_time_seconds = elapsed,
+        mean_timestep = steps > 0 ? simulated_time / steps : NaN,
+        milliseconds_per_step = steps > 0 ? 1e3 * elapsed / steps : NaN,
+        mparticle_steps_per_second = elapsed > 0 && steps > 0 ? (steps * NumberOfPoints / 1e6) / elapsed : NaN,
+        output_write_seconds = write_time[], phase_timings = copy(HourGlass),
+        phase_timings_synchronized = SimMetaData.GPUSyncTimers)
+    run_diagnostics = (; particle_count = NumberOfPoints, output_frames = output_frames[],
+        cell_list_rebuilds = cl.nrebuilds, grid_dims = Tuple(cl.grid.dims),
+        frozen_particles = cl.frozen_total, step_state_readbacks = state.readbacks,
+        grid_status_readbacks = cl.grid_status_readbacks, capacity_growths = cl.capacity_growths,
+        bbox_host_readbacks = cl.bbox_host_readbacks, captured_graphs = length(state.graphs))
+    termination_reason = run_status == "finished" ? :completed : :interrupted
+    return SimulationResult(final_state, performance, run_diagnostics, termination_reason)
 end
 
 end # module
