@@ -35,6 +35,7 @@ using ..SPHViscosityModels
 using ..SPHDensityDiffusionModels
 using ..GPUReductions
 using ..GPUStepState
+using ..ExternalForces: prepare_external_forces, launch_external_forces!
 using ..GPUCellGrid
 using ..GPUKernels
 using ..GPUConfiguration: effective_configuration, configuration_snapshot, log_effective_configuration
@@ -1023,6 +1024,8 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
                              radial = get(ctx, :radial, Val(false)),
                              scalar_sps = get(ctx, :scalar_sps, Val(false)), periodicity = cl.periodicity)
     end
+    launch_external_forces!(get(ctx, :external_forces, ()), gpu.Acceleration, gpu.Position, gpu.Velocity,
+        gpu.Type, gpu.GroupMarker, step, SimConstants.g)
     floating = get(ctx, :floating, nothing)
     if get(ctx, :SingleNeighbor, false) && floating !== nothing && floating.active
         @phase HourGlass "02d Rebuild Floating Derivative" timed begin
@@ -1139,6 +1142,10 @@ function enqueue_step!(ctx, timed::Bool)
         frozen_particles = get(ctx, :frozen_particles, Val(true)),
         radial = get(ctx, :radial, Val(false)),
         scalar_sps = get(ctx, :scalar_sps, Val(false)), periodicity = cl.periodicity)
+
+    @phase HourGlass "09 External Forces" timed launch_external_forces!(get(ctx, :external_forces, ()),
+        gpu.Acceleration, position_half, velocity_half, gpu.Type, gpu.GroupMarker, state, SimConstants.g;
+        half_time = true)
 
     if floats
         @phase HourGlass "10 Floating Corrector" timed begin
@@ -1322,7 +1329,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                         SimConstants, gpu::GPUParticles{Dimensions, FloatType},
                         cl::CellListWorkspace, sup::GPUSupportArrays, red::ReductionWorkspace,
                         motion, state::StepState{FloatType};
-                        floating = nothing, logger = nothing, diagnostics = nothing) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
+                        floating = nothing, external_forces = (), logger = nothing, diagnostics = nothing) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
                                                    SDD <: SPHDensityDiffusion, SV <: SPHViscosity}
     HourGlass = SimMetaData.HourGlass
     h = SimKernel.h
@@ -1382,7 +1389,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     cache_final_state = !UseMDBC && !motion.active && (floating === nothing || !floating.active) &&
         sup.InvDensity !== nothing && sup.Pressure !== nothing
 
-    ctx = (; gpu, cl, sup, red, motion, floating, state, SimKernel, SimConstants, SimDensityDiffusion,
+    ctx = (; gpu, cl, sup, red, motion, floating, external_forces, state, SimKernel, SimConstants, SimDensityDiffusion,
              SimViscosity, FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, radial, scalar_sps, HourGlass, boundary_mode,
              frozen_particles = Val(cl.frozen_total > 0), cache_final_state, diagnostics,
              logger = LMode === StoreLog ? logger : nothing)
@@ -1396,10 +1403,16 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         enqueue_state_derivative!(ctx, step, timed, "00a Refresh Interaction MDBC", "00b Refresh Interaction Derivative")
     end
 
+    initialize_external_forces = !state.primed && !isempty(external_forces)
     if !state.primed
         # A caller may supply an already sorted cell list with fresh support arrays.
         if cache_final_state && cl.nrebuilds > 0
             prepare_state_caches!(ctx, HostStep(state.fh[F_DT], state.fh[F_TIME]))
+        end
+        if initialize_external_forces && cl.nrebuilds > 0
+            enqueue_state_derivative!(ctx, HostStep(state.fh[F_DT], state.fh[F_TIME]), timed,
+                "00a Initial Force MDBC", "00b Initial Force Derivative"; total_acceleration = true)
+            initialize_external_forces = false
         end
         # No final step kernel has run yet: reduce the initial state for the
         # first time step. There is no half state yet; the initial displacement
@@ -1476,16 +1489,18 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                 # CPU does ("03a Rebuild MDBC" .. "03c Rebuild NeighborLoop").
                 # Before the first step this is the CPU "00 Init" evaluation,
                 # because the initial displacement bound forces a rebuild.
-                if SingleNeighbor || froze_particles || cl.periodicity !== nothing
+                if SingleNeighbor || froze_particles || cl.periodicity !== nothing || initialize_external_forces
                     enqueue_state_derivative!(ctx, state, timed, "02b Rebuild MDBC", "02c Rebuild NeighborLoop";
-                        total_acceleration = SingleNeighbor || cl.periodicity !== nothing)
+                        total_acceleration = SingleNeighbor || cl.periodicity !== nothing || initialize_external_forces)
                 end
-                if froze_particles || cl.periodicity !== nothing
+                if froze_particles || cl.periodicity !== nothing || initialize_external_forces
                     # Removal changes forces; wrapping also changes the coordinates
-                    # used by the timestep criterion. Reduce the accepted state.
+                    # used by the timestep criterion. Initial external forces must
+                    # also limit the first step. Reduce the accepted state.
                     launch_step_reduction!(red, gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Position, SimKernel;
                         diagnostics, particle_ids = gpu.ID)
                     GPUStepState.set_slot!(state.i, state.ih, I_PHASE, PHASE_NEED_DT)
+                    initialize_external_forces = false
                 end
             end
         elseif stop == STOP_OUTPUT || GPUStepState.output_time_reached(SimMetaData.TotalTime, t_out, SimMetaData.GPUClipTimeStepToOutput)
@@ -1503,7 +1518,7 @@ end
 """
     RunSimulation(; SimGeometry, SimMetaData, SimConstants, SimKernel, SimLogger,
                     SimParticles, SimViscosity, SimDensityDiffusion, SimTimeStepping,
-                    ParticleNormalsPath, SimMeasurements = nothing,
+                    ParticleNormalsPath, SimMeasurements = nothing, SimExternalForces = nothing,
                     ParaviewPressureRange = nothing)
 
 Run a complete simulation on the GPU. Same interface as the CPU version: the
@@ -1535,6 +1550,13 @@ positions; other host arrays are converted on upload and download.
 and free-surface series at output times. With asynchronous output, samples are
 computed by the output worker rather than the timestep kernels.
 
+`SimExternalForces` accepts an `ExternalForce` or a tuple/vector of histories,
+one per fluid `GroupMarker`. Forces are evaluated on the device at each
+derivative evaluation, including startup/rebuilds and the predictor state at
+half time. The single-neighbor scheme carries the previous evaluated total
+acceleration into its next predictor. Gravity is applied once and the final
+total acceleration participates in the adaptive timestep reduction.
+
 `ParaviewPressureRange = (min, max)` fixes the generated ParaView pressure color
 scale in Pa. By default use zero through the hydrostatic pressure of the initial
 fluid height plus one particle spacing. This scale stays fixed across frames;
@@ -1551,10 +1573,12 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     SimTimeStepping::TimeSteppingMode,
     ParticleNormalsPath::Union{Nothing, String} = nothing,
     SimMeasurements::Union{Nothing, MeasurementConfig} = nothing,
+    SimExternalForces = nothing,
     ParaviewPressureRange = nothing,
     ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SV <: SPHViscosity, SDD <: SPHDensityDiffusion}
 
     CUDA.functional() || error("CUDA is not functional on this machine; use the CPU package SPHExample instead.")
+    external_forces = prepare_external_forces(SimExternalForces, SimParticles, Val(Dimensions), FloatType)
     SimMetaData.GPUTimestepDiagnosticsEvery >= 0 || throw(ArgumentError("GPUTimestepDiagnosticsEvery must be nonnegative"))
     SimulationLoggerConfiguration.start_runtime!(SimLogger, SimMetaData.TotalTime)
     initial_time = SimMetaData.TotalTime
@@ -1988,7 +2012,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         while true
             @timeit HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                                                                  SimConstants, gpu, cl, sup, red, motion, state;
-                                                                 floating = floating, logger = SimLogger, diagnostics)
+                                                                 floating = floating, external_forces, logger = SimLogger, diagnostics)
 
             # Publish progress immediately, independently of the queued disk writes.
             if StoreLogOutput

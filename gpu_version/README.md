@@ -129,6 +129,66 @@ julia --project=gpu_version gpu_version/example/Periodicity2d.jl
 julia --project=gpu_version -t 2,0 gpu_version/test/periodicity.jl
 ```
 
+### External forces
+
+`SimExternalForces` adds prescribed acceleration histories to fluid groups,
+following DualSPHysics 5.4 `examples/main/04_ExternalForces`. The implementation
+lives in `src/ExternalForces.jl`; the interaction kernels are unchanged.
+
+```julia
+force = ExternalForce{3, Float32}(3;
+    times = [0, 1, 3, 5],
+    linear_acceleration = [(0, 0, 0), (0, 0, 15), (0, 0, 0), (0, 0, 0)],
+    angular_acceleration = [(0, 0, 0), (0, 0, 0), (0, 2, 0), (0, 0, 0)],
+    center = (0, 0, 0), global_gravity = true)
+# Add SimExternalForces = force (or a tuple/vector of forces) to RunSimulation.
+# Reference CSV files can also be read directly:
+# force = ExternalForce{3, Float32}(3, "CaseForcesData_0.csv")
+```
+
+Markers use this package's `SPHGeometry.GroupMarker`, rather than the reference's
+separate `mkfluid` numbering. Each selected marker must contain only fluid
+particles, and can have one history. Fixed, moving and floating groups are
+rejected. Other fluid groups retain their usual gravity. Forces use acceleration
+units (m/s² and rad/s²), with seconds and metres for time and center.
+
+Samples interpolate linearly and hold their first/last value outside the table.
+`start_time` and `end_time` optionally restrict the inclusive active interval;
+outside it the force and its gravity override are inactive. Set
+`global_gravity = false` to cancel gravity for that group during the interval.
+For 2D, linear vectors and centers have two components, and angular samples are
+scalars, positive counterclockwise. Reference CSV columns are
+`time;ax;ay;az;alpha_x;alpha_y;alpha_z`, with optional `#` comments. In 2D their
+x/z coordinates map to x/y, and angular y changes sign; unused components must
+be zero.
+
+Angular terms reproduce the 5.4 source conventions: frame velocities start at
+zero at the first table sample and accumulate each interval's **right-end**
+acceleration, then interpolate linearly. Tangential, centripetal and Coriolis
+terms run only when angular acceleration is nonzero. Coriolis follows the
+reference's component-wise frame-velocity subtraction, including its asymmetry;
+this is not the general `2ω × (v - v_frame)` expression. These details matter
+when reproducing this case. Both time integrators, compact buffers, particle
+sorting, Float32/Float64 physics, double positions and CUDA graph replay are
+supported. Corrector forces use half-step positions, velocities and time; the
+single-neighbor predictor carries the previous evaluated acceleration.
+
+Run the self-contained generated 3D example from the repository root:
+
+```powershell
+julia --project=gpu_version gpu_version/example/ExternalForces.jl
+# Optional arguments: output directory, spacing, duration (defaults: 0.02 m, 5 s).
+julia --project=gpu_version gpu_version/example/ExternalForces.jl output/forces 0.05 5
+julia --project=gpu_version -t 4,0 gpu_version/test/external_forces.jl
+```
+
+The example generates a cubic container, central sphere and two water blocks in
+Julia, then applies the reference's upward acceleration and angular oscillation
+to the two fluid groups. It needs no DualSPHysics installation or input CSVs.
+The container has three outer particle layers. This example demonstrates the
+force contract; it is not a complete solver-to-solver trajectory equivalence
+claim (boundary viscosity and other SPH operators can differ).
+
 ### Choosing the mDBC formulation
 
 The fifth `SimulationMetaData` type parameter selects the boundary formulation:

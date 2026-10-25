@@ -28,6 +28,7 @@ module SPHExampleGPU
         "SPHDensityDiffusionModels.jl",
         "GPUReductions.jl",
         "GPUStepState.jl",
+        "ExternalForces.jl",
         "GPUCellGrid.jl",
         "GPUKernels.jl",
         "GPUConfiguration.jl",
@@ -62,6 +63,9 @@ module SPHExampleGPU
 
     using .PeriodicBoundaries
     export PeriodicBoundary
+
+    using .ExternalForces
+    export ExternalForce, external_acceleration
 
     using .PreProcess
     export AllocateDataStructures, AllocateSupportDataStructures, LoadBoundaryNormals
