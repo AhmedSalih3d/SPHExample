@@ -766,11 +766,17 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
     Frames to hold in memory for a host memory budget: the budget divided by
     the size of a frame, rounded down to a power of two, at least 1 and at
-    most `MAX_BUFFERED_FRAMES`. A power of two lets the dataset chunks hold a
-    divisor of the frames per flush, so that a flush writes whole chunks.
+    most `MAX_BUFFERED_FRAMES`. Small batches use a whole chunk per flush;
+    large batches span bounded chunks independently of the frame capacity.
     """
     buffered_frames(bytes_per_frame::Integer, budget_bytes::Integer) =
         prevpow(2, clamp(budget_bytes ÷ max(bytes_per_frame, 1), 1, MAX_BUFFERED_FRAMES))
+
+    # Keep small batches in one chunk, but split large ones independently of
+    # buffering: frame-sized chunks make HDF5 writes much slower.
+    const MAX_PARTICLE_CHUNK_BYTES = 2^20
+    particle_chunk_size(points_per_flush::Integer, bytes_per_point::Integer) =
+        min(points_per_flush, max(1, MAX_PARTICLE_CHUNK_BYTES ÷ bytes_per_point))
 
     set_nsteps!(attr::HDF5.Attribute, n::Integer) = HDF5.write_attribute(attr, HDF5.datatype(idType), idType(n))
 
@@ -1417,7 +1423,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             # positions and the output variables. The grid estimate uses one
             # occupied cell per particle; its writer also checks actual frame
             # bytes against the remaining grid output budget.
-            particle_frame_bytes = n * (3 * sizeof(component_type(SimParticles.Position)) +
+            particle_frame_bytes = n * (3 * sizeof(fType) +
                                sum(d -> ncomponents(d) * sizeof(component_type(d)), descriptors; init = 0))
             frame_bytes = particle_frame_bytes
             if SimMetaData.ExportGridCells
@@ -1437,12 +1443,12 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 create_block(collection, PARTICLE_BLOCK)
             end
 
-            # The point datasets are chunked by whole flushes (the frames per
-            # flush are a power of two, so smaller batches would still align):
-            # every flush writes complete chunks and the file holds one chunk
-            # per dataset and flush instead of one per frame, which makes the
-            # writes and the close (which writes the chunk indices) cheaper.
-            GenerateGeometryStructure(root, output_vars, descriptors...; chunk_size = frames_per_flush * n)
+            # Match small batches to a chunk. Large batches span chunks of
+            # at most 1 MiB per dataset, including Float64 point positions.
+            max_point_bytes = max(3 * sizeof(fType),
+                maximum(d -> ncomponents(d) * sizeof(component_type(d)), descriptors; init = 0))
+            chunk_size = particle_chunk_size(frames_per_flush * n, max_point_bytes)
+            GenerateGeometryStructure(root, output_vars, descriptors...; chunk_size)
             GenerateStepStructure(root, output_vars, descriptors...)
             frame_writer = PolyDataFrameWriter(root, SimParticles.Position, output_vars, descriptors...; capacity = frames_per_flush)
             if measurement_plan !== nothing

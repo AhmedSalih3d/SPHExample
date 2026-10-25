@@ -1224,7 +1224,12 @@ the standard *gather* formulation:
   writers (`PolyDataFrameWriter`, `GridFrameWriter`) keep the dataset
   handles open and collect frames in host memory, at most 16 or as many as
   fit into `GPUOutputBufferBytes`, then write them with one hyperslab write
-  per dataset into chunks that hold exactly one batch. The cell grid frame is
+  per dataset. Small batches occupy one chunk; large particle batches span
+  chunks capped at 1 MiB per dataset. This avoids slow HDF5 writes caused by
+  frame-sized chunks in cases with many particles, without changing output
+  values, precision or timestamps. The particle buffer budget counts the
+  actual Float64 positions written to the file; at least one frame is allocated
+  even when it exceeds the budget. The cell grid frame is
   built in preallocated buffers instead of one array per cell. The
   measurements of the previous two-staging-buffer pipeline (Float32, RTX A1000,
   cell grid exported, default threads) show
@@ -1241,6 +1246,9 @@ the standard *gather* formulation:
   asynchronous). `benchmark/bench_output_interval.jl` measures the run time
   as a function of the output interval; its `--buffer-mib` option sets the
   frame buffer.
+  `benchmark/bench_particle_chunks.jl` compares the previous batch-sized chunks
+  with bounded chunks on MovingSquare2D using warmed, alternating runs and
+  verifies matching solver counters, final states and saved particle fields.
   Pressing `Ctrl+C` during `RunSimulation` drains queued downloads, flushes and
   closes VTKHDF and log files, then opens the results written so far in
   ParaView. A Julia exit while the simulation is running triggers the same
