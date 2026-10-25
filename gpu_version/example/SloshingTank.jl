@@ -91,7 +91,8 @@ Use `driving_mode = :rotation` for measured physical tank rotation under fixed
 world gravity, or `:acceleration` for the fixed-tank external-force variant.
 Pressure at the inner reference probe follows the tank in rotation mode. Three
 vertical water-column probes are included in acceleration mode. Set
-`measurements = false` to omit probes. Pressure uses the nearest fluid particle.
+`measurements = false` to omit probes. Pressure uses normalized SPH interpolation
+with the simulation's kernel over fluid particles in its support.
 Returns a `SimulationResult`.
 """
 function run_sloshing_tank(; driving_mode = SLOSHING_DRIVING_MODE, FloatType = Float32, dx = 0.002, simulation_time = 8.35,

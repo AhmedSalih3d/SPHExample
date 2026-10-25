@@ -4,6 +4,9 @@ using HDF5
 using ..HDF5Append: extend! as _extend!, extend_columns! as _extend_columns!,
     append_slice! as _append!, append_columns! as _append_columns!
 using ..SimulationEquations: EquationOfStateGamma7
+using ..SPHKernels: SPHKernelInstance, Wᵢⱼ
+using ..PeriodicBoundaries: wrap_periodic_position
+using StaticArrays: SVector
 
 export MeasurementProbe, WaterColumnProbe, FreeSurfaceDomain, MeasurementConfig
 
@@ -11,7 +14,10 @@ export MeasurementProbe, WaterColumnProbe, FreeSurfaceDomain, MeasurementConfig
     MeasurementProbe(name, location; trajectory = nothing)
 
 Describe a pressure or velocity probe. `location` has one coordinate per
-simulation dimension. Values are sampled from the nearest fluid particle.
+simulation dimension. Values use normalized SPH interpolation over fluid
+particles within the simulation kernel's support, with weights `W / ρ`.
+The common particle mass cancels in the normalization. The simulation's kernel,
+smoothing length and periodic boundaries are used; empty support returns `NaN`.
 Optional `trajectory(time)` returns its world-coordinate location for that
 output frame. Moving probe coordinates are saved with each frame, including
 frames that repeat a previous sampled value via `sample_every`.
@@ -221,6 +227,9 @@ function required_particle_fields(config::Union{Nothing, MeasurementConfig})
     has_measurements(config) || return Symbol[]
 
     fields = Symbol[:Type]
+    if !isempty(config.pressure_probes) || !isempty(config.velocity_probes)
+        push!(fields, :Density)
+    end
     isempty(config.pressure_probes) || push!(fields, :Pressure)
     isempty(config.velocity_probes) || push!(fields, :Velocity)
     return fields
@@ -654,9 +663,11 @@ Writer of the measurement blocks (see the section comment above). Keeps the
 latest sample of every series so that output frames between samples repeat
 it, and buffers `capacity` frames before writing.
 """
-mutable struct MeasurementWriter{F}
+mutable struct MeasurementWriter{F,K,P}
     plan::ResolvedMeasurements
     fluid_type::F
+    kernel::K
+    periodicity::P
     blocks::Vector{MeasurementBlock}
     pressure::Union{Nothing, MeasurementBlock}
     velocity::Union{Nothing, MeasurementBlock}
@@ -666,10 +677,8 @@ mutable struct MeasurementWriter{F}
     velocity_values::Matrix{Float64}   # `3 × probes`, latest sample
     column_values::Vector{Float64}
     surface_values::Vector{Float64}
-    pressure_nearest::Vector{Int}
-    pressure_distance²::Vector{Float64}
-    velocity_nearest::Vector{Int}
-    velocity_distance²::Vector{Float64}
+    pressure_weights::Vector{Float64}
+    velocity_weights::Vector{Float64}
     column_maximum::Vector{Float64}
     surface_maximum::Vector{Float64}
     time_buffer::Vector{Float64}
@@ -683,17 +692,25 @@ mutable struct MeasurementWriter{F}
 end
 
 """
-    MeasurementWriter(root, plan, fluid_type; capacity = 4, constants = nothing)
+    MeasurementWriter(root, plan, fluid_type; kernel = nothing, periodicity = nothing,
+                      capacity = 4, constants = nothing)
 
 Create the measurement blocks of `plan` in the `MultiBlockDataSet` group
 `root` (`/VTKHDF`) and buffer `capacity` frames before a write. The caller
 links the blocks named by `measurement_block_names(plan)` into the `Assembly`
-group.
+group. Pressure and velocity probes require the simulation's `SPHKernelInstance`
+as `kernel`; height-only measurements do not require one.
 """
 function MeasurementWriter(root::HDF5.Group, plan::ResolvedMeasurements, fluid_type;
+                           kernel = nothing, periodicity = nothing,
                            capacity::Integer = 4, constants = nothing)
     capacity >= 1 ||
         throw(ArgumentError("measurement buffer capacity must be at least 1"))
+    if !isempty(plan.pressure_names) || !isempty(plan.velocity_names)
+        kernel isa SPHKernelInstance ||
+            throw(ArgumentError("pressure and velocity probes require the simulation kernel"))
+        _validate_kernel(kernel, plan.dimension)
+    end
     c₀ = constants === nothing ? sqrt(9.81 * 2) * 20 : Float64(constants.c₀)
     ρ₀ = constants === nothing ? 1000.0 : Float64(constants.ρ₀)
 
@@ -705,6 +722,13 @@ function MeasurementWriter(root::HDF5.Group, plan::ResolvedMeasurements, fluid_t
     ]
     probe_attributes(names, extra...) =
         [common; "Names" => join(names, "\n"); extra...]
+    interpolation_attributes() = Pair{String,Any}[
+        "Sampling" => "normalized SPH interpolation",
+        "Kernel" => string(nameof(typeof(kernel.kernel))),
+        "SmoothingLength" => Float64(kernel.h),
+        "SupportRadius" => Float64(kernel.H),
+        "Weighting" => "W / density (uniform particle mass cancels)",
+    ]
     sampled_arrays = ["Sampled" => (UInt8, 1), "SampleTime" => (Float64, 1)]
     none = Pair{String, Vector{Float64}}[]
 
@@ -716,7 +740,7 @@ function MeasurementWriter(root::HDF5.Group, plan::ResolvedMeasurements, fluid_t
             ["Pressure" => (Float64, 1); sampled_arrays], none,
             ["Names" => plan.pressure_names],
             probe_attributes(
-                plan.pressure_names, "Sampling" => "nearest fluid particle",
+                plan.pressure_names, interpolation_attributes()...,
             ),
             capacity; dynamic_points = any(!isnothing, plan.pressure_trajectories),
         )
@@ -728,7 +752,7 @@ function MeasurementWriter(root::HDF5.Group, plan::ResolvedMeasurements, fluid_t
             ["Velocity" => (Float64, 3); sampled_arrays], none,
             ["Names" => plan.velocity_names],
             probe_attributes(
-                plan.velocity_names, "Sampling" => "nearest fluid particle",
+                plan.velocity_names, interpolation_attributes()...,
             ),
             capacity; dynamic_points = any(!isnothing, plan.velocity_trajectories),
         )
@@ -774,6 +798,8 @@ function MeasurementWriter(root::HDF5.Group, plan::ResolvedMeasurements, fluid_t
     return MeasurementWriter(
         plan,
         fluid_type,
+        kernel,
+        periodicity,
         blocks,
         pressure,
         velocity,
@@ -783,9 +809,7 @@ function MeasurementWriter(root::HDF5.Group, plan::ResolvedMeasurements, fluid_t
         fill(NaN, 3, length(plan.velocity_names)),
         fill(NaN, length(plan.column_names)),
         fill(NaN, size(plan.surface_locations, 2)),
-        zeros(Int, length(plan.pressure_names)),
         Vector{Float64}(undef, length(plan.pressure_names)),
-        zeros(Int, length(plan.velocity_names)),
         Vector{Float64}(undef, length(plan.velocity_names)),
         Vector{Float64}(undef, length(plan.column_names)),
         Vector{Float64}(undef, size(plan.surface_locations, 2)),
@@ -806,11 +830,39 @@ frames_written(writer::MeasurementWriter) = writer.frames_written
 """Number of frames buffered and not yet written."""
 frames_pending(writer::MeasurementWriter) = writer.pending
 
-function _nearest_indices!(writer, positions, particle_types)
-    fill!(writer.pressure_nearest, 0)
-    fill!(writer.pressure_distance², Inf)
-    fill!(writer.velocity_nearest, 0)
-    fill!(writer.velocity_distance², Inf)
+function _validate_kernel(kernel::SPHKernelInstance{K,D}, dimension) where {K,D}
+    D == dimension || throw(DimensionMismatch("measurement kernel must match the simulation dimension"))
+    isfinite(kernel.h) && kernel.h > 0 && isfinite(kernel.H) && kernel.H > 0 ||
+        throw(ArgumentError("measurement kernel smoothing length and support radius must be finite and positive"))
+    return nothing
+end
+
+@inline function _kernel_weight(kernel::SPHKernelInstance{K,D,T}, displacement) where {K,D,T}
+    # Match the solver's pair arithmetic, including mixed-precision positions.
+    delta = SVector{D,T}(displacement)
+    distance² = sum(abs2, delta)
+    distance² <= kernel.H² || return 0.0
+    return Float64(Wᵢⱼ(kernel, sqrt(distance²) * kernel.h⁻¹))
+end
+
+@inline function _probe_weight(kernel::SPHKernelInstance{K,D}, periodicity,
+                               position, locations, probe) where {K,D}
+    point = SVector{D,Float64}(ntuple(axis -> locations[axis, probe], Val(D)))
+    delta = wrap_periodic_position(SVector{D,Float64}(position), periodicity) -
+            wrap_periodic_position(point, periodicity)
+    weight = _kernel_weight(kernel, delta)
+    if periodicity !== nothing
+        weight += _kernel_weight(kernel, delta + periodicity.translation)
+        weight += _kernel_weight(kernel, delta - periodicity.translation)
+    end
+    return weight
+end
+
+function _accumulate_samples!(writer, particles)
+    fill!(writer.pressure_values, 0.0)
+    fill!(writer.velocity_values, 0.0)
+    fill!(writer.pressure_weights, 0.0)
+    fill!(writer.velocity_weights, 0.0)
     fill!(writer.column_maximum, -Inf)
     fill!(writer.surface_maximum, -Inf)
 
@@ -819,34 +871,43 @@ function _nearest_indices!(writer, positions, particle_types)
     surface_lower = plan.surface_lower
     surface_upper = plan.surface_upper
     surface_spacing = plan.surface_spacing
+    positions = particles.Position
+    has_probes = !isempty(writer.pressure_weights) || !isempty(writer.velocity_weights)
+    has_pressure = hasproperty(particles, :Pressure)
 
     @inbounds for particle in eachindex(positions)
-        particle_types[particle] == writer.fluid_type || continue
+        particles.Type[particle] == writer.fluid_type || continue
         position = positions[particle]
-
-        for probe in eachindex(writer.pressure_nearest)
-            distance² = 0.0
-            for axis in 1:plan.dimension
-                difference =
-                    Float64(position[axis]) - plan.pressure_locations[axis, probe]
-                distance² += difference * difference
-            end
-            if distance² < writer.pressure_distance²[probe]
-                writer.pressure_distance²[probe] = distance²
-                writer.pressure_nearest[probe] = particle
-            end
+        inverse_density = 0.0
+        if has_probes
+            density = particles.Density[particle]
+            isfinite(density) && density > 0 ||
+                throw(ArgumentError("SPH probe interpolation requires finite, positive fluid densities"))
+            inverse_density = inv(Float64(density))
         end
 
-        for probe in eachindex(writer.velocity_nearest)
-            distance² = 0.0
-            for axis in 1:plan.dimension
-                difference =
-                    Float64(position[axis]) - plan.velocity_locations[axis, probe]
-                distance² += difference * difference
+        for probe in eachindex(writer.pressure_weights)
+            weight = inverse_density * _probe_weight(writer.kernel, writer.periodicity,
+                position, plan.pressure_locations, probe)
+            weight > 0 || continue
+            pressure = if has_pressure
+                Float64(particles.Pressure[particle])
+            else
+                ρ = particles.Density[particle]
+                T = typeof(ρ)
+                Float64(EquationOfStateGamma7(ρ, T(writer.c₀), T(writer.ρ₀)))
             end
-            if distance² < writer.velocity_distance²[probe]
-                writer.velocity_distance²[probe] = distance²
-                writer.velocity_nearest[probe] = particle
+            writer.pressure_weights[probe] += weight
+            writer.pressure_values[probe] += weight * pressure
+        end
+
+        for probe in eachindex(writer.velocity_weights)
+            weight = inverse_density * _probe_weight(writer.kernel, writer.periodicity,
+                position, plan.velocity_locations, probe)
+            weight > 0 || continue
+            writer.velocity_weights[probe] += weight
+            for axis in 1:plan.dimension
+                writer.velocity_values[axis, probe] += weight * Float64(particles.Velocity[particle][axis])
             end
         end
 
@@ -934,22 +995,21 @@ function _validate_particles(writer::MeasurementWriter, particles)
             "particle positions do not match the measurement dimension",
         ))
     end
-    if !isempty(writer.pressure_nearest)
+    if !isempty(writer.pressure_weights) || !isempty(writer.velocity_weights)
+        hasproperty(particles, :Density) ||
+            throw(ArgumentError("SPH pressure and velocity probes require the Density particle field"))
+        length(particles.Density) == length(positions) ||
+            throw(DimensionMismatch("particle density and positions must have matching lengths"))
+    end
+    if !isempty(writer.pressure_weights)
         if hasproperty(particles, :Pressure)
             length(particles.Pressure) == length(positions) ||
                 throw(DimensionMismatch(
                     "particle pressure and positions must have matching lengths",
                 ))
-        elseif hasproperty(particles, :Density)
-            length(particles.Density) == length(positions) ||
-                throw(DimensionMismatch(
-                    "particle density and positions must have matching lengths",
-                ))
-        else
-            throw(ArgumentError("pressure probes require the Pressure or Density particle field"))
         end
     end
-    if !isempty(writer.velocity_nearest)
+    if !isempty(writer.velocity_weights)
         hasproperty(particles, :Velocity) ||
             throw(ArgumentError("velocity probes require the Velocity particle field"))
         length(particles.Velocity) == length(positions) ||
@@ -962,34 +1022,20 @@ end
 
 # Sample every series from `particles` into the writer's latest-value arrays.
 function _sample!(writer::MeasurementWriter, particles)
-    _nearest_indices!(writer, particles.Position, particles.Type)
+    _accumulate_samples!(writer, particles)
     plan = writer.plan
 
     values = writer.pressure_values
-    fill!(values, NaN)
-    has_pressure = hasproperty(particles, :Pressure)
-    for probe in eachindex(writer.pressure_nearest)
-        particle = writer.pressure_nearest[probe]
-        particle == 0 && continue
-        values[probe] = if has_pressure
-            Float64(particles.Pressure[particle])
-        else
-            ρ = particles.Density[particle]
-            T = typeof(ρ)
-            Float64(EquationOfStateGamma7(ρ, T(writer.c₀), T(writer.ρ₀)))
-        end
+    for probe in eachindex(writer.pressure_weights)
+        weight = writer.pressure_weights[probe]
+        values[probe] = weight > 0 ? values[probe] / weight : NaN
     end
 
     velocity = writer.velocity_values
-    fill!(velocity, NaN)
-    for probe in eachindex(writer.velocity_nearest)
-        particle = writer.velocity_nearest[probe]
-        particle == 0 && continue
-        for axis in 1:plan.dimension
-            velocity[axis, probe] = Float64(particles.Velocity[particle][axis])
-        end
-        for axis in (plan.dimension + 1):3
-            velocity[axis, probe] = 0.0
+    for probe in eachindex(writer.velocity_weights)
+        weight = writer.velocity_weights[probe]
+        for axis in 1:3
+            velocity[axis, probe] = weight > 0 ? velocity[axis, probe] / weight : NaN
         end
     end
 

@@ -1454,6 +1454,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             if measurement_plan !== nothing
                 measurement_writer = MeasurementWriter(
                     collection, measurement_plan, fluid_type;
+                    kernel = SimKernel, periodicity = SimMetaData.Periodicity,
                     capacity = frames_per_flush, constants = sim_constants,
                 )
                 write_assembly!(

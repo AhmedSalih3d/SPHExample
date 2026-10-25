@@ -235,9 +235,8 @@ history are rejected.
 The pressure probe at reference location `(-0.4461, 0.093)` rotates with the tank
 in rotation mode. Its world positions are saved for every output frame. The
 left/center/right vertical water-column probes are included in acceleration
-mode. Pressure uses this solver's nearest
-fluid-particle measurement, so its values should not be treated as equivalent
-to DualSPHysics MeasureTool interpolation. The example uses three wall layers
+mode. Pressure uses normalized SPH interpolation over fluid particles with the
+simulation's kernel and smoothing length. The example uses three wall layers
 at the default spacing and the solver's standard boundary viscosity; the
 reference sets its separate boundary-viscosity multiplier to zero. Together
 with other operator differences, this prevents a solver-to-solver or experimental
@@ -1583,19 +1582,31 @@ RunSimulation(;
 ```
 
 The default combined output stores all selected series in the same
-`<SimulationName>.vtkhdf` file under `/Measurements`; set
+`<SimulationName>.vtkhdf` file as blocks under `/VTKHDF`, linked through
+`/VTKHDF/Assembly/Measurements`; set
 `ExportSingleVTKHDF = true` when constructing the metadata. Samples share the
 particle output times, and `sample_every` can reduce their frequency without
 changing the simulation step. The GPU computes and writes measurements on its
 existing output worker, not in the timestep kernels. Pressure and velocity use
-the nearest fluid particle. Water-column height is the nonnegative height above
+normalized SPH interpolation over fluid particles within `SimKernel.H`, using
+the exact `SimKernel` instance (kernel family, smoothing length and dimension)
+and the simulation's periodic boundaries, including transverse shifts. For a
+particle field `A`, each probe records `sum(W * A / ρ) / sum(W / ρ)`; the common
+particle mass cancels. This preserves constant fields near walls and free
+surfaces. Only fluid particles contribute, and probes with no positive kernel
+weight return `NaN`. Pressure is evaluated per particle before interpolation,
+using the simulation's equation of state when no stored pressure is present.
+The output records the kernel name, smoothing length, support radius and
+weighting as probe-block attributes. Density is staged for both pressure and
+velocity probes even when omitted from `OutputVariables`.
+Water-column height is the nonnegative height above
 the probe's vertical coordinate within its radius (the kernel support radius by
 default; zero means the surface is below the probe and `NaN` means no particle
 was found).
 Free-surface values are the highest fluid-particle coordinate in each
-horizontal bin; empty bins contain `NaN`. `Locations`, `Names`, `Values`,
-`Radii`, `GridShape`, `HorizontalAxes`, and the shared `Time` dataset describe
-the measurement groups.
+horizontal bin; empty bins contain `NaN`. Each block stores its coordinates in
+`Points`, series in `PointData`, and frame times in `Steps/Values`. Probe names
+and surface-grid metadata are in `FieldData`.
 Omitting `SimMeasurements` creates no measurement datasets or extra downloads.
 Fields omitted from `OutputVariables` are added only to the existing GPU output
 staging when the selected measurements need them.
@@ -2318,6 +2329,15 @@ for small changes that make them precision generic (`Float32` literals), the
 ```bash
 julia --project=gpu_version gpu_version/test/runtests.jl
 ```
+
+Run the measurement output and analytical interpolation checks without a GPU:
+
+```bash
+julia --project=gpu_version -e 'using Test, SPHExampleGPU; include("gpu_version/test/measurements.jl"); measurement_output_tests(SPHExampleGPU); measurement_interpolation_tests(SPHExampleGPU)'
+```
+
+`measurement_gpu_tests(SPHExampleGPU)` in the same test file additionally checks
+velocity-only probes with synchronous/asynchronous output and both time steppers.
 
 The time-step and final-step reductions use warp shuffles for Float32/Float64
 `SVector` accumulators in whole-warp blocks, reducing block-wide barriers from

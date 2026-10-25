@@ -12,8 +12,10 @@ include(joinpath(@__DIR__, "effective_configuration.jl"))
 
 include(joinpath(@__DIR__, "updated_mdbc.jl"))
 
-include(joinpath(@__DIR__, "..", "..", "test", "measurements.jl"))
+include(joinpath(@__DIR__, "measurements.jl"))
 measurement_output_tests(SPHExampleGPU)
+measurement_interpolation_tests(SPHExampleGPU)
+measurement_gpu_tests(SPHExampleGPU)
 include(joinpath(@__DIR__, "geometry_particles.jl"))
 include(joinpath(@__DIR__, "cleanup.jl"))
 include(joinpath(@__DIR__, "radial_interactions.jl"))

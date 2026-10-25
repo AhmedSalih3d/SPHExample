@@ -100,7 +100,7 @@ if CUDA.functional()
                         @test all(isfinite, read(pressure["PointData/Pressure"]))
                         @test all(isfinite, read(heights["PointData/WaterColumnHeight"]))
                         @test length(read(pressure["Steps/Values"])) == result.diagnostics.output_frames
-                        @test HDF5.attributes(pressure)["Sampling"][] == "nearest fluid particle"
+                        @test HDF5.attributes(pressure)["Sampling"][] == "normalized SPH interpolation"
                     end
                     order = sortperm(particles.ID)
                     return (; position = particles.Position[order], velocity = particles.Velocity[order],

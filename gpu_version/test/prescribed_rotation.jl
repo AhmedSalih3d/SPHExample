@@ -56,11 +56,13 @@ end
             velocity_probes = [MeasurementProbe("moving_velocity", (1, 0); trajectory = t -> (1-t, t))],
             sample_every = 2)
         plan = MEASUREMENTS.resolve_measurements(config, 2, 0.1)
+        kernel = SPHKernelInstance{2,Float64}(WendlandC2(); h = 0.05)
         particles = (Position = [SVector(1., 0.), SVector(0., 1.)], Type = [Fluid, Fluid],
+            Density = [1000., 1000.],
             Pressure = [10., 20.], Velocity = [SVector(2., 0.), SVector(0., 3.)])
         path = joinpath(dir, "moving_probes.h5")
         h5open(path, "w") do file
-            writer = MEASUREMENTS.MeasurementWriter(create_group(file, "VTKHDF"), plan, Fluid; capacity = 2)
+            writer = MEASUREMENTS.MeasurementWriter(create_group(file, "VTKHDF"), plan, Fluid; kernel, capacity = 2)
             for t in (0., 0.5, 1.)
                 MEASUREMENTS.append_measurements!(writer, t, particles)
             end
@@ -72,11 +74,11 @@ end
             expected = [1. 0.5 0.; 0. 0.5 1.; 0. 0. 0.]
             @test read(pressure["Points"]) == expected
             @test read(velocity["Points"]) == expected
-            @test read(pressure["PointData/Pressure"]) == [10, 10, 20]
+            @test read(pressure["PointData/Pressure"]) ≈ [10, 10, 20]
             @test read(pressure["PointData/Sampled"]) == [1, 0, 1]
             @test read(pressure["PointData/SampleTime"]) == [0, 0, 1]
             @test read(pressure["Steps/PointOffsets"]) == [0, 1, 2]
-            @test read(velocity["PointData/Velocity"]) == [2. 2. 0.; 0. 0. 3.; 0. 0. 0.]
+            @test read(velocity["PointData/Velocity"]) ≈ [2. 2. 0.; 0. 0. 3.; 0. 0. 0.]
         end
     end
 end
