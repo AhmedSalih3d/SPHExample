@@ -35,7 +35,8 @@ module GPUCellGrid
 
 using CUDA
 using StaticArrays
-using ..SimulationGeometry: Frozen, Floating
+using ..PeriodicBoundaries: PeriodicBoundary, wrap_periodic_position
+using ..SimulationGeometry: Fixed, Moving, Frozen, Floating
 using ..GPUStepState: DeviceStep, StepState, I_STOP, STOP_REBUILD,
                       I_GRID_STATUS, I_GRID_ORIGIN, I_GRID_DIMS, I_GRID_NCELLS, I_GRID_FROZEN
 
@@ -443,6 +444,7 @@ mutable struct CellListWorkspace{D, T, R}
     grid_initialized::Bool
     fixed_grid::Bool
     expansion::NTuple{D, Tuple{Bool, Bool}}
+    periodicity::Union{Nothing, PeriodicBoundary{D, T}}
     freeze_count::Union{Nothing, CuVector{Int32}}
     newly_frozen::Int
     frozen_total::Int
@@ -477,7 +479,8 @@ constant for the lifetime of a fixed workspace.
 """
 function CellListWorkspace{D, T}(n::Integer; reach::Integer = 1, max_cells::Integer = 50_000_000,
                                  deterministic::Bool = true, fixed_grid::Bool = false,
-                                 expansion::NTuple{D, Tuple{Bool, Bool}} = ntuple(_ -> (false, false), D)) where {D, T}
+                                 expansion::NTuple{D, Tuple{Bool, Bool}} = ntuple(_ -> (false, false), D),
+                                 periodicity::Union{Nothing, PeriodicBoundary{D}} = nothing) where {D, T}
     reach >= 1 || throw(ArgumentError("the cell list reach must be at least 1, got $reach"))
     reach <= typemax(Int32) || throw(ArgumentError("the cell list reach is too large: $reach"))
     0 <= n <= CELL_INDEX_LIMIT || throw(ArgumentError("the cell-list particle count must be between 0 and $CELL_INDEX_LIMIT, got $n"))
@@ -497,7 +500,8 @@ function CellListWorkspace{D, T}(n::Integer; reach::Integer = 1, max_cells::Inte
         false,
         false,
         fixed_grid,
-        expansion,
+        periodicity === nothing ? expansion : ntuple(d -> d == periodicity.axis ? (true, true) : expansion[d], D),
+        periodicity === nothing ? nothing : convert(PeriodicBoundary{D, T}, periodicity),
         fixed_grid ? CUDA.zeros(Int32, 1) : nothing,
         0,
         0,
@@ -515,6 +519,63 @@ function CellListWorkspace{D, T}(n::Integer; reach::Integer = 1, max_cells::Inte
         0,
         0,
     )
+end
+
+@inline request_periodic_rebuild!(::Nothing) = nothing
+@inline function request_periodic_rebuild!(step::DeviceStep)
+    CUDA.atomic_xchg!(pointer(step.i, I_STOP), STOP_REBUILD)
+    return nothing
+end
+
+function periodic_wrap_kernel!(Position, periodicity, step, state, n::Int32)
+    i = thread_index()
+    i > n && return nothing
+    @inbounds begin
+        state === nothing || !(state.types[i] in (Fixed, Frozen)) || return nothing
+        x = Position[i]
+        wrapped = if state !== nothing && state.floating !== nothing && state.types[i] == Floating
+            body = state.floating
+            b = body.body[state.groups[i]]
+            center = body.center[b]
+            x + (wrap_periodic_position(center, periodicity) - center)
+        else
+            wrap_periodic_position(x, periodicity)
+        end
+        if wrapped != x && all(isfinite, wrapped)
+            Position[i] = wrapped
+            request_periodic_rebuild!(step)
+        end
+        if state !== nothing && state.ghosts !== nothing
+            slot = state.slots === nothing ? i : state.slots[i]
+            if slot > 0 && !iszero(state.ghosts[slot])
+                state.ghosts[slot] = state.types[i] == Moving ? wrapped + state.normals[slot] : state.ghosts[slot] + (wrapped - x)
+            end
+        end
+    end
+    return nothing
+end
+
+function periodic_wrap_bodies_kernel!(body, periodicity, step)
+    b = thread_index()
+    b > body.nbodies && return nothing
+    @inbounds begin
+        body.frozen[b] == 0 || return nothing
+        center = body.center[b]
+        delta = wrap_periodic_position(center, periodicity) - center
+        if !iszero(delta) && all(isfinite, delta)
+            body.center[b] += delta
+            body.center_n[b] += delta
+            body.center_half[b] += delta
+            c = body.constraints[b]
+            if c.hinge
+                body.constraints[b] = typeof(c)(c.active, c.translation_free, c.velocity,
+                    c.rotation_free, c.omega, c.hinge, c.point + delta, c.axis,
+                    c.hinge_prescribed, c.hinge_velocity)
+            end
+            request_periodic_rebuild!(step)
+        end
+    end
+    return nothing
 end
 
 #---------------------------------------------------------------
@@ -1146,7 +1207,8 @@ interactions explicitly exclude them.
 """
 function prepare_cell_grid!(ws::CellListWorkspace{D, T, R},
                             Position::CuVector{SVector{D, T}}, InverseCutOff;
-                            step::Union{Nothing, StepState} = nothing, freeze_state = nothing) where {D, T, R}
+                            step::Union{Nothing, StepState} = nothing, freeze_state = nothing,
+                            periodic_state = nothing) where {D, T, R}
     n = length(Position)
     1 <= n <= CELL_INDEX_LIMIT || error("The cell-list particle count must be between 1 and $CELL_INDEX_LIMIT.")
     n == length(ws.Perm) || throw(DimensionMismatch("positions and cell-list workspace particle counts differ"))
@@ -1154,6 +1216,15 @@ function prepare_cell_grid!(ws::CellListWorkspace{D, T, R},
         throw(ArgumentError("A workspace with frozen particles requires particle state; use rebuild_cell_list! with GPU particles."))
     ws.grid_prepared = false
     inv_cell = bin_scale(CellGrid{D, R}(), InverseCutOff)
+    if ws.periodicity !== nothing
+        ws.periodicity.upper - ws.periodicity.lower > 2 / InverseCutOff ||
+            throw(ArgumentError("Periodic interval must exceed twice the kernel support radius"))
+        @cuda threads=256 blocks=cld(n, 256) periodic_wrap_kernel!(Position, ws.periodicity, step, periodic_state, Int32(n))
+        if periodic_state !== nothing && periodic_state.floating !== nothing
+            body = periodic_state.floating
+            @cuda threads=256 blocks=cld(Int(body.nbodies), 256) periodic_wrap_bodies_kernel!(body, ws.periodicity, step)
+        end
+    end
     ws.freeze_count === nothing || fill!(ws.freeze_count, Int32(0))
     if ws.fixed_grid && ws.grid_initialized && freeze_state !== nothing && isfinite(inv_cell) && inv_cell > zero(inv_cell)
         if freeze_state.body !== nothing

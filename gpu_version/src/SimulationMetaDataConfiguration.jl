@@ -1,4 +1,5 @@
 module SimulationMetaDataConfiguration
+using ..PeriodicBoundaries: PeriodicBoundary
 
 using TimerOutputs
 
@@ -119,6 +120,18 @@ velocity/acceleration and no SPH interactions. Their IDs, positions, time and
 crossed limits are logged, even with `NoLog`. Floating bodies freeze as a whole.
 Cell size and particle rebinning are unchanged. Expansion requires `GPUFixedGrid = true`.
 
+`Periodicity = PeriodicBoundary{Dimensions}(axis; min, max, shift)` connects
+opposite faces of a physical interval, with an optional transverse translation
+when crossing `max`. The default `nothing` disables periodicity. Interactions
+and mDBC interpolation include neighbors across the seam. Accepted positions
+are wrapped before grid escape checks and output, triggering a reorder when
+needed. The periodic axis is exempt from freezing; `GPUGridExpansion` still
+controls the other axes, including height changes from `shift`. One periodic
+axis is supported, with interval length greater than twice the support radius.
+Floating bodies wrap as a whole, keeping all centers, torque arms and hinge
+anchors in the same periodic image. Their diameter plus twice the support
+radius must fit inside the interval. Fixed boundaries remain stationary.
+
 `GPUTimestepDiagnosticsEvery = N` records the last accepted step's limiting
 criterion and stable particle ID every `N` output intervals in
 `<SimulationName>_Timestep.csv`. The default `0` disables diagnostics. Positive
@@ -165,6 +178,7 @@ mutable struct SimulationMetaData{Dimensions,
     GPUCellSubdivision::Int      # cells per support radius H per axis (1: edge H, 3^D stencil; 2: edge H/2, 5^D stencil)
     GPUFixedGrid::Bool           # retain initial grid bounds, growing only on explicitly allowed sides
     GPUGridExpansion::NTuple{Dimensions, Tuple{Bool, Bool}} # (negative, positive) growth per axis
+    Periodicity::Union{Nothing, PeriodicBoundary{Dimensions, Float64}}
     GPUDoublePosition::Bool      # integrate positions in Float64 (pair loops use cell relative positions in FloatType)
     GPUCacheInteractionFields::Bool # cache reciprocal density for interaction loops
     GPUCompactBuffers::Bool      # omit unused buffers and narrow GPU-only metadata when lossless
@@ -281,6 +295,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUCellSubdivision::Int                 = 1,
         GPUFixedGrid::Bool                      = false,
         GPUGridExpansion::NTuple{Dimensions, Tuple{Bool, Bool}} = ntuple(_ -> (false, false), Dimensions),
+        Periodicity::Union{Nothing, PeriodicBoundary{Dimensions}} = nothing,
         GPUDoublePosition::Bool                 = false,
         GPUCacheInteractionFields::Bool         = false,
         GPUCompactBuffers::Bool                 = true,
@@ -304,7 +319,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         OutputVariables, OpenLogFile, TimeSteppingMode,
         GPUSyncTimers, GPUDeterministicSort, GPUMaxCells, GPUInteractionThreads, GPULanesPerParticle, GPURadialInteractions, GPUScalarSPSViscosity,
         GPUBoundaryForces, GPUAsyncOutput, GPUMaxStepsPerSync, GPUUseGraph, GPUClipTimeStepToOutput, GPUCellSubdivision,
-        GPUFixedGrid, GPUGridExpansion,
+        GPUFixedGrid, GPUGridExpansion, Periodicity,
         GPUDoublePosition, GPUCacheInteractionFields, GPUCompactBuffers, GPUOutputQueueBytes, GPUOutputBufferBytes,
         GPUTimestepDiagnosticsEvery,
     )

@@ -20,6 +20,7 @@ using Logging, LoggingExtras
 
 using ..SimulationEquations
 using ..SimulationGeometry
+using ..PeriodicBoundaries: wrap_periodic_position
 using ..AuxiliaryFunctions
 using ..SimulationMetaDataConfiguration
 using ..SimulationConstantsConfiguration
@@ -730,6 +731,14 @@ function grid_freeze_state(gpu, floating = nothing)
         frozen_bodies = bodies ? floating.frozen : nothing)
 end
 
+function periodic_particle_state(gpu, floating = nothing)
+    body = floating === nothing || !floating.active ? nothing :
+        (; floating.nbodies, floating.body, floating.center, floating.center_n,
+           floating.center_half, floating.constraints, floating.frozen)
+    return (; types = gpu.Type, ghosts = isempty(gpu.GhostPoints) ? nothing : gpu.GhostPoints, slots = gpu.BoundarySlot,
+        normals = gpu.GhostNormals, groups = gpu.GroupMarker, floating = body)
+end
+
 function log_frozen_particles!(cl, gpu, inverse_cutoff; logger = nothing, time = 0, iteration = 0)
     n = cl.newly_frozen
     n == 0 && return nothing
@@ -794,9 +803,12 @@ function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCut
                             logger = nothing, time = 0, iteration = 0)
     support !== nothing && uses_pos_cells(support) && kernel === nothing &&
         throw(ArgumentError("Rebuilding with cell relative positions requires the SPH kernel."))
+    if cl.periodicity !== nothing && cl.nrebuilds == 0 && floating === nothing
+        any(==(Floating), Array(gpu.Type)) && throw(ArgumentError("Periodic floating-body rebuilds require the floating state"))
+    end
     freeze_state = cl.fixed_grid ? grid_freeze_state(gpu, floating) : nothing
     if !prepared
-        prepare_cell_grid!(cl, gpu.Position, InverseCutOff; freeze_state)
+        prepare_cell_grid!(cl, gpu.Position, InverseCutOff; freeze_state, periodic_state = periodic_particle_state(gpu, floating))
         sync_cell_grid!(cl)
         prepared = true
     end
@@ -948,12 +960,13 @@ function enqueue_boundary_correction!(ctx, step, half::Bool)
             step, SimKernel, SimConstants, sup.boundary_data; threads, lanes, pos_cells = pairs,
             motion = get(ctx, :motion, nothing), groups = gpu.GroupMarker,
             compact_ghosts = Val(gpu.BoundarySlot !== nothing), inverse_density = sup.InvDensity,
-            pressure = sup.Pressure)
+            pressure = sup.Pressure, periodicity = cl.periodicity)
     else
         launch_mdbc!(density, position, gpu.GhostPoints, gpu.GhostIndex, gpu.Type,
             cl.CellStart, cl.grid_dev, step, SimKernel, SimConstants; threads, lanes, pos_cells = pairs,
+            ghost_normals = gpu.GhostNormals,
             compact_ghosts = Val(gpu.BoundarySlot !== nothing), inverse_density = sup.InvDensity,
-            pressure = sup.Pressure)
+            pressure = sup.Pressure, periodicity = cl.periodicity)
     end
     return nothing
 end
@@ -975,7 +988,8 @@ single-neighbor evaluations include gravity so every carried acceleration
 has the same convention as the previous corrector's total acceleration. `step`
 gates every kernel; `mdbc_name` and `loop_name` are the timer labels.
 """
-function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractString, loop_name::AbstractString; prepare_motion::Bool = false)
+function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractString, loop_name::AbstractString;
+                                   prepare_motion::Bool = false, total_acceleration::Bool = get(ctx, :SingleNeighbor, false))
     (; gpu, cl, sup, SimKernel, SimConstants, SimDensityDiffusion, SimViscosity,
        FlagKernel, FlagShift, UseMDBC, threads, lanes, bforces, HourGlass) = ctx
     grid      = cl.grid_dev
@@ -1005,9 +1019,9 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
                              boundary_forces = bforces, pos_cells = sup.PosCells, boundary_data = sup.boundary_data,
                              inverse_density = sup.InvDensity, pressure = sup.Pressure,
                              frozen_particles = get(ctx, :frozen_particles, Val(true)),
-                             include_gravity = Val(get(ctx, :SingleNeighbor, false)),
+                             include_gravity = Val(total_acceleration),
                              radial = get(ctx, :radial, Val(false)),
-                             scalar_sps = get(ctx, :scalar_sps, Val(false)))
+                             scalar_sps = get(ctx, :scalar_sps, Val(false)), periodicity = cl.periodicity)
     end
     floating = get(ctx, :floating, nothing)
     if get(ctx, :SingleNeighbor, false) && floating !== nothing && floating.active
@@ -1124,7 +1138,7 @@ function enqueue_step!(ctx, timed::Bool)
         inverse_density = sup.InvDensity, pressure = sup.Pressure,
         frozen_particles = get(ctx, :frozen_particles, Val(true)),
         radial = get(ctx, :radial, Val(false)),
-        scalar_sps = get(ctx, :scalar_sps, Val(false)))
+        scalar_sps = get(ctx, :scalar_sps, Val(false)), periodicity = cl.periodicity)
 
     if floats
         @phase HourGlass "10 Floating Corrector" timed begin
@@ -1421,7 +1435,8 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         # escapes here and request a rebuild before further steps or output.
         # Publish the grid header in the existing timestep readback.
         @timeit HourGlass "02a Prepare Cell Grid" prepare_cell_grid!(cl, gpu.Position, SimKernel.H⁻¹; step = state,
-            freeze_state = cl.fixed_grid ? grid_freeze_state(gpu, floating) : nothing)
+            freeze_state = cl.fixed_grid ? grid_freeze_state(gpu, floating) : nothing,
+            periodic_state = periodic_particle_state(gpu, floating))
 
         @timeit HourGlass "13 Read Back State" begin
             readback!(state)
@@ -1461,12 +1476,13 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                 # CPU does ("03a Rebuild MDBC" .. "03c Rebuild NeighborLoop").
                 # Before the first step this is the CPU "00 Init" evaluation,
                 # because the initial displacement bound forces a rebuild.
-                if SingleNeighbor || froze_particles
-                    enqueue_state_derivative!(ctx, state, timed, "02b Rebuild MDBC", "02c Rebuild NeighborLoop")
+                if SingleNeighbor || froze_particles || cl.periodicity !== nothing
+                    enqueue_state_derivative!(ctx, state, timed, "02b Rebuild MDBC", "02c Rebuild NeighborLoop";
+                        total_acceleration = SingleNeighbor || cl.periodicity !== nothing)
                 end
-                if froze_particles
-                    # Removal changes the accepted-state forces. Recompute the
-                    # timestep without counting the previous displacement again.
+                if froze_particles || cl.periodicity !== nothing
+                    # Removal changes forces; wrapping also changes the coordinates
+                    # used by the timestep criterion. Reduce the accepted state.
                     launch_step_reduction!(red, gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Position, SimKernel;
                         diagnostics, particle_ids = gpu.ID)
                     GPUStepState.set_slot!(state.i, state.ih, I_PHASE, PHASE_NEED_DT)
@@ -1633,6 +1649,33 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
 
     NumberOfPoints = length(SimParticles)::Int
 
+    if SimMetaData.Periodicity !== nothing
+        p = SimMetaData.Periodicity
+        p.upper - p.lower > 2SimKernel.H || throw(ArgumentError("Periodic interval must exceed twice the kernel support radius"))
+        for i in eachindex(SimParticles.Position)
+            x = SimParticles.Position[i]
+            if SimParticles.Type[i] == Fixed
+                p.lower <= x[p.axis] < p.upper || throw(ArgumentError("Fixed boundary particles must lie inside the periodic interval"))
+                continue
+            end
+            SimParticles.Type[i] in (Floating, Frozen) && continue
+            wrapped = wrap_periodic_position(x, p)
+            SimParticles.Position[i] = wrapped
+            if hasproperty(SimParticles, :GhostPoints) && !iszero(SimParticles.GhostPoints[i])
+                SimParticles.GhostPoints[i] += wrapped - x
+            end
+        end
+        for geom in SimGeometry
+            geom.Type == Floating || continue
+            positions = SimParticles.Position[(SimParticles.Type .== Floating) .& (SimParticles.GroupMarker .== geom.GroupMarker)]
+            center = sum(positions) / length(positions)
+            p.lower <= center[p.axis] < p.upper || throw(ArgumentError("Initial floating body centers must lie inside the periodic interval"))
+            radius = maximum(x -> norm(x - center), positions)
+            2(radius + SimKernel.H) < p.upper - p.lower ||
+                throw(ArgumentError("Floating body diameter plus twice the support radius must be smaller than the periodic interval"))
+        end
+    end
+
     # Device side data
     @timeit HourGlass "00a Upload To GPU" begin
         gpu    = upload_particles(SimParticles, SimMetaData)
@@ -1642,6 +1685,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         cl     = CellListWorkspace{Dimensions, PositionType}(NumberOfPoints;
                      reach = SimMetaData.GPUCellSubdivision, max_cells = SimMetaData.GPUMaxCells,
                      fixed_grid = SimMetaData.GPUFixedGrid, expansion = SimMetaData.GPUGridExpansion,
+                     periodicity = SimMetaData.Periodicity,
                      deterministic = SimMetaData.GPUDeterministicSort)
         sup    = GPUSupportArrays{Dimensions, FloatType}(gpu, SimMetaData)
         motion = MotionArrays(SimGeometry, SimParticles)

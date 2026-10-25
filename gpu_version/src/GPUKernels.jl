@@ -47,6 +47,7 @@ cell list rebuild refreshes it for every particle (`launch_pos_cells!`).
 module GPUKernels
 
 using CUDA
+using Adapt
 using StaticArrays
 using LinearAlgebra
 
@@ -55,6 +56,7 @@ using ..SPHViscosityModels
 using ..SPHDensityDiffusionModels
 using ..SimulationEquations
 using ..SimulationGeometry
+using ..PeriodicBoundaries: PeriodicBoundary
 using ..GPUCellGrid
 using ..GPUReductions
 using ..GPUStepState
@@ -73,6 +75,8 @@ include("GPUTimestepDiagnostics.jl")
 # It preserves the same neighbor order as the tuple returned by cell_rows.
 @inline interaction_rows(grid::CellGrid{D, R}) where {D, R} =
     GPUCellGrid.CellRows{D, R}(grid.dims[1], grid.dims[1] * grid.dims[2])
+
+include("GPUPeriodicSearch.jl")
 
 """
     radial_interactions_supported(kernel, diffusion, viscosity) -> Bool
@@ -367,7 +371,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                              SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
                              ::Val{FlagKernel}, ::Val{FlagShift}, ::Val{BoundaryForces}, ::Val{K},
                              boundary_data, InvDensity, Pressure, n::Int32, ::Val{Radial} = Val(false), ::Val{ScalarSPS} = Val(false),
-                             ::Val{FrozenParticles} = Val(true), ::Val{IncludeGravity} = Val(false)) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity}
+                             ::Val{FrozenParticles} = Val(true), ::Val{IncludeGravity} = Val(false), periodicity = nothing) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -409,7 +413,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
         own_lo = CellStart[c] + Int32(1)
         own_hi = CellStart[c + Int32(1)]
 
-        for row in interaction_rows(grid)
+        for row in neighbor_rows(periodicity, grid, c, s)
             jlo, jhi = row_range(grid, CellStart, c, row)
             rowcell  = c + row.off
             j = jlo + lane
@@ -583,7 +587,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
                               FlagKernel::Val, FlagShift::Val; threads::Integer = 128, lanes::Val = Val(1),
                               boundary_forces::Val = Val(true), pos_cells = nothing, boundary_data = nothing,
                               radial::Val = Val(false), scalar_sps::Val = Val(false), inverse_density = nothing,
-                              pressure = nothing, frozen_particles::Val = Val(true), include_gravity::Val = Val(false))
+                              pressure = nothing, frozen_particles::Val = Val(true), include_gravity::Val = Val(false), periodicity = nothing)
     inverse_density === nothing || length(inverse_density) == length(Density) ||
         throw(DimensionMismatch("Reciprocal cache must have one entry per evaluated density"))
     pressure === nothing || length(pressure) == length(Density) ||
@@ -591,7 +595,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
     n = length(Position)
     n == 0 && return nothing
     K = typeof(lanes).parameters[1]
-    Pairs = pos_cells === nothing ? Position : pos_cells
+    Pairs = periodicity === nothing ? (pos_cells === nothing ? Position : pos_cells) : PeriodicPairSource(eltype(Density), Position)
     SimParticles = (Position = Position, Density = Density, Velocity = Velocity,
                     Type = ParticleType)
     options = interaction_options(SimKernel, SimDensityDiffusion, SimViscosity;
@@ -609,7 +613,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
         Pairs, Position, Density, Velocity, ParticleType, SimParticles,
         CellStart, CellID, grid, step,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity)
+        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity)
     return nothing
 end
 
@@ -631,7 +635,7 @@ end
 # Testing the fluid type before the support predicate lets the compiler
 # schedule the type load independently of the distance calculation.
 @inline function mdbc_range(b, A::SMatrix{DP, DP, T}, jlo::Int32, jhi::Int32, lane::Int32, ::Val{K}, ref,
-                            Pairs, rowcell::Int32, row::CellRow, s, Density, ParticleType, SimKernel,
+                            Pairs, rowcell::Int32, row, s, Density, ParticleType, SimKernel,
                             m₀, Velocity = nothing, InvDensity = nothing) where {K, DP, T}
     (; h⁻¹, H²) = SimKernel
     j = jlo + lane
@@ -723,7 +727,7 @@ end
 # position precision `TP`, `Pairs` is the pair source (see `pair_vector`).
 function mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVector{SVector{D, TP}}, Pairs,
                       GhostPoints, GhostIndex, ParticleType, CellStart, gridarg, step,
-                      SimKernel, SimConstants, InvDensity, Pressure, ::Val{K}, ::Val{Compact}, nghost::Int32) where {D, T, TP, K, Compact}
+                      SimKernel, SimConstants, InvDensity, Pressure, ::Val{K}, ::Val{Compact}, nghost::Int32, periodicity, GhostNormals) where {D, T, TP, K, Compact}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -743,15 +747,15 @@ function mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVector{SVect
     @inbounds if valid
         i  = GhostIndex[g]
         gp = GhostPoints[Compact ? g : i]
+        if periodicity !== nothing && GhostNormals !== nothing && ParticleType[i] == Moving
+            gp = Position[i] + SVector{D, TP}(GhostNormals[Compact ? g : i])
+        end
         valid = ParticleType[i] != Frozen
     end
 
     @inbounds if valid
-        cg  = cell_coords(gp, bin_scale(grid, SimKernel.H⁻¹))
-        lg  = ntuple(d -> cg[d] - grid.origin[d], Val(D))
-        ref = mdbc_reference(Pairs, gp, cg, s)
-        b, A = mdbc_rows(b, A, ref, lg, grid, CellStart, Pairs, s, Density, ParticleType, SimKernel, m₀,
-                         lane, Val(K), nothing, InvDensity)
+        b, A = mdbc_neighborhood(b, A, gp, Pairs, Position, grid, CellStart, s,
+            Density, ParticleType, SimKernel, m₀, lane, Val(K), nothing, InvDensity, periodicity)
     end
 
     if K > 1
@@ -775,6 +779,9 @@ function mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVector{SVect
             ρ = isnan(v) ? ρ₀ : v
         end
         Density[i]  = ρ
+        if periodicity !== nothing && ParticleType[i] == Moving
+            GhostPoints[Compact ? g : i] = gp
+        end
         store_inverse_density!(InvDensity, i, ρ)
         store_pressure!(Pressure, i, EquationOfStateGamma7(ρ, c₀, ρ₀))
     end
@@ -799,14 +806,15 @@ corrected boundary entries (and `pressure` when cached) are refreshed by this ke
 """
 function launch_mdbc!(Density, Position, GhostPoints, GhostIndex, ParticleType, CellStart, grid, step,
                       SimKernel, SimConstants; threads::Integer = 128, lanes::Val = Val(1), pos_cells = nothing,
-                      compact_ghosts::Val = Val(false), inverse_density = nothing, pressure = nothing)
+                      compact_ghosts::Val = Val(false), inverse_density = nothing, pressure = nothing, periodicity = nothing,
+                      ghost_normals = nothing)
     n = length(GhostIndex)
     n == 0 && return nothing
     K = typeof(lanes).parameters[1]
     Pairs = pos_cells === nothing ? Position : pos_cells
     @cuda threads=threads blocks=cld(n * K, threads) mdbc_kernel!(
         Density, Position, Pairs, GhostPoints, GhostIndex, ParticleType, CellStart, grid, step,
-        SimKernel, SimConstants, inverse_density, pressure, lanes, compact_ghosts, Int32(n))
+        SimKernel, SimConstants, inverse_density, pressure, lanes, compact_ghosts, Int32(n), periodicity, ghost_normals)
     return nothing
 end
 

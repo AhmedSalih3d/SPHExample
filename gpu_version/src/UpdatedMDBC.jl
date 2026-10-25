@@ -80,7 +80,7 @@ end
 function updated_mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVector{SVector{D, TP}},
                               Pairs, Velocity, GhostPoints, GhostNormals, GhostIndex, ParticleType,
                               CellStart, gridarg, step, SimKernel, SimConstants, data, motion, groups,
-                              InvDensity, Pressure, ::Val{K}, ::Val{Compact}, nghost::Int32) where {T, D, TP, K, Compact}
+                              InvDensity, Pressure, ::Val{K}, ::Val{Compact}, nghost::Int32, periodicity) where {T, D, TP, K, Compact}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t = thread_index()
@@ -105,12 +105,9 @@ function updated_mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVect
         if ParticleType[i] == Moving
             gp = Position[i] + SVector{D, TP}(GhostNormals[slot])
         end
-        cg = cell_coords(gp, bin_scale(grid, SimKernel.H⁻¹))
-        lg = ntuple(d -> cg[d] - grid.origin[d], Val(D))
         s = cell_size(grid, SimKernel.H)
-        ref = mdbc_reference(Pairs, gp, cg, s)
-        b, A = mdbc_rows(b, A, ref, lg, grid, CellStart, Pairs, s, Density, ParticleType,
-                         SimKernel, SimConstants.m₀, lane, Val(K), Velocity, InvDensity)
+        b, A = mdbc_neighborhood(b, A, gp, Pairs, Position, grid, CellStart, s,
+            Density, ParticleType, SimKernel, SimConstants.m₀, lane, Val(K), Velocity, InvDensity, periodicity)
     end
     if K > 1
         b = lanes_sum(b, Val(K))
@@ -151,13 +148,13 @@ end
 function launch_updated_mdbc!(Density, Position, Velocity, GhostPoints, GhostNormals,
                                GhostIndex, ParticleType, CellStart, grid, step, SimKernel, SimConstants,
                                data; threads = 128, lanes = Val(1), pos_cells = nothing, motion = nothing, groups = nothing,
-                               compact_ghosts::Val = Val(false), inverse_density = nothing, pressure = nothing)
+                               compact_ghosts::Val = Val(false), inverse_density = nothing, pressure = nothing, periodicity = nothing)
     n = length(GhostIndex)
     n == 0 && return nothing
     K = typeof(lanes).parameters[1]
     pairs = pos_cells === nothing ? Position : pos_cells
     @cuda threads=threads blocks=cld(n * K, threads) updated_mdbc_kernel!(
         Density, Position, pairs, Velocity, GhostPoints, GhostNormals, GhostIndex, ParticleType,
-        CellStart, grid, step, SimKernel, SimConstants, data, motion, groups, inverse_density, pressure, lanes, compact_ghosts, Int32(n))
+        CellStart, grid, step, SimKernel, SimConstants, data, motion, groups, inverse_density, pressure, lanes, compact_ghosts, Int32(n), periodicity)
     return nothing
 end

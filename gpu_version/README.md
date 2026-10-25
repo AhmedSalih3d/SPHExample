@@ -69,6 +69,66 @@ in a browser. It includes expandable helper implementations and the complete
 function index. Recorded kernel entries are distinguished from accepted
 physical steps and from unmeasured per-thread GPU branches.
 
+### Periodic boundaries
+
+Set a physical periodic interval independently of the neighbor-grid cell size:
+
+```julia
+meta = SimulationMetaData{2, Float32}(
+    SimulationName = "Periodic", SaveLocation = "output/periodic",
+    Periodicity = PeriodicBoundary{2}(1; min = -0.011, max = 0.801, shift = (0, 0.3)),
+    GPUFixedGrid = true, GPUGridExpansion = ((false, false), (true, true)),
+)
+```
+
+This example wraps x into `[-0.011, 0.801)`: crossing the right edge raises
+height by 0.3 m, and crossing the left edge lowers it. Omit `shift` for ordinary
+periodicity. Axis indices follow the simulation coordinates (`x, y` in 2D;
+`x, y, z` in 3D). Bounds are explicit physical faces, not grid-cell centers.
+For a lattice with both end particles present, put the faces half a spacing
+outside their extrema to avoid duplicate seam particles.
+
+Pressure, continuity, viscosity, density diffusion, shifting and both mDBC
+formulations use neighbors across the seam. No image particles or duplicate
+output IDs are allocated. Positions are wrapped at accepted batch boundaries,
+before fixed-grid freezing and output, and the cell list is rebuilt after a
+crossing. The periodic axis cannot freeze particles. Other axes retain their
+configured escape behavior; allow height expansion when using a height shift.
+Both time-stepping schemes, CUDA graphs, buffer modes and position precisions
+are supported. Periodic pair differences are formed in position precision and
+then converted to the working precision (`:translated_absolute` in the
+configuration report). `Periodicity = nothing` keeps the existing path.
+
+Fixed boundaries stay stationary and must start inside the interval. Moving
+walls keep their prescribed velocity; their owned ghosts translate with each
+wrapped wall particle. Floating bodies wrap together when their center crosses
+a face. All particle positions, full/half/previous centers and hinge anchors
+receive the same translation, preserving rigid geometry, orientation, linear
+and angular velocity, and torque arms. A straddling body is exported whole;
+some of its particles can lie outside the primary interval until its center
+crosses. Its periodic images still interact across the seam.
+
+Currently one periodic axis is supported in 2D or 3D. Its length must exceed
+twice the support radius `H`. A floating body's diameter plus `2H` must fit
+inside the interval, and its initial center must be inside it. Existing mDBC
+mode restrictions still apply (UpdatedMDBC does not support floating bodies).
+This does not enable periodicity in the separate CPU package.
+
+[Periodicity2d.jl](example/Periodicity2d.jl) generates the floor, step, baffle
+and water columns from DualSPHysics 5.4 `examples/main/02_Periodicity`, mapping
+its x/z plane to x/y. Defaults are `dx = 0.002`, 6 seconds and output every
+0.06 seconds, with `XPeriodicIncZ = 0.3`, symplectic stepping, Wendland C2 and
+artificial viscosity 0.2. It uses this solver's complex hydrostatic diffusion;
+matching the geometry and periodic topology does not establish numerical
+equivalence to DualSPHysics' integration, DDT and particle-exclusion policies.
+The example needs no DualSPHysics files at runtime.
+
+```bash
+# From the repository root; optional arguments: output directory, spacing, duration
+julia --project=gpu_version gpu_version/example/Periodicity2d.jl
+julia --project=gpu_version -t 2,0 gpu_version/test/periodicity.jl
+```
+
 ### Choosing the mDBC formulation
 
 The fifth `SimulationMetaData` type parameter selects the boundary formulation:

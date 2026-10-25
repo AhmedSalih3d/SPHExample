@@ -49,9 +49,10 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
         viscosity_path = viscosity isa ZeroViscosity ? :disabled : options.scalar_sps ? :scalar_sps :
             options.radial && !(viscosity isa LaminarSPS) ? :radial_symmetric : :reference_ordered,
         dimensions = D, float_type = T, position_type,
-        pair_coordinates = position_type === T ? :absolute : :cell_relative,
+        pair_coordinates = meta.Periodicity !== nothing ? :translated_absolute : position_type === T ? :absolute : :cell_relative,
         time_stepping = typeof(meta.TimeSteppingMode), boundary_mode = B, shifting_mode = S,
         kernel_output_mode = K, cell_subdivision = meta.GPUCellSubdivision,
+        periodicity = meta.Periodicity,
         cache_interaction_fields = meta.GPUCacheInteractionFields,
         boundary_forces = meta.GPUBoundaryForces, deterministic_sort = meta.GPUDeterministicSort,
         clip_timestep_to_output = meta.GPUClipTimeStepToOutput,

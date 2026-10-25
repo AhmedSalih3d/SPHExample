@@ -14,6 +14,7 @@ module SPHExampleGPU
         "PolygonDrawing.jl",
         "SimulationGeometry.jl",
         "SPHKernels.jl",
+        "PeriodicBoundaries.jl",
         "SimulationMetaDataConfiguration.jl",
         "SimulationConstantsConfiguration.jl",
         "SimulationEquations.jl",
@@ -58,6 +59,9 @@ module SPHExampleGPU
     using .SimulationGeometry
     export ParticleType, Fixed, Fluid, Moving, Floating, Frozen, SPHGeometry, MotionDetails, FloatingDetails, FloatingConstraints,
            GravityFactorValue, MotionLimiterValue, particle_struct_array
+
+    using .PeriodicBoundaries
+    export PeriodicBoundary
 
     using .PreProcess
     export AllocateDataStructures, AllocateSupportDataStructures, LoadBoundaryNormals
