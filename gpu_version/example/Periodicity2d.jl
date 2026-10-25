@@ -64,7 +64,7 @@ function run_periodicity_2d(; FloatType = Float32, dx = 0.002, simulation_time =
         VisualizeInParaview = visualize, OpenLogFile = open_log_file,
         Periodicity = case.periodicity, GPUFixedGrid = fixed_grid,
         GPUGridExpansion = fixed_grid ? ((false, false), (true, true)) : ((false, false), (false, false)),
-        GPUUseGraph = use_graph, GPUDoublePosition = double_position, GPUCellSubdivision = 1)
+        GPUUseGraph = use_graph, GPUDoublePosition = double_position, GPUCellSubdivision = 1, ExportGridCells = true)
     particles = AllocateDataStructures(case.geometry, meta)
     logger = SimulationLogger(save_location)
     try
@@ -77,9 +77,7 @@ function run_periodicity_2d(; FloatType = Float32, dx = 0.002, simulation_time =
     end
 end
 
-if abspath(PROGRAM_FILE) == @__FILE__
     run_periodicity_2d(;
         save_location = length(ARGS) >= 1 ? ARGS[1] : joinpath(@__DIR__, "..", "output", "periodicity_2d"),
         dx = length(ARGS) >= 2 ? parse(Float64, ARGS[2]) : 0.002,
         simulation_time = length(ARGS) >= 3 ? parse(Float64, ARGS[3]) : 6.0)
-end
