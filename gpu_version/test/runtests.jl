@@ -46,6 +46,7 @@ include(joinpath(@__DIR__, "cell_list_rebuild.jl"))
 include(joinpath(@__DIR__, "fixed_grid.jl"))
 include(joinpath(@__DIR__, "periodicity.jl"))
 include(joinpath(@__DIR__, "external_forces.jl"))
+include(joinpath(@__DIR__, "sloshing_tank.jl"))
 include(joinpath(@__DIR__, "frozen_grid.jl"))
 
 # Project of the CPU package used as the reference. Defaults to the repository

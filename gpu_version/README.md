@@ -189,6 +189,47 @@ The container has three outer particle layers. This example demonstrates the
 force contract; it is not a complete solver-to-solver trajectory equivalence
 claim (boundary viscosity and other SPH operators can differ).
 
+### Sloshing tank
+
+`example/SloshingTank.jl` implements the fixed-tank acceleration case from
+DualSPHysics 5.4 `examples/main/05_SloshingTank`. It generates a closed 0.9 m
+wide, 0.508 m high tank with a 0.093 m water layer directly from Julia polygons.
+Reference x/z coordinates map to simulation x/y. Defaults are 0.002 m spacing,
+8.35 seconds, 0.01-second output, symplectic stepping, Wendland C2,
+`h = 0.91924√2 * dx`, artificial viscosity `α = 0.05`, and complex density
+diffusion `δ = 0.1`. Automatic sound speed uses the sampled fluid depth, giving
+`c₀ ≈ 28.1888 m/s` at the default spacing, as in the resolved reference case.
+No solver source changes are needed.
+
+```powershell
+julia --project=gpu_version gpu_version/example/SloshingTank.jl
+# Optional arguments: output directory, spacing, duration.
+julia --project=gpu_version gpu_version/example/SloshingTank.jl output/sloshing 0.004 8.35
+julia --project=gpu_version -t 4,0 gpu_version/test/sloshing_tank.jl
+```
+
+The original 167,001-sample excitation history is bundled under
+`example/data/sloshing_tank/`, with its source notice and upstream license.
+It is not resampled or replaced with a synthetic sinusoid. The geometry needs
+no input CSVs or DualSPHysics installation. Linear acceleration already contains
+the changing gravity vector: `ExternalForce` disables global gravity for the
+fluid group and applies the full linear/angular history. The tank stays fixed.
+The default force center `(0.45, 0)` follows the reference XML; its explanatory
+note instead describes the bottom midpoint. The example's `force_center`
+keyword can select that alternative explicitly. Runs beyond the supplied
+history are rejected.
+
+Output includes the inner reference pressure probe at `(-0.4461, 0.093)` and
+left/center/right water-column heights. Pressure uses this solver's nearest
+fluid-particle measurement, so its values should not be treated as equivalent
+to DualSPHysics MeasureTool interpolation. The example uses three wall layers
+at the default spacing and the solver's standard boundary viscosity; the
+reference sets its separate boundary-viscosity multiplier to zero. Together
+with other operator differences, this prevents a solver-to-solver or experimental
+pressure-equivalence claim. The two reference variants (fixed tank with
+acceleration versus a physically rotating tank) are distinct; this example
+implements the acceleration variant.
+
 ### Choosing the mDBC formulation
 
 The fifth `SimulationMetaData` type parameter selects the boundary formulation:
