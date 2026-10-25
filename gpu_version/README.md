@@ -191,8 +191,20 @@ claim (boundary viscosity and other SPH operators can differ).
 
 ### Sloshing tank
 
-`example/SloshingTank.jl` implements the fixed-tank acceleration case from
-DualSPHysics 5.4 `examples/main/05_SloshingTank`. It generates a closed 0.9 m
+`example/SloshingTank.jl` supports both variants of DualSPHysics 5.4
+`examples/main/05_SloshingTank`. The lever near the top of the file is:
+
+```julia
+const SLOSHING_DRIVING_MODE = :rotation  # or :acceleration
+```
+
+`:rotation` is the default: the tank physically rotates about its bottom
+midpoint `(0, 0)` following `CaseSloshingMotionData.dat`, with constant world
+gravity and no external fluid acceleration. `:acceleration` keeps the tank
+fixed and uses `CaseSloshingAccData.csv`. The same choice is available as
+`run_sloshing_tank(; driving_mode = :rotation)`.
+
+The example generates a closed 0.9 m
 wide, 0.508 m high tank with a 0.093 m water layer directly from Julia polygons.
 Reference x/z coordinates map to simulation x/y. Defaults are 0.002 m spacing,
 8.35 seconds, 0.01-second output, symplectic stepping, Wendland C2,
@@ -206,29 +218,42 @@ julia --project=gpu_version gpu_version/example/SloshingTank.jl
 # Optional arguments: output directory, spacing, duration.
 julia --project=gpu_version gpu_version/example/SloshingTank.jl output/sloshing 0.004 8.35
 julia --project=gpu_version -t 4,0 gpu_version/test/sloshing_tank.jl
+julia --project=gpu_version -t 4,0 gpu_version/test/prescribed_rotation.jl
 ```
 
-The original 167,001-sample excitation history is bundled under
+Both original 167,001-sample histories are bundled under
 `example/data/sloshing_tank/`, with its source notice and upstream license.
-It is not resampled or replaced with a synthetic sinusoid. The geometry needs
-no input CSVs or DualSPHysics installation. Linear acceleration already contains
+They are not resampled or replaced with synthetic sinusoids. The geometry needs
+no input CSVs or DualSPHysics installation. In acceleration mode, linear input already contains
 the changing gravity vector: `ExternalForce` disables global gravity for the
 fluid group and applies the full linear/angular history. The tank stays fixed.
-The default force center `(0.45, 0)` follows the reference XML; its explanatory
+The acceleration-mode force center `(0.45, 0)` follows the reference XML; its explanatory
 note instead describes the bottom midpoint. The example's `force_center`
 keyword can select that alternative explicitly. Runs beyond the supplied
 history are rejected.
 
-Output includes the inner reference pressure probe at `(-0.4461, 0.093)` and
-left/center/right water-column heights. Pressure uses this solver's nearest
+The pressure probe at reference location `(-0.4461, 0.093)` rotates with the tank
+in rotation mode. Its world positions are saved for every output frame. The
+left/center/right vertical water-column probes are included in acceleration
+mode. Pressure uses this solver's nearest
 fluid-particle measurement, so its values should not be treated as equivalent
 to DualSPHysics MeasureTool interpolation. The example uses three wall layers
 at the default spacing and the solver's standard boundary viscosity; the
 reference sets its separate boundary-viscosity multiplier to zero. Together
 with other operator differences, this prevents a solver-to-solver or experimental
-pressure-equivalence claim. The two reference variants (fixed tank with
-acceleration versus a physically rotating tank) are distinct; this example
-implements the acceleration variant.
+pressure-equivalence claim. Mode-specific default outputs are in
+`output/sloshing_tank_rotation` and `output/sloshing_tank_acceleration`.
+
+Physical rotation support lives in `src/PrescribedRotation.jl`. Low-level cases
+can pass `SimRotation = RotationMotion(marker; times, angles, center)` to
+`RunSimulation`, with `Moving` geometry and angles in radians, positive
+counterclockwise. Absolute placement uses stable IDs at the start, half-step
+and accepted times; wall velocity is the derivative of the interpolated angle.
+Endpoint angles are held with zero velocity beyond the table. This currently
+supports nonperiodic 2D DBC cases; the rotating group cannot also use
+`MotionDetails`. Motion tables retain Float64 precision with either physics
+precision. Pressure and velocity probes accept a host `trajectory(time)`
+keyword when their locations need to follow motion.
 
 ### Choosing the mDBC formulation
 

@@ -36,6 +36,7 @@ using ..SPHDensityDiffusionModels
 using ..GPUReductions
 using ..GPUStepState
 using ..ExternalForces: prepare_external_forces, launch_external_forces!
+using ..PrescribedRotation: RotationMotion, prepare_rotation, launch_rotation!
 using ..GPUCellGrid
 using ..GPUKernels
 using ..GPUConfiguration: effective_configuration, configuration_snapshot, log_effective_configuration
@@ -1074,6 +1075,10 @@ function enqueue_step!(ctx, timed::Bool)
     @phase HourGlass "01 Update TimeStep" timed launch_finish!(state, red, SimKernel, SimConstants;
         diagnostics = get(ctx, :diagnostics, nothing))
 
+    rotation = get(ctx, :rotation, nothing)
+    launch_rotation!(rotation, gpu.Position, gpu.Velocity, gpu.Type, gpu.GroupMarker, gpu.ID, state;
+        pos_cells = sup.PosCells, cell_ids = gpu.CellID, grid, H = SimKernel.H)
+
     # Stationary cached DBC steps carry the accepted-state caches from final
     # integration; startup and sorting explicitly refresh them.
     # DBC has no neighbor evaluation between motion and per-particle preparation.
@@ -1123,6 +1128,9 @@ function enqueue_step!(ctx, timed::Bool)
             pos_cells = sup.PosCellsₙ⁺, CellID = gpu.CellID, grid = grid, H = SimKernel.H)
     end
 
+    launch_rotation!(rotation, position_half, velocity_half, gpu.Type, gpu.GroupMarker, gpu.ID, state;
+        fraction = 0.5, pos_cells = sup.PosCellsₙ⁺, cell_ids = gpu.CellID, grid, H = SimKernel.H)
+
     if get(ctx, :boundary_mode, SimpleMDBC()) isa UpdatedMDBC
         @phase HourGlass "07 Updated mDBC corrector" timed begin
             enqueue_boundary_correction!(ctx, state, true)
@@ -1154,6 +1162,12 @@ function enqueue_step!(ctx, timed::Bool)
             launch_floating_update!(floating, state, SimConstants.g, true)
         end
     end
+
+    # Place the accepted wall before final integration/reduction, so its motion
+    # contributes to the next displacement bound and timestep. The step can
+    # commit inside final integration, after this absolute placement has run.
+    launch_rotation!(rotation, gpu.Position, gpu.Velocity, gpu.Type, gpu.GroupMarker, gpu.ID, state;
+        fraction = 1.0, pos_cells = sup.PosCells, cell_ids = gpu.CellID, grid, H = SimKernel.H)
 
     @phase HourGlass "11 Update To Final TimeStep" timed launch_final_step!(
         gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Density,
@@ -1329,7 +1343,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                         SimConstants, gpu::GPUParticles{Dimensions, FloatType},
                         cl::CellListWorkspace, sup::GPUSupportArrays, red::ReductionWorkspace,
                         motion, state::StepState{FloatType};
-                        floating = nothing, external_forces = (), logger = nothing, diagnostics = nothing) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
+                        floating = nothing, external_forces = (), rotation = nothing, logger = nothing, diagnostics = nothing) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
                                                    SDD <: SPHDensityDiffusion, SV <: SPHViscosity}
     HourGlass = SimMetaData.HourGlass
     h = SimKernel.h
@@ -1389,7 +1403,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     cache_final_state = !UseMDBC && !motion.active && (floating === nothing || !floating.active) &&
         sup.InvDensity !== nothing && sup.Pressure !== nothing
 
-    ctx = (; gpu, cl, sup, red, motion, floating, external_forces, state, SimKernel, SimConstants, SimDensityDiffusion,
+    ctx = (; gpu, cl, sup, red, motion, floating, external_forces, rotation, state, SimKernel, SimConstants, SimDensityDiffusion,
              SimViscosity, FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, radial, scalar_sps, HourGlass, boundary_mode,
              frozen_particles = Val(cl.frozen_total > 0), cache_final_state, diagnostics,
              logger = LMode === StoreLog ? logger : nothing)
@@ -1519,6 +1533,7 @@ end
     RunSimulation(; SimGeometry, SimMetaData, SimConstants, SimKernel, SimLogger,
                     SimParticles, SimViscosity, SimDensityDiffusion, SimTimeStepping,
                     ParticleNormalsPath, SimMeasurements = nothing, SimExternalForces = nothing,
+                    SimRotation = nothing,
                     ParaviewPressureRange = nothing)
 
 Run a complete simulation on the GPU. Same interface as the CPU version: the
@@ -1557,6 +1572,12 @@ half time. The single-neighbor scheme carries the previous evaluated total
 acceleration into its next predictor. Gravity is applied once and the final
 total acceleration participates in the adaptive timestep reduction.
 
+`SimRotation = RotationMotion(...)` prescribes physical rotation of one
+`Moving` group in nonperiodic 2D DBC cases. The input geometry is the zero-angle
+reference. Walls are placed absolutely at the start, predictor and accepted
+times, with matching angular wall velocity and refreshed cell-relative
+positions. Gravity remains in world coordinates; no external forces are implied.
+
 `ParaviewPressureRange = (min, max)` fixes the generated ParaView pressure color
 scale in Pa. By default use zero through the hydrostatic pressure of the initial
 fluid height plus one particle spacing. This scale stays fixed across frames;
@@ -1574,10 +1595,13 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     ParticleNormalsPath::Union{Nothing, String} = nothing,
     SimMeasurements::Union{Nothing, MeasurementConfig} = nothing,
     SimExternalForces = nothing,
+    SimRotation::Union{Nothing,RotationMotion} = nothing,
     ParaviewPressureRange = nothing,
     ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SV <: SPHViscosity, SDD <: SPHDensityDiffusion}
 
     CUDA.functional() || error("CUDA is not functional on this machine; use the CPU package SPHExample instead.")
+    SimRotation === nothing || (Dimensions == 2 && BMode === NoMDBC && SimMetaData.Periodicity === nothing) ||
+        throw(ArgumentError("SimRotation currently requires a nonperiodic 2D DBC case (NoMDBC)"))
     external_forces = prepare_external_forces(SimExternalForces, SimParticles, Val(Dimensions), FloatType)
     SimMetaData.GPUTimestepDiagnosticsEvery >= 0 || throw(ArgumentError("GPUTimestepDiagnosticsEvery must be nonnegative"))
     SimulationLoggerConfiguration.start_runtime!(SimLogger, SimMetaData.TotalTime)
@@ -1713,6 +1737,13 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                      deterministic = SimMetaData.GPUDeterministicSort)
         sup    = GPUSupportArrays{Dimensions, FloatType}(gpu, SimMetaData)
         motion = MotionArrays(SimGeometry, SimParticles)
+        rotation = prepare_rotation(SimRotation, SimGeometry, SimParticles)
+        if rotation !== nothing
+            launch_rotation!(rotation, gpu.Position, gpu.Velocity, gpu.Type, gpu.GroupMarker, gpu.ID,
+                HostStep(zero(FloatType), SimMetaData.TotalTime))
+            copyto!(SimParticles.Position, gpu.Position)
+            copyto!(SimParticles.Velocity, gpu.Velocity)
+        end
         floating = FloatingArrays(SimGeometry, SimParticles, SimConstants; position_type = PositionType,
                                   time = SimMetaData.TotalTime)
         if floating.constrained
@@ -1729,7 +1760,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     end
 
     gpu_buffers = (; particles = gpu, support = sup, cells = cl,
-        auxiliary = (motion, floating, red.partial, state.f, state.i, diagnostics))
+        auxiliary = (motion, rotation, external_forces, floating, red.partial, state.f, state.i, diagnostics))
 
     output = SetupVTKOutput(
         SimMetaData, SimParticles, SimKernel, Dimensions;
@@ -2012,7 +2043,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         while true
             @timeit HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                                                                  SimConstants, gpu, cl, sup, red, motion, state;
-                                                                 floating = floating, external_forces, logger = SimLogger, diagnostics)
+                                                                 floating = floating, external_forces, rotation, logger = SimLogger, diagnostics)
 
             # Publish progress immediately, independently of the queued disk writes.
             if StoreLogOutput

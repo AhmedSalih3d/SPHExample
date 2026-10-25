@@ -1,16 +1,22 @@
-# DualSPHysics 5.4 examples/main/05_SloshingTank, fixed-tank acceleration case.
+# DualSPHysics 5.4 examples/main/05_SloshingTank.
 # julia --project=gpu_version gpu_version/example/SloshingTank.jl [output_dir] [dx] [duration]
 using SPHExampleGPU
+using StaticArrays: SVector
+
+# The lever: :rotation moves the tank; :acceleration keeps it fixed.
+const SLOSHING_DRIVING_MODE = :rotation
 
 """
-    sloshing_tank_geometry(; dx = 0.002, FloatType = Float32)
+    sloshing_tank_geometry(; dx = 0.002, FloatType = Float32, driving_mode = :acceleration)
 
 Generate a closed 0.9 m by 0.508 m tank and a 0.093 m deep water layer in
 the reference's x/z plane, mapped to x/y. Three particle layers form the walls
 at the default spacing. Geometry and hydrostatic densities are generated in
 memory; only the measured excitation is read from the bundled data file.
+Walls are `Moving` in rotation mode and `Fixed` in acceleration mode.
 """
-function sloshing_tank_geometry(; dx = 0.002, FloatType = Float32)
+function sloshing_tank_geometry(; dx = 0.002, FloatType = Float32, driving_mode = :acceleration)
+    driving_mode in (:rotation, :acceleration) || throw(ArgumentError("driving_mode must be :rotation or :acceleration"))
     isfinite(dx) && 0 < dx <= 0.02 || throw(ArgumentError("dx must be finite and in (0, 0.02] to resolve the water layer"))
     T = FloatType
     thickness = 2dx
@@ -29,13 +35,37 @@ function sloshing_tank_geometry(; dx = 0.002, FloatType = Float32)
     constants = SimulationConstants{T}(2; dx, g = 9.81, c₀ = 30sqrt(9.81 * depth),
         CFL = 0.2, α = 0.05, δᵩ = 0.1)
     geometry = [
-        SPHGeometry{2,T}(boundary.positions; Density = constants.ρ₀, GroupMarker = 1, Type = Fixed),
+        SPHGeometry{2,T}(boundary.positions; Density = constants.ρ₀, GroupMarker = 1,
+            Type = driving_mode == :rotation ? Moving : Fixed),
         SPHGeometry{2,T}(fluid.positions;
             Density = hydrostatic_density(fluid.positions, constants; water_level),
             GroupMarker = 2, Type = Fluid),
     ]
     kernel = SPHKernelInstance{2,T}(WendlandC2(); h = T(0.91924sqrt(2) * dx))
     return (; geometry, constants, kernel, tank, water, water_level)
+end
+
+"""
+    sloshing_tank_rotation(; motion_path, center = (0, 0))
+
+Load the supplied motion angles for physical tank rotation about the bottom
+midpoint. Reference degrees about +y become negative radians in the x/y plane.
+Positions are reconstructed absolutely from the generated tank, not integrated
+incrementally. Gravity stays fixed in world coordinates.
+"""
+function sloshing_tank_rotation(;
+        motion_path = joinpath(@__DIR__, "data", "sloshing_tank", "CaseSloshingMotionData.dat"),
+        center = (0.0, 0.0))
+    times, angles = Float64[], Float64[]
+    for line in eachline(motion_path)
+        text = strip(line)
+        (isempty(text) || startswith(text, "#")) && continue
+        fields = split(text)
+        length(fields) == 2 || throw(ArgumentError("motion data requires time and angle in degrees"))
+        push!(times, parse(Float64, fields[1]))
+        push!(angles, -deg2rad(parse(Float64, fields[2])))
+    end
+    return RotationMotion(1; times, angles, center)
 end
 
 """
@@ -55,33 +85,38 @@ function sloshing_tank_force(::Type{T} = Float32;
 end
 
 """
-    run_sloshing_tank(; dx = 0.002, simulation_time = 8.35, ...)
+    run_sloshing_tank(; driving_mode = SLOSHING_DRIVING_MODE, dx = 0.002, simulation_time = 8.35, ...)
 
-Run the generated fixed-tank sloshing case using the full measured linear and
-angular forcing, symplectic stepping, Wendland C2 and complex density diffusion.
-Pressure at the reference's inner probe `(-0.4461, 0.093)` and three water-column
-heights are saved with the particle output. Set `measurements = false` to omit
-these probes. Pressure sampling uses the nearest fluid particle, rather than
-the DualSPHysics MeasureTool interpolation. Returns a `SimulationResult`.
+Use `driving_mode = :rotation` for measured physical tank rotation under fixed
+world gravity, or `:acceleration` for the fixed-tank external-force variant.
+Pressure at the inner reference probe follows the tank in rotation mode. Three
+vertical water-column probes are included in acceleration mode. Set
+`measurements = false` to omit probes. Pressure uses the nearest fluid particle.
+Returns a `SimulationResult`.
 """
-function run_sloshing_tank(; FloatType = Float32, dx = 0.002, simulation_time = 8.35,
+function run_sloshing_tank(; driving_mode = SLOSHING_DRIVING_MODE, FloatType = Float32, dx = 0.002, simulation_time = 8.35,
         output_interval = 0.01, visualize = true, open_log_file = true,
         use_graph = true, double_position = false, measurements = true,
         time_stepping::TimeSteppingMode = SymplecticTimeStepping(),
         acceleration_path = joinpath(@__DIR__, "data", "sloshing_tank", "CaseSloshingAccData.csv"),
+        motion_path = joinpath(@__DIR__, "data", "sloshing_tank", "CaseSloshingMotionData.dat"),
         force_center = (0.45, 0.0),
-        save_location = joinpath(@__DIR__, "..", "output", "sloshing_tank"))
+        save_location = joinpath(@__DIR__, "..", "output", "sloshing_tank_$(driving_mode)"))
+    driving_mode in (:rotation, :acceleration) || throw(ArgumentError("driving_mode must be :rotation or :acceleration"))
     isfinite(simulation_time) && simulation_time > 0 || throw(ArgumentError("simulation_time must be finite and positive"))
     isfinite(output_interval) && output_interval > 0 || throw(ArgumentError("output_interval must be finite and positive"))
     T = FloatType
-    force = sloshing_tank_force(T; acceleration_path, center = force_center)
-    first(force.times) <= 0 && T(simulation_time) <= last(force.times) ||
-        throw(ArgumentError("acceleration history must cover the complete requested simulation interval"))
-    case = sloshing_tank_geometry(; dx, FloatType)
+    rotation = driving_mode == :rotation ? sloshing_tank_rotation(; motion_path) : nothing
+    force = driving_mode == :acceleration ? sloshing_tank_force(T; acceleration_path, center = force_center) : nothing
+    history = rotation === nothing ? force : rotation
+    first(history.times) <= 0 && T(simulation_time) <= T(last(history.times)) ||
+        throw(ArgumentError("driving history must cover the complete requested simulation interval"))
+    case = sloshing_tank_geometry(; dx, FloatType, driving_mode)
+    trajectory = rotation === nothing ? nothing : t -> rotation_position(rotation, (-0.4461, 0.093), t)
     probes = measurements ? MeasurementConfig(
-        pressure_probes = [MeasurementProbe("left_wall_pressure", (-0.4461, 0.093))],
-        water_column_probes = [WaterColumnProbe(name, (x, 0.0); radius = 2dx)
-            for (name, x) in (("left_level", -0.44), ("center_level", 0.0), ("right_level", 0.44))],
+        pressure_probes = [MeasurementProbe("left_wall_pressure", (-0.4461, 0.093); trajectory)],
+        water_column_probes = rotation === nothing ? [WaterColumnProbe(name, (x, 0.0); radius = 2dx)
+            for (name, x) in (("left_level", -0.44), ("center_level", 0.0), ("right_level", 0.44))] : WaterColumnProbe[],
     ) : nothing
     mkpath(save_location)
     meta = SimulationMetaData{2,T,NoShifting,NoKernelOutput,NoMDBC,StoreLog}(
@@ -97,7 +132,7 @@ function run_sloshing_tank(; FloatType = Float32, dx = 0.002, simulation_time = 
             SimConstants = case.constants, SimKernel = case.kernel, SimLogger = logger,
             SimTimeStepping = time_stepping, SimViscosity = ArtificialViscosity(),
             SimDensityDiffusion = ComplexDensityDiffusion(), SimExternalForces = force,
-            SimMeasurements = probes)
+            SimRotation = rotation, SimMeasurements = probes)
     finally
         isopen(logger.LoggerIo) && close(logger.LoggerIo)
     end
@@ -105,6 +140,6 @@ end
 
 # Including this file starts the simulation.
 run_sloshing_tank(;
-    save_location = length(ARGS) >= 1 ? ARGS[1] : joinpath(@__DIR__, "..", "output", "sloshing_tank"),
+    save_location = length(ARGS) >= 1 ? ARGS[1] : joinpath(@__DIR__, "..", "output", "sloshing_tank_$(SLOSHING_DRIVING_MODE)"),
     dx = length(ARGS) >= 2 ? parse(Float64, ARGS[2]) : 0.002,
     simulation_time = length(ARGS) >= 3 ? parse(Float64, ARGS[3]) : 8.35)

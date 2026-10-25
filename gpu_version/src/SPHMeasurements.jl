@@ -8,16 +8,20 @@ using ..SimulationEquations: EquationOfStateGamma7
 export MeasurementProbe, WaterColumnProbe, FreeSurfaceDomain, MeasurementConfig
 
 """
-    MeasurementProbe(name, location)
+    MeasurementProbe(name, location; trajectory = nothing)
 
 Describe a pressure or velocity probe. `location` has one coordinate per
 simulation dimension. Values are sampled from the nearest fluid particle.
+Optional `trajectory(time)` returns its world-coordinate location for that
+output frame. Moving probe coordinates are saved with each frame, including
+frames that repeat a previous sampled value via `sample_every`.
 """
 struct MeasurementProbe
     name::String
     location::Tuple{Vararg{Float64}}
-    function MeasurementProbe(name::AbstractString, location)
-        return new(_measurement_name(name), _coordinates(location))
+    trajectory::Union{Nothing,Function}
+    function MeasurementProbe(name::AbstractString, location; trajectory::Union{Nothing,Function} = nothing)
+        return new(_measurement_name(name), _coordinates(location), trajectory)
     end
 end
 
@@ -152,8 +156,10 @@ struct ResolvedMeasurements
     sample_every::Int
     pressure_names::Vector{String}
     pressure_locations::Matrix{Float64}
+    pressure_trajectories::Vector{Union{Nothing,Function}}
     velocity_names::Vector{String}
     velocity_locations::Matrix{Float64}
+    velocity_trajectories::Vector{Union{Nothing,Function}}
     column_names::Vector{String}
     column_locations::Matrix{Float64}
     column_radii::Vector{Float64}
@@ -311,8 +317,10 @@ function resolve_measurements(
         config.sample_every,
         [probe.name for probe in config.pressure_probes],
         pressure_locations,
+        Union{Nothing,Function}[probe.trajectory for probe in config.pressure_probes],
         [probe.name for probe in config.velocity_probes],
         velocity_locations,
+        Union{Nothing,Function}[probe.trajectory for probe in config.velocity_probes],
         [probe.name for probe in config.water_column_probes],
         column_locations,
         column_radii,
@@ -710,7 +718,7 @@ function MeasurementWriter(root::HDF5.Group, plan::ResolvedMeasurements, fluid_t
             probe_attributes(
                 plan.pressure_names, "Sampling" => "nearest fluid particle",
             ),
-            capacity,
+            capacity; dynamic_points = any(!isnothing, plan.pressure_trajectories),
         )
         push!(blocks, pressure)
     end
@@ -722,7 +730,7 @@ function MeasurementWriter(root::HDF5.Group, plan::ResolvedMeasurements, fluid_t
             probe_attributes(
                 plan.velocity_names, "Sampling" => "nearest fluid particle",
             ),
-            capacity,
+            capacity; dynamic_points = any(!isnothing, plan.velocity_trajectories),
         )
         push!(blocks, velocity)
     end
@@ -1003,15 +1011,30 @@ function _sample!(writer::MeasurementWriter, particles)
     return nothing
 end
 
+function update_probe_locations!(block, locations, trajectories, time)
+    block === nothing && return nothing
+    for (probe, trajectory) in enumerate(trajectories)
+        trajectory === nothing && continue
+        point = _coordinates(trajectory(time))
+        length(point) == size(locations, 1) || throw(DimensionMismatch("probe trajectory must match simulation dimensions"))
+        for axis in eachindex(point)
+            locations[axis, probe] = point[axis]
+            block.points[axis, probe] = point[axis]
+        end
+    end
+    return nothing
+end
+
 """
     append_measurements!(writer, time, particles)
 
-Record the output frame at `time`. The frame is sampled from `particles` when
-it is the first frame or `sample_every` frames after the previous sample;
-otherwise the previous sample is repeated with `Sampled = 0`. Every frame is
-written to all blocks so that they share the time steps of the particles.
+Record an output frame, evaluating probe trajectories at this frame's time.
+Sample on the first frame and every `sample_every` frames thereafter; other
+frames repeat previous values with `Sampled = 0` while probe points still move.
 """
 function append_measurements!(writer::MeasurementWriter, time, particles)
+    update_probe_locations!(writer.pressure, writer.plan.pressure_locations, writer.plan.pressure_trajectories, time)
+    update_probe_locations!(writer.velocity, writer.plan.velocity_locations, writer.plan.velocity_trajectories, time)
     writer.output_frames_seen += 1
     sampled = mod(writer.output_frames_seen - 1, writer.plan.sample_every) == 0
     if sampled

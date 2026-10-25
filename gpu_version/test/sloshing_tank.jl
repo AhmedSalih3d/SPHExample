@@ -58,14 +58,26 @@ end
     @test_throws ArgumentError run_sloshing_tank(; output_interval = 0)
 end
 
+@testset "measured physical tank rotation" begin
+    rotation = sloshing_tank_rotation()
+    @test SLOSHING_DRIVING_MODE == :rotation
+    @test length(rotation.times) == 167001
+    @test first(rotation.times) == 0 && last(rotation.times) == 8.35
+    @test rotation.center == SVector(0., 0.)
+    @test rotation.angles[2] == -deg2rad(2.23547e-8)
+    @test sloshing_tank_geometry(; dx = 0.01, driving_mode = :rotation).geometry[1].Type == Moving
+    @test_throws ArgumentError run_sloshing_tank(; driving_mode = :invalid)
+end
+
 if CUDA.functional()
     @testset "sloshing tank GPU forcing, probes and graph replay" begin
         for scheme in (SymplecticTimeStepping(), SingleNeighborTimeStepping())
             results = map((false, true)) do graph
                 mktempdir() do save
-                    result = run_sloshing_tank(; dx = 0.01, simulation_time = 0.03,
+                    result = run_sloshing_tank(; driving_mode = :acceleration, dx = 0.01, simulation_time = 0.03,
                         output_interval = 0.015, visualize = false, open_log_file = false,
                         time_stepping = scheme, use_graph = graph, double_position = true,
+                        motion_path = joinpath(save, "unused_motion.dat"),
                         save_location = save)
                     particles = result.final_state.particles
                     @test result.final_state.complete
@@ -97,6 +109,55 @@ if CUDA.functional()
                 end
             end
             @test results[1] == results[2]
+        end
+    end
+
+    @testset "physical tank rotation and attached pressure probe" begin
+        for scheme in (SymplecticTimeStepping(), SingleNeighborTimeStepping())
+            runs = map((false, true)) do graph
+                mktempdir() do save
+                    result = run_sloshing_tank(; driving_mode = :rotation, dx = 0.01,
+                        simulation_time = 0.25, output_interval = 0.1,
+                        visualize = false, open_log_file = false, double_position = true,
+                        time_stepping = scheme, use_graph = graph,
+                        acceleration_path = joinpath(save, "unused_acceleration.csv"), save_location = save)
+                    p = result.final_state.particles
+                    initial = AllocateDataStructures(sloshing_tank_geometry(; dx = 0.01, driving_mode = :rotation).geometry;
+                        position_type = Float64)
+                    reference = Dict(id => position for (id, position) in zip(initial.ID, initial.Position))
+                    rotation = sloshing_tank_rotation()
+                    time = result.final_state.time
+                    _, omega = rotation_state(rotation, time)
+                    wall = findall(==(Moving), p.Type)
+                    @test result.final_state.complete
+                    @test result.diagnostics.cell_list_rebuilds > 1
+                    @test result.diagnostics.frozen_particles == 0
+                    @test result.configuration.execution.graph_capture_failures == 0
+                    graph && @test result.configuration.execution.graph_batches > 0
+                    @test all(isfinite, p.Density)
+                    for i in wall
+                        expected = rotation_position(rotation, reference[p.ID[i]], time)
+                        @test p.Position[i] ≈ expected atol = 2e-12
+                        @test p.Velocity[i] ≈ SVector(-omega*expected[2], omega*expected[1]) atol = 2e-7
+                    end
+                    h5open(joinpath(save, "SloshingTank.vtkhdf"), "r") do file
+                        root = file["VTKHDF"]
+                        probe = root["PressureProbes"]
+                        times = read(probe["Steps/Values"])
+                        points = read(probe["Points"])
+                        @test !haskey(root, "WaterColumnProbes")
+                        @test all(isfinite, read(probe["PointData/Pressure"]))
+                        @test read(probe["Steps/PointOffsets"]) == collect(0:(length(times)-1))
+                        for (frame, t) in enumerate(times)
+                            expected = rotation_position(rotation, (-0.4461, 0.093), t)
+                            @test points[:, frame] ≈ [expected[1], expected[2], 0] atol = 1e-12
+                        end
+                    end
+                    order = sortperm(p.ID)
+                    return (; position = p.Position[order], velocity = p.Velocity[order], density = p.Density[order], time)
+                end
+            end
+            @test runs[1] == runs[2]
         end
     end
 end

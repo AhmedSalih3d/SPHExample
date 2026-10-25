@@ -31,6 +31,7 @@ module SPHExampleGPU
         "ExternalForces.jl",
         "GPUCellGrid.jl",
         "GPUKernels.jl",
+        "PrescribedRotation.jl",
         "GPUConfiguration.jl",
         "GPUFloating.jl",
         "SimulationResults.jl",
@@ -66,6 +67,9 @@ module SPHExampleGPU
 
     using .ExternalForces
     export ExternalForce, external_acceleration
+
+    using .PrescribedRotation
+    export RotationMotion, rotation_state, rotation_position
 
     using .PreProcess
     export AllocateDataStructures, AllocateSupportDataStructures, LoadBoundaryNormals
