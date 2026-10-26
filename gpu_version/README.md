@@ -173,6 +173,16 @@ sorting, Float32/Float64 physics, double positions and CUDA graph replay are
 supported. Corrector forces use half-step positions, velocities and time; the
 single-neighbor predictor carries the previous evaluated acceleration.
 
+The driver samples each group's history once on the device at each evaluated
+stage, then reuses the coefficients in its particle kernel. This is the default
+for both integrators and CUDA graph replay. The extra preparation launch was
+slightly slower in the warmed complete-run comparison below; shared sampling
+is not a general speedup guarantee. Low-level experiments can still use
+`prepare_external_forces(...; sample_once = false)` for per-particle sampling.
+Shared sampling does not change
+endpoint holding, the inclusive active interval, gravity overrides or the
+angular-acceleration gate.
+
 Run the self-contained generated 3D example from the repository root:
 
 ```powershell
@@ -246,13 +256,55 @@ pressure-equivalence claim. Mode-specific default outputs are in
 Physical rotation support lives in `src/PrescribedRotation.jl`. Low-level cases
 can pass `SimRotation = RotationMotion(marker; times, angles, center)` to
 `RunSimulation`, with `Moving` geometry and angles in radians, positive
-counterclockwise. Absolute placement uses stable IDs at the start, half-step
-and accepted times; wall velocity is the derivative of the interpolated angle.
+counterclockwise. Absolute placement uses stable reference slots at the start,
+half-step and accepted times; wall velocity is the derivative of the interpolated angle.
 Endpoint angles are held with zero velocity beyond the table. This currently
 supports nonperiodic 2D DBC cases; the rotating group cannot also use
 `MotionDetails`. Motion tables retain Float64 precision with either physics
 precision. Pressure and velocity probes accept a host `trajectory(time)`
 keyword when their locations need to follow motion.
+
+Each rotation stage samples the table and computes sine/cosine once on the
+device, followed by a compact kernel over the selected wall particles.
+Reference-owner indices follow the cell-sort permutation using idle cell-list
+scratch, without per-particle ID searches, sparse ID-indexed buffers, or
+additional full-particle persistent arrays. Low-level callers that sort must
+pass their prepared `rotation` to `rebuild_cell_list!`.
+
+#### Stage-sampling performance experiment
+
+Run the paired benchmark from the repository root:
+
+```powershell
+julia --project=gpu_version -t 2,0 gpu_version\benchmark\motion_sampling.jl --rounds=9 --duration=0.1 --dx=0.002
+```
+
+The benchmark loads the original particle-sampling kernels and driver from
+git commit `2067c583521dd06d317b56a33beb957f0889684b` without changing the
+worktree. That git object must be available locally. It uses the complete,
+unresampled 167,001-entry sloshing histories, two warmup pairs per mode, and
+alternating paired **complete** `RunSimulation` calls including setup, graph
+preparation, sorting, readbacks, downloads and output finalization. It checks
+exact ID-ordered particle state and every exported dataset, as well as matching
+accepted time, steps, rebuilds, readbacks, output frames and frozen counts.
+`--single-neighbor`, `--no-graph`, `--float64`, `--double-position`,
+`--modes=rotation` and `--output=path.csv` select additional comparisons.
+
+On an NVIDIA RTX A1000 Laptop GPU with Julia 1.12.7, Float32 physics/positions,
+CUDA graphs, deterministic sorting, `R = 1`, 24,902 particles and 5,422 steps:
+
+| Mode | Original median complete run | Shared-stage median | Median paired ratio (stage/original) | Faster pairs |
+|---|---:|---:|---:|---:|
+| Rotation | 1.7962 s | 1.6600 s | 0.9231 | 9/9 |
+| External acceleration | 1.7689 s | 1.7896 s | 1.0113 | 0/9 |
+
+Rotation's paired ratio IQR was 0.9218–0.9242 (about 7.7% lower elapsed time);
+external acceleration's was 1.0102–1.0115 (about 1.1% higher elapsed time).
+Raw pairs are in `benchmark/motion_sampling_results.csv`. All pairs had exact
+state/output equality. This is short-duration, shared-laptop evidence, not a
+general speedup or long-run stability claim. Both shared rotation and
+external-force sampling are enabled by default; the latter is an explicit
+choice despite the measured small launch-overhead regression.
 
 ### Choosing the mDBC formulation
 

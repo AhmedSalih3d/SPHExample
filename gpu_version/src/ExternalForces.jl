@@ -146,6 +146,26 @@ end
 
 @inline interpolate(values, k, fraction) = @inbounds values[k] + fraction * (values[k+1] - values[k])
 
+struct ExternalForceSample{T}
+    active::Bool
+    linear::SVector{3,T}
+    angular::SVector{3,T}
+    angular_velocity::SVector{3,T}
+    linear_velocity::SVector{3,T}
+end
+
+@inline function sample_force(force::ExternalForce{D,T}, time) where {D,T}
+    z = zero(SVector{3,T})
+    force.start_time <= time <= force.end_time || return ExternalForceSample(false, z, z, z, z)
+    k, fraction = sample_interval(force.times, time)
+    acc = interpolate(force.linear, k, fraction)
+    alpha = interpolate(force.angular, k, fraction)
+    z = zero(acc)
+    omega = iszero(alpha) ? z : interpolate(force.angular_velocity, k, fraction)
+    frame_velocity = iszero(alpha) ? z : interpolate(force.linear_velocity, k, fraction)
+    return ExternalForceSample(true, acc, alpha, omega, frame_velocity)
+end
+
 """
     external_acceleration(force, position, velocity, time, g)
 
@@ -155,13 +175,14 @@ this result cancels fluid gravity along the last coordinate. Works on host
 histories and adapted device histories, preserving higher-precision positions.
 """
 @inline function external_acceleration(force::ExternalForce{D,T}, position::SVector{D}, velocity::SVector{D}, time, g) where {D,T}
-    force.start_time <= time <= force.end_time || return zero(SVector{D,T})
-    k, fraction = sample_interval(force.times, time)
-    acc = interpolate(force.linear, k, fraction)
-    alpha = interpolate(force.angular, k, fraction)
+    return sampled_acceleration(force, position, velocity, sample_force(force, time), g)
+end
+
+@inline function sampled_acceleration(force::ExternalForce{D,T}, position::SVector{D}, velocity::SVector{D}, sample, g) where {D,T}
+    sample.active || return zero(SVector{D,T})
+    acc, alpha = sample.linear, sample.angular
     if !iszero(alpha)
-        omega = interpolate(force.angular_velocity, k, fraction)
-        frame_velocity = interpolate(force.linear_velocity, k, fraction)
+        omega, frame_velocity = sample.angular_velocity, sample.linear_velocity
         r = embed(position) - force.center
         v = embed(velocity)
         # Preserve DualSPHysics 5.4's component-wise Coriolis convention.
@@ -176,7 +197,7 @@ histories and adapted device histories, preserving higher-precision positions.
     return SVector{D,T}(project(acc, Val(D)))
 end
 
-function prepare_external_forces(forces, particles, ::Val{D}, ::Type{T}) where {D,T}
+function prepare_external_forces(forces, particles, ::Val{D}, ::Type{T}; sample_once::Bool = true) where {D,T}
     forces === nothing && return ()
     histories = forces isa ExternalForce ? (forces,) : Tuple(forces)
     markers = Int[]
@@ -188,7 +209,10 @@ function prepare_external_forces(forces, particles, ::Val{D}, ::Type{T}) where {
         any(selected) || throw(ArgumentError("external force GroupMarker $(force.group_marker) is absent"))
         all(==(Fluid), particles.Type[selected]) || throw(ArgumentError("external forces require an exclusively fluid GroupMarker"))
     end
-    return map(force -> Adapt.adapt(CuArray, force), histories)
+    return map(histories) do force
+        history = Adapt.adapt(CuArray, force)
+        sample_once ? (; history, sample = CuArray([sample_force(force, zero(T))])) : history
+    end
 end
 
 function external_force_kernel!(acceleration, position, velocity, types, groups, force, step, g, half_time, n)
@@ -203,12 +227,41 @@ function external_force_kernel!(acceleration, position, velocity, types, groups,
     return nothing
 end
 
+function force_sample_kernel!(sample, force, step, half_time)
+    step_active(step) || return nothing
+    time = step_time(step) + (half_time ? step_dt(step) / 2 : zero(step_time(step)))
+    @inbounds sample[1] = sample_force(force, time)
+    return nothing
+end
+
+function sampled_force_kernel!(acceleration, position, velocity, types, groups, force, sample, step, g, n)
+    step_active(step) || return nothing
+    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    @inbounds if i <= n && types[i] == Fluid && groups[i] == force.group_marker
+        acceleration[i] += sampled_acceleration(force, position[i], velocity[i], sample[1], g)
+    end
+    return nothing
+end
+
+function launch_external_force!(force::ExternalForce, acceleration, position, velocity, types, groups, step, g, half_time, n)
+    @cuda threads=256 blocks=cld(n, 256) external_force_kernel!(
+        acceleration, position, velocity, types, groups, force, step, g, half_time, n)
+    return nothing
+end
+
+function launch_external_force!(prepared::NamedTuple, acceleration, position, velocity, types, groups, step, g, half_time, n)
+    (; history, sample) = prepared
+    @cuda threads=1 blocks=1 force_sample_kernel!(sample, history, step, half_time)
+    @cuda threads=256 blocks=cld(n, 256) sampled_force_kernel!(
+        acceleration, position, velocity, types, groups, history, sample, step, g, n)
+    return nothing
+end
+
 function launch_external_forces!(forces::Tuple, acceleration, position, velocity, types, groups, step, g; half_time = false)
     n = length(position)
     n == 0 && return nothing
     for force in forces
-        @cuda threads=256 blocks=cld(n, 256) external_force_kernel!(
-            acceleration, position, velocity, types, groups, force, step, g, half_time, n)
+        launch_external_force!(force, acceleration, position, velocity, types, groups, step, g, half_time, n)
     end
     return nothing
 end

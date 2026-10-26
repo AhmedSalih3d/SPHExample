@@ -30,6 +30,7 @@ const MEASUREMENTS = SPHExampleGPU.SPHMeasurements
             order = [3, 2, 1]
             p, v = CuArray(reference[order]), CUDA.zeros(SVector{2,Float32}, 3)
             ty, gm, ids = CuArray(host.Type[order]), CuArray(host.GroupMarker[order]), CuArray(host.ID[order])
+            ROTATION.update_rotation_indices!(rotation, (Perm = CuArray(Int32.(order)), CellIDScratch = CUDA.zeros(Int32, 3)))
             for _ in 1:20
                 ROTATION.launch_rotation!(rotation, p, v, ty, gm, ids, HostStep(1.0, 0.0); fraction = 0.5)
                 @test Array(p)[3] ≈ SVector(1 + sqrt(0.5), sqrt(0.5)) atol = 1e-7
@@ -45,6 +46,57 @@ const MEASUREMENTS = SPHExampleGPU.SPHMeasurements
             @test Array(p) == reference[order]
             @test_throws ArgumentError ROTATION.prepare_rotation(RotationMotion(9; times = [0, 1], angles = [0, 1]), (), host)
             @test_throws ArgumentError ROTATION.prepare_rotation(RotationMotion(2; times = [0, 1], angles = [0, 1]), (), host)
+        end
+    end
+end
+
+if CUDA.functional()
+    @testset "rotation stage arithmetic and reference slots survive repeated sorting" begin
+        for T in (Float32, Float64), TP in (Float32, Float64)
+            reference = SVector{2,TP}[(2, 0), (0, 0), (3, 2), (4, 5)]
+            host = (Position = reference, Type = [Moving, Moving, Fluid, Moving],
+                GroupMarker = [3, 3, 2, 4], ID = [1001, 8, 73, 50000])
+            motion = RotationMotion(3; times = [0.1, 0.3, 0.7], angles = [0.2, -0.4, 0.6], center = (1, 0))
+            rotation = ROTATION.prepare_rotation(motion, (), host)
+            owners_pointer = pointer(rotation.indices)
+            order = collect(1:4)
+            for perm in ([3, 2, 4, 1], [4, 1, 2, 3], [2, 3, 1, 4])
+                order = order[perm]
+                ROTATION.update_rotation_indices!(rotation, (Perm = CuArray(Int32.(perm)), CellIDScratch = CUDA.zeros(Int32, 4)))
+                @test pointer(rotation.indices) == owners_pointer
+                @test host.ID[order[Array(rotation.indices)]] == [8, 1001]
+                p, v = CuArray(reference[order]), CUDA.zeros(SVector{2,T}, 4)
+                ty, gm, ids = CuArray(host.Type[order]), CuArray(host.GroupMarker[order]), CuArray(host.ID[order])
+                for time in T.((0, 0.1, 0.3, 0.7, 0.8)), fraction in (0.0, 0.5, 1.0)
+                    dt = T(0.13)
+                    state = StepState{T}(; time, dt)
+                    ROTATION.launch_rotation!(rotation, p, v, ty, gm, ids, state; fraction)
+                    sampled_time = Float64(time + T(fraction) * dt)
+                    angle, omega = rotation_state(motion, sampled_time)
+                    positions, velocities = Array(p), Array(v)
+                    for i in eachindex(order)
+                        original = order[i]
+                        if original in (1, 2)
+                            x = ROTATION.rotated_position(SVector{2,Float64}(reference[original]), motion.center, angle)
+                            r = x - motion.center
+                            @test positions[i] ≈ SVector{2,TP}(x) rtol = 2eps(TP) atol = 2eps(TP)
+                            @test velocities[i] ≈ SVector{2,T}(-omega*r[2], omega*r[1]) rtol = 2eps(T) atol = 2eps(T)
+                        else
+                            @test positions[i] == reference[original]
+                            @test iszero(velocities[i])
+                        end
+                    end
+                    before = (positions, velocities, Array(rotation.coefficients))
+                    SPHExampleGPU.GPUStepState.set_slot!(state.i, state.ih, SPHExampleGPU.GPUStepState.I_STOP,
+                        SPHExampleGPU.GPUStepState.STOP_REBUILD)
+                    ROTATION.launch_rotation!(rotation, p, v, ty, gm, ids, state; fraction = 1)
+                    @test (Array(p), Array(v), Array(rotation.coefficients)) == before
+                end
+                ty .= CuArray(fill(Frozen, 4))
+                before = Array(p)
+                ROTATION.launch_rotation!(rotation, p, v, ty, gm, ids, HostStep(T(0.1), T(0.4)))
+                @test Array(p) == before
+            end
         end
     end
 end

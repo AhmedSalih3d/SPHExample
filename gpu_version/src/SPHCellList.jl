@@ -36,7 +36,7 @@ using ..SPHDensityDiffusionModels
 using ..GPUReductions
 using ..GPUStepState
 using ..ExternalForces: prepare_external_forces, launch_external_forces!
-using ..PrescribedRotation: RotationMotion, prepare_rotation, launch_rotation!
+using ..PrescribedRotation: RotationMotion, prepare_rotation, launch_rotation!, update_rotation_indices!
 using ..GPUCellGrid
 using ..GPUKernels
 using ..GPUConfiguration: effective_configuration, configuration_snapshot, log_effective_configuration
@@ -783,7 +783,7 @@ end
 """
     rebuild_cell_list!(gpu, cl, InverseCutOff; constants = nothing, boundary_mode = NoMDBC(),
                        discard_acceleration = false, preserve_pressure = false,
-                       prepared = false, support = nothing, floating = nothing, kernel = nothing)
+                       prepared = false, support = nothing, floating = nothing, rotation = nothing, kernel = nothing)
 
 Sort persistent particle state. Acceleration is preserved by default,
 using idle velocity reorder scratch when its own destination is omitted.
@@ -797,9 +797,11 @@ and cells; the time step keeps them current until the next rebuild.
 For fixed grids, escaped particles become `Frozen`. Pass `logger`, `time`
 and `iteration` to record events in a simulation log; without `logger`, events
 use Julia's current logger. Frozen density remains unchanged.
+Pass the prepared `rotation` state when rotating particles are present, so its
+stable reference owners follow the sorting permutation before scratch is reused.
 """
 function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCutOff;
-                            prepared::Bool = false, support = nothing, floating = nothing,
+                            prepared::Bool = false, support = nothing, floating = nothing, rotation = nothing,
                             constants = nothing, boundary_mode = NoMDBC(), discard_acceleration::Bool = false,
                             preserve_pressure::Bool = false, kernel = nothing,
                             logger = nothing, time = 0, iteration = 0)
@@ -866,6 +868,7 @@ function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCut
         gpu.Acceleration = s.Acceleration
     end
 
+    update_rotation_indices!(rotation, cl)
     # Floating membership needs the reorder permutation before ghost compaction
     # reuses it. Retain frozen body members and the existing index-buffer size.
     floating === nothing || update_floating_indices!(floating, gpu.Type, cl; preserve_membership = true)
@@ -1487,7 +1490,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                     invalidate_graphs!(state)
                     generation = cl.generation
                 end
-                rebuild_cell_list!(gpu, cl, SimKernel.H⁻¹; prepared = true, support = sup, floating,
+                rebuild_cell_list!(gpu, cl, SimKernel.H⁻¹; prepared = true, support = sup, floating, rotation,
                     constants = SimConstants, boundary_mode, discard_acceleration = true,
                     preserve_pressure = cl.nrebuilds == 0, kernel = SimKernel,
                     logger, time = SimMetaData.TotalTime, iteration = SimMetaData.Iteration)

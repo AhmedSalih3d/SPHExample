@@ -71,6 +71,37 @@ const STEP = SPHExampleGPU.GPUStepState
 end
 
 if CUDA.functional()
+    @testset "shared force samples match per-particle full and half stages" begin
+        for D in (2, 3), T in (Float32, Float64), TP in (Float32, Float64)
+            V = SVector{D,T}
+            points = [SVector{D,TP}(ntuple(d -> 1 + i + d / 8, D)) for i in 1:5]
+            velocities = [V(ntuple(d -> i - d / 4, D)) for i in 1:5]
+            types, groups = [Fluid, Fluid, Fixed, Frozen, Fluid], [3, 4, 3, 3, 3]
+            force = ExternalForce{D,T}(3; times = [0.1, 0.3, 0.7],
+                linear_acceleration = [ntuple(d -> k*d / 7, D) for k in 1:3],
+                angular_acceleration = D == 2 ? [1, -2, 0] : [(1, 2, 3), (-2, 3, -1), (0, 0, 0)],
+                center = ntuple(d -> d / 8, D), global_gravity = false, start_time = 0.05, end_time = 0.8)
+            host = (Type = fill(Fluid, 5), GroupMarker = groups)
+            prepared = EF.prepare_external_forces(force, host, Val(D), T; sample_once = true)
+            legacy = (Adapt.adapt(CuArray, force),)
+            p, v, ty, gm = CuArray(points), CuArray(velocities), CuArray(types), CuArray(groups)
+            for time in T.((0, 0.05, 0.1, 0.3, 0.7, 0.8, 0.9)), half_time in (false, true)
+                state = StepState{T}(; time, dt = T(0.13))
+                initial = fill(one(T) * V(ntuple(identity, D)), 5)
+                a, b = CuArray(initial), CuArray(initial)
+                EF.launch_external_forces!(legacy, a, p, v, ty, gm, state, T(9.81); half_time)
+                EF.launch_external_forces!(prepared, b, p, v, ty, gm, state, T(9.81); half_time)
+                @test Array(a) == Array(b)
+                before = (Array(b), Array(prepared[1].sample))
+                STEP.set_slot!(state.i, state.ih, STEP.I_STOP, STEP.STOP_REBUILD)
+                EF.launch_external_forces!(prepared, b, p, v, ty, gm, state, T(9.81); half_time)
+                @test (Array(b), Array(prepared[1].sample)) == before
+            end
+            # Host callers may sample Float32 histories with a Float64 time.
+            @test all(isfinite, external_acceleration(force, points[1], velocities[1], 0.7, T(9.81)))
+        end
+    end
+
     @testset "external force device selection and stop flags" begin
         for D in (2, 3), T in (Float32, Float64)
             V = SVector{D,T}

@@ -20,8 +20,8 @@ finite, nonnegative and strictly increasing, with at least two samples.
 
 Pass as `SimRotation` to `RunSimulation`. Currently supports nonperiodic 2D
 DBC cases. The selected group cannot also have `MotionDetails`. Device motion
-uses stable particle IDs and absolute reference positions, so sorting and long
-runs do not accumulate incremental rotation drift.
+uses stable reference slots and absolute reference positions, so sorting and
+long runs do not accumulate incremental rotation drift.
 """
 struct RotationMotion
     group_marker::Int
@@ -97,38 +97,63 @@ function prepare_rotation(motion::RotationMotion, geometry, particles)
     selected = selected[order]
     return (; group_marker = motion.group_marker, center = motion.center,
         times = CuArray(motion.times), angles = CuArray(motion.angles),
-        ids = CuArray(particles.ID[selected]),
+        indices = CuArray(Int32.(selected)),
+        coefficients = CUDA.zeros(SVector{3,Float64}, 1),
         reference = CuArray(SVector{2,Float64}.(particles.Position[selected])))
 end
 
-# Only the reference entries for this group are stored. ID lookup remains valid
-# across cell-list permutations, without a sparse allocation indexed by ID.
-@inline function reference_index(ids, id)
-    lo, hi = 1, length(ids)
-    @inbounds while lo < hi
-        mid = (lo + hi) >>> 1
-        if ids[mid] < id
-            lo = mid + 1
-        else
-            hi = mid
-        end
+function inverse_permutation_kernel!(inverse, permutation, n)
+    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    @inbounds if i <= n
+        inverse[permutation[i]] = i
     end
-    return lo
+    return nothing
 end
 
-function rotation_kernel!(position, velocity, types, groups, ids, motion, step,
-                          fraction, pos_cells, cell_ids, grid, H, n)
+function rotation_indices_kernel!(indices, inverse, n)
+    slot = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    @inbounds if slot <= n
+        indices[slot] = inverse[indices[slot]]
+    end
+    return nothing
+end
+
+update_rotation_indices!(::Nothing, workspace) = nothing
+function update_rotation_indices!(motion, workspace)
+    # Sorting has consumed cell IDs; borrow that scratch before compaction uses it.
+    n = length(workspace.Perm)
+    @cuda threads=256 blocks=cld(n, 256) inverse_permutation_kernel!(
+        workspace.CellIDScratch, workspace.Perm, n)
+    m = length(motion.indices)
+    @cuda threads=256 blocks=cld(m, 256) rotation_indices_kernel!(
+        motion.indices, workspace.CellIDScratch, m)
+    return nothing
+end
+
+function rotation_coefficients_kernel!(motion, step, fraction)
     step_active(step) || return nothing
-    i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
-    @inbounds if i <= n && types[i] == Moving && groups[i] == motion.group_marker
-        time = Float64(step_time(step) + oftype(step_dt(step), fraction) * step_dt(step))
-        angle, omega = rotation_state(motion, time)
-        reference = motion.reference[reference_index(motion.ids, ids[i])]
-        x = rotated_position(reference, motion.center, angle)
-        r = x - motion.center
-        position[i] = x
-        velocity[i] = SVector(-omega*r[2], omega*r[1])
-        store_pos_cell!(pos_cells, i, position[i], cell_ids, grid, H)
+    time = Float64(step_time(step) + oftype(step_dt(step), fraction) * step_dt(step))
+    angle, omega = rotation_state(motion, time)
+    s, c = sincos(angle)
+    @inbounds motion.coefficients[1] = SVector(s, c, omega)
+    return nothing
+end
+
+function rotation_kernel!(position, velocity, types, groups, motion, step,
+                          pos_cells, cell_ids, grid, H, n)
+    step_active(step) || return nothing
+    slot = (blockIdx().x - 1) * blockDim().x + threadIdx().x
+    @inbounds if slot <= n
+        i = motion.indices[slot]
+        if types[i] == Moving && groups[i] == motion.group_marker
+            s, c, omega = motion.coefficients[1]
+            r = motion.reference[slot] - motion.center
+            x = motion.center + SVector(c*r[1] - s*r[2], s*r[1] + c*r[2])
+            r = x - motion.center
+            position[i] = x
+            velocity[i] = SVector(-omega*r[2], omega*r[1])
+            store_pos_cell!(pos_cells, i, position[i], cell_ids, grid, H)
+        end
     end
     return nothing
 end
@@ -136,10 +161,11 @@ end
 launch_rotation!(::Nothing, args...; kwargs...) = nothing
 function launch_rotation!(motion, position, velocity, types, groups, ids, step;
         fraction = 0.0, pos_cells = nothing, cell_ids = nothing, grid = nothing, H = nothing)
-    n = length(position)
+    n = length(motion.indices)
     n == 0 && return nothing
-    @cuda threads=256 blocks=cld(n, 256) rotation_kernel!(position, velocity, types, groups, ids,
-        motion, step, Float64(fraction), pos_cells, cell_ids, grid, H, n)
+    @cuda threads=1 blocks=1 rotation_coefficients_kernel!(motion, step, Float64(fraction))
+    @cuda threads=256 blocks=cld(n, 256) rotation_kernel!(position, velocity, types, groups,
+        motion, step, pos_cells, cell_ids, grid, H, n)
     return nothing
 end
 
