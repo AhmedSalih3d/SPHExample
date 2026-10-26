@@ -37,6 +37,7 @@ using ..GPUReductions
 using ..GPUStepState
 using ..ExternalForces: prepare_external_forces, launch_external_forces!
 using ..PrescribedRotation: RotationMotion, prepare_rotation, launch_rotation!, update_rotation_indices!
+using ..PrescribedMotions: PrescribedMotion, MotionSystem, combine_motions
 using ..MotionStageSampling: MotionStageSampler
 using ..GPUCellGrid
 using ..GPUKernels
@@ -1542,6 +1543,7 @@ end
                     SimParticles, SimViscosity, SimDensityDiffusion, SimTimeStepping,
                     ParticleNormalsPath, SimMeasurements = nothing, SimExternalForces = nothing,
                     SimRotation = nothing,
+                    SimMotion = nothing,
                     ParaviewPressureRange = nothing)
 
 Run a complete simulation on the GPU. Same interface as the CPU version: the
@@ -1587,6 +1589,14 @@ reference. Walls are placed absolutely at the start, predictor and accepted
 times, with matching angular wall velocity and refreshed cell-relative
 positions. Gravity remains in world coordinates; no external forces are implied.
 
+`SimMotion = PrescribedMotion(...)` or `MotionSystem(...)` extends absolute
+placement to translations, arbitrary-axis 3D rotations, circular translation,
+sequences and hierarchical motion, in nonperiodic 2D/3D DBC cases. Sampled
+histories and analytical segments provide matching trajectory derivatives.
+`SimMotion`, `SimRotation` and `MotionDetails` must target disjoint groups.
+These motion features do not imply numerical equivalence with DualSPHysics'
+increment-based wall velocities or its event/XML system.
+
 `ParaviewPressureRange = (min, max)` fixes the generated ParaView pressure color
 scale in Pa. By default use zero through the hydrostatic pressure of the initial
 fluid height plus one particle spacing. This scale stays fixed across frames;
@@ -1605,12 +1615,15 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     SimMeasurements::Union{Nothing, MeasurementConfig} = nothing,
     SimExternalForces = nothing,
     SimRotation::Union{Nothing,RotationMotion} = nothing,
+    SimMotion::Union{Nothing,PrescribedMotion,MotionSystem} = nothing,
     ParaviewPressureRange = nothing,
     ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SV <: SPHViscosity, SDD <: SPHDensityDiffusion}
 
     CUDA.functional() || error("CUDA is not functional on this machine; use the CPU package SPHExample instead.")
     SimRotation === nothing || (Dimensions == 2 && BMode === NoMDBC && SimMetaData.Periodicity === nothing) ||
         throw(ArgumentError("SimRotation currently requires a nonperiodic 2D DBC case (NoMDBC)"))
+    SimMotion === nothing || (Dimensions in (2,3) && BMode === NoMDBC && SimMetaData.Periodicity === nothing) ||
+        throw(ArgumentError("SimMotion requires a nonperiodic 2D or 3D DBC case (NoMDBC)"))
     external_forces = prepare_external_forces(SimExternalForces, SimParticles, Val(Dimensions), FloatType)
     SimMetaData.GPUTimestepDiagnosticsEvery >= 0 || throw(ArgumentError("GPUTimestepDiagnosticsEvery must be nonnegative"))
     SimulationLoggerConfiguration.start_runtime!(SimLogger, SimMetaData.TotalTime)
@@ -1746,7 +1759,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                      deterministic = SimMetaData.GPUDeterministicSort)
         sup    = GPUSupportArrays{Dimensions, FloatType}(gpu, SimMetaData)
         motion = MotionArrays(SimGeometry, SimParticles)
-        rotation = prepare_rotation(SimRotation, SimGeometry, SimParticles)
+        rotation = combine_motions(SimRotation, SimMotion, SimGeometry, SimParticles)
         if rotation !== nothing
             launch_rotation!(rotation, gpu.Position, gpu.Velocity, gpu.Type, gpu.GroupMarker, gpu.ID,
                 HostStep(zero(FloatType), SimMetaData.TotalTime))

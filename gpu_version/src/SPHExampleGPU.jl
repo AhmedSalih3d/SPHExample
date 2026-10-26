@@ -32,6 +32,8 @@ module SPHExampleGPU
         "GPUCellGrid.jl",
         "GPUKernels.jl",
         "PrescribedRotation.jl",
+        "MotionTrajectories.jl",
+        "PrescribedMotions.jl",
         "MotionStageSampling.jl",
         "GPUConfiguration.jl",
         "GPUFloating.jl",
@@ -71,6 +73,14 @@ module SPHExampleGPU
 
     using .PrescribedRotation
     export RotationMotion, rotation_state, rotation_position
+
+    using .MotionTrajectories
+    export SampledTrajectory, KinematicSegment, SinusoidalSegment, MotionSequence,
+           CircularTrajectory, trajectory_state
+
+    using .PrescribedMotions
+    export PrescribedMotion, MotionSystem, motion_state, motion_position, motion_velocity,
+           motion_acceleration, load_translation_trajectory, load_rotation_trajectory
 
     using .PreProcess
     export AllocateDataStructures, AllocateSupportDataStructures, LoadBoundaryNormals

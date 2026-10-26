@@ -50,6 +50,8 @@ include(joinpath(@__DIR__, "periodicity.jl"))
 include(joinpath(@__DIR__, "external_forces.jl"))
 include(joinpath(@__DIR__, "sloshing_tank.jl"))
 include(joinpath(@__DIR__, "prescribed_rotation.jl"))
+include(joinpath(@__DIR__, "prescribed_motion.jl"))
+include(joinpath(@__DIR__, "motion_examples.jl"))
 include(joinpath(@__DIR__, "motion_stage_sampling.jl"))
 include(joinpath(@__DIR__, "frozen_grid.jl"))
 

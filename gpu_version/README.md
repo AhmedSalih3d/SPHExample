@@ -267,7 +267,24 @@ supports nonperiodic 2D DBC cases; the rotating group cannot also use
 precision. Pressure and velocity probes accept a host `trajectory(time)`
 keyword when their locations need to follow motion.
 
-The timestep kernel samples the rotation table and computes sine/cosine once
+For translation, acceleration, sinusoidal/circular trajectories, file input
+and hierarchical rigid motion, pass `SimMotion = PrescribedMotion(...)` or
+`MotionSystem(...)`. This path supports nonperiodic 2D/3D DBC and both
+integrators, with analytical wall velocities at the start, predictor and
+accepted times. The [nine runnable Motion examples](example/Motion/README.md)
+document the trajectory, hierarchy, file and endpoint contracts. Their Julia
+implementation uses independent trajectory and transform abstractions.
+The [upstream motion-engine comparison](test/reference/README.md) validates
+representative positions for all nine patterns; finite-increment wall rates,
+general event semantics and fluid-solver equivalence are not claimed.
+
+```powershell
+julia --project=gpu_version -t 2,0 gpu_version/example/Motion/Motion01.jl
+julia --project=gpu_version -t 2,0 gpu_version/test/prescribed_motion.jl
+julia --project=gpu_version -t 2,0 gpu_version/test/motion_examples.jl
+```
+
+For `SimRotation`, the timestep kernel samples the rotation table and computes sine/cosine once
 for each of the start, half and accepted stages. Compact wall-particle kernels
 reuse these three samples without separate preparation launches.
 Reference-owner indices follow the cell-sort permutation using idle cell-list
@@ -279,6 +296,10 @@ buffers contain three rotation coefficient vectors and two samples per force
 history; no additional particle-sized persistent arrays are needed. Stopped
 steps leave these buffers untouched, and a step resumed after sorting samples
 the retained timestep before applying motion.
+
+`SimMotion` uses the same stage/sort lifecycle, caching three rigid poses and
+their first two derivatives per hierarchy node. Its compact reference positions,
+owner indices and group markers cover only the selected moving particles.
 
 #### Stage-sampling performance experiment
 
