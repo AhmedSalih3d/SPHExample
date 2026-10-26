@@ -174,10 +174,12 @@ supported. Corrector forces use half-step positions, velocities and time; the
 single-neighbor predictor carries the previous evaluated acceleration.
 
 The driver samples each group's history once on the device at each evaluated
-stage, then reuses the coefficients in its particle kernel. This is the default
-for both integrators and CUDA graph replay. The extra preparation launch was
-slightly slower in the warmed complete-run comparison below; shared sampling
-is not a general speedup guarantee. Low-level experiments can still use
+stage, then reuses the coefficients in its particle kernel. The existing
+timestep kernel prepares the full- and half-stage samples together, avoiding
+separate sampling launches during integration. The single-neighbor integrator
+prepares only the half-stage sample; startup and rebuild derivative evaluations
+sample their accepted state independently. Both integrators and CUDA graph
+replay use this path. Low-level experiments can still use
 `prepare_external_forces(...; sample_once = false)` for per-particle sampling.
 Shared sampling does not change
 endpoint holding, the inclusive active interval, gravity overrides or the
@@ -229,6 +231,7 @@ julia --project=gpu_version gpu_version/example/SloshingTank.jl
 julia --project=gpu_version gpu_version/example/SloshingTank.jl output/sloshing 0.004 8.35
 julia --project=gpu_version -t 4,0 gpu_version/test/sloshing_tank.jl
 julia --project=gpu_version -t 4,0 gpu_version/test/prescribed_rotation.jl
+julia --project=gpu_version -t 4,0 gpu_version/test/motion_stage_sampling.jl
 ```
 
 Both original 167,001-sample histories are bundled under
@@ -264,22 +267,29 @@ supports nonperiodic 2D DBC cases; the rotating group cannot also use
 precision. Pressure and velocity probes accept a host `trajectory(time)`
 keyword when their locations need to follow motion.
 
-Each rotation stage samples the table and computes sine/cosine once on the
-device, followed by a compact kernel over the selected wall particles.
+The timestep kernel samples the rotation table and computes sine/cosine once
+for each of the start, half and accepted stages. Compact wall-particle kernels
+reuse these three samples without separate preparation launches.
 Reference-owner indices follow the cell-sort permutation using idle cell-list
 scratch, without per-particle ID searches, sparse ID-indexed buffers, or
 additional full-particle persistent arrays. Low-level callers that sort must
 pass their prepared `rotation` to `rebuild_cell_list!`.
+Standalone motion launches prepare their own samples by default. Sampling
+buffers contain three rotation coefficient vectors and two samples per force
+history; no additional particle-sized persistent arrays are needed. Stopped
+steps leave these buffers untouched, and a step resumed after sorting samples
+the retained timestep before applying motion.
 
 #### Stage-sampling performance experiment
 
-Run the paired benchmark from the repository root:
+Run the paired benchmark from the repository root (the default comparison
+is against the original per-particle implementation):
 
 ```powershell
 julia --project=gpu_version -t 2,0 gpu_version\benchmark\motion_sampling.jl --rounds=9 --duration=0.1 --dx=0.002
 ```
 
-The benchmark loads the original particle-sampling kernels and driver from
+By default the benchmark loads the original particle-sampling kernels and driver from
 git commit `2067c583521dd06d317b56a33beb957f0889684b` without changing the
 worktree. That git object must be available locally. It uses the complete,
 unresampled 167,001-entry sloshing histories, two warmup pairs per mode, and
@@ -290,7 +300,9 @@ accepted time, steps, rebuilds, readbacks, output frames and frozen counts.
 `--single-neighbor`, `--no-graph`, `--float64`, `--double-position`,
 `--modes=rotation` and `--output=path.csv` select additional comparisons.
 
-On an NVIDIA RTX A1000 Laptop GPU with Julia 1.12.7, Float32 physics/positions,
+For the first shared-stage implementation (`f06a58d`, which still used separate
+sampling launches), measurements on an NVIDIA RTX A1000 Laptop GPU with Julia
+1.12.7, Float32 physics/positions,
 CUDA graphs, deterministic sorting, `R = 1`, 24,902 particles and 5,422 steps:
 
 | Mode | Original median complete run | Shared-stage median | Median paired ratio (stage/original) | Faster pairs |
@@ -302,9 +314,47 @@ Rotation's paired ratio IQR was 0.9218–0.9242 (about 7.7% lower elapsed time);
 external acceleration's was 1.0102–1.0115 (about 1.1% higher elapsed time).
 Raw pairs are in `benchmark/motion_sampling_results.csv`. All pairs had exact
 state/output equality. This is short-duration, shared-laptop evidence, not a
-general speedup or long-run stability claim. Both shared rotation and
-external-force sampling are enabled by default; the latter is an explicit
-choice despite the measured small launch-overhead regression.
+general speedup or long-run stability claim. The current timestep-fused
+implementation removes the separate sampling launches used in that experiment.
+Set `SPH_MOTION_BASELINE_COMMIT` to compare against a later committed driver;
+CSV variants are labelled `baseline` and `current`.
+
+The timestep-fused sampler was compared with both `f06a58d` and the original
+`2067c58` on an NVIDIA GeForce RTX 5080 (driver 616.92), Julia 1.12.7, using the
+same Float32, graph, sorting, history, particle-count and duration settings
+above. Each comparison used two warmup pairs and nine alternating measured pairs:
+
+| Baseline | Mode | Baseline median complete run | Current median complete run | Median paired ratio (current/baseline) | Faster pairs |
+|---|---|---:|---:|---:|---:|
+| Separate stage launches (`f06a58d`) | Rotation | 0.4461 s | 0.4098 s | 0.9162 | 9/9 |
+| Separate stage launches (`f06a58d`) | External acceleration | 0.4313 s | 0.4117 s | 0.9544 | 9/9 |
+| Per-particle sampling (`2067c58`) | Rotation | 0.4869 s | 0.4126 s | 0.8482 | 9/9 |
+| Per-particle sampling (`2067c58`) | External acceleration | 0.4230 s | 0.4149 s | 0.9796 | 9/9 |
+
+This is about 8.4% and 4.6% lower elapsed time than the separate-stage version,
+and 15.2% and 2.0% lower than the original version, respectively. The paired
+ratio IQRs against `f06a58d` were 0.9154–0.9214 for rotation and 0.9537–0.9567
+for external acceleration. Every pair had exact ID-ordered particle-state and
+exported-dataset equality, with matching work counts. Raw pairs are in
+`benchmark/motion_stage_fusion_results.csv` and
+`benchmark/motion_stage_fusion_original_results.csv`. These are measurements of
+this case and device, rather than a general performance guarantee.
+
+Three alternating pairs at a longer 1.0 s physical duration also matched
+exactly, including 54,267 steps and 123 rebuilds for rotation, and 54,265 steps
+and 104 rebuilds for external acceleration. Median paired elapsed time was
+8.1% lower for rotation and 4.9% lower for external acceleration than `f06a58d`;
+all six pairs were faster. Raw pairs are in
+`benchmark/motion_stage_fusion_long_results.csv`. This checks a longer segment
+of the same case, rather than full-history stability or other devices.
+
+To reproduce the comparison with the separate-stage version from the repository root:
+
+```powershell
+$env:SPH_MOTION_BASELINE_COMMIT = "f06a58d0a7cc03235a9e15ce7cdec39db776d3eb"
+julia --project=gpu_version -t 2,0 gpu_version\benchmark\motion_sampling.jl --rounds=9 --duration=0.1 --dx=0.002 --output=gpu_version/benchmark/motion_stage_fusion_results.csv
+Remove-Item Env:SPH_MOTION_BASELINE_COMMIT
+```
 
 ### Choosing the mDBC formulation
 

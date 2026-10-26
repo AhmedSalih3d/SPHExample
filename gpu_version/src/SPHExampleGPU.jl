@@ -32,6 +32,7 @@ module SPHExampleGPU
         "GPUCellGrid.jl",
         "GPUKernels.jl",
         "PrescribedRotation.jl",
+        "MotionStageSampling.jl",
         "GPUConfiguration.jl",
         "GPUFloating.jl",
         "SimulationResults.jl",

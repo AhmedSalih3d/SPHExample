@@ -37,6 +37,7 @@ using ..GPUReductions
 using ..GPUStepState
 using ..ExternalForces: prepare_external_forces, launch_external_forces!
 using ..PrescribedRotation: RotationMotion, prepare_rotation, launch_rotation!, update_rotation_indices!
+using ..MotionStageSampling: MotionStageSampler
 using ..GPUCellGrid
 using ..GPUKernels
 using ..GPUConfiguration: effective_configuration, configuration_snapshot, log_effective_configuration
@@ -994,7 +995,8 @@ has the same convention as the previous corrector's total acceleration. `step`
 gates every kernel; `mdbc_name` and `loop_name` are the timer labels.
 """
 function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractString, loop_name::AbstractString;
-                                   prepare_motion::Bool = false, total_acceleration::Bool = get(ctx, :SingleNeighbor, false))
+                                   prepare_motion::Bool = false, total_acceleration::Bool = get(ctx, :SingleNeighbor, false),
+                                   prepared_forces::Bool = false)
     (; gpu, cl, sup, SimKernel, SimConstants, SimDensityDiffusion, SimViscosity,
        FlagKernel, FlagShift, UseMDBC, threads, lanes, bforces, HourGlass) = ctx
     grid      = cl.grid_dev
@@ -1029,7 +1031,7 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
                              scalar_sps = get(ctx, :scalar_sps, Val(false)), periodicity = cl.periodicity)
     end
     launch_external_forces!(get(ctx, :external_forces, ()), gpu.Acceleration, gpu.Position, gpu.Velocity,
-        gpu.Type, gpu.GroupMarker, step, SimConstants.g)
+        gpu.Type, gpu.GroupMarker, step, SimConstants.g; prepared = prepared_forces)
     floating = get(ctx, :floating, nothing)
     if get(ctx, :SingleNeighbor, false) && floating !== nothing && floating.active
         @phase HourGlass "02d Rebuild Floating Derivative" timed begin
@@ -1075,12 +1077,13 @@ function enqueue_step!(ctx, timed::Bool)
 
     # dt of this step from the reduction of the previous one; also decides
     # whether the step may run at all (cell list rebuild, output time).
-    @phase HourGlass "01 Update TimeStep" timed launch_finish!(state, red, SimKernel, SimConstants;
-        diagnostics = get(ctx, :diagnostics, nothing))
-
     rotation = get(ctx, :rotation, nothing)
+    sampler = MotionStageSampler(rotation, get(ctx, :external_forces, ()), Val(SingleNeighbor))
+    @phase HourGlass "01 Update TimeStep" timed launch_finish!(state, red, SimKernel, SimConstants;
+        diagnostics = get(ctx, :diagnostics, nothing), stage_sampler = sampler)
+
     launch_rotation!(rotation, gpu.Position, gpu.Velocity, gpu.Type, gpu.GroupMarker, gpu.ID, state;
-        pos_cells = sup.PosCells, cell_ids = gpu.CellID, grid, H = SimKernel.H)
+        pos_cells = sup.PosCells, cell_ids = gpu.CellID, grid, H = SimKernel.H, prepared = true)
 
     # Stationary cached DBC steps carry the accepted-state caches from final
     # integration; startup and sorting explicitly refresh them.
@@ -1102,7 +1105,7 @@ function enqueue_step!(ctx, timed::Bool)
         end
     else
         enqueue_state_derivative!(ctx, state, timed, "04a First NeighborLoopMDBC", "04 First NeighborLoop";
-            prepare_motion = fused_motion && motion.active)
+            prepare_motion = fused_motion && motion.active, prepared_forces = true)
     end
 
     if floats
@@ -1132,7 +1135,8 @@ function enqueue_step!(ctx, timed::Bool)
     end
 
     launch_rotation!(rotation, position_half, velocity_half, gpu.Type, gpu.GroupMarker, gpu.ID, state;
-        fraction = 0.5, pos_cells = sup.PosCellsₙ⁺, cell_ids = gpu.CellID, grid, H = SimKernel.H)
+        fraction = 0.5, pos_cells = sup.PosCellsₙ⁺, cell_ids = gpu.CellID, grid, H = SimKernel.H,
+        prepared = true, coefficient_slot = 2)
 
     if get(ctx, :boundary_mode, SimpleMDBC()) isa UpdatedMDBC
         @phase HourGlass "07 Updated mDBC corrector" timed begin
@@ -1156,7 +1160,7 @@ function enqueue_step!(ctx, timed::Bool)
 
     @phase HourGlass "09 External Forces" timed launch_external_forces!(get(ctx, :external_forces, ()),
         gpu.Acceleration, position_half, velocity_half, gpu.Type, gpu.GroupMarker, state, SimConstants.g;
-        half_time = true)
+        half_time = true, prepared = true)
 
     if floats
         @phase HourGlass "10 Floating Corrector" timed begin
@@ -1170,7 +1174,8 @@ function enqueue_step!(ctx, timed::Bool)
     # contributes to the next displacement bound and timestep. The step can
     # commit inside final integration, after this absolute placement has run.
     launch_rotation!(rotation, gpu.Position, gpu.Velocity, gpu.Type, gpu.GroupMarker, gpu.ID, state;
-        fraction = 1.0, pos_cells = sup.PosCells, cell_ids = gpu.CellID, grid, H = SimKernel.H)
+        fraction = 1.0, pos_cells = sup.PosCells, cell_ids = gpu.CellID, grid, H = SimKernel.H,
+        prepared = true, coefficient_slot = 3)
 
     @phase HourGlass "11 Update To Final TimeStep" timed launch_final_step!(
         gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Density,

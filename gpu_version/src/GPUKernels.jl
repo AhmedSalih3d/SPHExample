@@ -1116,7 +1116,7 @@ end
 # flag when the output time is reached (before computing anything) or when
 # the accumulated displacement bound requires a cell list rebuild.
 function finish_kernel!(step::DeviceStep{T}, partial, nblocks::Int32, CFL::T, câ‚€::T, h::T,
-                        diagnostic_partial, diagnostic_result) where {T}
+                        diagnostic_partial, diagnostic_result, stage_sampler) where {T}
     f = step.f
     s = step.i
     @inbounds begin
@@ -1129,7 +1129,10 @@ function finish_kernel!(step::DeviceStep{T}, partial, nblocks::Int32, CFL::T, câ
             return nothing
         end
         # `dt` was computed before a rebuild interrupted the step: keep it.
-        phase == PHASE_DT_READY && return nothing
+        if phase == PHASE_DT_READY
+            threadIdx().x == Int32(1) && GPUStepState.prepare_stage_samples!(stage_sampler, step)
+            return nothing
+        end
     end
 
     acc = SVector{3, T}(zero(T), T(Inf), zero(T))
@@ -1158,6 +1161,8 @@ function finish_kernel!(step::DeviceStep{T}, partial, nblocks::Int32, CFL::T, câ
             s[I_PHASE] = PHASE_DT_READY
             if dx >= h
                 s[I_STOP] = STOP_REBUILD
+            else
+                GPUStepState.prepare_stage_samples!(stage_sampler, step)
             end
         end
     end
@@ -1171,14 +1176,16 @@ Compute the time step of the next step on the device from the reduction in
 `red` (see `finish_kernel!`).
 With `diagnostics`, retain the selected criterion and its particle ID for
 the step being started; a pending step interrupted by a rebuild keeps them.
+An optional `stage_sampler` prepares motion coefficients in the same launch,
+after an active timestep is ready, including the resumed rebuild path.
 """
 function launch_finish!(state::StepState{T}, red::ReductionWorkspace{SVector{3, T}}, SimKernel,
-                        SimConstants; diagnostics = nothing) where {T}
+                        SimConstants; diagnostics = nothing, stage_sampler = nothing) where {T}
     diagnostic_partial = diagnostics === nothing ? nothing : diagnostics.reduction.partial
     diagnostic_result = diagnostics === nothing ? nothing : diagnostics.result
     @cuda threads=REDUCE_THREADS blocks=1 finish_kernel!(state, red.partial, Int32(red.nblocks),
                                                         T(SimConstants.CFL), T(SimConstants.câ‚€),
-                                                        T(SimKernel.h), diagnostic_partial, diagnostic_result)
+                                                        T(SimKernel.h), diagnostic_partial, diagnostic_result, stage_sampler)
     return nothing
 end
 

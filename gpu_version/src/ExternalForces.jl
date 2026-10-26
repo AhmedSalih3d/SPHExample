@@ -211,7 +211,7 @@ function prepare_external_forces(forces, particles, ::Val{D}, ::Type{T}; sample_
     end
     return map(histories) do force
         history = Adapt.adapt(CuArray, force)
-        sample_once ? (; history, sample = CuArray([sample_force(force, zero(T))])) : history
+        sample_once ? (; history, sample = CuArray(fill(sample_force(force, zero(T)), 2))) : history
     end
 end
 
@@ -230,38 +230,41 @@ end
 function force_sample_kernel!(sample, force, step, half_time)
     step_active(step) || return nothing
     time = step_time(step) + (half_time ? step_dt(step) / 2 : zero(step_time(step)))
-    @inbounds sample[1] = sample_force(force, time)
+    @inbounds sample[half_time ? 2 : 1] = sample_force(force, time)
     return nothing
 end
 
-function sampled_force_kernel!(acceleration, position, velocity, types, groups, force, sample, step, g, n)
+function sampled_force_kernel!(acceleration, position, velocity, types, groups, force, sample, step, g, sample_slot, n)
     step_active(step) || return nothing
     i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     @inbounds if i <= n && types[i] == Fluid && groups[i] == force.group_marker
-        acceleration[i] += sampled_acceleration(force, position[i], velocity[i], sample[1], g)
+        acceleration[i] += sampled_acceleration(force, position[i], velocity[i], sample[sample_slot], g)
     end
     return nothing
 end
 
-function launch_external_force!(force::ExternalForce, acceleration, position, velocity, types, groups, step, g, half_time, n)
+function launch_external_force!(force::ExternalForce, acceleration, position, velocity, types, groups, step, g, half_time, n, prepared)
     @cuda threads=256 blocks=cld(n, 256) external_force_kernel!(
         acceleration, position, velocity, types, groups, force, step, g, half_time, n)
     return nothing
 end
 
-function launch_external_force!(prepared::NamedTuple, acceleration, position, velocity, types, groups, step, g, half_time, n)
-    (; history, sample) = prepared
-    @cuda threads=1 blocks=1 force_sample_kernel!(sample, history, step, half_time)
+function launch_external_force!(force::NamedTuple, acceleration, position, velocity, types, groups, step, g, half_time, n, prepared)
+    (; history, sample) = force
+    if !prepared
+        @cuda threads=1 blocks=1 force_sample_kernel!(sample, history, step, half_time)
+    end
     @cuda threads=256 blocks=cld(n, 256) sampled_force_kernel!(
-        acceleration, position, velocity, types, groups, history, sample, step, g, n)
+        acceleration, position, velocity, types, groups, history, sample, step, g, half_time ? 2 : 1, n)
     return nothing
 end
 
-function launch_external_forces!(forces::Tuple, acceleration, position, velocity, types, groups, step, g; half_time = false)
+function launch_external_forces!(forces::Tuple, acceleration, position, velocity, types, groups, step, g;
+                                 half_time = false, prepared::Bool = false)
     n = length(position)
     n == 0 && return nothing
     for force in forces
-        launch_external_force!(force, acceleration, position, velocity, types, groups, step, g, half_time, n)
+        launch_external_force!(force, acceleration, position, velocity, types, groups, step, g, half_time, n, prepared)
     end
     return nothing
 end

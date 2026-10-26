@@ -128,6 +128,10 @@ end
 @inline step_dt(s::HostStep)     = s.dt
 @inline step_time(s::HostStep)   = s.time
 
+# Optional device-side preparation after a timestep is ready. Motion samplers
+# extend this hook without adding work to simulations that have no histories.
+@inline prepare_stage_samples!(::Nothing, step) = nothing
+
 @inline output_time_reached(time, deadline, clip_timestep::Bool) =
     clip_timestep ? time >= deadline : time > deadline
 

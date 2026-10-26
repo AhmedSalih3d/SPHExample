@@ -2,9 +2,10 @@ module MotionSamplingBenchmark
 
 using SPHExampleGPU, CUDA, StaticArrays, Statistics, Printf, HDF5, SHA, TimerOutputs
 
-# Last driver before shared stage sampling. Read-only git objects keep the
-# baseline independent of both working-tree edits and the current branch tip.
-const BASELINE_COMMIT = "2067c583521dd06d317b56a33beb957f0889684b"
+# Default to the last driver before shared stage sampling; an environment
+# override also supports comparisons with later motion implementations.
+# Read-only git objects leave the worktree untouched.
+const BASELINE_COMMIT = get(ENV, "SPH_MOTION_BASELINE_COMMIT", "2067c583521dd06d317b56a33beb957f0889684b")
 const ROOT = normpath(joinpath(@__DIR__, "..", ".."))
 
 function baseline_source(name)
@@ -13,6 +14,12 @@ function baseline_source(name)
 end
 
 function baseline_driver()
+    kernels = replace(baseline_source("GPUKernels.jl"),
+        "module GPUKernels" => "module MotionSamplingBaselineKernels",
+        ("include(\"$file\")" => baseline_source(file) for file in
+            ("GPUTimestepDiagnostics.jl", "GPUPeriodicSearch.jl", "UpdatedMDBC.jl"))...)
+    Base.include_string(SPHExampleGPU, kernels, joinpath(ROOT, "gpu_version", "src", "GPUKernels.jl"))
+
     rotation = baseline_source("PrescribedRotation.jl")
     start = first(findfirst("prepare_rotation(::Nothing", rotation))
     rotation = """
@@ -20,7 +27,7 @@ function baseline_driver()
         using CUDA, StaticArrays
         using ..SimulationGeometry: Moving
         using ..GPUStepState: step_active, step_time, step_dt
-        using ..GPUKernels: store_pos_cell!
+        using ..MotionSamplingBaselineKernels: store_pos_cell!
         using ..PrescribedRotation: RotationMotion, rotation_state, rotated_position
         """ * rotation[start:end]
     Base.include_string(SPHExampleGPU, rotation, @__FILE__)
@@ -40,7 +47,9 @@ function baseline_driver()
     driver = replace(baseline_source("SPHCellList.jl"),
         "module SPHCellList" => "module MotionSamplingBaselineDriver",
         "using ..PrescribedRotation:" => "using ..MotionSamplingBaselineRotation:",
-        "using ..ExternalForces:" => "using ..MotionSamplingBaselineForces:")
+        "using ..ExternalForces:" => "using ..MotionSamplingBaselineForces:",
+        "using ..GPUKernels" => "using ..MotionSamplingBaselineKernels",
+        "GPUKernels." => "MotionSamplingBaselineKernels.")
     Base.include_string(SPHExampleGPU, driver, @__FILE__)
     return Base.invokelatest(getproperty, SPHExampleGPU, :MotionSamplingBaselineDriver)
 end
@@ -166,16 +175,16 @@ function main(args = ARGS)
                     r, w = results[i], results[i].work
                     push!(times[i], r.elapsed)
                     push!(loops[i], r.loop)
-                    println(io, join((mode, round, i == 1 ? "particle" : "stage", r.elapsed, r.loop,
+                    println(io, join((mode, round, i == 1 ? "baseline" : "current", r.elapsed, r.loop,
                         r.particles, w.steps, w.rebuilds, w.readbacks, w.frames, w.time, true, true), ','))
                 end
                 flush(io)
-                @printf("mode=%s pair=%d particle=%.6fs stage=%.6fs ratio=%.4f exact=true\n",
+                @printf("mode=%s pair=%d baseline=%.6fs current=%.6fs ratio=%.4f exact=true\n",
                     mode, round, results[1].elapsed, results[2].elapsed, results[2].elapsed / results[1].elapsed)
                 flush(stdout)
             end
             ratios = times[2] ./ times[1]
-            @printf("mode=%s complete medians particle=%.6fs stage=%.6fs paired_ratio=%.4f IQR=[%.4f,%.4f] range=[%.4f,%.4f] faster=%d/%d loop_ratio=%.4f\n",
+            @printf("mode=%s complete medians baseline=%.6fs current=%.6fs paired_ratio=%.4f IQR=[%.4f,%.4f] range=[%.4f,%.4f] faster=%d/%d loop_ratio=%.4f\n",
                 mode, median(times[1]), median(times[2]), median(ratios), quantile(ratios, 0.25), quantile(ratios, 0.75),
                 minimum(ratios), maximum(ratios), count(<(1), ratios), rounds, median(loops[2] ./ loops[1]))
             flush(stdout)

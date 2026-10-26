@@ -98,7 +98,7 @@ function prepare_rotation(motion::RotationMotion, geometry, particles)
     return (; group_marker = motion.group_marker, center = motion.center,
         times = CuArray(motion.times), angles = CuArray(motion.angles),
         indices = CuArray(Int32.(selected)),
-        coefficients = CUDA.zeros(SVector{3,Float64}, 1),
+        coefficients = CUDA.zeros(SVector{3,Float64}, 3),
         reference = CuArray(SVector{2,Float64}.(particles.Position[selected])))
 end
 
@@ -130,23 +130,28 @@ function update_rotation_indices!(motion, workspace)
     return nothing
 end
 
-function rotation_coefficients_kernel!(motion, step, fraction)
-    step_active(step) || return nothing
+@inline function sample_rotation!(motion, step, fraction, slot)
     time = Float64(step_time(step) + oftype(step_dt(step), fraction) * step_dt(step))
     angle, omega = rotation_state(motion, time)
     s, c = sincos(angle)
-    @inbounds motion.coefficients[1] = SVector(s, c, omega)
+    @inbounds motion.coefficients[slot] = SVector(s, c, omega)
+    return nothing
+end
+
+function rotation_coefficients_kernel!(motion, step, fraction)
+    step_active(step) || return nothing
+    sample_rotation!(motion, step, fraction, 1)
     return nothing
 end
 
 function rotation_kernel!(position, velocity, types, groups, motion, step,
-                          pos_cells, cell_ids, grid, H, n)
+                          pos_cells, cell_ids, grid, H, coefficient_slot, n)
     step_active(step) || return nothing
     slot = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     @inbounds if slot <= n
         i = motion.indices[slot]
         if types[i] == Moving && groups[i] == motion.group_marker
-            s, c, omega = motion.coefficients[1]
+            s, c, omega = motion.coefficients[coefficient_slot]
             r = motion.reference[slot] - motion.center
             x = motion.center + SVector(c*r[1] - s*r[2], s*r[1] + c*r[2])
             r = x - motion.center
@@ -160,12 +165,15 @@ end
 
 launch_rotation!(::Nothing, args...; kwargs...) = nothing
 function launch_rotation!(motion, position, velocity, types, groups, ids, step;
-        fraction = 0.0, pos_cells = nothing, cell_ids = nothing, grid = nothing, H = nothing)
+        fraction = 0.0, pos_cells = nothing, cell_ids = nothing, grid = nothing, H = nothing,
+        prepared::Bool = false, coefficient_slot::Int = 1)
     n = length(motion.indices)
     n == 0 && return nothing
-    @cuda threads=1 blocks=1 rotation_coefficients_kernel!(motion, step, Float64(fraction))
+    if !prepared
+        @cuda threads=1 blocks=1 rotation_coefficients_kernel!(motion, step, Float64(fraction))
+    end
     @cuda threads=256 blocks=cld(n, 256) rotation_kernel!(position, velocity, types, groups,
-        motion, step, pos_cells, cell_ids, grid, H, n)
+        motion, step, pos_cells, cell_ids, grid, H, prepared ? coefficient_slot : 1, n)
     return nothing
 end
 
