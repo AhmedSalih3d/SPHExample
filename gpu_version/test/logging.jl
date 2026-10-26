@@ -67,6 +67,42 @@ end
         "Output staging & buffer capacity: 1.0000 MiB pinned + 2.0000 MiB queue (up to 4 frames) + 8.0000 MiB HDF5 writer buffer"
 end
 
+@testset "configuration reports can stay in the saved log" begin
+    mktempdir() do dir
+        f = fixture(2, Float32, dir)
+        f.metadata.GPULanesPerParticle = 1
+        f.metadata.GPUScalarSPSViscosity = true
+        configuration = effective_configuration(f.metadata, f.kernel,
+            ZeroDensityDiffusion(), ZeroViscosity(); particle_count = length(f.host))
+        configuration = merge(configuration, (; execution = (;
+            path = :direct, graph_batches = 0, direct_batches = 1, graph_capture_failures = 0)))
+        logger = SimulationLogger(dir)
+        console_path = joinpath(dir, "console.log")
+        try
+            open(console_path, "w") do console
+                redirect_stdout(console) do
+                    for (phase, to_console) in (("startup", true), ("resolved before launches", false), ("final", false))
+                        SPHExampleGPU.GPUConfiguration.log_effective_configuration(logger, configuration;
+                            phase, to_console)
+                    end
+                end
+            end
+        finally
+            close(logger.LoggerIo)
+        end
+        console = read(console_path, String)
+        saved = read(joinpath(dir, "SimulationOutput.log"), String)
+        @test occursin("Effective GPU configuration (startup):", console)
+        @test !occursin("Effective GPU configuration (resolved before launches):", console)
+        @test !occursin("Effective GPU configuration (final):", console)
+        for phase in ("startup", "resolved before launches", "final")
+            @test occursin("Effective GPU configuration ($phase):", saved)
+        end
+        @test count("Configuration fallback:", saved) == 3
+        @test count("Observed GPU execution:", saved) == 3
+    end
+end
+
 if CUDA.functional()
     @testset "alias-aware live GPU buffer accounting" begin
         for D in (2, 3), T in (Float32, Float64)
@@ -175,6 +211,13 @@ if CUDA.functional()
             @test occursin(r"^Solver throughput: \d+\.\d{4} ms/step, \d+\.\d{4} M particle-steps/s, mean dt = \d+\.\d{6}e[+-]\d+ s \(\d+ steps\)"m, logged.log)
             @test occursin("TimerOutput note: GPUSyncTimers = false;", logged.log)
             @test occursin("Simulation finished at:", logged.log)
+            for output in (logged.console, logged.log)
+                @test first(findfirst("Effective GPU configuration (startup, resolved before launches):", output)) <
+                    first(findfirst("PART [-]", output))
+                @test occursin(r"Remaining Time \[Date\][^\n]*\n[= ]+\nPart_0000", output)
+            end
+            @test count("Effective GPU configuration", logged.console) == 1
+            @test !occursin("Effective GPU configuration (final):", logged.console)
             for output in (reference.console, logged.console, logged.log)
                 headers = collect(eachmatch(r"(?m)^\s*Section\s+ncalls\b", output))
                 @test length(headers) == 1

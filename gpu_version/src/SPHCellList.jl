@@ -1379,7 +1379,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         end
         state.configuration = configuration
         if logger !== nothing && LMode === StoreLog
-            log_effective_configuration(logger, configuration; phase = "resolved before launches")
+            log_effective_configuration(logger, configuration; phase = "resolved before launches", to_console = false)
         end
     end
     effective = configuration.effective
@@ -1547,7 +1547,8 @@ return value preserves existing usage. Interrupted runs return
 `:interrupted` with `final_state.complete = false`; other errors propagate.
 `result.configuration` reports requested/supported/effective settings and
 fallback reasons, plus observed graph/direct batch counts. It is available
-with `NoLog` too; `StoreLog` also writes startup and final configuration reports.
+with `NoLog` too; `StoreLog` prints the startup configuration before the progress
+table and keeps subsequent configuration reports in the saved log only.
 
 `SimMetaData.GPUClipTimeStepToOutput = true` clips adaptive steps to output
 deadlines and ends exactly at `SimulationTime` in the metadata's precision.
@@ -1845,9 +1846,9 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     )
 
     if StoreLogOutput
+        log_effective_configuration(SimLogger, state.configuration; phase = "startup, resolved before launches")
         InitializeLogger(SimLogger, SimConstants, SimMetaData, SimKernel, SimViscosity,
             SimDensityDiffusion, SimGeometry, SimParticles; gpu_buffers, output_memory)
-        log_effective_configuration(SimLogger, state.configuration; phase = "startup, resolved before launches")
         LogStep(SimLogger, SimMetaData, HourGlass)
         SimMetaData.StepsTakenForLastOutput = SimMetaData.Iteration
     end
@@ -1978,7 +1979,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             pressure_range = paraview_pressure_range)
 
         if StoreLogOutput
-            log_effective_configuration(SimLogger, configuration_snapshot(state); phase = "final")
+            log_effective_configuration(SimLogger, configuration_snapshot(state); phase = "final", to_console = false)
             elapsed = SimulationLoggerConfiguration.elapsed_wall_time(SimLogger)
             steps_taken = max(0, SimMetaData.Iteration - initial_steps)
             physical_progress = max(0.0, Float64(SimMetaData.TotalTime) - SimLogger.clock.initial_time)

@@ -2,6 +2,7 @@
 module GPUConfiguration
 
 using Logging
+using LoggingExtras: FormatLogger
 using ..SimulationMetaDataConfiguration
 using ..SPHDensityDiffusionModels: ZeroDensityDiffusion
 using ..SPHViscosityModels: ZeroViscosity, LaminarSPS
@@ -91,10 +92,12 @@ function configuration_snapshot(state)
     return merge(configuration, (; fallbacks, execution))
 end
 
-function log_effective_configuration(logger, configuration; phase)
+function log_effective_configuration(logger, configuration; phase, to_console::Bool = true)
     configuration === nothing && return nothing
     e = configuration.effective
-    with_logger(logger.Logger) do
+    report_logger = to_console ? logger.Logger :
+        FormatLogger((io, args) -> println(io, args.message), logger.LoggerIo)
+    with_logger(report_logger) do
         @info "Effective GPU configuration ($phase):"
         @info "Requested GPU options: $(configuration.requested)"
         @info "Supported specializations: $(configuration.capabilities)"

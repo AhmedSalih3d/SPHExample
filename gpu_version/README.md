@@ -1540,6 +1540,11 @@ eligibility, while `execution` records what happened. `GPUSyncTimers = true`
 disables graphs and limits batches to one, with an explicit fallback reason if
 graphs were requested. `StoreLog` writes resolved settings at startup, changes
 at output-interval boundaries, and a final summary with observed execution.
+The startup configuration appears before the progress table. Subsequent
+configuration reports go only to `SimulationOutput.log`, so they do not
+interrupt console progress or displace the final timing and results output.
+Runtime warnings remain visible, and the complete final configuration is
+also available in `result.configuration`.
 
 To inspect settings before a run, use
 `effective_configuration(meta, kernel, diffusion, viscosity; particle_count = n)`.
