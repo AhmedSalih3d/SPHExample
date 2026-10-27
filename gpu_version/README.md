@@ -71,6 +71,22 @@ physical steps and from unmeasured per-thread GPU branches.
 
 ### Periodic boundaries
 
+For a self-contained **3D motor-driven floating paddle wheel**, see
+[WheelPeriodic3d.jl](example/WheelPeriodic3d.jl) and its
+[case guide](example/WheelPeriodic3d.md). It generates the trough and wheel,
+applies a uniform initial velocity to every fluid particle, and combines a
+prescribed floating-body hinge with physical longitudinal periodicity. The
+video-inspired showcase inputs are explicitly illustrative and configurable.
+Run from the repository root with an NVIDIA GPU:
+
+```sh
+julia --project=gpu_version -t 2,0 gpu_version/example/WheelPeriodic3d.jl
+```
+
+Output defaults to `gpu_version/output/wheel_periodic_3d`; use a new or empty
+directory for each run. Geometry and host initialization can be checked without
+CUDA using `gpu_version/test/wheel_periodic.jl`.
+
 Set a physical periodic interval independently of the neighbor-grid cell size:
 
 ```julia
