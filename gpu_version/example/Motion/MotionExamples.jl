@@ -2,109 +2,136 @@ module MotionExamples
 
 using SPHExampleGPU
 using StaticArrays
+using LinearAlgebra
+using HDF5
 
-export motion_example, run_motion_example
+export motion_example, run_motion_example, motion_frame_times
+
+include("MotionCaseGeometry.jl")
+include("MotionCaseTrajectories.jl")
+
+surface_points(shape::PolygonSurface) = shape.points
+surface_points(shapes::AbstractVector) = reduce(vcat, surface_points.(shapes))
 
 """
-    motion_example(number; dimensions = 2, FloatType = Float32, dx = 0.025)
+    motion_example(number; dimensions = 3, FloatType = Float32, dx = nothing)
 
-Build a small, entirely Julia-generated kinematic demonstration of MOTION01–09.
-The blocks are prescribed `Moving` particles, with no fluid or gravity. These
-examples demonstrate motion features, rather than reproducing upstream XML
-geometry or fluid results. Positions use (x,z) in 2D and (x,y,z) in 3D.
+Build the geometry and commanded motion of DualSPHysics 5.4's distributed
+Motion01-09 cases. Shapes, coordinates, axes, tracks, data files and timing
+match the reference definitions. These are 3D kinematic cases, without fluid.
+Polygon rendering uses the complete surfaces; the optional solver exercise
+uses their vertices as a small boundary-particle set, not a GenCase lattice.
 """
-function motion_example(number; dimensions = 2, FloatType = Float32, dx = 0.025)
+function motion_example(number; dimensions = 3, FloatType = Float32, dx = nothing)
     number in 1:9 || throw(ArgumentError("motion example number must be in 1:9"))
-    dimensions in (2,3) || throw(ArgumentError("dimensions must be 2 or 3"))
-    isfinite(dx) && 0 < dx <= 0.05 || throw(ArgumentError("dx must be finite and in (0,0.05]"))
-    D, T = dimensions, FloatType
-    point(x,z=0) = SVector{D,Float64}(ntuple(d -> d==1 ? x : d==D ? z : 0.,D))
-    center(g) = point(0.3*(g-1),0.15*(g-1))
-    axis = D==2 ? (0,0,1) : (1,2,3)
-    angle(v,a=0) = MotionSequence([KinematicSegment(4;velocity=v,acceleration=a)])
-    linear(v,a=zero(v)) = MotionSequence([KinematicSegment(4;velocity=v,acceleration=a)])
-    sinusoid(amplitude,frequency,phase=zero(amplitude)) = MotionSequence([SinusoidalSegment(4;amplitude,frequency,phase)])
-    motions = if number == 1
-        translation = MotionSequence([KinematicSegment(1;velocity=point(0.1)),
-            KinematicSegment(1;velocity=point(0)),KinematicSegment(1;velocity=point(-0.1)),
-            KinematicSegment(1;velocity=point(0))])
-        (PrescribedMotion(1;center=center(1),translation),)
-    elseif number == 2
-        translation = MotionSequence([KinematicSegment(1;velocity=v) for v in
-            (point(0.08),point(0,0.08),point(-0.08),point(0,-0.08))])
-        (PrescribedMotion(1;center=center(1),translation),)
-    elseif number == 3
-        (PrescribedMotion(1;center=center(1),axis,translation=linear(point(0.02)),rotation=angle(0.35)),
-            PrescribedMotion(2;parent=1,center=center(2),axis,rotation=angle(-0.6)),
-            PrescribedMotion(3;parent=2,center=center(3),translation=sinusoid(point(0.04),point(0.5))))
-    elseif number == 4
-        translation = MotionSequence([KinematicSegment(2;velocity=point(0.05),acceleration=point(0.025)),
-            KinematicSegment(2;velocity=point(0.1),acceleration=point(-0.025))])
-        (PrescribedMotion(1;center=center(1),translation),)
-    elseif number == 5
-        (PrescribedMotion(1;center=center(1),axis,rotation=angle(pi/2)),)
-    elseif number == 6
-        angles = angle(0.2,0.3)
-        (PrescribedMotion(1;center=center(1),axis,rotation=angles),
-            PrescribedMotion(2;center=center(2),translation=CircularTrajectory(angles;
-                reference=center(2),center=center(2)-point(0.15),axis)))
-    elseif number == 7
-        angles = sinusoid(pi/4,0.5,pi/6)
-        (PrescribedMotion(1;center=center(1),translation=sinusoid(point(0.1,0.05),point(0.5,1))),
-            PrescribedMotion(2;center=center(2),axis,rotation=angles),
-            PrescribedMotion(3;center=center(3),translation=CircularTrajectory(angles;
-                reference=center(3),center=center(3)-point(0.15),axis)))
-    elseif number == 8
-        translation = load_translation_trajectory(joinpath(@__DIR__,"data","translation.csv");
-            value_columns=D==2 ? (2,4) : (2,3,4))
-        (PrescribedMotion(1;center=center(1),translation),)
+    dimensions == 3 || throw(ArgumentError("the distributed DualSPHysics motion cases are 3D; use dimensions = 3"))
+    spacing = dx === nothing ? (number == 8 ? 0.02 : number == 9 ? 0.001 : 0.01) : Float64(dx)
+    isfinite(spacing) && spacing > 0 || throw(ArgumentError("dx must be finite and positive"))
+    parts = case_parts(number)
+    motion = case_motion(number)
+    names = Tuple(part.name for part in parts)
+    regions = NamedTuple{names}(Tuple(part.shape for part in parts))
+    moving_ids = Set(node.id for node in motion.motions if node.group_marker !== nothing)
+    geometry = [SPHGeometry{3,FloatType}(unique(surface_points(part.shape));
+        Density = 1000, GroupMarker = part.mk+1, Type = part.mk in moving_ids ? Moving : Fixed) for part in parts]
+    return (; number, parts, regions, geometry, motion, duration = MOTION_DURATIONS[number],
+        output_interval = MOTION_INTERVALS[number], dx = spacing,
+        constants = SimulationConstants{FloatType}(3;dx=spacing,c₀=10,g=0))
+end
+
+function motion_frame_times(duration, interval)
+    isfinite(duration) && duration > 0 || throw(ArgumentError("simulation_time must be finite and positive"))
+    isfinite(interval) && interval > 0 || throw(ArgumentError("output_interval must be finite and positive"))
+    count = floor(Int,duration/interval)
+    times = collect(range(0.0;step=Float64(interval),length=count+1))
+    if isapprox(last(times),duration;rtol=8eps(Float64),atol=0)
+        times[end] = Float64(duration)
     else
-        degrees = load_rotation_trajectory(joinpath(@__DIR__,"data","rotation_degrees.csv");angle_units=:degrees)
-        radians = load_rotation_trajectory(joinpath(@__DIR__,"data","rotation_radians.csv");angle_units=:radians)
-        (PrescribedMotion(1;center=center(1),axis,rotation=degrees),
-            PrescribedMotion(2;center=center(2),axis,rotation=radians))
+        push!(times,Float64(duration))
     end
-    radius = max(1,floor(Int,0.05/dx))
-    geometry = [SPHGeometry{D,T}([center(g) + point(i*dx,j*dx)
-            for i in -radius:radius for j in -radius:radius];
-            Density=1000,GroupMarker=g,Type=Moving) for g in 1:length(motions)]
-    return (;geometry,motion=MotionSystem(motions),duration=4.0,
-        constants=SimulationConstants{T}(D;dx,c₀=10,g=0))
+    return times
+end
+
+# Sample a body's pose once per rendered frame, retaining immutable reference
+# vertices. This is the same absolute transform used by the particle solver.
+function polygon_trajectory(system, id)
+    sampled_time = Ref(NaN)
+    sampled_pose = Ref(motion_state(system,id,0.0))
+    return function(reference,time)
+        if sampled_time[] != time
+            sampled_pose[] = motion_state(system,id,time)
+            sampled_time[] = time
+        end
+        return motion_position(sampled_pose[],reference)
+    end
+end
+
+function label_case_regions(path, parts)
+    h5open(path,"r+") do file
+        root = file["VTKHDF"]
+        regions = read(root["CellData/Region"])
+        root["CellData/MkBound"] = Int32[parts[region].mk for region in regions]
+        root["CellData/Mk"] = Int32[10+parts[region].mk for region in regions]
+        if haskey(root,"Steps")
+            offsets = read(root["Steps/CellDataOffsets/Region"])
+            root["Steps/CellDataOffsets/MkBound"] = offsets
+            root["Steps/CellDataOffsets/Mk"] = offsets
+        end
+    end
 end
 
 """
-    run_motion_example(number; dimensions = 2, simulation_time = 4, ...)
+    run_motion_example(number; simulation_time = nothing, output_interval = nothing,
+                       visualize = true, simulate_particles = false, ...)
 
-Run a motion demonstration and write VTKHDF particle output. Set `visualize`
-and `open_log_file` to false for unattended runs. `time_stepping` accepts both
-supported integrators; `use_graph` enables CUDA graph replay.
+Write and optionally open a polygon animation, using the distributed case's
+full duration and output interval by default. Returns paths, frame times and
+the case definition. Set `simulate_particles = true` to additionally exercise
+GPU integration on a small boundary-particle set; its SimulationResult is
+returned in `simulation`. The primary `MotionXX.vtkhdf` always contains polygon
+surfaces, while optional particle output is named `MotionXX_Particles.vtkhdf`.
 """
-function run_motion_example(number; dimensions = 2, FloatType = Float32, dx = 0.025,
-        simulation_time = 4.0, output_interval = 0.05, visualize = true,
-        open_log_file = true, use_graph = true,
+function run_motion_example(number; dimensions = 3, FloatType = Float32, dx = nothing,
+        simulation_time = nothing, output_interval = nothing, visualize = true,
+        open_log_file = true, simulate_particles = false, use_graph = true,
         time_stepping = SymplecticTimeStepping(),
-        save_location = joinpath(@__DIR__,"..","..","output","Motion",lpad(number,2,'0')))
-    isfinite(simulation_time) && simulation_time > 0 || throw(ArgumentError("simulation_time must be finite and positive"))
-    isfinite(output_interval) && output_interval > 0 || throw(ArgumentError("output_interval must be finite and positive"))
+        save_location = joinpath(@__DIR__,"..","..","output","Motion","Motion"*lpad(number,2,'0')))
     case = motion_example(number;dimensions,FloatType,dx)
-    D,T = dimensions,FloatType
+    duration = simulation_time === nothing ? case.duration : Float64(simulation_time)
+    interval = output_interval === nothing ? case.output_interval : Float64(output_interval)
+    duration <= case.duration || throw(ArgumentError("simulation_time exceeds the reference case's duration $(case.duration)"))
+    times = motion_frame_times(duration,interval)
     mkpath(save_location)
-    metadata = SimulationMetaData{D,T,NoShifting,NoKernelOutput,NoMDBC,StoreLog}(
-        SimulationName="Motion"*lpad(number,2,'0'),SaveLocation=save_location,
-        SimulationTime=simulation_time,OutputTimes=output_interval,
-        GPUUseGraph=use_graph,GPUDoublePosition=true,GPUClipTimeStepToOutput=true,
-        GPUCellSubdivision=1,ExportGridCells=false,
-        VisualizeInParaview=visualize,OpenLogFile=open_log_file)
-    particles = AllocateDataStructures(case.geometry,metadata)
-    logger = SimulationLogger(save_location)
-    try
-        return RunSimulation(SimGeometry=case.geometry,SimMetaData=metadata,SimParticles=particles,
-            SimConstants=case.constants,SimKernel=SPHKernelInstance{D,T}(WendlandC2();dx=T(dx)),
-            SimLogger=logger,SimTimeStepping=time_stepping,SimViscosity=ZeroViscosity(),
-            SimDensityDiffusion=ZeroDensityDiffusion(),SimMotion=case.motion)
-    finally
-        isopen(logger.LoggerIo) && close(logger.LoggerIo)
+    name = "Motion"*lpad(number,2,'0')
+    geometry_path = joinpath(save_location,name*"_Geometry.vtkhdf")
+    motion_path = joinpath(save_location,name*".vtkhdf")
+    moving_parts = [part for part in case.parts if any(node -> node.group_marker == part.mk+1,case.motion.motions)]
+    transforms = NamedTuple{Tuple(part.name for part in moving_parts)}(
+        Tuple(polygon_trajectory(case.motion,part.mk) for part in moving_parts))
+    SavePolygonVTKHDF(geometry_path,case.regions)
+    SavePolygonMotionSequence(motion_path,case.regions;motions=transforms,times)
+    label_case_regions(geometry_path,case.parts)
+    label_case_regions(motion_path,case.parts)
+    simulation = nothing
+    if simulate_particles
+        metadata = SimulationMetaData{3,FloatType,NoShifting,NoKernelOutput,NoMDBC,StoreLog}(
+            SimulationName=name*"_Particles",SaveLocation=save_location,
+            SimulationTime=duration,OutputTimes=interval,GPUUseGraph=use_graph,
+            GPUDoublePosition=true,GPUClipTimeStepToOutput=true,GPUCellSubdivision=1,
+            ExportGridCells=false,VisualizeInParaview=false,OpenLogFile=open_log_file)
+        particles = AllocateDataStructures(case.geometry,metadata)
+        logger = SimulationLogger(save_location)
+        try
+            simulation = RunSimulation(SimGeometry=case.geometry,SimMetaData=metadata,SimParticles=particles,
+                SimConstants=case.constants,SimKernel=SPHKernelInstance{3,FloatType}(WendlandC2();dx=FloatType(case.dx)),
+                SimLogger=logger,SimTimeStepping=time_stepping,SimViscosity=ZeroViscosity(),
+                SimDensityDiffusion=ZeroDensityDiffusion(),SimMotion=case.motion)
+        finally
+            isopen(logger.LoggerIo) && close(logger.LoggerIo)
+        end
     end
+    visualize && OpenParaviewFile(motion_path)
+    return (;geometry_path,motion_path,times,case,simulation)
 end
 
 end

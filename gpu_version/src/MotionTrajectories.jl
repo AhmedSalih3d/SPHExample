@@ -3,7 +3,7 @@ module MotionTrajectories
 using Adapt
 using StaticArrays
 
-export SampledTrajectory, KinematicSegment, SinusoidalSegment, MotionSequence,
+export SampledTrajectory, KinematicSegment, SinusoidalSegment, MotionSequence, TrajectoryWindow,
        CircularTrajectory, trajectory_state
 
 abstract type AbstractTrajectory end
@@ -161,12 +161,15 @@ end
 end
 
 """
-    MotionSequence(segments; start_time = 0, initial_value = zero)
+    MotionSequence(segments; start_time = 0, initial_value = zero, jumps = nothing)
 
 Ordered kinematic/sinusoidal segments with continuous accumulated displacement.
 The next segment owns a shared endpoint. Before `start_time`, hold
 `initial_value`; at/after the final endpoint hold the accumulated value, with
 zero rates. Scalar sequences describe angles; vector sequences translations.
+Optional `jumps` gives one instantaneous displacement after each segment.
+Jumps take effect at the shared endpoint; their impulses are not represented
+as finite velocities or accelerations. Omit them for continuous trajectories.
 """
 struct MotionSequence{T,S,V} <: AbstractTrajectory
     times::T
@@ -175,7 +178,7 @@ struct MotionSequence{T,S,V} <: AbstractTrajectory
 end
 Adapt.@adapt_structure MotionSequence
 
-function MotionSequence(segments; start_time = 0, initial_value = nothing)
+function MotionSequence(segments; start_time = 0, initial_value = nothing, jumps = nothing)
     ss = collect(segments)
     isempty(ss) && throw(ArgumentError("a motion sequence needs at least one segment"))
     all(s -> s isa TrajectorySegment && typeof(s) == typeof(first(ss)), ss) ||
@@ -185,15 +188,60 @@ function MotionSequence(segments; start_time = 0, initial_value = nothing)
     p = initial_value === nothing ? zero(first(ss).velocity) : motion_value(initial_value)
     typeof(p) == typeof(first(ss).velocity) && all(isfinite, p) ||
         throw(ArgumentError("initial value must be finite and match the segments"))
+    shifts = jumps === nothing ? fill(zero(p), length(ss)) : motion_value.(collect(jumps))
+    length(shifts) == length(ss) || throw(DimensionMismatch("jumps must match sequence segments"))
+    all(x -> typeof(x) == typeof(p) && all(isfinite, x), shifts) ||
+        throw(ArgumentError("sequence jumps must be finite and match segment dimensions"))
     ts, offsets = [t], [p]
-    for s in ss
+    for (s, shift) in zip(ss, shifts)
         t += s.duration
-        p += first(segment_state(s, s.duration))
+        p += first(segment_state(s, s.duration)) + shift
         isfinite(t) && t > last(ts) && all(isfinite, p) || throw(ArgumentError("sequence endpoint overflows"))
         push!(ts, t)
         push!(offsets, p)
     end
     return MotionSequence(ts, ss, offsets)
+end
+
+"""
+    TrajectoryWindow(trajectory; start_time = 0, end_time = Inf,
+                     finish_offset = zero)
+
+Play a trajectory in local time starting at `start_time`, stopping at
+`end_time`. Hold the initial/final value with zero rates outside the window.
+An optional instantaneous `finish_offset` is applied strictly after the final
+time, allowing a file-driven path to finish with a relocation. No finite
+velocity or acceleration is assigned to that instantaneous displacement.
+"""
+struct TrajectoryWindow{H,V} <: AbstractTrajectory
+    trajectory::H
+    start_time::Float64
+    end_time::Float64
+    finish_offset::V
+end
+Adapt.@adapt_structure TrajectoryWindow
+
+function TrajectoryWindow(trajectory::AbstractTrajectory; start_time = 0, end_time = Inf, finish_offset = nothing)
+    start, finish = Float64(start_time), Float64(end_time)
+    isfinite(start) && start >= 0 && finish > start && !isnan(finish) ||
+        throw(ArgumentError("trajectory window needs a finite nonnegative start and a later end"))
+    value = first(trajectory_state(trajectory, 0.0))
+    offset = finish_offset === nothing ? zero(value) : motion_value(finish_offset)
+    typeof(offset) == typeof(value) && all(isfinite, offset) ||
+        throw(ArgumentError("finish offset must be finite and match the trajectory dimension"))
+    return TrajectoryWindow(trajectory, start, finish, offset)
+end
+
+@inline function trajectory_state(h::TrajectoryWindow, time)
+    if time < h.start_time
+        value = first(trajectory_state(h.trajectory, 0.0))
+        return (value, zero(value), zero(value))
+    elseif time >= h.end_time
+        value = first(trajectory_state(h.trajectory, h.end_time - h.start_time))
+        time > h.end_time && (value += h.finish_offset)
+        return (value, zero(value), zero(value))
+    end
+    return trajectory_state(h.trajectory, time - h.start_time)
 end
 
 @inline function trajectory_state(h::MotionSequence, time)

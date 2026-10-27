@@ -272,8 +272,11 @@ and hierarchical rigid motion, pass `SimMotion = PrescribedMotion(...)` or
 `MotionSystem(...)`. This path supports nonperiodic 2D/3D DBC and both
 integrators, with analytical wall velocities at the start, predictor and
 accepted times. The [nine runnable Motion examples](example/Motion/README.md)
-document the trajectory, hierarchy, file and endpoint contracts. Their Julia
-implementation uses independent trajectory and transform abstractions.
+now reproduce the distributed DualSPHysics 5.4 Motion01–09 geometry and commanded
+motion, opening animated polygon surfaces by default. Their Julia implementation
+uses independent trajectory and transform abstractions. Actual-case geometry
+and motion fixtures from GenCase/BoundaryVTK validate the matching scenes,
+timelines, simultaneous tracks, instantaneous resets and file transitions.
 The [upstream motion-engine comparison](test/reference/README.md) validates
 representative positions for all nine patterns; finite-increment wall rates,
 general event semantics and fluid-solver equivalence are not claimed.

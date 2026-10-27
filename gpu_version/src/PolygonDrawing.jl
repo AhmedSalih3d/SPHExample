@@ -19,6 +19,7 @@ Meshes `Point`s; lengths are plain numbers (metres) and angles are in radians
   arc for `polyline` and `polygon`, and `translate`, `rotate` and `mirror`
   move shapes.
 * `prism` extrudes a 2D shape along `z` for 3D particle regions.
+* `PolygonSurface` describes explicit 3D polygon faces for surface export.
 
 Corners of offset paths are mitred, so straight walls keep sharp corners;
 corners sharper than `miter_limit` are bevelled on their convex side. A wall that
@@ -29,7 +30,7 @@ throws an `ArgumentError` instead of returning an invalid polygon.
 export polygon, triangle, rectangle, square, regular_polygon, circle, arc,
        line, polyline, outline, offset_polygon,
        translate, rotate, mirror,
-       ExtrudedPolygon, prism
+       ExtrudedPolygon, PolygonSurface, prism
 
 using LinearAlgebra: dot, norm
 using Meshes
@@ -37,6 +38,35 @@ using StaticArrays
 
 const Vec2 = SVector{2, Float64}
 const Ring = Vector{Vec2}
+
+"""
+    PolygonSurface(points, faces)
+
+A 3D surface with explicit polygon faces, for geometry that is not a vertical
+extrusion (for example a pyramid or tapered prism). Points have three finite
+coordinates; faces contain at least three distinct one-based point indices.
+Faces should be planar convex polygons with outward winding. Accepted by
+`SavePolygonVTKHDF` and `SavePolygonMotionSequence`.
+"""
+struct PolygonSurface
+    points::Vector{SVector{3,Float64}}
+    faces::Vector{Vector{Int}}
+
+    function PolygonSurface(points, faces)
+        ps = SVector{3,Float64}.(collect(points))
+        fs = [Int.(collect(face)) for face in faces]
+        !isempty(ps) && all(p -> all(isfinite, p), ps) ||
+            throw(ArgumentError("surface points must be nonempty and finite"))
+        !isempty(fs) && all(f -> length(f) >= 3 && length(unique(f)) == length(f) && all(i -> 1 <= i <= length(ps), f), fs) ||
+            throw(ArgumentError("surface faces need at least three distinct valid point indices"))
+        new(ps, fs)
+    end
+end
+
+function translate(shape::PolygonSurface, displacement)
+    length(displacement) == 3 || throw(DimensionMismatch("surface translation requires three components"))
+    return PolygonSurface(shape.points .+ Ref(SVector{3,Float64}(displacement)), shape.faces)
+end
 
 #  Points and rings
 

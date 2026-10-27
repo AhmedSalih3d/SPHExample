@@ -75,7 +75,7 @@ module SPHExampleGPU
     export RotationMotion, rotation_state, rotation_position
 
     using .MotionTrajectories
-    export SampledTrajectory, KinematicSegment, SinusoidalSegment, MotionSequence,
+    export SampledTrajectory, KinematicSegment, SinusoidalSegment, MotionSequence, TrajectoryWindow,
            CircularTrajectory, trajectory_state
 
     using .PrescribedMotions
@@ -145,7 +145,7 @@ module SPHExampleGPU
     export polygon, triangle, rectangle, square, regular_polygon, circle, arc,
            line, polyline, outline, offset_polygon,
            translate, rotate, mirror,
-           ExtrudedPolygon, prism
+           ExtrudedPolygon, PolygonSurface, prism
 
     using .ParticleGenerator
     export ParticleRegion, sample_particles, hydrostatic_density, write_particle_csv

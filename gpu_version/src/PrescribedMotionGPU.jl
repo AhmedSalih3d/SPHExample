@@ -13,6 +13,7 @@ device_trajectory(h::ConstantTrajectory) = h
 device_trajectory(h::SampledTrajectory) = SampledTrajectory(CuArray(h.times), CuArray(h.values), CuArray(h.velocities), h.cubic)
 device_trajectory(h::MotionSequence) = MotionSequence(CuArray(h.times), CuArray(h.segments), CuArray(h.offsets))
 device_trajectory(h::CircularTrajectory) = CircularTrajectory(device_trajectory(h.angles), h.reference, h.center, h.axis)
+device_trajectory(h::TrajectoryWindow) = TrajectoryWindow(device_trajectory(h.trajectory), h.start_time, h.end_time, h.finish_offset)
 
 struct PreparedMotionSystem{N,I,V,P,G,O}
     nodes::N

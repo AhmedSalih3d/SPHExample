@@ -1,6 +1,0 @@
-# time,x,y,z; times and coordinates deliberately have nonzero origins
-10,1,0,2
-11,1.1,0,2
-12,1.1,0.05,2.1
-13,1,0,2.1
-14,1,0,2

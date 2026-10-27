@@ -28,7 +28,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
     using ..AuxiliaryFunctions: to_3d, to_3d!, components!
     using ..HDF5Append: extend!, extend_columns!, append_slice!, append_columns!
-    using ..PolygonDrawing: ExtrudedPolygon, translate
+    using ..PolygonDrawing: ExtrudedPolygon, PolygonSurface, translate
     using ..SimulationGeometry: MotionDetails
     using ..SimulationMetaDataConfiguration: SimulationMetaData, NoMDBC, UpdatedMDBC
     using ..SimulationConstantsConfiguration: SimulationConstants
@@ -216,7 +216,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
     Write the polygons of the named tuple `regions` as one static VTKHDF
     `PolyData` file. Every region is a `PolyArea`, a `Multi` of `PolyArea`s, an
-    `ExtrudedPolygon` (see `prism`) or a tuple or vector of those. Convex
+    `ExtrudedPolygon` (see `prism`), `PolygonSurface`, or a tuple or vector of those. Convex
     polygons without holes are written as single polygon cells. Concave
     polygons and polygons with holes are triangulated with constrained
     Delaunay to preserve their actual area. Prisms are written as closed
@@ -253,9 +253,13 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     `times`. `filepath` must end in `.vtkhdf`.
     `regions` is a named tuple of polygon geometries accepted by
     `SavePolygonVTKHDF`; `motions` maps the names of translating regions to
-    `MotionDetails`. Unmapped regions remain fixed.
+    `MotionDetails` or a callable `(reference_position, time) -> position`.
+    Callables receive a three-component reference point (flat polygons use
+    the XY plane) and return two or three finite world coordinates. This
+    supports rigid rotations, histories and hierarchies without coupling the
+    geometry writer to a particular motion model. Unmapped regions remain fixed.
 
-    Positions follow the prescribed constant velocity from simulation time
+    `MotionDetails` positions follow the prescribed constant velocity from simulation time
     zero, clipped to each motion's start time and duration. Regions whose
     motion has `MoveParticles = false` remain stationary. This previews the
     commanded geometry motion without running the solver or predicting fluid
@@ -287,12 +291,15 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         for (name, motion) in pairs(motions)
             hasproperty(regions, name) ||
                 throw(ArgumentError("motion refers to unknown region `$(name)`"))
-            motion isa MotionDetails ||
-                throw(ArgumentError("motion for region `$(name)` must be a MotionDetails"))
-            validate_preview_motion(name, motion)
+            if motion isa MotionDetails
+                validate_preview_motion(name, motion)
+            elseif !applicable(motion, SVector(0.0, 0.0, 0.0), first(frame_times))
+                throw(ArgumentError("motion for region `$(name)` must be MotionDetails or a callable (reference_position, time)"))
+            end
         end
 
-        points, connectivity, offsets, region_ids = polygonal_regions(values(regions))
+        point_regions = Int[]
+        points, connectivity, offsets, region_ids = polygonal_regions(values(regions); point_regions)
         npoints = length(points)
         ncells = length(region_ids)
         nconnectivity = length(connectivity)
@@ -303,13 +310,21 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         step_regions = Vector{Int32}(undef, ncells * nsteps)
 
         for (step, time) in enumerate(frame_times)
-            frame_regions = polygon_regions_at_time(regions, motions, time)
-            frame_points, frame_connectivity, frame_offsets, frame_region_ids =
-                polygonal_regions(values(frame_regions))
-            if length(frame_points) != npoints ||
-               length(frame_connectivity) != nconnectivity ||
-               frame_offsets != offsets || length(frame_region_ids) != ncells
-                throw(ArgumentError("polygon topology changed at frame time $time"))
+            frame_points = copy(points)
+            for i in eachindex(points)
+                region = point_regions[i]
+                region == 0 && continue
+                name = keys(regions)[region]
+                hasproperty(motions, name) || continue
+                motion = getproperty(motions, name)
+                value = if motion isa MotionDetails
+                    displacement = motion.MoveParticles ? preview_displacement(motion, time) : zero(motion.Direction)
+                    points[i] + preview_point(displacement, name, time)
+                else
+                    preview_point(motion(points[i], time), name, time)
+                end
+                all(isfinite, value) || throw(ArgumentError("motion for region `$name` is nonfinite at time $time"))
+                frame_points[i] = value
             end
 
             point_columns = ((step - 1) * npoints + 1):(step * npoints)
@@ -317,9 +332,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             offset_rows = ((step - 1) * length(offsets) + 1):(step * length(offsets))
             region_rows = ((step - 1) * ncells + 1):(step * ncells)
             positions[:, point_columns] = stack(frame_points)
-            step_connectivity[connectivity_rows] = frame_connectivity
-            step_offsets[offset_rows] = frame_offsets
-            step_regions[region_rows] = frame_region_ids
+            step_connectivity[connectivity_rows] = connectivity
+            step_offsets[offset_rows] = offsets
+            step_regions[region_rows] = region_ids
         end
 
         output_path = abspath(filepath)
@@ -365,6 +380,13 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             cell_data_offsets["Region"] = Int64.(0:ncells:(nsteps - 1) * ncells)
         end
         return filepath
+    end
+
+    function preview_point(value, name, time)
+        (value isa Tuple || value isa AbstractVector) && length(value) in (2, 3) &&
+            all(x -> x isa Real && isfinite(x), value) ||
+            throw(ArgumentError("motion for region `$name` must return two or three finite coordinates at time $time"))
+        return length(value) == 2 ? SVector{3,Float64}(value[1], value[2], 0.0) : SVector{3,Float64}(value)
     end
 
     function validate_preview_motion(name, motion::MotionDetails)
@@ -432,7 +454,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     constrained Delaunay. Convex prism caps are single cells, while concave or
     holed caps are triangulated; prism sides are quads.
     """
-    function polygonal_regions(regions)
+    function polygonal_regions(regions; point_regions = nothing)
         points       = SVector{3, Float64}[]
         connectivity = Int64[]
         offsets      = Int64[0]
@@ -443,8 +465,20 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             push!(offsets, length(connectivity))
             push!(region_ids, id)
         end
+        record_points!(start, id) = point_regions === nothing ? nothing :
+            append!(point_regions, fill(id, length(points)-start))
 
         for (id, region) in enumerate(regions), (polygon, z) in surfaces_of(region)
+            surface_start = length(points)
+            if polygon isa PolygonSurface
+                first_point = length(points)
+                append!(points, polygon.points)
+                for face in polygon.faces
+                    add_cell!(first_point .+ face, id)
+                end
+                record_points!(surface_start, id)
+                continue
+            end
             polygon_rings = collect(rings(polygon))
             base_z      = z === nothing ? 0.0 : z[1]
 
@@ -453,6 +487,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 if z === nothing
                     ids = append_ring_points!(points, ring, base_z)
                     add_cell!(counter_clockwise(points, ids), id)
+                    record_points!(surface_start, id)
                     continue
                 end
 
@@ -465,6 +500,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     add_cell!([bottom_ids[i], bottom_ids[next], top_ids[next],
                                top_ids[i]], id)
                 end
+                record_points!(surface_start, id)
                 continue
             end
 
@@ -482,7 +518,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 # A prism's bottom lid faces down.
                 add_cell!(z === nothing ? ids : reverse(ids), id)
             end
-            z === nothing && continue
+            if z === nothing
+                record_points!(surface_start, id)
+                continue
+            end
 
             # Prism: a triangulated top lid and one quad per outline edge.
             top_first = length(points)
@@ -502,6 +541,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                               SVector(b[1], b[2], z[2]), SVector(a[1], a[2], z[2]))
                 add_cell!(corner .+ [1, 2, 3, 4], id)
             end
+            record_points!(surface_start, id)
         end
         isempty(points) && throw(ArgumentError("polygon regions have no points"))
         return points, connectivity, offsets, region_ids
@@ -518,6 +558,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
     # `(polygon, nothing)` for flat polygons, `(polygon, (bottom, top))` for prisms.
     surfaces_of(region::PolyArea) = ((region, nothing),)
+    surfaces_of(region::PolygonSurface) = ((region, nothing),)
     surfaces_of(region::Multi) =
         ((p, nothing) for p in polygons_of_multi(parent(region)))
     surfaces_of(region::ExtrudedPolygon) =
@@ -528,7 +569,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     end
     surfaces_of(region) =
         throw(ArgumentError("each region must be a PolyArea, a Multi of PolyAreas, an " *
-                            "ExtrudedPolygon or a tuple or vector of those, got $(typeof(region))"))
+                            "ExtrudedPolygon, PolygonSurface or a tuple or vector of those, got $(typeof(region))"))
 
     function polygons_of_multi(polygons)
         isempty(polygons) && throw(ArgumentError("polygon regions cannot be empty"))
