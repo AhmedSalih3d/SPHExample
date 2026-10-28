@@ -120,6 +120,17 @@ the existing SPS stress tensors. Pair orientation and the closure are unchanged,
 but rounding can differ. It defaults to `false` and does not require radial
 continuity/diffusion. Other viscosity models retain their existing path.
 
+`GPUInteractionAlwaysInline = true` forces helper-function inlining in the
+interaction kernel without requesting relaxed floating-point semantics.
+`GPUInteractionFastMath = true` enables CUDA fast math in that kernel and its
+callees, including custom models: approximate arithmetic, reassociation,
+Float32 subnormal flushing and assumptions about NaN/Inf may change results.
+Both default to `false`, can be combined, and do not change the compilation of
+boundary-correction, integration, reduction or interaction-cache preparation
+kernels. Validate accuracy and elapsed solver time for the intended case.
+Changing either option between output intervals invalidates captured graphs
+and refreshes the carried single-neighbor derivative.
+
 `GPUFixedGrid = true` retains the neighbour-grid bounds from the initial
 particle geometry. `GPUGridExpansion` selects which sides may grow, as one
 `(negative, positive)` Boolean pair per axis, for example
@@ -178,6 +189,8 @@ mutable struct SimulationMetaData{Dimensions,
     GPUMaxCells::Int             # safety limit for the size of the neighbour grid
     GPUInteractionThreads::Int   # threads per block for the interaction kernels
     GPULanesPerParticle::Int     # warp lanes per particle in the gather kernels (0 = automatic)
+    GPUInteractionAlwaysInline::Bool # force inlining only in the interaction kernel
+    GPUInteractionFastMath::Bool # opt-in relaxed arithmetic only in the interaction kernel
     GPURadialInteractions::Bool  # opt-in scalar Wendland arithmetic and symmetric linear diffusion
     GPUScalarSPSViscosity::Bool   # separate opt-in rank-one SPS stress arithmetic (changes rounding)
     GPUBoundaryForces::Bool      # also evaluate the momentum equation for boundary particles (CPU parity)
@@ -296,6 +309,8 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUMaxCells::Int                        = 50_000_000,
         GPUInteractionThreads::Int              = 128,
         GPULanesPerParticle::Int                = 0,
+        GPUInteractionAlwaysInline::Bool        = false,
+        GPUInteractionFastMath::Bool            = false,
         GPURadialInteractions::Bool             = false,
         GPUScalarSPSViscosity::Bool              = false,
         GPUBoundaryForces::Bool                 = true,
@@ -329,7 +344,8 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         FloatType(CurrentTimeStep), FloatType(TotalTime), FloatType(SimulationTime),
         IndexCounter, VisualizeInParaview, ExportSingleVTKHDF, ExportGridCells,
         OutputVariables, OpenLogFile, TimeSteppingMode,
-        GPUSyncTimers, GPUDeterministicSort, GPUMaxCells, GPUInteractionThreads, GPULanesPerParticle, GPURadialInteractions, GPUScalarSPSViscosity,
+        GPUSyncTimers, GPUDeterministicSort, GPUMaxCells, GPUInteractionThreads, GPULanesPerParticle,
+        GPUInteractionAlwaysInline, GPUInteractionFastMath, GPURadialInteractions, GPUScalarSPSViscosity,
         GPUBoundaryForces, GPUAsyncOutput, GPUMaxStepsPerSync, GPUUseGraph, GPUClipTimeStepToOutput, GPUCellSubdivision,
         GPUFixedGrid, GPUGridExpansion, Periodicity,
         GPUDoublePosition, GPUPeriodicCellCoordinates, GPUCacheInteractionFields, GPUCompactBuffers, GPUOutputQueueBytes, GPUOutputBufferBytes,

@@ -19,7 +19,7 @@ simulation. Returns host-only `requested`, `capabilities`, `effective` and
 explicit `GPULanesPerParticle` values can be resolved without one.
 
 `effective` identifies the SPH kernel, interaction specialization, diffusion
-operator, viscosity arithmetic, precision, pair coordinates and simulation
+operator, viscosity arithmetic, interaction compiler options, precision, pair coordinates and simulation
 modes. A radial linear-diffusion operator is `:symmetric_reciprocal_density`;
 `:reference` retains CPU pair orientation (CPU equivalence also requires cell
 subdivision one). Capabilities describe implementation support, not accuracy.
@@ -33,6 +33,8 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
     options = interaction_options(kernel, diffusion, viscosity;
         radial = meta.GPURadialInteractions, scalar_sps = meta.GPUScalarSPSViscosity)
     requested = (; radial_interactions = meta.GPURadialInteractions,
+        interaction_always_inline = meta.GPUInteractionAlwaysInline,
+        interaction_fastmath = meta.GPUInteractionFastMath,
         scalar_sps_viscosity = meta.GPUScalarSPSViscosity, use_graph = meta.GPUUseGraph,
         sync_timers = meta.GPUSyncTimers, lanes_per_particle = meta.GPULanesPerParticle,
         max_steps_per_sync = meta.GPUMaxStepsPerSync, double_position = meta.GPUDoublePosition,
@@ -45,6 +47,8 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
         kernel_normalization = kernel.αD, interaction_kernel = :interaction_kernel!,
         interaction_path = options.radial ? :radial : :reference,
         radial_interactions = options.radial, scalar_sps_viscosity = options.scalar_sps,
+        interaction_always_inline = meta.GPUInteractionAlwaysInline,
+        interaction_fastmath = meta.GPUInteractionFastMath,
         density_diffusion_model = typeof(diffusion),
         density_diffusion_operator = diffusion isa ZeroDensityDiffusion ? :disabled :
             diffusion isa FourtakasDensityDiffusion ? :fourtakas_inner :

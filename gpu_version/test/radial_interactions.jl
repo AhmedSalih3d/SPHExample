@@ -12,6 +12,9 @@ const GS = SPHExampleGPU.GPUStepState
 struct OrderedViscosity <: SPHViscosity end
 struct OrderedDiffusion <: SPHDensityDiffusion end
 struct ReciprocalProbeDiffusion <: SPHDensityDiffusion end
+struct CompilerProbeDiffusion{T} <: SPHDensityDiffusion
+    value::T
+end
 struct SymmetricReferenceDiffusion{M<:SPHDensityDiffusion} <: SPHDensityDiffusion
     model::M
 end
@@ -32,6 +35,12 @@ end
 @inline function DD.compute_density_diffusion(::ReciprocalProbeDiffusion, kernel, constants, particles,
                                              x, gradient, d², ρᵢ, ρⱼ, invρᵢ, invρⱼ, i, j, types)
     value = invρᵢ + invρⱼ
+    return value, value
+end
+
+@inline function DD.compute_density_diffusion(model::CompilerProbeDiffusion, kernel, constants, particles,
+                                             x, gradient, d², ρᵢ, ρⱼ, invρᵢ, invρⱼ, i, j, types)
+    value = ifelse(isfinite(model.value), one(ρᵢ), zero(ρᵢ))
     return value, value
 end
 
@@ -206,7 +215,8 @@ function diffusion_pair_fixture(D, T, TP; reach)
 end
 
 function interaction_fields(f, diffusion, viscosity; radial = nothing, lanes = 1, boundary_forces = true,
-                            boundary_data = nothing, step = f.step, scalar_sps = nothing)
+                            boundary_data = nothing, step = f.step, scalar_sps = nothing,
+                            always_inline = false, fastmath = false)
     (; gpu, cells, support) = f
     extra = radial === nothing ? (;) : (; radial = Val(radial))
     scalar_extra = scalar_sps === nothing ? (;) : (; scalar_sps = Val(scalar_sps))
@@ -215,7 +225,7 @@ function interaction_fields(f, diffusion, viscosity; radial = nothing, lanes = 1
         gpu.Velocity, gpu.Type, cells.CellStart, gpu.CellID, cells.grid_dev, step,
         diffusion, viscosity, f.kernel, f.constants, Val(true), Val(true);
         lanes = Val(lanes), boundary_forces = Val(boundary_forces), pos_cells = support.PosCells,
-        boundary_data, extra..., scalar_extra...)
+        boundary_data, always_inline, fastmath, extra..., scalar_extra...)
     return map(Array, (support.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient, support.∇Cᵢ, support.∇◌rᵢ))
 end
 
@@ -243,7 +253,8 @@ function simulation_fixture(D, T, TP, boundary_mode; floating = false)
 end
 
 function simulate(f; radial, graph, scheme, precision = Float32, position_type = Float64,
-                  diffusion = LinearDensityDiffusion(), viscosity = ArtificialViscosity(), scalar_sps = false)
+                  diffusion = LinearDensityDiffusion(), viscosity = ArtificialViscosity(), scalar_sps = false,
+                  always_inline = false, fastmath = false, cached = false)
     return mktempdir() do save
         D = length(eltype(f.geometry[1].Particles.Position))
         T = precision
@@ -253,6 +264,8 @@ function simulate(f; radial, graph, scheme, precision = Float32, position_type =
             OutputTimes = T(0.001), GPUDoublePosition = position_type !== T, GPUUseGraph = graph,
             GPUMaxStepsPerSync = 8, GPURadialInteractions = radial, OutputVariables = fields,
             GPUScalarSPSViscosity = scalar_sps,
+            GPUInteractionAlwaysInline = always_inline, GPUInteractionFastMath = fastmath,
+            GPUCacheInteractionFields = cached,
             GPUOutputQueueBytes = 1024^2, VisualizeInParaview = false, OpenLogFile = false, ExportGridCells = true)
         host = AllocateDataStructures(f.geometry, meta)
         logger = SimulationLogger(save)
@@ -275,12 +288,13 @@ function simulate(f; radial, graph, scheme, precision = Float32, position_type =
     end
 end
 
-function mode_switch_run(graph; scalar_sps = false, scheme = SymplecticTimeStepping(), refresh_control = false)
+function mode_switch_run(graph; scalar_sps = false, compiler_options = false,
+                         scheme = SymplecticTimeStepping(), refresh_control = false)
     D, T, TP = 2, Float32, Float64
     f = simulation_fixture(D, T, TP, NoMDBC)
     return mktempdir() do save
         meta = SimulationMetaData{D,T}(SimulationName = "Switch", SaveLocation = save,
-            SimulationTime = T(scalar_sps ? 0.015 : 0.009), OutputTimes = T(0.003), OutputIterationCounter = 1,
+            SimulationTime = T(scalar_sps || compiler_options ? 0.015 : 0.009), OutputTimes = T(0.003), OutputIterationCounter = 1,
             GPUDoublePosition = true, GPUUseGraph = graph, GPUMaxStepsPerSync = 8)
         meta.TimeSteppingMode = scheme
         host = AllocateDataStructures(f.geometry, meta)
@@ -291,14 +305,21 @@ function mode_switch_run(graph; scalar_sps = false, scheme = SymplecticTimeStepp
         motion = MotionArrays(f.geometry, host)
         state = StepState{T}(dx = one(T) + f.kernel.h)
         old_graphs = CUDA.CuGraphExec[]
-        modes = scalar_sps ? ((false, false), (true, false), (false, true), (true, true), (false, false)) :
+        modes = scalar_sps || compiler_options ? ((false, false), (true, false), (false, true), (true, true), (false, false)) :
             ((false, false), (true, false), (false, false))
         viscosity = scalar_sps ? LaminarSPS() : ArtificialViscosity()
         for (mode, scalar_mode) in modes
+            always_inline, fastmath = compiler_options ? (mode, scalar_mode) : (false, false)
+            if compiler_options
+                mode, scalar_mode = false, false
+            end
             meta.GPURadialInteractions = mode
             meta.GPUScalarSPSViscosity = scalar_mode
+            meta.GPUInteractionAlwaysInline = always_inline
+            meta.GPUInteractionFastMath = fastmath
             if refresh_control && state.primed &&
-               (state.radial_interactions != mode || state.scalar_sps_viscosity != scalar_mode)
+               (state.radial_interactions != mode || state.scalar_sps_viscosity != scalar_mode ||
+                state.interaction_always_inline != always_inline || state.interaction_fastmath != fastmath)
                 # Supply the new full-state derivative explicitly in the control.
                 step = HostStep(state.fh[GS.F_DT], state.fh[GS.F_TIME])
                 GK.launch_prepare_interactions!(gpu.Position, step;
@@ -311,10 +332,13 @@ function mode_switch_run(graph; scalar_sps = false, scheme = SymplecticTimeStepp
                     LinearDensityDiffusion(), viscosity, f.kernel, f.constants, Val(false), Val(false);
                     lanes = Val(choose_lanes(length(gpu), Val(D))), pos_cells = support.PosCells,
                     radial = Val(mode), scalar_sps = Val(scalar_mode),
+                    always_inline, fastmath,
                     include_gravity = Val(scheme isa SingleNeighborTimeStepping))
                 GS.invalidate_graphs!(state)
                 state.radial_interactions = mode
                 state.scalar_sps_viscosity = scalar_mode
+                state.interaction_always_inline = always_inline
+                state.interaction_fastmath = fastmath
             end
             SimulationLoop(LinearDensityDiffusion(), viscosity, f.kernel,
                 meta, f.constants, gpu, cells, support, reduction, motion, state)
@@ -322,6 +346,10 @@ function mode_switch_run(graph; scalar_sps = false, scheme = SymplecticTimeStepp
             @test state.scalar_sps_viscosity == scalar_mode
             @test state.configuration.effective.radial_interactions == mode
             @test state.configuration.effective.scalar_sps_viscosity == scalar_mode
+            @test state.interaction_always_inline == always_inline
+            @test state.interaction_fastmath == fastmath
+            @test state.configuration.effective.interaction_always_inline == always_inline
+            @test state.configuration.effective.interaction_fastmath == fastmath
             if graph
                 @test !isempty(state.graphs)
                 @test all(exec -> all(old -> exec !== old, old_graphs), values(state.graphs))
@@ -336,6 +364,59 @@ function mode_switch_run(graph; scalar_sps = false, scheme = SymplecticTimeStepp
 end
 
 if CUDA.functional()
+    @testset "interaction compiler flags reach the kernel and custom model callees" begin
+        for D in (2, 3), T in (Float32, Float64), always_inline in (false, true)
+            f = interaction_fixture(D, T, T)
+            diffusion = CompilerProbeDiffusion(T(NaN))
+            strict = interaction_fields(f, diffusion, ZeroViscosity(); always_inline)
+            approximate = interaction_fields(f, diffusion, ZeroViscosity(); always_inline, fastmath = true)
+            # Fast math is permitted to assume finite values even in custom models.
+            @test maximum(abs, approximate[1] .- strict[1]) > one(T)
+            restored = interaction_fields(f, diffusion, ZeroViscosity(); always_inline, fastmath = false)
+            @test restored == strict
+            for fields in (strict, approximate)
+                @test all(field -> all(x -> x isa Number ? isfinite(x) : all(isfinite, x), field), fields)
+            end
+        end
+    end
+
+    @testset "combined compiler options preserve graph/direct integration" begin
+        for (D, T, TP, mode) in ((2, Float32, Float32, NoMDBC), (2, Float32, Float64, SimpleMDBC),
+                                 (3, Float32, Float64, UpdatedMDBC), (2, Float64, Float64, NoMDBC)),
+            scheme in (SymplecticTimeStepping(), SingleNeighborTimeStepping())
+            f = simulation_fixture(D, T, TP, mode)
+            reference = simulate(f; radial = false, graph = false, scheme,
+                precision = T, position_type = TP, viscosity = LaminarSPS(), cached = mode !== NoMDBC)
+            for always_inline in (false, true), fastmath in (false, true)
+                direct = simulate(f; radial = false, graph = false, scheme, precision = T,
+                    position_type = TP, viscosity = LaminarSPS(), cached = mode !== NoMDBC,
+                    always_inline, fastmath)
+                replay = simulate(f; radial = false, graph = true, scheme, precision = T,
+                    position_type = TP, viscosity = LaminarSPS(), cached = mode !== NoMDBC,
+                    always_inline, fastmath)
+                @test replay == direct
+                @test direct.output.fields == reference.output.fields
+                @test all(>(0), direct.state[3])
+                @test all(field -> all(x -> x isa Number ? isfinite(x) : all(isfinite, x), field), direct.state)
+                if !fastmath
+                    test_fields_close(direct.state, reference.state, T === Float32 ? 5e-5 : 2e-12)
+                end
+            end
+        end
+    end
+
+    @testset "compiler option switches invalidate graphs and refresh carried derivatives" begin
+        for scheme in (SymplecticTimeStepping(), SingleNeighborTimeStepping())
+            direct = mode_switch_run(false; compiler_options = true, scheme)
+            replay = mode_switch_run(true; compiler_options = true, scheme)
+            @test replay == direct
+            if scheme isa SingleNeighborTimeStepping
+                control = mode_switch_run(false; compiler_options = true, scheme, refresh_control = true)
+                @test direct == control
+            end
+        end
+    end
+
     @testset "reciprocal densities follow the evaluated state without preparation" begin
         for D in (2, 3), (T, TP) in ((Float32, Float32), (Float32, Float64), (Float64, Float64))
             f = diffusion_pair_fixture(D, T, TP; reach = 1)

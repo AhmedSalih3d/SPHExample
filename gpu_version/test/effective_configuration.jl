@@ -69,6 +69,32 @@ end
     end
 end
 
+@testset "independent interaction compiler options and defaults" begin
+    for D in (2, 3), T in (Float32, Float64)
+        default = metadata(D, T)
+        @test !default.GPUInteractionAlwaysInline
+        @test !default.GPUInteractionFastMath
+        kernel = SPHKernelInstance{D,T}(WendlandC2(); dx = T(0.02))
+        for always_inline in (false, true), fastmath in (false, true)
+            meta = metadata(D, T; GPUInteractionAlwaysInline = always_inline,
+                GPUInteractionFastMath = fastmath, GPURadialInteractions = !always_inline,
+                GPUScalarSPSViscosity = !fastmath)
+            config = effective_configuration(meta, kernel, LinearDensityDiffusion(), LaminarSPS(); particle_count = 8)
+            @test config.requested.interaction_always_inline == always_inline
+            @test config.requested.interaction_fastmath == fastmath
+            @test config.effective.interaction_always_inline == always_inline
+            @test config.effective.interaction_fastmath == fastmath
+            @test config.effective.radial_interactions == !always_inline
+            @test config.effective.scalar_sps_viscosity == !fastmath
+            @test isempty(config.fallbacks)
+            meta.GPUInteractionAlwaysInline = !always_inline
+            meta.GPUInteractionFastMath = !fastmath
+            @test config.effective.interaction_always_inline == always_inline
+            @test config.effective.interaction_fastmath == fastmath
+        end
+    end
+end
+
 # Exercise the real capture/fallback accounting with one deterministic device update.
 struct CaptureContext{S, G, C}
     state::S
@@ -99,7 +125,7 @@ end
 if CUDA.functional()
     function run_case(save; kernel_model = WendlandC2(), diffusion = LinearDensityDiffusion(),
                       viscosity = ArtificialViscosity(), requested = true, log_mode = StoreLog,
-                      timed = false)
+                      timed = false, always_inline = false, fastmath = false)
         T = Float32
         points = [SVector{2,T}(x, y) for x in T[0, 0.02], y in T[0, 0.02]][:]
         geometry = [SPHGeometry{2,T}(points; Density = T[999, 1001, 1003, 998], Type = Fluid, GroupMarker = 1)]
@@ -107,6 +133,7 @@ if CUDA.functional()
             SimulationName = "EffectiveConfiguration", SaveLocation = save,
             SimulationTime = T(0.001), OutputTimes = T(0.001),
             GPURadialInteractions = requested, GPUScalarSPSViscosity = requested,
+            GPUInteractionAlwaysInline = always_inline, GPUInteractionFastMath = fastmath,
             GPULanesPerParticle = 0, GPUSyncTimers = timed, GPUUseGraph = timed,
             VisualizeInParaview = false, OpenLogFile = false)
         constants = SimulationConstants{T}(dx = T(0.02), c₀ = T(20), g = zero(T))
@@ -124,6 +151,19 @@ if CUDA.functional()
             close(logger.LoggerIo)
         end
         return (; result, log = read(joinpath(save, "SimulationOutput.log"), String))
+    end
+
+    @testset "simulation reports the submitted interaction compiler options" begin
+        for always_inline in (false, true), fastmath in (false, true)
+            mktempdir() do save
+                run = run_case(save; viscosity = LaminarSPS(), always_inline, fastmath)
+                config = run.result.configuration
+                @test config.effective.interaction_always_inline == always_inline
+                @test config.effective.interaction_fastmath == fastmath
+                @test occursin("interaction_always_inline = $always_inline", run.log)
+                @test occursin("interaction_fastmath = $fastmath", run.log)
+            end
+        end
     end
 
     @testset "simulation reports resolved fallbacks with and without logging" begin

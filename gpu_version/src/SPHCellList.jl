@@ -1053,7 +1053,10 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
                              include_gravity = Val(total_acceleration),
                              radial = get(ctx, :radial, Val(false)),
                              scalar_sps = get(ctx, :scalar_sps, Val(false)), periodicity = cl.periodicity,
-                             periodic_bounds = periodic_bounds(sup), periodic_cell_coordinates = get(ctx, :periodic_cell_coordinates, false))
+                             periodic_bounds = periodic_bounds(sup),
+                             periodic_cell_coordinates = get(ctx, :periodic_cell_coordinates, false),
+                             always_inline = get(ctx, :interaction_always_inline, false),
+                             fastmath = get(ctx, :interaction_fastmath, false))
     end
     launch_external_forces!(get(ctx, :external_forces, ()), gpu.Acceleration, gpu.Position, gpu.Velocity,
         gpu.Type, gpu.GroupMarker, step, SimConstants.g; prepared = prepared_forces)
@@ -1184,7 +1187,10 @@ function enqueue_step!(ctx, timed::Bool)
         frozen_particles = get(ctx, :frozen_particles, Val(true)),
         radial = get(ctx, :radial, Val(false)),
         scalar_sps = get(ctx, :scalar_sps, Val(false)), periodicity = cl.periodicity,
-        periodic_bounds = periodic_bounds(sup), periodic_cell_coordinates = get(ctx, :periodic_cell_coordinates, false))
+        periodic_bounds = periodic_bounds(sup),
+        periodic_cell_coordinates = get(ctx, :periodic_cell_coordinates, false),
+        always_inline = get(ctx, :interaction_always_inline, false),
+        fastmath = get(ctx, :interaction_fastmath, false))
 
     @phase HourGlass "09 External Forces" timed launch_external_forces!(get(ctx, :external_forces, ()),
         gpu.Acceleration, position_half, velocity_half, gpu.Type, gpu.GroupMarker, state, SimConstants.g;
@@ -1428,11 +1434,18 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     bforces    = Val(SimMetaData.GPUBoundaryForces)
     use_radial = effective.radial_interactions
     use_scalar_sps = effective.scalar_sps_viscosity
-    interaction_mode_changed = state.radial_interactions != use_radial || state.scalar_sps_viscosity != use_scalar_sps
+    interaction_always_inline = effective.interaction_always_inline
+    interaction_fastmath = effective.interaction_fastmath
+    interaction_mode_changed = state.radial_interactions != use_radial ||
+        state.scalar_sps_viscosity != use_scalar_sps ||
+        state.interaction_always_inline != interaction_always_inline ||
+        state.interaction_fastmath != interaction_fastmath
     if interaction_mode_changed
         invalidate_graphs!(state)
         state.radial_interactions = use_radial
         state.scalar_sps_viscosity = use_scalar_sps
+        state.interaction_always_inline = interaction_always_inline
+        state.interaction_fastmath = interaction_fastmath
     end
     radial = Val(use_radial)
     scalar_sps = Val(use_scalar_sps)
@@ -1444,7 +1457,8 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         sup.InvDensity !== nothing && sup.Pressure !== nothing
 
     ctx = (; gpu, cl, sup, red, motion, floating, external_forces, rotation, state, SimKernel, SimConstants, SimDensityDiffusion,
-             SimViscosity, FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, radial, scalar_sps, HourGlass, boundary_mode,
+             SimViscosity, FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, radial, scalar_sps,
+             interaction_always_inline, interaction_fastmath, HourGlass, boundary_mode,
              frozen_particles = Val(cl.frozen_total > 0), cache_final_state, diagnostics,
              periodic_cell_coordinates = SimMetaData.GPUPeriodicCellCoordinates,
              logger = LMode === StoreLog ? logger : nothing)
@@ -1453,7 +1467,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     set_output_time!(state, t_out; clip_timestep = SimMetaData.GPUClipTimeStepToOutput)
 
     if SingleNeighbor && interaction_mode_changed && state.primed && cl.nrebuilds > 0
-        # The carried derivative belongs to the previous interaction operator.
+        # The carried derivative belongs to the previous operator/compiler options.
         step = HostStep(state.fh[F_DT], state.fh[F_TIME])
         enqueue_state_derivative!(ctx, step, timed, "00a Refresh Interaction MDBC", "00b Refresh Interaction Derivative")
     end

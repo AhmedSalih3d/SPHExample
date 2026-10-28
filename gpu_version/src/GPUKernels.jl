@@ -594,7 +594,8 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
 end
 
 """
-    launch_interactions!(...; threads, lanes, boundary_forces, pos_cells, radial, scalar_sps)
+    launch_interactions!(...; threads, lanes, boundary_forces, pos_cells, radial, scalar_sps,
+                         always_inline = false, fastmath = false)
 
 Launch the gather interaction kernel. `Position`, `Density` and
 `Velocity` are the arrays of the state being evaluated (the half step arrays
@@ -626,6 +627,13 @@ selected without radial continuity/diffusion, and changes rounding.
 `include_gravity = Val(true)` writes total acceleration for startup/rebuild
 evaluations carried into a single-neighbor predictor. The default writes only
 interaction acceleration; the predictor or corrector then adds gravity.
+`always_inline = true` forces helper-function inlining. Independently,
+`fastmath = true` enables relaxed floating-point semantics throughout the
+interaction kernel and its callees, including custom models. It may change
+rounding and NaN/Inf checks, flush Float32 subnormals, and use approximate
+arithmetic. Both default to `false` and can be combined. Other kernels,
+including mDBC corrections and pressure/reciprocal cache preparation, are not
+recompiled with these options.
 """
 function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
                               Position, Density, Velocity, ParticleType,
@@ -635,7 +643,9 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
                               boundary_forces::Val = Val(true), pos_cells = nothing, boundary_data = nothing,
                               radial::Val = Val(false), scalar_sps::Val = Val(false), inverse_density = nothing,
                               pressure = nothing, frozen_particles::Val = Val(true), include_gravity::Val = Val(false), periodicity = nothing,
-                              periodic_bounds = nothing, periodic_cell_coordinates::Bool = false, viscous_dt = nothing, fast_math::Bool = false)
+                              periodic_bounds = nothing, periodic_cell_coordinates::Bool = false, viscous_dt = nothing,
+                              fast_math::Bool = false,
+                              always_inline::Bool = false, fastmath::Bool = false)
     inverse_density === nothing || length(inverse_density) == length(Density) ||
         throw(DimensionMismatch("Reciprocal cache must have one entry per evaluated density"))
     pressure === nothing || length(pressure) == length(Density) ||
@@ -660,7 +670,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
     end
     use_radial = Val(options.radial)
     use_scalar_sps = Val(options.scalar_sps)
-    @cuda fastmath=fast_math threads=threads blocks=cld(n * K, threads) interaction_kernel!(
+    @cuda always_inline=always_inline fastmath=fastmath threads=threads blocks=cld(n * K, threads) interaction_kernel!(
         dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
         Pairs, Position, Density, Velocity, ParticleType, SimParticles,
         CellStart, CellID, grid, step,
