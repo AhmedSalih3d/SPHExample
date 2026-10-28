@@ -55,7 +55,7 @@ Base.@kwdef struct WheelPeriodicConfig
     density_diffusion::Float64 = 0.1
     cfl::Float64 = 0.2
     simulation_time::Float64 = 3.2
-    output_interval::Float64 = 0.08
+    output_interval::Float64 = 0.01 #0.08
 end
 
 function validate_wheel_config(c::WheelPeriodicConfig)
@@ -206,7 +206,7 @@ function prepare_wheel_periodic_3d(c::WheelPeriodicConfig = WheelPeriodicConfig(
         SimulationName = "WheelPeriodic3D", SaveLocation = abspath(save_location),
         SimulationTime = c.simulation_time, OutputTimes = c.output_interval,
         VisualizeInParaview = visualize, OpenLogFile = open_log_file,
-        Periodicity = case.periodicity, GPUCellSubdivision = 1, GPUDoublePosition = true,
+        Periodicity = case.periodicity, GPUCellSubdivision = 2, GPUDoublePosition = true, GPULanesPerParticle = 1,
         GPUUseGraph = use_graph, GPUClipTimeStepToOutput = true,
         GPUFixedGrid = true, GPUGridExpansion = ((false, false), (true, true), (false, true)),
         ExportSingleVTKHDF = true, ExportGridCells = false)
@@ -223,7 +223,7 @@ Reject a nonempty output directory so existing user data cannot be overwritten.
 Return the standard `SimulationResult`, including the final floating-body state.
 """
 function run_wheel_periodic_3d(c::WheelPeriodicConfig = WheelPeriodicConfig();
-        save_location = joinpath(@__DIR__, "..", "output", "wheel_periodic_3d"), kwargs...)
+        save_location = joinpath(@__DIR__, "..", "output", "wheel_periodic_3d_dp0.0125_LinearDensityDiffusion_GPULanesPerParticle=1"), kwargs...)
     save = abspath(save_location)
     ispath(save) && (!isdir(save) || !isempty(readdir(save))) &&
         throw(ArgumentError("output path must be a new or empty directory: $save"))
@@ -242,8 +242,8 @@ function run_wheel_periodic_3d(c::WheelPeriodicConfig = WheelPeriodicConfig();
         return RunSimulation(SimGeometry = setup.case.geometry, SimMetaData = setup.meta,
             SimParticles = setup.particles, SimConstants = setup.case.constants,
             SimKernel = setup.case.kernel, SimLogger = logger,
-            SimTimeStepping = SymplecticTimeStepping(), SimViscosity = ArtificialViscosity(),
-            SimDensityDiffusion = ComplexDensityDiffusion())
+            SimTimeStepping = SingleNeighborTimeStepping(), SimViscosity = ArtificialViscosity(),
+            SimDensityDiffusion = LinearDensityDiffusion())
     finally
         isopen(logger.LoggerIo) && close(logger.LoggerIo)
     end
@@ -251,12 +251,12 @@ end
 
 end # module PeriodicWheelCase
 
-if abspath(PROGRAM_FILE) == @__FILE__
+# if abspath(PROGRAM_FILE) == @__FILE__
     using .PeriodicWheelCase
     length(ARGS) <= 3 || error("usage: WheelPeriodic3d.jl [output_dir] [dx] [duration]")
-    config = WheelPeriodicConfig(
-        particle_spacing = length(ARGS) >= 2 ? parse(Float64, ARGS[2]) : 0.025,
+    config = PeriodicWheelCase.WheelPeriodicConfig(
+        particle_spacing = length(ARGS) >= 2 ? parse(Float64, ARGS[2]) : 0.0125,
         simulation_time = length(ARGS) >= 3 ? parse(Float64, ARGS[3]) : 3.2)
-    run_wheel_periodic_3d(config; save_location = isempty(ARGS) ?
-        joinpath(@__DIR__, "..", "output", "wheel_periodic_3d") : ARGS[1])
-end
+    PeriodicWheelCase.run_wheel_periodic_3d(config; save_location = isempty(ARGS) ?
+        joinpath(@__DIR__, "..", "output", "wheel_periodic_3d_dp0.0125_LinearDensityDiffusion_GPULanesPerParticle=1_Verlet") : ARGS[1])
+# end

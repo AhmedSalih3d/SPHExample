@@ -215,7 +215,8 @@ if CUDA.functional()
                     SimConstants=SimulationConstants{T}(D;dx=0.01,c₀=10),
                     SimKernel=SPHKernelInstance{D,T}(WendlandC2();dx=T(0.01)),
                     SimViscosity=ZeroViscosity(),SimDensityDiffusion=ZeroDensityDiffusion(),
-                    SimTimeStepping=SymplecticTimeStepping(),SimLogger=logger,SimMotion=PrescribedMotion(1))
+                    SimTimeStepping=SymplecticTimeStepping(),SimLogger=logger,
+                    SimMotion=PrescribedMotion(1;translation=MotionSequence([KinematicSegment(1;velocity=(1,0))])))
             finally
                 isopen(logger.LoggerIo) && close(logger.LoggerIo)
             end

@@ -145,6 +145,21 @@ julia --project=gpu_version gpu_version/example/Periodicity2d.jl
 julia --project=gpu_version -t 2,0 gpu_version/test/periodicity.jl
 ```
 
+### Sinusoidal wave maker
+
+[Wavemaker.jl](example/Wavemaker/Wavemaker.jl) adapts DualSPHysics example 06: a 3D tank,
+sloping beach and sinusoidal piston, with periodicity across the tank width.
+The editable geometry lives in [Geometry.jl](example/Wavemaker/Geometry.jl);
+the [case guide](example/Wavemaker/README.md) describes the motion schedule, settings
+and exported geometry. Defaults are `dx = 0.02`, 10 seconds and output every
+0.1 seconds, using DBC, symplectic stepping and hydrostatic fluid initialization.
+
+```sh
+# From the repository root; optional arguments: output directory, spacing, duration
+julia --project=gpu_version -t 2,0 gpu_version/example/Wavemaker/Wavemaker.jl
+julia --project=gpu_version -t 2,0 gpu_version/example/Wavemaker/test_wavemaker.jl
+```
+
 ### External forces
 
 `SimExternalForces` adds prescribed acceleration histories to fluid groups,
@@ -287,7 +302,10 @@ For translation, acceleration, sinusoidal/circular trajectories, file input
 and hierarchical rigid motion, pass `SimMotion = PrescribedMotion(...)` or
 `MotionSystem(...)`. This path supports nonperiodic 2D/3D DBC and both
 integrators, with analytical wall velocities at the start, predictor and
-accepted times. The [nine runnable Motion examples](example/Motion/README.md)
+accepted times. Periodic DBC cases additionally allow independent translations
+that leave the periodic coordinate unchanged, as in the wave-maker example.
+Periodic rotations and parent hierarchies remain unsupported.
+The [nine runnable Motion examples](example/Motion/README.md)
 now reproduce the distributed DualSPHysics 5.4 Motion01–09 geometry and commanded
 motion, opening animated polygon surfaces by default. Their Julia implementation
 uses independent trajectory and transform abstractions. Actual-case geometry

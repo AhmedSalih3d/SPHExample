@@ -37,7 +37,7 @@ using ..GPUReductions
 using ..GPUStepState
 using ..ExternalForces: prepare_external_forces, launch_external_forces!
 using ..PrescribedRotation: RotationMotion, prepare_rotation, launch_rotation!, update_rotation_indices!
-using ..PrescribedMotions: PrescribedMotion, MotionSystem, combine_motions
+using ..PrescribedMotions: PrescribedMotion, MotionSystem, combine_motions, validate_periodic_motion
 using ..MotionStageSampling: MotionStageSampler
 using ..GPUCellGrid
 using ..GPUKernels
@@ -1593,6 +1593,8 @@ positions. Gravity remains in world coordinates; no external forces are implied.
 placement to translations, arbitrary-axis 3D rotations, circular translation,
 sequences and hierarchical motion, in nonperiodic 2D/3D DBC cases. Sampled
 histories and analytical segments provide matching trajectory derivatives.
+Periodic DBC cases also support independent translations with zero displacement
+along the periodic axis; rotations and parent hierarchies remain unsupported.
 `SimMotion`, `SimRotation` and `MotionDetails` must target disjoint groups.
 These motion features do not imply numerical equivalence with DualSPHysics'
 increment-based wall velocities or its event/XML system.
@@ -1622,8 +1624,9 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     CUDA.functional() || error("CUDA is not functional on this machine; use the CPU package SPHExample instead.")
     SimRotation === nothing || (Dimensions == 2 && BMode === NoMDBC && SimMetaData.Periodicity === nothing) ||
         throw(ArgumentError("SimRotation currently requires a nonperiodic 2D DBC case (NoMDBC)"))
-    SimMotion === nothing || (Dimensions in (2,3) && BMode === NoMDBC && SimMetaData.Periodicity === nothing) ||
-        throw(ArgumentError("SimMotion requires a nonperiodic 2D or 3D DBC case (NoMDBC)"))
+    SimMotion === nothing || (Dimensions in (2,3) && BMode === NoMDBC) ||
+        throw(ArgumentError("SimMotion requires a 2D or 3D DBC case (NoMDBC)"))
+    validate_periodic_motion(SimMotion, SimMetaData.Periodicity)
     external_forces = prepare_external_forces(SimExternalForces, SimParticles, Val(Dimensions), FloatType)
     SimMetaData.GPUTimestepDiagnosticsEvery >= 0 || throw(ArgumentError("GPUTimestepDiagnosticsEvery must be nonnegative"))
     SimulationLoggerConfiguration.start_runtime!(SimLogger, SimMetaData.TotalTime)

@@ -30,7 +30,9 @@ share a common coordinate frame. The child's transform acts first, followed
 by its parent's transform, recursively; translation directions and rotation
 axes therefore move with the parent. Set `group_marker = nothing` for a virtual
 parent that has no particles. A `MotionSystem` validates and orders the tree.
-Pass it as `SimMotion` to `RunSimulation` (nonperiodic 2D/3D DBC only).
+Pass it as `SimMotion` to `RunSimulation` (2D/3D DBC). Periodic cases allow
+independent translations that leave the periodic coordinate unchanged;
+rotations and parent hierarchies still require a nonperiodic case.
 """
 struct PrescribedMotion{D,T,A}
     id::Int
@@ -88,6 +90,30 @@ function MotionSystem(motions::Union{Tuple,AbstractVector})
     return MotionSystem{typeof(Tuple(ordered))}(Tuple(ordered))
 end
 MotionSystem(motion::PrescribedMotion) = MotionSystem((motion,))
+
+# Absolute poses retain their original reference positions. A transverse
+# translation never crosses a periodic face, so wrapping cannot invalidate
+# that reference. Reject other periodic motions until they have that support.
+function validate_periodic_motion(system, periodicity)
+    (system === nothing || periodicity === nothing) && return nothing
+    nodes = system isa PrescribedMotion ? (system,) : system.motions
+    for node in nodes
+        node.parent === nothing && node.rotation isa ConstantTrajectory && iszero(node.rotation.value) &&
+            zero_axial_translation(node.translation, periodicity.axis) ||
+            throw(ArgumentError("Periodic SimMotion requires independent translations with zero displacement along the periodic axis; rotations and parent hierarchies are unsupported"))
+    end
+    return nothing
+end
+
+zero_axial_translation(trajectory, axis) = false
+zero_axial_translation(h::ConstantTrajectory, axis) = iszero(h.value[axis])
+zero_axial_translation(h::SampledTrajectory, axis) =
+    all(x -> iszero(x[axis]), h.values) && all(v -> iszero(v[axis]), h.velocities)
+zero_axial_translation(h::MotionSequence, axis) =
+    all(x -> iszero(x[axis]), h.offsets) &&
+    all(s -> iszero(s.velocity[axis]) && iszero(s.acceleration[axis]) && iszero(s.amplitude[axis]), h.segments)
+zero_axial_translation(h::TrajectoryWindow, axis) =
+    iszero(h.finish_offset[axis]) && zero_axial_translation(h.trajectory, axis)
 
 # An affine transform and its exact first two time derivatives. Keeping the
 # derivatives avoids frame ambiguities when composing angular/linear motion.
