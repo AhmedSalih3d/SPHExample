@@ -152,7 +152,10 @@ sloping beach and sinusoidal piston, with periodicity across the tank width.
 The editable geometry lives in [Geometry.jl](example/Wavemaker/Geometry.jl);
 the [case guide](example/Wavemaker/README.md) describes the motion schedule, settings
 and exported geometry. Defaults are `dx = 0.02`, 10 seconds and output every
-0.1 seconds, using DBC, symplectic stepping and hydrostatic fluid initialization.
+0.1 seconds, using the reference's DBC particle layout, Fourtakas inner diffusion,
+double positions and `DualSPHysicsSymplectic()` reference stepping. The generated
+counts are 31,600 fixed, 30,000 moving and 401,600 fluid particles. The separate
+reference scheme leaves the existing CPU-compatible integrators unchanged.
 
 ```sh
 # From the repository root; optional arguments: output directory, spacing, duration
@@ -1342,13 +1345,15 @@ exactly. The drawing tests need no GPU:
   `Float32` is the precision DualSPHysics uses by default as well; densities
   stay well within the ~1 % variation of weakly compressible SPH.
 * `Float32` with `GPUDoublePosition = true` keeps the positions alone in
-  `Float64`, like the `posdouble` mode of DualSPHysics. A `Float32` position
+  `Float64`, matching DualSPHysics 5.4's internal position storage. Its
+  `SavePosDouble` option controls output precision. A `Float32` position
   is quantised to an ulp of its distance from the origin (1e-3 at 10 000 m,
   a tenth of a typical `dx`), and every step adds increments that are far
-  smaller than that ulp; a `Float64` position is not. The pair loops never
-  read the `Float64` positions, they work on cell relative `Float32`
-  coordinates (see "Double positions" below), so the cost is a `Float64`
-  add per particle per step and there is no measurable slowdown.
+  smaller than that ulp; a `Float64` position is not. Nonperiodic force
+  pairs use cell relative `Float32` coordinates (see "Double positions"
+  below). Periodic force pairs default to position-precision subtraction;
+  periodic DBC can select `GPUPeriodicCellCoordinates = true`. The wave-maker
+  investigation measures the performance and rounding differences.
 
 ### Startup time and precompilation
 
@@ -1418,7 +1423,7 @@ the standard *gather* formulation:
   neighbour loop is split over several lanes of a warp (each lane takes every
   `K`-th candidate) and the partial sums are merged with warp shuffles, so a
   3 000 particle 2D case still keeps the whole GPU busy.
-* **Exact CPU semantics.** The CPU's density diffusion uses `Dⱼ = -Dᵢ` as a
+* **CPU semantics for the reference models.** The CPU's density diffusion uses `Dⱼ = -Dᵢ` as a
   short cut that is not symmetric in the particle roles. The gather kernel
   reconstructs which particle of a pair was the CPU's `i` (lower index inside
   a cell, higher index across cells) and calls the very same
@@ -1428,6 +1433,12 @@ the standard *gather* formulation:
   evaluated (`ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹`) as arguments, so the corrector loop sees the
   predictor density and velocity, and the reciprocals are computed once per
   particle instead of once per pair.
+  The separate GPU model `FourtakasDensityDiffusion()` instead evaluates the
+  reference wave-maker's DDT2 inner operator from each target's viewpoint.
+  It uses the neighbour's reciprocal density and a nonlinear hydrostatic
+  correction, and suppresses the whole diffusion sum when a prescribed wall
+  lies within the support radius. `ComplexDensityDiffusion()` retains its
+  existing CPU pair orientation and fluid-fluid diffusion near walls.
 * **Fluid gating of density diffusion by select, not early exit.** The
   `LinearDensityDiffusion` and `ComplexDensityDiffusion` terms act only between
   two fluid particles. The CPU code returns early when either particle is not
@@ -1603,7 +1614,8 @@ the standard *gather* formulation:
   interaction kernels a `float4 poscell`: the position relative to the
   corner of the particle's cell plus the cell index, so that a pair distance
   is `(poscell₁ - poscell₂) + cellsize * (cell₁ - cell₂)` in single
-  precision. The GPU version does the same. With the option on, `Position`,
+  precision. The nonperiodic GPU force path uses this representation;
+  periodic DBC can opt in with `GPUPeriodicCellCoordinates`. With the option on, `Position`,
   the half step position and the mDBC ghost node positions are `Float64`
   arrays on the device (and on the host when the particles are allocated
   with `AllocateDataStructures(SimGeometry, SimMetaData)`); velocities,
@@ -1802,6 +1814,25 @@ rebuild. Unlike the CPU it does not re-evaluate the carried derivative every
 20 steps. Because both packages share these types
 and the `AllocateDataStructures(SimGeometry, SimMetaData)` form, the case
 definitions in `benchmark/cases.jl` construct against either package.
+
+The GPU-only `DualSPHysicsSymplectic()` path reproduces the reference DBC
+predictor/corrector, Float64 clock, neighbour-relative timestep limits and
+increment-averaged wall velocities. It currently requires direct execution,
+one gather lane, double positions, Wendland C2, artificial viscosity and
+Fourtakas inner diffusion, without floating bodies or external forces. See
+the [wave-maker guide](example/Wavemaker/README.md) for the matched setup and
+explicit reference exclusions. Existing integrators retain their arithmetic.
+
+`SPHKernelInstance` accepts optional `η²` and `αD` keywords. Omitting them
+retains the existing normalization and `(0.01h)^2` regularization. The
+wave-maker explicitly selects DualSPHysics' `(0.1h)^2` regularization and its
+normalization evaluated from the reference smoothing length.
+
+`GPUPeriodicCellCoordinates = true` enables working-precision cell-relative
+force coordinates for periodic DBC with mixed position precision. It is
+selected by the reference wave-maker. The default `false` retains periodic
+absolute-coordinate arithmetic. This changes rounding and requires numerical
+validation; it is not a bitwise-preserving performance option.
 
 ### GPU specific `SimulationMetaData` options
 

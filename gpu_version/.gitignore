@@ -17,3 +17,6 @@ julia-*.tar.gz
 
 # Logs
 *.log
+
+# Local reference exports and wave-maker comparison runs
+/output/wavemaker_investigation/

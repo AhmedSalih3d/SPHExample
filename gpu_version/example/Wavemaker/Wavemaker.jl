@@ -4,6 +4,7 @@
 # From gpu_version/:
 #   julia --project=. -t 2,0 example/Wavemaker/Wavemaker.jl
 using SPHExampleGPU
+using StaticArrays: SVector
 
 include(joinpath(@__DIR__, "Geometry.jl"))
 using .WavemakerGeometry
@@ -24,7 +25,7 @@ function wavemaker_motion()
     segments = [SinusoidalSegment(5.0;
         amplitude = (amplitude, 0.0, 0.0),
         frequency = (first_frequency, 0.0, 0.0),
-        phase = (3pi / 2, 0.0, 0.0),
+        phase = (4.71238898, 0.0, 0.0),
     )]
     for segment in 1:10
         frequency = isodd(segment) ? second_frequency : first_frequency
@@ -45,9 +46,13 @@ an animated polygon preview and solver output are saved below `save_location`.
 Use a new output directory for each run. Returns a `SimulationResult`.
 """
 function run_wavemaker(; FloatType = Float32, dx = 0.02, simulation_time = 10.0,
-        output_interval = 0.1, boundary_layers = 3,
-        visualize = true, open_log_file = true, use_graph = true,
-        double_position = false, measurements = true,
+        output_interval = 0.1,
+        cache_fields = false, lanes = 1, boundary_forces = false,
+        stationary = false,
+        density_diffusion = FourtakasDensityDiffusion(),
+        time_stepping = nothing, periodic_cell_coordinates = true, fast_math = true,
+        visualize = true, open_log_file = true, use_graph = false,
+        double_position = true, measurements = false,
         save_location = joinpath(@__DIR__, "..", "..", "output", "wavemaker"))
     isfinite(simulation_time) && 0 < simulation_time <= 100 ||
         throw(ArgumentError("simulation_time must be finite and in (0, 100]"))
@@ -57,8 +62,8 @@ function run_wavemaker(; FloatType = Float32, dx = 0.02, simulation_time = 10.0,
     T = FloatType
 
     # Geometry is kept in a separate, editable file.
-    case = wavemaker_geometry(; dx, boundary_layers)
-    piston_motion = wavemaker_motion()
+    case = wavemaker_geometry(; dx)
+    piston_motion = stationary ? PrescribedMotion(2; center = (0.0, 0.0, 0.0)) : wavemaker_motion()
 
     # Physical constants follow CaseWavemaker_Def.xml. Automatic sound speed
     # uses the sampled fluid depth, as in GenCase, rather than the polygon height.
@@ -73,13 +78,13 @@ function run_wavemaker(; FloatType = Float32, dx = 0.02, simulation_time = 10.0,
         δᵩ = 0.1,
     )
 
-    fixed_boundary = SPHGeometry{dimensions,T}(case.positions.fixed;
-        Density = constants.ρ₀,
+    fixed_boundary = SPHGeometry{dimensions,T}(;
+        Particles = particle_struct_array(case.positions.fixed, constants.ρ₀),
         GroupMarker = 1,
         Type = Fixed,
     )
-    piston = SPHGeometry{dimensions,T}(case.positions.piston;
-        Density = constants.ρ₀,
+    piston = SPHGeometry{dimensions,T}(;
+        Particles = particle_struct_array(case.positions.piston, constants.ρ₀),
         GroupMarker = 2,
         Type = Moving,
     )
@@ -90,8 +95,7 @@ function run_wavemaker(; FloatType = Float32, dx = 0.02, simulation_time = 10.0,
     )
     geometry = [fixed_boundary, piston, water]
 
-    # The reference case uses DBC and has shifting disabled. DucklingMDBC's
-    # setup layout is retained, while this case does not need ghost-node files.
+    # The distributed reference uses DBC, without ghost-node correction.
     metadata = SimulationMetaData{
         dimensions,
         T,
@@ -111,13 +115,30 @@ function run_wavemaker(; FloatType = Float32, dx = 0.02, simulation_time = 10.0,
         Periodicity = case.periodicity,
         GPUUseGraph = use_graph,
         GPUDoublePosition = double_position,
+        GPUPeriodicCellCoordinates = periodic_cell_coordinates,
         GPUCellSubdivision = 1,
-        GPUClipTimeStepToOutput = true,
+        GPUCacheInteractionFields = cache_fields,
+        GPULanesPerParticle = lanes,
+        # The tank and piston are prescribed; their interaction forces are not
+        # needed for rigid-body dynamics. Fluid forces are always evaluated.
+        GPUBoundaryForces = boundary_forces,
+        GPUClipTimeStepToOutput = false,
     )
 
-    kernel = SPHKernelInstance{dimensions,T}(WendlandC2(); h = T(1.5sqrt(3) * dx))
+    h = 1.5sqrt(3) * dx
+    kernel = SPHKernelInstance{dimensions,T}(WendlandC2();
+        h = T(h), αD = T(21 / (16pi * h^3)), η² = T((0.1h)^2))
+    if time_stepping === nothing
+        border = 0.05h
+        xmin, xmax = extrema(first,case.positions.fixed)
+        zmin, zmax = extrema(last,case.positions.fixed)
+        time_stepping = DualSPHysicsSymplectic(;
+            smoothing_length = h, sound_speed = 20sqrt(9.81 * sampled_depth),
+            domain_min = (xmin - border, 0.0, zmin - border),
+            domain_max = (xmax + border, 2.0, zmax + border + 0.5 * (zmax - zmin + 2border)),
+            density_min = 700.0, density_max = 1300.0, fast_math)
+    end
     viscosity = ArtificialViscosity()
-    density_diffusion = ComplexDensityDiffusion()
     probes = measurements ? MeasurementConfig(
         water_column_probes = [WaterColumnProbe("WG0", (1.0, 1.0, 0.0); radius = 2dx)],
     ) : nothing
@@ -143,7 +164,7 @@ function run_wavemaker(; FloatType = Float32, dx = 0.02, simulation_time = 10.0,
             SimKernel = kernel,
             SimViscosity = viscosity,
             SimDensityDiffusion = density_diffusion,
-            SimTimeStepping = SymplecticTimeStepping(),
+            SimTimeStepping = time_stepping,
             SimMotion = piston_motion,
             SimMeasurements = probes,
         )
@@ -152,10 +173,10 @@ function run_wavemaker(; FloatType = Float32, dx = 0.02, simulation_time = 10.0,
     end
 end
 
-# if abspath(PROGRAM_FILE) == @__FILE__
+if abspath(PROGRAM_FILE) == @__FILE__
     run_wavemaker(;
         save_location = length(ARGS) >= 1 ? ARGS[1] : joinpath(@__DIR__, "..", "..", "output", "wavemaker"),
         dx = length(ARGS) >= 2 ? parse(Float64, ARGS[2]) : 0.02,
         simulation_time = length(ARGS) >= 3 ? parse(Float64, ARGS[3]) : 10.0,
     )
-# end
+end

@@ -7,10 +7,10 @@ export SimulationMetaData, UpdateMetaData!, ShiftingMode, NoShifting, PlanarShif
        KernelOutputMode, NoKernelOutput, StoreKernelOutput,
        MDBCMode, NoMDBC, SimpleMDBC, UpdatedMDBC,
        LogMode, NoLog, StoreLog,
-       TimeSteppingMode, SymplecticTimeStepping, SingleNeighborTimeStepping,
+       TimeSteppingMode, SymplecticTimeStepping, SingleNeighborTimeStepping, DualSPHysicsSymplectic,
        OUTPUT_VARIABLES, DEFAULT_OUTPUT_VARIABLES, resolve_output_variables!, position_float_type
 
-# Mode types shared with the CPU package. They select code paths at compile
+# CPU-compatible mode types mirror the CPU package. They select code paths at compile
 # time (as type parameters of `SimulationMetaData`) instead of run time flags,
 # so that one case definition constructs against both packages.
 abstract type ShiftingMode end
@@ -34,6 +34,16 @@ struct StoreLog <: LogMode end
 abstract type TimeSteppingMode end
 struct SymplecticTimeStepping     <: TimeSteppingMode end
 struct SingleNeighborTimeStepping <: TimeSteppingMode end
+"DualSPHysics-style DBC predictor/corrector, pair-based timestep limits and Float64 integration clock."
+Base.@kwdef struct DualSPHysicsSymplectic <: TimeSteppingMode
+    smoothing_length::Float64 = NaN
+    sound_speed::Float64 = NaN
+    domain_min::NTuple{3,Float64} = (-Inf,-Inf,-Inf)
+    domain_max::NTuple{3,Float64} = (Inf,Inf,Inf)
+    density_min::Float64 = -Inf
+    density_max::Float64 = Inf
+    fast_math::Bool = true
+end
 
 """
     SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(; SimulationName, SaveLocation, kwargs...)
@@ -180,6 +190,7 @@ mutable struct SimulationMetaData{Dimensions,
     GPUGridExpansion::NTuple{Dimensions, Tuple{Bool, Bool}} # (negative, positive) growth per axis
     Periodicity::Union{Nothing, PeriodicBoundary{Dimensions, Float64}}
     GPUDoublePosition::Bool      # integrate positions in Float64 (pair loops use cell relative positions in FloatType)
+    GPUPeriodicCellCoordinates::Bool # opt-in cell-relative arithmetic for periodic force pairs
     GPUCacheInteractionFields::Bool # cache reciprocal density for interaction loops
     GPUCompactBuffers::Bool      # omit unused buffers and narrow GPU-only metadata when lossless
     GPUOutputQueueBytes::Int     # reusable host frames between collector and disk writer
@@ -297,6 +308,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUGridExpansion::NTuple{Dimensions, Tuple{Bool, Bool}} = ntuple(_ -> (false, false), Dimensions),
         Periodicity::Union{Nothing, PeriodicBoundary{Dimensions}} = nothing,
         GPUDoublePosition::Bool                 = false,
+        GPUPeriodicCellCoordinates::Bool        = false,
         GPUCacheInteractionFields::Bool         = false,
         GPUCompactBuffers::Bool                 = true,
         GPUOutputQueueBytes::Int                = 256 * 2^20,
@@ -320,7 +332,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUSyncTimers, GPUDeterministicSort, GPUMaxCells, GPUInteractionThreads, GPULanesPerParticle, GPURadialInteractions, GPUScalarSPSViscosity,
         GPUBoundaryForces, GPUAsyncOutput, GPUMaxStepsPerSync, GPUUseGraph, GPUClipTimeStepToOutput, GPUCellSubdivision,
         GPUFixedGrid, GPUGridExpansion, Periodicity,
-        GPUDoublePosition, GPUCacheInteractionFields, GPUCompactBuffers, GPUOutputQueueBytes, GPUOutputBufferBytes,
+        GPUDoublePosition, GPUPeriodicCellCoordinates, GPUCacheInteractionFields, GPUCompactBuffers, GPUOutputQueueBytes, GPUOutputBufferBytes,
         GPUTimestepDiagnosticsEvery,
     )
 end

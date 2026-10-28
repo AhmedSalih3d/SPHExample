@@ -4,7 +4,7 @@ module GPUConfiguration
 using Logging
 using LoggingExtras: FormatLogger
 using ..SimulationMetaDataConfiguration
-using ..SPHDensityDiffusionModels: ZeroDensityDiffusion
+using ..SPHDensityDiffusionModels: ZeroDensityDiffusion, FourtakasDensityDiffusion
 using ..SPHViscosityModels: ZeroViscosity, LaminarSPS
 using ..GPUKernels: choose_lanes, interaction_options
 
@@ -35,23 +35,33 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
     requested = (; radial_interactions = meta.GPURadialInteractions,
         scalar_sps_viscosity = meta.GPUScalarSPSViscosity, use_graph = meta.GPUUseGraph,
         sync_timers = meta.GPUSyncTimers, lanes_per_particle = meta.GPULanesPerParticle,
-        max_steps_per_sync = meta.GPUMaxStepsPerSync, double_position = meta.GPUDoublePosition)
+        max_steps_per_sync = meta.GPUMaxStepsPerSync, double_position = meta.GPUDoublePosition,
+        periodic_cell_coordinates = meta.GPUPeriodicCellCoordinates)
     capabilities = (; radial_interactions = options.radial_supported,
         scalar_sps_viscosity = options.scalar_sps_supported)
     lanes = meta.GPULanesPerParticle <= 0 ? choose_lanes(particle_count, Val(D)) : meta.GPULanesPerParticle
     position_type = position_float_type(meta)
-    effective = (; sph_kernel = typeof(kernel.kernel), interaction_kernel = :interaction_kernel!,
+    effective = (; sph_kernel = typeof(kernel.kernel), kernel_regularization = kernel.η²,
+        kernel_normalization = kernel.αD, interaction_kernel = :interaction_kernel!,
         interaction_path = options.radial ? :radial : :reference,
         radial_interactions = options.radial, scalar_sps_viscosity = options.scalar_sps,
         density_diffusion_model = typeof(diffusion),
         density_diffusion_operator = diffusion isa ZeroDensityDiffusion ? :disabled :
+            diffusion isa FourtakasDensityDiffusion ? :fourtakas_inner :
             options.radial ? :symmetric_reciprocal_density : :reference,
         viscosity_model = typeof(viscosity),
         viscosity_path = viscosity isa ZeroViscosity ? :disabled : options.scalar_sps ? :scalar_sps :
             options.radial && !(viscosity isa LaminarSPS) ? :radial_symmetric : :reference_ordered,
         dimensions = D, float_type = T, position_type,
-        pair_coordinates = meta.Periodicity !== nothing ? :translated_absolute : position_type === T ? :absolute : :cell_relative,
+        pair_coordinates = meta.Periodicity !== nothing ?
+            (meta.GPUPeriodicCellCoordinates ? :periodic_cell_relative : :translated_absolute) :
+            position_type === T ? :absolute : :cell_relative,
         time_stepping = typeof(meta.TimeSteppingMode), boundary_mode = B, shifting_mode = S,
+        reference_step_parameters = meta.TimeSteppingMode isa DualSPHysicsSymplectic ?
+            (; smoothing_length=meta.TimeSteppingMode.smoothing_length, sound_speed=meta.TimeSteppingMode.sound_speed,
+                domain_min=meta.TimeSteppingMode.domain_min, domain_max=meta.TimeSteppingMode.domain_max,
+                density_min=meta.TimeSteppingMode.density_min, density_max=meta.TimeSteppingMode.density_max,
+                fast_math=meta.TimeSteppingMode.fast_math) : nothing,
         kernel_output_mode = K, cell_subdivision = meta.GPUCellSubdivision,
         periodicity = meta.Periodicity,
         cache_interaction_fields = meta.GPUCacheInteractionFields,

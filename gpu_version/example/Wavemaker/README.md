@@ -1,118 +1,107 @@
-# Sinusoidal wave maker — DualSPHysics example 06
+# DualSPHysics 06: sinusoidal wave maker
 
-[Wavemaker.jl](Wavemaker.jl) sets up a CUDA simulation of a piston generating
-waves that travel towards a sloping beach. Its setup follows the readable
-constants / geometry / metadata / models / allocation / solver sequence of
-[DucklingMDBC.jl](../DucklingMDBC.jl).
+This case reproduces the distributed DualSPHysics 5.4 `main/06_Wavemaker`
+DBC setup. All case files stay together here, with geometry and simulation
+settings in separate readable files.
 
-[Geometry.jl](Geometry.jl) contains the geometry. It draws
-the x/z cross section, samples particles and repeats the section across y.
-Geometry generation works without an NVIDIA GPU. No external geometry files
-or DualSPHysics installation are needed to run this example.
-
-The source case is the distributed DualSPHysics 5.4
-`examples/main/06_Wavemaker/CaseWavemaker_Def.xml`, described in the
-[official test-case guide](https://github.com/DualSPHysics/DualSPHysics/wiki/7.-Testcases#716-wavemaker).
-
-| Setting | Default |
+| File | Purpose |
 | --- | --- |
-| Coordinates | x along the tank, y across it, z upwards |
-| Tank | 5 m long, 2 m wide, 1.5 m high |
+| `Geometry.jl` | Tank dimensions, reference particle layout and surface previews |
+| `BoundarySection.csv` | GenCase's 316 fixed-wall x/z lattice cells |
+| `Wavemaker.jl` | Physical constants, sinusoidal motion and solver setup |
+| `Investigate.jl` | Initial-state checks, containment reports and paired timings |
+| `test_wavemaker.jl`, `test_periodic_bounds.jl` | Numerical and geometry regressions |
+| `Investigation.md` | Findings, measured comparisons and limitations |
+
+The reference has 31,600 fixed, 30,000 moving and 401,600 fluid particles.
+The geometry generator repeats its x/z sections over 100 y rows in `[0,2)`.
+`BoundarySection.csv` preserves GenCase's rasterized skin and corner cells;
+fluid and piston particles are generated from this skin. The matched layout
+uses `dx = 0.02 m`. Changing resolution requires regenerating that small
+section file, rather than silently changing the reference case.
+
+| Setting | Reference setup |
+| --- | --- |
+| Tank | 5 m long, 2 m wide, 1.5 m high; open top |
 | Beach | Flat to x = 1 m, rising to z = 1.1 m at x = 5 m |
-| Initial water polygon | z = 0.75 m, clipped by the beach |
-| Piston | x = 0 to 0.06 m, z = 0 to 1.5 m |
-| Particle spacing | 0.02 m |
-| Piston amplitude | 0.25 m; 0.5 m peak-to-peak stroke |
-| Simulation | 10 s, output every 0.1 s |
-| Boundaries | DBC (`NoMDBC`), periodic across y, open top |
-| Physics | Gravity 9.81 m/s², artificial viscosity 0.02, density diffusion 0.1 |
-| Numerics | Symplectic, Wendland C2, h = 1.5√3 dx, CFL = 0.2, no shifting |
+| Initial water polygon | z = 0.75 m; sampled water z = 0.03 to 0.73 m |
+| Piston | x = 0 to 0.06 m, driven in x |
+| Boundaries | DBC (`NoMDBC`), periodic across y; no ghost correction |
+| Physics | Gravity 9.81 m/s², viscosity 0.02, Fourtakas inner DDT2 0.1 |
+| Kernel | Wendland C2, h = 1.5√3 dx, CFL = 0.2; no shifting |
+| Regularization | η² = (0.1h)², matching the reference |
+| Precision | Float64 positions and clock, Float32 fluid state and force coordinates |
+| Sound speed | 52.4099227246139 m/s |
+| Motion | Amplitude 0.25 m, initially 0.5 Hz; reference frequency schedule |
+| Output | 10 s simulation, frames every 0.1 s; full timesteps may overshoot |
 
-Run from the repository root:
-
-```sh
-julia --project=gpu_version -t 2,0 gpu_version/example/Wavemaker/Wavemaker.jl
-```
-
-Or from `gpu_version/`:
+From `gpu_version/`:
 
 ```sh
 julia --project=. -t 2,0 example/Wavemaker/Wavemaker.jl
-# Optional arguments: output directory, particle spacing, duration in seconds.
-julia --project=. -t 2,0 example/Wavemaker/Wavemaker.jl output/wavemaker_preview 0.05 2.0
 ```
 
-The default output directory is `gpu_version/output/wavemaker`. Use a new
-directory for each run. The main script opens the solver output in ParaView
-and opens its log. For a run without opening these programs:
+Optional CLI arguments are output directory, spacing (0.02 for the matched
+layout) and physical duration. Use a new directory for each run. To avoid
+opening ParaView and the log:
 
 ```julia
 include("example/Wavemaker/Wavemaker.jl")
 result = run_wavemaker(
-    dx = 0.05,
     simulation_time = 2.0,
     visualize = false,
     open_log_file = false,
-    save_location = "output/wavemaker_preview",
+    save_location = "output/wavemaker_reference",
 )
 ```
 
-Including either source file only defines functions. To inspect the geometry
-without running the solver:
+Including the source only defines functions. Geometry can be generated on the
+CPU without running the CUDA solver. The run saves Fixed/Piston/Water CSVs,
+a static geometry preview, an animated prescribed-motion preview and the
+solver's particle data. A water-column gauge can be enabled with
+`measurements = true`; the reference comparison leaves it disabled.
+Surface previews show the source polygons; particle centres follow GenCase's
+rasterization.
 
-```julia
-include("example/Wavemaker/Geometry.jl")
-using .WavemakerGeometry
-case = wavemaker_geometry(; dx = 0.02)
-length.(values(case.positions))  # fixed, piston, water particle counts
-```
+The first sine segment lasts 5 s at 0.5 Hz, using the XML phase 4.71238898
+radians (approximately 3π/2). Subsequent ten-second segments alternate
+0.75 Hz and 0.5 Hz with zero phase. Each segment adds its displacement to
+the preceding endpoint; motion ends at 100 s. Edit `wavemaker_motion()` to
+change this schedule.
 
-The simulation saves:
+The case selects `DualSPHysicsSymplectic()`: the reference predictor/corrector,
+neighbour-relative timestep limits, a Float64 integration clock and
+increment-averaged prescribed-wall velocities. It also matches the reference
+build's fast-math policy. The existing `SymplecticTimeStepping()` and
+`SingleNeighborTimeStepping()` schemes keep their CPU-reference behavior.
+The new reference path currently uses direct steps, one gather lane, DBC,
+Wendland C2, artificial viscosity and Fourtakas inner diffusion. Unsupported
+combinations fail explicitly.
+For this host-controlled reference path, the readback count records the three
+criterion/displacement reductions per step; these are not full particle downloads.
 
-- `Wavemaker_Fixed.csv`, `Wavemaker_Piston.csv` and
-  `Wavemaker_Water.csv`: particle positions and initial densities, readable by
-  `SPHGeometry`. These are inspection/export copies; the solver uses the
-  in-memory particles.
-- `Wavemaker_Geometry.vtkhdf`: stationary polygon geometry.
-- `Wavemaker_Motion.vtkhdf`: animated polygons showing the prescribed piston
-  motion. Its water polygon shows the initial volume; simulated water motion
-  is in the solver's particle output.
-- Solver particle output, logs and the WG0 water-column measurement at
-  `(x, y) = (1, 1)` m. Measurement blocks are stored in the solver VTKHDF file.
-  Set `measurements = false` to omit the gauge.
+The reference's position domain and density exclusion limits (700–1300 kg/m³)
+are configured explicitly and checked at predictor and accepted states.
+Excluded particles remain in this solver's output
+with `Type = Frozen`, so their IDs and escape positions remain inspectable;
+they stop contributing to interactions. Count both exclusions and penetration
+among active particles when judging leakage. Exclusion alone is not a
+containment improvement. `Investigate.jl` reports both quantities.
 
-The piston follows the reference's piecewise sinusoidal schedule. Each segment
-adds a displacement to the previous endpoint:
-
-```text
-Δx(τ) = A [sin(2π f τ + φ) - sin(φ)]
-vx(τ) = 2π f A cos(2π f τ + φ)
-```
-
-Here τ is time since that segment started. The first segment lasts 5 s with
-f = 0.5 Hz and φ = 3π/2, starting at rest and moving into the water. Subsequent
-segments last 10 s with zero phase, alternating f = 0.75 Hz and f = 0.5 Hz.
-Displacement remains continuous; velocity can jump at a segment change, as
-commanded by these separate sinusoids. The motion stops at 100 s. Edit
-`wavemaker_motion()` to change the amplitude, frequency or schedule, checking
-that the complete piston stroke stays over the flat bed.
-
-The geometry uses an outward boundary band, three particle layers thick on
-the flat floor at the default spacing. At coarse spacing the piston thickens
-to retain at least that many layers. Both sampled endpoint rows across y are
-kept, with periodic faces half a spacing outside them; at dx = 0.02 the period
-is 2.02 m and the seam spacing is 0.02 m. Fixed walls own shared lattice nodes,
-so the moving piston and water do not duplicate them.
-
-This is an adaptation of the reference geometry and commanded motion to this
-solver. It uses DBC rather than Duckling's mDBC, so it needs no ghost-node CSV.
-Hydrostatic fluid density and sound speed use the sampled water extrema.
-The boundary sampling, analytical wall velocities, density diffusion,
-time-step clipping and particle escape handling can differ from DualSPHysics;
-matching these inputs does not establish matching wave heights or trajectories.
-
-Run the focused geometry, motion and short CUDA regressions from `gpu_version/`:
+Force coordinates use cell-relative arithmetic while positions stay in double
+precision. This follows the reference's Pos-Cell approach and changes rounding
+relative to the older periodic absolute-coordinate path. Particle ordering,
+rebuild cadence, compiler arithmetic and output times can still differ;
+matching the physical setup does not imply bitwise-identical trajectories.
 
 ```sh
 julia --project=. -t 2,0 example/Wavemaker/test_wavemaker.jl
+julia --project=. -t 2,0 example/Wavemaker/Investigate.jl containment 10
+julia --project=. -t 2,0 example/Wavemaker/Investigate.jl timing_coordinates
+julia --project=. -t 2,0 example/Wavemaker/Investigate.jl timing_fastmath
+julia --project=. -t 2,0 example/Wavemaker/Investigate.jl profile
 ```
+
+The timing scripts warm each variant, alternate ABBA order, compare whole-solver
+elapsed time and record states plus step/rebuild/readback counts. Run timings
+without other GPU work. See [Investigation.md](Investigation.md) for results.

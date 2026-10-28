@@ -12,6 +12,7 @@ export  SPHDensityDiffusion,
         LinearDensityDiffusion,
         ZeroGravityComplexDensityDiffusion,
         ComplexDensityDiffusion,
+        FourtakasDensityDiffusion,
         compute_density_diffusion
 
 
@@ -206,6 +207,34 @@ Uses a 'complex' relationship for the hydrostatic correction. In essence the inv
 hydrostatic equation of state.
 """
 struct ComplexDensityDiffusion <: SPHDensityDiffusion end
+
+"""
+    FourtakasDensityDiffusion()
+
+Target-oriented Fourtakas inner density diffusion (DualSPHysics DDT2).
+The GPU interaction pass suppresses the complete contribution when the target's support
+contains a prescribed wall. This differs from `ComplexDensityDiffusion`,
+which retains the CPU reference's pair orientation and fluid-fluid terms
+near walls. Existing diffusion models are unchanged.
+"""
+struct FourtakasDensityDiffusion <: SPHDensityDiffusion end
+
+@inline function fourtakas_diffusion(kernel, constants, x, gradient, distance_squared, density_i, density_j, inverse_j, ::Val{Fast}=Val(false)) where {Fast}
+    base = one(density_i) + (constants.ρ₀ * constants.g / constants.Cb) * x[end]
+    root = Fast ? Base.FastMath.pow_fast(base,constants.γ⁻¹) : base^constants.γ⁻¹
+    hydrostatic = constants.ρ₀ * root - constants.ρ₀
+    coefficient = constants.δᵩ * kernel.H * constants.c₀ *
+        ((density_j - density_i) - hydrostatic) / (distance_squared + kernel.η²)
+    return -coefficient * dot(x, gradient) * constants.m₀ / density_j
+end
+
+@inline function compute_density_diffusion(::FourtakasDensityDiffusion, kernel, constants, particles,
+        x, gradient, distance_squared, density_i, density_j, inverse_i, inverse_j, i, j, types)
+    (types[i] == Fluid && types[j] == Fluid) || return zero(density_i), zero(density_j)
+    first = fourtakas_diffusion(kernel, constants, x, gradient, distance_squared, density_i, density_j, inverse_j)
+    second = fourtakas_diffusion(kernel, constants, -x, -gradient, distance_squared, density_j, density_i, inverse_i)
+    return first, second
+end
 
 @inline function compute_density_diffusion(
         ::ComplexDensityDiffusion,

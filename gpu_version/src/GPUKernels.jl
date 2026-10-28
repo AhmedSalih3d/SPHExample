@@ -24,6 +24,8 @@ any grid; it only reproduces the CPU's choice with the CPU's cells of edge
 `H` (`GPUCellSubdivision = 1`). Opt-in radial linear diffusion instead
 averages the two reciprocal-density weights and evaluates from the target
 particle's viewpoint, removing that diffusion term's orientation dependence.
+The separate Fourtakas inner model also evaluates from the target viewpoint;
+it suppresses the whole diffusion sum when the support contains a wall.
 
 Every kernel of a time step takes the device resident step state (`step`, see
 `GPUStepState`) and reads the step size and the simulated time from it; the
@@ -60,7 +62,7 @@ using ..PeriodicBoundaries: PeriodicBoundary
 using ..GPUCellGrid
 using ..GPUReductions
 using ..GPUStepState
-using ..SimulationMetaDataConfiguration: NoMDBC, SimpleMDBC, UpdatedMDBC
+using ..SimulationMetaDataConfiguration: NoMDBC, SimpleMDBC, UpdatedMDBC, DualSPHysicsSymplectic
 
 export launch_interactions!, launch_mdbc!, launch_motion!, launch_half_step!, launch_final_step!,
        launch_prepare_interactions!, launch_finish!, launch_commit!, launch_step_reduction!, launch_pos_cells!,
@@ -169,6 +171,15 @@ end
 end
 
 @inline lanes_sum(x, ::Val{1}) = x
+
+@inline function lanes_max(x, ::Val{K}) where {K}
+    offset = K ÷ 2
+    while offset >= 1
+        x = max(x, CUDA.shfl_down_sync(FULL_MASK, x, offset, K))
+        offset ÷= 2
+    end
+    return x
+end
 
 """
 Prescribed motion of `Moving` particles (mirrors `ProgressMotion` of the CPU
@@ -371,7 +382,8 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                              SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
                              ::Val{FlagKernel}, ::Val{FlagShift}, ::Val{BoundaryForces}, ::Val{K},
                              boundary_data, InvDensity, Pressure, n::Int32, ::Val{Radial} = Val(false), ::Val{ScalarSPS} = Val(false),
-                             ::Val{FrozenParticles} = Val(true), ::Val{IncludeGravity} = Val(false), periodicity = nothing) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity}
+                             ::Val{FrozenParticles} = Val(true), ::Val{IncludeGravity} = Val(false), periodicity = nothing,
+                             periodic_bounds = nothing, viscous_dt = nothing, ::Val{FastMath}=Val(false)) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -384,6 +396,9 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
     s = cell_size(grid, SimKernel.H)
 
     dρdt  = zero(T)
+    inner_diffusion = zero(T)
+    diffusion_blocked = false
+    pair_rate = zero(T)
     acc   = zero(SVector{D, T})
     Wsum  = zero(T)
     ∇Wsum = zero(SVector{D, T})
@@ -406,14 +421,15 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
         # force based time step criterion. Floating bodies always need them:
         # their particle accelerations sum to the force on the body.
         forces = BoundaryForces | (MLᵢ != zero(T)) | (typeᵢ == Floating)
-        Pᵢ = forces ? interaction_pressure(Pressure, i, ρᵢ, typeᵢ, c₀, ρ₀, boundary_data) : zero(T)
+        Pᵢ = forces ? (viscous_dt === nothing ? interaction_pressure(Pressure,i,ρᵢ,typeᵢ,c₀,ρ₀,boundary_data) :
+            dual_pressure(ρᵢ,SimConstants,Val(FastMath))) : zero(T)
         wallᵢ = is_wall(typeᵢ)
 
         c      = CellID[i]
         own_lo = CellStart[c] + Int32(1)
         own_hi = CellStart[c + Int32(1)]
 
-        for row in neighbor_rows(periodicity, grid, c, s)
+        for row in neighbor_rows(periodicity, grid, c, s, pair_position(pᵢ), periodic_bounds)
             jlo, jhi = row_range(grid, CellStart, c, row)
             rowcell  = c + row.off
             j = jlo + lane
@@ -422,10 +438,14 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                     xᵢⱼ  = pair_vector(Pairs, pᵢ, j, rowcell, row, s)
                     xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
                     slotⱼ = xᵢⱼ² <= H² ? boundary_slot(boundary_data, ParticleType, j) : Int32(0)
-                    if xᵢⱼ² <= H² && boundary_enabled(boundary_data, slotⱼ)
+                    if SimDensityDiffusion isa FourtakasDensityDiffusion
+                        diffusion_blocked |= xᵢⱼ² <= H² && is_wall(ParticleType[j])
+                    end
+                    skip_wall_pair = viscous_dt !== nothing && wallᵢ && is_wall(ParticleType[j])
+                    if xᵢⱼ² <= H² && boundary_enabled(boundary_data, slotⱼ) && !skip_wall_pair
                         dᵢⱼ   = sqrt(xᵢⱼ²)
                         q     = dᵢⱼ * h⁻¹ # in [0, 2]: the guard above enforces xᵢⱼ² <= H² = (2h)²
-                        if Radial
+                        if Radial || viscous_dt !== nothing
                             radial_factor = SPHKernels.radial_gradient_factor(SimKernel, q)
                             ∇ᵢWᵢⱼ = radial_factor * xᵢⱼ
                             inverse_distance = inv(xᵢⱼ² + SimKernel.η²)
@@ -437,11 +457,15 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         ρⱼ⁻¹ = interaction_inverse_density(InvDensity, j, ρⱼ)
                         vⱼ   = boundary_velocity(boundary_data, Velocity, ParticleType, j, slotⱼ)
                         vᵢⱼ  = vᵢ - vⱼ
+                        if viscous_dt !== nothing
+                            pair_rate = max(pair_rate, dot(vᵢⱼ, xᵢⱼ) / (xᵢⱼ² + SimKernel.η²))
+                        end
                         density_symmetric_term = Radial ? -radial_factor * dot(vᵢⱼ, xᵢⱼ) : dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
                         # DBC walls take density from the fluid, not other walls.
                         wall_pair = wallᵢ && is_wall(ParticleType[j])
                         if !wall_pair
-                            dρdt += -ρᵢ * (m₀ * ρⱼ⁻¹) * density_symmetric_term
+                            dρdt += viscous_dt === nothing ? -ρᵢ * (m₀ * ρⱼ⁻¹) * density_symmetric_term :
+                                -m₀ * density_symmetric_term * (ρᵢ / ρⱼ)
                         end
 
                         # Reference diffusion and ordered/SPS viscosity use the CPU
@@ -457,7 +481,12 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         ρb   = i_first ? ρⱼ : ρᵢ
                         ρa⁻¹ = i_first ? ρᵢ⁻¹ : ρⱼ⁻¹
                         ρb⁻¹ = i_first ? ρⱼ⁻¹ : ρᵢ⁻¹
-                        if Radial
+                        if SimDensityDiffusion isa FourtakasDensityDiffusion
+                            if typeᵢ == Fluid && ParticleType[j] == Fluid
+                                inner_diffusion += SPHDensityDiffusionModels.fourtakas_diffusion(
+                                    SimKernel, SimConstants, xᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ², ρᵢ, ρⱼ, ρⱼ⁻¹, Val(FastMath))
+                            end
+                        elseif Radial
                             D1, _ = SPHDensityDiffusionModels.radial_density_diffusion(SimDensityDiffusion,
                                 SimKernel, SimConstants, xᵢⱼ, xᵢⱼ², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹,
                                 i, j, ParticleType, radial_factor, inverse_distance)
@@ -472,7 +501,13 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         if forces
                             viscous_velocity = viscous_vᵢ -
                                                boundary_viscous_velocity(boundary_data, Velocity, ParticleType, j, slotⱼ)
-                            if ScalarSPS
+                            if viscous_dt !== nothing
+                                dot_velocity = dot(viscous_velocity, xᵢⱼ)
+                                mu = SimKernel.h * dot_velocity / (xᵢⱼ² + SimKernel.η²)
+                                coefficient = dot_velocity < zero(T) ?
+                                    (-SimConstants.α * c₀ * mu / ((ρᵢ + ρⱼ) / 2)) * m₀ : zero(T)
+                                visc = -coefficient * ∇ᵢWᵢⱼ
+                            elseif ScalarSPS
                                 v1 = SPHViscosityModels.scalar_sps_viscosity(SimKernel, SimConstants,
                                     sgn * xᵢⱼ, sgn * viscous_velocity, sgn * ∇ᵢWᵢⱼ, xᵢⱼ²,
                                     ρa, ρb, ρa⁻¹, ρb⁻¹)
@@ -487,8 +522,9 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                                 visc  = sgn * v1
                             end
 
-                            Pⱼ   = interaction_pressure(Pressure, j, ρⱼ, ParticleType[j], c₀, ρ₀, boundary_data)
-                            Pfac = (Pᵢ + Pⱼ) * (ρᵢ⁻¹ * ρⱼ⁻¹)
+                            Pⱼ = viscous_dt === nothing ? interaction_pressure(Pressure,j,ρⱼ,ParticleType[j],c₀,ρ₀,boundary_data) :
+                                dual_pressure(ρⱼ,SimConstants,Val(FastMath))
+                            Pfac = viscous_dt === nothing ? (Pᵢ + Pⱼ) * (ρᵢ⁻¹ * ρⱼ⁻¹) : (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
                             f_ab = InvDensity === nothing ? tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx) :
                                 tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx, ρᵢ⁻¹, ρⱼ⁻¹)
                             dvdt = -m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
@@ -515,6 +551,13 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
     end
 
     if K > 1
+        if viscous_dt !== nothing
+            pair_rate = lanes_max(pair_rate, Val(K))
+        end
+        if SimDensityDiffusion isa FourtakasDensityDiffusion
+            inner_diffusion = lanes_sum(inner_diffusion, Val(K))
+            diffusion_blocked = lanes_sum(diffusion_blocked ? one(T) : zero(T), Val(K)) > zero(T)
+        end
         dρdt = lanes_sum(dρdt, Val(K))
         acc  = lanes_sum(acc, Val(K))
         if FlagKernel
@@ -528,12 +571,16 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
     end
 
     @inbounds if valid & (lane == Int32(0))
+        if SimDensityDiffusion isa FourtakasDensityDiffusion && !diffusion_blocked
+            dρdt += inner_diffusion
+        end
         if IncludeGravity
             # Gravity belongs to the particle, not to each neighbor-gather lane.
             acc += ConstructGravitySVector(acc, SimConstants.g * GravityFactorValue(T, ParticleType[i]))
         end
         dρdtI[i]        = dρdt
         Acceleration[i] = acc
+        viscous_dt === nothing || (viscous_dt[i] = pair_rate)
         if FlagKernel
             Kernel[i]         = Wsum
             KernelGradient[i] = ∇Wsum
@@ -587,7 +634,8 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
                               FlagKernel::Val, FlagShift::Val; threads::Integer = 128, lanes::Val = Val(1),
                               boundary_forces::Val = Val(true), pos_cells = nothing, boundary_data = nothing,
                               radial::Val = Val(false), scalar_sps::Val = Val(false), inverse_density = nothing,
-                              pressure = nothing, frozen_particles::Val = Val(true), include_gravity::Val = Val(false), periodicity = nothing)
+                              pressure = nothing, frozen_particles::Val = Val(true), include_gravity::Val = Val(false), periodicity = nothing,
+                              periodic_bounds = nothing, periodic_cell_coordinates::Bool = false, viscous_dt = nothing, fast_math::Bool = false)
     inverse_density === nothing || length(inverse_density) == length(Density) ||
         throw(DimensionMismatch("Reciprocal cache must have one entry per evaluated density"))
     pressure === nothing || length(pressure) == length(Density) ||
@@ -595,7 +643,11 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
     n = length(Position)
     n == 0 && return nothing
     K = typeof(lanes).parameters[1]
-    Pairs = periodicity === nothing ? (pos_cells === nothing ? Position : pos_cells) : PeriodicPairSource(eltype(Density), Position)
+    periodic_cell_coordinates && (periodicity === nothing || pos_cells === nothing) &&
+        throw(ArgumentError("Periodic cell coordinates require periodicity and mixed-precision PosCell buffers"))
+    Pairs = periodicity === nothing ? (pos_cells === nothing ? Position : pos_cells) :
+        periodic_cell_coordinates ? PeriodicCellPairSource(eltype(Density), Position, pos_cells, grid) :
+        PeriodicPairSource(eltype(Density), Position)
     SimParticles = (Position = Position, Density = Density, Velocity = Velocity,
                     Type = ParticleType)
     options = interaction_options(SimKernel, SimDensityDiffusion, SimViscosity;
@@ -608,12 +660,12 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
     end
     use_radial = Val(options.radial)
     use_scalar_sps = Val(options.scalar_sps)
-    @cuda threads=threads blocks=cld(n * K, threads) interaction_kernel!(
+    @cuda fastmath=fast_math threads=threads blocks=cld(n * K, threads) interaction_kernel!(
         dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
         Pairs, Position, Density, Velocity, ParticleType, SimParticles,
         CellStart, CellID, grid, step,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity)
+        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math))
     return nothing
 end
 
@@ -727,7 +779,7 @@ end
 # position precision `TP`, `Pairs` is the pair source (see `pair_vector`).
 function mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVector{SVector{D, TP}}, Pairs,
                       GhostPoints, GhostIndex, ParticleType, CellStart, gridarg, step,
-                      SimKernel, SimConstants, InvDensity, Pressure, ::Val{K}, ::Val{Compact}, nghost::Int32, periodicity, GhostNormals) where {D, T, TP, K, Compact}
+                      SimKernel, SimConstants, InvDensity, Pressure, ::Val{K}, ::Val{Compact}, nghost::Int32, periodicity, GhostNormals, periodic_bounds) where {D, T, TP, K, Compact}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -755,7 +807,7 @@ function mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVector{SVect
 
     @inbounds if valid
         b, A = mdbc_neighborhood(b, A, gp, Pairs, Position, grid, CellStart, s,
-            Density, ParticleType, SimKernel, m₀, lane, Val(K), nothing, InvDensity, periodicity)
+            Density, ParticleType, SimKernel, m₀, lane, Val(K), nothing, InvDensity, periodicity, periodic_bounds)
     end
 
     if K > 1
@@ -807,14 +859,14 @@ corrected boundary entries (and `pressure` when cached) are refreshed by this ke
 function launch_mdbc!(Density, Position, GhostPoints, GhostIndex, ParticleType, CellStart, grid, step,
                       SimKernel, SimConstants; threads::Integer = 128, lanes::Val = Val(1), pos_cells = nothing,
                       compact_ghosts::Val = Val(false), inverse_density = nothing, pressure = nothing, periodicity = nothing,
-                      ghost_normals = nothing)
+                      ghost_normals = nothing, periodic_bounds = nothing)
     n = length(GhostIndex)
     n == 0 && return nothing
     K = typeof(lanes).parameters[1]
     Pairs = pos_cells === nothing ? Position : pos_cells
     @cuda threads=threads blocks=cld(n * K, threads) mdbc_kernel!(
         Density, Position, Pairs, GhostPoints, GhostIndex, ParticleType, CellStart, grid, step,
-        SimKernel, SimConstants, inverse_density, pressure, lanes, compact_ghosts, Int32(n), periodicity, ghost_normals)
+        SimKernel, SimConstants, inverse_density, pressure, lanes, compact_ghosts, Int32(n), periodicity, ghost_normals, periodic_bounds)
     return nothing
 end
 
@@ -1215,5 +1267,7 @@ function launch_commit!(state::StepState)
     @cuda threads=1 blocks=1 commit_kernel!(state)
     return nothing
 end
+
+include("GPUDualSymplectic.jl")
 
 end # module

@@ -42,7 +42,9 @@ function SPHKernelInstance{D,T}(
     kernel::KernelType;
     dx::Union{T,Nothing}=nothing,
     h::Union{T,Nothing}=nothing,
-    k::T = T(2.0)
+    k::T = T(2.0),
+    αD::Union{T,Nothing} = nothing,
+    η²::Union{T,Nothing} = nothing,
 ) where {KernelType<:SPHKernel, D, T}
 
     # pick h
@@ -59,14 +61,16 @@ function SPHKernelInstance{D,T}(
     H    = k * h₀
     H⁻¹  = inv(H)
     H²   = H * H
-    αD   = _αD(KernelType, Val(D), h₀)
-    η²   = (0.01*h₀)^2
+    alpha_d = αD === nothing ? _αD(KernelType, Val(D), h₀) : αD
+    eta_squared = η² === nothing ? (0.01*h₀)^2 : η²
+    isfinite(alpha_d) && alpha_d > 0 || throw(ArgumentError("Kernel normalization must be finite and positive"))
+    isfinite(eta_squared) && eta_squared >= 0 || throw(ArgumentError("Kernel regularization must be finite and nonnegative"))
 
     return SPHKernelInstance{KernelType,D,T}(
         kernel=kernel, k=k,
         h=h₀, h⁻¹=h₀⁻¹,
         H=H, H⁻¹=H⁻¹, H²=H²,
-        αD=αD, η²=η²
+        αD=alpha_d, η²=eta_squared
     )
 end
 

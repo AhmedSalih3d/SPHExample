@@ -2,75 +2,55 @@ module WavemakerGeometry
 
 using SPHExampleGPU
 using StaticArrays: SVector
+using CSV
 using Meshes: vertices, to, ustrip
 
 export wavemaker_geometry, save_wavemaker_geometry
 
 """
-    wavemaker_geometry(; dx = 0.02, boundary_layers = 3)
+    wavemaker_geometry()
 
-Build the tank, piston and water for DualSPHysics `main/06_Wavemaker`.
-Coordinates are `(x, y, z)` in metres; z is vertical and y is periodic.
-This function only builds host geometry and does not require a CUDA device.
+Reproduce the initial particle layout of DualSPHysics 5.4 main/06_Wavemaker.
+The small CSV stores GenCase's rasterized fixed-wall cross section as integer
+lattice coordinates. Fluid and piston particles are generated from that skin;
+all sections are repeated over the reference's 100 periodic y rows.
 """
-function wavemaker_geometry(; dx = 0.02, boundary_layers = 3)
-    isfinite(dx) && 0 < dx <= 0.1 || throw(ArgumentError("dx must be finite and in (0, 0.1]"))
-    boundary_layers isa Integer && boundary_layers >= 2 ||
-        throw(ArgumentError("boundary_layers must be an integer of at least 2"))
-    dx = SPHExampleGPU.ParticleGenerator.lattice_spacing(dx)
+function wavemaker_geometry(; dx = 0.02)
+    dx == 0.02 || throw(ArgumentError("The matched GenCase layout uses dx = 0.02; regenerate BoundarySection.csv before changing resolution"))
+    tank_length, tank_width, tank_height = 5.0, 2.0, 1.5
+    water_depth, beach_start, beach_height = 0.75, 1.0, 1.1
+    piston_front, piston_thickness = 0.06, 0.06
 
-    tank_length = 5.0
-    tank_width = 2.0
-    tank_height = 1.5
-    water_depth = 0.75
-    beach_start = 1.0
-    beach_height = 1.1
-    piston_thickness = max(0.06, (boundary_layers - 1) * dx)
-    wall_thickness = (boundary_layers - 1) * dx
+    # GenCase's lattice: x = ix*dx, y = (iy+1/2)*dx, z = (iz+1/2)*dx.
+    # Preserve its rasterized skin, including the slope's corner cells.
+    rows = CSV.File(joinpath(@__DIR__, "BoundarySection.csv"))
+    fixed_indices = [(Int(row.x_index), Int(row.z_index)) for row in rows]
+    bed_top = Dict(ix => maximum(iz for (x, iz) in fixed_indices if x == ix) for ix in 0:250)
+    piston_indices = [(ix, iz) for ix in 0:3 for iz in 1:75]
+    water_indices = [(ix, iz) for ix in 4:250 for iz in (bed_top[ix] + 1):36]
+    extrude(indices) = [SVector(ix * dx, (iy + 0.5) * dx, (iz + 0.5) * dx)
+        for (ix, iz) in indices for iy in 0:99]
+    positions = (; fixed = extrude(fixed_indices), piston = extrude(piston_indices), water = extrude(water_indices))
+    @assert length.(values(positions)) == (31600, 30000, 401600)
 
-    # Draw the x/z section first. Fixed walls grow below/outside the water.
-    # There is no fixed left wall: the sliding piston closes that end.
-    bed_profile = [(0.0, 0.0), (beach_start, 0.0),
-        (tank_length, beach_height), (tank_length, tank_height)]
-    fixed_section = polyline(bed_profile; thickness = wall_thickness, side = :right)
+    bed_profile = [(0.0, 0.0), (beach_start, 0.0), (tank_length, beach_height), (tank_length, tank_height)]
+    fixed_section = polyline(bed_profile; thickness = dx, side = :right)
     piston_section = rectangle((0.0, 0.0), piston_thickness, tank_height)
-
-    beach_slope = beach_height / (tank_length - beach_start)
-    shoreline = beach_start + water_depth / beach_slope
-    water_section = polygon([(0.0, 0.0), (beach_start, 0.0),
-        (shoreline, water_depth), (0.0, water_depth)])
-
-    # One shared lattice gives each point to one region. The fixed bed owns
-    # shared nodes, then the piston, then the water, avoiding duplicate particles.
-    sections = sample_particles([
-        ParticleRegion("Fixed", fixed_section, Fixed),
-        ParticleRegion("Piston", piston_section, Moving),
-        ParticleRegion("Water", water_section, Fluid),
-    ], dx)
-
-    # Keep both endpoint rows, as in GenCase. Periodic faces lie half a spacing
-    # beyond them, so the seam has exactly the same spacing as the interior.
-    y_rows = collect(0:dx:tank_width)
-    extrude_positions(section) = [SVector(x, y, z) for (x, z) in section.positions for y in y_rows]
-    positions = (
-        fixed = extrude_positions(sections[1]),
-        piston = extrude_positions(sections[2]),
-        water = extrude_positions(sections[3]),
-    )
-    periodicity = PeriodicBoundary{3}(2; min = -dx / 2, max = last(y_rows) + dx / 2)
-    water_level = maximum(last, positions.water)
-
+    shoreline = beach_start + water_depth * (tank_length - beach_start) / beach_height
+    water_section = polygon([(0.0, 0.0), (beach_start, 0.0), (shoreline, water_depth), (0.0, water_depth)])
     surfaces = (
-        fixed = extrude_surface(fixed_section, first(y_rows), last(y_rows)),
-        piston = extrude_surface(piston_section, first(y_rows), last(y_rows)),
-        water = extrude_surface(water_section, first(y_rows), last(y_rows)),
+        fixed = extrude_surface(fixed_section, 0.0, tank_width),
+        piston = extrude_surface(piston_section, 0.0, tank_width),
+        water = extrude_surface(water_section, 0.0, tank_width),
     )
-    return (; positions, periodicity, surfaces, water_level, water_depth,
-        tank_length, tank_width, tank_height, beach_start, beach_height, piston_thickness)
+    periodicity = PeriodicBoundary{3}(2; min = 0.0, max = tank_width)
+    water_level = maximum(last, positions.water)
+    return (; positions, periodicity, surfaces, water_level, water_depth, dx,
+        tank_length, tank_width, tank_height, beach_start, beach_height, piston_front, piston_thickness)
 end
 
-# The package's prism helper extrudes along z. This case instead spans y,
-# keeping the beach section in x/z and gravity along -z.
+bed_clearance(x, z) = x <= 1.0 ? z : (z - 0.275 * (x - 1.0)) / sqrt(1 + 0.275^2)
+
 function extrude_surface(section, y_min, y_max)
     outline = [SVector{2,Float64}(ustrip.(to(point))) for point in vertices(section)]
     n = length(outline)
@@ -83,12 +63,6 @@ function extrude_surface(section, y_min, y_max)
     return PolygonSurface(points, faces)
 end
 
-"""
-    save_wavemaker_geometry(directory, case, geometry)
-
-Write readable Fixed/Piston/Water particle CSVs and a static polygon VTKHDF
-preview. The simulation uses the generated in-memory particles directly.
-"""
 function save_wavemaker_geometry(directory, case, geometry)
     mkpath(directory)
     next_id = 0
@@ -100,4 +74,4 @@ function save_wavemaker_geometry(directory, case, geometry)
     return nothing
 end
 
-end # module WavemakerGeometry
+end # module

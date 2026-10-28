@@ -59,7 +59,7 @@ module SPHExampleGPU
     export SPHViscosity, ZeroViscosity, ArtificialViscosity, Laminar, LaminarSPS, compute_viscosity
 
     using .SPHDensityDiffusionModels
-    export SPHDensityDiffusion, ZeroDensityDiffusion, ZeroGravityLinearDensityDiffusion, LinearDensityDiffusion, ZeroGravityComplexDensityDiffusion, ComplexDensityDiffusion, compute_density_diffusion
+    export SPHDensityDiffusion, ZeroDensityDiffusion, ZeroGravityLinearDensityDiffusion, LinearDensityDiffusion, ZeroGravityComplexDensityDiffusion, ComplexDensityDiffusion, FourtakasDensityDiffusion, compute_density_diffusion
 
     using .SimulationGeometry
     export ParticleType, Fixed, Fluid, Moving, Floating, Frozen, SPHGeometry, MotionDetails, FloatingDetails, FloatingConstraints,
@@ -108,7 +108,7 @@ module SPHExampleGPU
            KernelOutputMode, NoKernelOutput, StoreKernelOutput,
            MDBCMode, NoMDBC, SimpleMDBC, UpdatedMDBC,
            LogMode, NoLog, StoreLog,
-           TimeSteppingMode, SymplecticTimeStepping, SingleNeighborTimeStepping,
+           TimeSteppingMode, SymplecticTimeStepping, SingleNeighborTimeStepping, DualSPHysicsSymplectic,
            OUTPUT_VARIABLES, DEFAULT_OUTPUT_VARIABLES, resolve_output_variables!, position_float_type
 
     using .SimulationConstantsConfiguration
