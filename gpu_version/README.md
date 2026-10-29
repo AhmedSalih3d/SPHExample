@@ -313,19 +313,19 @@ GenCase's 594,842 fluid particles and the same box.
 julia --project=gpu_version -t 2,0 gpu_version/example/FloatingWavesFlap2d.jl
 ```
 
-A first 15-second Float32 run, made before the flap's turning direction was
-corrected, took 4,480 s and 653,358 steps (90 million particle-steps per
-second) on an NVIDIA RTX A1000 Laptop GPU; the corrected run advances at the
-same rate. A DualSPHysics 5.4 GPU run of the distributed case, with 602,920
-particles, took 10,652 s and 657,991 steps (37 million particle-steps per
-second). Against the experiment, that reference has gauge RMSEs of 2.4 and
-5.5 mm (correlations 0.98 and 0.90), and RMSEs of 6.8 mm in heave, 4.4° in roll
-and 7.5 mm in sway. The comparison of the corrected run so far covers its first
-6.9 s, as the waves reach the box. It follows the reference closely: heave, down
-to −3.7 cm, has an RMSE of 0.4 mm and a correlation of 0.999, and roll, from
-−8.9° to 2.3°, has an RMSE of 0.07° and a correlation of 0.999. Against the
-experiment in this window, the RMSEs here and in DualSPHysics are 5.1 and
-5.7 mm in heave, 3.1° and 3.2° in roll, and 14 and 7 mm in sway.
+The 15-second Float32 run took 4,791 s and 653,349 steps (84 million
+particle-steps per second) on an NVIDIA RTX A1000 Laptop GPU. A DualSPHysics
+5.4 GPU run of the distributed case, with 602,920 particles, took 10,652 s and
+657,991 steps (37 million particle-steps per second). Sampled every 0.05 s, the
+two runs nearly coincide. Heave, within ±4 cm, has an RMSE of 0.4 mm and a
+correlation of 0.999. Roll, from −13° to 23°, has an RMSE of 0.18° and a
+correlation of 0.999. The box drifts 15 cm here and 14 cm in the reference;
+sway has an RMSE of 1.3 cm and a correlation of 0.982. `WG1` and `WG2` have
+RMSEs of 0.6 mm and correlations of 0.999 and 0.998. Against the experiment,
+the RMSEs here and in DualSPHysics are 2.5 and 2.4 mm at `WG1`, 5.0 and 5.5 mm
+at `WG2`, 7.3 and 6.8 mm in heave, 4.3° and 4.4° in roll, and 10 and 7.5 mm in
+sway, with correlations from 0.91 to 0.99 in both. No fluid particle crossed
+the bed or flap.
 
 #### Piston waves
 
