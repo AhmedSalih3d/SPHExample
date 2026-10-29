@@ -57,7 +57,7 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
         viscosity_path = viscosity isa ZeroViscosity ? :disabled : options.scalar_sps ? :scalar_sps :
             options.radial && !(viscosity isa LaminarSPS) ? :radial_symmetric : :reference_ordered,
         dimensions = D, float_type = T, position_type,
-        pair_coordinates = meta.Periodicity !== nothing ?
+        pair_coordinates = meta.TimeSteppingMode isa DualSPHysicsSymplectic && meta.TimeSteppingMode.periodic_images ? :periodic_images_cell_relative : meta.Periodicity !== nothing ?
             (meta.GPUPeriodicCellCoordinates ? :periodic_cell_relative : :translated_absolute) :
             position_type === T ? :absolute : :cell_relative,
         time_stepping = typeof(meta.TimeSteppingMode), boundary_mode = B, shifting_mode = S,
@@ -65,7 +65,9 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
             (; smoothing_length=meta.TimeSteppingMode.smoothing_length, sound_speed=meta.TimeSteppingMode.sound_speed,
                 domain_min=meta.TimeSteppingMode.domain_min, domain_max=meta.TimeSteppingMode.domain_max,
                 density_min=meta.TimeSteppingMode.density_min, density_max=meta.TimeSteppingMode.density_max,
-                fast_math=meta.TimeSteppingMode.fast_math) : nothing,
+                fast_math=meta.TimeSteppingMode.fast_math,
+                cache_periodic_queries=meta.TimeSteppingMode.cache_periodic_queries,
+                periodic_images=meta.TimeSteppingMode.periodic_images) : nothing,
         kernel_output_mode = K, cell_subdivision = meta.GPUCellSubdivision,
         periodicity = meta.Periodicity,
         cache_interaction_fields = meta.GPUCacheInteractionFields,

@@ -1,8 +1,33 @@
 module WavemakerTests
 using Test, SPHExampleGPU, StaticArrays, CUDA, LinearAlgebra
-include(joinpath(@__DIR__, "Wavemaker.jl"))
+include(joinpath(@__DIR__, "WavemakerSetup.jl"))
 const GK = SPHExampleGPU.GPUKernels
 const CL = SPHExampleGPU.SPHCellList
+
+@testset "case entry point arguments" begin
+    runner = joinpath(@__DIR__, "Wavemaker.jl")
+    function launch_arguments(program_file, args)
+        scope = Module(gensym(:WavemakerEntry))
+        Core.eval(scope, quote
+            const PROGRAM_FILE = $program_file
+            const ARGS = $args
+            # Capture the launch without loading or running another solver.
+            include(path) = nothing
+            run_wavemaker(; kwargs...) = (; kwargs...)
+        end)
+        return Base.include(scope, runner)
+    end
+    included = launch_arguments("", ["unrelated", "--julia-option"])
+    @test included.dx == 0.02
+    @test included.simulation_time == 10.0
+    @test included.save_location == joinpath(@__DIR__, "..", "..", "output", "wavemaker_periodic_copies")
+    @test included.periodic_images
+    direct = launch_arguments(runner, ["custom_output", "0.02", "0.003"])
+    @test direct == (; save_location = "custom_output", dx = 0.02, simulation_time = 0.003, periodic_images = true)
+    query = launch_arguments(runner,["custom_output","0.02","0.003","queries"])
+    @test !query.periodic_images
+    @test_throws LoadError launch_arguments(runner, ["out", "0.02", "0.003", "extra"])
+end
 
 @testset "matched GenCase geometry" begin
     case = wavemaker_geometry()
@@ -95,15 +120,51 @@ if CUDA.functional()
         @test Array(types)[1] == Fluid
         @test all(iszero,Array(support.exclusions))
     end
-    @testset "matched DBC short run" begin
+    @testset "periodic travel uses continuous displacement" begin
+        periodic = PeriodicBoundary{3}(2; min=0,max=2)
+        scheme = DualSPHysicsSymplectic()
+        support = GK.DualStepSupport{Float32}(1)
+        velocity = CUDA.zeros(SVector{3,Float32},1)
+        density = CUDA.fill(1000f0,1)
+        types = CuArray([Fluid])
+        for (old_y,new_y,wrapped_y) in ((1.999,2.001,0.001),(0.001,-0.001,1.999))
+            previous = CuArray([SVector(0.2,old_y,0.2)])
+            position = CuArray([SVector(0.2,new_y,0.2)])
+            finish = GK.launch_dual_motion_finish!(support,position,velocity,density,previous,types,0.1,periodic,scheme)
+            @test finish[4] ≈ 0.002f0
+            @test finish[3] == 1f0
+            @test Array(position)[1][2] ≈ wrapped_y
+            @test Array(types) == [Fluid]
+        end
+        @test_throws ArgumentError GPUSupportArrays{3,Float32}(1; cache_periodic_queries=true)
+        plain = GPUSupportArrays{3,Float32}(1; periodic=true,dual_time_stepping=true)
+        cached = GPUSupportArrays{3,Float32}(1; periodic=true,dual_time_stepping=true,cache_periodic_queries=true)
+        @test plain.dual_state.queries === nothing
+        @test sizeof(eltype(cached.dual_state.queries.limits)) * length(cached.dual_state.queries.limits) == 72
+        memory = SPHExampleGPU.SimulationLoggerConfiguration.device_buffer_bytes
+        @test memory(cached) - memory(plain) == 72
+    end
+    @testset "matched DBC short run images=$images" for images in (false,true)
         mktempdir() do dir
-            result=run_wavemaker(; simulation_time=0.003,output_interval=0.003,
+            result=run_wavemaker(; simulation_time=0.003,output_interval=0.003,cache_periodic_queries=!images,periodic_images=images,
                 visualize=false,open_log_file=false,save_location=dir)
             @test result.final_state.complete
             @test result.configuration.effective.boundary_mode === NoMDBC
-            @test result.configuration.effective.pair_coordinates === :periodic_cell_relative
+            @test result.configuration.effective.pair_coordinates === (images ? :periodic_images_cell_relative : :periodic_cell_relative)
+            @test result.configuration.effective.reference_step_parameters.cache_periodic_queries == !images
+            @test result.configuration.effective.reference_step_parameters.periodic_images == images
+            @test result.configuration.effective.kernel_regularization ≈ Float32((0.1 * 1.5sqrt(3) * 0.02)^2)
             @test all(isfinite,result.final_state.particles.Density)
             @test result.diagnostics.frozen_particles == 0
+            particles = result.final_state.particles
+            @test length(particles) == 463200
+            @test all(p -> all(isfinite, p), particles.Position)
+            @test all(v -> all(isfinite, v), particles.Velocity)
+            piston = particles.Position[particles.GroupMarker .== 2]
+            offset = first(motion_position(wavemaker_motion(), (0, 0, 0), result.final_state.time))
+            @test collect(extrema(first, piston)) ≈ [offset, 0.06 + offset] atol=1e-12
+            @test all(name -> isfile(joinpath(dir, name)),
+                ("Wavemaker.vtkhdf", "Wavemaker_Geometry.vtkhdf", "Wavemaker_Motion.vtkhdf"))
         end
     end
 end

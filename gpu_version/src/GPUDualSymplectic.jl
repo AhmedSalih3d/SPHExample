@@ -1,5 +1,5 @@
 # Included in GPUKernels. This path keeps the CPU-reference integrators intact.
-mutable struct DualStepSupport{T}
+mutable struct DualStepSupport{T,PQ,PI}
     viscous::CuVector{T}
     exclusions::CuVector{UInt8}
     reduction::ReductionWorkspace{SVector{4,T}}
@@ -9,8 +9,16 @@ mutable struct DualStepSupport{T}
     initialized::Bool
     excluded_position::Int
     excluded_density::Int
+    queries::PQ
+    images::PI
 end
-DualStepSupport{T}(n) where {T} = DualStepSupport(CUDA.zeros(T,n), CUDA.zeros(UInt8,n), ReductionWorkspace{SVector{4,T}}(n), 0.0, 0.0, 0.0, false, 0, 0)
+function DualStepSupport{T}(n; dimensions=3, cache_periodic_queries=false, images=nothing) where {T}
+    !cache_periodic_queries || n <= typemax(Int32)÷3 ||
+        throw(ArgumentError("Periodic-query cache indices exceed Int32 capacity"))
+    queries = cache_periodic_queries ? PeriodicQueryCache(CUDA.zeros(SVector{2dimensions,Int32},3n)) : nothing
+    return DualStepSupport(CUDA.zeros(T,n), CUDA.zeros(UInt8,n), ReductionWorkspace{SVector{4,T}}(n),
+        0.0, 0.0, 0.0, false, 0, 0, queries, images)
+end
 
 @inline dual_max(a, b) = max.(a, b)
 
@@ -20,8 +28,11 @@ DualStepSupport{T}(n) where {T} = DualStepSupport(CUDA.zeros(T,n), CUDA.zeros(UI
     return constants.Cb * (power - one(density))
 end
 
-function dual_criteria_kernel!(partial, velocity, acceleration, types, viscous, n)
+function dual_criteria_kernel!(partial, velocity, acceleration, types, viscous, n, invalid)
     value = zero(eltype(partial))
+    if invalid !== nothing
+        @inbounds value = setindex(value,eltype(value)(invalid[1]),4)
+    end
     i = thread_index()
     @inbounds while i <= n
         if types[i] != Frozen
@@ -37,7 +48,8 @@ end
 
 function launch_dual_criteria!(support, velocity, acceleration, types)
     @cuda threads=REDUCE_THREADS blocks=support.reduction.nblocks dual_criteria_kernel!(
-        support.reduction.partial, velocity, acceleration, types, support.viscous, Int32(length(types)))
+        support.reduction.partial, velocity, acceleration, types, support.viscous, Int32(length(types)),
+        support.images === nothing ? nothing : support.images.invalid)
     return finish_reduction(support.reduction, dual_max, zero(eltype(support.reduction.partial)))
 end
 
@@ -118,7 +130,7 @@ function launch_dual_corrector!(x,v,rho,xp,rp,acceleration,rate,types,dt,constan
         x,v,rho,xp,rp,acceleration,rate,types,dt,constants,Int32(length(types)))
 end
 
-@inline dual_finish_merge(a,b) = SVector(a[1]+b[1],a[2]+b[2],zero(a[3]),max(a[4],b[4]))
+@inline dual_finish_merge(a,b) = SVector(a[1]+b[1],a[2]+b[2],max(a[3],b[3]),max(a[4],b[4]))
 
 function dual_motion_finish_kernel!(partial,x,v,rho,previous,types,exclusions,dt,periodicity,domain_min,domain_max,rho_min,rho_max,n)
     value = zero(eltype(partial))
@@ -130,10 +142,15 @@ function dual_motion_finish_kernel!(partial,x,v,rho,previous,types,exclusions,dt
             value = dual_finish_merge(value,SVector(T(event==1),T(event==2),zero(T),zero(T)))
             exclusions[i] = 0
         else
-            if periodicity !== nothing && types[i] == Fluid
-                x[i] = GPUCellGrid.wrap_periodic_position(x[i],periodicity)
-            end
+            # Measure the continuous accepted displacement before wrapping.
+            # A seam crossing must not count as a full-period grid excursion.
             displacement = x[i] - previous[i]
+            wrapped = false
+            if periodicity !== nothing && types[i] == Fluid
+                position = GPUCellGrid.wrap_periodic_position(x[i],periodicity)
+                wrapped = position != x[i]
+                x[i] = position
+            end
             if types[i] == Moving
                 v[i] = SVector{length(displacement),T}(displacement / dt)
             end
@@ -148,7 +165,7 @@ function dual_motion_finish_kernel!(partial,x,v,rho,previous,types,exclusions,dt
                 types[i] = Frozen
                 v[i] = zero(v[i])
             end
-            value = dual_finish_merge(value, SVector(T(out_position),T(out_density && !out_position),zero(T),T(norm(displacement))))
+            value = dual_finish_merge(value, SVector(T(out_position),T(out_density && !out_position),T(wrapped),T(norm(displacement))))
         end
         i += blockDim().x * gridDim().x
     end

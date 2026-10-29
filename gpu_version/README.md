@@ -156,6 +156,13 @@ and exported geometry. Defaults are `dx = 0.02`, 10 seconds and output every
 double positions and `DualSPHysicsSymplectic()` reference stepping. The generated
 counts are 31,600 fixed, 30,000 moving and 401,600 fluid particles. The separate
 reference scheme leaves the existing CPU-compatible integrators unchanged.
+Running or including `Wavemaker.jl` starts the case. For customized calls to
+`run_wavemaker(...)`, include `example/Wavemaker/WavemakerSetup.jl` instead.
+Both runnable entry points explicitly enable `periodic_images = true`: dense,
+GPU-generated periodic copies replace translated force queries while only
+original particles are integrated and exported. The scheme default remains
+off. See the case guide for selecting the query backend and measuring the
+implemented backend with whole-solver timings.
 
 ```sh
 # From the repository root; optional arguments: output directory, spacing, duration
@@ -1822,6 +1829,20 @@ one gather lane, double positions, Wendland C2, artificial viscosity and
 Fourtakas inner diffusion, without floating bodies or external forces. See
 the [wave-maker guide](example/Wavemaker/README.md) for the matched setup and
 explicit reference exclusions. Existing integrators retain their arithmetic.
+For periodic reference runs, `DualSPHysicsSymplectic(cache_periodic_queries = true)`
+precomputes the same image search limits before each interaction stage. It retains
+row and pair order while adding 48 bytes per particle in 2D or 72 in 3D to live
+device support storage. The option defaults to `false`, including in WaveMaker;
+its benefit depends on the interaction compiler settings and workload.
+`DualSPHysicsSymplectic(periodic_images = true)` instead allocates a separate
+dense periodic-source buffer and sorts it for every force evaluation. It
+requires finite domain bounds, changes summation order and keeps copies out of
+integration, timestep reductions and exports. This opt-in backend is explicitly
+selected by the runnable WaveMaker examples; see their guide for validation and
+the whole-solver comparison command.
+The reference driver also honors `GPUInteractionAlwaysInline` and
+`GPUInteractionFastMath`, independently of the scheme's pressure/diffusion
+`fast_math` option.
 
 `SPHKernelInstance` accepts optional `η²` and `αD` keywords. Omitting them
 retains the existing normalization and `(0.01h)^2` regularization. The

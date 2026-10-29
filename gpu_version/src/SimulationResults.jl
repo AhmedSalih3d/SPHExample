@@ -29,6 +29,10 @@ and files have closed. Its fields are:
   frame), `cell_list_rebuilds`, `grid_dims`, `frozen_particles`,
   `step_state_readbacks`, `grid_status_readbacks`, `capacity_growths`,
   `bbox_host_readbacks`, and `captured_graphs`, all captured at return.
+  `periodic_source_rebuilds` counts the separate force-source sorts for the
+  periodic-image backend; `periodic_source_count` includes originals and copies
+  in its last evaluated state. Both are zero for other backends. The final
+  source count uses one additional scalar download after simulation completion.
 - `termination_reason`: `:completed` when the requested simulation time has
   been reached (possibly overshot), or `:interrupted` for a caught
   `InterruptException`. Other errors still propagate after output cleanup;

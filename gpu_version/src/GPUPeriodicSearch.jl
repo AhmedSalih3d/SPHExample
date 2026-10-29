@@ -130,6 +130,24 @@ struct BoundedPeriodicRows{D,G,P,B}
     bounds::B
 end
 
+struct PeriodicQueryCache{D,A}
+    limits::A
+end
+PeriodicQueryCache(limits::AbstractVector{SVector{N,Int32}}) where {N} =
+    PeriodicQueryCache{N÷2,typeof(limits)}(limits)
+Adapt.adapt_structure(to,cache::PeriodicQueryCache) = PeriodicQueryCache(Adapt.adapt(to,cache.limits))
+
+struct CachedPeriodicRows{D,A,P}
+    limits::A
+    index::Int32
+    n::Int32
+    periodicity::P
+end
+@inline function periodic_image_limits(rows::CachedPeriodicRows{D},image::Int32) where {D}
+    @inbounds limits = rows.limits[rows.index+image*rows.n]
+    return ntuple(d -> limits[d],Val(D)),ntuple(d -> limits[d+D],Val(D))
+end
+
 @inline function periodic_image_limits(rows::BoundedPeriodicRows{D}, image::Int32) where {D}
     grid,s,H,p = rows.grid,rows.size,rows.radius,rows.periodicity
     @inbounds halo = rows.bounds[1]
@@ -139,11 +157,11 @@ end
     hi = ntuple(d -> min(grid.dims[d]-Int32(1),floor(Int32,(reference[d]+H-halo[d])/s)-grid.origin[d]),Val(D))
     return lo,hi
 end
-@inline function Base.iterate(rows::BoundedPeriodicRows)
+@inline function Base.iterate(rows::Union{BoundedPeriodicRows,CachedPeriodicRows})
     lo,hi = periodic_image_limits(rows,Int32(0))
     return iterate(rows,(Int32(0),Int32(0),lo,hi))
 end
-@inline function Base.iterate(rows::BoundedPeriodicRows{D}, state::Tuple{Int32,Int32,NTuple{D,Int32},NTuple{D,Int32}}) where {D}
+@inline function Base.iterate(rows::Union{BoundedPeriodicRows{D},CachedPeriodicRows{D}}, state::Tuple{Int32,Int32,NTuple{D,Int32},NTuple{D,Int32}}) where {D}
     image,offset,lo,hi = state
     while image < Int32(3)
         wy = max(Int32(0),hi[2]-lo[2]+Int32(1))
@@ -158,6 +176,46 @@ end
         offset = Int32(0)
         lo,hi = periodic_image_limits(rows,image)
     end
+    return nothing
+end
+
+@inline neighbor_rows(p,grid,c,s,reference,bounds,i) = neighbor_rows(p,grid,c,s,reference,bounds)
+@inline function neighbor_rows(p,grid,c,s,reference,cache::PeriodicQueryCache{D},i) where {D}
+    return CachedPeriodicRows{D,typeof(cache.limits),typeof(p)}(cache.limits,Int32(i),Int32(length(cache.limits)÷3),p)
+end
+
+function periodic_queries_kernel!(limits,positions,cells,gridarg,H,bounds,periodicity,step,n::Int32)
+    step_active(step) || return nothing
+    i = thread_index()
+    if i <= n
+        D = length(eltype(positions))
+        @inbounds if cells[i] <= Int32(1)
+            empty_limits = SVector{2D,Int32}(ntuple(d -> d <= D ? Int32(1) : Int32(0),Val(2D)))
+            for image in Int32(0):Int32(2)
+                limits[i+image*n] = empty_limits
+            end
+        else
+            grid = load_grid(gridarg)
+            rows = neighbor_rows(periodicity,grid,cells[i],cell_size(grid,H),positions[i],bounds)
+            for image in Int32(0):Int32(2)
+                lo,hi = periodic_image_limits(rows,image)
+                limits[i+image*n] = SVector{2D,Int32}(lo...,hi...)
+            end
+        end
+    end
+    return nothing
+end
+
+# Cache only search limits, retaining the original rows and accepted-pair order.
+# Refresh after the halo reduction for each full/predictor state and grid order.
+function launch_periodic_queries!(cache::PeriodicQueryCache{D},positions,cells,grid,H,bounds,periodicity,step) where {D}
+    periodicity !== nothing && bounds !== nothing ||
+        throw(ArgumentError("Cached periodic queries require periodicity and measured cell-offset bounds"))
+    length(cache.limits) == 3length(positions) ||
+        throw(DimensionMismatch("Periodic-query cache must have three entries per particle"))
+    isempty(positions) && return nothing
+    @cuda threads=128 blocks=cld(length(positions),128) periodic_queries_kernel!(
+        cache.limits,positions,cells,grid,H,bounds,periodicity,step,Int32(length(positions)))
     return nothing
 end
 

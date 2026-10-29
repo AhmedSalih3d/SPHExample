@@ -383,13 +383,14 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                              ::Val{FlagKernel}, ::Val{FlagShift}, ::Val{BoundaryForces}, ::Val{K},
                              boundary_data, InvDensity, Pressure, n::Int32, ::Val{Radial} = Val(false), ::Val{ScalarSPS} = Val(false),
                              ::Val{FrozenParticles} = Val(true), ::Val{IncludeGravity} = Val(false), periodicity = nothing,
-                             periodic_bounds = nothing, viscous_dt = nothing, ::Val{FastMath}=Val(false)) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath}
+                             periodic_bounds = nothing, viscous_dt = nothing, ::Val{FastMath}=Val(false), target_indices=nothing) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
     i    = (t - Int32(1)) ÷ Int32(K) + Int32(1)
     lane = (t - Int32(1)) % Int32(K)
     valid = i <= n
+    source_i = valid && target_indices !== nothing ? (@inbounds target_indices[i]) : i
 
     (; m₀, dx, c₀, ρ₀) = SimConstants
     (; h⁻¹, H²) = SimKernel
@@ -405,14 +406,14 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
     ∇C    = zero(SVector{D, T})
     ∇r    = zero(T)
 
-    slotᵢ = valid ? boundary_slot(boundary_data, ParticleType, i) : Int32(0)
-    @inbounds if valid && (!FrozenParticles || ParticleType[i] != Frozen) && boundary_enabled(boundary_data, slotᵢ)
-        pᵢ  = Pairs[i]
-        vᵢ  = boundary_velocity(boundary_data, Velocity, ParticleType, i, slotᵢ)
-        viscous_vᵢ = boundary_viscous_velocity(boundary_data, Velocity, ParticleType, i, slotᵢ)
-        ρᵢ  = Density[i]
-        ρᵢ⁻¹ = interaction_inverse_density(InvDensity, i, ρᵢ)
-        typeᵢ = ParticleType[i]
+    slotᵢ = valid ? boundary_slot(boundary_data, ParticleType, source_i) : Int32(0)
+    @inbounds if valid && (!FrozenParticles || ParticleType[source_i] != Frozen) && boundary_enabled(boundary_data, slotᵢ)
+        pᵢ  = Pairs[source_i]
+        vᵢ  = boundary_velocity(boundary_data, Velocity, ParticleType, source_i, slotᵢ)
+        viscous_vᵢ = boundary_viscous_velocity(boundary_data, Velocity, ParticleType, source_i, slotᵢ)
+        ρᵢ  = Density[source_i]
+        ρᵢ⁻¹ = interaction_inverse_density(InvDensity, source_i, ρᵢ)
+        typeᵢ = ParticleType[source_i]
         MLᵢ = MotionLimiterValue(T, typeᵢ)
 
         # Boundary particles only need the density rate; their acceleration is
@@ -421,20 +422,20 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
         # force based time step criterion. Floating bodies always need them:
         # their particle accelerations sum to the force on the body.
         forces = BoundaryForces | (MLᵢ != zero(T)) | (typeᵢ == Floating)
-        Pᵢ = forces ? (viscous_dt === nothing ? interaction_pressure(Pressure,i,ρᵢ,typeᵢ,c₀,ρ₀,boundary_data) :
+        Pᵢ = forces ? (viscous_dt === nothing ? interaction_pressure(Pressure,source_i,ρᵢ,typeᵢ,c₀,ρ₀,boundary_data) :
             dual_pressure(ρᵢ,SimConstants,Val(FastMath))) : zero(T)
         wallᵢ = is_wall(typeᵢ)
 
-        c      = CellID[i]
+        c      = CellID[source_i]
         own_lo = CellStart[c] + Int32(1)
         own_hi = CellStart[c + Int32(1)]
 
-        for row in neighbor_rows(periodicity, grid, c, s, pair_position(pᵢ), periodic_bounds)
+        for row in neighbor_rows(periodicity, grid, c, s, pair_position(pᵢ), periodic_bounds, source_i)
             jlo, jhi = row_range(grid, CellStart, c, row)
             rowcell  = c + row.off
             j = jlo + lane
             while j <= jhi
-                if j != i && (!FrozenParticles || ParticleType[j] != Frozen)
+                if j != source_i && (!FrozenParticles || ParticleType[j] != Frozen)
                     xᵢⱼ  = pair_vector(Pairs, pᵢ, j, rowcell, row, s)
                     xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
                     slotⱼ = xᵢⱼ² <= H² ? boundary_slot(boundary_data, ParticleType, j) : Int32(0)
@@ -473,10 +474,10 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         # The densities handed to the models are those of the arrays
                         # being evaluated (the predictor state in the corrector loop).
                         same_cell = (j >= own_lo) & (j <= own_hi)
-                        i_first   = same_cell ? (i < j) : (i > j)
+                        i_first   = same_cell ? (source_i < j) : (source_i > j)
                         sgn  = i_first ? one(T) : -one(T)
-                        ia   = i_first ? i : j
-                        ja   = i_first ? j : i
+                        ia   = i_first ? source_i : j
+                        ja   = i_first ? j : source_i
                         ρa   = i_first ? ρᵢ : ρⱼ
                         ρb   = i_first ? ρⱼ : ρᵢ
                         ρa⁻¹ = i_first ? ρᵢ⁻¹ : ρⱼ⁻¹
@@ -489,7 +490,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         elseif Radial
                             D1, _ = SPHDensityDiffusionModels.radial_density_diffusion(SimDensityDiffusion,
                                 SimKernel, SimConstants, xᵢⱼ, xᵢⱼ², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹,
-                                i, j, ParticleType, radial_factor, inverse_distance)
+                                source_i, j, ParticleType, radial_factor, inverse_distance)
                             dρdt += D1
                         else
                             D1, D2 = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants,
@@ -576,7 +577,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
         end
         if IncludeGravity
             # Gravity belongs to the particle, not to each neighbor-gather lane.
-            acc += ConstructGravitySVector(acc, SimConstants.g * GravityFactorValue(T, ParticleType[i]))
+            acc += ConstructGravitySVector(acc, SimConstants.g * GravityFactorValue(T, ParticleType[source_i]))
         end
         dρdtI[i]        = dρdt
         Acceleration[i] = acc
@@ -634,6 +635,9 @@ rounding and NaN/Inf checks, flush Float32 subnormals, and use approximate
 arithmetic. Both default to `false` and can be combined. Other kernels,
 including mDBC corrections and pressure/reciprocal cache preparation, are not
 recompiled with these options.
+`target_indices` optionally maps the `target_count` outputs to source indices.
+Sources and their cell IDs must share dense cell order; outputs remain in target
+order. This permits periodic copies as neighbors without integrating them.
 """
 function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
                               Position, Density, Velocity, ParticleType,
@@ -645,12 +649,15 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
                               pressure = nothing, frozen_particles::Val = Val(true), include_gravity::Val = Val(false), periodicity = nothing,
                               periodic_bounds = nothing, periodic_cell_coordinates::Bool = false, viscous_dt = nothing,
                               fast_math::Bool = false,
-                              always_inline::Bool = false, fastmath::Bool = false)
+                              always_inline::Bool = false, fastmath::Bool = false,
+                              target_indices = nothing, target_count::Integer = length(Position))
     inverse_density === nothing || length(inverse_density) == length(Density) ||
         throw(DimensionMismatch("Reciprocal cache must have one entry per evaluated density"))
     pressure === nothing || length(pressure) == length(Density) ||
         throw(DimensionMismatch("Pressure cache must have one entry per evaluated density"))
-    n = length(Position)
+    n = target_count
+    target_indices === nothing ? (n == length(Position) || throw(DimensionMismatch("Unmapped targets must cover all sources"))) :
+        (length(target_indices) == n || throw(DimensionMismatch("Target map and target count differ")))
     n == 0 && return nothing
     K = typeof(lanes).parameters[1]
     periodic_cell_coordinates && (periodicity === nothing || pos_cells === nothing) &&
@@ -675,7 +682,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
         Pairs, Position, Density, Velocity, ParticleType, SimParticles,
         CellStart, CellID, grid, step,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math))
+        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math), target_indices)
     return nothing
 end
 

@@ -1,5 +1,5 @@
 # Run from gpu_version/ with Julia --project=. -t 2,0.
-include(joinpath(@__DIR__, "Wavemaker.jl"))
+include(joinpath(@__DIR__, "WavemakerSetup.jl"))
 using CUDA, CSV, Statistics, LinearAlgebra
 
 const CL = SPHExampleGPU.SPHCellList
@@ -52,10 +52,12 @@ function search_variant!(bounded)
     end
 end
 
-function benchmark_run(duration,directory,cell_coordinates,fast_math)
+function benchmark_run(duration,directory,cell_coordinates,fast_math; kwargs...)
+    settings = (; periodic_cell_coordinates=cell_coordinates,fast_math,
+        interaction_always_inline=false,interaction_fastmath=false,cell_subdivision=1,
+        visualize=false,open_log_file=false,kwargs...)
     return run_wavemaker(; simulation_time=duration,output_interval=duration,
-        periodic_cell_coordinates=cell_coordinates,fast_math,visualize=false,open_log_file=false,
-        save_location=directory)
+        save_location=directory,settings...)
 end
 
 function timing(experiment=:search)
@@ -65,23 +67,27 @@ function timing(experiment=:search)
     for (round,variant) in enumerate((false,true,true,false))
         search_variant!(experiment===:search ? variant : true)
         cell_coordinates = experiment===:coordinates ? variant : true
-        fast_math = experiment===:fastmath && variant
-        Base.invokelatest(benchmark_run,0.01,joinpath(INVESTIGATION_OUTPUT,"$(experiment)_warm_$(round)"),cell_coordinates,fast_math)
-        result = Base.invokelatest(benchmark_run,0.1,joinpath(INVESTIGATION_OUTPUT,"$(experiment)_timing_$(round)"),cell_coordinates,fast_math)
+        fast_math = experiment===:fastmath ? variant : experiment in (:compiler,:queries)
+        compiler_options = experiment===:compiler ? variant : experiment===:queries
+        cache_queries = experiment===:queries && variant
+        settings = (; interaction_always_inline=compiler_options,interaction_fastmath=compiler_options,
+            cache_periodic_queries=cache_queries,cell_subdivision=experiment in (:compiler,:queries) ? 2 : 1)
+        Base.invokelatest(benchmark_run,0.01,joinpath(INVESTIGATION_OUTPUT,"$(experiment)_warm_$(round)"),cell_coordinates,fast_math;settings...)
+        result = Base.invokelatest(benchmark_run,0.1,joinpath(INVESTIGATION_OUTPUT,"$(experiment)_timing_$(round)"),cell_coordinates,fast_math;settings...)
         particles = result.final_state.particles
         order = sortperm(particles.ID)
         snapshot = (; positions=particles.Position[order],velocity=particles.Velocity[order],density=particles.Density[order])
         work = (result.performance.steps,result.diagnostics.cell_list_rebuilds,result.diagnostics.step_state_readbacks)
         if reference===nothing
             reference,reference_work = snapshot,work
-        elseif experiment===:search
+        elseif experiment in (:search,:queries)
             @assert snapshot==reference "Search bounds changed the final particle state"
             @assert work==reference_work "Search bounds changed step/rebuild/readback counts"
         end
         differences = (; position=maximum(norm.(snapshot.positions.-reference.positions)),
             velocity=maximum(norm.(snapshot.velocity.-reference.velocity)),
             density=maximum(abs.(snapshot.density.-reference.density)))
-        record = (; round,variant,seconds=result.performance.wall_time_seconds,
+        record = (; round,variant,settings...,seconds=result.performance.wall_time_seconds,
             steps=work[1],rebuilds=work[2],readbacks=work[3],differences...)
         push!(records,record)
         println("TIMING ",record)
@@ -111,11 +117,13 @@ if abspath(PROGRAM_FILE)==@__FILE__
         containment(length(ARGS)>=2 ? parse(Float64,ARGS[2]) : 10.0)
     elseif mode=="check"
         check_reference(ARGS[2])
-    elseif mode in ("timing","timing_coordinates","timing_fastmath")
-        timing(mode=="timing" ? :search : mode=="timing_coordinates" ? :coordinates : :fastmath)
+    elseif mode in ("timing","timing_coordinates","timing_fastmath","timing_compiler","timing_queries")
+        experiment = mode=="timing" ? :search : mode=="timing_coordinates" ? :coordinates :
+            mode=="timing_fastmath" ? :fastmath : mode=="timing_compiler" ? :compiler : :queries
+        timing(experiment)
     elseif mode=="profile"
         profile_run()
     else
-        error("Use containment [duration], check initial.csv, timing, timing_coordinates, timing_fastmath, or profile")
+        error("Use containment [duration], check initial.csv, timing, timing_coordinates, timing_fastmath, timing_compiler, timing_queries, or profile")
     end
 end

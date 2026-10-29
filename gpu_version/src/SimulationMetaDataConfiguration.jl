@@ -34,7 +34,19 @@ struct StoreLog <: LogMode end
 abstract type TimeSteppingMode end
 struct SymplecticTimeStepping     <: TimeSteppingMode end
 struct SingleNeighborTimeStepping <: TimeSteppingMode end
-"DualSPHysics-style DBC predictor/corrector, pair-based timestep limits and Float64 integration clock."
+"""
+    DualSPHysicsSymplectic(; cache_periodic_queries = false, ...)
+
+Reference DBC predictor/corrector, pair-based timestep limits and Float64 clock.
+For periodic runs, caching image search limits preserves row/pair order and
+adds 48 bytes per particle in 2D or 72 in 3D to device support storage. Limits
+are refreshed for each evaluated state; nonperiodic runs cannot enable it.
+`periodic_images = true` instead builds dense, cell-sorted originals plus
+periodic copies for each force evaluation. Only originals are integrated,
+reduced and exported. It requires finite domain bounds and a period greater
+than twice the kernel support radius, and cannot be combined with query caching.
+It uses additional device storage and changes neighbor summation order.
+"""
 Base.@kwdef struct DualSPHysicsSymplectic <: TimeSteppingMode
     smoothing_length::Float64 = NaN
     sound_speed::Float64 = NaN
@@ -43,6 +55,8 @@ Base.@kwdef struct DualSPHysicsSymplectic <: TimeSteppingMode
     density_min::Float64 = -Inf
     density_max::Float64 = Inf
     fast_math::Bool = true
+    cache_periodic_queries::Bool = false
+    periodic_images::Bool = false
 end
 
 """

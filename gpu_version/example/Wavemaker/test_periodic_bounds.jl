@@ -96,12 +96,17 @@ if CUDA.functional()
                 copyto!(gpu.Position, moved)
                 GK.launch_periodic_halo!(bounds, gpu.Position, gpu.CellID, cl.grid_dev, kernel.H, step)
                 host_bounds = Array(bounds)
+                queries = GK.PeriodicQueryCache(CUDA.zeros(SVector{2D,Int32},3length(moved)))
+                GK.launch_periodic_queries!(queries,gpu.Position,gpu.CellID,cl.grid_dev,kernel.H,bounds,cl.periodicity,step)
+                host_queries = GK.PeriodicQueryCache(Array(queries.limits))
                 s = GRID.cell_size(cl.grid, kernel.H)
                 cell_points = [GRID.pos_cell(p,c,cl.grid,s) for (p,c) in zip(moved,cells)]
                 cell_source = GK.PeriodicCellPairSource(T,moved,cell_points,cl.grid)
                 for i in eachindex(moved)
                     rows = GK.neighbor_rows(cl.periodicity, cl.grid, cells[i], s, moved[i], host_bounds)
                     actual = accepted_pairs(rows, moved, i, starts, cl.grid, kernel.H, T)
+                    cached_rows = GK.neighbor_rows(cl.periodicity,cl.grid,cells[i],s,moved[i],host_queries,i)
+                    @test accepted_pairs(cached_rows,moved,i,starts,cl.grid,kernel.H,T) == actual
                     old_rows = GK.neighbor_rows(cl.periodicity, cl.grid, cells[i], s)
                     previous = accepted_pairs(old_rows, moved, i, starts, cl.grid, kernel.H, T)
                     @test actual == previous
