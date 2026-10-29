@@ -1186,6 +1186,14 @@ per body and stage, including the promoted precision used for 3D double
 positions. These changes preserve CUDA graph replay and the rigid-body scheme;
 force summation order can differ slightly due to floating-point rounding.
 
+Body-state predictor/corrector updates and startup/rebuild derivatives assign
+one GPU thread to each body in both 2D and 3D. Constraints remain local to each
+body, including hinges, prescribed rates, pause/release and frozen bodies.
+This removes serial body loops for cases with tens or hundreds of bodies;
+little benefit is expected for a single cylinder or paddle wheel.
+Run the multi-body, multi-block and CUDA graph regression with
+`julia --project=. -t 1,0 test/floating_body_updates.jl`.
+
 On an RTX 5080, a warmed GPU benchmark with 250,000 particles (5,000 floating,
 `Float32` physics and `Float64` positions) measured 1.5 times faster floating
 stages for eight 2D bodies and 2.5 times faster 3D particle placement. These are

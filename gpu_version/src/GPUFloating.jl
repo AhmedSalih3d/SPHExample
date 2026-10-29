@@ -313,17 +313,18 @@ function launch_floating_forces!(floating, Acceleration, Position, ParticleType,
 end
 
 #---------------------------------------------------------------
-# Rigid body update (one thread)
+# Rigid body update (one thread per body)
 #---------------------------------------------------------------
 
 function floating_update_kernel!(f, step, g::T, ::Val{2}, ::Val{Final}, ::Val{Carried}) where {T, Final, Carried}
     step_active(step) || return nothing
-    thread_index() == 1 || return nothing
+    b = thread_index()
+    b > f.nbodies && return nothing
     dt   = step_dt(step)
     time = step_time(step)
     gvec = SVector{2, T}(zero(T), -g)
-    @inbounds for b in 1:Int(f.nbodies)
-        f.frozen[b] != 0 && continue
+    @inbounds begin
+        f.frozen[b] != 0 && return nothing
         F = SVector{2, T}(f.force[3b - 2], f.force[3b - 1])
         τ = f.force[3b]
         f.force[3b - 2] = zero(T)
@@ -331,7 +332,7 @@ function floating_update_kernel!(f, step, g::T, ::Val{2}, ::Val{Final}, ::Val{Ca
         f.force[3b]     = zero(T)
         if f.constraints[b].active
             constrained_floating_update!(f, b, F, τ, gvec, step, Val(Final), Val(Carried), Val(2))
-            continue
+            return nothing
         end
         held = time < f.pause[b]
         Vₙ = f.velocity[b]
@@ -452,13 +453,14 @@ end
 
 function floating_update_kernel!(f, step, g::T, ::Val{3}, ::Val{Final}, ::Val{Carried}) where {T, Final, Carried}
     step_active(step) || return nothing
-    thread_index() == 1 || return nothing
+    b = thread_index()
+    b > f.nbodies && return nothing
     dt   = step_dt(step)
     time = step_time(step)
     gvec = SVector{3, T}(zero(T), zero(T), -g)
     U = eltype(eltype(f.rotation))
-    @inbounds for b in 1:Int(f.nbodies)
-        f.frozen[b] != 0 && continue
+    @inbounds begin
+        f.frozen[b] != 0 && return nothing
         base = 6 * (b - 1)
         F = SVector{3, T}(f.force[base + 1], f.force[base + 2], f.force[base + 3])
         τ = SVector{3, T}(f.force[base + 4], f.force[base + 5], f.force[base + 6])
@@ -467,7 +469,7 @@ function floating_update_kernel!(f, step, g::T, ::Val{3}, ::Val{Final}, ::Val{Ca
         end
         if f.constraints[b].active
             constrained_floating_update!(f, b, F, τ, gvec, step, Val(Final), Val(Carried), Val(3))
-            continue
+            return nothing
         end
         held = time < f.pause[b]
         Vₙ = f.velocity[b]
@@ -535,23 +537,25 @@ function launch_floating_update!(floating, step, g, final::Bool; carried::Bool =
 end
 
 function launch_floating_update!(floating, step, g, final::Bool, ::Val{2}; carried::Bool = false)
+    floating.nbodies == 0 && return nothing
     T = eltype(floating.force)
     f = floating
     device = (; f.nbodies, f.frozen, f.constraints, f.force, f.pause, f.mass, f.inertia, f.center, f.center_n, f.center_half,
                 f.velocity, f.velocity_half, f.omega, f.omega_half, f.angle, f.turn, f.rotation,
                 f.acceleration, f.angular_acceleration)
-    @cuda threads=1 blocks=1 floating_update_kernel!(device, step, T(g), Val(2), Val(final), Val(carried))
+    @cuda threads=128 blocks=cld(Int(f.nbodies), 128) floating_update_kernel!(device, step, T(g), Val(2), Val(final), Val(carried))
     return nothing
 end
 
 function launch_floating_update!(floating, step, g, final::Bool, ::Val{3}; carried::Bool = false)
+    floating.nbodies == 0 && return nothing
     T = eltype(floating.force)
     f = floating
     device = (; f.nbodies, f.frozen, f.constraints, f.force, f.pause, f.mass, f.inertia, f.inertia_inv,
                 f.center, f.center_n, f.center_half, f.velocity, f.velocity_half,
                 f.omega, f.omega_half, f.orientation, f.orientation_half, f.turn, f.rotation,
                 f.acceleration, f.angular_acceleration)
-    @cuda threads=1 blocks=1 floating_update_kernel!(device, step, T(g), Val(3), Val(final), Val(carried))
+    @cuda threads=128 blocks=cld(Int(f.nbodies), 128) floating_update_kernel!(device, step, T(g), Val(3), Val(final), Val(carried))
     return nothing
 end
 
@@ -559,11 +563,12 @@ end
 # Ordinary single-neighbor predictors reuse the previous half-state derivative.
 function floating_derivative_kernel!(f, step, g::T, ::Val{D}) where {T, D}
     step_active(step) || return nothing
-    thread_index() == 1 || return nothing
+    b = thread_index()
+    b > f.nbodies && return nothing
     gvec = SVector{D, T}(ntuple(d -> d == D ? -g : zero(T), Val(D)))
     stride = D == 2 ? 3 : 6
-    @inbounds for b in 1:Int(f.nbodies)
-        f.frozen[b] != 0 && continue
+    @inbounds begin
+        f.frozen[b] != 0 && return nothing
         base = stride * (b - 1)
         force = SVector{D, T}(ntuple(d -> f.force[base + d], Val(D)))
         if f.constraints[b].active
@@ -601,6 +606,7 @@ the single-neighbor scheme. Corrector updates refresh the cache at the half stat
 """
 function launch_floating_derivative!(floating, step, g)
     f = floating
+    f.nbodies == 0 && return nothing
     D = floating_dimension(f.center)
     device = if D == 2
         (; f.nbodies, f.frozen, f.constraints, f.center, f.omega, f.force, f.mass, f.inertia, f.acceleration, f.angular_acceleration)
@@ -608,7 +614,7 @@ function launch_floating_derivative!(floating, step, g)
         (; f.nbodies, f.frozen, f.constraints, f.center, f.force, f.mass, f.inertia, f.inertia_inv, f.orientation, f.omega,
            f.acceleration, f.angular_acceleration)
     end
-    @cuda threads=1 blocks=1 floating_derivative_kernel!(device, step, eltype(f.force)(g), Val(D))
+    @cuda threads=128 blocks=cld(Int(f.nbodies), 128) floating_derivative_kernel!(device, step, eltype(f.force)(g), Val(D))
     return nothing
 end
 

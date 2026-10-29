@@ -252,3 +252,4 @@ end
 include("fluid_free_fall.jl")
 include("floating_single_neighbor.jl")
 include("floating_constraints.jl")
+include("floating_body_updates.jl")
