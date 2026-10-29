@@ -500,3 +500,79 @@ every periodic axis, transverse shifts, seam-crossing predictor states,
 moving/fixed/frozen sources and explicit invalid-grid failures.
 `output/periodic_images_regressions.log` ends with the completion marker and
 exit code zero. The full CPU/GPU suite was not run for this change.
+
+## Default periodic copies across standard integrators
+
+Periodic DBC now defaults to `GPUPeriodicImages = true` independently of the
+integration and density-diffusion choices. The ordinary 2D periodic example
+retains `SymplecticTimeStepping`, `ComplexDensityDiffusion`, its fixed grid,
+Float32 positions and CUDA graphs. `SingleNeighborTimeStepping` is supported
+too. The reference scheme's `periodic_images` setting and `run_wavemaker`
+also default to true. Nonperiodic cases allocate no copy workspace.
+
+The standard interaction path gathers original-owner indices and original
+cell IDs alongside the dense source fields. Pair orientation follows that
+original ordering, rather than the freshly sorted source indices. This retains
+the existing ordered diffusion and SPS operators while allowing neighbor
+summation order to change. Source pressure/reciprocal caches are refreshed from
+the evaluated state, including predictor density.
+
+The standard source grid derives from the original grid and grows without
+shrinking outside CUDA graph capture. A growth invalidates captures whose
+launch dimensions or pointers changed. Every source kernel honors the device
+stop flag. A separate device counter records active builds during graph replay;
+stopped preparation and excess queued steps do not inflate the diagnostics.
+Source failures stop the step and are reported through the existing timestep
+readback. Later periodic wrapping or fixed-grid checks cannot clear that stop.
+
+mDBC and periods no larger than twice the support radius retain translated
+queries, with the reason in the resolved configuration. `GPUPeriodicImages =
+false` explicitly selects that legacy backend. This legacy selection is
+scheduled for future deprecation after the remaining boundary modes are
+supported and full-run trajectory validation is complete. It remains supported
+today; no removal version is scheduled.
+
+The first standard 2D smoke run completed 123 steps with one original rebuild,
+five step-state readbacks, 247 active source builds, six cached graphs, no graph
+capture failures and no exclusions. The 247 builds comprise two per step plus
+the startup derivative evaluation. Output retained 988 originals; the last
+source state contained 1058 originals plus copies. This coarse smoke case is
+a correctness check, not performance evidence.
+
+Force comparisons additionally cover linear, complex and Fourtakas diffusion,
+artificial and SPS viscosity, 2D/3D, Float32/Float64, original and predictor
+states, shifted seam crossings, old cell assignments and optional cached
+pressure/reciprocal fields. The existing periodic suite passed its graph/output
+crossings, rigid wrapping, floating-body integration, mDBC query fallback and
+standard 2D case checks. Allocation, predictor, configuration and WaveMaker
+regressions also completed successfully in
+`output/periodic_default_regressions.log`.
+Those selected regressions passed 20,590 assertions. The final
+`test/periodic_images.jl` run passed another 530, including the policy,
+reference-orientation and source-error-stop checks; its log is
+`output/periodic_default_forces_final.log`. Both logs end with exit code zero.
+
+The standard-resolution 2D comparison (`dx=0.002`, 23,808 originals) warmed
+both complete 0.1 s windows before unprofiled ABBA measurements:
+
+| Backend | Elapsed solver times | Steps | Original rebuilds | Step readbacks |
+| --- | --- | --- | --- | --- |
+| Periodic queries | 0.8038 s, 0.8054 s | 3173 | 73 | 120 |
+| Dense periodic copies | 0.4974 s, 0.5163 s | 3173 | 73 | 120 |
+
+The mean elapsed improvement is approximately 1.59 times for this 2D case,
+including source generation/sorting, graph handling, integration and output.
+Both variants produced 11 frames, retained 12 cached graphs, had no capture
+failures or exclusions, and used the same original grid dimensions and two
+capacity growths. Copies performed 6419 active source builds (two per step
+plus 73 startup/rebuild evaluations); the last source state had 24,165 entries.
+This is a 0.1 s comparison, not a full six-second case timing.
+
+The final accepted times were 0.100012347 s and 0.100012511 s. Minimum-image
+position differences were 0.855 mm maximum and 0.0362 mm RMS; relative L2
+velocity and density differences were 0.0340 and 2.64e-5. Preserving the
+operator does not make trajectories bitwise equal: source-cell assignments,
+pair-vector arithmetic and summation order differ. Long-run trajectory
+validation remains outstanding. Results are in
+`output/periodic_default_benchmark_final.log` and
+`output/periodic_default_benchmark_YRY2wg/results.txt`.

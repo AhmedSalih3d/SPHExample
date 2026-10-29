@@ -37,7 +37,7 @@ using CUDA
 using StaticArrays
 using ..PeriodicBoundaries: PeriodicBoundary, wrap_periodic_position
 using ..SimulationGeometry: Fixed, Moving, Frozen, Floating
-using ..GPUStepState: DeviceStep, StepState, I_STOP, STOP_REBUILD,
+using ..GPUStepState: DeviceStep, StepState, I_STOP, STOP_REBUILD, STOP_PERIODIC_IMAGES,
                       I_GRID_STATUS, I_GRID_ORIGIN, I_GRID_DIMS, I_GRID_NCELLS, I_GRID_FROZEN
 
 export CellGrid, CellListWorkspace, update_cell_list!, compact_nonzero!, unique_cells_host, occupied_cells_host,
@@ -523,7 +523,7 @@ end
 
 @inline request_periodic_rebuild!(::Nothing) = nothing
 @inline function request_periodic_rebuild!(step::DeviceStep)
-    CUDA.atomic_xchg!(pointer(step.i, I_STOP), STOP_REBUILD)
+    @inbounds step.i[I_STOP] == STOP_PERIODIC_IMAGES || CUDA.atomic_xchg!(pointer(step.i, I_STOP), STOP_REBUILD)
     return nothing
 end
 
@@ -761,7 +761,7 @@ function freeze_particles_kernel!(Position, state, events, count, grid, inv_cell
 end
 
 function finish_freeze_kernel!(count, step::DeviceStep)
-    @inbounds count[1] > 0 && (step.i[I_STOP] = STOP_REBUILD)
+    @inbounds step.i[I_STOP] != STOP_PERIODIC_IMAGES && count[1] > 0 && (step.i[I_STOP] = STOP_REBUILD)
     return nothing
 end
 finish_freeze_kernel!(count, ::Nothing) = nothing

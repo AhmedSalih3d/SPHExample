@@ -32,7 +32,9 @@ and files have closed. Its fields are:
   `periodic_source_rebuilds` counts the separate force-source sorts for the
   periodic-image backend; `periodic_source_count` includes originals and copies
   in its last evaluated state. Both are zero for other backends. The final
-  source count uses one additional scalar download after simulation completion.
+  source statistics use two additional scalar downloads after simulation
+  completion. The build counter records active evaluations, including graph
+  replay, and excludes stopped graph preparation and excess queued steps.
 - `termination_reason`: `:completed` when the requested simulation time has
   been reached (possibly overshot), or `:interrupted` for a caught
   `InterruptException`. Other errors still propagate after output cleanup;

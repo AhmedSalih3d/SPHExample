@@ -158,10 +158,11 @@ counts are 31,600 fixed, 30,000 moving and 401,600 fluid particles. The separate
 reference scheme leaves the existing CPU-compatible integrators unchanged.
 Running or including `Wavemaker.jl` starts the case. For customized calls to
 `run_wavemaker(...)`, include `example/Wavemaker/WavemakerSetup.jl` instead.
-Both runnable entry points explicitly enable `periodic_images = true`: dense,
+Periodic DBC defaults to copies (`GPUPeriodicImages = true`), and
+both runnable entry points enable `periodic_images = true`: dense,
 GPU-generated periodic copies replace translated force queries while only
-original particles are integrated and exported. The scheme default remains
-off. See the case guide for selecting the query backend and measuring the
+original particles are integrated and exported. The scheme default is
+on. See the case guide for selecting the query backend and measuring the
 implemented backend with whole-solver timings.
 
 ```sh
@@ -1834,12 +1835,32 @@ precomputes the same image search limits before each interaction stage. It retai
 row and pair order while adding 48 bytes per particle in 2D or 72 in 3D to live
 device support storage. The option defaults to `false`, including in WaveMaker;
 its benefit depends on the interaction compiler settings and workload.
-`DualSPHysicsSymplectic(periodic_images = true)` instead allocates a separate
-dense periodic-source buffer and sorts it for every force evaluation. It
-requires finite domain bounds, changes summation order and keeps copies out of
-integration, timestep reductions and exports. This opt-in backend is explicitly
-selected by the runnable WaveMaker examples; see their guide for validation and
-the whole-solver comparison command.
+`GPUPeriodicImages = true` (the default) builds dense periodic sources for DBC
+in 2D/3D with either standard integrator or the DualSPHysics-style scheme.
+It preserves the selected diffusion and viscosity models. Dense original-owner
+and cell metadata retain reference pair orientation for ordered diffusion and
+SPS viscosity; neighbor summation order and rounding can still change.
+Copies stay out of integration, timestep reductions and exports. Their grid
+grows outside graph capture when needed, and source-build diagnostics count
+active graph replays rather than queued or stopped work. The source grid is
+derived from the original grid, or finite reference domain bounds when supplied.
+
+`GPUPeriodicImages = false` retains the legacy translated-query backend.
+The reference scheme also accepts `periodic_images = false`. mDBC and periods
+no larger than twice the support radius retain queries automatically, with
+the reason recorded in the resolved configuration. Nonperiodic cases allocate
+no copy workspace.
+
+The legacy query-backend selection will be deprecated in a future release once
+copies support the remaining boundary modes and full-run validation is complete.
+The opt-out remains supported today; no removal version is scheduled.
+
+To benchmark the standard 2D case while preserving its symplectic integrator,
+complex hydrostatic diffusion, fixed grid and CUDA graphs:
+
+```sh
+julia --project=. -t 2,0 benchmark/periodic_backend_defaults.jl 0.1 0.002 4
+```
 The reference driver also honors `GPUInteractionAlwaysInline` and
 `GPUInteractionFastMath`, independently of the scheme's pressure/diffusion
 `fast_math` option.
@@ -1850,7 +1871,7 @@ wave-maker explicitly selects DualSPHysics' `(0.1h)^2` regularization and its
 normalization evaluated from the reference smoothing length.
 
 `GPUPeriodicCellCoordinates = true` enables working-precision cell-relative
-force coordinates for periodic DBC with mixed position precision. It is
+force coordinates for the periodic query backend with mixed position precision. It is
 selected by the reference wave-maker. The default `false` retains periodic
 absolute-coordinate arithmetic. This changes rounding and requires numerical
 validation; it is not a bitwise-preserving performance option.
@@ -1862,6 +1883,7 @@ validation; it is not a bitwise-preserving performance option.
 | `GPUSyncTimers` | `false` | Synchronize after every phase so the `TimerOutputs` table shows real per kernel times (costs a few percent). |
 | `GPUDeterministicSort` | `true` | Sort particles inside each cell after the counting sort; results become bitwise reproducible between runs. |
 | `GPUMaxCells` | `50_000_000` | Abort with a clear message if the neighbour grid would need more cells (a particle escaped). |
+| `GPUPeriodicImages` | `true` | Dense periodic sources for supported DBC runs. `false` selects legacy translated queries. mDBC and short periods retain queries automatically; nonperiodic runs allocate no copies. The legacy selection is intended for future deprecation after compatibility and trajectory validation. |
 | `GPUFixedGrid` | `false` | Retain the initial particle-grid bounds. Particles crossing locked sides freeze and are logged at rebuilds; allowed sides grow without shrinking. See "Fixed grid and directional expansion". |
 | `GPUGridExpansion` | `((false, false), ...)` | One `(negative, positive)` Boolean pair per axis, selecting which sides of a fixed grid may expand. Requires `GPUFixedGrid = true`. |
 | `GPUInteractionThreads` | `128` | Threads per block of the interaction and mDBC kernels. |

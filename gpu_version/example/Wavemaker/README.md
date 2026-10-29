@@ -104,17 +104,24 @@ original particles and near-face periodic copies for each predictor/corrector
 force evaluation. Its ordinary cell-relative neighbor loop avoids translated
 periodic queries. Copy generation and sorting run on the GPU. Originals alone
 are integrated, used for timestep reductions and exported. This backend needs
-finite domain bounds and a period larger than twice the support radius;
-query caching cannot be enabled with it. It uses more device memory and changes
+a period larger than twice the support radius. This case supplies finite
+reference bounds for the source grid. Selecting query caching uses queries
+instead. Copies use more device memory and change
 neighbor summation order, so trajectories need not be bitwise identical.
 The measured one-second pair took 144.8 s with queries and 47.6 s with copies;
 step counts differed by two. Its 99th-percentile periodic position difference
 was 0.8 mm, with a 7.4 cm maximum outlier. Full-run trajectory equivalence is
 not established; inspect the flow as well as elapsed time. See the investigation
 for matched-work short timings, state differences and memory cost.
-The package-level scheme and `run_wavemaker` function retain `false` as their
-default; the two runnable case entry points explicitly select `true`.
-With a custom `time_stepping`, set `periodic_images` on that scheme.
+Periodic DBC now selects copies by default through `GPUPeriodicImages = true`,
+including standard symplectic and single-neighbor stepping in 2D/3D. The
+reference scheme and `run_wavemaker` function also default to `true`.
+For comparisons, use `run_wavemaker(periodic_images = false)` or set
+`GPUPeriodicImages = false` on generic case metadata. Existing integrators and
+diffusion models are preserved; copies do not require Fourtakas.
+The legacy query-backend option will be deprecated in a future release after the
+remaining boundary modes are supported and full-run validation is complete.
+It remains supported today, with no removal version scheduled.
 `SimulationResult.diagnostics.periodic_source_rebuilds` reports the additional
 source sorts, separately from original-particle rebuilds. `periodic_source_count`
 reports originals plus copies in the last evaluated state.

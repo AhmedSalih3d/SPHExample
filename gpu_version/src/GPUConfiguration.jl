@@ -4,6 +4,7 @@ module GPUConfiguration
 using Logging
 using LoggingExtras: FormatLogger
 using ..SimulationMetaDataConfiguration
+using ..SimulationMetaDataConfiguration: periodic_images_enabled
 using ..SPHDensityDiffusionModels: ZeroDensityDiffusion, FourtakasDensityDiffusion
 using ..SPHViscosityModels: ZeroViscosity, LaminarSPS
 using ..GPUKernels: choose_lanes, interaction_options
@@ -38,7 +39,7 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
         scalar_sps_viscosity = meta.GPUScalarSPSViscosity, use_graph = meta.GPUUseGraph,
         sync_timers = meta.GPUSyncTimers, lanes_per_particle = meta.GPULanesPerParticle,
         max_steps_per_sync = meta.GPUMaxStepsPerSync, double_position = meta.GPUDoublePosition,
-        periodic_cell_coordinates = meta.GPUPeriodicCellCoordinates)
+        periodic_cell_coordinates = meta.GPUPeriodicCellCoordinates, periodic_images=meta.GPUPeriodicImages)
     capabilities = (; radial_interactions = options.radial_supported,
         scalar_sps_viscosity = options.scalar_sps_supported)
     lanes = meta.GPULanesPerParticle <= 0 ? choose_lanes(particle_count, Val(D)) : meta.GPULanesPerParticle
@@ -57,7 +58,8 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
         viscosity_path = viscosity isa ZeroViscosity ? :disabled : options.scalar_sps ? :scalar_sps :
             options.radial && !(viscosity isa LaminarSPS) ? :radial_symmetric : :reference_ordered,
         dimensions = D, float_type = T, position_type,
-        pair_coordinates = meta.TimeSteppingMode isa DualSPHysicsSymplectic && meta.TimeSteppingMode.periodic_images ? :periodic_images_cell_relative : meta.Periodicity !== nothing ?
+        periodic_images = periodic_images_enabled(meta,kernel),
+        pair_coordinates = periodic_images_enabled(meta,kernel) ? :periodic_images_cell_relative : meta.Periodicity !== nothing ?
             (meta.GPUPeriodicCellCoordinates ? :periodic_cell_relative : :translated_absolute) :
             position_type === T ? :absolute : :cell_relative,
         time_stepping = typeof(meta.TimeSteppingMode), boundary_mode = B, shifting_mode = S,
@@ -77,6 +79,13 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
         use_graph = meta.GPUUseGraph && !meta.GPUSyncTimers,
         max_steps_per_sync = meta.GPUSyncTimers ? 1 : max(1, meta.GPUMaxStepsPerSync))
     fallbacks = NamedTuple[]
+    if requested.periodic_images && meta.Periodicity !== nothing && !effective.periodic_images
+        reason = B !== NoMDBC ? :unsupported_boundary_mode :
+            meta.TimeSteppingMode isa DualSPHysicsSymplectic && meta.TimeSteppingMode.cache_periodic_queries ? :query_cache_selected :
+            meta.TimeSteppingMode isa DualSPHysicsSymplectic && !meta.TimeSteppingMode.periodic_images ? :scheme_selected_queries :
+            :period_not_larger_than_twice_support
+        push!(fallbacks,(;option=:GPUPeriodicImages,requested=true,effective=false,reason))
+    end
     if requested.radial_interactions && !effective.radial_interactions
         push!(fallbacks, (; option = :GPURadialInteractions, requested = true, effective = false,
             reason = :unsupported_kernel_or_models))

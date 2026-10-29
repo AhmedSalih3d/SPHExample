@@ -7,7 +7,8 @@ const GK = SPHExampleGPU.GPUKernels
 const CL = SPHExampleGPU.SPHCellList
 const GRID = SPHExampleGPU.GPUCellGrid
 
-include(joinpath(@__DIR__, "..", "example", "Periodicity2d.jl"))
+Base.include(expr -> expr isa Expr && expr.head === :call && first(expr.args) === :run_periodicity_2d ? nothing : expr,
+    @__MODULE__,joinpath(@__DIR__, "..", "example", "Periodicity2d.jl"))
 
 @testset "DualSPHysics Periodicity geometry" begin
     case = periodicity_2d_geometry()
@@ -296,6 +297,8 @@ if CUDA.functional()
                     @test particles.Density == fill(T(1000), 2)
                     @test result.configuration.execution.graph_capture_failures == 0
                     @test result.configuration.effective.periodicity == p
+                    @test result.configuration.effective.periodic_images
+                    @test result.diagnostics.periodic_source_rebuilds > 0
                     graph && @test result.configuration.execution.graph_batches > 0
                     h5open(joinpath(save, "PeriodicAdvection.vtkhdf"), "r") do io
                         root = io["VTKHDF"]
@@ -364,6 +367,9 @@ if CUDA.functional()
             @test all(isfinite, result.final_state.particles.Density)
             @test all(x -> all(isfinite, x), result.final_state.particles.Position)
             @test result.diagnostics.frozen_particles == 0
+            @test result.configuration.effective.periodic_images
+            @test result.configuration.effective.time_stepping === SymplecticTimeStepping
+            @test result.configuration.effective.density_diffusion_model === ComplexDensityDiffusion
         end
     end
 end

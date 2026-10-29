@@ -46,7 +46,7 @@ Use a new output directory for each run. Returns a `SimulationResult`.
 function run_wavemaker(; FloatType = Float32, dx = 0.02, simulation_time = 10.0,
         output_interval = 0.1,
         cache_fields = false, lanes = 1, boundary_forces = false,
-        cell_subdivision = 2, cache_periodic_queries = false, periodic_images = false,
+        cell_subdivision = 2, cache_periodic_queries = false, periodic_images = true,
         interaction_always_inline = true, interaction_fastmath = true,
         stationary = false,
         density_diffusion = FourtakasDensityDiffusion(),
@@ -58,10 +58,6 @@ function run_wavemaker(; FloatType = Float32, dx = 0.02, simulation_time = 10.0,
         throw(ArgumentError("simulation_time must be finite and in (0, 100]"))
     isfinite(output_interval) && output_interval > 0 ||
         throw(ArgumentError("output_interval must be finite and positive"))
-    if periodic_images && time_stepping !== nothing
-        time_stepping isa DualSPHysicsSymplectic && time_stepping.periodic_images ||
-            throw(ArgumentError("With custom time_stepping, enable periodic_images on that scheme too"))
-    end
     dimensions = 3
     T = FloatType
 
@@ -120,6 +116,7 @@ function run_wavemaker(; FloatType = Float32, dx = 0.02, simulation_time = 10.0,
         GPUUseGraph = use_graph,
         GPUDoublePosition = double_position,
         GPUPeriodicCellCoordinates = periodic_cell_coordinates,
+        GPUPeriodicImages = periodic_images,
         GPUCellSubdivision = cell_subdivision,
         GPUCacheInteractionFields = cache_fields,
         GPULanesPerParticle = lanes,

@@ -15,6 +15,9 @@ end
 function dual_force_stage!(position,velocity,density,pairs,gpu,cl,sup,kernel,constants,diffusion,viscosity,meta,step)
     images = sup.dual_state.images
     if images !== nothing
+        if !all(isfinite,meta.TimeSteppingMode.domain_min) || !all(isfinite,meta.TimeSteppingMode.domain_max)
+            configure_periodic_images!(images,cl.periodicity,cl.grid,kernel)
+        end
         build_periodic_images!(images,position,velocity,density,gpu.Type,cl.periodicity,meta.TimeSteppingMode,kernel)
         source = images.sorted
         launch_interactions!(sup.dρdtI,gpu.Acceleration,gpu.Kernel,gpu.KernelGradient,sup.∇Cᵢ,sup.∇◌rᵢ,
@@ -55,7 +58,7 @@ function dual_simulation_loop!(diffusion,viscosity,kernel,meta,constants,gpu,cl,
     clock === nothing && throw(ArgumentError("Allocate support arrays with DualSPHysicsSymplectic metadata"))
     scheme.cache_periodic_queries == (clock.queries !== nothing) ||
         throw(ArgumentError("Periodic-query caching must match the allocated support arrays; reallocate after changing the scheme"))
-    scheme.periodic_images == (clock.images !== nothing) ||
+    periodic_images_enabled(meta,kernel) == (clock.images !== nothing) ||
         throw(ArgumentError("Periodic-image mode must match the allocated support arrays; reallocate after changing the scheme"))
     if !clock.initialized
         clock.time = Float64(meta.TotalTime)

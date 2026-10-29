@@ -25,7 +25,7 @@ using Adapt
 export StepState, DeviceStep, HostStep, step_active, step_dt, step_time,
        F_DT, F_TIME, F_DX, F_TOUT, F_DISP, I_STOP, I_PHASE, I_ITER, I_CLIP_OUTPUT,
        I_GRID_STATUS, I_GRID_ORIGIN, I_GRID_DIMS, I_GRID_NCELLS, I_GRID_FROZEN,
-       STOP_NONE, STOP_REBUILD, STOP_OUTPUT, PHASE_NEED_DT, PHASE_DT_READY,
+       STOP_NONE, STOP_REBUILD, STOP_OUTPUT, STOP_PERIODIC_IMAGES, PHASE_NEED_DT, PHASE_DT_READY,
        readback!, set_output_time!, resume_after_rebuild!, invalidate_graphs!
 
 # Slots of the floating point state vector
@@ -53,6 +53,7 @@ const NUM_I   = 13
 const STOP_NONE    = Int32(0)
 const STOP_REBUILD = Int32(1)  # the cell list must be rebuilt before the step can run
 const STOP_OUTPUT  = Int32(2)  # the output time is reached, no further step is taken
+const STOP_PERIODIC_IMAGES = Int32(3) # invalid active periodic force source
 
 const PHASE_NEED_DT  = Int32(0)  # `dt` of the next step still has to be computed
 const PHASE_DT_READY = Int32(1)  # `dt` is stored, the step itself has not run yet

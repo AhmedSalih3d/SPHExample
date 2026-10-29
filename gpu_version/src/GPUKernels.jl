@@ -383,7 +383,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                              ::Val{FlagKernel}, ::Val{FlagShift}, ::Val{BoundaryForces}, ::Val{K},
                              boundary_data, InvDensity, Pressure, n::Int32, ::Val{Radial} = Val(false), ::Val{ScalarSPS} = Val(false),
                              ::Val{FrozenParticles} = Val(true), ::Val{IncludeGravity} = Val(false), periodicity = nothing,
-                             periodic_bounds = nothing, viscous_dt = nothing, ::Val{FastMath}=Val(false), target_indices=nothing) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath}
+                             periodic_bounds = nothing, viscous_dt = nothing, ::Val{FastMath}=Val(false), target_indices=nothing, pair_order=nothing) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -429,6 +429,8 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
         c      = CellID[source_i]
         own_lo = CellStart[c] + Int32(1)
         own_hi = CellStart[c + Int32(1)]
+        owner_i = pair_order === nothing ? source_i : pair_order.owners[source_i]
+        anchor_i = pair_order === nothing ? c : pair_order.cells[source_i]
 
         for row in neighbor_rows(periodicity, grid, c, s, pair_position(pᵢ), periodic_bounds, source_i)
             jlo, jhi = row_range(grid, CellStart, c, row)
@@ -473,8 +475,9 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         # pair orientation. The sign flip and swaps are selects.
                         # The densities handed to the models are those of the arrays
                         # being evaluated (the predictor state in the corrector loop).
-                        same_cell = (j >= own_lo) & (j <= own_hi)
-                        i_first   = same_cell ? (source_i < j) : (source_i > j)
+                        same_cell = pair_order === nothing ? (j >= own_lo) & (j <= own_hi) : anchor_i == pair_order.cells[j]
+                        owner_j = pair_order === nothing ? j : pair_order.owners[j]
+                        i_first   = same_cell ? (owner_i < owner_j) : (owner_i > owner_j)
                         sgn  = i_first ? one(T) : -one(T)
                         ia   = i_first ? source_i : j
                         ja   = i_first ? j : source_i
@@ -638,6 +641,8 @@ recompiled with these options.
 `target_indices` optionally maps the `target_count` outputs to source indices.
 Sources and their cell IDs must share dense cell order; outputs remain in target
 order. This permits periodic copies as neighbors without integrating them.
+`pair_order` optionally supplies dense original owner indices and cell IDs,
+preserving reference pair orientation after sorting periodic sources.
 """
 function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
                               Position, Density, Velocity, ParticleType,
@@ -650,7 +655,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
                               periodic_bounds = nothing, periodic_cell_coordinates::Bool = false, viscous_dt = nothing,
                               fast_math::Bool = false,
                               always_inline::Bool = false, fastmath::Bool = false,
-                              target_indices = nothing, target_count::Integer = length(Position))
+                              target_indices = nothing, target_count::Integer = length(Position), pair_order = nothing)
     inverse_density === nothing || length(inverse_density) == length(Density) ||
         throw(DimensionMismatch("Reciprocal cache must have one entry per evaluated density"))
     pressure === nothing || length(pressure) == length(Density) ||
@@ -682,7 +687,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
         Pairs, Position, Density, Velocity, ParticleType, SimParticles,
         CellStart, CellID, grid, step,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math), target_indices)
+        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math), target_indices, pair_order)
     return nothing
 end
 

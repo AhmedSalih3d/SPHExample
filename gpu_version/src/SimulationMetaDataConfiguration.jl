@@ -41,10 +41,12 @@ Reference DBC predictor/corrector, pair-based timestep limits and Float64 clock.
 For periodic runs, caching image search limits preserves row/pair order and
 adds 48 bytes per particle in 2D or 72 in 3D to device support storage. Limits
 are refreshed for each evaluated state; nonperiodic runs cannot enable it.
-`periodic_images = true` instead builds dense, cell-sorted originals plus
+`periodic_images = true` (the default) instead builds dense, cell-sorted originals plus
 periodic copies for each force evaluation. Only originals are integrated,
-reduced and exported. It requires finite domain bounds and a period greater
-than twice the kernel support radius, and cannot be combined with query caching.
+reduced and exported. The period must exceed twice the kernel support radius.
+Finite reference domain bounds initialize the source grid when supplied;
+otherwise it follows the original particle grid. Selecting query caching uses
+the query backend. `periodic_images = false` disables copies for this scheme.
 It uses additional device storage and changes neighbor summation order.
 """
 Base.@kwdef struct DualSPHysicsSymplectic <: TimeSteppingMode
@@ -56,7 +58,7 @@ Base.@kwdef struct DualSPHysicsSymplectic <: TimeSteppingMode
     density_max::Float64 = Inf
     fast_math::Bool = true
     cache_periodic_queries::Bool = false
-    periodic_images::Bool = false
+    periodic_images::Bool = true
 end
 
 """
@@ -120,6 +122,10 @@ refreshed after density prediction and boundary corrections. This option is
 independent of `GPUCompactBuffers`, defaults to `false`, and trades device
 memory for fewer neighbor-loop divisions and EOS evaluations; elapsed speed
 depends on the case and GPU.
+With periodic copies, the dense source capacity also holds its own two cache
+fields. Capacity is twice the original count, adding another
+`4 * sizeof(FloatType)` bytes per original beyond the original-state cache.
+The live-buffer report includes these arrays.
 
 `GPURadialInteractions = true` opts into experimental scalar Wendland C2 pair contractions
 for supported linear diffusion and built-in viscosity models. Linear diffusion
@@ -218,6 +224,7 @@ mutable struct SimulationMetaData{Dimensions,
     Periodicity::Union{Nothing, PeriodicBoundary{Dimensions, Float64}}
     GPUDoublePosition::Bool      # integrate positions in Float64 (pair loops use cell relative positions in FloatType)
     GPUPeriodicCellCoordinates::Bool # opt-in cell-relative arithmetic for periodic force pairs
+    GPUPeriodicImages::Bool      # dense periodic force sources for supported DBC runs
     GPUCacheInteractionFields::Bool # cache reciprocal density for interaction loops
     GPUCompactBuffers::Bool      # omit unused buffers and narrow GPU-only metadata when lossless
     GPUOutputQueueBytes::Int     # reusable host frames between collector and disk writer
@@ -338,6 +345,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         Periodicity::Union{Nothing, PeriodicBoundary{Dimensions}} = nothing,
         GPUDoublePosition::Bool                 = false,
         GPUPeriodicCellCoordinates::Bool        = false,
+        GPUPeriodicImages::Bool                 = true,
         GPUCacheInteractionFields::Bool         = false,
         GPUCompactBuffers::Bool                 = true,
         GPUOutputQueueBytes::Int                = 256 * 2^20,
@@ -362,9 +370,18 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUInteractionAlwaysInline, GPUInteractionFastMath, GPURadialInteractions, GPUScalarSPSViscosity,
         GPUBoundaryForces, GPUAsyncOutput, GPUMaxStepsPerSync, GPUUseGraph, GPUClipTimeStepToOutput, GPUCellSubdivision,
         GPUFixedGrid, GPUGridExpansion, Periodicity,
-        GPUDoublePosition, GPUPeriodicCellCoordinates, GPUCacheInteractionFields, GPUCompactBuffers, GPUOutputQueueBytes, GPUOutputBufferBytes,
+        GPUDoublePosition, GPUPeriodicCellCoordinates, GPUPeriodicImages, GPUCacheInteractionFields, GPUCompactBuffers, GPUOutputQueueBytes, GPUOutputBufferBytes,
         GPUTimestepDiagnosticsEvery,
     )
+end
+
+# Legacy query selection will be deprecated after compatibility
+# and trajectory validation; the opt-out remains supported in this release.
+function periodic_images_enabled(meta::SimulationMetaData{D,T,S,K,B}, kernel=nothing) where {D,T,S,K,B}
+    mode = meta.TimeSteppingMode
+    return meta.GPUPeriodicImages && meta.Periodicity !== nothing && B === NoMDBC &&
+        (!(mode isa DualSPHysicsSymplectic) || (mode.periodic_images && !mode.cache_periodic_queries)) &&
+        (kernel === nothing || meta.Periodicity.upper-meta.Periodicity.lower > 2kernel.H)
 end
 
 # Trailing mode parameters default like in the CPU package.
