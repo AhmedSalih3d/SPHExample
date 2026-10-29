@@ -210,6 +210,60 @@ including impact peaks of about 1 kN/m after the waves break, closely follow the
 same DualSPHysics run. That run used the same pressure integral; the reference's
 `ComputeForces` uses a different measure. No fluid particle crossed the bed or wall.
 
+### Floating box in a wave tank
+
+[FloatingBox3d.jl](example/FloatingBox3d.jl) adapts DualSPHysics example 11
+(`11_Floating`, `CaseFloating`) in a single file, following its
+[video](https://youtu.be/hdgJJJ_5Mxo) and description: a 3D floating box in a
+wave tank, periodic across the width, with a sinusoidal piston and δ-SPH. The
+5.4 distribution's XML keeps the geometry but replaces the periodicity with side
+walls. The tank is 16 m long, 6 m wide and 6 m high. The water fills it to 4 m;
+its top particle layer lies at 3.9 m, as with GenCase's `fillbox`. The 0.3 m
+piston stands at x = 0.7 m and moves as x = 0.5 sin(2π · 0.3 t), starting at
+full speed into the tank. The 2 m box of 10 t starts half submerged, with its
+centre at (11, 3, 4) m. The tank, piston, box and water are drawn as prisms and
+sampled on one lattice. The bed and end wall have four particle layers, and the
+piston slides one spacing above the bed. The periodic faces are at
+y = −dx/2 and 6 − dx/2, so no particle row is duplicated at the seam. At
+`dx = 0.1` the case has 53,760 wall, 12,000 piston, 9,261 box and 344,250 fluid
+particles.
+
+As in the previous example, the package's defaults replace the reference's
+DualSPHysics-specific settings: `SymplecticTimeStepping()`, artificial
+viscosity `α = 0.01` and `LinearDensityDiffusion()` (δ-SPH with `δ = 0.1`). The
+kernel is Wendland C2 with `h = √3 dx`, the reference's `coefh = 1`. The sound
+speed `c₀ = 20√(g · 3.8)` uses the sampled water column, as GenCase does.
+Densities start hydrostatic. `RelativeWeight = 10000 / (m₀ N) ≈ 1.08` gives
+the reference's `massbody`. Boundaries use DBC, and positions are stored in
+Float64. `FloatingBox3D_Floating.csv` records the box's centre, velocity,
+orientation and angular velocity. Water-column probes `WG1` and `WG2`, at
+x = 6 m (between the piston and box) and x = 14 m (behind it), with y = 1 m,
+are written to the output file.
+
+```sh
+julia --project=gpu_version -t 2,0 gpu_version/example/FloatingBox3d.jl
+```
+
+The 10-second Float32 run took 1,461 s and 35,304 steps on an NVIDIA RTX A1000
+Laptop GPU. A DualSPHysics 5.4 GPU run gave the reference. It used the
+distributed case's settings (Laminar+SPS, Fourtakas DDT 0.1), made periodic in
+y with `YPeriodicIncZ = 0`. GenCase's BCC boundary lattice (`lattice
+bound="2"`) offsets wall particles by ±dp/4, which cannot tile the periodic
+seam. That run therefore used the cubic lattice and the four-layer walls drawn
+here. Its water, piston and box particles coincide with this example's.
+
+In both runs, the box first sinks from its 1 m draft. It then hangs fully
+submerged, with its centre about 2.1 m above the bed, until the first wave crests
+lift it towards the surface after 4 s. The comparison samples 0.1 to 10 s every
+0.1 s. Surge, from −0.73 to 0.62 m, had an RMSE of 6.1 cm and a correlation of
+0.993. Heave, down to −1.97 m, had an RMSE of 7.1 cm and a correlation of 0.990.
+Pitch shows the same rocking of about ±10°, but its phase drifts after 6 s
+(RMSE 4.3°, correlation 0.67). The largest pitch magnitude was 13.5° in the
+reference and 11.7° here. Gauge elevations agree closely. `WG1` ranges from
+−0.58 to 1.17 m, with an RMSE of 1.4 cm and a correlation of 0.9997. Behind the
+box, `WG2` had an RMSE of 4.7 cm and a correlation of 0.996. No fluid particle
+crossed the bed, end wall or piston.
+
 ### External forces
 
 `SimExternalForces` adds prescribed acceleration histories to fluid groups,
