@@ -1027,8 +1027,8 @@ function launch_solver_interactions!(ctx,position,density,velocity,pairs,step;in
         threads,lanes,boundary_forces=bforces,pos_cells=pairs,boundary_data=sup.boundary_data,
         inverse_density,pressure,frozen_particles=get(ctx,:frozen_particles,Val(true)),include_gravity,
         radial=get(ctx,:radial,Val(false)),scalar_sps=get(ctx,:scalar_sps,Val(false)),periodicity,periodic_bounds=bounds,
-        periodic_cell_coordinates=periodic_coordinates,always_inline=get(ctx,:interaction_always_inline,false),
-        fastmath=get(ctx,:interaction_fastmath,false),target_indices=targets,target_count=length(gpu),pair_order=order)
+        periodic_cell_coordinates=periodic_coordinates,always_inline=get(ctx,:interaction_always_inline,true),
+        fastmath=get(ctx,:interaction_fastmath,true),target_indices=targets,target_count=length(gpu),pair_order=order)
     return nothing
 end
 

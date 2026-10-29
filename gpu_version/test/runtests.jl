@@ -1099,7 +1099,8 @@ relerr(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), eps(eltype(b))))
             )
             case = BENCH_CASES[findfirst(c -> c.name == name, BENCH_CASES)]
             ref  = run_cpu_reference(case, simtime; time_stepping = scheme)
-            p, meta = run_gpu(case, Float64, simtime; time_stepping = scheme)
+            p, meta = run_gpu(case, Float64, simtime; time_stepping = scheme,
+                GPUInteractionAlwaysInline = false, GPUInteractionFastMath = false)
 
             @test meta.Iteration == ref.Iteration
             @test p.ID == ref.ID

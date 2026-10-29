@@ -23,7 +23,7 @@ explicit `GPULanesPerParticle` values can be resolved without one.
 operator, viscosity arithmetic, interaction compiler options, precision, pair coordinates and simulation
 modes. A radial linear-diffusion operator is `:symmetric_reciprocal_density`;
 `:reference` retains CPU pair orientation (CPU equivalence also requires cell
-subdivision one). Capabilities describe implementation support, not accuracy.
+subdivision one and `GPUInteractionFastMath = false`). Capabilities describe implementation support, not accuracy.
 
 This is a configuration preview. `RunSimulation(...).configuration` additionally
 reports observed graph/direct batch counts and capture failures under `execution`.

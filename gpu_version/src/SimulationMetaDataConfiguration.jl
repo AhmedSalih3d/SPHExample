@@ -148,7 +148,7 @@ interaction kernel without requesting relaxed floating-point semantics.
 `GPUInteractionFastMath = true` enables CUDA fast math in that kernel and its
 callees, including custom models: approximate arithmetic, reassociation,
 Float32 subnormal flushing and assumptions about NaN/Inf may change results.
-Both default to `false`, can be combined, and do not change the compilation of
+Both default to `true`, can be disabled independently, and do not change the compilation of
 boundary-correction, integration, reduction or interaction-cache preparation
 kernels. Validate accuracy and elapsed solver time for the intended case.
 Changing either option between output intervals invalidates captured graphs
@@ -213,7 +213,7 @@ mutable struct SimulationMetaData{Dimensions,
     GPUInteractionThreads::Int   # threads per block for the interaction kernels
     GPULanesPerParticle::Int     # warp lanes per particle in the gather kernels (0 = automatic)
     GPUInteractionAlwaysInline::Bool # force inlining only in the interaction kernel
-    GPUInteractionFastMath::Bool # opt-in relaxed arithmetic only in the interaction kernel
+    GPUInteractionFastMath::Bool # relaxed arithmetic only in the interaction kernel
     GPURadialInteractions::Bool  # opt-in scalar Wendland arithmetic and symmetric linear diffusion
     GPUScalarSPSViscosity::Bool   # separate opt-in rank-one SPS stress arithmetic (changes rounding)
     GPUBoundaryForces::Bool      # also evaluate the momentum equation for boundary particles (CPU parity)
@@ -333,8 +333,8 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUMaxCells::Int                        = 50_000_000,
         GPUInteractionThreads::Int              = 128,
         GPULanesPerParticle::Int                = 0,
-        GPUInteractionAlwaysInline::Bool        = false,
-        GPUInteractionFastMath::Bool            = false,
+        GPUInteractionAlwaysInline::Bool        = true,
+        GPUInteractionFastMath::Bool            = true,
         GPURadialInteractions::Bool             = false,
         GPUScalarSPSViscosity::Bool              = false,
         GPUBoundaryForces::Bool                 = true,

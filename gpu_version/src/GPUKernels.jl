@@ -599,7 +599,7 @@ end
 
 """
     launch_interactions!(...; threads, lanes, boundary_forces, pos_cells, radial, scalar_sps,
-                         always_inline = false, fastmath = false)
+                         always_inline = true, fastmath = true)
 
 Launch the gather interaction kernel. `Position`, `Density` and
 `Velocity` are the arrays of the state being evaluated (the half step arrays
@@ -635,7 +635,7 @@ interaction acceleration; the predictor or corrector then adds gravity.
 `fastmath = true` enables relaxed floating-point semantics throughout the
 interaction kernel and its callees, including custom models. It may change
 rounding and NaN/Inf checks, flush Float32 subnormals, and use approximate
-arithmetic. Both default to `false` and can be combined. Other kernels,
+arithmetic. Both default to `true` and can be disabled independently. Other kernels,
 including mDBC corrections and pressure/reciprocal cache preparation, are not
 recompiled with these options.
 `target_indices` optionally maps the `target_count` outputs to source indices.
@@ -654,7 +654,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
                               pressure = nothing, frozen_particles::Val = Val(true), include_gravity::Val = Val(false), periodicity = nothing,
                               periodic_bounds = nothing, periodic_cell_coordinates::Bool = false, viscous_dt = nothing,
                               fast_math::Bool = false,
-                              always_inline::Bool = false, fastmath::Bool = false,
+                              always_inline::Bool = true, fastmath::Bool = true,
                               target_indices = nothing, target_count::Integer = length(Position), pair_order = nothing)
     inverse_density === nothing || length(inverse_density) == length(Density) ||
         throw(DimensionMismatch("Reciprocal cache must have one entry per evaluated density"))

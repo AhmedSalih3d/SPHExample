@@ -72,9 +72,14 @@ end
 @testset "independent interaction compiler options and defaults" begin
     for D in (2, 3), T in (Float32, Float64)
         default = metadata(D, T)
-        @test !default.GPUInteractionAlwaysInline
-        @test !default.GPUInteractionFastMath
+        @test default.GPUInteractionAlwaysInline
+        @test default.GPUInteractionFastMath
         kernel = SPHKernelInstance{D,T}(WendlandC2(); dx = T(0.02))
+        config = effective_configuration(default, kernel, LinearDensityDiffusion(), LaminarSPS(); particle_count = 8)
+        @test config.requested.interaction_always_inline
+        @test config.requested.interaction_fastmath
+        @test config.effective.interaction_always_inline
+        @test config.effective.interaction_fastmath
         for always_inline in (false, true), fastmath in (false, true)
             meta = metadata(D, T; GPUInteractionAlwaysInline = always_inline,
                 GPUInteractionFastMath = fastmath, GPURadialInteractions = !always_inline,
@@ -125,7 +130,7 @@ end
 if CUDA.functional()
     function run_case(save; kernel_model = WendlandC2(), diffusion = LinearDensityDiffusion(),
                       viscosity = ArtificialViscosity(), requested = true, log_mode = StoreLog,
-                      timed = false, always_inline = false, fastmath = false)
+                      timed = false, compiler_options...)
         T = Float32
         points = [SVector{2,T}(x, y) for x in T[0, 0.02], y in T[0, 0.02]][:]
         geometry = [SPHGeometry{2,T}(points; Density = T[999, 1001, 1003, 998], Type = Fluid, GroupMarker = 1)]
@@ -133,9 +138,8 @@ if CUDA.functional()
             SimulationName = "EffectiveConfiguration", SaveLocation = save,
             SimulationTime = T(0.001), OutputTimes = T(0.001),
             GPURadialInteractions = requested, GPUScalarSPSViscosity = requested,
-            GPUInteractionAlwaysInline = always_inline, GPUInteractionFastMath = fastmath,
             GPULanesPerParticle = 0, GPUSyncTimers = timed, GPUUseGraph = timed,
-            VisualizeInParaview = false, OpenLogFile = false)
+            VisualizeInParaview = false, OpenLogFile = false; compiler_options...)
         constants = SimulationConstants{T}(dx = T(0.02), c₀ = T(20), g = zero(T))
         kernel = SPHKernelInstance{2,T}(kernel_model; dx = constants.dx)
         particles = AllocateDataStructures(geometry, meta)
@@ -154,9 +158,18 @@ if CUDA.functional()
     end
 
     @testset "simulation reports the submitted interaction compiler options" begin
+        mktempdir() do save
+            run = run_case(save; viscosity = LaminarSPS())
+            config = run.result.configuration
+            @test config.effective.interaction_always_inline
+            @test config.effective.interaction_fastmath
+            @test occursin("interaction_always_inline = true", run.log)
+            @test occursin("interaction_fastmath = true", run.log)
+        end
         for always_inline in (false, true), fastmath in (false, true)
             mktempdir() do save
-                run = run_case(save; viscosity = LaminarSPS(), always_inline, fastmath)
+                run = run_case(save; viscosity = LaminarSPS(),
+                    GPUInteractionAlwaysInline = always_inline, GPUInteractionFastMath = fastmath)
                 config = run.result.configuration
                 @test config.effective.interaction_always_inline == always_inline
                 @test config.effective.interaction_fastmath == fastmath

@@ -220,12 +220,14 @@ function interaction_fields(f, diffusion, viscosity; radial = nothing, lanes = 1
     (; gpu, cells, support) = f
     extra = radial === nothing ? (;) : (; radial = Val(radial))
     scalar_extra = scalar_sps === nothing ? (;) : (; scalar_sps = Val(scalar_sps))
+    inline_option = always_inline === nothing ? (;) : (; always_inline)
+    fastmath_option = fastmath === nothing ? (;) : (; fastmath)
     GK.launch_interactions!(support.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient,
         support.∇Cᵢ, support.∇◌rᵢ, gpu.Position, gpu.Density,
         gpu.Velocity, gpu.Type, cells.CellStart, gpu.CellID, cells.grid_dev, step,
         diffusion, viscosity, f.kernel, f.constants, Val(true), Val(true);
         lanes = Val(lanes), boundary_forces = Val(boundary_forces), pos_cells = support.PosCells,
-        boundary_data, always_inline, fastmath, extra..., scalar_extra...)
+        boundary_data, inline_option..., fastmath_option..., extra..., scalar_extra...)
     return map(Array, (support.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient, support.∇Cᵢ, support.∇◌rᵢ))
 end
 
@@ -370,6 +372,10 @@ if CUDA.functional()
             diffusion = CompilerProbeDiffusion(T(NaN))
             strict = interaction_fields(f, diffusion, ZeroViscosity(); always_inline)
             approximate = interaction_fields(f, diffusion, ZeroViscosity(); always_inline, fastmath = true)
+            if always_inline
+                defaults = interaction_fields(f, diffusion, ZeroViscosity(); always_inline = nothing, fastmath = nothing)
+                @test defaults == approximate
+            end
             # Fast math is permitted to assume finite values even in custom models.
             @test maximum(abs, approximate[1] .- strict[1]) > one(T)
             restored = interaction_fields(f, diffusion, ZeroViscosity(); always_inline, fastmath = false)

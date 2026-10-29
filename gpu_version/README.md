@@ -1363,7 +1363,7 @@ reduces accumulation error in motion phase, segment transitions, output
 deadlines and termination. It does not make Float32 particle trajectories
 identical to Float64 runs.
 
-* `Float64` reproduces the CPU results to round-off (the test suite checks
+* With `GPUInteractionFastMath = false`, `Float64` reproduces the CPU results to round-off (the test suite checks
   that densities, positions and velocities agree to about `1e-14` relative
   after a few dozen steps).
 * `Float32` is where consumer and laptop GPUs are fast. GeForce/RTX-A/Quadro
@@ -1451,13 +1451,13 @@ the standard *gather* formulation:
   neighbour loop is split over several lanes of a warp (each lane takes every
   `K`-th candidate) and the partial sums are merged with warp shuffles, so a
   3 000 particle 2D case still keeps the whole GPU busy.
-* **CPU semantics for the reference models.** The CPU's density diffusion uses `Dⱼ = -Dᵢ` as a
+* **CPU pair semantics.** The CPU's density diffusion uses `Dⱼ = -Dᵢ` as a
   short cut that is not symmetric in the particle roles. The gather kernel
   reconstructs which particle of a pair was the CPU's `i` (lower index inside
   a cell, higher index across cells) and calls the very same
   `compute_viscosity`/`compute_density_diffusion` functions with the same
-  signature, so the GPU reproduces the CPU results instead of a "close"
-  variant. As on the CPU, the models receive the densities of the state being
+  signature. Use `GPUInteractionFastMath = false` to retain strict arithmetic
+  for CPU comparisons; fast math is enabled by default. As on the CPU, the models receive the densities of the state being
   evaluated (`ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹`) as arguments, so the corrector loop sees the
   predictor density and velocity, and the reciprocals are computed once per
   particle instead of once per pair.
@@ -1908,8 +1908,8 @@ validation; it is not a bitwise-preserving performance option.
 | `GPUGridExpansion` | `((false, false), ...)` | One `(negative, positive)` Boolean pair per axis, selecting which sides of a fixed grid may expand. Requires `GPUFixedGrid = true`. |
 | `GPUInteractionThreads` | `128` | Threads per block of the interaction and mDBC kernels. |
 | `GPULanesPerParticle` | `0` (auto) | Warp lanes that share one particle's neighbour loop (1, 2, 4, ... 32). The automatic choice targets roughly one resident thread per particle-lane in 3D and one quarter of that in 2D, where neighborhoods generally contain fewer candidates; it caps lanes at 32 and combines them with warp shuffles. Explicit settings are unchanged. Use `1` for large cases and together with `GPUCellSubdivision = 2` (see "Lanes per particle" above). |
-| `GPUInteractionAlwaysInline` | `false` | Force helper-function inlining in the interaction kernel without requesting relaxed floating-point semantics. Independent of fast math; benchmark the intended model and GPU. |
-| `GPUInteractionFastMath` | `false` | **Experimental** CUDA fast math in the interaction kernel and its callees, including custom models. Allows approximate arithmetic, reassociation, Float32 subnormal flushing and NaN/Inf assumptions. Can be combined with forced inlining; other kernels retain their existing compilation options. See "Interaction compiler options" below. |
+| `GPUInteractionAlwaysInline` | `true` | Force helper-function inlining in the interaction kernel without requesting relaxed floating-point semantics. Independent of fast math; set to `false` to disable. Benchmark the intended model and GPU. |
+| `GPUInteractionFastMath` | `true` | CUDA fast math in the interaction kernel and its callees, including custom models. Allows approximate arithmetic, reassociation, Float32 subnormal flushing and NaN/Inf assumptions. Set to `false` for strict interaction arithmetic. Independent of forced inlining; other kernels retain their existing compilation options. See "Interaction compiler options" below. |
 | `GPURadialInteractions` | `false` | **Experimental** scalar Wendland C2 contractions and symmetric linear diffusion using `(ρᵢ⁻¹ + ρⱼ⁻¹) / 2`. Supported with `ZeroDensityDiffusion`, `LinearDensityDiffusion` or `ZeroGravityLinearDensityDiffusion`, and `ZeroViscosity`, `ArtificialViscosity`, `Laminar` or `LaminarSPS`, in 2D/3D Float32/Float64. SPS retains its original ordered tensor calculation; the other supported viscosities use direct symmetric evaluation. Other combinations warn and use reference interactions. Changes the reference diffusion operator as well as rounding; see below before opting in. |
 | `GPUScalarSPSViscosity` | `false` | **Experimental**, separately selectable rank-one SPS stress contraction with `LaminarSPS` in 2D/3D Float32/Float64. Preserves the closure and CPU pair ordering, but changes rounding. Does not require `GPURadialInteractions`. Other viscosities warn and use their existing path. |
 | `GPUBoundaryForces` | `true` | Evaluate the momentum equation for boundary particles too, as the CPU does (their acceleration only enters the force based time step limit). `false` skips it and saves 10-20 % in cases with many boundary particles, at the price of a slightly different adaptive time step. |
@@ -2391,18 +2391,19 @@ or `launch_half_step!`; `GPUSupportArrays` no longer contains `InvDensity` or
 
 ### Interaction compiler options
 
-Forced inlining and fast math are independent, opt-in compiler options. Enable
-both in the same metadata constructor, or select either one alone:
+Forced inlining and fast math are independent compiler options, both enabled
+by default. To restore the previous strict, unforced compilation, disable
+both in the metadata constructor, or disable either one alone:
 
 ```julia
 meta = SimulationMetaData{2,Float32}(
     SimulationName = "CompilerTuning", SaveLocation = save,
-    GPUInteractionAlwaysInline = true,
-    GPUInteractionFastMath = true,
+    GPUInteractionAlwaysInline = false,
+    GPUInteractionFastMath = false,
 )
 ```
 
-Both default to `false`. The driver applies them to every evaluation of
+Both default to `true`. The driver applies them to every evaluation of
 `interaction_kernel!`, including predictor/corrector stages, startup and
 post-rebuild derivatives, either time-stepping scheme, and direct or CUDA-graph
 execution. They are reported as `interaction_always_inline` and
@@ -2427,14 +2428,14 @@ are still prepared separately without these flags: cached and uncached fast-math
 runs need not follow identical trajectories. Avoid global
 `julia --math-mode=fast` when relying on strict arithmetic outside interactions.
 
-Low-level callers use
-`launch_interactions!(...; always_inline = true, fastmath = true)`. No register
+Low-level callers use the same defaults and can opt out with
+`launch_interactions!(...; always_inline = false, fastmath = false)`. No register
 limit is imposed: forcing fewer registers can cause spills and reduce
 performance. Check paired, warmed, unprofiled **whole-solver** timings with the
 same configuration and work counts; isolated interaction improvements are not
 solver speedups. Before using fast math in production, compare long-duration
 positions, velocities, densities, pressures and adaptive timesteps against the
-default and validate the case's physical accuracy.
+strict configuration (`GPUInteractionFastMath = false`) and validate the case's physical accuracy.
 
 Focused regressions cover all four flag combinations, device/custom-model
 semantics, boundary modes, position/physics precisions, both integrators,
