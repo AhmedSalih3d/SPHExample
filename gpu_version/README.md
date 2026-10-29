@@ -171,6 +171,45 @@ julia --project=gpu_version -t 2,0 gpu_version/example/Wavemaker/Wavemaker.jl
 julia --project=gpu_version -t 2,0 gpu_version/example/Wavemaker/test_wavemaker.jl
 ```
 
+### Wave maker driven by a measured signal
+
+[WavemakerFile2d.jl](example/WavemakerFile2d.jl) adapts DualSPHysics example 07
+(`07_WavemakerFile`) in a single file. In this 2D flume, a piston follows the
+measured CIEMito paddle signal, and the waves shoal on a beach before running up
+a vertical wall. The flume, piston and water are drawn as polygons in the file,
+replacing the reference's STL structure. The beach has a 2 cm step at its toe
+at x = 4 m and rises to z = 0.235 m at the wall (x = 6.045 m). The still water
+depth is 0.31 m. The tank is sampled with `sampling = :conforming`, so the bed,
+step, slope and wall have four smooth particle layers, without a lattice staircase.
+The piston slides one spacing above the bed. At `dx = 0.005` the case has
+4,448 wall, 770 piston and 50,713 fluid particles.
+
+The example uses this package's defaults instead of the reference's
+DualSPHysics-specific settings. These are Wendland C2 with `h = 2dx`,
+`SymplecticTimeStepping()`, artificial viscosity `α = 0.01` and
+`LinearDensityDiffusion()` with `δ = 0.1`. The sound speed is
+`c₀ = 20√(g · 0.31)`. Boundaries use DBC, because `SimMotion` requires
+`NoMDBC`; positions are stored in Float64. The piston signal is interpolated
+linearly between its 0.025-second samples. The signal and CIEMito validation
+data are bundled in
+[example/data/wavemaker_file](example/data/wavemaker_file/README.md), with their
+source notice and license. Water-column probes `WG1`–`WG3` at x = 1.38, 2.83 and
+4.12 m are written to the output file. Subtract each probe's initial height to
+compare with the experimental elevations.
+
+```sh
+julia --project=gpu_version -t 2,0 gpu_version/example/WavemakerFile2d.jl
+```
+
+The 10-second Float32 run took 161 s and 174,402 steps on an NVIDIA RTX A1000
+Laptop GPU. Against the experiment from 1 to 10 s, sampled every 0.05 s, the
+gauge RMSEs were 8.6, 8.7 and 9.1 mm, with correlations of 0.92, 0.91 and 0.87.
+A DualSPHysics 5.4 GPU run of the distributed case gave 7.9, 8.3 and 8.9 mm, and
+0.93, 0.92 and 0.87. The pressure integrals over the 54 wall-face particles,
+including impact peaks of about 1 kN/m after the waves break, closely follow the
+same DualSPHysics run. That run used the same pressure integral; the reference's
+`ComputeForces` uses a different measure. No fluid particle crossed the bed or wall.
+
 ### External forces
 
 `SimExternalForces` adds prescribed acceleration histories to fluid groups,
