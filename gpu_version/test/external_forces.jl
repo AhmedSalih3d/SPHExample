@@ -99,6 +99,7 @@ if CUDA.functional()
             end
             # Host callers may sample Float32 histories with a Float64 time.
             @test all(isfinite, external_acceleration(force, points[1], velocities[1], 0.7, T(9.81)))
+            @test EF.sample_force(force, 0.700000001) isa EF.ExternalForceSample{T}
         end
     end
 

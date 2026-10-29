@@ -1286,7 +1286,7 @@ that temporary state. Preparation is repeated after graph invalidation.
 function prepare_step_graph!(ctx::NamedTuple)
     state = ctx.state
     state.graph_kernels_prepared && return nothing
-    stopped = StepState{eltype(state.f)}()
+    stopped = typeof(state)()
     stopped.ih[I_STOP] = STOP_OUTPUT
     copyto!(stopped.i, stopped.ih)
     try
@@ -1382,7 +1382,7 @@ function batch_size(state::StepState{T}, h, t_out, kmax::Int) where {T}
     d4 = fh[F_DISP]
     dt = fh[F_DT]
     est_rebuild = d4 > zero(T) ? (h - dx) / d4 : T(Inf)
-    est_output  = dt > zero(T) ? (T(t_out) - fh[F_TIME]) / dt : T(Inf)
+    est_output  = dt > zero(T) ? (Float64(t_out) - fh[F_TIME]) / dt : Inf
     est = min(est_rebuild, est_output)
     isfinite(est) || return kmax
     return clamp(floor(Int, est) + 1, 1, kmax)
@@ -1513,7 +1513,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
 
     if SingleNeighbor && interaction_mode_changed && state.primed && cl.nrebuilds > 0
         # The carried derivative belongs to the previous operator/compiler options.
-        step = HostStep(state.fh[F_DT], state.fh[F_TIME])
+        step = HostStep(state)
         enqueue_state_derivative!(ctx, step, timed, "00a Refresh Interaction MDBC", "00b Refresh Interaction Derivative")
     end
 
@@ -1521,10 +1521,10 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     if !state.primed
         # A caller may supply an already sorted cell list with fresh support arrays.
         if cache_final_state && cl.nrebuilds > 0
-            prepare_state_caches!(ctx, HostStep(state.fh[F_DT], state.fh[F_TIME]))
+            prepare_state_caches!(ctx, HostStep(state))
         end
         if initialize_external_forces && cl.nrebuilds > 0
-            enqueue_state_derivative!(ctx, HostStep(state.fh[F_DT], state.fh[F_TIME]), timed,
+            enqueue_state_derivative!(ctx, HostStep(state), timed,
                 "00a Initial Force MDBC", "00b Initial Force Derivative"; total_acceleration = true)
             initialize_external_forces = false
         end
@@ -2031,8 +2031,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             apply_download!(dl, SimParticles, job.grid;
                 fields = measurement_fields === nothing ? () : measurement_fields)
         end
-        # Preserve the CSV's working-precision time formatting.
-        log_floating(FloatType(job.time), dl.floating)
+        log_floating(job.time, dl.floating)
         SimMetaData.IndexCounter = length(UniqueCells)
         output.save_particles(job.counter, job.time; download = dl, staged_slot = direct_writer_slabs)
         if SimMetaData.ExportGridCells

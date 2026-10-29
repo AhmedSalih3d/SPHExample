@@ -62,15 +62,19 @@ const PHASE_DT_READY = Int32(1)  # `dt` is stored, the step itself has not run y
     StepState{T}(; dt, time, dx, iteration)
 
 Device state of the time loop plus a pinned host mirror that `readback!`
-fills. `graphs` caches CUDA graphs of power-of-two step batches per set of
+fills. The small floating control vector uses Float64 for the accumulated
+clock and output deadline. `T` remains the working precision: `step_dt`
+converts the stored timestep to `T` before particle integration, and
+displacement accumulation is performed in `T`.
+`graphs` caches CUDA graphs of power-of-two step batches per set of
 device pointers. Changing the interaction arithmetic invalidates this cache.
 The persistent particle arrays are swapped at every cell
 list rebuild; the batch length is also part of the cache key.
 """
 mutable struct StepState{T}
-    f::CuVector{T}
+    f::CuVector{Float64}
     i::CuVector{Int32}
-    fh::Vector{T}
+    fh::Vector{Float64}
     ih::Vector{Int32}
     primed::Bool        # the reduction workspace holds a valid reduction for the next `dt`
     readbacks::Int      # number of host read backs (device synchronizations of the loop)
@@ -88,11 +92,11 @@ mutable struct StepState{T}
 end
 
 function StepState{T}(; dt = zero(T), time = zero(T), dx = zero(T), iteration::Integer = 0) where {T}
-    fh = zeros(T, NUM_F)
+    fh = zeros(Float64, NUM_F)
     ih = zeros(Int32, NUM_I)
-    fh[F_DT]   = dt
+    fh[F_DT]   = T(dt)
     fh[F_TIME] = time
-    fh[F_DX]   = dx
+    fh[F_DX]   = T(dx)
     fh[F_TOUT] = time
     ih[I_ITER] = iteration
     CUDA.pin(fh)
@@ -105,26 +109,31 @@ end
 Kernel side view of a `StepState` (what `@cuda` receives when a `StepState`
 is passed as an argument).
 """
-struct DeviceStep{T, F <: AbstractVector{T}, I <: AbstractVector{Int32}}
+struct DeviceStep{T, F <: AbstractVector{Float64}, I <: AbstractVector{Int32}}
     f::F
     i::I
 end
 
+DeviceStep{T}(f, i) where {T} = DeviceStep{T, typeof(f), typeof(i)}(f, i)
 
-Adapt.adapt_structure(to, s::StepState) = DeviceStep(adapt(to, s.f), adapt(to, s.i))
-Adapt.adapt_structure(to, s::DeviceStep) = DeviceStep(adapt(to, s.f), adapt(to, s.i))
+Adapt.adapt_structure(to, s::StepState{T}) where {T} = DeviceStep{T}(adapt(to, s.f), adapt(to, s.i))
+Adapt.adapt_structure(to, s::DeviceStep{T}) where {T} = DeviceStep{T}(adapt(to, s.f), adapt(to, s.i))
 
 """
 Fixed step size and time passed by value, for launching the kernels of a step
-in isolation (unit tests). Such a step is always active.
+in isolation (unit tests). The timestep retains its supplied type and the
+clock uses Float64. Such a step is always active.
 """
 struct HostStep{T}
     dt::T
-    time::T
+    time::Float64
 end
 
+HostStep(dt::T, time::Real) where {T} = HostStep{T}(dt, Float64(time))
+HostStep(s::StepState{T}) where {T} = HostStep(T(s.fh[F_DT]), s.fh[F_TIME])
+
 @inline step_active(s::DeviceStep) = @inbounds s.i[I_STOP] == STOP_NONE
-@inline step_dt(s::DeviceStep)     = @inbounds s.f[F_DT]
+@inline step_dt(s::DeviceStep{T}) where {T} = @inbounds T(s.f[F_DT])
 @inline step_time(s::DeviceStep)   = @inbounds s.f[F_TIME]
 
 @inline step_active(::HostStep)  = true

@@ -81,13 +81,16 @@ selects all defaults. The time stepping scheme is not a type parameter; it is
 passed to `RunSimulation` as `SimTimeStepping` and stored in the
 `TimeSteppingMode` field.
 
-Unlike the CPU version the keyword constructor converts `OutputTimes` (a number
-or a vector of numbers) to `FloatType`, so `OutputTimes = 0.01` also works for
-`FloatType = Float32`.
+The accumulated clock (`TotalTime`), simulation end (`SimulationTime`) and
+output schedule (`OutputEach`, `OutputTimes`) use Float64 independently of
+`FloatType`. `CurrentTimeStep` and particle arithmetic retain `FloatType`.
+The keyword constructor and later assignments accept scalar or vector output
+times in either precision.
 
 `GPUClipTimeStepToOutput = true` clips each adaptive step to the next output
 deadline (including `SimulationTime`). Frames then contain the integrated state
-at that deadline in `FloatType`, without interpolation. The default `false`
+at that Float64 deadline, with the timestep converted to `FloatType` for
+particle integration, without interpolation. The default `false`
 keeps full adaptive steps and writes the first state strictly beyond each
 deadline. Clipping changes the integration trajectory and can change the step
 count; with it enabled, changing `OutputTimes` can also change the trajectory.
@@ -189,13 +192,13 @@ mutable struct SimulationMetaData{Dimensions,
     SaveLocation::String
     HourGlass::TimerOutput
     Iteration::Int
-    OutputEach::FloatType
-    OutputTimes::Union{FloatType, Vector{FloatType}}
+    OutputEach::Float64
+    OutputTimes::Union{Float64, Vector{Float64}}
     OutputIterationCounter::Int
     StepsTakenForLastOutput::Int
     CurrentTimeStep::FloatType
-    TotalTime::FloatType
-    SimulationTime::FloatType
+    TotalTime::Float64
+    SimulationTime::Float64
     IndexCounter::Int
     VisualizeInParaview::Bool
     ExportSingleVTKHDF::Bool
@@ -361,9 +364,9 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
     GPUTimestepDiagnosticsEvery >= 0 || throw(ArgumentError("GPUTimestepDiagnosticsEvery must be nonnegative"))
     return SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(
         SimulationName, SaveLocation, HourGlass, Iteration,
-        FloatType(OutputEach), _output_times(FloatType, OutputTimes),
+        Float64(OutputEach), _output_times(Float64, OutputTimes),
         OutputIterationCounter, StepsTakenForLastOutput,
-        FloatType(CurrentTimeStep), FloatType(TotalTime), FloatType(SimulationTime),
+        FloatType(CurrentTimeStep), Float64(TotalTime), Float64(SimulationTime),
         IndexCounter, VisualizeInParaview, ExportSingleVTKHDF, ExportGridCells,
         OutputVariables, OpenLogFile, TimeSteppingMode,
         GPUSyncTimers, GPUDeterministicSort, GPUMaxCells, GPUInteractionThreads, GPULanesPerParticle,
@@ -394,10 +397,10 @@ SimulationMetaData{D,T,S}(; kwargs...) where {D,T,S<:ShiftingMode} =
 SimulationMetaData{D,T}(; kwargs...) where {D,T} =
     SimulationMetaData{D,T,NoShifting,NoKernelOutput,NoMDBC,NoLog}(; kwargs...)
 
-# Allow `meta.OutputTimes = 0.01` for Float32 meta data as well.
+# Accept scalar and vector schedules without narrowing the clock precision.
 function Base.setproperty!(m::SimulationMetaData{D, T}, name::Symbol, x) where {D, T}
     if name === :OutputTimes
-        return setfield!(m, name, _output_times(T, x))
+        return setfield!(m, name, _output_times(Float64, x))
     else
         return setfield!(m, name, convert(fieldtype(typeof(m), name), x))
     end

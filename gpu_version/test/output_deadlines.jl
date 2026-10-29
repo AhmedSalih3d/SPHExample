@@ -93,7 +93,8 @@ if CUDA.functional()
         end
     end
 
-    function simulate(::Type{T}; scheme, graph, single_file = true, clip = true, schedule = T(0.00045)) where {T}
+    function simulate(::Type{T}; scheme, graph, single_file = true, clip = true,
+                      schedule = T(0.00045), simulation_time = T(0.00131), start_time = 0.0) where {T}
         return mktempdir() do save
             body = [SVector{2,T}(x, y) for x in (0, 0.02), y in (1, 1.02)][:]
             geometry = [
@@ -105,7 +106,7 @@ if CUDA.functional()
                         StartTime = -1, Duration = 2)),
             ]
             meta = SimulationMetaData{2,T}(SimulationName = "Deadlines", SaveLocation = save,
-                SimulationTime = T(0.00131), OutputTimes = schedule,
+                SimulationTime = simulation_time, OutputTimes = schedule, TotalTime = start_time,
                 GPUClipTimeStepToOutput = clip, GPUUseGraph = graph, GPUMaxStepsPerSync = graph ? 32 : 1,
                 GPUAsyncOutput = graph, GPUOutputQueueBytes = 1024, ExportSingleVTKHDF = single_file,
                 VisualizeInParaview = false, OpenLogFile = false)
@@ -127,8 +128,7 @@ if CUDA.functional()
                 sort(filter(name -> occursin(r"^Deadlines_\d+\.vtkhdf$", name), readdir(save)))
             times = Float64[]
             positions = Matrix{Float64}[]
-            # The CSV uses Float32's shortest round-trip decimal spelling.
-            floating_times = Float64[T(row.Time) for row in CSV.File(joinpath(save, "Deadlines_Floating.csv"))]
+            floating_times = Float64[row.Time for row in CSV.File(joinpath(save, "Deadlines_Floating.csv"))]
             for (index, name) in enumerate(files)
                 h5open(joinpath(save, name), "r") do file
                     root = file["VTKHDF"]
@@ -151,10 +151,29 @@ if CUDA.functional()
         end
     end
 
+    @testset "Float32 runs preserve Float64 deadlines and resumed time in saved frames" begin
+        start = 10.000000123
+        schedule = [start + 0.00045, start + 0.0009]
+        finish = start + 0.00131
+        for scheme in (SymplecticTimeStepping(), SingleNeighborTimeStepping())
+            reference = simulate(Float32; scheme, graph = false, schedule,
+                simulation_time = finish, start_time = start)
+            @test reference.times == [start; schedule; finish]
+            @test reference.time === finish
+            @test reference.steps == 6
+            @test eltype(reference.velocity) === SVector{2,Float32}
+            @test eltype(reference.density) === Float32
+            for single_file in (false, true)
+                @test simulate(Float32; scheme, graph = true, single_file, schedule,
+                    simulation_time = finish, start_time = start) == reference
+            end
+        end
+    end
+
     @testset "exact saved states and step counts in both integration schemes" begin
         for T in (Float32, Float64), scheme in (SymplecticTimeStepping(), SingleNeighborTimeStepping())
             reference = simulate(T; scheme, graph = false)
-            expected = Float64.([zero(T), T(0.00045), T(0.00045) * 2, T(0.00131)])
+            expected = [0.0, Float64(T(0.00045)), Float64(T(0.00045)) * 2, Float64(T(0.00131))]
             @test reference.times == expected
             @test reference.time == T(0.00131)
             @test reference.steps == 6

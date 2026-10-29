@@ -31,7 +31,8 @@ if CUDA.functional()
             ids = I[offset + n - i for i in 1:n]
             red = ReductionWorkspace{SVector{3,T}}(n)
             diagnostics = K.TimestepDiagnostics{T,I}(n)
-            state = StepState{T}(time = T(0.25), iteration = 17)
+            time = 0.250000000123
+            state = StepState{T}(; time, iteration = 17)
             set_output_time!(state, one(T))
             K.launch_step_reduction!(red, position, CuArray(velocities), CuArray(accelerations), position, kernel;
                 diagnostics, particle_ids = CuArray(ids))
@@ -48,7 +49,8 @@ if CUDA.functional()
             expected_force = force ? sqrt(kernel.h / T(1e8)) : T(Inf)
             expected_acoustic = kernel.h / (constants.c₀ + visc)
             @test record.iteration == 18
-            @test record.time == T(0.25)
+            @test record.time === time
+            @test record.dt isa T
             @test record.dt == state.fh[F_DT] == constants.CFL * min(expected_force, expected_acoustic)
             @test record.force_dt == constants.CFL * expected_force
             @test record.acoustic_viscous_dt == constants.CFL * expected_acoustic
@@ -64,6 +66,7 @@ if CUDA.functional()
             K.write_timestep_diagnostic!(io, diagnostics, T(0.5))
             row = split(chomp(String(take!(io))), ',')
             @test row[2] == "18"
+            @test parse(Float64, row[3]) === time
             @test row[5] == (force ? "force" : "acoustic_viscous")
             @test parse(I, row[6]) == record.particle_id
             K.launch_commit!(state)

@@ -735,7 +735,7 @@ Pinning failures now propagate from `StepState` construction rather than
 silently falling back to pageable storage.
 
 Run the focused readback checks (both precisions, stream changes, graph replay,
-and rebuild/output stop transitions) from the repository root:
+50,000-step clock accumulation and rebuild/output stop transitions) from the repository root:
 
 ```bash
 julia --project=gpu_version gpu_version/test/step_state.jl
@@ -1343,6 +1343,26 @@ exactly. The drawing tests need no GPU:
 
 ### Which precision?
 
+All GPU steppers accumulate simulation time in `Float64`, including with
+`FloatType = Float32`. `TotalTime`, `SimulationTime`, `OutputEach` and scalar
+or vector `OutputTimes` retain Float64 precision through device execution,
+motion sampling, metadata readback and output timestamps. The standard
+steppers' adaptive timestep selection and particle integration retain the
+working precision; clipping
+keeps the remaining deadline interval in Float64 and converts it to the
+working precision when integrating particles. Density, velocity and force
+arithmetic retain their working precision. The five-entry floating
+control vector uses 40 bytes on the device (20 bytes more for Float32 runs),
+with the same two control-state downloads and one wait per readback.
+
+For illustration, adding `dt = 0.0002f0` 50,000 times gives about
+`9.999040604` seconds with a Float32 accumulator and `9.999999747` seconds
+with a Float64 accumulator using the same timestep values. This isolates
+clock arithmetic; it is not a measurement of WaveMaker drift. Float64 time
+reduces accumulation error in motion phase, segment transitions, output
+deadlines and termination. It does not make Float32 particle trajectories
+identical to Float64 runs.
+
 * `Float64` reproduces the CPU results to round-off (the test suite checks
   that densities, positions and velocities agree to about `1e-14` relative
   after a few dozen steps).
@@ -1352,7 +1372,7 @@ exactly. The drawing tests need no GPU:
   modern multi core CPU. Datacenter GPUs (A100, H100) have fast `Float64`.
   `Float32` is the precision DualSPHysics uses by default as well; densities
   stay well within the ~1 % variation of weakly compressible SPH.
-* `Float32` with `GPUDoublePosition = true` keeps the positions alone in
+* `Float32` with `GPUDoublePosition = true` also keeps the positions in
   `Float64`, matching DualSPHysics 5.4's internal position storage. Its
   `SavePosDouble` option controls output precision. A `Float32` position
   is quantised to an ulp of its distance from the origin (1e-3 at 10 000 m,
@@ -1928,7 +1948,7 @@ meta = SimulationMetaData{2, Float32}(
 ```
 
 This saves the initial state and integrated states at `0.01`, `0.02`, and
-`0.025`, represented in the metadata's `FloatType`. A vector such as
+`0.025`, represented in Float64. A vector such as
 `OutputTimes = [0.01, 0.02]` gives the same deadlines; the simulation end is
 included even when absent from the schedule. Clipping applies to both time
 stepping schemes, prescribed motion and floating bodies, with direct launches

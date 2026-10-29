@@ -67,11 +67,11 @@ if CUDA.functional()
                 @test host.ID[order[Array(rotation.indices)]] == [8, 1001]
                 p, v = CuArray(reference[order]), CUDA.zeros(SVector{2,T}, 4)
                 ty, gm, ids = CuArray(host.Type[order]), CuArray(host.GroupMarker[order]), CuArray(host.ID[order])
-                for time in T.((0, 0.1, 0.3, 0.7, 0.8)), fraction in (0.0, 0.5, 1.0)
+                for time in (0.0, 0.1, 0.3, 0.7, 0.8), fraction in (0.0, 0.5, 1.0)
                     dt = T(0.13)
                     state = StepState{T}(; time, dt)
                     ROTATION.launch_rotation!(rotation, p, v, ty, gm, ids, state; fraction)
-                    sampled_time = Float64(time + T(fraction) * dt)
+                    sampled_time = Float64(time) + T(fraction) * dt
                     angle, omega = rotation_state(motion, sampled_time)
                     positions, velocities = Array(p), Array(v)
                     for i in eachindex(order)

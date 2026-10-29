@@ -243,10 +243,10 @@ if CUDA.functional()
                 @test pointer(motion.indices) == owner_pointer
                 p,v = CuArray(reference[order]),CUDA.zeros(SVector{D,T},5)
                 ty,gm,ids = CuArray(host.Type[order]),CuArray(host.GroupMarker[order]),CuArray(host.ID[order])
-                for time in T.((0,0.019,0.03,0.04,0.079,0.08)), fraction in (0.,0.5,1.)
+                for time in (0.0,0.019,0.03,0.04,0.079,0.08), fraction in (0.,0.5,1.)
                     state = StepState{T}(;time,dt=T(0.007))
                     ROT.launch_rotation!(motion,p,v,ty,gm,ids,state;fraction)
-                    sampled = Float64(time+T(fraction)*T(0.007))
+                    sampled = Float64(time) + T(fraction)*T(0.007)
                     positions,velocities = Array(p),Array(v)
                     for i in eachindex(order)
                         j = order[i]

@@ -158,6 +158,8 @@ end
     z = zero(SVector{3,T})
     force.start_time <= time <= force.end_time || return ExternalForceSample(false, z, z, z, z)
     k, fraction = sample_interval(force.times, time)
+    # Locate the interval with the clock's precision, then retain force arithmetic in T.
+    fraction = T(fraction)
     acc = interpolate(force.linear, k, fraction)
     alpha = interpolate(force.angular, k, fraction)
     z = zero(acc)

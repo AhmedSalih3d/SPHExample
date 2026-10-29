@@ -22,7 +22,7 @@ end
 
 struct TimestepRecord{T, I}
     iteration::Int32
-    time::T
+    time::Float64
     dt::T
     force_dt::T
     acoustic_viscous_dt::T
@@ -39,7 +39,7 @@ struct TimestepDiagnostics{T, I}
 end
 
 function TimestepDiagnostics{T, I}(n::Integer) where {T, I}
-    initial = TimestepRecord(Int32(0), zero(T), zero(T), T(Inf), T(Inf), zero(I), Int32(0), false)
+    initial = TimestepRecord(Int32(0), 0.0, zero(T), T(Inf), T(Inf), zero(I), Int32(0), false)
     return TimestepDiagnostics{T, I}(ReductionWorkspace{TimestepLimit{T, I}}(n), CuArray([initial]), [initial])
 end
 
@@ -81,7 +81,7 @@ end
 @inline function record_diagnostic!(result, limit, step, dt, force_dt, acoustic_dt, force)
     clipped = dt < min(force_dt, acoustic_dt)
     id = force ? limit.force_id : limit.visc_id
-    @inbounds result[1] = TimestepRecord(step.i[I_ITER] + Int32(1), step.f[F_TIME], dt,
+    @inbounds result[1] = TimestepRecord(step.i[I_ITER] + Int32(1), step.f[F_TIME], oftype(force_dt, dt),
         force_dt, acoustic_dt, id, clipped ? Int32(3) : force ? Int32(1) : Int32(2), limit.valid && !clipped)
     return nothing
 end

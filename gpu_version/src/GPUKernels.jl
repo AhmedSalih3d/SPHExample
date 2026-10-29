@@ -1222,12 +1222,12 @@ function finish_kernel!(step::DeviceStep{T}, partial, nblocks::Int32, CFL::T, c�
         @inbounds begin
             visc = r[1]
             dt1  = r[2]
-            dt   = CFL * min(dt1, h / (c₀ + visc))
+            dt   = Float64(CFL * min(dt1, h / (c₀ + visc)))
             if s[I_CLIP_OUTPUT] != 0
                 dt = min(dt, f[F_TOUT] - f[F_TIME])
             end
             d4   = 4 * r[3]
-            dx   = f[F_DX] + d4
+            dx   = T(f[F_DX]) + d4
             f[F_DT]   = dt
             record_diagnostic!(diagnostic_result, limit, step, dt, CFL * dt1, CFL * (h / (c₀ + visc)), dt1 <= h / (c₀ + visc))
             f[F_DISP] = d4

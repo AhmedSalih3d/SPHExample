@@ -131,7 +131,7 @@ end
             row = rows[2(frame - 1) + body]
             @test row.Body == body
             @test row.GroupMarker == marker
-            @test row.Time ≈ reference.output.times[frame] rtol = 2eps(T)
+            @test row.Time == reference.output.times[frame]
             columns = ((frame - 1) * n + 1):(frame * n)
             members = columns[reference.output.groups[columns] .== marker]
             for axis in 1:D

@@ -321,7 +321,7 @@ function mode_switch_run(graph; scalar_sps = false, compiler_options = false,
                (state.radial_interactions != mode || state.scalar_sps_viscosity != scalar_mode ||
                 state.interaction_always_inline != always_inline || state.interaction_fastmath != fastmath)
                 # Supply the new full-state derivative explicitly in the control.
-                step = HostStep(state.fh[GS.F_DT], state.fh[GS.F_TIME])
+                step = HostStep(state)
                 GK.launch_prepare_interactions!(gpu.Position, step;
                     pos_cells = support.PosCells,
                     CellID = gpu.CellID, grid = cells.grid_dev, H = f.kernel.H,
