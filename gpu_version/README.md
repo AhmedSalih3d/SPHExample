@@ -363,6 +363,61 @@ reference. Over the whole record, the RMSEs here and in DualSPHysics are 5.9
 and 7.6 cm in surge, 19 and 18 mm in heave, and 3.2° and 3.6° in roll. No fluid
 particle crossed the bed or piston.
 
+### Waves over a bathymetry from XYZ points
+
+[Bathymetry2d.jl](example/Bathymetry2d.jl) adapts DualSPHysics example 18
+(`18_Bathymetry`, `CaseBathymetry2D`) in a single file. A piston makes regular
+waves, 1.5 m high with a 4 s period, which cross a surveyed seabed and break on
+its beach. The reference builds the bed with GenCase's `drawbathymetry`, and
+the file follows the same steps with the bundled survey points. It moves them
+to the reference's frame, scales their heights by 1.8 and keeps the 5,200
+points of the selected area. Then it samples them on a 2 m grid over
+200 ≤ x ≤ 260 m. As in the reference, the grid is extended upstream by flat
+nodes 15 m high at x = 190 and 182 m and up to a 28 m beach crest at
+x = 280 m, then moved by (−185, −30, −21) m. The 2D case is the grid row at
+y = 32 m after the move, so the bed is straight between nodes 2 m apart. It
+lies 6 m below the still water level at the piston and deepens to 8.6 m at
+x = 43 m. From x = 51 m it rises steeply to a shelf 0.5 to 1.1 m deep between
+x = 65 and 75 m, and then the beach climbs 7.5 m over 20 m.
+
+GenCase does not document how it computes grid heights from scattered points.
+Here they are interpolated linearly on a Delaunay triangulation of the points
+(Meshes.jl's `DelaunayTesselation`, with a fixed seed). Along the section, these
+heights differ from GenCase's by 19 cm RMS. The largest difference, 0.86 m, is
+at x = 63 m, where the survey has no points within 2 m upstream of the node.
+The survey file is bundled in
+[example/data/bathymetry](example/data/bathymetry/README.md), with its source
+notice and license.
+
+The bed is sampled with `sampling = :conforming`, so it has four smooth
+particle layers, without a lattice staircase. The piston's wet face stands at
+x = 0.8 m, one spacing above the bed, and nothing closes the dry flume behind
+it. The top particle row of the water lies one spacing below the still water
+level, as with GenCase's `fillbox`. At `dx = 0.2` the case has 2,035 bed,
+236 piston and 10,368 fluid particles, against GenCase's 236 piston and 10,308
+fluid particles. The piston follows second-order wave maker theory for the
+reference's nominal depth of 5.5 m. Its first harmonic is amplified by the
+reference's `gainstroke` of 1.1, giving a 1.17 m stroke, and a ramp
+r(s) = 6s² − 8s³ + 3s⁴, with s = t / 4 s, scales both harmonics over the first
+period. The motion matches the one DualSPHysics writes for this case to 1 µm.
+
+The example uses the package's defaults, as the previous examples do: Wendland
+C2 with `h = 1.2√2 dx`, the reference's `coefh = 1.2`,
+`SymplecticTimeStepping()`, artificial viscosity `α = 0.01` and
+`LinearDensityDiffusion()` (δ-SPH with `δ = 0.1`). The reference uses
+Fourtakas' diffusion term with the same coefficient. The sound speed is
+`c₀ = 20√(g · 8.2)`, from the height of the sampled water column, as GenCase
+computes it. Densities start hydrostatic. Boundaries use DBC, because
+`SimMotion` requires `NoMDBC`, and positions are stored in Float64. The run
+lasts 30 s and writes a frame every 0.1 s, as the reference does. Water-column
+probes stand on the bed at x = 6 m, where DualSPHysics writes the theoretical
+elevation, and every 5 m from x = 10 to 75 m. They give the water depth;
+subtract each probe's initial depth for the wave elevation.
+
+```sh
+julia --project=gpu_version -t 2,0 gpu_version/example/Bathymetry2d.jl
+```
+
 ### External forces
 
 `SimExternalForces` adds prescribed acceleration histories to fluid groups,
