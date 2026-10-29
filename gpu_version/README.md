@@ -264,6 +264,105 @@ reference and 11.7° here. Gauge elevations agree closely. `WG1` ranges from
 box, `WG2` had an RMSE of 4.7 cm and a correlation of 0.996. No fluid particle
 crossed the bed, end wall or piston.
 
+### Floating boxes in flap and piston waves
+
+DualSPHysics example 12 (`12_FloatingWaves`) checks a 2D floating box in waves
+against two experiments, and each case is adapted here in a single file. As in
+the previous examples, the flume, wave maker, box and water are drawn as
+polygons. The tank is sampled with `sampling = :conforming`, so the bed and
+beach have four smooth particle layers, without a lattice staircase. The wave
+maker is four particles thick and starts one spacing above the bed. Its wet face
+lies where the reference's does, so the box and water particles coincide with
+GenCase's lattice. The top particle row of the water lies one spacing below the
+0.4 m still water level, as with GenCase's `fillbox`. The data files are bundled
+in [example/data/floating_waves](example/data/floating_waves/README.md), with
+their source notice and license.
+
+Both examples use the package's defaults: `SymplecticTimeStepping()`,
+artificial viscosity `α = 0.01`, as in the 5.4 reference, and
+`LinearDensityDiffusion()` (δ-SPH with `δ = 0.1`), where the reference uses
+Fourtakas' diffusion term with the same coefficient. The kernel is Wendland C2
+with `h = 1.2√2 dx`, the reference's `coefh = 1.2`. The sound speed uses the
+reference's `coefsound` and the height of the sampled water column, as GenCase
+does. Densities start hydrostatic. Boundaries use DBC, because `SimMotion`
+requires `NoMDBC`, and positions are stored in Float64. The box's centre,
+velocity, angle and angular velocity are written to
+`<SimulationName>_Floating.csv`. Its angle is counterclockwise in the x-y plane,
+so DualSPHysics' pitch and the roll of Ren et al. are its negative; the roll in
+the Hadžić et al. data file has the angle's sign.
+Water-column probes are written to the output file; subtract each probe's
+initial height for the wave elevation.
+
+#### Flap waves
+
+[FloatingWavesFlap2d.jl](example/FloatingWavesFlap2d.jl) adapts
+`CaseFloatingWavesVal` ([video](https://youtu.be/nwbS8QcDnm4)), validated
+against Hadžić et al. (2005). A flap hinged on the bed at x = 0 follows the
+bundled angle signal, within ±4.7°, for 10.9 s and then holds its last angle.
+As in DualSPHysics, a positive angle turns the flap away from the water; at
+1.5 s the flap particles coincide with the reference's to rounding.
+The waves break on a 1:10 beach that starts at x = 4 m. The 10 × 5 cm box has
+a relative density of 0.68 and starts with its bottom at 0.37 m, 3 cm below the
+still water level. Probes `WG1` and `WG2` lie at the reference's elevation
+points, x = 1.16 and 2.66 m. The video names Laminar+SPS viscosity, from version
+4.4; the 5.4 case uses artificial viscosity. At `dx = 0.002` the case has
+21,064 wall, 1,200 flap, 1,326 box and 595,041 fluid particles, against
+GenCase's 594,842 fluid particles and the same box.
+
+```sh
+julia --project=gpu_version -t 2,0 gpu_version/example/FloatingWavesFlap2d.jl
+```
+
+A first 15-second Float32 run, made before the flap's turning direction was
+corrected, took 4,480 s and 653,358 steps (90 million particle-steps per
+second) on an NVIDIA RTX A1000 Laptop GPU; the corrected run advances at the
+same rate. A DualSPHysics 5.4 GPU run of the distributed case, with 602,920
+particles, took 10,652 s and 657,991 steps (37 million particle-steps per
+second). Against the experiment, that reference has gauge RMSEs of 2.4 and
+5.5 mm (correlations 0.98 and 0.90), and RMSEs of 6.8 mm in heave, 4.4° in roll
+and 7.5 mm in sway. The comparison of the corrected run so far covers its first
+6.9 s, as the waves reach the box. It follows the reference closely: heave, down
+to −3.7 cm, has an RMSE of 0.4 mm and a correlation of 0.999, and roll, from
+−8.9° to 2.3°, has an RMSE of 0.07° and a correlation of 0.999. Against the
+experiment in this window, the RMSEs here and in DualSPHysics are 5.1 and
+5.7 mm in heave, 3.1° and 3.2° in roll, and 14 and 7 mm in sway.
+
+#### Piston waves
+
+[FloatingWavesPiston2d.jl](example/FloatingWavesPiston2d.jl) adapts
+`CaseFloatingWavesVal2` ([video](https://youtu.be/VnBVXMVNV7s)), validated
+against Ren et al. (2015). The piston's wet face starts at x = 0.205 m. It makes
+regular waves 0.1 m high, with a 1.2 s period, by second-order wave maker theory
+(Madsen, 1971): x = a₁ sin ωt + a₂ sin 2ωt, with a₁ = 4.03 cm and
+a₂ = −0.31 mm. The file solves the linear dispersion relation for the stroke,
+and the result matches the motion DualSPHysics writes for this case. The piston
+starts at full speed, without a ramp, as in the reference. The beach rises
+1.8 m over 7 m from x = 5 m. The walls end at 0.75 m, where the reference crops
+its domain. The 30 × 20 cm box, of relative density 0.5, starts with its centre
+at (2, 0.4) m. Probe `WG1` lies at x = 1 m, between the piston and the box. At
+`dx = 0.005` the case has 6,415 wall, 600 piston, 2,501 box and 86,628 fluid
+particles, against GenCase's 86,602 fluid particles and the same box.
+
+```sh
+julia --project=gpu_version -t 2,0 gpu_version/example/FloatingWavesPiston2d.jl
+```
+
+The 13.5-second Float32 run took 368 s and 311,257 steps (81 million
+particle-steps per second) on an NVIDIA RTX A1000 Laptop GPU. A DualSPHysics
+5.4 GPU run of the distributed case, with 91,115 particles, took 1,289 s and
+319,143 steps (23 million particle-steps per second). Sampled every 0.05 s, the
+two runs agree closely. The box drifts 0.94 m with the waves here and 0.92 m
+in the reference; surge has an RMSE of 2.2 cm and a correlation of 1.000. Heave,
+within ±5.5 cm, has an RMSE of 3.1 mm and a correlation of 0.995. Roll, from
+−10° to 19°, has an RMSE of 1.0° and a correlation of 0.993. `WG1` has an RMSE
+of 1.8 mm and a correlation of 0.998. Against the experiment, from 1.8 to
+8.9 s, both runs miss the first wave's larger response before 2.5 s. After
+that, heave and roll follow it, but the measured drift is faster: by 8.9 s the
+box has moved 0.72 m in the experiment, 0.61 m here and 0.59 m in the
+reference. Over the whole record, the RMSEs here and in DualSPHysics are 5.9
+and 7.6 cm in surge, 19 and 18 mm in heave, and 3.2° and 3.6° in roll. No fluid
+particle crossed the bed or piston.
+
 ### External forces
 
 `SimExternalForces` adds prescribed acceleration histories to fluid groups,
