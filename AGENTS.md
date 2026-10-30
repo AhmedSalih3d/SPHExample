@@ -120,6 +120,8 @@ see `gpu_version/README.md` for focused commands. When dependencies change,
 instantiate the affected package before testing.
 
 Select focused GPU regressions for the changed contract:
+[damping.jl](gpu_version/test/damping.jl) for planar, box, and cylindrical
+damping and the `20_Damping` examples,
 [gpu_memory.jl](gpu_version/test/gpu_memory.jl) for allocation,
 [stationary_predictors.jl](gpu_version/test/stationary_predictors.jl) for scratch
 sharing, [sorting_shadows.jl](gpu_version/test/sorting_shadows.jl) for derived

@@ -20,7 +20,6 @@ module SPHExampleGPU
         "SimulationEquations.jl",
         "SPHMeasurements.jl",
         "SPHViscosityModels.jl",
-        "ProduceHDFVTK.jl",
         "TimeStepping.jl",
         "SimulationLoggerConfiguration.jl",
         "PreProcess.jl",
@@ -29,6 +28,7 @@ module SPHExampleGPU
         "GPUReductions.jl",
         "GPUStepState.jl",
         "DampingZones.jl",
+        "ProduceHDFVTK.jl",
         "ExternalForces.jl",
         "GPUCellGrid.jl",
         "GPUKernels.jl",
@@ -74,7 +74,7 @@ module SPHExampleGPU
     export ExternalForce, external_acceleration
 
     using .DampingZones
-    export DampingZone
+    export DampingZone, DampingBox, DampingCylinder
 
     using .PrescribedRotation
     export RotationMotion, rotation_state, rotation_position

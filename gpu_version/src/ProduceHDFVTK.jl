@@ -34,6 +34,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     using ..SimulationMetaDataConfiguration: SimulationMetaData, NoMDBC, UpdatedMDBC
     using ..SimulationConstantsConfiguration: SimulationConstants
     using ..SimulationEquations: EquationOfStateGamma7, particle_pressure
+    using ..DampingZones: DampingZone, DampingBox, DampingCylinder, normalized_damping
     using ..SPHMeasurements: MeasurementConfig, has_measurements,
         resolve_measurements, MeasurementWriter, append_measurements!,
         flush_measurements!, measurement_block_names, MeasurementBlock,
@@ -1501,19 +1502,21 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         return nothing
     end
 
-    function _damping_profile_distances(zone)
-        active_end = zone.length + zone.overlimit
+    function _damping_profile_distances(length, overlimit)
+        active_end = length + overlimit
         isfinite(active_end) ||
             throw(ArgumentError("damping zone visualization extent must be finite"))
-        distances = collect(range(0.0, stop = zone.length, length = 33))
-        if active_end > zone.length
+        distances = collect(range(0.0, stop = length, length = 33))
+        if active_end > length
             append!(
                 distances,
-                collect(range(zone.length, stop = active_end, length = 9))[2:end],
+                collect(range(length, stop = active_end, length = 9))[2:end],
             )
         end
         return distances
     end
+    _damping_profile_distances(zone::DampingZone) =
+        _damping_profile_distances(zone.length, zone.overlimit)
 
     function _append_zone_wireframe!(
             points, connectivity, offsets, zone_ids, zone_weights, zone, zone_id,
@@ -1602,6 +1605,297 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         return nothing
     end
 
+    function _box_zone_bounds(zone::DampingBox{D}) where D
+        outer_min = SVector{D,Float64}(ntuple(
+            axis -> (zone.directions[axis] & 0x01) != 0 ?
+                zone.maximum_min[axis] : zone.minimum_min[axis], D,
+        ))
+        outer_max = SVector{D,Float64}(ntuple(
+            axis -> (zone.directions[axis] & 0x02) != 0 ?
+                zone.maximum_max[axis] : zone.minimum_max[axis], D,
+        ))
+        over_min = SVector{D,Float64}(ntuple(
+            axis -> (zone.directions[axis] & 0x01) != 0 ?
+                outer_min[axis] - zone.overlimit : outer_min[axis], D,
+        ))
+        over_max = SVector{D,Float64}(ntuple(
+            axis -> (zone.directions[axis] & 0x02) != 0 ?
+                outer_max[axis] + zone.overlimit : outer_max[axis], D,
+        ))
+        return outer_min, outer_max, over_min, over_max
+    end
+
+    function _box_corners(lower::SVector{D}, upper::SVector{D}) where D
+        return [
+            SVector{D,Float64}(ntuple(
+                axis -> (mask & (1 << (axis - 1))) == 0 ? lower[axis] : upper[axis], D,
+            ))
+            for mask in 0:((1 << D) - 1)
+        ]
+    end
+
+    function _append_box_wireframe!(
+            points, connectivity, offsets, zone_ids, zone_weights, zone, zone_id,
+            lower, upper,
+        )
+        corners = _box_corners(lower, upper)
+        point_indices = [
+            _append_damping_point!(points, zone_ids, _damping_point3(point), zone_id)
+            for point in corners
+        ]
+        append!(zone_weights, normalized_damping.(Ref(zone), corners))
+        for mask in 0:(length(corners) - 1), axis in 1:length(lower)
+            (mask & (1 << (axis - 1))) == 0 || continue
+            neighbor = mask | (1 << (axis - 1))
+            _append_damping_line!(
+                connectivity, offsets,
+                (point_indices[mask + 1], point_indices[neighbor + 1]),
+            )
+        end
+        return corners
+    end
+
+    function _append_box_connector!(
+            points, connectivity, offsets, zone_ids, zone_weights, zone, zone_id,
+            from_corners, to_corners,
+        )
+        for corner in eachindex(from_corners)
+            indices = Int[]
+            for fraction in range(0.0, 1.0; length = 17)
+                point = (1 - fraction) * from_corners[corner] +
+                        fraction * to_corners[corner]
+                push!(
+                    indices,
+                    _append_damping_point!(
+                        points, zone_ids, _damping_point3(point), zone_id,
+                    ),
+                )
+                push!(zone_weights, normalized_damping(zone, point))
+            end
+            _append_damping_line!(connectivity, offsets, indices)
+        end
+        return nothing
+    end
+
+    function _append_box_wireframe!(
+            points, connectivity, offsets, zone_ids, zone_weights, zone, zone_id,
+        )
+        outer_min, outer_max, over_min, over_max = _box_zone_bounds(zone)
+        inner_corners = _append_box_wireframe!(
+            points, connectivity, offsets, zone_ids, zone_weights, zone, zone_id,
+            zone.minimum_min, zone.minimum_max,
+        )
+        outer_corners = _append_box_wireframe!(
+            points, connectivity, offsets, zone_ids, zone_weights, zone, zone_id,
+            outer_min, outer_max,
+        )
+        _append_box_connector!(
+            points, connectivity, offsets, zone_ids, zone_weights, zone, zone_id,
+            inner_corners, outer_corners,
+        )
+        if zone.overlimit > 0
+            over_corners = _append_box_wireframe!(
+                points, connectivity, offsets, zone_ids, zone_weights, zone, zone_id,
+                over_min, over_max,
+            )
+            _append_box_connector!(
+                points, connectivity, offsets, zone_ids, zone_weights, zone, zone_id,
+                outer_corners, over_corners,
+            )
+        end
+        return nothing
+    end
+
+    function _append_box_profile!(
+            points, connectivity, offsets, weights, zone_ids, zone::DampingBox{D}, zone_id,
+        ) where D
+        center = (zone.minimum_min + zone.minimum_max) / 2
+        for axis in 1:D
+            bits = zone.directions[axis]
+            for lower_side in (true, false)
+                active = lower_side ? (bits & 0x01) != 0 : (bits & 0x02) != 0
+                active || continue
+                start = lower_side ? zone.minimum_min[axis] : zone.minimum_max[axis]
+                limit = lower_side ? zone.maximum_min[axis] : zone.maximum_max[axis]
+                width = abs(limit - start)
+                distances = _damping_profile_distances(width, zone.overlimit)
+                curve = Int[]
+                for distance in distances
+                    coordinate = lower_side ? start - distance : start + distance
+                    point = SVector{D,Float64}(ntuple(
+                        dimension -> dimension == axis ? coordinate : center[dimension], D,
+                    ))
+                    push!(
+                        curve,
+                        _append_damping_point!(
+                            points, zone_ids, _damping_point3(point), zone_id,
+                        ),
+                    )
+                    push!(weights, normalized_damping(zone, point))
+                end
+                _append_damping_line!(connectivity, offsets, curve)
+
+                transverse = axis == 1 ? 2 : 1
+                for (level, coordinate) in ((0.0, start), (1.0, limit))
+                    reference = Int[]
+                    for endpoint in 0:1
+                        point = setindex(
+                            center,
+                            endpoint == 0 ? zone.minimum_min[transverse] :
+                                zone.minimum_max[transverse],
+                            transverse,
+                        )
+                        point = setindex(point, coordinate, axis)
+                        push!(
+                            reference,
+                            _append_damping_point!(
+                                points, zone_ids, _damping_point3(point), zone_id,
+                            ),
+                        )
+                        push!(weights, level)
+                    end
+                    _append_damping_line!(connectivity, offsets, reference)
+                end
+            end
+        end
+        return nothing
+    end
+
+    function _cylinder_transverse_basis(direction)
+        reference = abs(direction[1]) < 0.8 ?
+            SVector(1.0, 0.0, 0.0) : SVector(0.0, 1.0, 0.0)
+        first_axis = cross(direction, reference)
+        first_axis /= norm(first_axis)
+        return first_axis, cross(direction, first_axis)
+    end
+
+    function _cylinder_world_point(zone, axial, radius, angle, basis)
+        return zone.axis_origin + axial * zone.axis_direction +
+               radius * (cos(angle) * basis[1] + sin(angle) * basis[2])
+    end
+
+    function _cylinder_visual_bounds(zone, positions, fallback_width)
+        axial = _damping_bounds(
+            positions, zone.axis_origin, zone.axis_direction, fallback_width,
+        )
+        basis = _cylinder_transverse_basis(zone.axis_direction)
+        radii = zone.overlimit > 0 ?
+            (zone.radius_min, zone.radius_max, zone.radius_max + zone.overlimit) :
+            (zone.radius_min, zone.radius_max)
+        return axial, basis, radii
+    end
+
+    function _append_cylinder_wireframe!(
+            points, connectivity, offsets, zone_ids, zone_weights, zone, zone_id,
+            positions, fallback_width,
+        )
+        axial, basis, radii = _cylinder_visual_bounds(zone, positions, fallback_width)
+        angles = range(0.0, 2pi; length = 33)
+        for radius in radii
+            for coordinate in axial
+                indices = Int[]
+                for angle in angles
+                    point = _cylinder_world_point(
+                        zone, coordinate, radius, angle, basis,
+                    )
+                    push!(
+                        indices,
+                        _append_damping_point!(points, zone_ids, point, zone_id),
+                    )
+                    push!(zone_weights, normalized_damping(zone, point))
+                end
+                _append_damping_line!(connectivity, offsets, indices)
+            end
+            for angle in range(0.0, 2pi; length = 9)[1:8]
+                indices = Int[]
+                for coordinate in axial
+                    point = _cylinder_world_point(
+                        zone, coordinate, radius, angle, basis,
+                    )
+                    push!(
+                        indices,
+                        _append_damping_point!(points, zone_ids, point, zone_id),
+                    )
+                    push!(zone_weights, normalized_damping(zone, point))
+                end
+                _append_damping_line!(connectivity, offsets, indices)
+            end
+        end
+        for coordinate in axial, angle in range(0.0, 2pi; length = 9)[1:8]
+            indices = Int[]
+            for radius in radii
+                point = _cylinder_world_point(zone, coordinate, radius, angle, basis)
+                push!(
+                    indices,
+                    _append_damping_point!(points, zone_ids, point, zone_id),
+                )
+                push!(zone_weights, normalized_damping(zone, point))
+            end
+            _append_damping_line!(connectivity, offsets, indices)
+        end
+        return axial, basis
+    end
+
+    function _append_cylinder_profile!(
+            points, connectivity, offsets, weights, zone_ids, zone, zone_id,
+            axial, basis,
+        )
+        axial_middle = (axial[1] + axial[2]) / 2
+        for (level, radius) in ((0.0, zone.radius_min), (1.0, zone.radius_max))
+            reference = Int[]
+            for coordinate in axial
+                point = _cylinder_world_point(zone, coordinate, radius, 0.0, basis)
+                push!(
+                    reference,
+                    _append_damping_point!(points, zone_ids, point, zone_id),
+                )
+                push!(weights, level)
+            end
+            _append_damping_line!(connectivity, offsets, reference)
+        end
+        curve = Int[]
+        width = zone.radius_max - zone.radius_min
+        for distance in _damping_profile_distances(width, zone.overlimit)
+            point = _cylinder_world_point(
+                zone, axial_middle, zone.radius_min + distance, 0.0, basis,
+            )
+            push!(
+                curve,
+                _append_damping_point!(points, zone_ids, point, zone_id),
+            )
+            push!(weights, normalized_damping(zone, point))
+        end
+        _append_damping_line!(connectivity, offsets, curve)
+        return nothing
+    end
+
+    function _damping_zone_parameters(zone::DampingZone, index)
+        return "$index: plane origin=$(Tuple(zone.origin)), direction=$(Tuple(zone.direction)), " *
+               "length=$(zone.length), overlimit=$(zone.overlimit), " *
+               "rate=$(zone.rate), factors=$(Tuple(zone.factors))"
+    end
+
+    function _damping_zone_parameters(zone::DampingBox, index)
+        directions = String[]
+        for axis in eachindex(zone.directions)
+            bits = zone.directions[axis]
+            lower = axis == 1 ? "left" : axis == length(zone.directions) ? "bottom" : "front"
+            upper = axis == 1 ? "right" : axis == length(zone.directions) ? "top" : "back"
+            (bits & 0x01) != 0 && push!(directions, lower)
+            (bits & 0x02) != 0 && push!(directions, upper)
+        end
+        return "$index: box minimum=$(Tuple(zone.minimum_min))..$(Tuple(zone.minimum_max)), " *
+               "maximum=$(Tuple(zone.maximum_min))..$(Tuple(zone.maximum_max)), " *
+               "directions=$(join(directions, ',')), overlimit=$(zone.overlimit), " *
+               "rate=$(zone.rate), factors=$(Tuple(zone.factors))"
+    end
+
+    function _damping_zone_parameters(zone::DampingCylinder, index)
+        return "$index: cylinder axis=$(Tuple(zone.axis_origin))->$(Tuple(zone.axis_origin + zone.axis_direction)), " *
+               "radii=$(zone.radius_min)-$(zone.radius_max), overlimit=$(zone.overlimit), " *
+               "rate=$(zone.rate), factors=$(Tuple(zone.factors))"
+    end
+
     function _points_matrix(points::Vector{SVector{3, Float64}})
         matrix = Matrix{Float64}(undef, 3, length(points))
         for (index, point) in enumerate(points)
@@ -1630,44 +1924,64 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         fallback_width = Float64(kernel.H)
 
         for (zone_id, zone) in enumerate(zones)
-            hasproperty(zone, :origin) && hasproperty(zone, :direction) &&
-                hasproperty(zone, :length) && hasproperty(zone, :overlimit) ||
-                throw(ArgumentError("damping visualization requires DampingZone values"))
-            length(zone.origin) == dimension ||
-                throw(DimensionMismatch("damping zone dimension must match the simulation"))
-            basis, bounds = _append_zone_wireframe!(
-                zone_points, zone_connectivity, zone_offsets, zone_ids, zone_weights,
-                zone, zone_id, positions, fallback_width,
-            )
-            _append_zone_profile!(
-                profile_points, profile_connectivity, profile_offsets,
-                profile_weights, profile_zone_ids, zone, zone_id, basis, bounds,
-            )
+            if zone isa DampingZone
+                length(zone.origin) == dimension ||
+                    throw(DimensionMismatch("damping zone dimension must match the simulation"))
+                basis, bounds = _append_zone_wireframe!(
+                    zone_points, zone_connectivity, zone_offsets, zone_ids, zone_weights,
+                    zone, zone_id, positions, fallback_width,
+                )
+                _append_zone_profile!(
+                    profile_points, profile_connectivity, profile_offsets,
+                    profile_weights, profile_zone_ids, zone, zone_id, basis, bounds,
+                )
+            elseif zone isa DampingBox
+                length(zone.minimum_min) == dimension ||
+                    throw(DimensionMismatch("damping box dimension must match the simulation"))
+                _append_box_wireframe!(
+                    zone_points, zone_connectivity, zone_offsets, zone_ids, zone_weights,
+                    zone, zone_id,
+                )
+                _append_box_profile!(
+                    profile_points, profile_connectivity, profile_offsets,
+                    profile_weights, profile_zone_ids, zone, zone_id,
+                )
+            elseif zone isa DampingCylinder
+                dimension == 3 ||
+                    throw(DimensionMismatch("cylinder damping requires a 3D simulation"))
+                axial, basis = _append_cylinder_wireframe!(
+                    zone_points, zone_connectivity, zone_offsets, zone_ids, zone_weights,
+                    zone, zone_id, positions, fallback_width,
+                )
+                _append_cylinder_profile!(
+                    profile_points, profile_connectivity, profile_offsets,
+                    profile_weights, profile_zone_ids, zone, zone_id, axial, basis,
+                )
+            else
+                throw(ArgumentError("unsupported damping visualization for $(typeof(zone))"))
+            end
         end
 
         zone_parameters = join(
-            [
-                "$index: origin=$(Tuple(zone.origin)), direction=$(Tuple(zone.direction)), " *
-                "length=$(zone.length), overlimit=$(zone.overlimit), " *
-                "rate=$(zone.rate), factors=$(Tuple(zone.factors))"
-                for (index, zone) in enumerate(zones)
-            ],
+            [_damping_zone_parameters(zone, index) for (index, zone) in enumerate(zones)],
             "\n",
         )
+        intensity_definition = all(zone -> zone isa DampingZone, zones) ?
+            "NormalizedDamping = min(s / length, 1)^2" :
+            "NormalizedDamping is the squared, clamped ramp defined by each zone."
         zone_attributes = Pair{String, Any}[
             "CoordinateDimension" => Int32(dimension),
             "Definition" =>
-                "Wireframe bounds are projected from the initial particle extent; " *
-                "the damping model itself is unbounded in transverse directions.",
-            "IntensityDefinition" =>
-                "NormalizedDamping = min(s / length, 1)^2",
+                "Planar and cylindrical wireframes use initial particle bounds " *
+                "along unbounded axes; box zones use their configured bounds.",
+            "IntensityDefinition" => intensity_definition,
             "ZoneParameters" => zone_parameters,
         ]
         profile_attributes = Pair{String, Any}[
             "CoordinateDimension" => Int32(dimension),
             "Definition" =>
-                "Normalized spatial profile = min(s / length, 1)^2. " *
-                "The velocity multiplier is max(0, 1 - dt * rate * profile * factors[d]).",
+                "Profiles show each zone's normalized squared ramp. The velocity " *
+                "multiplier is max(0, 1 - dt * rate * profile * factors[d]).",
             "ReferenceLines" => "NormalizedDamping = 0 and 1",
             "ZoneParameters" => zone_parameters,
         ]

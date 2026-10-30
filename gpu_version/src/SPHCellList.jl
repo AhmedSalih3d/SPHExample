@@ -1691,10 +1691,11 @@ half time. The single-neighbor scheme carries the previous evaluated total
 acceleration into its next predictor. Gravity is applied once and the final
 total acceleration participates in the adaptive timestep reduction.
 
-`SimDamping` accepts a `DampingZone` or a tuple/vector of zones. Completed
-fluid velocities are reduced at their accepted positions after integration;
-boundaries, floating bodies and frozen particles are unchanged. This works
-with both CPU-style schemes, CUDA graphs and `DualSPHysicsSymplectic`.
+`SimDamping` accepts `DampingZone`, `DampingBox`, or `DampingCylinder` values,
+individually or in a tuple/vector. Completed fluid velocities are reduced at
+their accepted positions after integration; boundaries, floating bodies and
+frozen particles are unchanged. This works with both CPU-style schemes, CUDA
+graphs and `DualSPHysicsSymplectic`.
 
 `SimRotation = RotationMotion(...)` prescribes physical rotation of one
 `Moving` group in nonperiodic 2D DBC cases. The input geometry is the zero-angle

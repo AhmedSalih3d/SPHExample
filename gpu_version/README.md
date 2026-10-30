@@ -251,23 +251,25 @@ The damping variant passes a `DampingZone` as `SimDamping`. After each
 completed step, it multiplies each fluid velocity component by
 `max(0, 1 - dt * 10 * min((x - 11) / 4.5, 1)^2)` for 11 < x ≤ 16.5 m,
 matching the reference's quadratic zone and 1 m overlimit. The general API
-also supports oriented planes in 2D/3D, per-component factors, multiple
-zones, both CPU-style integrators and CUDA graphs. Boundary, floating and
-frozen particles retain their velocities.
+also supports oriented `DampingZone` planes, `DampingBox` side regions and
+radial `DampingCylinder` regions, with per-component factors and multiple
+zones. Box corners use the strongest active-side profile; box and cylinder
+profiles follow the DualSPHysics squared ramp. All three shapes work with both
+CPU-style integrators and CUDA graphs. Boundary, floating and frozen particles
+retain their velocities.
 
 When `SimDamping` is set, particle VTKHDF output also contains `DampingZones`
 and `DampingProfiles` wireframe blocks. The zone block outlines the active
-region through the initial particle bounds, including the ramp-to-cap plane
-and any overlimit. Since damping zones are unbounded across their planes,
-these bounds are for visualization only. The profile block draws reference
-lines at normalized weights 0 and 1 with a polyline for
-`min(s / length, 1)^2`; the actual per-step velocity multiplier remains
-`max(0, 1 - dt * rate * profile * factors[d])`. The zone wireframe uses this
+region. Plane extents are projected from the initial particle bounds because
+planes are unbounded transversely; cylinder extents are similarly bounded only
+for visualization along their infinite axes. Box zones use their configured
+bounds. The profile block records reference values 0 and 1 and the spatial ramp
+for each plane, active box side and cylinder. The per-step velocity multiplier
+is `max(0, 1 - dt * rate * profile * factors[d])`. The zone wireframe uses the
 same normalized weight for point coloring, with a fixed 0-1 ParaView color
 scale. The generated ParaView state enables this array for coloring and labels
-it as dimensionless. Both blocks support 2D and 3D and are included in
-single-file and numbered VTKHDF output. The state displays them as a wireframe
-when the simulation has damping.
+it as dimensionless. Both blocks are included in single-file and numbered
+VTKHDF output and displayed as wireframes when damping is enabled.
 
 Each variant writes to `output/waves_piston_<termination>_<waves>/`: particle
 and grid VTKHDF series, the polygon geometry, gauges at x = 2, 6 and 10 m,
@@ -311,6 +313,37 @@ they do not establish convergence or an exact match to the reference solver.
 ![Four piston-wave variants at 10 seconds, colored by fluid speed](example/WavesPiston/preview.png)
 
 [Wave-gauge comparison with second-order theory](example/WavesPiston/theory_comparison.png).
+
+### DualSPHysics 5.4 `20_Damping`
+
+[Damping.jl](example/Damping.jl) provides the four damping demonstrations:
+`plane_mdbc` and `plane` (2D wave absorption with and without Simple mDBC),
+`angle` (a 3D angled plane), `box` (a box-side zone) and `cylinder` (a radial
+cylindrical zone). The box and cylinder cases use their corresponding damping
+models rather than approximating them with intersecting planes.
+
+```sh
+julia --project=gpu_version -t 2,0 gpu_version/example/Damping.jl plane_mdbc
+julia --project=gpu_version -t 2,0 gpu_version/example/Damping.jl plane
+julia --project=gpu_version -t 2,0 gpu_version/example/Damping.jl angle
+julia --project=gpu_version -t 2,0 gpu_version/example/Damping.jl box
+julia --project=gpu_version -t 2,0 gpu_version/example/Damping.jl cylinder
+```
+
+The examples generate their tank and fluid particles in Julia and launch a
+small initial velocity pulse, so they need no DualSPHysics input files. Their
+default spacing is 0.02 m for the 2D plane cases and 0.1 m for the 3D cases.
+The case description identifies the four configurations but does not provide
+their GenCase XML settings; the dimensions and pulse are therefore
+self-contained demonstration defaults, while the planar, box and cylindrical
+damping profiles follow the DualSPHysics 5.4 implementation.
+
+Focused damping-profile, case-construction, VTKHDF and optional CUDA-kernel
+regressions:
+
+```sh
+julia --project=gpu_version gpu_version/test/damping.jl
+```
 
 ### Floating box in a wave tank
 
