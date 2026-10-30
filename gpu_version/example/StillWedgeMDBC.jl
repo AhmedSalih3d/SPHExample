@@ -10,12 +10,19 @@ using SPHExampleGPU
 using StaticArrays: SVector
 using Meshes
 
+# Set to `false` to skip the optional PDF report.
+GeneratePDFReport = true
+
+include(joinpath(@__DIR__, "StillWedgeMDBCReport.jl"))
+using .StillWedgeMDBCReport: write_still_wedge_report
+
 function run_still_wedge(;
     time_stepping::TimeSteppingMode = SymplecticTimeStepping(),
     simulation_time = 4.00,
     save_location = "C:/TestSimulations/StillWedge2D_MDBC_GPU",
     visualize::Bool = true,
     open_log_file::Bool = true,
+    generate_pdf_report::Bool = GeneratePDFReport,
 )
     Dimensions = 2
     FloatType = Float32
@@ -98,19 +105,37 @@ function run_still_wedge(;
 
     SimKernel =
         SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); dx = SimConstantsWedge.dx)
+    SimViscosity = ArtificialViscosity()
+    SimDensityDiffusion = LinearDensityDiffusion()
 
-    RunSimulation(
+    result = RunSimulation(
         SimGeometry = SimulationGeometry,
         SimMetaData = SimMetaDataWedge,
         SimConstants = SimConstantsWedge,
         SimKernel = SimKernel,
         SimLogger = SimLogger,
         SimParticles = SimParticles,
-        SimViscosity = ArtificialViscosity(),
-        SimDensityDiffusion = LinearDensityDiffusion(),
+        SimViscosity = SimViscosity,
+        SimDensityDiffusion = SimDensityDiffusion,
         SimTimeStepping = time_stepping,
         ParticleNormalsPath = "./input/still_wedge_mdbc/StillWedge_Dp$(SimConstantsWedge.dx)_GhostNodes_Correct.csv",
     )
+
+    if generate_pdf_report
+        report_files = write_still_wedge_report(
+            result,
+            SimConstantsWedge;
+            output_dir = SimMetaDataWedge.SaveLocation,
+            simulation_time,
+            simulation_name = SimMetaDataWedge.SimulationName,
+            metadata = SimMetaDataWedge,
+            geometry = SimulationGeometry,
+            kernel = SimKernel,
+            viscosity = SimViscosity,
+            density_diffusion = SimDensityDiffusion,
+        )
+        @info "Wrote StillWedge report" typst_source = report_files.typ_path pdf = report_files.pdf_path
+    end
 
     # This can be used to plot pressure profile results after simulation
     # using Plots
@@ -146,7 +171,7 @@ function run_still_wedge(;
     # ylims!((0, 1))
 
     # display(plt)
-    # return (; particles = SimParticles, metadata = SimMetaDataWedge)
+    return result
 end
 
 """
@@ -334,4 +359,4 @@ function still_wedge_2d_geometry(
 end
 
 # Including this file starts the simulation.
-run_still_wedge()
+run_still_wedge(generate_pdf_report = GeneratePDFReport)

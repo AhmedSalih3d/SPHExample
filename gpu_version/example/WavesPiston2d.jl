@@ -8,5 +8,5 @@
 include(joinpath(@__DIR__, "WavesPiston", "WavesPistonSetup.jl"))
 
 length(ARGS) <= 2 || throw(ArgumentError("usage: WavesPiston2d.jl [beach|damping] [regular|irregular]"))
-run_waves_piston(termination = isempty(ARGS) ? :beach : Symbol(ARGS[1]),
+run_waves_piston(termination = isempty(ARGS) ? :damping : Symbol(ARGS[1]),
     waves = length(ARGS) < 2 ? :regular : Symbol(ARGS[2]))

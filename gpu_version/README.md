@@ -943,6 +943,29 @@ level is the highest fluid particle (the DualSPHysics convention); pass
 `water_level` to override it, and the `SimConstants` of your simulation so that
 `ρ₀`, `g` and `c₀` agree (the default matches `StillWedgeMDBC.jl`).
 
+#### Optional Typst PDF summary
+
+The StillWedge run can optionally write an editable Typst source file and a PDF
+summary. PDF compilation uses `Typst_jll`, included in the GPU project; no
+separate Typst installation is needed. The `GeneratePDFReport` switch near the
+top of `example/StillWedgeMDBC.jl` controls PDF generation: `true` generates
+the report and `false` skips it (the example currently sets it to `true`). Run
+from the repository root:
+
+```bash
+julia --project=gpu_version gpu_version/example/StillWedgeMDBC.jl
+```
+
+`StillWedge_report.typ` and `StillWedge_report.pdf` are written to the run's
+`SaveLocation`. The report summarizes the case settings, run performance and
+solver diagnostics, plus minimum, mean and maximum final fluid density,
+pressure and speed. Boundary particles are excluded from those statistics.
+It reorganizes the logger's environment, model settings, effective GPU
+configuration, memory accounting, output-frame progress and phase timings into
+colored, labeled tables, with a guide explaining each component. It does not
+paste the raw log into the PDF. The editable `.typ` source is kept alongside
+the PDF.
+
 The particles come from `ParticleRegion` and `sample_particles`
 (`src/ParticleGenerator.jl`): one lattice of spacing `dx` is laid over all
 regions with `RegularSampling` and each lattice point goes to the first region
