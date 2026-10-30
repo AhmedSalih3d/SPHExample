@@ -39,7 +39,8 @@ using ..GPUStepState
 using ..ExternalForces: prepare_external_forces, launch_external_forces!
 using ..DampingZones: prepare_damping, launch_damping!
 using ..PrescribedRotation: RotationMotion, prepare_rotation, launch_rotation!, update_rotation_indices!
-using ..PrescribedMotions: PrescribedMotion, MotionSystem, combine_motions, validate_periodic_motion
+using ..PrescribedMotions: PrescribedMotion, MotionSystem, combine_motions,
+    validate_periodic_motion, validate_simple_mdbc_motion
 using ..MotionStageSampling: MotionStageSampler
 using ..GPUCellGrid
 using ..GPUKernels
@@ -1705,10 +1706,12 @@ positions. Gravity remains in world coordinates; no external forces are implied.
 
 `SimMotion = PrescribedMotion(...)` or `MotionSystem(...)` extends absolute
 placement to translations, arbitrary-axis 3D rotations, circular translation,
-sequences and hierarchical motion, in nonperiodic 2D/3D DBC cases. Sampled
-histories and analytical segments provide matching trajectory derivatives.
-Periodic DBC cases also support independent translations with zero displacement
-along the periodic axis; rotations and parent hierarchies remain unsupported.
+sequences and hierarchical motion in nonperiodic 2D/3D DBC cases. Nonperiodic
+Simple mDBC cases support translation-only motion; the moving ghost point is
+rebuilt from its fixed wall-normal offset. Sampled histories and analytical
+segments provide matching trajectory derivatives. Periodic DBC cases also
+support independent translations with zero displacement along the periodic
+axis; rotations and parent hierarchies remain unsupported.
 `SimMotion`, `SimRotation` and `MotionDetails` must target disjoint groups.
 These motion features do not imply numerical equivalence with DualSPHysics'
 increment-based wall velocities or its event/XML system.
@@ -1739,8 +1742,11 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     CUDA.functional() || error("CUDA is not functional on this machine; use the CPU package SPHExample instead.")
     SimRotation === nothing || (Dimensions == 2 && BMode === NoMDBC && SimMetaData.Periodicity === nothing) ||
         throw(ArgumentError("SimRotation currently requires a nonperiodic 2D DBC case (NoMDBC)"))
-    SimMotion === nothing || (Dimensions in (2,3) && BMode === NoMDBC) ||
-        throw(ArgumentError("SimMotion requires a 2D or 3D DBC case (NoMDBC)"))
+    SimMotion === nothing || (Dimensions in (2,3) &&
+        (BMode === NoMDBC || BMode === SimpleMDBC)) ||
+        throw(ArgumentError("SimMotion requires 2D/3D DBC or SimpleMDBC"))
+    SimMotion === nothing || BMode !== SimpleMDBC ||
+        validate_simple_mdbc_motion(SimMotion)
     validate_periodic_motion(SimMotion, SimMetaData.Periodicity)
     external_forces = prepare_external_forces(SimExternalForces, SimParticles, Val(Dimensions), FloatType)
     damping = prepare_damping(SimDamping, Val(Dimensions))
@@ -1813,7 +1819,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             all(geom -> !is_wall(geom.Type) ||
                 (hasproperty(geom.Particles, :GhostPoints) &&
                  hasproperty(geom.Particles, :GhostNormals)), SimGeometry) ||
-                error("$(BMode) requires ParticleNormalsPath or geometry ghost fields.")
+                throw(ArgumentError("$(BMode) requires ParticleNormalsPath or geometry ghost fields."))
         else
             # Directions use working precision; ghost positions use position precision.
             points, ghosts, normals = LoadBoundaryNormals(

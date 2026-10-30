@@ -188,8 +188,8 @@ The example uses this package's defaults instead of the reference's
 DualSPHysics-specific settings. These are Wendland C2 with `h = 2dx`,
 `SymplecticTimeStepping()`, artificial viscosity `α = 0.01` and
 `LinearDensityDiffusion()` with `δ = 0.1`. The sound speed is
-`c₀ = 20√(g · 0.31)`. Boundaries use DBC, because `SimMotion` requires
-`NoMDBC`; positions are stored in Float64. The piston signal is interpolated
+`c₀ = 20√(g · 0.31)`. Boundaries retain the reference's DBC setting; positions
+are stored in Float64. The piston signal is interpolated
 linearly between its 0.025-second samples. The signal and CIEMito validation
 data are bundled in
 [example/data/wavemaker_file](example/data/wavemaker_file/README.md), with their
@@ -316,11 +316,14 @@ they do not establish convergence or an exact match to the reference solver.
 
 ### DualSPHysics 5.4 `20_Damping`
 
-[Damping.jl](example/Damping.jl) provides the four damping demonstrations:
-`plane_mdbc` and `plane` (2D wave absorption with and without Simple mDBC),
-`angle` (a 3D angled plane), `box` (a box-side zone) and `cylinder` (a radial
-cylindrical zone). The box and cylinder cases use their corresponding damping
-models rather than approximating them with intersecting planes.
+[Damping.jl](example/Damping.jl) builds the five physical configurations from
+the installed v5.4 `20_Damping` XML files. `plane_mdbc` is the narrow flume
+with its moving piston and damping enabled; `plane` is the same mDBC/piston case
+with damping disabled as the control. `angle` releases the reference 3D water
+block into a closed tank with an angled damping plane. `box` and `cylinder`
+each reproduce the shallow pool plus falling fluid drop, with damped and
+undamped tanks side by side. These use `DampingBox` and `DampingCylinder`,
+respectively, not approximations made from intersecting planes.
 
 ```sh
 julia --project=gpu_version -t 2,0 gpu_version/example/Damping.jl plane_mdbc
@@ -330,16 +333,28 @@ julia --project=gpu_version -t 2,0 gpu_version/example/Damping.jl box
 julia --project=gpu_version -t 2,0 gpu_version/example/Damping.jl cylinder
 ```
 
-The examples generate their tank and fluid particles in Julia and launch a
-small initial velocity pulse, so they need no DualSPHysics input files. Their
-default spacing is 0.02 m for the 2D plane cases and 0.1 m for the 3D cases.
-The case description identifies the four configurations but does not provide
-their GenCase XML settings; the dimensions and pulse are therefore
-self-contained demonstration defaults, while the planar, box and cylindrical
-damping profiles follow the DualSPHysics 5.4 implementation.
+The physical inputs follow the installed XML: `dp = 0.0125 m` for the narrow
+flume (0.37 m width) and `dp = 0.005 m` for the other 3D cases; run durations
+are 20, 3.5 and 2.5 s for the plane, angle and drop cases. The original
+361-sample piston history is
+bundled at [CaseDampingPlane_PistonMovement.dat](example/data/damping/CaseDampingPlane_PistonMovement.dat)
+with its provenance. Both plane XML files use boundary method 2 (mDBC); the
+`Not_mDBC` file disables damping for the control run. To keep runs practical,
+pass a larger `dx` or shorter duration when testing:
 
-Focused damping-profile, case-construction, VTKHDF and optional CUDA-kernel
-regressions:
+```julia
+include("gpu_version/example/Damping/DampingSetup.jl")
+run_damping_case20(variant = :box, dx = 0.025, duration = 0.1,
+    visualize = false, save_location = mktempdir())
+```
+
+The cases use this package's
+`SymplecticTimeStepping()` and `LinearDensityDiffusion()` rather than importing
+DualSPHysics' time-step or density-diffusion implementation; damping rates,
+zones, fluid blocks, drops and paddle motion come from the reference inputs.
+
+Focused damping-profile, physical-case construction, VTKHDF, CUDA-kernel and
+short integration regressions:
 
 ```sh
 julia --project=gpu_version gpu_version/test/damping.jl
@@ -419,8 +434,8 @@ artificial viscosity `α = 0.01`, as in the 5.4 reference, and
 Fourtakas' diffusion term with the same coefficient. The kernel is Wendland C2
 with `h = 1.2√2 dx`, the reference's `coefh = 1.2`. The sound speed uses the
 reference's `coefsound` and the height of the sampled water column, as GenCase
-does. Densities start hydrostatic. Boundaries use DBC, because `SimMotion`
-requires `NoMDBC`, and positions are stored in Float64. The box's centre,
+does. Densities start hydrostatic. Boundaries retain the reference's DBC
+setting, and positions are stored in Float64. The box's centre,
 velocity, angle and angular velocity are written to
 `<SimulationName>_Floating.csv`. Its angle is counterclockwise in the x-y plane,
 so DualSPHysics' pitch and the roll of Ren et al. are its negative; the roll in
@@ -542,8 +557,8 @@ C2 with `h = 1.2√2 dx`, the reference's `coefh = 1.2`,
 `LinearDensityDiffusion()` (δ-SPH with `δ = 0.1`). The reference uses
 Fourtakas' diffusion term with the same coefficient. The sound speed is
 `c₀ = 20√(g · 8.2)`, from the height of the sampled water column, as GenCase
-computes it. Densities start hydrostatic. Boundaries use DBC, because
-`SimMotion` requires `NoMDBC`, and positions are stored in Float64. The run
+computes it. Densities start hydrostatic. Boundaries retain the reference's DBC
+setting, and positions are stored in Float64. The run
 lasts 30 s and writes a frame every 0.1 s, as the reference does. Water-column
 probes stand on the bed at x = 6 m, where DualSPHysics writes the theoretical
 elevation, and every 5 m from x = 10 to 75 m. They give the water depth;
@@ -694,8 +709,10 @@ keyword when their locations need to follow motion.
 For translation, acceleration, sinusoidal/circular trajectories, file input
 and hierarchical rigid motion, pass `SimMotion = PrescribedMotion(...)` or
 `MotionSystem(...)`. This path supports nonperiodic 2D/3D DBC and both
-integrators, with analytical wall velocities at the start, predictor and
-accepted times. Periodic DBC cases additionally allow independent translations
+integrators, plus translation-only `SimpleMDBC` cases, with analytical wall
+velocities at the start, predictor and accepted times. `SimpleMDBC` motion
+keeps its ghost-normal offset fixed; prescribed rotations remain DBC-only.
+Periodic DBC cases additionally allow independent translations
 that leave the periodic coordinate unchanged, as in the wave-maker example.
 Periodic rotations and parent hierarchies remain unsupported.
 The [nine runnable Motion examples](example/Motion/README.md)

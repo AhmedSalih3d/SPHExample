@@ -55,29 +55,54 @@ end
 
 @testset "DualSPHysics 20_Damping case builders" begin
     for variant in DAMPING_VARIANTS
-        case = damping_case20(; variant, dx = 0.1, duration = 0.1, visualize = false)
+        dx = variant in (:plane_mdbc, :plane) ? 0.05 : 0.025
+        case = damping_case20(; variant, dx, duration = 0.1, visualize = false)
         @test case.variant == variant
-        @test length(case.geometry) == 2
+        expected_groups = variant in (:plane_mdbc, :plane) ? 3 :
+            variant == :angle ? 2 : 6
+        @test length(case.geometry) == expected_groups
         @test all(!isempty(geometry.Particles.Position) for geometry in case.geometry)
-        zone_type =
-            variant in (:plane_mdbc, :plane, :angle) ? DampingZone :
-            variant == :box ? DampingBox : DampingCylinder
-        @test isa(case.damping, zone_type)
-        @test any(!iszero, case.geometry[2].Particles.Velocity)
+        if variant in (:plane_mdbc, :plane)
+            @test case.metadata isa SimulationMetaData{3,Float32,NoShifting,NoKernelOutput,SimpleMDBC}
+            @test case.geometry[1].Type == Fixed
+            @test case.geometry[2].Type == Moving
+            @test case.geometry[3].Type == Fluid
+            @test hasproperty(case.geometry[1].Particles, :GhostPoints)
+            @test hasproperty(case.geometry[2].Particles, :GhostPoints)
+            @test case.motion isa PrescribedMotion
+            @test length(case.motion.translation.times) == 361
+            @test first(case.motion.translation.times) == 0
+            @test last(case.motion.translation.times) == 9
+            @test maximum(abs(point[1]) for point in case.motion.translation.values) ≈ 0.026 atol = 0.001
+            @test (case.damping === nothing) == (variant == :plane)
+        elseif variant == :angle
+            @test case.metadata isa SimulationMetaData{3,Float32,NoShifting,NoKernelOutput,NoMDBC}
+            @test case.damping isa DampingZone
+            water = case.geometry[2].Particles.Position
+            @test maximum(point[1] for point in water) <= 0.3 + dx
+            @test maximum(point[3] for point in water) <= 0.3 + dx
+            @test case.damping.origin ≈ SVector(0.8, 0.5, 0.0)
+            @test case.damping.length ≈ sqrt(0.5^2 + 0.5^2)
+        elseif variant == :box
+            @test case.metadata isa SimulationMetaData{3,Float32,NoShifting,NoKernelOutput,NoMDBC}
+            @test case.damping isa DampingBox
+            drops = (case.geometry[4].Particles.Position, case.geometry[6].Particles.Position)
+            @test all(minimum(point[3] for point in drop) >= 0.15 - dx for drop in drops)
+            @test all(maximum(point[3] for point in drop) <= 0.25 + dx for drop in drops)
+            @test minimum(point[1] for point in drops[2]) > 1.15
+        else
+            @test case.metadata isa SimulationMetaData{3,Float32,NoShifting,NoKernelOutput,NoMDBC}
+            @test case.damping isa DampingCylinder
+            drops = (case.geometry[4].Particles.Position, case.geometry[6].Particles.Position)
+            @test all(minimum(point[3] for point in drop) >= 0.15 - dx for drop in drops)
+            @test all(maximum(point[3] for point in drop) <= 0.25 + dx for drop in drops)
+            @test minimum(point[1] for point in drops[2]) >= 1.35 - 0.06 - dx
+            @test maximum(point[1] for point in drops[2]) <= 1.35 + 0.06 + dx
+        end
         mktempdir() do directory
             geometry_path = joinpath(directory, case.metadata.SimulationName * "_Geometry.vtkhdf")
             SavePolygonVTKHDF(geometry_path, case.shapes)
             @test isfile(geometry_path)
-        end
-        if variant == :plane_mdbc
-            @test case.metadata isa SimulationMetaData{2,Float32,NoShifting,NoKernelOutput,SimpleMDBC}
-            @test hasproperty(case.geometry[1].Particles, :GhostPoints)
-            @test all(!iszero, case.geometry[1].Particles.GhostNormals)
-        elseif variant == :plane
-            @test case.metadata isa SimulationMetaData{2,Float32,NoShifting,NoKernelOutput,NoMDBC}
-            @test !hasproperty(case.geometry[1].Particles, :GhostPoints)
-        else
-            @test case.metadata isa SimulationMetaData{3,Float32,NoShifting,NoKernelOutput,NoMDBC}
         end
     end
     @test_throws ArgumentError damping_case20(variant = :unknown)
@@ -160,13 +185,34 @@ if CUDA.functional()
         end
     end
 
-    @testset "generated box damping case runs through the solver" begin
+    @testset "falling box and cylinder drops reach their pools" begin
+        for variant in (:box, :cylinder)
+            mktempdir() do directory
+                result = run_damping_case20(; variant, dx = 0.025,
+                    duration = 0.12, output_interval = 0.12,
+                    visualize = false, save_location = directory)
+                @test result.simulation.final_state.complete
+                drop = findall(==(4), result.particles.GroupMarker)
+                @test !isempty(drop)
+                @test minimum(result.particles.Position[i][3] for i in drop) < 0.14
+                @test isfile(joinpath(directory, result.case.metadata.SimulationName * ".vtkhdf"))
+            end
+        end
+    end
+
+    @testset "moving Simple mDBC paddle follows its reference history" begin
         mktempdir() do directory
-            result = run_damping_case20(; variant = :box, dx = 0.2,
-                duration = 1e-4, output_interval = 1e-4,
+            result = run_damping_case20(; variant = :plane_mdbc, dx = 0.05,
+                duration = 1.2, output_interval = 1.2,
                 visualize = false, save_location = directory)
+            moving = findall(==(Moving), result.particles.Type)
             @test result.simulation.final_state.complete
-            @test isfile(joinpath(directory, result.case.metadata.SimulationName * ".vtkhdf"))
+            @test maximum(result.particles.Position[i][1] for i in moving) > 1.0 + 0.005
+            @test all(
+                result.particles.GhostPoints[i] ≈
+                    result.particles.Position[i] + result.particles.GhostNormals[i]
+                for i in moving
+            )
         end
     end
 end

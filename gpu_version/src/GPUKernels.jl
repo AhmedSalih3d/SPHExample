@@ -825,7 +825,8 @@ function mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVector{SVect
     @inbounds if valid
         i  = GhostIndex[g]
         gp = GhostPoints[Compact ? g : i]
-        if periodicity !== nothing && GhostNormals !== nothing && ParticleType[i] == Moving
+        # A translating mDBC wall keeps its ghost offset in the wall frame.
+        if GhostNormals !== nothing && ParticleType[i] == Moving
             gp = Position[i] + SVector{D, TP}(GhostNormals[Compact ? g : i])
         end
         valid = ParticleType[i] != Frozen
@@ -857,7 +858,7 @@ function mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVector{SVect
             ρ = isnan(v) ? ρ₀ : v
         end
         Density[i]  = ρ
-        if periodicity !== nothing && ParticleType[i] == Moving
+        if GhostNormals !== nothing && ParticleType[i] == Moving
             GhostPoints[Compact ? g : i] = gp
         end
         store_inverse_density!(InvDensity, i, ρ)
@@ -1095,7 +1096,9 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
         v = damped_velocity(damping, x, v, type, dt)
         Velocity[i] = v
         store_pos_cell!(PosCells, i, x, CellID, gridarg, SimKernel.H)
-        if boundary_mode isa UpdatedMDBC && type == Moving && GhostPoints !== nothing
+        # Keep SimpleMDBC output and the next step's correction at the accepted pose.
+        if (boundary_mode isa SimpleMDBC || boundary_mode isa UpdatedMDBC) &&
+            type == Moving && GhostPoints !== nothing && GhostNormals !== nothing
             slot = BoundarySlots === nothing ? i : BoundarySlots[i]
             slot == 0 || (GhostPoints[slot] = x + GhostNormals[slot])
         end

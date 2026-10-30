@@ -28,10 +28,12 @@ transform is `center + translation(t) + R(t)*(x_reference-center)`.
 `parent` names another motion's ID. All zero-pose reference geometry and centers
 share a common coordinate frame. The child's transform acts first, followed
 by its parent's transform, recursively; translation directions and rotation
-axes therefore move with the parent. Set `group_marker = nothing` for a virtual
-parent that has no particles. A `MotionSystem` validates and orders the tree.
-Pass it as `SimMotion` to `RunSimulation` (2D/3D DBC). Periodic cases allow
-independent translations that leave the periodic coordinate unchanged;
+axes therefore move with the parent. Set `group_marker = nothing` for a virtual parent that has no particles.
+A `MotionSystem` validates and orders the tree. Pass it as `SimMotion` to
+`RunSimulation` for 2D/3D DBC, or for nonperiodic translation-only
+`SimpleMDBC` cases. In Simple mDBC, each moving ghost point follows the
+prescribed translation and its wall-normal offset stays fixed. Periodic cases
+allow independent translations that leave the periodic coordinate unchanged;
 rotations and parent hierarchies still require a nonperiodic case.
 """
 struct PrescribedMotion{D,T,A}
@@ -90,6 +92,13 @@ function MotionSystem(motions::Union{Tuple,AbstractVector})
     return MotionSystem{typeof(Tuple(ordered))}(Tuple(ordered))
 end
 MotionSystem(motion::PrescribedMotion) = MotionSystem((motion,))
+
+function validate_simple_mdbc_motion(system)
+    nodes = system isa PrescribedMotion ? (system,) : system.motions
+    all(node -> node.rotation isa ConstantTrajectory && iszero(node.rotation.value), nodes) ||
+        throw(ArgumentError("SimpleMDBC prescribed motion currently supports translations only"))
+    return nothing
+end
 
 # Absolute poses retain their original reference positions. A transverse
 # translation never crosses a periodic face, so wrapping cannot invalidate
