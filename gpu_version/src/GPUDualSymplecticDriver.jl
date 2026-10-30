@@ -52,7 +52,7 @@ function dual_force_stage!(position,velocity,density,pairs,gpu,cl,sup,kernel,con
     return dual_time_step(criteria,kernel,constants,meta.TimeSteppingMode)
 end
 
-function dual_simulation_loop!(diffusion,viscosity,kernel,meta,constants,gpu,cl,sup,rotation,state)
+function dual_simulation_loop!(diffusion,viscosity,kernel,meta,constants,gpu,cl,sup,rotation,state,damping=())
     clock = sup.dual_state
     scheme = meta.TimeSteppingMode
     clock === nothing && throw(ArgumentError("Allocate support arrays with DualSPHysicsSymplectic metadata"))
@@ -87,6 +87,7 @@ function dual_simulation_loop!(diffusion,viscosity,kernel,meta,constants,gpu,cl,
         # DualSPHysics moves prescribed walls after the fluid corrector. Its
         # velocity is the completed displacement divided by this step's dt.
         launch_rotation!(rotation,gpu.Position,gpu.Velocity,gpu.Type,gpu.GroupMarker,gpu.ID,step; fraction=1.0)
+        launch_damping!(damping,gpu.Position,gpu.Velocity,gpu.Type,step)
         finish = GPUKernels.launch_dual_motion_finish!(clock,gpu.Position,gpu.Velocity,gpu.Density,
             position_half,gpu.Type,dt,cl.periodicity,scheme)
         clock.excluded_position += Int(finish[1])

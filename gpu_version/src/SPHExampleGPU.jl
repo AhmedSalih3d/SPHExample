@@ -28,6 +28,7 @@ module SPHExampleGPU
         "SPHDensityDiffusionModels.jl",
         "GPUReductions.jl",
         "GPUStepState.jl",
+        "DampingZones.jl",
         "ExternalForces.jl",
         "GPUCellGrid.jl",
         "GPUKernels.jl",
@@ -70,6 +71,9 @@ module SPHExampleGPU
 
     using .ExternalForces
     export ExternalForce, external_acceleration
+
+    using .DampingZones
+    export DampingZone
 
     using .PrescribedRotation
     export RotationMotion, rotation_state, rotation_position

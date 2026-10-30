@@ -210,6 +210,94 @@ including impact peaks of about 1 kN/m after the waves break, closely follow the
 same DualSPHysics run. That run used the same pressure integral; the reference's
 `ComputeForces` uses a different measure. No fluid particle crossed the bed or wall.
 
+### Regular and irregular piston waves
+
+[WavesPiston2d.jl](example/WavesPiston2d.jl) adapts all four variants of
+DualSPHysics 5.4 example 09 (`09_WavesPiston`). A piston makes second-order
+waves in 0.66 m of water. Select a 1:10 beach starting at x = 9 m and ending
+at (19, 1) m, or a flat flume ending at x = 15.5 m with an absorbing zone
+from x = 11 to 15.5 m. Reference x/z coordinates map to simulation x/y.
+The default is the regular-wave beach case; running or including the file
+starts its 30-second simulation.
+
+```bash
+julia --project=gpu_version -t 2,0 gpu_version/example/WavesPiston2d.jl beach regular
+julia --project=gpu_version -t 2,0 gpu_version/example/WavesPiston2d.jl damping regular
+julia --project=gpu_version -t 2,0 gpu_version/example/WavesPiston2d.jl beach irregular
+julia --project=gpu_version -t 2,0 gpu_version/example/WavesPiston2d.jl damping irregular
+```
+
+Regular waves have height 0.15 m and period 2 s. The piston uses the same
+second-order transfer function as `FloatingWavesPiston2d.jl`, with the
+reference's smooth one-period ramp as in `Bathymetry2d.jl`. Irregular waves
+use JONSWAP with significant height 0.15 m, peak period 2 s, peak enhancement
+3.3, 1024 energy-stretched components and seed 1234, including second-order
+interactions. The reference's fitted series start is 560.075 s and it has no
+startup ramp. Its bundled 0.01 s motion history is interpolated linearly.
+Runs are limited to the bundled motion/theory interval of 30 s. See the
+[data provenance and regeneration instructions](example/data/waves_piston/README.md).
+DualSPHysics is only needed to regenerate those tables.
+
+The native polygons use four conforming wall layers and a piston whose wet
+face is at x = 0, one particle spacing above the bed. At the default
+`dx = 0.02`, the solver uses hydrostatic initial density, `h = 1.2√2 dx`,
+Wendland C2 with `(0.1h)^2` regularization, artificial viscosity 0.01 with `boundary_factor = 0`, Fourtakas
+inner density diffusion 0.1, no shifting, DBC and Float64 positions.
+`DualSPHysicsSymplectic` selects the reference integrator and timestep rules;
+its direct steps require `GPUUseGraph = false`, `GPUBoundaryForces = false`
+and one lane per particle.
+
+The damping variant passes a `DampingZone` as `SimDamping`. After each
+completed step, it multiplies each fluid velocity component by
+`max(0, 1 - dt * 10 * min((x - 11) / 4.5, 1)^2)` for 11 < x ≤ 16.5 m,
+matching the reference's quadratic zone and 1 m overlimit. The general API
+also supports oriented planes in 2D/3D, per-component factors, multiple
+zones, both CPU-style integrators and CUDA graphs. Boundary, floating and
+frozen particles retain their velocities.
+
+Each variant writes to `output/waves_piston_<termination>_<waves>/`: particle
+and grid VTKHDF series, the polygon geometry, gauges at x = 2, 6 and 10 m,
+and a submerged velocity probe at (6, 0.4) m. `_Theory.csv` contains the
+reference's first/second-order predictions at x = 6 m and 0.26 m below still
+water. `_Comparison.csv` aligns them with the measured elevations (subtracting
+each gauge's initial height) and velocity. Compare after the startup waves
+have reached x = 6 m; the theory does not propagate the startup transient.
+These tables support validation; they are not experimental data.
+
+For customized runs, include the definitions instead of the entry point:
+
+```julia
+include("gpu_version/example/WavesPiston/WavesPistonSetup.jl")
+result = run_waves_piston(termination = :damping, waves = :irregular,
+    dx = 0.02, duration = 10, visualize = false)
+```
+
+Focused geometry, motion, damping, graph and four-variant CUDA regressions:
+
+```bash
+julia --project=gpu_version -t 2,0 gpu_version/test/waves_piston.jl
+```
+
+All four default-resolution cases were run for 30 s on an NVIDIA RTX 5080
+with Julia 1.12.7. Each wrote 601 frames. No fluid particle crossed the bed,
+piston or damping-case end wall in those frames, and no particle was frozen.
+At x = 6 m, using outputs from 8–30 s without a phase adjustment:
+
+| Termination | Waves | Total / fluid particles | Steps | Elevation RMSE vs second-order theory |
+| --- | --- | ---: | ---: | ---: |
+| Beach | Regular | 23,603 / 19,488 | 222,245 | 7.6 mm |
+| Beach | Irregular | 23,603 / 19,488 | 221,418 | 10.6 mm |
+| Damping | Regular | 28,384 / 24,768 | 219,821 | 7.2 mm |
+| Damping | Irregular | 28,384 / 24,768 | 219,507 | 10.0 mm |
+
+The fluid counts are close to the reference's; the four wall layers deliberately
+add boundary particles. These results validate this resolution and setup;
+they do not establish convergence or an exact match to the reference solver.
+
+![Four piston-wave variants at 10 seconds, colored by fluid speed](example/WavesPiston/preview.png)
+
+[Wave-gauge comparison with second-order theory](example/WavesPiston/theory_comparison.png).
+
 ### Floating box in a wave tank
 
 [FloatingBox3d.jl](example/FloatingBox3d.jl) adapts DualSPHysics example 11

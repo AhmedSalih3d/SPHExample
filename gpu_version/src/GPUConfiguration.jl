@@ -6,7 +6,7 @@ using LoggingExtras: FormatLogger
 using ..SimulationMetaDataConfiguration
 using ..SimulationMetaDataConfiguration: periodic_images_enabled
 using ..SPHDensityDiffusionModels: ZeroDensityDiffusion, FourtakasDensityDiffusion
-using ..SPHViscosityModels: ZeroViscosity, LaminarSPS
+using ..SPHViscosityModels: ZeroViscosity, LaminarSPS, ArtificialViscosity
 using ..GPUKernels: choose_lanes, interaction_options
 
 export effective_configuration
@@ -55,6 +55,7 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
             diffusion isa FourtakasDensityDiffusion ? :fourtakas_inner :
             options.radial ? :symmetric_reciprocal_density : :reference,
         viscosity_model = typeof(viscosity),
+        boundary_viscosity_factor = viscosity isa ArtificialViscosity ? viscosity.boundary_factor : nothing,
         viscosity_path = viscosity isa ZeroViscosity ? :disabled : options.scalar_sps ? :scalar_sps :
             options.radial && !(viscosity isa LaminarSPS) ? :radial_symmetric : :reference_ordered,
         dimensions = D, float_type = T, position_type,

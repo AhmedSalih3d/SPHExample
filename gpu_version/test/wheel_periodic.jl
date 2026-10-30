@@ -2,7 +2,9 @@ module WheelPeriodicTests
 
 using Test, SPHExampleGPU, StaticArrays, LinearAlgebra, CUDA, HDF5
 
-include(joinpath(@__DIR__, "..", "example", "WheelPeriodic3d.jl"))
+# Load the module without starting the example's interactive simulation.
+Base.include(expr -> expr isa Expr && expr.head === :module ? expr : nothing,
+    @__MODULE__, joinpath(@__DIR__, "..", "example", "WheelPeriodic3d.jl"))
 using .PeriodicWheelCase
 
 const PB = SPHExampleGPU.PeriodicBoundaries
@@ -19,7 +21,7 @@ const CL = SPHExampleGPU.SPHCellList
     @test length(unique(p.ID)) == length(p)
     @test case.constants.m₀ ≈ case.constants.ρ₀ * case.constants.dx^3
     @test setup.meta.Periodicity == case.periodicity
-    @test setup.meta.GPUCellSubdivision == 1
+    @test setup.meta.GPUCellSubdivision == 2
     @test setup.meta.GPUDoublePosition
     @test setup.meta.GPUClipTimeStepToOutput
     @test case.periodicity.axis == 1

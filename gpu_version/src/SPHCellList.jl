@@ -37,6 +37,7 @@ using ..SPHDensityDiffusionModels
 using ..GPUReductions
 using ..GPUStepState
 using ..ExternalForces: prepare_external_forces, launch_external_forces!
+using ..DampingZones: prepare_damping, launch_damping!
 using ..PrescribedRotation: RotationMotion, prepare_rotation, launch_rotation!, update_rotation_indices!
 using ..PrescribedMotions: PrescribedMotion, MotionSystem, combine_motions, validate_periodic_motion
 using ..MotionStageSampling: MotionStageSampler
@@ -1259,7 +1260,8 @@ function enqueue_step!(ctx, timed::Bool)
         inverse_density = sup.InvDensity,
         next_inverse_density = get(ctx, :cache_final_state, false) ? sup.InvDensity : nothing,
         next_pressure = get(ctx, :cache_final_state, false) ? sup.Pressure : nothing,
-        diagnostics = get(ctx, :diagnostics, nothing), particle_ids = gpu.ID)
+        diagnostics = get(ctx, :diagnostics, nothing), particle_ids = gpu.ID,
+        damping = get(ctx, :damping, ()))
 
     # Rigid final placement reads neither time nor phase, so a one-block
     # integration may commit before this launch without changing body placement.
@@ -1423,11 +1425,11 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                         SimConstants, gpu::GPUParticles{Dimensions, FloatType},
                         cl::CellListWorkspace, sup::GPUSupportArrays, red::ReductionWorkspace,
                         motion, state::StepState{FloatType};
-                        floating = nothing, external_forces = (), rotation = nothing, logger = nothing, diagnostics = nothing) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
+                        floating = nothing, external_forces = (), damping = (), rotation = nothing, logger = nothing, diagnostics = nothing) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
                                                    SDD <: SPHDensityDiffusion, SV <: SPHViscosity}
     if SimMetaData.TimeSteppingMode isa DualSPHysicsSymplectic
         return dual_simulation_loop!(SimDensityDiffusion, SimViscosity, SimKernel,
-            SimMetaData, SimConstants, gpu, cl, sup, rotation, state)
+            SimMetaData, SimConstants, gpu, cl, sup, rotation, state, damping)
     end
     HourGlass = SimMetaData.HourGlass
     h = SimKernel.h
@@ -1501,7 +1503,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     cache_final_state = !UseMDBC && !motion.active && (floating === nothing || !floating.active) &&
         sup.InvDensity !== nothing && sup.Pressure !== nothing
 
-    ctx = (; gpu, cl, sup, red, motion, floating, external_forces, rotation, state, SimKernel, SimConstants, SimDensityDiffusion,
+    ctx = (; gpu, cl, sup, red, motion, floating, external_forces, damping, rotation, state, SimKernel, SimConstants, SimDensityDiffusion,
              SimViscosity, FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, radial, scalar_sps,
              interaction_always_inline, interaction_fastmath, HourGlass, boundary_mode,
              frozen_particles = Val(cl.frozen_total > 0), cache_final_state, diagnostics,
@@ -1689,6 +1691,11 @@ half time. The single-neighbor scheme carries the previous evaluated total
 acceleration into its next predictor. Gravity is applied once and the final
 total acceleration participates in the adaptive timestep reduction.
 
+`SimDamping` accepts a `DampingZone` or a tuple/vector of zones. Completed
+fluid velocities are reduced at their accepted positions after integration;
+boundaries, floating bodies and frozen particles are unchanged. This works
+with both CPU-style schemes, CUDA graphs and `DualSPHysicsSymplectic`.
+
 `SimRotation = RotationMotion(...)` prescribes physical rotation of one
 `Moving` group in nonperiodic 2D DBC cases. The input geometry is the zero-angle
 reference. Walls are placed absolutely at the start, predictor and accepted
@@ -1722,6 +1729,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     ParticleNormalsPath::Union{Nothing, String} = nothing,
     SimMeasurements::Union{Nothing, MeasurementConfig} = nothing,
     SimExternalForces = nothing,
+    SimDamping = nothing,
     SimRotation::Union{Nothing,RotationMotion} = nothing,
     SimMotion::Union{Nothing,PrescribedMotion,MotionSystem} = nothing,
     ParaviewPressureRange = nothing,
@@ -1734,6 +1742,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         throw(ArgumentError("SimMotion requires a 2D or 3D DBC case (NoMDBC)"))
     validate_periodic_motion(SimMotion, SimMetaData.Periodicity)
     external_forces = prepare_external_forces(SimExternalForces, SimParticles, Val(Dimensions), FloatType)
+    damping = prepare_damping(SimDamping, Val(Dimensions))
     SimMetaData.GPUTimestepDiagnosticsEvery >= 0 || throw(ArgumentError("GPUTimestepDiagnosticsEvery must be nonnegative"))
     SimulationLoggerConfiguration.start_runtime!(SimLogger, SimMetaData.TotalTime)
     initial_time = SimMetaData.TotalTime
@@ -2191,7 +2200,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         while true
             @timeit HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                                                                  SimConstants, gpu, cl, sup, red, motion, state;
-                                                                 floating = floating, external_forces, rotation, logger = SimLogger, diagnostics)
+                                                                 floating = floating, external_forces, damping, rotation, logger = SimLogger, diagnostics)
 
             # Publish progress immediately, independently of the queued disk writes.
             if StoreLogOutput

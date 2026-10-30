@@ -42,7 +42,7 @@ using CUDA
             if name == "StillWedgeMDBC"
                 @test inputs.SimTimeStepping isa SymplecticTimeStepping
                 @test inputs.SimMetaData.GPUDoublePosition
-                @test inputs.SimMetaData.OutputTimes == 0.01f0
+                @test inputs.SimMetaData.OutputTimes === 0.01
                 @test inputs.SimMetaData.ExportGridCells
                 @test eltype(eltype(inputs.SimParticles.Position)) === Float64
                 @test eltype(inputs.SimParticles.Density) === Float32
@@ -51,7 +51,7 @@ using CUDA
                     save_location = dir, visualize = false, open_log_file = false)
                 original_inputs = Base.invokelatest(getproperty, scope, :captured)[]
                 @test original_inputs.SimTimeStepping isa SingleNeighborTimeStepping
-                @test original_inputs.SimMetaData.SimulationTime == 0.01f0
+                @test original_inputs.SimMetaData.SimulationTime === 0.01
             end
             if name in ("Dambreak2dMDBC", "LidDrivenCavity2d")
                 walls = filter(geom -> geom.Type != Fluid, inputs.SimGeometry)

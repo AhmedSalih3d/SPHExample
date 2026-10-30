@@ -62,6 +62,7 @@ using ..PeriodicBoundaries: PeriodicBoundary
 using ..GPUCellGrid
 using ..GPUReductions
 using ..GPUStepState
+using ..DampingZones: damped_velocity
 using ..SimulationMetaDataConfiguration: NoMDBC, SimpleMDBC, UpdatedMDBC, DualSPHysicsSymplectic
 
 export launch_interactions!, launch_mdbc!, launch_motion!, launch_half_step!, launch_final_step!,
@@ -526,6 +527,9 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                                 visc  = sgn * v1
                             end
 
+                            if SimViscosity isa ArtificialViscosity && (is_wall(typeᵢ) || is_wall(ParticleType[j]))
+                                visc *= T(SimViscosity.boundary_factor)
+                            end
                             Pⱼ = viscous_dt === nothing ? interaction_pressure(Pressure,j,ρⱼ,ParticleType[j],c₀,ρ₀,boundary_data) :
                                 dual_pressure(ρⱼ,SimConstants,Val(FastMath))
                             Pfac = viscous_dt === nothing ? (Pᵢ + Pⱼ) * (ρᵢ⁻¹ * ρⱼ⁻¹) : (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
@@ -1030,7 +1034,7 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
                             Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
                             partial, ::Val{FlagShift}, boundary_mode, GhostPoints, GhostNormals, BoundarySlots,
                             PosCells, CellID, gridarg, InvDensity, NextInvDensity, NextPressure,
-                            diagnostic_partial, particle_ids, ::Val{CommitStep}, n::Int32) where {FlagShift, CommitStep}
+                            diagnostic_partial, particle_ids, damping, ::Val{CommitStep}, n::Int32) where {FlagShift, CommitStep}
     step_active(step) || return nothing
     dt = step_dt(step)
     (; g, ρ₀) = SimConstants
@@ -1088,6 +1092,8 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
             x += (vₙ⁺ * dt) * ML
         end
         Position[i] = x
+        v = damped_velocity(damping, x, v, type, dt)
+        Velocity[i] = v
         store_pos_cell!(PosCells, i, x, CellID, gridarg, SimKernel.H)
         if boundary_mode isa UpdatedMDBC && type == Moving && GhostPoints !== nothing
             slot = BoundarySlots === nothing ? i : BoundarySlots[i]
@@ -1136,7 +1142,7 @@ function launch_final_step!(Position, Velocity, Acceleration, Density, dρdtI, �
                             ghost_points = nothing, ghost_normals = nothing, boundary_slots = nothing,
                             pos_cells = nothing, CellID = nothing, grid = nothing, commit_step::Bool = false,
                             inverse_density = nothing, next_inverse_density = nothing, next_pressure = nothing,
-                            diagnostics = nothing, particle_ids = nothing)
+                            diagnostics = nothing, particle_ids = nothing, damping = ())
     commit_step && red.nblocks != 1 && throw(ArgumentError("fused commit requires one reduction block"))
     next_inverse_density === nothing || length(next_inverse_density) == length(Density) ||
         throw(DimensionMismatch("Next-state reciprocal cache must have one entry per density"))
@@ -1154,7 +1160,7 @@ function launch_final_step!(Position, Velocity, Acceleration, Density, dρdtI, �
         Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
         red.partial, FlagShift, boundary_mode, ghost_points, ghost_normals, boundary_slots,
         pos_cells, CellID, grid, inverse_density, next_inverse_density, next_pressure,
-        diagnostic_partial, particle_ids, Val(commit_step), Int32(n))
+        diagnostic_partial, particle_ids, damping, Val(commit_step), Int32(n))
     return nothing
 end
 

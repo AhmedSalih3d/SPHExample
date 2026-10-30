@@ -16,12 +16,20 @@ abstract type SPHViscosity end
 struct ZeroViscosity <: SPHViscosity end
 
 """
-    ArtificialViscosity()
+    ArtificialViscosity(; boundary_factor = 1)
 
 Monaghan style artificial viscosity for shock capturing and preventing
-particle interpenetration.
+particle interpenetration. `boundary_factor` multiplies wall-pair viscosity
+in the GPU interaction loop; zero selects the inviscid walls used by the
+DualSPHysics piston-wave examples. The default preserves existing behavior.
 """
-struct ArtificialViscosity <: SPHViscosity end
+struct ArtificialViscosity <: SPHViscosity
+    boundary_factor::Float64
+    function ArtificialViscosity(; boundary_factor = 1)
+        isfinite(boundary_factor) && boundary_factor >= 0 || throw(ArgumentError("boundary_factor must be finite and nonnegative"))
+        return new(Float64(boundary_factor))
+    end
+end
 
 """
     Laminar()

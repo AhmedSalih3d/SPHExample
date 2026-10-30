@@ -56,6 +56,7 @@ include(joinpath(@__DIR__, "prescribed_motion.jl"))
 include(joinpath(@__DIR__, "..", "example", "Wavemaker", "test_wavemaker.jl"))
 include(joinpath(@__DIR__, "motion_examples.jl"))
 include(joinpath(@__DIR__, "motion_stage_sampling.jl"))
+include(joinpath(@__DIR__, "waves_piston.jl"))
 include(joinpath(@__DIR__, "frozen_grid.jl"))
 
 # Project of the CPU package used as the reference. Defaults to the repository
