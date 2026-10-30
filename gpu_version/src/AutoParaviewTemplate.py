@@ -64,7 +64,10 @@ SetActiveView(renderView1)
 # create a new 'VTKHDF Reader'
 Simulation_vtkhdf = VTKHDFReader(registrationName='__SIM_NAME__.vtkhdf*', FileName=file_list)
 
-Simulation_vtkhdf.PointArrayStatus = __OUTPUT_VARIABLES__
+point_array_status = list(__OUTPUT_VARIABLES__)
+if __SHOW_DAMPING__:
+    point_array_status.append('NormalizedDamping')
+Simulation_vtkhdf.PointArrayStatus = point_array_status
 
 # ----------------------------------------------------------------
 # setup the visualization in view 'renderView1'
@@ -89,9 +92,15 @@ if __SHOW_DAMPING__ and data_type == 'vtkMultiBlockDataSet':
     DampingBlocks.UpdatePipeline()
     DampingBlocksDisplay = Show(DampingBlocks, renderView1, 'GeometryRepresentation')
     DampingBlocksDisplay.SetRepresentationType('Wireframe')
-    DampingBlocksDisplay.ColorArrayName = ['POINTS', '']
-    DampingBlocksDisplay.DiffuseColor = [1.0, 0.45, 0.05]
+    ColorBy(DampingBlocksDisplay, ('POINTS', 'NormalizedDamping'))
     DampingBlocksDisplay.LineWidth = 2.0
+    damping_lut = GetColorTransferFunction('NormalizedDamping')
+    damping_lut.RescaleTransferFunction(0.0, 1.0)
+    damping_lut.AutomaticRescaleRangeMode = 'Never'
+    DampingBlocksDisplay.SetScalarBarVisibility(renderView1, True)
+    damping_bar = GetScalarBar(damping_lut, renderView1)
+    damping_bar.Title = 'Normalized damping weight (dimensionless)'
+    damping_bar.ComponentTitle = ''
 
 # To always load in at correct position
 # Simulation_vtkhdfDisplay.Position = [0.0, 0.0, 0.0]

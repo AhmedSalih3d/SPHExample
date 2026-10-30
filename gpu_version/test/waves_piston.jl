@@ -23,13 +23,26 @@ function check_damping_blocks(root, dimension, times)
     profile = root["DampingProfiles"]
     @test HDF5.attrs(zone)["Type"] == "PolyData"
     @test HDF5.attrs(profile)["Type"] == "PolyData"
+    @test HDF5.attrs(zone)["IntensityDefinition"] ==
+          "NormalizedDamping = min(s / length, 1)^2"
 
     zone_points = read(zone["Points"])
     @test size(zone_points, 1) == 3
-    @test size(zone_points, 2) == (dimension == 2 ? 6 : 12)
+    @test size(zone_points, 2) == (dimension == 2 ? 2 : 4) * 41
     @test minimum(zone_points[1, :]) == 0
     @test maximum(zone_points[1, :]) == 2.5
     @test all(iszero, zone_points[3, :]) == (dimension == 2)
+
+    zone_weights = vec(read(zone["PointData/NormalizedDamping"]))
+    connectivity = read(zone["Lines/Connectivity"])
+    offsets = read(zone["Lines/Offsets"])
+    first_rail = Int.(connectivity[(offsets[1] + 1):offsets[2]]) .+ 1
+    rail_weights = zone_weights[first_rail]
+    @test rail_weights[1] == 0
+    @test rail_weights[17] ≈ 0.25
+    @test rail_weights[33] == 1
+    @test all(==(1), rail_weights[33:end])
+    @test all(==(1), read(zone["PointData/ZoneId"]))
 
     profile_lines = read(profile["Lines/NumberOfCells"])
     @test profile_lines == fill(3, length(times))
@@ -103,6 +116,7 @@ end
                     @test HDF5.attrs(root)["Type"] == "MultiBlockDataSet"
                     @test haskey(root, "DampingZones")
                     @test read(root["DampingZones/Lines/NumberOfCells"]) == [5]
+                    @test all(>=(0), read(root["DampingZones/PointData/NormalizedDamping"]))
                     @test size(read(root["DampingProfiles/Points"]), 1) == 3
                 end
             end

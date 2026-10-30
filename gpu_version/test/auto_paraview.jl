@@ -32,11 +32,21 @@ using StaticArrays
                 String,
             )
             @test occursin("if True and data_type == 'vtkMultiBlockDataSet':", state)
+            @test occursin("point_array_status.append('NormalizedDamping')", state)
             @test occursin(
                 "DampingBlocks.Selectors = ['/Root/DampingZones', '/Root/DampingProfiles']",
                 state,
             )
             @test occursin("DampingBlocksDisplay.SetRepresentationType('Wireframe')", state)
+            @test occursin(
+                "ColorBy(DampingBlocksDisplay, ('POINTS', 'NormalizedDamping'))",
+                state,
+            )
+            @test occursin("damping_lut.RescaleTransferFunction(0.0, 1.0)", state)
+            @test occursin(
+                "damping_bar.Title = 'Normalized damping weight (dimensionless)'",
+                state,
+            )
         end
     end
     pvpython = Sys.which("pvpython")

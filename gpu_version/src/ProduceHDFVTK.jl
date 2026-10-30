@@ -215,7 +215,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 collection, DAMPING_ZONE_BLOCK,
                 damping_geometry.zone_points, damping_geometry.zone_connectivity,
                 damping_geometry.zone_offsets,
-                ["ZoneId" => damping_geometry.zone_ids],
+                [
+                    "NormalizedDamping" => damping_geometry.zone_weights,
+                    "ZoneId" => damping_geometry.zone_ids,
+                ],
                 damping_geometry.zone_attributes,
             )
             _write_static_lines_block!(
@@ -1409,6 +1412,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         zone_connectivity::Vector{Int64}
         zone_offsets::Vector{Int64}
         zone_ids::Vector{Int32}
+        zone_weights::Vector{Float64}
         profile_points::Matrix{Float64}
         profile_connectivity::Vector{Int64}
         profile_offsets::Vector{Int64}
@@ -1497,8 +1501,22 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         return nothing
     end
 
+    function _damping_profile_distances(zone)
+        active_end = zone.length + zone.overlimit
+        isfinite(active_end) ||
+            throw(ArgumentError("damping zone visualization extent must be finite"))
+        distances = collect(range(0.0, stop = zone.length, length = 33))
+        if active_end > zone.length
+            append!(
+                distances,
+                collect(range(zone.length, stop = active_end, length = 9))[2:end],
+            )
+        end
+        return distances
+    end
+
     function _append_zone_wireframe!(
-            points, connectivity, offsets, zone_ids, zone, zone_id,
+            points, connectivity, offsets, zone_ids, zone_weights, zone, zone_id,
             positions, fallback_width,
         )
         active_end = zone.length + zone.overlimit
@@ -1509,7 +1527,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             axis -> _damping_bounds(positions, zone.origin, axis, fallback_width),
             basis,
         )
-        distances = active_end > zone.length ?
+        distances = _damping_profile_distances(zone)
+        cross_sections = active_end > zone.length ?
             (0.0, zone.length, active_end) : (0.0, zone.length)
         transverse_count = length(basis)
         corner_count = 1 << transverse_count
@@ -1522,8 +1541,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         point_indices = Matrix{Int}(undef, length(distances), corner_count)
         for (plane, distance) in enumerate(distances), corner in 1:corner_count
             point = _zone_world_point(zone, distance, basis, corners[corner])
+            weight = min(distance / zone.length, 1.0)^2
             point_indices[plane, corner] =
                 _append_damping_point!(points, zone_ids, point, zone_id)
+            push!(zone_weights, weight)
         end
 
         for corner in 1:corner_count
@@ -1531,6 +1552,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         end
         for plane in eachindex(distances), axis in 1:transverse_count,
             mask in 0:(corner_count - 1)
+            any(==(distances[plane]), cross_sections) || continue
             ((mask >> (axis - 1)) & 1) == 0 || continue
             neighbor = mask | (1 << (axis - 1))
             _append_damping_line!(
@@ -1562,13 +1584,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             _append_damping_line!(connectivity, offsets, indices)
         end
 
-        distances = collect(range(0.0, stop = zone.length, length = 33))
-        if zone.overlimit > 0
-            append!(
-                distances,
-                collect(range(zone.length, stop = active_end, length = 9))[2:end],
-            )
-        end
+        distances = _damping_profile_distances(zone)
         curve = Int[]
         for distance in distances
             weight = min(distance / zone.length, 1.0)^2
@@ -1605,6 +1621,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         zone_connectivity = Int64[]
         zone_offsets = Int64[0]
         zone_ids = Int32[]
+        zone_weights = Float64[]
         profile_points = SVector{3, Float64}[]
         profile_connectivity = Int64[]
         profile_offsets = Int64[0]
@@ -1619,7 +1636,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             length(zone.origin) == dimension ||
                 throw(DimensionMismatch("damping zone dimension must match the simulation"))
             basis, bounds = _append_zone_wireframe!(
-                zone_points, zone_connectivity, zone_offsets, zone_ids,
+                zone_points, zone_connectivity, zone_offsets, zone_ids, zone_weights,
                 zone, zone_id, positions, fallback_width,
             )
             _append_zone_profile!(
@@ -1642,6 +1659,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             "Definition" =>
                 "Wireframe bounds are projected from the initial particle extent; " *
                 "the damping model itself is unbounded in transverse directions.",
+            "IntensityDefinition" =>
+                "NormalizedDamping = min(s / length, 1)^2",
             "ZoneParameters" => zone_parameters,
         ]
         profile_attributes = Pair{String, Any}[
@@ -1654,6 +1673,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         ]
         return DampingVisualizationGeometry(
             _points_matrix(zone_points), zone_connectivity, zone_offsets, zone_ids,
+            zone_weights,
             _points_matrix(profile_points), profile_connectivity, profile_offsets,
             profile_weights, profile_zone_ids, zone_attributes, profile_attributes,
         )
@@ -1665,7 +1685,12 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         blocks = MeasurementBlock[
             MeasurementBlock(
                 root, DAMPING_ZONE_BLOCK, geometry.zone_points,
-                no_arrays, ["ZoneId" => geometry.zone_ids], no_fields,
+                no_arrays,
+                [
+                    "NormalizedDamping" => geometry.zone_weights,
+                    "ZoneId" => geometry.zone_ids,
+                ],
+                no_fields,
                 geometry.zone_attributes, capacity;
                 vertices = false,
                 line_connectivity = geometry.zone_connectivity,

@@ -262,9 +262,12 @@ and any overlimit. Since damping zones are unbounded across their planes,
 these bounds are for visualization only. The profile block draws reference
 lines at normalized weights 0 and 1 with a polyline for
 `min(s / length, 1)^2`; the actual per-step velocity multiplier remains
-`max(0, 1 - dt * rate * profile * factors[d])`. Both blocks support 2D and 3D
-and are included in single-file and numbered VTKHDF output. The generated
-ParaView state displays them as a wireframe when the simulation has damping.
+`max(0, 1 - dt * rate * profile * factors[d])`. The zone wireframe uses this
+same normalized weight for point coloring, with a fixed 0-1 ParaView color
+scale. The generated ParaView state enables this array for coloring and labels
+it as dimensionless. Both blocks support 2D and 3D and are included in
+single-file and numbered VTKHDF output. The state displays them as a wireframe
+when the simulation has damping.
 
 Each variant writes to `output/waves_piston_<termination>_<waves>/`: particle
 and grid VTKHDF series, the polygon geometry, gauges at x = 2, 6 and 10 m,
