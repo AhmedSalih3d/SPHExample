@@ -57,7 +57,23 @@ function report_fixture(output_dir)
             execution = (; path = :direct, graph_batches = 0, direct_batches = 1, graph_capture_failures = 0),
         ),
     )
-    constants = (; dx = 0.02, ρ₀ = 1000.0, c₀ = 20.0, g = 9.81, m₀ = 0.4)
+    constants = (;
+        ρ₀ = 1000.0,
+        dx = 0.02,
+        m₀ = 0.4,
+        α = 0.01,
+        g = 9.81,
+        c₀ = 20.0,
+        γ = 7.0,
+        γ⁻¹ = 1 / 7,
+        δᵩ = 0.1,
+        CFL = 0.2,
+        Cb = 400000 / 7,
+        Cb⁻¹ = 7 / 400000,
+        ν₀ = 1e-6,
+        BlinConstant = 0.0066,
+        SmagorinskyConstant = 0.12,
+    )
     metadata = (;
         SimulationName = "Wedge test",
         SaveLocation = output_dir,
@@ -167,6 +183,10 @@ end
         source = read(files.typ_path, String)
         @test !occursin("{{", source)
         @test occursin("Wedge \\\"draft\\\"", source)
+        @test occursin("table.header([Parameter], [Value], [Description], repeat: true)", source)
+        @test occursin("Reference fluid density used by the equation of state", source)
+        @test occursin("Kinematic viscosity used by the selected viscous model", source)
+        @test occursin("Smagorinsky coefficient used by the SPS viscosity model", source)
         @test occursin("density", lowercase(source))
         @test occursin("[#text(\"990\")]", source)
         @test occursin("[#text(\"995\")]", source)

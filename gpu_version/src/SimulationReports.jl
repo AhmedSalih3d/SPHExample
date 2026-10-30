@@ -66,6 +66,35 @@ function _field_rows(component; excluded_fields = ())
     return rows
 end
 
+const PHYSICAL_CONSTANT_DESCRIPTIONS = Dict(
+    :ρ₀ => "Reference fluid density used by the equation of state and particle-mass default.",
+    :dx => "Initial particle spacing, which sets the spatial resolution of the particle layout.",
+    :m₀ => "Per-particle mass; the dimension-aware default is ρ₀ × dx^D for D = 2 or 3.",
+    :α => "Artificial-viscosity coefficient controlling dissipative momentum interactions.",
+    :g => "Positive magnitude of gravitational acceleration used in the simulation.",
+    :c₀ => "Numerical speed of sound used by the weakly-compressible equation of state.",
+    :γ => "Adiabatic exponent used by the equation of state.",
+    :γ⁻¹ => "Reciprocal of γ used in equation-of-state calculations.",
+    :δᵩ => "Coefficient controlling the strength of the density-diffusion model.",
+    :CFL => "Courant-Friedrichs-Lewy factor used to limit the adaptive timestep.",
+    :Cb => "Equation-of-state coefficient derived from c₀², ρ₀ and γ.",
+    :Cb⁻¹ => "Reciprocal of the equation-of-state coefficient Cb.",
+    :ν₀ => "Kinematic viscosity used by the selected viscous model.",
+    :BlinConstant => "Model coefficient used by the Blin viscosity formulation.",
+    :SmagorinskyConstant => "Smagorinsky coefficient used by the SPS viscosity model.",
+)
+
+function _physical_constant_rows(constants)
+    rows = NTuple{3, String}[]
+    for field in fieldnames(typeof(constants))
+        description = get(PHYSICAL_CONSTANT_DESCRIPTIONS, field, nothing)
+        description === nothing &&
+            throw(ArgumentError("No description is registered for physical constant '$field'"))
+        push!(rows, (string(field), _format_value(getfield(constants, field)), description))
+    end
+    return rows
+end
+
 function _flatten_rows!(rows, prefix::String, value)
     if value isa NamedTuple
         if isempty(value)
@@ -377,11 +406,11 @@ end
         simulation_name = nothing, compile_pdf = true)
 
 Create a structured Typst report for a GPU simulation, with summary cards,
-parameter tables, particle and geometry counts, effective GPU settings, memory
-accounting, progress history and phase timings. By default, the report title
-and output filename are derived from `metadata.SimulationName`. The logger
-output is parsed into these sections; it is not copied into the report as a raw
-appendix.
+parameter tables (including descriptions for every physical constant), particle
+and geometry counts, effective GPU settings, memory accounting, progress
+history and phase timings. By default, the report title and output filename are
+derived from `metadata.SimulationName`. The logger output is parsed into these
+sections; it is not copied into the report as a raw appendix.
 """
 function write_simulation_report(
     result,
@@ -497,7 +526,7 @@ function write_simulation_report(
         summary_rows = _typst_table_rows(summary_rows),
         variable_rows = _typst_table_rows(variable_rows; columns = 4),
         environment_rows = _typst_table_rows(_environment_rows(log_text)),
-        constants_rows = _typst_table_rows(_field_rows(constants)),
+        constants_rows = _typst_table_rows(_physical_constant_rows(constants); columns = 3),
         metadata_rows = _typst_table_rows(metadata_rows),
         geometry_rows = _typst_table_rows(_geometry_rows(geometry, particles); columns = 5),
         particle_type_rows = _typst_table_rows(_particle_type_rows(geometry); columns = 3),

@@ -123,8 +123,8 @@
 == Physical constants
 
 #table(
-  columns: (1.15fr, 1.85fr),
-  table.header([Parameter], [Value], repeat: true),
+  columns: (0.8fr, 0.85fr, 2.35fr),
+  table.header([Parameter], [Value], [Description], repeat: true),
   {{CONSTANTS_ROWS}}
 )
 
