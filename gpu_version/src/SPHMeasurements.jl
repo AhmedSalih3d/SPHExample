@@ -455,9 +455,8 @@ function _flush!(array::FrameArray{<:AbstractArray{<:Any, 3}}, count)
 end
 
 """
-One measurement block: a temporal vertex `PolyData` under `/VTKHDF/<name>`
-with one point per probe. Holds the handles of the datasets that grow by one
-entry per frame, grouped by the value they receive.
+One temporal `PolyData` block under `/VTKHDF/<name>`. Holds the handles of
+the datasets that grow by one entry per frame, grouped by the value they receive.
 """
 struct MeasurementBlock
     name::String
@@ -470,7 +469,7 @@ struct MeasurementBlock
     step_values::HDF5.Dataset           # Steps/Values: the frame times
     part_offsets::HDF5.Dataset          # Steps/PartOffsets: the frame index
     point_offsets::HDF5.Dataset         # Steps/PointOffsets
-    point_counts::Vector{HDF5.Dataset}  # `npoints` points and vertices per frame
+    frame_counts::Vector{Pair{HDF5.Dataset, IdType}}
     part_counts::Vector{HDF5.Dataset}   # Steps/NumberOfParts: one part per frame
     zero_entries::Vector{HDF5.Dataset}  # offsets into static data, empty topologies
     zero_columns::Vector{HDF5.Dataset}  # Steps/CellOffsets, ConnectivityIdOffsets
@@ -483,21 +482,38 @@ end
                      attributes, capacity)
 
 Create the block `name` in the composite group `root`. `points` (`3 x n`) are
-the probe locations. `arrays` lists the temporal point arrays as
+the geometry points. `arrays` lists the temporal point arrays as
 `name => (eltype, components)`, `static_arrays` the point arrays and
 `field_arrays` the field arrays written once as `name => values`.
 `attributes` are descriptive HDF5 attributes of the block group.
 Set `dynamic_points = true` to store a point geometry frame and offset for
-every output frame.
+every output frame. Static line cells can be added with zero-based
+`line_connectivity` and cumulative `line_offsets`; set `vertices = false` for
+line-only geometry blocks.
 """
 function MeasurementBlock(
         root::HDF5.Group, name::AbstractString, points::AbstractMatrix{Float64},
         arrays, static_arrays, field_arrays, attributes, capacity::Integer;
         dynamic_points::Bool = false,
+        vertices::Bool = true,
+        line_connectivity::AbstractVector{<:Integer} = Int64[],
+        line_offsets::AbstractVector{<:Integer} = Int64[0],
     )
     size(points, 1) == 3 || throw(ArgumentError("block points must be 3 x n"))
     npoints = size(points, 2)
     npoints >= 1 || throw(ArgumentError("block `$name` needs at least one point"))
+    if isempty(line_connectivity)
+        length(line_offsets) == 1 && first(line_offsets) == 0 ||
+            throw(ArgumentError("empty line connectivity requires offsets [0]"))
+    else
+        length(line_offsets) >= 2 && first(line_offsets) == 0 &&
+            last(line_offsets) == length(line_connectivity) ||
+            throw(ArgumentError("line offsets must start at zero and end at the connectivity length"))
+        all(diff(line_offsets) .>= 2) ||
+            throw(ArgumentError("each line cell must contain at least two points"))
+        all(index -> 0 <= index < npoints, line_connectivity) ||
+            throw(ArgumentError("line connectivity indices must address points in the block"))
+    end
 
     block = HDF5.create_group(root, name)
     HDF5.attrs(block)["Version"] = BLOCK_VERSION
@@ -520,16 +536,26 @@ function MeasurementBlock(
     end
     points_buffer = dynamic_points ?
         Matrix{Float64}(undef, 3, npoints * capacity) : nothing
-    point_counts = HDF5.Dataset[_step_dataset(block, "NumberOfPoints", IdType, capacity)]
+    frame_counts = Pair{HDF5.Dataset, IdType}[
+        _step_dataset(block, "NumberOfPoints", IdType, capacity) => IdType(npoints),
+    ]
     zero_entries = HDF5.Dataset[]
     for topology in ("Vertices", "Lines", "Polygons", "Strips")
         group = HDF5.create_group(block, topology)
         cells = _step_dataset(group, "NumberOfCells", IdType, capacity)
         ids = _step_dataset(group, "NumberOfConnectivityIds", IdType, capacity)
-        if topology == "Vertices"
+        if topology == "Vertices" && vertices
             group["Connectivity"] = collect(IdType, 0:(npoints - 1))
             group["Offsets"] = collect(IdType, 0:npoints)
-            push!(point_counts, cells, ids)
+            push!(frame_counts, cells => IdType(npoints), ids => IdType(npoints))
+        elseif topology == "Lines" && !isempty(line_connectivity)
+            group["Connectivity"] = collect(IdType, line_connectivity)
+            group["Offsets"] = collect(IdType, line_offsets)
+            push!(
+                frame_counts,
+                cells => IdType(length(line_offsets) - 1),
+                ids => IdType(length(line_connectivity)),
+            )
         else
             group["Connectivity"] = IdType[]
             group["Offsets"] = IdType[0]
@@ -598,7 +624,7 @@ function MeasurementBlock(
     return MeasurementBlock(
         String(name), npoints, Matrix{Float64}(points), points_data,
         points_buffer, dynamic_points, nsteps, step_values, part_offsets,
-        point_offsets, point_counts, part_counts, zero_entries, zero_columns,
+        point_offsets, frame_counts, part_counts, zero_entries, zero_columns,
         field_sizes, frame_arrays,
     )
 end
@@ -621,7 +647,9 @@ function _flush_block!(block::MeasurementBlock, times::AbstractVector{Float64},
     else
         _append!(block.point_offsets, zeros(IdType, count))
     end
-    foreach(ds -> _append!(ds, fill(IdType(block.npoints), count)), block.point_counts)
+    for (dataset, value) in block.frame_counts
+        _append!(dataset, fill(value, count))
+    end
     foreach(ds -> _append!(ds, ones(IdType, count)), block.part_counts)
     foreach(ds -> _extend!(ds, count), block.zero_entries)
     foreach(ds -> _extend_columns!(ds, count), block.zero_columns)

@@ -82,6 +82,17 @@ data_type = Simulation_vtkhdf.GetDataInformation().GetDataSetTypeAsString()
 if data_type == 'vtkMultiBlockDataSet':
     Simulation_vtkhdfDisplay.BlockSelectors = ['/Root/Particles']
 
+if __SHOW_DAMPING__ and data_type == 'vtkMultiBlockDataSet':
+    DampingBlocks = ExtractBlock(registrationName='Damping zones and profile',
+                                 Input=Simulation_vtkhdf)
+    DampingBlocks.Selectors = ['/Root/DampingZones', '/Root/DampingProfiles']
+    DampingBlocks.UpdatePipeline()
+    DampingBlocksDisplay = Show(DampingBlocks, renderView1, 'GeometryRepresentation')
+    DampingBlocksDisplay.SetRepresentationType('Wireframe')
+    DampingBlocksDisplay.ColorArrayName = ['POINTS', '']
+    DampingBlocksDisplay.DiffuseColor = [1.0, 0.45, 0.05]
+    DampingBlocksDisplay.LineWidth = 2.0
+
 # To always load in at correct position
 # Simulation_vtkhdfDisplay.Position = [0.0, 0.0, 0.0]
 

@@ -25,6 +25,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     using HDF5
     using Meshes
     using StaticArrays
+    using LinearAlgebra: cross, dot, norm
 
     using ..AuxiliaryFunctions: to_3d, to_3d!, components!
     using ..HDF5Append: extend!, extend_columns!, append_slice!, append_columns!
@@ -35,11 +36,15 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     using ..SimulationEquations: EquationOfStateGamma7, particle_pressure
     using ..SPHMeasurements: MeasurementConfig, has_measurements,
         resolve_measurements, MeasurementWriter, append_measurements!,
-        flush_measurements!, measurement_block_names
+        flush_measurements!, measurement_block_names, MeasurementBlock,
+        _flush_block!
 
 
     const idType = Int64
     const fType = Float64
+    const DAMPING_ZONE_BLOCK = "DampingZones"
+    const DAMPING_PROFILE_BLOCK = "DampingProfiles"
+    const DAMPING_BLOCK_NAMES = (DAMPING_ZONE_BLOCK, DAMPING_PROFILE_BLOCK)
 
     # Name of the particle block when the file is a composite dataset.
     const PARTICLE_BLOCK = "Particles"
@@ -57,9 +62,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     # Composite (MultiBlockDataSet) files
     #---------------------------------------------------------------
     #
-    # With measurements the file holds several datasets, so `/VTKHDF` becomes
-    # a `MultiBlockDataSet`: every dataset is a block group directly below
-    # `/VTKHDF` with its own `Type` and `Version` attributes, and the
+    # With measurements or damping geometry the file holds several datasets, so
+    # `/VTKHDF` becomes a `MultiBlockDataSet`: every dataset is a block group
+    # directly below `/VTKHDF` with its own `Type` and `Version` attributes, and the
     # `Assembly` group describes the hierarchy with soft links to the blocks
     # (a plain subgroup is a nested multiblock). The specification requires
     # `/VTKHDF`, `Assembly` and its nodes to track link creation order, which
@@ -102,19 +107,22 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         write_assembly!(root, particle_block, measurement_blocks)
 
     Write the `Assembly` of the collection `root`: the particle block at the
-    top level and the measurement blocks below a `Measurements` node.
+    top level, geometry blocks alongside it, and measurement blocks below a
+    `Measurements` node.
     """
     function write_assembly!(root::HDF5.Group, particle_block::AbstractString,
-                             measurement_blocks)
+                             measurement_blocks; geometry_blocks = String[])
         assembly = HDF5.create_group(root, "Assembly"; track_order = true)
         try
             link_block!(assembly, particle_block)
-            isempty(measurement_blocks) && return root
-            node = HDF5.create_group(assembly, "Measurements"; track_order = true)
-            try
-                foreach(name -> link_block!(node, name), measurement_blocks)
-            finally
-                close(node)
+            foreach(name -> link_block!(assembly, name), geometry_blocks)
+            if !isempty(measurement_blocks)
+                node = HDF5.create_group(assembly, "Measurements"; track_order = true)
+                try
+                    foreach(name -> link_block!(node, name), measurement_blocks)
+                finally
+                    close(node)
+                end
             end
         finally
             close(assembly)
@@ -156,10 +164,17 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         return points, buf.connectivity, buf.offsets, buf.types, buf.cell_data, D
     end
 
-    function SaveVTKHDF(fid_vector, index, filepath, points, variable_names = String[], args...)
+    function SaveVTKHDF(fid_vector, index, filepath, points, variable_names = String[], args...;
+                        damping_geometry = nothing)
         @assert length(variable_names) == length(args) "Same number of variable_names as args is necessary"
         io = h5open(filepath, "w")
-        gtop = HDF5.create_group(io, "VTKHDF")
+        collection = nothing
+        gtop = if damping_geometry === nothing
+            HDF5.create_group(io, "VTKHDF")
+        else
+            collection = create_collection_root(io)
+            create_block(collection, PARTICLE_BLOCK)
+        end
 
         HDF5.attrs(gtop)["Version"] = [2, 3]
         write_ascii_attribute(gtop, "Type", "PolyData")
@@ -195,6 +210,30 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             close(gempty)
         end
 
+        if damping_geometry !== nothing
+            _write_static_lines_block!(
+                collection, DAMPING_ZONE_BLOCK,
+                damping_geometry.zone_points, damping_geometry.zone_connectivity,
+                damping_geometry.zone_offsets,
+                ["ZoneId" => damping_geometry.zone_ids],
+                damping_geometry.zone_attributes,
+            )
+            _write_static_lines_block!(
+                collection, DAMPING_PROFILE_BLOCK,
+                damping_geometry.profile_points, damping_geometry.profile_connectivity,
+                damping_geometry.profile_offsets,
+                [
+                    "NormalizedDamping" => damping_geometry.profile_weights,
+                    "ZoneId" => damping_geometry.profile_zone_ids,
+                ],
+                damping_geometry.profile_attributes,
+            )
+            write_assembly!(
+                collection, PARTICLE_BLOCK, String[];
+                geometry_blocks = DAMPING_BLOCK_NAMES,
+            )
+        end
+
         fid_vector[index] = io
     end
 
@@ -204,9 +243,11 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     Write one static `PolyData` file of vertices (one cell per point) with the
     point data `variable_names => args` and close it. Returns `filepath`.
     """
-    function SaveVTKHDF(filepath::AbstractString, points, variable_names = String[], args...)
+    function SaveVTKHDF(filepath::AbstractString, points, variable_names = String[], args...;
+                        damping_geometry = nothing)
         files = Vector{HDF5.File}(undef, 1)
-        SaveVTKHDF(files, 1, filepath, points, variable_names, args...)
+        SaveVTKHDF(files, 1, filepath, points, variable_names, args...;
+            damping_geometry)
         close(files[1])
         return filepath
     end
@@ -608,6 +649,42 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         group["Connectivity"]            = connectivity
         group["Offsets"]                 = offsets
         return group
+    end
+
+    function _write_static_lines_block!(
+            root::HDF5.Group, name::AbstractString, points::AbstractMatrix,
+            connectivity, offsets, point_arrays, attributes,
+        )
+        block = create_block(root, name)
+        try
+            HDF5.attrs(block)["Version"] = Int32[2, 3]
+            write_ascii_attribute(block, "Type", "PolyData")
+            for (key, value) in attributes
+                value isa AbstractString ?
+                    write_ascii_attribute(block, key, value) :
+                    (HDF5.attrs(block)[key] = value)
+            end
+            block["NumberOfPoints"] = [size(points, 2)]
+            block["Points"] = points
+
+            for topology in ("Vertices", "Lines", "Polygons", "Strips")
+                cells = topology == "Lines" ? connectivity : Int64[]
+                cell_offsets = topology == "Lines" ? offsets : Int64[0]
+                close(write_polydata_cells(block, topology, cells, cell_offsets))
+            end
+
+            point_data = HDF5.create_group(block, "PointData")
+            try
+                for (array_name, values) in point_arrays
+                    point_data[array_name] = values
+                end
+            finally
+                close(point_data)
+            end
+        finally
+            close(block)
+        end
+        return root
     end
 
 
@@ -1327,9 +1404,301 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         close(io)
     end
 
+    struct DampingVisualizationGeometry
+        zone_points::Matrix{Float64}
+        zone_connectivity::Vector{Int64}
+        zone_offsets::Vector{Int64}
+        zone_ids::Vector{Int32}
+        profile_points::Matrix{Float64}
+        profile_connectivity::Vector{Int64}
+        profile_offsets::Vector{Int64}
+        profile_weights::Vector{Float64}
+        profile_zone_ids::Vector{Int32}
+        zone_attributes::Vector{Pair{String, Any}}
+        profile_attributes::Vector{Pair{String, Any}}
+    end
+
+    mutable struct DampingBlockWriter
+        blocks::Vector{MeasurementBlock}
+        frames_written::Int
+    end
+
+    function _output_damping_zones(damping)
+        damping === nothing && return ()
+        damping isa Tuple && return damping
+        damping isa AbstractVector && return Tuple(damping)
+        return (damping,)
+    end
+
+    _damping_transverse_basis(direction::SVector{2, Float64}) =
+        (SVector(-direction[2], direction[1]),)
+
+    function _damping_transverse_basis(direction::SVector{3, Float64})
+        vertical = SVector{3, Float64}(0, 1, 0)
+        first_axis = vertical - dot(vertical, direction) * direction
+        if norm(first_axis) <= 64eps(Float64)
+            axis = argmin(abs.(direction))
+            reference = SVector{3, Float64}(
+                ntuple(index -> index == axis ? 1.0 : 0.0, 3),
+            )
+            first_axis = reference - dot(reference, direction) * direction
+        end
+        first_axis /= norm(first_axis)
+        return (first_axis, cross(direction, first_axis))
+    end
+
+    function _damping_bounds(positions, origin, basis, fallback_width)
+        lower = Inf
+        upper = -Inf
+        for position in positions
+            point = typeof(origin)(position)
+            projection = dot(point - origin, basis)
+            isfinite(projection) ||
+                throw(ArgumentError("damping visualization requires finite particle positions"))
+            lower = min(lower, projection)
+            upper = max(upper, projection)
+        end
+        isfinite(lower) ||
+            throw(ArgumentError("damping visualization requires at least one particle position"))
+        if !(upper > lower)
+            lower -= fallback_width / 2
+            upper += fallback_width / 2
+        end
+        return (lower, upper)
+    end
+
+    function _damping_point3(point::SVector{D, Float64}) where D
+        return SVector{3, Float64}(
+            ntuple(axis -> axis <= D ? point[axis] : 0.0, Val(3)),
+        )
+    end
+
+    function _zone_world_point(zone, distance, basis, transverse)
+        point = zone.origin + distance * zone.direction
+        for axis in eachindex(basis)
+            point += transverse[axis] * basis[axis]
+        end
+        all(isfinite, point) ||
+            throw(ArgumentError("damping visualization coordinates must be finite"))
+        return _damping_point3(point)
+    end
+
+    function _append_damping_point!(points, zone_ids, point, zone_id)
+        push!(points, point)
+        push!(zone_ids, Int32(zone_id))
+        return length(points)
+    end
+
+    function _append_damping_line!(connectivity, offsets, point_indices)
+        length(point_indices) >= 2 ||
+            throw(ArgumentError("damping visualization lines need at least two points"))
+        append!(connectivity, (Int64(index - 1) for index in point_indices))
+        push!(offsets, Int64(length(connectivity)))
+        return nothing
+    end
+
+    function _append_zone_wireframe!(
+            points, connectivity, offsets, zone_ids, zone, zone_id,
+            positions, fallback_width,
+        )
+        active_end = zone.length + zone.overlimit
+        isfinite(active_end) ||
+            throw(ArgumentError("damping zone visualization extent must be finite"))
+        basis = _damping_transverse_basis(zone.direction)
+        bounds = map(
+            axis -> _damping_bounds(positions, zone.origin, axis, fallback_width),
+            basis,
+        )
+        distances = active_end > zone.length ?
+            (0.0, zone.length, active_end) : (0.0, zone.length)
+        transverse_count = length(basis)
+        corner_count = 1 << transverse_count
+        corners = [
+            ntuple(
+                axis -> bounds[axis][((mask >> (axis - 1)) & 1) + 1],
+                transverse_count,
+            ) for mask in 0:(corner_count - 1)
+        ]
+        point_indices = Matrix{Int}(undef, length(distances), corner_count)
+        for (plane, distance) in enumerate(distances), corner in 1:corner_count
+            point = _zone_world_point(zone, distance, basis, corners[corner])
+            point_indices[plane, corner] =
+                _append_damping_point!(points, zone_ids, point, zone_id)
+        end
+
+        for corner in 1:corner_count
+            _append_damping_line!(connectivity, offsets, view(point_indices, :, corner))
+        end
+        for plane in eachindex(distances), axis in 1:transverse_count,
+            mask in 0:(corner_count - 1)
+            ((mask >> (axis - 1)) & 1) == 0 || continue
+            neighbor = mask | (1 << (axis - 1))
+            _append_damping_line!(
+                connectivity, offsets,
+                (point_indices[plane, mask + 1], point_indices[plane, neighbor + 1]),
+            )
+        end
+        return basis, bounds
+    end
+
+    function _append_zone_profile!(
+            points, connectivity, offsets, weights, zone_ids, zone, zone_id,
+            basis, bounds,
+        )
+        active_end = zone.length + zone.overlimit
+        for level in (0.0, 1.0)
+            transverse = ntuple(
+                axis -> axis == 1 ?
+                    bounds[axis][1] + level * (bounds[axis][2] - bounds[axis][1]) :
+                    bounds[axis][1],
+                length(basis),
+            )
+            indices = Int[]
+            for distance in (0.0, active_end)
+                point = _zone_world_point(zone, distance, basis, transverse)
+                push!(indices, _append_damping_point!(points, zone_ids, point, zone_id))
+                push!(weights, level)
+            end
+            _append_damping_line!(connectivity, offsets, indices)
+        end
+
+        distances = collect(range(0.0, stop = zone.length, length = 33))
+        if zone.overlimit > 0
+            append!(
+                distances,
+                collect(range(zone.length, stop = active_end, length = 9))[2:end],
+            )
+        end
+        curve = Int[]
+        for distance in distances
+            weight = min(distance / zone.length, 1.0)^2
+            transverse = ntuple(
+                axis -> axis == 1 ?
+                    bounds[axis][1] + weight * (bounds[axis][2] - bounds[axis][1]) :
+                    bounds[axis][1],
+                length(basis),
+            )
+            point = _zone_world_point(zone, distance, basis, transverse)
+            push!(curve, _append_damping_point!(points, zone_ids, point, zone_id))
+            push!(weights, weight)
+        end
+        _append_damping_line!(connectivity, offsets, curve)
+        return nothing
+    end
+
+    function _points_matrix(points::Vector{SVector{3, Float64}})
+        matrix = Matrix{Float64}(undef, 3, length(points))
+        for (index, point) in enumerate(points)
+            matrix[:, index] = point
+        end
+        return matrix
+    end
+
+    function _damping_visualization_geometry(zones, positions, kernel, dimension)
+        isempty(zones) && return nothing
+        isempty(positions) &&
+            throw(ArgumentError("damping visualization requires particle positions"))
+        isfinite(kernel.H) && kernel.H > 0 ||
+            throw(ArgumentError("damping visualization requires a finite positive support radius"))
+
+        zone_points = SVector{3, Float64}[]
+        zone_connectivity = Int64[]
+        zone_offsets = Int64[0]
+        zone_ids = Int32[]
+        profile_points = SVector{3, Float64}[]
+        profile_connectivity = Int64[]
+        profile_offsets = Int64[0]
+        profile_weights = Float64[]
+        profile_zone_ids = Int32[]
+        fallback_width = Float64(kernel.H)
+
+        for (zone_id, zone) in enumerate(zones)
+            hasproperty(zone, :origin) && hasproperty(zone, :direction) &&
+                hasproperty(zone, :length) && hasproperty(zone, :overlimit) ||
+                throw(ArgumentError("damping visualization requires DampingZone values"))
+            length(zone.origin) == dimension ||
+                throw(DimensionMismatch("damping zone dimension must match the simulation"))
+            basis, bounds = _append_zone_wireframe!(
+                zone_points, zone_connectivity, zone_offsets, zone_ids,
+                zone, zone_id, positions, fallback_width,
+            )
+            _append_zone_profile!(
+                profile_points, profile_connectivity, profile_offsets,
+                profile_weights, profile_zone_ids, zone, zone_id, basis, bounds,
+            )
+        end
+
+        zone_parameters = join(
+            [
+                "$index: origin=$(Tuple(zone.origin)), direction=$(Tuple(zone.direction)), " *
+                "length=$(zone.length), overlimit=$(zone.overlimit), " *
+                "rate=$(zone.rate), factors=$(Tuple(zone.factors))"
+                for (index, zone) in enumerate(zones)
+            ],
+            "\n",
+        )
+        zone_attributes = Pair{String, Any}[
+            "CoordinateDimension" => Int32(dimension),
+            "Definition" =>
+                "Wireframe bounds are projected from the initial particle extent; " *
+                "the damping model itself is unbounded in transverse directions.",
+            "ZoneParameters" => zone_parameters,
+        ]
+        profile_attributes = Pair{String, Any}[
+            "CoordinateDimension" => Int32(dimension),
+            "Definition" =>
+                "Normalized spatial profile = min(s / length, 1)^2. " *
+                "The velocity multiplier is max(0, 1 - dt * rate * profile * factors[d]).",
+            "ReferenceLines" => "NormalizedDamping = 0 and 1",
+            "ZoneParameters" => zone_parameters,
+        ]
+        return DampingVisualizationGeometry(
+            _points_matrix(zone_points), zone_connectivity, zone_offsets, zone_ids,
+            _points_matrix(profile_points), profile_connectivity, profile_offsets,
+            profile_weights, profile_zone_ids, zone_attributes, profile_attributes,
+        )
+    end
+
+    function DampingBlockWriter(root::HDF5.Group, geometry, capacity)
+        no_arrays = Pair{String, Any}[]
+        no_fields = Pair{String, Any}[]
+        blocks = MeasurementBlock[
+            MeasurementBlock(
+                root, DAMPING_ZONE_BLOCK, geometry.zone_points,
+                no_arrays, ["ZoneId" => geometry.zone_ids], no_fields,
+                geometry.zone_attributes, capacity;
+                vertices = false,
+                line_connectivity = geometry.zone_connectivity,
+                line_offsets = geometry.zone_offsets,
+            ),
+            MeasurementBlock(
+                root, DAMPING_PROFILE_BLOCK, geometry.profile_points,
+                no_arrays,
+                [
+                    "NormalizedDamping" => geometry.profile_weights,
+                    "ZoneId" => geometry.profile_zone_ids,
+                ],
+                no_fields, geometry.profile_attributes, capacity;
+                vertices = false,
+                line_connectivity = geometry.profile_connectivity,
+                line_offsets = geometry.profile_offsets,
+            ),
+        ]
+        return DampingBlockWriter(blocks, 0)
+    end
+
+    function append_damping_frame!(writer::DampingBlockWriter, time)
+        times = Float64[time]
+        for block in writer.blocks
+            _flush_block!(block, times, writer.frames_written)
+        end
+        writer.frames_written += 1
+        return writer
+    end
+
     """
         SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions;
-                       measurements = nothing, fluid_type = nothing)
+                       measurements = nothing, fluid_type = nothing, damping = ())
 
     Prepare VTK/HDF5 output. Returns a named tuple with `save_particles`,
     `save_grid` and `close_files` functions. Uses single or multi-file mode
@@ -1343,19 +1712,20 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     remaining byte budget and may flush sooner. `close_files` writes the
     frames still pending.
 
-    Without measurements the combined file is a temporal `PolyData` at
-    `/VTKHDF`. With measurements it is a `MultiBlockDataSet`: the particles
-    become the block `/VTKHDF/Particles` and every measurement category a
-    block next to it (see `SPHMeasurements`), all sharing the same time steps
-    and linked from `/VTKHDF/Assembly`; the measurement writer buffers
-    `frames_per_flush` frames as well. Measurements cannot be requested in
-    multi-file mode.
+    Without measurements or damping the combined file is a temporal `PolyData`
+    at `/VTKHDF`. Measurements or damping produce a `MultiBlockDataSet`:
+    particles are written to `/VTKHDF/Particles`, measurement categories and
+    damping geometry are sibling blocks, and every block shares the same time
+    steps and is linked from `/VTKHDF/Assembly`. Damping geometry is also
+    included in each numbered file when multi-file output is selected.
+    Measurements cannot be requested in multi-file mode.
     """
     function SetupVTKOutput(
             SimMetaData, SimParticles, SimKernel, Dimensions;
             measurements::Union{Nothing, MeasurementConfig} = nothing,
             fluid_type = nothing,
             constants = nothing,
+            damping = (),
         )
         measurement_plan = if measurements === nothing ||
                               !has_measurements(measurements)
@@ -1370,6 +1740,12 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 throw(ArgumentError("SPH measurements require a fluid particle type"))
             resolve_measurements(measurements, Dimensions, SimKernel.H)
         end
+        damping_zones = _output_damping_zones(damping)
+        damping_geometry = isempty(damping_zones) ? nothing :
+            _damping_visualization_geometry(
+                damping_zones, SimParticles.Position, SimKernel, Dimensions,
+            )
+        composite_output = measurement_plan !== nothing || damping_geometry !== nothing
 
         # Generate save locations
         particle_savepath = joinpath(SimMetaData.SaveLocation, SimMetaData.SimulationName)
@@ -1433,6 +1809,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         frame_writer = nothing
         grid_writer  = nothing
         measurement_writer = nothing
+        damping_writer = nothing
         frames_per_flush = 1
         writer_buffer_bytes = multi_file ?
             (pos_buf === nothing ? 0 : sizeof(pos_buf)) +
@@ -1477,7 +1854,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             # the PolyData itself.
             OutputVTKHDF = h5open("$(particle_savepath).vtkhdf", "w")
             collection = nothing
-            root = if measurement_plan === nothing
+            root = if !composite_output
                 HDF5.create_group(OutputVTKHDF, "VTKHDF")
             else
                 collection = create_collection_root(OutputVTKHDF)
@@ -1492,15 +1869,24 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             GenerateGeometryStructure(root, output_vars, descriptors...; chunk_size)
             GenerateStepStructure(root, output_vars, descriptors...)
             frame_writer = PolyDataFrameWriter(root, SimParticles.Position, output_vars, descriptors...; capacity = frames_per_flush)
-            if measurement_plan !== nothing
-                measurement_writer = MeasurementWriter(
-                    collection, measurement_plan, fluid_type;
-                    kernel = SimKernel, periodicity = SimMetaData.Periodicity,
-                    capacity = frames_per_flush, constants = sim_constants,
-                )
+            if composite_output
+                if measurement_plan !== nothing
+                    measurement_writer = MeasurementWriter(
+                        collection, measurement_plan, fluid_type;
+                        kernel = SimKernel, periodicity = SimMetaData.Periodicity,
+                        capacity = frames_per_flush, constants = sim_constants,
+                    )
+                end
+                damping_geometry === nothing ||
+                    (damping_writer = DampingBlockWriter(
+                        collection, damping_geometry, frames_per_flush,
+                    ))
                 write_assembly!(
                     collection, PARTICLE_BLOCK,
-                    measurement_block_names(measurement_plan),
+                    measurement_plan === nothing ?
+                        String[] : measurement_block_names(measurement_plan);
+                    geometry_blocks = damping_geometry === nothing ?
+                        String[] : collect(DAMPING_BLOCK_NAMES),
                 )
             end
 
@@ -1571,7 +1957,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 if multi_file
                     output_data = [output_field(name) for name in output_vars]
                     SaveVTKHDF(file_handles.particle_files, iteration, particle_filename(iteration),
-                               output_position(), output_vars, output_data...)
+                               output_position(), output_vars, output_data...;
+                               damping_geometry)
                 elseif has_host_pressure || !("Pressure" in output_vars)
                     append_frame!(frame_writer, time, SimParticles.Position, (field_source(name) for name in output_vars)...)
                 else
@@ -1619,7 +2006,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                         return components!(buf, src)
                     end
                     SaveVTKHDF(file_handles.particle_files, iteration, particle_filename(iteration),
-                               pos_buf, output_vars, output_data...)
+                               pos_buf, output_vars, output_data...;
+                               damping_geometry)
                 else
                     stage_particle_slot(download)
                     push!(frame_writer.times, Float64(time))
@@ -1629,6 +2017,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             end
             measurement_writer === nothing ||
                 append_measurements!(measurement_writer, time, SimParticles)
+            damping_writer === nothing ||
+                append_damping_frame!(damping_writer, time)
         end
 
         function save_cell_grid(iteration, cells, SimParticles, time = SimMetaData.TotalTime)

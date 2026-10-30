@@ -255,6 +255,17 @@ also supports oriented planes in 2D/3D, per-component factors, multiple
 zones, both CPU-style integrators and CUDA graphs. Boundary, floating and
 frozen particles retain their velocities.
 
+When `SimDamping` is set, particle VTKHDF output also contains `DampingZones`
+and `DampingProfiles` wireframe blocks. The zone block outlines the active
+region through the initial particle bounds, including the ramp-to-cap plane
+and any overlimit. Since damping zones are unbounded across their planes,
+these bounds are for visualization only. The profile block draws reference
+lines at normalized weights 0 and 1 with a polyline for
+`min(s / length, 1)^2`; the actual per-step velocity multiplier remains
+`max(0, 1 - dt * rate * profile * factors[d])`. Both blocks support 2D and 3D
+and are included in single-file and numbered VTKHDF output. The generated
+ParaView state displays them as a wireframe when the simulation has damping.
+
 Each variant writes to `output/waves_piston_<termination>_<waves>/`: particle
 and grid VTKHDF series, the polygon geometry, gauges at x = 2, 6 and 10 m,
 and a submerged velocity probe at (6, 0.4) m. `_Theory.csv` contains the

@@ -4,6 +4,112 @@ using Test, SPHExampleGPU, CUDA, StaticArrays, CSV, HDF5
 include(joinpath(@__DIR__, "..", "example", "WavesPiston", "WavesPistonSetup.jl"))
 const DZ = SPHExampleGPU.DampingZones
 
+damping_output_fixture(::Val{2}) = (
+    positions = [SVector(-1.0, -1.0), SVector(3.0, 1.0), SVector(1.0, 0.0)],
+    zone = DampingZone((0.0, 0.0), (2.0, 0.0); overlimit = 0.5, rate = 2),
+)
+
+damping_output_fixture(::Val{3}) = (
+    positions = vec([
+        SVector(x, y, z)
+        for x in (-1.0, 3.0), y in (-2.0, 2.0), z in (-1.0, 1.0)
+    ]),
+    zone = DampingZone((0.0, 0.0, 0.0), (2.0, 0.0, 0.0);
+        overlimit = 0.5, rate = 2),
+)
+
+function check_damping_blocks(root, dimension, times)
+    zone = root["DampingZones"]
+    profile = root["DampingProfiles"]
+    @test HDF5.attrs(zone)["Type"] == "PolyData"
+    @test HDF5.attrs(profile)["Type"] == "PolyData"
+
+    zone_points = read(zone["Points"])
+    @test size(zone_points, 1) == 3
+    @test size(zone_points, 2) == (dimension == 2 ? 6 : 12)
+    @test minimum(zone_points[1, :]) == 0
+    @test maximum(zone_points[1, :]) == 2.5
+    @test all(iszero, zone_points[3, :]) == (dimension == 2)
+
+    profile_lines = read(profile["Lines/NumberOfCells"])
+    @test profile_lines == fill(3, length(times))
+    @test read(zone["Lines/NumberOfCells"]) ==
+          fill(dimension == 2 ? 5 : 16, length(times))
+    @test read(zone["Steps/Values"]) == times
+    @test read(profile["Steps/Values"]) == times
+
+    damping = vec(read(profile["PointData/NormalizedDamping"]))
+    curve = damping[5:end]
+    @test curve[1] == 0
+    @test curve[17] ≈ 0.25
+    @test curve[33] == 1
+    @test all(==(1), curve[33:end])
+    @test all(==(1), read(profile["PointData/ZoneId"]))
+    @test HDF5.attrs(profile)["ReferenceLines"] == "NormalizedDamping = 0 and 1"
+    return nothing
+end
+
+@testset "damping visualization is included in VTKHDF output" begin
+    for dimension in (2, 3)
+        fixture = damping_output_fixture(Val(dimension))
+        particles = (
+            Position = fixture.positions,
+            Type = fill(Fluid, length(fixture.positions)),
+        )
+        kernel = SPHKernelInstance{dimension, Float64}(WendlandC2(); h = 0.1)
+        times = [0.0, 0.5]
+        mktempdir() do directory
+            metadata = SimulationMetaData{dimension, Float64}(
+                SimulationName = "Damping2D3D",
+                SaveLocation = directory,
+                OutputVariables = ["Type"],
+                ExportSingleVTKHDF = true,
+                ExportGridCells = false,
+                VisualizeInParaview = false,
+                OpenLogFile = false,
+            )
+            output = SPHExampleGPU.ProduceHDFVTK.SetupVTKOutput(
+                metadata, particles, kernel, dimension; damping = (fixture.zone,),
+            )
+            try
+                for (iteration, time) in enumerate(times)
+                    output.save_particles(iteration, time)
+                end
+            finally
+                output.close_files()
+            end
+
+            h5open(joinpath(directory, "Damping2D3D.vtkhdf"), "r") do file
+                root = file["VTKHDF"]
+                @test HDF5.attrs(root)["Type"] == "MultiBlockDataSet"
+                @test haskey(root["Assembly"], "DampingZones")
+                @test haskey(root["Assembly"], "DampingProfiles")
+                check_damping_blocks(root, dimension, times)
+            end
+
+            if dimension == 2
+                metadata.ExportSingleVTKHDF = false
+                metadata.SimulationName = "DampingNumbered"
+                output = SPHExampleGPU.ProduceHDFVTK.SetupVTKOutput(
+                    metadata, particles, kernel, dimension; damping = (fixture.zone,),
+                )
+                try
+                    output.save_particles(1, 0.0)
+                finally
+                    output.close_files()
+                end
+                h5open(joinpath(directory, "DampingNumbered_000001.vtkhdf"), "r") do file
+                    root = file["VTKHDF"]
+                    @test HDF5.attrs(root)["Type"] == "MultiBlockDataSet"
+                    @test haskey(root, "DampingZones")
+                    @test read(root["DampingZones/Lines/NumberOfCells"]) == [5]
+                    @test size(read(root["DampingProfiles/Points"]), 1) == 3
+                end
+            end
+        end
+    end
+end
+
 @testset "planar absorption follows completed-step velocity reduction" begin
     zone = DampingZone((11, 0), (15.5, 0))
     velocity = SVector(2.0f0, -3.0f0)

@@ -92,7 +92,8 @@ end
     AutoOpenParaview(metadata, constants, variable_names;
                      paraview_cmd="paraview",
                      representation="Point Gaussian",
-                     color_variable=nothing, pressure_range=nothing)
+                     color_variable=nothing, pressure_range=nothing,
+                     show_damping=false)
 
 Write a ParaView state file for the given simulation and optionally
 launch ParaView to visualise the results. `variable_names` should contain the
@@ -102,6 +103,8 @@ grid alongside the particles in the same view, displayed as a wireframe.
 Color by pressure when exported, otherwise density. `pressure_range = (min, max)`
 sets a fixed pressure color scale in Pa, also used when switching to pressure
 coloring later. Without a range, use the initial output's pressure data range.
+Set `show_damping = true` to display the damping-zone wireframe and profile
+when those blocks are present in the VTKHDF output.
 """
 function AutoOpenParaview(SimMetaData::SimulationMetaData, 
                           SimConstants::SimulationConstants,
@@ -109,7 +112,8 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData,
                           paraview_cmd::Union{String,Nothing}="paraview",
                           representation::String="Point Gaussian",
                           color_variable::Union{String,Nothing}="Density",
-                          pressure_range=nothing)
+                          pressure_range=nothing,
+                          show_damping::Bool=false)
     ## Generate auto paraview py
     if pressure_range !== nothing
         length(pressure_range) == 2 ||
@@ -142,6 +146,7 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData,
                      "__COLOR_VAR__" => color_variable,
                      "__PRESSURE_RANGE__" => (pressure_range === nothing ? "None" :
                          "[$(pressure_range[1]), $(pressure_range[2])]"),
+                     "__SHOW_DAMPING__" => (show_damping ? "True" : "False"),
                      "__VIEW_DIMENSION__" => ViewDimension,
                      "__GAUSSIAN_RADIUS__" => SimConstants.dx / 2,
                      )

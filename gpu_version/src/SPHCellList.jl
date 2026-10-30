@@ -1924,6 +1924,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         SimMetaData, SimParticles, SimKernel, Dimensions;
         measurements = SimMeasurements, fluid_type = Fluid,
         constants = SimConstants,
+        damping,
     )
 
     # Motion of the floating bodies at every output time, one row per body.
@@ -2132,7 +2133,8 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         close_output_streams!()
 
         AutoOpenParaview(SimMetaData, SimConstants, output.variable_names;
-            pressure_range = paraview_pressure_range)
+            pressure_range = paraview_pressure_range,
+            show_damping = !isempty(damping))
 
         if StoreLogOutput
             log_effective_configuration(SimLogger, configuration_snapshot(state); phase = "final", to_console = false)

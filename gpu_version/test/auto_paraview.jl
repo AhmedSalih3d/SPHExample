@@ -15,6 +15,30 @@ using StaticArrays
         constants) === nothing
     @test pressure_range_for((Position = [SVector(0.0, 0.0)], Type = [Fluid]),
         SimulationConstants{Float64}(g = 0.0)) === nothing
+    @testset "damping blocks get a wireframe display" begin
+        mktempdir() do directory
+            metadata = SimulationMetaData{2, Float32}(
+                SimulationName = "DampingView",
+                SaveLocation = directory,
+                VisualizeInParaview = false,
+                OpenLogFile = false,
+            )
+            AutoOpenParaview(
+                metadata, SimulationConstants{Float32}(), ["Density"];
+                paraview_cmd = nothing, show_damping = true,
+            )
+            state = read(
+                joinpath(directory, "DampingView_SingleVTKHDFStateFile.py"),
+                String,
+            )
+            @test occursin("if True and data_type == 'vtkMultiBlockDataSet':", state)
+            @test occursin(
+                "DampingBlocks.Selectors = ['/Root/DampingZones', '/Root/DampingProfiles']",
+                state,
+            )
+            @test occursin("DampingBlocksDisplay.SetRepresentationType('Wireframe')", state)
+        end
+    end
     pvpython = Sys.which("pvpython")
     if pvpython === nothing
         @test_skip false # Optional integration check requires ParaView.
