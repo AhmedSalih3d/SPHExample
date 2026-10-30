@@ -39,6 +39,7 @@ module SPHExampleGPU
         "GPUConfiguration.jl",
         "GPUFloating.jl",
         "SimulationResults.jl",
+        "SimulationReports.jl",
         "SPHCellList.jl",
         "ParticleGenerator.jl",
         "CustomPrettyPrinting.jl",
@@ -144,6 +145,9 @@ module SPHExampleGPU
 
     using .SimulationResults
     export SimulationResult
+
+    using .SimulationReports
+    export write_simulation_report
 
     using .PolygonDrawing
     export polygon, triangle, rectangle, square, regular_polygon, circle, arc,

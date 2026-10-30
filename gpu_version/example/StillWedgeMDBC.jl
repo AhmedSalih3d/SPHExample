@@ -13,9 +13,6 @@ using Meshes
 # Set to `false` to skip the optional PDF report.
 GeneratePDFReport = true
 
-include(joinpath(@__DIR__, "StillWedgeMDBCReport.jl"))
-using .StillWedgeMDBCReport: write_still_wedge_report
-
 function run_still_wedge(;
     time_stepping::TimeSteppingMode = SymplecticTimeStepping(),
     simulation_time = 4.00,
@@ -122,7 +119,7 @@ function run_still_wedge(;
     )
 
     if generate_pdf_report
-        report_files = write_still_wedge_report(
+        report_files = write_simulation_report(
             result,
             SimConstantsWedge;
             output_dir = SimMetaDataWedge.SaveLocation,

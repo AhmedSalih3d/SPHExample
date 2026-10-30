@@ -945,20 +945,41 @@ level is the highest fluid particle (the DualSPHysics convention); pass
 
 #### Optional Typst PDF summary
 
-The StillWedge run can optionally write an editable Typst source file and a PDF
-summary. PDF compilation uses `Typst_jll`, included in the GPU project; no
-separate Typst installation is needed. The `GeneratePDFReport` switch near the
-top of `example/StillWedgeMDBC.jl` controls PDF generation: `true` generates
-the report and `false` skips it (the example currently sets it to `true`). Run
-from the repository root:
+The shared `write_simulation_report` API can create an editable Typst source
+file and PDF summary for any GPU `RunSimulation` result. Its implementation
+and layout are in [SimulationReports.jl](src/SimulationReports.jl) and
+[SimulationReportTemplate.typ](src/SimulationReportTemplate.typ). PDF
+compilation uses `Typst_jll`, included in the GPU project; no separate Typst
+installation is needed. Call it after `RunSimulation`, passing the same
+configuration objects used for that run:
+
+```julia
+report_files = write_simulation_report(
+    result,
+    SimConstants;
+    output_dir = SimMetaData.SaveLocation,
+    simulation_time = SimMetaData.SimulationTime,
+    metadata = SimMetaData,
+    geometry = SimGeometry,
+    kernel = SimKernel,
+    viscosity = SimViscosity,
+    density_diffusion = SimDensityDiffusion,
+)
+```
+
+By default, the report name comes from `SimMetaData.SimulationName`. The
+StillWedge example demonstrates the optional call; its `GeneratePDFReport`
+switch near the top of `example/StillWedgeMDBC.jl` controls whether that
+example generates the report. Run from the repository root:
 
 ```bash
 julia --project=gpu_version gpu_version/example/StillWedgeMDBC.jl
 ```
 
-`StillWedge_report.typ` and `StillWedge_report.pdf` are written to the run's
-`SaveLocation`. The report summarizes the case settings, run performance and
-solver diagnostics, plus minimum, mean and maximum final fluid density,
+`<SimulationName>_report.typ` and `<SimulationName>_report.pdf` are written to
+the run's `SaveLocation` (for example, `StillWedge_report.typ` and
+`StillWedge_report.pdf`). The report summarizes the run settings, performance
+and solver diagnostics, plus minimum, mean and maximum final fluid density,
 pressure and speed. Boundary particles are excluded from those statistics.
 It reorganizes the logger's environment, model settings, effective GPU
 configuration, memory accounting, output-frame progress and phase timings into

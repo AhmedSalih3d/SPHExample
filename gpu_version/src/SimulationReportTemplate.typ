@@ -37,7 +37,7 @@
   #v(5pt)
   #text(size: 24pt, weight: "bold", fill: navy)[#report.simulation_name]
   #v(3pt)
-  #text(size: 10pt, fill: muted)[Still-wedge GPU simulation]
+  #text(size: 10pt, fill: muted)[GPU simulation run]
 ]
 
 #v(12pt)

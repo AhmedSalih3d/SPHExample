@@ -1,14 +1,14 @@
-module StillWedgeMDBCReport
+module SimulationReports
 
 using Printf: @sprintf
-import SPHExampleGPU
-using SPHExampleGPU: EquationOfStateGamma7, Fluid, Fixed, Moving, Floating, Frozen
+using ..SimulationEquations: EquationOfStateGamma7
+using ..SimulationGeometry: Fluid, Fixed, Moving, Floating, Frozen
 using TimerOutputs
 using Typst_jll
 
-export write_still_wedge_report
+export write_simulation_report
 
-const REPORT_TEMPLATE = joinpath(@__DIR__, "StillWedgeMDBCReport.typ")
+const REPORT_TEMPLATE = joinpath(@__DIR__, "SimulationReportTemplate.typ")
 const RUNTIME_METADATA_FIELDS = (
     :Iteration,
     :OutputIterationCounter,
@@ -354,26 +354,36 @@ function _render_template(report)
     for (key, value) in pairs(report)
         placeholder = "{{$(uppercase(string(key)))}}"
         occursin(placeholder, source) ||
-            throw(ArgumentError("StillWedge Typst report template is missing $placeholder"))
+            throw(ArgumentError("Simulation Typst report template is missing $placeholder"))
         rendered = endswith(string(key), "_rows") ? string(value) : _typst_string(value)
         source = replace(source, placeholder => rendered)
     end
     occursin("{{", source) &&
-        throw(ArgumentError("StillWedge Typst report template has an unresolved placeholder"))
+        throw(ArgumentError("Simulation Typst report template has an unresolved placeholder"))
     return source
 end
 
-"""
-    write_still_wedge_report(result, constants; output_dir, simulation_time,
-        metadata, geometry, kernel, viscosity, density_diffusion,
-        simulation_name = "StillWedge", compile_pdf = true)
+function _report_file_stem(simulation_name::AbstractString)
+    stem = replace(strip(simulation_name), r"[^A-Za-z0-9]+" => "_")
+    stem = replace(stem, r"^_+|_+$" => "")
+    isempty(stem) &&
+        throw(ArgumentError("Simulation name '$simulation_name' cannot be used in a report filename"))
+    return stem
+end
 
-Create a structured Typst report with colored summary cards, parameter tables,
-particle and geometry counts, effective GPU settings, memory accounting,
-progress history and phase timings. The logger output is parsed into these
-sections; it is not copied into the report as a raw appendix.
 """
-function write_still_wedge_report(
+    write_simulation_report(result, constants; output_dir, simulation_time,
+        metadata, geometry, kernel, viscosity, density_diffusion,
+        simulation_name = nothing, compile_pdf = true)
+
+Create a structured Typst report for a GPU simulation, with summary cards,
+parameter tables, particle and geometry counts, effective GPU settings, memory
+accounting, progress history and phase timings. By default, the report title
+and output filename are derived from `metadata.SimulationName`. The logger
+output is parsed into these sections; it is not copied into the report as a raw
+appendix.
+"""
+function write_simulation_report(
     result,
     constants;
     output_dir::AbstractString,
@@ -383,9 +393,20 @@ function write_still_wedge_report(
     kernel,
     viscosity,
     density_diffusion,
-    simulation_name::AbstractString = "StillWedge",
+    simulation_name::Union{Nothing, AbstractString} = nothing,
     compile_pdf::Bool = true,
 )
+    report_name = if simulation_name === nothing
+        hasproperty(metadata, :SimulationName) ||
+            throw(ArgumentError("Simulation metadata must include a SimulationName"))
+        string(metadata.SimulationName)
+    else
+        String(simulation_name)
+    end
+    isempty(strip(report_name)) &&
+        throw(ArgumentError("Simulation report requires a non-empty simulation name"))
+    file_stem = _report_file_stem(report_name)
+
     log_path = joinpath(output_dir, "SimulationOutput.log")
     isfile(log_path) ||
         throw(ArgumentError("SimulationOutput.log was not found at '$log_path'"))
@@ -396,7 +417,7 @@ function write_still_wedge_report(
     particles = result.final_state.particles
     fluid_indices = findall(==(Fluid), particles.Type)
     isempty(fluid_indices) &&
-        throw(ArgumentError("StillWedge report requires at least one fluid particle"))
+        throw(ArgumentError("Simulation report requires at least one fluid particle"))
 
     density = particles.Density[fluid_indices]
     pressure = EquationOfStateGamma7.(density, constants.c₀, constants.ρ₀)
@@ -466,7 +487,7 @@ function write_still_wedge_report(
         excluded_fields = RUNTIME_METADATA_FIELDS,
     )
     report = (
-        simulation_name = simulation_name,
+        simulation_name = report_name,
         completion,
         final_time = _format_number(result.final_state.time),
         steps = _format_value(result.performance.steps),
@@ -500,8 +521,8 @@ function write_still_wedge_report(
     )
 
     mkpath(output_dir)
-    typ_path = joinpath(output_dir, "StillWedge_report.typ")
-    pdf_path = joinpath(output_dir, "StillWedge_report.pdf")
+    typ_path = joinpath(output_dir, "$(file_stem)_report.typ")
+    pdf_path = joinpath(output_dir, "$(file_stem)_report.pdf")
     write(typ_path, _render_template(report))
 
     if compile_pdf
@@ -511,4 +532,4 @@ function write_still_wedge_report(
     return (; typ_path, pdf_path = compile_pdf ? pdf_path : nothing)
 end
 
-end # module StillWedgeMDBCReport
+end # module SimulationReports

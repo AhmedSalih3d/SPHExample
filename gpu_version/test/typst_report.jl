@@ -1,10 +1,7 @@
 using Test
 using StaticArrays: SVector
 using TimerOutputs: TimerOutput, @timeit
-using SPHExampleGPU: Fixed, Fluid
-
-include(joinpath(@__DIR__, "..", "example", "StillWedgeMDBCReport.jl"))
-using .StillWedgeMDBCReport: write_still_wedge_report
+using SPHExampleGPU: Fixed, Fluid, write_simulation_report
 
 function report_fixture(output_dir)
     particles = (
@@ -143,7 +140,7 @@ Simulation took 1.50[s]
 end
 
 function generate_report(fixture, output_dir; compile_pdf)
-    return write_still_wedge_report(
+    return write_simulation_report(
         fixture.result,
         fixture.constants;
         output_dir,
@@ -158,13 +155,14 @@ function generate_report(fixture, output_dir; compile_pdf)
     )
 end
 
-@testset "structured StillWedge Typst report" begin
+@testset "shared GPU Typst report" begin
     mktempdir() do output_dir
         write_mock_log(output_dir)
         fixture = report_fixture(output_dir)
         files = generate_report(fixture, output_dir; compile_pdf = false)
 
         @test isfile(files.typ_path)
+        @test basename(files.typ_path) == "Wedge_draft_report.typ"
         @test files.pdf_path === nothing
         source = read(files.typ_path, String)
         @test !occursin("{{", source)
@@ -192,9 +190,22 @@ end
     mktempdir() do output_dir
         write_mock_log(output_dir)
         fixture = report_fixture(output_dir)
-        files = generate_report(fixture, output_dir; compile_pdf = true)
+        files = write_simulation_report(
+            fixture.result,
+            fixture.constants;
+            output_dir,
+            simulation_time = 0.09,
+            metadata = fixture.metadata,
+            geometry = fixture.geometry,
+            kernel = fixture.kernel,
+            viscosity = fixture.viscosity,
+            density_diffusion = fixture.density_diffusion,
+            compile_pdf = true,
+        )
+        @test basename(files.typ_path) == "Wedge_test_report.typ"
         @test isfile(files.typ_path)
         @test isfile(files.pdf_path)
+        @test occursin("Wedge test", read(files.typ_path, String))
         @test read(files.pdf_path, String)[1:5] == "%PDF-"
     end
 end
