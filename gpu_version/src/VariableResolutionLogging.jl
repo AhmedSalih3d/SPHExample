@@ -19,7 +19,10 @@ function initialize_resolution_log!(logger, settings)
     end
     log_line(logger,"Common physical constants:\n$(settings.coarse_constants)")
     log_line(logger,"Models: Wendland C2, artificial viscosity, full Fourtakas DDT3, fixed mDBC walls, first-order MLS buffers")
-    log_line(logger,"Execution: direct CUDA launches, independent predictor sorting, synchronous VTKHDF output")
+    execution = get(settings,:execution,:host)
+    log_line(logger,execution == :gpu ?
+        "Execution: device-resident control and dense active pools; CUDA graphs=$(settings.use_graphs), batch steps=$(settings.batch_steps); synchronous VTKHDF output" :
+        "Execution: host-controlled reference, direct CUDA launches, independent predictor sorting, synchronous VTKHDF output")
     log_line(logger,"Timing scope: driver initialization/JIT, stepping and output; excludes package load/precompilation and caller-side geometry construction/export.")
     log_line(logger,"First-use compilation inside the driver is included; these timings are not automatically warmed benchmark results.")
     log_line(logger,"Phase timings synchronize CUDA at initialization/output boundaries; no per-kernel profiling or additional per-step synchronization.")
@@ -43,6 +46,9 @@ function log_resolution_summary!(logger,timer,result)
             1e3solver_seconds/result.iterations,result.iterations/solver_seconds))
     end
     coarse,fine = result.coarse,result.fine
+    if result.configuration.execution == :gpu
+        log_line(logger,"Device control readbacks: $(result.configuration.control_readbacks); graph/direct batches: $(result.configuration.graph_batches)/$(result.configuration.direct_batches)")
+    end
     log_line(logger,"Cell list rebuilds (accepted coarse/fine): $(coarse.cells.nrebuilds)/$(fine.cells.nrebuilds)")
     log_line(logger,"Cell list rebuilds (predictor coarse/fine): $(coarse.predictor.cells.nrebuilds)/$(fine.predictor.cells.nrebuilds)")
     log_line(logger,"Final exported fluid particles (coarse/fine): $(result.particle_counts.coarse)/$(result.particle_counts.fine)")

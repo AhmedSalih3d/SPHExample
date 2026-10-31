@@ -117,7 +117,7 @@ function interface_flux_kernel!(points, normals, widths, accumulated_mass,
         position, velocity, density, types, ids, groups, free_slots, allocation, next_id, events,
         target_starts, target_grid, target_kernel,
         source_position, source_velocity, source_density, source_types, starts, grid,
-        kernel, constants, target_constants, fluid_marker, limits, source_fine, dt, n)
+        kernel, constants, target_constants, fluid_marker, limits, source_fine, dt, n, pool = nothing)
     i = thread_index()
     i > n && return nothing
     @inbounds begin
@@ -135,11 +135,11 @@ function interface_flux_kernel!(points, normals, widths, accumulated_mass,
         budget += budget < 0 ? max(0.0,incoming_mass) : incoming_mass
         while budget >= target_constants.m₀
             request = CUDA.atomic_add!(pointer(allocation,1),Int32(1)) + Int32(1)
-            if request > length(free_slots)
+            if request > (pool === nothing ? length(free_slots) : length(types) - pool[1])
                 CUDA.atomic_xchg!(pointer(allocation,2),Int32(1))
                 break
             end
-            slot = free_slots[request]
+            slot = pool === nothing ? free_slots[request] : pool[1] + request
             if slot == 0
                 CUDA.atomic_xchg!(pointer(allocation,2),Int32(1))
                 break

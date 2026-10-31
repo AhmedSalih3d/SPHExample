@@ -62,7 +62,8 @@ function vresolution_dambreak_case(; dx = 0.01, ratio = 2, duration = 1.0,
 end
 
 "Run the native two-domain CUDA dam break and write its geometry and VTKHDF series."
-function run_vresolution_dambreak(; particle_reserve = nothing, include_buffers = false, kwargs...)
+function run_vresolution_dambreak(; particle_reserve = nothing, include_buffers = false,
+        execution = :gpu, batch_steps = 32, use_graphs = true, kwargs...)
     case = vresolution_dambreak_case(; kwargs...)
     result = run_variable_resolution_simulation(;
         coarse_geometry = case.coarse.geometry, fine_geometry = case.fine.geometry,
@@ -70,7 +71,7 @@ function run_vresolution_dambreak(; particle_reserve = nothing, include_buffers 
         coarse_kernel = case.coarse.kernel, fine_kernel = case.fine.kernel,
         region = case.region, simulation_time = case.simulation_time,
         output_interval = case.output_interval, save_location = case.save_location,
-        particle_reserve, include_buffers)
+        particle_reserve, include_buffers, execution, batch_steps, use_graphs)
     SavePolygonVTKHDF(joinpath(result.output,"DamBreak2D_VRes_Geometry.vtkhdf"),case.shapes)
     return result
 end

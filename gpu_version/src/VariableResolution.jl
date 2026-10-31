@@ -2,6 +2,7 @@
 module VariableResolution
 
 using CUDA
+using Adapt
 using StaticArrays
 using LinearAlgebra
 using Printf
@@ -19,6 +20,8 @@ using ..SPHCellList: upload_particles, GPUSupportArrays, rebuild_cell_list!, dua
 using ..GPUCellGrid
 using ..GPUKernels
 using ..GPUStepState: HostStep
+import ..GPUStepState
+using ..GPUReductions
 using ..ProduceHDFVTK: SaveVTKHDF
 using ..AuxiliaryFunctions: to_3d
 
@@ -96,7 +99,7 @@ function interface_points(limits, fine, dx)
     return (; points, normals, widths)
 end
 
-struct ResolutionDomain{P,C,S,K,F,I,PP}
+struct ResolutionDomain{P,C,S,K,F,I,PP,POOL}
     particles::P
     cells::C
     support::S
@@ -109,9 +112,10 @@ struct ResolutionDomain{P,C,S,K,F,I,PP}
     next_id::CuVector{Int64}
     events::CuVector{Int64}
     fine::Bool
+    pool::POOL
 end
 
-function make_resolution_domain(geometry, constants::SimulationConstants{T}, kernel, limits, fine, reserve) where {T}
+function make_resolution_domain(geometry, constants::SimulationConstants{T}, kernel, limits, fine, reserve; resident = false) where {T}
     geometry isa AbstractVector && !isempty(geometry) && all(g -> g isa SPHGeometry{2,T},geometry) ||
         throw(ArgumentError("each domain needs a nonempty vector of 2D geometries matching its constants' precision"))
     geometry = SPHGeometry{2,T}[geometry...]
@@ -157,15 +161,18 @@ function make_resolution_domain(geometry, constants::SimulationConstants{T}, ker
     predictor = (; particles = upload_particles(host; position_type = Float64, kernel_output = false),
         cells = CellListWorkspace{2,Float64}(n),
         support = GPUSupportArrays{2,T}(n; position_type = Float64, shifting = false, dual_time_stepping = true),
-        kernel, constants)
+        kernel, constants,
+        pool = resident ? ResolutionPool(host, initial_count) : nothing)
     faces = interface_points(limits, fine, Float64(constants.dx))
     interface = (; points = CuArray(faces.points), normals = CuArray(faces.normals),
         widths = CuArray(faces.widths), mass = CUDA.zeros(Float64, length(faces.points)), fluid_marker)
     return ResolutionDomain(gpu, cells, support, kernel, constants, interface, predictor,
-        CUDA.zeros(Int32, n), CUDA.zeros(Int32, 2), CuArray([Int64(maximum(host.ID) + 2)]), CUDA.zeros(Int64, 4), fine)
+        CUDA.zeros(Int32, resident ? 0 : n), CUDA.zeros(Int32, 2), CuArray([Int64(maximum(host.ID) + 2)]), CUDA.zeros(Int64, 4), fine,
+        resident ? ResolutionPool(host, initial_count) : nothing)
 end
 
 include("GPUVariableResolution.jl")
+include("GPUVariableResolutionDriver.jl")
 include("VariableResolutionLogging.jl")
 
 function rebuild_domain!(domain)
@@ -254,7 +261,8 @@ end
     run_variable_resolution_simulation(; coarse_geometry, fine_geometry,
         coarse_constants, fine_constants, coarse_kernel, fine_kernel, region,
         simulation_time = 1, output_interval = 0.0025, save_location,
-        particle_reserve = nothing, include_buffers = false)
+        particle_reserve = nothing, include_buffers = false, execution = :gpu,
+        batch_steps = 32, use_graphs = true)
 
 Run two native CUDA SPH domains with a common adaptive timestep, mDBC density
 correction and symplectic predictor/corrector stages. Buffers exchange density
@@ -273,12 +281,21 @@ report, with separate initialization, solver and output timings. CUDA is
 synchronized at output boundaries for complete interval timings. The driver
 clock includes first-use JIT but excludes package loading and caller geometry
 construction. The result exposes `log_path` and `timings`.
+
+`execution=:gpu` keeps timestep, transfer and grid decisions on the device and
+checks status once per `batch_steps` (1–256, default 32). CUDA graphs are enabled
+by default; `use_graphs=false` uses direct launches of the same device phases.
+Grid capacity growth resumes the pending rebuild without repeating a step.
+`execution=:host` retains the original host-controlled reference driver.
 """
 function run_variable_resolution_simulation(; coarse_geometry, fine_geometry, coarse_constants,
         fine_constants, coarse_kernel, fine_kernel, region::VariableResolutionBox,
         simulation_time = 1.0, output_interval = 0.0025, save_location,
-        particle_reserve = nothing, include_buffers = false)
+        particle_reserve = nothing, include_buffers = false, execution = :gpu,
+        batch_steps = 32, use_graphs = true)
     CUDA.functional() || error("variable resolution requires a functional CUDA device")
+    execution in (:gpu, :host) || throw(ArgumentError("execution must be :gpu or :host"))
+    batch_steps isa Integer && 1 <= batch_steps <= 256 || throw(ArgumentError("batch_steps must be an integer from 1 to 256"))
     isfinite(simulation_time) && simulation_time > 0 || throw(ArgumentError("simulation_time must be finite and positive"))
     isfinite(output_interval) && output_interval > 0 || throw(ArgumentError("output_interval must be finite and positive"))
     for (constants, kernel) in ((coarse_constants, coarse_kernel), (fine_constants, fine_kernel))
@@ -309,15 +326,17 @@ function run_variable_resolution_simulation(; coarse_geometry, fine_geometry, co
     return with_resolution_logger(output) do logger,timer
         @timeit timer "00 Initialization" begin
             settings = (; coarse_constants, fine_constants, coarse_kernel, fine_kernel,
-                coarse_geometry, fine_geometry, coarse_reserve, fine_reserve, region, simulation_time, output_interval)
+                coarse_geometry, fine_geometry, coarse_reserve, fine_reserve, region, simulation_time, output_interval, execution, batch_steps, use_graphs)
             initialize_resolution_log!(logger,settings)
-            coarse = make_resolution_domain(coarse_geometry, coarse_constants, coarse_kernel, limits, false, coarse_reserve)
-            fine = make_resolution_domain(fine_geometry, fine_constants, fine_kernel, limits, true, fine_reserve)
+            coarse = make_resolution_domain(coarse_geometry, coarse_constants, coarse_kernel, limits, false, coarse_reserve; resident = execution == :gpu)
+            fine = make_resolution_domain(fine_geometry, fine_constants, fine_kernel, limits, true, fine_reserve; resident = execution == :gpu)
             domains = (coarse, fine)
             foreach(d -> retire_particles!(d, limits), domains)
-            foreach(rebuild_domain!, domains)
+            device_state = execution == :gpu ? initialize_resident_domains!(domains) : nothing
+            execution == :host && foreach(rebuild_domain!, domains)
             exchange_buffers!(coarse, fine, limits)
             exchange_buffers!(fine, coarse, limits)
+            device_state === nothing || prepare_resolution_graph!(domains, limits, device_state; batch_steps, use_graphs)
             CUDA.synchronize()
         end
         log_line(logger,logger.ValuesToPrint)
@@ -365,7 +384,12 @@ function run_variable_resolution_simulation(; coarse_geometry, fine_geometry, co
             while time < simulation_time
                 deadline = min(length(times) * Float64(output_interval), Float64(simulation_time))
                 @timeit timer "01 Solver" begin
-                    while time < deadline
+                    if device_state !== nothing
+                        advance_resolution!(domains, limits, device_state, deadline; batch_steps, use_graphs)
+                        time = device_state.fh[GPUStepState.F_TIME]
+                        iterations = Int(device_state.ih[GPUStepState.I_ITER])
+                    end
+                    while device_state === nothing && time < deadline
                         limits_dt = map(domains) do d
                             p,s = d.particles,d.support
                             domain_force_stage!(d,p.Position,p.Velocity,p.Density,s.PosCells,time)
@@ -397,9 +421,13 @@ function run_variable_resolution_simulation(; coarse_geometry, fine_geometry, co
                 write_frame()
             end
         end
+        device_state === nothing || sync_resolution_counters!(domains)
         return (; coarse, fine, time, iterations, output, times, files, history_path,
             particle_counts = (; coarse = last_counts[1], fine = last_counts[2]), represented_fluid_mass = last_mass,
-            configuration = (; method = :two_domain_mls, region, limits, include_buffers,
+            configuration = (; method = :two_domain_mls, region, limits, include_buffers, execution,
+                control_readbacks = device_state === nothing ? nothing : device_state.readbacks,
+                graph_batches = device_state === nothing ? 0 : device_state.graph_batches,
+                direct_batches = device_state === nothing ? 0 : device_state.direct_batches,
                 density_diffusion = :fourtakas_full, boundary = :mdbc, cell_subdivision = 1,
                 coarse_spacing = coarse_constants.dx, fine_spacing = fine_constants.dx,
                 coarse_mass = coarse_constants.m₀, fine_mass = fine_constants.m₀))

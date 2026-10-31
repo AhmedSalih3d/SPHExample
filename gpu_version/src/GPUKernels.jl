@@ -343,6 +343,7 @@ end
 
 function pos_cells_kernel!(PosCells, Position, CellID, gridarg, H, step, n::Int32)
     step_active(step) || return nothing
+    n = step_particle_count(step, n)
     i = thread_index()
     i > n && return nothing
     @inbounds store_pos_cell!(PosCells, i, Position[i], CellID, gridarg, H)
@@ -390,6 +391,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
     t    = thread_index()
     i    = (t - Int32(1)) ÷ Int32(K) + Int32(1)
     lane = (t - Int32(1)) % Int32(K)
+    n = step_particle_count(step, n)
     valid = i <= n
     source_i = valid && target_indices !== nothing ? (@inbounds target_indices[i]) : i
 

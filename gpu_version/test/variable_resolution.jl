@@ -233,6 +233,112 @@ end
     end
 end
 
+function resident_resolution_fixture(case; reserve = 256)
+    limits = VR.resolution_limits(case.region,Float64(case.coarse.kernel.h),Float64(case.fine.kernel.h))
+    domains = map(((case.coarse,false),(case.fine,true))) do (level,fine)
+        VR.make_resolution_domain(level.geometry,level.constants,level.kernel,limits,fine,reserve; resident=true)
+    end
+    foreach(d -> VR.retire_particles!(d,limits),domains)
+    state = VR.initialize_resident_domains!(domains)
+    VR.exchange_buffers!(domains[1],domains[2],limits)
+    VR.exchange_buffers!(domains[2],domains[1],limits)
+    return (; domains,limits,state)
+end
+
+function resolution_live_state(domain)
+    p = domain.particles
+    ids,types = Array(p.ID),Array(p.Type)
+    indices = findall(!=(Frozen),types)
+    indices = indices[sortperm(ids[indices])]
+    return (; ids=ids[indices],types=types[indices],position=Array(p.Position)[indices],
+        velocity=Array(p.Velocity)[indices],density=Array(p.Density)[indices])
+end
+
+@testset "resident resolution batching, growth, and reference state" begin
+    if CUDA.functional()
+        case = VariableResolutionExample.vresolution_dambreak_case(dx=0.05)
+        reference = redirect_stdout(devnull) do
+            run_variable_resolution_simulation(;
+                coarse_geometry=case.coarse.geometry,fine_geometry=case.fine.geometry,
+                coarse_constants=case.coarse.constants,fine_constants=case.fine.constants,
+                coarse_kernel=case.coarse.kernel,fine_kernel=case.fine.kernel,region=case.region,
+                simulation_time=0.003,output_interval=0.001,save_location=mktempdir(),
+                particle_reserve=256,execution=:host)
+        end
+        previous = nothing
+        for (graphs,batch,reserve,grow) in ((false,1,256,false),(true,16,20000,false),(true,16,256,true))
+            (; domains,limits,state) = resident_resolution_fixture(case; reserve)
+            if grow
+                # Force a real, mid-step predictor capacity miss. The next
+                # replay must resume the pending rebuild without reintegrating.
+                c = domains[1].predictor.cells
+                c.Counts = CUDA.zeros(Int32,8)
+                c.CellStart = CUDA.zeros(Int32,9)
+            end
+            for deadline in (0.001,0.002,0.003)
+                VR.advance_resolution!(domains,limits,state,deadline; batch_steps=batch,use_graphs=graphs)
+                @test state.fh[2] == deadline
+            end
+            @test state.ih[3] == reference.iterations
+            graphs && @test state.readbacks < reference.iterations
+            grow && @test domains[1].predictor.cells.capacity_growths > 0
+            states = map(resolution_live_state,domains)
+            for (actual,expected) in zip(states,map(resolution_live_state,(reference.coarse,reference.fine)))
+                @test actual.ids == expected.ids
+                @test actual.types == expected.types
+                @test actual.position ≈ expected.position rtol=1e-9 atol=1e-10
+                @test actual.velocity ≈ expected.velocity rtol=1e-5 atol=1e-6
+                @test actual.density ≈ expected.density rtol=1e-6
+            end
+            previous === nothing || @test states == previous
+            previous = states
+            for d in domains
+                n = Array(d.pool.count)[1]
+                @test count(!=(Frozen),Array(d.particles.Type)) == n
+                @test all(==(Frozen),Array(d.particles.Type)[n+1:end])
+                @test only(Array(view(d.cells.CellStart,length(d.cells.CellStart):length(d.cells.CellStart)))) == n
+            end
+            # A completed batch is inert, including cell scans and flux budget.
+            starts = map(d -> Array(d.cells.CellStart),domains)
+            masses = map(d -> Array(d.interface.mass),domains)
+            VR.enqueue_resolution_step!(domains,limits,state)
+            @test map(resolution_live_state,domains) == states
+            @test map(d -> Array(d.cells.CellStart),domains) == starts
+            @test map(d -> Array(d.interface.mass),domains) == masses
+        end
+        fixture = resident_resolution_fixture(moving_resolution_case(); reserve=1)
+        for d in fixture.domains
+            fill!(d.interface.mass,100Float64(d.constants.m₀))
+        end
+        failure = try
+            VR.advance_resolution!(fixture.domains,fixture.limits,fixture.state,0.001; batch_steps=16,use_graphs=true)
+            nothing
+        catch e
+            e
+        end
+        @test failure isa ErrorException
+        @test occursin("reserve exhausted",sprint(showerror,failure))
+        invalid = resident_resolution_fixture(case)
+        p = invalid.domains[1].particles
+        fill!(p.Velocity,SVector(NaN32,NaN32))
+        @test_throws ErrorException VR.advance_resolution!(invalid.domains,invalid.limits,invalid.state,0.001;
+            batch_steps=16,use_graphs=true)
+
+        empty_case = deepcopy(case)
+        empty!(empty_case.fine.geometry)
+        push!(empty_case.fine.geometry,SPHGeometry{2,Float32}([SVector(3.0,0.1)];Density=1000f0,Type=Fluid,GroupMarker=2))
+        empty_fixture = resident_resolution_fixture(empty_case)
+        empty_domain = empty_fixture.domains[2]
+        fill!(empty_domain.particles.Type,Frozen)
+        VR.enqueue_resolution_rebuild!(empty_domain,VR.ResolutionStep(empty_fixture.state,empty_domain,0))
+        VR.advance_resolution!(empty_fixture.domains,empty_fixture.limits,empty_fixture.state,0.001;
+            batch_steps=16,use_graphs=true)
+        @test Array(empty_domain.pool.count)[1] == 0
+        @test all(iszero,Array(empty_domain.cells.CellStart))
+        @test empty_fixture.state.fh[2] == 0.001
+    end
+end
+
 if get(ENV,"SPH_VRES_LONG_TEST","0") == "1" && CUDA.functional()
     @testset "dam-break front enters native fine domain" begin
         result = VariableResolutionExample.run_vresolution_dambreak(dx = 0.05,duration = 0.65,

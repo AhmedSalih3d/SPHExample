@@ -22,7 +22,7 @@ module GPUStepState
 using CUDA
 using Adapt
 
-export StepState, DeviceStep, HostStep, step_active, step_dt, step_time,
+export StepState, DeviceStep, HostStep, step_active, step_dt, step_time, step_particle_count,
        F_DT, F_TIME, F_DX, F_TOUT, F_DISP, I_STOP, I_PHASE, I_ITER, I_CLIP_OUTPUT,
        I_GRID_STATUS, I_GRID_ORIGIN, I_GRID_DIMS, I_GRID_NCELLS, I_GRID_FROZEN,
        STOP_NONE, STOP_REBUILD, STOP_OUTPUT, STOP_PERIODIC_IMAGES, PHASE_NEED_DT, PHASE_DT_READY,
@@ -139,6 +139,9 @@ HostStep(s::StepState{T}) where {T} = HostStep(T(s.fh[F_DT]), s.fh[F_TIME])
 @inline step_active(::HostStep)  = true
 @inline step_dt(s::HostStep)     = s.dt
 @inline step_time(s::HostStep)   = s.time
+
+# Private particle pools can keep their live prefix length on the device.
+@inline step_particle_count(step, n) = n
 
 # Optional device-side preparation after a timestep is ready. Motion samplers
 # extend this hook without adding work to simulations that have no histories.

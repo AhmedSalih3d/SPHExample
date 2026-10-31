@@ -45,6 +45,22 @@ differences, output fields, customization and validation commands.
 julia --project=gpu_version -t 2,0 gpu_version/example/VResolutionDamBreak2d.jl
 ```
 
+Variable-resolution runs default to GPU-resident timestep, transfer and grid
+control, replayed in CUDA graph batches of 32 steps. Active particles occupy a
+dense prefix; dormant reserve slots do not participate in histograms, sorting,
+predictor copies or reductions. The host checks a small control state once per
+batch, handles exceptional grid-capacity growth, and downloads output frames.
+Use `execution=:host` for the previous reference driver, or `use_graphs=false`
+to validate the same device driver with direct launches. `batch_steps` controls
+the status-check interval. The timestep rules, Float64 positions/MLS and
+subdivision `R=1` are preserved.
+
+Paired whole-solver timings and particle-state checks are available with:
+
+```bash
+julia --project=gpu_version -t 2,0 gpu_version/benchmark/variable_resolution.jl
+```
+
 ### Dimension-aware physical constants
 
 Pass the simulation dimension to set the default particle mass from density
