@@ -2058,6 +2058,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     steps and is linked from `/VTKHDF/Assembly`. Damping geometry is also
     included in each numbered file when multi-file output is selected.
     Measurements cannot be requested in multi-file mode.
+
+    `variable_count=true` accepts changing host-frame lengths. Particle data
+    is appended directly to temporal datasets (or written per numbered file),
+    with current point counts and offsets; fixed-size staging is disabled.
     """
     function SetupVTKOutput(
             SimMetaData, SimParticles, SimKernel, Dimensions;
@@ -2065,6 +2069,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             fluid_type = nothing,
             constants = nothing,
             damping = (),
+            variable_count::Bool = false,
         )
         measurement_plan = if measurements === nothing ||
                               !has_measurements(measurements)
@@ -2125,11 +2130,11 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         # `Int8` from a buffer as well. The single file mode fills the frame
         # buffers of the `PolyDataFrameWriter` directly and needs none of these.
         component_buffer(src) = Matrix{component_type(src)}(undef, 3, n)
-        pos_buf  = multi_file ? component_buffer(SimParticles.Position) : nothing
+        pos_buf  = multi_file && !variable_count ? component_buffer(SimParticles.Position) : nothing
         vec_bufs = Dict{String, Matrix}(name => component_buffer(field_source(name))
-                                        for name in output_vars if multi_file && (name != "Pressure" || has_host_pressure) && ncomponents(field_source(name)) == 3)
-        type_buf = multi_file && "Type" in output_vars ? Vector{Int8}(undef, n) : nothing
-        press_buf = multi_file && "Pressure" in output_vars && !has_host_pressure ? Vector{FloatType}(undef, n) : nothing
+                                        for name in output_vars if multi_file && !variable_count && (name != "Pressure" || has_host_pressure) && ncomponents(field_source(name)) == 3)
+        type_buf = multi_file && !variable_count && "Type" in output_vars ? Vector{Int8}(undef, n) : nothing
+        press_buf = multi_file && !variable_count && "Pressure" in output_vars && !has_host_pressure ? Vector{FloatType}(undef, n) : nothing
         function output_field(name)
             name == "Type" && return map!(Int8, type_buf, SimParticles.Type)
             if name == "Pressure" && !has_host_pressure
@@ -2180,13 +2185,13 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             # positions and the output variables. The grid estimate uses one
             # occupied cell per particle; its writer also checks actual frame
             # bytes against the remaining grid output budget.
-            particle_frame_bytes = n * (3 * sizeof(fType) +
+            particle_frame_bytes = variable_count ? 0 : n * (3 * sizeof(fType) +
                                sum(d -> ncomponents(d) * sizeof(component_type(d)), descriptors; init = 0))
             frame_bytes = particle_frame_bytes
             if SimMetaData.ExportGridCells
                 frame_bytes += grid_frame_bytes(n, Dimensions)
             end
-            frames_per_flush = buffered_frames(frame_bytes, SimMetaData.GPUOutputBufferBytes)
+            frames_per_flush = variable_count ? 1 : buffered_frames(frame_bytes, SimMetaData.GPUOutputBufferBytes)
 
             # Single-file mode: handles for both files. With measurements the
             # particles are one block of a multiblock, otherwise the file is
@@ -2207,7 +2212,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             chunk_size = particle_chunk_size(frames_per_flush * n, max_point_bytes)
             GenerateGeometryStructure(root, output_vars, descriptors...; chunk_size)
             GenerateStepStructure(root, output_vars, descriptors...)
-            frame_writer = PolyDataFrameWriter(root, SimParticles.Position, output_vars, descriptors...; capacity = frames_per_flush)
+            frame_writer = variable_count ? nothing :
+                PolyDataFrameWriter(root, SimParticles.Position, output_vars, descriptors...; capacity = frames_per_flush)
             if composite_output
                 if measurement_plan !== nothing
                     measurement_writer = MeasurementWriter(
@@ -2235,7 +2241,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 root_grid = HDF5.create_group(OutputVTKHDFGrid, "VTKHDF")
                 GenerateGeometryStructure(root_grid; vtk_file_type="UnstructuredGrid", chunk_size = 2^13)
                 GenerateStepStructure(root_grid; vtk_file_type="UnstructuredGrid")
-                grid_budget = max(0, SimMetaData.GPUOutputBufferBytes - frames_per_flush * particle_frame_bytes)
+                grid_budget = variable_count ? 0 : max(0, SimMetaData.GPUOutputBufferBytes - frames_per_flush * particle_frame_bytes)
                 grid_writer = GridFrameWriter(root_grid; capacity = frames_per_flush, budget_bytes = grid_budget)
                 writer_buffer_bytes = frames_per_flush * particle_frame_bytes + grid_budget
 
@@ -2288,7 +2294,25 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
         function save_particle_data(iteration, time = SimMetaData.TotalTime;
                                     download = nothing, staged_slot::Bool = false)
-            if staged_slot
+            if variable_count
+                download === nothing && !staged_slot || throw(ArgumentError("variable-count output requires a completed host frame"))
+                data = map(output_vars) do name
+                    src = field_source(name)
+                    name == "Type" ? Int8.(src) : ncomponents(src) == 3 ?
+                        components!(Matrix{component_type(src)}(undef,3,length(src)),src) : src
+                end
+                if multi_file
+                    SaveVTKHDF(file_handles.particle_files,iteration,particle_filename(iteration),
+                        components!(Matrix{Float64}(undef,3,length(SimParticles.Position)),SimParticles.Position),output_vars,data...; damping_geometry)
+                else
+                    root = file_handles.particle_files[composite_output ? "VTKHDF/Particles" : "VTKHDF"]
+                    try
+                        AppendVTKHDFData(root,time,components!(Matrix{Float64}(undef,3,length(SimParticles.Position)),SimParticles.Position),output_vars,data...)
+                    finally
+                        close(root)
+                    end
+                end
+            elseif staged_slot
                 push!(frame_writer.times, Float64(time))
                 frame_writer.pending += 1
                 frame_writer.pending == frame_writer.capacity && flush_frames!(frame_writer)
@@ -2383,7 +2407,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             else
                 # Write the pending frames and close the single-file handles
                 if isopen(file_handles.particle_files)
-                    flush_frames!(frame_writer)
+                    frame_writer === nothing || flush_frames!(frame_writer)
                     measurement_writer === nothing ||
                         flush_measurements!(measurement_writer)
                     close(file_handles.particle_files)

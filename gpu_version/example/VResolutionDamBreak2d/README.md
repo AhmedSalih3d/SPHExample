@@ -19,9 +19,71 @@ To change the run, include the definitions without starting a simulation:
 ```julia
 include("gpu_version/example/VResolutionDamBreak2d/Setup.jl")
 case = vresolution_dambreak_case()  # geometry and settings only; no GPU allocation
-result = run_vresolution_dambreak(duration = 1.0, output_interval = 0.01,
+result = run_vresolution_dambreak_solver(duration = 1.0, output_interval = 0.01,
     save_location = "C:/TestSimulations/DamBreak2D_VRes")
 ```
+
+The example uses the normal `RunSimulation` entry point. Configure a general
+case through `SimulationMetaData`:
+
+```julia
+refinement = VariableResolutionConfig(case.region;
+    fine_geometry = case.fine.geometry, particle_reserve = 40000)
+mkpath(case.save_location)
+metadata = SimulationMetaData{2,Float32,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
+    SimulationName = "RefinedTank", SaveLocation = case.save_location,
+    SimulationTime = case.simulation_time, OutputTimes = [0.1,0.25,0.5,1.0],
+    VariableResolution = refinement, GPUClipTimeStepToOutput = true,
+    GPUUseGraph = true, GPUMaxStepsPerSync = 32,
+    OutputVariables = ["Velocity","Density","Pressure","Type","ID","Resolution","Spacing","Mass"],
+    VisualizeInParaview = false, OpenLogFile = false)
+particles = AllocateDataStructures(case.coarse.geometry,metadata)
+logger = SimulationLogger(metadata.SaveLocation)
+result = RunSimulation(
+    SimGeometry = case.coarse.geometry, SimMetaData = metadata,
+    SimParticles = particles, SimLogger = logger,
+    SimConstants = case.coarse.constants, SimKernel = case.coarse.kernel,
+    SimViscosity = ArtificialViscosity(),
+    SimDensityDiffusion = FourtakasDensityDiffusion(full=true),
+    SimTimeStepping = DualSPHysicsSymplectic(fast_math=false))
+```
+
+Fine constants and Wendland parameters are scaled from the coarse domain when
+omitted, including mass and regularization. Supply `fine_constants` and
+`fine_kernel` in `VariableResolutionConfig` to keep an existing fine setup.
+Fine geometry is explicit so wall placement and mDBC normals remain under the
+case author's control. `nothing` disables `metadata.VariableResolution`.
+
+The normal API uses `SimulationName`, `OutputVariables`, scalar/vector
+`OutputTimes`, `ExportSingleVTKHDF`, `ExportGridCells` and the normal logger.
+Single-file output records variable point counts and cumulative offsets;
+numbered output also writes a `.vtkhdf.series`. Grid output bins the current
+exported positions at the coarse kernel's cell edge, independently of either
+domain's last neighbor rebuild. `GPUClipTimeStepToOutput=true` lands on exact
+deadlines; `false` retains full steps and exports the first state beyond them.
+The final `SimParticles` is resized to the combined exported state, and
+`result.final_state.resolution` provides separate host domain snapshots.
+`result.diagnostics.resolution` records pool capacity, dormant slots, events
+and the named `<SimulationName>_History.csv`. Dormant reserves are not counted
+as persistent frozen particles. Per-particle `Mass` accompanies each level;
+particle-step throughput is left unreported because the active count varies.
+
+`GPUUseGraph`, `GPUMaxStepsPerSync` (capped at 256), `GPUInteractionThreads`,
+`GPUInteractionAlwaysInline`, `GPUDeterministicSort`, `GPUMaxCells` and
+`GPUSyncTimers` control the device backend. Synchronized timers use one direct
+step per status check. The effective configuration records conservative
+interaction arithmetic, one lane per particle, Float64 positions, full device
+buffers and synchronous variable-count output, including fallbacks from other
+requested settings. `SimDamping` accepts the usual plane, box and cylinder
+zones and acts on both domains after integration. Periodic/fixed grids,
+subdivision other than `R=1`, moving/floating walls, external forces, shifting,
+kernel-output modes and measurements are currently rejected explicitly.
+
+`run_vresolution_dambreak_solver(...; metadata_options=(GPUUseGraph=false,))`
+overrides metadata fields in the supplied example. The lower-level
+`run_vresolution_dambreak` / `run_variable_resolution_simulation` APIs remain
+available for reference validation and paired benchmarks. The execution options,
+filenames and historical measurements below describe those standalone APIs.
 
 Each run writes `SimulationOutput.log` in its output directory. It contains
 the usual `PART`, physical time, total/interval steps, elapsed runtime,
@@ -36,7 +98,9 @@ geometry construction/export are outside that clock. CUDA synchronization at
 initialization/output boundaries makes the phase totals include completed GPU
 work; no per-kernel profiling or additional per-step synchronization is added.
 Caught failures and interruptions finalize the log before being rethrown.
-The returned result provides `log_path` and `timings` for programmatic access.
+The standalone result provides `log_path` and `timings` for programmatic access.
+Normal `RunSimulation` returns `SimulationResult`, with timing information in
+`performance` and its copied `phase_timings`; the log remains in `SaveLocation`.
 
 The default `execution=:gpu` keeps all four timestep criteria, the previous
 predictor limit, simulation clock, particle allocation decisions and routine
@@ -103,6 +167,7 @@ repository root:
 
 ```powershell
 julia --project=gpu_version -t 2,0 gpu_version/test/variable_resolution.jl
+julia --project=gpu_version -t 2,0 gpu_version/test/variable_resolution_solver.jl
 julia --project=gpu_version -t 2,0 gpu_version/test/vresolution_logging.jl
 ```
 
@@ -114,6 +179,18 @@ inspection:
 ```powershell
 julia --project=gpu_version -t 2,0 gpu_version/test/run_vresolution_dambreak.jl
 ```
+
+The normal metadata-driven path has its own full validation, including every
+frame's changing point counts, offsets, unique IDs and finite fields:
+
+```powershell
+julia --project=gpu_version -t 2,0 gpu_version/test/run_vresolution_solver_dambreak.jl
+```
+
+The normal solver passed 43,430 steps and 401 frames through 1 s on the RTX
+5080, with 0.05375% maximum represented-mass deviation and no density exclusions
+or non-finite states. Its 437 full-run assertions and focused metadata/output
+checks cover the normal entry point rather than only the standalone driver.
 
 The generator accepts spacings that divide the 1 m water width exactly, such
 as 0.01, 0.02, 0.025 or 0.05 m. Creation slots use GPU atomics; repeated runs

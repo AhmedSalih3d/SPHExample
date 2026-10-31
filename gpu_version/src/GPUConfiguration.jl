@@ -34,6 +34,7 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
     options = interaction_options(kernel, diffusion, viscosity;
         radial = meta.GPURadialInteractions, scalar_sps = meta.GPUScalarSPSViscosity)
     requested = (; radial_interactions = meta.GPURadialInteractions,
+        variable_resolution = meta.VariableResolution !== nothing,
         interaction_always_inline = meta.GPUInteractionAlwaysInline,
         interaction_fastmath = meta.GPUInteractionFastMath,
         scalar_sps_viscosity = meta.GPUScalarSPSViscosity, use_graph = meta.GPUUseGraph,
@@ -42,9 +43,14 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
         periodic_cell_coordinates = meta.GPUPeriodicCellCoordinates, periodic_images=meta.GPUPeriodicImages)
     capabilities = (; radial_interactions = options.radial_supported,
         scalar_sps_viscosity = options.scalar_sps_supported)
-    lanes = meta.GPULanesPerParticle <= 0 ? choose_lanes(particle_count, Val(D)) : meta.GPULanesPerParticle
+    lanes = meta.VariableResolution !== nothing ? 1 : meta.GPULanesPerParticle <= 0 ? choose_lanes(particle_count, Val(D)) : meta.GPULanesPerParticle
     position_type = position_float_type(meta)
     effective = (; sph_kernel = typeof(kernel.kernel), kernel_regularization = kernel.η²,
+        variable_resolution = meta.VariableResolution === nothing ? nothing :
+            (; method=:two_domain_mls,region=meta.VariableResolution.region,
+                include_buffers=meta.VariableResolution.include_buffers,particle_reserve=meta.VariableResolution.particle_reserve,
+                coarse_smoothing_length=kernel.h,fine_smoothing_length=meta.VariableResolution.fine_kernel === nothing ?
+                    kernel.h/meta.VariableResolution.region.ratio : meta.VariableResolution.fine_kernel.h),
         kernel_normalization = kernel.αD, interaction_kernel = :interaction_kernel!,
         interaction_path = options.radial ? :radial : :reference,
         radial_interactions = options.radial, scalar_sps_viscosity = options.scalar_sps,
@@ -80,6 +86,34 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
         use_graph = meta.GPUUseGraph && !meta.GPUSyncTimers,
         max_steps_per_sync = meta.GPUSyncTimers ? 1 : max(1, meta.GPUMaxStepsPerSync))
     fallbacks = NamedTuple[]
+    if meta.VariableResolution !== nothing
+        effective = merge(effective,(;position_type=Float64,
+            interaction_fastmath=false,radial_interactions=false,scalar_sps_viscosity=false,
+            interaction_path=:reference,viscosity_path=:reference_ordered,cache_interaction_fields=false,
+            boundary_forces=false,lanes_per_particle=1,compact_buffers=false,async_output=false,
+            output_buffer_bytes=0,max_steps_per_sync=meta.GPUSyncTimers ? 1 : clamp(meta.GPUMaxStepsPerSync,1,256)))
+        if effective.reference_step_parameters !== nothing
+            effective = merge(effective,(;reference_step_parameters=merge(effective.reference_step_parameters,
+                (;fast_math=false,periodic_images=false))))
+            meta.TimeSteppingMode.fast_math && push!(fallbacks,(;option=:DualSPHysicsSymplecticFastMath,
+                requested=true,effective=false,reason=:variable_resolution_backend))
+        end
+        for (option,requested_value,effective_value) in (
+                (:GPUDoublePosition,meta.GPUDoublePosition,true),
+                (:GPUInteractionFastMath,meta.GPUInteractionFastMath,false),
+                (:GPURadialInteractions,meta.GPURadialInteractions,false),
+                (:GPUScalarSPSViscosity,meta.GPUScalarSPSViscosity,false),
+                (:GPUCacheInteractionFields,meta.GPUCacheInteractionFields,false),
+                (:GPUBoundaryForces,meta.GPUBoundaryForces,false),
+                (:GPUCompactBuffers,meta.GPUCompactBuffers,false),
+                (:GPUAsyncOutput,meta.GPUAsyncOutput,false),
+                (:GPUOutputBufferBytes,meta.GPUOutputBufferBytes,0),
+                (:GPULanesPerParticle,meta.GPULanesPerParticle,1),
+                (:GPUMaxStepsPerSync,meta.GPUMaxStepsPerSync,effective.max_steps_per_sync))
+            requested_value == effective_value && continue
+            push!(fallbacks,(;option,requested=requested_value,effective=effective_value,reason=:variable_resolution_backend))
+        end
+    end
     if requested.periodic_images && meta.Periodicity !== nothing && !effective.periodic_images
         reason = B !== NoMDBC ? :unsupported_boundary_mode :
             meta.TimeSteppingMode isa DualSPHysicsSymplectic && meta.TimeSteppingMode.cache_periodic_queries ? :query_cache_selected :
@@ -87,11 +121,11 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
             :period_not_larger_than_twice_support
         push!(fallbacks,(;option=:GPUPeriodicImages,requested=true,effective=false,reason))
     end
-    if requested.radial_interactions && !effective.radial_interactions
+    if meta.VariableResolution === nothing && requested.radial_interactions && !effective.radial_interactions
         push!(fallbacks, (; option = :GPURadialInteractions, requested = true, effective = false,
             reason = :unsupported_kernel_or_models))
     end
-    if requested.scalar_sps_viscosity && !effective.scalar_sps_viscosity
+    if meta.VariableResolution === nothing && requested.scalar_sps_viscosity && !effective.scalar_sps_viscosity
         push!(fallbacks, (; option = :GPUScalarSPSViscosity, requested = true, effective = false,
             reason = :unsupported_kernel_or_viscosity))
     end

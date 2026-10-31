@@ -60,6 +60,7 @@ include(joinpath(@__DIR__, "motion_stage_sampling.jl"))
 include(joinpath(@__DIR__, "waves_piston.jl"))
 include(joinpath(@__DIR__, "damping.jl"))
 include(joinpath(@__DIR__, "variable_resolution.jl"))
+include(joinpath(@__DIR__, "variable_resolution_solver.jl"))
 include(joinpath(@__DIR__, "vresolution_logging.jl"))
 include(joinpath(@__DIR__, "frozen_grid.jl"))
 

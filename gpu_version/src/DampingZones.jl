@@ -4,7 +4,7 @@ using CUDA
 using StaticArrays
 using LinearAlgebra: norm, dot
 using ..SimulationGeometry: Fluid
-using ..GPUStepState: step_active, step_dt
+using ..GPUStepState: step_active, step_dt, step_particle_count
 
 export DampingZone, DampingBox, DampingCylinder
 
@@ -250,6 +250,7 @@ end
 
 function damping_kernel!(zones, position, velocity, types, step, n)
     step_active(step) || return nothing
+    n = step_particle_count(step,n)
     i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     if i <= n
         @inbounds velocity[i] = damped_velocity(zones, position[i], velocity[i], types[i], step_dt(step))

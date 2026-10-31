@@ -7,4 +7,4 @@
 include(joinpath(@__DIR__, "VResolutionDamBreak2d", "Setup.jl"))
 
 isempty(ARGS) || throw(ArgumentError("this example takes no arguments; include VResolutionDamBreak2d/Setup.jl for customized runs"))
-run_vresolution_dambreak()
+run_vresolution_dambreak_solver()

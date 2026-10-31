@@ -1,5 +1,6 @@
 module SimulationMetaDataConfiguration
 using ..PeriodicBoundaries: PeriodicBoundary
+using ..VariableResolutionConfiguration: VariableResolutionConfig
 
 using TimerOutputs
 
@@ -86,6 +87,21 @@ output schedule (`OutputEach`, `OutputTimes`) use Float64 independently of
 `FloatType`. `CurrentTimeStep` and particle arithmetic retain `FloatType`.
 The keyword constructor and later assignments accept scalar or vector output
 times in either precision.
+
+`VariableResolution = VariableResolutionConfig(region; fine_geometry, ...)`
+enables two-domain refinement in the normal `RunSimulation` entry point.
+The usual geometry, constants and kernel describe the coarse domain; the
+configuration supplies the fine geometry and optional fine constants/kernel.
+This backend requires 2D SimpleMDBC, NoShifting, NoKernelOutput, reference
+symplectic stepping, artificial viscosity and full Fourtakas diffusion.
+It supports `SimDamping`, normal output fields/names, single-file or numbered
+VTKHDF, scalar/vector schedules and `GPUClipTimeStepToOutput`. Graph execution,
+batch size, interaction threads, sort determinism and cell limits use the
+corresponding metadata fields. Positions use Float64; conservative interaction
+arithmetic and synchronous variable-count output are reported in the effective
+configuration. Periodic/fixed grids, subdivision other than one, moving/floating
+walls, external forces and measurements are currently unsupported and fail
+explicitly. `nothing` (the default) selects the ordinary uniform-resolution path.
 
 `GPUClipTimeStepToOutput = true` clips each adaptive step to the next output
 deadline (including `SimulationTime`). Frames then contain the integrated state
@@ -206,6 +222,7 @@ mutable struct SimulationMetaData{Dimensions,
     OutputVariables::Vector{String}
     OpenLogFile::Bool
     TimeSteppingMode::TimeSteppingMode
+    VariableResolution::Union{Nothing,VariableResolutionConfig}
     # GPU specific options
     GPUSyncTimers::Bool          # synchronize after every phase so the timer output is meaningful
     GPUDeterministicSort::Bool   # sort particles inside each cell for bitwise reproducible runs
@@ -239,10 +256,10 @@ end
     position_float_type(SimMetaData) -> Type
 
 Element precision of the particle positions: `Float64` with
-`GPUDoublePosition`, otherwise the `FloatType` of the meta data. With
+`GPUDoublePosition` or variable resolution, otherwise the `FloatType` of the meta data. With
 `FloatType = Float64` the option changes nothing.
 """
-position_float_type(m::SimulationMetaData{D, T}) where {D, T} = m.GPUDoublePosition ? Float64 : T
+position_float_type(m::SimulationMetaData{D, T}) where {D, T} = m.GPUDoublePosition || m.VariableResolution !== nothing ? Float64 : T
 
 # Particle fields that can be written to the output files. `Position` is always
 # written as the point coordinates and is not listed. `Kernel` and
@@ -261,6 +278,7 @@ const OUTPUT_VARIABLES = [
     "KernelGradient",
     "GhostPoints",
     "GhostNormals",
+    "Resolution", "Spacing", "Mass", "Owned", "IsBuffer",
 ]
 
 # The state and identity of every particle. Diagnostics (`Acceleration`, the
@@ -285,6 +303,9 @@ the writer, the GPU download and the ParaView state file all agree on it.
 """
 function resolve_output_variables!(SimMetaData::SimulationMetaData{D, T, SMode, KMode, BMode}) where {D, T, SMode, KMode, BMode}
     requested = SimMetaData.OutputVariables
+    SimMetaData.VariableResolution !== nothing ||
+        isempty(intersect(requested,["Resolution","Spacing","Mass","Owned","IsBuffer"])) ||
+        throw(ArgumentError("resolution output fields require VariableResolution in SimulationMetaData"))
     unknown   = setdiff(requested, OUTPUT_VARIABLES)
     if !isempty(unknown)
         hint = any(in(("ChunkID", "BoundaryBool")), unknown) ?
@@ -328,6 +349,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         OutputVariables::Vector{String}         = copy(DEFAULT_OUTPUT_VARIABLES),
         OpenLogFile::Bool                       = true,
         TimeSteppingMode::TimeSteppingMode      = SingleNeighborTimeStepping(),
+        VariableResolution::Union{Nothing,VariableResolutionConfig} = nothing,
         GPUSyncTimers::Bool                     = false,
         GPUDeterministicSort::Bool              = true,
         GPUMaxCells::Int                        = 50_000_000,
@@ -362,13 +384,14 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
     GPUOutputQueueBytes >= 0 || throw(ArgumentError("GPUOutputQueueBytes must be nonnegative"))
     GPUOutputBufferBytes >= 0 || throw(ArgumentError("GPUOutputBufferBytes must not be negative, got $GPUOutputBufferBytes"))
     GPUTimestepDiagnosticsEvery >= 0 || throw(ArgumentError("GPUTimestepDiagnosticsEvery must be nonnegative"))
+    VariableResolution === nothing || Dimensions == 2 || throw(ArgumentError("variable resolution currently supports only 2D"))
     return SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(
         SimulationName, SaveLocation, HourGlass, Iteration,
         Float64(OutputEach), _output_times(Float64, OutputTimes),
         OutputIterationCounter, StepsTakenForLastOutput,
         FloatType(CurrentTimeStep), Float64(TotalTime), Float64(SimulationTime),
         IndexCounter, VisualizeInParaview, ExportSingleVTKHDF, ExportGridCells,
-        OutputVariables, OpenLogFile, TimeSteppingMode,
+        OutputVariables, OpenLogFile, TimeSteppingMode, VariableResolution,
         GPUSyncTimers, GPUDeterministicSort, GPUMaxCells, GPUInteractionThreads, GPULanesPerParticle,
         GPUInteractionAlwaysInline, GPUInteractionFastMath, GPURadialInteractions, GPUScalarSPSViscosity,
         GPUBoundaryForces, GPUAsyncOutput, GPUMaxStepsPerSync, GPUUseGraph, GPUClipTimeStepToOutput, GPUCellSubdivision,

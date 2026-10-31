@@ -75,3 +75,39 @@ function run_vresolution_dambreak(; particle_reserve = nothing, include_buffers 
     SavePolygonVTKHDF(joinpath(result.output,"DamBreak2D_VRes_Geometry.vtkhdf"),case.shapes)
     return result
 end
+
+"""
+    run_vresolution_dambreak_solver(; particle_reserve=nothing, include_buffers=false,
+        metadata_options=(;), kwargs...)
+
+Run the case through the normal `RunSimulation` API and return `SimulationResult`.
+`kwargs` configure `vresolution_dambreak_case`; `metadata_options` override normal
+`SimulationMetaData` fields, including output schedules and CUDA batching.
+"""
+function run_vresolution_dambreak_solver(; particle_reserve=nothing,include_buffers=false,metadata_options=(;),kwargs...)
+    case = vresolution_dambreak_case(;kwargs...)
+    isdir(case.save_location) && !isempty(readdir(case.save_location)) &&
+        throw(ArgumentError("save_location must be empty: $(case.save_location)"))
+    mkpath(case.save_location)
+    T = typeof(case.coarse.constants.dx)
+    refinement = VariableResolutionConfig(case.region;fine_geometry=case.fine.geometry,
+        fine_constants=case.fine.constants,fine_kernel=case.fine.kernel,particle_reserve,include_buffers)
+    defaults = (;SimulationName="DamBreak2D_VRes",SaveLocation=case.save_location,SimulationTime=case.simulation_time,
+        OutputTimes=case.output_interval,VariableResolution=refinement,GPUClipTimeStepToOutput=true,
+        GPUDoublePosition=true,GPUInteractionFastMath=false,GPULanesPerParticle=1,GPUBoundaryForces=false,
+        GPUCompactBuffers=false,GPUAsyncOutput=false,GPUOutputBufferBytes=0,
+        VisualizeInParaview=false,OpenLogFile=false,
+        OutputVariables=["Velocity","Density","Pressure","Type","ID","Resolution","Spacing","Mass","Owned","IsBuffer"])
+    meta = SimulationMetaData{2,T,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(;merge(defaults,metadata_options)...)
+    particles = AllocateDataStructures(case.coarse.geometry,meta)
+    logger = SimulationLogger(meta.SaveLocation)
+    result = try
+        RunSimulation(;SimGeometry=case.coarse.geometry,SimMetaData=meta,SimConstants=case.coarse.constants,
+            SimKernel=case.coarse.kernel,SimParticles=particles,SimLogger=logger,SimViscosity=ArtificialViscosity(),
+            SimDensityDiffusion=FourtakasDensityDiffusion(full=true),SimTimeStepping=DualSPHysicsSymplectic(fast_math=false))
+    finally
+        isopen(logger.LoggerIo) && close(logger.LoggerIo)
+    end
+    SavePolygonVTKHDF(joinpath(meta.SaveLocation,meta.SimulationName*"_Geometry.vtkhdf"),case.shapes)
+    return result
+end

@@ -42,6 +42,8 @@ unless `ExportGridCells` is enabled, `Kernel` and `KernelGradient` unless
 `ID` / `GroupMarker` are narrowed losslessly when every value fits (`Int32` for
 `ID`; `UInt8`, `UInt16`, or `UInt32` for `GroupMarker`). Setting
 `GPUCompactBuffers = false` retains all host columns and full integer widths.
+Variable resolution also retains full-width host IDs/group markers so the
+coarse container can safely receive particles from the fine domain at output.
 """
 function AllocateDataStructures(SimGeometry::Vector{<:SPHGeometry{Dimensions, FloatType}},
                                 SimMetaData::SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode}) where {Dimensions, FloatType, SMode, KMode, BMode}
@@ -53,7 +55,7 @@ function AllocateDataStructures(SimGeometry::Vector{<:SPHGeometry{Dimensions, Fl
         cells = !compact || SimMetaData.ExportGridCells,
         kernel_output = !compact || KMode === StoreKernelOutput,
         ghost_data = !compact || BMode !== NoMDBC || has_geom_ghosts,
-        compact_metadata = compact)
+        compact_metadata = compact && SimMetaData.VariableResolution === nothing)
 end
 
 function AllocateDataStructures(SimGeometry::Vector{<:SPHGeometry{Dimensions, FloatType}};

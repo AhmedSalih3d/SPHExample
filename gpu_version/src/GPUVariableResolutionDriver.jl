@@ -183,7 +183,9 @@ function enqueue_resolution_rebuild!(domain, step)
     resolution_scan!(c.scan_ws,view(c.CellStart,2:capacity+1),c.Counts,capacity,step)
     @cuda threads=256 blocks=cld(capacity,256) resolution_clear_kernel!(c.Counts,step)
     @cuda threads=256 blocks=blocks resolution_scatter_kernel!(c.Perm,c.Counts,c.CellStart,c.CellIDScratch,step,Int32(n))
-    @cuda threads=256 blocks=cld(capacity,256) resolution_sort_kernel!(c.Perm,c.CellStart,c.grid_dev,step)
+    if c.deterministic
+        @cuda threads=256 blocks=cld(capacity,256) resolution_sort_kernel!(c.Perm,c.CellStart,c.grid_dev,step)
+    end
     srcs = (map(f -> getproperty(p,f),RESOLUTION_FIELDS)...,c.CellIDScratch,pool.owners)
     dsts = (map(f -> getproperty(p.scratch,f),RESOLUTION_FIELDS)...,p.CellID,pool.owner_scratch)
     @cuda threads=256 blocks=blocks resolution_gather_kernel!(c.Perm,srcs,dsts,c.CellStart,step)
@@ -202,7 +204,7 @@ function resolution_criteria_kernel!(partial, velocity, acceleration, types, vis
         GPUStepState.step_particle_count(step,n),nothing)
     return nothing
 end
-function resident_force_stage!(domain, step)
+function resident_force_stage!(domain, step; interaction=(;))
     p,s,c,k = domain.particles,domain.support,domain.cells,domain.kernel
     launch_pos_cells!(s.PosCells,p.Position,p.CellID,c.grid_dev,step,k)
     launch_mdbc!(p.Density,p.Position,p.GhostPoints,p.GhostIndex,p.Type,c.CellStart,c.grid_dev,step,k,domain.constants;
@@ -210,7 +212,7 @@ function resident_force_stage!(domain, step)
     launch_interactions!(s.dρdtI,p.Acceleration,p.Kernel,p.KernelGradient,s.∇Cᵢ,s.∇◌rᵢ,
         p.Position,p.Density,p.Velocity,p.Type,c.CellStart,p.CellID,c.grid_dev,step,
         FourtakasDensityDiffusion(full=true),ArtificialViscosity(),k,domain.constants,Val(false),Val(false);
-        boundary_forces=Val(false),pos_cells=s.PosCells,viscous_dt=s.dual_state.viscous,fastmath=false)
+        boundary_forces=Val(false),pos_cells=s.PosCells,viscous_dt=s.dual_state.viscous,fastmath=false,interaction...)
     r = s.dual_state.reduction
     @cuda threads=REDUCE_THREADS blocks=r.nblocks resolution_criteria_kernel!(r.partial,p.Velocity,p.Acceleration,p.Type,
         s.dual_state.viscous,step,Int32(length(p)))
@@ -234,7 +236,8 @@ function resolution_dt_kernel!(a,b,ka,kb,ca,cb,step,predictor)
         if predictor
             step.f[3] = dt
         else
-            step.f[1] = min(dt,step.f[3],step.f[4]-step.f[2])
+            limit = min(dt,step.f[3])
+            step.f[1] = step.i[GPUStepState.I_CLIP_OUTPUT] != 0 ? min(limit,step.f[4]-step.f[2]) : limit
             dt = step.f[1]
         end
         isfinite(dt) && dt > 0 || (step.i[1] = RESOLUTION_STATE_ERROR)
@@ -306,15 +309,16 @@ function resolution_commit_kernel!(step)
         step.f[2] = dt == deadline-time ? deadline : time+dt
         step.i[3] += 1
         step.i[2] = 0
-        step.f[2] >= deadline && (step.i[1] = GPUStepState.STOP_OUTPUT)
+        GPUStepState.output_time_reached(step.f[2],deadline,step.i[GPUStepState.I_CLIP_OUTPUT] != 0) &&
+            (step.i[1] = GPUStepState.STOP_OUTPUT)
     end
     return nothing
 end
 
-function enqueue_resolution_step!(domains,limits,state)
+function enqueue_resolution_step!(domains,limits,state; damping=(),interaction=(;))
     coarse,fine = domains
     for d in domains
-        resident_force_stage!(d,ResolutionStep(state,d,0))
+        resident_force_stage!(d,ResolutionStep(state,d,0); interaction)
     end
     @cuda threads=1 resolution_dt_kernel!(coarse.support.dual_state.reduction.partial,fine.support.dual_state.reduction.partial,
         coarse.kernel,fine.kernel,coarse.constants,fine.constants,ResolutionStep(state,coarse,0),false)
@@ -333,7 +337,7 @@ function enqueue_resolution_step!(domains,limits,state)
         @cuda threads=1 resolution_phase_kernel!(ResolutionStep(state,d,phase),Int32(phase+1))
     end
     for d in domains
-        resident_force_stage!(d.predictor,ResolutionStep(state,d.predictor,3))
+        resident_force_stage!(d.predictor,ResolutionStep(state,d.predictor,3); interaction)
     end
     @cuda threads=1 resolution_dt_kernel!(coarse.predictor.support.dual_state.reduction.partial,fine.predictor.support.dual_state.reduction.partial,
         coarse.kernel,fine.kernel,coarse.constants,fine.constants,ResolutionStep(state,coarse,3),true)
@@ -344,6 +348,7 @@ function enqueue_resolution_step!(domains,limits,state)
             q.Acceleration,qs.dρdtI,q.Density,q.ID,ResolutionStep(state,d.predictor,3),Int32(length(p)))
         @cuda threads=128 blocks=cld(length(p),128) resolution_corrector_kernel!(p.Position,p.Velocity,p.Density,
             s.Positionₙ⁺,s.ρₙ⁺,p.Acceleration,s.dρdtI,p.Type,step,d.constants,Int32(length(p)))
+        launch_damping!(damping,p.Position,p.Velocity,p.Type,step)
         @cuda threads=128 blocks=cld(length(p),128) resolution_retire_kernel!(p.Position,p.Velocity,p.Density,p.Type,
             d.events,limits,d.fine,d.constants.ρ₀,step,Int32(length(p)))
     end
@@ -382,8 +387,8 @@ function enqueue_resolution_step!(domains,limits,state)
     return nothing
 end
 
-function initialize_resident_domains!(domains)
-    state = GPUStepState.StepState{Float64}()
+function initialize_resident_domains!(domains; time=0.0, iteration=0)
+    state = GPUStepState.StepState{Float64}(; time,iteration)
     state.fh[3] = Inf
     copyto!(state.f,state.fh)
     for d in (domains...,map(d -> d.predictor,domains)...)
@@ -400,7 +405,7 @@ function initialize_resident_domains!(domains)
     return state
 end
 
-function prepare_resolution_graph!(domains,limits,state; batch_steps,use_graphs)
+function prepare_resolution_graph!(domains,limits,state; batch_steps,use_graphs,damping=(),interaction=(;))
     !use_graphs && return nothing
     key = (UInt(0),0,Int(batch_steps))
     haskey(state.graphs,key) && return nothing
@@ -408,11 +413,11 @@ function prepare_resolution_graph!(domains,limits,state; batch_steps,use_graphs)
     # destroys the accepted grid or mutates the flux budget.
     saved_stop = state.ih[1]
     GPUStepState.set_slot!(state.i,state.ih,1,GPUStepState.STOP_OUTPUT)
-    enqueue_resolution_step!(domains,limits,state)
+    enqueue_resolution_step!(domains,limits,state; damping,interaction)
     CUDA.synchronize()
     graph = CUDA.capture(; flags=CUDA.STREAM_CAPTURE_MODE_RELAXED) do
         for _ in 1:batch_steps
-            enqueue_resolution_step!(domains,limits,state)
+            enqueue_resolution_step!(domains,limits,state; damping,interaction)
         end
     end
     state.graphs[key] = CUDA.instantiate(graph)
@@ -428,16 +433,16 @@ function resolution_pending_domain(domains,phase)
     error("Invalid variable-resolution rebuild phase: $phase")
 end
 
-function advance_resolution!(domains,limits,state,deadline; batch_steps=32,use_graphs=true)
-    GPUStepState.set_output_time!(state,deadline; clip_timestep=true)
-    while state.fh[2] < deadline
-        prepare_resolution_graph!(domains,limits,state; batch_steps,use_graphs)
+function advance_resolution!(domains,limits,state,deadline; batch_steps=32,use_graphs=true,clip_timestep=true,damping=(),interaction=(;))
+    GPUStepState.set_output_time!(state,deadline; clip_timestep)
+    while !GPUStepState.output_time_reached(state.fh[2],deadline,clip_timestep)
+        prepare_resolution_graph!(domains,limits,state; batch_steps,use_graphs,damping,interaction)
         if use_graphs
             CUDA.launch(state.graphs[(UInt(0),0,Int(batch_steps))])
             state.graph_batches += 1
         else
             for _ in 1:batch_steps
-                enqueue_resolution_step!(domains,limits,state)
+                enqueue_resolution_step!(domains,limits,state; damping,interaction)
             end
             state.direct_batches += 1
         end

@@ -12,6 +12,7 @@ import ..SimulationLoggerConfiguration as LOGGER
 using ..SimulationGeometry
 using ..SimulationConstantsConfiguration
 using ..SimulationMetaDataConfiguration: DualSPHysicsSymplectic
+using ..VariableResolutionConfiguration: VariableResolutionBox, VariableResolutionConfig
 using ..SPHKernels
 using ..SPHDensityDiffusionModels: FourtakasDensityDiffusion
 using ..SPHViscosityModels: ArtificialViscosity
@@ -22,38 +23,11 @@ using ..GPUKernels
 using ..GPUStepState: HostStep
 import ..GPUStepState
 using ..GPUReductions
+using ..DampingZones: launch_damping!
 using ..ProduceHDFVTK: SaveVTKHDF
 using ..AuxiliaryFunctions: to_3d
 
-export VariableResolutionBox, run_variable_resolution_simulation
-
-"""
-    VariableResolutionBox(lower, upper; ratio = 2, buffer_h = 2, overlap_h = 2)
-
-One stationary, axis-aligned refinement rectangle in 2D. The fine spacing is
-the coarse spacing divided by `ratio`. Buffer widths are multiples of each
-domain's smoothing length; the overlap is measured with the fine smoothing
-length. Domains interact through reconstructed buffer states and accumulated
-mass flux, rather than direct interactions between unequal particle masses.
-Only one refinement level, fixed mDBC walls and Wendland C2 are supported.
-Each domain may contain one fluid group; newly created particles keep its marker.
-"""
-struct VariableResolutionBox
-    lower::SVector{2,Float64}
-    upper::SVector{2,Float64}
-    ratio::Int
-    buffer_h::Float64
-    overlap_h::Float64
-    function VariableResolutionBox(lower, upper; ratio = 2, buffer_h = 2, overlap_h = 2)
-        lo, hi = SVector{2,Float64}(lower), SVector{2,Float64}(upper)
-        all(isfinite, lo) && all(isfinite, hi) && all(hi .> lo) ||
-            throw(ArgumentError("refinement bounds must be finite and strictly increasing"))
-        ratio isa Integer && 2 <= ratio <= 4 || throw(ArgumentError("ratio must be an integer from 2 to 4"))
-        isfinite(buffer_h) && buffer_h >= 2 || throw(ArgumentError("buffer_h must be finite and at least 2"))
-        isfinite(overlap_h) && overlap_h >= 2 || throw(ArgumentError("overlap_h must be finite and at least 2"))
-        new(lo, hi, ratio, buffer_h, overlap_h)
-    end
-end
+export VariableResolutionBox, VariableResolutionConfig, run_variable_resolution_simulation
 
 @inline inside_box(x, lo, hi) = all(x .>= lo) && all(x .<= hi)
 
@@ -257,6 +231,29 @@ function resolution_snapshot(domain, region, limits; include_buffers = false)
         buffer = Int8[types[i] == Fluid && buffer_particle(x[i], limits, domain.fine) for i in keep])
 end
 
+function validate_resolution_physics(coarse_constants,fine_constants,coarse_kernel,fine_kernel,region)
+    for (constants, kernel) in ((coarse_constants, coarse_kernel), (fine_constants, fine_kernel))
+        typeof(constants.dx) in (Float32,Float64) && typeof(kernel.h) == typeof(constants.dx) ||
+            throw(ArgumentError("each domain requires matching Float32 or Float64 constants and kernel precision"))
+        kernel isa SPHKernelInstance{<:WendlandC2,2} || throw(ArgumentError("variable resolution requires 2D Wendland C2 kernels"))
+        positive = (constants.dx, constants.m₀, constants.c₀, constants.ρ₀, constants.Cb, constants.γ⁻¹, kernel.h)
+        all(isfinite,positive) && minimum(positive) > 0 ||
+            throw(ArgumentError("spacings, masses, sound speeds, reference densities, EOS coefficients and smoothing lengths must be positive and finite"))
+        isapprox(constants.m₀, constants.ρ₀ * constants.dx^2; rtol = 1e-5) ||
+            throw(ArgumentError("2D resolution domains require mass = reference density * spacing^2"))
+        isfinite(constants.γ) && constants.γ > 0 && isfinite(constants.CFL) && constants.CFL > 0 &&
+            all(v -> isfinite(v) && v >= 0,(constants.g,constants.α,constants.δᵩ)) ||
+            throw(ArgumentError("gamma and CFL must be positive; gravity, viscosity and diffusion must be finite and nonnegative"))
+        kernel.k == 2 || throw(ArgumentError("Wendland support radius must be 2h"))
+    end
+    isapprox(coarse_constants.dx / fine_constants.dx, region.ratio; rtol = 1e-5) || throw(ArgumentError("domain spacings do not match the refinement ratio"))
+    isapprox(coarse_kernel.h / fine_kernel.h, region.ratio; rtol = 1e-5) || throw(ArgumentError("domain smoothing lengths do not match the refinement ratio"))
+    for field in (:ρ₀, :c₀, :g, :γ, :γ⁻¹, :Cb, :α, :δᵩ, :CFL)
+        getproperty(coarse_constants,field) == getproperty(fine_constants,field) || throw(ArgumentError("domain constants must agree on $field"))
+    end
+    return nothing
+end
+
 """
     run_variable_resolution_simulation(; coarse_geometry, fine_geometry,
         coarse_constants, fine_constants, coarse_kernel, fine_kernel, region,
@@ -298,25 +295,7 @@ function run_variable_resolution_simulation(; coarse_geometry, fine_geometry, co
     batch_steps isa Integer && 1 <= batch_steps <= 256 || throw(ArgumentError("batch_steps must be an integer from 1 to 256"))
     isfinite(simulation_time) && simulation_time > 0 || throw(ArgumentError("simulation_time must be finite and positive"))
     isfinite(output_interval) && output_interval > 0 || throw(ArgumentError("output_interval must be finite and positive"))
-    for (constants, kernel) in ((coarse_constants, coarse_kernel), (fine_constants, fine_kernel))
-        typeof(constants.dx) in (Float32,Float64) && typeof(kernel.h) == typeof(constants.dx) ||
-            throw(ArgumentError("each domain requires matching Float32 or Float64 constants and kernel precision"))
-        kernel isa SPHKernelInstance{<:WendlandC2,2} || throw(ArgumentError("variable resolution requires 2D Wendland C2 kernels"))
-        positive = (constants.dx, constants.m₀, constants.c₀, constants.ρ₀, constants.Cb, constants.γ⁻¹, kernel.h)
-        all(isfinite,positive) && minimum(positive) > 0 ||
-            throw(ArgumentError("spacings, masses, sound speeds, reference densities, EOS coefficients and smoothing lengths must be positive and finite"))
-        isapprox(constants.m₀, constants.ρ₀ * constants.dx^2; rtol = 1e-5) ||
-            throw(ArgumentError("2D resolution domains require mass = reference density * spacing^2"))
-        isfinite(constants.γ) && constants.γ > 0 && isfinite(constants.CFL) && constants.CFL > 0 &&
-            all(v -> isfinite(v) && v >= 0,(constants.g,constants.α,constants.δᵩ)) ||
-            throw(ArgumentError("gamma and CFL must be positive; gravity, viscosity and diffusion must be finite and nonnegative"))
-        kernel.k == 2 || throw(ArgumentError("Wendland support radius must be 2h"))
-    end
-    isapprox(coarse_constants.dx / fine_constants.dx, region.ratio; rtol = 1e-5) || throw(ArgumentError("domain spacings do not match the refinement ratio"))
-    isapprox(coarse_kernel.h / fine_kernel.h, region.ratio; rtol = 1e-5) || throw(ArgumentError("domain smoothing lengths do not match the refinement ratio"))
-    for field in (:ρ₀, :c₀, :g, :γ, :γ⁻¹, :Cb, :α, :δᵩ, :CFL)
-        getproperty(coarse_constants,field) == getproperty(fine_constants,field) || throw(ArgumentError("domain constants must agree on $field"))
-    end
+    validate_resolution_physics(coarse_constants,fine_constants,coarse_kernel,fine_kernel,region)
     output = abspath(save_location)
     isdir(output) && !isempty(readdir(output)) && throw(ArgumentError("save_location must be empty: $output"))
     limits = resolution_limits(region, Float64(coarse_kernel.h), Float64(fine_kernel.h))
@@ -428,10 +407,12 @@ function run_variable_resolution_simulation(; coarse_geometry, fine_geometry, co
                 control_readbacks = device_state === nothing ? nothing : device_state.readbacks,
                 graph_batches = device_state === nothing ? 0 : device_state.graph_batches,
                 direct_batches = device_state === nothing ? 0 : device_state.direct_batches,
-                density_diffusion = :fourtakas_full, boundary = :mdbc, cell_subdivision = 1,
+                density_diffusion = :fourtakas_full, boundary = :mdbc, cell_subdivision = 2,
                 coarse_spacing = coarse_constants.dx, fine_spacing = fine_constants.dx,
                 coarse_mass = coarse_constants.m₀, fine_mass = fine_constants.m₀))
     end
 end
+
+include("VariableResolutionSolver.jl")
 
 end

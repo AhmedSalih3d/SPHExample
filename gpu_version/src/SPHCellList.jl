@@ -1647,6 +1647,8 @@ end
 
 include("GPUDualSymplecticDriver.jl")
 
+function run_variable_resolution end
+
 """
     RunSimulation(; SimGeometry, SimMetaData, SimConstants, SimKernel, SimLogger,
                     SimParticles, SimViscosity, SimDensityDiffusion, SimTimeStepping,
@@ -1701,6 +1703,15 @@ their accepted positions after integration; boundaries, floating bodies and
 frozen particles are unchanged. This works with both CPU-style schemes, CUDA
 graphs and `DualSPHysicsSymplectic`.
 
+`SimMetaData.VariableResolution = VariableResolutionConfig(region; fine_geometry, ...)`
+selects the two-domain GPU backend. The ordinary `SimGeometry`, `SimConstants`,
+`SimKernel` and `SimParticles` describe its coarse domain. Fine constants/kernel
+can be supplied or derived from the ratio. The normal output names, selected
+fields, schedules, logger and `SimulationResult` are used; `SimParticles` is
+resized to the final exported combined state. `final_state.resolution` contains
+the two host domain snapshots. See `VariableResolutionConfig` for supported
+models and boundary modes. `SimDamping` acts on both domains.
+
 `SimRotation = RotationMotion(...)` prescribes physical rotation of one
 `Moving` group in nonperiodic 2D DBC cases. The input geometry is the zero-angle
 reference. Walls are placed absolutely at the start, predictor and accepted
@@ -1743,6 +1754,11 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SV <: SPHViscosity, SDD <: SPHDensityDiffusion}
 
     CUDA.functional() || error("CUDA is not functional on this machine; use the CPU package SPHExample instead.")
+    if SimMetaData.VariableResolution !== nothing
+        return run_variable_resolution(; SimGeometry,SimMetaData,SimConstants,SimKernel,SimLogger,SimParticles,
+            SimViscosity,SimDensityDiffusion,SimTimeStepping,ParticleNormalsPath,SimMeasurements,SimExternalForces,
+            SimDamping,SimRotation,SimMotion,ParaviewPressureRange)
+    end
     SimRotation === nothing || (Dimensions == 2 && BMode === NoMDBC && SimMetaData.Periodicity === nothing) ||
         throw(ArgumentError("SimRotation currently requires a nonperiodic 2D DBC case (NoMDBC)"))
     SimMotion === nothing || (Dimensions in (2,3) &&

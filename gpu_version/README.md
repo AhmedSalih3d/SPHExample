@@ -33,6 +33,25 @@ precision with `FloatType = Float32` or `Float64` at the top of a script.
 
 ### Variable-resolution dam break
 
+Refinement is available through the normal solver:
+
+```julia
+refinement = VariableResolutionConfig(VariableResolutionBox((2.5,-0.2),(4.1,0.6));
+    fine_geometry = fine_geometry, particle_reserve = 40000)
+meta = SimulationMetaData{2,Float32,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(
+    SimulationName = "RefinedTank", SaveLocation = output_directory,
+    SimulationTime = 1.0, OutputTimes = 0.0025,
+    VariableResolution = refinement, GPUClipTimeStepToOutput = true)
+```
+
+Allocate particles with `AllocateDataStructures(coarse_geometry, meta)` and
+call `RunSimulation` with the coarse constants/kernel, `ArtificialViscosity()`,
+`FourtakasDensityDiffusion(full=true)` and `DualSPHysicsSymplectic()`. Fine
+constants/kernel are derived from the ratio unless supplied in the config.
+Normal file naming, output fields, scalar/vector schedules, logging and
+`SimulationResult` apply; `SimDamping` acts on both domains. The case guide
+contains a complete call and supported-option details.
+
 [VResolutionDamBreak2d.jl](example/VResolutionDamBreak2d.jl) runs a native Julia/CUDA
 adaptation of DualSPHysics 5.4 `vresolution/01_DamBreak2D`. A 0.01 m coarse domain
 couples to a 0.005 m downstream patch through reconstructed buffers and accumulated
@@ -45,15 +64,14 @@ differences, output fields, customization and validation commands.
 julia --project=gpu_version -t 2,0 gpu_version/example/VResolutionDamBreak2d.jl
 ```
 
-Variable-resolution runs default to GPU-resident timestep, transfer and grid
-control, replayed in CUDA graph batches of 32 steps. Active particles occupy a
-dense prefix; dormant reserve slots do not participate in histograms, sorting,
-predictor copies or reductions. The host checks a small control state once per
-batch, handles exceptional grid-capacity growth, and downloads output frames.
-Use `execution=:host` for the previous reference driver, or `use_graphs=false`
-to validate the same device driver with direct launches. `batch_steps` controls
-the status-check interval. The timestep rules, Float64 positions/MLS and
-subdivision `R=1` are preserved.
+Variable-resolution runs use GPU-resident timestep, transfer and grid control,
+with dense active prefixes that exclude dormant reserves from routine work.
+Normal runs use `GPUUseGraph` and `GPUMaxStepsPerSync` in metadata (default 32)
+for graph execution and status checks. The host handles exceptional grid growth
+and output downloads. The standalone validation driver also accepts
+`execution=:host` for reference comparisons, `use_graphs=false` for direct
+device launches and `batch_steps` for its status interval. The timestep rules,
+Float64 positions/MLS and subdivision `R=1` are preserved.
 
 Paired whole-solver timings and particle-state checks are available with:
 

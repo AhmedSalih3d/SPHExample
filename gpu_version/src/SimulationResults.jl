@@ -50,6 +50,15 @@ and files have closed. Its fields are:
 
 The result retains host data only, so it does not extend the lifetime of the
 solver's device buffers. Ignoring the return value preserves existing usage.
+
+With `SimulationMetaData.VariableResolution`, `particles` is resized to the
+combined exported coarse/fine state; `final_state.resolution` adds separate
+host snapshots with per-particle spacing, mass, ownership and level columns.
+`diagnostics.resolution` contains per-domain counts, transfer/exclusion event
+totals and the history CSV path. Variable-count throughput does not have a
+measured particle-step integral, so `mparticle_steps_per_second` is `NaN`.
+The configuration reports supported refinement arithmetic and synchronous
+variable-count output, including fallbacks from other requested GPU options.
 """
 struct SimulationResult{S, P, D, C}
     final_state::S

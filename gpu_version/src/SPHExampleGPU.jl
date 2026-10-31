@@ -15,6 +15,7 @@ module SPHExampleGPU
         "SimulationGeometry.jl",
         "SPHKernels.jl",
         "PeriodicBoundaries.jl",
+        "VariableResolutionConfiguration.jl",
         "SimulationMetaDataConfiguration.jl",
         "SimulationConstantsConfiguration.jl",
         "SimulationEquations.jl",
@@ -160,7 +161,7 @@ module SPHExampleGPU
     export ParticleRegion, sample_particles, hydrostatic_density, write_particle_csv
 
     using .VariableResolution
-    export VariableResolutionBox, run_variable_resolution_simulation
+    export VariableResolutionBox, VariableResolutionConfig, run_variable_resolution_simulation
 
     using .OpenExternalPrograms
     export AutoOpenLogFile, AutoOpenParaview, OpenParaviewFile
