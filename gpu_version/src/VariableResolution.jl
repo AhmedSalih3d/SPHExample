@@ -5,6 +5,9 @@ using CUDA
 using StaticArrays
 using LinearAlgebra
 using Printf
+using TimerOutputs
+using ..SimulationLoggerConfiguration: SimulationLogger, log_line, LogStep, LogFinal
+import ..SimulationLoggerConfiguration as LOGGER
 using ..SimulationGeometry
 using ..SimulationConstantsConfiguration
 using ..SimulationMetaDataConfiguration: DualSPHysicsSymplectic
@@ -163,6 +166,7 @@ function make_resolution_domain(geometry, constants::SimulationConstants{T}, ker
 end
 
 include("GPUVariableResolution.jl")
+include("VariableResolutionLogging.jl")
 
 function rebuild_domain!(domain)
     # Always supply the frozen-particle state, even if a previous transfer filled
@@ -264,6 +268,11 @@ Liu–Liu reconstruction and is experimental, not a trajectory-equivalent port.
 Numbered VTKHDF frames and a `.vtkhdf.series` time index contain current owned
 particles (or both domains with `include_buffers=true`). `History.csv` records
 particle counts, represented mass and transfer/exclusion events.
+`SimulationOutput.log` uses the standard progress/ETA table and final wall-time
+report, with separate initialization, solver and output timings. CUDA is
+synchronized at output boundaries for complete interval timings. The driver
+clock includes first-use JIT but excludes package loading and caller geometry
+construction. The result exposes `log_path` and `timings`.
 """
 function run_variable_resolution_simulation(; coarse_geometry, fine_geometry, coarse_constants,
         fine_constants, coarse_kernel, fine_kernel, region::VariableResolutionBox,
@@ -297,84 +306,104 @@ function run_variable_resolution_simulation(; coarse_geometry, fine_geometry, co
     area = prod(limits.fine_outer_hi - limits.fine_outer_lo)
     coarse_reserve = particle_reserve === nothing ? max(1024, ceil(Int, 2area / coarse_constants.dx^2)) : particle_reserve
     fine_reserve = particle_reserve === nothing ? max(1024, ceil(Int, 2area / fine_constants.dx^2)) : particle_reserve
-    coarse = make_resolution_domain(coarse_geometry, coarse_constants, coarse_kernel, limits, false, coarse_reserve)
-    fine = make_resolution_domain(fine_geometry, fine_constants, fine_kernel, limits, true, fine_reserve)
-    domains = (coarse, fine)
-    foreach(d -> retire_particles!(d, limits), domains)
-    foreach(rebuild_domain!, domains)
-    exchange_buffers!(coarse, fine, limits)
-    exchange_buffers!(fine, coarse, limits)
-    mkpath(output)
-    times, files = Float64[], String[]
-    time, iterations, frame = 0.0, 0, 0
-    previous_limit = Inf
-    history_path = joinpath(output, "History.csv")
-    open(history_path, "w") do history
-        println(history, "time,iteration,coarse_fluid,fine_fluid,represented_fluid_mass,coarse_created,fine_created,coarse_retired,fine_retired,coarse_excluded,fine_excluded,coarse_nonfinite,fine_nonfinite")
-        function write_frame()
-            events = map(d -> Array(d.events),domains)
-            all(e -> e[4] == 0,events) || error("Non-finite variable-resolution particle state at t=$time; coarse/fine failures=$(events[1][4])/$(events[2][4])")
-            snapshots = map(d -> resolution_snapshot(d,region,limits; include_buffers), domains)
-            fields = map(name -> vcat((getproperty(s,name) for s in snapshots)...), keys(first(snapshots)))
-            data = NamedTuple{keys(first(snapshots))}(fields)
-            file = @sprintf("DamBreak2D_VRes_%04d.vtkhdf", frame)
-            SaveVTKHDF(joinpath(output,file), to_3d(data.position),
-                ["Velocity", "Density", "Pressure", "Type", "ID", "Resolution", "Spacing", "Mass", "Owned", "IsBuffer"],
-                data.velocity, data.density, data.pressure, data.type, data.id, data.level, data.spacing, data.mass, data.owned, data.buffer)
-            counts = map(s -> count(==(Int8(Fluid)),s.type), snapshots)
-            mass = sum(data.mass[i] for i in eachindex(data.mass) if data.type[i] == Int8(Fluid) && data.owned[i] == 1; init = 0.0)
-            println(history, join((time,iterations,counts...,mass,events[1][1],events[2][1],events[1][2],events[2][2],events[1][3],events[2][3],events[1][4],events[2][4]),','))
-            flush(history)
-            push!(times,time); push!(files,file)
-            open(joinpath(output,"DamBreak2D_VRes.vtkhdf.series"),"w") do io
-                println(io,"{\"file-series-version\": \"1.0\", \"files\": [")
-                for i in eachindex(files)
-                    println(io,"{\"name\": \"",files[i],"\", \"time\": ",times[i],"}",i == length(files) ? "" : ",")
-                end
-                println(io,"]}")
-            end
-            @printf("VRes t = %.6f s, step %d, coarse/fine fluid = %d/%d\n",time,iterations,counts...)
-            flush(stdout)
-            frame += 1
+    return with_resolution_logger(output) do logger,timer
+        @timeit timer "00 Initialization" begin
+            settings = (; coarse_constants, fine_constants, coarse_kernel, fine_kernel,
+                coarse_geometry, fine_geometry, coarse_reserve, fine_reserve, region, simulation_time, output_interval)
+            initialize_resolution_log!(logger,settings)
+            coarse = make_resolution_domain(coarse_geometry, coarse_constants, coarse_kernel, limits, false, coarse_reserve)
+            fine = make_resolution_domain(fine_geometry, fine_constants, fine_kernel, limits, true, fine_reserve)
+            domains = (coarse, fine)
+            foreach(d -> retire_particles!(d, limits), domains)
+            foreach(rebuild_domain!, domains)
+            exchange_buffers!(coarse, fine, limits)
+            exchange_buffers!(fine, coarse, limits)
+            CUDA.synchronize()
         end
-        write_frame()
-        while time < simulation_time
-            deadline = min(length(times) * Float64(output_interval), Float64(simulation_time))
-            while time < deadline
-                limits_dt = map(domains) do d
-                    p,s = d.particles,d.support
-                    domain_force_stage!(d,p.Position,p.Velocity,p.Density,s.PosCells,time)
+        log_line(logger,logger.ValuesToPrint)
+        log_line(logger,logger.ValuesToPrintC)
+        times, files = Float64[], String[]
+        time, iterations, frame = 0.0, 0, 0
+        previous_limit = Inf
+        last_logged_steps = 0
+        last_counts, last_mass = (0,0), 0.0
+        history_path = joinpath(output, "History.csv")
+        open(history_path, "w") do history
+            println(history, "time,iteration,coarse_fluid,fine_fluid,represented_fluid_mass,coarse_created,fine_created,coarse_retired,fine_retired,coarse_excluded,fine_excluded,coarse_nonfinite,fine_nonfinite")
+            function write_frame()
+                @timeit timer "02 Output Frame" begin
+                    events = map(d -> Array(d.events),domains)
+                    all(e -> e[4] == 0,events) || error("Non-finite variable-resolution particle state at t=$time; coarse/fine failures=$(events[1][4])/$(events[2][4])")
+                    snapshots = map(d -> resolution_snapshot(d,region,limits; include_buffers), domains)
+                    fields = map(name -> vcat((getproperty(s,name) for s in snapshots)...), keys(first(snapshots)))
+                    data = NamedTuple{keys(first(snapshots))}(fields)
+                    file = @sprintf("DamBreak2D_VRes_%04d.vtkhdf", frame)
+                    SaveVTKHDF(joinpath(output,file), to_3d(data.position),
+                        ["Velocity", "Density", "Pressure", "Type", "ID", "Resolution", "Spacing", "Mass", "Owned", "IsBuffer"],
+                        data.velocity, data.density, data.pressure, data.type, data.id, data.level, data.spacing, data.mass, data.owned, data.buffer)
+                    counts = map(s -> count(==(Int8(Fluid)),s.type), snapshots)
+                    mass = sum(data.mass[i] for i in eachindex(data.mass) if data.type[i] == Int8(Fluid) && data.owned[i] == 1; init = 0.0)
+                    println(history, join((time,iterations,counts...,mass,events[1][1],events[2][1],events[1][2],events[2][2],events[1][3],events[2][3],events[1][4],events[2][4]),','))
+                    flush(history)
+                    push!(times,time); push!(files,file)
+                    open(joinpath(output,"DamBreak2D_VRes.vtkhdf.series"),"w") do io
+                        println(io,"{\"file-series-version\": \"1.0\", \"files\": [")
+                        for i in eachindex(files)
+                            println(io,"{\"name\": \"",files[i],"\", \"time\": ",times[i],"}",i == length(files) ? "" : ",")
+                        end
+                        println(io,"]}")
+                    end
+                    last_counts, last_mass = counts, mass
                 end
-                dt = min(limits_dt...,previous_limit,deadline-time)
-                isfinite(dt) && dt > 0 || error("nonpositive or nonfinite VRes timestep")
-                previous_limit = Inf
-                for d in domains
-                    p,s,c = d.particles,d.support,d.constants
-                    GPUKernels.launch_dual_predictor!(s.Positionₙ⁺,s.Velocityₙ⁺,s.ρₙ⁺,
-                        p.Position,p.Velocity,p.Density,p.Acceleration,s.dρdtI,p.Type,dt,c)
-                    previous_limit = min(previous_limit,predictor_force_stage!(d,time+dt/2))
-                    GPUKernels.launch_dual_corrector!(p.Position,p.Velocity,p.Density,s.Positionₙ⁺,
-                        s.ρₙ⁺,p.Acceleration,s.dρdtI,p.Type,dt,c)
-                    retire_particles!(d,limits)
-                    rebuild_domain!(d)
-                end
-                created_coarse = transfer_particles!(coarse,fine,limits,dt)
-                created_fine = transfer_particles!(fine,coarse,limits,dt)
-                exchange_buffers!(coarse,fine,limits)
-                exchange_buffers!(fine,coarse,limits)
-                created_coarse && rebuild_domain!(coarse)
-                created_fine && rebuild_domain!(fine)
-                time = dt == deadline-time ? deadline : time+dt
-                iterations += 1
+                progress = (; OutputIterationCounter = frame, TotalTime = time, Iteration = iterations,
+                    StepsTakenForLastOutput = last_logged_steps, SimulationTime = Float64(simulation_time))
+                LogStep(logger,progress,timer)
+                last_logged_steps = iterations
+                frame += 1
             end
             write_frame()
+            while time < simulation_time
+                deadline = min(length(times) * Float64(output_interval), Float64(simulation_time))
+                @timeit timer "01 Solver" begin
+                    while time < deadline
+                        limits_dt = map(domains) do d
+                            p,s = d.particles,d.support
+                            domain_force_stage!(d,p.Position,p.Velocity,p.Density,s.PosCells,time)
+                        end
+                        dt = min(limits_dt...,previous_limit,deadline-time)
+                        isfinite(dt) && dt > 0 || error("nonpositive or nonfinite VRes timestep")
+                        previous_limit = Inf
+                        for d in domains
+                            p,s,c = d.particles,d.support,d.constants
+                            GPUKernels.launch_dual_predictor!(s.Positionₙ⁺,s.Velocityₙ⁺,s.ρₙ⁺,
+                                p.Position,p.Velocity,p.Density,p.Acceleration,s.dρdtI,p.Type,dt,c)
+                            previous_limit = min(previous_limit,predictor_force_stage!(d,time+dt/2))
+                            GPUKernels.launch_dual_corrector!(p.Position,p.Velocity,p.Density,s.Positionₙ⁺,
+                                s.ρₙ⁺,p.Acceleration,s.dρdtI,p.Type,dt,c)
+                            retire_particles!(d,limits)
+                            rebuild_domain!(d)
+                        end
+                        created_coarse = transfer_particles!(coarse,fine,limits,dt)
+                        created_fine = transfer_particles!(fine,coarse,limits,dt)
+                        exchange_buffers!(coarse,fine,limits)
+                        exchange_buffers!(fine,coarse,limits)
+                        created_coarse && rebuild_domain!(coarse)
+                        created_fine && rebuild_domain!(fine)
+                        time = dt == deadline-time ? deadline : time+dt
+                        iterations += 1
+                    end
+                    CUDA.synchronize()
+                end
+                write_frame()
+            end
         end
+        return (; coarse, fine, time, iterations, output, times, files, history_path,
+            particle_counts = (; coarse = last_counts[1], fine = last_counts[2]), represented_fluid_mass = last_mass,
+            configuration = (; method = :two_domain_mls, region, limits, include_buffers,
+                density_diffusion = :fourtakas_full, boundary = :mdbc, cell_subdivision = 1,
+                coarse_spacing = coarse_constants.dx, fine_spacing = fine_constants.dx,
+                coarse_mass = coarse_constants.m₀, fine_mass = fine_constants.m₀))
     end
-    return (; coarse, fine, time, iterations, output, times, files, history_path,
-        configuration = (; method = :two_domain_mls, region, limits, include_buffers,
-            density_diffusion = :fourtakas_full, boundary = :mdbc, cell_subdivision = 1,
-            coarse_spacing = coarse_constants.dx, fine_spacing = fine_constants.dx,
-            coarse_mass = coarse_constants.m₀, fine_mass = fine_constants.m₀))
 end
 
 end

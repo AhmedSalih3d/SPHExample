@@ -23,6 +23,21 @@ result = run_vresolution_dambreak(duration = 1.0, output_interval = 0.01,
     save_location = "C:/TestSimulations/DamBreak2D_VRes")
 ```
 
+Each run writes `SimulationOutput.log` in its output directory. It contains
+the usual `PART`, physical time, total/interval steps, elapsed runtime,
+runtime per simulated second and estimated finish time. The final report
+separates initialization, solver stepping and output/download time, and records
+throughput, rebuild counts and particle transfer/exclusion totals. Progress is
+flushed after every frame so the log can be read while the simulation runs.
+
+The clock starts before device initialization and includes JIT compilation
+performed inside the driver. Package loading/precompilation and caller-side
+geometry construction/export are outside that clock. CUDA synchronization at
+initialization/output boundaries makes the phase totals include completed GPU
+work; no per-kernel profiling or additional per-step synchronization is added.
+Caught failures and interruptions finalize the log before being rethrown.
+The returned result provides `log_path` and `timings` for programmatic access.
+
 The output directory must be empty. Open `DamBreak2D_VRes.vtkhdf.series` in
 ParaView for the numbered frames with changing particle counts. `Resolution`
 is 0 for coarse particles and 1 for fine particles; `Spacing` and `Mass` carry
@@ -60,6 +75,7 @@ repository root:
 
 ```powershell
 julia --project=gpu_version -t 2,0 gpu_version/test/variable_resolution.jl
+julia --project=gpu_version -t 2,0 gpu_version/test/vresolution_logging.jl
 ```
 
 The complete 1 s dam-break validation uses the default 0.01 m coarse spacing,
