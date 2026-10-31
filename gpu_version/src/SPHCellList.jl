@@ -843,12 +843,15 @@ and `iteration` to record events in a simulation log; without `logger`, events
 use Julia's current logger. Frozen density remains unchanged.
 Pass the prepared `rotation` state when rotating particles are present, so its
 stable reference owners follow the sorting permutation before scratch is reused.
+`sort_inactive = false` leaves the reserved inactive cell in scatter order,
+avoiding a quadratic insertion sort for large private particle pools. Active
+cell ordering is unchanged; the default retains the full deterministic sort.
 """
 function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCutOff;
                             prepared::Bool = false, support = nothing, floating = nothing, rotation = nothing,
                             constants = nothing, boundary_mode = NoMDBC(), discard_acceleration::Bool = false,
                             preserve_pressure::Bool = false, kernel = nothing,
-                            logger = nothing, time = 0, iteration = 0)
+                            logger = nothing, time = 0, iteration = 0, sort_inactive::Bool = true)
     support !== nothing && uses_pos_cells(support) && kernel === nothing &&
         throw(ArgumentError("Rebuilding with cell relative positions requires the SPH kernel."))
     if cl.periodicity !== nothing && cl.nrebuilds == 0 && floating === nothing
@@ -873,7 +876,7 @@ function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCut
     dsts = (map(f -> getproperty(s, f), fields)...,
         (compact_ghosts ? (s.BoundarySlot,) : ())..., gpu.CellID)
 
-    grid = update_cell_list!(cl, gpu.Position, InverseCutOff, srcs, dsts; prepared, freeze_state)
+    grid = update_cell_list!(cl, gpu.Position, InverseCutOff, srcs, dsts; prepared, freeze_state, sort_inactive)
     if compact_ghosts
         n = length(gpu)
         @cuda threads=ELEMENTWISE_THREADS blocks=cld(n, ELEMENTWISE_THREADS) boundary_indices_kernel!(

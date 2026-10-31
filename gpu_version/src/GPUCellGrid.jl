@@ -1088,10 +1088,10 @@ end
 # Insertion sort of the particle indices inside every cell. This makes the
 # ordering independent of the (non deterministic) order in which atomics
 # were served, so repeated runs produce bit identical results.
-function cell_sort_kernel!(Perm, CellStart, gridarg)
+function cell_sort_kernel!(Perm, CellStart, gridarg, first_cell::Int32 = Int32(1))
     grid = load_grid(gridarg)
     c = thread_index()
-    c > grid.ncells && return nothing
+    (c < first_cell || c > grid.ncells) && return nothing
     @inbounds begin
         lo = CellStart[c] + Int32(1)
         hi = CellStart[c + Int32(1)]
@@ -1320,9 +1320,14 @@ With `prepared = true`, the caller has already prepared and consumed a valid
 grid header, so no dedicated grid-status synchronization is performed. The
 enqueue phase can be captured with fixed grid dimensions and stable buffers;
 conditional preparation and host capacity growth remain outside that capture.
+`sort_inactive = false` skips the deterministic insertion sort of reserved
+cell one. Only inactive particles occupy that margin cell; their order becomes
+unspecified while every active cell retains its deterministic sort. This is
+useful for drivers with a large dormant particle pool. The default is `true`.
 """
 function update_cell_list!(ws::CellListWorkspace{D, T, R}, Position::CuVector{SVector{D, T}},
-                           InverseCutOff, srcs::Tuple, dsts::Tuple; prepared::Bool = false, freeze_state = nothing) where {D, T, R}
+                           InverseCutOff, srcs::Tuple, dsts::Tuple; prepared::Bool = false, freeze_state = nothing,
+                           sort_inactive::Bool = true) where {D, T, R}
     n = length(Position)
     n == length(ws.Perm) || throw(DimensionMismatch("positions and cell-list workspace particle counts differ"))
     ws.frozen_total == 0 || freeze_state !== nothing ||
@@ -1359,7 +1364,7 @@ function update_cell_list!(ws::CellListWorkspace{D, T, R}, Position::CuVector{SV
 
     if ws.deterministic
         @cuda threads=threads blocks=cld(ncells, threads) cell_sort_kernel!(ws.Perm, ws.CellStart,
-                                                                               ws.grid_dev)
+            ws.grid_dev, sort_inactive ? Int32(1) : Int32(2))
     end
 
     @cuda threads=threads blocks=blocks gather_kernel!(ws.Perm, srcs, dsts, Int32(n))
@@ -1372,8 +1377,9 @@ end
     compact_nonzero!(ws, x, out; predicate = !iszero) -> out
 
 Write the (1-based, ascending) indices of the non-zero entries of the device
-vector `x` into `out`, an `Int32` vector whose length must equal their
-number. `x` must have one entry per particle. Uses the `Perm` and
+vector `x` into `out`, an `Int32` vector with capacity for at least their
+number. Entries beyond the selected count are left unchanged. `x` must
+have one entry per particle. Uses the `Perm` and
 `CellIDScratch` buffers of `ws` as scratch space, so call it only after
 `update_cell_list!` is done with them, i.e. after the reorder. The driver
 uses it in full-buffer mode to list ghost-owning boundary particles in cell order

@@ -443,7 +443,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                     xᵢⱼ² = dot(xᵢⱼ, xᵢⱼ)
                     slotⱼ = xᵢⱼ² <= H² ? boundary_slot(boundary_data, ParticleType, j) : Int32(0)
                     if SimDensityDiffusion isa FourtakasDensityDiffusion
-                        diffusion_blocked |= xᵢⱼ² <= H² && is_wall(ParticleType[j])
+                        diffusion_blocked |= !SimDensityDiffusion.full && xᵢⱼ² <= H² && is_wall(ParticleType[j])
                     end
                     skip_wall_pair = viscous_dt !== nothing && wallᵢ && is_wall(ParticleType[j])
                     if xᵢⱼ² <= H² && boundary_enabled(boundary_data, slotⱼ) && !skip_wall_pair

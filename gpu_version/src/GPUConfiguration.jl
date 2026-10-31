@@ -52,7 +52,7 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
         interaction_fastmath = meta.GPUInteractionFastMath,
         density_diffusion_model = typeof(diffusion),
         density_diffusion_operator = diffusion isa ZeroDensityDiffusion ? :disabled :
-            diffusion isa FourtakasDensityDiffusion ? :fourtakas_inner :
+            diffusion isa FourtakasDensityDiffusion ? (diffusion.full ? :fourtakas_full : :fourtakas_inner) :
             options.radial ? :symmetric_reciprocal_density : :reference,
         viscosity_model = typeof(viscosity),
         boundary_viscosity_factor = viscosity isa ArtificialViscosity ? viscosity.boundary_factor : nothing,

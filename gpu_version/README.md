@@ -31,6 +31,20 @@ julia --project=gpu_version gpu_version/example/Dambreak2dMDBC.jl
 The examples in `gpu_version/example/` mirror those in `example/`. Choose the
 precision with `FloatType = Float32` or `Float64` at the top of a script.
 
+### Variable-resolution dam break
+
+[VResolutionDamBreak2d.jl](example/VResolutionDamBreak2d.jl) runs a native Julia/CUDA
+adaptation of DualSPHysics 5.4 `vresolution/01_DamBreak2D`. A 0.01 m coarse domain
+couples to a 0.005 m downstream patch through reconstructed buffers and accumulated
+interface mass flux. It supports fixed mDBC walls and one stationary refinement
+rectangle. This experimental implementation uses first-order MLS reconstruction;
+see the [case guide](example/VResolutionDamBreak2d/README.md) for numerical
+differences, output fields, customization and validation commands.
+
+```bash
+julia --project=gpu_version -t 2,0 gpu_version/example/VResolutionDamBreak2d.jl
+```
+
 ### Dimension-aware physical constants
 
 Pass the simulation dimension to set the default particle mass from density
@@ -1916,7 +1930,9 @@ the standard *gather* formulation:
   reference wave-maker's DDT2 inner operator from each target's viewpoint.
   It uses the neighbour's reciprocal density and a nonlinear hydrostatic
   correction, and suppresses the whole diffusion sum when a prescribed wall
-  lies within the support radius. `ComplexDensityDiffusion()` retains its
+  lies within the support radius. `FourtakasDensityDiffusion(full = true)`
+  selects DDT3, retaining fluid-fluid diffusion near walls while excluding
+  wall pairs. `ComplexDensityDiffusion()` retains its
   existing CPU pair orientation and fluid-fluid diffusion near walls.
 * **Fluid gating of density diffusion by select, not early exit.** The
   `LinearDensityDiffusion` and `ComplexDensityDiffusion` terms act only between

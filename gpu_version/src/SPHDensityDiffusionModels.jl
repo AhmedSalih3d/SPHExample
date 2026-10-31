@@ -209,15 +209,20 @@ hydrostatic equation of state.
 struct ComplexDensityDiffusion <: SPHDensityDiffusion end
 
 """
-    FourtakasDensityDiffusion()
+    FourtakasDensityDiffusion(; full = false)
 
 Target-oriented Fourtakas inner density diffusion (DualSPHysics DDT2).
-The GPU interaction pass suppresses the complete contribution when the target's support
-contains a prescribed wall. This differs from `ComplexDensityDiffusion`,
+The default GPU interaction pass suppresses the complete contribution when the target's support
+contains a prescribed wall. `full = true` selects DDT3: fluid-fluid diffusion
+remains active near walls, while wall pairs contribute no diffusion.
+This differs from `ComplexDensityDiffusion`,
 which retains the CPU reference's pair orientation and fluid-fluid terms
 near walls. Existing diffusion models are unchanged.
 """
-struct FourtakasDensityDiffusion <: SPHDensityDiffusion end
+struct FourtakasDensityDiffusion <: SPHDensityDiffusion
+    full::Bool
+end
+FourtakasDensityDiffusion(; full = false) = FourtakasDensityDiffusion(full)
 
 @inline function fourtakas_diffusion(kernel, constants, x, gradient, distance_squared, density_i, density_j, inverse_j, ::Val{Fast}=Val(false)) where {Fast}
     base = one(density_i) + (constants.ρ₀ * constants.g / constants.Cb) * x[end]

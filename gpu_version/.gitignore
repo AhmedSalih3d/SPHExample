@@ -20,3 +20,4 @@ julia-*.tar.gz
 
 # Local reference exports and wave-maker comparison runs
 /output/wavemaker_investigation/
+/output/vresolution_dambreak2d*/
