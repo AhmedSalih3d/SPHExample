@@ -37,6 +37,7 @@ using CUDA
 using LinearAlgebra: cross, det, dot
 using StaticArrays
 
+using ..Constraints: axial_spring_force
 using ..SimulationGeometry
 using ..GPUCellGrid: thread_index, compact_nonzero!
 using ..GPUStepState

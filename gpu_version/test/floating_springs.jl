@@ -4,6 +4,9 @@ const F = SPHExampleGPU.GPUFloating
 const S = SPHExampleGPU.GPUStepState
 
 @testset "linear spring validation and analytic loads" begin
+    @test SPHExampleGPU.Constraints.LinearSpring === LinearSpring
+    @test SPHExampleGPU.Constraints.FloatingConstraints === FloatingConstraints
+    @test axial_spring_force(SVector(1.0,0.0),SVector(3.0,0.0),10.0,2.0,0.5) == SVector(-11.0,0.0)
     @test_throws ArgumentError LinearSpring{2,Float32}(;Anchor=(0,0),Attachment=(0,1),Stiffness=-1)
     @test_throws ArgumentError LinearSpring{2,Float32}(;Anchor=(0,0),Attachment=(0,1),Stiffness=1,Damping=Inf)
     @test_throws ArgumentError LinearSpring{2,Float32}(;Anchor=(0,NaN),Attachment=(0,1),Stiffness=1)

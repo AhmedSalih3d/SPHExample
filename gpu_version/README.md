@@ -122,7 +122,11 @@ particles in both single and numbered VTKHDF files. The final transform is
 follow the usual body-output format. Body poses are downloaded only at output.
 See [VResolutionAttachedBody2d.jl](example/VResolutionAttachedBody2d.jl) for a
 complete tank example; call `run_attached_resolution_example(floating=false)`
-for prescribed motion.
+for prescribed motion. Both body-following examples expose their input structs
+in the main `.jl` file, and including either file defines its functions without
+starting a simulation. They save one temporal `.vtkhdf` containing `Particles`
+and animated `Geometry` blocks (body outline, tracked patch and, for the point
+absorber, spring). Histories remain available as CSV files.
 
 ```bash
 julia --project=gpu_version gpu_version/test/resolution_attachment.jl
@@ -137,9 +141,14 @@ comparison CSV; it never launches DualSPHysics. See its
 [case guide](example/VResolutionPointAbsorberSpring2d/README.md) for settings,
 link animation and focused validation.
 
-Floating bodies in either solver can use fixed-anchor springs:
+The native `SPHExampleGPU.Constraints` module owns `FloatingConstraints`,
+`LinearSpring` and the host/device axial force law `axial_spring_force`.
+The types remain exported at the package level for existing callers. Floating
+bodies in either GPU solver can use fixed-anchor springs:
 
 ```julia
+using SPHExampleGPU.Constraints: FloatingConstraints, LinearSpring
+
 spring = LinearSpring{2,Float32}(Anchor=(2.0,0.0), Attachment=(2.0,0.325),
     Stiffness=100, Damping=500, RestLength=0.325)
 body = FloatingDetails{Float32}(RelativeWeight=0.5, Springs=(spring,),
@@ -155,6 +164,16 @@ CUDA graphs. Attached runs write endpoint, extension and force histories to
 `<SimulationName>_Springs.csv`; the accepted records are also available as
 `result.final_state.springs`. The ordinary uniform solver exposes output
 snapshots through `SPHExampleGPU.GPUFloating.floating_spring_state(floating)`.
+
+Open either example's `.vtkhdf` directly in ParaView and press **Apply**. Select
+the `Particles` block for point fields and `Geometry` for outlines/link geometry;
+use the time controls to animate. A render helper uses ParaView's bundled VTK:
+
+```powershell
+pvpython --dr gpu_version/example/RenderRefinement2d.py path/to/PointAbsorberSpring2D.vtkhdf preview.png
+# Numbered PNG frames for an animation:
+pvpython --dr gpu_version/example/RenderRefinement2d.py path/to/FloatingRefinement.vtkhdf frames --all-frames
+```
 
 Paired whole-solver timings and particle-state checks are available with:
 

@@ -12,6 +12,7 @@ module SPHExampleGPU
         "AuxiliaryFunctions.jl",
         "HDF5Append.jl",
         "PolygonDrawing.jl",
+        "Constraints.jl",
         "SimulationGeometry.jl",
         "SPHKernels.jl",
         "PeriodicBoundaries.jl",
@@ -64,6 +65,9 @@ module SPHExampleGPU
 
     using .SPHDensityDiffusionModels
     export SPHDensityDiffusion, ZeroDensityDiffusion, ZeroGravityLinearDensityDiffusion, LinearDensityDiffusion, ZeroGravityComplexDensityDiffusion, ComplexDensityDiffusion, FourtakasDensityDiffusion, compute_density_diffusion
+
+    using .Constraints
+    export Constraints, axial_spring_force
 
     using .SimulationGeometry
     export ParticleType, Fixed, Fluid, Moving, Floating, Frozen, SPHGeometry, MotionDetails, FloatingDetails, FloatingConstraints, LinearSpring,

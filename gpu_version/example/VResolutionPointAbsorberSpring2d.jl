@@ -1,18 +1,158 @@
-# DualSPHysics vresolution/06_Special: a heaving box on a damped linear spring.
-include(joinpath(@__DIR__,"VResolutionPointAbsorberSpring2d","Setup.jl"))
+# Heaving point absorber with a damped spring and body-following refinement.
+# Input structs are below; geometry and comparison helpers are in Setup.jl.
+# Including this file only defines the case. Running it starts the simulation.
+using SPHExampleGPU
+using SPHExampleGPU.Constraints: FloatingConstraints, LinearSpring
+using StaticArrays: SVector
 
-# Our ordinary solver settings; geometry, wave and link dimensions follow the
-# existing case. This runs only SPHExampleGPU and reads bundled reference data.
-run_point_absorber_spring(
-    dx=0.01,
-    ratio=2,
-    duration=10.0,
-    output_interval=0.05,
-    h_coefficient=1.5,
-    viscosity=0.05,
-    diffusion=0.1,
-    CFL=0.2,
-    stiffness=100.0,
-    damping=500.0,
-    rest_length=0.325,
-)
+include(joinpath(@__DIR__, "VResolutionPointAbsorberSpring2d", "Setup.jl"))
+
+"""
+    point_absorber_spring_case(; dx=0.01, ratio=2, duration=10.0, kwargs...)
+
+Build the sloping wave tank, heave-only floating box and damped spring without
+running a solver. The piston follows second-order wave theory with a smooth
+one-period ramp. Geometry dimensions follow DualSPHysics `vresolution/06_Special`;
+the solver uses this package's ordinary DBC and density-diffusion settings.
+"""
+function point_absorber_spring_case(;
+        dx = 0.01,
+        ratio = 2,
+        duration = 10.0,
+        output_interval = 0.05,
+        FloatType = Float32,
+        h_coefficient = 1.5,
+        viscosity = 0.05,
+        diffusion = 0.1,
+        CFL = 0.2,
+        stiffness = 100.0,
+        damping = 500.0,
+        rest_length = 0.325,
+        region = VariableResolutionBox((1.7, 0.2), (2.3, 0.6); ratio),
+        save_location = joinpath(@__DIR__, "..", "output", "vresolution_point_absorber_spring2d"))
+    Dimensions = 2
+    T = FloatType
+    T in (Float32, Float64) || throw(ArgumentError("FloatType must be Float32 or Float64"))
+    isfinite(dx) && 0 < dx <= 0.02 || throw(ArgumentError("dx must satisfy 0 < dx <= 0.02; enlarge region when using coarse test spacings"))
+    isfinite(duration) && duration > 0 && isfinite(output_interval) && output_interval > 0 ||
+        throw(ArgumentError("duration and output_interval must be positive and finite"))
+    ratio == region.ratio || throw(ArgumentError("ratio must match the refinement region"))
+
+    depth = 0.4
+    sound_speed = 20sqrt(9.81 * depth)
+    spring = LinearSpring{Dimensions,T}(;
+        Anchor     = (2.0, 0.0),
+        Attachment = (2.0, 0.325),
+        Stiffness  = stiffness,
+        Damping    = damping,
+        RestLength = rest_length,
+    )
+    constraints = FloatingConstraints{Dimensions,T}(;
+        TranslationLocks = (true, false),
+        RotationLocks    = (true,),
+    )
+    floating_details = FloatingDetails{T}(;
+        RelativeWeight = 0.5,
+        Constraints    = constraints,
+        Springs        = (spring,),
+    )
+
+    function level(spacing; fine)
+        constants = SimulationConstants{T}(Dimensions;
+            dx  = spacing,
+            c₀  = sound_speed,
+            γ   = 7,
+            g   = 9.81,
+            α   = viscosity,
+            δᵩ  = diffusion,
+            CFL = CFL,
+        )
+        h = h_coefficient * spacing
+        kernel = SPHKernelInstance{Dimensions,T}(WendlandC2();
+            h = T(h), η² = T((0.1h)^2))
+        return point_absorber_level(spacing, constants, kernel, region, floating_details; fine)
+    end
+    coarse = level(dx; fine = false)
+    fine = level(dx / ratio; fine = true)
+
+    # Sampled displacement and its analytic velocity drive the separate piston.
+    times = collect(range(0.0, duration + 0.002; step = 0.002))
+    states = point_absorber_piston_state.(times)
+    trajectory = SampledTrajectory(times, [(s[1], 0.0) for s in states];
+        velocities = [(s[2], 0.0) for s in states])
+    motion = PrescribedMotion(10; translation = trajectory)
+
+    return (; coarse, fine, region, motion, spring, depth, sound_speed,
+        simulation_time = Float64(duration), output_interval = Float64(output_interval),
+        save_location = abspath(save_location))
+end
+
+"""
+    run_point_absorber_spring(; particle_reserve=40000, metadata_options=(;), kwargs...)
+
+Run the case and save particles, the moving body/patch and spring in
+`PointAbsorberSpring2D.vtkhdf`. CSV files contain body, spring, represented-mass
+and bundled-reference comparison histories. Use a new, empty output directory.
+"""
+function run_point_absorber_spring(; particle_reserve = 40000, metadata_options = (;), kwargs...)
+    any(k -> k in (:SimulationName, :SaveLocation, :VariableResolution), keys(metadata_options)) &&
+        throw(ArgumentError("set case identity/location/refinement through the case keywords"))
+    get(metadata_options, :ExportSingleVTKHDF, true) && !get(metadata_options, :ExportGridCells, false) ||
+        throw(ArgumentError("this example saves one VTKHDF: use ExportSingleVTKHDF=true and ExportGridCells=false"))
+    case = point_absorber_spring_case(; kwargs...)
+    isdir(case.save_location) && !isempty(readdir(case.save_location)) &&
+        throw(ArgumentError("save_location must be empty: $(case.save_location)"))
+    mkpath(case.save_location)
+    T = typeof(case.coarse.constants.dx)
+
+    refinement = VariableResolutionConfig(case.region;
+        fine_geometry  = case.fine.geometry,
+        fine_constants = case.fine.constants,
+        fine_kernel    = case.fine.kernel,
+        follow         = 50,
+        particle_reserve = particle_reserve,
+    )
+    metadata = SimulationMetaData{2,T,NoShifting,NoKernelOutput,NoMDBC,StoreLog}(;
+        SimulationName      = "PointAbsorberSpring2D",
+        SaveLocation        = case.save_location,
+        SimulationTime      = case.simulation_time,
+        OutputTimes         = case.output_interval,
+        VariableResolution  = refinement,
+        GPUUseGraph         = true,
+        GPUClipTimeStepToOutput = true,
+        ExportSingleVTKHDF  = true,
+        ExportGridCells     = false,
+        VisualizeInParaview = false,
+        OpenLogFile         = false,
+        OutputVariables = ["Velocity", "Density", "Pressure", "Type", "ID", "GroupMarker",
+            "Resolution", "Spacing", "Mass", "Owned", "IsBuffer"],
+        metadata_options...,
+    )
+    viscosity = ArtificialViscosity()
+    density_diffusion = LinearDensityDiffusion()
+    time_stepping = SymplecticTimeStepping()
+
+    particles = AllocateDataStructures(case.coarse.geometry, metadata)
+    logger = SimulationLogger(case.save_location)
+    result = try
+        RunSimulation(;
+            SimGeometry         = case.coarse.geometry,
+            SimConstants        = case.coarse.constants,
+            SimKernel           = case.coarse.kernel,
+            SimMetaData         = metadata,
+            SimParticles        = particles,
+            SimLogger           = logger,
+            SimMotion           = case.motion,
+            SimViscosity        = viscosity,
+            SimDensityDiffusion = density_diffusion,
+            SimTimeStepping     = time_stepping,
+        )
+    finally
+        isopen(logger.LoggerIo) && close(logger.LoggerIo)
+    end
+    return point_absorber_outputs(case, result)
+end
+
+if abspath(PROGRAM_FILE) == @__FILE__
+    run_point_absorber_spring()
+end

@@ -49,25 +49,44 @@ julia --project=gpu_version -t 2,0 gpu_version/example/VResolutionPointAbsorberS
 For a shorter run or changed settings, load definitions only:
 
 ```julia
-include("gpu_version/example/VResolutionPointAbsorberSpring2d/Setup.jl")
+include("gpu_version/example/VResolutionPointAbsorberSpring2d.jl")
 result = run_point_absorber_spring(duration=1.3, output_interval=0.05,
     save_location="C:/TestSimulations/PointAbsorberSpring2D")
 ```
 
 Use a new empty output directory. Editable physical and solver settings are
-in the entry point and `point_absorber_spring_case`. `metadata_options` can
-override GPU/output controls. The inclusive fine body lattice has 2,013
+in the main example: `SimulationConstants`, kernel, `Constraints.LinearSpring`,
+`Constraints.FloatingConstraints`, `FloatingDetails`, refinement, metadata and
+solver models are visible there. `Setup.jl` contains geometry/wave mathematics
+and reference postprocessing. `metadata_options` can override GPU/output controls
+while retaining single-file output (`ExportSingleVTKHDF=true`, `ExportGridCells=false`).
+The inclusive fine body lattice has 2,013
 particles and mass 25.1625 kg, matching the generated reference. The original
 2,832-point coarse boundary skin is retained. Fluid and fine-floor particles
 are generated natively; their skin clearance and buffer extent can differ
 from GenCase. The full fine floor supports subsequent patch motion.
 
-Outputs include the ordinary particle VTKHDF, `_Floating.csv`, `_Springs.csv`,
-the represented-mass `_History.csv`, and `_Comparison.csv` evaluated at the
-existing reference times. Open `PointAbsorberSpring2D_Link.vtkhdf.series`
-beside the particles to animate the body outline, tracked rectangle and
-spring link. The link is drawn as a thin strip; its forces use the axial
-spring law, independent of that display thickness.
+All visualization data is saved in **`PointAbsorberSpring2D.vtkhdf`**. Its
+`Particles` and `Geometry` blocks share the same frame times. Geometry includes
+the tank, body outline, tracked rectangle and a spring strip whose anchor stays
+fixed and attachment follows the accepted body position. No separate geometry
+file or numbered VTKHDF series is produced. Open the single file in ParaView,
+press **Apply**, and use its time controls. The spring's display thickness does
+not affect the force law.
+
+`_Floating.csv`, `_Springs.csv`, represented-mass `_History.csv`, and
+`_Comparison.csv` retain their numerical histories. Render a saved frame with:
+
+```powershell
+pvpython --dr gpu_version/example/RenderRefinement2d.py path/to/PointAbsorberSpring2D.vtkhdf preview.png
+```
+
+Add `--all-frames` and give an output directory instead of `preview.png` to
+render an animation as numbered PNGs. A reduced-resolution smoke run can use
+`dx=0.02, duration=0.002, output_interval=0.001` with
+`region=VariableResolutionBox((1.6,0.1),(2.4,0.7))` to retain the required body
+clearance at that coarser spacing. This checks output and execution without
+running the production resolution or assessing long-run physics.
 
 The bundled reference data was extracted from the user's already completed
 run. No DualSPHysics solver or GenCase is invoked during generation, tests,

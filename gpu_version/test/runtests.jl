@@ -64,6 +64,8 @@ include(joinpath(@__DIR__, "variable_resolution_solver.jl"))
 include(joinpath(@__DIR__, "resolution_attachment.jl"))
 include(joinpath(@__DIR__, "floating_springs.jl"))
 include(joinpath(@__DIR__, "point_absorber_spring.jl"))
+include(joinpath(@__DIR__, "temporal_geometry_blocks.jl"))
+include(joinpath(@__DIR__, "attached_resolution_example.jl"))
 include(joinpath(@__DIR__, "vresolution_logging.jl"))
 include(joinpath(@__DIR__, "frozen_grid.jl"))
 

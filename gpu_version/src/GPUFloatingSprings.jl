@@ -17,14 +17,8 @@ end
 @inline function spring_load(spring::DeviceSpring{D,T},center,velocity,omega,orientation) where {D,T}
     r = spring_offset(spring.offset,orientation)
     delta = center+r-spring.anchor
-    length = sqrt(dot(delta,delta))
-    if iszero(length)
-        return zero(SVector{D,T}),zero(D == 2 ? T : SVector{3,T})
-    end
-    direction = delta/length
-    point_velocity = velocity+angular_cross(omega,SVector{D,T}(r))
-    load = -spring.stiffness*(length-spring.rest_length)-spring.damping*dot(point_velocity,direction)
-    force = SVector{D,T}(load*direction)
+    point_velocity = velocity + angular_cross(omega, SVector{D,T}(r))
+    force = axial_spring_force(delta, point_velocity, spring.stiffness, spring.damping, spring.rest_length)
     return force,floating_torque(SVector{D,T}(r),force)
 end
 

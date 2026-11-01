@@ -292,7 +292,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     end
 
     """
-        SavePolygonMotionSequence(filepath, regions; motions, times)
+        SavePolygonMotionSequence(filepath, regions; motions, times, block_name=nothing)
 
     Write a transient VTKHDF `PolyData` file containing polygon regions at
     `times`. `filepath` must end in `.vtkhdf`.
@@ -309,11 +309,15 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     motion has `MoveParticles = false` remain stationary. This previews the
     commanded geometry motion without running the solver or predicting fluid
     interactions. `times` must contain at least two finite, nonnegative,
-    strictly increasing simulation times. Returns `filepath`.
+    strictly increasing simulation times. With `block_name`, add the geometry
+    to an existing temporal particle file as a named multiblock. Its times must
+    match the particle frames exactly; particle datasets are moved within the
+    file without copying. Existing blocks are preserved. Returns `filepath`.
     """
     function SavePolygonMotionSequence(filepath::AbstractString, regions::NamedTuple;
                                        motions::NamedTuple,
-                                       times::AbstractVector{<:Real})
+                                       times::AbstractVector{<:Real},
+                                       block_name::Union{Nothing,AbstractString} = nothing)
         isempty(regions) && throw(ArgumentError("at least one polygon region is required"))
         isempty(motions) && throw(ArgumentError("at least one moving region is required"))
         lowercase(splitext(filepath)[2]) == ".vtkhdf" ||
@@ -384,8 +388,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
         output_path = abspath(filepath)
         mkpath(dirname(output_path))
-        h5open(output_path, "w") do io
-            root = HDF5.create_group(io, "VTKHDF")
+        h5open(output_path, block_name === nothing ? "w" : "r+") do io
+            root = block_name === nothing ? HDF5.create_group(io, "VTKHDF") :
+                add_temporal_geometry_block!(io, block_name, frame_times)
             HDF5.attrs(root)["Version"] = Int64[2, 5]
             write_ascii_attribute(root, "Type", "PolyData")
             root["Points"] = positions
@@ -425,6 +430,35 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             cell_data_offsets["Region"] = Int64.(0:ncells:(nsteps - 1) * ncells)
         end
         return filepath
+    end
+
+    function add_temporal_geometry_block!(io, name, frame_times)
+        if isempty(name) || occursin('/', name) || name in (PARTICLE_BLOCK, "Assembly")
+            throw(ArgumentError("geometry block name must be a nonempty, unreserved group name"))
+        end
+        root = io["VTKHDF"]
+        kind = HDF5.read_attribute(root, "Type")
+        kind in ("PolyData", "MultiBlockDataSet") ||
+            throw(ArgumentError("geometry requires a temporal particle PolyData or MultiBlockDataSet file"))
+        particle_root = kind == "PolyData" ? root : root[PARTICLE_BLOCK]
+        read(particle_root["Steps/Values"]) == frame_times ||
+            throw(ArgumentError("geometry times must match the saved particle frames"))
+        if kind == "PolyData"
+            close(root)
+            HDF5.move_link(io, "VTKHDF", io, "_ParticleGeometry")
+            root = create_collection_root(io)
+            HDF5.move_link(io, "_ParticleGeometry", root, PARTICLE_BLOCK)
+            write_assembly!(root, PARTICLE_BLOCK, String[])
+        else
+            close(particle_root)
+            haskey(root, name) && throw(ArgumentError("geometry block `$name` already exists"))
+        end
+        block = create_block(root, name)
+        assembly = root["Assembly"]
+        link_block!(assembly, name)
+        close(assembly)
+        close(root)
+        return block
     end
 
     function preview_point(value, name, time)

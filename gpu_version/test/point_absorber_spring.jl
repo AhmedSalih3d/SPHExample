@@ -1,6 +1,6 @@
 module PointAbsorberSpringTests
 using Test, SPHExampleGPU, CUDA, StaticArrays, CSV, LinearAlgebra, HDF5
-include(joinpath(@__DIR__,"..","example","VResolutionPointAbsorberSpring2d","Setup.jl"))
+include(joinpath(@__DIR__, "..", "example", "VResolutionPointAbsorberSpring2d.jl"))
 
 @testset "06 Special geometry, link and our solver parameters" begin
     case = point_absorber_spring_case()
@@ -45,7 +45,8 @@ if CUDA.functional()
         for graphs in (false,true)
             directory = mktempdir()
             result = redirect_stdout(devnull) do
-                run_point_absorber_spring(;duration=0.002,output_interval=0.001,save_location=directory,particle_reserve=2048,
+                run_point_absorber_spring(;dx=0.02,duration=0.002,output_interval=0.001,save_location=directory,particle_reserve=2048,
+                    region=VariableResolutionBox((1.6,0.1),(2.4,0.7)),
                     metadata_options=(GPUUseGraph=graphs,GPUMaxStepsPerSync=16))
             end
             push!(runs,result)
@@ -59,15 +60,24 @@ if CUDA.functional()
             @test result.final_state.floating.angle == [0]
             @test result.final_state.resolution_pose.offset[2] ≈ result.final_state.floating.center[1][2]-0.4 atol=1e-12
             @test !any(==(Floating),result.final_state.resolution.coarse.Type)
-            @test count(==(Floating),result.final_state.resolution.fine.Type) == 2013
+            @test count(==(Floating),result.final_state.resolution.fine.Type) == 527
             coarse = result.final_state.resolution.coarse
             piston = findall(==(Moving),coarse.Type)
-            @test length(piston) == 360
-            trajectory = point_absorber_spring_case(duration=0.002).motion
+            @test length(piston) == 90
+            trajectory = point_absorber_spring_case(dx=0.02,duration=0.002).motion
             displacement = motion_position(trajectory,SVector(0.0,0.0),0.002)[1]
             @test maximum(first,coarse.Position[piston]) ≈ displacement atol=1e-12
             @test length(readlines(joinpath(directory,"PointAbsorberSpring2D_Springs.csv"))) == 4
-            @test isfile(joinpath(directory,"PointAbsorberSpring2D_Link.vtkhdf.series"))
+            @test filter(f -> endswith(f, ".vtkhdf"), readdir(directory)) == ["PointAbsorberSpring2D.vtkhdf"]
+            @test !any(endswith(".series"), readdir(directory))
+            h5open(joinpath(directory, "PointAbsorberSpring2D.vtkhdf"), "r") do file
+                root = file["VTKHDF"]
+                @test read_attribute(root, "Type") == "MultiBlockDataSet"
+                @test read(root["Particles/Steps/Values"]) == [0.0, 0.001, 0.002]
+                @test read(root["Geometry/Steps/Values"]) == read(root["Particles/Steps/Values"])
+                @test haskey(root, "Assembly/Geometry")
+                @test all(isfinite, read(root["Geometry/Points"]))
+            end
             @test isfile(joinpath(directory,"PointAbsorberSpring2D_Comparison.csv"))
             @test all(d -> d[4] == 0,result.diagnostics.resolution.events)
         end
