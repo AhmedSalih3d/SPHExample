@@ -22,7 +22,7 @@ independent moving marker 10 in the coarse domain.
 | Setting | Native example |
 | --- | --- |
 | Coarse / fine spacing | 0.01 / 0.005 m |
-| Kernel | Wendland C2, h=1.5dp, η²=(0.1h)² |
+| Kernel | Wendland C2, h=1.2√2dp on both levels, η²=(0.1h)² |
 | Equation of state | gamma 7, reference density 1000 kg/m³ |
 | Sound speed | 20√(9.81×0.4) m/s |
 | Stepping | `SymplecticTimeStepping()`, CFL 0.2 |
@@ -32,9 +32,12 @@ independent moving marker 10 in the coarse domain.
 | Precision | Float64 positions and clock, Float32 fluid/body arithmetic |
 | Output | 10 s duration, 0.05 s intervals, CUDA graphs |
 
-These are our ordinary solver parameters. The reference instead used
-h=1.2√2dp, viscosity 0.01 with zero boundary factor, advanced shifting and
-Chrono coupling. The native wave driver uses the prescribed second-order
+The default `h_coefficient=1.2sqrt(2)` matches the reference's 2D smoothing-length
+ratio on both resolution levels: h≈0.0169706 m for dp=0.01 m and h≈0.00848528 m
+for dp=0.005 m. The other numerical settings remain this package's ordinary
+choices. The reference used viscosity 0.01 with zero boundary factor, advanced
+shifting with corrected non-conservative pressure, and Chrono coupling.
+The native wave driver uses the prescribed second-order
 theory; it does not reproduce the reference's AWAS feedback after 2 s.
 Consequently the bundled body history is a comparison, not a numerical
 equivalence target. The moving MLS/flux method is experimental; assess the
@@ -46,11 +49,12 @@ Run from the repository root:
 julia --project=gpu_version -t 2,0 gpu_version/example/VResolutionPointAbsorberSpring2d.jl
 ```
 
-For a shorter run or changed settings, load definitions only:
+Running or including the main example starts the simulation immediately; there
+is no `abspath(PROGRAM_FILE)` guard. For a shorter run or changed settings, edit
+the keyword defaults in the main example or its final call, for example:
 
 ```julia
-include("gpu_version/example/VResolutionPointAbsorberSpring2d.jl")
-result = run_point_absorber_spring(duration=1.3, output_interval=0.05,
+run_point_absorber_spring(duration=1.3, output_interval=0.05,
     save_location="C:/TestSimulations/PointAbsorberSpring2D")
 ```
 
@@ -101,10 +105,12 @@ julia --project=gpu_version gpu_version/test/point_absorber_spring.jl
 julia --project=gpu_version gpu_version/test/resolution_attachment.jl
 ```
 
-A native Float32 check on the RTX 5080 / Julia 1.12.7 reached 2.5 s in 66,050
-steps with CUDA graphs. There were no density exclusions or non-finite states.
+An earlier native Float32 check with h=1.5dp on the RTX 5080 / Julia 1.12.7
+reached 2.5 s in 66,050 steps with CUDA graphs. There were no density exclusions
+or non-finite states.
 The body centre ranged from 0.38204 to 0.40394 m, with horizontal position and
 rotation locked. Represented owned-fluid mass changed from 1776.500 to
 1773.800 kg (−0.152%). This is a short-run regression, not a full 10 s
-convergence or DualSPHysics-equivalence result. The existing reference was
-only read.
+convergence or DualSPHysics-equivalence result. It predates the matched
+`h=1.2√2dp` default and does not validate its long-run behavior. The existing
+reference was only read.

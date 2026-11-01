@@ -1,6 +1,10 @@
 module PointAbsorberSpringTests
 using Test, SPHExampleGPU, CUDA, StaticArrays, CSV, LinearAlgebra, HDF5
-include(joinpath(@__DIR__, "..", "example", "VResolutionPointAbsorberSpring2d.jl"))
+let path = joinpath(@__DIR__, "..", "example", "VResolutionPointAbsorberSpring2d.jl")
+    source = read(path, String)
+    source = replace(source, r"\r?\n# Including this file starts the simulation\.[\s\S]*\z" => "\n")
+    include_string(@__MODULE__, source, path)
+end
 
 @testset "06 Special geometry, link and our solver parameters" begin
     case = point_absorber_spring_case()
@@ -26,7 +30,8 @@ include(joinpath(@__DIR__, "..", "example", "VResolutionPointAbsorberSpring2d.jl
         @test level.constants.α == 0.05f0
         @test level.constants.δᵩ == 0.1f0
         @test level.constants.CFL == 0.2f0
-        @test level.kernel.h ≈ 1.5level.constants.dx
+        @test level.kernel.h ≈ 1.2sqrt(2) * level.constants.dx
+        @test level.kernel.η² ≈ (0.1level.kernel.h)^2
         @test all(>=(level.constants.ρ₀),level.geometry[2].Particles.Density)
     end
     theory = collect(CSV.File(joinpath(POINT_ABSORBER_DATA,"PistonTheory.csv")))
@@ -55,6 +60,8 @@ if CUDA.functional()
             @test result.configuration.effective.density_diffusion_model === LinearDensityDiffusion
             @test result.configuration.effective.variable_resolution.follow == 50
             @test result.configuration.effective.boundary_mode === NoMDBC
+            @test result.configuration.effective.variable_resolution.coarse_smoothing_length ≈ 1.2sqrt(2) * 0.02
+            @test result.configuration.effective.variable_resolution.fine_smoothing_length ≈ 1.2sqrt(2) * 0.01
             @test length(result.final_state.springs) == 1
             @test result.final_state.floating.center[1][1] ≈ 2.0 atol=1e-12
             @test result.final_state.floating.angle == [0]

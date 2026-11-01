@@ -1,6 +1,6 @@
 # Heaving point absorber with a damped spring and body-following refinement.
 # Input structs are below; geometry and comparison helpers are in Setup.jl.
-# Including this file only defines the case. Running it starts the simulation.
+# Running or including this file starts the simulation.
 using SPHExampleGPU
 using SPHExampleGPU.Constraints: FloatingConstraints, LinearSpring
 using StaticArrays: SVector
@@ -12,8 +12,9 @@ include(joinpath(@__DIR__, "VResolutionPointAbsorberSpring2d", "Setup.jl"))
 
 Build the sloping wave tank, heave-only floating box and damped spring without
 running a solver. The piston follows second-order wave theory with a smooth
-one-period ramp. Geometry dimensions follow DualSPHysics `vresolution/06_Special`;
-the solver uses this package's ordinary DBC and density-diffusion settings.
+one-period ramp. Geometry dimensions and the default smoothing-length ratio
+`h/dp = 1.2sqrt(2)` follow DualSPHysics `vresolution/06_Special`; the solver uses
+this package's ordinary DBC and density-diffusion settings.
 """
 function point_absorber_spring_case(;
         dx = 0.01,
@@ -21,7 +22,7 @@ function point_absorber_spring_case(;
         duration = 10.0,
         output_interval = 0.05,
         FloatType = Float32,
-        h_coefficient = 1.5,
+        h_coefficient = 1.2sqrt(2),
         viscosity = 0.05,
         diffusion = 0.1,
         CFL = 0.2,
@@ -153,6 +154,5 @@ function run_point_absorber_spring(; particle_reserve = 40000, metadata_options 
     return point_absorber_outputs(case, result)
 end
 
-if abspath(PROGRAM_FILE) == @__FILE__
-    run_point_absorber_spring()
-end
+# Including this file starts the simulation.
+run_point_absorber_spring()

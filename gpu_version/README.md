@@ -123,9 +123,10 @@ follow the usual body-output format. Body poses are downloaded only at output.
 See [VResolutionAttachedBody2d.jl](example/VResolutionAttachedBody2d.jl) for a
 complete tank example; call `run_attached_resolution_example(floating=false)`
 for prescribed motion. Both body-following examples expose their input structs
-in the main `.jl` file, and including either file defines its functions without
-starting a simulation. They save one temporal `.vtkhdf` containing `Particles`
-and animated `Geometry` blocks (body outline, tracked patch and, for the point
+in the main `.jl` file. Including the attached-body file defines its functions;
+running or including the point-absorber file starts its simulation immediately.
+They save one temporal `.vtkhdf` containing `Particles` and animated `Geometry`
+blocks (body outline, tracked patch and, for the point
 absorber, spring). Histories remain available as CSV files.
 
 ```bash
@@ -135,9 +136,11 @@ julia --project=gpu_version gpu_version/example/VResolutionAttachedBody2d.jl
 
 [VResolutionPointAbsorberSpring2d.jl](example/VResolutionPointAbsorberSpring2d.jl)
 implements `vresolution/06_Special/CasePointAbsorberSpringVRes`: a heaving box
-on a damped linear spring, wave piston and body-following fine patch. It uses
-our ordinary solver settings and the existing DualSPHysics history for a
-comparison CSV; it never launches DualSPHysics. See its
+on a damped linear spring, wave piston and body-following fine patch. Its
+default smoothing length matches the reference's `h = 1.2√2 dp` on both levels.
+It uses our ordinary viscosity, DBC and density-diffusion settings and the
+existing DualSPHysics history for a comparison CSV; it never launches
+DualSPHysics. See its
 [case guide](example/VResolutionPointAbsorberSpring2d/README.md) for settings,
 link animation and focused validation.
 
