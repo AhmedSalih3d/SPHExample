@@ -48,7 +48,7 @@ end
             distance_squared <= kernel.H² || continue
             q = eltype(density)(sqrt(distance_squared) * kernel.h⁻¹)
             gradient = ∇Wᵢⱼ(kernel, q, SVector{2,eltype(density)}(displacement))
-            if kind == Fixed
+            if is_wall(kind) || kind == Floating
                 saturation -= Float64(constants.m₀ / constants.ρ₀) * dot(displacement, gradient)
             elseif kind == Fluid && !buffer_particle(position[j], limits, fine)
                 volume = Float64(constants.m₀) / Float64(density[j])
@@ -101,7 +101,7 @@ end
     for row in cell_rows(grid)
         first, last = row_range(grid,starts,cell,row)
         @inbounds for j in first:last
-            types[j] == Fixed || continue
+            (is_wall(types[j]) || types[j] == Floating) || continue
             displacement = position[j] - query
             distance_squared = dot(displacement,displacement)
             if distance_squared < dx^2 && (iszero(distance_squared) ||
@@ -121,7 +121,7 @@ function interface_flux_kernel!(points, normals, widths, accumulated_mass,
     i = thread_index()
     i > n && return nothing
     @inbounds begin
-        point, normal = points[i], normals[i]
+        point,normal,interface_velocity = resolution_face(limits,points[i],normals[i],dt)
         if blocked_interface(point,normal,position,types,target_starts,target_grid,target_kernel,target_constants.dx)
             accumulated_mass[i] = 0
             return nothing
@@ -130,7 +130,8 @@ function interface_flux_kernel!(points, normals, widths, accumulated_mass,
             source_density,source_types,starts,grid,kernel,constants,limits,source_fine)
         wet = saturation > 1.5 || nearest < min(constants.dx,target_constants.dx)^2
         valid && wet || return nothing
-        incoming_mass = -value[1] * (value[2]*normal[1] + value[3]*normal[2]) * widths[i] * dt
+        incoming_mass = -value[1] * ((value[2]-interface_velocity[1])*normal[1] +
+            (value[3]-interface_velocity[2])*normal[2]) * widths[i] * dt
         budget = accumulated_mass[i]
         budget += budget < 0 ? max(0.0,incoming_mass) : incoming_mass
         while budget >= target_constants.m₀

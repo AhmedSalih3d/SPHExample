@@ -46,11 +46,16 @@ function validate_resolution_solver(meta::SimulationMetaData{D,T,S,K,B},geometry
     meta.GPUTimestepDiagnosticsEvery == 0 || throw(ArgumentError("variable-resolution timestep-ID diagnostics are not supported"))
     measurements === nothing || !has_measurements(measurements) ||
         throw(ArgumentError("variable-resolution measurements require per-particle mass weighting and are not supported yet"))
-    external === nothing && rotation === nothing && motion === nothing ||
-        throw(ArgumentError("variable resolution currently supports fixed walls and SimDamping; external forces and prescribed motion are unsupported"))
-    all(g -> g.Type in (Fixed,Fluid) && g.Motion === nothing && g.Floating === nothing,geometry) ||
-        throw(ArgumentError("variable resolution supports only fluid and fixed wall geometry"))
-    all(t -> t in (Fixed,Fluid),particles.Type) || throw(ArgumentError("variable resolution requires initially active fluid/fixed particles"))
+    external === nothing || throw(ArgumentError("variable resolution does not support SimExternalForces"))
+    if meta.VariableResolution.follow === nothing
+        rotation === nothing && motion === nothing &&
+            all(g -> g.Type in (Fixed,Fluid) && g.Motion === nothing && g.Floating === nothing,geometry) ||
+            throw(ArgumentError("moving/floating refinement requires VariableResolutionConfig(...; follow=GroupMarker)"))
+        all(t -> t in (Fixed,Fluid),particles.Type) || throw(ArgumentError("variable resolution requires initially active fluid/fixed particles"))
+    else
+        scheme isa DualSPHysicsSymplectic && throw(ArgumentError("attached refinement requires SymplecticTimeStepping or SingleNeighborTimeStepping"))
+        all(t -> t in (Fixed,Fluid,Moving,Floating),particles.Type) || throw(ArgumentError("attached refinement requires initially active particles"))
+    end
     eltype(eltype(particles.Position)) === Float64 ||
         throw(ArgumentError("allocate particles with AllocateDataStructures(geometry, metadata) after enabling VariableResolution so host positions retain Float64 precision"))
     isfinite(meta.TotalTime) && isfinite(meta.SimulationTime) && meta.SimulationTime > meta.TotalTime ||
@@ -103,7 +108,8 @@ end
 function solver_resolution_snapshot(domain,region,limits; include_buffers=false,scheme=DualSPHysicsSymplectic())
     p,c = domain.particles,domain.constants
     x,types = Array(p.Position),Array(p.Type)
-    owned = [inside_box(position,region.lower,region.upper) == domain.fine for position in x]
+    limits = resolution_host_limits(limits)
+    owned = [resolution_owned(position,limits,domain.fine) for position in x]
     keep = findall(i -> types[i] != Frozen && (include_buffers || owned[i]),eachindex(types))
     rho = Array(p.Density)[keep]
     return StructArray((;
@@ -146,6 +152,7 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
     validate_resolution_solver(meta,SimGeometry,SimParticles,SimViscosity,SimDensityDiffusion,SimTimeStepping,
         SimMeasurements,SimExternalForces,SimRotation,SimMotion)
     fine_constants,fine_kernel = fine_resolution_parameters(config,SimConstants,SimKernel)
+    attachment_config = resolution_attachment_config(config,SimGeometry,SimRotation,SimMotion,SimKernel)
     deadlines = resolution_output_deadlines(meta)
     resolve_output_variables!(meta)
     damping = prepare_damping(SimDamping,Val(2))
@@ -160,7 +167,7 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
     boundary_mode = typeof(meta).parameters[5]()
     LOGGER.start_runtime!(SimLogger,initial_time)
     timer = meta.HourGlass
-    output,history = nothing,nothing
+    output,history,floating_history = nothing,nothing,nothing
     status = "failed"
     frames,write_seconds = 0,0.0
     times,files = Float64[],String[]
@@ -171,6 +178,9 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
     try
         @timeit timer "00 Initialization" begin
             coarse_geometry = resolution_geometry(SimParticles,T; normals_path=ParticleNormalsPath,spacing=SimConstants.dx)
+            if attachment_config !== nothing
+                filter!(g -> g.GroupMarker != config.follow,coarse_geometry)
+            end
             limits = resolution_limits(config.region,Float64(SimKernel.h),Float64(fine_kernel.h))
             area = prod(limits.fine_outer_hi-limits.fine_outer_lo)
             reserves = map((SimConstants,fine_constants)) do c
@@ -178,14 +188,20 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
             end
             standard = !(scheme isa DualSPHysicsSymplectic)
             coarse = make_resolution_domain(coarse_geometry,SimConstants,SimKernel,limits,false,reserves[1];resident=true,standard,boundary_mode)
-            fine = make_resolution_domain(config.fine_geometry,fine_constants,fine_kernel,limits,true,reserves[2];resident=true,standard,boundary_mode)
+            fine = make_resolution_domain(config.fine_geometry,fine_constants,fine_kernel,limits,true,reserves[2];
+                resident=true,standard,boundary_mode,attachment_config,time=initial_time)
+            if attachment_config !== nothing
+                limits = AttachedResolutionLimits(limits,CuArray(fill(identity_resolution_pose(),2)))
+            end
             domains = (coarse,fine)
             for d in (domains...,coarse.predictor,fine.predictor)
                 d.cells.max_cells = meta.GPUMaxCells
                 d.cells.deterministic = meta.GPUDeterministicSort
             end
+            state = GPUStepState.StepState{Float64}(;time=initial_time,iteration=initial_steps)
+            initialize_resolution_attachment!(fine,limits,state)
             foreach(d -> retire_particles!(d,limits),domains)
-            state = initialize_resident_domains!(domains;time=initial_time,iteration=initial_steps)
+            initialize_resident_domains!(domains;state)
             exchange_buffers!(coarse,fine,limits)
             exchange_buffers!(fine,coarse,limits)
             initialize_resolution_numerics!(domains,state,scheme;density_diffusion,viscosity)
@@ -199,6 +215,10 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
             output = SetupVTKOutput(meta,frame,SimKernel,2;constants=SimConstants,damping,variable_count=true)
             history = open(history_path,"w")
             println(history,"time,iteration,coarse_fluid,fine_fluid,represented_fluid_mass,coarse_created,fine_created,coarse_retired,fine_retired,coarse_excluded,fine_excluded,coarse_nonfinite,fine_nonfinite")
+            if fine.attachment !== nothing && fine.attachment.floating !== nothing
+                floating_history = open(joinpath(meta.SaveLocation,meta.SimulationName*"_Floating.csv"),"w")
+                println(floating_history,"Time,Body,GroupMarker,Center:0,Center:1,Velocity:0,Velocity:1,Angle,Omega")
+            end
             if store_log
                 log_effective_configuration(SimLogger,state.configuration;phase="variable-resolution startup")
                 LOGGER.InitializeLogger(SimLogger,SimConstants,meta,SimKernel,SimViscosity,SimDensityDiffusion,
@@ -208,6 +228,7 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
                         cells=(coarse.cells,fine.cells,coarse.predictor.cells,fine.predictor.cells),
                         auxiliary=(coarse,fine,state.f,state.i)))
                 log_line(SimLogger,"Variable resolution: ratio=$(config.region.ratio), coarse/fine spacing=$(SimConstants.dx)/$(fine_constants.dx)")
+                config.follow === nothing || log_line(SimLogger,"Refinement follows body GroupMarker=$(config.follow); fine-domain body forces and GPU rigid transforms")
                 log_line(SimLogger,"Resolution pool capacities (coarse/fine): $(length(coarse.particles))/$(length(fine.particles)); includes dormant creation reserves")
             end
             CUDA.synchronize()
@@ -233,6 +254,11 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
                 mass = sum(frame.Mass[i] for i in eachindex(frame.Type) if frame.Type[i] == Fluid && frame.Owned[i] == 1;init=0.0)
                 println(history,join((meta.TotalTime,meta.Iteration,counts...,mass,events[1][1],events[2][1],events[1][2],events[2][2],events[1][3],events[2][3],events[1][4],events[2][4]),','))
                 flush(history)
+                if floating_history !== nothing
+                    body = floating_state(fine.attachment.floating)
+                    println(floating_history,join((meta.TotalTime,1,config.follow,body.center[1]...,body.velocity[1]...,body.angle[1],body.omega[1]),','))
+                    flush(floating_history)
+                end
                 push!(times,meta.TotalTime)
                 if !meta.ExportSingleVTKHDF
                     push!(files,meta.SimulationName*"_"*lpad(string(frames+1),6,'0')*".vtkhdf")
@@ -279,7 +305,11 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
             try
                 output === nothing || output.close_files()
             finally
-                history === nothing || close(history)
+                try
+                    history === nothing || close(history)
+                finally
+                    floating_history === nothing || close(floating_history)
+                end
             end
         catch
             status = "failed"
@@ -298,8 +328,10 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
     elapsed = LOGGER.elapsed_wall_time(SimLogger)
     steps,simulated = meta.Iteration-initial_steps,meta.TotalTime-initial_time
     configuration = configuration_snapshot(state)
-    final_state = (;particles=SimParticles,floating=nothing,time=meta.TotalTime,iteration=meta.Iteration,
-        timestep=meta.CurrentTimeStep,complete=status == "finished",resolution=(;coarse=snapshots[1],fine=snapshots[2]))
+    body_state = fine.attachment === nothing || fine.attachment.floating === nothing ? nothing : floating_state(fine.attachment.floating)
+    region_pose = limits isa AttachedResolutionLimits ? first(Array(limits.frames)) : identity_resolution_pose()
+    final_state = (;particles=SimParticles,floating=body_state,time=meta.TotalTime,iteration=meta.Iteration,
+        timestep=meta.CurrentTimeStep,complete=status == "finished",resolution=(;coarse=snapshots[1],fine=snapshots[2]),resolution_pose=region_pose)
     performance = (;steps,simulated_time=simulated,wall_time_seconds=elapsed,mean_timestep=steps > 0 ? simulated/steps : NaN,
         milliseconds_per_step=steps > 0 ? 1e3elapsed/steps : NaN,mparticle_steps_per_second=NaN,
         output_write_seconds=write_seconds,phase_timings=copy(timer),phase_timings_synchronized=meta.GPUSyncTimers)

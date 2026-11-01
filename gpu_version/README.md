@@ -81,6 +81,52 @@ GPU predictor/corrector kernels and timestep formula. Refinement rebuilds both
 domains each step, so single-neighbor stepping refreshes its accepted derivative
 after every rebuild, as the ordinary solver does after a rebuild.
 
+To attach the patch to a moving or floating body, set `follow` to its
+`GroupMarker`:
+
+```julia
+refinement = VariableResolutionConfig(
+    VariableResolutionBox((-0.7,-0.85),(0.7,0.55));
+    fine_geometry=fine_geometry, follow=5)
+```
+
+The rectangle translates and rotates with group 5. Its bounds use the body's
+reference geometry coordinates. Supply the body in `fine_geometry`, with
+`Type=Moving` and `MotionDetails`, `SimMotion` or `SimRotation`, or with
+`Type=Floating` and `FloatingDetails`. Virtual parents in `MotionSystem` and
+floating constraints are supported. An optional coarse copy of the followed
+body is omitted: its mass, inertia and fluid forces use only the fine body.
+Other groups must be fluid or fixed boundaries. The body must fit inside the
+coarse exclusion rectangle with an additional coarse support radius of clearance;
+the constructor reports when the box needs enlarging.
+Fluid and fixed-wall input positions remain world coordinates; provide the
+fine fluid covering the initially occupied patch, as for stationary refinement.
+
+Attached refinement supports 2D `NoMDBC` and `SimpleMDBC`, and
+`SymplecticTimeStepping()` or `SingleNeighborTimeStepping()`. Moving mDBC
+ghost points and normals turn with the body. The standalone reference driver
+retains its fixed-box API. Body integration, moving bounds, ownership and
+flux relative to the moving interface remain on the GPU, including CUDA graphs.
+Body motion limits the timestep by corner travel; discontinuous motion
+or a floating step that outruns the buffer fails explicitly. Choose continuous
+trajectories and reduce `CFL` for very rapid floating motion. As with fixed
+refinement, this is an experimental MLS/flux method, not exact particle splitting
+or an exact mass-conservation guarantee; inspect the represented-mass history
+and validate convergence for the intended trajectory.
+
+Output uses the current rotated rectangle, including buffer flags and owned
+particles in both single and numbered VTKHDF files. The final transform is
+`result.final_state.resolution_pose`; floating state and `_Floating.csv`
+follow the usual body-output format. Body poses are downloaded only at output.
+See [VResolutionAttachedBody2d.jl](example/VResolutionAttachedBody2d.jl) for a
+complete tank example; call `run_attached_resolution_example(floating=false)`
+for prescribed motion.
+
+```bash
+julia --project=gpu_version gpu_version/test/resolution_attachment.jl
+julia --project=gpu_version gpu_version/example/VResolutionAttachedBody2d.jl
+```
+
 Paired whole-solver timings and particle-state checks are available with:
 
 ```bash

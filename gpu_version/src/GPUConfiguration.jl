@@ -47,7 +47,7 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
     position_type = position_float_type(meta)
     effective = (; sph_kernel = typeof(kernel.kernel), kernel_regularization = kernel.η²,
         variable_resolution = meta.VariableResolution === nothing ? nothing :
-            (; method=:two_domain_mls,region=meta.VariableResolution.region,
+            (; method=:two_domain_mls,region=meta.VariableResolution.region,follow=meta.VariableResolution.follow,
                 include_buffers=meta.VariableResolution.include_buffers,particle_reserve=meta.VariableResolution.particle_reserve,
                 coarse_smoothing_length=kernel.h,fine_smoothing_length=meta.VariableResolution.fine_kernel === nothing ?
                     kernel.h/meta.VariableResolution.region.ratio : meta.VariableResolution.fine_kernel.h),

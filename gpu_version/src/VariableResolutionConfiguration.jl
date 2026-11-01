@@ -8,7 +8,8 @@ export VariableResolutionBox, VariableResolutionConfig
 """
     VariableResolutionBox(lower, upper; ratio=2, buffer_h=2, overlap_h=2)
 
-One stationary refinement rectangle in 2D. The fine spacing is the coarse
+One reference refinement rectangle in 2D, stationary unless its configuration
+sets `follow` to a body marker. The fine spacing is the coarse
 spacing divided by `ratio`. Buffer and overlap widths are measured in each
 domain's smoothing length and the fine smoothing length, respectively.
 """
@@ -31,7 +32,8 @@ end
 
 """
     VariableResolutionConfig(region; fine_geometry, fine_constants=nothing,
-        fine_kernel=nothing, particle_reserve=nothing, include_buffers=false)
+        fine_kernel=nothing, particle_reserve=nothing, include_buffers=false,
+        follow=nothing)
 
 Enable two-domain CUDA refinement through `SimulationMetaData.VariableResolution`.
 Pass the coarse geometry, constants and kernel to `RunSimulation` as usual.
@@ -42,8 +44,20 @@ spacing, mass, smoothing length and kernel regularization by `region.ratio`.
 pool from its spacing and the refinement area. Output normally selects owned
 particles; `include_buffers=true` includes both domains' buffers as well.
 
-The current backend supports one fixed 2D rectangle, Wendland C2 and fixed DBC
-or Simple mDBC walls. Select ordinary symplectic, single-neighbor
+Set `follow` to a `Moving` or `Floating` body's positive `GroupMarker` to
+translate and rotate the rectangle with that body. Bounds describe the body's
+reference geometry coordinates. Supply the body in `fine_geometry`; an optional
+coarse copy is omitted so its force and mass are counted only once. The body
+must fit inside the coarse exclusion rectangle with one coarse support radius
+of clearance. Other boundaries remain fixed. Prescribed bodies use
+`MotionDetails`, `SimMotion` or `SimRotation`; floating bodies use
+`FloatingDetails`. Attached regions require ordinary timestep schemes.
+All body placement, region transforms and relative interface flux run on CUDA,
+including graph execution. Discontinuous motion that outruns the buffer fails
+explicitly. Output ownership uses the current transformed rectangle.
+
+The backend supports one 2D rectangle, Wendland C2 and DBC or Simple mDBC
+walls. Select ordinary symplectic, single-neighbor
 or reference symplectic stepping with `SimTimeStepping`. Select any
 GPU-compatible density diffusion model with `RunSimulation(SimDensityDiffusion=...)`,
 as in the ordinary solver. Ordinary schemes also use the selected `SimViscosity`;
@@ -59,22 +73,26 @@ struct VariableResolutionConfig{G,C,K}
     fine_kernel::K
     particle_reserve::Union{Nothing,Int}
     include_buffers::Bool
+    follow::Union{Nothing,Int}
 end
 
 function VariableResolutionConfig(region::VariableResolutionBox; fine_geometry,
-        fine_constants=nothing, fine_kernel=nothing, particle_reserve=nothing, include_buffers=false)
+        fine_constants=nothing, fine_kernel=nothing, particle_reserve=nothing, include_buffers=false, follow=nothing)
     fine_geometry isa AbstractVector && !isempty(fine_geometry) ||
         throw(ArgumentError("fine_geometry must be a nonempty vector of SPH geometries"))
     particle_reserve === nothing || (particle_reserve isa Integer && particle_reserve > 0) ||
         throw(ArgumentError("particle_reserve must be a positive integer or nothing"))
+    follow === nothing || (follow isa Integer && !(follow isa Bool) && 0 < follow <= typemax(Int)) ||
+        throw(ArgumentError("follow must be a positive body GroupMarker or nothing"))
     return VariableResolutionConfig(region,fine_geometry,fine_constants,fine_kernel,
-        particle_reserve === nothing ? nothing : Int(particle_reserve),Bool(include_buffers))
+        particle_reserve === nothing ? nothing : Int(particle_reserve),Bool(include_buffers),
+        follow === nothing ? nothing : Int(follow))
 end
 
 function Base.show(io::IO,config::VariableResolutionConfig)
     print(io,"VariableResolutionConfig(region=",config.region,", fine_geometry=",
         length(config.fine_geometry)," groups, particle_reserve=",config.particle_reserve,
-        ", include_buffers=",config.include_buffers,")")
+        ", include_buffers=",config.include_buffers,", follow=",config.follow,")")
 end
 
 end

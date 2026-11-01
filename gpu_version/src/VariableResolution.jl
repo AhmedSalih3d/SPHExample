@@ -1,4 +1,4 @@
-"""Native two-level, fixed-box variable-resolution SPH on CUDA."""
+"""Native two-level variable-resolution SPH on CUDA."""
 module VariableResolution
 
 using CUDA
@@ -26,10 +26,18 @@ using ..GPUReductions
 using ..DampingZones: launch_damping!
 using ..ProduceHDFVTK: SaveVTKHDF
 using ..AuxiliaryFunctions: to_3d
+using ..GPUFloating
+using ..PrescribedMotions: PrescribedMotion, MotionSystem, MotionPose, motion_position, motion_velocity,
+    prepare_prescribed_motion, sample_nodes!
+using ..MotionTrajectories: SampledTrajectory
+import ..MotionTrajectories
+import ..PrescribedMotions
 
 export VariableResolutionBox, VariableResolutionConfig, run_variable_resolution_simulation
 
 @inline inside_box(x, lo, hi) = all(x .>= lo) && all(x .<= hi)
+
+include("GPUResolutionAttachment.jl")
 
 function resolution_limits(region, coarse_h, fine_h)
     overlap = region.overlap_h * fine_h
@@ -44,17 +52,20 @@ function resolution_limits(region, coarse_h, fine_h)
 end
 
 @inline function buffer_particle(x, limits, fine)
+    x, limits = resolution_local(x,limits), resolution_base(limits)
     return fine ? !inside_box(x, limits.fine_inner_lo, limits.fine_inner_hi) :
         inside_box(x, limits.coarse_outer_lo, limits.coarse_outer_hi)
 end
 
 @inline function outside_domain(x, limits, fine)
+    x, limits = resolution_local(x,limits), resolution_base(limits)
     return fine ? !inside_box(x, limits.fine_outer_lo, limits.fine_outer_hi) :
         inside_box(x, limits.coarse_inner_lo, limits.coarse_inner_hi)
 end
 
 "Midpoint quadrature on four faces; normals point out of the receiving domain."
 function interface_points(limits, fine, dx)
+    limits = resolution_base(limits)
     lo = fine ? limits.fine_outer_lo : limits.coarse_inner_lo
     hi = fine ? limits.fine_outer_hi : limits.coarse_inner_hi
     points, normals, widths = SVector{2,Float64}[], SVector{2,Float64}[], Float64[]
@@ -73,7 +84,7 @@ function interface_points(limits, fine, dx)
     return (; points, normals, widths)
 end
 
-struct ResolutionDomain{P,C,S,K,F,I,PP,POOL,B}
+struct ResolutionDomain{P,C,S,K,F,I,PP,POOL,B,A}
     particles::P
     cells::C
     support::S
@@ -88,20 +99,27 @@ struct ResolutionDomain{P,C,S,K,F,I,PP,POOL,B}
     fine::Bool
     pool::POOL
     boundary_mode::B
+    attachment::A
 end
 
 function make_resolution_domain(geometry, constants::SimulationConstants{T}, kernel, limits, fine, reserve;
-        resident = false, standard = false, boundary_mode = SimpleMDBC()) where {T}
+        resident = false, standard = false, boundary_mode = SimpleMDBC(), attachment_config=nothing, time=0.0) where {T}
     geometry isa AbstractVector && !isempty(geometry) && all(g -> g isa SPHGeometry{2,T},geometry) ||
         throw(ArgumentError("each domain needs a nonempty vector of 2D geometries matching its constants' precision"))
     geometry = SPHGeometry{2,T}[geometry...]
     fluid_markers = unique([g.GroupMarker for g in geometry if g.Type == Fluid])
     length(fluid_markers) <= 1 || throw(ArgumentError("each resolution domain supports a single fluid group"))
     fluid_marker = isempty(fluid_markers) ? UInt(2) : UInt(only(fluid_markers))
-    all(g -> g.Type in (Fixed, Fluid) && g.Motion === nothing, geometry) ||
-        throw(ArgumentError("variable resolution currently supports only fluid and fixed walls"))
-    boundary_mode isa NoMDBC || all(g -> g.Type != Fixed || (hasproperty(g.Particles, :GhostPoints) && hasproperty(g.Particles, :GhostNormals)), geometry) ||
-        throw(ArgumentError("fixed walls require mDBC ghost points and normals"))
+    if isempty(fluid_markers)
+        while any(g -> g.GroupMarker == fluid_marker,geometry)
+            fluid_marker += UInt(1)
+        end
+    end
+    all(g -> g.Type in (Fixed, Fluid) && g.Motion === nothing && g.Floating === nothing ||
+        (attachment_config !== nothing && g.GroupMarker == attachment_config.marker && g.Type in (Moving,Floating)), geometry) ||
+        throw(ArgumentError("variable resolution supports fluid, fixed walls and the configured followed body"))
+    boundary_mode isa NoMDBC || all(g -> !is_wall(g.Type) || (hasproperty(g.Particles, :GhostPoints) && hasproperty(g.Particles, :GhostNormals)), geometry) ||
+        throw(ArgumentError("fixed and moving walls require mDBC ghost points and normals"))
     for g in geometry
         all(x -> all(isfinite,x),g.Particles.Position) && all(isfinite,g.Particles.Density) ||
             throw(ArgumentError("initial particle positions and densities must be finite"))
@@ -109,7 +127,7 @@ function make_resolution_domain(geometry, constants::SimulationConstants{T}, ker
             throw(ArgumentError("initial particle velocities must be finite"))
         all(ρ -> 0.7constants.ρ₀ <= ρ <= 1.3constants.ρ₀,g.Particles.Density) ||
             throw(ArgumentError("initial densities must lie within 70–130% of the reference density"))
-        if g.Type == Fixed && !(boundary_mode isa NoMDBC)
+        if is_wall(g.Type) && !(boundary_mode isa NoMDBC)
             all(x -> all(isfinite,x) && !iszero(x),g.Particles.GhostPoints) &&
                 all(x -> all(isfinite,x) && !iszero(x),g.Particles.GhostNormals) ||
                 throw(ArgumentError("mDBC walls require finite nonzero ghost points and normals"))
@@ -120,7 +138,7 @@ function make_resolution_domain(geometry, constants::SimulationConstants{T}, ker
     initial_count > 0 || throw(ArgumentError("each domain needs initial fluid or wall particles"))
     reserve < typemax(Int32) - initial_count || throw(ArgumentError("particle capacity exceeds Int32 indexing"))
     dormant = SPHGeometry{2,T}(fill(zero(SVector{2,Float64}), reserve);
-        Density = constants.ρ₀, Type = Frozen, GroupMarker = 3)
+        Density = constants.ρ₀, Type = Frozen, GroupMarker = 0)
     host = AllocateDataStructures([geometry; dormant]; position_type = Float64, cells = false, kernel_output = false)
     # Odd/even namespaces give globally unique IDs across both domains and
     # across every subsequent retirement and creation, without a shared atomic.
@@ -132,19 +150,20 @@ function make_resolution_domain(geometry, constants::SimulationConstants{T}, ker
     # Dormant pool slots are excluded from grid bounds and all force sums.
     cells.frozen_total = reserve
     support = GPUSupportArrays{2,T}(n; position_type = Float64, shifting = false, dual_time_stepping = true)
+    attachment = make_resolution_attachment(attachment_config,geometry,host,constants;time)
     # Predictor neighbors are sorted independently. Keep their inputs dense and
     # scatter only the evaluated derivatives back to the accepted-state order.
     predictor = (; particles = upload_particles(host; position_type = Float64, kernel_output = false),
         cells = CellListWorkspace{2,Float64}(n),
         support = GPUSupportArrays{2,T}(n; position_type = Float64, shifting = false, dual_time_stepping = true),
-        kernel, constants, boundary_mode,
+        kernel, constants, boundary_mode, attachment=predictor_attachment(attachment),
         pool = resident ? ResolutionPool(host, initial_count) : nothing)
     faces = interface_points(limits, fine, Float64(constants.dx))
     interface = (; points = CuArray(faces.points), normals = CuArray(faces.normals),
         widths = CuArray(faces.widths), mass = CUDA.zeros(Float64, length(faces.points)), fluid_marker)
     return ResolutionDomain(gpu, cells, support, kernel, constants, interface, predictor,
         CUDA.zeros(Int32, resident ? 0 : n), CUDA.zeros(Int32, 2), CuArray([Int64(maximum(host.ID) + 2)]), CUDA.zeros(Int64, 4), fine,
-        resident ? ResolutionPool(host, initial_count; standard) : nothing,boundary_mode)
+        resident ? ResolutionPool(host, initial_count; standard) : nothing,boundary_mode,attachment)
 end
 
 include("GPUVariableResolution.jl")

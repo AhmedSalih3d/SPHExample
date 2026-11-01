@@ -56,6 +56,7 @@ const RESOLUTION_CAPACITY = Int32(3)
 const RESOLUTION_GRID_ERROR = Int32(4)
 const RESOLUTION_RESERVE_ERROR = Int32(5)
 const RESOLUTION_STATE_ERROR = Int32(6)
+const RESOLUTION_MOTION_ERROR = Int32(7)
 
 function resolution_phase_kernel!(step, next)
     GPUStepState.step_active(step) || return nothing
@@ -202,12 +203,20 @@ function enqueue_resolution_rebuild!(domain, step)
     end
     srcs = (map(f -> getproperty(p,f),RESOLUTION_FIELDS)...,c.CellIDScratch,pool.owners)
     dsts = (map(f -> getproperty(p.scratch,f),RESOLUTION_FIELDS)...,p.CellID,pool.owner_scratch)
+    if domain.attachment !== nothing
+        srcs = (srcs...,domain.attachment.slots)
+        dsts = (dsts...,domain.attachment.scratch)
+    end
     @cuda threads=256 blocks=blocks resolution_gather_kernel!(c.Perm,srcs,dsts,c.CellStart,step)
     # Stable pointers let one graph survive every reorder. Only the live prefix
     # is copied; capacity tails do not enter either sorting pass.
     @cuda threads=256 blocks=blocks resolution_copyback_kernel!(
         map(f -> getproperty(p.scratch,f),RESOLUTION_FIELDS),map(f -> getproperty(p,f),RESOLUTION_FIELDS),
         p.CellID,p.CellID,pool.owners,pool.owner_scratch,p.GhostIndex,p.Type,p.GhostPoints,p.GhostNormals,c.CellStart,step)
+    if domain.attachment !== nothing
+        a = domain.attachment
+        @cuda threads=256 blocks=blocks resolution_body_indices_kernel!(a.slots,a.scratch,a.indices,c.CellStart,step)
+    end
     @cuda threads=1 resolution_rebuild_finish_kernel!(c.CellStart,step)
     return nothing
 end
@@ -412,6 +421,14 @@ function enqueue_resolution_step!(domains,limits,state; density_diffusion=Linear
     end
     reference && @cuda threads=1 resolution_dt_kernel!(coarse.support.dual_state.reduction.partial,fine.support.dual_state.reduction.partial,
         coarse.kernel,fine.kernel,coarse.constants,fine.constants,ResolutionStep(state,coarse,0),false)
+    if fine.attachment !== nothing
+        a = fine.attachment
+        if a.motion !== nothing
+            @cuda threads=1 resolution_motion_dt_kernel!(limits.frames,a.motion,a.motion_slot,limits.reference,
+                ResolutionStep(state,fine,0),Float64(fine.constants.dx))
+        end
+        update_resolution_floating!(fine,ResolutionStep(state,fine,0),false;limits)
+    end
     for d in domains
         p,s,q = d.particles,d.support,d.predictor.particles
         step = ResolutionStep(state,d,0)
@@ -426,6 +443,12 @@ function enqueue_resolution_step!(domains,limits,state; density_diffusion=Linear
         @cuda threads=128 blocks=cld(length(p),128) resolution_predictor_metadata_kernel!(q.Type,q.ID,q.GroupMarker,
             q.GhostPoints,q.GhostNormals,d.predictor.pool.owners,d.predictor.pool.count,p.Type,p.GroupMarker,
             p.GhostPoints,p.GhostNormals,d.pool.owners,step,Int32(length(p)))
+        if d.attachment !== nothing
+            a,qa = d.attachment,d.predictor.attachment
+            @cuda threads=128 blocks=cld(length(p),128) resolution_body_predictor_indices_kernel!(qa.slots,qa.indices,a.slots,step,Int32(length(p)))
+            sample_resolution_body!(a,step,0.5)
+            place_resolution_body!(d.predictor,step)
+        end
     end
     @cuda threads=1 resolution_phase_kernel!(ResolutionStep(state,coarse,0),Int32(1))
     for (phase,d) in ((1,coarse.predictor),(2,fine.predictor))
@@ -437,6 +460,9 @@ function enqueue_resolution_step!(domains,limits,state; density_diffusion=Linear
     end
     reference && @cuda threads=1 resolution_dt_kernel!(coarse.predictor.support.dual_state.reduction.partial,fine.predictor.support.dual_state.reduction.partial,
         coarse.kernel,fine.kernel,coarse.constants,fine.constants,ResolutionStep(state,coarse,3),true)
+    if fine.attachment !== nothing
+        update_resolution_floating!(fine.predictor,ResolutionStep(state,fine.predictor,3),true)
+    end
     for d in domains
         p,s,q,qs = d.particles,d.support,d.predictor.particles,d.predictor.support
         step = ResolutionStep(state,d,3)
@@ -454,8 +480,21 @@ function enqueue_resolution_step!(domains,limits,state; density_diffusion=Linear
                 p.Acceleration,p.Density,s.dρdtI,s.ρₙ⁺,s.Positionₙ⁺,s.Velocityₙ⁺,p.Type,s.∇Cᵢ,s.∇◌rᵢ,
                 ResolutionArithmeticStep{eltype(p.Density)}(step),d.kernel,d.constants,d.boundary_mode,red.partial,damping,Int32(length(p)))
         end
+    end
+    if fine.attachment !== nothing
+        step = ResolutionStep(state,fine,3)
+        sample_resolution_body!(fine.attachment,step,1.0)
+        place_resolution_body!(fine,step)
+        @cuda threads=1 resolution_frame_kernel!(limits.frames,fine.attachment.pose,limits.reference,step,
+            0.5Float64(fine.kernel.h),false)
+        p,red = fine.particles,fine.pool.reduction
+        @cuda threads=REDUCE_THREADS blocks=red.nblocks resolution_standard_reduction_kernel!(
+            red.partial,p.Position,p.Velocity,p.Acceleration,p.Type,step,fine.kernel,Int32(length(p)))
+    end
+    for d in domains
+        p = d.particles
         @cuda threads=128 blocks=cld(length(p),128) resolution_retire_kernel!(p.Position,p.Velocity,p.Density,p.Type,
-            d.events,limits,d.fine,d.constants.ρ₀,step,Int32(length(p)))
+            d.events,limits,d.fine,d.constants.ρ₀,ResolutionStep(state,d,3),Int32(length(p)))
     end
     @cuda threads=1 resolution_phase_kernel!(ResolutionStep(state,coarse,3),Int32(4))
     for (phase,d) in ((4,coarse),(5,fine))
@@ -492,8 +531,7 @@ function enqueue_resolution_step!(domains,limits,state; density_diffusion=Linear
     return nothing
 end
 
-function initialize_resident_domains!(domains; time=0.0, iteration=0)
-    state = GPUStepState.StepState{Float64}(; time,iteration)
+function initialize_resident_domains!(domains; time=0.0, iteration=0,state=GPUStepState.StepState{Float64}(;time,iteration))
     state.fh[3] = Inf
     copyto!(state.f,state.fh)
     for d in (domains...,map(d -> d.predictor,domains)...)
@@ -564,6 +602,8 @@ function advance_resolution!(domains,limits,state,deadline; batch_steps=32,use_g
             error("Variable-resolution particle reserve exhausted; increase particle_reserve (no buffer particles were silently dropped)")
         elseif stop == RESOLUTION_STATE_ERROR
             error("Non-finite variable-resolution particle state or nonpositive/nonfinite VRes timestep")
+        elseif stop == RESOLUTION_MOTION_ERROR
+            error("Attached refinement motion is nonfinite, discontinuous or outruns its buffer; use continuous/slower motion or a smaller CFL")
         elseif !(stop in (0,GPUStepState.STOP_OUTPUT))
             error("Unexpected variable-resolution device status: $stop")
         end
