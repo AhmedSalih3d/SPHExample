@@ -30,7 +30,8 @@ device, so the step stays capturable as a CUDA graph.
 module GPUFloating
 
 export FloatingArrays, initialize_floating_velocities!, launch_floating_forces!, launch_floating_update!,
-       launch_floating_particles!, launch_floating_derivative!, floating_state, update_floating_indices!, freeze_body_state!
+       launch_floating_particles!, launch_floating_derivative!, floating_state, update_floating_indices!, freeze_body_state!,
+       launch_floating_springs!, floating_spring_state
 
 using CUDA
 using LinearAlgebra: cross, det, dot
@@ -42,6 +43,7 @@ using ..GPUStepState
 using ..GPUKernels: lanes_sum, store_pos_cell!, ELEMENTWISE_THREADS
 
 include("GPUFloatingConstraints.jl")
+include("GPUFloatingSprings.jl")
 
 """
     FloatingArrays(SimGeometry, SimParticles, SimConstants; position_type, time = 0) -> NamedTuple
@@ -81,6 +83,9 @@ function FloatingArrays(SimGeometry::Vector{SPHGeometry{D, T}}, SimParticles, Si
     velocity = zeros(SVector{D,T}, nstate)
     omega = zeros(D == 2 ? T : SVector{3,T}, nstate)
     count    = zeros(Int, max(nbodies, 1))
+    springs = DeviceSpring{D,T,TP}[]
+    spring_starts = ones(Int32,nstate+1)
+    spring_dt = Inf
     for (b, geom) in enumerate(floating)
         g = geom.GroupMarker
         body[g] != 0 && error("Two floating bodies share the group marker $g.")
@@ -113,6 +118,26 @@ function FloatingArrays(SimGeometry::Vector{SPHGeometry{D, T}}, SimParticles, Si
             inertia_inv[b] = inv(Ibody)
         end
         pause[b]   = T(geom.Floating.PauseTime)
+        spring_starts[b] = length(springs)+1
+        stiffness_rate,damping_rate = 0.0,0.0
+        for spring in geom.Floating.Springs
+            spring isa LinearSpring{D,T} || throw(ArgumentError("floating springs for group $g must use dimension $D and physics type $T"))
+            offset = SVector{D,TP}(spring.Attachment)-c
+            push!(springs,DeviceSpring(SVector{D,TP}(spring.Anchor),offset,spring.Stiffness,spring.Damping,spring.RestLength))
+            # Bound translational and rotational attachment mobility. Using
+            # the inverse-inertia norm also bounds every 3D body orientation.
+            inverse_inertia = D == 2 ? Float64(inertia_inv[b]) : sqrt(sum(abs2,inertia_inv[b]))
+            mobility = inv(Float64(mass[b]))+Float64(dot(offset,offset))*inverse_inertia
+            stiffness_rate += spring.Stiffness*mobility
+            damping_rate += spring.Damping*mobility
+        end
+        spring_starts[b+1] = length(springs)+1
+        rate = sqrt(stiffness_rate)+damping_rate
+        if rate > 0
+            limit = 0.2/rate
+            isfinite(limit) && limit >= floatmin(T) || throw(ArgumentError("spring timestep is not representable in $T; reduce stiffness/damping or increase body mass"))
+            spring_dt = min(spring_dt,limit)
+        end
         config = geom.Floating.Constraints
         if config !== nothing
             config isa FloatingConstraints{D,T} ||
@@ -130,6 +155,7 @@ function FloatingArrays(SimGeometry::Vector{SPHGeometry{D, T}}, SimParticles, Si
               constrained = any(c -> c.active, constraints), constraints = CuArray(constraints),
               frozen = CUDA.zeros(Int32, nstate),
               body = CuArray(body), mass = CuArray(mass), inertia = CuArray(inertia),
+              springs = CuArray(springs), spring_starts = CuArray(spring_starts), spring_dt,
               inertia_inv = CuArray(inertia_inv), pause = CuArray(pause),
               center = CuArray(center), center_n = CuArray(center),
               center_half = CuArray(center), velocity = CuArray(velocity),
@@ -531,7 +557,8 @@ from the force accumulated since the last update, and clear the force. With
 `carried = true`, the predictor uses the cached linear/angular acceleration;
 the corrector still evaluates and caches its half-state derivative.
 """
-function launch_floating_update!(floating, step, g, final::Bool; carried::Bool = false)
+function launch_floating_update!(floating, step, g, final::Bool; carried::Bool = false, spring_forces::Bool = true)
+    spring_forces && !(carried && !final) && launch_floating_springs!(floating,step,final)
     return launch_floating_update!(floating, step, g, final,
                                    Val(floating_dimension(floating.center)); carried)
 end
@@ -607,6 +634,7 @@ the single-neighbor scheme. Corrector updates refresh the cache at the half stat
 function launch_floating_derivative!(floating, step, g)
     f = floating
     f.nbodies == 0 && return nothing
+    launch_floating_springs!(f,step,false)
     D = floating_dimension(f.center)
     device = if D == 2
         (; f.nbodies, f.frozen, f.constraints, f.center, f.omega, f.force, f.mass, f.inertia, f.acceleration, f.angular_acceleration)

@@ -57,8 +57,8 @@ function resolution_attachment_config(config,geometry,rotation,motion,coarse_ker
         if g.GroupMarker == marker
             g.Type == body.Type || throw(ArgumentError("the followed GroupMarker must be exclusive to its body in both domains"))
         else
-            g.Type in (Fixed,Fluid) && g.Motion === nothing && g.Floating === nothing ||
-                throw(ArgumentError("attached refinement supports one moving/floating body; other groups must be fixed walls or fluid"))
+            g.Type in (Fixed,Fluid,Moving) && g.Motion === nothing && g.Floating === nothing ||
+                throw(ArgumentError("other refinement groups must be fluid, fixed walls or Moving walls prescribed by SimMotion"))
         end
     end
     h = Float64(coarse_kernel.h)
@@ -67,10 +67,23 @@ function resolution_attachment_config(config,geometry,rotation,motion,coarse_ker
     all(hi .> lo) && all(x -> inside_box(x,lo,hi),body.Particles.Position) ||
         throw(ArgumentError("the followed body must fit inside the coarse exclusion rectangle with one coarse support radius of clearance; enlarge the refinement box"))
     if body.Type == Floating
-        body.Floating !== nothing && body.Motion === nothing && motion === nothing && rotation === nothing ||
+        body.Floating !== nothing && body.Motion === nothing && rotation === nothing ||
             throw(ArgumentError("a followed floating body requires FloatingDetails and cannot also have prescribed motion"))
-        return (;marker,motion=nothing)
+        moving_markers = unique([g.GroupMarker for g in (geometry...,config.fine_geometry...) if g.Type == Moving])
+        system = motion isa PrescribedMotion ? MotionSystem(motion) : motion
+        if system === nothing
+            isempty(moving_markers) || throw(ArgumentError("additional Moving walls require SimMotion"))
+        else
+            system isa MotionSystem || throw(ArgumentError("SimMotion must be a PrescribedMotion or MotionSystem"))
+            targets = [n.group_marker for n in system.motions if n.group_marker !== nothing]
+            Set(targets) == Set(moving_markers) || throw(ArgumentError("SimMotion must target exactly the additional Moving wall groups, never the followed floating body"))
+            all(g -> !(g.GroupMarker in targets) || g.Type == Moving,(geometry...,config.fine_geometry...)) ||
+                throw(ArgumentError("prescribed boundary markers must be exclusive to Moving particles"))
+        end
+        return (;marker,motion=nothing,boundary_motion=system)
     end
+    all(g -> g.GroupMarker == marker || g.Type != Moving,(geometry...,config.fine_geometry...)) ||
+        throw(ArgumentError("additional prescribed walls currently require a Floating followed body"))
     body.Floating === nothing || throw(ArgumentError("a Moving body cannot have FloatingDetails"))
     count(!isnothing,(body.Motion,rotation,motion)) == 1 ||
         throw(ArgumentError("a followed Moving body needs exactly one of MotionDetails, SimMotion or SimRotation"))
@@ -94,7 +107,58 @@ function resolution_attachment_config(config,geometry,rotation,motion,coarse_ker
         count(n -> n.group_marker == marker,system.motions) == 1 ||
         throw(ArgumentError("SimMotion must target only the followed body (virtual parents are supported)"))
     length(first(system.motions).center) == 2 || throw(ArgumentError("attached refinement requires 2D motion"))
-    return (;marker,motion=system)
+    return (;marker,motion=system,boundary_motion=nothing)
+end
+
+function resolution_motion_subset(system,markers)
+    (system === nothing || isempty(markers)) && return nothing
+    nodes = map(system.motions) do n
+        PrescribedMotion(n.id;group_marker=n.group_marker in markers ? n.group_marker : nothing,
+            parent=n.parent,translation=n.translation,rotation=n.rotation,center=n.center,axis=n.axis)
+    end
+    return MotionSystem(nodes)
+end
+
+make_resolution_prescribed(::Nothing,args...) = nothing
+function make_resolution_prescribed(system,geometry,host)
+    markers = [g.GroupMarker for g in geometry if g.Type == Moving]
+    subset = resolution_motion_subset(system,markers)
+    subset === nothing && return nothing
+    motion = prepare_prescribed_motion(subset,geometry,host)
+    selected = Int.(Array(motion.indices))
+    slots = zeros(Int32,length(host))
+    slots[selected] = Int32.(eachindex(selected))
+    return (;slots=CuArray(slots),scratch=CUDA.zeros(Int32,length(host)),indices=copy(motion.indices),
+        reference=motion.reference,ghosts=CuArray(host.GhostPoints[selected]),normals=CuArray(host.GhostNormals[selected]),motion)
+end
+
+function resolution_prescribed_coefficients_kernel!(motion,step,fraction)
+    GPUStepState.step_active(step) || return nothing
+    sample_nodes!(motion.nodes,motion.poses,Float64(GPUStepState.step_time(step)+fraction*GPUStepState.step_dt(step)),0,1)
+    return nothing
+end
+
+function resolution_prescribed_particles_kernel!(x,v,ghosts,normals,a,step,n)
+    GPUStepState.step_active(step) || return nothing
+    slot = thread_index()
+    @inbounds if slot <= n
+        i = a.indices[slot]
+        pose = a.motion.poses[a.motion.owners[slot]]
+        x[i],v[i] = motion_position(pose,a.reference[slot]),motion_velocity(pose,a.reference[slot])
+        if !iszero(a.ghosts[slot])
+            ghosts[i],normals[i] = motion_position(pose,a.ghosts[slot]),pose.rotation*a.normals[slot]
+        end
+    end
+    return nothing
+end
+
+function place_resolution_prescribed!(domain,step,fraction)
+    a,p = domain.prescribed,domain.particles
+    a === nothing && return nothing
+    @cuda threads=1 resolution_prescribed_coefficients_kernel!(a.motion,step,Float64(fraction))
+    @cuda threads=128 blocks=cld(length(a.indices),128) resolution_prescribed_particles_kernel!(p.Position,p.Velocity,
+        p.GhostPoints,p.GhostNormals,a,step,Int32(length(a.indices)))
+    return nothing
 end
 
 function identity_resolution_pose()
@@ -232,12 +296,13 @@ function update_resolution_floating!(domain,step,final;limits=nothing)
     f = merge(a.floating,(;indices=a.indices))
     launch_floating_forces!(f,p.Acceleration,p.Position,p.Type,p.GroupMarker,
         final ? f.center_half : f.center,domain.constants.m₀,step)
+    launch_floating_springs!(f,step,final)
     if !final
         device = (;f.pause,f.velocity,f.omega,f.force,f.mass,f.inertia)
         @cuda threads=1 resolution_floating_dt_kernel!(device,a.center_reference,limits.reference,step,
             Float64(domain.constants.dx),Float64(domain.constants.g))
     end
-    launch_floating_update!(f,ResolutionArithmeticStep{eltype(p.Density)}(step),domain.constants.g,final)
+    launch_floating_update!(f,ResolutionArithmeticStep{eltype(p.Density)}(step),domain.constants.g,final;spring_forces=false)
     return nothing
 end
 

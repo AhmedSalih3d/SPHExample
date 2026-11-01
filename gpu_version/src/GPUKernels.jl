@@ -1203,7 +1203,7 @@ end
 # flag when the output time is reached (before computing anything) or when
 # the accumulated displacement bound requires a cell list rebuild.
 function finish_kernel!(step::DeviceStep{T}, partial, nblocks::Int32, CFL::T, c₀::T, h::T,
-                        diagnostic_partial, diagnostic_result, stage_sampler) where {T}
+                        diagnostic_partial, diagnostic_result, stage_sampler,dt_limit) where {T}
     f = step.f
     s = step.i
     @inbounds begin
@@ -1235,7 +1235,7 @@ function finish_kernel!(step::DeviceStep{T}, partial, nblocks::Int32, CFL::T, c�
         @inbounds begin
             visc = r[1]
             dt1  = r[2]
-            dt   = Float64(CFL * min(dt1, h / (c₀ + visc)))
+            dt   = min(Float64(CFL * min(dt1, h / (c₀ + visc))),dt_limit)
             if s[I_CLIP_OUTPUT] != 0
                 dt = min(dt, f[F_TOUT] - f[F_TIME])
             end
@@ -1265,14 +1265,16 @@ With `diagnostics`, retain the selected criterion and its particle ID for
 the step being started; a pending step interrupted by a rebuild keeps them.
 An optional `stage_sampler` prepares motion coefficients in the same launch,
 after an active timestep is ready, including the resumed rebuild path.
+`dt_limit` caps the timestep before motion sampling; floating springs supply
+their stability limit here. The default `Inf` retains the usual criterion.
 """
 function launch_finish!(state::StepState{T}, red::ReductionWorkspace{SVector{3, T}}, SimKernel,
-                        SimConstants; diagnostics = nothing, stage_sampler = nothing) where {T}
+                        SimConstants; diagnostics = nothing, stage_sampler = nothing,dt_limit=Inf) where {T}
     diagnostic_partial = diagnostics === nothing ? nothing : diagnostics.reduction.partial
     diagnostic_result = diagnostics === nothing ? nothing : diagnostics.result
     @cuda threads=REDUCE_THREADS blocks=1 finish_kernel!(state, red.partial, Int32(red.nblocks),
                                                         T(SimConstants.CFL), T(SimConstants.c₀),
-                                                        T(SimKernel.h), diagnostic_partial, diagnostic_result, stage_sampler)
+                                                        T(SimKernel.h), diagnostic_partial, diagnostic_result, stage_sampler,Float64(dt_limit))
     return nothing
 end
 

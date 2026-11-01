@@ -49,4 +49,4 @@ function run_attached_resolution_example(;floating=true,duration=0.5,dx=0.04,
     end
 end
 
-abspath(PROGRAM_FILE) == @__FILE__ && run_attached_resolution_example()
+abspath(PROGRAM_FILE) == (@__FILE__) && run_attached_resolution_example()

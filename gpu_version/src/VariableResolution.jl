@@ -84,7 +84,7 @@ function interface_points(limits, fine, dx)
     return (; points, normals, widths)
 end
 
-struct ResolutionDomain{P,C,S,K,F,I,PP,POOL,B,A}
+struct ResolutionDomain{P,C,S,K,F,I,PP,POOL,B,A,M}
     particles::P
     cells::C
     support::S
@@ -100,10 +100,11 @@ struct ResolutionDomain{P,C,S,K,F,I,PP,POOL,B,A}
     pool::POOL
     boundary_mode::B
     attachment::A
+    prescribed::M
 end
 
 function make_resolution_domain(geometry, constants::SimulationConstants{T}, kernel, limits, fine, reserve;
-        resident = false, standard = false, boundary_mode = SimpleMDBC(), attachment_config=nothing, time=0.0) where {T}
+        resident = false, standard = false, boundary_mode = SimpleMDBC(), attachment_config=nothing, prescribed_system=nothing, time=0.0) where {T}
     geometry isa AbstractVector && !isempty(geometry) && all(g -> g isa SPHGeometry{2,T},geometry) ||
         throw(ArgumentError("each domain needs a nonempty vector of 2D geometries matching its constants' precision"))
     geometry = SPHGeometry{2,T}[geometry...]
@@ -116,7 +117,8 @@ function make_resolution_domain(geometry, constants::SimulationConstants{T}, ker
         end
     end
     all(g -> g.Type in (Fixed, Fluid) && g.Motion === nothing && g.Floating === nothing ||
-        (attachment_config !== nothing && g.GroupMarker == attachment_config.marker && g.Type in (Moving,Floating)), geometry) ||
+        (attachment_config !== nothing && g.GroupMarker == attachment_config.marker && g.Type in (Moving,Floating)) ||
+        (prescribed_system !== nothing && g.Type == Moving && g.Motion === nothing && g.Floating === nothing), geometry) ||
         throw(ArgumentError("variable resolution supports fluid, fixed walls and the configured followed body"))
     boundary_mode isa NoMDBC || all(g -> !is_wall(g.Type) || (hasproperty(g.Particles, :GhostPoints) && hasproperty(g.Particles, :GhostNormals)), geometry) ||
         throw(ArgumentError("fixed and moving walls require mDBC ghost points and normals"))
@@ -151,19 +153,20 @@ function make_resolution_domain(geometry, constants::SimulationConstants{T}, ker
     cells.frozen_total = reserve
     support = GPUSupportArrays{2,T}(n; position_type = Float64, shifting = false, dual_time_stepping = true)
     attachment = make_resolution_attachment(attachment_config,geometry,host,constants;time)
+    prescribed = make_resolution_prescribed(prescribed_system,geometry,host)
     # Predictor neighbors are sorted independently. Keep their inputs dense and
     # scatter only the evaluated derivatives back to the accepted-state order.
     predictor = (; particles = upload_particles(host; position_type = Float64, kernel_output = false),
         cells = CellListWorkspace{2,Float64}(n),
         support = GPUSupportArrays{2,T}(n; position_type = Float64, shifting = false, dual_time_stepping = true),
-        kernel, constants, boundary_mode, attachment=predictor_attachment(attachment),
+        kernel, constants, boundary_mode, attachment=predictor_attachment(attachment),prescribed=predictor_attachment(prescribed),
         pool = resident ? ResolutionPool(host, initial_count) : nothing)
     faces = interface_points(limits, fine, Float64(constants.dx))
     interface = (; points = CuArray(faces.points), normals = CuArray(faces.normals),
         widths = CuArray(faces.widths), mass = CUDA.zeros(Float64, length(faces.points)), fluid_marker)
     return ResolutionDomain(gpu, cells, support, kernel, constants, interface, predictor,
         CUDA.zeros(Int32, resident ? 0 : n), CUDA.zeros(Int32, 2), CuArray([Int64(maximum(host.ID) + 2)]), CUDA.zeros(Int64, 4), fine,
-        resident ? ResolutionPool(host, initial_count; standard) : nothing,boundary_mode,attachment)
+        resident ? ResolutionPool(host, initial_count; standard) : nothing,boundary_mode,attachment,prescribed)
 end
 
 include("GPUVariableResolution.jl")

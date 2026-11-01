@@ -1,0 +1,78 @@
+module PointAbsorberSpringTests
+using Test, SPHExampleGPU, CUDA, StaticArrays, CSV, LinearAlgebra, HDF5
+include(joinpath(@__DIR__,"..","example","VResolutionPointAbsorberSpring2d","Setup.jl"))
+
+@testset "06 Special geometry, link and our solver parameters" begin
+    case = point_absorber_spring_case()
+    @test case.region.lower == SVector(1.7,0.2)
+    @test case.region.upper == SVector(2.3,0.6)
+    @test case.region.ratio == 2
+    @test length(case.coarse.geometry[1].Particles) == 2832
+    @test length(case.coarse.geometry[3].Particles) == 360
+    body = case.fine.geometry[3]
+    @test body.Type == Floating && body.GroupMarker == 50
+    @test length(body.Particles) == 2013
+    @test sum(body.Particles.Position)/2013 ≈ SVector(2.0,0.4)
+    @test body.Floating.RelativeWeight == 0.5
+    @test Tuple(body.Floating.Constraints.translation_free) == (false,true)
+    @test Tuple(body.Floating.Constraints.rotation_free) == (false,)
+    @test case.spring.Anchor == SVector(2.0,0.0)
+    @test case.spring.Attachment == SVector(2.0,0.325)
+    @test case.spring.Stiffness == 100 && case.spring.Damping == 500
+    @test case.spring.RestLength ≈ 0.325
+    @test body.Floating.RelativeWeight*case.fine.constants.m₀*length(body.Particles) ≈ 25.1625
+    for level in (case.coarse,case.fine)
+        @test level.constants.γ == 7
+        @test level.constants.α == 0.05f0
+        @test level.constants.δᵩ == 0.1f0
+        @test level.constants.CFL == 0.2f0
+        @test level.kernel.h ≈ 1.5level.constants.dx
+        @test all(>=(level.constants.ρ₀),level.geometry[2].Particles.Density)
+    end
+    theory = collect(CSV.File(joinpath(POINT_ABSORBER_DATA,"PistonTheory.csv")))
+    @test maximum(abs(point_absorber_piston_state(r.time)[1]-r.displacement) for r in theory) < 1e-6
+    reference = collect(CSV.File(joinpath(POINT_ABSORBER_DATA,"FloatingReference.csv")))
+    @test length(reference) == 200
+    @test all(r -> r.center_x == 2.0,reference)
+    @test maximum(abs(r.spring_force_y-(-100*(r.center_y-0.4)-500r.velocity_y)) for r in reference) < 0.00031
+    @test point_absorber_piston_state(0.0) == (0.0,0.0)
+end
+
+if CUDA.functional()
+    CUDA.allowscalar(false)
+    @testset "06 Special GPU piston, tracked spring body and output" begin
+        runs = []
+        for graphs in (false,true)
+            directory = mktempdir()
+            result = redirect_stdout(devnull) do
+                run_point_absorber_spring(;duration=0.002,output_interval=0.001,save_location=directory,particle_reserve=2048,
+                    metadata_options=(GPUUseGraph=graphs,GPUMaxStepsPerSync=16))
+            end
+            push!(runs,result)
+            @test result.final_state.complete
+            @test result.configuration.effective.time_stepping === SymplecticTimeStepping
+            @test result.configuration.effective.density_diffusion_model === LinearDensityDiffusion
+            @test result.configuration.effective.variable_resolution.follow == 50
+            @test result.configuration.effective.boundary_mode === NoMDBC
+            @test length(result.final_state.springs) == 1
+            @test result.final_state.floating.center[1][1] ≈ 2.0 atol=1e-12
+            @test result.final_state.floating.angle == [0]
+            @test result.final_state.resolution_pose.offset[2] ≈ result.final_state.floating.center[1][2]-0.4 atol=1e-12
+            @test !any(==(Floating),result.final_state.resolution.coarse.Type)
+            @test count(==(Floating),result.final_state.resolution.fine.Type) == 2013
+            coarse = result.final_state.resolution.coarse
+            piston = findall(==(Moving),coarse.Type)
+            @test length(piston) == 360
+            trajectory = point_absorber_spring_case(duration=0.002).motion
+            displacement = motion_position(trajectory,SVector(0.0,0.0),0.002)[1]
+            @test maximum(first,coarse.Position[piston]) ≈ displacement atol=1e-12
+            @test length(readlines(joinpath(directory,"PointAbsorberSpring2D_Springs.csv"))) == 4
+            @test isfile(joinpath(directory,"PointAbsorberSpring2D_Link.vtkhdf.series"))
+            @test isfile(joinpath(directory,"PointAbsorberSpring2D_Comparison.csv"))
+            @test all(d -> d[4] == 0,result.diagnostics.resolution.events)
+        end
+        @test runs[1].final_state.floating.center ≈ runs[2].final_state.floating.center atol=1e-7
+        @test runs[1].final_state.floating.velocity ≈ runs[2].final_state.floating.velocity atol=1e-6
+    end
+end
+end

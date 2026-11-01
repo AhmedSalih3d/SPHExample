@@ -7,7 +7,7 @@ using Base: @kwdef
 
 # Export relevant types and structs
 export ParticleType, SPHGeometry, particle_struct_array, Fluid, Fixed, Moving, Floating, Frozen,
-       MotionDetails, FloatingDetails, FloatingConstraints, GravityFactorValue, MotionLimiterValue, is_wall
+       MotionDetails, FloatingDetails, FloatingConstraints, LinearSpring, GravityFactorValue, MotionLimiterValue, is_wall
 
 # Use the existing @enum for ParticleType
 @enum ParticleType::UInt8 begin
@@ -134,7 +134,36 @@ function FloatingConstraints{D,T}(;
 end
 
 """
-    FloatingDetails{T}(; RelativeWeight, PauseTime = 0, Constraints = nothing)
+    LinearSpring{D,T}(; Anchor, Attachment, Stiffness, Damping=0,
+        RestLength=norm(Attachment-Anchor))
+
+A damped axial spring from a fixed world `Anchor` to a body `Attachment` in
+the initial geometry's world coordinates. Stiffness is N/m, damping is Ns/m,
+and rest length is metres. It supports tension and compression. The attachment
+turns with the body; its point velocity determines damping and its lever arm
+determines torque. Put one or more springs in `FloatingDetails.Springs`.
+"""
+struct LinearSpring{D,T}
+    Anchor::SVector{D,Float64}
+    Attachment::SVector{D,Float64}
+    Stiffness::T
+    Damping::T
+    RestLength::T
+end
+
+function LinearSpring{D,T}(;Anchor,Attachment,Stiffness,Damping=0,RestLength=nothing) where {D,T<:AbstractFloat}
+    D in (2,3) || throw(ArgumentError("linear springs require 2D or 3D"))
+    a,p = SVector{D,Float64}(Anchor),SVector{D,Float64}(Attachment)
+    all(isfinite,a) && all(isfinite,p) || throw(ArgumentError("spring points must be finite"))
+    k,c = T(Stiffness),T(Damping)
+    length0 = RestLength === nothing ? T(sqrt(sum(abs2,p-a))) : T(RestLength)
+    all(x -> isfinite(x) && x >= 0,(k,c,length0)) ||
+        throw(ArgumentError("spring stiffness, damping and rest length must be finite and nonnegative"))
+    return LinearSpring{D,T}(a,p,k,c,length0)
+end
+
+"""
+    FloatingDetails{T}(; RelativeWeight, PauseTime = 0, Constraints = nothing, Springs=())
 
 A rigid body (the DualSPHysics "floating" object) whose particles move
 together under gravity and the forces of the surrounding particles.
@@ -144,15 +173,20 @@ particle weighs `RelativeWeight * m₀`. The body is held still until
 `Constraints = FloatingConstraints{D,T}(...)` restricts or prescribes selected
 degrees of freedom. Pause and permanent grid freezing override all motion.
 Supported in 2D and 3D with both symplectic and single-neighbor time stepping.
+`Springs=(LinearSpring{D,T}(...), ...)` adds fixed-anchor spring forces on the
+GPU at each evaluated body state, including torque and a spring timestep limit.
 """
 @kwdef struct FloatingDetails{T}
     RelativeWeight::T
     PauseTime::T = zero(RelativeWeight)
     Constraints::Union{Nothing,FloatingConstraints} = nothing
+    Springs::Tuple = ()
 end
 
-FloatingDetails{T}(weight, pause) where {T} = FloatingDetails{T}(weight, pause, nothing)
+FloatingDetails{T}(weight, pause, constraints) where {T} = FloatingDetails{T}(weight, pause, constraints, ())
+FloatingDetails{T}(weight, pause) where {T} = FloatingDetails{T}(weight, pause, nothing, ())
 FloatingDetails(weight::T, pause::T) where {T} = FloatingDetails{T}(weight, pause)
+FloatingDetails(weight::T, pause::T, constraints) where {T} = FloatingDetails{T}(weight, pause, constraints, ())
 
 """
     SPHGeometry{D, T}(; Particles, GroupMarker, Type, Motion = nothing,

@@ -167,7 +167,7 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
     boundary_mode = typeof(meta).parameters[5]()
     LOGGER.start_runtime!(SimLogger,initial_time)
     timer = meta.HourGlass
-    output,history,floating_history = nothing,nothing,nothing
+    output,history,floating_history,spring_history = nothing,nothing,nothing,nothing
     status = "failed"
     frames,write_seconds = 0,0.0
     times,files = Float64[],String[]
@@ -187,9 +187,10 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
                 config.particle_reserve === nothing ? max(1024,ceil(Int,2area/c.dx^2)) : config.particle_reserve
             end
             standard = !(scheme isa DualSPHysicsSymplectic)
-            coarse = make_resolution_domain(coarse_geometry,SimConstants,SimKernel,limits,false,reserves[1];resident=true,standard,boundary_mode)
+            prescribed_system = attachment_config === nothing ? nothing : attachment_config.boundary_motion
+            coarse = make_resolution_domain(coarse_geometry,SimConstants,SimKernel,limits,false,reserves[1];resident=true,standard,boundary_mode,prescribed_system)
             fine = make_resolution_domain(config.fine_geometry,fine_constants,fine_kernel,limits,true,reserves[2];
-                resident=true,standard,boundary_mode,attachment_config,time=initial_time)
+                resident=true,standard,boundary_mode,attachment_config,prescribed_system,time=initial_time)
             if attachment_config !== nothing
                 limits = AttachedResolutionLimits(limits,CuArray(fill(identity_resolution_pose(),2)))
             end
@@ -200,6 +201,9 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
             end
             state = GPUStepState.StepState{Float64}(;time=initial_time,iteration=initial_steps)
             initialize_resolution_attachment!(fine,limits,state)
+            for d in domains
+                place_resolution_prescribed!(d,ResolutionStep(state,d,0),0.0)
+            end
             foreach(d -> retire_particles!(d,limits),domains)
             initialize_resident_domains!(domains;state)
             exchange_buffers!(coarse,fine,limits)
@@ -218,6 +222,10 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
             if fine.attachment !== nothing && fine.attachment.floating !== nothing
                 floating_history = open(joinpath(meta.SaveLocation,meta.SimulationName*"_Floating.csv"),"w")
                 println(floating_history,"Time,Body,GroupMarker,Center:0,Center:1,Velocity:0,Velocity:1,Angle,Omega")
+                if !isempty(fine.attachment.floating.springs)
+                    spring_history = open(joinpath(meta.SaveLocation,meta.SimulationName*"_Springs.csv"),"w")
+                    println(spring_history,"Time,Body,Spring,Anchor:0,Anchor:1,Attachment:0,Attachment:1,Length,Extension,Force:0,Force:1,Torque")
+                end
             end
             if store_log
                 log_effective_configuration(SimLogger,state.configuration;phase="variable-resolution startup")
@@ -258,6 +266,13 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
                     body = floating_state(fine.attachment.floating)
                     println(floating_history,join((meta.TotalTime,1,config.follow,body.center[1]...,body.velocity[1]...,body.angle[1],body.omega[1]),','))
                     flush(floating_history)
+                end
+                if spring_history !== nothing
+                    for spring in floating_spring_state(fine.attachment.floating)
+                        println(spring_history,join((meta.TotalTime,spring.body,spring.spring,spring.anchor...,
+                            spring.attachment...,spring.length,spring.extension,spring.force...,spring.torque),','))
+                    end
+                    flush(spring_history)
                 end
                 push!(times,meta.TotalTime)
                 if !meta.ExportSingleVTKHDF
@@ -308,7 +323,11 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
                 try
                     history === nothing || close(history)
                 finally
-                    floating_history === nothing || close(floating_history)
+                    try
+                        floating_history === nothing || close(floating_history)
+                    finally
+                        spring_history === nothing || close(spring_history)
+                    end
                 end
             end
         catch
@@ -329,9 +348,10 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
     steps,simulated = meta.Iteration-initial_steps,meta.TotalTime-initial_time
     configuration = configuration_snapshot(state)
     body_state = fine.attachment === nothing || fine.attachment.floating === nothing ? nothing : floating_state(fine.attachment.floating)
+    springs = fine.attachment === nothing || fine.attachment.floating === nothing ? NamedTuple[] : floating_spring_state(fine.attachment.floating)
     region_pose = limits isa AttachedResolutionLimits ? first(Array(limits.frames)) : identity_resolution_pose()
     final_state = (;particles=SimParticles,floating=body_state,time=meta.TotalTime,iteration=meta.Iteration,
-        timestep=meta.CurrentTimeStep,complete=status == "finished",resolution=(;coarse=snapshots[1],fine=snapshots[2]),resolution_pose=region_pose)
+        timestep=meta.CurrentTimeStep,complete=status == "finished",resolution=(;coarse=snapshots[1],fine=snapshots[2]),resolution_pose=region_pose,springs)
     performance = (;steps,simulated_time=simulated,wall_time_seconds=elapsed,mean_timestep=steps > 0 ? simulated/steps : NaN,
         milliseconds_per_step=steps > 0 ? 1e3elapsed/steps : NaN,mparticle_steps_per_second=NaN,
         output_write_seconds=write_seconds,phase_timings=copy(timer),phase_timings_synchronized=meta.GPUSyncTimers)

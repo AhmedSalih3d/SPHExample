@@ -96,7 +96,9 @@ reference geometry coordinates. Supply the body in `fine_geometry`, with
 `Type=Floating` and `FloatingDetails`. Virtual parents in `MotionSystem` and
 floating constraints are supported. An optional coarse copy of the followed
 body is omitted: its mass, inertia and fluid forces use only the fine body.
-Other groups must be fluid or fixed boundaries. The body must fit inside the
+Other groups may be fluid or fixed boundaries. A followed floating body also
+supports independent `Moving` walls through `SimMotion`, including a wave piston
+present only in the coarse domain. The body must fit inside the
 coarse exclusion rectangle with an additional coarse support radius of clearance;
 the constructor reports when the box needs enlarging.
 Fluid and fixed-wall input positions remain world coordinates; provide the
@@ -126,6 +128,33 @@ for prescribed motion.
 julia --project=gpu_version gpu_version/test/resolution_attachment.jl
 julia --project=gpu_version gpu_version/example/VResolutionAttachedBody2d.jl
 ```
+
+[VResolutionPointAbsorberSpring2d.jl](example/VResolutionPointAbsorberSpring2d.jl)
+implements `vresolution/06_Special/CasePointAbsorberSpringVRes`: a heaving box
+on a damped linear spring, wave piston and body-following fine patch. It uses
+our ordinary solver settings and the existing DualSPHysics history for a
+comparison CSV; it never launches DualSPHysics. See its
+[case guide](example/VResolutionPointAbsorberSpring2d/README.md) for settings,
+link animation and focused validation.
+
+Floating bodies in either solver can use fixed-anchor springs:
+
+```julia
+spring = LinearSpring{2,Float32}(Anchor=(2.0,0.0), Attachment=(2.0,0.325),
+    Stiffness=100, Damping=500, RestLength=0.325)
+body = FloatingDetails{Float32}(RelativeWeight=0.5, Springs=(spring,),
+    Constraints=FloatingConstraints{2,Float32}(TranslationLocks=(true,false), RotationLocks=(true,)))
+```
+
+The attachment is specified in the initial geometry's world coordinates and
+then moves rigidly with the body. Axial damping uses its point velocity;
+off-centre forces also exert torque. Springs support tension and compression
+in 2D and 3D. Force evaluation, body updates and spring timestep limits remain
+on the GPU with ordinary symplectic and single-neighbor stepping, including
+CUDA graphs. Attached runs write endpoint, extension and force histories to
+`<SimulationName>_Springs.csv`; the accepted records are also available as
+`result.final_state.springs`. The ordinary uniform solver exposes output
+snapshots through `SPHExampleGPU.GPUFloating.floating_spring_state(floating)`.
 
 Paired whole-solver timings and particle-state checks are available with:
 

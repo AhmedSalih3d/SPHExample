@@ -1164,7 +1164,8 @@ function enqueue_step!(ctx, timed::Bool)
     rotation = get(ctx, :rotation, nothing)
     sampler = MotionStageSampler(rotation, get(ctx, :external_forces, ()), Val(SingleNeighbor))
     @phase HourGlass "01 Update TimeStep" timed launch_finish!(state, red, SimKernel, SimConstants;
-        diagnostics = get(ctx, :diagnostics, nothing), stage_sampler = sampler)
+        diagnostics = get(ctx, :diagnostics, nothing), stage_sampler = sampler,
+        dt_limit=floats ? floating.spring_dt : Inf)
 
     launch_rotation!(rotation, gpu.Position, gpu.Velocity, gpu.Type, gpu.GroupMarker, gpu.ID, state;
         pos_cells = sup.PosCells, cell_ids = gpu.CellID, grid, H = SimKernel.H, prepared = true)

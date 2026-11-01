@@ -105,8 +105,13 @@ interaction arithmetic, one lane per particle, Float64 positions, full device
 buffers and synchronous variable-count output, including fallbacks from other
 requested settings. `SimDamping` accepts the usual plane, box and cylinder
 zones and acts on both domains after integration. Periodic/fixed grids,
-subdivision other than `R=1`, moving/floating walls, external forces, shifting,
+subdivision other than `R=1`, external forces, shifting,
 kernel-output modes and measurements are currently rejected explicitly.
+The normal backend supports body-following moving/floating refinement through
+`VariableResolutionConfig(...; follow=GroupMarker)`, including independent
+prescribed walls for a followed floating body. See the
+[spring point-absorber case](../VResolutionPointAbsorberSpring2d/README.md).
+The standalone reference driver retains its fixed-wall contract.
 
 `run_vresolution_dambreak_solver(...; metadata_options=(GPUUseGraph=false,))`
 overrides metadata fields in the supplied example. The lower-level

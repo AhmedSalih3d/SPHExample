@@ -58,6 +58,12 @@ const RESOLUTION_RESERVE_ERROR = Int32(5)
 const RESOLUTION_STATE_ERROR = Int32(6)
 const RESOLUTION_MOTION_ERROR = Int32(7)
 
+function resolution_timestep_limit_kernel!(step,limit)
+    GPUStepState.step_active(step) || return nothing
+    @inbounds step.f[1] = min(step.f[1],limit)
+    return nothing
+end
+
 function resolution_phase_kernel!(step, next)
     GPUStepState.step_active(step) || return nothing
     @inbounds step.i[2] = next
@@ -207,6 +213,10 @@ function enqueue_resolution_rebuild!(domain, step)
         srcs = (srcs...,domain.attachment.slots)
         dsts = (dsts...,domain.attachment.scratch)
     end
+    if domain.prescribed !== nothing
+        srcs = (srcs...,domain.prescribed.slots)
+        dsts = (dsts...,domain.prescribed.scratch)
+    end
     @cuda threads=256 blocks=blocks resolution_gather_kernel!(c.Perm,srcs,dsts,c.CellStart,step)
     # Stable pointers let one graph survive every reorder. Only the live prefix
     # is copied; capacity tails do not enter either sorting pass.
@@ -215,6 +225,10 @@ function enqueue_resolution_rebuild!(domain, step)
         p.CellID,p.CellID,pool.owners,pool.owner_scratch,p.GhostIndex,p.Type,p.GhostPoints,p.GhostNormals,c.CellStart,step)
     if domain.attachment !== nothing
         a = domain.attachment
+        @cuda threads=256 blocks=blocks resolution_body_indices_kernel!(a.slots,a.scratch,a.indices,c.CellStart,step)
+    end
+    if domain.prescribed !== nothing
+        a = domain.prescribed
         @cuda threads=256 blocks=blocks resolution_body_indices_kernel!(a.slots,a.scratch,a.indices,c.CellStart,step)
     end
     @cuda threads=1 resolution_rebuild_finish_kernel!(c.CellStart,step)
@@ -416,6 +430,9 @@ function enqueue_resolution_step!(domains,limits,state; density_diffusion=Linear
         @cuda threads=1 resolution_standard_dt_kernel!(coarse.pool.reduction.partial,fine.pool.reduction.partial,
             coarse.kernel,fine.kernel,coarse.constants,fine.constants,ResolutionStep(state,coarse,0))
     end
+    if fine.attachment !== nothing && fine.attachment.floating !== nothing && isfinite(fine.attachment.floating.spring_dt)
+        @cuda threads=1 resolution_timestep_limit_kernel!(ResolutionStep(state,fine,0),fine.attachment.floating.spring_dt)
+    end
     for d in domains
         resident_force_stage!(d,ResolutionStep(state,d,0); density_diffusion,viscosity,scheme,interaction)
     end
@@ -449,6 +466,11 @@ function enqueue_resolution_step!(domains,limits,state; density_diffusion=Linear
             sample_resolution_body!(a,step,0.5)
             place_resolution_body!(d.predictor,step)
         end
+        if d.prescribed !== nothing
+            a,qa = d.prescribed,d.predictor.prescribed
+            @cuda threads=128 blocks=cld(length(p),128) resolution_body_predictor_indices_kernel!(qa.slots,qa.indices,a.slots,step,Int32(length(p)))
+            place_resolution_prescribed!(d.predictor,step,0.5)
+        end
     end
     @cuda threads=1 resolution_phase_kernel!(ResolutionStep(state,coarse,0),Int32(1))
     for (phase,d) in ((1,coarse.predictor),(2,fine.predictor))
@@ -462,6 +484,11 @@ function enqueue_resolution_step!(domains,limits,state; density_diffusion=Linear
         coarse.kernel,fine.kernel,coarse.constants,fine.constants,ResolutionStep(state,coarse,3),true)
     if fine.attachment !== nothing
         update_resolution_floating!(fine.predictor,ResolutionStep(state,fine.predictor,3),true)
+    end
+    for d in domains
+        if d.prescribed !== nothing
+            place_resolution_prescribed!(d,ResolutionStep(state,d,3),1.0)
+        end
     end
     for d in domains
         p,s,q,qs = d.particles,d.support,d.predictor.particles,d.predictor.support

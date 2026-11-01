@@ -49,7 +49,8 @@ translate and rotate the rectangle with that body. Bounds describe the body's
 reference geometry coordinates. Supply the body in `fine_geometry`; an optional
 coarse copy is omitted so its force and mass are counted only once. The body
 must fit inside the coarse exclusion rectangle with one coarse support radius
-of clearance. Other boundaries remain fixed. Prescribed bodies use
+of clearance. A followed floating body may coexist with additional `Moving`
+walls prescribed through `SimMotion`, such as a coarse-domain wave piston. Prescribed bodies use
 `MotionDetails`, `SimMotion` or `SimRotation`; floating bodies use
 `FloatingDetails`. Attached regions require ordinary timestep schemes.
 All body placement, region transforms and relative interface flux run on CUDA,
