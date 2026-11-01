@@ -11,10 +11,10 @@ using ..SimulationLoggerConfiguration: SimulationLogger, log_line, LogStep, LogF
 import ..SimulationLoggerConfiguration as LOGGER
 using ..SimulationGeometry
 using ..SimulationConstantsConfiguration
-using ..SimulationMetaDataConfiguration: DualSPHysicsSymplectic
+using ..SimulationMetaDataConfiguration: DualSPHysicsSymplectic, SymplecticTimeStepping, SingleNeighborTimeStepping, SimpleMDBC, NoMDBC
 using ..VariableResolutionConfiguration: VariableResolutionBox, VariableResolutionConfig
 using ..SPHKernels
-using ..SPHDensityDiffusionModels: FourtakasDensityDiffusion
+using ..SPHDensityDiffusionModels: SPHDensityDiffusion, LinearDensityDiffusion, FourtakasDensityDiffusion
 using ..SPHViscosityModels: ArtificialViscosity
 using ..PreProcess: AllocateDataStructures
 using ..SPHCellList: upload_particles, GPUSupportArrays, rebuild_cell_list!, dual_time_step
@@ -73,7 +73,7 @@ function interface_points(limits, fine, dx)
     return (; points, normals, widths)
 end
 
-struct ResolutionDomain{P,C,S,K,F,I,PP,POOL}
+struct ResolutionDomain{P,C,S,K,F,I,PP,POOL,B}
     particles::P
     cells::C
     support::S
@@ -87,9 +87,11 @@ struct ResolutionDomain{P,C,S,K,F,I,PP,POOL}
     events::CuVector{Int64}
     fine::Bool
     pool::POOL
+    boundary_mode::B
 end
 
-function make_resolution_domain(geometry, constants::SimulationConstants{T}, kernel, limits, fine, reserve; resident = false) where {T}
+function make_resolution_domain(geometry, constants::SimulationConstants{T}, kernel, limits, fine, reserve;
+        resident = false, standard = false, boundary_mode = SimpleMDBC()) where {T}
     geometry isa AbstractVector && !isempty(geometry) && all(g -> g isa SPHGeometry{2,T},geometry) ||
         throw(ArgumentError("each domain needs a nonempty vector of 2D geometries matching its constants' precision"))
     geometry = SPHGeometry{2,T}[geometry...]
@@ -98,7 +100,7 @@ function make_resolution_domain(geometry, constants::SimulationConstants{T}, ker
     fluid_marker = isempty(fluid_markers) ? UInt(2) : UInt(only(fluid_markers))
     all(g -> g.Type in (Fixed, Fluid) && g.Motion === nothing, geometry) ||
         throw(ArgumentError("variable resolution currently supports only fluid and fixed walls"))
-    all(g -> g.Type != Fixed || (hasproperty(g.Particles, :GhostPoints) && hasproperty(g.Particles, :GhostNormals)), geometry) ||
+    boundary_mode isa NoMDBC || all(g -> g.Type != Fixed || (hasproperty(g.Particles, :GhostPoints) && hasproperty(g.Particles, :GhostNormals)), geometry) ||
         throw(ArgumentError("fixed walls require mDBC ghost points and normals"))
     for g in geometry
         all(x -> all(isfinite,x),g.Particles.Position) && all(isfinite,g.Particles.Density) ||
@@ -107,7 +109,7 @@ function make_resolution_domain(geometry, constants::SimulationConstants{T}, ker
             throw(ArgumentError("initial particle velocities must be finite"))
         all(ρ -> 0.7constants.ρ₀ <= ρ <= 1.3constants.ρ₀,g.Particles.Density) ||
             throw(ArgumentError("initial densities must lie within 70–130% of the reference density"))
-        if g.Type == Fixed
+        if g.Type == Fixed && !(boundary_mode isa NoMDBC)
             all(x -> all(isfinite,x) && !iszero(x),g.Particles.GhostPoints) &&
                 all(x -> all(isfinite,x) && !iszero(x),g.Particles.GhostNormals) ||
                 throw(ArgumentError("mDBC walls require finite nonzero ghost points and normals"))
@@ -135,14 +137,14 @@ function make_resolution_domain(geometry, constants::SimulationConstants{T}, ker
     predictor = (; particles = upload_particles(host; position_type = Float64, kernel_output = false),
         cells = CellListWorkspace{2,Float64}(n),
         support = GPUSupportArrays{2,T}(n; position_type = Float64, shifting = false, dual_time_stepping = true),
-        kernel, constants,
+        kernel, constants, boundary_mode,
         pool = resident ? ResolutionPool(host, initial_count) : nothing)
     faces = interface_points(limits, fine, Float64(constants.dx))
     interface = (; points = CuArray(faces.points), normals = CuArray(faces.normals),
         widths = CuArray(faces.widths), mass = CUDA.zeros(Float64, length(faces.points)), fluid_marker)
     return ResolutionDomain(gpu, cells, support, kernel, constants, interface, predictor,
         CUDA.zeros(Int32, resident ? 0 : n), CUDA.zeros(Int32, 2), CuArray([Int64(maximum(host.ID) + 2)]), CUDA.zeros(Int64, 4), fine,
-        resident ? ResolutionPool(host, initial_count) : nothing)
+        resident ? ResolutionPool(host, initial_count; standard) : nothing,boundary_mode)
 end
 
 include("GPUVariableResolution.jl")
@@ -157,7 +159,7 @@ function rebuild_domain!(domain)
         support = domain.support, kernel = domain.kernel, discard_acceleration = true, sort_inactive = false)
 end
 
-function domain_force_stage!(domain, position, velocity, density, pairs, time)
+function domain_force_stage!(domain, position, velocity, density, pairs, time; density_diffusion=LinearDensityDiffusion())
     (; particles, cells, support, kernel, constants) = domain
     step = HostStep(0.0, time)
     launch_pos_cells!(pairs, position, particles.CellID, cells.grid_dev, step, kernel)
@@ -166,7 +168,7 @@ function domain_force_stage!(domain, position, velocity, density, pairs, time)
     launch_interactions!(support.dρdtI, particles.Acceleration, particles.Kernel, particles.KernelGradient,
         support.∇Cᵢ, support.∇◌rᵢ, position, density, velocity, particles.Type,
         cells.CellStart, particles.CellID, cells.grid_dev, step,
-        FourtakasDensityDiffusion(full = true), ArtificialViscosity(), kernel, constants,
+        density_diffusion, ArtificialViscosity(), kernel, constants,
         Val(false), Val(false); boundary_forces = Val(false), pos_cells = pairs,
         viscous_dt = support.dual_state.viscous, fastmath = false)
     criteria = GPUKernels.launch_dual_criteria!(support.dual_state, velocity, particles.Acceleration, particles.Type)
@@ -174,14 +176,14 @@ function domain_force_stage!(domain, position, velocity, density, pairs, time)
     return dual_time_step(criteria, kernel, constants, scheme)
 end
 
-function predictor_force_stage!(domain, time)
+function predictor_force_stage!(domain, time; density_diffusion=LinearDensityDiffusion())
     p,s,half = domain.particles,domain.support,domain.predictor
     q = half.particles
     @cuda threads=128 blocks=cld(length(p),128) copy_predictor_kernel!(
         q.Position,q.Velocity,q.Density,q.Type,q.ID,q.GroupMarker,q.GhostPoints,q.GhostNormals,
         s.Positionₙ⁺,s.Velocityₙ⁺,s.ρₙ⁺,p.Type,p.GroupMarker,p.GhostPoints,p.GhostNormals,Int32(length(p)))
     rebuild_domain!(half)
-    limit = domain_force_stage!(half,q.Position,q.Velocity,q.Density,half.support.PosCells,time)
+    limit = domain_force_stage!(half,q.Position,q.Velocity,q.Density,half.support.PosCells,time; density_diffusion)
     @cuda threads=128 blocks=cld(length(p),128) scatter_predictor_kernel!(
         p.Acceleration,s.dρdtI,s.ρₙ⁺,q.Acceleration,half.support.dρdtI,q.Density,q.ID,Int32(length(p)))
     return limit
@@ -259,7 +261,7 @@ end
         coarse_constants, fine_constants, coarse_kernel, fine_kernel, region,
         simulation_time = 1, output_interval = 0.0025, save_location,
         particle_reserve = nothing, include_buffers = false, execution = :gpu,
-        batch_steps = 32, use_graphs = true)
+        batch_steps = 32, use_graphs = true, density_diffusion::SPHDensityDiffusion = LinearDensityDiffusion())
 
 Run two native CUDA SPH domains with a common adaptive timestep, mDBC density
 correction and symplectic predictor/corrector stages. Buffers exchange density
@@ -284,12 +286,14 @@ checks status once per `batch_steps` (1–256, default 32). CUDA graphs are enab
 by default; `use_graphs=false` uses direct launches of the same device phases.
 Grid capacity growth resumes the pending rebuild without repeating a step.
 `execution=:host` retains the original host-controlled reference driver.
+Both execution paths accept any GPU-compatible `SPHDensityDiffusion` model
+through `density_diffusion`, defaulting to `LinearDensityDiffusion()`.
 """
 function run_variable_resolution_simulation(; coarse_geometry, fine_geometry, coarse_constants,
         fine_constants, coarse_kernel, fine_kernel, region::VariableResolutionBox,
         simulation_time = 1.0, output_interval = 0.0025, save_location,
         particle_reserve = nothing, include_buffers = false, execution = :gpu,
-        batch_steps = 32, use_graphs = true)
+        batch_steps = 32, use_graphs = true, density_diffusion::SPHDensityDiffusion = LinearDensityDiffusion())
     CUDA.functional() || error("variable resolution requires a functional CUDA device")
     execution in (:gpu, :host) || throw(ArgumentError("execution must be :gpu or :host"))
     batch_steps isa Integer && 1 <= batch_steps <= 256 || throw(ArgumentError("batch_steps must be an integer from 1 to 256"))
@@ -305,7 +309,7 @@ function run_variable_resolution_simulation(; coarse_geometry, fine_geometry, co
     return with_resolution_logger(output) do logger,timer
         @timeit timer "00 Initialization" begin
             settings = (; coarse_constants, fine_constants, coarse_kernel, fine_kernel,
-                coarse_geometry, fine_geometry, coarse_reserve, fine_reserve, region, simulation_time, output_interval, execution, batch_steps, use_graphs)
+                coarse_geometry, fine_geometry, coarse_reserve, fine_reserve, region, simulation_time, output_interval, execution, batch_steps, use_graphs, density_diffusion)
             initialize_resolution_log!(logger,settings)
             coarse = make_resolution_domain(coarse_geometry, coarse_constants, coarse_kernel, limits, false, coarse_reserve; resident = execution == :gpu)
             fine = make_resolution_domain(fine_geometry, fine_constants, fine_kernel, limits, true, fine_reserve; resident = execution == :gpu)
@@ -315,7 +319,7 @@ function run_variable_resolution_simulation(; coarse_geometry, fine_geometry, co
             execution == :host && foreach(rebuild_domain!, domains)
             exchange_buffers!(coarse, fine, limits)
             exchange_buffers!(fine, coarse, limits)
-            device_state === nothing || prepare_resolution_graph!(domains, limits, device_state; batch_steps, use_graphs)
+            device_state === nothing || prepare_resolution_graph!(domains, limits, device_state; batch_steps, use_graphs, density_diffusion)
             CUDA.synchronize()
         end
         log_line(logger,logger.ValuesToPrint)
@@ -364,14 +368,14 @@ function run_variable_resolution_simulation(; coarse_geometry, fine_geometry, co
                 deadline = min(length(times) * Float64(output_interval), Float64(simulation_time))
                 @timeit timer "01 Solver" begin
                     if device_state !== nothing
-                        advance_resolution!(domains, limits, device_state, deadline; batch_steps, use_graphs)
+                        advance_resolution!(domains, limits, device_state, deadline; batch_steps, use_graphs, density_diffusion)
                         time = device_state.fh[GPUStepState.F_TIME]
                         iterations = Int(device_state.ih[GPUStepState.I_ITER])
                     end
                     while device_state === nothing && time < deadline
                         limits_dt = map(domains) do d
                             p,s = d.particles,d.support
-                            domain_force_stage!(d,p.Position,p.Velocity,p.Density,s.PosCells,time)
+                            domain_force_stage!(d,p.Position,p.Velocity,p.Density,s.PosCells,time; density_diffusion)
                         end
                         dt = min(limits_dt...,previous_limit,deadline-time)
                         isfinite(dt) && dt > 0 || error("nonpositive or nonfinite VRes timestep")
@@ -380,7 +384,7 @@ function run_variable_resolution_simulation(; coarse_geometry, fine_geometry, co
                             p,s,c = d.particles,d.support,d.constants
                             GPUKernels.launch_dual_predictor!(s.Positionₙ⁺,s.Velocityₙ⁺,s.ρₙ⁺,
                                 p.Position,p.Velocity,p.Density,p.Acceleration,s.dρdtI,p.Type,dt,c)
-                            previous_limit = min(previous_limit,predictor_force_stage!(d,time+dt/2))
+                            previous_limit = min(previous_limit,predictor_force_stage!(d,time+dt/2; density_diffusion))
                             GPUKernels.launch_dual_corrector!(p.Position,p.Velocity,p.Density,s.Positionₙ⁺,
                                 s.ρₙ⁺,p.Acceleration,s.dρdtI,p.Type,dt,c)
                             retire_particles!(d,limits)
@@ -407,7 +411,9 @@ function run_variable_resolution_simulation(; coarse_geometry, fine_geometry, co
                 control_readbacks = device_state === nothing ? nothing : device_state.readbacks,
                 graph_batches = device_state === nothing ? 0 : device_state.graph_batches,
                 direct_batches = device_state === nothing ? 0 : device_state.direct_batches,
-                density_diffusion = :fourtakas_full, boundary = :mdbc, cell_subdivision = 2,
+                density_diffusion = density_diffusion isa LinearDensityDiffusion ? :linear :
+                    density_diffusion isa FourtakasDensityDiffusion ? (density_diffusion.full ? :fourtakas_full : :fourtakas_inner) : nameof(typeof(density_diffusion)),
+                boundary = :mdbc, cell_subdivision = 2,
                 coarse_spacing = coarse_constants.dx, fine_spacing = fine_constants.dx,
                 coarse_mass = coarse_constants.m₀, fine_mass = fine_constants.m₀))
     end

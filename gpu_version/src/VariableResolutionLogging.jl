@@ -18,7 +18,7 @@ function initialize_resolution_log!(logger, settings)
         log_line(logger,"$name precision: physics $(typeof(constants.dx)); positions Float64")
     end
     log_line(logger,"Common physical constants:\n$(settings.coarse_constants)")
-    log_line(logger,"Models: Wendland C2, artificial viscosity, full Fourtakas DDT3, fixed mDBC walls, first-order MLS buffers")
+    log_line(logger,"Models: Wendland C2, artificial viscosity, $(settings.density_diffusion), fixed mDBC walls, first-order MLS buffers")
     execution = get(settings,:execution,:host)
     log_line(logger,execution == :gpu ?
         "Execution: device-resident control and dense active pools; CUDA graphs=$(settings.use_graphs), batch steps=$(settings.batch_steps); synchronous VTKHDF output" :

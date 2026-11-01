@@ -92,8 +92,10 @@ times in either precision.
 enables two-domain refinement in the normal `RunSimulation` entry point.
 The usual geometry, constants and kernel describe the coarse domain; the
 configuration supplies the fine geometry and optional fine constants/kernel.
-This backend requires 2D SimpleMDBC, NoShifting, NoKernelOutput, reference
-symplectic stepping, artificial viscosity and full Fourtakas diffusion.
+This backend supports 2D NoMDBC or SimpleMDBC, NoShifting and NoKernelOutput.
+The usual `SimDensityDiffusion` and `SimViscosity` arguments select GPU-compatible
+models for ordinary timestep schemes. `SymplecticTimeStepping()`, `SingleNeighborTimeStepping()` and
+`DualSPHysicsSymplectic()` select the integration scheme.
 It supports `SimDamping`, normal output fields/names, single-file or numbered
 VTKHDF, scalar/vector schedules and `GPUClipTimeStepToOutput`. Graph execution,
 batch size, interaction threads, sort determinism and cell limits use the

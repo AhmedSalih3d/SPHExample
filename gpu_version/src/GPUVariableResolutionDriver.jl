@@ -4,17 +4,19 @@
 # the previous predictor's timestep limit. Phases: 0 accepted forces/predict;
 # 1–2 predictor rebuilds; 3 predictor forces/correct/retire; 4–5 accepted
 # rebuilds; 6 flux/exchange; 7–8 conditional creation rebuilds; 9 commit.
-struct ResolutionPool
+struct ResolutionPool{R}
     count::CuVector{Int32} # live prefix (may contain newly retired holes), spare, rebuilds
     owners::CuVector{Int32}
     owner_scratch::CuVector{Int32}
+    reduction::R
 end
 
-function ResolutionPool(host, initial_count)
+function ResolutionPool(host, initial_count; standard=false)
     owners = zeros(Int32, length(host))
     indices = findall(!iszero, host.GhostPoints)
     owners[indices] = Int32.(eachindex(indices))
-    return ResolutionPool(CuArray(Int32[initial_count, 0, 0]), CuArray(owners), CuVector{Int32}(undef,length(owners)))
+    reduction = standard ? ReductionWorkspace{SVector{3,eltype(host.Density)}}(length(host)) : nothing
+    return ResolutionPool(CuArray(Int32[initial_count, 0, 0]), CuArray(owners), CuVector{Int32}(undef,length(owners)),reduction)
 end
 
 struct ResolutionStep{F,I,P,A}
@@ -37,6 +39,18 @@ Adapt.@adapt_structure ResolutionStep
 @inline GPUStepState.step_particle_count(s::ResolutionStep, n) = @inbounds min(n, s.count[1])
 @inline GPUCellGrid.grid_build_needed(s::ResolutionStep) = GPUStepState.step_active(s)
 @inline GPUCellGrid.publish_grid_state!(::ResolutionStep, state) = nothing
+
+# The normal integrators keep arithmetic in the working precision while the
+# refinement controller and reference scheme retain their Float64 clock.
+struct ResolutionArithmeticStep{T,S}
+    step::S
+end
+ResolutionArithmeticStep{T}(step) where T = ResolutionArithmeticStep{T,typeof(step)}(step)
+Adapt.adapt_structure(to,s::ResolutionArithmeticStep{T}) where T = ResolutionArithmeticStep{T}(Adapt.adapt(to,s.step))
+@inline GPUStepState.step_active(s::ResolutionArithmeticStep) = GPUStepState.step_active(s.step)
+@inline GPUStepState.step_dt(s::ResolutionArithmeticStep{T}) where T = T(GPUStepState.step_dt(s.step))
+@inline GPUStepState.step_time(s::ResolutionArithmeticStep) = GPUStepState.step_time(s.step)
+@inline GPUStepState.step_particle_count(s::ResolutionArithmeticStep,n) = GPUStepState.step_particle_count(s.step,n)
 
 const RESOLUTION_CAPACITY = Int32(3)
 const RESOLUTION_GRID_ERROR = Int32(4)
@@ -204,18 +218,85 @@ function resolution_criteria_kernel!(partial, velocity, acceleration, types, vis
         GPUStepState.step_particle_count(step,n),nothing)
     return nothing
 end
-function resident_force_stage!(domain, step; interaction=(;))
+function resident_force_stage!(domain, step; density_diffusion=LinearDensityDiffusion(),viscosity=ArtificialViscosity(),scheme=DualSPHysicsSymplectic(),
+        correct_boundary=true,include_gravity=Val(false),interaction=(;))
     p,s,c,k = domain.particles,domain.support,domain.cells,domain.kernel
     launch_pos_cells!(s.PosCells,p.Position,p.CellID,c.grid_dev,step,k)
-    launch_mdbc!(p.Density,p.Position,p.GhostPoints,p.GhostIndex,p.Type,c.CellStart,c.grid_dev,step,k,domain.constants;
+    correct_boundary && !(domain.boundary_mode isa NoMDBC) && launch_mdbc!(p.Density,p.Position,p.GhostPoints,p.GhostIndex,p.Type,c.CellStart,c.grid_dev,step,k,domain.constants;
         pos_cells=s.PosCells)
     launch_interactions!(s.dρdtI,p.Acceleration,p.Kernel,p.KernelGradient,s.∇Cᵢ,s.∇◌rᵢ,
         p.Position,p.Density,p.Velocity,p.Type,c.CellStart,p.CellID,c.grid_dev,step,
-        FourtakasDensityDiffusion(full=true),ArtificialViscosity(),k,domain.constants,Val(false),Val(false);
-        boundary_forces=Val(false),pos_cells=s.PosCells,viscous_dt=s.dual_state.viscous,fastmath=false,interaction...)
+        density_diffusion,viscosity,k,domain.constants,Val(false),Val(false);
+        boundary_forces=Val(false),pos_cells=s.PosCells,
+        viscous_dt=scheme isa DualSPHysicsSymplectic ? s.dual_state.viscous : nothing,
+        include_gravity,fastmath=false,interaction...)
+    scheme isa DualSPHysicsSymplectic || return nothing
     r = s.dual_state.reduction
     @cuda threads=REDUCE_THREADS blocks=r.nblocks resolution_criteria_kernel!(r.partial,p.Velocity,p.Acceleration,p.Type,
         s.dual_state.viscous,step,Int32(length(p)))
+end
+
+function resolution_standard_reduction_kernel!(partial,x,v,a,types,step,kernel,n)
+    GPUStepState.step_active(step) || return nothing
+    T = eltype(eltype(v))
+    value = SVector(zero(T),T(Inf),zero(T))
+    i = thread_index()
+    n = GPUStepState.step_particle_count(step,n)
+    @inbounds while i <= n
+        if types[i] != Frozen
+            value = GPUKernels.step_reduce(value,GPUKernels.step_values(x[i],v[i],a[i],x[i],kernel.h,kernel.η²))
+        end
+        i += blockDim().x*gridDim().x
+    end
+    block_reduce_store!(partial,value,GPUKernels.step_reduce)
+    return nothing
+end
+
+function initialize_resolution_numerics!(domains,state,scheme; density_diffusion=LinearDensityDiffusion(),viscosity=ArtificialViscosity())
+    scheme isa DualSPHysicsSymplectic && return nothing
+    for d in domains
+        p,red = d.particles,d.pool.reduction
+        if scheme isa SingleNeighborTimeStepping
+            resident_force_stage!(d,ResolutionStep(state,d,0);density_diffusion,viscosity,scheme,include_gravity=Val(true))
+        end
+        @cuda threads=REDUCE_THREADS blocks=red.nblocks resolution_standard_reduction_kernel!(
+            red.partial,p.Position,p.Velocity,p.Acceleration,p.Type,ResolutionStep(state,d,0),d.kernel,Int32(length(p)))
+    end
+    return nothing
+end
+
+@inline function resolution_standard_dt(partial,kernel,constants)
+    T = typeof(constants.dx)
+    value = SVector(zero(T),T(Inf),zero(T))
+    @inbounds for i in eachindex(partial)
+        value = GPUKernels.step_reduce(value,partial[i])
+    end
+    return Float64(constants.CFL*min(value[2],kernel.h/(constants.c₀+value[1])))
+end
+
+function resolution_standard_dt_kernel!(a,b,ka,kb,ca,cb,step)
+    GPUStepState.step_active(step) || return nothing
+    @inbounds begin
+        dt = min(resolution_standard_dt(a,ka,ca),resolution_standard_dt(b,kb,cb))
+        step.f[1] = step.i[GPUStepState.I_CLIP_OUTPUT] != 0 ? min(dt,step.f[4]-step.f[2]) : dt
+        isfinite(step.f[1]) && step.f[1] > 0 || (step.i[1] = RESOLUTION_STATE_ERROR)
+    end
+    return nothing
+end
+
+function resolution_standard_predictor_kernel!(xp,vp,rp,x,v,rho,a,rate,types,groups,step,constants,boundary_mode,n)
+    GPUKernels.half_step_kernel!(xp,vp,rp,x,v,a,rho,rate,types,groups,nothing,step,constants,
+        nothing,nothing,nothing,zero(constants.dx),boundary_mode,nothing,nothing,
+        Val(false),Val(false),Val(false),GPUStepState.step_particle_count(step,n))
+    return nothing
+end
+
+function resolution_standard_corrector_kernel!(x,v,a,rho,rate,rp,xp,vp,types,gradient,divergence,
+        step,kernel,constants,boundary_mode,partial,damping,n)
+    GPUKernels.final_step_kernel!(x,v,a,rho,rate,rp,xp,vp,types,gradient,divergence,step,kernel,constants,
+        partial,Val(false),boundary_mode,nothing,nothing,nothing,nothing,nothing,nothing,
+        nothing,nothing,nothing,nothing,nothing,damping,Val(false),GPUStepState.step_particle_count(step,n))
+    return nothing
 end
 
 @inline function resolution_dt(partial, kernel, constants)
@@ -264,9 +345,13 @@ function resolution_predictor_metadata_kernel!(types,ids,groups,ghosts,normals,o
     end
     return nothing
 end
-function resolution_scatter_predictor_kernel!(a,rate,rho,qa,qrate,qrho,ids,step,n)
+function resolution_scatter_predictor_kernel!(a,rate,rho,position,velocity,qa,qrate,qrho,qposition,qvelocity,ids,step,n)
     GPUStepState.step_active(step) || return nothing
     scatter_predictor_kernel!(a,rate,rho,qa,qrate,qrho,ids,GPUStepState.step_particle_count(step,n))
+    i = thread_index()
+    @inbounds if velocity !== nothing && i <= GPUStepState.step_particle_count(step,n)
+        position[ids[i]],velocity[ids[i]] = qposition[i],qvelocity[i]
+    end
     return nothing
 end
 function resolution_corrector_kernel!(x,v,rho,xp,rp,a,rate,types,step,constants,n)
@@ -315,18 +400,29 @@ function resolution_commit_kernel!(step)
     return nothing
 end
 
-function enqueue_resolution_step!(domains,limits,state; damping=(),interaction=(;))
+function enqueue_resolution_step!(domains,limits,state; density_diffusion=LinearDensityDiffusion(),viscosity=ArtificialViscosity(),scheme=DualSPHysicsSymplectic(),damping=(),interaction=(;))
     coarse,fine = domains
-    for d in domains
-        resident_force_stage!(d,ResolutionStep(state,d,0); interaction)
+    reference = scheme isa DualSPHysicsSymplectic
+    if !reference
+        @cuda threads=1 resolution_standard_dt_kernel!(coarse.pool.reduction.partial,fine.pool.reduction.partial,
+            coarse.kernel,fine.kernel,coarse.constants,fine.constants,ResolutionStep(state,coarse,0))
     end
-    @cuda threads=1 resolution_dt_kernel!(coarse.support.dual_state.reduction.partial,fine.support.dual_state.reduction.partial,
+    for d in domains
+        resident_force_stage!(d,ResolutionStep(state,d,0); density_diffusion,viscosity,scheme,interaction)
+    end
+    reference && @cuda threads=1 resolution_dt_kernel!(coarse.support.dual_state.reduction.partial,fine.support.dual_state.reduction.partial,
         coarse.kernel,fine.kernel,coarse.constants,fine.constants,ResolutionStep(state,coarse,0),false)
     for d in domains
         p,s,q = d.particles,d.support,d.predictor.particles
         step = ResolutionStep(state,d,0)
-        @cuda threads=128 blocks=cld(length(p),128) resolution_predictor_kernel!(q.Position,q.Velocity,q.Density,
-            p.Position,p.Velocity,p.Density,p.Acceleration,s.dρdtI,p.Type,step,d.constants,Int32(length(p)))
+        if reference
+            @cuda threads=128 blocks=cld(length(p),128) resolution_predictor_kernel!(q.Position,q.Velocity,q.Density,
+                p.Position,p.Velocity,p.Density,p.Acceleration,s.dρdtI,p.Type,step,d.constants,Int32(length(p)))
+        else
+            @cuda threads=128 blocks=cld(length(p),128) resolution_standard_predictor_kernel!(q.Position,q.Velocity,q.Density,
+                p.Position,p.Velocity,p.Density,p.Acceleration,s.dρdtI,p.Type,p.GroupMarker,
+                ResolutionArithmeticStep{eltype(p.Density)}(step),d.constants,d.boundary_mode,Int32(length(p)))
+        end
         @cuda threads=128 blocks=cld(length(p),128) resolution_predictor_metadata_kernel!(q.Type,q.ID,q.GroupMarker,
             q.GhostPoints,q.GhostNormals,d.predictor.pool.owners,d.predictor.pool.count,p.Type,p.GroupMarker,
             p.GhostPoints,p.GhostNormals,d.pool.owners,step,Int32(length(p)))
@@ -337,18 +433,27 @@ function enqueue_resolution_step!(domains,limits,state; damping=(),interaction=(
         @cuda threads=1 resolution_phase_kernel!(ResolutionStep(state,d,phase),Int32(phase+1))
     end
     for d in domains
-        resident_force_stage!(d.predictor,ResolutionStep(state,d.predictor,3); interaction)
+        resident_force_stage!(d.predictor,ResolutionStep(state,d.predictor,3); density_diffusion,viscosity,scheme,correct_boundary=reference,interaction)
     end
-    @cuda threads=1 resolution_dt_kernel!(coarse.predictor.support.dual_state.reduction.partial,fine.predictor.support.dual_state.reduction.partial,
+    reference && @cuda threads=1 resolution_dt_kernel!(coarse.predictor.support.dual_state.reduction.partial,fine.predictor.support.dual_state.reduction.partial,
         coarse.kernel,fine.kernel,coarse.constants,fine.constants,ResolutionStep(state,coarse,3),true)
     for d in domains
         p,s,q,qs = d.particles,d.support,d.predictor.particles,d.predictor.support
         step = ResolutionStep(state,d,3)
         @cuda threads=128 blocks=cld(length(p),128) resolution_scatter_predictor_kernel!(p.Acceleration,s.dρdtI,s.ρₙ⁺,
-            q.Acceleration,qs.dρdtI,q.Density,q.ID,ResolutionStep(state,d.predictor,3),Int32(length(p)))
-        @cuda threads=128 blocks=cld(length(p),128) resolution_corrector_kernel!(p.Position,p.Velocity,p.Density,
-            s.Positionₙ⁺,s.ρₙ⁺,p.Acceleration,s.dρdtI,p.Type,step,d.constants,Int32(length(p)))
-        launch_damping!(damping,p.Position,p.Velocity,p.Type,step)
+            reference ? nothing : s.Positionₙ⁺,reference ? nothing : s.Velocityₙ⁺,
+            q.Acceleration,qs.dρdtI,q.Density,q.Position,q.Velocity,q.ID,
+            ResolutionStep(state,d.predictor,3),Int32(length(p)))
+        if reference
+            @cuda threads=128 blocks=cld(length(p),128) resolution_corrector_kernel!(p.Position,p.Velocity,p.Density,
+                s.Positionₙ⁺,s.ρₙ⁺,p.Acceleration,s.dρdtI,p.Type,step,d.constants,Int32(length(p)))
+            launch_damping!(damping,p.Position,p.Velocity,p.Type,step)
+        else
+            red = d.pool.reduction
+            @cuda threads=REDUCE_THREADS blocks=red.nblocks resolution_standard_corrector_kernel!(p.Position,p.Velocity,
+                p.Acceleration,p.Density,s.dρdtI,s.ρₙ⁺,s.Positionₙ⁺,s.Velocityₙ⁺,p.Type,s.∇Cᵢ,s.∇◌rᵢ,
+                ResolutionArithmeticStep{eltype(p.Density)}(step),d.kernel,d.constants,d.boundary_mode,red.partial,damping,Int32(length(p)))
+        end
         @cuda threads=128 blocks=cld(length(p),128) resolution_retire_kernel!(p.Position,p.Velocity,p.Density,p.Type,
             d.events,limits,d.fine,d.constants.ρ₀,step,Int32(length(p)))
     end
@@ -405,19 +510,21 @@ function initialize_resident_domains!(domains; time=0.0, iteration=0)
     return state
 end
 
-function prepare_resolution_graph!(domains,limits,state; batch_steps,use_graphs,damping=(),interaction=(;))
+resolution_graph_key(batch_steps,density_diffusion,viscosity,scheme,damping,interaction) = (hash((density_diffusion,viscosity,scheme,damping,interaction)),0,Int(batch_steps))
+
+function prepare_resolution_graph!(domains,limits,state; batch_steps,use_graphs,density_diffusion=LinearDensityDiffusion(),viscosity=ArtificialViscosity(),scheme=DualSPHysicsSymplectic(),damping=(),interaction=(;))
     !use_graphs && return nothing
-    key = (UInt(0),0,Int(batch_steps))
+    key = resolution_graph_key(batch_steps,density_diffusion,viscosity,scheme,damping,interaction)
     haskey(state.graphs,key) && return nothing
     # Compile with stopped state; even scans are gated, so warmup/capture never
     # destroys the accepted grid or mutates the flux budget.
     saved_stop = state.ih[1]
     GPUStepState.set_slot!(state.i,state.ih,1,GPUStepState.STOP_OUTPUT)
-    enqueue_resolution_step!(domains,limits,state; damping,interaction)
+    enqueue_resolution_step!(domains,limits,state; density_diffusion,viscosity,scheme,damping,interaction)
     CUDA.synchronize()
     graph = CUDA.capture(; flags=CUDA.STREAM_CAPTURE_MODE_RELAXED) do
         for _ in 1:batch_steps
-            enqueue_resolution_step!(domains,limits,state; damping,interaction)
+            enqueue_resolution_step!(domains,limits,state; density_diffusion,viscosity,scheme,damping,interaction)
         end
     end
     state.graphs[key] = CUDA.instantiate(graph)
@@ -433,16 +540,16 @@ function resolution_pending_domain(domains,phase)
     error("Invalid variable-resolution rebuild phase: $phase")
 end
 
-function advance_resolution!(domains,limits,state,deadline; batch_steps=32,use_graphs=true,clip_timestep=true,damping=(),interaction=(;))
+function advance_resolution!(domains,limits,state,deadline; batch_steps=32,use_graphs=true,clip_timestep=true,density_diffusion=LinearDensityDiffusion(),viscosity=ArtificialViscosity(),scheme=DualSPHysicsSymplectic(),damping=(),interaction=(;))
     GPUStepState.set_output_time!(state,deadline; clip_timestep)
     while !GPUStepState.output_time_reached(state.fh[2],deadline,clip_timestep)
-        prepare_resolution_graph!(domains,limits,state; batch_steps,use_graphs,damping,interaction)
+        prepare_resolution_graph!(domains,limits,state; batch_steps,use_graphs,density_diffusion,viscosity,scheme,damping,interaction)
         if use_graphs
-            CUDA.launch(state.graphs[(UInt(0),0,Int(batch_steps))])
+            CUDA.launch(state.graphs[resolution_graph_key(batch_steps,density_diffusion,viscosity,scheme,damping,interaction)])
             state.graph_batches += 1
         else
             for _ in 1:batch_steps
-                enqueue_resolution_step!(domains,limits,state; damping,interaction)
+                enqueue_resolution_step!(domains,limits,state; density_diffusion,viscosity,scheme,damping,interaction)
             end
             state.direct_batches += 1
         end

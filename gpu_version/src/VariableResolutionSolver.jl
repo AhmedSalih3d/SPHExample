@@ -30,18 +30,17 @@ end
 
 function validate_resolution_solver(meta::SimulationMetaData{D,T,S,K,B},geometry,particles,
         viscosity,diffusion,scheme,measurements,external,rotation,motion) where {D,T,S,K,B}
-    D == 2 && S === NoShifting && K === NoKernelOutput && B === SimpleMDBC ||
-        throw(ArgumentError("variable resolution requires 2D NoShifting, NoKernelOutput and SimpleMDBC metadata modes"))
-    scheme isa DualSPHysicsSymplectic || throw(ArgumentError("variable resolution requires SimTimeStepping=DualSPHysicsSymplectic()"))
-    viscosity isa ArtificialViscosity && diffusion isa FourtakasDensityDiffusion && diffusion.full ||
-        throw(ArgumentError("variable resolution requires ArtificialViscosity() and FourtakasDensityDiffusion(full=true)"))
-    # The reference kernels currently use the default boundary viscosity and
-    # unrestricted reference integration; reject other policies explicitly.
-    viscosity == ArtificialViscosity() || throw(ArgumentError("variable resolution currently requires default ArtificialViscosity parameters"))
-    all(!isfinite,scheme.domain_min) && all(!isfinite,scheme.domain_max) &&
-        !isfinite(scheme.density_min) && !isfinite(scheme.density_max) &&
-        !isfinite(scheme.smoothing_length) && !isfinite(scheme.sound_speed) && !scheme.cache_periodic_queries ||
-        throw(ArgumentError("variable resolution derives per-domain timestep lengths and uses its own domain/density retirement policy; custom reference bounds are unsupported"))
+    D == 2 && S === NoShifting && K === NoKernelOutput && B in (NoMDBC,SimpleMDBC) ||
+        throw(ArgumentError("variable resolution requires 2D NoShifting, NoKernelOutput and NoMDBC or SimpleMDBC metadata modes"))
+    scheme isa Union{SymplecticTimeStepping,SingleNeighborTimeStepping,DualSPHysicsSymplectic} ||
+        throw(ArgumentError("unsupported variable-resolution timestep scheme: $(typeof(scheme))"))
+    if scheme isa DualSPHysicsSymplectic
+        viscosity isa ArtificialViscosity || throw(ArgumentError("reference variable-resolution stepping requires ArtificialViscosity(); select a normal timestep scheme for other viscosity models"))
+        all(!isfinite,scheme.domain_min) && all(!isfinite,scheme.domain_max) &&
+            !isfinite(scheme.density_min) && !isfinite(scheme.density_max) &&
+            !isfinite(scheme.smoothing_length) && !isfinite(scheme.sound_speed) && !scheme.cache_periodic_queries ||
+            throw(ArgumentError("variable resolution derives per-domain timestep lengths and uses its own domain/density retirement policy; custom reference bounds are unsupported"))
+    end
     meta.Periodicity === nothing && !meta.GPUFixedGrid && meta.GPUCellSubdivision == 1 ||
         throw(ArgumentError("variable resolution requires nonperiodic expanding grids and GPUCellSubdivision=1"))
     meta.GPUTimestepDiagnosticsEvery == 0 || throw(ArgumentError("variable-resolution timestep-ID diagnostics are not supported"))
@@ -101,7 +100,7 @@ function resolution_geometry(particles,::Type{T}; normals_path=nothing,spacing) 
     return geometry
 end
 
-function solver_resolution_snapshot(domain,region,limits; include_buffers=false)
+function solver_resolution_snapshot(domain,region,limits; include_buffers=false,scheme=DualSPHysicsSymplectic())
     p,c = domain.particles,domain.constants
     x,types = Array(p.Position),Array(p.Type)
     owned = [inside_box(position,region.lower,region.upper) == domain.fine for position in x]
@@ -109,7 +108,8 @@ function solver_resolution_snapshot(domain,region,limits; include_buffers=false)
     rho = Array(p.Density)[keep]
     return StructArray((;
         Position=x[keep],Velocity=Array(p.Velocity)[keep],Density=rho,
-        Pressure=[eltype(rho)(Float64(c.Cb)*((Float64(r)/c.ρ₀)^c.γ-1)) for r in rho],
+        Pressure=[scheme isa DualSPHysicsSymplectic ? eltype(rho)(Float64(c.Cb)*((Float64(r)/c.ρ₀)^c.γ-1)) :
+            GPUKernels.EquationOfStateGamma7(r,c.c₀,c.ρ₀) for r in rho],
         Acceleration=Array(p.Acceleration)[keep],Type=types[keep],ID=Array(p.ID)[keep],
         GroupMarker=Array(p.GroupMarker)[keep],GhostPoints=Array(p.GhostPoints)[keep],GhostNormals=Array(p.GhostNormals)[keep],
         Resolution=fill(Int8(domain.fine),length(keep)),Spacing=fill(c.dx,length(keep)),Mass=fill(c.m₀,length(keep)),
@@ -125,13 +125,14 @@ function replace_resolution_particles!(destination,source)
     return destination
 end
 
-function refresh_resolution_output!(domains,state,interaction)
+function refresh_resolution_output!(domains,state,interaction; density_diffusion=LinearDensityDiffusion(),viscosity=ArtificialViscosity(),scheme=DualSPHysicsSymplectic())
     # Rebuilds discard derivatives. Evaluate the accepted state once at a frame
     # boundary so acceleration and mDBC wall density are current in host output.
     stop = state.ih[GPUStepState.I_STOP]
     GPUStepState.set_slot!(state.i,state.ih,GPUStepState.I_STOP,0)
     for d in domains
-        resident_force_stage!(d,ResolutionStep(state,d,0); interaction)
+        resident_force_stage!(d,ResolutionStep(state,d,0); density_diffusion,viscosity,scheme,
+            include_gravity=Val(!(scheme isa DualSPHysicsSymplectic)),interaction)
     end
     GPUStepState.set_slot!(state.i,state.ih,GPUStepState.I_STOP,stop)
     return nothing
@@ -153,6 +154,10 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
     batch_steps = meta.GPUSyncTimers ? 1 : clamp(meta.GPUMaxStepsPerSync,1,256)
     use_graphs = meta.GPUUseGraph && !meta.GPUSyncTimers
     interaction = (;threads=meta.GPUInteractionThreads,always_inline=meta.GPUInteractionAlwaysInline)
+    density_diffusion = SimDensityDiffusion
+    viscosity = SimViscosity
+    scheme = SimTimeStepping
+    boundary_mode = typeof(meta).parameters[5]()
     LOGGER.start_runtime!(SimLogger,initial_time)
     timer = meta.HourGlass
     output,history = nothing,nothing
@@ -171,8 +176,9 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
             reserves = map((SimConstants,fine_constants)) do c
                 config.particle_reserve === nothing ? max(1024,ceil(Int,2area/c.dx^2)) : config.particle_reserve
             end
-            coarse = make_resolution_domain(coarse_geometry,SimConstants,SimKernel,limits,false,reserves[1];resident=true)
-            fine = make_resolution_domain(config.fine_geometry,fine_constants,fine_kernel,limits,true,reserves[2];resident=true)
+            standard = !(scheme isa DualSPHysicsSymplectic)
+            coarse = make_resolution_domain(coarse_geometry,SimConstants,SimKernel,limits,false,reserves[1];resident=true,standard,boundary_mode)
+            fine = make_resolution_domain(config.fine_geometry,fine_constants,fine_kernel,limits,true,reserves[2];resident=true,standard,boundary_mode)
             domains = (coarse,fine)
             for d in (domains...,coarse.predictor,fine.predictor)
                 d.cells.max_cells = meta.GPUMaxCells
@@ -182,11 +188,12 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
             state = initialize_resident_domains!(domains;time=initial_time,iteration=initial_steps)
             exchange_buffers!(coarse,fine,limits)
             exchange_buffers!(fine,coarse,limits)
-            prepare_resolution_graph!(domains,limits,state;batch_steps,use_graphs,damping,interaction)
+            initialize_resolution_numerics!(domains,state,scheme;density_diffusion,viscosity)
+            prepare_resolution_graph!(domains,limits,state;batch_steps,use_graphs,density_diffusion,viscosity,scheme,damping,interaction)
             state.configuration = effective_configuration(meta,SimKernel,SimDensityDiffusion,SimViscosity;
                 particle_count=length(SimParticles))
-            refresh_resolution_output!(domains,state,interaction)
-            snapshots = map(d -> solver_resolution_snapshot(d,config.region,limits;include_buffers=config.include_buffers),domains)
+            refresh_resolution_output!(domains,state,interaction; density_diffusion,viscosity,scheme)
+            snapshots = map(d -> solver_resolution_snapshot(d,config.region,limits;include_buffers=config.include_buffers,scheme),domains)
             frame = vcat(snapshots...)
             replace_resolution_particles!(SimParticles,frame)
             output = SetupVTKOutput(meta,frame,SimKernel,2;constants=SimConstants,damping,variable_count=true)
@@ -211,8 +218,8 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
                 events = map(d -> Array(d.events),domains)
                 all(e -> e[4] == 0,events) || error("Non-finite variable-resolution particle state at t=$(meta.TotalTime)")
                 if !initial
-                    refresh_resolution_output!(domains,state,interaction)
-                    snapshots = map(d -> solver_resolution_snapshot(d,config.region,limits;include_buffers=config.include_buffers),domains)
+                    refresh_resolution_output!(domains,state,interaction; density_diffusion,viscosity,scheme)
+                    snapshots = map(d -> solver_resolution_snapshot(d,config.region,limits;include_buffers=config.include_buffers,scheme),domains)
                     replace_resolution_particles!(frame,vcat(snapshots...))
                 end
                 meta.OutputIterationCounter = frames+1
@@ -248,7 +255,7 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
         for deadline in deadlines
             GPUStepState.output_time_reached(meta.TotalTime,deadline,meta.GPUClipTimeStepToOutput) && continue
             @timeit timer "03 Launch Steps" advance_resolution!(domains,limits,state,deadline;
-                batch_steps,use_graphs,clip_timestep=meta.GPUClipTimeStepToOutput,damping,interaction)
+                batch_steps,use_graphs,clip_timestep=meta.GPUClipTimeStepToOutput,density_diffusion,viscosity,scheme,damping,interaction)
             meta.TotalTime,meta.Iteration,meta.CurrentTimeStep = state.fh[2],Int(state.ih[3]),T(state.fh[1])
             write_frame!()
         end
@@ -260,7 +267,7 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
             GPUStepState.readback!(state)
             meta.TotalTime,meta.Iteration,meta.CurrentTimeStep = state.fh[2],Int(state.ih[3]),T(state.fh[1])
             sync_resolution_counters!(domains)
-            snapshots = map(d -> solver_resolution_snapshot(d,config.region,limits;include_buffers=config.include_buffers),domains)
+            snapshots = map(d -> solver_resolution_snapshot(d,config.region,limits;include_buffers=config.include_buffers,scheme),domains)
             replace_resolution_particles!(SimParticles,vcat(snapshots...))
             status = "interrupted"
         else

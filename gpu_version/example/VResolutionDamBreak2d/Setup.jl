@@ -12,7 +12,7 @@ The initial lattice uses cell centres, with five wall layers outside the
 physical tank surfaces. Construction does not allocate CUDA arrays or run.
 """
 function vresolution_dambreak_case(; dx = 0.01, ratio = 2, duration = 1.0,
-        output_interval = 0.0025, FloatType = Float32,
+        output_interval = 0.0025, FloatType = Float32, γ = 1,
         region = VariableResolutionBox((2.5,-0.2),(4.1,0.6); ratio),
         save_location = joinpath(@__DIR__, "..", "..", "output", "vresolution_dambreak2d"))
     isfinite(dx) && 0 < dx <= 0.05 || throw(ArgumentError("dx must satisfy 0 < dx <= 0.05 m"))
@@ -25,7 +25,7 @@ function vresolution_dambreak_case(; dx = 0.01, ratio = 2, duration = 1.0,
     sound_speed = 10sqrt(2 * 9.81)
     function level_case(spacing, fine)
         constants = SimulationConstants{T}(2; dx = spacing, c₀ = sound_speed,
-            γ = 1, α = 0.05, δᵩ = 0.1, CFL = 0.2)
+            γ = γ, α = 0.05, δᵩ = 0.1, CFL = 0.2)
         kernel = SPHKernelInstance{2,T}(WendlandC2(); h = T(1.5spacing), η² = T((0.1 * 1.5spacing)^2))
         # A shared lattice avoids duplicate floor/wall corner particles.
         nx, ny = round(Int,4 / spacing), round(Int,3 / spacing)
@@ -48,8 +48,9 @@ function vresolution_dambreak_case(; dx = 0.01, ratio = 2, duration = 1.0,
                          x[2] < 0 ? -x[2] : x[2]) for x in wall]
         boundary = SPHGeometry{2,T}(Particles = particle_struct_array(wall,constants.ρ₀;
             GhostPoints = ghost, GhostNormals = ghost .- wall), GroupMarker = 1, Type = Fixed)
-        # Inverse hydrostatic initialization for the reference's linear EOS.
-        density = T[constants.ρ₀ * (1 + constants.g * max(0,2-x[2]) / constants.c₀^2) for x in water]
+        density = constants.γ == 1 ?
+            T[constants.ρ₀ * (1 + constants.g * max(0,2-x[2]) / constants.c₀^2) for x in water] :
+            hydrostatic_density(water,constants;water_level=2.0)
         fluid = SPHGeometry{2,T}(water; Density = density, GroupMarker = 2, Type = Fluid)
         return (; geometry = [boundary,fluid], constants, kernel)
     end
@@ -63,7 +64,8 @@ end
 
 "Run the native two-domain CUDA dam break and write its geometry and VTKHDF series."
 function run_vresolution_dambreak(; particle_reserve = nothing, include_buffers = false,
-        execution = :gpu, batch_steps = 32, use_graphs = true, kwargs...)
+        execution = :gpu, batch_steps = 32, use_graphs = true,
+        density_diffusion = LinearDensityDiffusion(), kwargs...)
     case = vresolution_dambreak_case(; kwargs...)
     result = run_variable_resolution_simulation(;
         coarse_geometry = case.coarse.geometry, fine_geometry = case.fine.geometry,
@@ -71,21 +73,25 @@ function run_vresolution_dambreak(; particle_reserve = nothing, include_buffers 
         coarse_kernel = case.coarse.kernel, fine_kernel = case.fine.kernel,
         region = case.region, simulation_time = case.simulation_time,
         output_interval = case.output_interval, save_location = case.save_location,
-        particle_reserve, include_buffers, execution, batch_steps, use_graphs)
+        particle_reserve, include_buffers, execution, batch_steps, use_graphs, density_diffusion)
     SavePolygonVTKHDF(joinpath(result.output,"DamBreak2D_VRes_Geometry.vtkhdf"),case.shapes)
     return result
 end
 
 """
     run_vresolution_dambreak_solver(; particle_reserve=nothing, include_buffers=false,
+        density_diffusion=LinearDensityDiffusion(), time_stepping=SymplecticTimeStepping(),
         metadata_options=(;), kwargs...)
 
 Run the case through the normal `RunSimulation` API and return `SimulationResult`.
 `kwargs` configure `vresolution_dambreak_case`; `metadata_options` override normal
 `SimulationMetaData` fields, including output schedules and CUDA batching.
+The normal scheme uses gamma 7 by default; selecting `DualSPHysicsSymplectic()`
+retains the reference case's gamma 1 unless `γ` is supplied explicitly.
 """
-function run_vresolution_dambreak_solver(; particle_reserve=nothing,include_buffers=false,metadata_options=(;),kwargs...)
-    case = vresolution_dambreak_case(;kwargs...)
+function run_vresolution_dambreak_solver(; particle_reserve=nothing,include_buffers=false,
+        density_diffusion=LinearDensityDiffusion(),time_stepping=SymplecticTimeStepping(),metadata_options=(;),kwargs...)
+    case = vresolution_dambreak_case(;merge((;γ=time_stepping isa DualSPHysicsSymplectic ? 1 : 7),(;kwargs...))...)
     isdir(case.save_location) && !isempty(readdir(case.save_location)) &&
         throw(ArgumentError("save_location must be empty: $(case.save_location)"))
     mkpath(case.save_location)
@@ -104,7 +110,7 @@ function run_vresolution_dambreak_solver(; particle_reserve=nothing,include_buff
     result = try
         RunSimulation(;SimGeometry=case.coarse.geometry,SimMetaData=meta,SimConstants=case.coarse.constants,
             SimKernel=case.coarse.kernel,SimParticles=particles,SimLogger=logger,SimViscosity=ArtificialViscosity(),
-            SimDensityDiffusion=FourtakasDensityDiffusion(full=true),SimTimeStepping=DualSPHysicsSymplectic(fast_math=false))
+            SimDensityDiffusion=density_diffusion,SimTimeStepping=time_stepping)
     finally
         isopen(logger.LoggerIo) && close(logger.LoggerIo)
     end

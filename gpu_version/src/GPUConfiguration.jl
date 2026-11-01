@@ -89,7 +89,7 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
     if meta.VariableResolution !== nothing
         effective = merge(effective,(;position_type=Float64,
             interaction_fastmath=false,radial_interactions=false,scalar_sps_viscosity=false,
-            interaction_path=:reference,viscosity_path=:reference_ordered,cache_interaction_fields=false,
+            interaction_path=:reference,viscosity_path=viscosity isa ZeroViscosity ? :disabled : :reference_ordered,cache_interaction_fields=false,
             boundary_forces=false,lanes_per_particle=1,compact_buffers=false,async_output=false,
             output_buffer_bytes=0,max_steps_per_sync=meta.GPUSyncTimers ? 1 : clamp(meta.GPUMaxStepsPerSync,1,256)))
         if effective.reference_step_parameters !== nothing

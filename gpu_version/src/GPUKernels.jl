@@ -186,6 +186,8 @@ end
 Prescribed motion of `Moving` particles (mirrors `ProgressMotion` of the CPU
 code). `motion` is a NamedTuple of device arrays indexed by group marker.
 """
+@inline apply_motion!(i, Position, Velocity, ParticleType, GroupMarker, ::Nothing, dt₂, TotalTime) = nothing
+
 @inline function apply_motion!(i, Position, Velocity, ParticleType, GroupMarker, motion, dt₂, TotalTime)
     @inbounds if ParticleType[i] == Moving
         g = Int(GroupMarker[i])

@@ -42,9 +42,15 @@ spacing, mass, smoothing length and kernel regularization by `region.ratio`.
 pool from its spacing and the refinement area. Output normally selects owned
 particles; `include_buffers=true` includes both domains' buffers as well.
 
-The current backend supports one fixed 2D rectangle, Wendland C2, fixed Simple
-mDBC walls, artificial viscosity, full Fourtakas diffusion and reference
-symplectic stepping. `SimDamping` is supported on both domains.
+The current backend supports one fixed 2D rectangle, Wendland C2 and fixed DBC
+or Simple mDBC walls. Select ordinary symplectic, single-neighbor
+or reference symplectic stepping with `SimTimeStepping`. Select any
+GPU-compatible density diffusion model with `RunSimulation(SimDensityDiffusion=...)`,
+as in the ordinary solver. Ordinary schemes also use the selected `SimViscosity`;
+reference stepping requires artificial viscosity. `SimDamping` is supported on both domains.
+Both ordinary timestep schemes reuse the solver's integration kernels. Because
+refinement rebuilds the domains each step, single-neighbor stepping refreshes
+the accepted derivative each step, following the ordinary rebuild contract.
 """
 struct VariableResolutionConfig{G,C,K}
     region::VariableResolutionBox

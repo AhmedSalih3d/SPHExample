@@ -1,9 +1,13 @@
-# Full normal-RunSimulation integration validation (requires CUDA).
+# Full readable-example and normal-RunSimulation validation (requires CUDA).
 # julia --project=gpu_version -t 2,0 gpu_version/test/run_vresolution_solver_dambreak.jl
 using Test, SPHExampleGPU, CSV, HDF5, Dates
-include(joinpath(@__DIR__,"..","example","VResolutionDamBreak2d","Setup.jl"))
 output = joinpath(@__DIR__,"..","output","vresolution_dambreak2d_solver_"*Dates.format(now(),"yyyymmdd_HHMMSS"))
-result = run_vresolution_dambreak_solver(;save_location=output)
+example_path = joinpath(@__DIR__,"..","example","VResolutionDamBreak2d.jl")
+source = replace(read(example_path,String),
+    r"SaveLocation\s*=\s*joinpath\([^\n]+" => "SaveLocation = $(repr(output)),",
+    "VisualizeInParaview = true" => "VisualizeInParaview = false",
+    "OpenLogFile         = true" => "OpenLogFile         = false")
+result = Base.include_string(Main,source,example_path)
 history = CSV.File(result.diagnostics.resolution.history_path)
 mass = collect(history.represented_fluid_mass)
 mass_error = maximum(abs.(mass ./ first(mass) .- 1))
@@ -13,6 +17,8 @@ events = result.diagnostics.resolution.events
     @test result.final_state.time == 1.0
     @test result.diagnostics.output_frames == 401
     @test result.configuration.execution.path === :cuda_graph
+    @test result.configuration.effective.time_stepping === SymplecticTimeStepping
+    @test result.configuration.effective.density_diffusion_model === LinearDensityDiffusion
     @test events[2][1] > 0
     @test all(e -> e[3] == 0 && e[4] == 0,events)
     @test mass_error < 0.01

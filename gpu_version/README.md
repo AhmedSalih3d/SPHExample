@@ -46,8 +46,11 @@ meta = SimulationMetaData{2,Float32,NoShifting,NoKernelOutput,SimpleMDBC,StoreLo
 
 Allocate particles with `AllocateDataStructures(coarse_geometry, meta)` and
 call `RunSimulation` with the coarse constants/kernel, `ArtificialViscosity()`,
-`FourtakasDensityDiffusion(full=true)` and `DualSPHysicsSymplectic()`. Fine
-constants/kernel are derived from the ratio unless supplied in the config.
+`LinearDensityDiffusion()` and `SymplecticTimeStepping()`. Select any other
+GPU-compatible density diffusion model through the usual `SimDensityDiffusion`
+argument. `SingleNeighborTimeStepping()` and `DualSPHysicsSymplectic()` are also
+supported. Fine constants/kernel are derived from the ratio unless supplied
+in the config.
 Normal file naming, output fields, scalar/vector schedules, logging and
 `SimulationResult` apply; `SimDamping` acts on both domains. The case guide
 contains a complete call and supported-option details.
@@ -56,8 +59,10 @@ contains a complete call and supported-option details.
 adaptation of DualSPHysics 5.4 `vresolution/01_DamBreak2D`. A 0.01 m coarse domain
 couples to a 0.005 m downstream patch through reconstructed buffers and accumulated
 interface mass flux. It supports fixed mDBC walls and one stationary refinement
-rectangle. This experimental implementation uses first-order MLS reconstruction;
-see the [case guide](example/VResolutionDamBreak2d/README.md) for numerical
+rectangle. This experimental implementation uses first-order MLS reconstruction.
+the example shows its geometry, constants, kernels, refinement metadata and
+normal `RunSimulation` call directly, in the same layout as `Bathymetry2d.jl`.
+See the [case guide](example/VResolutionDamBreak2d/README.md) for numerical
 differences, output fields, customization and validation commands.
 
 ```bash
@@ -70,8 +75,11 @@ Normal runs use `GPUUseGraph` and `GPUMaxStepsPerSync` in metadata (default 32)
 for graph execution and status checks. The host handles exceptional grid growth
 and output downloads. The standalone validation driver also accepts
 `execution=:host` for reference comparisons, `use_graphs=false` for direct
-device launches and `batch_steps` for its status interval. The timestep rules,
-Float64 positions/MLS and subdivision `R=1` are preserved.
+device launches and `batch_steps` for its status interval. Float64 positions/MLS
+and subdivision `R=1` are preserved. Normal timestep schemes reuse the ordinary
+GPU predictor/corrector kernels and timestep formula. Refinement rebuilds both
+domains each step, so single-neighbor stepping refreshes its accepted derivative
+after every rebuild, as the ordinary solver does after a rebuild.
 
 Paired whole-solver timings and particle-state checks are available with:
 

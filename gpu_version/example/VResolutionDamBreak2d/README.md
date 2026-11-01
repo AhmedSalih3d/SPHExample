@@ -1,12 +1,19 @@
 # Variable-resolution 2D dam break
 
-This native Julia/CUDA example follows the geometry and physical settings of
+This native Julia/CUDA example follows the geometry of
 DualSPHysics 5.4 `vresolution/01_DamBreak2D`: a 4 m × 3 m open tank, a 1 m × 2 m
 water column and a refined rectangle from `(2.5, -0.2)` to `(4.1, 0.6)` m.
 Coarse spacing is 0.01 m; fine spacing is 0.005 m. Each domain has its own
 particle mass and Wendland kernel (`h = 1.5dp`). Five wall layers use mDBC.
-The reference settings are gamma 1, artificial viscosity 0.05, CFL 0.2 and
-Fourtakas full density diffusion 0.1. Initial water density is hydrostatic.
+The example uses `SymplecticTimeStepping()`, gamma 7, artificial viscosity 0.05,
+CFL 0.2 and `LinearDensityDiffusion()` with coefficient 0.1. Initial water
+density is hydrostatic. The original reference instead uses gamma 1 and
+Fourtakas full diffusion; its geometry is retained here.
+
+`VResolutionDamBreak2d.jl` shows the constants, two kernels, particle geometry,
+refinement metadata, output setup and `RunSimulation` call directly, following
+the layout of `Bathymetry2d.jl`. Edit those settings in the script for interactive
+work; `Setup.jl` supplies separate helpers for scripted runs and benchmarks.
 
 Run from the repository root with an NVIDIA GPU:
 
@@ -18,7 +25,7 @@ To change the run, include the definitions without starting a simulation:
 
 ```julia
 include("gpu_version/example/VResolutionDamBreak2d/Setup.jl")
-case = vresolution_dambreak_case()  # geometry and settings only; no GPU allocation
+case = vresolution_dambreak_case(γ = 7)  # geometry and settings only; no GPU allocation
 result = run_vresolution_dambreak_solver(duration = 1.0, output_interval = 0.01,
     save_location = "C:/TestSimulations/DamBreak2D_VRes")
 ```
@@ -44,8 +51,8 @@ result = RunSimulation(
     SimParticles = particles, SimLogger = logger,
     SimConstants = case.coarse.constants, SimKernel = case.coarse.kernel,
     SimViscosity = ArtificialViscosity(),
-    SimDensityDiffusion = FourtakasDensityDiffusion(full=true),
-    SimTimeStepping = DualSPHysicsSymplectic(fast_math=false))
+    SimDensityDiffusion = LinearDensityDiffusion(),
+    SimTimeStepping = SymplecticTimeStepping())
 ```
 
 Fine constants and Wendland parameters are scaled from the coarse domain when
@@ -53,6 +60,28 @@ omitted, including mass and regularization. Supply `fine_constants` and
 `fine_kernel` in `VariableResolutionConfig` to keep an existing fine setup.
 Fine geometry is explicit so wall placement and mDBC normals remain under the
 case author's control. `nothing` disables `metadata.VariableResolution`.
+
+Select any GPU-compatible `SPHDensityDiffusion` model using the ordinary
+`SimDensityDiffusion` argument. This includes zero diffusion, gravity-free
+linear diffusion, linear and complex hydrostatic corrections, Fourtakas, and
+custom models implementing `compute_density_diffusion`. The selected instance
+is used in both domains, both evaluated states, CUDA graphs and output-state
+refreshes; logs and effective configuration report the actual model. For the
+scripted helpers, use the `density_diffusion` keyword.
+
+`SimTimeStepping` accepts `SymplecticTimeStepping()`,
+`SingleNeighborTimeStepping()` or `DualSPHysicsSymplectic()`. The ordinary
+schemes reuse the normal GPU predictor, corrector and timestep formula, with
+working-precision arithmetic and the normal gamma-7 pressure law. Set `γ=7`
+when building their initial hydrostatic state. The helpers choose gamma 7 for
+ordinary schemes and gamma 1 for the reference scheme. Because refinement
+rebuilds both domains every step, single-neighbor stepping refreshes the
+accepted derivative every step, as required after an ordinary solver rebuild.
+Ordinary schemes also accept the normal `SimViscosity` models, including zero,
+artificial (with its boundary factor), laminar and laminar SPS viscosity.
+Reference stepping retains its artificial-viscosity formulation. Both `NoMDBC`
+and `SimpleMDBC` metadata modes are supported for fixed walls; DBC geometry
+does not require ghost points or normals.
 
 The normal API uses `SimulationName`, `OutputVariables`, scalar/vector
 `OutputTimes`, `ExportSingleVTKHDF`, `ExportGridCells` and the normal logger.
@@ -84,6 +113,11 @@ overrides metadata fields in the supplied example. The lower-level
 `run_vresolution_dambreak` / `run_variable_resolution_simulation` APIs remain
 available for reference validation and paired benchmarks. The execution options,
 filenames and historical measurements below describe those standalone APIs.
+They also accept `density_diffusion`, defaulting to `LinearDensityDiffusion()`;
+the standalone timestep remains the reference scheme. Select
+`FourtakasDensityDiffusion(full=true)` explicitly to reproduce the historical
+diffusion choice. Historical timings and mass histories below used that model,
+gamma 1 and reference integration, and do not measure the new ordinary scheme.
 
 Each run writes `SimulationOutput.log` in its output directory. It contains
 the usual `PART`, physical time, total/interval steps, elapsed runtime,
@@ -180,14 +214,23 @@ inspection:
 julia --project=gpu_version -t 2,0 gpu_version/test/run_vresolution_dambreak.jl
 ```
 
-The normal metadata-driven path has its own full validation, including every
-frame's changing point counts, offsets, unique IDs and finite fields:
+The normal metadata-driven validation runs the readable example itself,
+including every frame's changing point counts, offsets, unique IDs and finite fields:
 
 ```powershell
 julia --project=gpu_version -t 2,0 gpu_version/test/run_vresolution_solver_dambreak.jl
 ```
 
-The normal solver passed 43,430 steps and 401 frames through 1 s on the RTX
+The readable example with `LinearDensityDiffusion()`, gamma 7 and ordinary
+symplectic stepping passed all 439 full-run assertions on the RTX 5080:
+29,600 steps and 401 frames through 1 s, maximum represented-mass deviation
+0.05875%, no density exclusions and no non-finite states. Focused checks also
+compare ordinary and single-neighbor updates with the uniform solver in both
+Float32 and Float64, exercise every implemented diffusion model and a custom
+model, and cover viscosity selection, DBC/mDBC, damping and direct/graph execution.
+
+The historical normal solver with Fourtakas full diffusion and reference
+integration passed 43,430 steps and 401 frames through 1 s on the RTX
 5080, with 0.05375% maximum represented-mass deviation and no density exclusions
 or non-finite states. Its 437 full-run assertions and focused metadata/output
 checks cover the normal entry point rather than only the standalone driver.
