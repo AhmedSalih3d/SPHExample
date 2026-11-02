@@ -85,6 +85,38 @@ data_type = Simulation_vtkhdf.GetDataInformation().GetDataSetTypeAsString()
 if data_type == 'vtkMultiBlockDataSet':
     Simulation_vtkhdfDisplay.BlockSelectors = ['/Root/Particles']
 
+if data_type == 'vtkMultiBlockDataSet' and 'ForceMagnitude' in Simulation_vtkhdf.CellArrayStatus.Available:
+    Simulation_vtkhdf.CellArrayStatus = list(Simulation_vtkhdf.CellArrayStatus.Available)
+    SpringBlock = ExtractBlock(registrationName='Force-coloured springs', Input=Simulation_vtkhdf)
+    SpringBlock.Selectors = ['/Root/Springs']
+    SpringBlock.UpdatePipeline()
+    SpringDisplay = Show(SpringBlock, renderView1, 'GeometryRepresentation')
+    SpringDisplay.SetRepresentationType('Surface')
+    ColorBy(SpringDisplay, ('CELLS', 'ForceMagnitude'))
+    spring_lut = GetColorTransferFunction('ForceMagnitude')
+    spring_lut.RGBPoints = [0.0, 0.267, 0.005, 0.329,
+                           0.25, 0.230, 0.322, 0.546,
+                           0.5, 0.128, 0.567, 0.551,
+                           0.75, 0.369, 0.789, 0.383,
+                           1.0, 0.993, 0.906, 0.144]
+    spring_force_range = __SPRING_FORCE_RANGE__
+    if spring_force_range is None:
+        SpringDisplay.RescaleTransferFunctionToDataRangeOverTime()
+    else:
+        spring_lut.RescaleTransferFunction(*spring_force_range)
+    spring_lut.AutomaticRescaleRangeMode = 'Never'
+    SpringDisplay.SetScalarBarVisibility(renderView1, True)
+    spring_bar = GetScalarBar(spring_lut, renderView1)
+    spring_bar.Title = 'Spring + damper force [N]'
+    spring_bar.ComponentTitle = ''
+    spring_bar.WindowLocation = 'Upper Left Corner'
+    GeometryBlock = ExtractBlock(registrationName='Body and refinement outlines', Input=Simulation_vtkhdf)
+    GeometryBlock.Selectors = ['/Root/Geometry']
+    GeometryDisplay = Show(GeometryBlock, renderView1, 'GeometryRepresentation')
+    GeometryDisplay.SetRepresentationType('Wireframe')
+    GeometryDisplay.ColorArrayName = ['CELLS', '']
+    GeometryDisplay.DiffuseColor = [0.3, 0.3, 0.35]
+
 if __SHOW_DAMPING__ and data_type == 'vtkMultiBlockDataSet':
     DampingBlocks = ExtractBlock(registrationName='Damping zones and profile',
                                  Input=Simulation_vtkhdf)

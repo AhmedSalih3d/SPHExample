@@ -76,15 +76,24 @@ function falling_wedge_case(;
 end
 
 "Run three coupled GPU levels and save particles, wedge and both moving boxes in one VTKHDF."
-function run_falling_wedge(;particle_reserve=20000,visualize=true,graphs=true,kwargs...)
+function run_falling_wedge(;particle_reserve=nothing,visualize=true,graphs=true,kwargs...)
     case = falling_wedge_case(;kwargs...)
     T = typeof(first(case.constants).dx)
+    # The descending boxes fill initially dry space. Reserve scales as swept
+    # area / dp^2; a fixed count sufficient for a smoke run is too small at dp/4.
+    reserves = ntuple(2) do interface
+        particle_reserve === nothing || return particle_reserve
+        region,c,k = case.regions[interface],case.constants[interface+1],case.kernels[interface+1]
+        extent = region.upper-region.lower .+ 2region.buffer_h*k.h
+        travel = abs(case.initial_velocity)*case.duration+0.5Float64(c.g)*case.duration^2
+        max(20000,ceil(Int,1.5extent[1]*min(travel,extent[2])/Float64(c.dx)^2))
+    end
     inner = VariableResolutionConfig(case.regions[2];
         fine_geometry = case.geometry[3],
         fine_constants = case.constants[3],
         fine_kernel = case.kernels[3],
         follow = 51,
-        particle_reserve = particle_reserve,
+        particle_reserve = reserves[2],
     )
     refinement = VariableResolutionConfig(case.regions[1];
         fine_geometry = case.geometry[2],
@@ -92,7 +101,7 @@ function run_falling_wedge(;particle_reserve=20000,visualize=true,graphs=true,kw
         fine_kernel = case.kernels[2],
         follow = 51,
         child = inner,
-        particle_reserve = particle_reserve,
+        particle_reserve = reserves[1],
     )
     metadata = SimulationMetaData{2,T,NoShifting,NoKernelOutput,SimpleMDBC,StoreLog}(;
         SimulationName = "FallingWedge2D",

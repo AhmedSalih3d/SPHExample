@@ -146,6 +146,10 @@ existing DualSPHysics history for a comparison CSV; it never launches
 DualSPHysics. See its
 [case guide](example/VResolutionPointAbsorberSpring2d/README.md) for settings,
 link animation and focused validation.
+Its `Springs` block contains an animated helical wire coloured by the accepted
+spring-and-damper force magnitude in N, with signed axial force and the elastic
+and damping contributions available for inspection. Use the renderer's
+`--spring-detail` option for a close view; all data remains in the same VTKHDF.
 
 [VResolutionFallingWedge2d.jl](example/VResolutionFallingWedge2d.jl) implements a
 wedge entering water at **-6.15 m/s** with **two nested moving boxes and three

@@ -93,7 +93,7 @@ end
                      paraview_cmd="paraview",
                      representation="Point Gaussian",
                      color_variable=nothing, pressure_range=nothing,
-                     show_damping=false)
+                     show_damping=false, spring_force_range=nothing)
 
 Write a ParaView state file for the given simulation and optionally
 launch ParaView to visualise the results. `variable_names` should contain the
@@ -105,6 +105,9 @@ sets a fixed pressure color scale in Pa, also used when switching to pressure
 coloring later. Without a range, use the initial output's pressure data range.
 Set `show_damping = true` to display the damping-zone wireframe and profile
 when those blocks are present in the VTKHDF output.
+An exported `Springs` block is shown as a surface coloured by cell array
+`ForceMagnitude` in N. `spring_force_range=(min,max)` fixes its colour scale;
+without it, ParaView determines the range over the saved spring frames.
 """
 function AutoOpenParaview(SimMetaData::SimulationMetaData, 
                           SimConstants::SimulationConstants,
@@ -113,7 +116,8 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData,
                           representation::String="Point Gaussian",
                           color_variable::Union{String,Nothing}="Density",
                           pressure_range=nothing,
-                          show_damping::Bool=false)
+                          show_damping::Bool=false,
+                          spring_force_range=nothing)
     ## Generate auto paraview py
     if pressure_range !== nothing
         length(pressure_range) == 2 ||
@@ -122,6 +126,13 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData,
         all(isfinite, (pmin, pmax)) && pmin < pmax ||
             throw(ArgumentError("pressure_range must be finite and increasing"))
         pressure_range = (pmin, pmax)
+    end
+    if spring_force_range !== nothing
+        length(spring_force_range) == 2 || throw(ArgumentError("spring_force_range must contain two values in N"))
+        fmin,fmax = Float64.(spring_force_range)
+        all(isfinite,(fmin,fmax)) && 0 <= fmin < fmax ||
+            throw(ArgumentError("spring_force_range must be finite, nonnegative and increasing"))
+        spring_force_range = (fmin,fmax)
     end
 
     if SimMetaData.ExportSingleVTKHDF
@@ -147,6 +158,8 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData,
                      "__PRESSURE_RANGE__" => (pressure_range === nothing ? "None" :
                          "[$(pressure_range[1]), $(pressure_range[2])]"),
                      "__SHOW_DAMPING__" => (show_damping ? "True" : "False"),
+                     "__SPRING_FORCE_RANGE__" => (spring_force_range === nothing ? "None" :
+                         "[$(spring_force_range[1]), $(spring_force_range[2])]"),
                      "__VIEW_DIMENSION__" => ViewDimension,
                      "__GAUSSIAN_RADIUS__" => SimConstants.dx / 2,
                      )

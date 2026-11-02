@@ -292,7 +292,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     end
 
     """
-        SavePolygonMotionSequence(filepath, regions; motions, times, block_name=nothing)
+        SavePolygonMotionSequence(filepath, regions; motions, times,
+            block_name=nothing, cell_fields=(;))
 
     Write a transient VTKHDF `PolyData` file containing polygon regions at
     `times`. `filepath` must end in `.vtkhdf`.
@@ -303,6 +304,12 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     the XY plane) and return two or three finite world coordinates. This
     supports rigid rotations, histories and hierarchies without coupling the
     geometry writer to a particular motion model. Unmapped regions remain fixed.
+
+    `cell_fields` maps array names to callables `(region_name, time) -> value`.
+    A value is a finite real scalar or a two/three-component real vector;
+    two-component vectors are padded with zero in Z. Each value is repeated
+    over that region's cells at the given frame. These temporal cell arrays
+    support force colouring and other geometry diagnostics. `Region` is reserved.
 
     `MotionDetails` positions follow the prescribed constant velocity from simulation time
     zero, clipped to each motion's start time and duration. Regions whose
@@ -317,7 +324,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     function SavePolygonMotionSequence(filepath::AbstractString, regions::NamedTuple;
                                        motions::NamedTuple,
                                        times::AbstractVector{<:Real},
-                                       block_name::Union{Nothing,AbstractString} = nothing)
+                                       block_name::Union{Nothing,AbstractString} = nothing,
+                                       cell_fields::NamedTuple = (;))
         isempty(regions) && throw(ArgumentError("at least one polygon region is required"))
         isempty(motions) && throw(ArgumentError("at least one moving region is required"))
         lowercase(splitext(filepath)[2]) == ".vtkhdf" ||
@@ -357,6 +365,16 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         step_connectivity = Vector{Int64}(undef, nconnectivity * nsteps)
         step_offsets = Vector{Int64}(undef, length(offsets) * nsteps)
         step_regions = Vector{Int32}(undef, ncells * nsteps)
+        field_data = Dict{String,Union{Vector{Float64},Matrix{Float64}}}()
+        for (name, field) in pairs(cell_fields)
+            array_name = String(name)
+            !isempty(array_name) && !occursin('/',array_name) && array_name != "Region" ||
+                throw(ArgumentError("cell field names must be nonempty, contain no slash and differ from Region"))
+            applicable(field,first(keys(regions)),first(frame_times)) ||
+                throw(ArgumentError("cell field `$name` must be callable as (region_name, time)"))
+            sample = preview_cell_field(field(first(keys(regions)),first(frame_times)),name,first(frame_times))
+            field_data[array_name] = sample isa Real ? Vector{Float64}(undef,ncells*nsteps) : Matrix{Float64}(undef,3,ncells*nsteps)
+        end
 
         for (step, time) in enumerate(frame_times)
             frame_points = copy(points)
@@ -384,6 +402,17 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             step_connectivity[connectivity_rows] = connectivity
             step_offsets[offset_rows] = offsets
             step_regions[region_rows] = region_ids
+            for (name, field) in pairs(cell_fields)
+                samples = [preview_cell_field(field(region,time),name,time) for region in keys(regions)]
+                data = field_data[String(name)]
+                all(value -> (value isa Real) == (data isa Vector),samples) ||
+                    throw(ArgumentError("cell field `$name` must keep the same scalar/vector shape at every region and time"))
+                if data isa Vector
+                    data[region_rows] = samples[region_ids]
+                else
+                    data[:,region_rows] = stack(samples[region_ids])
+                end
+            end
         end
 
         output_path = abspath(filepath)
@@ -413,6 +442,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
             cell_data = HDF5.create_group(root, "CellData")
             cell_data["Region"] = step_regions
+            for (name, data) in field_data
+                cell_data[name] = data
+            end
 
             steps = HDF5.create_group(root, "Steps")
             HDF5.attrs(steps)["NSteps"] = Int64(nsteps)
@@ -428,8 +460,24 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
             cell_data_offsets = HDF5.create_group(steps, "CellDataOffsets")
             cell_data_offsets["Region"] = Int64.(0:ncells:(nsteps - 1) * ncells)
+            for name in keys(field_data)
+                cell_data_offsets[name] = Int64.(0:ncells:(nsteps - 1) * ncells)
+            end
         end
         return filepath
+    end
+
+    function preview_cell_field(value,name,time)
+        if value isa Real
+            scalar = Float64(value)
+            isfinite(scalar) || throw(ArgumentError("cell field `$name` is nonfinite at time $time"))
+            return scalar
+        end
+        value isa Union{Tuple,AbstractVector} && length(value) in (2,3) && all(x -> x isa Real,value) ||
+            throw(ArgumentError("cell field `$name` must return a real scalar or a two/three-component real vector"))
+        vector = length(value) == 2 ? SVector{3,Float64}(value[1],value[2],0) : SVector{3,Float64}(value)
+        all(isfinite,vector) || throw(ArgumentError("cell field `$name` is nonfinite at time $time"))
+        return vector
     end
 
     function add_temporal_geometry_block!(io, name, frame_times)

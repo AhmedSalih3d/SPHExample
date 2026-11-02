@@ -41,6 +41,10 @@ end
     @test all(r -> r.center_x == 2.0,reference)
     @test maximum(abs(r.spring_force_y-(-100*(r.center_y-0.4)-500r.velocity_y)) for r in reference) < 0.00031
     @test point_absorber_piston_state(0.0) == (0.0,0.0)
+    coil = point_absorber_spring_surface(case.spring)
+    @test all(p -> all(isfinite,p),coil.points)
+    @test length(coil.points) > 1000 && length(coil.faces) > 2000
+    @test_throws ArgumentError point_absorber_spring_surface(case.spring;wire_radius=0.1)
 end
 
 @testset "bed-following fluid rows have uniform wall clearance" begin
@@ -105,6 +109,25 @@ if CUDA.functional()
                 @test read(root["Geometry/Steps/Values"]) == read(root["Particles/Steps/Values"])
                 @test haskey(root, "Assembly/Geometry")
                 @test all(isfinite, read(root["Geometry/Points"]))
+                @test read(root["Springs/Steps/Values"]) == read(root["Particles/Steps/Values"])
+                @test haskey(root,"Assembly/Springs")
+                @test all(isfinite,read(root["Springs/Points"]))
+                rows = collect(CSV.File(joinpath(directory,"PointAbsorberSpring2D_Springs.csv")))
+                forces = read(root["Springs/CellData/Force"])
+                magnitudes = read(root["Springs/CellData/ForceMagnitude"])
+                axial = read(root["Springs/CellData/AxialForce"])
+                elastic = read(root["Springs/CellData/ElasticAxialForce"])
+                damping = read(root["Springs/CellData/DampingAxialForce"])
+                @test magnitudes ≈ vec(sqrt.(sum(abs2,forces;dims=1)))
+                @test axial ≈ elastic+damping
+                offsets = read(root["Springs/Steps/CellDataOffsets/ForceMagnitude"])
+                for (index,row) in enumerate(rows)
+                    i = offsets[index]+1
+                    expected = SVector(getproperty(row,Symbol("Force:0")),getproperty(row,Symbol("Force:1")),0.0)
+                    @test forces[:,i] ≈ expected
+                    @test magnitudes[i] ≈ norm(expected)
+                    @test axial[i] ≈ -expected[2]
+                end
             end
             @test isfile(joinpath(directory,"PointAbsorberSpring2D_Comparison.csv"))
             @test all(d -> d[4] == 0,result.diagnostics.resolution.events)

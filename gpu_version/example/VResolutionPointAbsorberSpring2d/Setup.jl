@@ -1,7 +1,7 @@
 # Geometry generation, wave theory and reference comparison helpers.
 # User-facing input structs and the simulation driver are in the main example.
 using CSV
-using LinearAlgebra: normalize
+using LinearAlgebra: normalize, norm, dot, cross
 
 const POINT_ABSORBER_DATA = joinpath(@__DIR__, "..", "data", "vresolution_special")
 
@@ -99,14 +99,56 @@ function point_absorber_geometry(case, heave = 0.0)
     tank = polyline([(-0.2, 0.0), (2.5, 0.0), (9.2, 0.6)]; thickness = 0.02, side = :right)
     body = rectangle((1.85, 0.32 + heave), 0.3, 0.16)
     patch = rectangle(Tuple(lower), case.region.upper[1] - case.region.lower[1], case.region.upper[2] - case.region.lower[2])
-    spring = polyline([Tuple(case.spring.Anchor), Tuple(case.spring.Attachment + shift)]; thickness = 0.003)
-    return (; tank, body, refinement = patch, spring)
+    return (; tank, body, refinement = patch)
 end
 
-function point_absorber_outputs(case,result)
+"A display-only helical wire with fixed turns and tapered ends at the two attachment points."
+function point_absorber_spring_surface(spring;radius=0.02,turns=8,sections_per_turn=16,wire_radius=0.0015,wire_sides=8)
+    all(x -> isfinite(x) && x > 0,(radius,wire_radius)) && wire_radius < radius ||
+        throw(ArgumentError("spring display radii must be positive, with wire_radius < radius"))
+    turns isa Integer && turns > 0 && sections_per_turn isa Integer && sections_per_turn >= 8 &&
+        wire_sides isa Integer && wire_sides >= 3 || throw(ArgumentError("spring display needs positive integer turns, at least 8 sections per turn and 3 wire sides"))
+    anchor = SVector(spring.Anchor[1],spring.Anchor[2],0.0)
+    attachment = SVector(spring.Attachment[1],spring.Attachment[2],0.0)
+    axis = attachment-anchor
+    norm(axis) > 0 || throw(ArgumentError("spring display needs distinct endpoints"))
+    direction = normalize(axis)
+    radial = normalize(cross(direction,SVector(0.0,0.0,1.0)))
+    transverse = cross(direction,radial)
+    path = [anchor,anchor+0.08axis]
+    for i in 1:turns*sections_per_turn-1
+        s = i/(turns*sections_per_turn)
+        envelope = min(1.0,2turns*s,2turns*(1-s))
+        angle = 2pi*turns*s
+        push!(path,anchor+(0.08+0.84s)*axis+radius*envelope*(cos(angle)*radial+sin(angle)*transverse))
+    end
+    append!(path,(anchor+0.92axis,attachment))
+    points = SVector{3,Float64}[]
+    for i in eachindex(path)
+        tangent = normalize(path[min(i+1,end)]-path[max(i-1,1)])
+        normal = normalize(radial-dot(radial,tangent)*tangent)
+        binormal = cross(tangent,normal)
+        for side in 0:wire_sides-1
+            angle = 2pi*side/wire_sides
+            push!(points,path[i]+wire_radius*(cos(angle)*normal+sin(angle)*binormal))
+        end
+    end
+    faces = [collect(wire_sides:-1:1)]
+    for i in 1:length(path)-1, side in 1:wire_sides
+        a,b = (i-1)*wire_sides+side,(i-1)*wire_sides+mod1(side+1,wire_sides)
+        c,d = b+wire_sides,a+wire_sides
+        # Triangles keep every exported face planar along the curved wire.
+        push!(faces,[a,b,c],[a,c,d])
+    end
+    push!(faces,collect((length(path)-1)*wire_sides+1:length(path)*wire_sides))
+    return PolygonSurface(points,faces)
+end
+
+function point_absorber_outputs(case,result;spring_display=(;))
     body_rows = collect(CSV.File(joinpath(case.save_location,"PointAbsorberSpring2D_Floating.csv")))
     spring_rows = collect(CSV.File(joinpath(case.save_location,"PointAbsorberSpring2D_Springs.csv")))
     times = Float64[r.Time for r in body_rows]
+    Float64[r.Time for r in spring_rows] == times || throw(ArgumentError("spring and body frame times must match"))
     function interpolate(values,time)
         length(times) == 1 && return first(values)
         i = clamp(searchsortedlast(times,time),1,length(times)-1)
@@ -138,8 +180,33 @@ function point_absorber_outputs(case,result)
         joinpath(case.save_location, "PointAbsorberSpring2D.vtkhdf"),
         point_absorber_geometry(case);
         times,
-        motions = (; body = translate_body, refinement = translate_body, spring = stretch_spring),
+        motions = (; body = translate_body, refinement = translate_body),
         block_name = "Geometry",
+    )
+    spring_state(time) = spring_rows[searchsortedfirst(times,time)]
+    force(time) = let row = spring_state(time)
+        SVector(getproperty(row,Symbol("Force:0")),getproperty(row,Symbol("Force:1")),0.0)
+    end
+    endpoint(time,kind) = let row = spring_state(time)
+        SVector(getproperty(row,Symbol("$kind:0")),getproperty(row,Symbol("$kind:1")),0.0)
+    end
+    axial_force(time) = -dot(force(time),normalize(endpoint(time,"Attachment")-endpoint(time,"Anchor")))
+    SavePolygonMotionSequence(
+        joinpath(case.save_location,"PointAbsorberSpring2D.vtkhdf"),
+        (;spring=point_absorber_spring_surface(case.spring;spring_display...));
+        times,
+        motions = (;spring=stretch_spring),
+        block_name = "Springs",
+        cell_fields = (;
+            Force = (_,time) -> force(time),
+            ForceMagnitude = (_,time) -> norm(force(time)),
+            AxialForce = (_,time) -> axial_force(time),
+            ElasticAxialForce = (_,time) -> case.spring.Stiffness*spring_state(time).Extension,
+            DampingAxialForce = (_,time) -> axial_force(time)-case.spring.Stiffness*spring_state(time).Extension,
+            Extension = (_,time) -> spring_state(time).Extension,
+            Anchor = (_,time) -> endpoint(time,"Anchor"),
+            Attachment = (_,time) -> endpoint(time,"Attachment"),
+        ),
     )
     return result
 end

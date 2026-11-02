@@ -91,11 +91,16 @@ end
 """
     run_point_absorber_spring(; particle_reserve=40000, metadata_options=(;), kwargs...)
 
-Run the case and save particles, the moving body/patch and spring in
-`PointAbsorberSpring2D.vtkhdf`. CSV files contain body, spring, represented-mass
+Run the case and save particles, the moving body/patch and force-coloured
+helical spring in `PointAbsorberSpring2D.vtkhdf`. `spring_display` configures
+display geometry only. CSV files contain body, spring, represented-mass
 and bundled-reference comparison histories. Use a new, empty output directory.
 """
-function run_point_absorber_spring(; particle_reserve = 40000, metadata_options = (;), kwargs...)
+function run_point_absorber_spring(;
+        particle_reserve = 40000,
+        metadata_options = (;),
+        spring_display = (;radius=0.02,turns=8,sections_per_turn=16,wire_radius=0.0015),
+        kwargs...)
     any(k -> k in (:SimulationName, :SaveLocation, :VariableResolution), keys(metadata_options)) &&
         throw(ArgumentError("set case identity/location/refinement through the case keywords"))
     get(metadata_options, :ExportSingleVTKHDF, true) && !get(metadata_options, :ExportGridCells, false) ||
@@ -132,6 +137,9 @@ function run_point_absorber_spring(; particle_reserve = 40000, metadata_options 
     viscosity = ArtificialViscosity()
     density_diffusion = LinearDensityDiffusion()
     time_stepping = SymplecticTimeStepping()
+    visualize = metadata.VisualizeInParaview
+    # Add the accepted spring/body histories before opening the combined file.
+    metadata.VisualizeInParaview = false
 
     particles = AllocateDataStructures(case.coarse.geometry, metadata)
     logger = SimulationLogger(case.save_location)
@@ -151,7 +159,14 @@ function run_point_absorber_spring(; particle_reserve = 40000, metadata_options 
     finally
         isopen(logger.LoggerIo) && close(logger.LoggerIo)
     end
-    return point_absorber_outputs(case, result)
+    point_absorber_outputs(case,result;spring_display)
+    maximum_force = maximum(CSV.File(joinpath(case.save_location,"PointAbsorberSpring2D_Springs.csv"))) do row
+        hypot(getproperty(row,Symbol("Force:0")),getproperty(row,Symbol("Force:1")))
+    end
+    metadata.VisualizeInParaview = visualize
+    AutoOpenParaview(metadata,case.coarse.constants,metadata.OutputVariables;
+        spring_force_range=(0.0,max(maximum_force,1.0)))
+    return result
 end
 
 # Including this file starts the simulation.

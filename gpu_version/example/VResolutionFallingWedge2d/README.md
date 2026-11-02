@@ -49,7 +49,12 @@ julia --project=gpu_version -t 2,0 gpu_version/example/VResolutionFallingWedge2d
 ```
 
 Running or including the main file starts the default 0.025 s case. Change
-the keyword defaults or final call for a different run. The production
+the keyword defaults or final call for a different run. By default the spare
+particle capacity scales with refinement spacing and the area swept by the
+descending boxes, including a margin. This lets the fine level fill initially
+dry space as it enters the water; a fixed 20,000-slot reserve is insufficient
+at production spacing. Pass `particle_reserve=...` to choose an explicit count.
+This changes allocation capacity rather than the numerical inputs. The production
 spacing is expensive; validation uses a coarser case with wider boxes to
 retain the required support clearance:
 
@@ -102,4 +107,15 @@ steps with CUDA graphs and no density or non-finite exclusions. The wedge's
 vertical velocity changed from -6.15 to -4.60 m/s. Represented owned-fluid mass
 changed from 4425.90 to 4402.68 kg (-0.525%); assess mass drift and convergence
 before using this experimental nested method for quantitative impact loads.
-The production resolution was not run for this validation.
+That reduced check did not run the production resolution.
+
+A subsequent full production run at dp=0.002/0.001/0.0005 m completed the same
+0.025 s interval in 10,050 steps on the RTX 5080 with CUDA graphs (356 graph
+batches and no capture failures). It saved 51 frames in one VTKHDF. The final
+level counts, including walls/body, were 1,060,681 / 136,663 / 685,080. There
+were no density or non-finite exclusions. The wedge slowed from -6.15 to
+-4.56516 m/s; represented owned-fluid mass changed from 4490.76421 to
+4492.41471 kg (+0.03675%). This validates execution and output at the production
+spacing; reference-model differences above still apply. The default reserve
+now scales with the falling boxes' swept area after the original fixed
+20,000-slot count was exhausted at 0.001 s.

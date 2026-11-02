@@ -82,18 +82,32 @@ and represented mass relative to the earlier Cartesian fill; compare mass drift
 within each run rather than treating the old initial mass as a target.
 
 All visualization data is saved in **`PointAbsorberSpring2D.vtkhdf`**. Its
-`Particles` and `Geometry` blocks share the same frame times. Geometry includes
-the tank, body outline, tracked rectangle and a spring strip whose anchor stays
-fixed and attachment follows the accepted body position. No separate geometry
-file or numbered VTKHDF series is produced. Open the single file in ParaView,
-press **Apply**, and use its time controls. The spring's display thickness does
-not affect the force law.
+`Particles`, `Geometry` and `Springs` blocks share the same accepted frame times.
+Geometry includes the tank, body outline and tracked rectangle. The spring is
+a 3D helical wire with tapered ends, a fixed bottom anchor and an upper endpoint
+following the accepted body motion. Like the local DualSPHysics reference's
+`savevtk` coil, it uses 16 sections per revolution. The main example exposes
+`spring_display=(;radius=0.02,turns=8,sections_per_turn=16,wire_radius=0.0015)`;
+these display dimensions in metres do not change the spring's mechanical law.
+
+The `Springs` block carries temporal cell arrays from the accepted solver's
+spring history: `Force` (force on the body, N), `ForceMagnitude` (total elastic
+plus damping load, N), `AxialForce` (positive tension, negative compression),
+`ElasticAxialForce`, `DampingAxialForce`, `Extension` (m), `Anchor` and
+`Attachment` (world coordinates, m). The colour is uniform along this massless
+axial spring; it does not represent wire stress or a local stress concentration.
+The generated ParaView state shows the coil coloured by `ForceMagnitude` with
+one fixed scale over the whole run. When opening the VTKHDF directly, enable
+the `Springs` block, choose Surface, and colour by its cell `ForceMagnitude`.
+No separate geometry file or numbered VTKHDF series is produced.
 
 `_Floating.csv`, `_Springs.csv`, represented-mass `_History.csv`, and
 `_Comparison.csv` retain their numerical histories. Render a saved frame with:
 
 ```powershell
 pvpython --dr gpu_version/example/RenderRefinement2d.py path/to/PointAbsorberSpring2D.vtkhdf preview.png
+pvpython --dr gpu_version/example/RenderRefinement2d.py path/to/PointAbsorberSpring2D.vtkhdf spring.png --spring-detail
+pvpython --dr gpu_version/example/RenderRefinement2d.py path/to/PointAbsorberSpring2D.vtkhdf frames --spring-detail --all-frames
 ```
 
 Add `--all-frames` and give an output directory instead of `preview.png` to
