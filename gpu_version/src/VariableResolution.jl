@@ -1,4 +1,4 @@
-"""Native two-level variable-resolution SPH on CUDA."""
+"""Native nested variable-resolution SPH on CUDA."""
 module VariableResolution
 
 using CUDA
@@ -101,10 +101,12 @@ struct ResolutionDomain{P,C,S,K,F,I,PP,POOL,B,A,M}
     boundary_mode::B
     attachment::A
     prescribed::M
+    id_stride::Int64
 end
 
 function make_resolution_domain(geometry, constants::SimulationConstants{T}, kernel, limits, fine, reserve;
-        resident = false, standard = false, boundary_mode = SimpleMDBC(), attachment_config=nothing, prescribed_system=nothing, time=0.0) where {T}
+        resident = false, standard = false, boundary_mode = SimpleMDBC(), attachment_config=nothing, prescribed_system=nothing, time=0.0,
+        id_stride=2, id_offset=fine ? 2 : 1) where {T}
     geometry isa AbstractVector && !isempty(geometry) && all(g -> g isa SPHGeometry{2,T},geometry) ||
         throw(ArgumentError("each domain needs a nonempty vector of 2D geometries matching its constants' precision"))
     geometry = SPHGeometry{2,T}[geometry...]
@@ -142,10 +144,10 @@ function make_resolution_domain(geometry, constants::SimulationConstants{T}, ker
     dormant = SPHGeometry{2,T}(fill(zero(SVector{2,Float64}), reserve);
         Density = constants.ρ₀, Type = Frozen, GroupMarker = 0)
     host = AllocateDataStructures([geometry; dormant]; position_type = Float64, cells = false, kernel_output = false)
-    # Odd/even namespaces give globally unique IDs across both domains and
-    # across every subsequent retirement and creation, without a shared atomic.
-    maximum(host.ID) <= typemax(Int64) ÷ 4 || throw(ArgumentError("particle IDs exceed the supported two-domain namespace"))
-    host.ID .= 2 .* host.ID .- (fine ? 0 : 1)
+    # A residue class per level keeps IDs globally unique after creation.
+    # The two-level default preserves the original odd/even namespaces.
+    maximum(host.ID) <= typemax(Int64) ÷ (2id_stride) || throw(ArgumentError("particle IDs exceed the supported domain namespace"))
+    host.ID .= id_stride .* (host.ID .- 1) .+ id_offset
     gpu = upload_particles(host; position_type = Float64, kernel_output = false)
     n = length(gpu)
     cells = CellListWorkspace{2,Float64}(n)
@@ -165,12 +167,13 @@ function make_resolution_domain(geometry, constants::SimulationConstants{T}, ker
     interface = (; points = CuArray(faces.points), normals = CuArray(faces.normals),
         widths = CuArray(faces.widths), mass = CUDA.zeros(Float64, length(faces.points)), fluid_marker)
     return ResolutionDomain(gpu, cells, support, kernel, constants, interface, predictor,
-        CUDA.zeros(Int32, resident ? 0 : n), CUDA.zeros(Int32, 2), CuArray([Int64(maximum(host.ID) + 2)]), CUDA.zeros(Int64, 4), fine,
-        resident ? ResolutionPool(host, initial_count; standard) : nothing,boundary_mode,attachment,prescribed)
+        CUDA.zeros(Int32, resident ? 0 : n), CUDA.zeros(Int32, 2), CuArray([Int64(maximum(host.ID) + id_stride)]), CUDA.zeros(Int64, 4), fine,
+        resident ? ResolutionPool(host, initial_count; standard) : nothing,boundary_mode,attachment,prescribed,Int64(id_stride))
 end
 
 include("GPUVariableResolution.jl")
 include("GPUVariableResolutionDriver.jl")
+include("GPUResolutionHierarchy.jl")
 include("VariableResolutionLogging.jl")
 
 function rebuild_domain!(domain)
@@ -442,5 +445,6 @@ function run_variable_resolution_simulation(; coarse_geometry, fine_geometry, co
 end
 
 include("VariableResolutionSolver.jl")
+include("VariableResolutionHierarchySolver.jl")
 
 end

@@ -33,9 +33,9 @@ end
 """
     VariableResolutionConfig(region; fine_geometry, fine_constants=nothing,
         fine_kernel=nothing, particle_reserve=nothing, include_buffers=false,
-        follow=nothing)
+        follow=nothing, child=nothing)
 
-Enable two-domain CUDA refinement through `SimulationMetaData.VariableResolution`.
+Enable CUDA refinement through `SimulationMetaData.VariableResolution`.
 Pass the coarse geometry, constants and kernel to `RunSimulation` as usual.
 Supply the fine fluid/wall geometry explicitly, including mDBC ghost fields.
 When omitted, fine constants and kernel are derived by scaling the coarse
@@ -57,7 +57,16 @@ All body placement, region transforms and relative interface flux run on CUDA,
 including graph execution. Discontinuous motion that outruns the buffer fails
 explicitly. Output ownership uses the current transformed rectangle.
 
-The backend supports one 2D rectangle, Wendland C2 and DBC or Simple mDBC
+Pass another `VariableResolutionConfig` as `child` for nested refinement.
+Its fine geometry belongs to the next, finer level. Each child buffer plus
+one parent-level support radius must fit inside the parent's owned rectangle.
+Nested boxes must all be stationary or follow the same floating body, present
+only on the finest level. Nested runs support ordinary symplectic/single-neighbor
+stepping, CUDA graphs and single-file VTKHDF. Output `Resolution` is the zero-based
+level number; the returned `final_state.resolution.levels` contains all levels.
+The outermost config's `include_buffers` controls output for every level.
+
+The backend supports 2D rectangles, Wendland C2 and DBC or Simple mDBC
 walls. Select ordinary symplectic, single-neighbor
 or reference symplectic stepping with `SimTimeStepping`. Select any
 GPU-compatible density diffusion model with `RunSimulation(SimDensityDiffusion=...)`,
@@ -67,7 +76,7 @@ Both ordinary timestep schemes reuse the solver's integration kernels. Because
 refinement rebuilds the domains each step, single-neighbor stepping refreshes
 the accepted derivative each step, following the ordinary rebuild contract.
 """
-struct VariableResolutionConfig{G,C,K}
+struct VariableResolutionConfig{G,C,K,CH}
     region::VariableResolutionBox
     fine_geometry::G
     fine_constants::C
@@ -75,25 +84,34 @@ struct VariableResolutionConfig{G,C,K}
     particle_reserve::Union{Nothing,Int}
     include_buffers::Bool
     follow::Union{Nothing,Int}
+    child::CH
 end
 
 function VariableResolutionConfig(region::VariableResolutionBox; fine_geometry,
-        fine_constants=nothing, fine_kernel=nothing, particle_reserve=nothing, include_buffers=false, follow=nothing)
+        fine_constants=nothing, fine_kernel=nothing, particle_reserve=nothing, include_buffers=false, follow=nothing, child=nothing)
     fine_geometry isa AbstractVector && !isempty(fine_geometry) ||
         throw(ArgumentError("fine_geometry must be a nonempty vector of SPH geometries"))
     particle_reserve === nothing || (particle_reserve isa Integer && particle_reserve > 0) ||
         throw(ArgumentError("particle_reserve must be a positive integer or nothing"))
     follow === nothing || (follow isa Integer && !(follow isa Bool) && 0 < follow <= typemax(Int)) ||
         throw(ArgumentError("follow must be a positive body GroupMarker or nothing"))
+    child === nothing || child isa VariableResolutionConfig || throw(ArgumentError("child must be a VariableResolutionConfig or nothing"))
+    child === nothing || child.follow == follow || throw(ArgumentError("nested regions must follow the same body, or all remain stationary"))
+    child === nothing || all(child.region.lower .> region.lower) && all(child.region.upper .< region.upper) ||
+        throw(ArgumentError("a child refinement rectangle must lie strictly inside its parent"))
     return VariableResolutionConfig(region,fine_geometry,fine_constants,fine_kernel,
         particle_reserve === nothing ? nothing : Int(particle_reserve),Bool(include_buffers),
-        follow === nothing ? nothing : Int(follow))
+        follow === nothing ? nothing : Int(follow),child)
 end
+
+VariableResolutionConfig(region,geometry,constants,kernel,reserve,buffers,follow) =
+    VariableResolutionConfig(region,geometry,constants,kernel,reserve,buffers,follow,nothing)
 
 function Base.show(io::IO,config::VariableResolutionConfig)
     print(io,"VariableResolutionConfig(region=",config.region,", fine_geometry=",
         length(config.fine_geometry)," groups, particle_reserve=",config.particle_reserve,
-        ", include_buffers=",config.include_buffers,", follow=",config.follow,")")
+        ", include_buffers=",config.include_buffers,", follow=",config.follow,
+        ", child=",config.child === nothing ? "nothing" : config.child,")")
 end
 
 end

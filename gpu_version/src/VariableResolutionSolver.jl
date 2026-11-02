@@ -148,6 +148,9 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
         SimViscosity,SimDensityDiffusion,SimTimeStepping,ParticleNormalsPath,SimMeasurements,SimExternalForces,
         SimDamping,SimRotation,SimMotion,ParaviewPressureRange)
     meta,config = SimMetaData,SimMetaData.VariableResolution
+    config.child === nothing || return run_nested_variable_resolution(;SimGeometry,SimMetaData,SimConstants,SimKernel,SimLogger,SimParticles,
+        SimViscosity,SimDensityDiffusion,SimTimeStepping,ParticleNormalsPath,SimMeasurements,SimExternalForces,
+        SimDamping,SimRotation,SimMotion,ParaviewPressureRange)
     T = eltype(SimParticles.Density)
     validate_resolution_solver(meta,SimGeometry,SimParticles,SimViscosity,SimDensityDiffusion,SimTimeStepping,
         SimMeasurements,SimExternalForces,SimRotation,SimMotion)

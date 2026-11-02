@@ -92,6 +92,18 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
             interaction_path=:reference,viscosity_path=viscosity isa ZeroViscosity ? :disabled : :reference_ordered,cache_interaction_fields=false,
             boundary_forces=false,lanes_per_particle=1,compact_buffers=false,async_output=false,
             output_buffer_bytes=0,max_steps_per_sync=meta.GPUSyncTimers ? 1 : clamp(meta.GPUMaxStepsPerSync,1,256)))
+        if meta.VariableResolution.child !== nothing
+            regions,hs = Any[],[kernel.h]
+            config = meta.VariableResolution
+            while true
+                push!(regions,config.region)
+                push!(hs,config.fine_kernel === nothing ? last(hs)/config.region.ratio : config.fine_kernel.h)
+                config.child === nothing && break
+                config = config.child
+            end
+            effective = merge(effective,(;variable_resolution=merge(effective.variable_resolution,
+                (;method=:nested_domain_mls,level_count=length(hs),regions=Tuple(regions),smoothing_lengths=Tuple(hs)))))
+        end
         if effective.reference_step_parameters !== nothing
             effective = merge(effective,(;reference_step_parameters=merge(effective.reference_step_parameters,
                 (;fast_math=false,periodic_images=false))))

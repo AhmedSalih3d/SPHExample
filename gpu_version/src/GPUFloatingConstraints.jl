@@ -158,7 +158,7 @@ function initial_floating_velocity_kernel!(velocities, positions, indices, group
     @inbounds begin
         i = indices[j]
         b = body[groups[i]]
-        constraints[b].active || return nothing
+        (constraints[b].active || !iszero(velocity[b]) || !iszero(omega[b])) || return nothing
         r = eltype(velocities)(positions[i] - center[b])
         velocities[i] = velocity[b] + angular_cross(omega[b], r)
     end
@@ -169,11 +169,11 @@ end
     initialize_floating_velocities!(floating, gpu)
 
 Set initial rigid particle velocities from the body state without moving any
-particles. Call after constructing constrained bodies and before interactions
+particles. Call after constructing constraints or initial body velocities and before interactions
 or the initial output frame. `FloatingArrays(...; time)` applies pause rules.
 """
 function initialize_floating_velocities!(f, gpu)
-    f.active && f.constrained || return nothing
+    f.active && (f.constrained || f.initial_velocity) || return nothing
     n = length(f.indices)
     @cuda threads=ELEMENTWISE_THREADS blocks=cld(n, ELEMENTWISE_THREADS) initial_floating_velocity_kernel!(
         gpu.Velocity, gpu.Position, f.indices, gpu.GroupMarker, f.body, f.constraints, f.center, f.velocity, f.omega, Int32(n))

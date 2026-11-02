@@ -57,6 +57,10 @@ host snapshots with per-particle spacing, mass, ownership and level columns.
 `diagnostics.resolution` contains per-domain counts, transfer/exclusion event
 totals and the history CSV path. Variable-count throughput does not have a
 measured particle-step integral, so `mparticle_steps_per_second` is `NaN`.
+Nested configurations add `final_state.resolution.levels` in coarse-to-fine
+order; `coarse` and `fine` refer to the first and last snapshots. Diagnostics
+contain per-level counts, capacities and events, and output `Resolution`
+contains level numbers starting at zero. Each body exists on the finest level.
 The configuration reports supported refinement arithmetic and synchronous
 variable-count output, including fallbacks from other requested GPU options.
 """

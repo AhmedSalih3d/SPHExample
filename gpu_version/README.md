@@ -147,6 +147,15 @@ DualSPHysics. See its
 [case guide](example/VResolutionPointAbsorberSpring2d/README.md) for settings,
 link animation and focused validation.
 
+[VResolutionFallingWedge2d.jl](example/VResolutionFallingWedge2d.jl) implements a
+wedge entering water at **-6.15 m/s** with **two nested moving boxes and three
+simultaneous particle resolutions**. `FloatingDetails(InitialVelocity=...)`
+sets a force-responsive initial body velocity; `VariableResolutionConfig(...;
+child=another_config)` adds a nested level. The body is represented only on the
+finest level. All levels, the wedge and both tracked boxes are saved in one
+temporal VTKHDF. See the [case guide](example/VResolutionFallingWedge2d/README.md)
+for readable inputs, coarse checks, rendering and reference-model differences.
+
 The native `SPHExampleGPU.Constraints` module owns `FloatingConstraints`,
 `LinearSpring` and the host/device axial force law `axial_spring_force`.
 The types remain exported at the package level for existing callers. Floating

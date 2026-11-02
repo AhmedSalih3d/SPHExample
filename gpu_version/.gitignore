@@ -22,3 +22,4 @@ julia-*.tar.gz
 /output/wavemaker_investigation/
 /output/vresolution_dambreak2d*/
 /output/vresolution_point_absorber_spring2d*/
+/output/vresolution_falling_wedge2d*/

@@ -598,10 +598,10 @@ function prepare_resolution_graph!(domains,limits,state; batch_steps,use_graphs,
 end
 
 function resolution_pending_domain(domains,phase)
-    phase == 1 && return domains[1].predictor
-    phase == 2 && return domains[2].predictor
-    phase in (4,7) && return domains[1]
-    phase in (5,8) && return domains[2]
+    n = length(domains)
+    1 <= phase <= n && return domains[phase].predictor
+    n+2 <= phase <= 2n+1 && return domains[phase-n-1]
+    2n+3 <= phase <= 3n+2 && return domains[phase-2n-2]
     error("Invalid variable-resolution rebuild phase: $phase")
 end
 

@@ -119,6 +119,12 @@ function FloatingArrays(SimGeometry::Vector{SPHGeometry{D, T}}, SimParticles, Si
             inertia_inv[b] = inv(Ibody)
         end
         pause[b]   = T(geom.Floating.PauseTime)
+        initial = geom.Floating.InitialVelocity
+        if initial !== nothing
+            length(initial) == D || throw(ArgumentError("InitialVelocity for body $g must have $D entries"))
+            all(x -> x isa Real && isfinite(T(x)),initial) || throw(ArgumentError("InitialVelocity must contain finite real values"))
+            time >= pause[b] && (velocity[b] = SVector{D,T}(initial))
+        end
         spring_starts[b] = length(springs)+1
         stiffness_rate,damping_rate = 0.0,0.0
         for spring in geom.Floating.Springs
@@ -146,7 +152,7 @@ function FloatingArrays(SimGeometry::Vector{SPHGeometry{D, T}}, SimParticles, Si
             constraints[b] = config
             if time >= pause[b]
                 omega[b] = constrained_omega(zero(eltype(omega)), config, Val(D))
-                velocity[b] = config.hinge ? angular_cross(omega[b], SVector{D,T}(c - typeof(c)(config.point))) : config.velocity
+                velocity[b] = config.hinge ? angular_cross(omega[b], SVector{D,T}(c - typeof(c)(config.point))) : constrained_velocity(velocity[b],config)
             end
         end
     end
@@ -154,6 +160,7 @@ function FloatingArrays(SimGeometry::Vector{SPHGeometry{D, T}}, SimParticles, Si
     zv(E) = CUDA.zeros(E, nstate)
     common = (active = nbodies > 0, nbodies = Int32(nbodies), count = count,
               constrained = any(c -> c.active, constraints), constraints = CuArray(constraints),
+              initial_velocity = any(!iszero,velocity),
               frozen = CUDA.zeros(Int32, nstate),
               body = CuArray(body), mass = CuArray(mass), inertia = CuArray(inertia),
               springs = CuArray(springs), spring_starts = CuArray(spring_starts), spring_dt,

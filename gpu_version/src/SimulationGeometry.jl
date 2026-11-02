@@ -51,7 +51,8 @@ wall with a prescribed boundary velocity, as in a lid-driven cavity.
 end
 
 """
-    FloatingDetails{T}(; RelativeWeight, PauseTime = 0, Constraints = nothing, Springs=())
+    FloatingDetails{T}(; RelativeWeight, PauseTime = 0, Constraints = nothing,
+        Springs=(), InitialVelocity=nothing)
 
 A rigid body (the DualSPHysics "floating" object) whose particles move
 together under gravity and the forces of the surrounding particles.
@@ -63,13 +64,21 @@ degrees of freedom. Pause and permanent grid freezing override all motion.
 Supported in 2D and 3D with both symplectic and single-neighbor time stepping.
 `Springs=(LinearSpring{D,T}(...), ...)` adds fixed-anchor spring forces on the
 GPU at each evaluated body state, including torque and a spring timestep limit.
+`InitialVelocity=(vx,vy)` in 2D or `(vx,vy,vz)` in 3D sets a world-space initial
+translation velocity. It does not prescribe later motion: forces and gravity
+continue to change the velocity. Constraints project it onto allowed degrees
+of freedom; pause and grid freezing override it. Values must be finite and
+match the body's dimension, checked when constructing its device state.
 """
 @kwdef struct FloatingDetails{T}
     RelativeWeight::T
     PauseTime::T = zero(RelativeWeight)
     Constraints::Union{Nothing,FloatingConstraints} = nothing
     Springs::Tuple = ()
+    InitialVelocity::Union{Nothing,Tuple,AbstractVector} = nothing
 end
+
+FloatingDetails{T}(weight, pause, constraints, springs) where {T} = FloatingDetails{T}(weight,pause,constraints,springs,nothing)
 
 FloatingDetails{T}(weight, pause, constraints) where {T} = FloatingDetails{T}(weight, pause, constraints, ())
 FloatingDetails{T}(weight, pause) where {T} = FloatingDetails{T}(weight, pause, nothing, ())

@@ -101,9 +101,13 @@ VTKHDF, scalar/vector schedules and `GPUClipTimeStepToOutput`. Graph execution,
 batch size, interaction threads, sort determinism and cell limits use the
 corresponding metadata fields. Positions use Float64; conservative interaction
 arithmetic and synchronous variable-count output are reported in the effective
-configuration. Periodic/fixed grids, subdivision other than one, moving/floating
-walls, external forces and measurements are currently unsupported and fail
-explicitly. `nothing` (the default) selects the ordinary uniform-resolution path.
+configuration. Periodic/fixed grids, subdivision other than one,
+external forces and measurements are currently unsupported and fail
+explicitly. Body-following configurations support moving/floating boundaries.
+Use `VariableResolutionConfig(...; child=...)` for a chain of nested boxes;
+nested runs require ordinary timestep schemes, a shared floating-body pose
+or stationary boxes, and single-file VTKHDF output. `nothing` (the default)
+selects the ordinary uniform-resolution path.
 
 `GPUClipTimeStepToOutput = true` clips each adaptive step to the next output
 deadline (including `SimulationTime`). Frames then contain the integrated state

@@ -79,12 +79,12 @@ end
 
 function reconstruct_buffers_kernel!(position, velocity, density, types,
         source_position, source_velocity, source_density, source_types, starts, grid,
-        kernel, constants, limits, fine, source_fine, n)
+        kernel, constants, limits, fine, source_fine, n, source_limits=limits)
     i = thread_index()
     i > n && return nothing
     @inbounds if types[i] == Fluid && buffer_particle(position[i],limits,fine)
         value, valid, _, _ = reconstruct_state(position[i],source_position,source_velocity,
-            source_density,source_types,starts,grid,kernel,constants,limits,source_fine)
+            source_density,source_types,starts,grid,kernel,constants,source_limits,source_fine)
         if valid
             density[i] = value[1]
             velocity[i] = SVector{2,eltype(density)}(value[2],value[3])
@@ -117,7 +117,8 @@ function interface_flux_kernel!(points, normals, widths, accumulated_mass,
         position, velocity, density, types, ids, groups, free_slots, allocation, next_id, events,
         target_starts, target_grid, target_kernel,
         source_position, source_velocity, source_density, source_types, starts, grid,
-        kernel, constants, target_constants, fluid_marker, limits, source_fine, dt, n, pool = nothing)
+        kernel, constants, target_constants, fluid_marker, limits, source_fine, dt, n, pool = nothing,
+        source_limits=limits, id_stride=Int64(2))
     i = thread_index()
     i > n && return nothing
     @inbounds begin
@@ -127,7 +128,7 @@ function interface_flux_kernel!(points, normals, widths, accumulated_mass,
             return nothing
         end
         value, valid, saturation, nearest = reconstruct_state(point,source_position,source_velocity,
-            source_density,source_types,starts,grid,kernel,constants,limits,source_fine)
+            source_density,source_types,starts,grid,kernel,constants,source_limits,source_fine)
         wet = saturation > 1.5 || nearest < min(constants.dx,target_constants.dx)^2
         valid && wet || return nothing
         incoming_mass = -value[1] * ((value[2]-interface_velocity[1])*normal[1] +
@@ -148,7 +149,7 @@ function interface_flux_kernel!(points, normals, widths, accumulated_mass,
             position[slot] = point - 0.5Float64(target_constants.dx) * normal
             velocity[slot] = SVector{2,eltype(density)}(value[2],value[3])
             density[slot] = value[1]
-            ids[slot] = CUDA.atomic_add!(pointer(next_id,1),Int64(2))
+            ids[slot] = CUDA.atomic_add!(pointer(next_id,1),id_stride)
             groups[slot] = fluid_marker
             types[slot] = Fluid
             budget -= target_constants.m₀
