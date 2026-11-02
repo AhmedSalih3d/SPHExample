@@ -65,6 +65,11 @@ SetActiveView(renderView1)
 Simulation_vtkhdf = VTKHDFReader(registrationName='__SIM_NAME__.vtkhdf*', FileName=file_list)
 
 point_array_status = list(__OUTPUT_VARIABLES__)
+# Body data is saved independently of the requested particle arrays.
+has_floating_forces = 'Force' in Simulation_vtkhdf.PointArrayStatus.Available
+if has_floating_forces:
+    point_array_status = list(dict.fromkeys(point_array_status +
+                             ['Body', 'GroupMarker', 'Velocity', 'Force', 'Torque', 'ForceMagnitude']))
 if __SHOW_DAMPING__:
     point_array_status.append('NormalizedDamping')
 Simulation_vtkhdf.PointArrayStatus = point_array_status
@@ -84,6 +89,21 @@ Simulation_vtkhdf.UpdatePipeline()
 data_type = Simulation_vtkhdf.GetDataInformation().GetDataSetTypeAsString()
 if data_type == 'vtkMultiBlockDataSet':
     Simulation_vtkhdfDisplay.BlockSelectors = ['/Root/Particles']
+
+if has_floating_forces and data_type == 'vtkMultiBlockDataSet':
+    FloatingBodies = ExtractBlock(registrationName='Floating body loads', Input=Simulation_vtkhdf)
+    FloatingBodies.Selectors = ['/Root/FloatingBodies']
+    FloatingForceGlyphs = Glyph(registrationName='Floating force arrows', Input=FloatingBodies,
+                               GlyphType='Arrow')
+    FloatingForceGlyphs.OrientationArray = ['POINTS', 'Force']
+    FloatingForceGlyphs.ScaleArray = ['POINTS', 'No scale array']
+    FloatingForceGlyphs.ScaleFactor = 12.0 * float(__GAUSSIAN_RADIUS__)
+    FloatingForceGlyphs.GlyphMode = 'All Points'
+    FloatingForceDisplay = Show(FloatingForceGlyphs, renderView1, 'GeometryRepresentation')
+    ColorBy(FloatingForceDisplay, ('POINTS', 'ForceMagnitude'))
+    FloatingForceDisplay.RescaleTransferFunctionToDataRangeOverTime()
+    # Enable the arrows in the Pipeline Browser when inspecting body loads.
+    Hide(FloatingForceGlyphs, renderView1)
 
 if data_type == 'vtkMultiBlockDataSet' and 'ForceMagnitude' in Simulation_vtkhdf.CellArrayStatus.Available:
     Simulation_vtkhdf.CellArrayStatus = list(Simulation_vtkhdf.CellArrayStatus.Available)

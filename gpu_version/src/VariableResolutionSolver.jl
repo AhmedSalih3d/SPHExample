@@ -219,12 +219,14 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
             snapshots = map(d -> solver_resolution_snapshot(d,config.region,limits;include_buffers=config.include_buffers,scheme),domains)
             frame = vcat(snapshots...)
             replace_resolution_particles!(SimParticles,frame)
-            output = SetupVTKOutput(meta,frame,SimKernel,2;constants=SimConstants,damping,variable_count=true)
+            body = fine.attachment === nothing || fine.attachment.floating === nothing ? nothing : floating_state(fine.attachment.floating)
+            output = SetupVTKOutput(meta,frame,SimKernel,2;constants=SimConstants,damping,variable_count=true,
+                floating_state=body,floating_markers=body === nothing ? Int[] : [config.follow])
             history = open(history_path,"w")
             println(history,"time,iteration,coarse_fluid,fine_fluid,represented_fluid_mass,coarse_created,fine_created,coarse_retired,fine_retired,coarse_excluded,fine_excluded,coarse_nonfinite,fine_nonfinite")
             if fine.attachment !== nothing && fine.attachment.floating !== nothing
                 floating_history = open(joinpath(meta.SaveLocation,meta.SimulationName*"_Floating.csv"),"w")
-                println(floating_history,"Time,Body,GroupMarker,Center:0,Center:1,Velocity:0,Velocity:1,Angle,Omega")
+                println(floating_history,"Time,Body,GroupMarker,Center:0,Center:1,Velocity:0,Velocity:1,Angle,Omega,Force:0,Force:1,Torque")
                 if !isempty(fine.attachment.floating.springs)
                     spring_history = open(joinpath(meta.SaveLocation,meta.SimulationName*"_Springs.csv"),"w")
                     println(spring_history,"Time,Body,Spring,Anchor:0,Anchor:1,Attachment:0,Attachment:1,Length,Extension,Force:0,Force:1,Torque")
@@ -255,7 +257,8 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
                     replace_resolution_particles!(frame,vcat(snapshots...))
                 end
                 meta.OutputIterationCounter = frames+1
-                output.save_particles(meta.OutputIterationCounter,meta.TotalTime)
+                body = fine.attachment === nothing || fine.attachment.floating === nothing ? nothing : floating_state(fine.attachment.floating)
+                output.save_particles(meta.OutputIterationCounter,meta.TotalTime;body_state=body)
                 if meta.ExportGridCells
                     cells = occupied_cells_host(frame.Position,SimKernel.H⁻¹)
                     output.save_grid(meta.OutputIterationCounter,cells,frame,meta.TotalTime)
@@ -266,8 +269,8 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
                 println(history,join((meta.TotalTime,meta.Iteration,counts...,mass,events[1][1],events[2][1],events[1][2],events[2][2],events[1][3],events[2][3],events[1][4],events[2][4]),','))
                 flush(history)
                 if floating_history !== nothing
-                    body = floating_state(fine.attachment.floating)
-                    println(floating_history,join((meta.TotalTime,1,config.follow,body.center[1]...,body.velocity[1]...,body.angle[1],body.omega[1]),','))
+                    println(floating_history,join((meta.TotalTime,1,config.follow,body.center[1]...,body.velocity[1]...,body.angle[1],body.omega[1],
+                        body.load_force[1]...,body.load_torque[1]),','))
                     flush(floating_history)
                 end
                 if spring_history !== nothing

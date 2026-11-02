@@ -1,6 +1,7 @@
 using Test
 using SPHExampleGPU
 using StaticArrays
+using StructArrays
 
 @testset "ParaView particles and cell grid" begin
     pressure_range_for = SPHExampleGPU.OpenExternalPrograms.hydrostatic_pressure_range
@@ -53,6 +54,45 @@ using StaticArrays
     if pvpython === nothing
         @test_skip false # Optional integration check requires ParaView.
     else
+        @testset "floating body force vectors and generated glyphs" begin
+            for D in (2, 3), single in (false, true)
+                mktempdir() do directory
+                    metadata = SimulationMetaData{D,Float32}(SimulationName = "BodyLoads", SaveLocation = directory,
+                        ExportSingleVTKHDF = single, SimulationTime = 0.1, OutputTimes = 0.1,
+                        OutputVariables = ["Density"], VisualizeInParaview = false, OpenLogFile = false)
+                    constants = SimulationConstants{Float32}(dx = 0.1)
+                    kernel = SPHKernelInstance{D,Float32}(WendlandC2(); dx = constants.dx)
+                    v = SVector{D,Float32}(ntuple(d -> Float32(d), D))
+                    body = (; center = [v], velocity = [zero(v)], load_force = [2v],
+                        load_torque = D == 2 ? Float32[3] : [3v])
+                    particles = StructArray((; Position = [v], Density = Float32[1000]))
+                    output = SetupVTKOutput(metadata, particles, kernel, D; constants,
+                        floating_state = body, floating_markers = [7])
+                    try
+                        output.save_particles(1, 0.0; body_state = body)
+                        output.save_particles(2, 0.1; body_state = body)
+                    finally
+                        output.close_files()
+                    end
+                    AutoOpenParaview(metadata, constants, ["Density"]; paraview_cmd = nothing)
+                    suffix = single ? "_SingleVTKHDFStateFile.py" : "_StateFile.py"
+                    state = joinpath(directory, "BodyLoads" * suffix)
+                    open(state, "a") do io
+                        write(io, "\nfrom paraview import servermanager\n")
+                        write(io, "FloatingBodies.UpdatePipeline(list(Simulation_vtkhdf.TimestepValues)[-1])\n")
+                        write(io, "body_data = servermanager.Fetch(FloatingBodies).GetBlock(0)\n")
+                        write(io, "assert body_data.GetNumberOfPoints() == 1\n")
+                        write(io, "assert body_data.GetPointData().GetArray('Force').GetTuple3(0) == $(D == 2 ? "(2.0, 4.0, 0.0)" : "(2.0, 4.0, 6.0)")\n")
+                        write(io, "FloatingForceGlyphs.UpdatePipeline(list(Simulation_vtkhdf.TimestepValues)[-1])\n")
+                        write(io, "assert servermanager.Fetch(FloatingForceGlyphs).GetNumberOfPoints() > 0\n")
+                        write(io, "assert FloatingForceDisplay.Visibility == 0\n")
+                    end
+                    process = run(pipeline(ignorestatus(`$pvpython --force-offscreen-rendering --no-mpi --dr $state`);
+                        stdout = stdout, stderr = stderr))
+                    @test process.exitcode == 0
+                end
+            end
+        end
         mktempdir() do directory
             constants = SimulationConstants{Float32}(dx = 0.02f0)
             for (single_file, export_grid) in ((true, true), (false, true), (true, false))

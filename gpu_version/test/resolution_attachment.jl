@@ -203,6 +203,13 @@ if CUDA.functional()
             @test direct.particles.Density == graph.particles.Density
             @test isfile(joinpath(graph.directory,"Attached_Floating.csv"))
             @test length(readlines(joinpath(graph.directory,"Attached_Floating.csv"))) == 4
+            h5open(joinpath(graph.directory,"Attached.vtkhdf"),"r") do file
+                bodies = file["VTKHDF/FloatingBodies"]
+                @test read(bodies["Steps/Values"]) == read(file["VTKHDF/Particles/Steps/Values"])
+                @test bodies["PointData/Force"][1:2,end] == f.load_force[1]
+                @test bodies["PointData/Torque"][3,end] == f.load_torque[1]
+                @test all(==(5),read(bodies["PointData/GroupMarker"]))
+            end
             constraints = FloatingConstraints{2,T}(;PrescribedVelocity=(T(1),T(0)),PrescribedOmega=(T(3),))
             case = attachment_case(T;floating=true,details=constraints)
             run = run_attachment(case;scheme=SingleNeighborTimeStepping())

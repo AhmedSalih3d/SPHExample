@@ -21,7 +21,8 @@ function floating_fixture(D, T, save; double_position = false)
 end
 
 function seed_body_state!(floating, D, phase)
-    fields = D == 2 ? (:center, :velocity, :angle, :omega) : (:center, :velocity, :orientation, :omega)
+    fields = D == 2 ? (:center, :velocity, :angle, :omega, :load_force, :load_torque) :
+        (:center, :velocity, :orientation, :omega, :load_force, :load_torque)
     for (k, name) in enumerate(fields)
         array = getproperty(floating, name)
         E = eltype(array)
@@ -98,9 +99,12 @@ function simulate_output(D, T; double_position, scheme, async, queue_bytes)
         end
         csv = read(joinpath(save, "FloatingOutput_Floating.csv"), String)
         output = h5open(joinpath(save, "FloatingOutput.vtkhdf"), "r") do file
-            root = file["VTKHDF"]
+            root = file["VTKHDF/Particles"]
+            bodies = file["VTKHDF/FloatingBodies"]
             (; times = read(root["Steps/Values"]), positions = read(root["Points"]),
-               groups = read(root["PointData/GroupMarker"]), velocity = read(root["PointData/Velocity"]))
+               groups = read(root["PointData/GroupMarker"]), velocity = read(root["PointData/Velocity"]),
+               body_times = read(bodies["Steps/Values"]), body_positions = read(bodies["Points"]),
+               force = read(bodies["PointData/Force"]), torque = read(bodies["PointData/Torque"]))
         end
         return (; csv, output, iteration = metadata.Iteration, position = particles.Position,
             velocity = particles.Velocity, density = particles.Density)
@@ -121,11 +125,15 @@ end
         @test length(rows) == 2frames
         @test Tuple(propertynames(first(rows))) == (D == 2 ?
             (:Time, :Body, :GroupMarker, Symbol("Center:0"), Symbol("Center:1"),
-             Symbol("Velocity:0"), Symbol("Velocity:1"), :Angle, :Omega) :
+             Symbol("Velocity:0"), Symbol("Velocity:1"), :Angle, :Omega,
+             Symbol("Force:0"), Symbol("Force:1"), :Torque) :
             (:Time, :Body, :GroupMarker, Symbol("Center:0"), Symbol("Center:1"), Symbol("Center:2"),
              Symbol("Velocity:0"), Symbol("Velocity:1"), Symbol("Velocity:2"),
              Symbol("Orientation:0"), Symbol("Orientation:1"), Symbol("Orientation:2"), Symbol("Orientation:3"),
-             Symbol("Omega:0"), Symbol("Omega:1"), Symbol("Omega:2")))
+             Symbol("Omega:0"), Symbol("Omega:1"), Symbol("Omega:2"),
+             Symbol("Force:0"), Symbol("Force:1"), Symbol("Force:2"),
+             Symbol("Torque:0"), Symbol("Torque:1"), Symbol("Torque:2")))
+        @test reference.output.body_times == reference.output.times
         n = length(reference.position)
         for frame in 1:frames, (body, marker) in enumerate((7, 3))
             row = rows[2(frame - 1) + body]
@@ -139,6 +147,15 @@ end
                 velocity = sum(reference.output.velocity[axis, members]) / length(members)
                 @test getproperty(row, Symbol("Center:$(axis - 1)")) ≈ center atol = 8eps(T) rtol = 8eps(T)
                 @test getproperty(row, Symbol("Velocity:$(axis - 1)")) ≈ velocity atol = 8eps(T) rtol = 8eps(T)
+                column = 2(frame - 1) + body
+                @test reference.output.body_positions[axis, column] ≈ getproperty(row, Symbol("Center:$(axis - 1)")) rtol = 8eps(T)
+                @test reference.output.force[axis, column] ≈ getproperty(row, Symbol("Force:$(axis - 1)")) rtol = 8eps(T)
+            end
+            column = 2(frame - 1) + body
+            if D == 2
+                @test reference.output.torque[:, column] ≈ [0, 0, row.Torque] rtol = 8eps(T)
+            else
+                @test reference.output.torque[:, column] ≈ [getproperty(row, Symbol("Torque:$d")) for d in 0:2] rtol = 8eps(T)
             end
         end
     end

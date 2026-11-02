@@ -69,6 +69,8 @@ if CUDA.functional()
         mass = only(Array(f.mass))
         expected = SVector{D,T}(ntuple(d -> d == D ? -2/mass : 0.0,D))
         @test only(Array(f.acceleration)) ≈ expected atol=2e-7
+        @test only(F.floating_state(f).load_force) ≈ expected*mass atol=2e-7
+        @test iszero(only(F.floating_state(f).load_torque))
         @test all(iszero,Array(f.force))
         F.launch_floating_update!(f,step,zero(T),false)
         @test only(Array(f.velocity_half)) ≈ expected*T(0.0005) atol=2e-9

@@ -49,6 +49,31 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
     # Name of the particle block when the file is a composite dataset.
     const PARTICLE_BLOCK = "Particles"
+    const FLOATING_BLOCK = "FloatingBodies"
+    const FLOATING_VARIABLES = ["Body", "GroupMarker", "Velocity", "Force", "Torque", "ForceMagnitude"]
+    floating_3d(v::SVector{D,T}) where {D,T} = SVector{3,T}(ntuple(d -> d <= D ? v[d] : zero(T), 3))
+
+    function floating_output_fields(state, markers)
+        force = state.load_force
+        torque = eltype(state.load_torque) <: Real ?
+            [SVector(zero(t), zero(t), t) for t in state.load_torque] : state.load_torque
+        return (collect(Int32, eachindex(markers)), markers, floating_3d.(state.velocity),
+                floating_3d.(force), torque, norm.(force))
+    end
+
+    function create_floating_block!(collection, state, markers)
+        root = create_block(collection, FLOATING_BLOCK)
+        fields = floating_output_fields(state, markers)
+        GenerateGeometryStructure(root, FLOATING_VARIABLES, fields...)
+        GenerateStepStructure(root, FLOATING_VARIABLES, fields...)
+        return root
+    end
+
+    function append_floating_frame!(root, time, state, markers)
+        AppendVTKHDFData(root, time, floating_3d.(state.center), FLOATING_VARIABLES,
+            floating_output_fields(state, markers)...)
+        return nothing
+    end
 
     """Write an ASCII attribute `name => value` to `grp`."""
     function write_ascii_attribute(grp, name, value)
@@ -63,7 +88,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     # Composite (MultiBlockDataSet) files
     #---------------------------------------------------------------
     #
-    # With measurements or damping geometry the file holds several datasets, so
+    # With measurements, damping geometry or floating bodies the file holds several datasets, so
     # `/VTKHDF` becomes a `MultiBlockDataSet`: every dataset is a block group
     # directly below `/VTKHDF` with its own `Type` and `Version` attributes, and the
     # `Assembly` group describes the hierarchy with soft links to the blocks
@@ -166,11 +191,11 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     end
 
     function SaveVTKHDF(fid_vector, index, filepath, points, variable_names = String[], args...;
-                        damping_geometry = nothing)
+                        damping_geometry = nothing, floating_frame = nothing)
         @assert length(variable_names) == length(args) "Same number of variable_names as args is necessary"
         io = h5open(filepath, "w")
         collection = nothing
-        gtop = if damping_geometry === nothing
+        gtop = if damping_geometry === nothing && floating_frame === nothing
             HDF5.create_group(io, "VTKHDF")
         else
             collection = create_collection_root(io)
@@ -232,10 +257,18 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 ],
                 damping_geometry.profile_attributes,
             )
-            write_assembly!(
-                collection, PARTICLE_BLOCK, String[];
-                geometry_blocks = DAMPING_BLOCK_NAMES,
-            )
+        end
+
+        if floating_frame !== nothing
+            (; state, markers, time) = floating_frame
+            root = create_floating_block!(collection, state, markers)
+            append_floating_frame!(root, time, state, markers)
+            close(root)
+        end
+        if collection !== nothing
+            blocks = damping_geometry === nothing ? String[] : collect(DAMPING_BLOCK_NAMES)
+            floating_frame === nothing || push!(blocks, FLOATING_BLOCK)
+            write_assembly!(collection, PARTICLE_BLOCK, String[]; geometry_blocks = blocks)
         end
 
         fid_vector[index] = io
@@ -2119,7 +2152,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
 
     """
         SetupVTKOutput(SimMetaData, SimParticles, SimKernel, Dimensions;
-                       measurements = nothing, fluid_type = nothing, damping = ())
+                       measurements = nothing, fluid_type = nothing, damping = (),
+                       floating_state = nothing, floating_markers = Int[])
 
     Prepare VTK/HDF5 output. Returns a named tuple with `save_particles`,
     `save_grid` and `close_files` functions. Uses single or multi-file mode
@@ -2133,13 +2167,19 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     remaining byte budget and may flush sooner. `close_files` writes the
     frames still pending.
 
-    Without measurements or damping the combined file is a temporal `PolyData`
-    at `/VTKHDF`. Measurements or damping produce a `MultiBlockDataSet`:
+    Without measurements, damping or floating bodies the combined file is a temporal `PolyData`
+    at `/VTKHDF`. Otherwise output uses a `MultiBlockDataSet`:
     particles are written to `/VTKHDF/Particles`, measurement categories and
     damping geometry are sibling blocks, and every block shares the same time
     steps and is linked from `/VTKHDF/Assembly`. Damping geometry is also
     included in each numbered file when multi-file output is selected.
     Measurements cannot be requested in multi-file mode.
+
+    Supplying an initial `floating_state` and its `floating_markers` adds a
+    `FloatingBodies` block with one point per body at its centre of mass.
+    Every `save_particles` call must supply the matching `body_state` (or a
+    download containing it). Body forces and torques are saved by default,
+    independently of particle `OutputVariables`.
 
     `variable_count=true` accepts changing host-frame lengths. Particle data
     is appended directly to temporal datasets (or written per numbered file),
@@ -2152,6 +2192,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             constants = nothing,
             damping = (),
             variable_count::Bool = false,
+            floating_state = nothing,
+            floating_markers = Int[],
         )
         measurement_plan = if measurements === nothing ||
                               !has_measurements(measurements)
@@ -2171,7 +2213,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             _damping_visualization_geometry(
                 damping_zones, SimParticles.Position, SimKernel, Dimensions,
             )
-        composite_output = measurement_plan !== nothing || damping_geometry !== nothing
+        has_floating = floating_state !== nothing
+        has_floating && length(floating_markers) != length(floating_state.center) &&
+            throw(DimensionMismatch("one group marker is required per floating body"))
+        composite_output = measurement_plan !== nothing || damping_geometry !== nothing || has_floating
 
         # Generate save locations
         particle_savepath = joinpath(SimMetaData.SaveLocation, SimMetaData.SimulationName)
@@ -2236,6 +2281,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         grid_writer  = nothing
         measurement_writer = nothing
         damping_writer = nothing
+        floating_root = nothing
         frames_per_flush = 1
         writer_buffer_bytes = multi_file ?
             (pos_buf === nothing ? 0 : sizeof(pos_buf)) +
@@ -2308,12 +2354,14 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     (damping_writer = DampingBlockWriter(
                         collection, damping_geometry, frames_per_flush,
                     ))
+                has_floating && (floating_root = create_floating_block!(collection, floating_state, floating_markers))
+                geometry_blocks = damping_geometry === nothing ? String[] : collect(DAMPING_BLOCK_NAMES)
+                has_floating && push!(geometry_blocks, FLOATING_BLOCK)
                 write_assembly!(
                     collection, PARTICLE_BLOCK,
                     measurement_plan === nothing ?
                         String[] : measurement_block_names(measurement_plan);
-                    geometry_blocks = damping_geometry === nothing ?
-                        String[] : collect(DAMPING_BLOCK_NAMES),
+                    geometry_blocks,
                 )
             end
 
@@ -2375,7 +2423,11 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         end
 
         function save_particle_data(iteration, time = SimMetaData.TotalTime;
-                                    download = nothing, staged_slot::Bool = false)
+                                    download = nothing, staged_slot::Bool = false,
+                                    body_state = has_floating && download !== nothing ? download.floating : nothing)
+            has_floating && body_state === nothing &&
+                throw(ArgumentError("Floating-body output requires the body state matching this particle frame"))
+            floating_frame = has_floating ? (; state = body_state, markers = floating_markers, time) : nothing
             if variable_count
                 download === nothing && !staged_slot || throw(ArgumentError("variable-count output requires a completed host frame"))
                 data = map(output_vars) do name
@@ -2385,7 +2437,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 end
                 if multi_file
                     SaveVTKHDF(file_handles.particle_files,iteration,particle_filename(iteration),
-                        components!(Matrix{Float64}(undef,3,length(SimParticles.Position)),SimParticles.Position),output_vars,data...; damping_geometry)
+                        components!(Matrix{Float64}(undef,3,length(SimParticles.Position)),SimParticles.Position),output_vars,data...; damping_geometry, floating_frame)
                 else
                     root = file_handles.particle_files[composite_output ? "VTKHDF/Particles" : "VTKHDF"]
                     try
@@ -2403,7 +2455,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     output_data = [output_field(name) for name in output_vars]
                     SaveVTKHDF(file_handles.particle_files, iteration, particle_filename(iteration),
                                output_position(), output_vars, output_data...;
-                               damping_geometry)
+                               damping_geometry, floating_frame)
                 elseif has_host_pressure || !("Pressure" in output_vars)
                     append_frame!(frame_writer, time, SimParticles.Position, (field_source(name) for name in output_vars)...)
                 else
@@ -2452,7 +2504,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     end
                     SaveVTKHDF(file_handles.particle_files, iteration, particle_filename(iteration),
                                pos_buf, output_vars, output_data...;
-                               damping_geometry)
+                               damping_geometry, floating_frame)
                 else
                     stage_particle_slot(download)
                     push!(frame_writer.times, Float64(time))
@@ -2464,6 +2516,8 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 append_measurements!(measurement_writer, time, SimParticles)
             damping_writer === nothing ||
                 append_damping_frame!(damping_writer, time)
+            floating_root === nothing ||
+                append_floating_frame!(floating_root, time, body_state, floating_markers)
         end
 
         function save_cell_grid(iteration, cells, SimParticles, time = SimMetaData.TotalTime)
@@ -2492,6 +2546,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                     frame_writer === nothing || flush_frames!(frame_writer)
                     measurement_writer === nothing ||
                         flush_measurements!(measurement_writer)
+                    floating_root === nothing || close(floating_root)
                     close(file_handles.particle_files)
                 end
                 if file_handles.grid_files !== nothing && isopen(file_handles.grid_files)

@@ -1796,6 +1796,33 @@ With `GPUAsyncOutput = true`, the output worker writes the CSV rows in frame
 order from independent snapshots, so later body updates cannot change queued
 rows. CSV times and column formats are the same in both output modes.
 
+Floating-body loads are saved automatically in both ordinary and body-following
+variable-resolution runs. `_Floating.csv` appends `Force:0`, `Force:1` (also
+`Force:2` in 3D) and `Torque` (2D) or `Torque:0` through `Torque:2` (3D).
+The particle `.vtkhdf` also contains a `FloatingBodies` block with one point at
+each body's centre of mass, carrying `Body`, `GroupMarker`, `Velocity`, `Force`,
+`Torque` and `ForceMagnitude`. This block is independent of particle
+`OutputVariables`, and works with single-file and numbered output. Runs with
+floating bodies now store particle data under `/VTKHDF/Particles`.
+
+`Force` is the resultant fluid-interaction plus spring/damper load in N;
+`Torque` is its moment about the evaluated centre of mass in N m, in world
+coordinates. Gravity and constraint reactions are excluded, so loads remain
+visible on paused or constrained bodies. In 2D the force has zero z component
+and torque occupies the z component. Values retain the latest force evaluation
+used by the integrator: ordinarily the corrector's half state, or the full
+state after a single-neighbour startup/rebuild evaluation. The initial frame
+has zero loads before any force evaluation; permanently frozen bodies report
+zero loads. These are body resultants, not per-particle forces.
+
+In ParaView, extract `FloatingBodies` and colour by `ForceMagnitude` or a
+component of `Force`/`Torque`. Use **Glyph → Arrow**, orientation `Force`, to
+show force direction, or **Plot Data Over Time** for load histories. The
+generated ParaView state already includes **Floating force arrows**, hidden
+initially; enable their eye icon in the Pipeline Browser. Arrows have uniform
+length and use colour for magnitude. All body snapshots are captured with
+their particle frame, including asynchronous output and CUDA graph runs.
+
 Constrain a body with `FloatingDetails(..., Constraints = FloatingConstraints{D,T}(...))`.
 All options use fixed world coordinates. Translation tuples have `D` entries;
 rotation tuples have one entry in 2D and three in 3D. For example:
@@ -3401,6 +3428,7 @@ precisions. Run the focused output checks with:
 
 ```bash
 julia -t 4,0 --project=gpu_version -L gpu_version/test/output_queue.jl gpu_version/test/floating_output.jl
+julia -t 2,0 --project=gpu_version gpu_version/test/floating_forces.jl
 ```
 
 `test/cell_subdivision_benchmark.jl` checks candidate accounting against the

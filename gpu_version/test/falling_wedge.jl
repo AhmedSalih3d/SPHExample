@@ -69,6 +69,8 @@ if CUDA.functional()
                 root = io["VTKHDF"]
                 @test Set(read(root["Particles/PointData/Resolution"])) == Set(Int8[0,1,2])
                 @test read(root["Particles/Steps/Values"]) == [0.0,0.0002,0.0004]
+                @test read(root["FloatingBodies/Steps/Values"]) == read(root["Particles/Steps/Values"])
+                @test size(root["FloatingBodies/PointData/Force"],1) == 3
                 @test read(root["Geometry/Steps/Values"]) == read(root["Particles/Steps/Values"])
                 @test haskey(root,"Assembly/Geometry")
                 @test haskey(root,"DampingZones")

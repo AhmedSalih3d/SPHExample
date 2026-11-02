@@ -98,13 +98,15 @@ function run_nested_variable_resolution(;SimGeometry,SimMetaData,SimConstants,Si
             snapshots = hierarchy_snapshots(domains,h,config,scheme)
             frame = vcat(snapshots...)
             replace_resolution_particles!(SimParticles,frame)
-            output = SetupVTKOutput(meta,frame,SimKernel,2;constants=SimConstants,damping,variable_count=true)
+            body = last(domains).attachment === nothing ? nothing : floating_state(last(domains).attachment.floating)
+            output = SetupVTKOutput(meta,frame,SimKernel,2;constants=SimConstants,damping,variable_count=true,
+                floating_state=body,floating_markers=body === nothing ? Int[] : [config.follow])
             history = open(history_path,"w")
             println(history,join(vcat(["time","iteration"],["level$(i-1)_fluid" for i in 1:n],["represented_fluid_mass"],
                 ["level$(i-1)_$(event)" for event in ("created","retired","excluded","nonfinite") for i in 1:n]),','))
             if last(domains).attachment !== nothing
                 floating_history = open(joinpath(meta.SaveLocation,meta.SimulationName*"_Floating.csv"),"w")
-                println(floating_history,"Time,Body,GroupMarker,Center:0,Center:1,Velocity:0,Velocity:1,Angle,Omega")
+                println(floating_history,"Time,Body,GroupMarker,Center:0,Center:1,Velocity:0,Velocity:1,Angle,Omega,Force:0,Force:1,Torque")
                 if !isempty(last(domains).attachment.floating.springs)
                     spring_history = open(joinpath(meta.SaveLocation,meta.SimulationName*"_Springs.csv"),"w")
                     println(spring_history,"Time,Body,Spring,Anchor:0,Anchor:1,Attachment:0,Attachment:1,Length,Extension,Force:0,Force:1,Torque")
@@ -131,7 +133,8 @@ function run_nested_variable_resolution(;SimGeometry,SimMetaData,SimConstants,Si
             events = map(d -> Array(d.events),domains)
             all(e -> e[4] == 0,events) || error("Non-finite nested-resolution state at t=$(meta.TotalTime)")
             meta.OutputIterationCounter = frames+1
-            output.save_particles(frames+1,meta.TotalTime)
+            body = last(domains).attachment === nothing ? nothing : floating_state(last(domains).attachment.floating)
+            output.save_particles(frames+1,meta.TotalTime;body_state=body)
             if meta.ExportGridCells
                 cells = occupied_cells_host(frame.Position,SimKernel.H⁻¹)
                 output.save_grid(frames+1,cells,frame,meta.TotalTime)
@@ -141,8 +144,8 @@ function run_nested_variable_resolution(;SimGeometry,SimMetaData,SimConstants,Si
             println(history,join((meta.TotalTime,meta.Iteration,counts...,mass,(events[i][event] for event in 1:4 for i in 1:n)...),','))
             flush(history)
             if floating_history !== nothing
-                body = floating_state(last(domains).attachment.floating)
-                println(floating_history,join((meta.TotalTime,1,config.follow,body.center[1]...,body.velocity[1]...,body.angle[1],body.omega[1]),','))
+                println(floating_history,join((meta.TotalTime,1,config.follow,body.center[1]...,body.velocity[1]...,body.angle[1],body.omega[1],
+                    body.load_force[1]...,body.load_torque[1]),','))
                 flush(floating_history)
             end
             if spring_history !== nothing

@@ -49,7 +49,7 @@ end
 function singleton_views(f)
     fields = (:frozen, :constraints, :pause, :mass, :inertia, :center, :center_n, :center_half,
               :velocity, :velocity_half, :omega, :omega_half, :turn, :rotation,
-              :acceleration, :angular_acceleration)
+              :acceleration, :angular_acceleration, :load_force, :load_torque)
     fields = hasproperty(f, :angle) ? (fields..., :angle) :
         (fields..., :inertia_inv, :orientation, :orientation_half)
     stride = hasproperty(f, :angle) ? 3 : 6

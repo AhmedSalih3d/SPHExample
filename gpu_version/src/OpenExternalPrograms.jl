@@ -108,6 +108,9 @@ when those blocks are present in the VTKHDF output.
 An exported `Springs` block is shown as a surface coloured by cell array
 `ForceMagnitude` in N. `spring_force_range=(min,max)` fixes its colour scale;
 without it, ParaView determines the range over the saved spring frames.
+An exported `FloatingBodies` block supplies one centre point per body with
+`Force` (N) and `Torque` (N m). The generated state includes hidden
+`Floating force arrows`; enable them in the Pipeline Browser to inspect loads.
 """
 function AutoOpenParaview(SimMetaData::SimulationMetaData, 
                           SimConstants::SimulationConstants,

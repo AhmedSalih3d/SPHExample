@@ -364,7 +364,8 @@ function OutputDownload(gpu::GPUParticles{D}, fields; cells::Bool, floating = no
     cid     = cells ? pinned(Int32, length(gpu)) : Int32[]
     ghost_index = gpu.BoundarySlot !== nothing && any(f -> f in (:GhostPoints, :GhostNormals), fields) ?
         pinned(Int32, length(gpu.GhostIndex)) : nothing
-    body_fields = D == 2 ? (:center, :velocity, :angle, :omega) : (:center, :velocity, :orientation, :omega)
+    body_fields = D == 2 ? (:center, :velocity, :angle, :omega, :load_force, :load_torque) :
+        (:center, :velocity, :orientation, :omega, :load_force, :load_torque)
     body_state = if floating === nothing || !floating.active
         nothing
     else
@@ -1947,11 +1948,14 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     gpu_buffers = (; particles = gpu, support = sup, cells = cl,
         auxiliary = (motion, rotation, external_forces, floating, red.partial, state.f, state.i, diagnostics))
 
+    initial_floating = floating.active ? floating_state(floating) : nothing
+    floating_markers = [geom.GroupMarker for geom in SimGeometry if geom.Type == Floating]
     output = SetupVTKOutput(
         SimMetaData, SimParticles, SimKernel, Dimensions;
         measurements = SimMeasurements, fluid_type = Fluid,
         constants = SimConstants,
         damping,
+        floating_state = initial_floating, floating_markers,
     )
 
     # Motion of the floating bodies at every output time, one row per body.
@@ -1959,29 +1963,28 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     if floating.active
         floating_log = open(joinpath(SimMetaData.SaveLocation, SimMetaData.SimulationName * "_Floating.csv"), "w")
         if Dimensions == 2
-            println(floating_log, "Time,Body,GroupMarker,Center:0,Center:1,Velocity:0,Velocity:1,Angle,Omega")
+            println(floating_log, "Time,Body,GroupMarker,Center:0,Center:1,Velocity:0,Velocity:1,Angle,Omega,Force:0,Force:1,Torque")
         else
             println(floating_log, "Time,Body,GroupMarker,Center:0,Center:1,Center:2," *
                                 "Velocity:0,Velocity:1,Velocity:2,Orientation:0,Orientation:1," *
-                                "Orientation:2,Orientation:3,Omega:0,Omega:1,Omega:2")
+                                "Orientation:2,Orientation:3,Omega:0,Omega:1,Omega:2,Force:0,Force:1,Force:2,Torque:0,Torque:1,Torque:2")
         end
     end
-    floating_markers = [geom.GroupMarker for geom in SimGeometry if geom.Type == Floating]
     function log_floating(t, s)
         floating_log === nothing && return nothing
         for b in 1:Int(floating.nbodies)
             if Dimensions == 2
                 println(floating_log, join((t, b, floating_markers[b], s.center[b]..., s.velocity[b]...,
-                                            s.angle[b], s.omega[b]), ","))
+                                            s.angle[b], s.omega[b], s.load_force[b]..., s.load_torque[b]), ","))
             else
                 println(floating_log, join((t, b, floating_markers[b], s.center[b]..., s.velocity[b]...,
-                                            s.orientation[b]..., s.omega[b]...), ","))
+                                            s.orientation[b]..., s.omega[b]..., s.load_force[b]..., s.load_torque[b]...), ","))
             end
         end
         flush(floating_log)
         return nothing
     end
-    floating.active && log_floating(SimMetaData.TotalTime, floating_state(floating))
+    floating.active && log_floating(SimMetaData.TotalTime, initial_floating)
 
     generate_showvalues(Iteration, TotalTime, TimeLeftInSeconds) = () -> [
         (:(Iteration), string(Iteration)),
@@ -2042,7 +2045,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
 
     # Save initial state, use 1 else this cannot be used to index fid vector
     SimMetaData.OutputIterationCounter = 1
-    output.save_particles(SimMetaData.OutputIterationCounter)
+    output.save_particles(SimMetaData.OutputIterationCounter; body_state = initial_floating)
     output.save_grid(SimMetaData.OutputIterationCounter, CartesianIndex{Dimensions}[], SimParticles)
 
     free    = Channel{OutputDownload{Dimensions}}(length(staging))

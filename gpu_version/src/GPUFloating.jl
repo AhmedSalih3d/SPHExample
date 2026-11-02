@@ -170,6 +170,8 @@ function FloatingArrays(SimGeometry::Vector{SPHGeometry{D, T}}, SimParticles, Si
               velocity_half = CuArray(velocity),
               acceleration = zv(SVector{D, T}),
               angular_acceleration = zv(D == 2 ? T : SVector{3, T}),
+              load_force = zv(SVector{D, T}),
+              load_torque = zv(D == 2 ? T : SVector{3, T}),
               indices = CuArray(Int32.(findall(==(Floating), SimParticles.Type))),
               force = CUDA.zeros(T, (D == 2 ? 3 : 6) * nstate))
     if D == 2
@@ -239,6 +241,8 @@ function freeze_body_state_kernel!(f)
         f.omega[b] = zero(eltype(f.omega))
         f.omega_half[b] = zero(eltype(f.omega_half))
         f.angular_acceleration[b] = zero(eltype(f.angular_acceleration))
+        f.load_force[b] = zero(eltype(f.load_force))
+        f.load_torque[b] = zero(eltype(f.load_torque))
         f.center_half[b] = f.center[b]
         f.center_n[b] = f.center[b]
         stride = length(f.force) ÷ max(Int(f.nbodies), 1)
@@ -253,7 +257,8 @@ function freeze_body_state!(f)
     f === nothing && return nothing
     f.active && hasproperty(f, :frozen) || return nothing
     device = (; f.nbodies, f.frozen, f.force, f.velocity, f.velocity_half, f.acceleration,
-        f.omega, f.omega_half, f.angular_acceleration, f.center, f.center_half, f.center_n)
+        f.omega, f.omega_half, f.angular_acceleration, f.center, f.center_half, f.center_n,
+        f.load_force, f.load_torque)
     @cuda threads=128 blocks=cld(Int(f.nbodies), 128) freeze_body_state_kernel!(device)
     return nothing
 end
@@ -264,12 +269,19 @@ end
 Centre and velocity of every body (synchronizes). In 2D, also returns the
 scalar `angle` and `omega`; in 3D, returns the scalar-first quaternion
 `orientation` and vector `omega`.
+`load_force` and `load_torque` retain the last evaluated body loads before the
+accumulator is cleared: fluid interactions plus springs, excluding gravity and
+constraint reactions. Torque is about the evaluated centre of mass, in world
+coordinates. Correctors retain half-state loads; startup/rebuild derivatives
+retain full-state loads. They are zero until the first evaluation.
 """
 floating_state(f) = floating_state(f, Val(floating_dimension(f.center)))
 floating_state(f, ::Val{2}) = (center = Array(f.center), velocity = Array(f.velocity),
-                               angle = Array(f.angle), omega = Array(f.omega))
+                               angle = Array(f.angle), omega = Array(f.omega),
+                               load_force = Array(f.load_force), load_torque = Array(f.load_torque))
 floating_state(f, ::Val{3}) = (center = Array(f.center), velocity = Array(f.velocity),
-                               orientation = Array(f.orientation), omega = Array(f.omega))
+                               orientation = Array(f.orientation), omega = Array(f.omega),
+                               load_force = Array(f.load_force), load_torque = Array(f.load_torque))
 
 #---------------------------------------------------------------
 # Force and torque on every body
@@ -361,6 +373,10 @@ function floating_update_kernel!(f, step, g::T, ::Val{2}, ::Val{Final}, ::Val{Ca
         f.frozen[b] != 0 && return nothing
         F = SVector{2, T}(f.force[3b - 2], f.force[3b - 1])
         τ = f.force[3b]
+        if Final
+            f.load_force[b] = F
+            f.load_torque[b] = τ
+        end
         f.force[3b - 2] = zero(T)
         f.force[3b - 1] = zero(T)
         f.force[3b]     = zero(T)
@@ -498,6 +514,10 @@ function floating_update_kernel!(f, step, g::T, ::Val{3}, ::Val{Final}, ::Val{Ca
         base = 6 * (b - 1)
         F = SVector{3, T}(f.force[base + 1], f.force[base + 2], f.force[base + 3])
         τ = SVector{3, T}(f.force[base + 4], f.force[base + 5], f.force[base + 6])
+        if Final
+            f.load_force[b] = F
+            f.load_torque[b] = τ
+        end
         for d in 1:6
             f.force[base + d] = zero(T)
         end
@@ -577,7 +597,7 @@ function launch_floating_update!(floating, step, g, final::Bool, ::Val{2}; carri
     f = floating
     device = (; f.nbodies, f.frozen, f.constraints, f.force, f.pause, f.mass, f.inertia, f.center, f.center_n, f.center_half,
                 f.velocity, f.velocity_half, f.omega, f.omega_half, f.angle, f.turn, f.rotation,
-                f.acceleration, f.angular_acceleration)
+                f.acceleration, f.angular_acceleration, f.load_force, f.load_torque)
     @cuda threads=128 blocks=cld(Int(f.nbodies), 128) floating_update_kernel!(device, step, T(g), Val(2), Val(final), Val(carried))
     return nothing
 end
@@ -589,7 +609,7 @@ function launch_floating_update!(floating, step, g, final::Bool, ::Val{3}; carri
     device = (; f.nbodies, f.frozen, f.constraints, f.force, f.pause, f.mass, f.inertia, f.inertia_inv,
                 f.center, f.center_n, f.center_half, f.velocity, f.velocity_half,
                 f.omega, f.omega_half, f.orientation, f.orientation_half, f.turn, f.rotation,
-                f.acceleration, f.angular_acceleration)
+                f.acceleration, f.angular_acceleration, f.load_force, f.load_torque)
     @cuda threads=128 blocks=cld(Int(f.nbodies), 128) floating_update_kernel!(device, step, T(g), Val(3), Val(final), Val(carried))
     return nothing
 end
@@ -606,6 +626,9 @@ function floating_derivative_kernel!(f, step, g::T, ::Val{D}) where {T, D}
         f.frozen[b] != 0 && return nothing
         base = stride * (b - 1)
         force = SVector{D, T}(ntuple(d -> f.force[base + d], Val(D)))
+        f.load_force[b] = force
+        f.load_torque[b] = D == 2 ? f.force[base + 3] :
+            SVector{3,T}(f.force[base + 4], f.force[base + 5], f.force[base + 6])
         if f.constraints[b].active
             torque = if D == 2
                 f.force[base + 3]
@@ -645,10 +668,11 @@ function launch_floating_derivative!(floating, step, g)
     launch_floating_springs!(f,step,false)
     D = floating_dimension(f.center)
     device = if D == 2
-        (; f.nbodies, f.frozen, f.constraints, f.center, f.omega, f.force, f.mass, f.inertia, f.acceleration, f.angular_acceleration)
+        (; f.nbodies, f.frozen, f.constraints, f.center, f.omega, f.force, f.mass, f.inertia, f.acceleration, f.angular_acceleration,
+           f.load_force, f.load_torque)
     else
         (; f.nbodies, f.frozen, f.constraints, f.center, f.force, f.mass, f.inertia, f.inertia_inv, f.orientation, f.omega,
-           f.acceleration, f.angular_acceleration)
+           f.acceleration, f.angular_acceleration, f.load_force, f.load_torque)
     end
     @cuda threads=128 blocks=cld(Int(f.nbodies), 128) floating_derivative_kernel!(device, step, eltype(f.force)(g), Val(D))
     return nothing
