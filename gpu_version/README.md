@@ -682,6 +682,63 @@ reference. Over the whole record, the RMSEs here and in DualSPHysics are 5.9
 and 7.6 cm in surge, 19 and 18 mm in heave, and 3.2° and 3.6° in roll. No fluid
 particle crossed the bed or piston.
 
+### Wave run-up over an armoured slope
+
+[WaveRunup3d.jl](example/WaveRunup3d.jl) adapts DualSPHysics example 17
+(`17_WaveRunup`, `CaseWaveRunup`) in the single-file layout of
+`Bathymetry2d.jl`. The reference is three-dimensional: a measured CIEMito
+piston signal generates waves in 0.25 m of water, which run up a slope covered
+by 98 fixed armour blocks. The example retains x/y/z coordinates and all block
+orientations from the reference's scaled STL, with its −90° rotation about z
+and translation by `(5.95, 0.37, 0)` m. The wedge rises 0.468 m over 0.884 m
+and starts at x = 5.953 m. The bottom extends from x = −0.5 to 7 m; the
+piston's wet face starts at x = 0 and its height is 0.55 m.
+
+The native bed, piston and water prisms and the convex STL interiors share
+one origin-anchored lattice at `dx = 0.008`. Boundary ownership excludes fluid
+inside the slope and blocks and removes duplicate particles at overlaps.
+There are 1,498,881 particles, including 1,060,530 fluid particles.
+The bottom and piston have six layers to cover the `2h = 5.20dx` support;
+the reference instead rasterizes thin boundary skins. Consequently this is
+an adaptation of the physical case, with a different boundary particle layout.
+The 46 transverse rows run from y = 0 to 0.36 m. As in the initialized
+reference, periodic faces at −0.004 and 0.364 m give a period of 0.368 m.
+The top water particle row is at z = 0.24 m; the sampled column height of
+0.232 m sets `c₀ = 20√(g · 0.232)`. Densities start hydrostatic and positions
+use Float64.
+
+The piston follows `Mov_piston.dat` with linear interpolation until 15 s and
+then holds zero displacement. The example removes the signal's identical
+duplicate row at time zero. It uses DBC, Wendland C2 with `h = 1.5√3 dx`,
+`SymplecticTimeStepping()`, artificial viscosity `α = 0.01` with zero boundary
+factor, and Fourtakas inner density diffusion with `δ = 0.1`. These viscosity
+and diffusion settings match Case 17; time integration uses the package's
+normal symplectic scheme, as in `Bathymetry2d.jl`.
+
+The 20 s run writes every 0.02 s to `output/wave_runup_3d/`, including particle
+and occupied-cell output, the drawn geometry, four water-column probes at
+x = 3.10, 3.20, 3.34 and 3.63 m (y = 0.18 m), and a binned free surface over
+the beach. Subtract each probe's initial height to compare wave elevations
+with the bundled experiment. The free surface shows the swash front using the
+highest particle in each horizontal bin; it does **not** implement the
+reference's seven inclined kernel-mass-threshold run-up gauges. Experimental
+run-up is absolute height, with still water at 0.25 m.
+See [data provenance](example/data/wave_runup/README.md). GenCase and a separate
+DualSPHysics installation are not required to run the example.
+
+Validation on Julia 1.12.7 and an RTX 5080 covered the 8 mm case through
+0.15 s, including the first piston movement, plus an 8 s propagation check
+at `dx = 0.016` with output every second. The latter completed 27,707 steps
+with finite particle states and gauge records. At completion, fluid positions
+were above the bed and densities were 992.1–1034.3 kg/m³. These are geometry and simulation
+checks; the complete 20 s response and experimental run-up accuracy have not
+been validated.
+
+```sh
+julia --project=gpu_version -t 2,0 gpu_version/example/WaveRunup3d.jl
+julia --project=gpu_version -t 2,0 gpu_version/test/wave_runup.jl
+```
+
 ### Waves over a bathymetry from XYZ points
 
 [Bathymetry2d.jl](example/Bathymetry2d.jl) adapts DualSPHysics example 18
