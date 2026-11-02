@@ -70,6 +70,17 @@ particles and mass 25.1625 kg, matching the generated reference. The original
 are generated natively; their skin clearance and buffer extent can differ
 from GenCase. The full fine floor supports subsequent patch motion.
 
+Fluid rows follow the bed with the area-preserving shear
+`(x,y) -> (x,y + bed(x))`, clipped at the horizontal still-water level. On the
+slope this keeps the first row one vertical spacing above the bed. Cutting
+horizontal rows at `bed(x) + dp` left a repeating one-to-two-spacing clearance,
+which produced the stepped fluid edge and large periodic DBC wall pressures.
+The flat part of the tank retains its original lattice, and the wall skin,
+particle mass, DBC model, viscosity and density-diffusion operators are unchanged.
+Filling the previously omitted near-bed strips changes the initial fluid count
+and represented mass relative to the earlier Cartesian fill; compare mass drift
+within each run rather than treating the old initial mass as a target.
+
 All visualization data is saved in **`PointAbsorberSpring2D.vtkhdf`**. Its
 `Particles` and `Geometry` blocks share the same frame times. Geometry includes
 the tank, body outline, tracked rectangle and a spring strip whose anchor stays
@@ -102,6 +113,7 @@ Focused tests, from the repository root:
 ```powershell
 julia --project=gpu_version gpu_version/test/floating_springs.jl
 julia --project=gpu_version gpu_version/test/point_absorber_spring.jl
+julia --project=gpu_version gpu_version/test/point_absorber_slope.jl
 julia --project=gpu_version gpu_version/test/resolution_attachment.jl
 ```
 
@@ -114,3 +126,17 @@ rotation locked. Represented owned-fluid mass changed from 1776.500 to
 convergence or DualSPHysics-equivalence result. It predates the matched
 `h=1.2√2dp` default and does not validate its long-run behavior. The existing
 reference was only read.
+
+The slope regression isolates a static 3 m DBC tank at dp=0.02 m with the same
+kernel and solver settings for both particle layouts. At 0.5 s, following the
+bed reduced the innermost wall-pressure RMS error from about 5.85 kPa to
+0.37 kPa, and maximum error from 16.73 kPa to 0.71 kPa. It checks particle
+preservation and finite densities as well as the pressure improvement. These
+are reduced-resolution checks of the sampling artifact; they do not establish
+long-run convergence or equivalence with DualSPHysics.
+
+A separate 2.5 s check at the same reduced spacing retained the improvement:
+wall-pressure RMS error was 5.25 kPa before and 0.30 kPa after the placement
+change. The coupled spring/piston/refinement case also completed 1.3 s at
+dp=0.02 m in 15,184 steps with no density or non-finite exclusions. No
+production-resolution simulation was run to validate this change.

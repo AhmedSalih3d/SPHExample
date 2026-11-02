@@ -138,6 +138,9 @@ julia --project=gpu_version gpu_version/example/VResolutionAttachedBody2d.jl
 implements `vresolution/06_Special/CasePointAbsorberSpringVRes`: a heaving box
 on a damped linear spring, wave piston and body-following fine patch. Its
 default smoothing length matches the reference's `h = 1.2√2 dp` on both levels.
+Initial fluid rows follow the sloping bed with an area-preserving shear to
+avoid the repeated clearance steps and DBC pressure spikes of a clipped
+Cartesian fill.
 It uses our ordinary viscosity, DBC and density-diffusion settings and the
 existing DualSPHysics history for a comparison CSV; it never launches
 DualSPHysics. See its

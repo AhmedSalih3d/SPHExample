@@ -43,6 +43,27 @@ end
     @test point_absorber_piston_state(0.0) == (0.0,0.0)
 end
 
+@testset "bed-following fluid rows have uniform wall clearance" begin
+    for spacing in (0.02, 0.01, 0.005)
+        water = point_absorber_water(spacing, SVector(3.0, 0.0), SVector(6.0, 0.4))
+        @test length(Set(water)) == length(water)
+        @test all(x -> 3.0 <= x[1] <= 6.0 && x[2] < 0.4, water)
+        columns = Dict{Float64,Vector{SVector{2,Float64}}}()
+        for point in water
+            push!(get!(columns, point[1], SVector{2,Float64}[]), point)
+        end
+        clearance = [minimum(last, points) - point_absorber_bed(x) for (x, points) in columns]
+        @test maximum(abs.(clearance .- spacing)) < 1e-12
+        # Adjacent columns form sheared cells with the original particle area.
+        xs = sort!(collect(keys(columns)))
+        a, b = first(columns[xs[1]]), first(columns[xs[2]])
+        c = columns[xs[1]][2]
+        @test abs((b-a)[1]*(c-a)[2] - (b-a)[2]*(c-a)[1]) ≈ spacing^2
+    end
+    flat = point_absorber_water(0.01, SVector(0.01,0.01), SVector(1.0,0.39))
+    @test all(x -> all(isapprox.(x ./ 0.01, round.(x ./ 0.01))), flat)
+end
+
 if CUDA.functional()
     CUDA.allowscalar(false)
     @testset "06 Special GPU piston, tracked spring body and output" begin
@@ -52,7 +73,7 @@ if CUDA.functional()
             result = redirect_stdout(devnull) do
                 run_point_absorber_spring(;dx=0.02,duration=0.002,output_interval=0.001,save_location=directory,particle_reserve=2048,
                     region=VariableResolutionBox((1.6,0.1),(2.4,0.7)),
-                    metadata_options=(GPUUseGraph=graphs,GPUMaxStepsPerSync=16))
+                    metadata_options=(GPUUseGraph=graphs,GPUMaxStepsPerSync=16,VisualizeInParaview=false))
             end
             push!(runs,result)
             @test result.final_state.complete

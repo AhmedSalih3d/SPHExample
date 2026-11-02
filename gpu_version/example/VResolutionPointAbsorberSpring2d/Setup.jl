@@ -5,6 +5,36 @@ using LinearAlgebra: normalize
 
 const POINT_ABSORBER_DATA = joinpath(@__DIR__, "..", "data", "vresolution_special")
 
+point_absorber_bed(x) = max(0.0, x - 2.5) * 0.6 / 6.7
+
+"""
+    point_absorber_water(spacing, lower, upper; exclude_body=true)
+
+Fill the tank with rows parallel to the bed, clipped at the still-water level.
+The shear `(x, y) -> (x, y + bed(x))` preserves particle area `spacing^2`.
+It keeps the first row one vertical spacing above the bed instead of cutting
+horizontal rows into steps with a clearance varying between one and two
+spacings. The flat part of the tank retains its Cartesian lattice.
+"""
+function point_absorber_water(spacing, lower, upper; exclude_body = true)
+    depth = 0.4
+    tolerance = 1e-10 * spacing
+    water = SVector{2,Float64}[]
+    for i in max(1, ceil(Int, lower[1] / spacing)):floor(Int, upper[1] / spacing)
+        x = i * spacing
+        bed = point_absorber_bed(x)
+        for j in 1:(ceil(Int, depth / spacing) - 1)
+            y = bed + j * spacing
+            lower[2] - tolerance <= y <= upper[2] + tolerance && y < depth - tolerance || continue
+            if exclude_body && 1.85 - 1e-10 <= x <= 2.15 + 1e-10 && 0.32 - 1e-10 <= y <= 0.48 + 1e-10
+                continue
+            end
+            push!(water, SVector(x, y))
+        end
+    end
+    return water
+end
+
 "Second-order regular piston motion, with the reference's smooth one-period ramp."
 function point_absorber_piston_state(t; depth = 0.4, height = 0.1, period = 1.2, gravity = 9.81)
     omega = 2pi / period
@@ -25,7 +55,6 @@ end
 
 function point_absorber_level(spacing, constants::SimulationConstants{T}, kernel, region, floating_details; fine) where T
     depth = 0.4
-    bed(x) = x <= 2.5 ? 0.0 : (x - 2.5) * 0.6 / 6.7
     if !fine && isapprox(spacing, 0.01; rtol = 1e-10)
         # Preserve the already generated coarse sloping skin; no GenCase call.
         fixed = [SVector(Float64(r.x), Float64(r.y))
@@ -35,18 +64,12 @@ function point_absorber_level(spacing, constants::SimulationConstants{T}, kernel
         for i in ceil(Int, -0.2 / spacing):floor(Int, 9.2 / spacing), layer in 0:2
             x = i * spacing
             normal = x <= 2.5 ? SVector(0.0, 1.0) : normalize(SVector(-0.6 / 6.7, 1.0))
-            push!(fixed, SVector(x, bed(x)) - layer * spacing * normal)
+            push!(fixed, SVector(x, point_absorber_bed(x)) - layer * spacing * normal)
         end
     end
     lo = fine ? region.lower .- region.buffer_h * kernel.h : SVector(0.0, 0.0)
     hi = fine ? region.upper .+ region.buffer_h * kernel.h : SVector(9.2, depth)
-    water = SVector{2,Float64}[]
-    for i in max(1,ceil(Int,lo[1]/spacing)):floor(Int,hi[1]/spacing), j in max(1,ceil(Int,lo[2]/spacing)):(ceil(Int,depth/spacing)-1)
-        x, y = i * spacing, j * spacing
-        y <= hi[2] && y >= bed(x) + spacing - 1e-10 || continue
-        1.85 - 1e-10 <= x <= 2.15 + 1e-10 && 0.32 - 1e-10 <= y <= 0.48 + 1e-10 && continue
-        push!(water, SVector(x, y))
-    end
+    water = point_absorber_water(spacing, lo, hi)
     boundary = SPHGeometry{2,T}(fixed;
         Density = constants.ρ₀, Type = Fixed, GroupMarker = 1)
     fluid = SPHGeometry{2,T}(water;
