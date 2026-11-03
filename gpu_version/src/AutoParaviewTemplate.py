@@ -93,17 +93,30 @@ if data_type == 'vtkMultiBlockDataSet':
 if has_floating_forces and data_type == 'vtkMultiBlockDataSet':
     FloatingBodies = ExtractBlock(registrationName='Floating body loads', Input=Simulation_vtkhdf)
     FloatingBodies.Selectors = ['/Root/FloatingBodies']
-    FloatingForceGlyphs = Glyph(registrationName='Floating force arrows', Input=FloatingBodies,
+    # Suppress zero loads without making arrow length depend on force units.
+    FloatingForceMask = Calculator(registrationName='Nonzero floating loads', Input=FloatingBodies)
+    FloatingForceMask.ResultArrayName = 'NonzeroForce'
+    FloatingForceMask.Function = 'if(ForceMagnitude > 0, 1, 0)'
+    FloatingForceGlyphs = Glyph(registrationName='Floating force arrows', Input=FloatingForceMask,
                                GlyphType='Arrow')
     FloatingForceGlyphs.OrientationArray = ['POINTS', 'Force']
-    FloatingForceGlyphs.ScaleArray = ['POINTS', 'No scale array']
-    FloatingForceGlyphs.ScaleFactor = 12.0 * float(__GAUSSIAN_RADIUS__)
+    FloatingForceGlyphs.ScaleArray = ['POINTS', 'NonzeroForce']
+    # Particle spacing can be tiny compared with the scene in refined runs.
+    floating_bounds = Simulation_vtkhdf.GetDataInformation().GetBounds()
+    floating_scene_size = max(floating_bounds[2*d+1] - floating_bounds[2*d] for d in range(3))
+    FloatingForceGlyphs.ScaleFactor = max(12.0 * float(__GAUSSIAN_RADIUS__), 0.08 * floating_scene_size)
     FloatingForceGlyphs.GlyphMode = 'All Points'
     FloatingForceDisplay = Show(FloatingForceGlyphs, renderView1, 'GeometryRepresentation')
-    ColorBy(FloatingForceDisplay, ('POINTS', 'ForceMagnitude'))
-    FloatingForceDisplay.RescaleTransferFunctionToDataRangeOverTime()
-    # Enable the arrows in the Pipeline Browser when inspecting body loads.
-    Hide(FloatingForceGlyphs, renderView1)
+    FloatingForceDisplay.SetRepresentationType('Surface')
+    ColorBy(FloatingForceDisplay, ('POINTS', 'ForceMagnitude'), separate=True)
+    FloatingForceDisplay.RescaleTransferFunctionToDataRange(True, False)
+    floating_force_lut = GetColorTransferFunction('ForceMagnitude', FloatingForceDisplay, separate=True)
+    floating_force_lut.AutomaticRescaleRangeMode = 'Grow and update every timestep'
+    FloatingForceDisplay.SetScalarBarVisibility(renderView1, True)
+    floating_force_bar = GetScalarBar(floating_force_lut, renderView1)
+    floating_force_bar.Title = 'Floating body force [N]'
+    floating_force_bar.ComponentTitle = ''
+    floating_force_bar.WindowLocation = 'Lower Left Corner'
 
 if data_type == 'vtkMultiBlockDataSet' and 'ForceMagnitude' in Simulation_vtkhdf.CellArrayStatus.Available:
     Simulation_vtkhdf.CellArrayStatus = list(Simulation_vtkhdf.CellArrayStatus.Available)

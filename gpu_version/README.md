@@ -1818,9 +1818,11 @@ zero loads. These are body resultants, not per-particle forces.
 In ParaView, extract `FloatingBodies` and colour by `ForceMagnitude` or a
 component of `Force`/`Torque`. Use **Glyph → Arrow**, orientation `Force`, to
 show force direction, or **Plot Data Over Time** for load histories. The
-generated ParaView state already includes **Floating force arrows**, hidden
-initially; enable their eye icon in the Pipeline Browser. Arrows have uniform
-length and use colour for magnitude. All body snapshots are captured with
+generated ParaView state shows **Floating force arrows** automatically as solid
+surfaces, with length scaled to the scene and a separate force colour legend.
+Nonzero loads have uniform arrow length and use colour for magnitude; zero
+loads have no visible arrow. Advance past the initial frame to see evaluated
+loads. Change the glyph's **Scale Factor** to adjust its size. All body snapshots are captured with
 their particle frame, including asynchronous output and CUDA graph runs.
 
 Constrain a body with `FloatingDetails(..., Constraints = FloatingConstraints{D,T}(...))`.

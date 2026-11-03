@@ -60,16 +60,17 @@ using StructArrays
                     metadata = SimulationMetaData{D,Float32}(SimulationName = "BodyLoads", SaveLocation = directory,
                         ExportSingleVTKHDF = single, SimulationTime = 0.1, OutputTimes = 0.1,
                         OutputVariables = ["Density"], VisualizeInParaview = false, OpenLogFile = false)
-                    constants = SimulationConstants{Float32}(dx = 0.1)
+                    constants = SimulationConstants{Float32}(dx = 1e-5)
                     kernel = SPHKernelInstance{D,Float32}(WendlandC2(); dx = constants.dx)
                     v = SVector{D,Float32}(ntuple(d -> Float32(d), D))
                     body = (; center = [v], velocity = [zero(v)], load_force = [2v],
                         load_torque = D == 2 ? Float32[3] : [3v])
-                    particles = StructArray((; Position = [v], Density = Float32[1000]))
+                    zero_body = merge(body, (; load_force = [zero(v)]))
+                    particles = StructArray((; Position = [v .- 20, v .+ 20], Density = Float32[1000, 1000]))
                     output = SetupVTKOutput(metadata, particles, kernel, D; constants,
                         floating_state = body, floating_markers = [7])
                     try
-                        output.save_particles(1, 0.0; body_state = body)
+                        output.save_particles(1, 0.0; body_state = zero_body)
                         output.save_particles(2, 0.1; body_state = body)
                     finally
                         output.close_files()
@@ -85,7 +86,15 @@ using StructArrays
                         write(io, "assert body_data.GetPointData().GetArray('Force').GetTuple3(0) == $(D == 2 ? "(2.0, 4.0, 0.0)" : "(2.0, 4.0, 6.0)")\n")
                         write(io, "FloatingForceGlyphs.UpdatePipeline(list(Simulation_vtkhdf.TimestepValues)[-1])\n")
                         write(io, "assert servermanager.Fetch(FloatingForceGlyphs).GetNumberOfPoints() > 0\n")
-                        write(io, "assert FloatingForceDisplay.Visibility == 0\n")
+                        write(io, "assert FloatingForceDisplay.Visibility == 1\n")
+                        write(io, "assert FloatingForceDisplay.Representation == 'Surface'\n")
+                        write(io, "assert FloatingForceGlyphs.ScaleFactor > 1.0\n")
+                        write(io, "assert FloatingForceDisplay.UseSeparateColorMap == 1\n")
+                        write(io, "assert floating_force_bar.Visibility == 1\n")
+                        write(io, "assert floating_force_bar.Title == 'Floating body force [N]'\n")
+                        write(io, "FloatingForceGlyphs.UpdatePipeline(list(Simulation_vtkhdf.TimestepValues)[0])\n")
+                        write(io, "zero_bounds = FloatingForceGlyphs.GetDataInformation().GetBounds()\n")
+                        write(io, "assert max(zero_bounds[2*d+1] - zero_bounds[2*d] for d in range(3)) < 1e-6 * FloatingForceGlyphs.ScaleFactor\n")
                     end
                     process = run(pipeline(ignorestatus(`$pvpython --force-offscreen-rendering --no-mpi --dr $state`);
                         stdout = stdout, stderr = stderr))
