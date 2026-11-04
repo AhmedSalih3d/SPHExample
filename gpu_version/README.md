@@ -1740,6 +1740,75 @@ Including that file also starts the run. Optional arguments are
 in `run_lid_driven_cavity_2d`. The simulation writes velocity, density and
 pressure frames to `C:\TestSimulations\LidDrivenCavity2D_GPU` by default.
 
+### 2D periodic Poiseuille flow
+
+`example/Poiseuille2d.jl` matches **DualSPHysics 5.4 `examples/main/15_Poiseuille`**.
+The channel is 5 mm long and 1 mm high, centred at y = 0. Its 20 µm
+spacing gives exactly **12,750 particles: 12,250 fluid and 500 fixed wall**.
+There are 250 fluid columns and 49 rows, with one fixed particle row on
+each plate. GenCase's `pointref` puts the first and last x-columns at
+0.01 and 4.99 mm. The plates lie at y = ±0.5 mm, and the fluid spans
+y = -0.48 to +0.48 mm. There are no inlet/outlet end caps.
+
+![Poiseuille particle layout and developed velocity](example/images/Poiseuille2d.png)
+
+The streamwise boundary is periodic over **0 ≤ x < 5 mm**, matching the
+reference's `XPeriodicIncZ = 0` without a transverse shift. Fluid starts
+from rest at `ρ₀ = 1000 kg/m³`, with kinematic viscosity `ν₀ = 10⁻⁶ m²/s`,
+sound speed `c₀ = 1 m/s`, and horizontal acceleration `a = 10⁻⁴ m/s²`.
+Scalar gravity is zero; `ExternalForce` supplies the acceleration.
+Wendland C2 uses `h = √2 dx`, `CFL = 0.2`, and laminar + SPS viscosity,
+without shifting or density diffusion. Julia uses symplectic stepping;
+the distributed reference selects Verlet with a 40-step Euler interval.
+
+Like `Bathymetry2d.jl`, the example has a single `let` block with the
+dimensions and spacing, named particle groups, `SimConstants`, `SimMetaData`,
+kernel/models, allocated particles and the final `RunSimulation` call.
+Edit its settings directly. **Including or running the file starts the run.**
+
+```bash
+# From the repository root:
+julia --project=gpu_version -t 2,0 gpu_version/example/Poiseuille2d.jl
+```
+
+The default run lasts 0.5 s and saves 251 frames at 0.002 s intervals under
+`gpu_version/output/poiseuille_2d`. `Poiseuille2D_Profile.csv` contains each
+fluid particle's numerical and analytical velocity; the example prints its
+relative L2 error. In ParaView, colour by **Velocity → Magnitude** to see
+the developed profile. Analytical/profile helpers live in
+`example/data/poiseuille/validation.jl`.
+
+For configurable headless runs, the shared benchmark harness loads the
+example's actual setup without starting its interactive run:
+
+```julia
+include("gpu_version/benchmark/poiseuille_case.jl")
+result = run_poiseuille_2d(; visualize = false, open_log_file = false)
+poiseuille_profile(result; path = "profile.csv")
+```
+
+`poiseuille_velocity(y, t)` evaluates the analytical startup series between
+the centred plates. Without a time argument, it gives the steady profile
+`a*(H²/4-y²)/(2ν₀)`, with maximum speed **12.5 µm/s** (`Re = 0.0125`).
+Validation uses the actual final time, including the small remaining
+startup transient. The [MFiX verification case](https://mfix.netl.doe.gov/doc/vvuq-manual/main/html/fluid/fld-01.html)
+describes the equivalent pressure-gradient problem and steady solution.
+
+The [comparison benchmark](benchmark/poiseuille.jl) runs the unchanged
+`main/15_Poiseuille` XML through the installed 5.4 executable. It warms
+both solvers, alternates run order, and records particle retention,
+analytical errors, steps, frames and whole-run wall times. From `gpu_version/`:
+
+```powershell
+julia --project=. -t 2,0 benchmark/poiseuille.jl W:\DualSPHysics_v5.4 3
+julia --project=. -t 2,0 test/poiseuille.jl
+```
+
+See the [measured accuracy and performance comparison](benchmark/poiseuille_results.md)
+for results, including the different time integrators. This case uses the
+main example's geometry, resolution and physical parameters.
+
+
 ### Floating bodies: the 2D falling cylinder and 3D rigid bodies
 
 Run a four-cylinder example with relative densities 0.7, 1.0, 1.2 and 1.5:
