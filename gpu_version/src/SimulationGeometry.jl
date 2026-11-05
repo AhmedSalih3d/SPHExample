@@ -4,11 +4,11 @@ using StaticArrays
 using StructArrays
 using CSV
 using Base: @kwdef
-using ..Constraints: FloatingConstraints, LinearSpring
+using ..Constraints: FloatingConstraints, LinearSpring, CoulombDamper
 
 # Export relevant types and structs
 export ParticleType, SPHGeometry, particle_struct_array, Fluid, Fixed, Moving, Floating, Frozen,
-       MotionDetails, FloatingDetails, FloatingConstraints, LinearSpring, GravityFactorValue, MotionLimiterValue, is_wall
+       MotionDetails, FloatingDetails, FloatingConstraints, LinearSpring, CoulombDamper, GravityFactorValue, MotionLimiterValue, is_wall
 
 # Use the existing @enum for ParticleType
 @enum ParticleType::UInt8 begin
@@ -64,6 +64,7 @@ degrees of freedom. Pause and permanent grid freezing override all motion.
 Supported in 2D and 3D with both symplectic and single-neighbor time stepping.
 `Springs=(LinearSpring{D,T}(...), ...)` adds fixed-anchor spring forces on the
 GPU at each evaluated body state, including torque and a spring timestep limit.
+The same tuple accepts `CoulombDamper{D,T}` for fixed-anchor sliding damping.
 Optional `Center` overrides the sampled centre of mass in native coordinates.
 `Inertia` overrides the body-frame inertia: a positive scalar in 2D, or a
 positive diagonal tuple/vector or symmetric positive-definite 3×3 matrix in 3D.

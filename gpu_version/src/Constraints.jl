@@ -7,7 +7,7 @@ module Constraints
 using StaticArrays
 using LinearAlgebra: dot
 
-export FloatingConstraints, LinearSpring, axial_spring_force
+export FloatingConstraints, LinearSpring, CoulombDamper, axial_spring_force, axial_coulomb_force
 
 """
     FloatingConstraints{D,T}(; TranslationLocks, RotationLocks,
@@ -120,6 +120,42 @@ function LinearSpring{D,T}(;Anchor,Attachment,Stiffness,Damping=0,RestLength=not
     all(x -> isfinite(x) && x >= 0,(k,c,length0)) ||
         throw(ArgumentError("spring stiffness, damping and rest length must be finite and nonnegative"))
     return LinearSpring{D,T}(a,p,k,c,length0)
+end
+
+"""
+    CoulombDamper{D,T}(; Anchor, Attachment, Force, RestLength=norm(Attachment-Anchor))
+
+Fixed-anchor axial sliding damper with constant opposing force in newtons.
+Put it in `FloatingDetails.Springs`. Zero axial velocity or a collapsed link
+has zero force. The GPU caps the stage impulse at the evaluated stopping
+impulse to avoid reversing motion through a velocity zero. This is sliding
+Coulomb damping, not a static-friction constraint. `RestLength` is for output.
+"""
+struct CoulombDamper{D,T}
+    Anchor::SVector{D,Float64}
+    Attachment::SVector{D,Float64}
+    Force::T
+    RestLength::T
+end
+
+function CoulombDamper{D,T}(;Anchor,Attachment,Force,RestLength = nothing) where {D,T<:AbstractFloat}
+    D in (2,3) || throw(ArgumentError("Coulomb dampers require 2D or 3D"))
+    a,p = SVector{D,Float64}(Anchor),SVector{D,Float64}(Attachment)
+    all(isfinite,a) && all(isfinite,p) || throw(ArgumentError("damper points must be finite"))
+    force = T(Force)
+    length0 = RestLength === nothing ? T(sqrt(sum(abs2,p-a))) : T(RestLength)
+    isfinite(force) && force >= 0 && isfinite(length0) && length0 >= 0 ||
+        throw(ArgumentError("damper force and rest length must be finite and nonnegative"))
+    return CoulombDamper{D,T}(a,p,force,length0)
+end
+
+"Axial sliding resistance; `force_limit` optionally caps a finite-stage stopping impulse."
+@inline function axial_coulomb_force(displacement,velocity,magnitude,force_limit = Inf)
+    length = sqrt(dot(displacement,displacement))
+    iszero(length) && return zero(velocity)
+    direction = displacement/length
+    speed = dot(velocity,direction)
+    return typeof(velocity)(-min(magnitude,force_limit)*sign(speed)*direction)
 end
 
 """

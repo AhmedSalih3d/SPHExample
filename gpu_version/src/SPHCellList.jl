@@ -1974,7 +1974,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             floating = attach_rigid_dynamics(floating, SimRigidBodyDynamics, SimParticles, SimKernel; gravity = SimConstants.g)
             initialize_rigid_velocities!(floating, SimMetaData.TotalTime)
         end
-        if floating.constrained || (SimRigidBodyDynamics !== nothing && floating.initial_velocity)
+        if floating.constrained || floating.initial_velocity
             initialize_floating_velocities!(floating, gpu)
             copyto!(SimParticles.Velocity, gpu.Velocity)
         end

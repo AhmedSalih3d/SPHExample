@@ -67,10 +67,10 @@ module SPHExampleGPU
     export SPHDensityDiffusion, ZeroDensityDiffusion, ZeroGravityLinearDensityDiffusion, LinearDensityDiffusion, ZeroGravityComplexDensityDiffusion, ComplexDensityDiffusion, FourtakasDensityDiffusion, compute_density_diffusion
 
     using .Constraints
-    export Constraints, axial_spring_force, BallJoint, HingeJoint, PointLineJoint, RigidMaterial, RigidContacts, RigidBodyDynamics
+    export Constraints, axial_spring_force, axial_coulomb_force, BallJoint, HingeJoint, PointLineJoint, RigidMaterial, RigidContacts, RigidBodyDynamics
 
     using .SimulationGeometry
-    export ParticleType, Fixed, Fluid, Moving, Floating, Frozen, SPHGeometry, MotionDetails, FloatingDetails, FloatingConstraints, LinearSpring,
+    export ParticleType, Fixed, Fluid, Moving, Floating, Frozen, SPHGeometry, MotionDetails, FloatingDetails, FloatingConstraints, LinearSpring, CoulombDamper,
            GravityFactorValue, MotionLimiterValue, particle_struct_array
 
     using .PeriodicBoundaries

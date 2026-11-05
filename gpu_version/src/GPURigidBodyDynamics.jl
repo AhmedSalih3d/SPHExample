@@ -50,6 +50,7 @@ function attach_rigid_dynamics(f, specification::RigidBodyDynamics, particles, k
     sort(Int.(particles.ID)) == collect(1:length(particles)) || throw(ArgumentError("native rigid dynamics requires dense IDs 1:N"))
     joints = DeviceRigidJoint{T,TP}[]
     for joint in specification.joints
+        joint.kind <= 2 || throw(ArgumentError("rotation-locked point-line joints currently require 2D"))
         a = joint.body_a <= length(body) ? body[joint.body_a] : Int32(0)
         b = joint.body_b == 0 ? Int32(0) : joint.body_b <= length(body) ? body[joint.body_b] : Int32(0)
         a != 0 && (joint.body_b == 0 || b != 0) || throw(ArgumentError("joint markers must identify floating groups (or zero for world)"))

@@ -54,13 +54,16 @@ function HingeJoint(a::Integer, b::Integer = 0; Anchor, Axis, Stiffness = 0, Dam
 end
 
 """
-    PointLineJoint(body; Point, Direction, Attachment = Point)
+    PointLineJoint(body; Point, Direction, Attachment = Point, LockRotation = false)
 
 Keep a body's initial world-space attachment on the infinite fixed line
 `Point + s*Direction`. Translation along the line and all body rotation remain
 free. An off-centre attachment transfers constraint torque to the body.
+`LockRotation = true` also fixes the initial planar angle, making a 2D
+prismatic/heave guide. Rotation locking currently requires a 2D simulation.
 """
-PointLineJoint(a::Integer; Point, Direction, Attachment = Point) = rigid_joint(2, a, 0, Attachment, Point, Direction)
+PointLineJoint(a::Integer; Point, Direction, Attachment = Point,LockRotation::Bool = false) =
+    rigid_joint(LockRotation ? 3 : 2,a,0,Attachment,Point,Direction)
 
 """
     RigidMaterial(; Friction = 0.5, Restitution = 0)

@@ -39,7 +39,7 @@ using CUDA
 using LinearAlgebra: cross, det, dot, norm, Diagonal, Symmetric, isposdef
 using StaticArrays
 
-using ..Constraints: axial_spring_force
+using ..Constraints: axial_spring_force, axial_coulomb_force
 using ..SimulationGeometry
 using ..GPUCellGrid: thread_index, compact_nonzero!
 using ..GPUStepState
@@ -164,8 +164,12 @@ function FloatingArrays(SimGeometry::Vector{SPHGeometry{D, T}}, SimParticles, Si
         spring_starts[b] = length(springs)+1
         stiffness_rate,damping_rate = 0.0,0.0
         for spring in geom.Floating.Springs
-            spring isa LinearSpring{D,T} || throw(ArgumentError("floating springs for group $g must use dimension $D and physics type $T"))
+            spring isa Union{LinearSpring{D,T},CoulombDamper{D,T}} || throw(ArgumentError("floating springs/dampers for group $g must use dimension $D and physics type $T"))
             offset = SVector{D,TP}(spring.Attachment)-c
+            if spring isa CoulombDamper
+                push!(springs,DeviceSpring(SVector{D,TP}(spring.Anchor),offset,zero(T),zero(T),spring.RestLength,spring.Force))
+                continue
+            end
             push!(springs,DeviceSpring(SVector{D,TP}(spring.Anchor),offset,spring.Stiffness,spring.Damping,spring.RestLength))
             # Bound translational and rotational attachment mobility. Using
             # the inverse-inertia norm also bounds every 3D body orientation.

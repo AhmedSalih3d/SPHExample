@@ -2227,6 +2227,23 @@ julia --project=gpu_version -t 2,0 gpu_version/test/water_mill.jl
 
 See [settings and validation](docs/water_mill_validation.md).
 
+#### Point absorber 2D
+
+[example/PointAbsorber2d.jl](example/PointAbsorber2d.jl) implements all four
+`chrono/10_PointAbsorber` variants. Choose `:direct`, `:point_line`, `:spring`
+or `:coulomb` at the top. The original 19,897 particles, regular wave piston,
+heave restrictions and PTO coefficients are preserved. The native guide uses
+`PointLineJoint(...; LockRotation = true)`. `CoulombDamper` adds GPU sliding
+resistance through the existing floating stages. Default states include a
+PTO/force close-up, and original CAD follows the simulated body.
+
+```sh
+julia --project=gpu_version -t 2,0 gpu_version/example/PointAbsorber2d.jl
+julia --project=gpu_version -t 2,0 gpu_version/test/point_absorber.jl
+```
+
+See [validation, damping limits and force definitions](docs/point_absorber_validation.md).
+
 #### Pelamis 2D
 
 [example/Pelamis2d.jl](example/Pelamis2d.jl) implements DualSPHysics 5.4

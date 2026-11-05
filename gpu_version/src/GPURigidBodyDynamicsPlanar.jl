@@ -33,13 +33,13 @@ function attach_planar_rigid_dynamics(f,specification,particles,kernel;gravity =
         iszero(joint.attachment[2]) && iszero(joint.anchor[2]) || throw(ArgumentError("planar joint points must have world y = 0; use world (x,0,z) coordinates"))
         if joint.kind == 1
             abs(joint.axis[1])+abs(joint.axis[3]) <= 16eps(Float64) || throw(ArgumentError("a planar hinge axis must be parallel to world Y"))
-        elseif joint.kind == 2
+        elseif joint.kind in (2,3)
             iszero(joint.axis[2]) || throw(ArgumentError("a planar sliding direction must lie in the world X-Z plane"))
         end
         a = joint.body_a <= length(body) ? body[joint.body_a] : Int32(0)
         b = joint.body_b == 0 ? Int32(0) : joint.body_b <= length(body) ? body[joint.body_b] : Int32(0)
         a != 0 && (joint.body_b == 0 || b != 0) || throw(ArgumentError("joint markers must identify floating groups (or zero for world)"))
-        axis = joint.kind == 2 ? SVector{2,T}(planar_point(joint.axis)) : SVector{2,T}(1,0)
+        axis = joint.kind in (2,3) ? SVector{2,T}(planar_point(joint.axis)) : SVector{2,T}(1,0)
         push!(joints,DevicePlanarRigidJoint(joint.kind,a,b,SVector{2,TP}(planar_point(joint.attachment))-centres[a],
             b == 0 ? SVector{2,TP}(planar_point(joint.anchor)) : SVector{2,TP}(planar_point(joint.anchor))-centres[b],axis))
     end
@@ -88,6 +88,13 @@ end
 @inline function solve_planar_joint!(f,center,angle,velocity,omega,joint,step,position)
     T = eltype(f.mass)
     a,b = joint.a,joint.b
+    if joint.kind == 3 && planar_inverse_inertia(f,a,step) > 0
+        @inbounds if position
+            angle[a] = zero(eltype(angle))
+        else
+            omega[a] = zero(eltype(omega))
+        end
+    end
     ra,rb = planar_arm(f,angle,a,joint.ra),planar_arm(f,angle,b,joint.rb)
     error = if position
         @inbounds SVector{2,T}(center[a]+ra-(b == 0 ? joint.rb : center[b]+rb))
@@ -98,7 +105,7 @@ end
     ma,mb = rigid_mobility(f,a,step),rigid_mobility(f,b,step)
     ia,ib = planar_inverse_inertia(f,a,step),planar_inverse_inertia(f,b,step)
     impulse = zero(error)
-    if joint.kind == 2
+    if joint.kind in (2,3)
         normal = planar_perpendicular(joint.axis)
         mobility = (ma+mb)*dot(normal,normal)+ia*planar_cross(ra,normal)^2+ib*planar_cross(rb,normal)^2
         mobility > 0 && (impulse = -(dot(error,normal)/mobility)*normal)
@@ -220,7 +227,7 @@ function planar_rigid_joint_errors(specification,geometry,state)
         pa = state.center[a]+planar_rotate(state.angle[a],planar_point(j.attachment)-initial[a])
         pb = b == 0 ? planar_point(j.anchor) : state.center[b]+planar_rotate(state.angle[b],planar_point(j.anchor)-initial[b])
         delta = pa-pb
-        j.kind == 2 && (axis = planar_point(j.axis); delta -= dot(delta,axis)*axis)
-        (;joint = i,translation_error = norm(delta),rotation_error = 0.)
+        j.kind in (2,3) && (axis = planar_point(j.axis); delta -= dot(delta,axis)*axis)
+        (;joint = i,translation_error = norm(delta),rotation_error = j.kind == 3 ? abs(state.angle[a]) : 0.)
     end for (i,j) in enumerate(specification.joints)]
 end

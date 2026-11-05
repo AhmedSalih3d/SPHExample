@@ -6,7 +6,10 @@ struct DeviceSpring{D,T,TP}
     stiffness::T
     damping::T
     rest_length::T
+    coulomb_force::T
 end
+
+DeviceSpring(a::SVector{D,TP},r::SVector{D,TP},k::T,c::T,l::T) where {D,T,TP} = DeviceSpring(a,r,k,c,l,zero(T))
 
 @inline function spring_offset(offset::SVector{2,TP},angle) where TP
     s,c = sincos(TP(angle))
@@ -14,15 +17,37 @@ end
 end
 @inline spring_offset(offset::SVector{3,TP},orientation) where TP = rotate_vector(SVector{4,TP}(orientation),offset)
 
-@inline function spring_load(spring::DeviceSpring{D,T},center,velocity,omega,orientation) where {D,T}
+@inline function spring_load(spring::DeviceSpring{D,T},center,velocity,omega,orientation,stage_dt = 0,mass = 0,inertia_inverse = nothing,
+        reference_velocity = velocity,reference_omega = omega) where {D,T}
     r = spring_offset(spring.offset,orientation)
     delta = center+r-spring.anchor
     point_velocity = velocity + angular_cross(omega, SVector{D,T}(r))
-    force = axial_spring_force(delta, point_velocity, spring.stiffness, spring.damping, spring.rest_length)
+    force = if spring.coulomb_force > 0
+        limit = T(Inf)
+        length = sqrt(dot(delta,delta))
+        if stage_dt > 0 && length > 0
+            direction = SVector{D,T}(delta/length)
+            arm = floating_torque(SVector{D,T}(r),direction)
+            rotational = if D == 2
+                inertia_inverse*arm^2
+            else
+                local_arm = rotate_vector(quaternion_conjugate(orientation),arm)
+                dot(local_arm,inertia_inverse*local_arm)
+            end
+            mobility = inv(mass)+rotational
+            reference_point_velocity = reference_velocity+angular_cross(reference_omega,SVector{D,T}(r))
+            reference_speed = dot(reference_point_velocity,direction)
+            limit = T(abs(reference_speed)/(stage_dt*mobility))
+            iszero(dot(point_velocity,direction)) && (point_velocity = reference_point_velocity)
+        end
+        axial_coulomb_force(delta,point_velocity,spring.coulomb_force,limit)
+    else
+        axial_spring_force(delta,point_velocity,spring.stiffness,spring.damping,spring.rest_length)
+    end
     return force,floating_torque(SVector{D,T}(r),force)
 end
 
-function floating_spring_kernel!(force,springs,starts,frozen,center,velocity,omega,orientation,turn,step,half,::Val{D},nbodies) where D
+function floating_spring_kernel!(force,springs,starts,frozen,center,velocity,omega,orientation,turn,step,half,::Val{D},nbodies,mass,inertia_inverse,reference_velocity,reference_omega) where D
     step_active(step) || return nothing
     b = thread_index()
     b > nbodies && return nothing
@@ -32,7 +57,8 @@ function floating_spring_kernel!(force,springs,starts,frozen,center,velocity,ome
         total = zero(eltype(center))
         torque = zero(D == 2 ? eltype(force) : SVector{3,eltype(force)})
         for j in starts[b]:starts[b+1]-1
-            load,moment = spring_load(springs[j],center[b],velocity[b],omega[b],pose)
+            load,moment = spring_load(springs[j],center[b],velocity[b],omega[b],pose,
+                step_dt(step)*(half ? 1 : 0.5),mass[b],inertia_inverse[b],reference_velocity[b],reference_omega[b])
             total += load
             torque += moment
         end
@@ -56,7 +82,7 @@ function launch_floating_springs!(f,step,half::Bool)
     orientation = D == 2 ? f.angle : (half ? f.orientation_half : f.orientation)
     @cuda threads=128 blocks=cld(Int(f.nbodies),128) floating_spring_kernel!(f.force,f.springs,f.spring_starts,f.frozen,
         half ? f.center_half : f.center,half ? f.velocity_half : f.velocity,half ? f.omega_half : f.omega,
-        orientation,f.turn,step,half,Val(D),f.nbodies)
+        orientation,f.turn,step,half,Val(D),f.nbodies,f.mass,f.inertia_inv,f.velocity,f.omega)
     return nothing
 end
 

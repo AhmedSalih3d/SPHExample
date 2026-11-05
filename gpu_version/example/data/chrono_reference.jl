@@ -1,5 +1,6 @@
 # Portable reference fixtures: ordinary runs require neither GenCase nor Chrono.
 using SPHExampleGPU,StaticArrays,CSV,LinearAlgebra
+include(joinpath(@__DIR__,"spring_display.jl"))
 
 function reference_geometry(directory,::Val{D},::Type{T};dx,origin,weights,details = Dict()) where {D,T}
     rows = collect(CSV.File(joinpath(directory,"lattice.csv")))
@@ -27,7 +28,8 @@ function reference_rotate(q,r)
 end
 
 function save_reference_surfaces(directory,fixture,geometry,name;moving = Dict(),force_offset = 0.2,
-        force_offset_vector = nothing,fluid_alpha = 0.03,speed_limit = 2.,write_geometry = true)
+        force_offset_vector = nothing,fluid_alpha = 0.03,speed_limit = 2.,direct_heave_weight = nothing,
+        detail_view = false,write_geometry = true)
     D = length(first(first(geometry).Particles.Position))
     points = [SVector(r.x,r.y,r.z) for r in CSV.File(joinpath(fixture,"surface_points.csv"))]
     cells = collect(CSV.File(joinpath(fixture,"surface_cells.csv")))
@@ -36,6 +38,9 @@ function save_reference_surfaces(directory,fixture,geometry,name;moving = Dict()
     length(times) >= 2 || return nothing
     states = Dict((r.Body,r.Time) => r for r in rows)
     bodies = filter(g -> g.Type == Floating,geometry)
+    direct_heave_weight === nothing || (D == 2 && length(bodies) == 1) ||
+        throw(ArgumentError("derived direct-heave forces require one planar body"))
+    !detail_view || (D == 2 && length(bodies) == 1) || throw(ArgumentError("the fixed heave detail view requires one planar body"))
     names = Tuple(Symbol("Body",b) for b in eachindex(bodies))
     reference = [g.Floating.Center === nothing ? sum(SVector{D,Float64}.(g.Particles.Position))/length(g.Particles) :
         SVector{D,Float64}(g.Floating.Center) for g in bodies]
@@ -70,6 +75,7 @@ function save_reference_surfaces(directory,fixture,geometry,name;moving = Dict()
                 motions = NamedTuple{labels}(Tuple(moving[g] for g in markers)),times,block_name = "MovingSurfaces")
         end
     end
+    spring_force_range = save_reference_springs(file,bodies,states,reference,times;write_geometry)
     path = joinpath(directory,name*"_SingleVTKHDFStateFile.py")
     text = read(path,String)
     appended = findfirst("\n# Coupled reference display",text)
@@ -129,6 +135,39 @@ if $(isempty(moving) ? "False" : "True"):
     MovingDisplay.Representation = 'Wireframe'
     MovingDisplay.ColorArrayName = ['CELLS','']
     MovingDisplay.DiffuseColor = [0.2,0.2,0.2]
+if $(direct_heave_weight === nothing ? "False" : "True") and not has_native_forces:
+    Hide(FloatingForceGlyphs,renderView1)
+    FloatingForceDisplay.SetScalarBarVisibility(renderView1,False)
+    GravityLoads = Calculator(registrationName='Direct heave gravity',Input=FloatingBodies)
+    GravityLoads.ResultArrayName = 'GravityForce'
+    GravityLoads.Function = '-$(something(direct_heave_weight,0.))*jHat'
+    GuideLoads = Calculator(registrationName='Direct horizontal guide reaction',Input=GravityLoads)
+    GuideLoads.ResultArrayName = 'ConstraintForce'
+    GuideLoads.Function = '-Force_X*iHat'
+    TotalLoads = Calculator(registrationName='Direct heave total force',Input=GuideLoads)
+    TotalLoads.ResultArrayName = 'TotalForce'
+    TotalLoads.Function = 'Force+GravityForce+ConstraintForce'
+    FloatingBodies = TotalLoads
+    for vector in ('GravityForce','ConstraintForce','TotalForce'):
+        magnitude = Calculator(Input=FloatingBodies)
+        magnitude.ResultArrayName = vector+'Magnitude'
+        magnitude.Function = 'mag('+vector+')'
+        FloatingBodies = magnitude
+    native_force_arrows = []
+    for vector,colour in (('GravityForce',[0.1,0.35,0.95]),('ConstraintForce',[0.9,0.12,0.08]),('TotalForce',[0.15,0.65,0.25])):
+        mask = Calculator(Input=FloatingBodies)
+        mask.ResultArrayName = 'VisibleForce'
+        mask.Function = 'if('+vector+'Magnitude > 0,1,0)'
+        arrows = Glyph(Input=mask,GlyphType='Arrow')
+        arrows.OrientationArray = ['POINTS',vector]
+        arrows.ScaleArray = ['POINTS','VisibleForce']
+        arrows.GlyphMode = 'All Points'
+        native_force_arrows.append((vector,arrows,colour))
+    ForceKey = Text()
+    ForceKeyDisplay = Show(ForceKey,renderView1,'TextSourceRepresentation')
+    ForceKeyDisplay.WindowLocation = 'Upper Left Corner'
+    ForceKeyDisplay.Color = [0.12,0.12,0.12]
+    has_native_forces = True
 if has_native_forces:
     ForceLocations = Transform(Input=FloatingBodies)
     ForceLocations.Transform.Translate = [$(offset[1]),$(offset[2]),$(offset[3])]
@@ -170,6 +209,57 @@ renderView1.CameraParallelScale *= 0.75
 GetLayout(renderView1).SetSize(1600,900)
 Colors.RescaleTransferFunction(0,$speed_limit)
 Colors.AutomaticRescaleRangeMode = 'Never'
+if 'spring_bar' in globals():
+    spring_bar.WindowLocation = 'Any Location'
+    spring_bar.Position = [0.25,0.06]
+    spring_bar.Orientation = 'Horizontal'
+    spring_bar.ScalarBarLength = 0.25
+    SpringDisplay.Translation = [0,0,0.04]
+    SpringDisplay.Ambient = 0.6
+    SpringDisplay.Diffuse = 0.4
+if $(detail_view ? "True" : "False"):
+    layout = GetLayout(renderView1)
+    layout.SplitVertical(0,0.5)
+    detailView = CreateView('RenderView')
+    layout.AssignView(2,detailView)
+    detailView.InteractionMode = '2D'
+    detailView.CameraParallelProjection = 1
+    detailView.CameraViewUp = [0,1,0]
+    detailView.CameraFocalPoint = [$(reference[1][1]),$(reference[1][2]),0]
+    detailView.CameraPosition = [$(reference[1][1]),$(reference[1][2]),100]
+    detailView.CameraParallelScale = 0.6
+    DetailWater = Show(Water,detailView,'GeometryRepresentation')
+    ColorBy(DetailWater,('POINTS','Velocity','Magnitude'))
+    DetailWater.LookupTable = Colors
+    DetailWater.SetScalarBarVisibility(detailView,False)
+    DetailBody = Show(Bodies,detailView,'GeometryRepresentation')
+    ColorBy(DetailBody,('CELLS','Region'))
+    DetailBody.LookupTable = BodyColors
+    DetailBody.SetScalarBarVisibility(detailView,False)
+    if has_native_forces:
+        for vector,arrows,colour in native_force_arrows:
+            if vector != 'TotalForce':
+                display = Show(arrows,detailView,'GeometryRepresentation')
+                display.ColorArrayName = ['POINTS','']
+                display.DiffuseColor = colour
+        Hide(ForceKey,renderView1)
+        DetailKey = Show(ForceKey,detailView,'TextSourceRepresentation')
+        DetailKey.WindowLocation = 'Upper Left Corner'
+        DetailKey.FontSize = 12
+        DetailKey.Color = [0.12,0.12,0.12]
+    if 'SpringBlock' in globals():
+        DetailSpring = Show(SpringBlock,detailView,'GeometryRepresentation')
+        ColorBy(DetailSpring,('CELLS','ForceMagnitude'))
+        DetailSpring.LookupTable = spring_lut
+        DetailSpring.SetScalarBarVisibility(detailView,False)
+        DetailSpring.Translation = [0,0,0.04]
+        DetailSpring.Ambient = 0.6
+        DetailSpring.Diffuse = 0.4
+    layout.SetSize(1600,900)
+    Colors.RescaleTransferFunction(0,$speed_limit)
+if 'spring_lut' in globals():
+    spring_lut.RescaleTransferFunction(0,$(spring_force_range === nothing ? 1. : last(spring_force_range)))
+    spring_lut.AutomaticRescaleRangeMode = 'Never'
 RenderAllViews()
 """)
     end
