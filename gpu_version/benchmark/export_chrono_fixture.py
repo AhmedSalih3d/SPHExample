@@ -31,6 +31,8 @@ rows = []
 for p in range(data.GetNumberOfPoints()):
     position = data.GetPoint(p)
     index = [round((position[d]-origin[d])/dx) for d in range(3)]
+    if max(abs(position[d]-origin[d]-dx*index[d]) for d in range(3)) > 1e-3*dx:
+        raise RuntimeError(f'Non-lattice point {position}: preserve its coordinates explicitly instead of quantizing')
     rows.append((int(mk.GetTuple1(p)), int(kind.GetTuple1(p)), *index, rho.GetTuple1(p)))
 with (target/'lattice.csv').open('w',newline='') as file:
     writer = csv.writer(file)

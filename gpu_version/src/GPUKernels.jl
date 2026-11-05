@@ -378,6 +378,8 @@ end
 @inline interaction_pressure(::Nothing, i, ρ, type, c₀, ρ₀, boundary_data) =
     is_wall(type) ? c₀^2 * (ρ - ρ₀) : EquationOfStateGamma7(ρ, c₀, ρ₀)
 @inline interaction_pressure(cache, i, ρ, type, c₀, ρ₀, boundary_data) = @inbounds cache[i]
+@inline interaction_particle_mass(::Nothing,i,default) = default
+@inline interaction_particle_mass(masses,i,default) = @inbounds masses.values[masses.groups[i]]
 
 function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
                              Pairs, Position, Density,
@@ -388,7 +390,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                              boundary_data, InvDensity, Pressure, n::Int32, ::Val{Radial} = Val(false), ::Val{ScalarSPS} = Val(false),
                              ::Val{FrozenParticles} = Val(true), ::Val{IncludeGravity} = Val(false), periodicity = nothing,
                              periodic_bounds = nothing, viscous_dt = nothing, ::Val{FastMath}=Val(false), target_indices=nothing, pair_order=nothing,
-                             ::Val{NativeRigid}=Val(false)) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath, NativeRigid}
+                             ::Val{NativeRigid}=Val(false), interaction_mass=nothing) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath, NativeRigid}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -464,6 +466,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         end
 
                         ρⱼ   = Density[j]
+                        mass_j = interaction_particle_mass(interaction_mass,j,m₀)
                         ρⱼ⁻¹ = interaction_inverse_density(InvDensity, j, ρⱼ)
                         vⱼ   = boundary_velocity(boundary_data, Velocity, ParticleType, j, slotⱼ)
                         vᵢⱼ  = vᵢ - vⱼ
@@ -474,8 +477,8 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         # DBC walls take density from the fluid, not other walls.
                         wall_pair = wallᵢ && is_wall(ParticleType[j])
                         if !wall_pair
-                            dρdt += viscous_dt === nothing ? -ρᵢ * (m₀ * ρⱼ⁻¹) * density_symmetric_term :
-                                -m₀ * density_symmetric_term * (ρᵢ / ρⱼ)
+                            dρdt += viscous_dt === nothing ? -ρᵢ * (mass_j * ρⱼ⁻¹) * density_symmetric_term :
+                                -mass_j * density_symmetric_term * (ρᵢ / ρⱼ)
                         end
 
                         # Reference diffusion and ordered/SPS viscosity use the CPU
@@ -536,12 +539,13 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                             if SimViscosity isa ArtificialViscosity && (is_wall(typeᵢ) || is_wall(ParticleType[j]))
                                 visc *= T(SimViscosity.boundary_factor)
                             end
+                            interaction_mass === nothing || (visc *= mass_j/m₀)
                             Pⱼ = viscous_dt === nothing ? interaction_pressure(Pressure,j,ρⱼ,ParticleType[j],c₀,ρ₀,boundary_data) :
                                 dual_pressure(ρⱼ,SimConstants,Val(FastMath))
                             Pfac = viscous_dt === nothing ? (Pᵢ + Pⱼ) * (ρᵢ⁻¹ * ρⱼ⁻¹) : (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
                             f_ab = InvDensity === nothing ? tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx) :
                                 tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx, ρᵢ⁻¹, ρⱼ⁻¹)
-                            dvdt = -m₀ * (Pfac + f_ab) * ∇ᵢWᵢⱼ
+                            dvdt = -mass_j * (Pfac + f_ab) * ∇ᵢWᵢⱼ
                             acc += dvdt + visc
                         end
 
@@ -552,10 +556,10 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
 
                         if FlagShift
                             MLcond = MLᵢ * MotionLimiterValue(T, ParticleType[j])
-                            ∇C += (m₀ * ρᵢ⁻¹) * ∇ᵢWᵢⱼ
+                            ∇C += (mass_j * ρᵢ⁻¹) * ∇ᵢWᵢⱼ
                             # Sign convention follows the CPU code, see
                             # https://arxiv.org/abs/2110.10076
-                            ∇r += (m₀ * ρⱼ⁻¹) * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MLcond
+                            ∇r += (mass_j * ρⱼ⁻¹) * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MLcond
                         end
                     end
                 end
@@ -666,11 +670,14 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
                               fast_math::Bool = false,
                               always_inline::Bool = true, fastmath::Bool = true,
                               target_indices = nothing, target_count::Integer = length(Position), pair_order = nothing,
-                              native_rigid::Val = Val(false))
+                              native_rigid::Val = Val(false), interaction_mass = nothing)
     inverse_density === nothing || length(inverse_density) == length(Density) ||
         throw(DimensionMismatch("Reciprocal cache must have one entry per evaluated density"))
     pressure === nothing || length(pressure) == length(Density) ||
         throw(DimensionMismatch("Pressure cache must have one entry per evaluated density"))
+    interaction_mass === nothing || (length(interaction_mass.groups) == length(Density) &&
+        (SimDensityDiffusion isa ZeroDensityDiffusion || SimDensityDiffusion isa FourtakasDensityDiffusion)) ||
+        throw(ArgumentError("custom floating interaction masses require dense source group markers and zero/Fourtakas diffusion"))
     n = target_count
     target_indices === nothing ? (n == length(Position) || throw(DimensionMismatch("Unmapped targets must cover all sources"))) :
         (length(target_indices) == n || throw(DimensionMismatch("Target map and target count differ")))
@@ -698,7 +705,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
         Pairs, Position, Density, Velocity, ParticleType, SimParticles,
         CellStart, CellID, grid, step,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math), target_indices, pair_order, native_rigid)
+        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math), target_indices, pair_order, native_rigid, interaction_mass)
     return nothing
 end
 

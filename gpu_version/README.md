@@ -2194,6 +2194,23 @@ julia --project=gpu_version -t 2,0 gpu_version/test/owsc.jl
 
 See [reference settings and validation](docs/owsc_validation.md).
 
+#### Dam-break cubes and blocks 3D
+
+[example/DamBreakCubes3d.jl](example/DamBreakCubes3d.jl) implements all three
+`chrono/07_DamBreakCubes` variants. Select `variant = :one_cube`, `:three_cubes`
+or `:blocks` in the direct `let` setup. Original GenCase particles/densities,
+2.7 kg cube masses, block relative weight/materials and CAD displays are
+preserved. Fluid loads couple to native CUDA contacts with friction and
+restitution. The block case also preserves its distributed SPH body-particle
+mass through opt-in `FloatingDetails.InteractionMass`.
+
+```sh
+julia --project=gpu_version -t 2,0 gpu_version/example/DamBreakCubes3d.jl
+julia --project=gpu_version -t 2,0 gpu_version/test/dam_break_cubes.jl
+```
+
+See [validation and contact-model limits](docs/dam_break_cubes_validation.md).
+
 #### Pelamis 2D
 
 [example/Pelamis2d.jl](example/Pelamis2d.jl) implements DualSPHysics 5.4

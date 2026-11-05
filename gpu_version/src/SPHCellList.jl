@@ -1010,6 +1010,9 @@ function launch_solver_interactions!(ctx,position,density,velocity,pairs,step;in
     (;gpu,cl,sup,SimKernel,SimConstants,SimDensityDiffusion,SimViscosity,FlagKernel,FlagShift,threads,lanes,bforces)=ctx
     floating = get(ctx, :floating, nothing)
     native_rigid = floating !== nothing && hasproperty(floating, :mechanics)
+    interaction_mass = floating === nothing || floating.interaction_mass === nothing ? nothing :
+        (;values = floating.interaction_mass,groups = gpu.GroupMarker)
+    interaction_mass === nothing || cl.periodicity === nothing || throw(ArgumentError("custom floating interaction masses currently require a nonperiodic case"))
     if native_rigid && floating.mechanics.solid_only && FlagKernel isa Val{false} && FlagShift isa Val{false}
         # No solid-solid SPH pairs remain when native contacts own them. The
         # grid is still built/reordered for contact detection and rigid motion.
@@ -1047,7 +1050,7 @@ function launch_solver_interactions!(ctx,position,density,velocity,pairs,step;in
         radial=get(ctx,:radial,Val(false)),scalar_sps=get(ctx,:scalar_sps,Val(false)),periodicity,periodic_bounds=bounds,
         periodic_cell_coordinates=periodic_coordinates,always_inline=get(ctx,:interaction_always_inline,true),
         fastmath=get(ctx,:interaction_fastmath,true),target_indices=targets,target_count=length(gpu),pair_order=order,
-        native_rigid=Val(native_rigid))
+        native_rigid=Val(native_rigid),interaction_mass)
     return nothing
 end
 
@@ -1776,6 +1779,13 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SV <: SPHViscosity, SDD <: SPHDensityDiffusion}
 
     CUDA.functional() || error("CUDA is not functional on this machine; use the CPU package SPHExample instead.")
+    custom_interaction_mass = any(g -> g.Floating !== nothing && g.Floating.InteractionMass !== nothing,SimGeometry)
+    if custom_interaction_mass
+        SimMetaData.Periodicity === nothing && SimMetaData.VariableResolution === nothing &&
+            !(SimTimeStepping isa DualSPHysicsSymplectic) &&
+            (SimDensityDiffusion isa ZeroDensityDiffusion || SimDensityDiffusion isa FourtakasDensityDiffusion) ||
+            throw(ArgumentError("custom floating InteractionMass requires nonperiodic single-resolution standard stepping and zero/Fourtakas diffusion"))
+    end
     if SimRigidBodyDynamics !== nothing
         SimRigidBodyDynamics isa RigidBodyDynamics || throw(ArgumentError("SimRigidBodyDynamics must be RigidBodyDynamics or nothing"))
         Dimensions in (2,3) && SimMetaData.Periodicity === nothing && SimMetaData.VariableResolution === nothing ||

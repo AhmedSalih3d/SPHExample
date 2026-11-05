@@ -20,9 +20,10 @@ and cell-list rebuilds initialize that cache at the accepted full state.
 This includes the 3D gyroscopic acceleration at the evaluated orientation,
 so the carried torque is never reduced about an updated body centre.
 
-The force on a body is `m₀ Σ aₖ` over its particles, `m₀` being the particle
-mass the neighbour loops use for every neighbour, so the fluid and the body
-exchange equal and opposite forces. The mass of the body is
+The force on a body is its SPH interaction mass times `Σ aₖ` over its particles.
+By default that mass is `m₀`, the uniform fluid particle mass. An explicit
+`FloatingDetails.InteractionMass` changes both neighbour weighting and body
+load reduction, preserving equal and opposite fluid/body forces. Rigid mass is
 `RelativeWeight m₀ N`. In 2D the moment of inertia is scalar; in 3D the full
 inertia tensor and quaternion orientation are used. The body state lives on the
 device, so the step stays capturable as a CUDA graph.
@@ -99,10 +100,16 @@ function FloatingArrays(SimGeometry::Vector{SPHGeometry{D, T}}, SimParticles, Si
     springs = DeviceSpring{D,T,TP}[]
     spring_starts = ones(Int32,nstate+1)
     spring_dt = Inf
+    interaction_mass = any(g -> g.Floating.InteractionMass !== nothing,floating) ? fill(T(SimConstants.m₀),length(body)) : nothing
     for (b, geom) in enumerate(floating)
         g = geom.GroupMarker
         body[g] != 0 && error("Two floating bodies share the group marker $g.")
         body[g] = b
+        if geom.Floating.InteractionMass !== nothing
+            value = T(geom.Floating.InteractionMass)
+            isfinite(value) && value > 0 || throw(ArgumentError("floating InteractionMass must be finite and positive in $T"))
+            interaction_mass[g] = value
+        end
         members = findall(k -> SimParticles.GroupMarker[k] == g && SimParticles.Type[k] == Floating,
                           eachindex(SimParticles.GroupMarker))
         isempty(members) && error("The floating body with group marker $g has no particles.")
@@ -192,6 +199,7 @@ function FloatingArrays(SimGeometry::Vector{SPHGeometry{D, T}}, SimParticles, Si
               initial_velocity = any(!iszero,velocity),
               frozen = CUDA.zeros(Int32, nstate),
               body = CuArray(body), mass = CuArray(mass), inertia = CuArray(inertia),
+              interaction_mass = interaction_mass === nothing ? nothing : CuArray(interaction_mass),
               springs = CuArray(springs), spring_starts = CuArray(spring_starts), spring_dt,
               inertia_inv = CuArray(inertia_inv), pause = CuArray(pause),
               center = CuArray(center), center_n = CuArray(center),
@@ -330,23 +338,27 @@ floating_state(f, ::Val{3}) = (center = Array(f.center), velocity = Array(f.velo
 
 @inline floating_torque_component(τ::T, d) where {T} = τ
 @inline floating_torque_component(τ::SVector{3, T}, d) where {T} = τ[d]
+@inline floating_particle_mass(mass::Number,marker) = mass
+@inline floating_particle_mass(mass::AbstractVector,marker) = @inbounds mass[marker]
 
 function floating_force_kernel!(force::AbstractVector{T},
                                 Acceleration::AbstractVector{SVector{D, T}},
                                 Position::AbstractVector{SVector{D, TP}},
                                 indices, ParticleType, GroupMarker, body,
                                 center::AbstractVector{SVector{D, TP}},
-                                m₀::T, step, nbodies::Int32, n::Int32) where {D, T, TP}
+                                masses, step, nbodies::Int32, n::Int32) where {D, T, TP}
     step_active(step) || return nothing
     j = thread_index()
     a = zero(SVector{D, T})
     r = zero(SVector{D, T})
     τ = zero(D == 2 ? T : SVector{3, T})
     b = Int32(0)
+    m₀ = zero(T)
     @inbounds if j <= n
         i = indices[j]
         if ParticleType[i] != Frozen
             b = body[GroupMarker[i]]
+            m₀ = floating_particle_mass(masses,GroupMarker[i])
             a = Acceleration[i]
             r = SVector{D, T}(Position[i] - center[b])
             τ = floating_torque(r, a)
@@ -391,7 +403,7 @@ function launch_floating_forces!(floating, Acceleration, Position, ParticleType,
     T = eltype(floating.force)
     @cuda threads=ELEMENTWISE_THREADS blocks=cld(n, ELEMENTWISE_THREADS) floating_force_kernel!(
         floating.force, Acceleration, Position, floating.indices, ParticleType, GroupMarker, floating.body, center,
-        T(m₀), step, floating.nbodies, Int32(n))
+        floating.interaction_mass === nothing ? T(m₀) : floating.interaction_mass, step, floating.nbodies, Int32(n))
     return nothing
 end
 
