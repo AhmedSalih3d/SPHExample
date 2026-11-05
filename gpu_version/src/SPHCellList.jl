@@ -46,6 +46,7 @@ using ..GPUCellGrid
 using ..GPUKernels
 using ..GPUConfiguration: effective_configuration, configuration_snapshot, log_effective_configuration
 using ..GPUFloating
+using ..OpenBoundaries
 using ..Constraints: RigidBodyDynamics
 using ..SimulationResults: SimulationResult
 
@@ -1110,6 +1111,8 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
     grid      = cl.grid_dev
     CellStart = cl.CellStart
 
+    launch_open_boundary_values!(get(ctx,:open_boundary,nothing),gpu.Position,gpu.Velocity,gpu.Density,
+        gpu.Type,gpu.GroupMarker,CellStart,grid,SimKernel,SimConstants,step)
     if UseMDBC
         @phase HourGlass mdbc_name timed enqueue_boundary_correction!(ctx, step, false)
     else
@@ -1243,6 +1246,14 @@ function enqueue_step!(ctx, timed::Bool)
         fraction = 0.5, pos_cells = sup.PosCellsₙ⁺, cell_ids = gpu.CellID, grid, H = SimKernel.H,
         prepared = true, coefficient_slot = 2)
 
+    launch_open_boundary_values!(get(ctx,:open_boundary,nothing),position_half,velocity_half,sup.ρₙ⁺,
+        gpu.Type,gpu.GroupMarker,CellStart,grid,SimKernel,SimConstants,state)
+
+    if get(ctx,:open_boundary,nothing) !== nothing
+        launch_prepare_interactions!(position_half,state;inverse_density = sup.InvDensity,pressure = sup.Pressure,
+            Density = sup.ρₙ⁺,SimConstants,ParticleType = gpu.Type)
+    end
+
     if get(ctx, :boundary_mode, SimpleMDBC()) isa UpdatedMDBC
         @phase HourGlass "07 Updated mDBC corrector" timed begin
             enqueue_boundary_correction!(ctx, state, true)
@@ -1283,7 +1294,7 @@ function enqueue_step!(ctx, timed::Bool)
         sup.∇Cᵢ, sup.∇◌rᵢ, state, SimKernel, SimConstants, red, FlagShift;
         boundary_mode = get(ctx, :boundary_mode, SimpleMDBC()),
         ghost_points = gpu.GhostPoints, ghost_normals = gpu.GhostNormals, boundary_slots = gpu.BoundarySlot,
-        pos_cells = sup.PosCells, CellID = gpu.CellID, grid = grid, commit_step = red.nblocks == 1,
+        pos_cells = sup.PosCells, CellID = gpu.CellID, grid = grid, commit_step = red.nblocks == 1 && get(ctx,:open_boundary,nothing) === nothing,
         inverse_density = sup.InvDensity,
         next_inverse_density = get(ctx, :cache_final_state, false) ? sup.InvDensity : nothing,
         next_pressure = get(ctx, :cache_final_state, false) ? sup.Pressure : nothing,
@@ -1298,7 +1309,11 @@ function enqueue_step!(ctx, timed::Bool)
             pos_cells = sup.PosCells, CellID = gpu.CellID, grid = grid, H = SimKernel.H, particle_ids = gpu.ID)
     end
 
-    if red.nblocks != 1
+    open_boundary = get(ctx,:open_boundary,nothing)
+    launch_open_boundary_events!(open_boundary,gpu,sup,cl,SimKernel,SimConstants,state)
+    launch_open_boundary_values!(open_boundary,gpu.Position,gpu.Velocity,gpu.Density,
+        gpu.Type,gpu.GroupMarker,CellStart,grid,SimKernel,SimConstants,state)
+    if red.nblocks != 1 || open_boundary !== nothing
         @phase HourGlass "12 Update MetaData" timed launch_commit!(state)
     end
     return nothing
@@ -1452,7 +1467,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                         SimConstants, gpu::GPUParticles{Dimensions, FloatType},
                         cl::CellListWorkspace, sup::GPUSupportArrays, red::ReductionWorkspace,
                         motion, state::StepState{FloatType};
-                        floating = nothing, external_forces = (), damping = (), rotation = nothing, logger = nothing, diagnostics = nothing) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
+                        floating = nothing, external_forces = (), damping = (), rotation = nothing, open_boundary = nothing,logger = nothing, diagnostics = nothing) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
                                                    SDD <: SPHDensityDiffusion, SV <: SPHViscosity}
     if SimMetaData.TimeSteppingMode isa DualSPHysicsSymplectic
         return dual_simulation_loop!(SimDensityDiffusion, SimViscosity, SimKernel,
@@ -1528,13 +1543,13 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     timed     = SimMetaData.GPUSyncTimers
     use_graph = effective.use_graph
     kmax      = effective.max_steps_per_sync
-    cache_final_state = !UseMDBC && !motion.active && (floating === nothing || !floating.active) &&
+    cache_final_state = open_boundary === nothing && !UseMDBC && !motion.active && (floating === nothing || !floating.active) &&
         sup.InvDensity !== nothing && sup.Pressure !== nothing
 
-    ctx = (; gpu, cl, sup, red, motion, floating, external_forces, damping, rotation, state, SimKernel, SimConstants, SimDensityDiffusion,
+    ctx = (; gpu, cl, sup, red, motion, floating, external_forces, damping, rotation, open_boundary,state, SimKernel, SimConstants, SimDensityDiffusion,
              SimViscosity, FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, radial, scalar_sps,
              interaction_always_inline, interaction_fastmath, HourGlass, boundary_mode,
-             frozen_particles = Val(cl.frozen_total > 0), cache_final_state, diagnostics,
+             frozen_particles = Val(open_boundary !== nothing || cl.frozen_total > 0), cache_final_state, diagnostics,
              periodic_cell_coordinates = SimMetaData.GPUPeriodicCellCoordinates,
              logger = LMode === StoreLog ? logger : nothing)
 
@@ -1772,6 +1787,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     SimMeasurements::Union{Nothing, MeasurementConfig} = nothing,
     SimExternalForces = nothing,
     SimRigidBodyDynamics = nothing,
+    SimOpenBoundaries = nothing,
     SimDamping = nothing,
     SimRotation::Union{Nothing,RotationMotion} = nothing,
     SimMotion::Union{Nothing,PrescribedMotion,MotionSystem} = nothing,
@@ -1779,6 +1795,14 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SV <: SPHViscosity, SDD <: SPHDensityDiffusion}
 
     CUDA.functional() || error("CUDA is not functional on this machine; use the CPU package SPHExample instead.")
+    if SimOpenBoundaries !== nothing
+        SimOpenBoundaries isa OpenChannel{FloatType} && Dimensions == 2 && BMode === NoMDBC && SMode === NoShifting &&
+            SimMetaData.Periodicity === nothing && SimMetaData.VariableResolution === nothing && !SimMetaData.GPUFixedGrid &&
+            !(SimTimeStepping isa DualSPHysicsSymplectic) && SimMetaData.TotalTime == 0 && SimMetaData.Iteration == 0 &&
+            SimMotion === nothing && SimRotation === nothing &&
+            SimExternalForces === nothing && SimDamping === nothing ||
+            throw(ArgumentError("OpenChannel requires matching precision, nonperiodic expanding-grid 2D DBC, no shifting, standard stepping and no prescribed/external particle motion"))
+    end
     custom_interaction_mass = any(g -> g.Floating !== nothing && g.Floating.InteractionMass !== nothing,SimGeometry)
     if custom_interaction_mass
         SimMetaData.Periodicity === nothing && SimMetaData.VariableResolution === nothing &&
@@ -1970,6 +1994,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         end
         floating = FloatingArrays(SimGeometry, SimParticles, SimConstants; position_type = PositionType,
                                   time = SimMetaData.TotalTime)
+        open_boundary = prepare_open_boundary(SimOpenBoundaries,SimParticles,SimConstants,SimKernel,SimMetaData)
         if SimRigidBodyDynamics !== nothing
             floating = attach_rigid_dynamics(floating, SimRigidBodyDynamics, SimParticles, SimKernel; gravity = SimConstants.g)
             initialize_rigid_velocities!(floating, SimMetaData.TotalTime)
@@ -1989,7 +2014,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     end
 
     gpu_buffers = (; particles = gpu, support = sup, cells = cl,
-        auxiliary = (motion, rotation, external_forces, floating, red.partial, state.f, state.i, diagnostics))
+        auxiliary = (motion, rotation, external_forces, floating, open_boundary,red.partial, state.f, state.i, diagnostics))
 
     initial_floating = floating.active ? floating_state(floating) : nothing
     floating_markers = [geom.GroupMarker for geom in SimGeometry if geom.Type == Floating]
@@ -2293,7 +2318,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         while true
             @timeit HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                                                                  SimConstants, gpu, cl, sup, red, motion, state;
-                                                                 floating = floating, external_forces, damping, rotation, logger = SimLogger, diagnostics)
+                                                                 floating = floating, external_forces, damping, rotation, open_boundary,logger = SimLogger, diagnostics)
 
             # Publish progress immediately, independently of the queued disk writes.
             if StoreLogOutput
@@ -2371,6 +2396,9 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     if SimRigidBodyDynamics !== nothing
         final_state = merge(final_state, (; rigid = rigid_dynamics_state(floating)))
     end
+    if open_boundary !== nothing
+        final_state = merge(final_state,(;open_boundary = open_boundary_state(open_boundary,SimParticles)))
+    end
     elapsed = SimulationLoggerConfiguration.elapsed_wall_time(SimLogger)
     performance = (; steps, simulated_time, wall_time_seconds = elapsed,
         mean_timestep = steps > 0 ? simulated_time / steps : NaN,
@@ -2382,7 +2410,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         cell_list_rebuilds = cl.nrebuilds, grid_dims = Tuple(cl.grid.dims),
         periodic_source_rebuilds,
         periodic_source_count,
-        frozen_particles = cl.frozen_total, step_state_readbacks = state.readbacks,
+        frozen_particles = open_boundary === nothing ? cl.frozen_total : count(==(Frozen),SimParticles.Type), step_state_readbacks = state.readbacks,
         grid_status_readbacks = cl.grid_status_readbacks, capacity_growths = cl.capacity_growths,
         bbox_host_readbacks = cl.bbox_host_readbacks, captured_graphs = length(state.graphs))
     termination_reason = run_status == "finished" ? :completed : :interrupted

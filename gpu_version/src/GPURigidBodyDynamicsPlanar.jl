@@ -7,6 +7,7 @@ struct DevicePlanarRigidJoint{T,TP}
     ra::SVector{2,TP}
     rb::SVector{2,TP}
     axis::SVector{2,T}
+    ratio::T
 end
 
 @inline planar_point(v) = SVector(v[1],v[3])
@@ -30,6 +31,7 @@ function attach_planar_rigid_dynamics(f,specification,particles,kernel;gravity =
     centres,body = Array(f.center),Array(f.body)
     joints = DevicePlanarRigidJoint{T,TP}[]
     for joint in specification.joints
+        isfinite(T(joint.ratio)) && T(joint.ratio) != 0 || throw(ArgumentError("pulley Ratio must be representable and nonzero in $T"))
         iszero(joint.attachment[2]) && iszero(joint.anchor[2]) || throw(ArgumentError("planar joint points must have world y = 0; use world (x,0,z) coordinates"))
         if joint.kind == 1
             abs(joint.axis[1])+abs(joint.axis[3]) <= 16eps(Float64) || throw(ArgumentError("a planar hinge axis must be parallel to world Y"))
@@ -41,7 +43,7 @@ function attach_planar_rigid_dynamics(f,specification,particles,kernel;gravity =
         a != 0 && (joint.body_b == 0 || b != 0) || throw(ArgumentError("joint markers must identify floating groups (or zero for world)"))
         axis = joint.kind in (2,3) ? SVector{2,T}(planar_point(joint.axis)) : SVector{2,T}(1,0)
         push!(joints,DevicePlanarRigidJoint(joint.kind,a,b,SVector{2,TP}(planar_point(joint.attachment))-centres[a],
-            b == 0 ? SVector{2,TP}(planar_point(joint.anchor)) : SVector{2,TP}(planar_point(joint.anchor))-centres[b],axis))
+            b == 0 ? SVector{2,TP}(planar_point(joint.anchor)) : SVector{2,TP}(planar_point(joint.anchor))-centres[b],axis,T(joint.ratio)))
     end
     joint_order,joint_starts,joint_colours = rigid_edge_colours([(Int(j.a),Int(j.b)) for j in joints])
     references = zeros(SVector{2,TP},length(particles))
@@ -88,6 +90,22 @@ end
 @inline function solve_planar_joint!(f,center,angle,velocity,omega,joint,step,position)
     T = eltype(f.mass)
     a,b = joint.a,joint.b
+    if joint.kind == 4
+        ia,ib = planar_inverse_inertia(f,a,step),planar_inverse_inertia(f,b,step)
+        mobility = joint.ratio^2*ia+ib
+        if mobility > 0
+            @inbounds error = position ? joint.ratio*angle[a]-angle[b] : joint.ratio*omega[a]-omega[b]
+            impulse = -error/mobility
+            @inbounds if position
+                angle[a] += ia*joint.ratio*impulse
+                angle[b] -= ib*impulse
+            else
+                omega[a] += ia*joint.ratio*impulse
+                omega[b] -= ib*impulse
+            end
+        end
+        return nothing
+    end
     if joint.kind == 3 && planar_inverse_inertia(f,a,step) > 0
         @inbounds if position
             angle[a] = zero(eltype(angle))
@@ -224,10 +242,14 @@ function planar_rigid_joint_errors(specification,geometry,state)
     mapping = Dict(g.GroupMarker => b for (b,g) in enumerate(bodies))
     initial = initial_body_center.(bodies)
     return [let a = mapping[j.body_a],b = j.body_b == 0 ? 0 : mapping[j.body_b]
-        pa = state.center[a]+planar_rotate(state.angle[a],planar_point(j.attachment)-initial[a])
-        pb = b == 0 ? planar_point(j.anchor) : state.center[b]+planar_rotate(state.angle[b],planar_point(j.anchor)-initial[b])
-        delta = pa-pb
-        j.kind in (2,3) && (axis = planar_point(j.axis); delta -= dot(delta,axis)*axis)
-        (;joint = i,translation_error = norm(delta),rotation_error = j.kind == 3 ? abs(state.angle[a]) : 0.)
+        if j.kind == 4
+            (;joint = i,translation_error = 0.,rotation_error = abs(j.ratio*state.angle[a]-state.angle[b]))
+        else
+            pa = state.center[a]+planar_rotate(state.angle[a],planar_point(j.attachment)-initial[a])
+            pb = b == 0 ? planar_point(j.anchor) : state.center[b]+planar_rotate(state.angle[b],planar_point(j.anchor)-initial[b])
+            delta = pa-pb
+            j.kind in (2,3) && (axis = planar_point(j.axis); delta -= dot(delta,axis)*axis)
+            (;joint = i,translation_error = norm(delta),rotation_error = j.kind == 3 ? abs(state.angle[a]) : 0.)
+        end
     end for (i,j) in enumerate(specification.joints)]
 end

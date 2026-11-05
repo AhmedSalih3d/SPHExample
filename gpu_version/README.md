@@ -4004,3 +4004,22 @@ Notes on reading the table:
   in 2D, 10x at 366k in 3D) because large launches amortize the fixed
   per-kernel overhead (~16 µs on Windows/WDDM); a desktop GPU with more SMs
   will extend this trend to even larger cases.
+
+### Current wheel and pulley (native CUDA)
+
+[example/CurrentWheelPulley2d.jl](example/CurrentWheelPulley2d.jl) implements
+`chrono/11_CurrentWheelPulley` with `:wheel` and `:pulley` variants. It retains
+original CAD/particle geometry, a 1 m/s open current, analytical shafts and
+an optional 6:1 pulley constraint. There is no periodic wrapping or Chrono
+import. The default ParaView state shows labelled forces and a gear pointer.
+
+```sh
+julia --project=gpu_version -t 2,0 gpu_version/example/CurrentWheelPulley2d.jl
+julia --project=gpu_version -t 2,0 gpu_version/test/open_boundaries.jl
+julia --project=gpu_version -t 2,0 gpu_version/test/current_wheel.jl
+```
+
+Read the [validation report](docs/current_wheel_validation.md) for supported
+open-boundary scope, inactive particle capacity, complete four-second runs
+and comparison with the installed reference. Allocated entries include inlet
+reserves and retired particles; they are not the active physical count.

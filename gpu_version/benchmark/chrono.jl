@@ -17,6 +17,11 @@ function measure_chrono_case(filename,directory;options...)
         metrics[string(key)] = getproperty(result.diagnostics,key)
     end
     merge!(metrics,Dict(string(k) => v for (k,v) in pairs(chrono_joint_validation(case,directory))))
+    metrics["physics_precision"] = string(typeof(case.constants.g))
+    metrics["position_precision"] = string(eltype(eltype(result.final_state.particles.Position)))
+    if hasproperty(result.final_state,:open_boundary)
+        merge!(metrics,Dict("open_"*string(k) => v for (k,v) in pairs(result.final_state.open_boundary)))
+    end
     open(joinpath(directory,"metrics.toml"),"w") do io
         TOML.print(io,metrics)
     end

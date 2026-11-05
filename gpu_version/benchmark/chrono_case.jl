@@ -20,7 +20,8 @@ function prepare_chrono_case(filename;options...)
             body.args = body.args[1:stop-1]
             push!(body.args,:((;geometry = SimulationGeometry,constants = SimConstants,kernel = SimKernel,meta = SimMetaData,
                 dynamics = SimRigidBodyDynamics,viscosity = SimViscosity,diffusion = SimDensityDiffusion,scheme = time_stepping,
-                motion = SimMotion,measurements = SimMeasurements,save_surfaces)))
+                motion = SimMotion,measurements = SimMeasurements,
+                open_boundaries = @isdefined(SimOpenBoundaries) ? SimOpenBoundaries : nothing,save_surfaces)))
             expression
         end
     catch error
@@ -38,7 +39,8 @@ function run_chrono_case(filename;options...)
         result = RunSimulation(SimGeometry = case.geometry,SimMetaData = case.meta,SimConstants = case.constants,
             SimParticles = AllocateDataStructures(case.geometry,case.meta),SimKernel = case.kernel,SimLogger = logger,
             SimViscosity = case.viscosity,SimDensityDiffusion = case.diffusion,SimTimeStepping = case.scheme,
-            SimRigidBodyDynamics = case.dynamics,SimMotion = case.motion,SimMeasurements = case.measurements)
+            SimRigidBodyDynamics = case.dynamics,SimMotion = case.motion,SimMeasurements = case.measurements,
+            SimOpenBoundaries = case.open_boundaries)
         return result,case
     finally
         isopen(logger.LoggerIo) && close(logger.LoggerIo)

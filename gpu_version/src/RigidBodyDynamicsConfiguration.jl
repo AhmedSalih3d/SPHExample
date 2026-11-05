@@ -1,6 +1,6 @@
 # Included in Constraints. These host specifications are converted once into
 # device joints, local attachment offsets and a body-disjoint graph colouring.
-export BallJoint, HingeJoint, PointLineJoint, RigidMaterial, RigidContacts, RigidBodyDynamics
+export BallJoint, HingeJoint, PointLineJoint, PulleyJoint, RigidMaterial, RigidContacts, RigidBodyDynamics
 
 struct RigidJoint
     kind::UInt8
@@ -12,7 +12,10 @@ struct RigidJoint
     stiffness::Float64
     damping::Float64
     rest_angle::Float64
+    ratio::Float64
 end
+
+RigidJoint(kind,a,b,attachment,anchor,axis,k,c,theta) = RigidJoint(kind,a,b,attachment,anchor,axis,k,c,theta,1.)
 
 function rigid_joint(kind, a, b, attachment, anchor, axis)
     a > 0 && b >= 0 && a != b || throw(ArgumentError("joint markers must be distinct, with body A positive and body B nonnegative; zero means the fixed world"))
@@ -64,6 +67,22 @@ prismatic/heave guide. Rotation locking currently requires a 2D simulation.
 """
 PointLineJoint(a::Integer; Point, Direction, Attachment = Point,LockRotation::Bool = false) =
     rigid_joint(LockRotation ? 3 : 2,a,0,Attachment,Point,Direction)
+
+"""
+    PulleyJoint(body_a, body_b; Ratio)
+
+Planar belt constraint `angle_b = Ratio*angle_a` from the initial pose, with
+matching angular velocities. Add a world hinge for each shaft separately.
+Positive ratio gives an uncrossed belt; negative ratio reverses rotation.
+Only 2D is supported. The belt is analytical and has no sampled particles.
+"""
+function PulleyJoint(a::Integer,b::Integer;Ratio)
+    b > 0 || throw(ArgumentError("a pulley needs two floating bodies"))
+    ratio = Float64(Ratio)
+    isfinite(ratio) && ratio != 0 || throw(ArgumentError("pulley Ratio must be finite and nonzero"))
+    joint = rigid_joint(4,a,b,(0,0,0),(0,0,0),(0,1,0))
+    return RigidJoint(joint.kind,joint.body_a,joint.body_b,joint.attachment,joint.anchor,joint.axis,0.,0.,0.,ratio)
+end
 
 """
     RigidMaterial(; Friction = 0.5, Restitution = 0)
