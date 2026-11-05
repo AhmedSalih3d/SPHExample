@@ -2020,7 +2020,14 @@ In this opt-in mode native mechanics owns solid-solid interactions: ordinary
 SPH solid-solid pressure/viscosity pairs are excluded even if `Contacts=nothing`.
 Fluid interactions retain their SPH coupling. Distinct rigid bodies and static
 `Fixed` groups can contact; particles belonging to one body never self-collide.
-`FixedGroups=(...)` restricts contact to selected fixed markers. The mode
+`FixedGroups=(...)` restricts contact to selected fixed markers.
+`FloatingGroups=(...)` similarly restricts which floating groups collide;
+their joints and fluid coupling remain active. Both default to `nothing`
+(all eligible groups). `Materials=(group => RigidMaterial(Friction=...,
+Restitution=...), ...)` overrides individual floating-body coefficients;
+other bodies retain the uniform `Friction` and `Restitution` settings.
+Material pairs use the smaller coefficient, mixed once at setup and stored
+on CUDA. Fixed surfaces retain `FixedFriction` and `FixedRestitution`. The mode
 requires nonperiodic, single-resolution 3D, the standard symplectic or
 single-neighbor integrator, and no per-body `FloatingConstraints`. Moving
 contact surfaces are currently unsupported. Native mode requires dense stable
@@ -2104,6 +2111,46 @@ Run geometry, independent planar dynamics and GPU regressions from
 DualSPHysics timing pairs; its header documents optional reference paths.
 The reference executable needs a GenCase-generated case prefix and
 `Floating_Materials.xml` in that prefix's directory.
+
+#### Demolisher 3D
+
+[example/Demolisher3d.jl](example/Demolisher3d.jl) implements the second
+`01_Pendulum` configuration, `CaseDemolisher`: a four-arm chain with a spherical
+wrecking ball striking a wall of sixteen movable blocks. It uses the same
+direct `let` layout as `Pendulum3d.jl` and `Bathymetry2d.jl`.
+
+```sh
+julia --project=gpu_version -t 2,0 gpu_version/example/Demolisher3d.jl
+```
+
+The reference lattice has **91,319 particles**: 67,541 fixed container nodes,
+643 arm nodes, 1,839 ball nodes and 21,296 block nodes. The spacing is 0.05 m.
+Five spherical joints connect the chain, world pivot at (5,5,5.2), and ball.
+Relative weights are 1.2 for the arms/blocks and 2.5 for the ball. The run
+lasts three seconds with output every 0.01 s, Float32 physics, Float64
+positions, 32 constraint iterations and a 0.001 s rigid timestep ceiling.
+It uses the existing `SymplecticTimeStepping()` and native CUDA solver.
+
+As in the reference, only the ball, blocks and container collide. The arms
+have no collision mesh in the supplied XML and remain linked without contact.
+The ball/container use the reference steel coefficients (friction 0.45,
+restitution 0.8); blocks use soft wood (0.75, 0.5). Native contacts use particle
+samples at a full-dp distance, while the reference uses Chrono CAD contacts
+with a half-dp overlap allowance. Their collision trajectories need not be
+identical. Neither case has fluid, periodic boundaries, springs or joint damping.
+
+The default ParaView state shows the copied GenCase surfaces with coloured
+blocks and a grey ball in a Z-up overview and a tracked close view. The close
+view shows the wrecking ball's gravity (blue) and joint/contact reaction (red).
+Arrows have equal length to show direction; inspect `Body forces [N]` or the
+floating CSV for all 21 bodies' magnitudes. See [geometry provenance](example/data/demolisher/README.md)
+and the [validation report](docs/demolisher_validation.md).
+
+From `gpu_version/`, run `julia --project=. -t 2,0 test/demolisher.jl` for the
+lattice, material-pair, collision-filter, graph/direct and block-impact checks.
+`benchmark/demolisher.jl` runs warmed solver comparisons. The optional
+`benchmark/render_demolisher.py` renders the generated default state into
+PNG frames for video encoding; commands are in the validation report.
 
 #### ZipLine 3D
 

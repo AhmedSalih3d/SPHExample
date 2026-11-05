@@ -14,7 +14,7 @@ struct DeviceRigidJoint{T,TP}
 end
 
 # Greedy edge colouring: a colour never writes the same dynamic body twice.
-function rigid_edge_colours(edges)
+function rigid_edge_colours(edges; indices = eachindex(edges))
     occupied = Set{Int}[]
     groups = Vector{Int32}[]
     for (i, (a, b)) in enumerate(edges)
@@ -26,7 +26,7 @@ function rigid_edge_colours(edges)
         end
         push!(occupied[colour], a)
         b == 0 || push!(occupied[colour], b)
-        push!(groups[colour], Int32(i))
+        push!(groups[colour], Int32(indices[i]))
     end
     order, starts = Int32[], Int32[1]
     for group in groups
@@ -66,6 +66,8 @@ function attach_rigid_dynamics(f, specification::RigidBodyDynamics, particles, k
     end
     pairs = SVector{2,Int32}[]
     fixed_enabled = ones(UInt8, length(body))
+    floating_enabled = contact === nothing ? UInt8[] : ones(UInt8, Int(f.nbodies))
+    friction, restitution = T[], T[]
     if contact !== nothing
         any(==(Moving), particles.Type) && throw(ArgumentError("rigid contacts currently support static Fixed surfaces, not Moving particles"))
         if contact.fixed_groups !== nothing
@@ -77,13 +79,30 @@ function attach_rigid_dynamics(f, specification::RigidBodyDynamics, particles, k
                 fixed_enabled[group] = 1
             end
         end
+        if contact.floating_groups !== nothing
+            fill!(floating_enabled, 0)
+            for group in contact.floating_groups
+                0 < group <= length(body) && body[group] != 0 || throw(ArgumentError("unknown floating contact group $group"))
+                floating_enabled[body[group]] = 1
+            end
+        end
+        body_materials = fill((contact.friction,contact.restitution), Int(f.nbodies))
+        for (group,material) in contact.materials
+            group <= length(body) && body[group] != 0 || throw(ArgumentError("material group $group must identify a floating body"))
+            body_materials[body[group]] = (material.friction,material.restitution)
+        end
         2(contact.diameter + contact.margin) <= Float64(kernel.H) * (1 + 8eps(T)) ||
             throw(ArgumentError("contact diameter + margin must not exceed half the SPH search support"))
         for a in 1:Int(f.nbodies), b in 0:a-1
             push!(pairs, SVector{2,Int32}(a, b))
+            other = b == 0 ? (contact.fixed_friction,contact.fixed_restitution) : body_materials[b]
+            push!(friction,T(min(body_materials[a][1],other[1])))
+            push!(restitution,T(min(body_materials[a][2],other[2])))
         end
     end
-    pair_order, pair_starts, pair_colours = rigid_edge_colours([(Int(p[1]), Int(p[2])) for p in pairs])
+    all(isfinite,friction) && all(isfinite,restitution) || throw(ArgumentError("material coefficients must be representable in $T"))
+    active_pairs = findall(p -> floating_enabled[p[1]] != 0 && (p[2] == 0 || floating_enabled[p[2]] != 0),pairs)
+    pair_order, pair_starts, pair_colours = rigid_edge_colours([(Int(pairs[i][1]),Int(pairs[i][2])) for i in active_pairs]; indices = active_pairs)
     slots = 24length(pairs)
     parameters = contact === nothing ? (; distance = zero(T), search = zero(T), friction = zero(T), fixed_friction = zero(T),
         restitution = zero(T), fixed_restitution = zero(T), bounce_threshold = zero(T)) :
@@ -99,7 +118,8 @@ function attach_rigid_dynamics(f, specification::RigidBodyDynamics, particles, k
     end
     mechanics = (; joints = CuArray(joints), joint_order, joint_starts, joint_colours,
         pairs = CuArray(pairs), pair_order, pair_starts, pair_colours,
-        references = CuArray(references), fixed_enabled = CuArray(fixed_enabled), old_orientation = similar(f.orientation),
+        references = CuArray(references), fixed_enabled = CuArray(fixed_enabled), floating_enabled = CuArray(floating_enabled),
+        contact_friction = CuArray(friction), contact_restitution = CuArray(restitution), old_orientation = similar(f.orientation),
         free_velocity = similar(f.velocity), free_omega = similar(f.omega),
         half_impulse = CUDA.zeros(SVector{3,T}, Int(f.nbodies)),
         half_angular_impulse = CUDA.zeros(SVector{3,T}, Int(f.nbodies)),
@@ -229,6 +249,7 @@ function rigid_candidates_kernel!(f, d, positions, ids, groups, types, indices, 
     @inbounds i = indices[t]
     @inbounds types[i] == Frozen && return nothing
     @inbounds a = f.body[groups[i]]
+    @inbounds d.floating_enabled[a] == 0 && return nothing
     grid = load_grid(gridarg)
     xi = rigid_particle_point(f, d, positions, ids, groups, center, q, i)
     @inbounds cell = cells[i]
@@ -238,7 +259,7 @@ function rigid_candidates_kernel!(f, d, positions, ids, groups, types, indices, 
             @inbounds kind = types[j]
             @inbounds if kind == Floating || (kind == Fixed && d.fixed_enabled[groups[j]] != 0)
                 @inbounds b = f.body[groups[j]]
-                if a > b
+                if a > b && (b == 0 || d.floating_enabled[b] != 0)
                     xj = rigid_particle_point(f, d, positions, ids, groups, center, q, j)
                     delta = SVector{3,eltype(f.mass)}(xi - xj)
                     distance2 = dot(delta, delta)
@@ -306,7 +327,7 @@ function rigid_partners_kernel!(f, d, positions, ids, groups, types, cells, star
     if partner != 0
         n, gap, ra, rb = rigid_contact_geometry(f, d, positions, ids, groups, center, q, a, b, i, partner)
         vn = dot(rigid_point_velocity(velocity, omega, a, ra) - rigid_point_velocity(velocity, omega, b, rb), n)
-        restitution = b == 0 ? min(d.parameters.restitution, d.parameters.fixed_restitution) : d.parameters.restitution
+        @inbounds restitution = d.contact_restitution[pair]
         tolerance = eltype(f.mass)(1e-5) * d.parameters.distance
         imminent = gap <= max(tolerance, -vn * eltype(f.mass)(step_dt(step)))
         @inbounds d.bounce[slot] = imminent && vn < -d.parameters.bounce_threshold ? -restitution * vn : zero(vn)
@@ -377,7 +398,7 @@ end
             v1, v2 = dot(relative, t1), dot(relative, t2)
             @inbounds old = d.tangent_impulse[slot]
             candidate = old - dot(old, n) * n - ((k22 * v1 - k12 * v2) * t1 + (k11 * v2 - k12 * v1) * t2) / determinant
-            friction = b == 0 ? min(d.parameters.friction, d.parameters.fixed_friction) : d.parameters.friction
+            @inbounds friction = d.contact_friction[rigid_pair_index(a,b)]
             limit = friction * total
             magnitude = sqrt(dot(candidate, candidate))
             magnitude > limit && (candidate *= limit / magnitude)

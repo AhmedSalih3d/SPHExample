@@ -1,6 +1,6 @@
 # Included in Constraints. These host specifications are converted once into
 # device joints, local attachment offsets and a body-disjoint graph colouring.
-export BallJoint, HingeJoint, PointLineJoint, RigidContacts, RigidBodyDynamics
+export BallJoint, HingeJoint, PointLineJoint, RigidMaterial, RigidContacts, RigidBodyDynamics
 
 struct RigidJoint
     kind::UInt8
@@ -49,9 +49,27 @@ free. An off-centre attachment transfers constraint torque to the body.
 PointLineJoint(a::Integer; Point, Direction, Attachment = Point) = rigid_joint(2, a, 0, Attachment, Point, Direction)
 
 """
+    RigidMaterial(; Friction = 0.5, Restitution = 0)
+
+Contact coefficients for a floating group in `RigidContacts.Materials`.
+Pair coefficients use the smaller value from the two contacting materials.
+"""
+struct RigidMaterial
+    friction::Float64
+    restitution::Float64
+    function RigidMaterial(; Friction = 0.5, Restitution = 0)
+        f, e = Float64(Friction), Float64(Restitution)
+        isfinite(f) && f >= 0 && isfinite(e) && 0 <= e <= 1 ||
+            throw(ArgumentError("rigid material requires finite friction >= 0 and restitution in [0,1]"))
+        new(f,e)
+    end
+end
+
+"""
     RigidContacts(; ParticleDiameter, Friction = 0.5, FixedFriction = Friction,
         Restitution = 0, FixedRestitution = Restitution, Slop = 0,
-        Margin = ParticleDiameter, BounceThreshold = 0.01, FixedGroups = nothing)
+        Margin = ParticleDiameter, BounceThreshold = 0.01, FixedGroups = nothing,
+        FloatingGroups = nothing, Materials = ())
 
 Native particle-sampled rigid contacts. Distinct bodies and static `Fixed`
 particles collide; same-body particles and fluid are excluded. The minimum
@@ -62,6 +80,11 @@ the two material coefficients. Fixed surfaces use the `Fixed*` coefficients.
 `BounceThreshold` suppresses restitution below that incident normal speed.
 `FixedGroups = nothing` enables all fixed groups; a tuple restricts contacts
 to those fixed markers, allowing other fixed particles to be visual guides.
+`FloatingGroups = nothing` enables all floating groups; a tuple restricts
+contacts to the selected bodies without disabling their joints or fluid coupling.
+`Materials = (group => RigidMaterial(...), ...)` overrides floating-group
+coefficients. Other bodies use `Friction`/`Restitution`; fixed surfaces retain
+`FixedFriction`/`FixedRestitution`. Material mixing occurs once during setup.
 
 Particle contact represents the sampled geometry, not the original CAD mesh.
 Use spacing/convergence checks when comparing with mesh-contact solvers.
@@ -76,11 +99,14 @@ struct RigidContacts
     margin::Float64
     bounce_threshold::Float64
     fixed_groups::Union{Nothing,Tuple}
+    floating_groups::Union{Nothing,Tuple}
+    materials::Tuple
 end
 
 function RigidContacts(; ParticleDiameter, Friction = 0.5, FixedFriction = Friction,
         Restitution = 0, FixedRestitution = Restitution, Slop = 0,
-        Margin = ParticleDiameter, BounceThreshold = 0.01, FixedGroups = nothing)
+        Margin = ParticleDiameter, BounceThreshold = 0.01, FixedGroups = nothing,
+        FloatingGroups = nothing, Materials = ())
     values = Float64.((ParticleDiameter, Friction, FixedFriction, Restitution, FixedRestitution, Slop, Margin, BounceThreshold))
     all(isfinite, values) || throw(ArgumentError("contact parameters must be finite"))
     d, f, ff, e, ef, s, m, b = values
@@ -88,8 +114,17 @@ function RigidContacts(; ParticleDiameter, Friction = 0.5, FixedFriction = Frict
         throw(ArgumentError("contact diameter must be positive, 0 <= slop < diameter, restitution in [0,1], and friction, margin and bounce threshold nonnegative"))
     fixed_groups = FixedGroups === nothing ? nothing : Tuple(Int.(FixedGroups))
     fixed_groups === nothing || all(>(0), fixed_groups) || throw(ArgumentError("FixedGroups must contain positive group markers"))
-    return RigidContacts(values..., fixed_groups)
+    floating_groups = FloatingGroups === nothing ? nothing : Tuple(Int.(FloatingGroups))
+    floating_groups === nothing || all(>(0), floating_groups) || throw(ArgumentError("FloatingGroups must contain positive group markers"))
+    materials = Tuple(Materials)
+    all(p -> p isa Pair && first(p) isa Integer && first(p) > 0 && last(p) isa RigidMaterial, materials) ||
+        throw(ArgumentError("Materials must contain positive floating group markers paired with RigidMaterial"))
+    length(unique(first.(materials))) == length(materials) || throw(ArgumentError("duplicate material group"))
+    return RigidContacts(values..., fixed_groups, floating_groups, materials)
 end
+
+# Preserve the original positional construction with uniform materials.
+RigidContacts(d,f,ff,e,ef,s,m,b,groups) = RigidContacts(d,f,ff,e,ef,s,m,b,groups,nothing,())
 
 """
     RigidBodyDynamics(; Joints = (), Contacts = nothing, Iterations = 32, MaxTimeStep = nothing)

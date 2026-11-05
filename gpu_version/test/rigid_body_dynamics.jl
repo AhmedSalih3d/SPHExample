@@ -25,6 +25,14 @@ end
     @test_throws ArgumentError RigidContacts(ParticleDiameter = 0)
     @test_throws ArgumentError RigidContacts(ParticleDiameter = 1, Slop = 1)
     @test_throws ArgumentError RigidContacts(ParticleDiameter = 1, Friction = -1)
+    @test_throws ArgumentError RigidMaterial(Friction = -1)
+    @test_throws ArgumentError RigidMaterial(Restitution = 1.1)
+    @test_throws ArgumentError RigidContacts(ParticleDiameter = 1, FloatingGroups = (0,))
+    @test_throws ArgumentError RigidContacts(ParticleDiameter = 1, Materials = (1 => 0.5,))
+    @test_throws ArgumentError RigidContacts(ParticleDiameter = 1,
+        Materials = (1 => RigidMaterial(),1 => RigidMaterial()))
+    uniform = RigidContacts(ParticleDiameter = 0.1)
+    @test RigidContacts(0.1,0.5,0.5,0.,0.,0.,0.1,0.01,nothing) == uniform
     @test_throws ArgumentError RigidBodyDynamics(Iterations = 0)
     @test_throws ArgumentError RigidBodyDynamics(MaxTimeStep = 0)
     @test_throws ArgumentError RigidBodyDynamics(MaxTimeStep = Inf)
@@ -259,6 +267,26 @@ if CUDA.functional()
             @test state.velocity[2] ≈ SVector(0.8, 0., 0.) atol = 1e-3
             @test maximum(norm, state.omega) < 1e-3
             @test state.center[1][1] ≈ -0.14 atol = 0.004
+        end
+    end
+
+    @testset "per-group contact materials and collision selection" begin
+        geometry = [SPHGeometry{3,Float64}(cube((x,0,1);spacing = 0.1);
+            Density = 1000, GroupMarker = b, Type = Floating,
+            Floating = FloatingDetails{Float64}(RelativeWeight = 1, InitialVelocity = (b == 1 ? 1. : -1.,0.,0.)))
+            for (b,x) in enumerate((-0.25,0.25))]
+        for selected in (nothing,(1,))
+            contacts = RigidContacts(ParticleDiameter = 0.1, Friction = 0, Restitution = 0.9,
+                FloatingGroups = selected, Materials = (1 => RigidMaterial(Friction = 0, Restitution = 0.2),))
+            mktempdir() do directory
+                result = simulate(geometry,RigidBodyDynamics(Contacts = contacts,Iterations = 48,MaxTimeStep = 0.002),
+                    directory; duration = 0.3, dx = 0.1, gravity = 0, graph = true)
+                state = result.final_state.floating
+                expected = selected === nothing ? -0.2 : 1.0
+                @test state.velocity[1] ≈ SVector(expected,0.,0.) atol = 1e-3
+                @test state.velocity[2] ≈ SVector(-expected,0.,0.) atol = 1e-3
+                @test norm(sum(state.velocity)) < 1e-9
+            end
         end
     end
 
