@@ -9,6 +9,23 @@ and laminar+SPS viscosity, all density diffusion models, dynamic and mDBC
 boundary conditions, particle shifting, prescribed motion of bodies) is
 supported in 2D and 3D, in `Float64` or `Float32`.
 
+## Recirculating flow from CaseRZ_Flow2D
+
+[`example/RZFlow2d.jl`](example/RZFlow2d.jl) adapts the DualSPHysics video case:
+water circulates around an L-shaped barrier in a 1.3 m tank, driven by a
+submerged uniform-flow relaxation zone with a time-varying target velocity.
+The geometry is generated in Julia; no CSV inputs are required.
+
+```bash
+julia --project=gpu_version -t 2,0 gpu_version/example/RZFlow2d.jl
+```
+
+See the [case guide](example/RZFlow2d/README.md) for reference dimensions,
+output paths, customization and numerical differences. `UniformFlowZone`
+can also be passed to `RunSimulation` through `SimDamping`, alone or alongside
+ordinary damping zones. It blends accepted fluid velocities towards the
+interpolated target; boundaries and floating bodies are unchanged.
+
 ## Requirements
 
 * An NVIDIA GPU with a recent driver (CUDA 12 or newer). The CUDA toolkit is

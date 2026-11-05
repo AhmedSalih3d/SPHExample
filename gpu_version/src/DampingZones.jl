@@ -4,9 +4,9 @@ using CUDA
 using StaticArrays
 using LinearAlgebra: norm, dot
 using ..SimulationGeometry: Fluid
-using ..GPUStepState: step_active, step_dt, step_particle_count
+using ..GPUStepState: step_active, step_dt, step_time, step_particle_count
 
-export DampingZone, DampingBox, DampingCylinder
+export DampingZone, DampingBox, DampingCylinder, UniformFlowZone
 
 """
     DampingZone(limit_min, limit_max; overlimit = 1, rate = 10, factors = ones(D))
@@ -182,7 +182,7 @@ function prepare_damping(zones, ::Val{D}) where {D}
         throw(ArgumentError("SimDamping requires damping-zone values"))
     end
     all(zone -> zone isa AbstractDampingZone{D}, result) ||
-        throw(ArgumentError("SimDamping requires $D-dimensional DampingZone, DampingBox, or DampingCylinder values"))
+        throw(ArgumentError("SimDamping requires $D-dimensional damping or uniform-flow zones"))
     return result
 end
 
@@ -237,13 +237,19 @@ end
     return 0.0
 end
 
-@inline function damped_velocity(zones::Tuple, position, velocity::SVector{D,T}, kind, dt) where {D,T}
+include("UniformFlowZones.jl")
+
+@inline function zone_velocity(zone::AbstractDampingZone, position, velocity::SVector{D,T}, dt, time) where {D,T}
+    profile = normalized_damping(zone, position)
+    profile == 0 && return velocity
+    reduction = Float64(dt) * zone.rate * profile
+    return SVector{D,T}(velocity .* max.(0.0, 1.0 .- reduction .* zone.factors))
+end
+
+@inline function damped_velocity(zones::Tuple, position, velocity::SVector{D,T}, kind, dt, time = 0.0) where {D,T}
     kind == Fluid || return velocity
     for zone in zones
-        profile = normalized_damping(zone, position)
-        profile == 0 && continue
-        reduction = Float64(dt) * zone.rate * profile
-        velocity = SVector{D,T}(velocity .* max.(0.0, 1.0 .- reduction .* zone.factors))
+        velocity = zone_velocity(zone, position, velocity, dt, time)
     end
     return velocity
 end
@@ -253,7 +259,7 @@ function damping_kernel!(zones, position, velocity, types, step, n)
     n = step_particle_count(step,n)
     i = (blockIdx().x - 1) * blockDim().x + threadIdx().x
     if i <= n
-        @inbounds velocity[i] = damped_velocity(zones, position[i], velocity[i], types[i], step_dt(step))
+        @inbounds velocity[i] = damped_velocity(zones, position[i], velocity[i], types[i], step_dt(step), step_time(step) + step_dt(step))
     end
     return nothing
 end

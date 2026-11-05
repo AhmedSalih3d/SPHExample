@@ -1721,8 +1721,8 @@ half time. The single-neighbor scheme carries the previous evaluated total
 acceleration into its next predictor. Gravity is applied once and the final
 total acceleration participates in the adaptive timestep reduction.
 
-`SimDamping` accepts `DampingZone`, `DampingBox`, or `DampingCylinder` values,
-individually or in a tuple/vector. Completed fluid velocities are reduced at
+`SimDamping` accepts `DampingZone`, `DampingBox`, `DampingCylinder`, or `UniformFlowZone` values,
+individually or in a tuple/vector. Completed fluid velocities are damped or relaxed at
 their accepted positions after integration; boundaries, floating bodies and
 frozen particles are unchanged. This works with both CPU-style schemes, CUDA
 graphs and `DualSPHysicsSymplectic`.

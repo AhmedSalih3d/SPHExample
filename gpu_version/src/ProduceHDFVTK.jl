@@ -34,7 +34,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     using ..SimulationMetaDataConfiguration: SimulationMetaData, NoMDBC, UpdatedMDBC
     using ..SimulationConstantsConfiguration: SimulationConstants
     using ..SimulationEquations: EquationOfStateGamma7, particle_pressure
-    using ..DampingZones: DampingZone, DampingBox, DampingCylinder, normalized_damping
+    using ..DampingZones: DampingZone, DampingBox, DampingCylinder, UniformFlowZone, normalized_damping
     using ..SPHMeasurements: MeasurementConfig, has_measurements,
         resolve_measurements, MeasurementWriter, append_measurements!,
         flush_measurements!, measurement_block_names, MeasurementBlock,
@@ -2023,6 +2023,27 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                "rate=$(zone.rate), factors=$(Tuple(zone.factors))"
     end
 
+    function _damping_zone_parameters(zone::UniformFlowZone, index)
+        return "$index: uniform flow box=$(Tuple(zone.lower))..$(Tuple(zone.upper)), " *
+               "direction=$(Tuple(zone.direction)), times=$(zone.times), speeds=$(zone.speeds), " *
+               "coefdt=$(zone.coefdt), psi=$(zone.psi), beta=$(zone.beta)"
+    end
+
+    function _append_flow_profile!(points, connectivity, offsets, weights, zone_ids,
+            zone::UniformFlowZone{D}, zone_id) where D
+        center = (zone.lower + zone.upper) / 2
+        curve = Int[]
+        for fraction in range(0.0, 1.0; length = 65)
+            point = setindex(center,
+                zone.lower[zone.axis] + fraction * (zone.upper[zone.axis] - zone.lower[zone.axis]),
+                zone.axis)
+            push!(curve, _append_damping_point!(points, zone_ids, _damping_point3(point), zone_id))
+            push!(weights, normalized_damping(zone, point))
+        end
+        _append_damping_line!(connectivity, offsets, curve)
+        return nothing
+    end
+
     function _points_matrix(points::Vector{SVector{3, Float64}})
         matrix = Matrix{Float64}(undef, 3, length(points))
         for (index, point) in enumerate(points)
@@ -2051,7 +2072,18 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         fallback_width = Float64(kernel.H)
 
         for (zone_id, zone) in enumerate(zones)
-            if zone isa DampingZone
+            if zone isa UniformFlowZone
+                length(zone.lower) == dimension ||
+                    throw(DimensionMismatch("uniform flow dimension must match the simulation"))
+                _append_box_wireframe!(
+                    zone_points, zone_connectivity, zone_offsets, zone_ids, zone_weights,
+                    zone, zone_id, zone.lower, zone.upper,
+                )
+                _append_flow_profile!(
+                    profile_points, profile_connectivity, profile_offsets,
+                    profile_weights, profile_zone_ids, zone, zone_id,
+                )
+            elseif zone isa DampingZone
                 length(zone.origin) == dimension ||
                     throw(DimensionMismatch("damping zone dimension must match the simulation"))
                 basis, bounds = _append_zone_wireframe!(
@@ -2093,7 +2125,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             [_damping_zone_parameters(zone, index) for (index, zone) in enumerate(zones)],
             "\n",
         )
-        intensity_definition = all(zone -> zone isa DampingZone, zones) ?
+        intensity_definition = any(zone -> zone isa UniformFlowZone, zones) ?
+            "Uniform flow uses a normalized double-tanh blending profile; damping zones use squared ramps." :
+            all(zone -> zone isa DampingZone, zones) ?
             "NormalizedDamping = min(s / length, 1)^2" :
             "NormalizedDamping is the squared, clamped ramp defined by each zone."
         zone_attributes = Pair{String, Any}[
@@ -2106,9 +2140,10 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         ]
         profile_attributes = Pair{String, Any}[
             "CoordinateDimension" => Int32(dimension),
-            "Definition" =>
-                "Profiles show each zone's normalized squared ramp. The velocity " *
-                "multiplier is max(0, 1 - dt * rate * profile * factors[d]).",
+            "Definition" => intensity_definition *
+                " Damping multiplies velocity by max(0, 1 - dt * rate * profile * factors[d]); " *
+                "uniform flow blends towards its target with min(1, dt * coefdt * profile), " *
+                "or profile directly when coefdt is zero.",
             "ReferenceLines" => "NormalizedDamping = 0 and 1",
             "ZoneParameters" => zone_parameters,
         ]

@@ -1107,7 +1107,7 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
             x += (vₙ⁺ * dt) * ML
         end
         Position[i] = x
-        v = damped_velocity(damping, x, v, type, dt)
+        v = damped_velocity(damping, x, v, type, dt, step_time(step) + dt)
         Velocity[i] = v
         store_pos_cell!(PosCells, i, x, CellID, gridarg, SimKernel.H)
         # Keep SimpleMDBC output and the next step's correction at the accepted pose.

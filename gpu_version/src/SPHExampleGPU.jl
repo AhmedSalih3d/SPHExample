@@ -80,7 +80,7 @@ module SPHExampleGPU
     export ExternalForce, external_acceleration
 
     using .DampingZones
-    export DampingZone, DampingBox, DampingCylinder
+    export DampingZone, DampingBox, DampingCylinder, UniformFlowZone
 
     using .PrescribedRotation
     export RotationMotion, rotation_state, rotation_position
