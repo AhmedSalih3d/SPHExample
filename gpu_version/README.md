@@ -2065,6 +2065,46 @@ field is zero; it cannot show gravity or these native reactions.
 translation residuals in metres and hinge-axis residuals in radians. This is
 an output-time download; no body state is downloaded during each solve.
 
+#### Pendulum 3D
+
+[example/Pendulum3d.jl](example/Pendulum3d.jl) reproduces DualSPHysics 5.4
+`examples/chrono/01_Pendulum/CasePendulum`, using the same direct `let` layout
+as `Bathymetry2d.jl`. It has **7,852 particles** at dp = 0.05 m: 7,200 fixed
+floor nodes and four rigid arms containing 161, 161, 161 and 169 nodes.
+Four spherical joints connect the arms and the analytical world pivot at
+(5,5,5). There is no fluid, contact, periodicity or joint damping, matching
+the reference's collision-free configuration. The run lasts six seconds,
+with output every 0.01 s. This implements `CasePendulum`, not the separate
+`CaseDemolisher` in the same upstream folder.
+
+```sh
+julia --project=gpu_version -t 2,0 gpu_version/example/Pendulum3d.jl
+```
+
+The example uses the existing `SymplecticTimeStepping()`; set
+`time_stepping = SingleNeighborTimeStepping()` to use the existing carried
+derivative scheme. Bilateral joint predictor impulses are scaled from the
+half step to the full midpoint corrector, including the reported reactions.
+No additional time stepping API or Chrono dependency is introduced. All
+joint iterations and body updates stay on CUDA. The example uses Float64
+physics and positions, 48 constraint iterations and a 0.001 s native
+timestep ceiling; the controller may reduce that ceiling during fast motion.
+Double precision limits accumulated projection noise in this undamped chain.
+
+The moving cylinder meshes and container are copied from GenCase's actual
+indexed surface geometry. The generated default ParaView state has a Z-up
+overview, a tracked detail view and visible blue gravity/red reaction arrows.
+The pivot sphere is a visual guide. See [geometry provenance and force
+interpretation](example/data/pendulum/README.md) and the
+[validation report](docs/pendulum_validation.md).
+
+Run geometry, independent planar dynamics and GPU regressions from
+`gpu_version/` with `julia --project=. -t 2,0 test/pendulum.jl`.
+`benchmark/pendulum.jl` performs whole-path warm-up and alternating native /
+DualSPHysics timing pairs; its header documents optional reference paths.
+The reference executable needs a GenCase-generated case prefix and
+`Floating_Materials.xml` in that prefix's directory.
+
 #### ZipLine 3D
 
 [example/ZipLine3d.jl](example/ZipLine3d.jl) follows the direct `let`-block

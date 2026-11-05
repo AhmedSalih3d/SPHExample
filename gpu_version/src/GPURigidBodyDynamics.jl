@@ -491,8 +491,11 @@ function rigid_project_kernel!(f, d, positions, ids, groups, center, q, velocity
     else
         rigid_project_iterations!(working_f, d, positions, ids, groups, working_center, working_q, working_velocity, working_omega, step, Val(false))
     end
-    # Carry predictor impulses into the corrector's base velocity. An impact
-    # in the predictor must not be undone by a pre-impact corrector velocity.
+    # A bilateral predictor impulse is a half-step constraint acceleration:
+    # the midpoint corrector needs twice that impulse over the full step.
+    # Carrying it only once introduces first-order damping in pendulums.
+    # Contact-enabled solves retain the existing single-application impact treatment.
+    predictor_scale = d.has_contacts ? one(eltype(f.mass)) : eltype(f.mass)(2)
     b = thread
     while b <= f.nbodies
         @inbounds begin
@@ -507,9 +510,9 @@ function rigid_project_kernel!(f, d, positions, ids, groups, center, q, velocity
                 d.reaction_force[b] = (impulse + d.half_impulse[b]) / eltype(f.mass)(step_dt(step))
                 d.reaction_torque[b] = (angular + d.half_angular_impulse[b]) / eltype(f.mass)(step_dt(step))
             else
-                d.half_impulse[b], d.half_angular_impulse[b] = impulse, angular
-                f.velocity[b] += velocity[b] - d.free_velocity[b]
-                f.omega[b] += omega[b] - d.free_omega[b]
+                d.half_impulse[b], d.half_angular_impulse[b] = predictor_scale * impulse, predictor_scale * angular
+                f.velocity[b] += predictor_scale * (velocity[b] - d.free_velocity[b])
+                f.omega[b] += predictor_scale * (omega[b] - d.free_omega[b])
             end
         end
         b += blockDim().x

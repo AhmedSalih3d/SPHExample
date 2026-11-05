@@ -157,6 +157,8 @@ if CUDA.functional()
                 @test state.velocity[1] ≈ SVector(1., 0., -1.) * (9.81time / 2) atol = 1e-8
                 @test norm(state.omega[1]) < 1e-9
                 @test state.orientation[1] ≈ SVector(1., 0., 0., 0.) atol = 1e-9
+                mass = 1000 * 0.05^3 * length(geometry[1].Particles)
+                @test result.final_state.rigid.reaction_force[1] ≈ mass * SVector(9.81/2,0.,9.81/2) atol = 1e-8
                 @test ceiling === nothing || result.performance.steps < 55
             end
         end
