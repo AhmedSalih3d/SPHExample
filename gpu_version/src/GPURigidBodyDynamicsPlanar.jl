@@ -63,8 +63,8 @@ function attach_planar_rigid_dynamics(f,specification,particles,kernel;gravity =
         iterations = specification.iterations,contacts = false,precision = nameof(T),position_precision = nameof(TP),
         solid_interactions = :native_constraints,max_timestep = specification.max_timestep)
     gravity_force = CuArray([SVector{2,T}(0,-T(gravity)*mass) for mass in Array(f.mass)])
-    return merge(f,(;mechanics,rigid_configuration = configuration,constraint_force = mechanics.reaction_force,
-        constraint_torque = mechanics.reaction_torque,gravity_force))
+    return attach_rigid_torsions(merge(f,(;mechanics,rigid_configuration = configuration,constraint_force = mechanics.reaction_force,
+        constraint_torque = mechanics.reaction_torque,gravity_force)),specification)
 end
 
 @inline planar_inverse_inertia(f,b,step) = b == 0 || rigid_mobility(f,b,step) == 0 ? zero(eltype(f.mass)) : @inbounds(f.inertia_inv[b])

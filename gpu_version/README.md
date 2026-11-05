@@ -2157,6 +2157,26 @@ lattice, material-pair, collision-filter, graph/direct and block-impact checks.
 `benchmark/render_demolisher.py` renders the generated default state into
 PNG frames for video encoding; commands are in the validation report.
 
+#### Flexible gate 2D
+
+[example/FlexibleGate2d.jl](example/FlexibleGate2d.jl) implements the reference
+`chrono/03_FlexibleGate` dam release with five elastic hinged blocks. The
+4,489-particle GenCase layout, initial densities, 0.8 relative body weight,
+750 Nm/rad torsional stiffness and 50 Nms/rad damping are preserved. Native
+CUDA torsional loads augment the existing floating predictor/corrector and
+limit its timestep for stiffness/damping stability. No Chrono library or
+additional integration scheme is used.
+
+```sh
+julia --project=gpu_version -t 2,0 gpu_version/example/FlexibleGate2d.jl
+julia --project=gpu_version -t 2,0 gpu_version/test/rigid_torsions.jl
+julia --project=gpu_version -t 2,0 gpu_version/test/flexible_gate.jl
+```
+
+The example writes original indexed CAD surfaces and a default ParaView state
+with fluid speed, time and labelled force directions. See
+[validation and reproduction](docs/flexible_gate_validation.md).
+
 #### Pelamis 2D
 
 [example/Pelamis2d.jl](example/Pelamis2d.jl) implements DualSPHysics 5.4

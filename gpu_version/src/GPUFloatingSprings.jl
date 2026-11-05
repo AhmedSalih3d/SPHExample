@@ -50,6 +50,7 @@ end
 
 "Add spring forces and torques at the full state or predictor state, on CUDA."
 function launch_floating_springs!(f,step,half::Bool)
+    launch_floating_torsions!(f,step,half)
     isempty(f.springs) && return nothing
     D = floating_dimension(f.center)
     orientation = D == 2 ? f.angle : (half ? f.orientation_half : f.orientation)

@@ -271,7 +271,7 @@ Centre and velocity of every body (synchronizes). In 2D, also returns the
 scalar `angle` and `omega`; in 3D, returns the scalar-first quaternion
 `orientation` and vector `omega`.
 `load_force` and `load_torque` retain the last evaluated body loads before the
-accumulator is cleared: fluid interactions plus springs, excluding gravity and
+accumulator is cleared: fluid interactions plus spring and torsional loads, excluding gravity and
 constraint reactions. Torque is about the evaluated centre of mass, in world
 coordinates. Correctors retain half-state loads; startup/rebuild derivatives
 retain full-state loads. They are zero until the first evaluation.
@@ -770,5 +770,6 @@ end
 
 include("GPURigidBodyDynamics.jl")
 include("GPURigidBodyDynamicsPlanar.jl")
+include("GPURigidTorsions.jl")
 
 end # module GPUFloating

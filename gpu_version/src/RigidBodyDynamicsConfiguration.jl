@@ -9,6 +9,9 @@ struct RigidJoint
     attachment::SVector{3,Float64}
     anchor::SVector{3,Float64}
     axis::SVector{3,Float64}
+    stiffness::Float64
+    damping::Float64
+    rest_angle::Float64
 end
 
 function rigid_joint(kind, a, b, attachment, anchor, axis)
@@ -18,7 +21,7 @@ function rigid_joint(kind, a, b, attachment, anchor, axis)
     scale = maximum(abs, d)
     scale > 0 || throw(ArgumentError("joint axis must be nonzero"))
     d /= scale
-    return RigidJoint(UInt8(kind), Int(a), Int(b), p, q, d / sqrt(dot(d, d)))
+    return RigidJoint(UInt8(kind), Int(a), Int(b), p, q, d / sqrt(dot(d, d)),0.,0.,0.)
 end
 
 """
@@ -31,13 +34,24 @@ Marker zero denotes the fixed world. Solved on the GPU with `RigidBodyDynamics`.
 BallJoint(a::Integer, b::Integer = 0; Anchor) = rigid_joint(0, a, b, Anchor, Anchor, (0, 0, 1))
 
 """
-    HingeJoint(body_a, body_b = 0; Anchor, Axis)
+    HingeJoint(body_a, body_b = 0; Anchor, Axis, Stiffness = 0, Damping = 0, RestAngle = 0)
 
 Join two floating markers at `Anchor`, permitting only relative rotation about
 the initial world-space `Axis`. Unlike `FloatingConstraints.HingePoint`, both
-bodies may move. Marker zero denotes the fixed world.
+bodies may move. Marker zero denotes the fixed world. Optional torsional
+stiffness (Nm/rad) and damping (Nms/rad) apply equal and opposite torques
+through the existing floating integrator. `RestAngle` is the signed relative
+rotation in radians about `Axis` from the initial pose. In 3D the elastic
+angle uses the principal twist, so elastic motion must remain within pi radians.
+The spring/damping stability bound also limits the existing SPH timestep.
 """
-HingeJoint(a::Integer, b::Integer = 0; Anchor, Axis) = rigid_joint(1, a, b, Anchor, Anchor, Axis)
+function HingeJoint(a::Integer, b::Integer = 0; Anchor, Axis, Stiffness = 0, Damping = 0, RestAngle = 0)
+    joint = rigid_joint(1,a,b,Anchor,Anchor,Axis)
+    k,c,theta = Float64.((Stiffness,Damping,RestAngle))
+    isfinite(k) && k >= 0 && isfinite(c) && c >= 0 && isfinite(theta) ||
+        throw(ArgumentError("hinge stiffness/damping must be finite and nonnegative, and RestAngle finite"))
+    return RigidJoint(joint.kind,joint.body_a,joint.body_b,joint.attachment,joint.anchor,joint.axis,k,c,theta)
+end
 
 """
     PointLineJoint(body; Point, Direction, Attachment = Point)

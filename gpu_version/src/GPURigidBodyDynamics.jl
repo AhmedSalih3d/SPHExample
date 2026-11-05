@@ -139,8 +139,8 @@ function attach_rigid_dynamics(f, specification::RigidBodyDynamics, particles, k
         solid_interactions = :native_constraints_and_contacts, max_timestep = specification.max_timestep,
         cache_velocity_inertia = true)
     gravity_force = CuArray([SVector{3,T}(0, 0, -T(gravity) * mass) for mass in Array(f.mass)])
-    return merge(f, (; mechanics, rigid_configuration = configuration,
-        constraint_force = mechanics.reaction_force, constraint_torque = mechanics.reaction_torque, gravity_force))
+    return attach_rigid_torsions(merge(f, (; mechanics, rigid_configuration = configuration,
+        constraint_force = mechanics.reaction_force, constraint_torque = mechanics.reaction_torque, gravity_force)),specification)
 end
 
 struct NativeRigidTimeStep{B,R,T}
