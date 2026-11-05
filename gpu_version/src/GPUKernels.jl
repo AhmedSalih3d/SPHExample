@@ -387,7 +387,8 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                              ::Val{FlagKernel}, ::Val{FlagShift}, ::Val{BoundaryForces}, ::Val{K},
                              boundary_data, InvDensity, Pressure, n::Int32, ::Val{Radial} = Val(false), ::Val{ScalarSPS} = Val(false),
                              ::Val{FrozenParticles} = Val(true), ::Val{IncludeGravity} = Val(false), periodicity = nothing,
-                             periodic_bounds = nothing, viscous_dt = nothing, ::Val{FastMath}=Val(false), target_indices=nothing, pair_order=nothing) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath}
+                             periodic_bounds = nothing, viscous_dt = nothing, ::Val{FastMath}=Val(false), target_indices=nothing, pair_order=nothing,
+                             ::Val{NativeRigid}=Val(false)) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath, NativeRigid}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -450,7 +451,8 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         diffusion_blocked |= !SimDensityDiffusion.full && xᵢⱼ² <= H² && is_wall(ParticleType[j])
                     end
                     skip_wall_pair = viscous_dt !== nothing && wallᵢ && is_wall(ParticleType[j])
-                    if xᵢⱼ² <= H² && boundary_enabled(boundary_data, slotⱼ) && !skip_wall_pair
+                    skip_solid_pair = NativeRigid && typeᵢ != Fluid && ParticleType[j] != Fluid
+                    if xᵢⱼ² <= H² && boundary_enabled(boundary_data, slotⱼ) && !skip_wall_pair && !skip_solid_pair
                         dᵢⱼ   = sqrt(xᵢⱼ²)
                         q     = dᵢⱼ * h⁻¹ # in [0, 2]: the guard above enforces xᵢⱼ² <= H² = (2h)²
                         if Radial || viscous_dt !== nothing
@@ -663,7 +665,8 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
                               periodic_bounds = nothing, periodic_cell_coordinates::Bool = false, viscous_dt = nothing,
                               fast_math::Bool = false,
                               always_inline::Bool = true, fastmath::Bool = true,
-                              target_indices = nothing, target_count::Integer = length(Position), pair_order = nothing)
+                              target_indices = nothing, target_count::Integer = length(Position), pair_order = nothing,
+                              native_rigid::Val = Val(false))
     inverse_density === nothing || length(inverse_density) == length(Density) ||
         throw(DimensionMismatch("Reciprocal cache must have one entry per evaluated density"))
     pressure === nothing || length(pressure) == length(Density) ||
@@ -695,7 +698,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
         Pairs, Position, Density, Velocity, ParticleType, SimParticles,
         CellStart, CellID, grid, step,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math), target_indices, pair_order)
+        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math), target_indices, pair_order, native_rigid)
     return nothing
 end
 
@@ -1203,7 +1206,7 @@ end
 # flag when the output time is reached (before computing anything) or when
 # the accumulated displacement bound requires a cell list rebuild.
 function finish_kernel!(step::DeviceStep{T}, partial, nblocks::Int32, CFL::T, c₀::T, h::T,
-                        diagnostic_partial, diagnostic_result, stage_sampler,dt_limit) where {T}
+                        diagnostic_partial, diagnostic_result, stage_sampler,dt_limit, timestep_controller = nothing) where {T}
     f = step.f
     s = step.i
     @inbounds begin
@@ -1235,7 +1238,7 @@ function finish_kernel!(step::DeviceStep{T}, partial, nblocks::Int32, CFL::T, c�
         @inbounds begin
             visc = r[1]
             dt1  = r[2]
-            dt   = min(Float64(CFL * min(dt1, h / (c₀ + visc))),dt_limit)
+            dt   = min(Float64(GPUStepState.controlled_timestep(timestep_controller, CFL * min(dt1, h / (c₀ + visc)))),dt_limit)
             if s[I_CLIP_OUTPUT] != 0
                 dt = min(dt, f[F_TOUT] - f[F_TIME])
             end
@@ -1269,12 +1272,12 @@ after an active timestep is ready, including the resumed rebuild path.
 their stability limit here. The default `Inf` retains the usual criterion.
 """
 function launch_finish!(state::StepState{T}, red::ReductionWorkspace{SVector{3, T}}, SimKernel,
-                        SimConstants; diagnostics = nothing, stage_sampler = nothing,dt_limit=Inf) where {T}
+                        SimConstants; diagnostics = nothing, stage_sampler = nothing,dt_limit=Inf, timestep_controller=nothing) where {T}
     diagnostic_partial = diagnostics === nothing ? nothing : diagnostics.reduction.partial
     diagnostic_result = diagnostics === nothing ? nothing : diagnostics.result
     @cuda threads=REDUCE_THREADS blocks=1 finish_kernel!(state, red.partial, Int32(red.nblocks),
                                                         T(SimConstants.CFL), T(SimConstants.c₀),
-                                                        T(SimKernel.h), diagnostic_partial, diagnostic_result, stage_sampler,Float64(dt_limit))
+                                                        T(SimKernel.h), diagnostic_partial, diagnostic_result, stage_sampler,Float64(dt_limit),timestep_controller)
     return nothing
 end
 

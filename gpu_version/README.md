@@ -1983,6 +1983,108 @@ Both runs rebuilt 23 times; the final body centres differed by 0.000378 m
 at 0.2 s simulated time. The physics and graph tests cover both schemes, including
 pause/release, buoyancy, rigid placement, and 3D gyroscopic derivatives.
 
+#### Native coupled joints and rigid contacts
+
+`SimRigidBodyDynamics` enables coupled rigid mechanics entirely on CUDA. It
+adds ball joints, revolute hinges and a point sliding along a fixed line,
+plus unilateral particle contacts with restitution and Coulomb friction.
+No Chrono installation, library or host constraint solve is used. Existing
+floating bodies and fixed-anchor springs remain available.
+
+```julia
+mechanics = RigidBodyDynamics(
+    Joints = (
+        BallJoint(3, 4; Anchor = (0, 0, 1)),
+        HingeJoint(4, 5; Anchor = (0, 0, 0.5), Axis = (0, 1, 0)),
+        PointLineJoint(3; Point = (0, 0, 1), Direction = (1, 0, -1)),
+    ),
+    Contacts = RigidContacts(ParticleDiameter = dx,
+        Friction = 0.75, FixedFriction = 0.45, Restitution = 0.5),
+    Iterations = 32,
+)
+# Pass SimRigidBodyDynamics = mechanics to RunSimulation.
+```
+
+Joint body numbers are floating `GroupMarker`s; zero denotes the fixed world.
+Anchors and axes are initial world coordinates. A point-line joint permits
+translation along the infinite line and unrestricted rotation; its optional
+`Attachment` is the body's initial attachment point. An off-centre attachment
+transfers torque. A ball constrains three translations, and a hinge also
+aligns two rotation axes. Both predictor and corrector project positions and
+velocities. Body-disjoint graph colours prevent competing body writes. Small
+systems cache body state in shared memory; larger systems use global memory.
+This implementation targets small articulated systems, with one CUDA block
+for the iterative solve and quadratic body-pair storage for contact manifolds.
+
+In this opt-in mode native mechanics owns solid-solid interactions: ordinary
+SPH solid-solid pressure/viscosity pairs are excluded even if `Contacts=nothing`.
+Fluid interactions retain their SPH coupling. Distinct rigid bodies and static
+`Fixed` groups can contact; particles belonging to one body never self-collide.
+`FixedGroups=(...)` restricts contact to selected fixed markers. The mode
+requires nonperiodic, single-resolution 3D, the standard symplectic or
+single-neighbor integrator, and no per-body `FloatingConstraints`. Moving
+contact surfaces are currently unsupported. Native mode requires dense stable
+particle IDs `1:N`; references remain keyed by ID across cell sorting.
+
+Contact uses particle centres separated by `ParticleDiameter-Slop`, with
+candidates extending to `ParticleDiameter+Margin`. This search radius must
+not exceed half the SPH kernel support. Up to 24 contact samples per body pair
+are retained by normal direction and tangent quadrant. Friction includes
+sticking and sliding and is limited by the accumulated normal impulse.
+Fixed-body pairs use the smaller dynamic/fixed friction and restitution
+coefficients. `BounceThreshold` suppresses tiny rebounds. Particle surfaces
+approximate CAD geometry; sparse walls, small features and finite manifolds
+need resolution and convergence checks. The existing SPH pressure interaction
+alone does not provide this frictional contact law.
+
+`MaxTimeStep=nothing` retains the usual SPH timestep. For cases with **no
+fluid**, a positive `MaxTimeStep` selects a CUDA rigid timestep controller:
+it caps predicted surface travel by `CFL*dx` (or the contact distance), limits
+accelerated and centripetal travel, and retains the spring stability cap.
+This removes an acoustic restriction that has no physical role without fluid.
+Convergence in timestep and constraint iterations still needs checking.
+SPH force/acoustic timestep diagnostics are unavailable with this controller.
+
+`result.final_state.rigid` contains the final native reaction force (N) and
+torque (N m) per body. These include joint and contact impulses and are
+separate from the SPH/spring load columns in `_Floating.csv`.
+`rigid_joint_errors(mechanics, geometry, result.final_state.floating)` returns
+translation residuals in metres and hinge-axis residuals in radians. This is
+an output-time download; no body state is downloaded during each solve.
+
+#### ZipLine 3D
+
+[example/ZipLine3d.jl](example/ZipLine3d.jl) follows the direct `let`-block
+layout of `Bathymetry2d.jl` and reproduces the initial particle geometry of
+DualSPHysics 5.4 `examples/chrono/06_ZipLine`. It has **32,142 particles**:
+31,464 fixed and 678 floating in ten ragdoll parts, with no fluid and no
+periodicity. Spacing is 0.04 m, gravity is 9.81 m/s², and the run lasts 3.5 s
+with output every 0.02 s. Four hinges, five ball joints and the left forearm's
+point-line attachment use the reference coordinates. The cable is a visual
+guide; the container is the fixed contact surface. The generated container
+and bundled fixture match every GenCase node and group. Body masses and full
+inertia tensors match GenCase to its printed precision.
+
+```sh
+julia --project=gpu_version -t 2,0 gpu_version/example/ZipLine3d.jl
+```
+
+The example uses Float32 physics, Float64 positions, CUDA graphs and the
+native rigid timestep controller. `max_timestep=nothing` restores the acoustic
+controller for comparison. The reference uses Chrono CAD mesh contacts with
+a half-dp overlap allowance; this example uses full-dp particle contact
+distance to keep sampled walls closed. These are different contact models,
+so identical ragdoll trajectories or superior contact accuracy are not claimed.
+The bundled CAD files are used only to add the moving `RagdollSurfaces`
+visualization block after the run; their motion comes from simulated body
+poses. See [geometry provenance](example/data/zipline/README.md).
+
+Run focused native regressions from `gpu_version/`:
+
+```sh
+julia --project=. -t 2,0 test/rigid_body_dynamics.jl
+```
+
 `example/FloatingCylinder2d.jl` generates the falling-cylinder particles in
 memory and runs the GPU solver. Including the file does the same thing. It
 reproduces DualSPHysics `examples/main/11_Floating/CaseFloatingSphereVal2D`.

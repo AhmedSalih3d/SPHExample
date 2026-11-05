@@ -424,7 +424,7 @@ end
             @test result.position == reference.position
             @test result.cells == reference.cells
             for key in keys(reference.particles)
-                if key in ("/VTKHDF/PointData/ID", "/VTKHDF/PointData/GroupMarker")
+                if endswith(key, "/PointData/ID") || endswith(key, "/PointData/GroupMarker")
                     @test result.particles[key][2] == reference.particles[key][2]
                     @test result.particles[key][3] == reference.particles[key][3]
                 else

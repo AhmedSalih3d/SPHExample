@@ -147,6 +147,8 @@ HostStep(s::StepState{T}) where {T} = HostStep(T(s.fh[F_DT]), s.fh[F_TIME])
 # extend this hook without adding work to simulations that have no histories.
 @inline prepare_stage_samples!(::Nothing, step) = nothing
 
+@inline controlled_timestep(::Nothing, acoustic_dt) = acoustic_dt
+
 @inline output_time_reached(time, deadline, clip_timestep::Bool) =
     clip_timestep ? time >= deadline : time > deadline
 

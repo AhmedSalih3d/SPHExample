@@ -46,6 +46,7 @@ using ..GPUCellGrid
 using ..GPUKernels
 using ..GPUConfiguration: effective_configuration, configuration_snapshot, log_effective_configuration
 using ..GPUFloating
+using ..Constraints: RigidBodyDynamics
 using ..SimulationResults: SimulationResult
 
 import StructArrays: StructArray
@@ -1004,6 +1005,14 @@ end
 
 function launch_solver_interactions!(ctx,position,density,velocity,pairs,step;include_gravity=Val(false))
     (;gpu,cl,sup,SimKernel,SimConstants,SimDensityDiffusion,SimViscosity,FlagKernel,FlagShift,threads,lanes,bforces)=ctx
+    floating = get(ctx, :floating, nothing)
+    native_rigid = floating !== nothing && hasproperty(floating, :mechanics)
+    if native_rigid && floating.mechanics.solid_only && FlagKernel isa Val{false} && FlagShift isa Val{false}
+        # No solid-solid SPH pairs remain when native contacts own them. The
+        # grid is still built/reordered for contact detection and rigid motion.
+        zero_rigid_interactions!(gpu.Acceleration, sup.dρdtI, step)
+        return nothing
+    end
     images=sup.PeriodicImages
     if images === nothing
         source=(;Position=position,Density=density,Velocity=velocity,Type=gpu.Type)
@@ -1034,7 +1043,8 @@ function launch_solver_interactions!(ctx,position,density,velocity,pairs,step;in
         inverse_density,pressure,frozen_particles=get(ctx,:frozen_particles,Val(true)),include_gravity,
         radial=get(ctx,:radial,Val(false)),scalar_sps=get(ctx,:scalar_sps,Val(false)),periodicity,periodic_bounds=bounds,
         periodic_cell_coordinates=periodic_coordinates,always_inline=get(ctx,:interaction_always_inline,true),
-        fastmath=get(ctx,:interaction_fastmath,true),target_indices=targets,target_count=length(gpu),pair_order=order)
+        fastmath=get(ctx,:interaction_fastmath,true),target_indices=targets,target_count=length(gpu),pair_order=order,
+        native_rigid=Val(native_rigid))
     return nothing
 end
 
@@ -1166,7 +1176,8 @@ function enqueue_step!(ctx, timed::Bool)
     sampler = MotionStageSampler(rotation, get(ctx, :external_forces, ()), Val(SingleNeighbor))
     @phase HourGlass "01 Update TimeStep" timed launch_finish!(state, red, SimKernel, SimConstants;
         diagnostics = get(ctx, :diagnostics, nothing), stage_sampler = sampler,
-        dt_limit=floats ? floating.spring_dt : Inf)
+        dt_limit=floats ? floating.spring_dt : Inf,
+        timestep_controller = floats ? rigid_timestep_controller(floating, SimConstants) : nothing)
 
     launch_rotation!(rotation, gpu.Position, gpu.Velocity, gpu.Type, gpu.GroupMarker, gpu.ID, state;
         pos_cells = sup.PosCells, cell_ids = gpu.CellID, grid, H = SimKernel.H, prepared = true)
@@ -1200,7 +1211,9 @@ function enqueue_step!(ctx, timed::Bool)
                 launch_floating_forces!(floating, gpu.Acceleration, gpu.Position, gpu.Type, gpu.GroupMarker,
                                         floating.center, SimConstants.m₀, state)
             end
+            prepare_rigid_stage!(floating, state)
             launch_floating_update!(floating, state, SimConstants.g, false; carried = SingleNeighbor)
+            solve_rigid_stage!(floating, gpu, cl, SimKernel, state, false)
         end
     end
 
@@ -1217,7 +1230,7 @@ function enqueue_step!(ctx, timed::Bool)
     if floats
         @phase HourGlass "05c Floating Half TimeStep" timed launch_floating_particles!(
             floating, position_half, velocity_half, gpu.Position, gpu.Type, gpu.GroupMarker, state, false;
-            pos_cells = sup.PosCellsₙ⁺, CellID = gpu.CellID, grid = grid, H = SimKernel.H)
+            pos_cells = sup.PosCellsₙ⁺, CellID = gpu.CellID, grid = grid, H = SimKernel.H, particle_ids = gpu.ID)
     end
 
     launch_rotation!(rotation, position_half, velocity_half, gpu.Type, gpu.GroupMarker, gpu.ID, state;
@@ -1245,7 +1258,9 @@ function enqueue_step!(ctx, timed::Bool)
         @phase HourGlass "10 Floating Corrector" timed begin
             launch_floating_forces!(floating, gpu.Acceleration, position_half, gpu.Type, gpu.GroupMarker,
                                     floating.center_half, SimConstants.m₀, state)
+            prepare_rigid_stage!(floating, state)
             launch_floating_update!(floating, state, SimConstants.g, true)
+            solve_rigid_stage!(floating, gpu, cl, SimKernel, state, true)
         end
     end
 
@@ -1274,7 +1289,7 @@ function enqueue_step!(ctx, timed::Bool)
     if floats
         @phase HourGlass "11b Floating Final TimeStep" timed launch_floating_particles!(
             floating, gpu.Position, gpu.Velocity, gpu.Position, gpu.Type, gpu.GroupMarker, state, true;
-            pos_cells = sup.PosCells, CellID = gpu.CellID, grid = grid, H = SimKernel.H)
+            pos_cells = sup.PosCells, CellID = gpu.CellID, grid = grid, H = SimKernel.H, particle_ids = gpu.ID)
     end
 
     if red.nblocks != 1
@@ -1472,6 +1487,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     SingleNeighbor = SimMetaData.TimeSteppingMode isa SingleNeighborTimeStepping
     configuration = effective_configuration(SimMetaData, SimKernel, SimDensityDiffusion, SimViscosity;
         particle_count = length(gpu))
+    configuration = rigid_configuration(configuration, floating)
     if state.configuration != configuration
         if state.configuration !== nothing && state.configuration.effective != configuration.effective
             invalidate_graphs!(state)
@@ -1749,6 +1765,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     ParticleNormalsPath::Union{Nothing, String} = nothing,
     SimMeasurements::Union{Nothing, MeasurementConfig} = nothing,
     SimExternalForces = nothing,
+    SimRigidBodyDynamics = nothing,
     SimDamping = nothing,
     SimRotation::Union{Nothing,RotationMotion} = nothing,
     SimMotion::Union{Nothing,PrescribedMotion,MotionSystem} = nothing,
@@ -1756,6 +1773,14 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SV <: SPHViscosity, SDD <: SPHDensityDiffusion}
 
     CUDA.functional() || error("CUDA is not functional on this machine; use the CPU package SPHExample instead.")
+    if SimRigidBodyDynamics !== nothing
+        SimRigidBodyDynamics isa RigidBodyDynamics || throw(ArgumentError("SimRigidBodyDynamics must be RigidBodyDynamics or nothing"))
+        Dimensions == 3 && SimMetaData.Periodicity === nothing && SimMetaData.VariableResolution === nothing ||
+            throw(ArgumentError("native multibody dynamics requires nonperiodic, single-resolution 3D"))
+        SimTimeStepping isa DualSPHysicsSymplectic && throw(ArgumentError("native multibody dynamics requires the standard symplectic or single-neighbor integrator"))
+        SimRigidBodyDynamics.max_timestep === nothing || SimMetaData.GPUTimestepDiagnosticsEvery == 0 ||
+            throw(ArgumentError("SPH acoustic/force timestep diagnostics do not support the native rigid timestep controller"))
+    end
     if SimMetaData.VariableResolution !== nothing
         return run_variable_resolution(; SimGeometry,SimMetaData,SimConstants,SimKernel,SimLogger,SimParticles,
             SimViscosity,SimDensityDiffusion,SimTimeStepping,ParticleNormalsPath,SimMeasurements,SimExternalForces,
@@ -1932,7 +1957,11 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         end
         floating = FloatingArrays(SimGeometry, SimParticles, SimConstants; position_type = PositionType,
                                   time = SimMetaData.TotalTime)
-        if floating.constrained
+        if SimRigidBodyDynamics !== nothing
+            floating = attach_rigid_dynamics(floating, SimRigidBodyDynamics, SimParticles, SimKernel)
+            initialize_rigid_velocities!(floating, SimMetaData.TotalTime)
+        end
+        if floating.constrained || (SimRigidBodyDynamics !== nothing && floating.initial_velocity)
             initialize_floating_velocities!(floating, gpu)
             copyto!(SimParticles.Velocity, gpu.Velocity)
         end
@@ -1942,6 +1971,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                                         dx = one(FloatType) + SimKernel.h)
         state.configuration = effective_configuration(SimMetaData, SimKernel, SimDensityDiffusion, SimViscosity;
             particle_count = NumberOfPoints)
+        state.configuration = rigid_configuration(state.configuration, floating)
         CUDA.synchronize()
     end
 
@@ -2302,12 +2332,15 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     periodic_source_count = periodic_images === nothing ? 0 : Int(only(Array(periodic_images.count)))
     periodic_source_rebuilds = periodic_images === nothing ? 0 : Int(only(Array(periodic_images.builds)))
     periodic_images === nothing || (periodic_images.cl.nrebuilds = periodic_source_rebuilds)
-    elapsed = SimulationLoggerConfiguration.elapsed_wall_time(SimLogger)
     steps = max(0, SimMetaData.Iteration - initial_steps)
     simulated_time = max(0.0, Float64(SimMetaData.TotalTime) - Float64(initial_time))
     final_state = (; particles = SimParticles, floating = final_floating,
         time = SimMetaData.TotalTime, iteration = SimMetaData.Iteration,
         timestep = SimMetaData.CurrentTimeStep, complete = run_status == "finished")
+    if SimRigidBodyDynamics !== nothing
+        final_state = merge(final_state, (; rigid = rigid_dynamics_state(floating)))
+    end
+    elapsed = SimulationLoggerConfiguration.elapsed_wall_time(SimLogger)
     performance = (; steps, simulated_time, wall_time_seconds = elapsed,
         mean_timestep = steps > 0 ? simulated_time / steps : NaN,
         milliseconds_per_step = steps > 0 ? 1e3 * elapsed / steps : NaN,

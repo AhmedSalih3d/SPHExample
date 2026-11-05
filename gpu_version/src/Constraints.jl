@@ -139,4 +139,6 @@ host and CUDA execution; the rigid-body integrator adds the attachment torque.
     return typeof(point_velocity)(load * direction)
 end
 
+include("RigidBodyDynamicsConfiguration.jl")
+
 end # module Constraints

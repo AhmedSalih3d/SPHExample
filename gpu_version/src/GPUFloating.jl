@@ -31,7 +31,8 @@ module GPUFloating
 
 export FloatingArrays, initialize_floating_velocities!, launch_floating_forces!, launch_floating_update!,
        launch_floating_particles!, launch_floating_derivative!, floating_state, update_floating_indices!, freeze_body_state!,
-       launch_floating_springs!, floating_spring_state
+       launch_floating_springs!, floating_spring_state, attach_rigid_dynamics, prepare_rigid_stage!, solve_rigid_stage!, zero_rigid_interactions!, rigid_configuration,
+       initialize_rigid_velocities!, rigid_joint_errors, rigid_dynamics_state, rigid_timestep_controller
 
 using CUDA
 using LinearAlgebra: cross, det, dot
@@ -743,9 +744,13 @@ corrector the start-of-step arrays of the next step.
 """
 function launch_floating_particles!(floating, PosOut, VelOut, PosIn, ParticleType, GroupMarker, step,
                                     final::Bool; pos_cells = nothing, CellID = nothing, grid = nothing,
-                                    H = zero(eltype(floating.force)))
+                                    H = zero(eltype(floating.force)), particle_ids = nothing)
     n = length(floating.indices)
     n == 0 && return nothing
+    if hasproperty(floating, :mechanics)
+        return place_native_rigid_particles!(floating, PosOut, VelOut, particle_ids, ParticleType, GroupMarker, step, final;
+            pos_cells, cells = CellID, grid, support = H)
+    end
     center, velocity, omega = final ? (floating.center, floating.velocity, floating.omega) :
                                       (floating.center_half, floating.velocity_half, floating.omega_half)
     @cuda threads=ELEMENTWISE_THREADS blocks=cld(n, ELEMENTWISE_THREADS) floating_particles_kernel!(
@@ -754,5 +759,7 @@ function launch_floating_particles!(floating, PosOut, VelOut, PosIn, ParticleTyp
         Val(floating_dimension(floating.center)), Int32(n))
     return nothing
 end
+
+include("GPURigidBodyDynamics.jl")
 
 end # module GPUFloating
