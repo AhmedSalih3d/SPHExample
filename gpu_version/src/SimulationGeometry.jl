@@ -52,7 +52,7 @@ end
 
 """
     FloatingDetails{T}(; RelativeWeight, PauseTime = 0, Constraints = nothing,
-        Springs=(), InitialVelocity=nothing)
+          Springs=(), InitialVelocity=nothing, Center=nothing, Inertia=nothing)
 
 A rigid body (the DualSPHysics "floating" object) whose particles move
 together under gravity and the forces of the surrounding particles.
@@ -64,6 +64,9 @@ degrees of freedom. Pause and permanent grid freezing override all motion.
 Supported in 2D and 3D with both symplectic and single-neighbor time stepping.
 `Springs=(LinearSpring{D,T}(...), ...)` adds fixed-anchor spring forces on the
 GPU at each evaluated body state, including torque and a spring timestep limit.
+Optional `Center` overrides the sampled centre of mass in native coordinates.
+`Inertia` overrides the body-frame inertia: a positive scalar in 2D, or a
+positive diagonal tuple/vector or symmetric positive-definite 3×3 matrix in 3D.
 `InitialVelocity=(vx,vy)` in 2D or `(vx,vy,vz)` in 3D sets a world-space initial
 translation velocity. It does not prescribe later motion: forces and gravity
 continue to change the velocity. Constraints project it onto allowed degrees
@@ -76,7 +79,11 @@ match the body's dimension, checked when constructing its device state.
     Constraints::Union{Nothing,FloatingConstraints} = nothing
     Springs::Tuple = ()
     InitialVelocity::Union{Nothing,Tuple,AbstractVector} = nothing
+    Center::Union{Nothing,Tuple,AbstractVector} = nothing
+    Inertia::Union{Nothing,Real,Tuple,AbstractArray} = nothing
 end
+
+FloatingDetails{T}(weight,pause,constraints,springs,initial) where T = FloatingDetails{T}(weight,pause,constraints,springs,initial,nothing,nothing)
 
 FloatingDetails{T}(weight, pause, constraints, springs) where {T} = FloatingDetails{T}(weight,pause,constraints,springs,nothing)
 

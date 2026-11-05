@@ -22,7 +22,8 @@ for time in (times[0],times[len(times)//2],times[-1]):
     state['Bodies'].UpdatePipeline(time)
     assert state['Bodies'].GetDataInformation().GetNumberOfPoints() > 0
     assert state['Bodies'].GetDataInformation().GetNumberOfCells() > 0
-    assert state['Colors'].RGBPoints[0] == 0 and state['Colors'].RGBPoints[-4] == 2
+    expected_speed = float(sys.argv[3]) if len(sys.argv) > 3 else 2.
+    assert state['Colors'].RGBPoints[0] == 0 and state['Colors'].RGBPoints[-4] == expected_speed
     state['TimeLabel'].UpdatePipeline(time)
     text = servermanager.Fetch(state['TimeLabel']).GetRowData().GetAbstractArray(0).GetValue(0)
     assert f'{time:.2f}' in text

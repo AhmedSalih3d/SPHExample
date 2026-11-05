@@ -2177,6 +2177,23 @@ The example writes original indexed CAD surfaces and a default ParaView state
 with fluid speed, time and labelled force directions. See
 [validation and reproduction](docs/flexible_gate_validation.md).
 
+#### OWSC 3D
+
+[example/OWSC3d.jl](example/OWSC3d.jl) implements the 173,388-particle
+`chrono/05_OWSC` oscillating wave surge converter. The native world-Y hinge
+retains the reference stiffness and damping, while `FloatingDetails.Center`
+and `Inertia` preserve its explicitly prescribed mass centre and body tensor.
+A moving piston produces second-order regular waves with the original
+one-period startup ramp. Indexed tank/flap CAD follows the simulated poses
+in the generated default ParaView state.
+
+```sh
+julia --project=gpu_version -t 2,0 gpu_version/example/OWSC3d.jl
+julia --project=gpu_version -t 2,0 gpu_version/test/owsc.jl
+```
+
+See [reference settings and validation](docs/owsc_validation.md).
+
 #### Pelamis 2D
 
 [example/Pelamis2d.jl](example/Pelamis2d.jl) implements DualSPHysics 5.4

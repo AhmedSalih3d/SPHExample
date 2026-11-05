@@ -35,7 +35,7 @@ export FloatingArrays, initialize_floating_velocities!, launch_floating_forces!,
        initialize_rigid_velocities!, rigid_joint_errors, rigid_dynamics_state, rigid_timestep_controller
 
 using CUDA
-using LinearAlgebra: cross, det, dot, norm
+using LinearAlgebra: cross, det, dot, norm, Diagonal, Symmetric, isposdef
 using StaticArrays
 
 using ..Constraints: axial_spring_force
@@ -60,6 +60,17 @@ construction, `initialize_floating_velocities!` applies them to device particles
 @inline floating_inertia_type(::Val{2}, ::Type{T}) where {T} = T
 @inline floating_inertia_type(::Val{3}, ::Type{T}) where {T} = SMatrix{3, 3, T, 9}
 @inline floating_dimension(::AbstractVector{SVector{D, T}}) where {D, T} = D
+
+function initial_body_center(geometry)
+    positions = geometry.Particles.Position
+    D = length(first(positions))
+    value = geometry.Floating.Center
+    value === nothing && return sum(SVector{D,Float64}.(positions))/length(positions)
+    length(value) == D || throw(ArgumentError("floating Center must have $D entries"))
+    center = SVector{D,Float64}(value)
+    all(isfinite,center) || throw(ArgumentError("floating Center must be finite"))
+    return center
+end
 
 function FloatingArrays(SimGeometry::Vector{SPHGeometry{D, T}}, SimParticles, SimConstants;
                         position_type::Type{TP} = T, time = zero(T)) where {D, T, TP}
@@ -97,21 +108,38 @@ function FloatingArrays(SimGeometry::Vector{SPHGeometry{D, T}}, SimParticles, Si
         isempty(members) && error("The floating body with group marker $g has no particles.")
         mₖ = T(geom.Floating.RelativeWeight) * SimConstants.m₀
         positions  = SimParticles.Position[members]
-        c          = sum(SVector{D, TP}.(positions)) / length(members)
+        c          = geom.Floating.Center === nothing ? sum(SVector{D, TP}.(positions)) / length(members) : SVector{D,TP}(initial_body_center(geom))
+        all(isfinite,c) || throw(ArgumentError("floating Center is not representable in $TP"))
         count[b]   = length(members)
         center[b]  = c
         mass[b]    = mₖ * length(members)
         if D == 2
-            inertia[b] = mₖ * sum(x -> T(sum(abs2, SVector{D, TP}(x) - c)), positions)
+            override = geom.Floating.Inertia
+            override === nothing || override isa Real || throw(ArgumentError("2D floating Inertia must be a positive scalar"))
+            inertia[b] = override === nothing ? mₖ * sum(x -> T(sum(abs2, SVector{D, TP}(x) - c)), positions) : T(override)
             (isfinite(inertia[b]) && inertia[b] > zero(T)) ||
                 throw(ArgumentError("Floating body $g has zero or invalid moment of inertia."))
             inertia_inv[b] = inv(inertia[b])
         else
             Ibody = zero(InertiaType)
             identity = one(InertiaType)
-            for x in positions
-                r = SVector{3, T}(SVector{D, TP}(x) - c)
-                Ibody += mₖ * (dot(r, r) * identity - r * transpose(r))
+            override = geom.Floating.Inertia
+            if override === nothing
+                for x in positions
+                    r = SVector{3, T}(SVector{D, TP}(x) - c)
+                    Ibody += mₖ * (dot(r, r) * identity - r * transpose(r))
+                end
+            else
+                if override isa Tuple || override isa AbstractVector
+                    length(override) == 3 || throw(ArgumentError("diagonal floating Inertia must have three entries"))
+                    Ibody = InertiaType(Diagonal(SVector{3,T}(override)))
+                elseif override isa AbstractMatrix && size(override) == (3,3)
+                    Ibody = InertiaType(override)
+                else
+                    throw(ArgumentError("3D floating Inertia must be a diagonal tuple/vector or a 3×3 matrix"))
+                end
+                all(isfinite,Ibody) && Ibody == transpose(Ibody) && isposdef(Symmetric(Matrix(Ibody))) ||
+                    throw(ArgumentError("floating Inertia must be finite, symmetric and positive definite"))
             end
             determinant = det(Ibody)
             (isfinite(determinant) && determinant > zero(T)) ||

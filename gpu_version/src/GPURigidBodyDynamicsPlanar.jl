@@ -215,7 +215,7 @@ end
 function planar_rigid_joint_errors(specification,geometry,state)
     bodies = filter(g -> g.Type == Floating,geometry)
     mapping = Dict(g.GroupMarker => b for (b,g) in enumerate(bodies))
-    initial = [sum(SVector{2,Float64}.(g.Particles.Position))/length(g.Particles) for g in bodies]
+    initial = initial_body_center.(bodies)
     return [let a = mapping[j.body_a],b = j.body_b == 0 ? 0 : mapping[j.body_b]
         pa = state.center[a]+planar_rotate(state.angle[a],planar_point(j.attachment)-initial[a])
         pb = b == 0 ? planar_point(j.anchor) : state.center[b]+planar_rotate(state.angle[b],planar_point(j.anchor)-initial[b])

@@ -679,7 +679,7 @@ function rigid_joint_errors(specification::RigidBodyDynamics, geometry, state)
     length(first(state.center)) == 2 && return planar_rigid_joint_errors(specification,geometry,state)
     bodies = filter(g -> g.Type == Floating, geometry)
     mapping = Dict(g.GroupMarker => b for (b, g) in enumerate(bodies))
-    initial = [sum(SVector{3,Float64}.(g.Particles.Position)) / length(g.Particles) for g in bodies]
+    initial = initial_body_center.(bodies)
     results = NamedTuple[]
     for (index, joint) in enumerate(specification.joints)
         a = mapping[joint.body_a]

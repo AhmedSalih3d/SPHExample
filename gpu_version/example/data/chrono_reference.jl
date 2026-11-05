@@ -27,7 +27,7 @@ function reference_rotate(q,r)
 end
 
 function save_reference_surfaces(directory,fixture,geometry,name;moving = Dict(),force_offset = 0.2,
-        force_offset_vector = nothing,fluid_alpha = 0.03,write_geometry = true)
+        force_offset_vector = nothing,fluid_alpha = 0.03,speed_limit = 2.,write_geometry = true)
     D = length(first(first(geometry).Particles.Position))
     points = [SVector(r.x,r.y,r.z) for r in CSV.File(joinpath(fixture,"surface_points.csv"))]
     cells = collect(CSV.File(joinpath(fixture,"surface_cells.csv")))
@@ -37,7 +37,8 @@ function save_reference_surfaces(directory,fixture,geometry,name;moving = Dict()
     states = Dict((r.Body,r.Time) => r for r in rows)
     bodies = filter(g -> g.Type == Floating,geometry)
     names = Tuple(Symbol("Body",b) for b in eachindex(bodies))
-    reference = [sum(SVector{D,Float64}.(g.Particles.Position))/length(g.Particles) for g in bodies]
+    reference = [g.Floating.Center === nothing ? sum(SVector{D,Float64}.(g.Particles.Position))/length(g.Particles) :
+        SVector{D,Float64}(g.Floating.Center) for g in bodies]
     surfaces = NamedTuple{names}(Tuple(reference_surface(g.GroupMarker,points,cells) for g in bodies))
     motions = NamedTuple{names}(Tuple(let body = b
         (point,time) -> begin
@@ -75,6 +76,9 @@ function save_reference_surfaces(directory,fixture,geometry,name;moving = Dict()
     appended === nothing || write(path,text[begin:prevind(text,first(appended))])
     fixed_path = repr(replace(abspath(fixed_file),'\\' => '/'))
     offset = something(force_offset_vector,D == 2 ? (0,force_offset,0) : (0,0,force_offset))
+    palette = ((0.65,0.05,0.3),(0.08,0.65,0.25),(0.95,0.65,0.12),(0.1,0.25,0.85))
+    body_colors = repr(collect(Iterators.flatten(palette[mod1(b,length(palette))] for b in eachindex(bodies))))
+    annotations = repr(collect(Iterators.flatten((string(b),"Body $b") for b in eachindex(bodies))))
     open(path,"a") do io
         write(io,"""
 
@@ -106,6 +110,11 @@ Bodies.Selectors = ['/Root/RigidSurfaces']
 BodyDisplay = Show(Bodies,renderView1,'GeometryRepresentation')
 BodyDisplay.Interpolation = 'Gouraud'
 ColorBy(BodyDisplay,('CELLS','Region'))
+BodyColors = GetColorTransferFunction('Region')
+BodyColors.InterpretValuesAsCategories = 1
+BodyColors.Annotations = $annotations
+BodyColors.IndexedColors = $body_colors
+BodyDisplay.LookupTable = BodyColors
 BodyDisplay.SetScalarBarVisibility(renderView1,False)
 if $(isempty(fixed) ? "False" : "True"):
     FixedSurfaces = VTKHDFReader(FileName=[$fixed_path])
@@ -132,7 +141,10 @@ if has_native_forces:
     FluidForceArrows.GlyphMode = 'All Points'
     native_force_arrows.append(('Force',FluidForceArrows,[0.95,0.45,0.05]))
     for vector,arrows,colour in native_force_arrows:
-        arrows.Input.Input = ForceLocations
+        origin = Transform(Input=FloatingBodies)
+        horizontal_offset = {'GravityForce':-1,'Force':1}.get(vector,0)*$(force_offset/3)
+        origin.Transform.Translate = [$(offset[1])+horizontal_offset,$(offset[2]),$(offset[3])]
+        arrows.Input.Input = origin
         arrows.ScaleFactor = $(force_offset/2)
         if vector != 'TotalForce':
             display = Show(arrows,renderView1,'GeometryRepresentation')
@@ -150,10 +162,13 @@ if $D == 2:
     renderView1.InteractionMode = '2D'
     renderView1.CameraPosition = [0,0,100]
     renderView1.CameraFocalPoint = [0,0,0]
+else:
+    renderView1.CameraPosition = [1,-2,1.2]
+    renderView1.CameraFocalPoint = [0,0,0]
 ResetCamera(renderView1)
 renderView1.CameraParallelScale *= 0.75
 GetLayout(renderView1).SetSize(1600,900)
-Colors.RescaleTransferFunction(0,2)
+Colors.RescaleTransferFunction(0,$speed_limit)
 Colors.AutomaticRescaleRangeMode = 'Never'
 RenderAllViews()
 """)
