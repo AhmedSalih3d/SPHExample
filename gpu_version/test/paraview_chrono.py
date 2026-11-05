@@ -22,6 +22,15 @@ for time in (times[0],times[len(times)//2],times[-1]):
     state['Bodies'].UpdatePipeline(time)
     assert state['Bodies'].GetDataInformation().GetNumberOfPoints() > 0
     assert state['Bodies'].GetDataInformation().GetNumberOfCells() > 0
+    for extra in ('Coil','Pointer'):
+        if extra in state:
+            state[extra].UpdatePipeline(time)
+            assert state[extra].GetDataInformation().GetNumberOfPoints() > 0
+            assert state[extra].GetDataInformation().GetNumberOfCells() > 0
+    if 'BodySpringLUT' in state:
+        assert 'ForceMagnitude' in state['Coil'].CellData.keys()
+        assert state['BodySpringLUT'].RGBPoints[0] == 0
+        assert abs(state['BodySpringLUT'].RGBPoints[-4]-state['BodySpringForceLimit']) < 1e-6
     expected_speed = float(sys.argv[3]) if len(sys.argv) > 3 else 2.
     assert state['Colors'].RGBPoints[0] == 0 and state['Colors'].RGBPoints[-4] == expected_speed
     state['TimeLabel'].UpdatePipeline(time)

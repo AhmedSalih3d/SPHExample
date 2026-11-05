@@ -98,8 +98,13 @@ if CUDA.functional()
             @test norm(only(b.final_state.floating.velocity)) > 1e-6
             @test only(a.final_state.floating.velocity) ≈ only(b.final_state.floating.velocity) atol = 1e-8
             @test only(a.final_state.floating.center) ≈ only(b.final_state.floating.center) atol = 1e-8
-            for dynamics in (RigidBodyDynamics(Contacts = RigidContacts(ParticleDiameter = 0.05)),
-                    RigidBodyDynamics(Joints = (BallJoint(2;Anchor = (0,1,0)),)),
+            contacted = redirect_stdout(devnull) do
+                simulate(geometry,RigidBodyDynamics(Contacts = RigidContacts(ParticleDiameter = 0.05)),
+                    joinpath(path,"contacts");duration = 0.004,gravity = 0)
+            end
+            @test contacted.final_state.complete
+            @test isapprox(only(contacted.final_state.floating.velocity),only(b.final_state.floating.velocity);atol = 1e-8)
+            for dynamics in (RigidBodyDynamics(Joints = (BallJoint(2;Anchor = (0,1,0)),)),
                     RigidBodyDynamics(Joints = (HingeJoint(2;Anchor = (0,0,0.15),Axis = (1,0,0)),)))
                 @test_throws ArgumentError redirect_stdout(devnull) do
                     simulate(geometry,dynamics,joinpath(path,"invalid");duration = 0.004,gravity = 0)

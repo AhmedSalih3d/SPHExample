@@ -2049,8 +2049,8 @@ requires nonperiodic, single-resolution 2D or 3D, the standard symplectic or
 single-neighbor integrator, and no per-body `FloatingConstraints`. Moving
 contact surfaces are currently unsupported. Native mode requires dense stable
 particle IDs `1:N`; references remain keyed by ID across cell sorting.
-Planar 2D supports bilateral ball, hinge and point-line joints; rigid particle
-contacts currently require 3D. For 2D, give joint points in world `(x,0,z)`,
+Planar 2D supports ball, hinge, point-line, rotation-locked guide and pulley
+joints, plus frictional particle contacts. For 2D, give joint points in world `(x,0,z)`,
 hinge axes parallel to world Y and sliding directions in world X-Z. The SPH
 coordinates and exported body centres remain `(x,z)`. Planar hinges and ball
 joints both leave the single relative pitch rotation free.
@@ -4023,3 +4023,31 @@ Read the [validation report](docs/current_wheel_validation.md) for supported
 open-boundary scope, inactive particle capacity, complete four-second runs
 and comparison with the installed reference. Allocated entries include inlet
 reserves and retired particles; they are not the active physical count.
+
+### External velocities, hauling and ship (native CUDA)
+
+[example/ExternalVelocity.jl](example/ExternalVelocity.jl) implements all five
+`chrono/12_ExternalVelocity` configurations. Select `:boxes`, `:breaking_wall`,
+`:many_blocks`, `:hauling` or `:ship` in its direct `let` setup. Original
+particle layouts, CAD and velocity programs are bundled. The second box reads
+the original CSV files; hauling uses a spring between both moving bodies;
+the ship propeller is motor-driven and hinged to the freely responding hull.
+
+`VelocitySeries` supports piecewise linear commands, right-continuous jumps
+and release with `nothing`. `RigidVelocity` prescribes complete native linear
+vectors and/or angular velocity, retaining contact/joint response in the other
+degrees of freedom. `BodySpring` adds equal/opposite attachment forces and
+torques. Put these in `RigidBodyDynamics(Velocities=(...), Springs=(...))`.
+Native planar particle contacts now include Coulomb friction and restitution.
+All use CUDA and the existing floating predictor/corrector; no Chrono import.
+
+```sh
+julia --project=gpu_version -t 2,0 gpu_version/example/ExternalVelocity.jl
+julia --project=gpu_version -t 2,0 gpu_version/test/rigid_velocities.jl
+julia --project=gpu_version -t 2,0 gpu_version/test/external_velocity.jl
+```
+
+See [fixture provenance](example/data/external_velocity/README.md) and the
+[validation report](docs/external_velocity_validation.md). The two wall cases
+contain about one million particles each; their default 0.01 s output is large.
+Their original CAD is displayed, while collision mechanics use sampled particles.

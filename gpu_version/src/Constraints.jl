@@ -175,6 +175,8 @@ host and CUDA execution; the rigid-body integrator adds the attachment torque.
     return typeof(point_velocity)(load * direction)
 end
 
+export VelocitySeries, RigidVelocity, BodySpring
+include("RigidVelocityConfiguration.jl")
 include("RigidBodyDynamicsConfiguration.jl")
 
 end # module Constraints

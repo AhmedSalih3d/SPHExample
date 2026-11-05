@@ -140,16 +140,17 @@ function attach_rigid_dynamics(f, specification::RigidBodyDynamics, particles, k
         solid_interactions = :native_constraints_and_contacts, max_timestep = specification.max_timestep,
         cache_velocity_inertia = true)
     gravity_force = CuArray([SVector{3,T}(0, 0, -T(gravity) * mass) for mass in Array(f.mass)])
-    return attach_rigid_torsions(merge(f, (; mechanics, rigid_configuration = configuration,
+    return attach_rigid_programs(merge(f, (; mechanics, rigid_configuration = configuration,
         constraint_force = mechanics.reaction_force, constraint_torque = mechanics.reaction_torque, gravity_force)),specification)
 end
 
-struct NativeRigidTimeStep{B,R,T}
+struct NativeRigidTimeStep{B,R,T,M}
     body::B
     radius::R
     maximum::T
     travel::T
     gravity::T
+    motor_speed_bounds::M
 end
 Adapt.@adapt_structure NativeRigidTimeStep
 
@@ -159,7 +160,8 @@ function rigid_timestep_controller(f, constants)
     distance = d.has_contacts ? d.parameters.distance : constants.dx
     body = (; f.velocity, f.omega, f.acceleration, f.angular_acceleration)
     T = eltype(f.mass)
-    return NativeRigidTimeStep(body, d.radii, T(d.maximum_timestep), T(constants.CFL * distance), T(constants.g))
+    return NativeRigidTimeStep(body, d.radii, T(d.maximum_timestep), T(constants.CFL * distance), T(constants.g),
+        hasproperty(f,:motors) ? f.motors.speed_bounds : nothing)
 end
 
 @inline function GPUStepState.controlled_timestep(controller::NativeRigidTimeStep, acoustic_dt)
@@ -169,6 +171,10 @@ end
             radius = controller.radius[b]
             v, w = controller.body.velocity[b], controller.body.omega[b]
             speed = sqrt(dot(v, v)) + radius * sqrt(dot(w, w))
+            if controller.motor_speed_bounds !== nothing
+                bounds = controller.motor_speed_bounds[b]
+                speed = max(speed,bounds[1]+radius*bounds[2])
+            end
             a, alpha = controller.body.acceleration[b], controller.body.angular_acceleration[b]
             acceleration = max(controller.gravity, sqrt(dot(a, a))) + radius * (sqrt(dot(alpha, alpha)) + dot(w, w))
             speed > 0 && (dt = min(dt, controller.travel / speed))
@@ -187,12 +193,12 @@ end
 @inline function rigid_mobility(f, b, step)
     b == 0 && return zero(eltype(f.mass))
     hasproperty(f, :inverse_mass) && return @inbounds f.inverse_mass[b]
-    @inbounds return f.frozen[b] != 0 || step_time(step) < f.pause[b] ? zero(eltype(f.mass)) : inv(f.mass[b])
+    @inbounds return f.frozen[b] != 0 || step_time(step) < f.pause[b] || motor_linear_active(f,b) ? zero(eltype(f.mass)) : inv(f.mass[b])
 end
 @inline function rigid_inverse_inertia(f, b, q, vector, step)
     b == 0 && return zero(vector)
     hasproperty(f, :world_inverse_inertia) && return @inbounds f.world_inverse_inertia[b] * vector
-    rigid_mobility(f, b, step) == 0 && return zero(vector)
+    @inbounds (f.frozen[b] != 0 || step_time(step) < f.pause[b] || motor_angular_active(f,b)) && return zero(vector)
     @inbounds orientation = q[b]
     local_vector = rotate_vector(quaternion_conjugate(orientation), vector)
     @inbounds return rotate_vector(orientation, f.inertia_inv[b] * local_vector)
@@ -263,7 +269,7 @@ function rigid_candidates_kernel!(f, d, positions, ids, groups, types, indices, 
                 @inbounds b = f.body[groups[j]]
                 if a > b && (b == 0 || d.floating_enabled[b] != 0)
                     xj = rigid_particle_point(f, d, positions, ids, groups, center, q, j)
-                    delta = SVector{3,eltype(f.mass)}(xi - xj)
+                    delta = SVector{length(xi),eltype(f.mass)}(xi - xj)
                     distance2 = dot(delta, delta)
                     if distance2 <= d.parameters.search^2
                         bin = rigid_contact_bin(delta, xi - center[a])
@@ -316,7 +322,7 @@ function rigid_partners_kernel!(f, d, positions, ids, groups, types, cells, star
             @inbounds kind = types[j]
             @inbounds if (kind == Floating || (kind == Fixed && d.fixed_enabled[groups[j]] != 0)) && f.body[groups[j]] == b
                 xj = rigid_particle_point(f, d, positions, ids, groups, center, q, j)
-                delta = SVector{3,eltype(f.mass)}(xi - xj)
+                delta = SVector{length(xi),eltype(f.mass)}(xi - xj)
                 distance2 = dot(delta, delta)
                 same_bin = rigid_contact_bin(delta, xi - center[a]) == bin
                 if same_bin && (distance2 < best || (distance2 == best && (partner == 0 || j < partner)))
@@ -328,7 +334,7 @@ function rigid_partners_kernel!(f, d, positions, ids, groups, types, cells, star
     @inbounds d.partner[slot] = partner
     if partner != 0
         n, gap, ra, rb = rigid_contact_geometry(f, d, positions, ids, groups, center, q, a, b, i, partner)
-        vn = dot(rigid_point_velocity(velocity, omega, a, ra) - rigid_point_velocity(velocity, omega, b, rb), n)
+        vn = dot(rigid_motor_point_velocity(f,velocity,omega,a,ra)-rigid_motor_point_velocity(f,velocity,omega,b,rb),n)
         @inbounds restitution = d.contact_restitution[pair]
         tolerance = eltype(f.mass)(1e-5) * d.parameters.distance
         imminent = gap <= max(tolerance, -vn * eltype(f.mass)(step_dt(step)))
@@ -487,6 +493,7 @@ function rigid_project_kernel!(f, d, positions, ids, groups, center, q, velocity
     b = thread
     while b <= f.nbodies
         @inbounds d.free_velocity[b], d.free_omega[b] = velocity[b], omega[b]
+        apply_rigid_motor!(f,velocity,omega,b)
         b += blockDim().x
     end
     sync_threads()
@@ -602,7 +609,8 @@ end
 
 function solve_rigid_stage!(f, gpu, cl, kernel, step, final::Bool)
     hasproperty(f, :mechanics) || return nothing
-    floating_dimension(f.center) == 2 && return solve_planar_rigid_stage!(f,step,final)
+    floating_dimension(f.center) == 2 && return solve_planar_rigid_stage!(f,step,final,gpu,cl)
+    sample_rigid_velocities!(f,step,final ? 1. : 0.5)
     d = f.mechanics
     device = rigid_device(f)
     center, q, velocity, omega = final ? (f.center, f.orientation, f.velocity, f.omega) :
@@ -625,8 +633,9 @@ function solve_rigid_stage!(f, gpu, cl, kernel, step, final::Bool)
     return nothing
 end
 
-rigid_device(f) = (; f.nbodies, f.mass, f.inertia, f.inertia_inv, f.pause, f.frozen, f.body,
-    f.orientation, f.rotation, f.turn, f.velocity, f.omega)
+rigid_device(f) = rigid_motor_device(f,(; f.nbodies, f.mass, f.inertia, f.inertia_inv, f.pause, f.frozen, f.body,
+    f.orientation, f.rotation, f.turn, f.velocity, f.omega))
+rigid_motor_device(f,device) = hasproperty(f,:motors) ? merge(device,(;f.motors)) : device
 
 function zero_rigid_interactions_kernel!(acceleration, rate, step, n)
     step_active(step) || return nothing
@@ -645,6 +654,12 @@ end
 
 function initial_rigid_velocity_kernel!(f, d, center, q, step)
     thread = threadIdx().x
+    b = thread
+    while b <= f.nbodies
+        apply_rigid_motor!(f,f.velocity,f.omega,b)
+        b += blockDim().x
+    end
+    sync_threads()
     for iteration in 1:d.iterations, colour in 1:d.joint_colours
         @inbounds index, stop = d.joint_starts[colour] + thread - 1, d.joint_starts[colour + 1]
         while index < stop
@@ -659,6 +674,7 @@ end
 function initialize_rigid_velocities!(f, time)
     hasproperty(f, :mechanics) || return nothing
     floating_dimension(f.center) == 2 && return initialize_planar_rigid_velocities!(f,time)
+    sample_rigid_velocities!(f,HostStep(zero(eltype(f.mass)),Float64(time)),0.)
     @cuda threads=128 blocks=1 initial_rigid_velocity_kernel!(rigid_device(f), f.mechanics, f.center,
         f.orientation, HostStep(zero(eltype(f.mass)), Float64(time)))
     return nothing
@@ -720,18 +736,18 @@ end
 
 @inline function rigid_apply_position!(f, center, q, b, arm, impulse, step)
     inverse_mass = rigid_mobility(f, b, step)
-    inverse_mass == 0 && return nothing
+    b == 0 && return nothing
     @inbounds begin
         turn = rigid_inverse_inertia(f, b, q, cross(arm, impulse), step)
         center[b] += eltype(center)(inverse_mass * impulse)
-        q[b] = advance_orientation(q[b], turn)
+        iszero(turn) || (q[b] = advance_orientation(q[b], turn))
     end
     return nothing
 end
 
 @inline function rigid_apply_velocity!(f, velocity, omega, q, b, arm, impulse, step)
     inverse_mass = rigid_mobility(f, b, step)
-    inverse_mass == 0 && return nothing
+    b == 0 && return nothing
     @inbounds begin
         velocity[b] += inverse_mass * impulse
         omega[b] += rigid_inverse_inertia(f, b, q, cross(arm, impulse), step)
@@ -792,11 +808,11 @@ end
                     -dot(omega[a] - (b == 0 ? zero(omega[a]) : omega[b]), n)
                 impulse = error / mobility
                 if position
-                    rigid_mobility(f, a, step) == 0 || (q[a] = advance_orientation(q[a], ia * impulse))
-                    rigid_mobility(f, b, step) == 0 || (q[b] = advance_orientation(q[b], -ib * impulse))
+                    iszero(ia) || (q[a] = advance_orientation(q[a], ia * impulse))
+                    iszero(ib) || (q[b] = advance_orientation(q[b], -ib * impulse))
                 else
-                    rigid_mobility(f, a, step) == 0 || (omega[a] += ia * impulse)
-                    rigid_mobility(f, b, step) == 0 || (omega[b] -= ib * impulse)
+                    iszero(ia) || (omega[a] += ia * impulse)
+                    iszero(ib) || (omega[b] -= ib * impulse)
                 end
             end
         end

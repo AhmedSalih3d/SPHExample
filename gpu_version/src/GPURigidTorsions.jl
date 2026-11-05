@@ -88,3 +88,9 @@ function launch_floating_torsions!(f,step,half)
         half ? f.omega_half : f.omega,f.turn,f.frozen,step,half,Val(D),f.nbodies)
     return nothing
 end
+
+function attach_rigid_programs(f,specification)
+    result = attach_body_springs(attach_rigid_velocities(attach_rigid_torsions(f,specification),specification),specification)
+    return merge(result,(;rigid_configuration = merge(result.rigid_configuration,
+        (;motor_bodies = length(specification.velocities),body_springs = length(specification.springs)))))
+end

@@ -815,5 +815,8 @@ end
 include("GPURigidBodyDynamics.jl")
 include("GPURigidBodyDynamicsPlanar.jl")
 include("GPURigidTorsions.jl")
+include("GPURigidVelocities.jl")
+include("GPUFloatingBodySprings.jl")
+include("GPURigidBodyContactsPlanar.jl")
 
 end # module GPUFloating

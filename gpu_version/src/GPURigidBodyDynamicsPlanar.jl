@@ -1,4 +1,4 @@
-# Planar bilateral joints use the existing 2D floating predictor/corrector.
+# Planar joints and contacts use the existing 2D floating predictor/corrector.
 # Public joint coordinates are world (x,y,z); the simulation plane is (x,z).
 struct DevicePlanarRigidJoint{T,TP}
     kind::UInt8
@@ -21,7 +21,6 @@ end
 function attach_planar_rigid_dynamics(f,specification,particles,kernel;gravity = 0)
     f.active || throw(ArgumentError("native multibody dynamics needs at least one floating body"))
     f.constrained && throw(ArgumentError("use native joints instead of per-body FloatingConstraints in multibody mode"))
-    specification.contacts === nothing || throw(ArgumentError("2D native multibody dynamics supports bilateral joints; rigid contacts currently require 3D"))
     T,TP = eltype(f.mass),eltype(eltype(f.center))
     solid_only = all(!=(Fluid),particles.Type)
     specification.max_timestep === nothing || solid_only || throw(ArgumentError("native MaxTimeStep requires a case with no fluid; coupled fluid retains the SPH timestep"))
@@ -61,21 +60,24 @@ function attach_planar_rigid_dynamics(f,specification,particles,kernel;gravity =
         reaction_force = CUDA.zeros(SVector{2,T},Int(f.nbodies)),reaction_torque = CUDA.zeros(T,Int(f.nbodies)),
         iterations = Int32(specification.iterations),has_contacts = false,solid_only,radii = CuArray(radii),
         parameters = (; distance = zero(T)),maximum_timestep = something(specification.max_timestep,0.))
+    mechanics = attach_planar_contacts(f,mechanics,specification,particles,kernel)
     configuration = (; backend = :native_cuda,joints = length(joints),bodies = Int(f.nbodies),dimensions = 2,
-        iterations = specification.iterations,contacts = false,precision = nameof(T),position_precision = nameof(TP),
-        solid_interactions = :native_constraints,max_timestep = specification.max_timestep)
+        iterations = specification.iterations,contacts = specification.contacts !== nothing,precision = nameof(T),position_precision = nameof(TP),
+        contact_samples_per_pair = specification.contacts === nothing ? 0 : 8,contact_parameters = specification.contacts,
+        solid_interactions = specification.contacts === nothing ? :native_constraints : :native_constraints_and_contacts,
+        max_timestep = specification.max_timestep)
     gravity_force = CuArray([SVector{2,T}(0,-T(gravity)*mass) for mass in Array(f.mass)])
-    return attach_rigid_torsions(merge(f,(;mechanics,rigid_configuration = configuration,constraint_force = mechanics.reaction_force,
+    return attach_rigid_programs(merge(f,(;mechanics,rigid_configuration = configuration,constraint_force = mechanics.reaction_force,
         constraint_torque = mechanics.reaction_torque,gravity_force)),specification)
 end
 
-@inline planar_inverse_inertia(f,b,step) = b == 0 || rigid_mobility(f,b,step) == 0 ? zero(eltype(f.mass)) : @inbounds(f.inertia_inv[b])
+@inline planar_inverse_inertia(f,b,step) = b == 0 || @inbounds(f.frozen[b] != 0 || step_time(step) < f.pause[b] || motor_angular_active(f,b)) ? zero(eltype(f.mass)) : @inbounds(f.inertia_inv[b])
 @inline planar_arm(f,angle,b,r) = b == 0 ? zero(SVector{2,eltype(f.mass)}) : planar_rotate(@inbounds(angle[b]),SVector{2,eltype(f.mass)}(r))
 @inline planar_velocity(v,w,b,r) = b == 0 ? zero(eltype(v)) : @inbounds(v[b]+w[b]*planar_perpendicular(r))
 
 @inline function apply_planar_impulse!(f,center,angle,velocity,omega,b,r,impulse,step,position)
     mass_inv = rigid_mobility(f,b,step)
-    mass_inv == 0 && return nothing
+    b == 0 && return nothing
     turn = planar_inverse_inertia(f,b,step)*planar_cross(r,impulse)
     @inbounds if position
         center[b] += eltype(center)(mass_inv*impulse)
@@ -137,15 +139,33 @@ end
     return nothing
 end
 
-@inline function planar_joint_iterations!(f,d,center,velocity,omega,step,position)
+@inline function planar_joint_iterations!(f,d,center,velocity,omega,step,position,positions,ids,groups,::Val{Contacts}) where Contacts
     thread = threadIdx().x
-    for iteration in 1:d.iterations,colour in 1:d.joint_colours
-        @inbounds index,stop = d.joint_starts[colour]+thread-1,d.joint_starts[colour+1]
-        while index < stop
-            @inbounds solve_planar_joint!(f,center,d.angle,velocity,omega,d.joints[d.joint_order[index]],step,position)
-            index += blockDim().x
+    for iteration in 1:d.iterations
+        for colour in 1:d.joint_colours
+            @inbounds index,stop = d.joint_starts[colour]+thread-1,d.joint_starts[colour+1]
+            while index < stop
+                @inbounds solve_planar_joint!(f,center,d.angle,velocity,omega,d.joints[d.joint_order[index]],step,position)
+                index += blockDim().x
+            end
+            sync_threads()
         end
-        sync_threads()
+        if Contacts && hasproperty(d,:pairs)
+            for colour in 1:d.pair_colours
+                @inbounds index,stop = d.pair_starts[colour]+thread-1,d.pair_starts[colour+1]
+                while index < stop
+                    @inbounds pair = d.pair_order[index]
+                    @inbounds a,b = d.pairs[pair]
+                    @inbounds count = d.contact_count[pair]
+                    for sample in Int32(1):count
+                        @inbounds slot = d.contact_order[Int32(24)*(pair-Int32(1))+sample]
+                        solve_rigid_contact!(f,d,positions,ids,groups,center,d.angle,velocity,omega,a,b,slot,step,position)
+                    end
+                    index += blockDim().x
+                end
+                sync_threads()
+            end
+        end
     end
     return nothing
 end
@@ -157,19 +177,20 @@ function planar_prepare_kernel!(old_angle,angle,step,n)
     return nothing
 end
 
-function planar_project_kernel!(f,d,center,velocity,omega,step,::Val{Final},::Val{Initial}) where {Final,Initial}
+function planar_project_kernel!(f,d,center,velocity,omega,positions,ids,groups,step,::Val{Final},::Val{Initial}) where {Final,Initial}
     step_active(step) || return nothing
     b = threadIdx().x
     while b <= f.nbodies
         @inbounds begin
             d.angle[b] = Final || f.frozen[b] != 0 ? f.angle[b] : f.angle[b]+f.turn[b]
             d.free_velocity[b],d.free_omega[b] = velocity[b],omega[b]
+            apply_rigid_motor!(f,velocity,omega,b)
         end
         b += blockDim().x
     end
     sync_threads()
-    Initial || planar_joint_iterations!(f,d,center,velocity,omega,step,true)
-    planar_joint_iterations!(f,d,center,velocity,omega,step,false)
+    Initial || planar_joint_iterations!(f,d,center,velocity,omega,step,true,positions,ids,groups,Val(!Initial))
+    planar_joint_iterations!(f,d,center,velocity,omega,step,false,positions,ids,groups,Val(!Initial))
     b = threadIdx().x
     while b <= f.nbodies
         @inbounds if !Initial
@@ -180,9 +201,10 @@ function planar_project_kernel!(f,d,center,velocity,omega,step,::Val{Final},::Va
                 d.reaction_torque[b] = (angular+d.half_angular_impulse[b])/eltype(f.mass)(step_dt(step))
                 f.angle[b] = d.angle[b]
             else
-                d.half_impulse[b],d.half_angular_impulse[b] = 2impulse,2angular
-                f.velocity[b] += 2(velocity[b]-d.free_velocity[b])
-                f.omega[b] += 2(omega[b]-d.free_omega[b])
+                scale = d.has_contacts ? one(eltype(f.mass)) : eltype(f.mass)(2)
+                d.half_impulse[b],d.half_angular_impulse[b] = scale*impulse,scale*angular
+                f.velocity[b] += scale*(velocity[b]-d.free_velocity[b])
+                f.omega[b] += scale*(omega[b]-d.free_omega[b])
             end
             f.turn[b] = d.angle[b]-d.old_angle[b]
             s,c = sincos(f.turn[b])
@@ -193,21 +215,44 @@ function planar_project_kernel!(f,d,center,velocity,omega,step,::Val{Final},::Va
     return nothing
 end
 
-planar_device(f) = (; f.nbodies,f.mass,f.inertia,f.inertia_inv,f.pause,f.frozen,f.velocity,f.omega,f.angle,f.turn,f.rotation)
+planar_device(f) = rigid_motor_device(f,(; f.nbodies,f.mass,f.inertia,f.inertia_inv,f.pause,f.frozen,f.body,f.velocity,f.omega,f.angle,f.turn,f.rotation,orientation = f.angle))
 
 function prepare_planar_rigid_stage!(f,step)
+    if f.mechanics.has_contacts
+        count = max(Int(f.nbodies),length(f.mechanics.winners))
+        @cuda threads=128 blocks=cld(count,128) rigid_reset_kernel!(planar_device(f),f.mechanics,step)
+    end
     @cuda threads=128 blocks=cld(Int(f.nbodies),128) planar_prepare_kernel!(f.mechanics.old_angle,f.angle,step,f.nbodies)
     return nothing
 end
 
-function solve_planar_rigid_stage!(f,step,final)
+function planar_contact_pose_kernel!(angle,accepted,turn,step,final,n)
+    step_active(step) || return nothing
+    b = thread_index()
+    @inbounds b <= n && (angle[b] = final ? accepted[b] : accepted[b]+turn[b])
+    return nothing
+end
+
+function solve_planar_rigid_stage!(f,step,final,gpu,cl)
     center,velocity,omega = final ? (f.center,f.velocity,f.omega) : (f.center_half,f.velocity_half,f.omega_half)
-    @cuda threads=128 blocks=1 planar_project_kernel!(planar_device(f),f.mechanics,center,velocity,omega,step,Val(final),Val(false))
+    sample_rigid_velocities!(f,step,final ? 1. : 0.5)
+    positions,ids,groups = gpu === nothing ? (nothing,nothing,nothing) : (gpu.Position,gpu.ID,gpu.GroupMarker)
+    d,device = f.mechanics,planar_device(f)
+    if d.has_contacts
+        @cuda threads=128 blocks=cld(Int(f.nbodies),128) planar_contact_pose_kernel!(d.angle,f.angle,f.turn,step,final,f.nbodies)
+        @cuda threads=128 blocks=cld(length(f.indices),128) rigid_candidates_kernel!(device,d,positions,ids,groups,gpu.Type,
+            f.indices,gpu.CellID,cl.CellStart,cl.grid_dev,center,d.angle,step)
+        @cuda threads=128 blocks=cld(length(d.winners),128) rigid_partners_kernel!(device,d,positions,ids,groups,gpu.Type,
+            gpu.CellID,cl.CellStart,cl.grid_dev,center,d.angle,velocity,omega,step)
+        @cuda threads=128 blocks=cld(length(d.pairs),128) rigid_pack_contacts_kernel!(d,step)
+    end
+    @cuda threads=128 blocks=1 planar_project_kernel!(device,d,center,velocity,omega,positions,ids,groups,step,Val(final),Val(false))
     return nothing
 end
 
 function initialize_planar_rigid_velocities!(f,time)
-    @cuda threads=128 blocks=1 planar_project_kernel!(planar_device(f),f.mechanics,f.center,f.velocity,f.omega,
+    sample_rigid_velocities!(f,HostStep(zero(eltype(f.mass)),Float64(time)),0.)
+    @cuda threads=128 blocks=1 planar_project_kernel!(planar_device(f),f.mechanics,f.center,f.velocity,f.omega,nothing,nothing,nothing,
         HostStep(zero(eltype(f.mass)),Float64(time)),Val(true),Val(true))
     return nothing
 end

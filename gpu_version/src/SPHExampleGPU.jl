@@ -68,7 +68,7 @@ module SPHExampleGPU
     export SPHDensityDiffusion, ZeroDensityDiffusion, ZeroGravityLinearDensityDiffusion, LinearDensityDiffusion, ZeroGravityComplexDensityDiffusion, ComplexDensityDiffusion, FourtakasDensityDiffusion, compute_density_diffusion
 
     using .Constraints
-    export Constraints, axial_spring_force, axial_coulomb_force, BallJoint, HingeJoint, PointLineJoint, PulleyJoint, RigidMaterial, RigidContacts, RigidBodyDynamics
+    export Constraints, axial_spring_force, axial_coulomb_force, BallJoint, HingeJoint, PointLineJoint, PulleyJoint, RigidMaterial, RigidContacts, RigidBodyDynamics, VelocitySeries, RigidVelocity, BodySpring
 
     using .OpenBoundaries
     export OpenChannel,open_channel_geometry
