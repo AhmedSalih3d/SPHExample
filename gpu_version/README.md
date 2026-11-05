@@ -2211,6 +2211,22 @@ julia --project=gpu_version -t 2,0 gpu_version/test/dam_break_cubes.jl
 
 See [validation and contact-model limits](docs/dam_break_cubes_validation.md).
 
+#### Water mill 3D
+
+[example/WaterMill3d.jl](example/WaterMill3d.jl) implements `chrono/08_WaterMill`
+with the original 917,323 particles: two fluid groups, a wheel and four
+independently hinged buckets. Falling water drives the mechanism. World and
+bucket damping remain 500 / 100 Nms/rad, solved natively on CUDA with the
+existing Symplectic scheme. Original indexed CAD, fluid speed and force
+directions are included in the default ParaView state.
+
+```sh
+julia --project=gpu_version -t 2,0 gpu_version/example/WaterMill3d.jl
+julia --project=gpu_version -t 2,0 gpu_version/test/water_mill.jl
+```
+
+See [settings and validation](docs/water_mill_validation.md).
+
 #### Pelamis 2D
 
 [example/Pelamis2d.jl](example/Pelamis2d.jl) implements DualSPHysics 5.4
