@@ -62,6 +62,9 @@ function rz_flow_case(; dx = 0.005, duration = 9.0, visualize = true,
         GPUDoublePosition = true,
         GPUClipTimeStepToOutput = true,
     )
-    kernel = SPHKernelInstance{2,Float32}(WendlandC2(); h = Float32(sqrt(2) * dx))
+    smoothing_length = sqrt(2) * dx
+    # DualSPHysics uses eta² = (0.1h)², rather than the package default.
+    kernel = SPHKernelInstance{2,Float32}(WendlandC2();
+        h = Float32(smoothing_length), η² = Float32((0.1 * smoothing_length)^2))
     return (; geometry, constants, metadata, kernel, relaxation)
 end

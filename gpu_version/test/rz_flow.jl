@@ -63,6 +63,7 @@ end
     @test case.metadata.SimulationTime == 9
     @test case.constants.dx ≈ 0.005
     @test case.constants.α ≈ 0.05
+    @test isapprox(case.kernel.η², 5f-7; rtol = 2eps(Float32))
     @test_throws ArgumentError rz_flow_case(; dx = 0.007)
     @test_throws ArgumentError rz_flow_case(; duration = -1)
     particles = AllocateDataStructures(case.geometry, case.metadata)

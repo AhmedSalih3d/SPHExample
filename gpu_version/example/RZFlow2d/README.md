@@ -14,6 +14,7 @@ Reference x/z coordinates map to solver x/y; dimensions are metres.
 | Shelf | x = 0.20–1.05, y = 0.20–0.24 |
 | Fill upper limit | 0.45 (highest fluid row at 0.445) |
 | Particle spacing | 0.005 |
+| Viscosity regularization | `η² = (0.1h)²`, approximately `5e-7 m²` at the default spacing |
 | Particles | 23,990 (2,847 fixed, 21,143 fluid) |
 | Uniform-flow box | x = 0.60–0.90, y = 0–0.20 |
 | Direction | negative x |
