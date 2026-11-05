@@ -2028,10 +2028,15 @@ Restitution=...), ...)` overrides individual floating-body coefficients;
 other bodies retain the uniform `Friction` and `Restitution` settings.
 Material pairs use the smaller coefficient, mixed once at setup and stored
 on CUDA. Fixed surfaces retain `FixedFriction` and `FixedRestitution`. The mode
-requires nonperiodic, single-resolution 3D, the standard symplectic or
+requires nonperiodic, single-resolution 2D or 3D, the standard symplectic or
 single-neighbor integrator, and no per-body `FloatingConstraints`. Moving
 contact surfaces are currently unsupported. Native mode requires dense stable
 particle IDs `1:N`; references remain keyed by ID across cell sorting.
+Planar 2D supports bilateral ball, hinge and point-line joints; rigid particle
+contacts currently require 3D. For 2D, give joint points in world `(x,0,z)`,
+hinge axes parallel to world Y and sliding directions in world X-Z. The SPH
+coordinates and exported body centres remain `(x,z)`. Planar hinges and ball
+joints both leave the single relative pitch rotation free.
 
 Contact uses particle centres separated by `ParticleDiameter-Slop`, with
 candidates extending to `ParticleDiameter+Margin`. This search radius must
@@ -2151,6 +2156,47 @@ lattice, material-pair, collision-filter, graph/direct and block-impact checks.
 `benchmark/demolisher.jl` runs warmed solver comparisons. The optional
 `benchmark/render_demolisher.py` renders the generated default state into
 PNG frames for video encoding; commands are in the validation report.
+
+#### Pelamis 2D
+
+[example/Pelamis2d.jl](example/Pelamis2d.jl) implements DualSPHysics 5.4
+`examples/chrono/04_Pelamis`: four floating segments in a piston-wave flume
+with a 1:6.67 beach. It follows the direct `let` layout of `Bathymetry2d.jl`.
+The supplied reference is genuinely 2D, with the particle domain at world
+y = 0. Native planar joints couple the bodies to the 2D SPH fluid on CUDA.
+
+```sh
+julia --project=gpu_version -t 2,0 gpu_version/example/Pelamis2d.jl
+```
+
+The bundled GenCase lattice has **30,801 particles** at dp = 0.025 m:
+26,839 fluid, 1,037 fixed beach, 300 moving piston, and 655, 655, 655, 660
+floating samples. Initial densities are copied from GenCase. The body relative
+weight is 0.5. A vertical point-line attachment at (5.8,0,1.5) and three hinges
+at x = 7.15, 8.45 and 9.75 m permit heave and relative pitch. There are no
+rigid collisions, periodic conditions, springs or joint damping. The analytical
+sliding line has no particle support.
+
+The case generates second-order waves of height 0.2 m and period 1.5 s in
+1.5 m water depth, with no ramp. It runs ten seconds, writing every 0.05 s.
+It uses the existing `SymplecticTimeStepping()`, Wendland C2, artificial
+viscosity 0.01 with zero wall factor and Fourtakas density diffusion 0.1.
+Float32 physics and Float64 positions retain the reference's acoustic
+timestep restriction; a dry-body timestep override is not used with fluid.
+No Chrono or DualSPHysics installation is required to run the native example.
+
+The generated default ParaView state shows fluid speed and the copied segment
+surfaces in an overview and a tracked detail view. Force arrows are displayed
+above each body to keep them visible: blue gravity, orange fluid load and red
+joint reaction. Their equal lengths show direction; arrays and CSV retain
+magnitudes for a one-metre out-of-plane width. The grey line is the analytical
+vertical attachment. See [geometry provenance](example/data/pelamis/README.md)
+and the [validation report](docs/pelamis_validation.md).
+
+From `gpu_version/`, focused checks are `test/rigid_body_planar.jl` and
+`test/pelamis.jl`. `benchmark/pelamis.jl` records full-run timings and optional
+reference motion differences. `test/paraview_pelamis.py` checks the actual
+generated state, including the fluid-only triangulation and speed scale.
 
 #### ZipLine 3D
 

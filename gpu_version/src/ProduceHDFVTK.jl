@@ -64,7 +64,9 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 floating_3d.(force), torque, norm.(force))
         if hasproperty(state, :constraint_force)
             total = force + state.constraint_force + state.gravity_force
-            return (fields..., state.constraint_force, state.constraint_torque, state.gravity_force, total,
+            reaction_torque = eltype(state.constraint_torque) <: Real ?
+                [SVector(zero(t),zero(t),t) for t in state.constraint_torque] : state.constraint_torque
+            return (fields..., floating_3d.(state.constraint_force), reaction_torque, floating_3d.(state.gravity_force), floating_3d.(total),
                 norm.(state.constraint_force), norm.(state.gravity_force), norm.(total))
         end
         return fields

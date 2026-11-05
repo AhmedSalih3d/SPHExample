@@ -35,7 +35,7 @@ export FloatingArrays, initialize_floating_velocities!, launch_floating_forces!,
        initialize_rigid_velocities!, rigid_joint_errors, rigid_dynamics_state, rigid_timestep_controller
 
 using CUDA
-using LinearAlgebra: cross, det, dot
+using LinearAlgebra: cross, det, dot, norm
 using StaticArrays
 
 using ..Constraints: axial_spring_force
@@ -769,5 +769,6 @@ function launch_floating_particles!(floating, PosOut, VelOut, PosIn, ParticleTyp
 end
 
 include("GPURigidBodyDynamics.jl")
+include("GPURigidBodyDynamicsPlanar.jl")
 
 end # module GPUFloating

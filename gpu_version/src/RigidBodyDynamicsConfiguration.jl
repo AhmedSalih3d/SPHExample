@@ -129,7 +129,7 @@ RigidContacts(d,f,ff,e,ef,s,m,b,groups) = RigidContacts(d,f,ff,e,ef,s,m,b,groups
 """
     RigidBodyDynamics(; Joints = (), Contacts = nothing, Iterations = 32, MaxTimeStep = nothing)
 
-Opt-in native GPU multibody dynamics for nonperiodic 3D simulations. Pass as
+Opt-in native GPU multibody dynamics for nonperiodic 2D/3D simulations. Pass as
 `SimRigidBodyDynamics` to `RunSimulation`. Coupled joints and contacts are
 projected at both predictor and corrector stages; all iteration, contact
 search and impulse application stay on CUDA, including graph replay.
@@ -139,6 +139,11 @@ racing on poses or velocities. Contact manifolds retain up to 24 samples per
 body pair (normal direction and tangent quadrant). No external rigid engine
 is used. Individual `FloatingConstraints` and moving contact surfaces cannot
 be combined with this mode. Native mode requires dense particle IDs 1:N.
+
+In 2D, bilateral joints act in the world X-Z plane: specify points as
+`(x,0,z)`, hinge axes parallel to world Y and sliding directions in X-Z.
+The SPH coordinates remain `(x,z)`. Ball and hinge joints both allow the
+single planar relative rotation. Particle-based rigid contacts require 3D.
 
 For a case with no fluid, `MaxTimeStep` optionally selects a rigid-body time
 controller instead of the SPH acoustic criterion. The CUDA controller caps

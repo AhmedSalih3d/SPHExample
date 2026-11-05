@@ -37,6 +37,7 @@ function rigid_edge_colours(edges; indices = eachindex(edges))
 end
 
 function attach_rigid_dynamics(f, specification::RigidBodyDynamics, particles, kernel; gravity = 0)
+    floating_dimension(f.center) == 2 && return attach_planar_rigid_dynamics(f,specification,particles,kernel;gravity)
     floating_dimension(f.center) == 3 || throw(ArgumentError("native multibody dynamics currently requires 3D"))
     f.active || throw(ArgumentError("native multibody dynamics needs at least one floating body"))
     f.constrained && throw(ArgumentError("use native joints instead of per-body FloatingConstraints in multibody mode"))
@@ -577,6 +578,8 @@ end
 
 function place_native_rigid_particles!(floating, positions, velocities, ids, types, groups, step, final;
         pos_cells, cells, grid, support)
+    floating_dimension(floating.center) == 2 && return place_planar_rigid_particles!(floating,positions,velocities,ids,types,groups,step,final;
+        pos_cells,cells,grid,support)
     ids === nothing && throw(ArgumentError("native rigid particle placement requires stable particle IDs"))
     f = floating
     center, q, velocity, omega = final ? (f.center, f.orientation, f.velocity, f.omega) :
@@ -589,6 +592,7 @@ end
 
 function prepare_rigid_stage!(f, step)
     hasproperty(f, :mechanics) || return nothing
+    floating_dimension(f.center) == 2 && return prepare_planar_rigid_stage!(f,step)
     d = f.mechanics
     count = max(Int(f.nbodies), length(d.winners))
     @cuda threads=128 blocks=cld(count, 128) rigid_reset_kernel!(rigid_device(f), d, step)
@@ -597,6 +601,7 @@ end
 
 function solve_rigid_stage!(f, gpu, cl, kernel, step, final::Bool)
     hasproperty(f, :mechanics) || return nothing
+    floating_dimension(f.center) == 2 && return solve_planar_rigid_stage!(f,step,final)
     d = f.mechanics
     device = rigid_device(f)
     center, q, velocity, omega = final ? (f.center, f.orientation, f.velocity, f.omega) :
@@ -652,6 +657,7 @@ end
 
 function initialize_rigid_velocities!(f, time)
     hasproperty(f, :mechanics) || return nothing
+    floating_dimension(f.center) == 2 && return initialize_planar_rigid_velocities!(f,time)
     @cuda threads=128 blocks=1 initial_rigid_velocity_kernel!(rigid_device(f), f.mechanics, f.center,
         f.orientation, HostStep(zero(eltype(f.mass)), Float64(time)))
     return nothing
@@ -669,6 +675,8 @@ snapshot, such as `result.final_state.floating`. This output-time check performs
 no per-step downloads. Errors are metres and radians, in joint declaration order.
 """
 function rigid_joint_errors(specification::RigidBodyDynamics, geometry, state)
+    isempty(specification.joints) && return NamedTuple[]
+    length(first(state.center)) == 2 && return planar_rigid_joint_errors(specification,geometry,state)
     bodies = filter(g -> g.Type == Floating, geometry)
     mapping = Dict(g.GroupMarker => b for (b, g) in enumerate(bodies))
     initial = [sum(SVector{3,Float64}.(g.Particles.Position)) / length(g.Particles) for g in bodies]

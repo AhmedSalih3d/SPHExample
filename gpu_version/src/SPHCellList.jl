@@ -1778,8 +1778,8 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     CUDA.functional() || error("CUDA is not functional on this machine; use the CPU package SPHExample instead.")
     if SimRigidBodyDynamics !== nothing
         SimRigidBodyDynamics isa RigidBodyDynamics || throw(ArgumentError("SimRigidBodyDynamics must be RigidBodyDynamics or nothing"))
-        Dimensions == 3 && SimMetaData.Periodicity === nothing && SimMetaData.VariableResolution === nothing ||
-            throw(ArgumentError("native multibody dynamics requires nonperiodic, single-resolution 3D"))
+        Dimensions in (2,3) && SimMetaData.Periodicity === nothing && SimMetaData.VariableResolution === nothing ||
+            throw(ArgumentError("native multibody dynamics requires nonperiodic, single-resolution 2D or 3D"))
         SimTimeStepping isa DualSPHysicsSymplectic && throw(ArgumentError("native multibody dynamics requires the standard symplectic or single-neighbor integrator"))
         SimRigidBodyDynamics.max_timestep === nothing || SimMetaData.GPUTimestepDiagnosticsEvery == 0 ||
             throw(ArgumentError("SPH acoustic/force timestep diagnostics do not support the native rigid timestep controller"))
@@ -1996,7 +1996,11 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     if floating.active
         floating_log = open(joinpath(SimMetaData.SaveLocation, SimMetaData.SimulationName * "_Floating.csv"), "w")
         if Dimensions == 2
-            println(floating_log, "Time,Body,GroupMarker,Center:0,Center:1,Velocity:0,Velocity:1,Angle,Omega,Force:0,Force:1,Torque")
+            header = "Time,Body,GroupMarker,Center:0,Center:1,Velocity:0,Velocity:1,Angle,Omega,Force:0,Force:1,Torque"
+            if SimRigidBodyDynamics !== nothing
+                header *= ",ConstraintForce:0,ConstraintForce:1,ConstraintTorque,GravityForce:0,GravityForce:1,TotalForce:0,TotalForce:1"
+            end
+            println(floating_log,header)
         else
             header = "Time,Body,GroupMarker,Center:0,Center:1,Center:2," *
                                 "Velocity:0,Velocity:1,Velocity:2,Orientation:0,Orientation:1," *
@@ -2012,8 +2016,12 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         floating_log === nothing && return nothing
         for b in 1:Int(floating.nbodies)
             if Dimensions == 2
-                println(floating_log, join((t, b, floating_markers[b], s.center[b]..., s.velocity[b]...,
-                                            s.angle[b], s.omega[b], s.load_force[b]..., s.load_torque[b]), ","))
+                row = (t,b,floating_markers[b],s.center[b]...,s.velocity[b]...,s.angle[b],s.omega[b],s.load_force[b]...,s.load_torque[b])
+                if hasproperty(s,:constraint_force)
+                    total = s.load_force[b]+s.constraint_force[b]+s.gravity_force[b]
+                    row = (row...,s.constraint_force[b]...,s.constraint_torque[b],s.gravity_force[b]...,total...)
+                end
+                println(floating_log,join(row,","))
             else
                 row = (t, b, floating_markers[b], s.center[b]..., s.velocity[b]...,
                     s.orientation[b]..., s.omega[b]..., s.load_force[b]..., s.load_torque[b]...)
