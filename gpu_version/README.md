@@ -2045,9 +2045,22 @@ This removes an acoustic restriction that has no physical role without fluid.
 Convergence in timestep and constraint iterations still needs checking.
 SPH force/acoustic timestep diagnostics are unavailable with this controller.
 
-`result.final_state.rigid` contains the final native reaction force (N) and
-torque (N m) per body. These include joint and contact impulses and are
-separate from the SPH/spring load columns in `_Floating.csv`.
+Native body output includes `ConstraintForce` and `ConstraintTorque` (joint
+and contact impulse reactions), `GravityForce`, and `TotalForce` (SPH/spring
+load + gravity + constraint reaction). Vectors are world coordinates in N
+and N m. They appear in `_Floating.csv` and the temporal `FloatingBodies`
+VTKHDF block, captured with each output frame, including asynchronous output.
+The existing `Force`/`Torque` fields retain their SPH/spring meaning. At time
+zero the reaction has not yet been evaluated. `result.final_state.rigid`
+also retains the final native reaction vectors.
+
+The default ParaView state displays blue gravity arrows and red joint/contact
+reaction arrows at each body centre. Arrow lengths are normalized for visibility;
+they show direction. Inspect the named arrays in **Body forces [N]** for
+magnitudes. Green net-force arrows are available but hidden initially. In a
+resting body gravity and support reactions oppose one another and the net
+force is near zero. For cases with no fluid or springs the original `Force`
+field is zero; it cannot show gravity or these native reactions.
 `rigid_joint_errors(mechanics, geometry, result.final_state.floating)` returns
 translation residuals in metres and hinge-axis residuals in radians. This is
 an output-time download; no body state is downloaded during each solve.
@@ -2056,14 +2069,16 @@ an output-time download; no body state is downloaded during each solve.
 
 [example/ZipLine3d.jl](example/ZipLine3d.jl) follows the direct `let`-block
 layout of `Bathymetry2d.jl` and reproduces the initial particle geometry of
-DualSPHysics 5.4 `examples/chrono/06_ZipLine`. It has **32,142 particles**:
-31,464 fixed and 678 floating in ten ragdoll parts, with no fluid and no
+DualSPHysics 5.4 `examples/chrono/06_ZipLine`. It has **31,727 particles**:
+31,049 fixed and 678 floating in ten ragdoll parts, with no fluid and no
 periodicity. Spacing is 0.04 m, gravity is 9.81 m/s², and the run lasts 3.5 s
 with output every 0.02 s. Four hinges, five ball joints and the left forearm's
 point-line attachment use the reference coordinates. The cable is a visual
-guide; the container is the fixed contact surface. The generated container
-and bundled fixture match every GenCase node and group. Body masses and full
-inertia tensors match GenCase to its printed precision.
+guide drawn as a line in ParaView; the analytical point-line constraint
+performs its mechanical role. The reference's 415 cable particles are not
+allocated or simulated. The container is the fixed contact surface. All
+physical container/body nodes retain GenCase's coordinates and group markers.
+Body masses and full inertia tensors match GenCase to its printed precision.
 
 ```sh
 julia --project=gpu_version -t 2,0 gpu_version/example/ZipLine3d.jl
@@ -2075,9 +2090,17 @@ controller for comparison. The reference uses Chrono CAD mesh contacts with
 a half-dp overlap allowance; this example uses full-dp particle contact
 distance to keep sampled walls closed. These are different contact models,
 so identical ragdoll trajectories or superior contact accuracy are not claimed.
-The bundled CAD files are used only to add the moving `RagdollSurfaces`
-visualization block after the run; their motion comes from simulated body
-poses. See [geometry provenance](example/data/zipline/README.md).
+The moving `RagdollSurfaces` block uses indexed vertices and faces copied
+directly from GenCase's `CaseZipLine__Actual.vtk`, including its draw offsets.
+Shared vertices preserve the reference topology and shading. The container
+surface is copied from that file too, including faces outside the sampled
+particle domain. These are display geometry; contact still uses particles.
+Their motion comes from simulated body poses. The generated default state
+shows these meshes and the analytical axis in a Z-up overview, alongside a
+close view that follows the ragdoll and shows its force arrows clearly.
+See [geometry provenance](example/data/zipline/README.md).
+The [ZipLine validation report](docs/zipline_validation.md) records warmed
+timings, the causes of the original slowdown, residuals and comparison limits.
 
 Run focused native regressions from `gpu_version/`:
 

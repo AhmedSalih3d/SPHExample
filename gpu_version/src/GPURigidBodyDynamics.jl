@@ -36,7 +36,7 @@ function rigid_edge_colours(edges)
     return CuArray(order), CuArray(starts), Int32(length(groups))
 end
 
-function attach_rigid_dynamics(f, specification::RigidBodyDynamics, particles, kernel)
+function attach_rigid_dynamics(f, specification::RigidBodyDynamics, particles, kernel; gravity = 0)
     floating_dimension(f.center) == 3 || throw(ArgumentError("native multibody dynamics currently requires 3D"))
     f.active || throw(ArgumentError("native multibody dynamics needs at least one floating body"))
     f.constrained && throw(ArgumentError("use native joints instead of per-body FloatingConstraints in multibody mode"))
@@ -105,7 +105,9 @@ function attach_rigid_dynamics(f, specification::RigidBodyDynamics, particles, k
         half_angular_impulse = CUDA.zeros(SVector{3,T}, Int(f.nbodies)),
         reaction_force = CUDA.zeros(SVector{3,T}, Int(f.nbodies)),
         reaction_torque = CUDA.zeros(SVector{3,T}, Int(f.nbodies)),
+        velocity_inertia = similar(f.inertia_inv),
         winners = CUDA.fill(typemax(UInt64), slots), partner = CUDA.zeros(Int32, slots),
+        contact_order = CUDA.zeros(Int32, slots), contact_count = CUDA.zeros(Int32, length(pairs)),
         normal_impulse = CUDA.zeros(T, slots), tangent_impulse = CUDA.zeros(SVector{3,T}, slots),
         bounce = CUDA.zeros(T, slots), iterations = Int32(specification.iterations),
         has_contacts = contact !== nothing, solid_only, parameters, radii = CuArray(radii),
@@ -113,8 +115,11 @@ function attach_rigid_dynamics(f, specification::RigidBodyDynamics, particles, k
     configuration = (; backend = :native_cuda, joints = length(joints), bodies = Int(f.nbodies),
         iterations = specification.iterations, contacts = contact !== nothing,
         contact_samples_per_pair = 24, contact_parameters = contact, precision = nameof(T), position_precision = nameof(TP),
-        solid_interactions = :native_constraints_and_contacts, max_timestep = specification.max_timestep)
-    return merge(f, (; mechanics, rigid_configuration = configuration))
+        solid_interactions = :native_constraints_and_contacts, max_timestep = specification.max_timestep,
+        cache_velocity_inertia = true)
+    gravity_force = CuArray([SVector{3,T}(0, 0, -T(gravity) * mass) for mass in Array(f.mass)])
+    return merge(f, (; mechanics, rigid_configuration = configuration,
+        constraint_force = mechanics.reaction_force, constraint_torque = mechanics.reaction_torque, gravity_force))
 end
 
 struct NativeRigidTimeStep{B,R,T}
@@ -163,6 +168,8 @@ end
     @inbounds return f.frozen[b] != 0 || step_time(step) < f.pause[b] ? zero(eltype(f.mass)) : inv(f.mass[b])
 end
 @inline function rigid_inverse_inertia(f, b, q, vector, step)
+    b == 0 && return zero(vector)
+    hasproperty(f, :world_inverse_inertia) && return @inbounds f.world_inverse_inertia[b] * vector
     rigid_mobility(f, b, step) == 0 && return zero(vector)
     @inbounds orientation = q[b]
     local_vector = rotate_vector(quaternion_conjugate(orientation), vector)
@@ -307,6 +314,22 @@ function rigid_partners_kernel!(f, d, positions, ids, groups, types, cells, star
     return nothing
 end
 
+function rigid_pack_contacts_kernel!(d, step)
+    step_active(step) || return nothing
+    pair = thread_index()
+    pair > length(d.pairs) && return nothing
+    count = Int32(0)
+    for sample in Int32(1):Int32(24)
+        slot = Int32(24) * (pair - Int32(1)) + sample
+        @inbounds if d.partner[slot] != 0
+            count += Int32(1)
+            d.contact_order[Int32(24) * (pair - Int32(1)) + count] = slot
+        end
+    end
+    @inbounds d.contact_count[pair] = count
+    return nothing
+end
+
 @inline function rigid_tangent_mass(f, q, a, b, ra, rb, n1, n2, step)
     return (rigid_mobility(f, a, step) + rigid_mobility(f, b, step)) * dot(n1, n2) +
         dot(cross(ra, n1), rigid_inverse_inertia(f, a, q, cross(ra, n2), step)) +
@@ -368,7 +391,7 @@ end
 end
 
 rigid_shared_bytes(f) = Int(f.nbodies) * (sizeof(eltype(f.center)) + sizeof(eltype(f.orientation)) +
-    2sizeof(eltype(f.velocity)) + sizeof(eltype(f.inertia_inv)) + 2sizeof(eltype(f.mass)))
+    2sizeof(eltype(f.velocity)) + 2sizeof(eltype(f.inertia_inv)) + 2sizeof(eltype(f.mass)))
 
 @inline function rigid_shared_state(f, center, q, velocity, omega, step)
     n = f.nbodies
@@ -386,6 +409,8 @@ rigid_shared_bytes(f) = Int(f.nbodies) * (sizeof(eltype(f.center)) + sizeof(elty
     mass = CuDynamicSharedArray(eltype(f.mass), n, offset)
     offset += sizeof(eltype(f.mass)) * n
     inverse_mass = CuDynamicSharedArray(eltype(f.mass), n, offset)
+    offset += sizeof(eltype(f.mass)) * n
+    velocity_inertia = CuDynamicSharedArray(eltype(f.inertia_inv), n, offset)
     b = threadIdx().x
     while b <= n
         @inbounds begin
@@ -397,10 +422,43 @@ rigid_shared_bytes(f) = Int(f.nbodies) * (sizeof(eltype(f.center)) + sizeof(elty
         b += blockDim().x
     end
     sync_threads()
-    return merge(f, (; inertia_inv, mass, inverse_mass)), local_center, local_q, local_velocity, local_omega
+    return merge(f, (; inertia_inv, mass, inverse_mass)), local_center, local_q, local_velocity, local_omega, velocity_inertia
 end
 
-function rigid_project_kernel!(f, d, positions, ids, groups, center, q, velocity, omega, step, final, ::Val{Shared} = Val(false)) where Shared
+@inline function rigid_project_iterations!(f, d, positions, ids, groups, center, q, velocity, omega, step, ::Val{Position}) where Position
+    thread = threadIdx().x
+    for iteration in 1:d.iterations
+        for colour in 1:d.joint_colours
+            @inbounds first, stop = d.joint_starts[colour], d.joint_starts[colour + 1]
+            index = first + thread - 1
+            while index < stop
+                @inbounds solve_rigid_joint!(f, center, q, velocity, omega, d.joints[d.joint_order[index]], step, Position)
+                index += blockDim().x
+            end
+            sync_threads()
+        end
+        for colour in 1:d.pair_colours
+            @inbounds first, stop = d.pair_starts[colour], d.pair_starts[colour + 1]
+            index = first + thread - 1
+            while index < stop
+                @inbounds pair = d.pair_order[index]
+                @inbounds a, b = d.pairs[pair]
+                @inbounds count = d.contact_count[pair]
+                for sample in Int32(1):count
+                    @inbounds slot = d.contact_order[Int32(24) * (pair - Int32(1)) + sample]
+                    solve_rigid_contact!(f, d, positions, ids, groups, center, q, velocity, omega,
+                        a, b, slot, step, Position)
+                end
+                index += blockDim().x
+            end
+            sync_threads()
+        end
+    end
+    return nothing
+end
+
+function rigid_project_kernel!(f, d, positions, ids, groups, center, q, velocity, omega, step, final,
+        ::Val{Shared} = Val(false), ::Val{CacheVelocity} = Val(true)) where {Shared,CacheVelocity}
     step_active(step) || return nothing
     thread = threadIdx().x
     b = thread
@@ -409,34 +467,29 @@ function rigid_project_kernel!(f, d, positions, ids, groups, center, q, velocity
         b += blockDim().x
     end
     sync_threads()
-    working_f, working_center, working_q, working_velocity, working_omega = Shared ?
-        rigid_shared_state(f, center, q, velocity, omega, step) : (f, center, q, velocity, omega)
-    for phase in 1:2
-        for iteration in 1:d.iterations
-            for colour in 1:d.joint_colours
-                @inbounds first, stop = d.joint_starts[colour], d.joint_starts[colour + 1]
-                index = first + thread - 1
-                while index < stop
-                    @inbounds solve_rigid_joint!(working_f, working_center, working_q, working_velocity, working_omega, d.joints[d.joint_order[index]], step, phase == 1)
-                    index += blockDim().x
-                end
-                sync_threads()
-            end
-            for colour in 1:d.pair_colours
-                @inbounds first, stop = d.pair_starts[colour], d.pair_starts[colour + 1]
-                index = first + thread - 1
-                while index < stop
-                    @inbounds pair = d.pair_order[index]
-                    @inbounds a, b = d.pairs[pair]
-                    for sample in 1:24
-                        solve_rigid_contact!(working_f, d, positions, ids, groups, working_center, working_q, working_velocity, working_omega,
-                            a, b, 24(pair - 1) + sample, step, phase == 1)
-                    end
-                    index += blockDim().x
-                end
-                sync_threads()
-            end
+    working_f, working_center, working_q, working_velocity, working_omega, velocity_inertia = Shared ?
+        rigid_shared_state(f, center, q, velocity, omega, step) : (f, center, q, velocity, omega, d.velocity_inertia)
+    rigid_project_iterations!(working_f, d, positions, ids, groups, working_center, working_q, working_velocity, working_omega, step, Val(true))
+    sync_threads()
+    if CacheVelocity
+        # Poses remain fixed throughout velocity projection. Cache the world
+        # inverse inertia once, rather than rotating every impulse into and
+        # out of the body frame on every iteration.
+        T = eltype(f.mass)
+        b = thread
+        while b <= f.nbodies
+            e1, e2, e3 = SVector{3,T}(1,0,0), SVector{3,T}(0,1,0), SVector{3,T}(0,0,1)
+            @inbounds velocity_inertia[b] = SMatrix{3,3,T}(hcat(
+                rigid_inverse_inertia(working_f, b, working_q, e1, step),
+                rigid_inverse_inertia(working_f, b, working_q, e2, step),
+                rigid_inverse_inertia(working_f, b, working_q, e3, step)))
+            b += blockDim().x
         end
+        sync_threads()
+        velocity_f = merge(working_f, (; world_inverse_inertia = velocity_inertia))
+        rigid_project_iterations!(velocity_f, d, positions, ids, groups, working_center, working_q, working_velocity, working_omega, step, Val(false))
+    else
+        rigid_project_iterations!(working_f, d, positions, ids, groups, working_center, working_q, working_velocity, working_omega, step, Val(false))
     end
     # Carry predictor impulses into the corrector's base velocity. An impact
     # in the predictor must not be undone by a pre-impact corrector velocity.
@@ -529,6 +582,7 @@ function solve_rigid_stage!(f, gpu, cl, kernel, step, final::Bool)
             gpu.Position, gpu.ID, gpu.GroupMarker, gpu.Type, f.indices, gpu.CellID, cl.CellStart, cl.grid_dev, center, q, step)
         @cuda threads=128 blocks=cld(length(d.winners), 128) rigid_partners_kernel!(device, d,
             gpu.Position, gpu.ID, gpu.GroupMarker, gpu.Type, gpu.CellID, cl.CellStart, cl.grid_dev, center, q, velocity, omega, step)
+        @cuda threads=128 blocks=cld(length(d.pairs), 128) rigid_pack_contacts_kernel!(d, step)
     end
     # Small articulated systems fit comfortably in shared memory. Larger
     # systems retain the same solver with global storage instead of exceeding

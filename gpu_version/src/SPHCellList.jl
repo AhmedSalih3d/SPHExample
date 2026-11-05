@@ -367,6 +367,9 @@ function OutputDownload(gpu::GPUParticles{D}, fields; cells::Bool, floating = no
         pinned(Int32, length(gpu.GhostIndex)) : nothing
     body_fields = D == 2 ? (:center, :velocity, :angle, :omega, :load_force, :load_torque) :
         (:center, :velocity, :orientation, :omega, :load_force, :load_torque)
+    if floating !== nothing && hasproperty(floating, :mechanics)
+        body_fields = (body_fields..., :constraint_force, :constraint_torque, :gravity_force)
+    end
     body_state = if floating === nothing || !floating.active
         nothing
     else
@@ -1958,7 +1961,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         floating = FloatingArrays(SimGeometry, SimParticles, SimConstants; position_type = PositionType,
                                   time = SimMetaData.TotalTime)
         if SimRigidBodyDynamics !== nothing
-            floating = attach_rigid_dynamics(floating, SimRigidBodyDynamics, SimParticles, SimKernel)
+            floating = attach_rigid_dynamics(floating, SimRigidBodyDynamics, SimParticles, SimKernel; gravity = SimConstants.g)
             initialize_rigid_velocities!(floating, SimMetaData.TotalTime)
         end
         if floating.constrained || (SimRigidBodyDynamics !== nothing && floating.initial_velocity)
@@ -1995,9 +1998,14 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         if Dimensions == 2
             println(floating_log, "Time,Body,GroupMarker,Center:0,Center:1,Velocity:0,Velocity:1,Angle,Omega,Force:0,Force:1,Torque")
         else
-            println(floating_log, "Time,Body,GroupMarker,Center:0,Center:1,Center:2," *
+            header = "Time,Body,GroupMarker,Center:0,Center:1,Center:2," *
                                 "Velocity:0,Velocity:1,Velocity:2,Orientation:0,Orientation:1," *
-                                "Orientation:2,Orientation:3,Omega:0,Omega:1,Omega:2,Force:0,Force:1,Force:2,Torque:0,Torque:1,Torque:2")
+                                "Orientation:2,Orientation:3,Omega:0,Omega:1,Omega:2,Force:0,Force:1,Force:2,Torque:0,Torque:1,Torque:2"
+            if SimRigidBodyDynamics !== nothing
+                header *= ",ConstraintForce:0,ConstraintForce:1,ConstraintForce:2,ConstraintTorque:0,ConstraintTorque:1,ConstraintTorque:2," *
+                    "GravityForce:0,GravityForce:1,GravityForce:2,TotalForce:0,TotalForce:1,TotalForce:2"
+            end
+            println(floating_log, header)
         end
     end
     function log_floating(t, s)
@@ -2007,8 +2015,13 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                 println(floating_log, join((t, b, floating_markers[b], s.center[b]..., s.velocity[b]...,
                                             s.angle[b], s.omega[b], s.load_force[b]..., s.load_torque[b]), ","))
             else
-                println(floating_log, join((t, b, floating_markers[b], s.center[b]..., s.velocity[b]...,
-                                            s.orientation[b]..., s.omega[b]..., s.load_force[b]..., s.load_torque[b]...), ","))
+                row = (t, b, floating_markers[b], s.center[b]..., s.velocity[b]...,
+                    s.orientation[b]..., s.omega[b]..., s.load_force[b]..., s.load_torque[b]...)
+                if hasproperty(s, :constraint_force)
+                    total = s.load_force[b] + s.constraint_force[b] + s.gravity_force[b]
+                    row = (row..., s.constraint_force[b]..., s.constraint_torque[b]..., s.gravity_force[b]..., total...)
+                end
+                println(floating_log, join(row, ","))
             end
         end
         flush(floating_log)

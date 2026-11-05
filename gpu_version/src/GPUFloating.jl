@@ -275,8 +275,16 @@ accumulator is cleared: fluid interactions plus springs, excluding gravity and
 constraint reactions. Torque is about the evaluated centre of mass, in world
 coordinates. Correctors retain half-state loads; startup/rebuild derivatives
 retain full-state loads. They are zero until the first evaluation.
+Native rigid mode additionally supplies `constraint_force`, `constraint_torque`
+and `gravity_force`. Reactions are impulse-derived loads from the last accepted
+step; gravity is the body's weight. These vectors are also exported per frame.
 """
-floating_state(f) = floating_state(f, Val(floating_dimension(f.center)))
+function floating_state(f)
+    state = floating_state(f, Val(floating_dimension(f.center)))
+    hasproperty(f, :mechanics) || return state
+    return merge(state, (; constraint_force = Array(f.constraint_force),
+        constraint_torque = Array(f.constraint_torque), gravity_force = Array(f.gravity_force)))
+end
 floating_state(f, ::Val{2}) = (center = Array(f.center), velocity = Array(f.velocity),
                                angle = Array(f.angle), omega = Array(f.omega),
                                load_force = Array(f.load_force), load_torque = Array(f.load_torque))

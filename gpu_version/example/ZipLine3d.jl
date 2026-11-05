@@ -29,7 +29,8 @@ let
     # GenCase's 40 mm lattice is anchored at the definition's pointmin. The
     # cable and CAD ragdoll use bundled integer lattice coordinates. Only the
     # two sampled container faces lie inside this example's particle domain.
-    # At the reference spacing the case has 32,142 particles and no fluid.
+    # The reference has 32,142 particles. Omit its 415 visual cable points:
+    # the axis is an analytical constraint, leaving 31,727 physical particles.
     origin = SVector(-0.5, -1.5, -10.0)
     lattice = CSV.File(joinpath(@__DIR__, "data", "zipline", "lattice.csv"))
     node_positions = [Tuple{Int,Int,Int}[] for _ in 1:12]
@@ -51,8 +52,7 @@ let
         CFL = 0.2,
     )
 
-    Cable = SPHGeometry{Dimensions, FloatType}(positions[1];
-        Density = SimConstants.ρ₀, GroupMarker = 1, Type = Fixed)
+    Cable = (; point = (0, -0.2, -0.6), direction = (11, 0, -8.4))
     Domain = SPHGeometry{Dimensions, FloatType}(positions[2];
         Density = SimConstants.ρ₀, GroupMarker = 2, Type = Fixed)
 
@@ -62,7 +62,7 @@ let
         Density = SimConstants.ρ₀, GroupMarker = marker, Type = Floating,
         Floating = FloatingDetails{FloatType}(RelativeWeight = 0.001)) for marker in 3:12]
     Head, Body, ArmLeft, ArmRight, ForearmLeft, ForearmRight, LegLeft, LegRight, CalfLeft, CalfRight = parts
-    SimulationGeometry = [Cable, Domain, parts...]
+    SimulationGeometry = [Domain, parts...]
 
     # All attachment points and axes are the original world coordinates.
     # Four hinges constrain elbows/knees; five ball joints join the remaining
@@ -81,7 +81,7 @@ let
         BallJoint(Body.GroupMarker, ArmRight.GroupMarker; Anchor = (0, 0.136, -0.17)),
         BallJoint(Body.GroupMarker, LegLeft.GroupMarker; Anchor = (0, -0.055, -0.532)),
         BallJoint(Body.GroupMarker, LegRight.GroupMarker; Anchor = (0, 0.055, -0.532)),
-        PointLineJoint(ForearmLeft.GroupMarker; Point = (0, -0.2, -0.6), Direction = (11, 0, -8.4)),
+        PointLineJoint(ForearmLeft.GroupMarker; Point = Cable.point, Direction = Cable.direction),
     )
     # Match the material coefficients. Keep a full-dp particle contact distance:
     # the reference's half-dp mesh overlap allowance cannot be used to shrink

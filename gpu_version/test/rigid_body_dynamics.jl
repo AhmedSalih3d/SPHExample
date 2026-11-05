@@ -7,8 +7,9 @@ include(joinpath(@__DIR__, "..", "benchmark", "zipline_case.jl"))
 
 @testset "ZipLine reference geometry" begin
     case = prepare_zipline_3d()
-    @test length.(getproperty.(case.geometry, :Particles)) == [415,31049,111,204,35,47,32,26,69,71,40,43]
-    @test sum(length(g.Particles) for g in case.geometry) == 32142
+    @test length.(getproperty.(case.geometry, :Particles)) == [31049,111,204,35,47,32,26,69,71,40,43]
+    @test sum(length(g.Particles) for g in case.geometry) == 31727
+    @test all(g -> g.GroupMarker != 1, case.geometry)
     @test count(g -> g.Type == Floating, case.geometry) == 10
     @test case.meta.Periodicity === nothing
     @test length(case.dynamics.joints) == 10
@@ -78,9 +79,22 @@ if CUDA.functional()
                 @test read(io["VTKHDF/RagdollSurfaces/Steps/Values"]) == [0, 0.02, 0.04]
                 points = read(io["VTKHDF/RagdollSurfaces/Points"])
                 n = first(read(io["VTKHDF/RagdollSurfaces/NumberOfPoints"]))
+                @test n == 127 # shared vertices copied from GenCase's actual mesh
                 @test all(isfinite, points)
                 @test norm(points[:,1:n] - points[:,end-n+1:end]) > 0.001
+                fields = io["VTKHDF/FloatingBodies/PointData"]
+                gravity = read(fields["GravityForce"])
+                reaction = read(fields["ConstraintForce"])
+                total = read(fields["TotalForce"])
+                @test all(iszero, gravity[1:2,:])
+                @test all(<(0), gravity[3,:])
+                @test any(!iszero, reaction)
+                @test total ≈ gravity + reaction rtol = 2e-6 atol = 1e-8
+                @test all(iszero, read(fields["Force"]))
             end
+            script = read(joinpath(directory, "true", "ZipLine3D_SingleVTKHDFStateFile.py"), String)
+            @test occursin("Analytical sliding axis (visual guide)", script)
+            @test occursin("Joint and contact reaction (red)", script)
         end
     end
 

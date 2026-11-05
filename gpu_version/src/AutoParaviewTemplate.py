@@ -67,9 +67,14 @@ Simulation_vtkhdf = VTKHDFReader(registrationName='__SIM_NAME__.vtkhdf*', FileNa
 point_array_status = list(__OUTPUT_VARIABLES__)
 # Body data is saved independently of the requested particle arrays.
 has_floating_forces = 'Force' in Simulation_vtkhdf.PointArrayStatus.Available
+has_native_forces = 'ConstraintForce' in Simulation_vtkhdf.PointArrayStatus.Available
 if has_floating_forces:
     point_array_status = list(dict.fromkeys(point_array_status +
                              ['Body', 'GroupMarker', 'Velocity', 'Force', 'Torque', 'ForceMagnitude']))
+if has_native_forces:
+    point_array_status = list(dict.fromkeys(point_array_status +
+        ['ConstraintForce', 'ConstraintTorque', 'GravityForce', 'TotalForce',
+         'ConstraintForceMagnitude', 'GravityForceMagnitude', 'TotalForceMagnitude']))
 if __SHOW_DAMPING__:
     point_array_status.append('NormalizedDamping')
 Simulation_vtkhdf.PointArrayStatus = point_array_status
@@ -90,7 +95,7 @@ data_type = Simulation_vtkhdf.GetDataInformation().GetDataSetTypeAsString()
 if data_type == 'vtkMultiBlockDataSet':
     Simulation_vtkhdfDisplay.BlockSelectors = ['/Root/Particles']
 
-if has_floating_forces and data_type == 'vtkMultiBlockDataSet':
+if has_floating_forces and not has_native_forces and data_type == 'vtkMultiBlockDataSet':
     FloatingBodies = ExtractBlock(registrationName='Floating body loads', Input=Simulation_vtkhdf)
     FloatingBodies.Selectors = ['/Root/FloatingBodies']
     # Suppress zero loads without making arrow length depend on force units.
@@ -117,6 +122,43 @@ if has_floating_forces and data_type == 'vtkMultiBlockDataSet':
     floating_force_bar.Title = 'Floating body force [N]'
     floating_force_bar.ComponentTitle = ''
     floating_force_bar.WindowLocation = 'Lower Left Corner'
+
+if has_native_forces and data_type == 'vtkMultiBlockDataSet':
+    FloatingBodies = ExtractBlock(registrationName='Body forces [N]', Input=Simulation_vtkhdf)
+    FloatingBodies.Selectors = ['/Root/FloatingBodies']
+    FloatingBodies.UpdatePipeline()
+    body_bounds = FloatingBodies.GetDataInformation().GetBounds()
+    body_size = max(body_bounds[2*d+1] - body_bounds[2*d] for d in range(3))
+    force_arrow_length = max(8.0 * float(__GAUSSIAN_RADIUS__), 0.25 * body_size)
+    native_force_arrows = []
+    for title, vector, magnitude, colour in (
+        ('Gravity force (blue)', 'GravityForce', 'GravityForceMagnitude', [0.10, 0.35, 0.95]),
+        ('Joint and contact reaction (red)', 'ConstraintForce', 'ConstraintForceMagnitude', [0.90, 0.12, 0.08]),
+        ('Net force (hidden)', 'TotalForce', 'TotalForceMagnitude', [0.15, 0.65, 0.25]),
+    ):
+        mask = Calculator(registrationName=title + ' mask', Input=FloatingBodies)
+        mask.ResultArrayName = 'VisibleForce'
+        mask.Function = 'if(' + magnitude + ' > 0, 1, 0)'
+        arrows = Glyph(registrationName=title, Input=mask, GlyphType='Arrow')
+        arrows.OrientationArray = ['POINTS', vector]
+        arrows.ScaleArray = ['POINTS', 'VisibleForce']
+        arrows.ScaleFactor = force_arrow_length
+        arrows.GlyphMode = 'All Points'
+        display = Show(arrows, renderView1, 'GeometryRepresentation')
+        display.SetRepresentationType('Surface')
+        display.ColorArrayName = ['POINTS', '']
+        display.DiffuseColor = colour
+        native_force_arrows.append((vector, arrows, colour))
+        if vector == 'TotalForce':
+            Hide(arrows, renderView1)
+    ForceKey = Text(registrationName='Force arrow key')
+    ForceKey.Text = ('Blue: gravity; red: joints + contact.\n'
+                     'Arrows show direction (equal length); values in Body forces [N].\n'
+                     'Net force = gravity + reaction + SPH/spring force (green, hidden).')
+    ForceKeyDisplay = Show(ForceKey, renderView1, 'TextSourceRepresentation')
+    ForceKeyDisplay.WindowLocation = 'Upper Left Corner'
+    ForceKeyDisplay.FontSize = 13
+    ForceKeyDisplay.Color = [0.12, 0.12, 0.12]
 
 if data_type == 'vtkMultiBlockDataSet' and 'ForceMagnitude' in Simulation_vtkhdf.CellArrayStatus.Available:
     Simulation_vtkhdf.CellArrayStatus = list(Simulation_vtkhdf.CellArrayStatus.Available)

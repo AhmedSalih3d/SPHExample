@@ -112,6 +112,10 @@ An exported `FloatingBodies` block supplies one centre point per body with
 `Force` (N) and `Torque` (N m). The generated state shows `Floating force arrows`
 as surfaces sized to the scene, with a separate force colour legend. Zero
 loads produce no visible arrow; advance past the initial unevaluated frame.
+Native rigid output instead shows blue gravity and red joint/contact-reaction
+arrows. Lengths are normalized for visibility; world force arrays are in N.
+The green net-force glyphs are initially hidden. The generated key explains
+these conventions; SPH/spring `Force` retains its original meaning.
 """
 function AutoOpenParaview(SimMetaData::SimulationMetaData, 
                           SimConstants::SimulationConstants,

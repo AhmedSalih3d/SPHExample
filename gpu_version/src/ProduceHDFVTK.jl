@@ -51,26 +51,36 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     const PARTICLE_BLOCK = "Particles"
     const FLOATING_BLOCK = "FloatingBodies"
     const FLOATING_VARIABLES = ["Body", "GroupMarker", "Velocity", "Force", "Torque", "ForceMagnitude"]
+    floating_output_variables(state) = hasproperty(state, :constraint_force) ?
+        [FLOATING_VARIABLES; "ConstraintForce"; "ConstraintTorque"; "GravityForce"; "TotalForce";
+            "ConstraintForceMagnitude"; "GravityForceMagnitude"; "TotalForceMagnitude"] : FLOATING_VARIABLES
     floating_3d(v::SVector{D,T}) where {D,T} = SVector{3,T}(ntuple(d -> d <= D ? v[d] : zero(T), 3))
 
     function floating_output_fields(state, markers)
         force = state.load_force
         torque = eltype(state.load_torque) <: Real ?
             [SVector(zero(t), zero(t), t) for t in state.load_torque] : state.load_torque
-        return (collect(Int32, eachindex(markers)), markers, floating_3d.(state.velocity),
+        fields = (collect(Int32, eachindex(markers)), markers, floating_3d.(state.velocity),
                 floating_3d.(force), torque, norm.(force))
+        if hasproperty(state, :constraint_force)
+            total = force + state.constraint_force + state.gravity_force
+            return (fields..., state.constraint_force, state.constraint_torque, state.gravity_force, total,
+                norm.(state.constraint_force), norm.(state.gravity_force), norm.(total))
+        end
+        return fields
     end
 
     function create_floating_block!(collection, state, markers)
         root = create_block(collection, FLOATING_BLOCK)
         fields = floating_output_fields(state, markers)
-        GenerateGeometryStructure(root, FLOATING_VARIABLES, fields...)
-        GenerateStepStructure(root, FLOATING_VARIABLES, fields...)
+        variables = floating_output_variables(state)
+        GenerateGeometryStructure(root, variables, fields...)
+        GenerateStepStructure(root, variables, fields...)
         return root
     end
 
     function append_floating_frame!(root, time, state, markers)
-        AppendVTKHDFData(root, time, floating_3d.(state.center), FLOATING_VARIABLES,
+        AppendVTKHDFData(root, time, floating_3d.(state.center), floating_output_variables(state),
             floating_output_fields(state, markers)...)
         return nothing
     end
