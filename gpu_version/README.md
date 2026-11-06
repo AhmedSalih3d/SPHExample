@@ -4054,4 +4054,4 @@ Their original CAD is displayed, while collision mechanics use sampled particles
 
 ### Impinging jet
 
-The DualSPHysics-inspired [2D impinging jet](example/ImpingingJet2d.md) adds a downward fixed-density inlet and two extrapolated side outlets. Run with `julia --project=. example/ImpingingJet2d.jl`. This first version uses DBC; see the example documentation for reference differences and a smaller smoke run.
+The DualSPHysics-based [2D impinging jet](example/ImpingingJet2d.md) constructs all geometry and simulation settings in `example/ImpingingJet2d.jl`. It uses mDBC wall ghosts, a downward fixed-density inlet and two side outlets with fixed density and extrapolated velocity. Run with `julia --project=. example/ImpingingJet2d.jl`; see the example documentation for the reference settings and a smaller run through first impact.

@@ -1,4 +1,4 @@
-"""Native one-way planar open-channel boundaries with GPU particle emission."""
+"""Native planar open boundaries with GPU particle emission."""
 module OpenBoundaries
 using CUDA,StaticArrays,LinearAlgebra
 using ..SimulationGeometry
@@ -8,7 +8,7 @@ using ..GPUKernels: store_pos_cell!,ELEMENTWISE_THREADS
 using ..GPUStepState
 using ..SPHKernels
 
-export ImpingingJet,impinging_jet_geometry,OpenChannel,open_channel_geometry,prepare_open_boundary,launch_open_boundary_values!,
+export ImpingingJet,OpenChannel,open_channel_geometry,prepare_open_boundary,launch_open_boundary_values!,
        launch_open_boundary_events!,open_boundary_state
 
 """

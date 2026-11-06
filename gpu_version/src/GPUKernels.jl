@@ -822,7 +822,7 @@ end
 # position precision `TP`, `Pairs` is the pair source (see `pair_vector`).
 function mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVector{SVector{D, TP}}, Pairs,
                       GhostPoints, GhostIndex, ParticleType, CellStart, gridarg, step,
-                      SimKernel, SimConstants, InvDensity, Pressure, ::Val{K}, ::Val{Compact}, nghost::Int32, periodicity, GhostNormals, periodic_bounds) where {D, T, TP, K, Compact}
+                      SimKernel, SimConstants, InvDensity, Pressure, ::Val{K}, ::Val{Compact}, nghost::Int32, periodicity, GhostNormals, periodic_bounds, ::Val{ResetDry}) where {D, T, TP, K, Compact, ResetDry}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -862,7 +862,7 @@ function mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVector{SVect
     # Density correction (mirrors ApplyMDBCCorrection of the CPU code)
     # https://github.com/DualSPHysics/DualSPHysics/blob/f4fa76ad5083873fa1c6dd3b26cdce89c55a9aeb/src/source/JSphCpu_mdbc.cpp#L347
     @inbounds if valid & (lane == Int32(0))
-        ρ = Density[i]
+        ρ = ResetDry ? ρ₀ : Density[i]
         if abs(det(A)) >= 1e-3
             sol  = A \ b
             # in the position precision, then rounded: the two points are close
@@ -899,18 +899,20 @@ With `compact_ghosts = Val(true)`, `GhostPoints` is indexed by owner slot
 rather than particle index; otherwise the full-particle layout is retained.
 `inverse_density` must contain the current fluid reciprocals before launch;
 corrected boundary entries (and `pressure` when cached) are refreshed by this kernel.
+`reset_dry = Val(true)` resets unsupported ghosts to reference density, as in
+the original DualSPHysics mDBC. The default preserves the CPU reference fallback.
 """
 function launch_mdbc!(Density, Position, GhostPoints, GhostIndex, ParticleType, CellStart, grid, step,
                       SimKernel, SimConstants; threads::Integer = 128, lanes::Val = Val(1), pos_cells = nothing,
                       compact_ghosts::Val = Val(false), inverse_density = nothing, pressure = nothing, periodicity = nothing,
-                      ghost_normals = nothing, periodic_bounds = nothing)
+                      ghost_normals = nothing, periodic_bounds = nothing, reset_dry::Val = Val(false))
     n = length(GhostIndex)
     n == 0 && return nothing
     K = typeof(lanes).parameters[1]
     Pairs = pos_cells === nothing ? Position : pos_cells
     @cuda threads=threads blocks=cld(n * K, threads) mdbc_kernel!(
         Density, Position, Pairs, GhostPoints, GhostIndex, ParticleType, CellStart, grid, step,
-        SimKernel, SimConstants, inverse_density, pressure, lanes, compact_ghosts, Int32(n), periodicity, ghost_normals, periodic_bounds)
+        SimKernel, SimConstants, inverse_density, pressure, lanes, compact_ghosts, Int32(n), periodicity, ghost_normals, periodic_bounds, reset_dry)
     return nothing
 end
 

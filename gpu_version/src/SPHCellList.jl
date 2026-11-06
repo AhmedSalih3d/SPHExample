@@ -1083,7 +1083,8 @@ function enqueue_boundary_correction!(ctx, step, half::Bool)
             cl.CellStart, cl.grid_dev, step, SimKernel, SimConstants; threads, lanes, pos_cells = pairs,
             ghost_normals = gpu.GhostNormals,
             compact_ghosts = Val(gpu.BoundarySlot !== nothing), inverse_density = sup.InvDensity,
-            pressure = sup.Pressure, periodicity = cl.periodicity, periodic_bounds = periodic_bounds(sup))
+            pressure = sup.Pressure, periodicity = cl.periodicity, periodic_bounds = periodic_bounds(sup),
+            reset_dry = Val(get(ctx,:open_boundary,nothing) !== nothing && ctx.open_boundary.configuration isa ImpingingJet))
     end
     return nothing
 end
@@ -1205,6 +1206,8 @@ function enqueue_step!(ctx, timed::Bool)
     end
 
     if SingleNeighbor
+        launch_open_boundary_values!(get(ctx,:open_boundary,nothing),gpu.Position,gpu.Velocity,gpu.Density,
+            gpu.Type,gpu.GroupMarker,CellStart,grid,SimKernel,SimConstants,state)
         # CPU "02 Apply MDBC before Half TimeStep": the boundary densities the
         # predictor and the final density update start from are corrected
         # every step, the carried derivative is kept.
@@ -1253,7 +1256,7 @@ function enqueue_step!(ctx, timed::Bool)
 
     if get(ctx,:open_boundary,nothing) !== nothing
         launch_prepare_interactions!(position_half,state;inverse_density = sup.InvDensity,pressure = sup.Pressure,
-            Density = sup.ρₙ⁺,SimConstants,ParticleType = gpu.Type)
+            Density = sup.ρₙ⁺,SimConstants,ParticleType = gpu.Type,boundary_mode = get(ctx,:boundary_mode,NoMDBC()))
     end
 
     if get(ctx, :boundary_mode, SimpleMDBC()) isa UpdatedMDBC
@@ -1799,12 +1802,14 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
 
     CUDA.functional() || error("CUDA is not functional on this machine; use the CPU package SPHExample instead.")
     if SimOpenBoundaries !== nothing
-        SimOpenBoundaries isa Union{OpenChannel{FloatType},ImpingingJet{FloatType}} && Dimensions == 2 && BMode === NoMDBC && SMode === NoShifting &&
+        supported_open_mode = (SimOpenBoundaries isa OpenChannel{FloatType} && BMode === NoMDBC) ||
+            (SimOpenBoundaries isa ImpingingJet{FloatType} && BMode in (SimpleMDBC,UpdatedMDBC))
+        supported_open_mode && Dimensions == 2 && SMode === NoShifting &&
             SimMetaData.Periodicity === nothing && SimMetaData.VariableResolution === nothing && !SimMetaData.GPUFixedGrid &&
             !(SimTimeStepping isa DualSPHysicsSymplectic) && SimMetaData.TotalTime == 0 && SimMetaData.Iteration == 0 &&
             SimMotion === nothing && SimRotation === nothing &&
             SimExternalForces === nothing && SimDamping === nothing ||
-            throw(ArgumentError("Open boundaries require matching precision, nonperiodic expanding-grid 2D DBC, no shifting, standard stepping and no prescribed/external particle motion"))
+            throw(ArgumentError("Open boundaries require matching precision, nonperiodic expanding-grid 2D, no shifting, standard stepping and no prescribed/external particle motion; OpenChannel uses DBC and ImpingingJet requires mDBC"))
     end
     custom_interaction_mass = any(g -> g.Floating !== nothing && g.Floating.InteractionMass !== nothing,SimGeometry)
     if custom_interaction_mass
