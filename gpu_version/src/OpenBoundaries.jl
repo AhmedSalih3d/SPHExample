@@ -8,7 +8,7 @@ using ..GPUKernels: store_pos_cell!,ELEMENTWISE_THREADS
 using ..GPUStepState
 using ..SPHKernels
 
-export OpenChannel,open_channel_geometry,prepare_open_boundary,launch_open_boundary_values!,
+export ImpingingJet,impinging_jet_geometry,OpenChannel,open_channel_geometry,prepare_open_boundary,launch_open_boundary_values!,
        launch_open_boundary_events!,open_boundary_state
 
 """
@@ -168,7 +168,8 @@ end
 
 launch_open_boundary_values!(::Nothing,args...) = nothing
 function launch_open_boundary_values!(state,position,velocity,density,types,groups,starts,grid,kernel,constants,step)
-    @cuda threads=128 blocks=cld(length(position),128) open_values_kernel!(position,velocity,density,types,groups,starts,grid,kernel,constants,state.configuration,step,Int32(length(position)))
+    value_kernel! = state.configuration isa ImpingingJet ? jet_values_kernel! : open_values_kernel!
+    @cuda threads=128 blocks=cld(length(position),128) value_kernel!(position,velocity,density,types,groups,starts,grid,kernel,constants,state.configuration,step,Int32(length(position)))
     return nothing
 end
 
@@ -216,7 +217,8 @@ end
 
 launch_open_boundary_events!(::Nothing,args...) = nothing
 function launch_open_boundary_events!(state,gpu,support,cl,kernel,constants,step)
-    @cuda threads=128 blocks=cld(length(gpu),128) open_events_kernel!(gpu.Position,gpu.Velocity,gpu.Density,gpu.Type,
+    event_kernel! = state.configuration isa ImpingingJet ? jet_events_kernel! : open_events_kernel!
+    @cuda threads=128 blocks=cld(length(gpu),128) event_kernel!(gpu.Position,gpu.Velocity,gpu.Density,gpu.Type,
         gpu.GroupMarker,gpu.ID,gpu.CellID,support.PosCells,cl.grid_dev,state,kernel,constants,step,Int32(length(gpu)))
     return nothing
 end
@@ -228,4 +230,5 @@ function open_boundary_state(state,particles)
         reserve_particles = state.reserve_particles,initial_active_fluid = state.initial_active_fluid,
         remaining_reserve = count(i -> particles.Type[i] == Frozen && particles.GroupMarker[i] == state.configuration.reserve_marker,eachindex(particles.ID)))
 end
+include("ImpingingJet.jl")
 end

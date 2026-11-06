@@ -442,6 +442,9 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
 
         for row in neighbor_rows(periodicity, grid, c, s, pair_position(pᵢ), periodic_bounds, source_i)
             jlo, jhi = row_range(grid, CellStart, c, row)
+            # Cell one contains only inactive particles. Skip its whole range
+            # when a corner stencil reaches a large dormant inlet reserve.
+            jlo = FrozenParticles ? max(jlo, CellStart[Int32(2)] + Int32(1)) : jlo
             rowcell  = c + row.off
             j = jlo + lane
             while j <= jhi

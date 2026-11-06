@@ -4051,3 +4051,7 @@ See [fixture provenance](example/data/external_velocity/README.md) and the
 [validation report](docs/external_velocity_validation.md). The two wall cases
 contain about one million particles each; their default 0.01 s output is large.
 Their original CAD is displayed, while collision mechanics use sampled particles.
+
+### Impinging jet
+
+The DualSPHysics-inspired [2D impinging jet](example/ImpingingJet2d.md) adds a downward fixed-density inlet and two extrapolated side outlets. Run with `julia --project=. example/ImpingingJet2d.jl`. This first version uses DBC; see the example documentation for reference differences and a smaller smoke run.

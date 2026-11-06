@@ -852,18 +852,20 @@ stable reference owners follow the sorting permutation before scratch is reused.
 `sort_inactive = false` leaves the reserved inactive cell in scatter order,
 avoiding a quadratic insertion sort for large private particle pools. Active
 cell ordering is unchanged; the default retains the full deterministic sort.
+`inactive_particles = true` supplies particle types to exclude inactive reserves
+from grid bounds and neighbor cells even on an expanding grid.
 """
 function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCutOff;
                             prepared::Bool = false, support = nothing, floating = nothing, rotation = nothing,
                             constants = nothing, boundary_mode = NoMDBC(), discard_acceleration::Bool = false,
                             preserve_pressure::Bool = false, kernel = nothing,
-                            logger = nothing, time = 0, iteration = 0, sort_inactive::Bool = true)
+                            logger = nothing, time = 0, iteration = 0, sort_inactive::Bool = true, inactive_particles::Bool = false)
     support !== nothing && uses_pos_cells(support) && kernel === nothing &&
         throw(ArgumentError("Rebuilding with cell relative positions requires the SPH kernel."))
     if cl.periodicity !== nothing && cl.nrebuilds == 0 && floating === nothing
         any(==(Floating), Array(gpu.Type)) && throw(ArgumentError("Periodic floating-body rebuilds require the floating state"))
     end
-    freeze_state = cl.fixed_grid || cl.frozen_total > 0 ? grid_freeze_state(gpu, floating) : nothing
+    freeze_state = cl.fixed_grid || cl.frozen_total > 0 || inactive_particles ? grid_freeze_state(gpu, floating) : nothing
     if !prepared
         prepare_cell_grid!(cl, gpu.Position, InverseCutOff; freeze_state, periodic_state = periodic_particle_state(gpu, floating))
         sync_cell_grid!(cl)
@@ -1608,7 +1610,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         # escapes here and request a rebuild before further steps or output.
         # Publish the grid header in the existing timestep readback.
         @timeit HourGlass "02a Prepare Cell Grid" prepare_cell_grid!(cl, gpu.Position, SimKernel.H⁻¹; step = state,
-            freeze_state = cl.fixed_grid ? grid_freeze_state(gpu, floating) : nothing,
+            freeze_state = cl.fixed_grid || open_boundary !== nothing ? grid_freeze_state(gpu, floating) : nothing,
             periodic_state = periodic_particle_state(gpu, floating))
 
         @timeit HourGlass "13 Read Back State" begin
@@ -1636,7 +1638,8 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                 rebuild_cell_list!(gpu, cl, SimKernel.H⁻¹; prepared = true, support = sup, floating, rotation,
                     constants = SimConstants, boundary_mode, discard_acceleration = true,
                     preserve_pressure = cl.nrebuilds == 0, kernel = SimKernel,
-                    logger, time = SimMetaData.TotalTime, iteration = SimMetaData.Iteration)
+                    logger, time = SimMetaData.TotalTime, iteration = SimMetaData.Iteration,
+                    inactive_particles = open_boundary !== nothing, sort_inactive = open_boundary === nothing)
                 if sup.PeriodicImages !== nothing
                     configure_periodic_images!(sup.PeriodicImages,cl.periodicity,cl.grid,SimKernel)
                     if image_generation != sup.PeriodicImages.cl.generation
@@ -1796,12 +1799,12 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
 
     CUDA.functional() || error("CUDA is not functional on this machine; use the CPU package SPHExample instead.")
     if SimOpenBoundaries !== nothing
-        SimOpenBoundaries isa OpenChannel{FloatType} && Dimensions == 2 && BMode === NoMDBC && SMode === NoShifting &&
+        SimOpenBoundaries isa Union{OpenChannel{FloatType},ImpingingJet{FloatType}} && Dimensions == 2 && BMode === NoMDBC && SMode === NoShifting &&
             SimMetaData.Periodicity === nothing && SimMetaData.VariableResolution === nothing && !SimMetaData.GPUFixedGrid &&
             !(SimTimeStepping isa DualSPHysicsSymplectic) && SimMetaData.TotalTime == 0 && SimMetaData.Iteration == 0 &&
             SimMotion === nothing && SimRotation === nothing &&
             SimExternalForces === nothing && SimDamping === nothing ||
-            throw(ArgumentError("OpenChannel requires matching precision, nonperiodic expanding-grid 2D DBC, no shifting, standard stepping and no prescribed/external particle motion"))
+            throw(ArgumentError("Open boundaries require matching precision, nonperiodic expanding-grid 2D DBC, no shifting, standard stepping and no prescribed/external particle motion"))
     end
     custom_interaction_mass = any(g -> g.Floating !== nothing && g.Floating.InteractionMass !== nothing,SimGeometry)
     if custom_interaction_mass
