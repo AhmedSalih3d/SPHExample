@@ -65,7 +65,9 @@ end
 function output_times(f)
     # Opening in r+ also checks that RunSimulation closed its output handles.
     return h5open(joinpath(f.SimMetaData.SaveLocation, "SimulationResult.vtkhdf"), "r+") do file
-        read(file["VTKHDF/Steps/Values"])
+        # Floating-body output uses the existing composite particle block.
+        root = haskey(file,"VTKHDF/Particles") ? "VTKHDF/Particles" : "VTKHDF"
+        read(file["$root/Steps/Values"])
     end
 end
 

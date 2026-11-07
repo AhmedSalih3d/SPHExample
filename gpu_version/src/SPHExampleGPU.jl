@@ -18,6 +18,7 @@ module SPHExampleGPU
         "SPHKernels.jl",
         "PeriodicBoundaries.jl",
         "VariableResolutionConfiguration.jl",
+        "SolverConfiguration.jl",
         "SimulationMetaDataConfiguration.jl",
         "SimulationConstantsConfiguration.jl",
         "SimulationEquations.jl",
@@ -29,12 +30,14 @@ module SPHExampleGPU
         "OpenExternalPrograms.jl",
         "SPHDensityDiffusionModels.jl",
         "GPUReductions.jl",
+        "IISPHSupport.jl",
         "GPUStepState.jl",
         "DampingZones.jl",
         "ProduceHDFVTK.jl",
         "ExternalForces.jl",
         "GPUCellGrid.jl",
         "GPUKernels.jl",
+        "GPUIISPH.jl",
         "OpenBoundaries.jl",
         "PrescribedRotation.jl",
         "MotionTrajectories.jl",
@@ -114,6 +117,9 @@ module SPHExampleGPU
 
     using .TimeStepping: Δt
     export Δt
+
+    using .SolverConfiguration
+    export SPHSolver, WCSPH, IISPH
 
     using .SimulationEquations
     export EquationOfState, EquationOfStateGamma7, Pressure!, particle_pressure, DensityEpsi!, LimitDensityAtBoundary!, ConstructGravitySVector, InverseHydrostaticEquationOfState, Estimate7thRoot

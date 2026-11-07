@@ -7,7 +7,112 @@ example scripts only differ in `using SPHExampleGPU` instead of
 `using SPHExample`. All physics (Wendland/cubic kernels, artificial, laminar
 and laminar+SPS viscosity, all density diffusion models, dynamic and mDBC
 boundary conditions, particle shifting, prescribed motion of bodies) is
-supported in 2D and 3D, in `Float64` or `Float32`.
+supported in 2D and 3D, in `Float64` or `Float32` by the default WCSPH solver.
+An experimental [IISPH solver](#implicit-incompressible-sph-iisph) provides a
+separate pressure-projection path with the narrower feature set below.
+
+## Implicit incompressible SPH (IISPH)
+
+Select the pressure formulation independently of WCSPH time stepping:
+
+```julia
+result = RunSimulation(;
+    SimGeometry, SimMetaData, SimConstants, SimKernel, SimLogger, SimParticles,
+    SimSolver = IISPH(max_timestep = 0.002),
+    SimViscosity = Laminar(),
+    SimDensityDiffusion = ZeroDensityDiffusion(),
+)
+```
+
+Omitting `SimSolver`, or selecting `WCSPH()`, retains the existing solver and
+`SimTimeStepping` API. IISPH owns its symplectic Euler projection sequence;
+omit `SimTimeStepping` when selecting it. The CPU package is unchanged.
+
+This first milestone supports 2D/3D, Float32/Float64 (including double
+positions), uniform resolution, fixed walls, free surfaces, gravity,
+`SimExternalForces`, and `ZeroViscosity()` or explicit `Laminar()`. Select
+`NoMDBC`, `NoShifting`, `NoKernelOutput` and `ZeroDensityDiffusion()`.
+Fixed walls must **fill the solid volume at the fluid sampling resolution**,
+with enough layers to cover the kernel support (`H`); their sample volumes are
+`m₀/ρ₀`. Surface-only boundaries are not supported. Fixed-particle velocities
+must be zero. Wall pressure values in exports are zero placeholders; the
+fluid pressure and the wall contribution to the projection provide the wall
+response. They are not mDBC wall-pressure measurements.
+
+Moving/floating bodies, mDBC, shifting, periodic/open boundaries, damping,
+variable resolution, WCSPH interaction caches and experimental radial/SPS
+arithmetic, and restarts are rejected explicitly. CUDA graphs and asynchronous
+output are deferred: IISPH uses direct iterations, one step at a time, and
+synchronous frames even when the metadata requests those options. These
+fallbacks are recorded in `result.configuration`. Compiler fastmath is also
+disabled for this path. Preview it with
+`effective_configuration(meta, kernel, diffusion, viscosity; particle_count=n, solver=IISPH())`.
+
+Each step rebuilds the shared cell list at the current positions, computes
+summation density and non-pressure acceleration, predicts velocity, solves
+the pressure constraint with projected relaxed Jacobi, and integrates with
+the converged pressure acceleration. Positions and neighbours remain fixed
+during the pressure solve. Previous pressure is preserved through particle
+sorting and scaled by `warm_start` (default `0.5`). The default relaxation is
+`0.1` for the package's `h=2dx` stencil, with a maximum of 1,000 updates.
+More aggressive relaxation can diverge; changes to smoothing length, particle
+packing or tolerance need convergence checks.
+
+`relative_density_tolerance=1e-3` bounds the **maximum linearized constraint
+residual**, divided by rest density, for each accepted step. Positive-pressure
+particles check both compression and expansion; zero-pressure free-surface
+particles only check compression. This is not a bound on the nonlinear
+summation density after advection. Failure to converge throws before particle
+integration and does not return a successful result. Initial density is
+recomputed from positions, and pressure starts at zero; WCSPH hydrostatic
+density initialization does not initialize the IISPH pressure field.
+
+The timestep uses velocity and acceleration limits controlled by IISPH's
+`cfl`, an explicit laminar-viscosity limit, and `max_timestep`. It is clipped
+to output deadlines and the simulation end, within working-precision rounding.
+There is no artificial sound-speed limit. Larger timesteps can require more
+pressure iterations; a speedup over WCSPH has **not** been established.
+Individual particle pressures can contain substantial high-frequency noise,
+even when the density solve converges. The hydrostatic regression checks
+normalized SPH pressure probes in a settled viscous tank against `ρ₀g(depth)`;
+it does not establish pointwise particle-pressure accuracy or impact loads.
+The density-based wall is soft for under-supported leading-edge particles:
+the dam-break screen shows about half a particle spacing of floor intrusion
+at 0.2 s, which persists when the timestep is halved. It does not provide a
+hard nonpenetration constraint. Moving-wall/mDBC compatibility and improved
+near-wall treatment remain later milestones.
+
+Solved pressure is downloaded and passed directly to the shared VTKHDF writer
+and pressure probes. `result.final_state.particles` adds a `Pressure` column
+and shares the remaining host columns with the supplied `SimParticles`.
+Both numbered and single-file output, measurements, and current-frame occupied
+grid-cell export use this state. `<SimulationName>_IISPH.csv` records every
+accepted timestep, iteration count and maximum relative constraint residual;
+`result.diagnostics.iisph` contains aggregate counts and the history path.
+
+The solver workspace has six scalar arrays and three vector arrays, or
+`(6 + 3D) * sizeof(FloatType)` bytes per particle, plus a small GPU reduction
+workspace. This excludes particle/reorder buffers, the cell grid, output and
+external-force storage. It does not allocate the WCSPH predictor support arrays
+or a global pressure matrix.
+
+From the repository root:
+
+```bash
+julia --project=gpu_version -t 4,0 gpu_version/example/IISPH/run_tank.jl
+julia --project=gpu_version -t 4,0 gpu_version/test/iisph.jl
+julia --project=gpu_version -t 4,0 gpu_version/test/iisph_operator.jl
+julia --project=gpu_version -t 4,0 gpu_version/test/iisph_hydrostatic.jl
+julia --project=gpu_version -t 4,0 gpu_version/test/iisph_dam_break.jl
+julia --project=gpu_version -t 4,0 gpu_version/benchmark/iisph.jl
+```
+
+See the [IISPH case guide](example/IISPH/README.md). The formulation follows
+[Ihmsen et al., Implicit Incompressible SPH](https://cgl.ethz.ch/publications/papers/paperSol13b.php),
+with a matrix-free acceleration/continuity composition as illustrated by the
+[IISPH tutorial](https://learn.physics-simulation.org/examples/iisph.html).
+Our fixed walls use uniform volume samples, rather than the tutorial's
+surface-sampling volume estimator.
 
 ## Recirculating flow from CaseRZ_Flow2D
 
@@ -3765,6 +3870,10 @@ gpu_version/
 │   ├── GPUReductions.jl              # fused SVector block reductions
 │   ├── GPUCellGrid.jl                # dense grid, counting sort, reorder kernel, cell relative positions
 │   ├── GPUKernels.jl                 # interaction, mDBC, half/final step kernels
+│   ├── SolverConfiguration.jl        # WCSPH/IISPH formulation selection
+│   ├── IISPHSupport.jl               # independent pressure state and work arrays
+│   ├── GPUIISPH.jl                   # matrix-free pressure-projection kernels
+│   ├── GPUIISPHDriver.jl             # fixed-wall IISPH driver, included in SPHCellList
 │   ├── GPUFloating.jl                # floating rigid bodies: force sums, body update, rigid placement
 │   ├── SPHCellList.jl                # device containers, time loop, RunSimulation
 │   ├── SPHMeasurements.jl            # output-time pressure, velocity and surface samples

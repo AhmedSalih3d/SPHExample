@@ -8,16 +8,20 @@ using ..SimulationMetaDataConfiguration: periodic_images_enabled
 using ..SPHDensityDiffusionModels: ZeroDensityDiffusion, FourtakasDensityDiffusion
 using ..SPHViscosityModels: ZeroViscosity, LaminarSPS, ArtificialViscosity
 using ..GPUKernels: choose_lanes, interaction_options
+using ..SolverConfiguration: SPHSolver, WCSPH, IISPH
+import ..GPUIISPH
 
 export effective_configuration
 
 """
-    effective_configuration(metadata, kernel, diffusion, viscosity; particle_count)
+    effective_configuration(metadata, kernel, diffusion, viscosity; particle_count, solver=WCSPH())
 
 Resolve supported GPU specializations and launch settings without running a
 simulation. Returns host-only `requested`, `capabilities`, `effective` and
 `fallbacks` snapshots. Automatic lanes require a functional CUDA device;
 explicit `GPULanesPerParticle` values can be resolved without one.
+`solver=IISPH()` previews its dedicated direct, synchronous pressure solver;
+its single-lane configuration does not need a CUDA device for this preview.
 
 `effective` identifies the SPH kernel, interaction specialization, diffusion
 operator, viscosity arithmetic, interaction compiler options, precision, pair coordinates and simulation
@@ -29,7 +33,8 @@ This is a configuration preview. `RunSimulation(...).configuration` additionally
 reports observed graph/direct batch counts and capture failures under `execution`.
 """
 function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel, diffusion, viscosity;
-                                 particle_count::Integer) where {D, T, S, K, B}
+                                 particle_count::Integer, solver::SPHSolver=WCSPH()) where {D, T, S, K, B}
+    solver isa Union{WCSPH,IISPH} || throw(ArgumentError("unsupported SPH solver: $(typeof(solver))"))
     particle_count >= 0 || throw(ArgumentError("particle_count must be nonnegative"))
     options = interaction_options(kernel, diffusion, viscosity;
         radial = meta.GPURadialInteractions, scalar_sps = meta.GPUScalarSPSViscosity)
@@ -43,9 +48,9 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
         periodic_cell_coordinates = meta.GPUPeriodicCellCoordinates, periodic_images=meta.GPUPeriodicImages)
     capabilities = (; radial_interactions = options.radial_supported,
         scalar_sps_viscosity = options.scalar_sps_supported)
-    lanes = meta.VariableResolution !== nothing ? 1 : meta.GPULanesPerParticle <= 0 ? choose_lanes(particle_count, Val(D)) : meta.GPULanesPerParticle
+    lanes = meta.VariableResolution !== nothing || solver isa IISPH ? 1 : meta.GPULanesPerParticle <= 0 ? choose_lanes(particle_count, Val(D)) : meta.GPULanesPerParticle
     position_type = position_float_type(meta)
-    effective = (; sph_kernel = typeof(kernel.kernel), kernel_regularization = kernel.η²,
+    effective = (; solver = :WCSPH, sph_kernel = typeof(kernel.kernel), kernel_regularization = kernel.η²,
         variable_resolution = meta.VariableResolution === nothing ? nothing :
             (; method=:two_domain_mls,region=meta.VariableResolution.region,follow=meta.VariableResolution.follow,
                 include_buffers=meta.VariableResolution.include_buffers,particle_reserve=meta.VariableResolution.particle_reserve,
@@ -145,7 +150,35 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
         push!(fallbacks, (; option = :GPUUseGraph, requested = true, effective = false,
             reason = :synchronized_timers))
     end
-    return (; requested, capabilities, effective, fallbacks = Tuple(fallbacks))
+    config = (; requested, capabilities, effective, fallbacks = Tuple(fallbacks))
+    return solver isa IISPH ? iisph_configuration(config,meta,viscosity,solver) : config
+end
+
+function iisph_configuration(config,meta,viscosity,solver)
+    effective = merge(config.effective,(;solver=:IISPH,time_stepping=:symplectic_euler,
+        interaction_kernel=:iisph_matrix_free,interaction_path=:iisph_reference,
+        pressure_source=:solved,pressure_boundary=:volume_weighted_fixed,
+        relative_density_tolerance=solver.relative_density_tolerance,
+        min_pressure_iterations=solver.min_iterations,max_pressure_iterations=solver.max_iterations,
+        pressure_relaxation=solver.relaxation,cfl=solver.cfl,max_timestep=solver.max_timestep,
+        warm_start=solver.warm_start,use_graph=false,async_output=false,
+        max_steps_per_sync=1,lanes_per_particle=1,interaction_threads=GPUIISPH.THREADS,
+        viscosity_path=viscosity isa ZeroViscosity ? :disabled : :iisph_laminar,
+        pair_coordinates=:position_difference,radial_interactions=false,scalar_sps_viscosity=false,
+        boundary_forces=false,interaction_always_inline=false,interaction_fastmath=false,
+        clip_timestep_to_output=true))
+    fallbacks = NamedTuple[f for f in config.fallbacks if f.option !== :GPUUseGraph]
+    for (option,requested,effective_value) in ((:GPUUseGraph,meta.GPUUseGraph,false),
+            (:GPUAsyncOutput,meta.GPUAsyncOutput,false),(:GPUMaxStepsPerSync,meta.GPUMaxStepsPerSync,1),
+            (:GPULanesPerParticle,meta.GPULanesPerParticle,1),(:GPUInteractionThreads,meta.GPUInteractionThreads,GPUIISPH.THREADS),
+            (:GPUBoundaryForces,meta.GPUBoundaryForces,false),
+            (:GPUInteractionAlwaysInline,meta.GPUInteractionAlwaysInline,false),
+            (:GPUInteractionFastMath,meta.GPUInteractionFastMath,false),
+            (:GPUClipTimeStepToOutput,meta.GPUClipTimeStepToOutput,true))
+        requested == effective_value && continue
+        push!(fallbacks,(;option,requested,effective=effective_value,reason=:iisph_foundation_backend))
+    end
+    return merge(config,(;effective,capabilities=(;radial_interactions=false,scalar_sps_viscosity=false),fallbacks=Tuple(fallbacks)))
 end
 
 function configuration_snapshot(state)

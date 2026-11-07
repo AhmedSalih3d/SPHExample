@@ -51,6 +51,13 @@ and files have closed. Its fields are:
 The result retains host data only, so it does not extend the lifetime of the
 solver's device buffers. Ignoring the return value preserves existing usage.
 
+With `SimSolver=IISPH()`, `final_state.particles` wraps the supplied host columns
+and adds the independently solved `Pressure` column. The other columns share
+storage with the caller's `SimParticles`. `diagnostics.iisph` reports total and
+maximum pressure iterations, maximum accepted linearized density residual, and
+the per-step history CSV path. The initial IISPH path throws on interruption or
+solver failure after closing its output; it does not return a partial result.
+
 With `SimulationMetaData.VariableResolution`, `particles` is resized to the
 combined exported coarse/fine state; `final_state.resolution` adds separate
 host snapshots with per-particle spacing, mass, ownership and level columns.

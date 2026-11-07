@@ -10,6 +10,7 @@ include(joinpath(@__DIR__, "simulation_constants.jl"))
 include(joinpath(@__DIR__, "simulation_result.jl"))
 include(joinpath(@__DIR__, "typst_report.jl"))
 include(joinpath(@__DIR__, "effective_configuration.jl"))
+include(joinpath(@__DIR__, "iisph.jl"))
 
 include(joinpath(@__DIR__, "updated_mdbc.jl"))
 

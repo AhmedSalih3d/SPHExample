@@ -49,8 +49,12 @@ using ..GPUFloating
 using ..OpenBoundaries
 using ..Constraints: RigidBodyDynamics
 using ..SimulationResults: SimulationResult
+using ..SolverConfiguration: SPHSolver, WCSPH, IISPH
+using ..IISPHSupport: IISPHWorkspace
+using ..GPUIISPH
 
 import StructArrays: StructArray
+import StructArrays
 
 #---------------------------------------------------------------
 # Device data containers
@@ -1691,6 +1695,7 @@ end
 #---------------------------------------------------------------
 
 include("GPUDualSymplecticDriver.jl")
+include("GPUIISPHDriver.jl")
 
 function run_variable_resolution end
 
@@ -1700,7 +1705,14 @@ function run_variable_resolution end
                     ParticleNormalsPath, SimMeasurements = nothing, SimExternalForces = nothing,
                     SimRotation = nothing,
                     SimMotion = nothing,
-                    ParaviewPressureRange = nothing)
+                    ParaviewPressureRange = nothing, SimSolver = WCSPH())
+
+`SimSolver=WCSPH()` preserves equation-of-state pressure and the existing
+`SimTimeStepping` choices (default `SymplecticTimeStepping()`). `SimSolver=IISPH()`
+selects the experimental uniform-resolution fixed-wall projection solver; omit
+`SimTimeStepping` and select `ZeroDensityDiffusion()` with zero/laminar viscosity.
+IISPH reports direct/synchronous execution fallbacks and returns solved pressure
+in `result.final_state.particles.Pressure`. See [`IISPH`](@ref) for its scope.
 
 Run a complete simulation on the GPU. Same interface as the CPU version: the
 shifting, kernel output, mDBC and log modes are the type parameters of
@@ -1788,7 +1800,8 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     SimParticles::StructArray,
     SimViscosity::SV,
     SimDensityDiffusion::SDD,
-    SimTimeStepping::TimeSteppingMode,
+    SimTimeStepping::Union{Nothing,TimeSteppingMode} = nothing,
+    SimSolver::SPHSolver = WCSPH(),
     ParticleNormalsPath::Union{Nothing, String} = nothing,
     SimMeasurements::Union{Nothing, MeasurementConfig} = nothing,
     SimExternalForces = nothing,
@@ -1801,6 +1814,14 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SV <: SPHViscosity, SDD <: SPHDensityDiffusion}
 
     CUDA.functional() || error("CUDA is not functional on this machine; use the CPU package SPHExample instead.")
+    if SimSolver isa IISPH
+        return run_iisph_simulation(; SimGeometry,SimMetaData,SimConstants,SimKernel,SimLogger,
+            SimParticles,SimViscosity,SimDensityDiffusion,SimTimeStepping,SimSolver,
+            ParticleNormalsPath,SimMeasurements,SimExternalForces,SimRigidBodyDynamics,
+            SimOpenBoundaries,SimDamping,SimRotation,SimMotion,ParaviewPressureRange)
+    end
+    SimSolver isa WCSPH || throw(ArgumentError("unsupported SPH solver: $(typeof(SimSolver))"))
+    SimTimeStepping = something(SimTimeStepping,SymplecticTimeStepping())
     if SimOpenBoundaries !== nothing
         supported_open_mode = (SimOpenBoundaries isa OpenChannel{FloatType} && BMode === NoMDBC) ||
             (SimOpenBoundaries isa ImpingingJet{FloatType} && BMode in (SimpleMDBC,UpdatedMDBC))
