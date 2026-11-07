@@ -175,6 +175,23 @@ end
     mktempdir() do output_dir
         write_mock_log(output_dir)
         fixture = report_fixture(output_dir)
+        particles = merge(fixture.result.final_state.particles,(;Pressure=[123.0,456.0,999999.0]))
+        state = merge(fixture.result.final_state,(;particles))
+        fixture = merge(fixture,(;result=merge(fixture.result,(;final_state=state))))
+        files = generate_report(fixture,output_dir;compile_pdf=false)
+        source = read(files.typ_path,String)
+        # These values cannot be obtained from the fixture's density/EOS.
+        @test occursin("[#text(\"123\")]",source)
+        @test occursin("[#text(\"289.5\")]",source)
+        @test occursin("[#text(\"456\")]",source)
+        @test !occursin("[#text(\"999999\")]",source)
+        @test occursin("Pressure uses the stored solver values.",source)
+        @test !occursin("Pressure is calculated from final fluid density",source)
+    end
+
+    mktempdir() do output_dir
+        write_mock_log(output_dir)
+        fixture = report_fixture(output_dir)
         files = generate_report(fixture, output_dir; compile_pdf = false)
 
         @test isfile(files.typ_path)

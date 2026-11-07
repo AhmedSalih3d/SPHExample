@@ -28,8 +28,9 @@ to converge throws before velocities or positions are advanced.
 The initial GPU implementation supports uniform-resolution 2D/3D fluid and
 stationary fixed walls, NoMDBC, NoShifting, NoKernelOutput, ZeroDensityDiffusion,
 and ZeroViscosity or Laminar. Fixed walls must sample the solid volume at the
-fluid resolution, with volume `m₀/ρ₀` per sample and enough layers to fill the
-kernel support. Surface-only wall sampling is unsupported. The conservative
+fluid resolution, with volume `m₀/ρ₀` per sample. Kernel-deep walls are recommended
+for containment; thinner volume geometries require case-specific validation.
+Surface-only wall sampling is unsupported. The conservative
 default relaxation accommodates the package's `h=2dx` neighbour stencil.
 Pressure is stored independently of density. Pressure iteration and output run
 directly and synchronously; CUDA graphs and asynchronous output are deferred.

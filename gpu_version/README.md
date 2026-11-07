@@ -33,8 +33,9 @@ positions), uniform resolution, fixed walls, free surfaces, gravity,
 `SimExternalForces`, and `ZeroViscosity()` or explicit `Laminar()`. Select
 `NoMDBC`, `NoShifting`, `NoKernelOutput` and `ZeroDensityDiffusion()`.
 Fixed walls must **fill the solid volume at the fluid sampling resolution**,
-with enough layers to cover the kernel support (`H`); their sample volumes are
-`m₀/ρ₀`. Surface-only boundaries are not supported. Fixed-particle velocities
+with sample volumes `m₀/ρ₀`. Walls covering the kernel support (`H`) are
+recommended for general containment; thinner volume geometries need case-specific
+validation, such as the StillWedge run below. Surface-only boundaries are not supported. Fixed-particle velocities
 must be zero. Wall pressure values in exports are zero placeholders; the
 fluid pressure and the wall contribution to the projection provide the wall
 response. They are not mDBC wall-pressure measurements.
@@ -1319,6 +1320,32 @@ repository root:
 ```bash
 julia --project=gpu_version gpu_version/example/StillWedgeMDBC.jl
 ```
+
+Select the experimental IISPH path in the same example with:
+
+```bash
+julia --project=gpu_version -t 4,0 gpu_version/example/StillWedgeMDBC.jl --iisph
+```
+
+Alternatively, set `SimSolver = IISPH(max_timestep = 0.002)` near the top of
+the file. The example forwards this choice as `SimSolver` to `RunSimulation`.
+`run_still_wedge(; solver=IISPH(...), ...)` also accepts the selection directly;
+the WCSPH default and its `time_stepping` keyword remain available.
+IISPH uses `Laminar()` and `ZeroDensityDiffusion()` by default, disables the
+WCSPH radial/pressure-cache options and omits `SimTimeStepping` (passes `nothing`).
+The model arguments remain explicit in `RunSimulation`; unsupported combinations
+still fail validation. The initial particle positions, IDs, wall/wedge geometry,
+0.01 s output cadence, VTKHDF filenames and report layout are shared.
+IISPH output defaults to `C:/TestSimulations/StillWedge2D_IISPH_GPU`, keeping
+the existing WCSPH output directory separate.
+
+The original 3,027-particle case completed four seconds with IISPH in 2,000
+steps and 401 saved frames. The offline frame checks found no escaped fluid
+particles or intrusion into the floor/wedge and unchanged fixed positions.
+See the [case validation](benchmark/still_wedge_iisph_validation.md) for pressure
+errors, limitations and reproducible commands. The example's optional PDF
+summary uses stored solved pressure for IISPH and the existing EOS fallback
+for WCSPH, with the same report layout.
 
 The tank is one polygon (floor and walls of 0.04 m carrying a hollow 45°
 wedge with its tip at `(1.1, 0.26)` m; the inner V of the wedge shell continues

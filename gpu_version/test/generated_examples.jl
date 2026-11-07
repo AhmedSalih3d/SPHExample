@@ -22,8 +22,8 @@ using CUDA
             source = replace(source, r"SaveLocation\s*=\s*\x22[^\x22]*\x22" =>
                 "SaveLocation = " * repr(dir))
             if name == "StillWedgeMDBC"
-                source = replace(source, r"run_still_wedge\(\)\s*\z" =>
-                    "run_still_wedge(; save_location = $(repr(dir)), visualize = false, open_log_file = false)\n")
+                source = replace(source, r"\r?\n# Including this file starts the simulation\.[\s\S]*\z" =>
+                    "\nrun_still_wedge(; save_location = $(repr(dir)), visualize = false, open_log_file = false, generate_pdf_report = false)\n")
             elseif name == "LidDrivenCavity2d"
                 source = replace(source, r"\r?\n# Including this file starts the simulation\.[\s\S]*\z" =>
                     "\nrun_lid_driven_cavity_2d(; dx = 0.05, simulation_time = 0.01, " *
@@ -48,7 +48,7 @@ using CUDA
                 @test eltype(inputs.SimParticles.Density) === Float32
                 Base.invokelatest(Base.invokelatest(getproperty, scope, :run_still_wedge);
                     time_stepping = SingleNeighborTimeStepping(), simulation_time = 0.01,
-                    save_location = dir, visualize = false, open_log_file = false)
+                    save_location = dir, visualize = false, open_log_file = false, generate_pdf_report = false)
                 original_inputs = Base.invokelatest(getproperty, scope, :captured)[]
                 @test original_inputs.SimTimeStepping isa SingleNeighborTimeStepping
                 @test original_inputs.SimMetaData.SimulationTime === 0.01

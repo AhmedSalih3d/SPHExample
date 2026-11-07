@@ -145,6 +145,7 @@ function run_iisph_simulation(;SimGeometry,SimMetaData,SimConstants,SimKernel,Si
             frames += 1
             write_seconds += (time_ns()-started)/1e9
             store_log && LogStep(SimLogger,meta,meta.HourGlass)
+            meta.StepsTakenForLastOutput = meta.Iteration
             return nothing
         end
         write_frame!()

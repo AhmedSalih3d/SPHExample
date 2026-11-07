@@ -449,7 +449,8 @@ function write_simulation_report(
         throw(ArgumentError("Simulation report requires at least one fluid particle"))
 
     density = particles.Density[fluid_indices]
-    pressure = EquationOfStateGamma7.(density, constants.c₀, constants.ρ₀)
+    pressure = hasproperty(particles, :Pressure) ? particles.Pressure[fluid_indices] :
+        EquationOfStateGamma7.(density, constants.c₀, constants.ρ₀)
     speed = [
         sqrt(sum(abs2, velocity)) for
         velocity in particles.Velocity[fluid_indices]
@@ -525,6 +526,9 @@ function write_simulation_report(
         wall_time = _format_number(result.performance.wall_time_seconds),
         summary_rows = _typst_table_rows(summary_rows),
         variable_rows = _typst_table_rows(variable_rows; columns = 4),
+        pressure_note = hasproperty(particles, :Pressure) ?
+            "Pressure uses the stored solver values." :
+            "Pressure is calculated from final fluid density with EquationOfStateGamma7.",
         environment_rows = _typst_table_rows(_environment_rows(log_text)),
         constants_rows = _typst_table_rows(_physical_constant_rows(constants); columns = 3),
         metadata_rows = _typst_table_rows(metadata_rows),

@@ -2,6 +2,7 @@
 # Including or running this file starts the simulation. Requires an NVIDIA GPU.
 #
 #     julia --project=gpu_version gpu_version/example/StillWedgeMDBC.jl
+#     julia --project=gpu_version gpu_version/example/StillWedgeMDBC.jl --iisph
 #
 # FloatType = Float32 is usually 2-4x faster than Float64 on consumer and
 # laptop GPUs (their double precision throughput is low); Float64 reproduces
@@ -12,15 +13,33 @@ using Meshes
 
 # Set to `false` to skip the optional PDF report.
 GeneratePDFReport = true
+# Choose WCSPH() or IISPH(max_timestep = 0.002). The command-line --iisph flag
+# selects the latter without editing the example.
+SimSolver = WCSPH()
 
+"""
+    run_still_wedge(; solver=WCSPH(), time_stepping=nothing, ...)
+
+Run the original StillWedge geometry and output layout with a selected pressure
+solver. IISPH defaults to Laminar viscosity and zero density diffusion, disables
+the WCSPH interaction specializations, and uses its own integration. The WCSPH
+defaults retain artificial viscosity, linear diffusion and symplectic stepping.
+The initial particle positions and identities are identical for both solvers.
+"""
 function run_still_wedge(;
-    time_stepping::TimeSteppingMode = SymplecticTimeStepping(),
+    solver::SPHSolver = WCSPH(),
+    time_stepping::Union{Nothing,TimeSteppingMode} = nothing,
+    viscosity::SPHViscosity = solver isa IISPH ? Laminar() : ArtificialViscosity(),
+    density_diffusion::SPHDensityDiffusion = solver isa IISPH ? ZeroDensityDiffusion() : LinearDensityDiffusion(),
     simulation_time = 4.00,
-    save_location = "C:/TestSimulations/StillWedge2D_MDBC_GPU",
+    save_location = solver isa IISPH ? "C:/TestSimulations/StillWedge2D_IISPH_GPU" : "C:/TestSimulations/StillWedge2D_MDBC_GPU",
     visualize::Bool = true,
     open_log_file::Bool = true,
     generate_pdf_report::Bool = GeneratePDFReport,
 )
+    solver isa Union{WCSPH,IISPH} || throw(ArgumentError("StillWedge supports WCSPH() or IISPH()"))
+    solver isa IISPH && time_stepping !== nothing &&
+        throw(ArgumentError("IISPH owns its integration; omit time_stepping"))
     Dimensions = 2
     FloatType = Float32
 
@@ -72,8 +91,8 @@ function run_still_wedge(;
         ExportGridCells = true,
         OpenLogFile = open_log_file,
         GPUDoublePosition = true,
-        GPURadialInteractions = true,
-        GPUCacheInteractionFields = true,
+        GPURadialInteractions = solver isa WCSPH,
+        GPUCacheInteractionFields = solver isa WCSPH,
         # This small case needs only a few queued frames to overlap disk output.
         GPUOutputQueueBytes = 8 * 1024^2,
         # OutputVariables = [
@@ -102,10 +121,12 @@ function run_still_wedge(;
 
     SimKernel =
         SPHKernelInstance{Dimensions, FloatType}(WendlandC2(); dx = SimConstantsWedge.dx)
-    SimViscosity = ArtificialViscosity()
-    SimDensityDiffusion = LinearDensityDiffusion()
+    SimViscosity = viscosity
+    SimDensityDiffusion = density_diffusion
+    SimTimeStepping = time_stepping === nothing && solver isa WCSPH ? SymplecticTimeStepping() : time_stepping
 
     result = RunSimulation(
+        SimSolver = solver,
         SimGeometry = SimulationGeometry,
         SimMetaData = SimMetaDataWedge,
         SimConstants = SimConstantsWedge,
@@ -114,8 +135,8 @@ function run_still_wedge(;
         SimParticles = SimParticles,
         SimViscosity = SimViscosity,
         SimDensityDiffusion = SimDensityDiffusion,
-        SimTimeStepping = time_stepping,
-        ParticleNormalsPath = "./input/still_wedge_mdbc/StillWedge_Dp$(SimConstantsWedge.dx)_GhostNodes_Correct.csv",
+        SimTimeStepping = SimTimeStepping,
+        ParticleNormalsPath = nothing,
     )
 
     if generate_pdf_report
@@ -356,4 +377,5 @@ function still_wedge_2d_geometry(
 end
 
 # Including this file starts the simulation.
-run_still_wedge(generate_pdf_report = GeneratePDFReport)
+run_still_wedge(solver = "--iisph" in ARGS ? IISPH(max_timestep = 0.002) : SimSolver,
+    generate_pdf_report = GeneratePDFReport)

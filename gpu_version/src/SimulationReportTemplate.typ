@@ -7,6 +7,7 @@
   fluid_particles: "{{FLUID_PARTICLES}}",
   wall_time: "{{WALL_TIME}}",
   timing_note: "{{TIMING_NOTE}}",
+  pressure_note: "{{PRESSURE_NOTE}}",
 )
 
 #let navy = rgb("#17324d")
@@ -87,7 +88,7 @@
 )
 
 #block(fill: pale_teal, inset: 8pt, radius: 4pt)[
-  #text(size: 8pt)[Density describes fluid mass per volume. Pressure is calculated from final fluid density with `EquationOfStateGamma7`; speed is the magnitude of the velocity vector. Boundary particles are excluded from all three summaries.]
+  #text(size: 8pt)[Density describes fluid mass per volume. #report.pressure_note Speed is the magnitude of the velocity vector. Boundary particles are excluded from all three summaries.]
 ]
 
 = Component guide
