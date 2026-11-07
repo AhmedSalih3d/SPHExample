@@ -4005,6 +4005,27 @@ Notes on reading the table:
   per-kernel overhead (~16 µs on Windows/WDDM); a desktop GPU with more SMs
   will extend this trend to even larger cases.
 
+### Boat hull in a 3D open current
+
+[example/Boat3d.jl](example/Boat3d.jl) runs a fixed STL hull in a genuine 3D
+inlet/outlet channel. The default fixture retains the principal hull from
+DualSPHysics 5.4 CurrentHull, with its dry opening sealed; separate propellers
+and fittings are omitted. STL preprocessing uses accelerated triangle-distance
+queries and constrained particle relaxation. Both ends prescribe the reference
+current and extrapolate density departures from a hydrostatic background
+using mirrored interior neighborhoods. The opt-in background correction avoids
+truncation bias at inlet-wall corners.
+
+```sh
+julia --project=gpu_version -t 2,0 gpu_version/example/Boat3d.jl
+```
+
+See [setup, geometry scope and validation](example/Boat3d.md) before using
+custom STL units or interpreting the wake and forces. The short CUDA smoke
+test is `gpu_version/test/boat_simulation.jl`; a complete two-second coarse run is recorded in
+[the validation report](docs/boat_validation.md). Full-resolution hydrodynamic
+convergence remains separate from these regressions.
+
 ### Current wheel and pulley (native CUDA)
 
 [example/CurrentWheelPulley2d.jl](example/CurrentWheelPulley2d.jl) implements

@@ -1804,12 +1804,12 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     if SimOpenBoundaries !== nothing
         supported_open_mode = (SimOpenBoundaries isa OpenChannel{FloatType} && BMode === NoMDBC) ||
             (SimOpenBoundaries isa ImpingingJet{FloatType} && BMode in (SimpleMDBC,UpdatedMDBC))
-        supported_open_mode && Dimensions == 2 && SMode === NoShifting &&
+        supported_open_mode && (SimOpenBoundaries isa OpenChannel ? Dimensions in (2,3) : Dimensions == 2) && SMode === NoShifting &&
             SimMetaData.Periodicity === nothing && SimMetaData.VariableResolution === nothing && !SimMetaData.GPUFixedGrid &&
             !(SimTimeStepping isa DualSPHysicsSymplectic) && SimMetaData.TotalTime == 0 && SimMetaData.Iteration == 0 &&
             SimMotion === nothing && SimRotation === nothing &&
             SimExternalForces === nothing && SimDamping === nothing ||
-            throw(ArgumentError("Open boundaries require matching precision, nonperiodic expanding-grid 2D, no shifting, standard stepping and no prescribed/external particle motion; OpenChannel uses DBC and ImpingingJet requires mDBC"))
+            throw(ArgumentError("Open boundaries require matching precision, nonperiodic expanding-grid (2D/3D channel or 2D jet), no shifting, standard stepping and no prescribed/external particle motion; OpenChannel uses DBC and ImpingingJet requires mDBC"))
     end
     custom_interaction_mass = any(g -> g.Floating !== nothing && g.Floating.InteractionMass !== nothing,SimGeometry)
     if custom_interaction_mass

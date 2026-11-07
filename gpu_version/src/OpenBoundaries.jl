@@ -14,15 +14,19 @@ export ImpingingJet,OpenChannel,open_channel_geometry,prepare_open_boundary,laun
 """
     OpenChannel{T}(; Inlet, Outlet, WaterLevel, Velocity, Spacing, Duration,
         InletLayers=5, OutletLayers=8, FluidMarker=1, InletMarker=2,
-        OutletMarker=3, ReserveMarker=4)
+        OutletMarker=3, ReserveMarker=4, HydrostaticCorrection=false)
 
-One-way X-directed 2D flow with prescribed velocity and zeroth-order ghost
+One-way X-directed 2D or 3D flow with prescribed velocity and zeroth-order ghost
 density extrapolation. `open_channel_geometry` expands the seed lines into
 buffer layers and preallocates inactive inlet particles for `Duration`.
 Emission, conversion and retirement stay on CUDA; opposite ends have no
 periodic neighbour interactions. Pass the configuration as `SimOpenBoundaries`.
-Currently requires nonperiodic, expanding-grid 2D DBC and standard stepping.
+Currently requires nonperiodic, expanding-grid 2D/3D DBC and standard stepping.
 Inactive reserves use `Frozen`; distinguish them from lost physical particles.
+`HydrostaticCorrection=true` extrapolates departures from the hydrostatic
+background, then restores that background at the ghost point. This preserves
+an exact hydrostatic density profile near inlet/floor/sidewall intersections.
+The default retains direct zeroth-order density extrapolation.
 """
 struct OpenChannel{T}
     inlet::Float64
@@ -37,10 +41,11 @@ struct OpenChannel{T}
     inlet_marker::Int32
     outlet_marker::Int32
     reserve_marker::Int32
+    hydrostatic_correction::Bool
 end
 
 function OpenChannel{T}(;Inlet,Outlet,WaterLevel,Velocity,Spacing,Duration,InletLayers = 5,OutletLayers = 8,
-        FluidMarker = 1,InletMarker = 2,OutletMarker = 3,ReserveMarker = 4) where {T<:AbstractFloat}
+        FluidMarker = 1,InletMarker = 2,OutletMarker = 3,ReserveMarker = 4,HydrostaticCorrection = false) where {T<:AbstractFloat}
     left,right,level,duration = Float64.((Inlet,Outlet,WaterLevel,Duration))
     speed,spacing = T(Velocity),Float64(Spacing)
     all(isfinite,(left,right,level,duration,speed,spacing)) && right > left && speed > 0 && spacing > 0 && duration > 0 ||
@@ -48,26 +53,28 @@ function OpenChannel{T}(;Inlet,Outlet,WaterLevel,Velocity,Spacing,Duration,Inlet
     markers = Int32.((FluidMarker,InletMarker,OutletMarker,ReserveMarker))
     all(>(0),markers) && length(unique(markers)) == 4 || throw(ArgumentError("open-channel markers must be positive and distinct"))
     InletLayers >= 2 && OutletLayers >= 2 || throw(ArgumentError("open boundaries need at least two buffer layers"))
-    return OpenChannel(left,right,level,speed,spacing,duration,Int32(InletLayers),Int32(OutletLayers),markers...)
+    return OpenChannel(left,right,level,speed,spacing,duration,Int32(InletLayers),Int32(OutletLayers),markers...,Bool(HydrostaticCorrection))
 end
 
-function open_channel_geometry(geometry::Vector{SPHGeometry{2,T}},flow::OpenChannel{T}) where T
+@inline channel_vector(::Val{D},x::T) where {D,T} = SVector{D,T}(ntuple(k -> k == 1 ? x : zero(T),Val(D)))
+
+function open_channel_geometry(geometry::Vector{SPHGeometry{D,T}},flow::OpenChannel{T}) where {D,T}
     any(g -> g.GroupMarker == flow.reserve_marker,geometry) && throw(ArgumentError("ReserveMarker already belongs to input geometry"))
     incoming = only(filter(g -> g.GroupMarker == flow.inlet_marker && g.Type == Fluid,geometry))
     outgoing = only(filter(g -> g.GroupMarker == flow.outlet_marker && g.Type == Fluid,geometry))
-    select(g) = findall(p -> p[2] <= flow.water_level+1e-6*flow.spacing,g.Particles.Position)
+    select(g) = findall(p -> p[D] <= flow.water_level+1e-6*flow.spacing,g.Particles.Position)
     inlet_rows,outlet_rows = select(incoming),select(outgoing)
     isempty(inlet_rows) && throw(ArgumentError("inlet seed line has no points below WaterLevel"))
     length(inlet_rows) == length(outlet_rows) || throw(ArgumentError("this one-way channel requires matching inlet/outlet row counts"))
     all(p -> abs(p[1]-flow.inlet) < 1e-5*flow.spacing,incoming.Particles.Position) &&
         all(p -> abs(p[1]-flow.outlet) < 1e-5*flow.spacing,outgoing.Particles.Position) || throw(ArgumentError("seed-line positions differ from the configured inlet/outlet"))
-    vector = SVector{2,T}(flow.velocity,0)
+    vector = channel_vector(Val(D),flow.velocity)
     function region(points,density,marker,kind)
         velocity = fill(kind == Fluid ? vector : zero(vector),length(points))
-        return SPHGeometry{2,T}(Particles = particle_struct_array(SVector{2,Float64}.(points),T(1000);
+        return SPHGeometry{D,T}(Particles = particle_struct_array(SVector{D,Float64}.(points),T(1000);
             Density = T.(density),Velocity = velocity),GroupMarker = Int(marker),Type = kind)
     end
-    result = SPHGeometry{2,T}[]
+    result = SPHGeometry{D,T}[]
     for g in geometry
         if g.Type == Fluid && g.GroupMarker in (flow.inlet_marker,flow.outlet_marker)
             active = select(g)
@@ -81,13 +88,13 @@ function open_channel_geometry(geometry::Vector{SPHGeometry{2,T}},flow::OpenChan
         end
     end
     for (g,indices,layers,sign) in ((incoming,inlet_rows,flow.inlet_layers,-1),(outgoing,outlet_rows,flow.outlet_layers,1))
-        points = [SVector{2,Float64}(g.Particles.Position[i])+SVector(sign*Float64(flow.spacing)*layer,0.) for layer in 1:layers-1 for i in indices]
+        points = [SVector{D,Float64}(g.Particles.Position[i])+channel_vector(Val(D),sign*Float64(flow.spacing)*layer) for layer in 1:layers-1 for i in indices]
         densities = [g.Particles.Density[i] for _ in 1:layers-1 for i in indices]
         push!(result,region(points,densities,g.GroupMarker,Fluid))
     end
     events = ceil(Int,flow.duration*flow.velocity/flow.spacing)+1
     events*length(inlet_rows) <= typemax(Int32) || throw(ArgumentError("inlet reserve does not fit Int32 indexing"))
-    points = [SVector{2,Float64}(incoming.Particles.Position[i])-SVector(Float64(flow.spacing)*(flow.inlet_layers-1),0.) for _ in 1:events for i in inlet_rows]
+    points = [SVector{D,Float64}(incoming.Particles.Position[i])-channel_vector(Val(D),Float64(flow.spacing)*(flow.inlet_layers-1)) for _ in 1:events for i in inlet_rows]
     push!(result,region(points,fill(T(1000),length(points)),flow.reserve_marker,Frozen))
     return result
 end
@@ -96,7 +103,7 @@ prepare_open_boundary(::Nothing,particles,constants,kernel,metadata) = nothing
 function prepare_open_boundary(flow::OpenChannel{T},particles,constants,kernel,metadata) where T
     flow.duration >= metadata.SimulationTime || throw(ArgumentError("inlet reserve duration is shorter than SimulationTime"))
     T(flow.spacing) == constants.dx || throw(ArgumentError("open-channel spacing differs from simulation dx"))
-    (min(flow.inlet_layers,flow.outlet_layers)-1)*flow.spacing >= kernel.H || throw(ArgumentError("open-channel buffer thickness must cover the SPH support"))
+    T((min(flow.inlet_layers,flow.outlet_layers)-1)*flow.spacing) >= kernel.H || throw(ArgumentError("open-channel buffer thickness must cover the SPH support"))
     sort(Int.(particles.ID)) == collect(1:length(particles)) || throw(ArgumentError("open boundaries require dense stable IDs 1:N"))
     reserve = sort!(findall(==(flow.reserve_marker),particles.GroupMarker);by = i -> particles.ID[i])
     !isempty(reserve) && all(i -> particles.Type[i] == Frozen,reserve) || throw(ArgumentError("call open_channel_geometry before allocation"))
@@ -104,7 +111,7 @@ function prepare_open_boundary(flow::OpenChannel{T},particles,constants,kernel,m
     length(reserve)%events == 0 || throw(ArgumentError("inlet reserve layout differs from its duration"))
     rows = length(reserve)÷events
     times = fill(Inf,length(particles))
-    positions = zeros(SVector{2,Float64},length(particles))
+    positions = zeros(eltype(particles.Position),length(particles))
     for (k,i) in enumerate(reserve)
         id = particles.ID[i]
         times[id] = (1+(k-1)÷rows)*Float64(flow.spacing)/Float64(flow.velocity)
@@ -114,36 +121,47 @@ function prepare_open_boundary(flow::OpenChannel{T},particles,constants,kernel,m
         counters = CUDA.zeros(Int32,2),reserve_particles = length(reserve),initial_active_fluid = count(==(Fluid),particles.Type))
 end
 
+@inline function channel_background_density(height,flow,constants)
+    T = typeof(constants.ρ₀)
+    depth = max(zero(T),T(flow.water_level)-T(height))
+    return constants.ρ₀*(one(T)+T(7)*constants.g*depth/constants.c₀^2)^(one(T)/T(7))
+end
+
 @inline function open_ghost_density(point,side,flow,positions,density,types,groups,starts,grid,kernel,constants)
     T = eltype(density)
     plane = side == flow.inlet_marker ? flow.inlet : flow.outlet
-    ghost = SVector(2plane-point[1],point[2])
+    D = length(point)
+    ghost = setindex(point,2plane-point[1],1)
     cg = cell_coords(ghost,bin_scale(grid,kernel.H⁻¹))
-    lx,ly = cg[1]-grid.origin[1],cg[2]-grid.origin[2]
+    local_cell = ntuple(k -> cg[k]-grid.origin[k],Val(D))
     R = reach(grid)
-    xlo,xhi = max(Int32(0),lx-R),min(grid.dims[1]-1,lx+R)
+    xlo,xhi = max(Int32(0),local_cell[1]-R),min(grid.dims[1]-1,local_cell[1]+R)
     weight,perturbation = zero(T),zero(T)
     @inbounds if xlo <= xhi
-        for dy in -R:R
-            y = ly+dy
-            if 0 <= y < grid.dims[2]
+        for row in cell_rows(grid)
+            y = local_cell[2]+row.dy
+            z = D == 3 ? local_cell[3]+row.dz : Int32(0)
+            if 0 <= y < grid.dims[2] && (D == 2 || 0 <= z < grid.dims[3])
                 first_cell = Int32(1)+xlo+grid.dims[1]*y
+                D == 3 && (first_cell += grid.dims[1]*grid.dims[2]*z)
                 for j in starts[first_cell]+Int32(1):starts[first_cell+(xhi-xlo)+Int32(1)]
                     if types[j] == Fluid && groups[j] == flow.fluid_marker
-                        delta = SVector{2,T}(positions[j]-ghost)
+                        delta = SVector{D,T}(positions[j]-ghost)
                         distance2 = dot(delta,delta)
                         if distance2 <= kernel.H²
                             w = SPHKernels.Wᵢⱼ(kernel,sqrt(distance2)*kernel.h⁻¹)*constants.m₀
                             volume_weight = w/density[j]
                             weight += volume_weight
-                            perturbation += volume_weight*(density[j]-constants.ρ₀)
+                            background = flow.hydrostatic_correction ? channel_background_density(positions[j][D],flow,constants) : constants.ρ₀
+                            perturbation += volume_weight*(density[j]-background)
                         end
                     end
                 end
             end
         end
     end
-    value = weight > eps(T) ? constants.ρ₀+perturbation/weight : constants.ρ₀
+    background = flow.hydrostatic_correction ? channel_background_density(point[D],flow,constants) : constants.ρ₀
+    value = weight > eps(T) ? background+perturbation/weight : background
     return isfinite(value) && value > 0 ? value : constants.ρ₀
 end
 
@@ -160,7 +178,7 @@ function open_values_kernel!(positions,velocity,density,types,groups,starts,grid
         if buffer || wall
             side = wall ? (positions[i][1] <= flow.inlet ? flow.inlet_marker : flow.outlet_marker) : groups[i]
             density[i] = open_ghost_density(positions[i],side,flow,positions,density,types,groups,starts,load_grid(gridarg),kernel,constants)
-            buffer && (velocity[i] = SVector(flow.velocity,zero(flow.velocity)))
+            buffer && (velocity[i] = channel_vector(Val(length(positions[i])),flow.velocity))
         end
     end
     return nothing
@@ -183,9 +201,9 @@ function open_events_kernel!(positions,velocity,density,types,groups,ids,cells,p
     @inbounds begin
         id = ids[i]
         if types[i] == Frozen && groups[i] == flow.reserve_marker && state.emission_time[id] <= time+max(64eps(max(1.,time)),8eps(eltype(density))*flow.spacing)
-            positions[i] = state.emission_position[id]+SVector((time-state.emission_time[id])*flow.velocity,0.)
-            velocity[i] = SVector(flow.velocity,zero(flow.velocity))
-            depth = max(0.,flow.water_level-positions[i][2])
+            positions[i] = state.emission_position[id]+channel_vector(Val(length(positions[i])),(time-state.emission_time[id])*flow.velocity)
+            velocity[i] = channel_vector(Val(length(positions[i])),flow.velocity)
+            depth = max(0.,flow.water_level-positions[i][end])
             density[i] = eltype(density)(constants.ρ₀*(1+7constants.g*depth/constants.c₀^2)^(1/7))
             groups[i],types[i] = flow.inlet_marker,Fluid
             store_pos_cell!(pos_cells,i,positions[i],cells,grid,kernel.H)
@@ -204,6 +222,8 @@ function open_events_kernel!(positions,velocity,density,types,groups,ids,cells,p
                 groups[i] = flow.fluid_marker
             elseif groups[i] == flow.fluid_marker && x >= flow.outlet
                 groups[i] = flow.outlet_marker
+            elseif groups[i] == flow.outlet_marker && x < flow.outlet
+                groups[i] = flow.fluid_marker
             end
         end
         if changed

@@ -1,0 +1,10 @@
+{
+  "source": "W:\\DualSPHysics_v5.4\\examples\\inletoutlet\\07_CurrentHull\\Hull.vtk",
+  "source_sha256": "2fa267e85b0f2d55f319b3ab83f6fb569026758912373dba1f362ef467d8d798",
+  "source_triangles": 8829,
+  "retained_triangles": 2440,
+  "cap_triangles": 38,
+  "weld_tolerance_m": 1e-06,
+  "lowest_cap_z_m": 0.16754519939422607,
+  "omitted_triangles": 6389
+}

@@ -14,6 +14,7 @@ module SPHExampleGPU
         "PolygonDrawing.jl",
         "Constraints.jl",
         "SimulationGeometry.jl",
+        "STLDiscretization.jl",
         "SPHKernels.jl",
         "PeriodicBoundaries.jl",
         "VariableResolutionConfiguration.jl",
@@ -71,6 +72,8 @@ module SPHExampleGPU
     export Constraints, axial_spring_force, axial_coulomb_force, BallJoint, HingeJoint, PointLineJoint, PulleyJoint, RigidMaterial, RigidContacts, RigidBodyDynamics, VelocitySeries, RigidVelocity, BodySpring
 
     using .OpenBoundaries
+    using .STLDiscretization
+    export TriangleSurface, load_stl, signed_distance, sample_solid, packing_quality
     export OpenChannel,open_channel_geometry,ImpingingJet
 
     using .SimulationGeometry
