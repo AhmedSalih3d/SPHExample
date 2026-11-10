@@ -130,7 +130,8 @@ struct LinearDensityDiffusion <: SPHDensityDiffusion end
     return (ρⱼ - ρᵢ) - hydrostatic
 end
 
-@inline function compute_density_diffusion(
+# Propagate the gather loop's checked index range without disabling standalone bounds checks.
+Base.@propagate_inbounds function compute_density_diffusion(
         ::LinearDensityDiffusion,
         SimKernel,
         SimConstants,

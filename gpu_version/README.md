@@ -3528,6 +3528,69 @@ or `launch_half_step!`; `GPUSupportArrays` no longer contains `InvDensity` or
 `InvDensityₙ⁺`. For fused DBC position/motion preparation, use
 `launch_prepare_interactions!`. The high-level `RunSimulation` API is unchanged.
 
+### Reducing interaction instruction count
+
+The reference `LinearDensityDiffusion` model propagates the gather loop's
+`@inbounds` context to its two ordered particle-type reads. The loop already
+validates the target and neighbor ranges; repeating bounds checks inside the
+model issued unnecessary integer comparisons, branches and address work for
+every accepted pair. `Base.@propagate_inbounds` removes these checks **only for
+an inbounds caller**: ordinary standalone calls still throw `BoundsError` for
+invalid indices. Pair ordering, arithmetic, precision, neighbor search, and
+custom-model handling are unchanged. No new setting or buffer is required.
+
+Measured on 2026-11-10 with Julia 1.12.7, CUDA.jl 6.4.2 and an RTX A1000 Laptop
+GPU, against `aa91e13`, using Float32 physics, Float64 positions, symplectic
+stepping, `R = 1`, default interaction compiler flags, and no interaction caches:
+
+| Case | Particles | Fewer issued interaction instructions | Median paired solver runtime reduction |
+| --- | ---: | ---: | ---: |
+| StillWedge 2D mDBC, dp 0.02 | 3,027 | 7.9% | 6.3% |
+| DamBreak 3D, dp 0.02 | 17,446 | 6.4% | 6.1% |
+| DamBreak 3D, dp 0.0085 | 171,496 | 3.2% | 3.8% |
+
+Instruction counts are the median of three cache-flushed CUPTI
+`smsp__inst_issued.sum` samples of the same interaction snapshot after three
+output intervals, not a sum over a complete simulation. Whole-solver timings
+are separate, unprofiled measurements: two warm runs per variant, then seven
+alternating pairs. Timed durations are 0.2 s physical time for the wedge and
+0.03 s for each dam-break. Timing covers `RunSimulation`, including upload,
+stepping, rebuilds, readbacks and particle-file output; package compilation,
+host geometry/allocation, dataset hashing and directory cleanup are excluded.
+The small wedge is noisy (paired ratios 0.750--1.154); these measurements are
+not universal speed guarantees or claims of memory-bandwidth saturation.
+
+Final positions, velocities, densities, accelerations, accepted times and
+step/rebuild/readback counts matched exactly, including separate 0.3 s runs
+(638, 1,440 and 3,382 steps respectively). The benchmark also checks all saved
+particle coordinates and fields by dataset shape, element type and SHA-256,
+along with frame counts and timestamps. Separate strict-arithmetic validation
+uses `--strict`; the benchmark fails rather than accepting trajectory drift.
+
+An initially faster preloaded-type specialization was **rejected**. Although
+it removed more instructions, changed compiler fusion caused a 5.96 mm maximum
+position difference after 0.3 s in the large dam-break. Explicit fused
+accumulation repaired the sampled default kernel but did not preserve all
+tested specializations. Neither experimental arithmetic change is enabled.
+
+Reproduce the paired run and longer validation from the repository root:
+
+```powershell
+julia --project=gpu_version -t 2,0 gpu_version\benchmark\interaction_instructions.jl --long-time=0.3
+julia --project=gpu_version -t 2,0 gpu_version\benchmark\interaction_instructions.jl --strict --rounds=3 --time=0.003 --long-time=0.1 --output=gpu_version\benchmark\interaction_instructions_strict.csv
+```
+
+Raw evidence: [paired timings](benchmark/interaction_instructions_results.csv),
+[instruction counters](benchmark/interaction_instruction_counters.csv),
+[saved-dataset validation](benchmark/interaction_instructions_validation.csv),
+and [strict validation](benchmark/interaction_instructions_strict.csv).
+The regressions in [radial_interactions.jl](test/radial_interactions.jl) cover
+2D/3D, Float32/Float64, mixed positions, both compiler arithmetic modes,
+multiple lane counts, frozen/updated-mDBC gating and standalone bounds safety.
+The wider file currently stops at an unrelated floating-output fixture that
+expects `VTKHDF/Steps/Values` at the composite-file root; the same failure was
+reproduced with the unchanged `aa91e13` kernels, driver and diffusion models.
+
 ### Interaction compiler options
 
 Forced inlining and fast math are independent compiler options, both enabled

@@ -12,6 +12,7 @@ const GS = SPHExampleGPU.GPUStepState
 struct OrderedViscosity <: SPHViscosity end
 struct OrderedDiffusion <: SPHDensityDiffusion end
 struct ReciprocalProbeDiffusion <: SPHDensityDiffusion end
+struct BoundsCheckedLinearDiffusion <: SPHDensityDiffusion end
 struct CompilerProbeDiffusion{T} <: SPHDensityDiffusion
     value::T
 end
@@ -36,6 +37,13 @@ end
                                              x, gradient, d², ρᵢ, ρⱼ, invρᵢ, invρⱼ, i, j, types)
     value = invρᵢ + invρⱼ
     return value, value
+end
+
+# This wrapper deliberately does not propagate the caller's inbounds context.
+@inline function DD.compute_density_diffusion(::BoundsCheckedLinearDiffusion, kernel, constants, particles,
+                                             x, gradient, d², ρᵢ, ρⱼ, invρᵢ, invρⱼ, i, j, types)
+    return DD.compute_density_diffusion(LinearDensityDiffusion(), kernel, constants, particles,
+        x, gradient, d², ρᵢ, ρⱼ, invρᵢ, invρⱼ, i, j, types)
 end
 
 @inline function DD.compute_density_diffusion(model::CompilerProbeDiffusion, kernel, constants, particles,
@@ -366,6 +374,53 @@ function mode_switch_run(graph; scalar_sps = false, compiler_options = false,
 end
 
 if CUDA.functional()
+    @testset "linear diffusion propagates GPU bounds without changing pair ownership" begin
+        for D in (2, 3), (T, TP) in ((Float32, Float32), (Float32, Float64), (Float64, Float64)),
+            reach in (1, 2)
+            f = interaction_fixture(D, T, TP; reach)
+            types = Array(f.gpu.Type)
+            types[end] = Frozen
+            copyto!(f.gpu.Type, types)
+            for lanes in (1, 4), fastmath in (false, true),
+                boundary_data in (nothing, f.support.boundary_data)
+                reference = interaction_fields(f, BoundsCheckedLinearDiffusion(), ArtificialViscosity();
+                    lanes, fastmath, boundary_data, always_inline = true)
+                actual = interaction_fields(f, LinearDensityDiffusion(), ArtificialViscosity();
+                    lanes, fastmath, boundary_data, always_inline = true)
+                test_fields_close(actual, reference, T === Float32 ? 3e-6 : 2e-14)
+                @test all(isfinite, actual[1])
+                @test actual[1][end] == zero(T)
+            end
+        end
+    end
+
+    @testset "linear diffusion retains standalone bounds checks and fluid gates" begin
+        for T in (Float32, Float64), D in (2, 3)
+            constants = SimulationConstants{T}(dx = T(0.02), c₀ = T(35))
+            kernel = SPHKernelInstance{D,T}(WendlandC2(); dx = constants.dx)
+            x = SVector{D,T}(ntuple(d -> T(0.01 * d), D))
+            gradient = ∇Wᵢⱼ(kernel, norm(x) * kernel.h⁻¹, x)
+            for ti in (Fluid, Fixed, Moving, Floating, Frozen), tj in (Fluid, Fixed, Moving, Floating, Frozen),
+                swapped in (false, true)
+                types = [ti, tj]
+                i, j = swapped ? (2, 1) : (1, 2)
+                r, g = swapped ? (-x, -gradient) : (x, gradient)
+                ra, rb = swapped ? (T(1007), T(995)) : (T(995), T(1007))
+                expected = compute_density_diffusion(LinearDensityDiffusion(), kernel, constants, nothing,
+                    r, g, dot(x, x), ra, rb, inv(ra), inv(rb), i, j, types)
+                actual = compute_density_diffusion(BoundsCheckedLinearDiffusion(), kernel, constants, nothing,
+                    r, g, dot(x, x), ra, rb, inv(ra), inv(rb), i, j, types)
+                @test actual == expected
+                @test (ti == Fluid && tj == Fluid) || iszero(actual[1])
+            end
+            for (i, j) in ((0, 1), (1, 0), (3, 1), (1, 3))
+                @test_throws BoundsError compute_density_diffusion(LinearDensityDiffusion(), kernel, constants,
+                    nothing, x, gradient, dot(x, x), T(995), T(1007), inv(T(995)), inv(T(1007)),
+                    i, j, [Fluid, Fluid])
+            end
+        end
+    end
+
     @testset "interaction compiler flags reach the kernel and custom model callees" begin
         for D in (2, 3), T in (Float32, Float64), always_inline in (false, true)
             f = interaction_fixture(D, T, T)
