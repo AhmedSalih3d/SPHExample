@@ -495,7 +495,9 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         # being evaluated (the predictor state in the corrector loop).
                         same_cell = pair_order === nothing ? (j >= own_lo) & (j <= own_hi) : anchor_i == pair_order.cells[j]
                         owner_j = pair_order === nothing ? j : pair_order.owners[j]
-                        i_first   = same_cell ? (owner_i < owner_j) : (owner_i > owner_j)
+                        # Non-self direct pairs make the strict index comparisons complements.
+                        i_first   = pair_order === nothing ? xor(source_i > j, same_cell) :
+                            (same_cell ? owner_i < owner_j : owner_i > owner_j)
                         sgn  = i_first ? one(T) : -one(T)
                         ia   = i_first ? source_i : j
                         ja   = i_first ? j : source_i
