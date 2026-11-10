@@ -112,11 +112,15 @@ function scalar_sps_supported(::SPHKernelInstance{K, D, T}, ::LaminarSPS) where 
 end
 
 # Keep previews, the driver and standalone launches on the same capability checks.
-function interaction_options(kernel, diffusion, viscosity; radial::Bool = false, scalar_sps::Bool = false)
+function interaction_options(kernel, diffusion, viscosity; radial::Bool = false, scalar_sps::Bool = false,
+                             preload_types::Bool = false)
     radial_supported = radial_interactions_supported(kernel, diffusion, viscosity)
     sps_supported = scalar_sps_supported(kernel, viscosity)
-    return (; radial = radial && radial_supported, scalar_sps = scalar_sps && sps_supported,
-        radial_supported, scalar_sps_supported = sps_supported)
+    use_radial = radial && radial_supported
+    preload_supported = diffusion isa LinearDensityDiffusion
+    return (; radial = use_radial, scalar_sps = scalar_sps && sps_supported,
+        preload_types = preload_types && preload_supported && !use_radial,
+        radial_supported, scalar_sps_supported = sps_supported, preload_types_supported = preload_supported)
 end
 
 #---------------------------------------------------------------
@@ -390,7 +394,8 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                              boundary_data, InvDensity, Pressure, n::Int32, ::Val{Radial} = Val(false), ::Val{ScalarSPS} = Val(false),
                              ::Val{FrozenParticles} = Val(true), ::Val{IncludeGravity} = Val(false), periodicity = nothing,
                              periodic_bounds = nothing, viscous_dt = nothing, ::Val{FastMath}=Val(false), target_indices=nothing, pair_order=nothing,
-                             ::Val{NativeRigid}=Val(false), interaction_mass=nothing) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath, NativeRigid}
+                             ::Val{NativeRigid}=Val(false), interaction_mass=nothing,
+                             ::Val{PreloadTypes}=Val(false)) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath, NativeRigid, PreloadTypes}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -509,9 +514,11 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                                 source_i, j, ParticleType, radial_factor, inverse_distance)
                             dρdt += D1
                         else
+                            diffusion_types = PreloadTypes && SimDensityDiffusion isa LinearDensityDiffusion ?
+                                (typeᵢ == Fluid) & (ParticleType[j] == Fluid) : ParticleType
                             D1, D2 = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants,
                                                                SimParticles, sgn * xᵢⱼ, sgn * ∇ᵢWᵢⱼ, xᵢⱼ²,
-                                                               ρa, ρb, ρa⁻¹, ρb⁻¹, ia, ja, ParticleType)
+                                                               ρa, ρb, ρa⁻¹, ρb⁻¹, ia, ja, diffusion_types)
                             dρdt += i_first ? D1 : D2
                         end
 
@@ -645,6 +652,10 @@ settings in `SimulationResult.configuration`.
 `scalar_sps = Val(true)` separately opts into the rank-one SPS stress
 contraction while retaining its pair orientation and closure. It can be
 selected without radial continuity/diffusion, and changes rounding.
+`preload_types = Val(true)` reuses the already-loaded fluid predicate for
+reference `LinearDensityDiffusion`, retaining its pair ordering and formula.
+It can change compiler fusion/rounding. Other diffusion models and effective
+radial interactions warn and leave this optimization disabled.
 `include_gravity = Val(true)` writes total acceleration for startup/rebuild
 evaluations carried into a single-neighbor predictor. The default writes only
 interaction acceleration; the predictor or corrector then adds gravity.
@@ -668,6 +679,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
                               FlagKernel::Val, FlagShift::Val; threads::Integer = 128, lanes::Val = Val(1),
                               boundary_forces::Val = Val(true), pos_cells = nothing, boundary_data = nothing,
                               radial::Val = Val(false), scalar_sps::Val = Val(false), inverse_density = nothing,
+                              preload_types::Val = Val(false),
                               pressure = nothing, frozen_particles::Val = Val(true), include_gravity::Val = Val(false), periodicity = nothing,
                               periodic_bounds = nothing, periodic_cell_coordinates::Bool = false, viscous_dt = nothing,
                               fast_math::Bool = false,
@@ -694,12 +706,16 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
     SimParticles = (Position = Position, Density = Density, Velocity = Velocity,
                     Type = ParticleType)
     options = interaction_options(SimKernel, SimDensityDiffusion, SimViscosity;
-        radial = typeof(radial).parameters[1], scalar_sps = typeof(scalar_sps).parameters[1])
+        radial = typeof(radial).parameters[1], scalar_sps = typeof(scalar_sps).parameters[1],
+        preload_types = typeof(preload_types).parameters[1])
     if typeof(radial).parameters[1] && !options.radial
         @warn "Unsupported radial interaction request; interaction_kernel! uses radial=false (reference pair arithmetic)." kernel = typeof(SimKernel) diffusion = typeof(SimDensityDiffusion) viscosity = typeof(SimViscosity) scalar_sps = options.scalar_sps maxlog = 1
     end
     if typeof(scalar_sps).parameters[1] && !options.scalar_sps
         @warn "Unsupported scalar SPS request; interaction_kernel! uses scalar_sps=false with the selected model's viscosity arithmetic." kernel = typeof(SimKernel) viscosity = typeof(SimViscosity) radial = options.radial maxlog = 1
+    end
+    if typeof(preload_types).parameters[1] && !options.preload_types
+        @warn "GPU preloaded types require reference LinearDensityDiffusion; preload_types=false retains the selected diffusion path." diffusion = typeof(SimDensityDiffusion) radial = options.radial maxlog = 1
     end
     use_radial = Val(options.radial)
     use_scalar_sps = Val(options.scalar_sps)
@@ -708,7 +724,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
         Pairs, Position, Density, Velocity, ParticleType, SimParticles,
         CellStart, CellID, grid, step,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math), target_indices, pair_order, native_rigid, interaction_mass)
+        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math), target_indices, pair_order, native_rigid, interaction_mass, Val(options.preload_types))
     return nothing
 end
 

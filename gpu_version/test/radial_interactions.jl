@@ -276,6 +276,7 @@ function simulate(f; radial, graph, scheme, precision = Float32, position_type =
             GPUScalarSPSViscosity = scalar_sps,
             GPUInteractionAlwaysInline = always_inline, GPUInteractionFastMath = fastmath,
             GPUCacheInteractionFields = cached,
+            GPUPreloadInteractionTypes = false,
             GPUOutputQueueBytes = 1024^2, VisualizeInParaview = false, OpenLogFile = false, ExportGridCells = true)
         host = AllocateDataStructures(f.geometry, meta)
         logger = SimulationLogger(save)
@@ -306,6 +307,7 @@ function mode_switch_run(graph; scalar_sps = false, compiler_options = false,
         meta = SimulationMetaData{D,T}(SimulationName = "Switch", SaveLocation = save,
             SimulationTime = T(scalar_sps || compiler_options ? 0.015 : 0.009), OutputTimes = T(0.003), OutputIterationCounter = 1,
             GPUDoublePosition = true, GPUUseGraph = graph, GPUMaxStepsPerSync = 8)
+        meta.GPUPreloadInteractionTypes = false
         meta.TimeSteppingMode = scheme
         host = AllocateDataStructures(f.geometry, meta)
         gpu = upload_particles(host; position_type = TP)

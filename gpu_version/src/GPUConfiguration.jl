@@ -32,17 +32,19 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
                                  particle_count::Integer) where {D, T, S, K, B}
     particle_count >= 0 || throw(ArgumentError("particle_count must be nonnegative"))
     options = interaction_options(kernel, diffusion, viscosity;
-        radial = meta.GPURadialInteractions, scalar_sps = meta.GPUScalarSPSViscosity)
+        radial = meta.GPURadialInteractions, scalar_sps = meta.GPUScalarSPSViscosity,
+        preload_types = meta.GPUPreloadInteractionTypes)
     requested = (; radial_interactions = meta.GPURadialInteractions,
         variable_resolution = meta.VariableResolution !== nothing,
         interaction_always_inline = meta.GPUInteractionAlwaysInline,
         interaction_fastmath = meta.GPUInteractionFastMath,
+        preload_interaction_types = meta.GPUPreloadInteractionTypes,
         scalar_sps_viscosity = meta.GPUScalarSPSViscosity, use_graph = meta.GPUUseGraph,
         sync_timers = meta.GPUSyncTimers, lanes_per_particle = meta.GPULanesPerParticle,
         max_steps_per_sync = meta.GPUMaxStepsPerSync, double_position = meta.GPUDoublePosition,
         periodic_cell_coordinates = meta.GPUPeriodicCellCoordinates, periodic_images=meta.GPUPeriodicImages)
     capabilities = (; radial_interactions = options.radial_supported,
-        scalar_sps_viscosity = options.scalar_sps_supported)
+        scalar_sps_viscosity = options.scalar_sps_supported, preload_interaction_types = options.preload_types_supported)
     lanes = meta.VariableResolution !== nothing ? 1 : meta.GPULanesPerParticle <= 0 ? choose_lanes(particle_count, Val(D)) : meta.GPULanesPerParticle
     position_type = position_float_type(meta)
     effective = (; sph_kernel = typeof(kernel.kernel), kernel_regularization = kernel.η²,
@@ -54,6 +56,7 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
         kernel_normalization = kernel.αD, interaction_kernel = :interaction_kernel!,
         interaction_path = options.radial ? :radial : :reference,
         radial_interactions = options.radial, scalar_sps_viscosity = options.scalar_sps,
+        preload_interaction_types = options.preload_types,
         interaction_always_inline = meta.GPUInteractionAlwaysInline,
         interaction_fastmath = meta.GPUInteractionFastMath,
         density_diffusion_model = typeof(diffusion),
@@ -88,7 +91,7 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
     fallbacks = NamedTuple[]
     if meta.VariableResolution !== nothing
         effective = merge(effective,(;position_type=Float64,
-            interaction_fastmath=false,radial_interactions=false,scalar_sps_viscosity=false,
+            interaction_fastmath=false,radial_interactions=false,scalar_sps_viscosity=false,preload_interaction_types=false,
             interaction_path=:reference,viscosity_path=viscosity isa ZeroViscosity ? :disabled : :reference_ordered,cache_interaction_fields=false,
             boundary_forces=false,lanes_per_particle=1,compact_buffers=false,async_output=false,
             output_buffer_bytes=0,max_steps_per_sync=meta.GPUSyncTimers ? 1 : clamp(meta.GPUMaxStepsPerSync,1,256)))
@@ -115,6 +118,7 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
                 (:GPUInteractionFastMath,meta.GPUInteractionFastMath,false),
                 (:GPURadialInteractions,meta.GPURadialInteractions,false),
                 (:GPUScalarSPSViscosity,meta.GPUScalarSPSViscosity,false),
+                (:GPUPreloadInteractionTypes,meta.GPUPreloadInteractionTypes,false),
                 (:GPUCacheInteractionFields,meta.GPUCacheInteractionFields,false),
                 (:GPUBoundaryForces,meta.GPUBoundaryForces,false),
                 (:GPUCompactBuffers,meta.GPUCompactBuffers,false),
@@ -144,6 +148,10 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
     if requested.use_graph && !effective.use_graph
         push!(fallbacks, (; option = :GPUUseGraph, requested = true, effective = false,
             reason = :synchronized_timers))
+    end
+    if meta.VariableResolution === nothing && requested.preload_interaction_types && !effective.preload_interaction_types
+        push!(fallbacks, (; option = :GPUPreloadInteractionTypes, requested = true, effective = false,
+            reason = options.radial ? :radial_diffusion_selected : :unsupported_diffusion_model))
     end
     return (; requested, capabilities, effective, fallbacks = Tuple(fallbacks))
 end

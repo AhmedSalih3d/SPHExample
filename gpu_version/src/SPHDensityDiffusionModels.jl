@@ -130,6 +130,10 @@ struct LinearDensityDiffusion <: SPHDensityDiffusion end
     return (ρⱼ - ρᵢ) - hydrostatic
 end
 
+Base.@propagate_inbounds linear_diffusion_fluid_pair(types, i, j) =
+    (types[i] == Fluid) & (types[j] == Fluid)
+@inline linear_diffusion_fluid_pair(both_fluid::Bool, i, j) = both_fluid
+
 # Propagate the gather loop's checked index range without disabling standalone bounds checks.
 Base.@propagate_inbounds function compute_density_diffusion(
         ::LinearDensityDiffusion,
@@ -163,7 +167,7 @@ Base.@propagate_inbounds function compute_density_diffusion(
         # branch diverges inside the pair loop for fluid particles with boundary
         # neighbours, while the select made the pair kernel 4-10% faster in 3D and
         # was neutral in 2D. See gpu_version/README.md.
-        both_fluid = (ParticleType[i] == Fluid) & (ParticleType[j] == Fluid)
+        both_fluid = linear_diffusion_fluid_pair(ParticleType, i, j)
 
         Dᵢ  = both_fluid ? δᵩ * h * c₀ * (m₀ * ρⱼ⁻¹) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ) : zero(d²)
         Dⱼ  = -Dᵢ

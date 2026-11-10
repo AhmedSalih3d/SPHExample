@@ -1051,6 +1051,7 @@ function launch_solver_interactions!(ctx,position,density,velocity,pairs,step;in
         threads,lanes,boundary_forces=bforces,pos_cells=pairs,boundary_data=sup.boundary_data,
         inverse_density,pressure,frozen_particles=get(ctx,:frozen_particles,Val(true)),include_gravity,
         radial=get(ctx,:radial,Val(false)),scalar_sps=get(ctx,:scalar_sps,Val(false)),periodicity,periodic_bounds=bounds,
+        preload_types=get(ctx,:preload_types,Val(false)),
         periodic_cell_coordinates=periodic_coordinates,always_inline=get(ctx,:interaction_always_inline,true),
         fastmath=get(ctx,:interaction_fastmath,true),target_indices=targets,target_count=length(gpu),pair_order=order,
         native_rigid=Val(native_rigid),interaction_mass)
@@ -1529,21 +1530,25 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     bforces    = Val(SimMetaData.GPUBoundaryForces)
     use_radial = effective.radial_interactions
     use_scalar_sps = effective.scalar_sps_viscosity
+    use_preloaded_types = effective.preload_interaction_types
     interaction_always_inline = effective.interaction_always_inline
     interaction_fastmath = effective.interaction_fastmath
     interaction_mode_changed = state.radial_interactions != use_radial ||
         state.scalar_sps_viscosity != use_scalar_sps ||
+        state.preload_interaction_types != use_preloaded_types ||
         state.interaction_always_inline != interaction_always_inline ||
         state.interaction_fastmath != interaction_fastmath
     if interaction_mode_changed
         invalidate_graphs!(state)
         state.radial_interactions = use_radial
         state.scalar_sps_viscosity = use_scalar_sps
+        state.preload_interaction_types = use_preloaded_types
         state.interaction_always_inline = interaction_always_inline
         state.interaction_fastmath = interaction_fastmath
     end
     radial = Val(use_radial)
     scalar_sps = Val(use_scalar_sps)
+    preload_types = Val(use_preloaded_types)
 
     timed     = SimMetaData.GPUSyncTimers
     use_graph = effective.use_graph
@@ -1552,7 +1557,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         sup.InvDensity !== nothing && sup.Pressure !== nothing
 
     ctx = (; gpu, cl, sup, red, motion, floating, external_forces, damping, rotation, open_boundary,state, SimKernel, SimConstants, SimDensityDiffusion,
-             SimViscosity, FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, radial, scalar_sps,
+             SimViscosity, FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, radial, scalar_sps, preload_types,
              interaction_always_inline, interaction_fastmath, HourGlass, boundary_mode,
              frozen_particles = Val(open_boundary !== nothing || cl.frozen_total > 0), cache_final_state, diagnostics,
              periodic_cell_coordinates = SimMetaData.GPUPeriodicCellCoordinates,
@@ -1857,6 +1862,13 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             @warn "GPUScalarSPSViscosity uses experimental reassociated SPS stress arithmetic; validate accuracy and convergence for this case."
         else
             @warn "GPUScalarSPSViscosity requires a supported LaminarSPS configuration; scalar SPS is disabled and the supported viscosity path is retained." kernel = typeof(SimKernel) viscosity = typeof(SimViscosity)
+        end
+    end
+    if SimMetaData.GPUPreloadInteractionTypes
+        options = GPUKernels.interaction_options(SimKernel, SimDensityDiffusion, SimViscosity;
+            radial = SimMetaData.GPURadialInteractions, preload_types = true)
+        if !options.preload_types || SimMetaData.VariableResolution !== nothing
+            @warn "GPUPreloadInteractionTypes requires reference LinearDensityDiffusion without variable resolution; using the selected diffusion path without type preloading."
         end
     end
 

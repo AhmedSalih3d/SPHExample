@@ -5,10 +5,10 @@ using Test, SPHExampleGPU, CUDA, StaticArrays
 const CONFIG = SPHExampleGPU.GPUConfiguration
 const DRIVER = SPHExampleGPU.SPHCellList
 
-function metadata(D, T; kwargs...)
+function metadata(D, T; GPUPreloadInteractionTypes = false, kwargs...)
     SimulationMetaData{D,T}(SimulationName = "EffectiveConfiguration", SaveLocation = tempdir(),
         SimulationTime = T(0.001), OutputTimes = T(0.001), GPULanesPerParticle = 1,
-        VisualizeInParaview = false, OpenLogFile = false; kwargs...)
+        VisualizeInParaview = false, OpenLogFile = false, GPUPreloadInteractionTypes = GPUPreloadInteractionTypes; kwargs...)
 end
 
 @testset "effective numerical configuration and capabilities" begin
@@ -17,7 +17,7 @@ end
             GPUDoublePosition = true, GPUCacheInteractionFields = true, GPUCellSubdivision = 2)
         kernel = SPHKernelInstance{D,T}(WendlandC2(); dx = T(0.02))
         config = effective_configuration(meta, kernel, LinearDensityDiffusion(), LaminarSPS(); particle_count = 8)
-        @test config.capabilities == (; radial_interactions = true, scalar_sps_viscosity = true)
+        @test config.capabilities == (; radial_interactions = true, scalar_sps_viscosity = true, preload_interaction_types = true)
         @test config.effective.sph_kernel === WendlandC2
         @test config.effective.interaction_kernel === :interaction_kernel!
         @test config.effective.interaction_path === :radial
@@ -138,6 +138,7 @@ if CUDA.functional()
             SimulationName = "EffectiveConfiguration", SaveLocation = save,
             SimulationTime = T(0.001), OutputTimes = T(0.001),
             GPURadialInteractions = requested, GPUScalarSPSViscosity = requested,
+            GPUPreloadInteractionTypes = false,
             GPULanesPerParticle = 0, GPUSyncTimers = timed, GPUUseGraph = timed,
             VisualizeInParaview = false, OpenLogFile = false; compiler_options...)
         constants = SimulationConstants{T}(dx = T(0.02), c₀ = T(20), g = zero(T))

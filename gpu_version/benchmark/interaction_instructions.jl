@@ -44,6 +44,7 @@ function measure(variant, case, duration; strict = false)
         meta.GPURadialInteractions = false
         meta.GPUScalarSPSViscosity = false
         meta.GPUCacheInteractionFields = false
+        meta.GPUPreloadInteractionTypes = false
         meta.GPUInteractionFastMath = !strict
         meta.GPUUseGraph = true
         meta.GPUMaxStepsPerSync = 32

@@ -1,0 +1,13 @@
+case,variant,phase,duration,round,particles,seconds,loop_seconds,steps,rebuilds,readbacks
+DamBreak3D_dp0.0085,current,timing,0.03,1,171496,3.4892474,3.4146008,339,2,14
+DamBreak3D_dp0.0085,preloaded,timing,0.03,1,171496,3.2861728,3.190638,339,2,14
+DamBreak3D_dp0.0085,preloaded,timing,0.03,2,171496,3.5560902,3.4821203,339,2,14
+DamBreak3D_dp0.0085,current,timing,0.03,2,171496,3.502604,3.4326402,339,2,14
+DamBreak3D_dp0.0085,current,timing,0.03,3,171496,3.9894824,3.6471492,339,2,14
+DamBreak3D_dp0.0085,preloaded,timing,0.03,3,171496,3.3485529,3.2712351,339,2,14
+DamBreak3D_dp0.0085,preloaded,timing,0.03,4,171496,3.2997551,3.2286934,339,2,14
+DamBreak3D_dp0.0085,current,timing,0.03,4,171496,3.538505,3.4579597,339,2,14
+DamBreak3D_dp0.0085,current,timing,0.03,5,171496,3.5146759,3.4525536,339,2,14
+DamBreak3D_dp0.0085,preloaded,timing,0.03,5,171496,3.3140577,3.2304658,339,2,14
+DamBreak3D_dp0.0085,current,validation,0.1,0,171496,11.8494612,11.6988206,1128,14,47
+DamBreak3D_dp0.0085,preloaded,validation,0.1,0,171496,11.2946286,11.1734254,1128,14,47

@@ -3051,6 +3051,7 @@ validation; it is not a bitwise-preserving performance option.
 | `GPUInteractionFastMath` | `true` | CUDA fast math in the interaction kernel and its callees, including custom models. Allows approximate arithmetic, reassociation, Float32 subnormal flushing and NaN/Inf assumptions. Set to `false` for strict interaction arithmetic. Independent of forced inlining; other kernels retain their existing compilation options. See "Interaction compiler options" below. |
 | `GPURadialInteractions` | `false` | **Experimental** scalar Wendland C2 contractions and symmetric linear diffusion using `(ρᵢ⁻¹ + ρⱼ⁻¹) / 2`. Supported with `ZeroDensityDiffusion`, `LinearDensityDiffusion` or `ZeroGravityLinearDensityDiffusion`, and `ZeroViscosity`, `ArtificialViscosity`, `Laminar` or `LaminarSPS`, in 2D/3D Float32/Float64. SPS retains its original ordered tensor calculation; the other supported viscosities use direct symmetric evaluation. Other combinations warn and use reference interactions. Changes the reference diffusion operator as well as rounding; see below before opting in. |
 | `GPUScalarSPSViscosity` | `false` | **Experimental**, separately selectable rank-one SPS stress contraction with `LaminarSPS` in 2D/3D Float32/Float64. Preserves the closure and CPU pair ordering, but changes rounding. Does not require `GPURadialInteractions`. Other viscosities warn and use their existing path. |
+| `GPUPreloadInteractionTypes` | `true` | Reuse the loaded fluid predicate for reference `LinearDensityDiffusion`. Retains the diffusion formula and pair orientation, but compiler fusion/rounding can change. Set `false` for the previous type-loading path. Other diffusion models, effective radial interactions and variable resolution explicitly fall back without preloading. |
 | `GPUBoundaryForces` | `true` | Evaluate the momentum equation for boundary particles too, as the CPU does (their acceleration only enters the force based time step limit). `false` skips it and saves 10-20 % in cases with many boundary particles, at the price of a slightly different adaptive time step. |
 | `GPUAsyncOutput` | `true` | Write output files on a task while the GPU continues (see "Asynchronous output"). |
 | `GPUMaxStepsPerSync` | `32` | Upper bound on the steps enqueued between two host read backs of the device resident step state. The actual batch is the estimated number of steps until the next cell list rebuild or output. `1` reproduces a synchronization per step. |
@@ -3590,6 +3591,134 @@ multiple lane counts, frozen/updated-mDBC gating and standalone bounds safety.
 The wider file currently stops at an unrelated floating-output fixture that
 expects `VTKHDF/Steps/Values` at the composite-file root; the same failure was
 reproduced with the unchanged `aa91e13` kernels, driver and diffusion models.
+
+#### Experimental preloaded-type follow-up
+
+The rejection above was from the **unchanged-results optimization**, not proof
+that the faster formulation is physically wrong. A follow-up now lives in
+[preloaded_types.jl](benchmark/preloaded_types.jl), isolated in experimental
+kernel/driver modules. It reuses the already-loaded fluid-type predicate but
+extracts the reference diffusion formula from the current source, preserving
+its pair orientation, hydrostatic correction and reciprocal-density weight.
+It does **not** enable radial/symmetric diffusion. The installed solver now
+**enables the same optimization by default** for reference linear diffusion.
+No example edit is required. Set `GPUPreloadInteractionTypes = false` to restore
+the previous type-loading path. It can also be stated explicitly:
+
+```julia
+meta = SimulationMetaData{3,Float32}(
+    SimulationName = "FastLinearDiffusion", SaveLocation = save,
+    GPUPreloadInteractionTypes = true,
+)
+```
+
+The option applies to both integrators, startup/rebuild derivatives,
+predictor/corrector evaluations, and graph/direct execution. It works independently
+of `GPUInteractionFastMath`. Changing it between output intervals invalidates
+graphs and refreshes the single-neighbor carried derivative. Requested/effective
+values appear as `preload_interaction_types` in configuration snapshots and logs.
+Other diffusion models, effective radial interactions and variable resolution
+report a disabled fallback; the selected diffusion operator is never replaced.
+Low-level callers use `launch_interactions!(...; preload_types = Val(true))`.
+
+On the same RTX A1000, relative to the **already optimized** `3473acb` solver:
+
+| Case | Fewer issued interaction instructions | Median paired runtime change |
+| --- | ---: | ---: |
+| 171,496-particle 3D dam-break | 7.88% | 6.80% less time; faster in all five pairs |
+| 3,027-particle 2D mDBC wedge | 8.65% | No convincing speedup; median ratio 1.006 with substantial noise |
+
+The installed public option was separately remeasured on the large 3D case:
+five alternating pairs gave **5.82% less whole-solver time** (median paired
+ratio 0.942, range 0.839--1.015), with matching work counts. Its 0.1 s
+validation completed 1,128 steps with a 0.000600-dx maximum fluid-position
+difference. These installed-mode results are in
+[timings](benchmark/preloaded_types_installed_timings.csv),
+[observables](benchmark/preloaded_types_installed_observables.csv) and
+[differences](benchmark/preloaded_types_installed_differences.csv); the longer
+table below describes the isolated prototype investigation.
+
+These are incremental gains, not gains against the earlier `aa91e13`.
+Whole-solver timing uses two warm runs per variant, then five alternating,
+unprofiled pairs with matching step/rebuild/readback counts (339/2/14 for the
+0.03 s dam-break; 425/1/21 for the 0.2 s wedge). It includes upload, simulation
+and output, but excludes geometry/host allocation, post-run diagnostics and
+cleanup. Separate cache-flushed CUPTI snapshots after three output intervals
+measure `smsp__inst_issued.sum`, not whole-run instruction counts.
+
+Longer comparisons use four variants: current fast math, preloaded fast math,
+current strict interaction arithmetic, and current fast math with **each
+initial fluid density increased by one Float32 ULP**. The latter is a
+sensitivity control, not a numerically equivalent initial condition. Strict
+arithmetic is also a sensitivity control, **not an exact physical solution**.
+
+After 0.6 s in the large dam-break (6,762 steps in every variant), the
+fluid-particle differences relative to current fast math were:
+
+| Variant | RMS position difference / dx | 99th percentile / dx | Maximum / dx |
+| --- | ---: | ---: | ---: |
+| Preloaded types | 0.0733 | 0.213 | 7.267 |
+| Strict interactions | 0.0850 | 0.274 | 5.856 |
+| One-ULP initial density perturbation | 0.0902 | 0.293 | 7.272 |
+
+Here `dx = 8.5 mm`: the prototype's RMS difference is 0.623 mm, while the
+worst particle differs by 61.8 mm. At 0.3 s the prototype reproduces the earlier
+5.96 mm maximum difference. This growth is comparable to the rounding
+controls, so maximum particle mismatch alone is not evidence that the
+optimization changes the modeled physics.
+
+The prototype's final bulk kinetic-energy difference is 0.00195%, its
+center-of-mass difference is 1.31 micrometers, and its maximum-x fluid-front
+difference is 0.0141 mm. However, the final **ID-matched particle-pressure**
+differences reach 3.50 kPa (RMS 53.2 Pa); particles no longer occupy identical
+locations, so these are not fixed-location pressure-gauge errors. Through
+4 s of the wedge (8,498 steps), the maximum position difference is 0.0245 mm,
+versus 0.0243 mm for strict arithmetic and 0.0299 mm for the ULP control.
+All runs retain finite states, positive densities, identical particle
+IDs/types and fluid mass, and matching work counts. Mass here follows the
+unchanged equal particle masses/count, not an independent conservation proof.
+
+Diagnostics cover **every output frame**, not just the final state. Matching
+frame numbers correspond to the same requested output deadlines, but their
+accepted times can differ; the CSV records this explicitly (maximum absolute
+offset below 0.16 microseconds in these runs). No temporal interpolation is
+used. The CSVs include density ranges, pressure, fluid momentum, kinetic
+energy, center of mass, fluid-front and surface extrema. The front is a
+particle-position statistic, not a reconstructed free-surface measurement.
+
+**Assessment:** promising especially in large 3D runs, and now the selected
+simulation default, with an
+explicit opt-out, rather than a bitwise-equivalence guarantee. These two cases
+do not establish physical accuracy for every application.
+Validation still needs application-specific tolerances, fixed-location
+pressure/force measurements, longer runs, and resolution/timestep convergence
+against trusted reference or experimental data. A small bulk difference does
+not guarantee acceptable local impact loads.
+
+Reproduce the investigation (the first command runs all four long-run variants):
+
+```powershell
+julia --project=gpu_version -t 2,0 gpu_version\benchmark\preloaded_types.jl
+julia --project=gpu_version -t 2,0 gpu_version\benchmark\preloaded_types.jl --installed --output-prefix=gpu_version\benchmark\preloaded_types_installed
+julia --project=gpu_version -t 2,0 gpu_version\test\preloaded_types.jl
+```
+
+`--time=...` sets the validation duration, `--timed-duration=...` the short
+paired-run duration, `--rounds=...` the paired repetitions, and
+`--output-prefix=...` the CSV prefix. Case substrings select cases;
+`--no-controls` omits strict/ULP validation variants. `--installed` exercises
+the public metadata option instead of the isolated prototype (the latter uses
+the `3473acb` source snapshot). Defaults are 0.6 s
+validation for 3D and 4 s for 2D, with output every 0.01 s.
+
+Raw evidence: [timings/work counts](benchmark/preloaded_types_timings.csv),
+[frame observables](benchmark/preloaded_types_observables.csv),
+[frame differences](benchmark/preloaded_types_differences.csv), and
+[instruction counters](benchmark/preloaded_types_counters.csv).
+The focused test file covers source-transformation guards,
+diagnostic normalization, the ordered diffusion formula for both precisions
+and all particle types, fallback models, standalone bounds safety, GPU smoke
+runs in strict/fast modes, graph invalidation, and single-neighbor derivative refresh.
 
 ### Interaction compiler options
 

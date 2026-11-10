@@ -165,6 +165,14 @@ the existing SPS stress tensors. Pair orientation and the closure are unchanged,
 but rounding can differ. It defaults to `false` and does not require radial
 continuity/diffusion. Other viscosity models retain their existing path.
 
+`GPUPreloadInteractionTypes = true` reuses the already-loaded fluid predicate
+for reference `LinearDensityDiffusion`. It preserves the model and pair ordering
+but can change compiler fusion/rounding. The default is `true`; set it to `false`
+to restore the previous type-loading path. Radial diffusion,
+other diffusion models and variable resolution disable it with a reported fallback.
+Changing it between output intervals invalidates graphs and refreshes the
+carried single-neighbor derivative.
+
 `GPUInteractionAlwaysInline = true` forces helper-function inlining in the
 interaction kernel without requesting relaxed floating-point semantics.
 `GPUInteractionFastMath = true` enables CUDA fast math in that kernel and its
@@ -239,6 +247,7 @@ mutable struct SimulationMetaData{Dimensions,
     GPUInteractionFastMath::Bool # relaxed arithmetic only in the interaction kernel
     GPURadialInteractions::Bool  # opt-in scalar Wendland arithmetic and symmetric linear diffusion
     GPUScalarSPSViscosity::Bool   # separate opt-in rank-one SPS stress arithmetic (changes rounding)
+    GPUPreloadInteractionTypes::Bool # reuse reference linear-diffusion type predicates (changes rounding)
     GPUBoundaryForces::Bool      # also evaluate the momentum equation for boundary particles (CPU parity)
     GPUAsyncOutput::Bool         # write output files on a Julia task while the GPU continues
     GPUMaxStepsPerSync::Int      # upper bound on the time steps enqueued between two host read backs
@@ -365,6 +374,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUInteractionFastMath::Bool            = true,
         GPURadialInteractions::Bool             = false,
         GPUScalarSPSViscosity::Bool              = false,
+        GPUPreloadInteractionTypes::Bool        = true,
         GPUBoundaryForces::Bool                 = true,
         GPUAsyncOutput::Bool                    = true,
         GPUMaxStepsPerSync::Int                 = 32,
@@ -400,6 +410,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         OutputVariables, OpenLogFile, TimeSteppingMode, VariableResolution,
         GPUSyncTimers, GPUDeterministicSort, GPUMaxCells, GPUInteractionThreads, GPULanesPerParticle,
         GPUInteractionAlwaysInline, GPUInteractionFastMath, GPURadialInteractions, GPUScalarSPSViscosity,
+        GPUPreloadInteractionTypes,
         GPUBoundaryForces, GPUAsyncOutput, GPUMaxStepsPerSync, GPUUseGraph, GPUClipTimeStepToOutput, GPUCellSubdivision,
         GPUFixedGrid, GPUGridExpansion, Periodicity,
         GPUDoublePosition, GPUPeriodicCellCoordinates, GPUPeriodicImages, GPUCacheInteractionFields, GPUCompactBuffers, GPUOutputQueueBytes, GPUOutputBufferBytes,
