@@ -481,12 +481,12 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         if viscous_dt !== nothing
                             pair_rate = max(pair_rate, dot(vᵢⱼ, xᵢⱼ) / (xᵢⱼ² + SimKernel.η²))
                         end
-                        density_symmetric_term = Radial ? -radial_factor * dot(vᵢⱼ, xᵢⱼ) : dot(-vᵢⱼ, ∇ᵢWᵢⱼ)
+                        density_symmetric_term = Radial ? radial_factor * dot(vᵢⱼ, xᵢⱼ) : dot(vᵢⱼ, ∇ᵢWᵢⱼ)
                         # DBC walls take density from the fluid, not other walls.
                         wall_pair = wallᵢ && is_wall(ParticleType[j])
                         if !wall_pair
-                            dρdt += viscous_dt === nothing ? -ρᵢ * (mass_j * ρⱼ⁻¹) * density_symmetric_term :
-                                -mass_j * density_symmetric_term * (ρᵢ / ρⱼ)
+                            dρdt += viscous_dt === nothing ? ρᵢ * (mass_j * ρⱼ⁻¹) * density_symmetric_term :
+                                mass_j * density_symmetric_term * (ρᵢ / ρⱼ)
                         end
 
                         # Reference diffusion and ordered/SPS viscosity use the CPU
@@ -515,18 +515,23 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                                 SimKernel, SimConstants, xᵢⱼ, xᵢⱼ², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹,
                                 source_i, j, ParticleType, radial_factor, inverse_distance)
                             dρdt += D1
-                        else
+                        elseif SimDensityDiffusion isa Union{ZeroDensityDiffusion, ZeroGravityLinearDensityDiffusion, LinearDensityDiffusion}
                             diffusion_types = PreloadTypes && SimDensityDiffusion isa LinearDensityDiffusion ?
                                 (typeᵢ == Fluid) & (ParticleType[j] == Fluid) : ParticleType
+                            D1, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants,
+                                                              SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ²,
+                                                              ρᵢ, ρⱼ, ρᵢ⁻¹, ρb⁻¹, ia, ja, diffusion_types)
+                            dρdt += D1
+                        else
                             D1, D2 = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants,
                                                                SimParticles, sgn * xᵢⱼ, sgn * ∇ᵢWᵢⱼ, xᵢⱼ²,
-                                                               ρa, ρb, ρa⁻¹, ρb⁻¹, ia, ja, diffusion_types)
+                                                               ρa, ρb, ρa⁻¹, ρb⁻¹, ia, ja, ParticleType)
                             dρdt += i_first ? D1 : D2
                         end
 
                         if forces
-                            viscous_velocity = viscous_vᵢ -
-                                               boundary_viscous_velocity(boundary_data, Velocity, ParticleType, j, slotⱼ)
+                            viscous_velocity = boundary_data === nothing ? vᵢⱼ :
+                                viscous_vᵢ - boundary_viscous_velocity(boundary_data, Velocity, ParticleType, j, slotⱼ)
                             if viscous_dt !== nothing
                                 dot_velocity = dot(viscous_velocity, xᵢⱼ)
                                 mu = SimKernel.h * dot_velocity / (xᵢⱼ² + SimKernel.η²)
@@ -541,6 +546,10 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                             elseif Radial && !(SimViscosity isa LaminarSPS)
                                 visc = SPHViscosityModels.radial_viscosity(SimViscosity, SimKernel, SimConstants,
                                     xᵢⱼ, viscous_velocity, ∇ᵢWᵢⱼ, ρᵢ, ρⱼ, inverse_distance)
+                            elseif SimViscosity isa Union{ZeroViscosity, ArtificialViscosity, Laminar}
+                                visc, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles,
+                                                            xᵢⱼ, viscous_velocity, ∇ᵢWᵢⱼ, xᵢⱼ²,
+                                                            ρa, ρb, ρa⁻¹, ρb⁻¹, ia, ja)
                             else
                                 v1, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles,
                                                           sgn * xᵢⱼ, sgn * viscous_velocity, sgn * ∇ᵢWᵢⱼ, xᵢⱼ²,

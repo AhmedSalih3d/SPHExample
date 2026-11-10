@@ -102,7 +102,7 @@ struct ZeroGravityLinearDensityDiffusion <: SPHDensityDiffusion end
         invdᵢⱼ²η² = one(eltype(ρᵢ)) / (d² + η²)
 
         difference = linear_density_difference(ZeroGravityLinearDensityDiffusion(), SimConstants, xᵢⱼ, ρᵢ, ρⱼ)
-        ψᵢⱼ = 2 * difference * (-xᵢⱼ) * invdᵢⱼ²η²
+        ψᵢⱼ = (-2 * difference) * xᵢⱼ * invdᵢⱼ²η²
 
         Dᵢ  = δᵩ * h * c₀ * (m₀ * ρⱼ⁻¹) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ)
         Dⱼ  = -Dᵢ
@@ -158,7 +158,7 @@ Base.@propagate_inbounds function compute_density_diffusion(
         invdᵢⱼ²η² = one(eltype(ρᵢ)) / (d² + η²)
 
         difference = linear_density_difference(LinearDensityDiffusion(), SimConstants, xᵢⱼ, ρᵢ, ρⱼ)
-        ψᵢⱼ = 2 * difference * (-xᵢⱼ) * invdᵢⱼ²η²
+        ψᵢⱼ = (-2 * difference) * xᵢⱼ * invdᵢⱼ²η²
 
         # The term only acts between two fluid particles. Gate it with a select
         # rather than an early `return` at the top of the function: measured on an
