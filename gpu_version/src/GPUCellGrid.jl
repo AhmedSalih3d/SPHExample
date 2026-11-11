@@ -64,7 +64,8 @@ both codes bin particles into the same cells: round to nearest, ties away
 from zero.
 """
 @inline function map_floor(x::T, InverseCutOff) where {T}
-    Int32(sign(x)) * unsafe_trunc(Int32, muladd(abs(x), InverseCutOff, T(0.5)))
+    u = unsafe_trunc(Int32, muladd(abs(x), InverseCutOff, T(0.5)))
+    return ifelse(x < zero(T), -u, ifelse(x > zero(T), u, Int32(0)))
 end
 
 """

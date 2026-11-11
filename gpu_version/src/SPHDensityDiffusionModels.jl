@@ -238,7 +238,7 @@ FourtakasDensityDiffusion(; full = false) = FourtakasDensityDiffusion(full)
     return -coefficient * dot(x, gradient) * constants.m₀ / density_j
 end
 
-@inline function compute_density_diffusion(::FourtakasDensityDiffusion, kernel, constants, particles,
+Base.@propagate_inbounds function compute_density_diffusion(::FourtakasDensityDiffusion, kernel, constants, particles,
         x, gradient, distance_squared, density_i, density_j, inverse_i, inverse_j, i, j, types)
     (types[i] == Fluid && types[j] == Fluid) || return zero(density_i), zero(density_j)
     first = fourtakas_diffusion(kernel, constants, x, gradient, distance_squared, density_i, density_j, inverse_j)
@@ -246,7 +246,7 @@ end
     return first, second
 end
 
-@inline function compute_density_diffusion(
+Base.@propagate_inbounds function compute_density_diffusion(
         ::ComplexDensityDiffusion,
         SimKernel,
         SimConstants,
@@ -260,7 +260,8 @@ end
         ρⱼ⁻¹,
         i,
         j,
-        ParticleType
+        ParticleType,
+        z = xᵢⱼ[end]
 )
 
         (; ρ₀, m₀, c₀, δᵩ, Cb, Cb⁻¹, γ, g) = SimConstants
@@ -269,7 +270,7 @@ end
         # In theory these two equations are not completely symmetric.
         # In practice it is 'good' enough and saves a lot of time to
         # not do it the mathematically correct way.
-        Pᵢⱼᴴ  = ρ₀ * (-g) * -xᵢⱼ[end]
+        Pᵢⱼᴴ  = ρ₀ * (-g) * -z
         ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
         # ρᵢⱼᴴ = ρ₀ * ( Estimate7thRoot( 1 + (Pᵢⱼᴴ * Cb⁻¹)) - 1)
         # ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
@@ -280,7 +281,7 @@ end
         ψᵢⱼ = 2 * (ρⱼᵢ - ρᵢⱼᴴ)  * (-xᵢⱼ) * invdᵢⱼ²η²
 
         # Same fluid-fluid select gate as `LinearDensityDiffusion`, see there.
-        both_fluid = (ParticleType[i] == Fluid) & (ParticleType[j] == Fluid)
+        both_fluid = linear_diffusion_fluid_pair(ParticleType, i, j)
 
         Dᵢ  = both_fluid ? δᵩ * h * c₀ * (m₀ * ρⱼ⁻¹) * dot(ψᵢⱼ, ∇ᵢWᵢⱼ) : zero(d²)
         Dⱼ  = -Dᵢ

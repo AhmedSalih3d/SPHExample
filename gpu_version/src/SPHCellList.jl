@@ -830,6 +830,44 @@ function boundary_indices_kernel!(slots, owners, sorted_slots, n::Int32)
     return nothing
 end
 
+function rebuild_epilogue_kernel!(slots, owners, sorted_slots,
+                                  Positionₙ⁺, Velocityₙ⁺, PosCells,
+                                  Position, Velocity, types, CellID, gridarg, H, n::Int32)
+    i = thread_index()
+    i > n && return nothing
+    @inbounds begin
+        if sorted_slots !== nothing
+            slot = sorted_slots[i]
+            slots[i] = slot
+            slot == 0 || (owners[slot] = i)
+        end
+        if Positionₙ⁺ !== nothing || PosCells !== nothing
+            x = Position[i]
+            if Positionₙ⁺ !== nothing && types[i] == Fixed
+                Positionₙ⁺[i] = x
+                Velocityₙ⁺[i] = Velocity[i]
+            end
+            GPUKernels.store_pos_cell!(PosCells, i, x, CellID, gridarg, H)
+        end
+    end
+    return nothing
+end
+
+function launch_rebuild_epilogue!(gpu::GPUParticles, cl::CellListWorkspace, support, kernel, sorted_slots)
+    n = length(gpu)
+    n == 0 && return nothing
+    reuse_predictors = support !== nothing && support.ReusePredictors
+    position_half, velocity_half = reuse_predictors ? predictor_arrays(support, gpu) : (nothing, nothing)
+    pos_cells = support !== nothing && uses_pos_cells(support) ? support.PosCells : nothing
+    sorted_slots === nothing && position_half === nothing && pos_cells === nothing && return nothing
+    H = kernel === nothing ? zero(eltype(gpu.Density)) : kernel.H
+    @cuda threads=ELEMENTWISE_THREADS blocks=cld(n, ELEMENTWISE_THREADS) rebuild_epilogue_kernel!(
+        gpu.BoundarySlot, gpu.GhostIndex, sorted_slots,
+        position_half, velocity_half, pos_cells,
+        gpu.Position, gpu.Velocity, gpu.Type, gpu.CellID, cl.grid_dev, H, Int32(n))
+    return nothing
+end
+
 """
     rebuild_cell_list!(gpu, cl, InverseCutOff; constants = nothing, boundary_mode = NoMDBC(),
                        discard_acceleration = false, preserve_pressure = false,
@@ -885,11 +923,6 @@ function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCut
         (compact_ghosts ? (s.BoundarySlot,) : ())..., gpu.CellID)
 
     grid = update_cell_list!(cl, gpu.Position, InverseCutOff, srcs, dsts; prepared, freeze_state, sort_inactive)
-    if compact_ghosts
-        n = length(gpu)
-        @cuda threads=ELEMENTWISE_THREADS blocks=cld(n, ELEMENTWISE_THREADS) boundary_indices_kernel!(
-            gpu.BoundarySlot, gpu.GhostIndex, s.BoundarySlot, Int32(n))
-    end
 
     # Swap the two sets of persistent arrays.
     gpu.scratch = (
@@ -931,11 +964,7 @@ function rebuild_cell_list!(gpu::GPUParticles, cl::CellListWorkspace, InverseCut
     # order. Their number never changes, so the list keeps its length and
     # device pointer, and captured graphs stay valid.
     compact_ghosts || isempty(gpu.GhostIndex) || compact_nonzero!(cl, gpu.GhostPoints, gpu.GhostIndex)
-    support === nothing || initialize_fixed_predictors!(support, gpu)
-    if support !== nothing && uses_pos_cells(support)
-        launch_pos_cells!(support.PosCells, gpu.Position, gpu.CellID, cl.grid_dev,
-            HostStep(zero(eltype(gpu.Density)), zero(eltype(gpu.Density))), kernel)
-    end
+    launch_rebuild_epilogue!(gpu, cl, support, kernel, compact_ghosts ? s.BoundarySlot : nothing)
 
     return grid
 end

@@ -522,6 +522,11 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                                                               SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ²,
                                                               ρᵢ, ρⱼ, ρᵢ⁻¹, ρb⁻¹, ia, ja, diffusion_types)
                             dρdt += D1
+                        elseif SimDensityDiffusion isa ComplexDensityDiffusion
+                            D1, D2 = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants,
+                                                               SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ²,
+                                                               ρa, ρb, ρa⁻¹, ρb⁻¹, ia, ja, ParticleType, sgn * xᵢⱼ[end])
+                            dρdt += i_first ? D1 : D2
                         else
                             D1, D2 = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants,
                                                                SimParticles, sgn * xᵢⱼ, sgn * ∇ᵢWᵢⱼ, xᵢⱼ²,
