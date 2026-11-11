@@ -1294,7 +1294,14 @@ end
 # flag when the output time is reached (before computing anything) or when
 # the accumulated displacement bound requires a cell list rebuild.
 function finish_kernel!(step::DeviceStep{T}, partial, nblocks::Int32, CFL::T, c₀::T, h::T,
-                        diagnostic_partial, diagnostic_result, stage_sampler,dt_limit, timestep_controller = nothing) where {T}
+                        diagnostic_partial, diagnostic_result, stage_sampler,dt_limit, timestep_controller = nothing,
+                        ::Val{CommitPrevious} = Val(false)) where {T, CommitPrevious}
+    if CommitPrevious
+        threadIdx().x == Int32(1) && commit_kernel!(step)
+        # The preceding step's particle writes completed in earlier kernels.
+        # Publish its clock/phase update before any lane tests the next step.
+        sync_threads()
+    end
     f = step.f
     s = step.i
     @inbounds begin
@@ -1358,14 +1365,19 @@ An optional `stage_sampler` prepares motion coefficients in the same launch,
 after an active timestep is ready, including the resumed rebuild path.
 `dt_limit` caps the timestep before motion sampling; floating springs supply
 their stability limit here. The default `Inf` retains the usual criterion.
+With `commit_previous = true`, commit the preceding completed step before
+selecting the next timestep. Only use this after all of that step's particle,
+body and open-boundary updates have completed, in place of `launch_commit!`.
 """
 function launch_finish!(state::StepState{T}, red::ReductionWorkspace{SVector{3, T}}, SimKernel,
-                        SimConstants; diagnostics = nothing, stage_sampler = nothing,dt_limit=Inf, timestep_controller=nothing) where {T}
+                        SimConstants; diagnostics = nothing, stage_sampler = nothing,dt_limit=Inf, timestep_controller=nothing,
+                        commit_previous::Bool = false) where {T}
     diagnostic_partial = diagnostics === nothing ? nothing : diagnostics.reduction.partial
     diagnostic_result = diagnostics === nothing ? nothing : diagnostics.result
     @cuda threads=REDUCE_THREADS blocks=1 finish_kernel!(state, red.partial, Int32(red.nblocks),
                                                         T(SimConstants.CFL), T(SimConstants.c₀),
-                                                        T(SimKernel.h), diagnostic_partial, diagnostic_result, stage_sampler,Float64(dt_limit),timestep_controller)
+                                                        T(SimKernel.h), diagnostic_partial, diagnostic_result, stage_sampler,Float64(dt_limit),timestep_controller,
+                                                        Val(commit_previous))
     return nothing
 end
 

@@ -2695,9 +2695,9 @@ the standard *gather* formulation:
   compute it on the host from the downloaded density (and particle type for
   Updated mDBC) when writing VTKHDF files or sampling pressure probes. The
   corrector advances the position with the half step velocity times `dt`, the
-  same symplectic scheme as the CPU `FullTimeStep`. A step therefore consists
-  of 6 kernel launches (8 with mDBC and moving bodies), two of which are single
-  block kernels that do the loop control.
+  same symplectic scheme as the CPU `FullTimeStep`. The launch count depends
+  on boundary, cache and predictor-fusion modes. Single-block final integration
+  also commits the step at its reduction barrier.
 * **Device resident time step.** The time step, the simulated time, the
   displacement bound that triggers a cell list rebuild and the loop flags
   live on the device. A single block kernel turns the block wise reduction
@@ -2709,6 +2709,11 @@ the standard *gather* formulation:
   the launch sequence of a step changes from step to step, it is captured
   as graphs of up to 32 steps and replayed (`GPUUseGraph`), which removes most of
   the per launch overhead that bounds the small 2D cases on Windows.
+  With multiple reduction blocks, interior graph steps combine the completed
+  step's commit with the next timestep selection. A batch of `B` steps saves
+  `B - 1` launches and retains complete first/last steps, the same stop decisions,
+  and the same arithmetic. Direct launches retain separate commit and selection.
+  See the [paired benchmark and validation](benchmark/batch_commit.md).
 * **mDBC on the GPU.** One thread (or `K` lanes) per boundary particle with
   a ghost node gathers the fluid neighbours of the node, assembles the
   `(D+1)×(D+1)` system in registers and solves it with StaticArrays inside

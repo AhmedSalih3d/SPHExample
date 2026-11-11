@@ -1239,8 +1239,13 @@ corrector update, and the half step and final step by the rigid placement of
 the body particles (see `GPUFloating`). The single-neighbor predictor uses
 cached body linear/angular acceleration from the previous corrector; startup
 and rebuild evaluations refresh that cache at the accepted full state.
+
+Interior steps of a multi-block CUDA graph use `finish_next = true` to commit
+this step and select the next timestep together; the following step then sets
+`finish_current = false`. The first and last steps retain standalone batch
+boundaries. Direct launches and single-block integration keep the default path.
 """
-function enqueue_step!(ctx, timed::Bool)
+function enqueue_step!(ctx, timed::Bool; finish_current::Bool = true, finish_next::Bool = false)
     (; gpu, cl, sup, red, motion, state, SimKernel, SimConstants, SimDensityDiffusion, SimViscosity,
        FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, HourGlass) = ctx
     grid      = cl.grid_dev
@@ -1254,10 +1259,12 @@ function enqueue_step!(ctx, timed::Bool)
     # whether the step may run at all (cell list rebuild, output time).
     rotation = get(ctx, :rotation, nothing)
     sampler = MotionStageSampler(rotation, get(ctx, :external_forces, ()), Val(SingleNeighbor))
-    @phase HourGlass "01 Update TimeStep" timed launch_finish!(state, red, SimKernel, SimConstants;
-        diagnostics = get(ctx, :diagnostics, nothing), stage_sampler = sampler,
-        dt_limit=floats ? floating.spring_dt : Inf,
-        timestep_controller = floats ? rigid_timestep_controller(floating, SimConstants) : nothing)
+    if finish_current
+        @phase HourGlass "01 Update TimeStep" timed launch_finish!(state, red, SimKernel, SimConstants;
+            diagnostics = get(ctx, :diagnostics, nothing), stage_sampler = sampler,
+            dt_limit=floats ? floating.spring_dt : Inf,
+            timestep_controller = floats ? rigid_timestep_controller(floating, SimConstants) : nothing)
+    end
 
     launch_rotation!(rotation, gpu.Position, gpu.Velocity, gpu.Type, gpu.GroupMarker, gpu.ID, state;
         pos_cells = sup.PosCells, cell_ids = gpu.CellID, grid, H = SimKernel.H, prepared = true)
@@ -1390,7 +1397,15 @@ function enqueue_step!(ctx, timed::Bool)
     launch_open_boundary_values!(open_boundary,gpu.Position,gpu.Velocity,gpu.Density,
         gpu.Type,gpu.GroupMarker,CellStart,grid,SimKernel,SimConstants,state)
     if red.nblocks != 1 || open_boundary !== nothing
-        @phase HourGlass "12 Update MetaData" timed launch_commit!(state)
+        if finish_next
+            launch_finish!(state, red, SimKernel, SimConstants;
+                diagnostics = get(ctx, :diagnostics, nothing), stage_sampler = sampler,
+                dt_limit = floats ? floating.spring_dt : Inf,
+                timestep_controller = floats ? rigid_timestep_controller(floating, SimConstants) : nothing,
+                commit_previous = true)
+        else
+            @phase HourGlass "12 Update MetaData" timed launch_commit!(state)
+        end
     end
     return nothing
 end
@@ -1411,6 +1426,7 @@ function prepare_step_graph!(ctx::NamedTuple)
     copyto!(stopped.i, stopped.ih)
     try
         enqueue_step!(merge(ctx, (; state = stopped)), false)
+        ctx.red.nblocks > 1 && enqueue_step!(merge(ctx, (; state = stopped)), false; finish_next = true)
     finally
         CUDA.synchronize()
     end
@@ -1442,8 +1458,14 @@ function launch_step_graph!(ctx, steps::Int = 1; capture = CUDA.capture)
         graph = capture(; flags = CUDA.STREAM_CAPTURE_MODE_RELAXED,
                                throw_error = false) do
             try
-                for _ in 1:steps
-                    enqueue_step!(ctx, false)
+                for index in 1:steps
+                    # Interior graph steps share a commit/next-timestep launch.
+                    # Keep both ends complete so every batch remains standalone.
+                    if ctx isa NamedTuple && ctx.red.nblocks > 1
+                        enqueue_step!(ctx, false; finish_current = index == 1, finish_next = index < steps)
+                    else
+                        enqueue_step!(ctx, false)
+                    end
                 end
             catch err
                 # CUDA.capture may return from its finally block on invalidation,
