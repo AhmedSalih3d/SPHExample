@@ -395,7 +395,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                              ::Val{FrozenParticles} = Val(true), ::Val{IncludeGravity} = Val(false), periodicity = nothing,
                              periodic_bounds = nothing, viscous_dt = nothing, ::Val{FastMath}=Val(false), target_indices=nothing, pair_order=nothing,
                              ::Val{NativeRigid}=Val(false), interaction_mass=nothing,
-                             ::Val{PreloadTypes}=Val(false), ρ₀⁻¹ = inv(SimConstants.ρ₀)) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath, NativeRigid, PreloadTypes}
+                             ::Val{PreloadTypes}=Val(false), ρ₀⁻¹ = inv(SimConstants.ρ₀), predictor_output = nothing) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath, NativeRigid, PreloadTypes}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -625,6 +625,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
             # Gravity belongs to the particle, not to each neighbor-gather lane.
             acc += ConstructGravitySVector(acc, SimConstants.g * GravityFactorValue(T, ParticleType[source_i]))
         end
+        acc = predict_after_gather!(predictor_output, i, acc, dρdt, step, SimConstants)
         dρdtI[i]        = dρdt
         Acceleration[i] = acc
         viscous_dt === nothing || (viscous_dt[i] = pair_rate)
@@ -688,6 +689,10 @@ recompiled with these options.
 `target_indices` optionally maps the `target_count` outputs to source indices.
 Sources and their cell IDs must share dense cell order; outputs remain in target
 order. This permits periodic copies as neighbors without integrating them.
+`predictor_output` is an internal stationary-DBC destination bundle. It predicts
+each target after the gather-lane reduction, including gravity, density limiting,
+and predictor caches. All destinations must be disjoint from gather inputs.
+Prediction then inherits this kernel's compiler options, including fast math.
 `pair_order` optionally supplies dense original owner indices and cell IDs,
 preserving reference pair orientation after sorting periodic sources.
 """
@@ -704,7 +709,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
                               fast_math::Bool = false,
                               always_inline::Bool = true, fastmath::Bool = true,
                               target_indices = nothing, target_count::Integer = length(Position), pair_order = nothing,
-                              native_rigid::Val = Val(false), interaction_mass = nothing)
+                              native_rigid::Val = Val(false), interaction_mass = nothing, predictor_output = nothing)
     inverse_density === nothing || length(inverse_density) == length(Density) ||
         throw(DimensionMismatch("Reciprocal cache must have one entry per evaluated density"))
     pressure === nothing || length(pressure) == length(Density) ||
@@ -717,6 +722,18 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
         (length(target_indices) == n || throw(DimensionMismatch("Target map and target count differ")))
     n == 0 && return nothing
     K = typeof(lanes).parameters[1]
+    if predictor_output !== nothing
+        target_indices === nothing && periodicity === nothing && boundary_data === nothing &&
+            include_gravity isa Val{false} || throw(ArgumentError("Fused prediction requires unmapped nonperiodic DBC targets without included gravity"))
+        inputs = (Position, Velocity, Density, pos_cells, inverse_density, pressure)
+        for output in (predictor_output.position, predictor_output.velocity, predictor_output.density,
+                       predictor_output.pos_cells, predictor_output.inverse_density, predictor_output.pressure)
+            output === nothing && continue
+            length(output) == n || throw(DimensionMismatch("Fused predictor destinations must cover every target"))
+            any(input -> input !== nothing && Base.mightalias(input, output), inputs) &&
+                throw(ArgumentError("Fused predictor destinations must not alias gather inputs"))
+        end
+    end
     periodic_cell_coordinates && (periodicity === nothing || pos_cells === nothing) &&
         throw(ArgumentError("Periodic cell coordinates require periodicity and mixed-precision PosCell buffers"))
     Pairs = periodicity === nothing ? (pos_cells === nothing ? Position : pos_cells) :
@@ -743,7 +760,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
         Pairs, Position, Density, Velocity, ParticleType, SimParticles,
         CellStart, CellID, grid, step,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math), target_indices, pair_order, native_rigid, interaction_mass, Val(options.preload_types), inv(SimConstants.ρ₀))
+        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math), target_indices, pair_order, native_rigid, interaction_mass, Val(options.preload_types), inv(SimConstants.ρ₀), predictor_output)
     return nothing
 end
 
@@ -959,17 +976,11 @@ include("UpdatedMDBC.jl")
 # higher precision
 #---------------------------------------------------------------
 
-function half_step_kernel!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺,
-                           Position, Velocity, Acceleration, Density, dρdtI,
-                           ParticleType, GroupMarker, motion, step, SimConstants,
-                           PosCellsₙ⁺, CellID, gridarg, H, boundary_mode, InvDensity, Pressure,
-                           ::Val{ReusePredictors}, ::Val{FirstMotion}, ::Val{Carried}, n::Int32) where {ReusePredictors, FirstMotion, Carried}
-    step_active(step) || return nothing
-    i = thread_index()
-    i > n && return nothing
+@inline function predict_particle!(i, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, Position, Velocity, Density,
+                                   ParticleType, acc, rate, step, SimConstants,
+                                   PosCellsₙ⁺, CellID, gridarg, H, boundary_mode, InvDensity, Pressure,
+                                   ::Val{ReusePredictors}, ::Val{Carried}) where {ReusePredictors, Carried}
     dt₂       = step_dt(step) / 2
-    TotalTime = step_time(step)
-    FirstMotion && apply_motion!(i, Position, Velocity, ParticleType, GroupMarker, motion, dt₂, TotalTime)
     (; g, ρ₀, c₀) = SimConstants
     T = eltype(Density)
     @inbounds begin
@@ -982,13 +993,11 @@ function half_step_kernel!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺,
             store_inverse_density!(InvDensity, i, ρ)
             store_pressure!(Pressure, i, EquationOfStateGamma7(ρ, c₀, ρ₀))
             store_pos_cell!(PosCellsₙ⁺, i, Position[i], CellID, gridarg, H)
-            return nothing
+            return acc
         end
         ML  = MotionLimiterValue(T, type)
-        acc = Acceleration[i]
         if !Carried
             acc += ConstructGravitySVector(acc, g * GravityFactorValue(T, type))
-            Acceleration[i] = acc
         end
         # the increment is promoted to the precision of the position
         xₙ⁺ = Position[i]
@@ -997,14 +1006,45 @@ function half_step_kernel!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺,
             Positionₙ⁺[i] = xₙ⁺
             Velocityₙ⁺[i] = Velocity[i] + acc * dt₂ * ML
         end
-        ρ = Density[i] + dρdtI[i] * dt₂
+        ρ = Density[i] + rate * dt₂
         ρ = boundary_mode isa UpdatedMDBC && is_wall(type) ? Density[i] : limit_density(ρ, ρ₀, ML)
         ρₙ⁺[i] = ρ
         store_inverse_density!(InvDensity, i, ρ)
         store_pressure!(Pressure, i, EquationOfStateGamma7(ρ, c₀, ρ₀))
 
         store_pos_cell!(PosCellsₙ⁺, i, xₙ⁺, CellID, gridarg, H)
+    end
+    return acc
+end
 
+@inline predict_after_gather!(::Nothing, i, acc, rate, step, constants) = acc
+@inline function predict_after_gather!(out, i, acc, rate, step, constants)
+    # Preserve the derivative storage conversion for custom models returning wider types.
+    acc = convert(eltype(out.source_velocity), acc)
+    rate = convert(eltype(out.source_density), rate)
+    return predict_particle!(i, out.position, out.velocity, out.density,
+        out.source_position, out.source_velocity, out.source_density, out.types, acc, rate, step, constants,
+        out.pos_cells, out.cell_ids, out.grid, out.H, NoMDBC(), out.inverse_density, out.pressure,
+        out.reuse_predictors, Val(false))
+end
+
+function half_step_kernel!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺,
+                           Position, Velocity, Acceleration, Density, dρdtI,
+                           ParticleType, GroupMarker, motion, step, SimConstants,
+                           PosCellsₙ⁺, CellID, gridarg, H, boundary_mode, InvDensity, Pressure,
+                           reuse_predictors::Val, ::Val{FirstMotion}, carried::Val, n::Int32) where {FirstMotion}
+    step_active(step) || return nothing
+    i = thread_index()
+    i > n && return nothing
+    dt₂ = step_dt(step) / 2
+    TotalTime = step_time(step)
+    FirstMotion && apply_motion!(i, Position, Velocity, ParticleType, GroupMarker, motion, dt₂, TotalTime)
+    @inbounds begin
+        acc = predict_particle!(i, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, Position, Velocity, Density,
+            ParticleType, Acceleration[i], dρdtI[i], step, SimConstants,
+            PosCellsₙ⁺, CellID, gridarg, H, boundary_mode, InvDensity, Pressure, reuse_predictors, carried)
+        ParticleType[i] == Frozen && return nothing
+        carried isa Val{false} && (Acceleration[i] = acc)
         apply_motion!(i, Position, Velocity, ParticleType, GroupMarker, motion, dt₂, TotalTime)
     end
     return nothing

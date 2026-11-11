@@ -147,6 +147,11 @@ refreshed after density prediction and boundary corrections. This option is
 independent of `GPUCompactBuffers`, defaults to `false`, and trades device
 memory for fewer neighbor-loop divisions and EOS evaluations; elapsed speed
 depends on the case and GPU.
+`GPUFusePredictor = true` combines the first symplectic gather and prediction in
+stationary nonperiodic DBC runs with interaction fast math enabled. The driver
+keeps predictor caches and cell-relative positions separate from gather inputs.
+Prediction inherits interaction fast math and can change trajectories slightly;
+set this option to false for the separate predictor and its smaller scratch use.
 With periodic copies, the dense source capacity also holds its own two cache
 fields. Capacity is twice the original count, adding another
 `4 * sizeof(FloatType)` bytes per original beyond the original-state cache.
@@ -261,6 +266,7 @@ mutable struct SimulationMetaData{Dimensions,
     GPUPeriodicCellCoordinates::Bool # opt-in cell-relative arithmetic for periodic force pairs
     GPUPeriodicImages::Bool      # dense periodic force sources for supported DBC runs
     GPUCacheInteractionFields::Bool # cache reciprocal density for interaction loops
+    GPUFusePredictor::Bool       # fuse stationary DBC prediction into the first symplectic gather
     GPUCompactBuffers::Bool      # omit unused buffers and narrow GPU-only metadata when lossless
     GPUOutputQueueBytes::Int     # reusable host frames between collector and disk writer
     GPUOutputBufferBytes::Int    # host memory that holds output frames before they are written to the file
@@ -388,6 +394,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUPeriodicCellCoordinates::Bool        = false,
         GPUPeriodicImages::Bool                 = true,
         GPUCacheInteractionFields::Bool         = false,
+        GPUFusePredictor::Bool                  = true,
         GPUCompactBuffers::Bool                 = true,
         GPUOutputQueueBytes::Int                = 256 * 2^20,
         GPUOutputBufferBytes::Int               = 256 * 2^20,
@@ -413,7 +420,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUPreloadInteractionTypes,
         GPUBoundaryForces, GPUAsyncOutput, GPUMaxStepsPerSync, GPUUseGraph, GPUClipTimeStepToOutput, GPUCellSubdivision,
         GPUFixedGrid, GPUGridExpansion, Periodicity,
-        GPUDoublePosition, GPUPeriodicCellCoordinates, GPUPeriodicImages, GPUCacheInteractionFields, GPUCompactBuffers, GPUOutputQueueBytes, GPUOutputBufferBytes,
+        GPUDoublePosition, GPUPeriodicCellCoordinates, GPUPeriodicImages, GPUCacheInteractionFields, GPUFusePredictor, GPUCompactBuffers, GPUOutputQueueBytes, GPUOutputBufferBytes,
         GPUTimestepDiagnosticsEvery,
     )
 end

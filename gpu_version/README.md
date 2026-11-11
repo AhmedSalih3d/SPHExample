@@ -3060,6 +3060,7 @@ validation; it is not a bitwise-preserving performance option.
 | `GPUCellSubdivision` | `1` | Positive integer `R`: cells of edge `H/R`, a `(2R+1)^D` stencil, and `(2R+1)^(D-1)` contiguous row ranges. `1` reproduces the CPU grid, `2` uses half-width cells, and `4` uses quarter-width cells. Finer grids reduce candidates but increase dense-grid memory, row overhead and mDBC work. With reference interactions, only `1` reproduces the CPU's density-diffusion pair orientation. Radial symmetric diffusion removes that orientation dependence; accumulation and SPS rounding can still differ. Benchmark the intended precision, lane count and boundary mode before changing it. |
 | `GPUDoublePosition` | `false` | Store and integrate the particle positions (and the mDBC ghost node positions) in `Float64` while everything else stays in `FloatType`; the pair loops use cell relative `FloatType` coordinates (see "Double positions" above). Use it for `Float32` runs of domains far from the origin or with many steps. No effect with `FloatType = Float64`. Allocate the particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so that the input is read in `Float64`. |
 | `GPUCacheInteractionFields` | `false` | Cache inverse density and pressure per particle for reuse in neighbor interactions. Adds two `FloatType` scalars per particle (8 bytes with `Float32`, 16 with `Float64`), independently of `GPUCompactBuffers`. Refreshed for each evaluated density state, including predictor and mDBC corrections. Trades memory for fewer neighbor-loop divisions and EOS evaluations; benchmark elapsed solver time for your case. |
+| `GPUFusePredictor` | `true` | Fuse the first gather and half-step prediction for stationary nonperiodic DBC symplectic runs with `GPUInteractionFastMath = true`. Separate predictor caches and cell-relative positions prevent concurrent input overwrites. Prediction inherits interaction fast math and may change trajectories slightly. Moving walls, floating bodies, external forces, rotations, open boundaries, mDBC, periodic, single-neighbor, strict-math and variable-resolution runs retain separate prediction. See "Gather/predictor fusion" below. |
 | `GPUCompactBuffers` | `true` | Omit unused ghost, kernel-output and shifting buffers on the GPU, and omit inactive `Cells`, `Kernel`, `KernelGradient`, `GhostPoints` and `GhostNormals` columns on the host when allocated with `AllocateDataStructures(SimGeometry, SimMetaData)`; store enabled mDBC ghosts and Updated mDBC state only for ghost-owning boundaries, without ghost reorder scratch; share position/velocity predictors with existing reorder scratch; and remove acceleration sorting shadows. Acceleration is refreshed before post-rebuild readers. Fixed predictor writes are skipped; boundary density and requested force calculations are retained. Host and GPU IDs use `Int32` and group markers use `UInt8`, `UInt16` or `UInt32` only when every value fits; otherwise each field independently retains its original width. Precision and neighbor ranges are unchanged. `false` restores the previous full host and GPU allocation layout. |
 | `GPUOutputQueueBytes` | `256 * 2^20` | Separate host memory budget for frames between the download collector and disk writer. Allocated on demand and reused; capacity for at least one frame. Used with `GPUAsyncOutput`. |
 | `GPUOutputBufferBytes` | `256 * 2^20` | Host memory for output frames that are held before they are written to the single `vtkhdf` file (see "Asynchronous output"). The number of frames per flush uses the particle fields plus an initial grid-size estimate, at least 1 and at most 16. Dense grid frames are checked against the remaining byte budget and can flush sooner; a frame larger than the budget is written immediately. `0` writes every frame at once. |
@@ -3215,7 +3216,8 @@ precision, cell-relative positions are already stored per particle; by default
 (`GPUCacheInteractionFields = false`), both inverse density and pressure are
 computed on demand from density.
 The cache uses one dense vector for `InvDensity` and one for `Pressure` in
-`GPUSupportArrays`, shared between the full and predictor states. Both are
+`GPUSupportArrays`, shared between the full and predictor states unless gather/predictor
+fusion is active. Both are
 refreshed after prediction and boundary corrections. For stationary non-mDBC
 runs (no active prescribed motion or floating bodies), final integration
 reads the predictor reciprocal before overwriting the caches with the accepted
@@ -3267,6 +3269,43 @@ runs, including output, measured median paired elapsed-time reductions of 1.27%
 and 1.15%, with the fused driver faster in 19/21 and 18/21 pairs. Individual
 ratios ranged from 0.736 to 1.062 and 0.725 to 1.038, respectively: this is a
 small, noisy, hardware-specific improvement, not a kernel-count-based speedup.
+
+### Gather/predictor fusion
+
+`RunSimulation` enables `GPUFusePredictor` for the stationary DBC symplectic
+path described in the settings table. The first neighbor gather directly uses
+each target's acceleration and density rate to produce its half-step state,
+removing one kernel launch and intermediate derivative reads. The predictor
+uses the same integration helper as the separate kernel, compiled with the
+interaction kernel's fast math. Small trajectory differences can accumulate;
+`GPUFusePredictor = false` restores separate prediction. This setting changes
+neither the integrator nor the neighbor search or diffusion operator.
+
+Both gathers retain dense position/velocity inputs. Predictor pressure and
+reciprocal density have separate buffers when interaction fields are cached,
+adding `2 * sizeof(FloatType)` bytes per particle. Mixed-precision compact runs
+also separate the two cell-relative position buffers, adding
+`sizeof(PosCell{D,FloatType})` bytes per particle. The combined addition is
+20 bytes per particle in 2D with Float32 physics and Float64 positions (60,540
+bytes for the 3,027-particle StillWedge case). Full buffers already have distinct
+cell-relative positions. These are live support-buffer costs, separate from
+allocator reservations and whole-solver memory. Low-level support constructors
+keep their previous allocations unless passed `fuse_predictor = true`.
+
+The effective setting is recorded in `result.configuration.effective.fuse_predictor`.
+Validate sorting, graph replay, fixed/frozen entries and cache ownership, then
+compare warmed alternating complete runs, including particle and occupied-cell
+output and all saved-frame positions:
+
+```powershell
+julia --project=gpu_version -t 4,0 gpu_version/test/predictor_fusion.jl
+julia --project=gpu_version -t 4,0 gpu_version/benchmark/predictor_fusion.jl --rounds=9 --duration=4
+```
+
+The benchmark accepts a maximum 5 mm position difference by default and reports
+velocity, density, pressure and frame-time differences separately. It requires
+matching step, rebuild and readback counts. See the [measurement notes](benchmark/predictor_fusion.md)
+for results and their limits.
 
 ### Compact GPU buffers
 

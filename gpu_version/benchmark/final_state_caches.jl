@@ -56,6 +56,7 @@ function measure(driver; duration, dx, collect_garbage = true)
         meta.ExportGridCells = true
         meta.GPUDoublePosition = true
         meta.GPUCacheInteractionFields = true
+        meta.GPUFusePredictor = false # Isolate accepted-state cache preparation from predictor fusion.
         meta.GPUCellSubdivision = 1
         meta.GPURadialInteractions = false
         meta.GPUUseGraph = true

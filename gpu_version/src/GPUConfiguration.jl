@@ -26,7 +26,9 @@ modes. A radial linear-diffusion operator is `:symmetric_reciprocal_density`;
 subdivision one and `GPUInteractionFastMath = false`). Capabilities describe implementation support, not accuracy.
 
 This is a configuration preview. `RunSimulation(...).configuration` additionally
-reports observed graph/direct batch counts and capture failures under `execution`.
+resolves `fuse_predictor` against allocated support and actual motion, floating
+bodies, external forces, rotation and open boundaries, and reports observed
+graph/direct batch counts and capture failures under `execution`.
 """
 function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel, diffusion, viscosity;
                                  particle_count::Integer) where {D, T, S, K, B}
@@ -35,6 +37,7 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
         radial = meta.GPURadialInteractions, scalar_sps = meta.GPUScalarSPSViscosity,
         preload_types = meta.GPUPreloadInteractionTypes)
     requested = (; radial_interactions = meta.GPURadialInteractions,
+        fuse_predictor = meta.GPUFusePredictor,
         variable_resolution = meta.VariableResolution !== nothing,
         interaction_always_inline = meta.GPUInteractionAlwaysInline,
         interaction_fastmath = meta.GPUInteractionFastMath,
@@ -83,6 +86,8 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
         kernel_output_mode = K, cell_subdivision = meta.GPUCellSubdivision,
         periodicity = meta.Periodicity,
         cache_interaction_fields = meta.GPUCacheInteractionFields,
+        fuse_predictor = meta.GPUFusePredictor && meta.GPUInteractionFastMath && B === NoMDBC &&
+            meta.TimeSteppingMode isa SymplecticTimeStepping && meta.Periodicity === nothing && meta.VariableResolution === nothing,
         boundary_forces = meta.GPUBoundaryForces, deterministic_sort = meta.GPUDeterministicSort,
         clip_timestep_to_output = meta.GPUClipTimeStepToOutput,
         interaction_threads = meta.GPUInteractionThreads, lanes_per_particle = lanes,

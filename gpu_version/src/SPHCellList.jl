@@ -590,6 +590,8 @@ struct GPUSupportArrays{D, T, TP, PC, BD, IC, DS, PI}
     ρₙ⁺::CuVector{T}
     InvDensity::IC
     Pressure::IC
+    InvDensityₙ⁺::IC
+    Pressureₙ⁺::IC
     ∇Cᵢ::CuVector{SVector{D, T}}
     ∇◌rᵢ::CuVector{T}
     PosCells::PC
@@ -599,6 +601,7 @@ struct GPUSupportArrays{D, T, TP, PC, BD, IC, DS, PI}
     dual_state::DS
     PeriodicImages::PI
     ReusePredictors::Bool
+    FusePredictor::Bool
 end
 
 """
@@ -625,6 +628,10 @@ entries in the reorder scratch after sorting. Density predictors remain allocate
 for all particles. `cache_interaction_fields = true` allocates shared reciprocal
 density and pressure buffers; metadata constructors select it with
 `GPUCacheInteractionFields`.
+`fuse_predictor = true` separates predictor pressure, reciprocal density and
+cell-relative positions from the accepted-state inputs. `RunSimulation` selects
+it for eligible `GPUFusePredictor` runs; low-level constructors default to false.
+The two half-state cache fields otherwise alias their accepted-state fields.
 Periodic metadata also allocates a small reduction buffer for conservative
 cell-offset bounds, refreshed for each evaluated interaction state.
 The reference scheme's `cache_periodic_queries` option additionally allocates
@@ -638,6 +645,7 @@ function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T, updated
                               shifting::Bool = true, reuse_predictors::Bool = false,
                               share_pos_cells::Bool = reuse_predictors,
                               cache_interaction_fields::Bool = false,
+                              fuse_predictor::Bool = false,
                               periodic::Bool = false,
                               dual_time_stepping::Bool = false,
                               cache_periodic_queries::Bool = false,
@@ -648,8 +656,10 @@ function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T, updated
         throw(ArgumentError("Cached periodic queries require periodic DualSPHysicsSymplectic support"))
     !periodic_images || (periodic && !cache_periodic_queries && !updated_mdbc) ||
         throw(ArgumentError("Periodic images require periodic DBC support without query caching"))
+    !fuse_predictor || (!updated_mdbc && !periodic && !dual_time_stepping) ||
+        throw(ArgumentError("Fused predictors require nonperiodic ordinary DBC support"))
     pc = TP === T ? nothing : CuVector{PosCell{D, T}}(undef, n)
-    pcₙ⁺ = TP === T ? nothing : (share_pos_cells ? pc : CuVector{PosCell{D, T}}(undef, n))
+    pcₙ⁺ = TP === T ? nothing : (share_pos_cells && !fuse_predictor ? pc : CuVector{PosCell{D, T}}(undef, n))
     boundary_slots === nothing || length(boundary_slots) == n ||
         throw(DimensionMismatch("boundary slot map must have one entry per particle"))
     boundary_data = updated_mdbc ? (; active = CUDA.ones(Bool, boundary_count),
@@ -657,6 +667,8 @@ function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T, updated
         tangent_velocity = CUDA.zeros(SVector{D, T}, boundary_count), slots = boundary_slots) : nothing
     inverse_density = cache_interaction_fields ? CUDA.zeros(T, n) : nothing
     pressure = cache_interaction_fields ? CUDA.zeros(T, n) : nothing
+    inverse_half = cache_interaction_fields && fuse_predictor ? similar(inverse_density) : inverse_density
+    pressure_half = cache_interaction_fields && fuse_predictor ? similar(pressure) : pressure
     images = periodic_images ? PeriodicImageWorkspace{D,T,TP}(n; reach=image_reach,
         max_cells=image_max_cells, deterministic=image_deterministic, cache_fields=cache_interaction_fields,
         preserve_pair_order=!dual_time_stepping) : nothing
@@ -668,6 +680,8 @@ function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T, updated
         CUDA.zeros(T, n),
         inverse_density,
         pressure,
+        inverse_half,
+        pressure_half,
         CUDA.zeros(SVector{D, T}, shifting ? n : 0),
         CUDA.zeros(T, shifting ? n : 0),
         pc,
@@ -677,15 +691,19 @@ function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T, updated
         dual_state,
         images,
         reuse_predictors,
+        fuse_predictor,
     )
 end
 
-function GPUSupportArrays{D, T}(gpu::GPUParticles{D, T}, meta::SimulationMetaData{D, T, S, K, B}; kernel=nothing) where {D, T, S, K, B}
+function GPUSupportArrays{D, T}(gpu::GPUParticles{D, T}, meta::SimulationMetaData{D, T, S, K, B}; kernel=nothing,
+                              fuse_predictor::Bool = false) where {D, T, S, K, B}
+    !fuse_predictor || B === NoMDBC || throw(ArgumentError("Fused predictors require NoMDBC support"))
     position_type(gpu) === position_float_type(meta) ||
         throw(ArgumentError("GPU positions and support-array metadata must use the same precision"))
     return GPUSupportArrays{D, T}(length(gpu); position_type = position_type(gpu),
         updated_mdbc = B === UpdatedMDBC, shifting = !meta.GPUCompactBuffers || S === PlanarShifting,
         cache_interaction_fields = meta.GPUCacheInteractionFields,
+        fuse_predictor,
         periodic = meta.Periodicity !== nothing,
         dual_time_stepping = meta.TimeSteppingMode isa DualSPHysicsSymplectic,
         cache_periodic_queries = meta.TimeSteppingMode isa DualSPHysicsSymplectic && meta.TimeSteppingMode.cache_periodic_queries,
@@ -1038,7 +1056,26 @@ function prepare_periodic_bounds!(ctx, position, step)
     return nothing
 end
 
-function launch_solver_interactions!(ctx,position,density,velocity,pairs,step;include_gravity=Val(false))
+function predictor_outputs(ctx)
+    (; gpu, sup, cl, SimKernel) = ctx
+    position, velocity = predictor_arrays(sup, gpu)
+    return (; position, velocity, density = sup.ρₙ⁺,
+        source_position = gpu.Position, source_velocity = gpu.Velocity, source_density = gpu.Density,
+        types = gpu.Type, pos_cells = sup.PosCellsₙ⁺, cell_ids = gpu.CellID, grid = cl.grid_dev,
+        H = SimKernel.H, inverse_density = sup.InvDensityₙ⁺, pressure = sup.Pressureₙ⁺,
+        reuse_predictors = Val(sup.ReusePredictors))
+end
+
+function predictor_fusion_enabled(meta::SimulationMetaData{D,T,S,K,B}; motion, floating,
+                                  external_forces, rotation, open_boundary) where {D,T,S,K,B}
+    return meta.GPUFusePredictor && meta.GPUInteractionFastMath && B === NoMDBC &&
+        meta.TimeSteppingMode isa SymplecticTimeStepping && meta.Periodicity === nothing &&
+        meta.VariableResolution === nothing && !motion.active &&
+        (floating === nothing || !floating.active) && isempty(external_forces) &&
+        rotation === nothing && open_boundary === nothing
+end
+
+function launch_solver_interactions!(ctx,position,density,velocity,pairs,step;include_gravity=Val(false), predictor_output=nothing)
     (;gpu,cl,sup,SimKernel,SimConstants,SimDensityDiffusion,SimViscosity,FlagKernel,FlagShift,threads,lanes,bforces)=ctx
     floating = get(ctx, :floating, nothing)
     native_rigid = floating !== nothing && hasproperty(floating, :mechanics)
@@ -1056,7 +1093,7 @@ function launch_solver_interactions!(ctx,position,density,velocity,pairs,step;in
         source=(;Position=position,Density=density,Velocity=velocity,Type=gpu.Type)
         cells,starts,grid=gpu.CellID,cl.CellStart,cl.grid_dev
         periodicity,bounds=cl.periodicity,periodic_bounds(sup)
-        inverse_density,pressure=sup.InvDensity,sup.Pressure
+        inverse_density,pressure=density === gpu.Density ? (sup.InvDensity,sup.Pressure) : (sup.InvDensityₙ⁺,sup.Pressureₙ⁺)
         targets,order=nothing,nothing
         periodic_coordinates=get(ctx,:periodic_cell_coordinates,false)
     else
@@ -1083,7 +1120,7 @@ function launch_solver_interactions!(ctx,position,density,velocity,pairs,step;in
         preload_types=get(ctx,:preload_types,Val(false)),
         periodic_cell_coordinates=periodic_coordinates,always_inline=get(ctx,:interaction_always_inline,true),
         fastmath=get(ctx,:interaction_fastmath,true),target_indices=targets,target_count=length(gpu),pair_order=order,
-        native_rigid=Val(native_rigid),interaction_mass)
+        native_rigid=Val(native_rigid),interaction_mass,predictor_output)
     return nothing
 end
 
@@ -1138,7 +1175,7 @@ gates every kernel; `mdbc_name` and `loop_name` are the timer labels.
 """
 function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractString, loop_name::AbstractString;
                                    prepare_motion::Bool = false, total_acceleration::Bool = get(ctx, :SingleNeighbor, false),
-                                   prepared_forces::Bool = false)
+                                   prepared_forces::Bool = false, predictor_output = nothing)
     (; gpu, cl, sup, SimKernel, SimConstants, SimDensityDiffusion, SimViscosity,
        FlagKernel, FlagShift, UseMDBC, threads, lanes, bforces, HourGlass) = ctx
     grid      = cl.grid_dev
@@ -1165,7 +1202,7 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
                 boundary_mode = get(ctx, :boundary_mode, NoMDBC()))
         end
         launch_solver_interactions!(ctx,gpu.Position,gpu.Density,gpu.Velocity,sup.PosCells,step;
-            include_gravity=Val(total_acceleration))
+            include_gravity=Val(total_acceleration), predictor_output)
     end
     launch_external_forces!(get(ctx, :external_forces, ()), gpu.Acceleration, gpu.Position, gpu.Velocity,
         gpu.Type, gpu.GroupMarker, step, SimConstants.g; prepared = prepared_forces)
@@ -1211,6 +1248,7 @@ function enqueue_step!(ctx, timed::Bool)
     floating  = get(ctx, :floating, nothing)
     floats    = floating !== nothing && floating.active
     position_half, velocity_half = predictor_arrays(sup, gpu)
+    fuse_predictor = get(ctx, :fuse_predictor, false)
 
     # dt of this step from the reduction of the previous one; also decides
     # whether the step may run at all (cell list rebuild, output time).
@@ -1246,7 +1284,8 @@ function enqueue_step!(ctx, timed::Bool)
         end
     else
         enqueue_state_derivative!(ctx, state, timed, "04a First NeighborLoopMDBC", "04 First NeighborLoop";
-            prepare_motion = fused_motion && motion.active, prepared_forces = true)
+            prepare_motion = fused_motion && motion.active, prepared_forces = true,
+            predictor_output = fuse_predictor ? predictor_outputs(ctx) : nothing)
     end
 
     if floats
@@ -1261,15 +1300,17 @@ function enqueue_step!(ctx, timed::Bool)
         end
     end
 
-    @phase HourGlass "05b Update To Half TimeStep" timed launch_half_step!(
-        position_half, velocity_half, sup.ρₙ⁺,
-        gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Density, sup.dρdtI,
-        gpu.Type, gpu.GroupMarker, motion, state, SimConstants;
-        pos_cells = sup.PosCellsₙ⁺, CellID = gpu.CellID, grid = grid, SimKernel = SimKernel,
-        boundary_mode = get(ctx, :boundary_mode, SimpleMDBC()),
-        reuse_predictors = sup.ReusePredictors, inverse_density = sup.InvDensity,
-        pressure = sup.Pressure, carried = SingleNeighbor,
-        first_motion = SingleNeighbor && fused_motion && motion.active)
+    if !fuse_predictor
+        @phase HourGlass "05b Update To Half TimeStep" timed launch_half_step!(
+            position_half, velocity_half, sup.ρₙ⁺,
+            gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Density, sup.dρdtI,
+            gpu.Type, gpu.GroupMarker, motion, state, SimConstants;
+            pos_cells = sup.PosCellsₙ⁺, CellID = gpu.CellID, grid = grid, SimKernel = SimKernel,
+            boundary_mode = get(ctx, :boundary_mode, SimpleMDBC()),
+            reuse_predictors = sup.ReusePredictors, inverse_density = sup.InvDensityₙ⁺,
+            pressure = sup.Pressureₙ⁺, carried = SingleNeighbor,
+            first_motion = SingleNeighbor && fused_motion && motion.active)
+    end
 
     if floats
         @phase HourGlass "05c Floating Half TimeStep" timed launch_floating_particles!(
@@ -1330,7 +1371,7 @@ function enqueue_step!(ctx, timed::Bool)
         boundary_mode = get(ctx, :boundary_mode, SimpleMDBC()),
         ghost_points = gpu.GhostPoints, ghost_normals = gpu.GhostNormals, boundary_slots = gpu.BoundarySlot,
         pos_cells = sup.PosCells, CellID = gpu.CellID, grid = grid, commit_step = red.nblocks == 1 && get(ctx,:open_boundary,nothing) === nothing,
-        inverse_density = sup.InvDensity,
+        inverse_density = sup.InvDensityₙ⁺,
         next_inverse_density = get(ctx, :cache_final_state, false) ? sup.InvDensity : nothing,
         next_pressure = get(ctx, :cache_final_state, false) ? sup.Pressure : nothing,
         diagnostics = get(ctx, :diagnostics, nothing), particle_ids = gpu.ID,
@@ -1544,6 +1585,9 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     configuration = effective_configuration(SimMetaData, SimKernel, SimDensityDiffusion, SimViscosity;
         particle_count = length(gpu))
     configuration = rigid_configuration(configuration, floating)
+    fuse_predictor = sup.FusePredictor && predictor_fusion_enabled(SimMetaData;
+        motion, floating, external_forces, rotation, open_boundary)
+    configuration = merge(configuration, (; effective = merge(configuration.effective, (; fuse_predictor))))
     if state.configuration != configuration
         if state.configuration !== nothing && state.configuration.effective != configuration.effective
             invalidate_graphs!(state)
@@ -1588,7 +1632,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     ctx = (; gpu, cl, sup, red, motion, floating, external_forces, damping, rotation, open_boundary,state, SimKernel, SimConstants, SimDensityDiffusion,
              SimViscosity, FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, radial, scalar_sps, preload_types,
              interaction_always_inline, interaction_fastmath, HourGlass, boundary_mode,
-             frozen_particles = Val(open_boundary !== nothing || cl.frozen_total > 0), cache_final_state, diagnostics,
+             frozen_particles = Val(open_boundary !== nothing || cl.frozen_total > 0), cache_final_state, fuse_predictor, diagnostics,
              periodic_cell_coordinates = SimMetaData.GPUPeriodicCellCoordinates,
              logger = LMode === StoreLog ? logger : nothing)
 
@@ -2028,11 +2072,6 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                      fixed_grid = SimMetaData.GPUFixedGrid, expansion = SimMetaData.GPUGridExpansion,
                      periodicity = SimMetaData.Periodicity,
                      deterministic = SimMetaData.GPUDeterministicSort)
-        sup    = GPUSupportArrays{Dimensions, FloatType}(gpu, SimMetaData; kernel=SimKernel)
-        if sup.dual_state !== nothing && sup.dual_state.images !== nothing &&
-            all(isfinite,SimTimeStepping.domain_min) && all(isfinite,SimTimeStepping.domain_max)
-            initialize_periodic_images!(sup.dual_state.images,SimMetaData.Periodicity,SimTimeStepping,SimKernel)
-        end
         motion = MotionArrays(SimGeometry, SimParticles)
         rotation = combine_motions(SimRotation, SimMotion, SimGeometry, SimParticles)
         if rotation !== nothing && !(SimTimeStepping isa DualSPHysicsSymplectic)
@@ -2052,6 +2091,13 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             initialize_floating_velocities!(floating, gpu)
             copyto!(SimParticles.Velocity, gpu.Velocity)
         end
+        fuse_predictor = predictor_fusion_enabled(SimMetaData;
+            motion, floating, external_forces, rotation, open_boundary)
+        sup = GPUSupportArrays{Dimensions, FloatType}(gpu, SimMetaData; kernel=SimKernel, fuse_predictor)
+        if sup.dual_state !== nothing && sup.dual_state.images !== nothing &&
+            all(isfinite,SimTimeStepping.domain_min) && all(isfinite,SimTimeStepping.domain_max)
+            initialize_periodic_images!(sup.dual_state.images,SimMetaData.Periodicity,SimTimeStepping,SimKernel)
+        end
         # Device resident loop state. The displacement bound starts above `h`
         # so that the cell list is built before the first step.
         state  = StepState{FloatType}(; time = SimMetaData.TotalTime, iteration = SimMetaData.Iteration,
@@ -2059,6 +2105,8 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         state.configuration = effective_configuration(SimMetaData, SimKernel, SimDensityDiffusion, SimViscosity;
             particle_count = NumberOfPoints)
         state.configuration = rigid_configuration(state.configuration, floating)
+        state.configuration = merge(state.configuration,
+            (; effective = merge(state.configuration.effective, (; fuse_predictor))))
         CUDA.synchronize()
     end
 

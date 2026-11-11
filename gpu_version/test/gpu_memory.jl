@@ -44,6 +44,7 @@ function simulate(build, T; compact, double_position, graph, async, scheme, queu
         kwargs = build(T, save)
         metadata = kwargs.SimMetaData
         metadata.GPUCompactBuffers = compact
+        metadata.GPUFusePredictor = false # Keep exact allocation comparisons on the same arithmetic path.
         metadata.GPUDoublePosition = double_position
         metadata.GPUUseGraph = graph
         metadata.GPUAsyncOutput = async
@@ -144,7 +145,8 @@ end
             @test support.boundary_data === nothing
             @test support.InvDensity === nothing && support.Pressure === nothing
             @test full_support.InvDensity === nothing && full_support.Pressure === nothing
-            @test !hasproperty(support, :InvDensityₙ⁺)
+            @test support.InvDensityₙ⁺ === nothing && support.Pressureₙ⁺ === nothing
+            @test !support.FusePredictor
             @test uses_pos_cells(support) == (position_float_type(f.metadata) !== T)
             n = length(f.host)
             support_bytes = n * (2 * sizeof(T) + sizeof(SVector{D, T}) + sizeof(SVector{D, position_float_type(f.metadata)}))
