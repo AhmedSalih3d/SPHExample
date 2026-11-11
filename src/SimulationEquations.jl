@@ -5,8 +5,8 @@ export EquationOfState, EquationOfStateGamma7, Pressure!, DensityEpsi!, LimitDen
 using StaticArrays
 using FastPow
 
-@inline function EquationOfStateGamma7(ρ,c₀,ρ₀)
-    return @fastpow ((c₀^2*ρ₀)/7) * ((ρ/ρ₀)^7 - 1)
+@inline function EquationOfStateGamma7(ρ,c₀,ρ₀,ρ₀⁻¹=inv(ρ₀))
+    return @fastpow ((c₀^2*ρ₀)/7) * ((ρ*ρ₀⁻¹)^7 - 1)
 end
 
 # Equation of State in Weakly-Compressible SPH
@@ -16,9 +16,10 @@ end
 
 @inline function Pressure!(Press, Density, SimulationConstants)
     (; c₀, γ, ρ₀) = SimulationConstants
+    ρ₀⁻¹ = inv(ρ₀)
     @inbounds for i ∈ eachindex(Press,Density)
         # Press[i] = EquationOfState(Density[i],c₀,γ,ρ₀)
-        Press[i] = EquationOfStateGamma7(Density[i],c₀,ρ₀)
+        Press[i] = EquationOfStateGamma7(Density[i],c₀,ρ₀,ρ₀⁻¹)
     end
 end
 

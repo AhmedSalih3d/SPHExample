@@ -22,8 +22,8 @@ end
 
 @inline dual_max(a, b) = max.(a, b)
 
-@inline function dual_pressure(density,constants,::Val{Fast}) where {Fast}
-    ratio = density * inv(constants.ρ₀)
+@inline function dual_pressure(density,constants,::Val{Fast},inv_rho0=inv(constants.ρ₀)) where {Fast}
+    ratio = density * inv_rho0
     power = Fast ? Base.FastMath.pow_fast(ratio,constants.γ) : ratio^constants.γ
     return constants.Cb * (power - one(density))
 end

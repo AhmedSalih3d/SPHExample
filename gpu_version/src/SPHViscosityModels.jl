@@ -63,22 +63,29 @@ evaluated state's device arrays (`Position`, `Density`, `Velocity`,
 built in models never touch it.
 """
 
+@inline compute_viscosity(model::SPHViscosity, SimKernel, SimConstants, SimParticles,
+                          xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹, i, j, invdᵢⱼ²η²) =
+    compute_viscosity(model, SimKernel, SimConstants, SimParticles,
+                      xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹, i, j)
+
 # No viscosity: return zero contributions.
 @inline function compute_viscosity(::ZeroViscosity, SimKernel, SimConstants, SimParticles,
-                                   xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹, i, j)
+                                   xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹, i, j,
+                                   invdᵢⱼ²η² = one(eltype(ρᵢ)) / (d² + SimKernel.η²))
     return zero(xᵢⱼ), zero(xᵢⱼ)
 end
 
 # Artificial viscosity formulation.
 @inline function compute_viscosity(::ArtificialViscosity, SimKernel, SimConstants, SimParticles,
-                                   xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹, i, j)
+                                   xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹, i, j,
+                                   invdᵢⱼ²η² = one(eltype(ρᵢ)) / (d² + SimKernel.η²))
     (; m₀, α, c₀) = SimConstants
-    (; h, η²) = SimKernel
+    (; h) = SimKernel
 
     v_dot_x = dot(vᵢⱼ, xᵢⱼ)
     if v_dot_x < 0
         ρ̄ = (ρᵢ + ρⱼ) / 2
-        μᵢⱼ = h * v_dot_x / (d² + η²)
+        μᵢⱼ = h * v_dot_x * invdᵢⱼ²η²
 
         Π = -m₀ * (-α * c₀ * μᵢⱼ) / ρ̄ * ∇ᵢWᵢⱼ
         return Π, -Π
@@ -89,11 +96,11 @@ end
 
 # Laminar viscosity formulation.
 @inline function compute_viscosity(::Laminar, SimKernel, SimConstants, SimParticles,
-                                   xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹, i, j)
+                                   xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹, i, j,
+                                   invdᵢⱼ²η² = one(eltype(ρᵢ)) / (d² + SimKernel.η²))
     (; m₀, ν₀) = SimConstants
-    (; η²) = SimKernel
 
-    term = (4 * m₀ * ν₀ * dot(xᵢⱼ, ∇ᵢWᵢⱼ)) / ((ρᵢ + ρⱼ) * (d² + η²))
+    term = (4 * m₀ * ν₀ * dot(xᵢⱼ, ∇ᵢWᵢⱼ)) * invdᵢⱼ²η² / (ρᵢ + ρⱼ)
     return term * vᵢⱼ, -term * vᵢⱼ
 end
 
@@ -116,11 +123,12 @@ end
 
 # LaminarSPS: with sub-grid scale stresses.
 @inline function compute_viscosity(::LaminarSPS, SimKernel, SimConstants, SimParticles,
-                                   xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹, i, j)
+                                   xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹, i, j,
+                                   invdᵢⱼ²η² = one(eltype(ρᵢ)) / (d² + SimKernel.η²))
     (; m₀, dx, SmagorinskyConstant, BlinConstant) = SimConstants
 
     t1, t2 = compute_viscosity(Laminar(), SimKernel, SimConstants, SimParticles,
-                               xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹, i, j)
+                               xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, d², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹, i, j, invdᵢⱼ²η²)
 
     T        = eltype(xᵢⱼ)
     Iᴹ       = diagm(one.(xᵢⱼ))
@@ -151,9 +159,10 @@ end
     return t1 + dτdtᵢ, t2 + dτdtⱼ
 end
 
-@inline function scalar_sps_viscosity(kernel, constants, x, v, gradient, d², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹)
+@inline function scalar_sps_viscosity(kernel, constants, x, v, gradient, d², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹,
+                                      invdᵢⱼ²η² = one(eltype(ρᵢ)) / (d² + kernel.η²))
     laminar, _ = compute_viscosity(Laminar(), kernel, constants, nothing,
-        x, v, gradient, d², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹, 1, 2)
+        x, v, gradient, d², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹, 1, 2, invdᵢⱼ²η²)
     T = eltype(x)
     ci = constants.m₀ * ρⱼ⁻¹
     cj = constants.m₀ * ρᵢ⁻¹

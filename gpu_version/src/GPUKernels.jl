@@ -378,10 +378,10 @@ end
 # Particle interactions (gather)
 #---------------------------------------------------------------
 
-@inline interaction_pressure(::Nothing, i, ρ, type, c₀, ρ₀, ::Nothing) = EquationOfStateGamma7(ρ, c₀, ρ₀)
-@inline interaction_pressure(::Nothing, i, ρ, type, c₀, ρ₀, boundary_data) =
-    is_wall(type) ? c₀^2 * (ρ - ρ₀) : EquationOfStateGamma7(ρ, c₀, ρ₀)
-@inline interaction_pressure(cache, i, ρ, type, c₀, ρ₀, boundary_data) = @inbounds cache[i]
+@inline interaction_pressure(::Nothing, i, ρ, type, c₀, ρ₀, ::Nothing, ρ₀⁻¹ = inv(ρ₀)) = EquationOfStateGamma7(ρ, c₀, ρ₀, ρ₀⁻¹)
+@inline interaction_pressure(::Nothing, i, ρ, type, c₀, ρ₀, boundary_data, ρ₀⁻¹ = inv(ρ₀)) =
+    is_wall(type) ? c₀^2 * (ρ - ρ₀) : EquationOfStateGamma7(ρ, c₀, ρ₀, ρ₀⁻¹)
+@inline interaction_pressure(cache, i, ρ, type, c₀, ρ₀, boundary_data, ρ₀⁻¹ = inv(ρ₀)) = @inbounds cache[i]
 @inline interaction_particle_mass(::Nothing,i,default) = default
 @inline interaction_particle_mass(masses,i,default) = @inbounds masses.values[masses.groups[i]]
 
@@ -395,7 +395,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                              ::Val{FrozenParticles} = Val(true), ::Val{IncludeGravity} = Val(false), periodicity = nothing,
                              periodic_bounds = nothing, viscous_dt = nothing, ::Val{FastMath}=Val(false), target_indices=nothing, pair_order=nothing,
                              ::Val{NativeRigid}=Val(false), interaction_mass=nothing,
-                             ::Val{PreloadTypes}=Val(false)) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath, NativeRigid, PreloadTypes}
+                             ::Val{PreloadTypes}=Val(false), ρ₀⁻¹ = inv(SimConstants.ρ₀)) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath, NativeRigid, PreloadTypes}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -435,8 +435,8 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
         # force based time step criterion. Floating bodies always need them:
         # their particle accelerations sum to the force on the body.
         forces = BoundaryForces | (MLᵢ != zero(T)) | (typeᵢ == Floating)
-        Pᵢ = forces ? (viscous_dt === nothing ? interaction_pressure(Pressure,source_i,ρᵢ,typeᵢ,c₀,ρ₀,boundary_data) :
-            dual_pressure(ρᵢ,SimConstants,Val(FastMath))) : zero(T)
+        Pᵢ = forces ? (viscous_dt === nothing ? interaction_pressure(Pressure,source_i,ρᵢ,typeᵢ,c₀,ρ₀,boundary_data,ρ₀⁻¹) :
+            dual_pressure(ρᵢ,SimConstants,Val(FastMath),ρ₀⁻¹)) : zero(T)
         wallᵢ = is_wall(typeᵢ)
 
         c      = CellID[source_i]
@@ -468,7 +468,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         if Radial || viscous_dt !== nothing
                             radial_factor = SPHKernels.radial_gradient_factor(SimKernel, q)
                             ∇ᵢWᵢⱼ = radial_factor * xᵢⱼ
-                            inverse_distance = inv(xᵢⱼ² + SimKernel.η²)
+                            inverse_distance = one(T) / (xᵢⱼ² + SimKernel.η²)
                         else
                             ∇ᵢWᵢⱼ = ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
                         end
@@ -479,7 +479,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         vⱼ   = boundary_velocity(boundary_data, Velocity, ParticleType, j, slotⱼ)
                         vᵢⱼ  = vᵢ - vⱼ
                         if viscous_dt !== nothing
-                            pair_rate = max(pair_rate, dot(vᵢⱼ, xᵢⱼ) / (xᵢⱼ² + SimKernel.η²))
+                            pair_rate = max(pair_rate, dot(vᵢⱼ, xᵢⱼ) * inverse_distance)
                         end
                         density_symmetric_term = Radial ? radial_factor * dot(vᵢⱼ, xᵢⱼ) : dot(vᵢⱼ, ∇ᵢWᵢⱼ)
                         # DBC walls take density from the fluid, not other walls.
@@ -505,10 +505,13 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         ρb   = i_first ? ρⱼ : ρᵢ
                         ρa⁻¹ = i_first ? ρᵢ⁻¹ : ρⱼ⁻¹
                         ρb⁻¹ = i_first ? ρⱼ⁻¹ : ρᵢ⁻¹
+                        if !(Radial || viscous_dt !== nothing)
+                            inverse_distance = one(T) / (xᵢⱼ² + SimKernel.η²)
+                        end
                         if SimDensityDiffusion isa FourtakasDensityDiffusion
                             if typeᵢ == Fluid && ParticleType[j] == Fluid
                                 inner_diffusion += SPHDensityDiffusionModels.fourtakas_diffusion(
-                                    SimKernel, SimConstants, xᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ², ρᵢ, ρⱼ, ρⱼ⁻¹, Val(FastMath))
+                                    SimKernel, SimConstants, xᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ², ρᵢ, ρⱼ, ρⱼ⁻¹, Val(FastMath), inverse_distance)
                             end
                         elseif Radial
                             D1, _ = SPHDensityDiffusionModels.radial_density_diffusion(SimDensityDiffusion,
@@ -520,17 +523,17 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                                 (typeᵢ == Fluid) & (ParticleType[j] == Fluid) : ParticleType
                             D1, _ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants,
                                                               SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ²,
-                                                              ρᵢ, ρⱼ, ρᵢ⁻¹, ρb⁻¹, ia, ja, diffusion_types)
+                                                              ρᵢ, ρⱼ, ρᵢ⁻¹, ρb⁻¹, ia, ja, diffusion_types, inverse_distance)
                             dρdt += D1
                         elseif SimDensityDiffusion isa ComplexDensityDiffusion
                             D1, D2 = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants,
                                                                SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ²,
-                                                               ρa, ρb, ρa⁻¹, ρb⁻¹, ia, ja, ParticleType, sgn * xᵢⱼ[end])
+                                                               ρa, ρb, ρa⁻¹, ρb⁻¹, ia, ja, ParticleType, sgn * xᵢⱼ[end], inverse_distance)
                             dρdt += i_first ? D1 : D2
                         else
                             D1, D2 = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants,
                                                                SimParticles, sgn * xᵢⱼ, sgn * ∇ᵢWᵢⱼ, xᵢⱼ²,
-                                                               ρa, ρb, ρa⁻¹, ρb⁻¹, ia, ja, ParticleType)
+                                                               ρa, ρb, ρa⁻¹, ρb⁻¹, ia, ja, ParticleType, inverse_distance)
                             dρdt += i_first ? D1 : D2
                         end
 
@@ -539,14 +542,14 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                                 viscous_vᵢ - boundary_viscous_velocity(boundary_data, Velocity, ParticleType, j, slotⱼ)
                             if viscous_dt !== nothing
                                 dot_velocity = dot(viscous_velocity, xᵢⱼ)
-                                mu = SimKernel.h * dot_velocity / (xᵢⱼ² + SimKernel.η²)
+                                mu = SimKernel.h * dot_velocity * inverse_distance
                                 coefficient = dot_velocity < zero(T) ?
                                     (-SimConstants.α * c₀ * mu / ((ρᵢ + ρⱼ) / 2)) * m₀ : zero(T)
                                 visc = -coefficient * ∇ᵢWᵢⱼ
                             elseif ScalarSPS
                                 v1 = SPHViscosityModels.scalar_sps_viscosity(SimKernel, SimConstants,
                                     sgn * xᵢⱼ, sgn * viscous_velocity, sgn * ∇ᵢWᵢⱼ, xᵢⱼ²,
-                                    ρa, ρb, ρa⁻¹, ρb⁻¹)
+                                    ρa, ρb, ρa⁻¹, ρb⁻¹, inverse_distance)
                                 visc = sgn * v1
                             elseif Radial && !(SimViscosity isa LaminarSPS)
                                 visc = SPHViscosityModels.radial_viscosity(SimViscosity, SimKernel, SimConstants,
@@ -554,11 +557,11 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                             elseif SimViscosity isa Union{ZeroViscosity, ArtificialViscosity, Laminar}
                                 visc, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles,
                                                             xᵢⱼ, viscous_velocity, ∇ᵢWᵢⱼ, xᵢⱼ²,
-                                                            ρa, ρb, ρa⁻¹, ρb⁻¹, ia, ja)
+                                                            ρa, ρb, ρa⁻¹, ρb⁻¹, ia, ja, inverse_distance)
                             else
                                 v1, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles,
                                                           sgn * xᵢⱼ, sgn * viscous_velocity, sgn * ∇ᵢWᵢⱼ, xᵢⱼ²,
-                                                          ρa, ρb, ρa⁻¹, ρb⁻¹, ia, ja)
+                                                          ρa, ρb, ρa⁻¹, ρb⁻¹, ia, ja, inverse_distance)
                                 visc  = sgn * v1
                             end
 
@@ -566,8 +569,8 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                                 visc *= T(SimViscosity.boundary_factor)
                             end
                             interaction_mass === nothing || (visc *= mass_j/m₀)
-                            Pⱼ = viscous_dt === nothing ? interaction_pressure(Pressure,j,ρⱼ,ParticleType[j],c₀,ρ₀,boundary_data) :
-                                dual_pressure(ρⱼ,SimConstants,Val(FastMath))
+                            Pⱼ = viscous_dt === nothing ? interaction_pressure(Pressure,j,ρⱼ,ParticleType[j],c₀,ρ₀,boundary_data,ρ₀⁻¹) :
+                                dual_pressure(ρⱼ,SimConstants,Val(FastMath),ρ₀⁻¹)
                             Pfac = viscous_dt === nothing ? (Pᵢ + Pⱼ) * (ρᵢ⁻¹ * ρⱼ⁻¹) : (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
                             f_ab = InvDensity === nothing ? tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx) :
                                 tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx, ρᵢ⁻¹, ρⱼ⁻¹)
@@ -740,7 +743,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
         Pairs, Position, Density, Velocity, ParticleType, SimParticles,
         CellStart, CellID, grid, step,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math), target_indices, pair_order, native_rigid, interaction_mass, Val(options.preload_types))
+        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math), target_indices, pair_order, native_rigid, interaction_mass, Val(options.preload_types), inv(SimConstants.ρ₀))
     return nothing
 end
 
@@ -1090,6 +1093,7 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
     step_active(step) || return nothing
     dt = step_dt(step)
     (; g, ρ₀) = SimConstants
+    ρ₀⁻¹ = inv(ρ₀)
     T = eltype(Density)
     acc_red = SVector{3, T}(zero(T), T(Inf), zero(T))
     acc_diagnostic = diagnostic_init(diagnostic_partial)
@@ -1102,7 +1106,7 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
             ρ = Density[i]
             store_inverse_density!(NextInvDensity, i, ρ)
             if NextPressure !== nothing
-                store_pressure!(NextPressure, i, particle_pressure(ρ, type, SimConstants.c₀, ρ₀, boundary_mode))
+                store_pressure!(NextPressure, i, particle_pressure(ρ, type, SimConstants.c₀, ρ₀, boundary_mode, ρ₀⁻¹))
             end
             i += stride
             continue
@@ -1119,7 +1123,7 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
         # The predictor reciprocal must be consumed before an aliased cache is overwritten.
         store_inverse_density!(NextInvDensity, i, ρ)
         if NextPressure !== nothing
-            store_pressure!(NextPressure, i, particle_pressure(ρ, type, SimConstants.c₀, ρ₀, boundary_mode))
+            store_pressure!(NextPressure, i, particle_pressure(ρ, type, SimConstants.c₀, ρ₀, boundary_mode, ρ₀⁻¹))
         end
 
         # FullTimeStep

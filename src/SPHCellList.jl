@@ -239,7 +239,8 @@ using Bumper
             dρdt⁺          = wall_pair ? zero(ρᵢ) : - ρᵢ * (m₀/ρⱼ) * density_symmetric_term
             dρdt⁻          = wall_pair ? zero(ρⱼ) : - ρⱼ * (m₀/ρᵢ) * density_symmetric_term
 
-            Dᵢ, Dⱼ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ², i, j, MotionLimiter)
+            invdᵢⱼ²η² = one(ρᵢ) / (xᵢⱼ² + η²)
+            Dᵢ, Dⱼ = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants, SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ², i, j, MotionLimiter, invdᵢⱼ²η²)
 
             SimThreadedArrays.dρdtIThreaded[ichunk][i] += dρdt⁺ + Dᵢ
             SimThreadedArrays.dρdtIThreaded[ichunk][j] += dρdt⁻ + Dⱼ
@@ -251,7 +252,7 @@ using Bumper
             f_ab    = tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx)
             dvdt⁺   = - m₀ * (Pfac + f_ab) *  ∇ᵢWᵢⱼ
 
-            visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ², i, j)
+            visc_term, _ = compute_viscosity(SimViscosity, SimKernel, SimConstants, SimParticles, xᵢⱼ, vᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ², i, j, invdᵢⱼ²η²)
 
             uₘ = dvdt⁺ + visc_term
             SimThreadedArrays.AccelerationThreaded[ichunk][i] += uₘ

@@ -37,6 +37,12 @@ device arrays for custom models; the built in models only read
 """
 function compute_density_diffusion end
 
+Base.@propagate_inbounds compute_density_diffusion(
+        model::SPHDensityDiffusion, SimKernel, SimConstants, SimParticles,
+        xᵢⱼ, ∇ᵢWᵢⱼ, d², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹, i, j, ParticleType, invdᵢⱼ²η²) =
+    compute_density_diffusion(model, SimKernel, SimConstants, SimParticles,
+                              xᵢⱼ, ∇ᵢWᵢⱼ, d², ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹, i, j, ParticleType)
+
 #---------------------------------------------------------------
 # 1) ZeroDensityDiffusion(): ignore all diffusion
 #---------------------------------------------------------------
@@ -61,7 +67,8 @@ struct ZeroDensityDiffusion <: SPHDensityDiffusion end
         ρⱼ⁻¹,
         i,
         j,
-        ParticleType
+        ParticleType,
+        invdᵢⱼ²η² = one(eltype(ρᵢ)) / (d² + SimKernel.η²)
 )
         return zero(d²), zero(d²)
 end
@@ -91,15 +98,14 @@ struct ZeroGravityLinearDensityDiffusion <: SPHDensityDiffusion end
         ρⱼ⁻¹,
         i,
         j,
-        ParticleType
+        ParticleType,
+        invdᵢⱼ²η² = one(eltype(ρᵢ)) / (d² + SimKernel.η²)
 )
 
         (; ρ₀, m₀, c₀, δᵩ, Cb, Cb⁻¹, γ) = SimConstants
-        (; h, η²) = SimKernel
+        (; h) = SimKernel
 
         # g == 0 => skip any hydrostatic parts
-        
-        invdᵢⱼ²η² = one(eltype(ρᵢ)) / (d² + η²)
 
         difference = linear_density_difference(ZeroGravityLinearDensityDiffusion(), SimConstants, xᵢⱼ, ρᵢ, ρⱼ)
         ψᵢⱼ = (-2 * difference) * xᵢⱼ * invdᵢⱼ²η²
@@ -149,13 +155,12 @@ Base.@propagate_inbounds function compute_density_diffusion(
         ρⱼ⁻¹,
         i,
         j,
-        ParticleType
+        ParticleType,
+        invdᵢⱼ²η² = one(eltype(ρᵢ)) / (d² + SimKernel.η²)
 )
 
         (; ρ₀, m₀, c₀, δᵩ, Cb, Cb⁻¹, γ, g) = SimConstants
-        (; h, η²) = SimKernel
-
-        invdᵢⱼ²η² = one(eltype(ρᵢ)) / (d² + η²)
+        (; h) = SimKernel
 
         difference = linear_density_difference(LinearDensityDiffusion(), SimConstants, xᵢⱼ, ρᵢ, ρⱼ)
         ψᵢⱼ = (-2 * difference) * xᵢⱼ * invdᵢⱼ²η²
@@ -229,20 +234,21 @@ struct FourtakasDensityDiffusion <: SPHDensityDiffusion
 end
 FourtakasDensityDiffusion(; full = false) = FourtakasDensityDiffusion(full)
 
-@inline function fourtakas_diffusion(kernel, constants, x, gradient, distance_squared, density_i, density_j, inverse_j, ::Val{Fast}=Val(false)) where {Fast}
+@inline function fourtakas_diffusion(kernel, constants, x, gradient, distance_squared, density_i, density_j, inverse_j, ::Val{Fast}=Val(false), inv_distance = one(density_i) / (distance_squared + kernel.η²)) where {Fast}
     base = one(density_i) + (constants.ρ₀ * constants.g / constants.Cb) * x[end]
     root = Fast ? Base.FastMath.pow_fast(base,constants.γ⁻¹) : base^constants.γ⁻¹
     hydrostatic = constants.ρ₀ * root - constants.ρ₀
     coefficient = constants.δᵩ * kernel.H * constants.c₀ *
-        ((density_j - density_i) - hydrostatic) / (distance_squared + kernel.η²)
+        ((density_j - density_i) - hydrostatic) * inv_distance
     return -coefficient * dot(x, gradient) * constants.m₀ / density_j
 end
 
 Base.@propagate_inbounds function compute_density_diffusion(::FourtakasDensityDiffusion, kernel, constants, particles,
-        x, gradient, distance_squared, density_i, density_j, inverse_i, inverse_j, i, j, types)
+        x, gradient, distance_squared, density_i, density_j, inverse_i, inverse_j, i, j, types,
+        inv_distance = one(density_i) / (distance_squared + kernel.η²))
     (types[i] == Fluid && types[j] == Fluid) || return zero(density_i), zero(density_j)
-    first = fourtakas_diffusion(kernel, constants, x, gradient, distance_squared, density_i, density_j, inverse_j)
-    second = fourtakas_diffusion(kernel, constants, -x, -gradient, distance_squared, density_j, density_i, inverse_i)
+    first = fourtakas_diffusion(kernel, constants, x, gradient, distance_squared, density_i, density_j, inverse_j, Val(false), inv_distance)
+    second = fourtakas_diffusion(kernel, constants, -x, -gradient, distance_squared, density_j, density_i, inverse_i, Val(false), inv_distance)
     return first, second
 end
 
@@ -261,11 +267,12 @@ Base.@propagate_inbounds function compute_density_diffusion(
         i,
         j,
         ParticleType,
-        z = xᵢⱼ[end]
+        z = xᵢⱼ[end],
+        invdᵢⱼ²η² = one(eltype(ρᵢ)) / (d² + SimKernel.η²)
 )
 
         (; ρ₀, m₀, c₀, δᵩ, Cb, Cb⁻¹, γ, g) = SimConstants
-        (; h, η²) = SimKernel
+        (; h) = SimKernel
 
         # In theory these two equations are not completely symmetric.
         # In practice it is 'good' enough and saves a lot of time to
@@ -274,8 +281,6 @@ Base.@propagate_inbounds function compute_density_diffusion(
         ρᵢⱼᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pᵢⱼᴴ, Cb⁻¹)
         # ρᵢⱼᴴ = ρ₀ * ( Estimate7thRoot( 1 + (Pᵢⱼᴴ * Cb⁻¹)) - 1)
         # ρⱼᵢᴴ  = InverseHydrostaticEquationOfState(ρ₀, Pⱼᵢᴴ, Cb⁻¹)
-        
-        invdᵢⱼ²η² = one(eltype(ρᵢ)) / (d² + η²)
 
         ρⱼᵢ = ρⱼ - ρᵢ
         ψᵢⱼ = 2 * (ρⱼᵢ - ρᵢⱼᴴ)  * (-xᵢⱼ) * invdᵢⱼ²η²
