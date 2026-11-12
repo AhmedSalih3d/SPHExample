@@ -402,7 +402,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUUseGraph::Bool                       = true,
         GPUClipTimeStepToOutput::Bool            = false,
         GPUCellSubdivision::Int                 = 1,
-        GPUXCellSubdivision::Int                = GPUCellSubdivision == 1 ? 4 : GPUCellSubdivision,
+        GPUXCellSubdivision::Int                = max(4, GPUCellSubdivision),
         GPUFixedGrid::Bool                      = false,
         GPUGridExpansion::NTuple{Dimensions, Tuple{Bool, Bool}} = ntuple(_ -> (false, false), Dimensions),
         Periodicity::Union{Nothing, PeriodicBoundary{Dimensions}} = nothing,
@@ -471,7 +471,7 @@ function Base.setproperty!(m::SimulationMetaData{D, T}, name::Symbol, x) where {
         v >= 1 || throw(ArgumentError("GPUCellSubdivision must be at least 1, got $v"))
         old_r = getfield(m, :GPUCellSubdivision)
         old_rx = getfield(m, :GPUXCellSubdivision)
-        if old_rx == old_r || (old_r == 1 && old_rx == 4)
+        if old_rx == old_r || old_rx == max(4, old_r)
             setfield!(m, :GPUXCellSubdivision, v)
         end
         return setfield!(m, name, v)

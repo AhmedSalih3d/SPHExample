@@ -27,9 +27,9 @@ end
         @test config.effective.pair_coordinates === (T === Float32 ? :cell_relative : :absolute)
         @test config.effective.cache_interaction_fields
         @test config.effective.cell_subdivision == 2
-        @test config.effective.x_cell_subdivision == 2
+        @test config.effective.x_cell_subdivision == 4
         @test config.requested.cell_subdivision == 2
-        @test config.requested.x_cell_subdivision == 2
+        @test config.requested.x_cell_subdivision == 4
         @test isempty(config.fallbacks)
 
         default_meta = metadata(D, T)

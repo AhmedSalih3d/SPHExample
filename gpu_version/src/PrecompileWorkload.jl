@@ -393,8 +393,8 @@ function _precompile_cases(dir::String, ::Type{T}) where {T}
         SimMeasurements = measurements_3d,
     )
 
-    # example/Dambreak3d.jl (3D DBC with GPUDoublePosition = true and GPUCellSubdivision = 2,
-    # plus single-precision positions)
+    # example/Dambreak3d.jl (3D DBC with GPUDoublePosition = true, GPUCellSubdivision = 2,
+    # and GPUXCellSubdivision = 4, plus single-precision positions)
     c3dbc = SimulationConstants{T}(dx = dx, c₀ = 33.14, α = 0.1, m₀ = 1000 * dx^3, CFL = 0.2)
     dbc_3d = (
         SimGeometry  = [SPHGeometry{3, T}(CSVFile = g3.bound, GroupMarker = 1, Type = Fixed),
@@ -402,7 +402,7 @@ function _precompile_cases(dir::String, ::Type{T}) where {T}
         SimMetaData  = SimulationMetaData{3, T, NoShifting, NoKernelOutput, NoMDBC, StoreLog}(;
                            SimulationName = "DBC3D", SaveLocation = save("DBC3D"),
                            OutputTimes = time.SimulationTime, ExportGridCells = true,
-                           GPUCellSubdivision = 2, GPUDoublePosition = true, time...),
+                           GPUCellSubdivision = 2, GPUXCellSubdivision = 4, GPUDoublePosition = true, time...),
         SimConstants = c3dbc,
         SimKernel    = SPHKernelInstance{3, T}(WendlandC2(); h = T(sqrt(3 * dx^2))),
         SimViscosity = ArtificialViscosity(),
@@ -413,7 +413,7 @@ function _precompile_cases(dir::String, ::Type{T}) where {T}
         SimMetaData = SimulationMetaData{3, T, NoShifting, NoKernelOutput, NoMDBC, StoreLog}(;
             SimulationName = "DBC3DSingle", SaveLocation = save("DBC3DSingle"),
             OutputTimes = time.SimulationTime, ExportGridCells = true,
-            GPUCellSubdivision = 2, GPUDoublePosition = false, time...),
+            GPUCellSubdivision = 2, GPUXCellSubdivision = 4, GPUDoublePosition = false, time...),
     ))
 
     return (mdbc_2d, dbc_2d, dbc_2d_radial, dbc_2d_radial_cached, dbc_2d_zero_visc,
