@@ -56,7 +56,7 @@ let
         RunSimulation(SimGeometry = SimulationGeometry,SimMetaData = SimMetaData,SimConstants = SimConstants,
             SimParticles = SimParticles,SimKernel = SimKernel,SimLogger = SimLogger,SimViscosity = SimViscosity,
             SimDensityDiffusion = SimDensityDiffusion,SimTimeStepping = time_stepping,
-            SimRigidBodyDynamics = SimRigidBodyDynamics,SimMotion,SimMeasurements)
+            SimRigidBodyDynamics = SimRigidBodyDynamics,SimMotion = SimMotion,SimMeasurements = SimMeasurements)
         save_surfaces(SimMetaData.SaveLocation,SimulationGeometry)
     finally
         isopen(SimLogger.LoggerIo) && close(SimLogger.LoggerIo)
