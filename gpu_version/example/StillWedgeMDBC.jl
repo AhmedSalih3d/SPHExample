@@ -74,6 +74,7 @@ function run_still_wedge(;
         GPUDoublePosition = true,
         GPURadialInteractions = true,
         GPUCacheInteractionFields = true,
+        GPUXCellSubdivision = 4,
         # This small case needs only a few queued frames to overlap disk output.
         GPUOutputQueueBytes = 8 * 1024^2,
         # OutputVariables = [

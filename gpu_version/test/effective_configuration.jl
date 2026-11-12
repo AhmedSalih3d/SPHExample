@@ -32,15 +32,18 @@ end
         @test config.requested.x_cell_subdivision == 2
         @test isempty(config.fallbacks)
 
-        aniso = metadata(D, T; GPUCellSubdivision = 1, GPUXCellSubdivision = 4)
-        @test aniso.GPUCellSubdivision == 1 && aniso.GPUXCellSubdivision == 4
-        aniso_cfg = effective_configuration(aniso, kernel, LinearDensityDiffusion(), LaminarSPS(); particle_count = 8)
-        @test aniso_cfg.requested.cell_subdivision == 1
-        @test aniso_cfg.requested.x_cell_subdivision == 4
-        @test aniso_cfg.effective.cell_subdivision == 1
-        @test aniso_cfg.effective.x_cell_subdivision == 4
+        default_meta = metadata(D, T)
+        @test default_meta.GPUCellSubdivision == 1 && default_meta.GPUXCellSubdivision == 4
+        default_cfg = effective_configuration(default_meta, kernel, LinearDensityDiffusion(), LaminarSPS(); particle_count = 8)
+        @test default_cfg.requested.cell_subdivision == 1
+        @test default_cfg.requested.x_cell_subdivision == 4
+        @test default_cfg.effective.cell_subdivision == 1
+        @test default_cfg.effective.x_cell_subdivision == 4
+
+        iso1 = metadata(D, T; GPUCellSubdivision = 1, GPUXCellSubdivision = 1)
+        @test iso1.GPUCellSubdivision == 1 && iso1.GPUXCellSubdivision == 1
         @test_throws ArgumentError metadata(D, T; GPUXCellSubdivision = 0)
-        @test_throws ArgumentError (aniso.GPUXCellSubdivision = 0)
+        @test_throws ArgumentError (default_meta.GPUXCellSubdivision = 0)
 
         meta.GPUScalarSPSViscosity = false
         ordered_sps = effective_configuration(meta, kernel, LinearDensityDiffusion(), LaminarSPS(); particle_count = 8)

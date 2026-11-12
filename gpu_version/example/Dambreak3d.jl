@@ -57,7 +57,8 @@ let
         ExportSingleVTKHDF = true,
         ExportGridCells = true,
         OpenLogFile = true,
-        GPUCellSubdivision = 2,
+        # GPUCellSubdivision = 2,
+        GPUXCellSubdivision = 4,
         GPULanesPerParticle = 1,
         GPUDoublePosition = true,
     )

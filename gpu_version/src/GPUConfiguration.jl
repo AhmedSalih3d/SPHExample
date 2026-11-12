@@ -99,6 +99,7 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
     fallbacks = NamedTuple[]
     if meta.VariableResolution !== nothing
         effective = merge(effective,(;position_type=Float64,
+            cell_subdivision=1,x_cell_subdivision=1,
             interaction_fastmath=false,radial_interactions=false,scalar_sps_viscosity=false,preload_interaction_types=false,
             interaction_path=:reference,viscosity_path=viscosity isa ZeroViscosity ? :disabled : :reference_ordered,cache_interaction_fields=false,
             boundary_forces=false,lanes_per_particle=1,compact_buffers=false,async_output=false,
@@ -123,6 +124,7 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
         end
         for (option,requested_value,effective_value) in (
                 (:GPUDoublePosition,meta.GPUDoublePosition,true),
+                (:GPUXCellSubdivision,meta.GPUXCellSubdivision,1),
                 (:GPUInteractionFastMath,meta.GPUInteractionFastMath,false),
                 (:GPURadialInteractions,meta.GPURadialInteractions,false),
                 (:GPUScalarSPSViscosity,meta.GPUScalarSPSViscosity,false),

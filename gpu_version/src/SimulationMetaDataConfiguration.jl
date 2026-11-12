@@ -219,17 +219,17 @@ changing its arithmetic. Sampling follows `OutputTimes` and works with `NoLog`.
 
 `GPUCellSubdivision = R` subdivides the neighbor-search grid isotropically into
 cells of edge `H / R` per axis (`1` by default: edge `H` and `(2R+1)^(D-1)`
-stencil row ranges). `GPUXCellSubdivision = Rx` (defaulting to
-`GPUCellSubdivision`) subdivides only the contiguous `x` axis into cells of
-edge `H / Rx` while keeping axes `2..D` at edge `H / R`. Setting `R = 1, Rx > 1`
-(for example `Rx = 2` or `Rx = 4`) keeps only `3` row ranges in 2D and `9` in
-3D (`1` contiguous `jlo:jhi` particle range per row) while narrowing the scanned
-x-width from `3H` to `(2 + 1/Rx) H`. Like `GPUCellSubdivision > 1`, `Rx > 1`
-reorders particles into finer x-subcells, which changes floating-point summation
-order and the pair orientation of reference density diffusion; exact CPU
-reference orientation requires `GPUCellSubdivision = 1` and
-`GPUXCellSubdivision = 1`. Exported VTKHDF grid cells continue to use cubic
-edge length `H / GPUCellSubdivision`.
+stencil row ranges). `GPUXCellSubdivision = Rx` (defaulting to `4` when
+`GPUCellSubdivision == 1`, and `GPUCellSubdivision` otherwise) subdivides the
+contiguous `x` axis into cells of edge `H / Rx` while keeping axes `2..D` at
+edge `H / R`. With the default `R = 1, Rx = 4`, the grid keeps only `3` row
+ranges in 2D and `9` in 3D (`1` contiguous `jlo:jhi` particle range per row)
+while narrowing the scanned x-width from `3H` to `2.25H`. Like
+`GPUCellSubdivision > 1`, `Rx > 1` reorders particles into finer x-subcells,
+which changes floating-point summation order and the pair orientation of
+reference density diffusion; exact CPU reference orientation requires
+`GPUCellSubdivision = 1` and `GPUXCellSubdivision = 1`. Exported VTKHDF grid
+cells continue to use cubic edge length `H / GPUCellSubdivision`.
 """
 mutable struct SimulationMetaData{Dimensions,
                                   FloatType <: AbstractFloat,
@@ -402,7 +402,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUUseGraph::Bool                       = true,
         GPUClipTimeStepToOutput::Bool            = false,
         GPUCellSubdivision::Int                 = 1,
-        GPUXCellSubdivision::Int                = GPUCellSubdivision,
+        GPUXCellSubdivision::Int                = GPUCellSubdivision == 1 ? 4 : GPUCellSubdivision,
         GPUFixedGrid::Bool                      = false,
         GPUGridExpansion::NTuple{Dimensions, Tuple{Bool, Bool}} = ntuple(_ -> (false, false), Dimensions),
         Periodicity::Union{Nothing, PeriodicBoundary{Dimensions}} = nothing,
@@ -469,7 +469,9 @@ function Base.setproperty!(m::SimulationMetaData{D, T}, name::Symbol, x) where {
     elseif name === :GPUCellSubdivision
         v = convert(Int, x)
         v >= 1 || throw(ArgumentError("GPUCellSubdivision must be at least 1, got $v"))
-        if getfield(m, :GPUXCellSubdivision) == getfield(m, :GPUCellSubdivision)
+        old_r = getfield(m, :GPUCellSubdivision)
+        old_rx = getfield(m, :GPUXCellSubdivision)
+        if old_rx == old_r || (old_r == 1 && old_rx == 4)
             setfield!(m, :GPUXCellSubdivision, v)
         end
         return setfield!(m, name, v)
