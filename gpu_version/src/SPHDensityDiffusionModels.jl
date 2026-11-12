@@ -193,7 +193,9 @@ it is not only a reassociation of its floating-point arithmetic.
     return zero(d²), zero(d²)
 end
 
-@inline function radial_density_diffusion(model::Union{LinearDensityDiffusion, ZeroGravityLinearDensityDiffusion},
+# The gather loop checks pair indices; carry that guarantee through the type reads.
+# Standalone calls retain their normal bounds checks.
+Base.@propagate_inbounds function radial_density_diffusion(model::Union{LinearDensityDiffusion, ZeroGravityLinearDensityDiffusion},
                                          kernel, constants, x, d²::T, ρᵢ, ρⱼ, ρᵢ⁻¹, ρⱼ⁻¹, i, j,
                                          types, factor, inverse_distance) where {T}
     difference = linear_density_difference(model, constants, x, ρᵢ, ρⱼ)

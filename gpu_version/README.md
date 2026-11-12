@@ -1376,6 +1376,60 @@ Results are saved in `benchmark/still_wedge_same_work_results.csv`.
 `run_still_wedge` also accepts `save_location`, `simulation_time`, `visualize`,
 and `open_log_file` for noninteractive runs.
 
+#### Radial diffusion bounds propagation
+
+The radial helper shared by linear and zero-gravity linear diffusion propagates
+the interaction gather's `@inbounds` context to its linear model's particle-type reads. Ordinary
+standalone calls to linear radial diffusion still throw `BoundsError` for
+invalid type indices; zero-gravity diffusion does not read types. This changes
+no example settings or diffusion formula. `test/radial_bounds.jl` checks both
+precisions in 2D and 3D. `benchmark/still_wedge_instructions.jl` clones the
+current driver, configuration resolver, kernels and diffusion module to make
+an otherwise identical checked baseline. An identical-source clone control
+matches the packaged driver exactly.
+
+On an RTX 5080 (Julia 1.12.7), Nsight Compute's `smsp__inst_issued.sum` for
+active StillWedge radial interaction launches fell from 1,665,623 to 1,588,781
+for the fused first interaction (4.61%) and from 1,391,377 to 1,300,698 for
+the corrector (6.52%). Each used 379 blocks; these are issued warp instructions
+for selected launches, not whole-solver instructions. Generated PTX instruction
+counts fell from 493 to 477 and 263 to 244 respectively. Nine warmed,
+alternating, unprofiled four-second complete-run pairs had a median optimized
+to checked ratio of 0.989, range 0.939–1.063, faster in 5/9 pairs: no clear
+small-case solver speedup.
+
+Larger radial cases with Float32 physics, Float64 positions, cached interaction
+fields and `GPUXCellSubdivision = 4` were measured over 0.01 s of physical time:
+
+| Case | Particles | Paired complete-run ratio, median (range) | Faster pairs |
+| --- | ---: | ---: | ---: |
+| StillWedge DBC, 2D, dx=0.01 | 11,246 | 0.978 (0.913–1.109) | 3/5 |
+| DamBreak, 3D, dx=0.02 | 17,446 | 0.988 (0.912–1.036) | 3/5 |
+| DamBreak, 3D, dx=0.0085 | 171,496 | 0.937 (0.920–1.114) | 8/9 |
+
+The large 3D case's median simulation-loop ratio was 0.925. These short runs
+have different output schedules and are not substitutes for the four-second
+StillWedge workload. The 128,775-particle zero-gravity moving-square control
+matched exactly and had a 0.990 median complete-run ratio over five pairs;
+that radial model does not read particle types.
+
+The linear-diffusion runs **do not match bit for bit**. In the four-second
+StillWedge comparison, initial particles, 8,499 steps, 3 rebuilds and 404
+readbacks matched, but final state, accepted time and 9 of 50 particle/grid
+HDF5 datasets differed.
+The maximum position difference was 0.00364 m after four seconds (5.2e-9 m
+at 0.01 s); the maximum density difference was 0.179 kg/m³. The same-source
+clone control matched exactly, so this is associated with the compiled
+annotation change, not the benchmark's module cloning. These measurements
+show instruction savings, not exact numerical equivalence or a guaranteed
+complete-run speedup. Reproduce with:
+
+```bash
+julia --project=. -t 2,0 test/radial_bounds.jl
+julia --project=. -t 2,0 benchmark/still_wedge_instructions.jl --rounds=9 --duration=4 --timing-only
+julia --project=. -t 2,0 benchmark/radial_bounds_cases.jl --rounds=9 --duration=0.01 DamBreak3D_dp0.0085
+```
+
 `SingleNeighborTimeStepping()` remains an explicitly selected alternative:
 it changes integration and must not count as an equivalent-workload speedup.
 The earlier scheme comparison measured about 1.52x throughput, but changed final
