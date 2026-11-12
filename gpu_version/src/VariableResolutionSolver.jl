@@ -41,7 +41,7 @@ function validate_resolution_solver(meta::SimulationMetaData{D,T,S,K,B},geometry
             !isfinite(scheme.smoothing_length) && !isfinite(scheme.sound_speed) && !scheme.cache_periodic_queries ||
             throw(ArgumentError("variable resolution derives per-domain timestep lengths and uses its own domain/density retirement policy; custom reference bounds are unsupported"))
     end
-    meta.Periodicity === nothing && !meta.GPUFixedGrid && meta.GPUCellSubdivision == 1 ||
+    meta.Periodicity === nothing && !meta.GPUFixedGrid && meta.GPUCellSubdivision == 1 && meta.GPUXCellSubdivision == 1 ||
         throw(ArgumentError("variable resolution requires nonperiodic expanding grids and GPUCellSubdivision=1"))
     meta.GPUTimestepDiagnosticsEvery == 0 || throw(ArgumentError("variable-resolution timestep-ID diagnostics are not supported"))
     measurements === nothing || !has_measurements(measurements) ||

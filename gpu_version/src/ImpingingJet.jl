@@ -55,8 +55,9 @@ end
     cg = cell_coords(ghost,bin_scale(grid,kernel.H⁻¹))
     lx,ly = cg[1]-grid.origin[1],cg[2]-grid.origin[2]
     R = reach(grid)
+    Rx = x_reach(grid)
     weight,v = zero(T),zero(eltype(velocity))
-    for dy in -R:R, dx in -R:R
+    for dy in -R:R, dx in -Rx:Rx
         x,y = lx+dx,ly+dy
         if 0 <= x < grid.dims[1] && 0 <= y < grid.dims[2]
             cell = Int32(1)+x+grid.dims[1]*y

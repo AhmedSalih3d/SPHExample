@@ -26,12 +26,13 @@ include(joinpath(@__DIR__, "cases.jl"))
 
 const G = SPHExampleGPU.GPUCellGrid
 
-function setup(case::BenchCase, ::Type{T}, subdiv::Int; lanes::Int = 0,
+function setup(case::BenchCase, ::Type{T}, subdiv::Int; x_subdiv::Int = subdiv, lanes::Int = 0,
                double_position::Bool = false, radial::Bool = false, scalar_sps::Bool = false) where {T}
     save = mktempdir()
     kw   = case.build(T, save)
     meta = kw.SimMetaData
     meta.GPUCellSubdivision = subdiv
+    meta.GPUXCellSubdivision = x_subdiv
     meta.GPULanesPerParticle = lanes
     meta.GPUDoublePosition = double_position
     meta.GPURadialInteractions = radial
@@ -49,14 +50,14 @@ function setup(case::BenchCase, ::Type{T}, subdiv::Int; lanes::Int = 0,
     gpu = upload_particles(particles, meta)
     sup = GPUSupportArrays{case.dims, T}(n, meta)
     red = ReductionWorkspace{SVector{3, T}}(n)
-    cl  = CellListWorkspace{case.dims, TP}(n; reach = subdiv)
+    cl  = CellListWorkspace{case.dims, TP}(n; reach = subdiv, x_reach = x_subdiv)
     mot = MotionArrays(kw.SimGeometry, particles)
     st  = StepState{T}(; dx = one(T) + kw.SimKernel.h)
     kw.SimMetaData.TimeSteppingMode = kw.SimTimeStepping
     kw.SimMetaData.OutputIterationCounter = 1
     # many output intervals so that repeated SimulationLoop calls keep stepping
     kw.SimMetaData.SimulationTime = T(1e6)
-    return (; kw, gpu, sup, red, cl, mot, st, subdiv)
+    return (; kw, gpu, sup, red, cl, mot, st, subdiv, x_subdiv)
 end
 
 function loop!(v)

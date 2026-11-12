@@ -5,15 +5,16 @@ const CELL_DRIVER = SPHExampleGPU.SPHCellList
 
 # The original host construction independently checks rounding, stencil
 # margins, prefix boundaries, and deterministic counting-sort order.
-function cell_rebuild_reference(points::Vector{SVector{D, TP}}, inverse_cutoff, reach) where {D, TP}
-    inv_cell = typeof(inverse_cutoff)(reach) * inverse_cutoff
-    old_map(x) = Int32(sign(x)) * unsafe_trunc(Int32, muladd(abs(x), inv_cell, TP(0.5)))
-    coordinates = [ntuple(d -> old_map(p[d]), D) for p in points]
-    origin = ntuple(d -> minimum(c[d] for c in coordinates) - Int32(reach), D)
-    upper = ntuple(d -> maximum(c[d] for c in coordinates) + Int32(reach), D)
+function cell_rebuild_reference(points::Vector{SVector{D, TP}}, inverse_cutoff, reach, x_reach = reach) where {D, TP}
+    inv_cell_y = typeof(inverse_cutoff)(reach) * inverse_cutoff
+    inv_cell_x = typeof(inverse_cutoff)(x_reach) * inverse_cutoff
+    old_map(x, inv_c) = Int32(sign(x)) * unsafe_trunc(Int32, muladd(abs(x), inv_c, TP(0.5)))
+    coordinates = [ntuple(d -> old_map(p[d], d == 1 ? inv_cell_x : inv_cell_y), D) for p in points]
+    origin = ntuple(d -> minimum(c[d] for c in coordinates) - Int32(d == 1 ? x_reach : reach), D)
+    upper = ntuple(d -> maximum(c[d] for c in coordinates) + Int32(d == 1 ? x_reach : reach), D)
     dims = ntuple(d -> upper[d] - origin[d] + Int32(1), D)
     ncells = Int32(prod(Int64.(dims)))
-    grid = CellGrid{D, reach}(origin, dims, ncells)
+    grid = CellGrid{D, reach, x_reach}(origin, dims, ncells)
     cell_ids = Int32[1 + sum((c[d] - origin[d]) * prod(Int64.(dims[1:d-1]); init = 1)
                              for d in 1:D) for c in coordinates]
     counts = zeros(Int32, ncells)
@@ -25,7 +26,7 @@ function cell_rebuild_reference(points::Vector{SVector{D, TP}}, inverse_cutoff, 
     return (; grid, coordinates, cell_ids, counts, starts, permutation)
 end
 
-function cell_rebuild_fixture(::Val{D}, ::Type{T}, ::Type{TP}; reach = 1) where {D, T, TP}
+function cell_rebuild_fixture(::Val{D}, ::Type{T}, ::Type{TP}; reach = 1, x_reach = reach) where {D, T, TP}
     points = vec([SVector{D, TP}(ntuple(d -> TP(Tuple(c)[d]) * TP(0.08), D))
                   for c in CartesianIndices(ntuple(_ -> -2:2, D))])
     # Coincident and adjacent-cell particles expose overlapping scatter slots.
@@ -49,7 +50,7 @@ function cell_rebuild_fixture(::Val{D}, ::Type{T}, ::Type{TP}; reach = 1) where 
         Cells = fill(CartesianIndex(ntuple(_ -> 0, D)), n),
     ))
     gpu = upload_particles(host; position_type = TP)
-    ws = CellListWorkspace{D, TP}(n; reach)
+    ws = CellListWorkspace{D, TP}(n; reach, x_reach)
     floating = (; active = true, indices = CuArray(Int32.(findall(==(Floating), host.Type))))
     return (; host, gpu, ws, floating)
 end
@@ -58,7 +59,8 @@ function check_cell_rebuild!(fixture, inverse_cutoff; neighbors = true)
     gpu, ws = fixture.gpu, fixture.ws
     before = NamedTuple{CELL_DRIVER.PERSISTENT_FIELDS}(Tuple(Array(getproperty(gpu, f))
                                                             for f in CELL_DRIVER.PERSISTENT_FIELDS))
-    reference = cell_rebuild_reference(before.Position, inverse_cutoff, Int(CELL_GRID.reach(ws.grid)))
+    reference = cell_rebuild_reference(before.Position, inverse_cutoff,
+        Int(CELL_GRID.reach(ws.grid)), Int(CELL_GRID.x_reach(ws.grid)))
     grid = CELL_DRIVER.rebuild_cell_list!(gpu, ws, inverse_cutoff)
     SPHExampleGPU.GPUFloating.update_floating_indices!(fixture.floating, gpu.Type, ws)
     @test grid == reference.grid
@@ -83,7 +85,7 @@ function check_cell_rebuild!(fixture, inverse_cutoff; neighbors = true)
                 lo, hi = CELL_GRID.row_range(grid, reference.starts, sorted_ids[i], row)
                 append!(candidates, Int(lo):Int(hi))
             end
-            expected = findall(c -> all(abs(c[d] - coordinates[i][d]) <= CELL_GRID.reach(grid)
+            expected = findall(c -> all(abs(c[d] - coordinates[i][d]) <= CELL_GRID.axis_reach(grid, d)
                                        for d in eachindex(c)), coordinates)
             @test sort(candidates) == expected
         end
@@ -163,9 +165,10 @@ end
 
 if CUDA.functional()
     @testset "device-resident cell-list rebuild" begin
-        @testset "host reference: D=$D T=$T TP=$TP reach=$reach" for D in (2, 3),
-                (T, TP) in ((Float32, Float32), (Float64, Float64), (Float32, Float64)), reach in (1, 2, 3, 4)
-            fixture = cell_rebuild_fixture(Val(D), T, TP; reach)
+        @testset "host reference: D=$D T=$T TP=$TP reach=$reach x_reach=$x_reach" for D in (2, 3),
+                (T, TP) in ((Float32, Float32), (Float64, Float64), (Float32, Float64)),
+                (reach, x_reach) in ((1, 1), (2, 2), (3, 3), (4, 4), (1, 2), (1, 4))
+            fixture = cell_rebuild_fixture(Val(D), T, TP; reach, x_reach)
             inverse_cutoff = T(10)
             first_grid = check_cell_rebuild!(fixture, inverse_cutoff).grid
             pointer_pair = (UInt(pointer(fixture.gpu.Position)), UInt(pointer(fixture.gpu.scratch.Position)))

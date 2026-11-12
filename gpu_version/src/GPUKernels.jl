@@ -21,7 +21,7 @@ different cells the particle in the cell that is processed (the higher index,
 because the CPU stencil only visits cells with a lower linear index). Both
 particles of a pair reach the same decision, so the rule stays consistent for
 any grid; it only reproduces the CPU's choice with the CPU's cells of edge
-`H` (`GPUCellSubdivision = 1`). Opt-in radial linear diffusion instead
+`H` (`GPUCellSubdivision = 1` and `GPUXCellSubdivision = 1`). Opt-in radial linear diffusion instead
 averages the two reciprocal-density weights and evaluates from the target
 particle's viewpoint, removing that diffusion term's orientation dependence.
 The separate Fourtakas inner model also evaluates from the target viewpoint;
@@ -773,8 +773,8 @@ end
 # Reference of a ghost node for `pair_vector`: the node itself in the working
 # precision, or its cell relative form for the cell with global coordinates
 # `cg` when the pair source holds `PosCell`s.
-@inline mdbc_reference(::AbstractVector{<:SVector}, gp::SVector{D, TP}, cg, s::T) where {D, TP, T} = SVector{D, T}(gp)
-@inline mdbc_reference(::AbstractVector{<:PosCell}, gp::SVector{D, TP}, cg::NTuple{D, Int32}, s::T) where {D, TP, T} =
+@inline mdbc_reference(::AbstractVector{<:SVector}, gp::SVector{D, TP}, cg, s) where {D, TP} = SVector{D, eltype(s)}(gp)
+@inline mdbc_reference(::AbstractVector{<:PosCell}, gp::SVector{D, TP}, cg::NTuple{D, Int32}, s) where {D, TP} =
     pos_cell(gp, cg, s)
 
 # Accumulate the contributions of the fluid particles in the (1-based) index
@@ -815,7 +815,8 @@ end
     return b, A
 end
 
-# Visit the (2R+1)^D cells around the ghost node (R the reach of the grid).
+# Visit the (2Rx+1)*(2R+1)^(D-1) cells around the ghost node (Rx the x-reach and
+# R the reach of axes 2..D of the grid).
 # Ghost nodes may lie outside the particle grid, so every row is range
 # checked. `lg` are the local cell coordinates of the node; the row's
 # `rowcell` for `pair_vector` is the (possibly virtual, never dereferenced)
@@ -824,8 +825,9 @@ end
                            Density, ParticleType, SimKernel, m₀, lane, lanes::Val, Velocity = nothing, InvDensity = nothing)
     n1, n2 = grid.dims
     R   = reach(grid)
-    xlo = max(lg[1] - R, Int32(0))
-    xhi = min(lg[1] + R, n1 - Int32(1))
+    Rx  = x_reach(grid)
+    xlo = max(lg[1] - Rx, Int32(0))
+    xhi = min(lg[1] + Rx, n1 - Int32(1))
     @inbounds if xlo <= xhi
         for dy in -R:R
             ly = lg[2] + dy
@@ -846,8 +848,9 @@ end
                            Density, ParticleType, SimKernel, m₀, lane, lanes::Val, Velocity = nothing, InvDensity = nothing)
     n1, n2, n3 = grid.dims
     R   = reach(grid)
-    xlo = max(lg[1] - R, Int32(0))
-    xhi = min(lg[1] + R, n1 - Int32(1))
+    Rx  = x_reach(grid)
+    xlo = max(lg[1] - Rx, Int32(0))
+    xhi = min(lg[1] + Rx, n1 - Int32(1))
     @inbounds if xlo <= xhi
         for dz in -R:R
             lz = lg[3] + dz

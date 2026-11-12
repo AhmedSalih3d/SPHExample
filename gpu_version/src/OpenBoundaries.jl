@@ -134,8 +134,8 @@ end
     ghost = setindex(point,2plane-point[1],1)
     cg = cell_coords(ghost,bin_scale(grid,kernel.H⁻¹))
     local_cell = ntuple(k -> cg[k]-grid.origin[k],Val(D))
-    R = reach(grid)
-    xlo,xhi = max(Int32(0),local_cell[1]-R),min(grid.dims[1]-1,local_cell[1]+R)
+    Rx = x_reach(grid)
+    xlo,xhi = max(Int32(0),local_cell[1]-Rx),min(grid.dims[1]-1,local_cell[1]+Rx)
     weight,perturbation = zero(T),zero(T)
     @inbounds if xlo <= xhi
         for row in cell_rows(grid)

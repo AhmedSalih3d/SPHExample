@@ -650,6 +650,7 @@ function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T, updated
                               dual_time_stepping::Bool = false,
                               cache_periodic_queries::Bool = false,
                               periodic_images::Bool = false, image_reach::Integer = 1,
+                              image_x_reach::Integer = image_reach,
                               image_max_cells::Integer = 50_000_000, image_deterministic::Bool = true,
                               boundary_slots = nothing, boundary_count::Integer = n) where {D, T, TP}
     !cache_periodic_queries || (periodic && dual_time_stepping) ||
@@ -669,7 +670,7 @@ function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T, updated
     pressure = cache_interaction_fields ? CUDA.zeros(T, n) : nothing
     inverse_half = cache_interaction_fields && fuse_predictor ? similar(inverse_density) : inverse_density
     pressure_half = cache_interaction_fields && fuse_predictor ? similar(pressure) : pressure
-    images = periodic_images ? PeriodicImageWorkspace{D,T,TP}(n; reach=image_reach,
+    images = periodic_images ? PeriodicImageWorkspace{D,T,TP}(n; reach=image_reach, x_reach=image_x_reach,
         max_cells=image_max_cells, deterministic=image_deterministic, cache_fields=cache_interaction_fields,
         preserve_pair_order=!dual_time_stepping) : nothing
     dual_state = dual_time_stepping ? GPUKernels.DualStepSupport{T}(n; dimensions=D, cache_periodic_queries, images) : nothing
@@ -708,7 +709,8 @@ function GPUSupportArrays{D, T}(gpu::GPUParticles{D, T}, meta::SimulationMetaDat
         dual_time_stepping = meta.TimeSteppingMode isa DualSPHysicsSymplectic,
         cache_periodic_queries = meta.TimeSteppingMode isa DualSPHysicsSymplectic && meta.TimeSteppingMode.cache_periodic_queries,
         periodic_images = periodic_images_enabled(meta,kernel),
-        image_reach = meta.GPUCellSubdivision, image_max_cells = meta.GPUMaxCells, image_deterministic = meta.GPUDeterministicSort,
+        image_reach = meta.GPUCellSubdivision, image_x_reach = meta.GPUXCellSubdivision,
+        image_max_cells = meta.GPUMaxCells, image_deterministic = meta.GPUDeterministicSort,
         reuse_predictors = meta.GPUCompactBuffers, share_pos_cells = meta.GPUCompactBuffers,
         boundary_slots = gpu.BoundarySlot,
         boundary_count = gpu.BoundarySlot === nothing ? length(gpu) : length(gpu.GhostIndex))
@@ -748,7 +750,8 @@ function GPUSupportArrays{D, T}(n::Integer, meta::SimulationMetaData{D, T, S, K,
         dual_time_stepping = meta.TimeSteppingMode isa DualSPHysicsSymplectic,
         cache_periodic_queries = meta.TimeSteppingMode isa DualSPHysicsSymplectic && meta.TimeSteppingMode.cache_periodic_queries,
         periodic_images = periodic_images_enabled(meta,kernel),
-        image_reach = meta.GPUCellSubdivision, image_max_cells = meta.GPUMaxCells, image_deterministic = meta.GPUDeterministicSort)
+        image_reach = meta.GPUCellSubdivision, image_x_reach = meta.GPUXCellSubdivision,
+        image_max_cells = meta.GPUMaxCells, image_deterministic = meta.GPUDeterministicSort)
 end
 
 """
@@ -2090,7 +2093,8 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         diagnostics = SimMetaData.GPUTimestepDiagnosticsEvery == 0 ? nothing :
             GPUKernels.TimestepDiagnostics{FloatType, eltype(gpu.ID)}(NumberOfPoints)
         cl     = CellListWorkspace{Dimensions, PositionType}(NumberOfPoints;
-                     reach = SimMetaData.GPUCellSubdivision, max_cells = SimMetaData.GPUMaxCells,
+                     reach = SimMetaData.GPUCellSubdivision, x_reach = SimMetaData.GPUXCellSubdivision,
+                     max_cells = SimMetaData.GPUMaxCells,
                      fixed_grid = SimMetaData.GPUFixedGrid, expansion = SimMetaData.GPUGridExpansion,
                      periodicity = SimMetaData.Periodicity,
                      deterministic = SimMetaData.GPUDeterministicSort)
@@ -2280,8 +2284,10 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         SimMetaData.IndexCounter = length(UniqueCells)
         output.save_particles(job.counter, job.time; download = dl, staged_slot = direct_writer_slabs)
         if SimMetaData.ExportGridCells
-            # Bin the downloaded positions, not the cells from the last neighbor rebuild.
-            grid_cells = occupied_cells_host(first(dl.buffers), bin_scale(job.grid, SimKernel.H⁻¹),
+            # Bin the downloaded positions into cubic export cells of edge H / GPUCellSubdivision,
+            # not the cells from the last neighbor rebuild or anisotropic x-subcells.
+            export_scale = typeof(SimKernel.H⁻¹)(reach(job.grid)) * SimKernel.H⁻¹
+            grid_cells = occupied_cells_host(first(dl.buffers), export_scale,
                 grid_cells_scratch, grid_cells_seen)
             output.save_grid(job.counter, grid_cells, SimParticles, job.time)
         end

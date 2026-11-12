@@ -207,7 +207,7 @@ function check_grid_file(path, positions, expected_time, edge, inverse_cell, D; 
     end
 end
 
-function simulate_grid(save, D, R; async, single_file, double_position, export_grid = true, compact = true)
+function simulate_grid(save, D, R; Rx = R, async, single_file, double_position, export_grid = true, compact = true)
     T = Float32
     constants = SimulationConstants{T}(dx = 0.02, c₀ = 20, g = 0, CFL = 0.2)
     kernel = SPHKernelInstance{D, T}(WendlandC2(); dx = constants.dx)
@@ -221,7 +221,7 @@ function simulate_grid(save, D, R; async, single_file, double_position, export_g
         SimulationName = "grid", SaveLocation = save, SimulationTime = 0.012,
         OutputTimes = 0.004, OutputVariables = ["ID"],
         ExportGridCells = export_grid, ExportSingleVTKHDF = single_file,
-        GPUCellSubdivision = R, GPUDoublePosition = double_position,
+        GPUCellSubdivision = R, GPUXCellSubdivision = Rx, GPUDoublePosition = double_position,
         GPUCompactBuffers = compact, GPUAsyncOutput = async, GPUUseGraph = false,
         GPUOutputQueueBytes = 4096, GPUOutputBufferBytes = 4096,
         VisualizeInParaview = false, OpenLogFile = false)
@@ -286,6 +286,34 @@ end
                 @test particles.Cells == reference.particles.Cells
                 @test !hasproperty(compact_control.particles, :Cells)
                 @test meta.Iteration == reference.meta.Iteration == compact_control.meta.Iteration
+            end
+            for D in (2, 3), (R, Rx) in ((1, 4), (2, 4)), async in (false, true), single_file in (false, true)
+                save = mkpath(joinpath(directory, "aniso_$(D)_$(R)_$(Rx)_$(async)_$(single_file)"))
+                result = simulate_grid(save, D, R; Rx, async, single_file, double_position = async)
+                (; particles, meta, kernel) = result
+                edge = Float64(kernel.H / R)
+                inverse_cell = Float32(R) * kernel.H⁻¹
+                if single_file
+                    h5open(joinpath(save, "grid.vtkhdf"), "r") do file
+                        root = file["VTKHDF"]
+                        times = read(root["Steps/Values"])
+                        offsets = read(root["Steps/PointOffsets"])
+                        for frame in 2:length(times)
+                            positions = root["Points"][:, offsets[frame] + 1:offsets[frame] + length(particles)]
+                            push!(reader_frames, check_grid_file(joinpath(save, "grid_GridCells.vtkhdf"),
+                                positions, times[frame], edge, inverse_cell, D; frame = frame - 1))
+                        end
+                    end
+                else
+                    for frame in 2:meta.OutputIterationCounter
+                        suffix = lpad(frame, 6, "0")
+                        positions = h5open(joinpath(save, "grid_$(suffix).vtkhdf"), "r") do file
+                            read(file["VTKHDF/Points"])
+                        end
+                        push!(reader_frames, check_grid_file(joinpath(save, "CellGrid_grid_$(suffix).vtkhdf"),
+                            positions, nothing, edge, inverse_cell, D))
+                    end
+                end
             end
 
             pvpython = Sys.which("pvpython")

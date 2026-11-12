@@ -27,7 +27,20 @@ end
         @test config.effective.pair_coordinates === (T === Float32 ? :cell_relative : :absolute)
         @test config.effective.cache_interaction_fields
         @test config.effective.cell_subdivision == 2
+        @test config.effective.x_cell_subdivision == 2
+        @test config.requested.cell_subdivision == 2
+        @test config.requested.x_cell_subdivision == 2
         @test isempty(config.fallbacks)
+
+        aniso = metadata(D, T; GPUCellSubdivision = 1, GPUXCellSubdivision = 4)
+        @test aniso.GPUCellSubdivision == 1 && aniso.GPUXCellSubdivision == 4
+        aniso_cfg = effective_configuration(aniso, kernel, LinearDensityDiffusion(), LaminarSPS(); particle_count = 8)
+        @test aniso_cfg.requested.cell_subdivision == 1
+        @test aniso_cfg.requested.x_cell_subdivision == 4
+        @test aniso_cfg.effective.cell_subdivision == 1
+        @test aniso_cfg.effective.x_cell_subdivision == 4
+        @test_throws ArgumentError metadata(D, T; GPUXCellSubdivision = 0)
+        @test_throws ArgumentError (aniso.GPUXCellSubdivision = 0)
 
         meta.GPUScalarSPSViscosity = false
         ordered_sps = effective_configuration(meta, kernel, LinearDensityDiffusion(), LaminarSPS(); particle_count = 8)

@@ -469,7 +469,7 @@ function _precompile_run(case, lanes::Int, double_position::Bool)
     gpu = upload_particles(particles, meta)
     red = ReductionWorkspace{SVector{3, T}}(length(particles))
     cl  = CellListWorkspace{D, position_float_type(meta)}(length(particles);
-              reach = meta.GPUCellSubdivision, max_cells = meta.GPUMaxCells,
+              reach = meta.GPUCellSubdivision, x_reach = meta.GPUXCellSubdivision, max_cells = meta.GPUMaxCells,
               fixed_grid = meta.GPUFixedGrid, expansion = meta.GPUGridExpansion,
               deterministic = meta.GPUDeterministicSort)
     sup = GPUSupportArrays{D, T}(gpu, meta)

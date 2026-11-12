@@ -216,6 +216,20 @@ criterion and stable particle ID every `N` output intervals in
 `<SimulationName>_Timestep.csv`. The default `0` disables diagnostics. Positive
 values retain integer IDs alongside the existing timestep reduction without
 changing its arithmetic. Sampling follows `OutputTimes` and works with `NoLog`.
+
+`GPUCellSubdivision = R` subdivides the neighbor-search grid isotropically into
+cells of edge `H / R` per axis (`1` by default: edge `H` and `(2R+1)^(D-1)`
+stencil row ranges). `GPUXCellSubdivision = Rx` (defaulting to
+`GPUCellSubdivision`) subdivides only the contiguous `x` axis into cells of
+edge `H / Rx` while keeping axes `2..D` at edge `H / R`. Setting `R = 1, Rx > 1`
+(for example `Rx = 2` or `Rx = 4`) keeps only `3` row ranges in 2D and `9` in
+3D (`1` contiguous `jlo:jhi` particle range per row) while narrowing the scanned
+x-width from `3H` to `(2 + 1/Rx) H`. Like `GPUCellSubdivision > 1`, `Rx > 1`
+reorders particles into finer x-subcells, which changes floating-point summation
+order and the pair orientation of reference density diffusion; exact CPU
+reference orientation requires `GPUCellSubdivision = 1` and
+`GPUXCellSubdivision = 1`. Exported VTKHDF grid cells continue to use cubic
+edge length `H / GPUCellSubdivision`.
 """
 mutable struct SimulationMetaData{Dimensions,
                                   FloatType <: AbstractFloat,
@@ -258,7 +272,8 @@ mutable struct SimulationMetaData{Dimensions,
     GPUMaxStepsPerSync::Int      # upper bound on the time steps enqueued between two host read backs
     GPUUseGraph::Bool            # replay the launch sequence of a step as a CUDA graph
     GPUClipTimeStepToOutput::Bool # shorten adaptive steps to land exactly on output deadlines
-    GPUCellSubdivision::Int      # cells per support radius H per axis (1: edge H, 3^D stencil; 2: edge H/2, 5^D stencil)
+    GPUCellSubdivision::Int      # cells per support radius H on axes 2..D (1: edge H, 3^(D-1) rows; 2: edge H/2, 5^(D-1) rows)
+    GPUXCellSubdivision::Int     # cells per support radius H along contiguous x-axis (defaults to GPUCellSubdivision)
     GPUFixedGrid::Bool           # retain initial grid bounds, growing only on explicitly allowed sides
     GPUGridExpansion::NTuple{Dimensions, Tuple{Bool, Bool}} # (negative, positive) growth per axis
     Periodicity::Union{Nothing, PeriodicBoundary{Dimensions, Float64}}
@@ -387,6 +402,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUUseGraph::Bool                       = true,
         GPUClipTimeStepToOutput::Bool            = false,
         GPUCellSubdivision::Int                 = 1,
+        GPUXCellSubdivision::Int                = GPUCellSubdivision,
         GPUFixedGrid::Bool                      = false,
         GPUGridExpansion::NTuple{Dimensions, Tuple{Bool, Bool}} = ntuple(_ -> (false, false), Dimensions),
         Periodicity::Union{Nothing, PeriodicBoundary{Dimensions}} = nothing,
@@ -402,6 +418,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
     ) where {Dimensions, FloatType <: AbstractFloat, SMode <: ShiftingMode, KMode <: KernelOutputMode,
              BMode <: MDBCMode, LMode <: LogMode}
     GPUCellSubdivision >= 1 || throw(ArgumentError("GPUCellSubdivision must be at least 1, got $GPUCellSubdivision"))
+    GPUXCellSubdivision >= 1 || throw(ArgumentError("GPUXCellSubdivision must be at least 1, got $GPUXCellSubdivision"))
     GPUFixedGrid || !any(sides -> any(sides), GPUGridExpansion) ||
         throw(ArgumentError("GPUGridExpansion requires GPUFixedGrid = true"))
     GPUOutputQueueBytes >= 0 || throw(ArgumentError("GPUOutputQueueBytes must be nonnegative"))
@@ -418,7 +435,8 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUSyncTimers, GPUDeterministicSort, GPUMaxCells, GPUInteractionThreads, GPULanesPerParticle,
         GPUInteractionAlwaysInline, GPUInteractionFastMath, GPURadialInteractions, GPUScalarSPSViscosity,
         GPUPreloadInteractionTypes,
-        GPUBoundaryForces, GPUAsyncOutput, GPUMaxStepsPerSync, GPUUseGraph, GPUClipTimeStepToOutput, GPUCellSubdivision,
+        GPUBoundaryForces, GPUAsyncOutput, GPUMaxStepsPerSync, GPUUseGraph, GPUClipTimeStepToOutput,
+        GPUCellSubdivision, GPUXCellSubdivision,
         GPUFixedGrid, GPUGridExpansion, Periodicity,
         GPUDoublePosition, GPUPeriodicCellCoordinates, GPUPeriodicImages, GPUCacheInteractionFields, GPUFusePredictor, GPUCompactBuffers, GPUOutputQueueBytes, GPUOutputBufferBytes,
         GPUTimestepDiagnosticsEvery,
@@ -448,6 +466,17 @@ SimulationMetaData{D,T}(; kwargs...) where {D,T} =
 function Base.setproperty!(m::SimulationMetaData{D, T}, name::Symbol, x) where {D, T}
     if name === :OutputTimes
         return setfield!(m, name, _output_times(Float64, x))
+    elseif name === :GPUCellSubdivision
+        v = convert(Int, x)
+        v >= 1 || throw(ArgumentError("GPUCellSubdivision must be at least 1, got $v"))
+        if getfield(m, :GPUXCellSubdivision) == getfield(m, :GPUCellSubdivision)
+            setfield!(m, :GPUXCellSubdivision, v)
+        end
+        return setfield!(m, name, v)
+    elseif name === :GPUXCellSubdivision
+        v = convert(Int, x)
+        v >= 1 || throw(ArgumentError("GPUXCellSubdivision must be at least 1, got $v"))
+        return setfield!(m, name, v)
     else
         return setfield!(m, name, convert(fieldtype(typeof(m), name), x))
     end

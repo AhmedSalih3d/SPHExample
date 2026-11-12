@@ -16,14 +16,14 @@ mutable struct PeriodicImageWorkspace{A,C,P,O,IC}
     initialized::Bool
 end
 
-function PeriodicImageWorkspace{D,T,TP}(n; reach=1, max_cells=50_000_000, deterministic=true,
+function PeriodicImageWorkspace{D,T,TP}(n; reach=1, x_reach=reach, max_cells=50_000_000, deterministic=true,
         preserve_pair_order=false, cache_fields=false) where {D,T,TP}
     0 < n <= GPUCellGrid.CELL_INDEX_LIMIT ÷ 2 || throw(ArgumentError("Periodic source capacity exceeds Int32 indexing"))
     arrays() = (; Position=CuVector{SVector{D,TP}}(undef,2n),
         Velocity=CuVector{SVector{D,T}}(undef,2n), Density=CuVector{T}(undef,2n),
         Type=CuVector{ParticleType}(undef,2n))
     raw, sorted = arrays(), arrays()
-    cl = CellListWorkspace{D,TP}(2n; reach, max_cells, deterministic)
+    cl = CellListWorkspace{D,TP}(2n; reach, x_reach, max_cells, deterministic)
     return PeriodicImageWorkspace(raw,sorted,CuVector{Int32}(undef,2n),CuVector{Int32}(undef,n),
         CuVector{Int32}(undef,2n),CuVector{PosCell{D,T}}(undef,2n),
         CuArray(Int32[n]),CUDA.zeros(Int32,1),CUDA.zeros(Int32,1),
@@ -36,25 +36,28 @@ end
 # dimensions and pointers stable while the original particle grid shrinks.
 function configure_periodic_images!(images,periodicity,original_grid,kernel)
     D = length(original_grid.dims)
-    R = Int(GPUCellGrid.reach(images.cl.grid))
-    s = Float64(cell_size(original_grid,kernel.H))
-    lower = ntuple(d -> (original_grid.origin[d]+GPUCellGrid.reach(original_grid)-1)*s - 2kernel.H,D)
-    upper = ntuple(d -> (original_grid.origin[d]+original_grid.dims[d]-GPUCellGrid.reach(original_grid))*s + 2kernel.H,D)
+    s = Float64.(cell_size(original_grid,kernel.H))
+    lower = ntuple(d -> (original_grid.origin[d]+GPUCellGrid.axis_reach(original_grid, d)-1)*GPUCellGrid.axis_scale(s, d) - 2kernel.H,D)
+    upper = ntuple(d -> (original_grid.origin[d]+original_grid.dims[d]-GPUCellGrid.axis_reach(original_grid, d))*GPUCellGrid.axis_scale(s, d) + 2kernel.H,D)
     bounds = (; domain_min=lower,domain_max=upper)
     # The initializer adds transverse image margins itself.
     if !images.initialized
         return initialize_periodic_images!(images,periodicity,bounds,kernel)
     end
     grid = images.cl.grid
-    scale = R*kernel.H⁻¹
-    coordinate_limit = Float64(typemax(Int32))-2R-4
-    all(d -> abs((lower[d]-abs(periodicity.translation[d]))*scale) < coordinate_limit &&
-        abs((upper[d]+abs(periodicity.translation[d]))*scale) < coordinate_limit,1:D) ||
+    scale = GPUCellGrid.bin_scale(grid, kernel.H⁻¹)
+    all(d -> begin
+        r_d = Int(GPUCellGrid.axis_reach(grid, d))
+        sc = Float64(GPUCellGrid.axis_scale(scale, d))
+        coordinate_limit = Float64(typemax(Int32))-2r_d-4
+        abs((lower[d]-abs(periodicity.translation[d]))*sc) < coordinate_limit &&
+            abs((upper[d]+abs(periodicity.translation[d]))*sc) < coordinate_limit
+    end,1:D) ||
         throw(ArgumentError("Periodic force-source grid coordinates exceed Int32 indexing"))
     lo = ntuple(d -> d == periodicity.axis ? grid.origin[d] :
-        min(grid.origin[d],GPUCellGrid.map_floor(bounds.domain_min[d]-abs(periodicity.translation[d]),scale)-Int32(R+1)),D)
+        min(grid.origin[d],GPUCellGrid.map_floor(bounds.domain_min[d]-abs(periodicity.translation[d]),Float64(GPUCellGrid.axis_scale(scale, d)))-(GPUCellGrid.axis_reach(grid, d)+Int32(1))),D)
     hi = ntuple(d -> d == periodicity.axis ? grid.origin[d]+grid.dims[d]-Int32(1) :
-        max(grid.origin[d]+grid.dims[d]-Int32(1),GPUCellGrid.map_floor(bounds.domain_max[d]+abs(periodicity.translation[d]),scale)+Int32(R+1)),D)
+        max(grid.origin[d]+grid.dims[d]-Int32(1),GPUCellGrid.map_floor(bounds.domain_max[d]+abs(periodicity.translation[d]),Float64(GPUCellGrid.axis_scale(scale, d)))+(GPUCellGrid.axis_reach(grid, d)+Int32(1))),D)
     dims64 = ntuple(d -> Int64(hi[d])-Int64(lo[d])+1,D)
     ncells = prod(Float64.(dims64))
     0 < ncells <= min(images.cl.max_cells,GPUCellGrid.CELL_INDEX_LIMIT) ||
@@ -79,8 +82,8 @@ function initialize_periodic_images!(images, periodicity, scheme, kernel)
     all(d -> isfinite(scheme.domain_min[d]) && isfinite(scheme.domain_max[d]) &&
         scheme.domain_min[d] < scheme.domain_max[d],1:D) ||
         throw(ArgumentError("Periodic images require finite, ordered domain bounds"))
-    R = Int(GPUCellGrid.reach(images.cl.grid))
-    scale = R * kernel.H⁻¹
+    grid0 = images.cl.grid
+    scale = GPUCellGrid.bin_scale(grid0, kernel.H⁻¹)
     lower = ntuple(D) do d
         d == periodicity.axis ? Float64(periodicity.lower) - kernel.H :
             scheme.domain_min[d] - abs(periodicity.translation[d])
@@ -89,11 +92,15 @@ function initialize_periodic_images!(images, periodicity, scheme, kernel)
         d == periodicity.axis ? Float64(periodicity.upper) + kernel.H :
             scheme.domain_max[d] + abs(periodicity.translation[d])
     end
-    coordinate_limit = Float64(typemax(Int32)) - 2R - 4
-    all(d -> abs(lower[d]*scale) < coordinate_limit && abs(upper[d]*scale) < coordinate_limit,1:D) ||
+    all(d -> begin
+        r_d = Int(GPUCellGrid.axis_reach(grid0, d))
+        sc = Float64(GPUCellGrid.axis_scale(scale, d))
+        coordinate_limit = Float64(typemax(Int32)) - 2r_d - 4
+        abs(lower[d]*sc) < coordinate_limit && abs(upper[d]*sc) < coordinate_limit
+    end,1:D) ||
         throw(ArgumentError("Periodic source grid coordinates exceed Int32 indexing"))
-    lo = ntuple(d -> GPUCellGrid.map_floor(lower[d],scale) - Int32(R+1),D)
-    hi = ntuple(d -> GPUCellGrid.map_floor(upper[d],scale) + Int32(R+1),D)
+    lo = ntuple(d -> GPUCellGrid.map_floor(lower[d],Float64(GPUCellGrid.axis_scale(scale, d))) - (GPUCellGrid.axis_reach(grid0, d)+Int32(1)),D)
+    hi = ntuple(d -> GPUCellGrid.map_floor(upper[d],Float64(GPUCellGrid.axis_scale(scale, d))) + (GPUCellGrid.axis_reach(grid0, d)+Int32(1)),D)
     dims64 = ntuple(d -> Int64(hi[d]) - Int64(lo[d]) + 1,D)
     limit = min(images.cl.max_cells,GPUCellGrid.CELL_INDEX_LIMIT)
     ncells = prod(Float64.(dims64))
@@ -112,10 +119,11 @@ end
 @inline function periodic_source_inside(x,grid,scale)
     valid = all(isfinite,x)
     for d in 1:length(x)
+        r_d = GPUCellGrid.axis_reach(grid, d)
         # Check before converting coordinates to Int32.
-        value = x[d] * scale
-        valid &= grid.origin[d] + GPUCellGrid.reach(grid) + 0.5 <= value <=
-            grid.origin[d] + grid.dims[d] - GPUCellGrid.reach(grid) - 1.5
+        value = x[d] * GPUCellGrid.axis_scale(scale, d)
+        valid &= grid.origin[d] + r_d + 0.5 <= value <=
+            grid.origin[d] + grid.dims[d] - r_d - 1.5
     end
     return valid
 end

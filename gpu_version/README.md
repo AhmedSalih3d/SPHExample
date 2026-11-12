@@ -3062,7 +3062,8 @@ validation; it is not a bitwise-preserving performance option.
 | `GPUMaxStepsPerSync` | `32` | Upper bound on the steps enqueued between two host read backs of the device resident step state. The actual batch is the estimated number of steps until the next cell list rebuild or output. `1` reproduces a synchronization per step. |
 | `GPUUseGraph` | `true` | Cache CUDA graphs of 1, 2, 4, 8, 16, and 32 steps and compose each host batch from them. Disabled automatically with `GPUSyncTimers`. |
 | `GPUClipTimeStepToOutput` | `false` | Shorten adaptive timesteps to land exactly on output deadlines, including `SimulationTime`. Changes trajectories and potentially step counts; see "Exact output deadlines" below. |
-| `GPUCellSubdivision` | `1` | Positive integer `R`: cells of edge `H/R`, a `(2R+1)^D` stencil, and `(2R+1)^(D-1)` contiguous row ranges. `1` reproduces the CPU grid, `2` uses half-width cells, and `4` uses quarter-width cells. Finer grids reduce candidates but increase dense-grid memory, row overhead and mDBC work. With reference interactions, only `1` reproduces the CPU's density-diffusion pair orientation. Radial symmetric diffusion removes that orientation dependence; accumulation and SPS rounding can still differ. Benchmark the intended precision, lane count and boundary mode before changing it. |
+| `GPUCellSubdivision` | `1` | Positive integer `R`: cells of edge `H/R` on axes `2..D` (and along `x` unless `GPUXCellSubdivision` overrides it), a `(2R+1)^D` isotropic stencil, and `(2R+1)^(D-1)` contiguous row ranges. `1` reproduces the CPU grid, `2` uses half-width cells, and `4` uses quarter-width cells. Finer grids reduce candidates but increase dense-grid memory, row overhead and mDBC work. With reference interactions, only `R = 1, Rx = 1` reproduces the CPU's density-diffusion pair orientation. Radial symmetric diffusion removes that orientation dependence; accumulation and SPS rounding can still differ. Benchmark the intended precision, lane count and boundary mode before changing it. |
+| `GPUXCellSubdivision` | `GPUCellSubdivision` | Positive integer `Rx`: cells of edge `H/Rx` along the contiguous `x` axis (`CellGrid{D, R, Rx}`). Setting `GPUCellSubdivision = 1, GPUXCellSubdivision = Rx` (`Rx = 2` or `4`) keeps only `3^(D-1)` row ranges (`1` contiguous `jlo:jhi` range per row) while narrowing the scanned x-width from `3H` to `(2 + 1/Rx) H`. Like `GPUCellSubdivision > 1`, `Rx > 1` reorders particles into finer x-subcells, changing summation order and reference density-diffusion pair orientation; exported VTKHDF grid cells continue to use cubic edge `H / GPUCellSubdivision`. |
 | `GPUDoublePosition` | `false` | Store and integrate the particle positions (and the mDBC ghost node positions) in `Float64` while everything else stays in `FloatType`; the pair loops use cell relative `FloatType` coordinates (see "Double positions" above). Use it for `Float32` runs of domains far from the origin or with many steps. No effect with `FloatType = Float64`. Allocate the particles with `AllocateDataStructures(SimGeometry, SimMetaData)` so that the input is read in `Float64`. |
 | `GPUCacheInteractionFields` | `false` | Cache inverse density and pressure per particle for reuse in neighbor interactions. Adds two `FloatType` scalars per particle (8 bytes with `Float32`, 16 with `Float64`), independently of `GPUCompactBuffers`. Refreshed for each evaluated density state, including predictor and mDBC corrections. Trades memory for fewer neighbor-loop divisions and EOS evaluations; benchmark elapsed solver time for your case. |
 | `GPUFusePredictor` | `true` | Fuse the first gather and half-step prediction for stationary nonperiodic DBC symplectic runs with `GPUInteractionFastMath = true`. Separate predictor caches and cell-relative positions prevent concurrent input overwrites. Prediction inherits interaction fast math and may change trajectories slightly. Moving walls, floating bodies, external forces, rotations, open boundaries, mDBC, periodic, single-neighbor, strict-math and variable-resolution runs retain separate prediction. See "Gather/predictor fusion" below. |
@@ -4103,10 +4104,12 @@ julia -t 2,0 --project=gpu_version gpu_version/test/floating_forces.jl
 `test/cell_subdivision_benchmark.jl` checks candidate accounting against the
 device, self exclusion versus coincident particles, inclusive support cutoffs,
 retained cell assignments after motion, and exact frozen-state neighbor IDs
-for subdivisions 1, 2, 3 and 4 in 2D/3D and native/mixed precision, including
-positions translated by 10 000 m. Short Float64 trajectories with zero
-density diffusion also agree across subdivisions 1, 2 and 4. These checks
-do not promise bitwise trajectory equality with asymmetric reference
+for isotropic subdivisions `R in (1, 2, 3, 4)` and anisotropic x-row
+subdivisions `Rx in (1, 2, 4)` (`CellGrid{D, R, Rx}`) in 2D/3D and native/mixed
+precision, including positions translated by 10 000 m and `SimpleMDBC` /
+`UpdatedMDBC` ghost interpolation. Short Float64 trajectories with zero
+density diffusion also agree across isotropic and anisotropic subdivisions.
+These checks do not promise bitwise trajectory equality with asymmetric reference
 diffusion or at floating-point cutoff ties.
 
 ```bash
@@ -4192,8 +4195,24 @@ for `R=2 / 4`: more pruning brings almost no additional whole-loop benefit,
 and mDBC device time grows from about 0.179 to 0.250 ms/step.
 
 **Reflection and recommendation:** tune the existing subdivision first,
-keeping `R=1` when reproducing reference CPU pair orientation matters.
-`R=2` is a lower-memory alternative; consider `R=4` for large measured cases
+keeping `R=1, Rx=1` when reproducing reference CPU pair orientation matters.
+Anisotropic x-row subdivision (`GPUCellSubdivision = 1, GPUXCellSubdivision = Rx`,
+e.g. `Rx = 2` or `Rx = 4`) narrows each contiguous x-row from `3H` to
+`(2 + 1/Rx) H` while keeping only `3^(D-1)` row ranges per particle (`3` in 2D,
+`9` in 3D) and `Rx` times the `R=1` cell count instead of `R^D`.
+Measured on an NVIDIA RTX A1000 Laptop GPU (`sm_86`, Julia 1.12.7, CUDA.jl 6.4.2,
+`Float32` physics / `Float64` positions, CUDA graphs, 5 alternating warmed rounds):
+
+| Case | Particles | `(R, Rx)` | Candidate reduction | CUPTI `interaction_kernel!` `smsp__inst_issued.sum` | CUPTI `interaction_kernel!` `gpu__time_duration.sum` | Paired whole-solver `RunSimulation` | Paired `SimulationLoop` |
+| --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| `StillWedge2D_MDBC_dp0.02` (`1.0 s`, `2,125` steps) | 3,027 | `(1, 2)` | -16.03% | -8.31% (`1.12M -> 1.02M`) | -35.59% (`155.7 -> 100.3 μs`) | **-3.03%** (`0.1698 -> 0.1646 s`) | **-6.34%** (`0.1451 -> 0.1362 s`) |
+| `StillWedge2D_MDBC_dp0.02` (`1.0 s`, `2,125` steps) | 3,027 | `(1, 4)` | -23.91% | -17.74% (`1.12M -> 0.92M`) | -57.04% (`155.7 -> 66.9 μs`) | **-9.95%** (`0.1698 -> 0.1545 s`) | **-10.72%** (`0.1451 -> 0.1292 s`) |
+| `DamBreak3D_dp0.02` (`0.2 s`, `960` steps) | 17,446 | `(1, 2)` | -15.16% | -8.89% (`25.45M -> 23.19M`) | -15.22% (`389.5 -> 330.2 μs`) | **-9.74%** (`0.7270 -> 0.6591 s`) | **-9.08%** (`0.6963 -> 0.6349 s`) |
+| `DamBreak3D_dp0.02` (`0.2 s`, `960` steps) | 17,446 | `(1, 4)` | -20.54% | -13.11% (`25.45M -> 22.11M`) | -20.05% (`389.5 -> 311.4 μs`) | **-12.10%** (`0.7270 -> 0.6394 s`) | **-13.48%** (`0.6963 -> 0.6014 s`) |
+| `DamBreak3D_dp0.0085` (`0.03 s`, `339` steps) | 171,496 | `(1, 2)` | -15.46% | -13.16% (`352.04M -> 305.70M`) | -11.16% (`3.824 -> 3.397 ms`) | **-10.54% to -11.01%** (`2.651 -> 2.358 s`) | **-11.19% to -11.34%** (`2.599 -> 2.305 s`) |
+| `DamBreak3D_dp0.0085` (`0.03 s`, `339` steps) | 171,496 | `(1, 4)` | -23.54% | -20.73% (`352.04M -> 279.07M`) | -18.89% (`3.824 -> 3.102 ms`) | **-17.61% to -18.62%** (`2.651 -> 2.156 s`) | **-18.36% to -18.99%** (`2.599 -> 2.103 s`) |
+
+`R=2` is a lower-memory isotropic alternative; consider `R=4` or `R=1, Rx=4` for large measured cases
 without assuming it helps mDBC, other GPUs, later states or output-heavy runs.
 Reference density diffusion can change with grid-dependent pair orientation.
 Radial diffusion removes that dependence but changes the reference operator,

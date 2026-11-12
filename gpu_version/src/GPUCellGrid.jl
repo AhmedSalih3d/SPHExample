@@ -1,22 +1,27 @@
 """
 GPU cell list (uniform grid neighbour search).
 
-Particles are binned into a dense grid of cubic cells with edge length
-`H / R` (`H` the kernel support radius, `R` the *reach* of the grid, a type
-parameter). A particle's neighbours then lie in the `(2R+1)^D` cells around
-its own: `R = 1` is the classic grid of edge `H` with a 3x3(x3) stencil,
-`R = 2` bins at `H/2` with a 5x5(x5) stencil, which scans about 42 % less
-volume in 3D (2.5^3 = 15.6 cells of edge `H` instead of 27) at the price of
-more, shorter cell ranges. The grid covers the bounding box of all particles
-plus an `R` cell margin on every side, so that the rows of neighbouring cells
-around any occupied cell are always valid indices. Particles are physically
-reordered by cell (counting sort) so that a particle's neighbours are
+Particles are binned into a dense grid of cells with edge lengths
+`(H / Rx, H / R, ...)` (`H` the kernel support radius, `R` the reach of axes
+`2..D` and `Rx` the reach along the contiguous `x` axis, both type parameters
+defaulting to `Rx = R`). A particle's neighbours then lie in the
+`(2Rx+1) * (2R+1)^(D-1)` cells around its own: `R = Rx = 1` is the classic
+cubic grid of edge `H` with a 3x3(x3) stencil, `R = Rx = 2` bins at `H/2` with
+a 5x5(x5) stencil, which scans about 42 % less volume in 3D (2.5^3 = 15.6 cells
+of edge `H` instead of 27) at the price of more, shorter cell ranges, while
+anisotropic x-subdivision (`R = 1, Rx > 1`, e.g. `Rx = 2` or `Rx = 4`) keeps
+only `(2R+1)^(D-1)` contiguous row ranges (3 in 2D, 9 in 3D for `R = 1`) and
+narrows each x-row from `3H` (`Rx = 1`) to `(2 + 1/Rx) H`. The grid covers the
+bounding box of all particles plus an `Rx` cell margin along `x` and an `R`
+cell margin on axes `2..D`, so that the rows of neighbouring cells around any
+occupied cell are always valid indices. Particles are physically reordered by
+cell (counting sort) so that a particle's neighbours in each x-row are
 contiguous in memory.
 
 Cell indices are linear with the first coordinate varying fastest. The
-`2R+1` cells `(cx-R .. cx+R, cy, cz)` of one row therefore form one contiguous
-particle range (`row_range`), which the interaction kernels exploit: a 3D
-particle scans `(2R+1)^2` ranges (9 for `R = 1`, 25 for `R = 2`).
+`2Rx+1` cells `(cx-Rx .. cx+Rx, cy, cz)` of one row therefore form one
+contiguous particle range (`row_range`), which the interaction kernels exploit:
+a 3D particle scans `(2R+1)^2` ranges (9 for `R = 1`, 25 for `R = 2`).
 
 `CellStart` stores exclusive prefix sums with a leading zero: particles of
 cell `c` occupy the (1-based) index range `CellStart[c]+1 : CellStart[c+1]`.
@@ -26,7 +31,7 @@ Positions may be stored in a higher precision than the rest of the state
 loops then never touch the double positions: every particle carries a
 `PosCell`, its position relative to the anchor of its cell list cell in the
 working precision plus the linear cell index (the `poscell` of DualSPHysics),
-and the pair vector is `(relᵢ - relⱼ) + cellsize * (cellᵢ - cellⱼ)`
+and the pair vector is `(relᵢ - relⱼ) + cellsize .* (cellᵢ - cellⱼ)`
 (`pair_vector`). The cell difference is a small integer known from the row
 being scanned, so the pair distance has the precision of the cell edge rather
 than of the distance to the origin.
@@ -42,7 +47,7 @@ using ..GPUStepState: DeviceStep, StepState, I_STOP, STOP_REBUILD, STOP_PERIODIC
 
 export CellGrid, CellListWorkspace, update_cell_list!, compact_nonzero!, unique_cells_host, occupied_cells_host,
        map_floor, cell_coords, linear_cell, local_coords, row_offsets, row_range, in_grid,
-       reach, bin_scale, gather_kernel!, thread_index, load_grid,
+       reach, x_reach, axis_reach, axis_scale, bin_scale, gather_kernel!, thread_index, load_grid,
        PosCell, CellRow, cell_rows, cell_size, cell_anchor, global_coords, pos_cell, load_pos_cell, pair_vector,
        prepare_cell_grid!, sync_cell_grid!, consume_cell_grid!, GRID_OK, GRID_NOT_NEEDED, GRID_CAPACITY,
        GRID_NONFINITE, GRID_COORD_OVERFLOW, GRID_CELL_OVERFLOW, GRID_MAX_CELLS, GRID_FIXED_BOUNDS
@@ -71,10 +76,12 @@ end
 """
 Uniform grid description: `origin` is the global cell coordinate of the first
 grid cell (including the margin) and `dims` the number of cells per axis. The
-type parameter `R` is the reach of the neighbour stencil in cells (the cell
-edge is `H / R`, see the module documentation); `CellGrid{D}` is `R = 1`.
+type parameter `R` is the reach of the neighbour stencil in cells along axes
+`2..D` (edge `H / R`) and `Rx` is the reach along the contiguous `x` axis
+(edge `H / Rx`, see the module documentation); `CellGrid{D, R}` defaults to
+`Rx = R` and `CellGrid{D}` is `R = Rx = 1`.
 """
-struct CellGrid{D, R}
+struct CellGrid{D, R, Rx}
     origin::NTuple{D, Int32}
     dims::NTuple{D, Int32}
     ncells::Int32
@@ -92,13 +99,17 @@ const GRID_CELL_OVERFLOW  = Int32(5)
 const GRID_MAX_CELLS      = Int32(6)
 const GRID_FIXED_BOUNDS   = Int32(7)
 
-struct GridBuildState{D, R}
-    grid::CellGrid{D, R}
+struct GridBuildState{D, R, Rx}
+    grid::CellGrid{D, R, Rx}
     status::Int32
     nfrozen::Int32
 end
-GridBuildState(grid::CellGrid{D, R}, status) where {D, R} = GridBuildState{D, R}(grid, status, Int32(0))
-GridBuildState{D, R}(grid, status) where {D, R} = GridBuildState{D, R}(grid, status, Int32(0))
+GridBuildState(grid::CellGrid{D, R, Rx}, status, nfrozen = Int32(0)) where {D, R, Rx} =
+    GridBuildState{D, R, Rx}(grid, Int32(status), Int32(nfrozen))
+GridBuildState{D, R, Rx}(grid, status) where {D, R, Rx} =
+    GridBuildState{D, R, Rx}(grid, Int32(status), Int32(0))
+GridBuildState{D, R}(grid::CellGrid{D, R, Rx}, status, nfrozen = Int32(0)) where {D, R, Rx} =
+    GridBuildState{D, R, Rx}(grid, Int32(status), Int32(nfrozen))
 
 struct BoundingBoxWorkspace{D, T}
     partial::CuVector{T}
@@ -112,25 +123,45 @@ function BoundingBoxWorkspace{D, T}(n::Integer) where {D, T}
                                       CuVector{Int32}(undef, nblocks), nblocks)
 end
 
-(::Type{CellGrid{D}})(origin, dims, ncells) where {D} = CellGrid{D, 1}(origin, dims, ncells)
-CellGrid{D, R}() where {D, R} = CellGrid{D, R}(ntuple(_ -> Int32(0), Val(D)), ntuple(_ -> Int32(1), Val(D)), Int32(1))
-CellGrid{D}() where {D} = CellGrid{D, 1}()
+(::Type{CellGrid{D, R}})(origin, dims, ncells) where {D, R} = CellGrid{D, R, R}(origin, dims, ncells)
+(::Type{CellGrid{D}})(origin, dims, ncells) where {D} = CellGrid{D, 1, 1}(origin, dims, ncells)
+CellGrid{D, R, Rx}() where {D, R, Rx} = CellGrid{D, R, Rx}(ntuple(_ -> Int32(0), Val(D)), ntuple(_ -> Int32(1), Val(D)), Int32(1))
+CellGrid{D, R}() where {D, R} = CellGrid{D, R, R}()
+CellGrid{D}() where {D} = CellGrid{D, 1, 1}()
 
 """
     reach(grid) -> Int32
 
-Number of cells the neighbour stencil extends from a particle's own cell in
-every direction (`R`).
+Number of cells the neighbour stencil extends from a particle's own cell along
+axes `2..D` (`R`, matching `GPUCellSubdivision`).
 """
 @inline reach(::CellGrid{D, R}) where {D, R} = Int32(R)
 
 """
+    x_reach(grid) -> Int32
+
+Number of cells the neighbour stencil extends from a particle's own cell along
+the contiguous `x` axis (`Rx`, matching `GPUXCellSubdivision`).
+"""
+@inline x_reach(::CellGrid{D, R, Rx}) where {D, R, Rx} = Int32(Rx)
+
+@inline axis_reach(::CellGrid{D, R, Rx}, d::Integer) where {D, R, Rx} = d == 1 ? Int32(Rx) : Int32(R)
+@inline axis_reach(::Val{R}, ::Val{Rx}, d::Integer) where {R, Rx} = d == 1 ? Int32(Rx) : Int32(R)
+@inline axis_scale(s::Real, d::Integer) = s
+@inline axis_scale(s::Union{Tuple, StaticVector}, d::Integer) = @inbounds s[d]
+@inline scale_valid(s::Real) = isfinite(s) & (s > zero(s))
+@inline scale_valid(s::Union{Tuple, StaticVector}) = all(x -> isfinite(x) & (x > zero(x)), s)
+
+"""
     bin_scale(grid, InverseCutOff)
 
-Factor that converts a position into a cell coordinate of `grid`: `R / H`.
-`R` is a small integer, so the scaled value is exact for `R = 1, 2, 4`.
+Factor that converts a position into cell coordinates of `grid`: scalar `R / H`
+when `Rx == R`, or `SVector{D, T}((Rx / H, R / H, ...))` when `Rx != R`.
+`R` and `Rx` are small integers, so the scaled values are exact for `1, 2, 4`.
 """
-@inline bin_scale(::CellGrid{D, R}, InverseCutOff::T) where {D, R, T} = T(R) * InverseCutOff
+@inline bin_scale(::CellGrid{D, R, R}, InverseCutOff::T) where {D, R, T} = T(R) * InverseCutOff
+@inline bin_scale(::CellGrid{D, R, Rx}, InverseCutOff::T) where {D, R, Rx, T} =
+    SVector{D, T}(ntuple(d -> (d == 1 ? T(Rx) : T(R)) * InverseCutOff, Val(D)))
 
 """
     load_grid(g) -> CellGrid
@@ -193,8 +224,12 @@ function ensure_scan_capacity!(ws::IntScanWorkspace, n::Integer)
     return nothing
 end
 
-@inline function cell_coords(pos::SVector{D, T}, InverseCutOff) where {D, T}
+@inline function cell_coords(pos::SVector{D, T}, InverseCutOff::Real) where {D, T}
     return ntuple(d -> map_floor(pos[d], InverseCutOff), Val(D))
+end
+
+@inline function cell_coords(pos::SVector{D, T}, InverseCutOff::Union{NTuple{D, Real}, StaticVector{D, <:Real}}) where {D, T}
+    return ntuple(d -> map_floor(pos[d], @inbounds(InverseCutOff[d])), Val(D))
 end
 
 @inline function in_grid(grid::CellGrid{D}, c::NTuple{D, Int32}) where {D}
@@ -208,18 +243,18 @@ end
 
 """
 Linear (1-based) cell index of the global cell coordinates `c`. The result is
-clamped to the interior of the grid (`R` cells away from the edge, i.e. inside
-the margin) so that a corrupt position can never produce an out of bounds
-neighbour range.
+clamped to the interior of the grid (`Rx` cells away from the `x` edge and `R`
+cells away from the `2..D` edges, i.e. inside the margin) so that a corrupt
+position can never produce an out of bounds neighbour range.
 """
-@inline function linear_cell(grid::CellGrid{2, R}, c::NTuple{2, Int32}) where {R}
-    l1 = clamp(c[1] - grid.origin[1], Int32(R), grid.dims[1] - Int32(R + 1))
+@inline function linear_cell(grid::CellGrid{2, R, Rx}, c::NTuple{2, Int32}) where {R, Rx}
+    l1 = clamp(c[1] - grid.origin[1], Int32(Rx), grid.dims[1] - Int32(Rx + 1))
     l2 = clamp(c[2] - grid.origin[2], Int32(R), grid.dims[2] - Int32(R + 1))
     return Int32(1) + l1 + grid.dims[1] * l2
 end
 
-@inline function linear_cell(grid::CellGrid{3, R}, c::NTuple{3, Int32}) where {R}
-    l1 = clamp(c[1] - grid.origin[1], Int32(R), grid.dims[1] - Int32(R + 1))
+@inline function linear_cell(grid::CellGrid{3, R, Rx}, c::NTuple{3, Int32}) where {R, Rx}
+    l1 = clamp(c[1] - grid.origin[1], Int32(Rx), grid.dims[1] - Int32(Rx + 1))
     l2 = clamp(c[2] - grid.origin[2], Int32(R), grid.dims[2] - Int32(R + 1))
     l3 = clamp(c[3] - grid.origin[3], Int32(R), grid.dims[3] - Int32(R + 1))
     return Int32(1) + l1 + grid.dims[1] * (l2 + grid.dims[2] * l3)
@@ -326,14 +361,14 @@ lazy otherwise).
 """
     row_range(grid, CellStart, c, off) -> (jlo, jhi)
 
-The (1-based, inclusive) particle index range of the row of `2R+1` cells
+The (1-based, inclusive) particle index range of the row of `2Rx+1` cells
 centred on cell `c + off`, where `off` is one of `row_offsets(grid)` or a
 `CellRow` of `cell_rows(grid)`.
 """
-@inline function row_range(grid::CellGrid{D, R}, CellStart, c::Int32, off::Int32) where {D, R}
-    row0 = c + off - Int32(R)
+@inline function row_range(grid::CellGrid{D, R, Rx}, CellStart, c::Int32, off::Int32) where {D, R, Rx}
+    row0 = c + off - Int32(Rx)
     @inbounds jlo = CellStart[row0] + Int32(1)
-    @inbounds jhi = CellStart[row0 + Int32(2R + 1)]
+    @inbounds jhi = CellStart[row0 + Int32(2Rx + 1)]
     return jlo, jhi
 end
 
@@ -349,7 +384,7 @@ end
 Position of a particle relative to the anchor of its cell list cell, in the
 working precision `T`, together with the linear index of that cell. Built
 from the (possibly higher precision) position by `pos_cell`; pair vectors are
-formed with `pair_vector`. The anchor is `cell * cellsize` in the global cell
+formed with `pair_vector`. The anchor is `cell .* cellsize` in the global cell
 coordinates, so the relative position is bounded by the cell edge plus the
 displacement since the last rebuild, and rounding it to `T` costs an ulp of
 the cell edge instead of an ulp of the position itself. In 3D the struct is
@@ -361,23 +396,29 @@ struct PosCell{D, T}
 end
 
 """
-    cell_size(grid, H) -> H / R
+    cell_size(grid, H)
 
 Edge of a cell of `grid` for the support radius `H` (in the precision of `H`;
-exact for `R = 1, 2, 4`). The pair vectors of `PosCell`s are formed with this
-value, so it must be the same in `pos_cell` and `pair_vector`.
+exact for `R, Rx in (1, 2, 4)`): scalar `H / R` when `Rx == R`, or
+`SVector{D, T}((H / Rx, H / R, ...))` when `Rx != R`. The pair vectors of
+`PosCell`s are formed with this value, so it must be the same in `pos_cell`
+and `pair_vector`.
 """
-@inline cell_size(::CellGrid{D, R}, H::T) where {D, R, T} = H / T(R)
+@inline cell_size(::CellGrid{D, R, R}, H::T) where {D, R, T} = H / T(R)
+@inline cell_size(::CellGrid{D, R, Rx}, H::T) where {D, R, Rx, T} =
+    SVector{D, T}(ntuple(d -> H / (d == 1 ? T(Rx) : T(R)), Val(D)))
 
 """
     cell_anchor(c, s, TP) -> SVector{D, TP}
 
-Anchor point of the cell with global coordinates `c` and edge `s`, in the
-position precision `TP`: `c * s` evaluated in `TP`, exact for the cell counts
-of any realistic grid.
+Anchor point of the cell with global coordinates `c` and edge `s` (scalar or
+per-axis vector/tuple), in the position precision `TP`: `c .* s` evaluated in
+`TP`, exact for the cell counts of any realistic grid.
 """
-@inline cell_anchor(c::NTuple{D, Int32}, s::T, ::Type{TP}) where {D, T, TP} =
+@inline cell_anchor(c::NTuple{D, Int32}, s::T, ::Type{TP}) where {D, T <: Real, TP} =
     SVector{D, TP}(ntuple(d -> TP(c[d]) * TP(s), Val(D)))
+@inline cell_anchor(c::NTuple{D, Int32}, s::Union{NTuple{D, T}, StaticVector{D, T}}, ::Type{TP}) where {D, T <: Real, TP} =
+    SVector{D, TP}(ntuple(d -> TP(c[d]) * TP(@inbounds(s[d])), Val(D)))
 
 """
     pos_cell(x, c, grid, s) -> PosCell
@@ -388,11 +429,11 @@ Cell relative form of the position `x` for the linear cell `c` of `grid`
 that is not a particle (a ghost node), for the global cell coordinates `cg`
 (the stored cell index is then meaningless and set to zero).
 """
-@inline function pos_cell(x::SVector{D, TP}, c::Int32, grid::CellGrid{D}, s::T) where {D, TP, T}
+@inline function pos_cell(x::SVector{D, TP}, c::Int32, grid::CellGrid{D}, s::Union{T, NTuple{D, T}, StaticVector{D, T}}) where {D, TP, T <: Real}
     return PosCell{D, T}(SVector{D, T}(x - cell_anchor(global_coords(grid, c), s, TP)), c)
 end
 
-@inline function pos_cell(x::SVector{D, TP}, cg::NTuple{D, Int32}, s::T) where {D, TP, T}
+@inline function pos_cell(x::SVector{D, TP}, cg::NTuple{D, Int32}, s::Union{T, NTuple{D, T}, StaticVector{D, T}}) where {D, TP, T <: Real}
     return PosCell{D, T}(SVector{D, T}(x - cell_anchor(cg, s, TP)), Int32(0))
 end
 
@@ -407,9 +448,9 @@ Vector from particle `j` to the reference `pᵢ` (`pos[i]` for a particle),
 where `j` lies in the stencil row `row` and `rowcell` is the linear index of
 the cell of that row with the first coordinate of the reference. With plain
 positions this is `pᵢ - pos[j]` (`rowcell`, `row` and `s` are ignored). With
-`PosCell`s it is `(relᵢ - relⱼ) + s * (cellᵢ - cellⱼ)`: the cell difference is
-`(rowcell - cellⱼ, -row.dy, -row.dz)`, at most the reach of the grid per axis,
-so the whole computation stays in the working precision.
+`PosCell`s it is `(relᵢ - relⱼ) + s .* (cellᵢ - cellⱼ)`: the cell difference is
+`(rowcell - cellⱼ, -row.dy, -row.dz)`, at most `(Rx, R, R)` per axis, so the
+whole computation stays in the working precision.
 """
 @inline function pair_vector(Position::AbstractVector{<:SVector}, xᵢ::SVector, j::Int32, rowcell::Int32,
                              row::CellRow, s)
@@ -434,9 +475,20 @@ end
 end
 
 @inline function pair_vector(PosCells::AbstractVector{PosCell{D, T}}, pᵢ::PosCell{D, T}, j::Int32,
-                             rowcell::Int32, row::CellRow, s::T) where {D, T}
+                             rowcell::Int32, row::CellRow, s::T) where {D, T <: Real}
     pⱼ = load_pos_cell(PosCells, j)
     return (pᵢ.rel - pⱼ.rel) + s * cell_shift(Val(D), rowcell - pⱼ.cell, row, T)
+end
+
+@inline function pair_vector(PosCells::AbstractVector{PosCell{D, T}}, pᵢ::PosCell{D, T}, j::Int32,
+                             rowcell::Int32, row::CellRow, s::SVector{D, T}) where {D, T <: Real}
+    pⱼ = load_pos_cell(PosCells, j)
+    return (pᵢ.rel - pⱼ.rel) + s .* cell_shift(Val(D), rowcell - pⱼ.cell, row, T)
+end
+
+@inline function pair_vector(PosCells::AbstractVector{PosCell{D, T}}, pᵢ::PosCell{D, T}, j::Int32,
+                             rowcell::Int32, row::CellRow, s::NTuple{D, T}) where {D, T <: Real}
+    return pair_vector(PosCells, pᵢ, j, rowcell, row, SVector{D, T}(s))
 end
 
 """
@@ -453,11 +505,11 @@ a dedicated header read for standalone calls, before launching the histogram.
 per side; `grid_initialized` distinguishes those bounds from the placeholder
 header, including when conditional preparation skips the first launch.
 """
-mutable struct CellListWorkspace{D, T, R}
-    grid::CellGrid{D, R}
-    grid_dev::CuVector{CellGrid{D, R}}
-    grid_state_dev::CuVector{GridBuildState{D, R}}
-    grid_state_host::Vector{GridBuildState{D, R}}
+mutable struct CellListWorkspace{D, T, R, Rx}
+    grid::CellGrid{D, R, Rx}
+    grid_dev::CuVector{CellGrid{D, R, Rx}}
+    grid_state_dev::CuVector{GridBuildState{D, R, Rx}}
+    grid_state_host::Vector{GridBuildState{D, R, Rx}}
     grid_prepared::Bool
     grid_initialized::Bool
     fixed_grid::Bool
@@ -482,11 +534,12 @@ mutable struct CellListWorkspace{D, T, R}
 end
 
 """
-    CellListWorkspace{D, T}(n; reach = 1, max_cells, deterministic, fixed_grid = false, expansion)
+    CellListWorkspace{D, T}(n; reach = 1, x_reach = reach, max_cells, deterministic, fixed_grid = false, expansion)
 
 Cell list buffers for `n` particles whose positions are `SVector{D, T}`.
-`reach` selects the grid: cells of edge `H / reach` and a `(2 reach + 1)^D`
-stencil (see the module documentation).
+`reach` selects the grid along axes `2..D` and `x_reach` along the contiguous
+`x` axis: cells of edges `(H / x_reach, H / reach, ...)` and a
+`(2 x_reach + 1) * (2 reach + 1)^(D-1)` stencil (see the module documentation).
 With `fixed_grid = true`, the first successfully consumed preparation sets the
 initial bounds. Subsequent rebuilds retain them and grow only on sides enabled
 by `expansion`, a tuple of `(negative, positive)` Boolean pairs in axis order.
@@ -495,22 +548,26 @@ particles before reordering. Raw position-only calls cannot freeze particle
 state and report a locked-side error instead. The support radius must remain
 constant for the lifetime of a fixed workspace.
 """
-function CellListWorkspace{D, T}(n::Integer; reach::Integer = 1, max_cells::Integer = 50_000_000,
+function CellListWorkspace{D, T}(n::Integer; reach::Integer = 1, x_reach::Integer = reach,
+                                 max_cells::Integer = 50_000_000,
                                  deterministic::Bool = true, fixed_grid::Bool = false,
                                  expansion::NTuple{D, Tuple{Bool, Bool}} = ntuple(_ -> (false, false), D),
                                  periodicity::Union{Nothing, PeriodicBoundary{D}} = nothing) where {D, T}
     reach >= 1 || throw(ArgumentError("the cell list reach must be at least 1, got $reach"))
     reach <= typemax(Int32) || throw(ArgumentError("the cell list reach is too large: $reach"))
+    x_reach >= 1 || throw(ArgumentError("the cell list x_reach must be at least 1, got $x_reach"))
+    x_reach <= typemax(Int32) || throw(ArgumentError("the cell list x_reach is too large: $x_reach"))
     0 <= n <= CELL_INDEX_LIMIT || throw(ArgumentError("the cell-list particle count must be between 0 and $CELL_INDEX_LIMIT, got $n"))
     max_cells >= 1 || throw(ArgumentError("GPUMaxCells must be at least 1, got $max_cells"))
     fixed_grid || !any(sides -> any(sides), expansion) ||
         throw(ArgumentError("grid expansion requires fixed_grid = true"))
     R = Int(reach)
+    Rx = Int(x_reach)
     bbox_ws = BoundingBoxWorkspace{D, T}(n)
-    grid = CellGrid{D, R}()
+    grid = CellGrid{D, R, Rx}()
     counts_capacity = 1024
-    grid_state = GridBuildState{D, R}(grid, GRID_NOT_NEEDED)
-    return CellListWorkspace{D, T, R}(
+    grid_state = GridBuildState{D, R, Rx}(grid, GRID_NOT_NEEDED)
+    return CellListWorkspace{D, T, R, Rx}(
         grid,
         CuArray([grid]),
         CuArray([grid_state]),
@@ -641,13 +698,13 @@ end
 @inline function write_grid_result!(grid_dev, state_dev, bbox,
                                     inv_cell, max_cells::Int64, capacity::Int64,
                                     fixed_grid::Bool, expansion, initialized::Bool,
-                                    step, ::Val{D}, ::Val{R}, nfrozen::Int32) where {D, R}
+                                    step, ::Val{D}, ::Val{R}, nfrozen::Int32, ::Val{Rx} = Val(R)) where {D, R, Rx}
     old_grid = load_grid(grid_dev)
     status = GRID_OK
 
     # With every particle frozen, retain the last valid domain. Empty reduction
     # extrema differ from nonfinite particle input, which the block flags reject.
-    if fixed_grid && initialized && isfinite(inv_cell) && inv_cell > zero(inv_cell) &&
+    if fixed_grid && initialized && scale_valid(inv_cell) &&
        all(d -> bbox[d] == Inf && bbox[D + d] == -Inf, 1:D)
         store_grid_state!(state_dev, old_grid, GRID_OK, step, nfrozen)
         return nothing
@@ -659,21 +716,23 @@ end
         return nothing
     end
 
-    valid = isfinite(inv_cell) & (inv_cell > zero(inv_cell))
+    valid = scale_valid(inv_cell)
     for d in 1:D
-        valid &= rounded_coordinate_valid(bbox[d], inv_cell)
-        valid &= rounded_coordinate_valid(bbox[D + d], inv_cell)
+        sc = axis_scale(inv_cell, d)
+        valid &= rounded_coordinate_valid(bbox[d], sc)
+        valid &= rounded_coordinate_valid(bbox[D + d], sc)
     end
     if !valid
         store_grid_state!(state_dev, old_grid, GRID_COORD_OVERFLOW, step)
         return nothing
     end
 
-    required_min = ntuple(d -> Int64(map_floor(bbox[d], inv_cell)) - Int64(R), Val(D))
-    required_max = ntuple(d -> Int64(map_floor(bbox[D + d], inv_cell)) + Int64(R), Val(D))
-    coord_limit_lo = Int64(typemin(Int32)) + Int64(R)
-    coord_limit_hi = Int64(typemax(Int32)) - Int64(R)
+    required_min = ntuple(d -> Int64(map_floor(bbox[d], axis_scale(inv_cell, d))) - Int64(axis_reach(Val(R), Val(Rx), d)), Val(D))
+    required_max = ntuple(d -> Int64(map_floor(bbox[D + d], axis_scale(inv_cell, d))) + Int64(axis_reach(Val(R), Val(Rx), d)), Val(D))
     for d in 1:D
+        r_d = Int64(axis_reach(Val(R), Val(Rx), d))
+        coord_limit_lo = Int64(typemin(Int32)) + r_d
+        coord_limit_hi = Int64(typemax(Int32)) - r_d
         valid &= (required_min[d] >= coord_limit_lo) & (required_max[d] <= coord_limit_hi)
     end
     if !valid
@@ -723,7 +782,7 @@ end
 
     dims = ntuple(d -> Int32(dims64[d]), Val(D))
     origin = ntuple(d -> Int32(cmin[d]), Val(D))
-    grid = CellGrid{D, R}(origin, dims, Int32(ncells64))
+    grid = CellGrid{D, R, Rx}(origin, dims, Int32(ncells64))
     status = ncells64 > capacity ? GRID_CAPACITY : GRID_OK
     @inbounds grid_dev[1] = grid
     store_grid_state!(state_dev, grid, status, step, nfrozen)
@@ -733,15 +792,17 @@ end
 @inline grid_build_needed(::Nothing) = true
 @inline grid_build_needed(step::DeviceStep) = @inbounds step.i[I_STOP] == STOP_REBUILD
 
-@inline function locked_grid_sides(x, grid::CellGrid{D, R}, inv_cell, expansion) where {D, R}
+@inline function locked_grid_sides(x, grid::CellGrid{D, R, Rx}, inv_cell, expansion) where {D, R, Rx}
     sides = UInt32(0)
     for d in 1:D
+        sc = axis_scale(inv_cell, d)
+        r_d = Int64(axis_reach(grid, d))
         # Numerical failures remain explicit grid errors, rather than becoming
         # frozen positions that the output grid cannot represent.
-        isfinite(x[d]) && rounded_coordinate_valid(x[d], inv_cell) || return UInt32(0)
-        c = Int64(map_floor(x[d], inv_cell))
-        lo = Int64(grid.origin[d]) + R
-        hi = Int64(grid.origin[d]) + grid.dims[d] - R - 1
+        isfinite(x[d]) && rounded_coordinate_valid(x[d], sc) || return UInt32(0)
+        c = Int64(map_floor(x[d], sc))
+        lo = Int64(grid.origin[d]) + r_d
+        hi = Int64(grid.origin[d]) + grid.dims[d] - r_d - 1
         !expansion[d][1] && c < lo && (sides |= UInt32(1) << (2d - 2))
         !expansion[d][2] && c > hi && (sides |= UInt32(1) << (2d - 1))
     end
@@ -764,7 +825,7 @@ function freeze_particles_kernel!(Position, state, events, count, grid, inv_cell
     @inbounds begin
         state.types[i] == Frozen && return nothing
         x = Position[i]
-        all(d -> isfinite(x[d]) && rounded_coordinate_valid(x[d], inv_cell), eachindex(x)) || return nothing
+        all(d -> isfinite(x[d]) && rounded_coordinate_valid(x[d], axis_scale(inv_cell, d)), eachindex(x)) || return nothing
         body_frozen = state.body !== nothing && state.types[i] == Floating &&
             state.frozen_bodies[state.body[state.groups[i]]] != 0
         if body_frozen || locked_grid_sides(x, grid, inv_cell, expansion) != 0
@@ -899,7 +960,7 @@ function finish_grid_metadata_kernel!(grid_dev, state_dev, partial, invalid, nbl
                                       lo_init::T, hi_init::T, inv_cell,
                                       max_cells::Int64, capacity::Int64,
                                       fixed_grid::Bool, expansion, initialized::Bool, freeze_count,
-                                      step, ::Val{2}, ::Val{R}) where {T, R}
+                                      step, ::Val{2}, ::Val{R}, ::Val{Rx} = Val(R)) where {T, R, Rx}
     tid = threadIdx().x
     if !grid_build_needed(step)
         if tid == Int32(1)
@@ -944,7 +1005,7 @@ function finish_grid_metadata_kernel!(grid_dev, state_dev, partial, invalid, nbl
     end
     bbox = (shared[1], shared[B + 1], shared[2B + 1], shared[3B + 1])
     write_grid_result!(grid_dev, state_dev, bbox, inv_cell, max_cells,
-                       capacity, fixed_grid, expansion, initialized, step, Val(2), Val(R), frozen_count(freeze_count))
+                       capacity, fixed_grid, expansion, initialized, step, Val(2), Val(R), frozen_count(freeze_count), Val(Rx))
     return nothing
 end
 
@@ -952,7 +1013,7 @@ function finish_grid_metadata_kernel!(grid_dev, state_dev, partial, invalid, nbl
                                       lo_init::T, hi_init::T, inv_cell,
                                       max_cells::Int64, capacity::Int64,
                                       fixed_grid::Bool, expansion, initialized::Bool, freeze_count,
-                                      step, ::Val{3}, ::Val{R}) where {T, R}
+                                      step, ::Val{3}, ::Val{R}, ::Val{Rx} = Val(R)) where {T, R, Rx}
     tid = threadIdx().x
     if !grid_build_needed(step)
         if tid == Int32(1)
@@ -1001,7 +1062,7 @@ function finish_grid_metadata_kernel!(grid_dev, state_dev, partial, invalid, nbl
     bbox = (shared[1], shared[B + 1], shared[2B + 1], shared[3B + 1],
             shared[4B + 1], shared[5B + 1])
     write_grid_result!(grid_dev, state_dev, bbox, inv_cell, max_cells,
-                       capacity, fixed_grid, expansion, initialized, step, Val(3), Val(R), frozen_count(freeze_count))
+                       capacity, fixed_grid, expansion, initialized, step, Val(3), Val(R), frozen_count(freeze_count), Val(Rx))
     return nothing
 end
 
@@ -1223,17 +1284,17 @@ reduction. `Perm[1:newly_frozen]` records their original indices until sorting
 or compaction reuses that scratch. Frozen entries use the corner margin bin;
 interactions explicitly exclude them.
 """
-function prepare_cell_grid!(ws::CellListWorkspace{D, T, R},
+function prepare_cell_grid!(ws::CellListWorkspace{D, T, R, Rx},
                             Position::CuVector{SVector{D, T}}, InverseCutOff;
                             step::Union{Nothing, StepState} = nothing, freeze_state = nothing,
-                            periodic_state = nothing) where {D, T, R}
+                            periodic_state = nothing) where {D, T, R, Rx}
     n = length(Position)
     1 <= n <= CELL_INDEX_LIMIT || error("The cell-list particle count must be between 1 and $CELL_INDEX_LIMIT.")
     n == length(ws.Perm) || throw(DimensionMismatch("positions and cell-list workspace particle counts differ"))
     ws.frozen_total == 0 || freeze_state !== nothing ||
         throw(ArgumentError("A workspace with frozen particles requires particle state; use rebuild_cell_list! with GPU particles."))
     ws.grid_prepared = false
-    inv_cell = bin_scale(CellGrid{D, R}(), InverseCutOff)
+    inv_cell = bin_scale(CellGrid{D, R, Rx}(), InverseCutOff)
     if ws.periodicity !== nothing
         ws.periodicity.upper - ws.periodicity.lower > 2 / InverseCutOff ||
             throw(ArgumentError("Periodic interval must exceed twice the kernel support radius"))
@@ -1244,7 +1305,7 @@ function prepare_cell_grid!(ws::CellListWorkspace{D, T, R},
         end
     end
     ws.freeze_count === nothing || fill!(ws.freeze_count, Int32(0))
-    if ws.fixed_grid && ws.grid_initialized && freeze_state !== nothing && isfinite(inv_cell) && inv_cell > zero(inv_cell)
+    if ws.fixed_grid && ws.grid_initialized && freeze_state !== nothing && scale_valid(inv_cell)
         if freeze_state.body !== nothing
             @cuda threads=256 blocks=cld(n, 256) mark_frozen_bodies_kernel!(
                 Position, freeze_state.types, freeze_state.groups, freeze_state.body,
@@ -1267,7 +1328,7 @@ function prepare_cell_grid!(ws::CellListWorkspace{D, T, R},
     @cuda threads=256 blocks=1 finish_grid_metadata_kernel!(
         ws.grid_dev, ws.grid_state_dev, ws.bbox_ws.partial, ws.bbox_ws.invalid,
         Int32(ws.bbox_ws.nblocks), lo, hi, inv_cell, Int64(ws.max_cells),
-        Int64(length(ws.Counts)), ws.fixed_grid, ws.expansion, ws.grid_initialized, ws.freeze_count, step, Val(D), Val(R))
+        Int64(length(ws.Counts)), ws.fixed_grid, ws.expansion, ws.grid_initialized, ws.freeze_count, step, Val(D), Val(R), Val(Rx))
     return nothing
 end
 
@@ -1278,7 +1339,7 @@ Copy and consume the one-element device grid status after a standalone
 preparation launch. This adds a dedicated synchronization; the simulation
 driver instead uses `consume_cell_grid!` after its necessary timestep readback.
 """
-function sync_cell_grid!(ws::CellListWorkspace{D, T, R}) where {D, T, R}
+function sync_cell_grid!(ws::CellListWorkspace{D, T, R, Rx}) where {D, T, R, Rx}
     copyto!(ws.grid_state_host, ws.grid_state_dev)
     ws.grid_status_readbacks += 1
     state = @inbounds ws.grid_state_host[1]
@@ -1314,12 +1375,12 @@ The caller must have completed `readback!(step)` after conditional preparation.
 This function does not transfer data or synchronize the device. Capacity
 growth changes `generation`; callers must invalidate their captured graphs.
 """
-function consume_cell_grid!(ws::CellListWorkspace{D, T, R}, ih::AbstractVector{Int32}) where {D, T, R}
+function consume_cell_grid!(ws::CellListWorkspace{D, T, R, Rx}, ih::AbstractVector{Int32}) where {D, T, R, Rx}
     length(ih) >= I_GRID_FROZEN || throw(DimensionMismatch("the timestep header has no cell-grid state"))
     origin = ntuple(d -> ih[I_GRID_ORIGIN + d - 1], Val(D))
     dims = ntuple(d -> ih[I_GRID_DIMS + d - 1], Val(D))
-    grid = CellGrid{D, R}(origin, dims, ih[I_GRID_NCELLS])
-    return consume_cell_grid!(ws, GridBuildState{D, R}(grid, ih[I_GRID_STATUS], ih[I_GRID_FROZEN]))
+    grid = CellGrid{D, R, Rx}(origin, dims, ih[I_GRID_NCELLS])
+    return consume_cell_grid!(ws, GridBuildState{D, R, Rx}(grid, ih[I_GRID_STATUS], ih[I_GRID_FROZEN]))
 end
 
 """

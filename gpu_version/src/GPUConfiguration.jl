@@ -23,7 +23,8 @@ explicit `GPULanesPerParticle` values can be resolved without one.
 operator, viscosity arithmetic, interaction compiler options, precision, pair coordinates and simulation
 modes. A radial linear-diffusion operator is `:symmetric_reciprocal_density`;
 `:reference` retains CPU pair orientation (CPU equivalence also requires cell
-subdivision one and `GPUInteractionFastMath = false`). Capabilities describe implementation support, not accuracy.
+subdivisions `GPUCellSubdivision = 1` and `GPUXCellSubdivision = 1`, and
+`GPUInteractionFastMath = false`). Capabilities describe implementation support, not accuracy.
 
 This is a configuration preview. `RunSimulation(...).configuration` additionally
 resolves `fuse_predictor` against allocated support and actual motion, floating
@@ -45,6 +46,7 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
         scalar_sps_viscosity = meta.GPUScalarSPSViscosity, use_graph = meta.GPUUseGraph,
         sync_timers = meta.GPUSyncTimers, lanes_per_particle = meta.GPULanesPerParticle,
         max_steps_per_sync = meta.GPUMaxStepsPerSync, double_position = meta.GPUDoublePosition,
+        cell_subdivision = meta.GPUCellSubdivision, x_cell_subdivision = meta.GPUXCellSubdivision,
         periodic_cell_coordinates = meta.GPUPeriodicCellCoordinates, periodic_images=meta.GPUPeriodicImages)
     capabilities = (; radial_interactions = options.radial_supported,
         scalar_sps_viscosity = options.scalar_sps_supported, preload_interaction_types = options.preload_types_supported)
@@ -84,6 +86,7 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
                 cache_periodic_queries=meta.TimeSteppingMode.cache_periodic_queries,
                 periodic_images=meta.TimeSteppingMode.periodic_images) : nothing,
         kernel_output_mode = K, cell_subdivision = meta.GPUCellSubdivision,
+        x_cell_subdivision = meta.GPUXCellSubdivision,
         periodicity = meta.Periodicity,
         cache_interaction_fields = meta.GPUCacheInteractionFields,
         fuse_predictor = meta.GPUFusePredictor && meta.GPUInteractionFastMath && B === NoMDBC &&

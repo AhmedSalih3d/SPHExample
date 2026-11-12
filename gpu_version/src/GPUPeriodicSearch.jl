@@ -44,28 +44,29 @@ struct PeriodicRow{D, T}
     off::Int32
 end
 
-struct PeriodicRows{D, T, G, P}
+struct PeriodicRows{D, S, G, P}
     grid::G
     center::NTuple{D, Int32}
-    size::T
+    size::S
     periodicity::P
 end
 
 @inline function Base.iterate(rows::PeriodicRows{D}, state::Int32 = Int32(0)) where {D}
     grid, s, p = rows.grid, rows.size, rows.periodicity
     R = reach(grid) + Int32(1)
+    Rx = x_reach(grid) + Int32(1)
     width = Int32(2) * R + Int32(1)
     count = D == 2 ? width : width * width
     state >= 3count && return nothing
     image, offset = divrem(state, count)
     shift = (image == 0 ? 0 : image == 1 ? 1 : -1) * p.translation
     anchor = GPUCellGrid.cell_anchor(rows.center, s, eltype(shift)) + shift
-    center = cell_coords(anchor, inv(s))
+    center = cell_coords(anchor, inv.(s))
     dy = offset % width - R
     dz = D == 2 ? Int32(0) : offset ÷ width - R
-    lower = ntuple(d -> d == 1 ? max(center[1] - R - grid.origin[1], Int32(0)) :
+    lower = ntuple(d -> d == 1 ? max(center[1] - Rx - grid.origin[1], Int32(0)) :
         center[d] - grid.origin[d] + (d == 2 ? dy : dz), Val(D))
-    upper_x = min(center[1] + R - grid.origin[1], grid.dims[1] - Int32(1))
+    upper_x = min(center[1] + Rx - grid.origin[1], grid.dims[1] - Int32(1))
     return PeriodicRow(lower, upper_x, shift, Int32(0)), state + Int32(1)
 end
 
@@ -79,7 +80,7 @@ end
 function periodic_halo_kernel!(bounds, positions, cells, gridarg, H, step, n)
     step_active(step) || return nothing
     grid = load_grid(gridarg)
-    s = Float64(cell_size(grid, H))
+    s = Float64.(cell_size(grid, H))
     acc = halo_identity()
     i = thread_index()
     while i <= n
@@ -121,10 +122,10 @@ function launch_periodic_halo!(bounds, positions, cells, grid, H, step)
     return nothing
 end
 
-struct BoundedPeriodicRows{D,G,P,B}
+struct BoundedPeriodicRows{D,G,S,P,B}
     grid::G
     reference::SVector{D,Float64}
-    size::Float64
+    size::S
     radius::Float64
     periodicity::P
     bounds::B
@@ -153,8 +154,8 @@ end
     @inbounds halo = rows.bounds[1]
     shift = (image == 0 ? 0 : image == 1 ? 1 : -1) * p.translation
     reference = rows.reference + shift
-    lo = ntuple(d -> max(Int32(0),ceil(Int32,(reference[d]-H-halo[d+3])/s)-grid.origin[d]),Val(D))
-    hi = ntuple(d -> min(grid.dims[d]-Int32(1),floor(Int32,(reference[d]+H-halo[d])/s)-grid.origin[d]),Val(D))
+    lo = ntuple(d -> max(Int32(0),ceil(Int32,(reference[d]-H-halo[d+3])/GPUCellGrid.axis_scale(s, d))-grid.origin[d]),Val(D))
+    hi = ntuple(d -> min(grid.dims[d]-Int32(1),floor(Int32,(reference[d]+H-halo[d])/GPUCellGrid.axis_scale(s, d))-grid.origin[d]),Val(D))
     return lo,hi
 end
 @inline function Base.iterate(rows::Union{BoundedPeriodicRows,CachedPeriodicRows})
@@ -225,13 +226,13 @@ end
 @inline function neighbor_rows(p, grid::CellGrid{D}, c, s, reference, bounds) where {D}
     # The distance check uses working-precision subtraction and a rounded pair
     # vector. Widen geometric bounds to include its rounding at large offsets.
-    padding = 16max(eps(eltype(reference)), eps(typeof(s))) * max(1.0, maximum(abs, reference), maximum(abs, p.translation))
-    return BoundedPeriodicRows(grid, SVector{D,Float64}(reference), Float64(s),
-        Float64(s) * reach(grid) + padding, p, bounds)
+    padding = 16max(eps(eltype(reference)), eps(eltype(s))) * max(1.0, maximum(abs, reference), maximum(abs, p.translation))
+    return BoundedPeriodicRows(grid, SVector{D,Float64}(reference), Float64.(s),
+        Float64(GPUCellGrid.axis_scale(s, 2)) * reach(grid) + padding, p, bounds)
 end
 
 @inline neighbor_rows(::Nothing, grid, c, s) = interaction_rows(grid)
-@inline neighbor_rows(p, grid, c, s) = PeriodicRows(grid, global_coords(grid, c), typeof(p.lower)(s), p)
+@inline neighbor_rows(p, grid, c, s) = PeriodicRows(grid, global_coords(grid, c), typeof(p.lower).(s), p)
 
 @inline GPUCellGrid.row_range(grid::CellGrid{D}, starts, c, row::PeriodicRow{D}) where {D} = periodic_row_range(grid, starts, row)
 @inline function periodic_row_range(grid::CellGrid{D}, starts, row::PeriodicRow{D}) where {D}
@@ -258,11 +259,11 @@ end
         (d == 1 ? other.cell - first_cell : Int32(0)), Val(D))
     local_difference = ref.cell.rel - other.rel
     if iszero(row.shift)
-        return local_difference + s * SVector{D,T}(delta)
+        return local_difference + s .* SVector{D,T}(delta)
     end
     # Combine the image translation with the anchor offset before rounding;
     # this avoids cancellation between metre-sized Float32 quantities.
-    anchor_difference = SVector{D,T}(Float64(s) * SVector{D,Float64}(delta) + row.shift)
+    anchor_difference = SVector{D,T}(Float64.(s) .* SVector{D,Float64}(delta) + row.shift)
     return local_difference + anchor_difference
 end
 
@@ -281,7 +282,7 @@ end
                                    Velocity, InvDensity, periodicity::PeriodicBoundary, periodic_bounds = nothing) where {D}
     cg = cell_coords(gp, bin_scale(grid, SimKernel.H⁻¹))
     pairs = PeriodicPairSource(eltype(Density), Position)
-    rows = periodic_bounds === nothing ? PeriodicRows(grid, cg, typeof(periodicity.lower)(s), periodicity) :
+    rows = periodic_bounds === nothing ? PeriodicRows(grid, cg, typeof(periodicity.lower).(s), periodicity) :
         neighbor_rows(periodicity, grid, Int32(0), s, gp, periodic_bounds)
     for row in rows
         jlo, jhi = periodic_row_range(grid, CellStart, row)

@@ -140,7 +140,7 @@ module SPHExampleGPU
 
     using .GPUCellGrid
     export CellGrid, CellListWorkspace, update_cell_list!, compact_nonzero!, unique_cells_host, map_floor,
-           PosCell, CellRow, cell_rows, cell_size, pos_cell, pair_vector
+           reach, x_reach, PosCell, CellRow, cell_rows, cell_size, pos_cell, pair_vector
 
     using .GPUKernels
     export launch_interactions!, launch_mdbc!, launch_motion!, launch_half_step!, launch_final_step!,
