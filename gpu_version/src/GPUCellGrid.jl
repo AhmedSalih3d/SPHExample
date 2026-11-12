@@ -43,7 +43,7 @@ using ..GPUStepState: DeviceStep, StepState, I_STOP, STOP_REBUILD, STOP_PERIODIC
 export CellGrid, CellListWorkspace, update_cell_list!, compact_nonzero!, unique_cells_host, occupied_cells_host,
        map_floor, cell_coords, linear_cell, local_coords, row_offsets, row_range, in_grid,
        reach, bin_scale, gather_kernel!, thread_index, load_grid,
-       PosCell, CellRow, cell_rows, cell_size, cell_anchor, global_coords, pos_cell, pair_vector,
+       PosCell, CellRow, cell_rows, cell_size, cell_anchor, global_coords, pos_cell, load_pos_cell, pair_vector,
        prepare_cell_grid!, sync_cell_grid!, consume_cell_grid!, GRID_OK, GRID_NOT_NEEDED, GRID_CAPACITY,
        GRID_NONFINITE, GRID_COORD_OVERFLOW, GRID_CELL_OVERFLOW, GRID_MAX_CELLS, GRID_FIXED_BOUNDS
 
@@ -416,9 +416,26 @@ so the whole computation stays in the working precision.
     @inbounds return xᵢ - Position[j]
 end
 
+@inline load_pos_cell(PosCells::AbstractVector{<:PosCell}, j::Integer) = @inbounds PosCells[j]
+
+# `PosCell{3, Float32}` is 16 bytes, but Julia's composite struct alignment is 4 bytes.
+# Explicit 16-byte aligned `v4.b32` device loads emit a single `LDG.E.128` transaction.
+@inline function load_pos_cell(PosCells::CuDeviceArray{PosCell{3, Float32}, N, AS}, j::Integer) where {N, AS}
+    V = NTuple{4, VecElement{UInt32}}
+    v = unsafe_load(reinterpret(Core.LLVMPtr{V, AS}, pointer(PosCells)), j, Val(16))
+    return PosCell{3, Float32}(
+        SVector{3, Float32}(
+            reinterpret(Float32, v[1].value),
+            reinterpret(Float32, v[2].value),
+            reinterpret(Float32, v[3].value),
+        ),
+        reinterpret(Int32, v[4].value),
+    )
+end
+
 @inline function pair_vector(PosCells::AbstractVector{PosCell{D, T}}, pᵢ::PosCell{D, T}, j::Int32,
                              rowcell::Int32, row::CellRow, s::T) where {D, T}
-    @inbounds pⱼ = PosCells[j]
+    pⱼ = load_pos_cell(PosCells, j)
     return (pᵢ.rel - pⱼ.rel) + s * cell_shift(Val(D), rowcell - pⱼ.cell, row, T)
 end
 

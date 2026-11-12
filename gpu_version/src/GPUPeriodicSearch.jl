@@ -31,7 +31,7 @@ struct PeriodicCellPoint{P,C,G,D}
 end
 @inline function Base.getindex(p::PeriodicCellPairSource, i)
     grid = load_grid(p.grid)
-    @inbounds cell = p.cells[i]
+    cell = load_pos_cell(p.cells, i)
     @inbounds return PeriodicCellPoint(p.positions[i], cell, grid, global_coords(grid, cell.cell))
 end
 @inline pair_position(point) = point
@@ -251,7 +251,7 @@ end
 
 @inline function GPUCellGrid.pair_vector(p::PeriodicCellPairSource{T}, ref::PeriodicCellPoint{P,C,G,D},
         j::Int32, rowcell, row::PeriodicRow, s) where {T,P,C,G,D}
-    @inbounds other = p.cells[j]
+    other = load_pos_cell(p.cells, j)
     grid = ref.grid
     first_cell = GPUCellGrid.linear_local(grid, row.lower)
     delta = ntuple(d -> ref.coordinates[d] - grid.origin[d] - row.lower[d] -

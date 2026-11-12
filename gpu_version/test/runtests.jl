@@ -734,6 +734,35 @@ relerr(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), eps(eltype(b))))
             pg = pos_cell(offset, cg, s)
             @test pg.cell == 0 && all(abs.(pg.rel) .<= s)
         end
+
+        # 16-byte `PosCell{3, Float32}` device buffers (and contiguous views)
+        # must load as a single 128-bit `v4.b32` transaction while matching host
+        # `pair_vector` bit-for-bit.
+        row3 = CellRow(Int32(-80), Int32(-1), Int32(0))
+        host_pcs = [
+            PosCell{3, Float32}(SVector{3, Float32}(0.0f0, 0.0f0, 0.0f0), Int32(1)),
+            PosCell{3, Float32}(SVector{3, Float32}(0.0125f0, -0.0075f0, 0.019f0), Int32(105)),
+            PosCell{3, Float32}(SVector{3, Float32}(-0.015f0, 0.011f0, -0.004f0), Int32(26)),
+        ]
+        dev_pcs = CuVector(host_pcs)
+        dev_view = @view dev_pcs[2:3]
+        out_vec = CUDA.zeros(SVector{3, Float32}, 2)
+        function pos_cell_vec_probe!(out, pcs, sub, row, s)
+            p_i = SPHExampleGPU.GPUCellGrid.load_pos_cell(pcs, Int32(2))
+            @inbounds out[1] = pair_vector(pcs, p_i, Int32(3), p_i.cell + row.off, row, s)
+            p_sub = SPHExampleGPU.GPUCellGrid.load_pos_cell(sub, Int32(1))
+            @inbounds out[2] = pair_vector(sub, p_sub, Int32(2), p_sub.cell + row.off, row, s)
+            return nothing
+        end
+        ptx_io = IOBuffer()
+        CUDA.@device_code_ptx io=ptx_io @cuda threads=1 pos_cell_vec_probe!(out_vec, dev_pcs, dev_view, row3, H)
+        ptx_str = String(take!(ptx_io))
+        @test occursin("ld.global.v4.b32", ptx_str)
+        @cuda threads=1 pos_cell_vec_probe!(out_vec, dev_pcs, dev_view, row3, H)
+        expected_v = pair_vector(host_pcs, host_pcs[2], Int32(3), host_pcs[2].cell + row3.off, row3, H)
+        got_vecs = Array(out_vec)
+        @test isequal(got_vecs[1], expected_v)
+        @test isequal(got_vecs[2], expected_v)
     end
 
     @testset "double positions: allocation, upload and download" begin

@@ -384,6 +384,8 @@ end
 @inline interaction_pressure(cache, i, ρ, type, c₀, ρ₀, boundary_data, ρ₀⁻¹ = inv(ρ₀)) = @inbounds cache[i]
 @inline interaction_particle_mass(::Nothing,i,default) = default
 @inline interaction_particle_mass(masses,i,default) = @inbounds masses.values[masses.groups[i]]
+@inline load_pair_point(Pairs, i) = @inbounds Pairs[i]
+@inline load_pair_point(Pairs::AbstractVector{<:PosCell}, i) = load_pos_cell(Pairs, i)
 
 function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
                              Pairs, Position, Density,
@@ -421,7 +423,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
 
     slotᵢ = valid ? boundary_slot(boundary_data, ParticleType, source_i) : Int32(0)
     @inbounds if valid && (!FrozenParticles || ParticleType[source_i] != Frozen) && boundary_enabled(boundary_data, slotᵢ)
-        pᵢ  = Pairs[source_i]
+        pᵢ  = load_pair_point(Pairs, source_i)
         vᵢ  = boundary_velocity(boundary_data, Velocity, ParticleType, source_i, slotᵢ)
         viscous_vᵢ = boundary_viscous_velocity(boundary_data, Velocity, ParticleType, source_i, slotᵢ)
         ρᵢ  = Density[source_i]
