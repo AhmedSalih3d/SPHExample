@@ -1430,6 +1430,112 @@ julia --project=. -t 2,0 benchmark/still_wedge_instructions.jl --rounds=9 --dura
 julia --project=. -t 2,0 benchmark/radial_bounds_cases.jl --rounds=9 --duration=0.01 DamBreak3D_dp0.0085
 ```
 
+#### Default radial pressure-viscosity fusion
+
+Pressure and artificial viscosity now share one final gradient multiplication
+by default in the existing radial interaction path. There is no additional
+fusion flag. This does **not** change the default value of
+`GPURadialInteractions` or switch reference runs to symmetric diffusion.
+
+The implementation combines the scalar pressure and artificial-viscosity
+coefficients before multiplying by the kernel gradient, only in radial mode.
+It preserves the model algebra but changes floating-point rounding. Wall
+viscosity and particle-mass scaling are applied before that multiplication;
+other viscosity models and the reference interaction path keep their original
+vector operations. DualSPHysics-style stepping retains its existing force
+arithmetic as well. No new buffers, kernel launches or graph-cache settings
+are needed.
+
+[`benchmark/operator_fusion.jl`](benchmark/operator_fusion.jl) compares the
+installed implementation against a cloned pre-fusion vector-force baseline.
+It warms both variants, alternates paired complete runs, checks an
+unmodified clone against the packaged solver exactly, and requires equal
+step/rebuild/readback counts, particle identities and output shapes. Timings
+include upload, stepping, logging and particle output, but exclude case/host
+construction, compilation warmup and output verification. Final state is
+compared by particle ID; exported dataset hashes also expose output differences.
+The default maximum final-position drift is **0.1 particle spacings (`dx`)**.
+This is an experiment's screening threshold, not a general accuracy guarantee.
+
+On an RTX A1000 Laptop GPU with Julia 1.12.7 and CUDA.jl 6.4.2, using Float32
+physics, Float64 positions, cached interaction fields, fast math, CUDA graphs,
+`R=1` and `Rx=4`, final installed-implementation checks gave these paired complete-run
+ratios (fused/baseline, lower is faster):
+
+| Candidate / case | Physical time | Median ratio (range) | Faster pairs |
+| --- | ---: | ---: | ---: |
+| Force / 3D dam break, dx=0.02, 17,446 particles | 0.03 s | 0.9468 (0.8549-0.9610) | 7/7 |
+| Force / 3D dam break, dx=0.0085, 171,496 particles | 0.03 s | 0.9703 (0.9363-0.9754) | 7/7 |
+| Earlier force prototype / StillWedge mDBC, dx=0.02 | 4 s | 1.0102 (0.9329-1.0384) | 1/3 |
+| Earlier unit-wall alternative / 3D dam break, dx=0.0085 | 0.03 s | 1.0147 (0.9814-1.0309) | 3/7 |
+
+The large-case median complete-run times were 2.2461 s before and 2.1768 s
+after, with a **2.97% median paired runtime reduction**. A separate confirmation
+measured 3.36%. The small case's final 5.32% paired reduction was not stable
+across runs: the preceding confirmation was 0.89% slower, so do not assume a
+reliable small-case speedup.
+
+At 0.03 s, the 171,496-particle 3D dam break's
+maximum position difference was only `1.31e-5 dx`; at 0.3 s it grew to
+**`0.517307 dx` (4.40 mm)**. This exceeded the original `0.1 dx` screening
+threshold; fusion was subsequently accepted as the radial default with this
+rounding/trajectory tradeoff. It is not a promise of a bounded error for other
+cases or longer durations. The installed implementation reproduced that drift
+with identical 3,382 steps, 80 rebuilds and 181 readbacks; maximum velocity,
+density and acceleration differences were 0.0689 m/s, 2.62 kg/m^3 and
+118.49 m/s^2 respectively. Four-second StillWedge **mDBC**
+runs passed the position threshold (`0.002573 dx`) but did not show a clear
+speedup; this is not the generated DBC example's workload. Force-fused state
+and output are not bitwise equivalent, even with fast math disabled.
+
+**Register usage did not decrease.** Separate compiled-kernel queries for the
+same cases, at 128 threads per block, measured:
+
+| Particles / lanes per particle | Pass | Registers/thread, baseline -> fused | Local bytes/thread, baseline -> fused |
+| --- | --- | ---: | ---: |
+| 17,446 / 2 | Fused gather + predictor | 56 -> 61 | 32 -> 32 |
+| 17,446 / 2 | Corrector gather | 56 -> 56 | 0 -> 0 |
+| 171,496 / 1 | Fused gather + predictor | 55 -> 56 | 32 -> 32 |
+| 171,496 / 1 | Corrector gather | 55 -> 55 | 0 -> 0 |
+
+These are CUDA function attributes, not PTX virtual-register counts or measured
+occupancy. Local memory size alone does not establish spill traffic.
+The timing benefit is not evidence of reduced registers or memory use.
+
+The historical unit-wall alternative (skipping multiplication by a wall factor
+of one) matched state and output exactly but did not establish a reliable
+large-case speedup. It remains benchmark-only. `--candidate=unit-wall` now tests
+that alternative against the installed force-fused solver.
+
+Raw paired measurements are in
+[`operator_fusion_production_results.csv`](benchmark/operator_fusion_production_results.csv)
+and
+[`operator_fusion_confirmation_results.csv`](benchmark/operator_fusion_confirmation_results.csv),
+with compiled resource counts in
+[`operator_fusion_registers.csv`](benchmark/operator_fusion_registers.csv)
+and the longer-run state comparison in
+[`operator_fusion_validation_results.csv`](benchmark/operator_fusion_validation_results.csv).
+Earlier experiments are in
+[`operator_fusion_results.csv`](benchmark/operator_fusion_results.csv),
+[`operator_fusion_long_results.csv`](benchmark/operator_fusion_long_results.csv)
+and [`operator_fusion_unit_wall_results.csv`](benchmark/operator_fusion_unit_wall_results.csv).
+The reference-path and strict uncached checks are recorded separately in
+[`operator_fusion_reference_results.csv`](benchmark/operator_fusion_reference_results.csv)
+and [`operator_fusion_strict_results.csv`](benchmark/operator_fusion_strict_results.csv);
+those short controls validate behavior, not performance.
+
+Run from the repository root:
+
+```powershell
+julia --project=gpu_version -t 2,0 gpu_version\test\radial_benchmark.jl
+julia --project=gpu_version -t 2,0 gpu_version\benchmark\operator_fusion.jl --rounds=7 --duration=0.03 --output=gpu_version\benchmark\operator_fusion_production_results.csv
+julia --project=gpu_version -t 2,0 gpu_version\benchmark\operator_fusion.jl --rounds=3 --duration=4 --output=gpu_version\benchmark\operator_fusion_long_results.csv StillWedge2D_MDBC_dp0.02
+# Explicit screening threshold for the accepted longer-run comparison:
+julia --project=gpu_version -t 2,0 gpu_version\benchmark\operator_fusion.jl --rounds=3 --duration=0.3 --max-position-dx=0.6 DamBreak3D_dp0.0085
+julia --project=gpu_version -t 2,0 gpu_version\benchmark\operator_fusion.jl --registers --duration=0.03
+julia --project=gpu_version -t 2,0 gpu_version\benchmark\operator_fusion.jl --candidate=unit-wall --rounds=7 --duration=0.03 --output=gpu_version\benchmark\operator_fusion_unit_wall_results.csv DamBreak3D_dp0.0085
+```
+
 `SingleNeighborTimeStepping()` remains an explicitly selected alternative:
 it changes integration and must not count as an equivalent-workload speedup.
 The earlier scheme comparison measured about 1.52x throughput, but changed final
@@ -3894,6 +4000,11 @@ hydrostatic correction are unchanged. With SPS, continuity and diffusion use
 the radial path while viscosity retains its original tensor arithmetic and pair
 ordering. Nonlinear diffusion, custom models and other kernels retain reference
 interactions.
+
+Within radial mode, artificial viscosity is combined with the pressure
+coefficient before multiplying by the kernel gradient, by default and without
+a separate flag. This changes rounding relative to separate vector forces;
+see the [measurements and trajectory tradeoff](#default-radial-pressure-viscosity-fusion).
 
 **Symmetrizing this density weight changes the diffusion operator, not just its
 floating-point evaluation.** It agrees with the old weight at equal densities

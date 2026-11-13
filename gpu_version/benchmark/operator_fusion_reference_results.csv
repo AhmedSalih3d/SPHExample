@@ -1,0 +1,7 @@
+case,round,variant,duration,radial,cached,strict,candidate,particles,seconds,loop_seconds,steps,rebuilds,readbacks,position_dx,velocity,density,acceleration,time_error,output_time_error,exact_state,exact_output
+DamBreak3D_dp0.02,1,baseline,0.03,false,true,false,force,17446,0.1342699,0.1059227,144,1,7,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+DamBreak3D_dp0.02,1,fused,0.03,false,true,false,force,17446,0.1368054,0.1049833,144,1,7,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+DamBreak3D_dp0.02,2,baseline,0.03,false,true,false,force,17446,0.1897827,0.1552759,144,1,7,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+DamBreak3D_dp0.02,2,fused,0.03,false,true,false,force,17446,0.1423531,0.1049586,144,1,7,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+DamBreak3D_dp0.02,3,baseline,0.03,false,true,false,force,17446,0.1315455,0.1050621,144,1,7,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+DamBreak3D_dp0.02,3,fused,0.03,false,true,false,force,17446,0.1339342,0.1048006,144,1,7,0.0,0.0,0.0,0.0,0.0,0.0,true,true

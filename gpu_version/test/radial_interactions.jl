@@ -292,6 +292,7 @@ function simulate(f; radial, graph, scheme, precision = Float32, position_type =
         order = sortperm(host.ID)
         output = h5open(joinpath(save, "Radial.vtkhdf"), "r") do file
             root = file["VTKHDF"]
+            haskey(root, "Particles") && (root = root["Particles"])
             (; times = read(root["Steps/Values"]), fields = Dict(name => size(root["PointData"][name]) for name in keys(root["PointData"])))
         end
         return (; steps = meta.Iteration, time = meta.TotalTime,

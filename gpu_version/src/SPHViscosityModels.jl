@@ -113,7 +113,7 @@ end
         μ = kernel.h * v_dot_x * inverse_distance
         return -constants.m₀ * (-constants.α * constants.c₀ * μ) / mean_density * gradient
     end
-    return zero(x)
+    return zero(gradient)
 end
 
 @inline function radial_viscosity(::Laminar, kernel, constants, x, v, gradient, ρᵢ, ρⱼ, inverse_distance)

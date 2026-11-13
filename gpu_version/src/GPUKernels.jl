@@ -26,6 +26,8 @@ averages the two reciprocal-density weights and evaluates from the target
 particle's viewpoint, removing that diffusion term's orientation dependence.
 The separate Fourtakas inner model also evaluates from the target viewpoint;
 it suppresses the whole diffusion sum when the support contains a wall.
+Radial artificial viscosity and pressure share one final gradient multiplication;
+this reassociation changes rounding relative to separate vector forces.
 
 Every kernel of a time step takes the device resident step state (`step`, see
 `GPUStepState`) and reads the step size and the simulated time from it; the
@@ -548,6 +550,9 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                                 coefficient = dot_velocity < zero(T) ?
                                     (-SimConstants.α * c₀ * mu / ((ρᵢ + ρⱼ) / 2)) * m₀ : zero(T)
                                 visc = -coefficient * ∇ᵢWᵢⱼ
+                            elseif Radial && SimViscosity isa ArtificialViscosity
+                                visc = SPHViscosityModels.radial_viscosity(SimViscosity, SimKernel, SimConstants,
+                                    xᵢⱼ, viscous_velocity, one(T), ρᵢ, ρⱼ, inverse_distance)
                             elseif ScalarSPS
                                 v1 = SPHViscosityModels.scalar_sps_viscosity(SimKernel, SimConstants,
                                     sgn * xᵢⱼ, sgn * viscous_velocity, sgn * ∇ᵢWᵢⱼ, xᵢⱼ²,
@@ -576,8 +581,13 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                             Pfac = viscous_dt === nothing ? (Pᵢ + Pⱼ) * (ρᵢ⁻¹ * ρⱼ⁻¹) : (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
                             f_ab = InvDensity === nothing ? tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx) :
                                 tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx, ρᵢ⁻¹, ρⱼ⁻¹)
-                            dvdt = -mass_j * (Pfac + f_ab) * ∇ᵢWᵢⱼ
-                            acc += dvdt + visc
+                            if Radial && SimViscosity isa ArtificialViscosity && viscous_dt === nothing
+                                # Combine the collinear forces before applying their shared gradient.
+                                acc += (-mass_j * (Pfac + f_ab) + visc) * ∇ᵢWᵢⱼ
+                            else
+                                dvdt = -mass_j * (Pfac + f_ab) * ∇ᵢWᵢⱼ
+                                acc += dvdt + visc
+                            end
                         end
 
                         if FlagKernel

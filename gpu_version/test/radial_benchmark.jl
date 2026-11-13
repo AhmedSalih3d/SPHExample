@@ -3,6 +3,55 @@ module RadialBenchmarkTests
 using Test, HDF5
 
 include(joinpath(@__DIR__, "..", "benchmark", "radial_interactions.jl"))
+include(joinpath(@__DIR__, "..", "benchmark", "operator_fusion.jl"))
+
+@testset "radial pressure-viscosity fusion and benchmark guards" begin
+    fusion = OperatorFusionBenchmark
+    @test_throws ArgumentError fusion.main(["--rounds=1"])
+    @test_throws ArgumentError fusion.main(["--duration=NaN"])
+    @test_throws ArgumentError fusion.main(["--max-position-dx=-1"])
+    @test_throws ArgumentError fusion.main(["--candidate=unknown"])
+    @test_throws ArgumentError fusion.main(["--unknown"])
+    @test fusion.check_accuracy((; position_dx = 0.1), 0.1) === nothing
+    @test_throws r"Position drift" fusion.check_accuracy((; position_dx = 0.11), 0.1)
+    @test_throws r"Position drift" fusion.check_accuracy((; position_dx = NaN), 0.1)
+    @test_throws r"source anchor" fusion.unfused_source("")
+    @test_throws r"source anchor" fusion.unit_wall_source("")
+    @test_throws r"source anchor" fusion.resources_source("")
+    fields = ([SVector(0.0, 0.0)], [SVector(0.0, 0.0)], [1000.0], [SVector(0.0, 0.0)])
+    fixture = (; work = (; steps = 2, rebuilds = 1, readbacks = 2), ids = [1], types = [Fluid],
+        state = fields, time = 0.1,
+        output = (; counts = [1], times = [0.1], datasets = Dict("Points" => (Float64, (2, 1), "hash"))))
+    @test fusion.differences(fixture, fixture, 0.02).exact_output
+    @test_throws r"counts changed" fusion.differences(fixture,
+        merge(fixture, (; work = (; steps = 3, rebuilds = 1, readbacks = 2))), 0.02)
+    @test_throws r"identities" fusion.differences(fixture, merge(fixture, (; ids = [2])), 0.02)
+    @test_throws r"shape/type" fusion.differences(fixture,
+        merge(fixture, (; output = merge(fixture.output, (; datasets = Dict("Points" => (Float64, (3, 1), "hash")))))), 0.02)
+    for T in (Float32, Float64), D in (2, 3)
+        constants = SimulationConstants{T}(dx = T(0.02), c₀ = T(35), m₀ = T(1000 * 0.02^D))
+        kernel = SPHKernelInstance{D,T}(WendlandC2(); dx = constants.dx)
+        for scenario in ((0, -1, 1, 1), (0.2, 1, 1, 1), (1, -1, 1, 1), (1, 0, 1, 1),
+                         (1, -1, 0, 1), (1, -1, 0.5, 2), (2, -1, 2, 0.5))
+            q, velocity_scale, wall, mass_ratio = T.(scenario)
+            x = normalize(SVector{D,T}(ntuple(identity, D))) * (q * kernel.h)
+            gradient = ∇Wᵢⱼ(kernel, q, x)
+            inverse_distance = inv(dot(x, x) + kernel.η²)
+            v = velocity_scale * x
+            coefficient = SPHExampleGPU.SPHViscosityModels.radial_viscosity(ArtificialViscosity(),
+                kernel, constants, x, v, one(T), T(995), T(1007), inverse_distance)
+            @test coefficient isa T
+            visc = SPHExampleGPU.SPHViscosityModels.radial_viscosity(ArtificialViscosity(),
+                kernel, constants, x, v, gradient, T(995), T(1007), inverse_distance)
+            for pressure in (T(-3), zero(T), T(3), -coefficient * wall * mass_ratio)
+                expected = pressure * gradient + (visc * wall) * mass_ratio
+                actual = (pressure + (coefficient * wall) * mass_ratio) * gradient
+                scale = norm(pressure * gradient) + norm((visc * wall) * mass_ratio)
+                @test norm(actual - expected) <= T(16) * eps(T) * scale
+            end
+        end
+    end
+end
 
 function write_output_fixture(folder; reverse_order = false, position_error = 0.0, density_error = 0.0)
     name = "Fixture"

@@ -161,7 +161,10 @@ The live-buffer report includes these arrays.
 for supported linear diffusion and built-in viscosity models. Linear diffusion
 uses the symmetric reciprocal-density average `(ρᵢ⁻¹ + ρⱼ⁻¹) / 2`, changing
 the reference diffusion operator, not just rounding. SPS keeps its original
-viscosity arithmetic and pair ordering. The default is `false`, preserving
+viscosity arithmetic and pair ordering. Radial artificial viscosity combines
+its scalar coefficient with pressure before applying their shared gradient;
+this force fusion is always enabled within the radial path and changes rounding.
+The default for `GPURadialInteractions` is `false`, preserving
 the reference arithmetic. Accuracy and convergence must be validated for the
 intended simulation; unsupported models use the reference path.
 

@@ -1,0 +1,9 @@
+case,variant,candidate,radial,cached,strict,particles,pass,step,threads,lanes,registers_per_thread,local_bytes_per_thread,shared_bytes_per_block
+DamBreak3D_dp0.0085,baseline,force,true,true,false,171496,corrector,device,128,1,55,0,0
+DamBreak3D_dp0.0085,fused,force,true,true,false,171496,corrector,device,128,1,55,0,0
+DamBreak3D_dp0.0085,baseline,force,true,true,false,171496,predictor,device,128,1,55,32,0
+DamBreak3D_dp0.0085,fused,force,true,true,false,171496,predictor,device,128,1,56,32,0
+DamBreak3D_dp0.02,baseline,force,true,true,false,17446,corrector,device,128,2,56,0,0
+DamBreak3D_dp0.02,fused,force,true,true,false,17446,corrector,device,128,2,56,0,0
+DamBreak3D_dp0.02,baseline,force,true,true,false,17446,predictor,device,128,2,56,32,0
+DamBreak3D_dp0.02,fused,force,true,true,false,17446,predictor,device,128,2,61,32,0

@@ -1,0 +1,2 @@
+case,duration,maximum_position_dx,steps,rebuilds,readbacks,position_dx,velocity,density,acceleration,time_error,output_time_error,exact_state,exact_output
+DamBreak3D_dp0.0085,0.3,0.6,3382,80,181,0.5173069672571518,0.06891355,2.61969,118.49273,5.456968210637569e-10,6.039044819772243e-10,false,false

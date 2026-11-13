@@ -1,0 +1,15 @@
+case,round,variant,duration,radial,cached,strict,candidate,particles,seconds,loop_seconds,steps,rebuilds,readbacks,position_dx,velocity,density,acceleration,time_error,output_time_error,exact_state,exact_output
+DamBreak3D_dp0.0085,1,baseline,0.03,true,true,false,unit-wall,171496,2.3033959,2.1543887,339,2,14,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+DamBreak3D_dp0.0085,1,fused,0.03,true,true,false,unit-wall,171496,2.2750839,2.175548,339,2,14,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+DamBreak3D_dp0.0085,2,baseline,0.03,true,true,false,unit-wall,171496,2.2428547,2.1231355,339,2,14,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+DamBreak3D_dp0.0085,2,fused,0.03,true,true,false,unit-wall,171496,2.3094237,2.2380596,339,2,14,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+DamBreak3D_dp0.0085,3,baseline,0.03,true,true,false,unit-wall,171496,2.1701197,2.0919657,339,2,14,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+DamBreak3D_dp0.0085,3,fused,0.03,true,true,false,unit-wall,171496,2.2371092,2.1106115,339,2,14,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+DamBreak3D_dp0.0085,4,baseline,0.03,true,true,false,unit-wall,171496,2.236188,2.1106902,339,2,14,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+DamBreak3D_dp0.0085,4,fused,0.03,true,true,false,unit-wall,171496,2.2099578,2.1260339,339,2,14,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+DamBreak3D_dp0.0085,5,baseline,0.03,true,true,false,unit-wall,171496,2.2468562,2.1691008,339,2,14,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+DamBreak3D_dp0.0085,5,fused,0.03,true,true,false,unit-wall,171496,2.2799115,2.1313453,339,2,14,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+DamBreak3D_dp0.0085,6,baseline,0.03,true,true,false,unit-wall,171496,2.2400377,2.1009596,339,2,14,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+DamBreak3D_dp0.0085,6,fused,0.03,true,true,false,unit-wall,171496,2.198352,2.1200516,339,2,14,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+DamBreak3D_dp0.0085,7,baseline,0.03,true,true,false,unit-wall,171496,2.1854045,2.0959942,339,2,14,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+DamBreak3D_dp0.0085,7,fused,0.03,true,true,false,unit-wall,171496,2.2353276,2.1139437,339,2,14,0.0,0.0,0.0,0.0,0.0,0.0,true,true

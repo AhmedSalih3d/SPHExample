@@ -30,7 +30,7 @@ function baseline_modules()
         kernels = Base.invokelatest(getproperty, SPHExampleGPU, Symbol(names["GPUKernels"])))
 end
 
-function measure(variant, case, duration; strict = false)
+function measure(variant, case, duration; strict = false, configure = identity)
     return mktempdir() do save
         kw = case.build(Float32, save)
         model = kw.SimDensityDiffusion
@@ -49,6 +49,7 @@ function measure(variant, case, duration; strict = false)
         meta.GPUUseGraph = true
         meta.GPUMaxStepsPerSync = 32
         meta.OutputVariables = ["Density", "Pressure", "Velocity", "Acceleration", "ID", "Type"]
+        configure(meta)
         host = AllocateDataStructures(kw.SimGeometry, meta)
         logger = SimulationLogger(save)
         GC.gc()

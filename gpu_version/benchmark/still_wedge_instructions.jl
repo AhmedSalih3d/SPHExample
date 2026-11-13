@@ -3,8 +3,8 @@ using SPHExampleGPU, CUDA, HDF5, SHA, Statistics, Printf, TimerOutputs, LinearAl
 const SOURCE_DIR = normpath(joinpath(@__DIR__, "..", "src"))
 const EXAMPLE_PATH = normpath(joinpath(@__DIR__, "..", "example", "StillWedgeMDBC.jl"))
 
-function checked_driver(; propagate = false)
-    names = Dict(name => "CheckedRadial" * name for name in
+function checked_driver(; propagate = false, kernel_transform = identity, prefix = "CheckedRadial")
+    names = Dict(name => prefix * name for name in
         ("SPHDensityDiffusionModels", "GPUKernels", "GPUConfiguration", "SPHCellList"))
     function source(file)
         text = read(joinpath(SOURCE_DIR, file), String)
@@ -13,6 +13,7 @@ function checked_driver(; propagate = false)
     end
     for name in ("SPHDensityDiffusionModels", "GPUKernels", "GPUConfiguration", "SPHCellList")
         text = source(name * ".jl")
+        name == "GPUKernels" && (text = kernel_transform(text))
         if name == "SPHDensityDiffusionModels" && !propagate
             needle = "Base.@propagate_inbounds function radial_density_diffusion(model::Union{LinearDensityDiffusion, ZeroGravityLinearDensityDiffusion}"
             occursin(needle, text) || error("optimized annotation not found")
@@ -25,7 +26,8 @@ function checked_driver(; propagate = false)
         Base.include_string(SPHExampleGPU, text, joinpath(SOURCE_DIR, name * ".jl"))
     end
     return (; driver = Base.invokelatest(getproperty, SPHExampleGPU, Symbol(names["SPHCellList"])),
-        diffusion = Base.invokelatest(getproperty, SPHExampleGPU, Symbol(names["SPHDensityDiffusionModels"])))
+        diffusion = Base.invokelatest(getproperty, SPHExampleGPU, Symbol(names["SPHDensityDiffusionModels"])),
+        kernels = Base.invokelatest(getproperty, SPHExampleGPU, Symbol(names["GPUKernels"])))
 end
 
 function example_runner(variant)
