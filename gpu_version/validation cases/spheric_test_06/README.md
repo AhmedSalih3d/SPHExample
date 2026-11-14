@@ -5,6 +5,13 @@ simulations completed; see the measured drag errors, resolution sensitivity,
 state checks and sound-speed investigation in [REPORT.md](REPORT.md).
 The source case is [SPHERIC Test 06](https://www.spheric-sph.org/tests/test-06).
 
+The follow-up [DualSPHysics comparison and proposed solution](COMPARISON.md)
+quantifies noise, accuracy and warm solver timings across all three Reynolds
+numbers. It includes current field images and isolated motion, diffusion,
+regularization, sound-speed and precision controls. The integrated-velocity
+motion control removes acceleration introduced by rounded position records;
+the remaining large acoustic ringing still requires pressure/boundary work.
+
 ## Case definition
 
 The closed tank occupies `[0,10] × [0,5]` m. A unit square initially occupies

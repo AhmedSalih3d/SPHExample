@@ -1,0 +1,6 @@
+integrated_position_difference_max = 2.1817941355140036e-5
+late_hermite_acceleration_max = 0.8008911933878365
+late_hermite_acceleration_rms = 0.21087497968178567
+late_hermite_velocity_error_rms = 0.000600813525093204
+late_integrated_acceleration_rms = 8.285432354997204e-12
+late_reference_acceleration_max = 7.0751e-24

@@ -1,0 +1,2 @@
+case,solver,reynolds,sound_speed,motion,diffusion,pressure_nrmse,viscous_nrmse,pressure_raw_nrmse,viscous_raw_nrmse,pressure_noise_rms,viscous_noise_rms,pressure_dominant_hz,viscous_dominant_hz,pressure_late_bias,viscous_late_bias,steps,frames,wall_seconds
+re100_dual_operators,native,100,40,hermite,2,0.515797718190076,0.18575955223807322,0.589157909853781,0.18809853108368363,0.9769167867060237,0.013281103667721936,1.7928286852589639,1.7928286852589639,0.2619585111323537,-0.23967231451503757,45600,401,19.0822318

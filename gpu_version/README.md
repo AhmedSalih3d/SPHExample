@@ -1824,6 +1824,10 @@ Re = 50, 100 and 150, with three particle spacings and full 8 s runs.
 Its [report](validation%20cases/spheric_test_06/REPORT.md) records a failed
 validation for the tested DBC setup, including measured errors, boundary
 penetration, resolution sensitivity and a sound-speed study.
+The follow-up [DualSPHysics comparison](validation%20cases/spheric_test_06/COMPARISON.md)
+includes current field images at all three Reynolds numbers, raw pressure-noise
+metrics, isolated motion/formulation controls, paired whole-solver timings,
+and an assessment of the pressure and wall-treatment changes still needed.
 
 `example/MovingSquare2d.jl` generates the closed tank, fluid and moving square
 in memory and runs the GPU solver. Including the file does the same thing.

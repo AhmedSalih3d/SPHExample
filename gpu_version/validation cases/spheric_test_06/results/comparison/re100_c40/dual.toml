@@ -1,0 +1,5 @@
+frames = 401
+particles = 84864
+solver_seconds = 46.662125
+steps = 46342
+wall_seconds = 46.9798613

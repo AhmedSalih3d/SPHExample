@@ -164,12 +164,12 @@ function frame_loads(position, velocity, density, types, markers, kernel, consta
 end
 
 """Recover drag from accepted output states, independently of stale acceleration buffers."""
-function analyze_history(path, case; coefficient_path, diagnostics_path)
-    trajectory = body_trajectory()
+function analyze_history(path, case; coefficient_path, diagnostics_path, trajectory = body_trajectory())
     # Float64 postprocessing of saved Float32 state avoids reduction-roundoff noise.
     constants = SimulationConstants{Float64}(2; dx = case.dx, ρ₀ = case.constants.ρ₀,
         c₀ = case.constants.c₀, g = 0, ν₀ = case.constants.ν₀)
-    kernel = SPHKernelInstance{2,Float64}(WendlandC2(); h = Float64(case.kernel.h))
+    kernel = SPHKernelInstance{2,Float64}(WendlandC2(); h = Float64(case.kernel.h),
+        αD = Float64(case.kernel.αD), η² = Float64(case.kernel.η²))
     rows, checks = NamedTuple[], NamedTuple[]
     h5open(path, "r") do file
         root = file["VTKHDF"]
@@ -242,7 +242,7 @@ function run_case(case; results_dir = joinpath(CASE_DIR, "results"))
     name = @sprintf("Re%03d_n%03d", case.reynolds, round(Int, 1 / case.dx))
     analysis = analyze_history(joinpath(save, "MovingSquare.vtkhdf"), case;
         coefficient_path = joinpath(results_dir, name * ".dat"),
-        diagnostics_path = joinpath(results_dir, name * "_state.csv"))
+        diagnostics_path = joinpath(results_dir, name * "_state.csv"), trajectory = case.motion.translation)
     metadata = Dict{String,Any}(
         "reynolds" => case.reynolds, "dx" => case.dx, "duration" => case.duration,
         "output_interval" => case.interval, "rho0" => Float64(case.constants.ρ₀),
