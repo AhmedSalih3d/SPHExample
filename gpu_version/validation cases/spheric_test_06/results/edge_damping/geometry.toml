@@ -1,0 +1,5 @@
+initial_fluid_particles = 78400
+initial_sponge_fluid_particles = 22400
+kernel_support_radius = 0.07071067811865477
+square_final_center_x = 8.97354
+square_to_sponge_final_gap = 0.02646000000000015

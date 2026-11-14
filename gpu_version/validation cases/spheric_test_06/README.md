@@ -12,6 +12,11 @@ regularization, sound-speed and precision controls. The integrated-velocity
 motion control removes acceleration introduced by rounded position records;
 the remaining large acoustic ringing still requires pressure/boundary work.
 
+The [four-edge damping experiment](EDGE_DAMPING.md) adds matching 0.5 m box
+sponges at strengths of 10 and 100 s⁻¹ in both solvers, across all three
+Reynolds numbers. It compares raw drag, noise, reference error and mean-load
+changes. Adding these momentum sinks changes the benchmark physics.
+
 ## Case definition
 
 The closed tank occupies `[0,10] × [0,5]` m. A unit square initially occupies

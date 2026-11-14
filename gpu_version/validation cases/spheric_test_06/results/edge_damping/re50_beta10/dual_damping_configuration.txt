@@ -1,0 +1,8 @@
+Damping configuration:
+Damping zone_0 (type: Box):
+  BoxDirections.: [top, bottom, left, right]
+  MinimalDamping: (0.5,-1,0.5)-(9.5,1,4.5)
+  MaximumDamping: (0,-1,0)-(10,1,5)
+  Overlimit.....: 0.100000
+  ReduMax.......: 10
+  Factorxyz.....: (1,0,1)

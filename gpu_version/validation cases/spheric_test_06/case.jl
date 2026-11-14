@@ -172,7 +172,7 @@ function analyze_history(path, case; coefficient_path, diagnostics_path, traject
         αD = Float64(case.kernel.αD), η² = Float64(case.kernel.η²))
     rows, checks = NamedTuple[], NamedTuple[]
     h5open(path, "r") do file
-        root = file["VTKHDF"]
+        root = haskey(file,"VTKHDF/Particles") ? file["VTKHDF/Particles"] : file["VTKHDF"]
         times = read(root["Steps/Values"])
         offsets = read(root["Steps/PointOffsets"])
         counts = read(root["NumberOfPoints"])

@@ -36,8 +36,11 @@ function integrated_trajectory()
 end
 
 function prepare_dual(; n = 40, reynolds = 100, sound_speed = 40, duration = 8.0, interval = 0.02,
-        motion_kind = :hermite, diffusion = 1)
+        motion_kind = :hermite, diffusion = 1, damping = nothing)
     name = "re$(reynolds)_n$(n)_c$(sound_speed)_$(motion_kind)_ddt$(diffusion)_t$(duration)_out$(interval)_centered_v2"
+    if damping !== nothing
+        name *= "_damp_w$(damping.width)_r$(damping.rate)_o$(damping.overlimit)"
+    end
     directory = mkpath(joinpath(WORK, "definitions", name))
     prefix = joinpath(directory, "Case")
     isfile(prefix * ".bi4") && return prefix
@@ -57,6 +60,7 @@ function prepare_dual(; n = 40, reynolds = 100, sound_speed = 40, duration = 8.0
     l = case.layers*dx
     walls = box(-l,-l,10+2l,l)*box(-l,5,10+2l,l)*box(-l,0,l,5)*box(10,0,l,5)
     fluid = box(0,0,1,5)*box(2,0,8,5)*box(1,0,1,2)*box(1,3,1,2)
+    special = damping === nothing ? "" : edge_damping_xml(damping)
     xml = """
     <?xml version="1.0" encoding="UTF-8"?>
     <case><casedef><constantsdef>
@@ -75,7 +79,7 @@ function prepare_dual(; n = 40, reynolds = 100, sound_speed = 40, duration = 8.0
     </mainlist></commands></geometry>
     <motion><objreal ref="10"><begin mov="1" start="0"/>
       <mvfile id="1" duration="8.1"><file name="$(replace(motion_path,'\\'=>'/'))" fields="2" fieldtime="0" fieldx="1"/></mvfile>
-    </objreal></motion></casedef><execution><parameters>
+    </objreal></motion></casedef><execution>$special<parameters>
       <parameter key="SavePosDouble" value="1"/><parameter key="StepAlgorithm" value="2"/>
       <parameter key="Kernel" value="2"/><parameter key="ViscoTreatment" value="3"/>
       <parameter key="Visco" value="$(1/reynolds)"/><parameter key="ViscoBoundFactor" value="1"/>
@@ -91,6 +95,23 @@ function prepare_dual(; n = 40, reynolds = 100, sound_speed = 40, duration = 8.0
     write(definition*".xml", xml)
     logged(`$GEN $definition $prefix -save:all`, joinpath(directory,"gencase.log"))
     return prefix
+end
+
+"""The 2D x/y rectangle maps to Dual's x/z plane; corners use the maximum ramp."""
+function edge_damping_xml(damping)
+    (; width, rate, overlimit) = damping
+    # The square's final right face is x ≈ 9.47354; keep it outside the band.
+    all(isfinite,(width,rate,overlimit)) && 0 < width < 0.526 && rate >= 0 && overlimit >= 0 ||
+        throw(ArgumentError("Invalid outer-edge damping parameters"))
+    return """
+    <special><damping><dampingbox active="true">
+      <directions value="left,right,bottom,top"/>
+      <limitmin><pointini x="$width" y="-1" z="$width"/><pointend x="$(10-width)" y="1" z="$(5-width)"/></limitmin>
+      <limitmax><pointini x="0" y="-1" z="0"/><pointend x="10" y="1" z="5"/></limitmax>
+      <overlimit value="$overlimit"/><redumax value="$rate"/>
+      <factorxyz x="1" y="0" z="1"/>
+    </dampingbox></damping></special>
+    """
 end
 
 function read_dual_csv(path)
@@ -143,14 +164,15 @@ end
 
 function native_case(configuration, directory)
     (; reynolds, sound_speed, motion_kind, diffusion, eta, float_type, n) = configuration
-    case = build_case(; reynolds, sound_speed, dx = 1/n, save = directory, float_type)
+    case = build_case(; reynolds, sound_speed, dx = 1/n, save = directory, float_type,
+        duration = get(configuration,:duration,8.0),interval = get(configuration,:interval,0.02))
     trajectory = motion_kind == :hermite ? body_trajectory() : integrated_trajectory()
     kernel = eta == :native ? case.kernel : SPHKernelInstance{2,float_type}(WendlandC2();
         h = case.kernel.h, η² = float_type((0.1case.kernel.h)^2))
     return merge(case,(; kernel, motion = PrescribedMotion(3; translation = trajectory)))
 end
 
-function native_run(configuration, directory; analyze = true, results = joinpath(RESULTS,configuration.id))
+function native_run(configuration, directory; analyze = true, results = joinpath(RESULTS,configuration.id), damping = nothing)
     mkpath(directory)
     isfile(joinpath(directory,"MovingSquare.vtkhdf")) && error("Refusing to overwrite $directory")
     case = native_case(configuration,directory)
@@ -165,7 +187,7 @@ function native_run(configuration, directory; analyze = true, results = joinpath
                 result = RunSimulation(SimGeometry = case.geometry, SimMetaData = case.metadata,
                     SimConstants = case.constants, SimKernel = case.kernel, SimLogger = logger,
                     SimParticles = particles, SimViscosity = Laminar(), SimDensityDiffusion = diffusion,
-                    SimTimeStepping = SymplecticTimeStepping(), SimMotion = case.motion)
+                    SimTimeStepping = SymplecticTimeStepping(), SimMotion = case.motion, SimDamping = damping)
             finally
                 isopen(logger.LoggerIo) && close(logger.LoggerIo)
             end

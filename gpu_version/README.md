@@ -1828,6 +1828,9 @@ The follow-up [DualSPHysics comparison](validation%20cases/spheric_test_06/COMPA
 includes current field images at all three Reynolds numbers, raw pressure-noise
 metrics, isolated motion/formulation controls, paired whole-solver timings,
 and an assessment of the pressure and wall-treatment changes still needed.
+The [four-edge damping experiment](validation%20cases/spheric_test_06/EDGE_DAMPING.md)
+tests matching box sponges in both solvers at Re = 50, 100 and 150, and measures
+noise reduction separately from changes in mean drag.
 
 `example/MovingSquare2d.jl` generates the closed tank, fluid and moving square
 in memory and runs the GPU solver. Including the file does the same thing.

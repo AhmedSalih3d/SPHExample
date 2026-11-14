@@ -1,0 +1,7 @@
+<special><damping><dampingbox active="true">
+  <directions value="left,right,bottom,top"/>
+  <limitmin><pointini x="0.5" y="-1" z="0.5"/><pointend x="9.5" y="1" z="4.5"/></limitmin>
+  <limitmax><pointini x="0" y="-1" z="0"/><pointend x="10" y="1" z="5"/></limitmax>
+  <overlimit value="0.1"/><redumax value="10.0"/>
+  <factorxyz x="1" y="0" z="1"/>
+</dampingbox></damping></special>
