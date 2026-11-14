@@ -1818,6 +1818,13 @@ pass a simulation's `SimConstants` to
 
 ### Generating the 2D MovingSquare case
 
+The reproducible [SPHERIC Test 06 validation](validation%20cases/spheric_test_06/README.md)
+uses the official motion and separate pressure/viscous drag references at
+Re = 50, 100 and 150, with three particle spacings and full 8 s runs.
+Its [report](validation%20cases/spheric_test_06/REPORT.md) records a failed
+validation for the tested DBC setup, including measured errors, boundary
+penetration, resolution sensitivity and a sound-speed study.
+
 `example/MovingSquare2d.jl` generates the closed tank, fluid and moving square
 in memory and runs the GPU solver. Including the file does the same thing.
 The tank is 10 m × 5 m with 0.04 m walls; the 1 m square starts at `(1, 2)` m:

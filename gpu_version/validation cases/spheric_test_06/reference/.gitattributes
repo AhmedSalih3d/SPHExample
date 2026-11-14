@@ -1,0 +1,2 @@
+# Preserve the official bytes, including CRLF and original header whitespace.
+*.dat -text -whitespace

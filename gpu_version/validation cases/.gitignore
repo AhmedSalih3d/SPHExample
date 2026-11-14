@@ -1,0 +1,6 @@
+# Particle histories and downloaded original archives are local validation artifacts.
+**/runs/
+**/reference/SPHERIC_TestCase6.zip
+**/reference/SPHERIC_Benchmark/
+**/reference/geometry.jpg
+**/__pycache__/
