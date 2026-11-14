@@ -1432,19 +1432,24 @@ julia --project=. -t 2,0 benchmark/radial_bounds_cases.jl --rounds=9 --duration=
 
 #### Default radial pressure-viscosity fusion
 
-Pressure and artificial viscosity now share one final gradient multiplication
-by default in the existing radial interaction path. There is no additional
-fusion flag. This does **not** change the default value of
+Pressure and artificial viscosity share one final gradient multiplication in
+the radial interaction path. Reference interactions also use this force fusion
+with `GPUInteractionFastMath = true`, independently of the selected diffusion
+formula. `GPUInteractionFastMath = false` retains separate reference forces;
+radial force fusion remains enabled. This does not change the default value of
 `GPURadialInteractions` or switch reference runs to symmetric diffusion.
 
 The implementation combines the scalar pressure and artificial-viscosity
-coefficients before multiplying by the kernel gradient, only in radial mode.
+coefficients before multiplying by the kernel gradient.
 It preserves the model algebra but changes floating-point rounding. Wall
 viscosity and particle-mass scaling are applied before that multiplication;
-other viscosity models and the reference interaction path keep their original
-vector operations. DualSPHysics-style stepping retains its existing force
+other viscosity models keep their original vector operations. DualSPHysics-style stepping retains its existing force
 arithmetic as well. No new buffers, kernel launches or graph-cache settings
-are needed.
+are needed. The resolved setting is `result.configuration.effective.force_fusion`.
+Standalone `launch_interactions!` also accepts `fuse_reference_forces`, defaulting
+to its `fastmath` option, for controlled comparisons. The historical measurements
+below describe the original radial-only optimization; reference-path measurements
+and validation are documented [separately](benchmark/reference_force_fusion.md).
 
 [`benchmark/operator_fusion.jl`](benchmark/operator_fusion.jl) compares the
 installed implementation against a cloned pre-fusion vector-force baseline.
@@ -3947,6 +3952,9 @@ execution. They are reported as `interaction_always_inline` and
 and configuration logs. Changing either setting between `SimulationLoop`
 output intervals invalidates captured graphs and refreshes the carried
 single-neighbor derivative before the next predictor.
+With artificial viscosity, interaction fast math also enables reference
+pressure-viscosity force fusion; `effective.force_fusion` reports that choice
+independently of the density-diffusion operator.
 
 Inlining does not request fast arithmetic, but performance and exact rounding
 still need checking for each specialization. Fast math relaxes floating-point
@@ -4015,7 +4023,7 @@ The default-off path retains the original oriented diffusion.
 The option does not change precision, physics parameters, the timestep scheme,
 neighbor selection, boundary forces, shifting or output fields. It introduces
 no extra device arrays or per-step launches with a fixed interaction mode. The host selects a `Val`-specialized
-kernel, so default-off runs retain reference arithmetic. Changing the option
+kernel, so default-off runs retain the reference density-diffusion operator. Changing the option
 between timestep intervals invalidates cached graphs and refreshes the carried
 derivative when using single-neighbor stepping. mDBC interpolation is
 unchanged, including Updated mDBC boundary activation and tangential velocity.

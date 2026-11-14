@@ -28,6 +28,8 @@ The separate Fourtakas inner model also evaluates from the target viewpoint;
 it suppresses the whole diffusion sum when the support contains a wall.
 Radial artificial viscosity and pressure share one final gradient multiplication;
 this reassociation changes rounding relative to separate vector forces.
+Reference artificial viscosity uses the same force fusion with interaction fast
+math, independently of the selected density-diffusion formula and pair ordering.
 
 Every kernel of a time step takes the device resident step state (`step`, see
 `GPUStepState`) and reads the step size and the simulated time from it; the
@@ -399,7 +401,8 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                              ::Val{FrozenParticles} = Val(true), ::Val{IncludeGravity} = Val(false), periodicity = nothing,
                              periodic_bounds = nothing, viscous_dt = nothing, ::Val{FastMath}=Val(false), target_indices=nothing, pair_order=nothing,
                              ::Val{NativeRigid}=Val(false), interaction_mass=nothing,
-                             ::Val{PreloadTypes}=Val(false), ρ₀⁻¹ = inv(SimConstants.ρ₀), predictor_output = nothing) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath, NativeRigid, PreloadTypes}
+                             ::Val{PreloadTypes}=Val(false), ρ₀⁻¹ = inv(SimConstants.ρ₀), predictor_output = nothing,
+                             ::Val{FuseReferenceForces} = Val(false)) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath, NativeRigid, PreloadTypes, FuseReferenceForces}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -550,7 +553,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                                 coefficient = dot_velocity < zero(T) ?
                                     (-SimConstants.α * c₀ * mu / ((ρᵢ + ρⱼ) / 2)) * m₀ : zero(T)
                                 visc = -coefficient * ∇ᵢWᵢⱼ
-                            elseif Radial && SimViscosity isa ArtificialViscosity
+                            elseif (Radial || FuseReferenceForces) && SimViscosity isa ArtificialViscosity
                                 visc = SPHViscosityModels.radial_viscosity(SimViscosity, SimKernel, SimConstants,
                                     xᵢⱼ, viscous_velocity, one(T), ρᵢ, ρⱼ, inverse_distance)
                             elseif ScalarSPS
@@ -581,7 +584,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                             Pfac = viscous_dt === nothing ? (Pᵢ + Pⱼ) * (ρᵢ⁻¹ * ρⱼ⁻¹) : (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
                             f_ab = InvDensity === nothing ? tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx) :
                                 tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx, ρᵢ⁻¹, ρⱼ⁻¹)
-                            if Radial && SimViscosity isa ArtificialViscosity && viscous_dt === nothing
+                            if (Radial || FuseReferenceForces) && SimViscosity isa ArtificialViscosity && viscous_dt === nothing
                                 # Combine the collinear forces before applying their shared gradient.
                                 acc += (-mass_j * (Pfac + f_ab) + visc) * ∇ᵢWᵢⱼ
                             else
@@ -655,7 +658,7 @@ end
 
 """
     launch_interactions!(...; threads, lanes, boundary_forces, pos_cells, radial, scalar_sps,
-                         always_inline = true, fastmath = true)
+                         always_inline = true, fastmath = true, fuse_reference_forces = fastmath)
 
 Launch the gather interaction kernel. `Position`, `Density` and
 `Velocity` are the arrays of the state being evaluated (the half step arrays
@@ -698,6 +701,11 @@ rounding and NaN/Inf checks, flush Float32 subnormals, and use approximate
 arithmetic. Both default to `true` and can be disabled independently. Other kernels,
 including mDBC corrections and pressure/reciprocal cache preparation, are not
 recompiled with these options.
+`fuse_reference_forces = fastmath` combines reference pressure and artificial-viscosity
+coefficients before their shared gradient multiplication. It retains the selected
+density-diffusion formula and pair ordering, but changes force rounding. The driver
+enables it with interaction fast math; `fastmath = false` retains separate reference
+forces by default. Existing radial force fusion remains enabled independently.
 `target_indices` optionally maps the `target_count` outputs to source indices.
 Sources and their cell IDs must share dense cell order; outputs remain in target
 order. This permits periodic copies as neighbors without integrating them.
@@ -719,7 +727,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
                               pressure = nothing, frozen_particles::Val = Val(true), include_gravity::Val = Val(false), periodicity = nothing,
                               periodic_bounds = nothing, periodic_cell_coordinates::Bool = false, viscous_dt = nothing,
                               fast_math::Bool = false,
-                              always_inline::Bool = true, fastmath::Bool = true,
+                              always_inline::Bool = true, fastmath::Bool = true, fuse_reference_forces::Bool = fastmath,
                               target_indices = nothing, target_count::Integer = length(Position), pair_order = nothing,
                               native_rigid::Val = Val(false), interaction_mass = nothing, predictor_output = nothing)
     inverse_density === nothing || length(inverse_density) == length(Density) ||
@@ -772,7 +780,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
         Pairs, Position, Density, Velocity, ParticleType, SimParticles,
         CellStart, CellID, grid, step,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math), target_indices, pair_order, native_rigid, interaction_mass, Val(options.preload_types), inv(SimConstants.ρ₀), predictor_output)
+        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math), target_indices, pair_order, native_rigid, interaction_mass, Val(options.preload_types), inv(SimConstants.ρ₀), predictor_output, Val(fuse_reference_forces))
     return nothing
 end
 

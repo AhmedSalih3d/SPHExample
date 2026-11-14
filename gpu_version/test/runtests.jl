@@ -36,6 +36,7 @@ include(joinpath(@__DIR__, "reductions.jl"))
 include(joinpath(@__DIR__, "step_state.jl"))
 
 include(joinpath(@__DIR__, "batch_commit.jl"))
+include(joinpath(@__DIR__, "reference_force_fusion.jl"))
 include(joinpath(@__DIR__, "timestep_diagnostics.jl"))
 include(joinpath(@__DIR__, "output_deadlines.jl"))
 include(joinpath(@__DIR__, "sorting_shadows.jl"))

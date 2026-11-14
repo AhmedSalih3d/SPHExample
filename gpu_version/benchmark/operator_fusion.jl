@@ -14,13 +14,13 @@ end
 function unfused_source(source)
     source = replace(source, "\r\n" => "\n")
     source = replace_once(source,
-        "elseif Radial && SimViscosity isa ArtificialViscosity\n" *
+        "elseif (Radial || FuseReferenceForces) && SimViscosity isa ArtificialViscosity\n" *
         "                                visc = SPHViscosityModels.radial_viscosity(SimViscosity, SimKernel, SimConstants,\n" *
         "                                    xᵢⱼ, viscous_velocity, one(T), ρᵢ, ρⱼ, inverse_distance)\n" *
         "                            elseif ScalarSPS",
         "elseif ScalarSPS")
     return replace_once(source,
-        "if Radial && SimViscosity isa ArtificialViscosity && viscous_dt === nothing\n" *
+        "if (Radial || FuseReferenceForces) && SimViscosity isa ArtificialViscosity && viscous_dt === nothing\n" *
         "                                # Combine the collinear forces before applying their shared gradient.\n" *
         "                                acc += (-mass_j * (Pfac + f_ab) + visc) * ∇ᵢWᵢⱼ\n" *
         "                            else\n" *
@@ -44,8 +44,8 @@ function resources_source(source)
         "@cuda always_inline=always_inline fastmath=fastmath threads=threads blocks=cld(n * K, threads) interaction_kernel!(",
         "compiled = @cuda always_inline=always_inline fastmath=fastmath threads=threads blocks=cld(n * K, threads) interaction_kernel!(")
     return replace_once(source,
-        "inv(SimConstants.ρ₀), predictor_output)\n    return nothing",
-        """inv(SimConstants.ρ₀), predictor_output)
+        "inv(SimConstants.ρ₀), predictor_output, Val(fuse_reference_forces))\n    return nothing",
+        """inv(SimConstants.ρ₀), predictor_output, Val(fuse_reference_forces))
     if !haskey(FUSION_KERNEL_RESOURCES, typeof(compiled))
         memory = CUDA.memory(compiled)
         FUSION_KERNEL_RESOURCES[typeof(compiled)] = (;
@@ -84,6 +84,7 @@ end
 
 function configure_case(meta; radial = true, cached = true)
     meta.GPURadialInteractions = radial
+    meta.GPUPreloadInteractionTypes = !radial
     meta.GPUCacheInteractionFields = cached
     meta.GPUCellSubdivision = 1
     meta.GPUXCellSubdivision = 4
@@ -130,7 +131,7 @@ function run_cases(variants, cases; rounds, duration, strict, radial, cached, ma
         errors = differences(baseline, optimized, dx)
         println(case.name, " warmup comparison: ", errors)
         check_accuracy(errors, maximum_position_dx)
-        require_exact = !radial || candidate == "unit-wall"
+        require_exact = (strict && !radial) || candidate == "unit-wall"
         !require_exact || (errors.exact_state && errors.exact_output || error("Exact comparison failed"))
         # Compile both cloned call paths before the first measured pair.
         warm_errors = differences(measure(variants[1]), measure(variants[2]), dx)

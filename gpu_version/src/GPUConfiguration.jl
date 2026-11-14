@@ -70,6 +70,8 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
             options.radial ? :symmetric_reciprocal_density : :reference,
         viscosity_model = typeof(viscosity),
         boundary_viscosity_factor = viscosity isa ArtificialViscosity ? viscosity.boundary_factor : nothing,
+        force_fusion = viscosity isa ArtificialViscosity && (options.radial || meta.GPUInteractionFastMath) &&
+            !(meta.TimeSteppingMode isa DualSPHysicsSymplectic),
         viscosity_path = viscosity isa ZeroViscosity ? :disabled : options.scalar_sps ? :scalar_sps :
             options.radial && !(viscosity isa LaminarSPS) ? :radial_symmetric : :reference_ordered,
         dimensions = D, float_type = T, position_type,
@@ -100,7 +102,7 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
     if meta.VariableResolution !== nothing
         effective = merge(effective,(;position_type=Float64,
             cell_subdivision=1,x_cell_subdivision=1,
-            interaction_fastmath=false,radial_interactions=false,scalar_sps_viscosity=false,preload_interaction_types=false,
+            interaction_fastmath=false,radial_interactions=false,scalar_sps_viscosity=false,preload_interaction_types=false,force_fusion=false,
             interaction_path=:reference,viscosity_path=viscosity isa ZeroViscosity ? :disabled : :reference_ordered,cache_interaction_fields=false,
             boundary_forces=false,lanes_per_particle=1,compact_buffers=false,async_output=false,
             output_buffer_bytes=0,max_steps_per_sync=meta.GPUSyncTimers ? 1 : clamp(meta.GPUMaxStepsPerSync,1,256)))

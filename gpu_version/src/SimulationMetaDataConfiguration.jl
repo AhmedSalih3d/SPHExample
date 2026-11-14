@@ -165,7 +165,10 @@ viscosity arithmetic and pair ordering. Radial artificial viscosity combines
 its scalar coefficient with pressure before applying their shared gradient;
 this force fusion is always enabled within the radial path and changes rounding.
 The default for `GPURadialInteractions` is `false`, preserving
-the reference arithmetic. Accuracy and convergence must be validated for the
+the reference density-diffusion operator. With `GPUInteractionFastMath = true`,
+reference artificial viscosity and pressure also share their final gradient
+multiplication, independently of radial diffusion. Set interaction fast math
+to false to retain separate reference forces. Accuracy and convergence must be validated for the
 intended simulation; unsupported models use the reference path.
 
 `GPUScalarSPSViscosity = true` separately opts into a rank-one contraction of

@@ -1,0 +1,13 @@
+case,round,variant,duration,radial,cached,strict,candidate,particles,seconds,loop_seconds,steps,rebuilds,readbacks,position_dx,velocity,density,acceleration,time_error,output_time_error,exact_state,exact_output
+StillWedge2D_MDBC_dp0.02,1,baseline,0.003,false,true,true,force,3027,0.0168236,0.0017994,7,1,2,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+StillWedge2D_MDBC_dp0.02,1,fused,0.003,false,true,true,force,3027,0.019558,0.0022625,7,1,2,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+StillWedge2D_MDBC_dp0.02,2,baseline,0.003,false,true,true,force,3027,0.0196003,0.0027237,7,1,2,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+StillWedge2D_MDBC_dp0.02,2,fused,0.003,false,true,true,force,3027,0.0175301,0.0020432,7,1,2,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+StillWedge2D_MDBC_dp0.02,3,baseline,0.003,false,true,true,force,3027,0.0198154,0.002716,7,1,2,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+StillWedge2D_MDBC_dp0.02,3,fused,0.003,false,true,true,force,3027,0.0212223,0.0027296,7,1,2,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+DamBreak3D_dp0.02,1,baseline,0.003,false,true,true,force,17446,0.0193115,0.0036584,15,1,2,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+DamBreak3D_dp0.02,1,fused,0.003,false,true,true,force,17446,0.0179785,0.0036035,15,1,2,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+DamBreak3D_dp0.02,2,baseline,0.003,false,true,true,force,17446,0.0184649,0.0039569,15,1,2,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+DamBreak3D_dp0.02,2,fused,0.003,false,true,true,force,17446,0.0201107,0.0039817,15,1,2,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+DamBreak3D_dp0.02,3,baseline,0.003,false,true,true,force,17446,0.0188528,0.0036384,15,1,2,0.0,0.0,0.0,0.0,0.0,0.0,true,true
+DamBreak3D_dp0.02,3,fused,0.003,false,true,true,force,17446,0.0196978,0.0043622,15,1,2,0.0,0.0,0.0,0.0,0.0,0.0,true,true
