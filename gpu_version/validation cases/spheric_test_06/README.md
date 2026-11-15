@@ -5,7 +5,13 @@ simulations completed; see the measured drag errors, resolution sensitivity,
 state checks and sound-speed investigation in [REPORT.md](REPORT.md).
 The source case is [SPHERIC Test 06](https://www.spheric-sph.org/tests/test-06).
 
-The latest [force comparison with the new default timestep](PAIRWISE_FORCE_ACCURACY.md)
+The latest [boundary-traction verification, mDBC and spatial-refinement study](MDBC_VALIDATION.md)
+establishes analytical hydrostatic/suction pressure and laminar Couette wall-shear
+benchmarks, then compares `NoMDBC`, `SimpleMDBC` and `UpdatedMDBC` (with and without
+`PlanarShifting`, across Re = 50/100/150, c0 = 40/160 m/s and L/dp = 20/40/60)
+under the new default pairwise timestep.
+
+The [force comparison with the new default timestep](PAIRWISE_FORCE_ACCURACY.md)
 reruns both legacy and neighbor-based criteria at Re = 50/100/150 and c0 = 40/160.
 It isolates the timestep change and reports raw pressure, viscous and total drag.
 

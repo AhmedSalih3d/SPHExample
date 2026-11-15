@@ -1,0 +1,11 @@
+cfl = 0.2
+cuda_jl = "6.4.2"
+driver = "13.2.0"
+duration = 8.0
+gpu = "NVIDIA RTX A1000 Laptop GPU"
+julia = "1.12.7"
+notes = "Matched moving-square boundary, shifting, sound-speed and spatial-convergence study with exact mDBC pair-load reconstruction"
+output_interval = 0.02
+precision = "Float32 physics, Float64 positions and clock"
+source_commit = "f992471c"
+timestep_criterion = "pairwise_signal (GPULegacyTimestep = false)"
