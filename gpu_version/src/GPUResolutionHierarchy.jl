@@ -76,6 +76,23 @@ function exchange_hierarchy!(domains,h,state,phase)
     return nothing
 end
 
+function predictor_hierarchy_levels(h,leaf)
+    pairs = map(p -> predictor_limits(p,leaf.attachment),h.pairs)
+    n = length(pairs)+1
+    return ntuple(i -> ResolutionLevelLimits(i == 1 ? nothing : pairs[i-1],i == n ? nothing : pairs[i]),n)
+end
+
+function exchange_predictor_hierarchy!(domains,h,levels,state,phase)
+    for edge in h.edges
+        d,source = domains[edge.target],domains[edge.source]
+        p,s,c = d.predictor.particles,source.predictor.particles,source.predictor.cells
+        @cuda threads=128 blocks=cld(length(p),128) hierarchy_exchange_kernel!(ResolutionStep(state,d.predictor,phase),Int32(length(p)),
+            levels[edge.source],p.Position,p.Velocity,p.Density,p.Type,s.Position,s.Velocity,s.Density,s.Type,
+            c.CellStart,c.grid_dev,source.kernel,source.constants,levels[edge.target],d.fine,source.fine)
+    end
+    return nothing
+end
+
 function enqueue_resolution_step!(domains,h::ResolutionHierarchy,state;
         density_diffusion=LinearDensityDiffusion(),viscosity=ArtificialViscosity(),
         scheme=SymplecticTimeStepping(),damping=(),interaction=(;))
@@ -91,12 +108,12 @@ function enqueue_resolution_step!(domains,h::ResolutionHierarchy,state;
         resident_force_stage!(d,ResolutionStep(state,d,0);density_diffusion,viscosity,scheme,interaction)
     end
     leaf.attachment === nothing || update_resolution_floating!(leaf,ResolutionStep(state,leaf,0),false;limits=first(h.pairs))
-    for d in domains
+    for (idx,d) in enumerate(domains)
         p,s,q = d.particles,d.support,d.predictor.particles
         step = ResolutionStep(state,d,0)
         @cuda threads=128 blocks=cld(length(p),128) resolution_standard_predictor_kernel!(q.Position,q.Velocity,q.Density,
             p.Position,p.Velocity,p.Density,p.Acceleration,s.dρdtI,p.Type,p.GroupMarker,
-            ResolutionArithmeticStep{eltype(p.Density)}(step),d.constants,d.boundary_mode,Int32(length(p)))
+            ResolutionArithmeticStep{eltype(p.Density)}(step),d.constants,d.boundary_mode,h.levels[idx],d.fine,Int32(length(p)))
         @cuda threads=128 blocks=cld(length(p),128) resolution_predictor_metadata_kernel!(q.Type,q.ID,q.GroupMarker,
             q.GhostPoints,q.GhostNormals,d.predictor.pool.owners,d.predictor.pool.count,p.Type,p.GroupMarker,
             p.GhostPoints,p.GhostNormals,d.pool.owners,step,Int32(length(p)))
@@ -112,17 +129,19 @@ function enqueue_resolution_step!(domains,h::ResolutionHierarchy,state;
         enqueue_resolution_rebuild!(d.predictor,ResolutionStep(state,d.predictor,i))
         @cuda threads=1 resolution_phase_kernel!(ResolutionStep(state,d.predictor,i),Int32(i+1))
     end
+    exchange_predictor_hierarchy!(domains,h,predictor_hierarchy_levels(h,leaf),state,corrector)
     for d in domains
         resident_force_stage!(d.predictor,ResolutionStep(state,d.predictor,corrector);
-            density_diffusion,viscosity,scheme,correct_boundary=false,interaction)
+            density_diffusion,viscosity,scheme,correct_boundary=false,compute_shifting=true,interaction)
     end
     leaf.attachment === nothing || update_resolution_floating!(leaf.predictor,ResolutionStep(state,leaf.predictor,corrector),true)
-    for d in domains
+    for (idx,d) in enumerate(domains)
         p,s,q,qs = d.particles,d.support,d.predictor.particles,d.predictor.support
         step = ResolutionStep(state,d,corrector)
         @cuda threads=128 blocks=cld(length(p),128) resolution_scatter_predictor_kernel!(p.Acceleration,s.dρdtI,s.ρₙ⁺,
             s.Positionₙ⁺,s.Velocityₙ⁺,q.Acceleration,qs.dρdtI,q.Density,q.Position,q.Velocity,q.ID,
-            ResolutionStep(state,d.predictor,corrector),Int32(length(p)))
+            ResolutionStep(state,d.predictor,corrector),Int32(length(p)),
+            p.Position,p.Density,p.Type,h.levels[idx],d.fine,s.∇Cᵢ,s.∇◌rᵢ,qs.∇Cᵢ,qs.∇◌rᵢ)
         red = d.pool.reduction
         @cuda threads=REDUCE_THREADS blocks=red.nblocks resolution_standard_corrector_kernel!(p.Position,p.Velocity,
             p.Acceleration,p.Density,s.dρdtI,s.ρₙ⁺,s.Positionₙ⁺,s.Velocityₙ⁺,p.Type,s.∇Cᵢ,s.∇◌rᵢ,

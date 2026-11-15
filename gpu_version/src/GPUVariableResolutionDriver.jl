@@ -242,14 +242,14 @@ function resolution_criteria_kernel!(partial, velocity, acceleration, types, vis
     return nothing
 end
 function resident_force_stage!(domain, step; density_diffusion=LinearDensityDiffusion(),viscosity=ArtificialViscosity(),scheme=DualSPHysicsSymplectic(),
-        correct_boundary=true,include_gravity=Val(false),interaction=(;))
+        correct_boundary=true,compute_shifting=false,include_gravity=Val(false),interaction=(;))
     p,s,c,k = domain.particles,domain.support,domain.cells,domain.kernel
     launch_pos_cells!(s.PosCells,p.Position,p.CellID,c.grid_dev,step,k)
     correct_boundary && !(domain.boundary_mode isa NoMDBC) && launch_mdbc!(p.Density,p.Position,p.GhostPoints,p.GhostIndex,p.Type,c.CellStart,c.grid_dev,step,k,domain.constants;
         pos_cells=s.PosCells)
     launch_interactions!(s.dρdtI,p.Acceleration,p.Kernel,p.KernelGradient,s.∇Cᵢ,s.∇◌rᵢ,
         p.Position,p.Density,p.Velocity,p.Type,c.CellStart,p.CellID,c.grid_dev,step,
-        density_diffusion,viscosity,k,domain.constants,Val(false),Val(false);
+        density_diffusion,viscosity,k,domain.constants,Val(false),Val(compute_shifting && s.∇Cᵢ !== nothing);
         boundary_forces=Val(false),pos_cells=s.PosCells,pair_signal=scheme isa DualSPHysicsSymplectic ? nothing : s.PairSignal,
         viscous_dt=scheme isa DualSPHysicsSymplectic ? s.dual_state.viscous : nothing,
         include_gravity,fastmath=false,interaction...)
@@ -308,17 +308,30 @@ function resolution_standard_dt_kernel!(a,b,ka,kb,ca,cb,step,sa=nothing,sb=nothi
     return nothing
 end
 
-function resolution_standard_predictor_kernel!(xp,vp,rp,x,v,rho,a,rate,types,groups,step,constants,boundary_mode,n)
-    GPUKernels.half_step_kernel!(xp,vp,rp,x,v,a,rho,rate,types,groups,nothing,step,constants,
-        nothing,nothing,nothing,zero(constants.dx),boundary_mode,nothing,nothing,
-        Val(false),Val(false),Val(false),GPUStepState.step_particle_count(step,n))
+@inline predictor_limits(limits, ::Nothing) = limits
+@inline predictor_limits(limits, _) = limits
+@inline predictor_limits(limits::AttachedResolutionLimits, a) = AttachedResolutionLimits(limits.reference, a.pose)
+
+function resolution_standard_predictor_kernel!(xp,vp,rp,x,v,rho,a,rate,types,groups,step,constants,boundary_mode,limits,fine,n)
+    GPUStepState.step_active(step) || return nothing
+    i = thread_index()
+    count = GPUStepState.step_particle_count(step,n)
+    i > count && return nothing
+    @inbounds begin
+        is_buf = types[i] == Fluid && buffer_particle(x[i],limits,fine)
+        acc_in = is_buf ? zero(eltype(a)) : a[i]
+        rate_in = is_buf ? zero(eltype(rate)) : rate[i]
+        acc = GPUKernels.predict_particle!(i,xp,vp,rp,x,v,rho,types,acc_in,rate_in,step,constants,
+            nothing,nothing,nothing,zero(constants.dx),boundary_mode,nothing,nothing,Val(false),Val(false))
+        types[i] == Frozen || (a[i] = acc)
+    end
     return nothing
 end
 
 function resolution_standard_corrector_kernel!(x,v,a,rho,rate,rp,xp,vp,types,gradient,divergence,
         step,kernel,constants,boundary_mode,partial,damping,n,signal=nothing)
     GPUKernels.final_step_kernel!(x,v,a,rho,rate,rp,xp,vp,types,gradient,divergence,step,kernel,constants,
-        partial,Val(false),boundary_mode,nothing,nothing,nothing,nothing,nothing,nothing,
+        partial,Val(gradient !== nothing),boundary_mode,nothing,nothing,nothing,nothing,nothing,nothing,
         nothing,nothing,nothing,nothing,nothing,damping,Val(false),GPUStepState.step_particle_count(step,n),nothing,signal)
     return nothing
 end
@@ -370,12 +383,32 @@ function resolution_predictor_metadata_kernel!(types,ids,groups,ghosts,normals,o
     end
     return nothing
 end
-function resolution_scatter_predictor_kernel!(a,rate,rho,position,velocity,qa,qrate,qrho,qposition,qvelocity,ids,step,n)
+function resolution_scatter_predictor_kernel!(a,rate,rho,position,velocity,qa,qrate,qrho,qposition,qvelocity,ids,
+        step,n,accepted_position=nothing,accepted_density=nothing,accepted_types=nothing,limits=nothing,fine=false,
+        grad_c=nothing,div_r=nothing,qgrad_c=nothing,qdiv_r=nothing)
     GPUStepState.step_active(step) || return nothing
-    scatter_predictor_kernel!(a,rate,rho,qa,qrate,qrho,ids,GPUStepState.step_particle_count(step,n))
+    count = GPUStepState.step_particle_count(step,n)
+    scatter_predictor_kernel!(a,rate,rho,qa,qrate,qrho,ids,count)
     i = thread_index()
-    @inbounds if velocity !== nothing && i <= GPUStepState.step_particle_count(step,n)
-        position[ids[i]],velocity[ids[i]] = qposition[i],qvelocity[i]
+    @inbounds if velocity !== nothing && i <= count
+        original = ids[i]
+        position[original],velocity[original] = qposition[i],qvelocity[i]
+        is_buf = accepted_types !== nothing && accepted_types[original] == Fluid &&
+            buffer_particle(accepted_position[original],limits,fine)
+        if is_buf
+            a[original] = zero(eltype(a))
+            rate[original] = zero(eltype(rate))
+            accepted_density[original] = qrho[i]
+        end
+        if grad_c !== nothing
+            if is_buf && qdiv_r[i] < eltype(qdiv_r)(1.85)
+                grad_c[original] = zero(eltype(grad_c))
+                div_r[original] = zero(eltype(div_r))
+            else
+                grad_c[original] = qgrad_c[i]
+                div_r[original] = qdiv_r[i]
+            end
+        end
     end
     return nothing
 end
@@ -457,7 +490,7 @@ function enqueue_resolution_step!(domains,limits,state; density_diffusion=Linear
         else
             @cuda threads=128 blocks=cld(length(p),128) resolution_standard_predictor_kernel!(q.Position,q.Velocity,q.Density,
                 p.Position,p.Velocity,p.Density,p.Acceleration,s.dρdtI,p.Type,p.GroupMarker,
-                ResolutionArithmeticStep{eltype(p.Density)}(step),d.constants,d.boundary_mode,Int32(length(p)))
+                ResolutionArithmeticStep{eltype(p.Density)}(step),d.constants,d.boundary_mode,limits,d.fine,Int32(length(p)))
         end
         @cuda threads=128 blocks=cld(length(p),128) resolution_predictor_metadata_kernel!(q.Type,q.ID,q.GroupMarker,
             q.GhostPoints,q.GhostNormals,d.predictor.pool.owners,d.predictor.pool.count,p.Type,p.GroupMarker,
@@ -479,8 +512,17 @@ function enqueue_resolution_step!(domains,limits,state; density_diffusion=Linear
         enqueue_resolution_rebuild!(d,ResolutionStep(state,d,phase))
         @cuda threads=1 resolution_phase_kernel!(ResolutionStep(state,d,phase),Int32(phase+1))
     end
+    if !reference
+        half_limits = predictor_limits(limits, fine.attachment)
+        for (d,source) in ((coarse,fine),(fine,coarse))
+            qp,sp,sc = d.predictor.particles,source.predictor.particles,source.predictor.cells
+            @cuda threads=128 blocks=cld(length(qp),128) resolution_exchange_kernel!(ResolutionStep(state,d.predictor,3),Int32(length(qp)),
+                qp.Position,qp.Velocity,qp.Density,qp.Type,sp.Position,sp.Velocity,sp.Density,sp.Type,sc.CellStart,sc.grid_dev,
+                source.kernel,source.constants,half_limits,d.fine,source.fine)
+        end
+    end
     for d in domains
-        resident_force_stage!(d.predictor,ResolutionStep(state,d.predictor,3); density_diffusion,viscosity,scheme,correct_boundary=reference,interaction)
+        resident_force_stage!(d.predictor,ResolutionStep(state,d.predictor,3); density_diffusion,viscosity,scheme,correct_boundary=reference,compute_shifting=!reference,interaction)
     end
     reference && @cuda threads=1 resolution_dt_kernel!(coarse.predictor.support.dual_state.reduction.partial,fine.predictor.support.dual_state.reduction.partial,
         coarse.kernel,fine.kernel,coarse.constants,fine.constants,ResolutionStep(state,coarse,3),true,scheme.respect_stability_limits)
@@ -498,7 +540,9 @@ function enqueue_resolution_step!(domains,limits,state; density_diffusion=Linear
         @cuda threads=128 blocks=cld(length(p),128) resolution_scatter_predictor_kernel!(p.Acceleration,s.dρdtI,s.ρₙ⁺,
             reference ? nothing : s.Positionₙ⁺,reference ? nothing : s.Velocityₙ⁺,
             q.Acceleration,qs.dρdtI,q.Density,q.Position,q.Velocity,q.ID,
-            ResolutionStep(state,d.predictor,3),Int32(length(p)))
+            ResolutionStep(state,d.predictor,3),Int32(length(p)),
+            reference ? nothing : p.Position,reference ? nothing : p.Density,reference ? nothing : p.Type,limits,d.fine,
+            s.∇Cᵢ,s.∇◌rᵢ,qs.∇Cᵢ,qs.∇◌rᵢ)
         if reference
             @cuda threads=128 blocks=cld(length(p),128) resolution_corrector_kernel!(p.Position,p.Velocity,p.Density,
                 s.Positionₙ⁺,s.ρₙ⁺,p.Acceleration,s.dρdtI,p.Type,step,d.constants,Int32(length(p)))

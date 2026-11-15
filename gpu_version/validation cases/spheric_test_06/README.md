@@ -5,7 +5,14 @@ simulations completed; see the measured drag errors, resolution sensitivity,
 state checks and sound-speed investigation in [REPORT.md](REPORT.md).
 The source case is [SPHERIC Test 06](https://www.spheric-sph.org/tests/test-06).
 
-The latest [boundary-traction verification, mDBC and spatial-refinement study](MDBC_VALIDATION.md)
+The [body-following variable-resolution `SimpleMDBC` study](VARIABLE_RESOLUTION_SIMPLE_MDBC.md)
+attaches a moving refinement box (`follow = 3`, $L/dp = 20 \to 40$ and $20 \to 80$)
+around the translating square, diagnoses closed-tank interface pressure relaxation
+and leading-corner cavitation, and documents three core `VariableResolution`
+improvements (kinematic buffer advection, half-step predictor MLS buffer exchange,
+reversible flux floor, and Chiron et al. 2018 `PlanarShifting` support).
+
+The [boundary-traction verification, mDBC and spatial-refinement study](MDBC_VALIDATION.md)
 establishes analytical hydrostatic/suction pressure and laminar Couette wall-shear
 benchmarks, then compares `NoMDBC`, `SimpleMDBC` and `UpdatedMDBC` (with and without
 `PlanarShifting`, across Re = 50/100/150, c0 = 40/160 m/s and L/dp = 20/40/60)

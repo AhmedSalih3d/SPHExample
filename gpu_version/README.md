@@ -191,8 +191,11 @@ call `RunSimulation` with the coarse constants/kernel, `ArtificialViscosity()`,
 `LinearDensityDiffusion()` and `SymplecticTimeStepping()`. Select any other
 GPU-compatible density diffusion model through the usual `SimDensityDiffusion`
 argument. `SingleNeighborTimeStepping()` and `DualSPHysicsSymplectic()` are also
-supported. Fine constants/kernel are derived from the ratio unless supplied
-in the config.
+supported, and both `NoShifting` and `PlanarShifting` (with an outer-buffer
+kernel-support guard) can be selected in `SimulationMetaData`. Fine constants/kernel
+are derived from the ratio unless supplied in the config; optional
+`BackgroundPressure` in `SimulationConstants` is inherited automatically across
+levels.
 Normal file naming, output fields, scalar/vector schedules, logging and
 `SimulationResult` apply; `SimDamping` acts on both domains. The case guide
 contains a complete call and supported-option details.

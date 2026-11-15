@@ -291,7 +291,7 @@ function prepare_interactions_kernel!(Position, step, n::Int32,
             store_inverse_density!(InvDensity, i, ρ)
             if Pressure !== nothing
                 type = boundary_mode isa UpdatedMDBC ? ParticleType[i] : Fluid
-                store_pressure!(Pressure, i, particle_pressure(ρ, type, SimConstants.c₀, SimConstants.ρ₀, boundary_mode))
+                store_pressure!(Pressure, i, particle_pressure(ρ, type, SimConstants.c₀, SimConstants.ρ₀, boundary_mode, inv(SimConstants.ρ₀), SimConstants.BackgroundPressure))
             end
         end
         if motion !== nothing
@@ -385,10 +385,12 @@ end
 # Particle interactions (gather)
 #---------------------------------------------------------------
 
-@inline interaction_pressure(::Nothing, i, ρ, type, c₀, ρ₀, ::Nothing, ρ₀⁻¹ = inv(ρ₀)) = EquationOfStateGamma7(ρ, c₀, ρ₀, ρ₀⁻¹)
-@inline interaction_pressure(::Nothing, i, ρ, type, c₀, ρ₀, boundary_data, ρ₀⁻¹ = inv(ρ₀)) =
-    is_wall(type) ? c₀^2 * (ρ - ρ₀) : EquationOfStateGamma7(ρ, c₀, ρ₀, ρ₀⁻¹)
-@inline interaction_pressure(cache, i, ρ, type, c₀, ρ₀, boundary_data, ρ₀⁻¹ = inv(ρ₀)) = @inbounds cache[i]
+@inline interaction_pressure(::Nothing, i, ρ, type, c₀, ρ₀, ::Nothing, ρ₀⁻¹ = inv(ρ₀), p_bg = zero(ρ)) = EquationOfStateGamma7(ρ, c₀, ρ₀, ρ₀⁻¹, p_bg)
+@inline function interaction_pressure(::Nothing, i, ρ, type, c₀, ρ₀, boundary_data, ρ₀⁻¹ = inv(ρ₀), p_bg = zero(ρ))
+    p = is_wall(type) ? c₀^2 * (ρ - ρ₀) : EquationOfStateGamma7(ρ, c₀, ρ₀, ρ₀⁻¹)
+    return iszero(p_bg) ? p : p + p_bg
+end
+@inline interaction_pressure(cache, i, ρ, type, c₀, ρ₀, boundary_data, ρ₀⁻¹ = inv(ρ₀), p_bg = zero(ρ)) = @inbounds cache[i]
 @inline interaction_particle_mass(::Nothing,i,default) = default
 @inline interaction_particle_mass(masses,i,default) = @inbounds masses.values[masses.groups[i]]
 @inline load_pair_point(Pairs, i) = @inbounds Pairs[i]
@@ -415,7 +417,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
     valid = i <= n
     source_i = valid && target_indices !== nothing ? (@inbounds target_indices[i]) : i
 
-    (; m₀, dx, c₀, ρ₀) = SimConstants
+    (; m₀, dx, c₀, ρ₀, BackgroundPressure) = SimConstants
     (; h⁻¹, H²) = SimKernel
     s = cell_size(grid, SimKernel.H)
 
@@ -447,7 +449,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
         # force based time step criterion. Floating bodies always need them:
         # their particle accelerations sum to the force on the body.
         forces = BoundaryForces | (MLᵢ != zero(T)) | (typeᵢ == Floating)
-        Pᵢ = forces ? (viscous_dt === nothing ? interaction_pressure(Pressure,source_i,ρᵢ,typeᵢ,c₀,ρ₀,boundary_data,ρ₀⁻¹) :
+        Pᵢ = forces ? (viscous_dt === nothing ? interaction_pressure(Pressure,source_i,ρᵢ,typeᵢ,c₀,ρ₀,boundary_data,ρ₀⁻¹,BackgroundPressure) :
             dual_pressure(ρᵢ,SimConstants,Val(FastMath),ρ₀⁻¹)) : zero(T)
         wallᵢ = is_wall(typeᵢ)
 
@@ -594,7 +596,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                                 visc *= T(SimViscosity.boundary_factor)
                             end
                             interaction_mass === nothing || (visc *= mass_j/m₀)
-                            Pⱼ = viscous_dt === nothing ? interaction_pressure(Pressure,j,ρⱼ,ParticleType[j],c₀,ρ₀,boundary_data,ρ₀⁻¹) :
+                            Pⱼ = viscous_dt === nothing ? interaction_pressure(Pressure,j,ρⱼ,ParticleType[j],c₀,ρ₀,boundary_data,ρ₀⁻¹,BackgroundPressure) :
                                 dual_pressure(ρⱼ,SimConstants,Val(FastMath),ρ₀⁻¹)
                             Pfac = viscous_dt === nothing ? (Pᵢ + Pⱼ) * (ρᵢ⁻¹ * ρⱼ⁻¹) : (Pᵢ + Pⱼ) / (ρᵢ * ρⱼ)
                             f_ab = InvDensity === nothing ? tensile_correction(SimKernel, Pᵢ, ρᵢ, Pⱼ, ρⱼ, q, dx) :
@@ -984,7 +986,7 @@ function mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVector{SVect
             GhostPoints[Compact ? g : i] = gp
         end
         store_inverse_density!(InvDensity, i, ρ)
-        store_pressure!(Pressure, i, EquationOfStateGamma7(ρ, c₀, ρ₀))
+        store_pressure!(Pressure, i, EquationOfStateGamma7(ρ, c₀, ρ₀, inv(ρ₀), SimConstants.BackgroundPressure))
     end
     return nothing
 end
@@ -1044,7 +1046,7 @@ include("UpdatedMDBC.jl")
             Velocityₙ⁺[i] = zero(eltype(Velocity))
             ρₙ⁺[i] = ρ
             store_inverse_density!(InvDensity, i, ρ)
-            store_pressure!(Pressure, i, EquationOfStateGamma7(ρ, c₀, ρ₀))
+            store_pressure!(Pressure, i, EquationOfStateGamma7(ρ, c₀, ρ₀, inv(ρ₀), SimConstants.BackgroundPressure))
             store_pos_cell!(PosCellsₙ⁺, i, Position[i], CellID, gridarg, H)
             return acc
         end
@@ -1063,7 +1065,7 @@ include("UpdatedMDBC.jl")
         ρ = boundary_mode isa UpdatedMDBC && is_wall(type) ? Density[i] : limit_density(ρ, ρ₀, ML)
         ρₙ⁺[i] = ρ
         store_inverse_density!(InvDensity, i, ρ)
-        store_pressure!(Pressure, i, EquationOfStateGamma7(ρ, c₀, ρ₀))
+        store_pressure!(Pressure, i, EquationOfStateGamma7(ρ, c₀, ρ₀, inv(ρ₀), SimConstants.BackgroundPressure))
 
         store_pos_cell!(PosCellsₙ⁺, i, xₙ⁺, CellID, gridarg, H)
     end
@@ -1202,7 +1204,7 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
             ρ = Density[i]
             store_inverse_density!(NextInvDensity, i, ρ)
             if NextPressure !== nothing
-                store_pressure!(NextPressure, i, particle_pressure(ρ, type, SimConstants.c₀, ρ₀, boundary_mode, ρ₀⁻¹))
+                store_pressure!(NextPressure, i, particle_pressure(ρ, type, SimConstants.c₀, ρ₀, boundary_mode, ρ₀⁻¹, SimConstants.BackgroundPressure))
             end
             i += stride
             continue
@@ -1220,7 +1222,7 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
         # The predictor reciprocal must be consumed before an aliased cache is overwritten.
         store_inverse_density!(NextInvDensity, i, ρ)
         if NextPressure !== nothing
-            store_pressure!(NextPressure, i, particle_pressure(ρ, type, SimConstants.c₀, ρ₀, boundary_mode, ρ₀⁻¹))
+            store_pressure!(NextPressure, i, particle_pressure(ρ, type, SimConstants.c₀, ρ₀, boundary_mode, ρ₀⁻¹, SimConstants.BackgroundPressure))
         end
 
         # FullTimeStep

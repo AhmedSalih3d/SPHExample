@@ -142,7 +142,8 @@ function updated_mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVect
                                             gravity, acceleration, c₀, ρ₀)
         Density[i] = active ? ρ : ρ₀
         store_inverse_density!(InvDensity, i, Density[i])
-        store_pressure!(Pressure, i, active ? pressure : zero(T))
+        p_wall = active ? pressure : zero(T)
+        store_pressure!(Pressure, i, iszero(SimConstants.BackgroundPressure) ? p_wall : p_wall + SimConstants.BackgroundPressure)
         ghost_velocity = let rhs = b, weight = A[1, 1]
             active ? SVector{D, T}(ntuple(k -> rhs[k + 1, 2] / weight, Val(D))) : zero(normal)
         end

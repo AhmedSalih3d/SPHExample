@@ -7,24 +7,28 @@ using FastPow
 using ..SimulationGeometry: is_wall
 using ..SimulationMetaDataConfiguration: NoMDBC, UpdatedMDBC
 
-@inline function EquationOfStateGamma7(ρ,c₀,ρ₀,ρ₀⁻¹=inv(ρ₀))
-    return @fastpow ((c₀^2*ρ₀)/7) * ((ρ*ρ₀⁻¹)^7 - 1)
+@inline function EquationOfStateGamma7(ρ,c₀,ρ₀,ρ₀⁻¹=inv(ρ₀),p_bg=zero(ρ))
+    p = @fastpow ((c₀^2*ρ₀)/7) * ((ρ*ρ₀⁻¹)^7 - 1)
+    return iszero(p_bg) ? p : p + p_bg
 end
 
-@inline particle_pressure(ρ, type, c₀, ρ₀, boundary_mode = NoMDBC(), ρ₀⁻¹ = inv(ρ₀)) =
-    boundary_mode isa UpdatedMDBC && is_wall(type) ? c₀^2 * (ρ - ρ₀) : EquationOfStateGamma7(ρ, c₀, ρ₀, ρ₀⁻¹)
+@inline function particle_pressure(ρ, type, c₀, ρ₀, boundary_mode = NoMDBC(), ρ₀⁻¹ = inv(ρ₀), p_bg = zero(ρ))
+    p = boundary_mode isa UpdatedMDBC && is_wall(type) ? c₀^2 * (ρ - ρ₀) : EquationOfStateGamma7(ρ, c₀, ρ₀, ρ₀⁻¹)
+    return iszero(p_bg) ? p : p + p_bg
+end
 
 # Equation of State in Weakly-Compressible SPH
-function EquationOfState(ρ,c₀,γ,ρ₀)
-    return ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
+function EquationOfState(ρ,c₀,γ,ρ₀,p_bg=zero(ρ))
+    p = ((c₀^2*ρ₀)/γ) * ((ρ/ρ₀)^γ - 1)
+    return iszero(p_bg) ? p : p + p_bg
 end
 
 @inline function Pressure!(Press, Density, SimulationConstants)
-    (; c₀, γ, ρ₀) = SimulationConstants
+    (; c₀, γ, ρ₀, BackgroundPressure) = SimulationConstants
     ρ₀⁻¹ = inv(ρ₀)
     @inbounds for i ∈ eachindex(Press,Density)
         # Press[i] = EquationOfState(Density[i],c₀,γ,ρ₀)
-        Press[i] = EquationOfStateGamma7(Density[i],c₀,ρ₀,ρ₀⁻¹)
+        Press[i] = EquationOfStateGamma7(Density[i],c₀,ρ₀,ρ₀⁻¹,BackgroundPressure)
     end
 end
 

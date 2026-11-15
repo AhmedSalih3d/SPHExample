@@ -133,9 +133,11 @@ function interface_flux_kernel!(points, normals, widths, accumulated_mass,
         valid && wet || return nothing
         incoming_mass = -value[1] * ((value[2]-interface_velocity[1])*normal[1] +
             (value[3]-interface_velocity[2])*normal[2]) * widths[i] * dt
-        budget = accumulated_mass[i]
-        budget += budget < 0 ? max(0.0,incoming_mass) : incoming_mass
-        while budget >= target_constants.m₀
+        m0 = Float64(target_constants.m₀)
+        dx = Float64(target_constants.dx)
+        denom = value[1] * widths[i]
+        budget = max(accumulated_mass[i] + incoming_mass, -0.25m0)
+        while budget >= m0
             request = CUDA.atomic_add!(pointer(allocation,1),Int32(1)) + Int32(1)
             if request > (pool === nothing ? length(free_slots) : length(types) - pool[1])
                 CUDA.atomic_xchg!(pointer(allocation,2),Int32(1))
@@ -146,13 +148,14 @@ function interface_flux_kernel!(points, normals, widths, accumulated_mass,
                 CUDA.atomic_xchg!(pointer(allocation,2),Int32(1))
                 break
             end
-            position[slot] = point - 0.5Float64(target_constants.dx) * normal
+            inward = 0.5dx + (denom > 0 ? clamp((budget - m0) / denom, 0.0, dx) : 0.0)
+            position[slot] = point - inward * normal
             velocity[slot] = SVector{2,eltype(density)}(value[2],value[3])
             density[slot] = value[1]
             ids[slot] = CUDA.atomic_add!(pointer(next_id,1),id_stride)
             groups[slot] = fluid_marker
             types[slot] = Fluid
-            budget -= target_constants.m₀
+            budget -= m0
             CUDA.atomic_add!(pointer(events,1),Int64(1))
         end
         accumulated_mass[i] = budget

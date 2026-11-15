@@ -117,8 +117,8 @@ end
 
 @testset "Analytical suction-acceleration pressure and Couette Galilean invariance" begin
     variants = MDBCValidation.moving_square_variants()
-    @test length(variants) == 33
-    @test length(unique(v.id for v in variants)) == 33
+    @test length(variants) == 35
+    @test length(unique(v.id for v in variants)) == 35
 
     fix_dbc = MDBCValidation.build_submerged_square_fixture(; dx = 0.05, g = 0.0, ax = 1.0, boundary_mode = NoMDBC)
     loads_dbc = mdbc_frame_loads(fix_dbc.position, fix_dbc.velocity, fix_dbc.density, fix_dbc.types, fix_dbc.markers,

@@ -89,6 +89,8 @@ All runs below use the identical 84,864-particle lattice (78,400 fluid, 1,600 sq
 | `UpdatedMDBC`, `NoShifting` | 401.06% | 220.29% | 339.29% | 371.92% | 0.7781 | $-458.09$ | 194,882 |
 | `UpdatedMDBC`, `PlanarShifting` | 34.64% | 32.18% | 117.47% | 42.73% | 0.2133 | $-39.64$ | 184,255 |
 
+At $\mathrm{Re} = 150, L/dp = 40, c_0 = 160\text{ m/s}$ (consistent integrated velocity), `NoMDBC` achieves `p_raw = 18.21%, v_raw = 22.28%` (late viscous bias `+35.80%`) and `SimpleMDBC` achieves `p_raw = 24.49%, v_raw = 30.55%` (late viscous bias `+48.52%`), confirming that $c_0 = 160\text{ m/s}$ removes the acoustic wave while viscous accuracy at $\mathrm{Re} = 150$ remains governed by near-wall spacing $L/dp$ (see [VARIABLE_RESOLUTION_SIMPLE_MDBC.md](VARIABLE_RESOLUTION_SIMPLE_MDBC.md)).
+
 Comparing `NoMDBC` at $c_0 = 160\text{ m/s}$ here (`p_raw = 20.42%`, `noise = 0.1150`) against the Hermite-motion pairwise result in [PAIRWISE_FORCE_ACCURACY.md](PAIRWISE_FORCE_ACCURACY.md) (`p_raw = 24.69%`, `noise = 0.3753`) shows that **consistent integrated-velocity motion cuts central pressure noise by $3.26\times$ at $c_0 = 160\text{ m/s}$** once tank-mode startup ringing is reduced. Conversely, in `UpdatedMDBC`, $16\times$ stiffer $c_0^2$ amplifies density perturbations from the $\sim 1.5\,dp$ near-wall penetration layer.
 
 ### Spatial resolution convergence ($\mathrm{Re} = 100, c_0 = 40\text{ m/s}$, $L/dp = 20, 40, 60$)
@@ -127,4 +129,4 @@ julia --compiled-modules=existing --project=. -t 2,0 "validation cases/spheric_t
 python "validation cases/spheric_test_06/plot_mdbc_validation.py"
 ```
 
-All 33 per-case summaries, coefficient histories and state checks are tracked under [results/mdbc_validation/](results/mdbc_validation/). Focused verification passed 71,803 assertions in `mdbc_validation_tests.jl` (ghost geometry/symmetry, Float32/Float64 GPU force parity for `SimpleMDBC` and `UpdatedMDBC` under suction and wall acceleration, analytical traction and Galilean invariance), alongside all 195 assertions in `test.jl` and 29 assertions in `comparison_tests.jl`.
+All 35 per-case summaries, coefficient histories and state checks are tracked under [results/mdbc_validation/](results/mdbc_validation/). Focused verification passed 71,803 assertions in `mdbc_validation_tests.jl` (ghost geometry/symmetry, Float32/Float64 GPU force parity for `SimpleMDBC` and `UpdatedMDBC` under suction and wall acceleration, analytical traction and Galilean invariance), alongside all 195 assertions in `test.jl` and 29 assertions in `comparison_tests.jl`.

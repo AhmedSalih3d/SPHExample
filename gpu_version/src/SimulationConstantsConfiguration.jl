@@ -34,6 +34,7 @@ the dimension only selects the default mass.
 - `ν₀::T`: Kinematic viscosity. Default is 1e-6.
 - `BlinConstant::T`: Blin model constant. Default is 0.0066.
 - `SmagorinskyConstant::T`: Smagorinsky model constant. Default is 0.12.
+- `BackgroundPressure::T`: Optional constant background pressure offset added to the equation of state (useful for enclosed zero-gravity flows without free surfaces to prevent tensile cavitation). Default is 0.
 
 # Example
 ```julia
@@ -59,6 +60,7 @@ constants = SimulationConstants{Float32}(3; ρ₀=1017, dx=0.03, α=0.02)
     ν₀::T  = 1e-6
     BlinConstant::T            = 0.0066
     SmagorinskyConstant::T     = 0.12
+    BackgroundPressure::T      = 0
 end
 
 function SimulationConstants{T}(dimensions::Integer; ρ₀ = 1000, dx = 0.02, m₀ = nothing, kwargs...) where {T<:AbstractFloat}

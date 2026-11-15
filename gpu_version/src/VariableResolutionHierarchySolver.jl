@@ -77,7 +77,8 @@ function run_nested_variable_resolution(;SimGeometry,SimMetaData,SimConstants,Si
                 area = prod(resolution_base(pair).fine_outer_hi-resolution_base(pair).fine_outer_lo)
                 reserve = ci.particle_reserve === nothing ? max(1024,ceil(Int,2area/plan.constants[i].dx^2)) : ci.particle_reserve
                 make_resolution_domain(geometries[i],plan.constants[i],plan.kernels[i],pair,i>1,reserve;
-                    resident=true,standard=true,pairwise_timestep=!meta.GPULegacyTimestep,boundary_mode,attachment_config=i == n ? attachment : nothing,
+                    resident=true,standard=true,pairwise_timestep=!meta.GPULegacyTimestep,
+                    shifting=typeof(meta).parameters[3] === PlanarShifting,boundary_mode,attachment_config=i == n ? attachment : nothing,
                     time=initial_time,id_stride=n,id_offset=i)
             end
             h = resolution_hierarchy(pairs,domains)

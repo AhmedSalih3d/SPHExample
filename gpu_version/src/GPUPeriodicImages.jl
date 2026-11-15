@@ -242,7 +242,7 @@ function periodic_gather_kernel!(sorted,pairs,cells,targets,raw,tags,perm,ids,co
         if inverse_density !== nothing
             density = sorted.Density[i]
             GPUKernels.store_inverse_density!(inverse_density,i,density)
-            GPUKernels.store_pressure!(pressure,i,EquationOfStateGamma7(density,constants.c₀,constants.ρ₀))
+            GPUKernels.store_pressure!(pressure,i,EquationOfStateGamma7(density,constants.c₀,constants.ρ₀,inv(constants.ρ₀),constants.BackgroundPressure))
         end
     end
     return nothing

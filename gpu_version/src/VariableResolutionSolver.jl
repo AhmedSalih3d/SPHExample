@@ -2,7 +2,7 @@
 # available, while both entry points share the same GPU phase machine.
 using StructArrays: StructArray, components
 import ..PreProcess
-using ..SimulationMetaDataConfiguration: SimulationMetaData, NoShifting, NoKernelOutput,
+using ..SimulationMetaDataConfiguration: SimulationMetaData, NoShifting, PlanarShifting, NoKernelOutput,
     SimpleMDBC, StoreLog, resolve_output_variables!
 using ..SPHCellList: run_variable_resolution
 import ..SPHCellList
@@ -30,10 +30,12 @@ end
 
 function validate_resolution_solver(meta::SimulationMetaData{D,T,S,K,B},geometry,particles,
         viscosity,diffusion,scheme,measurements,external,rotation,motion) where {D,T,S,K,B}
-    D == 2 && S === NoShifting && K === NoKernelOutput && B in (NoMDBC,SimpleMDBC) ||
-        throw(ArgumentError("variable resolution requires 2D NoShifting, NoKernelOutput and NoMDBC or SimpleMDBC metadata modes"))
+    D == 2 && S in (NoShifting,PlanarShifting) && K === NoKernelOutput && B in (NoMDBC,SimpleMDBC) ||
+        throw(ArgumentError("variable resolution requires 2D NoShifting or PlanarShifting, NoKernelOutput and NoMDBC or SimpleMDBC metadata modes"))
     scheme isa Union{SymplecticTimeStepping,SingleNeighborTimeStepping,DualSPHysicsSymplectic} ||
         throw(ArgumentError("unsupported variable-resolution timestep scheme: $(typeof(scheme))"))
+    S === PlanarShifting && scheme isa DualSPHysicsSymplectic &&
+        throw(ArgumentError("variable-resolution PlanarShifting requires SymplecticTimeStepping or SingleNeighborTimeStepping"))
     if scheme isa DualSPHysicsSymplectic
         viscosity isa ArtificialViscosity || throw(ArgumentError("reference variable-resolution stepping requires ArtificialViscosity(); select a normal timestep scheme for other viscosity models"))
         all(!isfinite,scheme.domain_min) && all(!isfinite,scheme.domain_max) &&
@@ -114,8 +116,8 @@ function solver_resolution_snapshot(domain,region,limits; include_buffers=false,
     rho = Array(p.Density)[keep]
     return StructArray((;
         Position=x[keep],Velocity=Array(p.Velocity)[keep],Density=rho,
-        Pressure=[scheme isa DualSPHysicsSymplectic ? eltype(rho)(Float64(c.Cb)*((Float64(r)/c.ρ₀)^c.γ-1)) :
-            GPUKernels.EquationOfStateGamma7(r,c.c₀,c.ρ₀) for r in rho],
+        Pressure=[scheme isa DualSPHysicsSymplectic ? eltype(rho)(Float64(c.Cb)*((Float64(r)/c.ρ₀)^c.γ-1)+Float64(c.BackgroundPressure)) :
+            GPUKernels.EquationOfStateGamma7(r,c.c₀,c.ρ₀,inv(c.ρ₀),c.BackgroundPressure) for r in rho],
         Acceleration=Array(p.Acceleration)[keep],Type=types[keep],ID=Array(p.ID)[keep],
         GroupMarker=Array(p.GroupMarker)[keep],GhostPoints=Array(p.GhostPoints)[keep],GhostNormals=Array(p.GhostNormals)[keep],
         Resolution=fill(Int8(domain.fine),length(keep)),Spacing=fill(c.dx,length(keep)),Mass=fill(c.m₀,length(keep)),
@@ -190,10 +192,11 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
                 config.particle_reserve === nothing ? max(1024,ceil(Int,2area/c.dx^2)) : config.particle_reserve
             end
             standard = !(scheme isa DualSPHysicsSymplectic)
+            shifting = typeof(meta).parameters[3] === PlanarShifting
             prescribed_system = attachment_config === nothing ? nothing : attachment_config.boundary_motion
-            coarse = make_resolution_domain(coarse_geometry,SimConstants,SimKernel,limits,false,reserves[1];resident=true,standard,pairwise_timestep=standard && !meta.GPULegacyTimestep,boundary_mode,prescribed_system)
+            coarse = make_resolution_domain(coarse_geometry,SimConstants,SimKernel,limits,false,reserves[1];resident=true,standard,pairwise_timestep=standard && !meta.GPULegacyTimestep,shifting,boundary_mode,prescribed_system)
             fine = make_resolution_domain(config.fine_geometry,fine_constants,fine_kernel,limits,true,reserves[2];
-                resident=true,standard,pairwise_timestep=standard && !meta.GPULegacyTimestep,boundary_mode,attachment_config,prescribed_system,time=initial_time)
+                resident=true,standard,pairwise_timestep=standard && !meta.GPULegacyTimestep,shifting,boundary_mode,attachment_config,prescribed_system,time=initial_time)
             if attachment_config !== nothing
                 limits = AttachedResolutionLimits(limits,CuArray(fill(identity_resolution_pose(),2)))
             end

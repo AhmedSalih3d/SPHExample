@@ -72,7 +72,7 @@ function uniform_step(level,scheme)
     directory = mktempdir()
     meta = SimulationMetaData{2,T,NoShifting,NoKernelOutput,SimpleMDBC,NoLog}(
         SimulationName="UniformStep",SaveLocation=directory,SimulationTime=0.0001,OutputTimes=0.0001,
-        GPUDoublePosition=true,GPUClipTimeStepToOutput=true,GPULanesPerParticle=1,
+        GPUDoublePosition=true,GPUClipTimeStepToOutput=true,GPULanesPerParticle=1,GPUXCellSubdivision=1,
         GPUInteractionFastMath=false,GPUBoundaryForces=false,VisualizeInParaview=false,OpenLogFile=false)
     particles = AllocateDataStructures(level.geometry,meta)
     logger = SimulationLogger(directory)
@@ -110,6 +110,16 @@ end
     meta.VariableResolution = nothing
     @test_throws ArgumentError resolve_output_variables!(meta)
     @test length(sprint(show,config)) < 500
+
+    meta_shift = SimulationMetaData{2,Float32,PlanarShifting,NoKernelOutput,SimpleMDBC,NoLog}(
+        SimulationName="metadata_shift",SaveLocation=".",VariableResolution=config,ShiftingFreeSurfaceThreshold=0.0)
+    @test meta_shift.VariableResolution === config
+    bg_coarse = SimulationConstants{Float32}(2; dx=case.coarse.constants.dx, c₀=case.coarse.constants.c₀, BackgroundPressure=1500)
+    fine_bg, _ = VR.fine_resolution_parameters(config, bg_coarse, case.coarse.kernel)
+    @test fine_bg.BackgroundPressure == Float32(1500)
+    bad_fine = SimulationConstants{Float32}(2; dx=case.fine.constants.dx, c₀=case.fine.constants.c₀, BackgroundPressure=500)
+    bad_cfg = VariableResolutionConfig(case.region; fine_geometry=case.fine.geometry, fine_constants=bad_fine)
+    @test_throws ArgumentError VR.fine_resolution_parameters(bad_cfg, bg_coarse, case.coarse.kernel)
 end
 
 @testset "readable variable-resolution example uses the normal API" begin

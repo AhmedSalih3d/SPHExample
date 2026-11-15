@@ -105,7 +105,7 @@ struct ResolutionDomain{P,C,S,K,F,I,PP,POOL,B,A,M}
 end
 
 function make_resolution_domain(geometry, constants::SimulationConstants{T}, kernel, limits, fine, reserve;
-        resident = false, standard = false, pairwise_timestep = standard, boundary_mode = SimpleMDBC(), attachment_config=nothing, prescribed_system=nothing, time=0.0,
+        resident = false, standard = false, pairwise_timestep = standard, shifting = false, boundary_mode = SimpleMDBC(), attachment_config=nothing, prescribed_system=nothing, time=0.0,
         id_stride=2, id_offset=fine ? 2 : 1) where {T}
     geometry isa AbstractVector && !isempty(geometry) && all(g -> g isa SPHGeometry{2,T},geometry) ||
         throw(ArgumentError("each domain needs a nonempty vector of 2D geometries matching its constants' precision"))
@@ -153,14 +153,14 @@ function make_resolution_domain(geometry, constants::SimulationConstants{T}, ker
     cells = CellListWorkspace{2,Float64}(n)
     # Dormant pool slots are excluded from grid bounds and all force sums.
     cells.frozen_total = reserve
-    support = GPUSupportArrays{2,T}(n; position_type = Float64, shifting = false, dual_time_stepping = true,pairwise_timestep)
+    support = GPUSupportArrays{2,T}(n; position_type = Float64, shifting, dual_time_stepping = true,pairwise_timestep)
     attachment = make_resolution_attachment(attachment_config,geometry,host,constants;time)
     prescribed = make_resolution_prescribed(prescribed_system,geometry,host)
     # Predictor neighbors are sorted independently. Keep their inputs dense and
     # scatter only the evaluated derivatives back to the accepted-state order.
     predictor = (; particles = upload_particles(host; position_type = Float64, kernel_output = false),
         cells = CellListWorkspace{2,Float64}(n),
-        support = GPUSupportArrays{2,T}(n; position_type = Float64, shifting = false, dual_time_stepping = true,pairwise_timestep),
+        support = GPUSupportArrays{2,T}(n; position_type = Float64, shifting, dual_time_stepping = true,pairwise_timestep),
         kernel, constants, boundary_mode, attachment=predictor_attachment(attachment),prescribed=predictor_attachment(prescribed),
         pool = resident ? ResolutionPool(host, initial_count) : nothing)
     faces = interface_points(limits, fine, Float64(constants.dx))
@@ -251,7 +251,7 @@ function resolution_snapshot(domain, region, limits; include_buffers = false)
     owned = [inside_box(position, region.lower, region.upper) == domain.fine for position in x]
     keep = findall(i -> types[i] != Frozen && (include_buffers || owned[i]), eachindex(types))
     c = domain.constants
-    pressure = [Float64(c.Cb) * ((Float64(rho[i]) / c.ρ₀)^c.γ - 1) for i in keep]
+    pressure = [Float64(c.Cb) * ((Float64(rho[i]) / c.ρ₀)^c.γ - 1) + Float64(c.BackgroundPressure) for i in keep]
     return (; position = x[keep], velocity = to_3d(v[keep]), density = rho[keep], pressure,
         type = Int8.(types[keep]), id = ids[keep], level = fill(Int8(domain.fine), length(keep)),
         spacing = fill(c.dx, length(keep)), mass = fill(c.m₀, length(keep)), owned = Int8.(owned[keep]),
@@ -269,13 +269,13 @@ function validate_resolution_physics(coarse_constants,fine_constants,coarse_kern
         isapprox(constants.m₀, constants.ρ₀ * constants.dx^2; rtol = 1e-5) ||
             throw(ArgumentError("2D resolution domains require mass = reference density * spacing^2"))
         isfinite(constants.γ) && constants.γ > 0 && isfinite(constants.CFL) && constants.CFL > 0 &&
-            all(v -> isfinite(v) && v >= 0,(constants.g,constants.α,constants.δᵩ)) ||
-            throw(ArgumentError("gamma and CFL must be positive; gravity, viscosity and diffusion must be finite and nonnegative"))
+            all(v -> isfinite(v) && v >= 0,(constants.g,constants.α,constants.δᵩ,constants.BackgroundPressure)) ||
+            throw(ArgumentError("gamma and CFL must be positive; gravity, viscosity, diffusion and background pressure must be finite and nonnegative"))
         kernel.k == 2 || throw(ArgumentError("Wendland support radius must be 2h"))
     end
     isapprox(coarse_constants.dx / fine_constants.dx, region.ratio; rtol = 1e-5) || throw(ArgumentError("domain spacings do not match the refinement ratio"))
     isapprox(coarse_kernel.h / fine_kernel.h, region.ratio; rtol = 1e-5) || throw(ArgumentError("domain smoothing lengths do not match the refinement ratio"))
-    for field in (:ρ₀, :c₀, :g, :γ, :γ⁻¹, :Cb, :α, :δᵩ, :CFL)
+    for field in (:ρ₀, :c₀, :g, :γ, :γ⁻¹, :Cb, :α, :δᵩ, :CFL, :BackgroundPressure)
         getproperty(coarse_constants,field) == getproperty(fine_constants,field) || throw(ArgumentError("domain constants must agree on $field"))
     end
     return nothing

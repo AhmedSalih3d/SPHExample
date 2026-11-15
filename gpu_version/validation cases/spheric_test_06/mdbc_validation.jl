@@ -85,7 +85,7 @@ function mdbc_wall_state(gp::SVector{2,Float64}, wall_pos::SVector{2,Float64}, w
             rho = isnan(v) ? constants.ρ₀ : v
         end
         clamp_simple_wall_density && (rho = max(constants.ρ₀, rho))
-        p = EquationOfStateGamma7(rho, constants.c₀, constants.ρ₀)
+        p = EquationOfStateGamma7(rho, constants.c₀, constants.ρ₀, inv(constants.ρ₀), constants.BackgroundPressure)
         return (; active = true, density = rho, pressure = p, viscous_velocity = wall_vel)
     end
     div_pos = A[2, 2] + A[3, 3]
@@ -95,7 +95,7 @@ function mdbc_wall_state(gp::SVector{2,Float64}, wall_pos::SVector{2,Float64}, w
     gravity = SVector(0.0, -gravity_scalar)
     rho, p = GK.cloned_boundary_state(ghost_rho, normal, wall_pos - gp, gravity, wall_acc, constants.c₀, constants.ρ₀)
     rho_final = active ? rho : constants.ρ₀
-    p_final = active ? p : 0.0
+    p_final = (active ? p : 0.0) + constants.BackgroundPressure
     ghost_vel = active ? b_vel / A[1, 1] : zero(wall_vel)
     mirrored = active ? 2.0 * wall_vel - ghost_vel : wall_vel
     visc_vel = active ? mirrored - dot(mirrored - wall_vel, normal) * normal : wall_vel
@@ -112,7 +112,7 @@ end
     end
     q = sqrt(d2) * kernel.h⁻¹
     grad = ∇Wᵢⱼ(kernel, q, separation)
-    fluid_pressure = EquationOfStateGamma7(fluid_rho, constants.c₀, constants.ρ₀)
+    fluid_pressure = EquationOfStateGamma7(fluid_rho, constants.c₀, constants.ρ₀, inv(constants.ρ₀), constants.BackgroundPressure)
     pressure_force = -constants.m₀^2 * ((wall_pressure + fluid_pressure) / (wall_rho * fluid_rho)) * grad
     viscosity, _ = compute_viscosity(Laminar(), kernel, constants, nothing, separation,
         wall_visc_vel - fluid_vel, grad, d2, wall_rho, fluid_rho,
@@ -722,7 +722,7 @@ function moving_square_variants()
     push!(variants, (; id = "re100_n40_c40_updated_mdbc_pbg2000_shift_integrated",
         reynolds = 100, n = 40, sound_speed = 40, boundary_mode = UpdatedMDBC,
         shifting_mode = PlanarShifting, motion_kind = :integrated, p_bg = 2000.0))
-    # 3. Sound-speed 160 m/s boundary comparison at Re = 100, L/dp = 40.
+    # 3. Sound-speed 160 m/s boundary comparison at Re = 100 and Re = 150, L/dp = 40.
     for (tag, mode, shift) in (
             ("dbc", NoMDBC, NoShifting),
             ("simple_mdbc", SimpleMDBC, NoShifting),
@@ -731,6 +731,11 @@ function moving_square_variants()
         push!(variants, (; id = "re100_n40_c160_$(tag)_integrated",
             reynolds = 100, n = 40, sound_speed = 160, boundary_mode = mode,
             shifting_mode = shift, motion_kind = :integrated, p_bg = 0.0))
+    end
+    for (tag, mode) in (("dbc", NoMDBC), ("simple_mdbc", SimpleMDBC))
+        push!(variants, (; id = "re150_n40_c160_$(tag)_integrated",
+            reynolds = 150, n = 40, sound_speed = 160, boundary_mode = mode,
+            shifting_mode = NoShifting, motion_kind = :integrated, p_bg = 0.0))
     end
     # 4. Spatial resolution study across L/dp = 20, 40, 60 at Re = 100, c0 = 40 m/s (n = 40 covered above).
     for n in (20, 60), (tag, mode, shift) in (

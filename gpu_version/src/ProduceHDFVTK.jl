@@ -1037,16 +1037,18 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     fill_field!(dest::AbstractVector{T}, src::AbstractVector) where {T} = map!(T, dest, src)
 
     function fill_pressure!(dest::AbstractVector{T}, density::AbstractVector,
-                            c₀::Real, ρ₀::Real, boundary_mode = NoMDBC(), types = nothing) where {T}
+                            c₀::Real, ρ₀::Real, boundary_mode = NoMDBC(), types = nothing, p_bg::Real = zero(T)) where {T}
         c0 = T(c₀)
         rho0 = T(ρ₀)
+        inv_rho0 = inv(rho0)
+        bg = T(p_bg)
         if boundary_mode isa UpdatedMDBC && types !== nothing
             @inbounds for i in eachindex(dest, density, types)
-                dest[i] = particle_pressure(T(density[i]), types[i], c0, rho0, boundary_mode)
+                dest[i] = particle_pressure(T(density[i]), types[i], c0, rho0, boundary_mode, inv_rho0, bg)
             end
         else
             @inbounds for i in eachindex(dest, density)
-                dest[i] = EquationOfStateGamma7(T(density[i]), c0, rho0)
+                dest[i] = EquationOfStateGamma7(T(density[i]), c0, rho0, inv_rho0, bg)
             end
         end
         return dest
@@ -2282,6 +2284,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         sim_constants = constants === nothing ? SimulationConstants{FloatType}() : constants
         c₀ = FloatType(sim_constants.c₀)
         ρ₀ = FloatType(sim_constants.ρ₀)
+        p_bg = FloatType(sim_constants.BackgroundPressure)
 
         # The particle field behind an output variable, and an array with the
         # element type and component count of the variable as it is written
@@ -2314,7 +2317,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
             if name == "Pressure" && !has_host_pressure
                 types = SimMetaData.Iteration > 0 && boundary_mode isa UpdatedMDBC && hasproperty(SimParticles, :Type) ?
                     SimParticles.Type : nothing
-                return fill_pressure!(press_buf, SimParticles.Density, c₀, ρ₀, boundary_mode, types)
+                return fill_pressure!(press_buf, SimParticles.Density, c₀, ρ₀, boundary_mode, types, p_bg)
             end
             src = field_source(name)
             buf = get(vec_bufs, name, nothing)
@@ -2451,7 +2454,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 if sym === :Pressure && !haskey(fidx, :Pressure)
                     density = download.buffers[fidx[:Density]]
                     types = boundary_mode isa UpdatedMDBC ? download.buffers[fidx[:Type]] : nothing
-                    fill_pressure!(view(buf, cols), density, c₀, ρ₀, boundary_mode, types)
+                    fill_pressure!(view(buf, cols), density, c₀, ρ₀, boundary_mode, types, p_bg)
                     continue
                 end
                 src = download.buffers[fidx[sym]]
@@ -2512,7 +2515,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                         SimParticles.Type : nothing
                     for (buf, name) in zip(frame_writer.data, output_vars)
                         if name == "Pressure"
-                            fill_pressure!(view(buf, cols), SimParticles.Density, c₀, ρ₀, boundary_mode, types)
+                            fill_pressure!(view(buf, cols), SimParticles.Density, c₀, ρ₀, boundary_mode, types, p_bg)
                         else
                             src = field_source(name)
                             if buf isa AbstractMatrix
@@ -2537,7 +2540,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                         if sym === :Pressure && !haskey(fidx, :Pressure)
                             density = download.buffers[fidx[:Density]]
                             types = boundary_mode isa UpdatedMDBC ? download.buffers[fidx[:Type]] : nothing
-                            return fill_pressure!(press_buf, density, c₀, ρ₀, boundary_mode, types)
+                            return fill_pressure!(press_buf, density, c₀, ρ₀, boundary_mode, types, p_bg)
                         end
                         src = download.buffers[fidx[sym]]
                         name == "Type" && return map!(Int8, type_buf, src)
