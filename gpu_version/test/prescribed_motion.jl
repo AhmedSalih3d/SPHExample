@@ -202,6 +202,27 @@ if CUDA.functional()
                     isopen(logger.LoggerIo) && close(logger.LoggerIo)
                 end
             end
+            mktempdir() do dir
+                T = Float32
+                n = SVector{D,T}(ntuple(k -> k == 1 ? T(0.01) : zero(T), D))
+                geometry = [SPHGeometry{D,T}(Particles=particle_struct_array([zero(SVector{D,T})],T(1000);
+                    GhostPoints=[n],GhostNormals=[n]),GroupMarker=1,Type=Moving)]
+                meta = SimulationMetaData{D,T,NoShifting,NoKernelOutput,B,NoLog}(
+                    SimulationName="InvalidRotatedMDBC",SaveLocation=dir,VisualizeInParaview=false,OpenLogFile=false)
+                particles = AllocateDataStructures(geometry,meta)
+                logger = SimulationLogger(dir)
+                rot = SampledTrajectory([0.0,1.0],[0.0,0.2])
+                try
+                    @test_throws ArgumentError RunSimulation(SimGeometry=geometry,SimMetaData=meta,SimParticles=particles,
+                        SimConstants=SimulationConstants{T}(D;dx=0.01,c₀=10),
+                        SimKernel=SPHKernelInstance{D,T}(WendlandC2();dx=T(0.01)),
+                        SimViscosity=ZeroViscosity(),SimDensityDiffusion=ZeroDensityDiffusion(),
+                        SimTimeStepping=SymplecticTimeStepping(),SimLogger=logger,
+                        SimMotion=PrescribedMotion(1;center=ntuple(_->0,D),rotation=rot))
+                finally
+                    isopen(logger.LoggerIo) && close(logger.LoggerIo)
+                end
+            end
         end
         mktempdir() do dir
             T,D = Float32,2

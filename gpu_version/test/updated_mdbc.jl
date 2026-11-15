@@ -212,4 +212,129 @@ if CUDA.functional()
         @test host.Position[wall][1] > 0.5
         @test host.GhostPoints[wall] ≈ host.Position[wall] + host.GhostNormals[wall]
     end
+
+    @testset "Galilean-invariant viscous wall velocity and SimMotion acceleration cloning" begin
+        GK = SPHExampleGPU.GPUKernels
+        CL = SPHExampleGPU.SPHCellList
+        PM = SPHExampleGPU.PrescribedMotions
+        for T in (Float32, Float64)
+            dx = T(0.04)
+            d = T(0.04)
+            normal_vec = SVector{2, T}(2d, zero(T)) # x_g - x_b along +x
+            wall_pos = SVector{2, Float64}(0.0, 0.5)
+            ghost_pos = wall_pos + SVector{2, Float64}(normal_vec)
+            fluid_pos = [ghost_pos + SVector(0.04 * ix, 0.04 * iy) for ix in 0:2, iy in -2:2] |> vec
+            U_wall = SVector{2, T}(T(0.75), -T(0.35))
+            # 1. Co-moving uniform velocity must give zero viscous & continuity rates (Galilean invariance).
+            geometry = [
+                SPHGeometry{2, T}(Particles = particle_struct_array([wall_pos], T(1000);
+                    Velocity = [U_wall], GhostPoints = [ghost_pos], GhostNormals = [normal_vec]), GroupMarker = 3, Type = Moving),
+                SPHGeometry{2, T}(Particles = particle_struct_array(fluid_pos, T(1000);
+                    Velocity = fill(U_wall, length(fluid_pos))), GroupMarker = 2, Type = Fluid),
+            ]
+            meta = SimulationMetaData{2, T, NoShifting, NoKernelOutput, UpdatedMDBC}(
+                SimulationName = "GalileanUpdatedMDBC", SaveLocation = mktempdir(), GPUDoublePosition = true,
+                GPUCompactBuffers = true, VisualizeInParaview = false, OpenLogFile = false)
+            constants = SimulationConstants{T}(2; dx, c₀ = T(20), g = zero(T), ν₀ = T(0.02))
+            kernel = SPHKernelInstance{2, T}(WendlandC2(); dx)
+            host = AllocateDataStructures(geometry, meta)
+            gpu = upload_particles(host, meta)
+            cl = CellListWorkspace{2, Float64}(length(gpu))
+            CL.rebuild_cell_list!(gpu, cl, kernel.H⁻¹)
+            sup = GPUSupportArrays{2, T}(gpu, meta; kernel)
+            step = HostStep(T(1e-4), 0.0)
+            launch_pos_cells!(sup.PosCells, gpu.Position, gpu.CellID, cl.grid_dev, step, kernel)
+            GK.launch_updated_mdbc!(gpu.Density, gpu.Position, gpu.Velocity,
+                gpu.GhostPoints, gpu.GhostNormals, gpu.GhostIndex, gpu.Type, cl.CellStart,
+                cl.grid_dev, step, kernel, constants, sup.boundary_data; pos_cells = sup.PosCells,
+                compact_ghosts = Val(true))
+            @test only(Array(sup.boundary_data.velocity)) ≈ U_wall atol = 20eps(T)
+            @test only(Array(sup.boundary_data.tangent_velocity)) ≈ U_wall atol = 20eps(T)
+            launch_interactions!(sup.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient, sup.∇Cᵢ, sup.∇◌rᵢ,
+                gpu.Position, gpu.Density, gpu.Velocity, gpu.Type, cl.CellStart, gpu.CellID, cl.grid_dev, step,
+                ZeroDensityDiffusion(), ZeroViscosity(), kernel, constants, Val(false), Val(false);
+                pos_cells = sup.PosCells, boundary_data = sup.boundary_data, boundary_forces = Val(true))
+            acc_inviscid = Array(gpu.Acceleration)
+            rate_inviscid = Array(sup.dρdtI)
+            launch_interactions!(sup.dρdtI, gpu.Acceleration, gpu.Kernel, gpu.KernelGradient, sup.∇Cᵢ, sup.∇◌rᵢ,
+                gpu.Position, gpu.Density, gpu.Velocity, gpu.Type, cl.CellStart, gpu.CellID, cl.grid_dev, step,
+                ZeroDensityDiffusion(), Laminar(), kernel, constants, Val(false), Val(false);
+                pos_cells = sup.PosCells, boundary_data = sup.boundary_data, boundary_forces = Val(true))
+            @test Array(gpu.Acceleration) ≈ acc_inviscid atol = 20eps(T)
+            @test Array(sup.dρdtI) ≈ rate_inviscid atol = 20eps(T)
+            @test maximum(abs, rate_inviscid) < 20eps(T) * constants.ρ₀
+
+            # 2. Shear + normal relative velocity: tangential relative part mirrors, normal stays wall normal.
+            delta_u = SVector{2, T}(T(0.12), T(0.24))
+            host2 = AllocateDataStructures(geometry, meta)
+            for k in eachindex(host2.Type)
+                host2.Type[k] == Fluid && (host2.Velocity[k] = U_wall + delta_u)
+            end
+            gpu2 = upload_particles(host2, meta)
+            CL.rebuild_cell_list!(gpu2, cl, kernel.H⁻¹)
+            launch_pos_cells!(sup.PosCells, gpu2.Position, gpu2.CellID, cl.grid_dev, step, kernel)
+            GK.launch_updated_mdbc!(gpu2.Density, gpu2.Position, gpu2.Velocity,
+                gpu2.GhostPoints, gpu2.GhostNormals, gpu2.GhostIndex, gpu2.Type, cl.CellStart,
+                cl.grid_dev, step, kernel, constants, sup.boundary_data; pos_cells = sup.PosCells,
+                compact_ghosts = Val(true))
+            @test only(Array(sup.boundary_data.velocity)) ≈ U_wall - delta_u atol = 50eps(T)
+            @test only(Array(sup.boundary_data.tangent_velocity)) ≈ SVector{2, T}(U_wall[1], U_wall[2] - delta_u[2]) atol = 50eps(T)
+
+            # 3. Exact prescribed SimMotion acceleration clones advancing (+p) and receding (-p) wall pressure.
+            traj = MotionSequence([KinematicSegment(1.0; velocity = (0.2, 0.0), acceleration = (5.0, 0.0))])
+            prescribed = PM.prepare_prescribed_motion(PrescribedMotion(3; translation = traj), geometry, host)
+            CL.update_rotation_indices!(prescribed, cl)
+            GK.launch_updated_mdbc!(gpu.Density, gpu.Position, gpu.Velocity,
+                gpu.GhostPoints, gpu.GhostNormals, gpu.GhostIndex, gpu.Type, cl.CellStart,
+                cl.grid_dev, HostStep(T(0.01), 0.1), kernel, constants, sup.boundary_data;
+                pos_cells = sup.PosCells, groups = gpu.GroupMarker, prescribed_motion = prescribed,
+                fraction = 0.5, compact_ghosts = Val(true))
+            wall_idx = only(Array(gpu.GhostIndex))
+            # Displacement x_b - x_g = -2d along +x, normal = +x, acceleration = +5:
+            # Δp = ρ0 * dot(-a, n) * dot(x_b - x_g, n) = 1000 * (-5) * (-2d) = +10000 * d.
+            expected_p = T(1000) * T(5.0) * (2d)
+            @test particle_pressure(Array(gpu.Density)[wall_idx], Moving, constants.c₀, constants.ρ₀, UpdatedMDBC()) ≈
+                expected_p atol = (T === Float32 ? T(0.5) : T(1e-9))
+        end
+
+        # 4. End-to-end RunSimulation with UpdatedMDBC + SimMotion across schemes, graphs, and caches.
+        for scheme in (SymplecticTimeStepping(), SingleNeighborTimeStepping()), cache in (false, true)
+            function run_updated_sim_motion(use_graph::Bool)
+                f = updated_mdbc_fixture(Val(2), Float32, Float64)
+                original = f.geometry[1]
+                f.geometry[1] = SPHGeometry{2, Float32}(Particles = original.Particles, GroupMarker = 1, Type = Moving)
+                f.metadata.SaveLocation = mktempdir()
+                f.metadata.GPUUseGraph = use_graph
+                f.metadata.GPUCacheInteractionFields = cache
+                f.metadata.GPUClipTimeStepToOutput = true
+                f.metadata.SimulationTime = 0.002
+                f.metadata.OutputTimes = 0.001
+                host = AllocateDataStructures(f.geometry, f.metadata)
+                motion = MotionSystem((
+                    PrescribedMotion(10; group_marker = nothing, translation = MotionSequence([KinematicSegment(1.0; velocity = (0.1, 0.0), acceleration = (2.0, 0.0))])),
+                    PrescribedMotion(1; parent = 10, translation = MotionSequence([KinematicSegment(1.0; velocity = (0.0, -0.05), acceleration = (0.0, -1.5))])),
+                ))
+                logger = SimulationLogger(f.metadata.SaveLocation)
+                result = try
+                    RunSimulation(SimGeometry = f.geometry, SimMetaData = f.metadata, SimConstants = f.constants,
+                        SimKernel = f.kernel, SimParticles = host, SimLogger = logger,
+                        SimViscosity = Laminar(), SimDensityDiffusion = ZeroDensityDiffusion(),
+                        SimTimeStepping = scheme, SimMotion = motion)
+                finally
+                    isopen(logger.LoggerIo) && close(logger.LoggerIo)
+                end
+                @test result.final_state.complete
+                @test result.diagnostics.frozen_particles == 0
+                order = sortperm(host.ID)
+                wall = findfirst(==(Moving), host.Type)
+                @test host.Position[wall] ≈ motion_position(motion, 1, SVector(0.5, 0.0), 0.002) atol = 1e-9
+                @test host.Velocity[wall] ≈ SVector{2, Float32}(motion_velocity(motion, 1, SVector(0.5, 0.0), 0.002)) atol = 1f-6
+                @test host.GhostPoints[wall] ≈ host.Position[wall] + SVector{2, Float64}(host.GhostNormals[wall]) atol = 1e-6
+                return (; pos = host.Position[order], vel = host.Velocity[order], rho = host.Density[order])
+            end
+            direct = run_updated_sim_motion(false)
+            graphed = run_updated_sim_motion(true)
+            @test direct == graphed
+        end
+    end
 end

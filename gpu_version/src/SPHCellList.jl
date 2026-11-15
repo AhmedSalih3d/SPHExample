@@ -1137,7 +1137,7 @@ function launch_solver_interactions!(ctx,position,density,velocity,pairs,step;in
     return nothing
 end
 
-function enqueue_boundary_correction!(ctx, step, half::Bool)
+function enqueue_boundary_correction!(ctx, step, half::Bool; prepared::Bool = false)
     (; gpu, sup, cl, SimKernel, SimConstants, threads, lanes) = ctx
     density = half ? sup.ρₙ⁺ : gpu.Density
     position, velocity = half ? predictor_arrays(sup, gpu) : (gpu.Position, gpu.Velocity)
@@ -1156,8 +1156,10 @@ function enqueue_boundary_correction!(ctx, step, half::Bool)
             gpu.GhostPoints, gpu.GhostNormals, gpu.GhostIndex, gpu.Type, cl.CellStart, cl.grid_dev,
             step, SimKernel, SimConstants, sup.boundary_data; threads, lanes, pos_cells = pairs,
             motion = get(ctx, :motion, nothing), groups = gpu.GroupMarker,
+            prescribed_motion = get(ctx, :rotation, nothing), prepared,
+            coefficient_slot = half ? 2 : 1, fraction = half ? 0.5 : 0.0,
             compact_ghosts = Val(gpu.BoundarySlot !== nothing), inverse_density = sup.InvDensity,
-            pressure = sup.Pressure, periodicity = cl.periodicity)
+            pressure = sup.Pressure, periodicity = cl.periodicity, periodic_bounds = periodic_bounds(sup))
     else
         launch_mdbc!(density, position, gpu.GhostPoints, gpu.GhostIndex, gpu.Type,
             cl.CellStart, cl.grid_dev, step, SimKernel, SimConstants; threads, lanes, pos_cells = pairs,
@@ -1197,7 +1199,7 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
     launch_open_boundary_values!(get(ctx,:open_boundary,nothing),gpu.Position,gpu.Velocity,gpu.Density,
         gpu.Type,gpu.GroupMarker,CellStart,grid,SimKernel,SimConstants,step)
     if UseMDBC
-        @phase HourGlass mdbc_name timed enqueue_boundary_correction!(ctx, step, false)
+        @phase HourGlass mdbc_name timed enqueue_boundary_correction!(ctx, step, false; prepared = prepared_forces)
     else
         prepare_periodic_bounds!(ctx, gpu.Position, step)
     end
@@ -1301,7 +1303,7 @@ function enqueue_step!(ctx, timed::Bool; finish_current::Bool = true, finish_nex
         # predictor and the final density update start from are corrected
         # every step, the carried derivative is kept.
         if UseMDBC
-            @phase HourGlass "04a NeighborLoopMDBC before Half TimeStep" timed enqueue_boundary_correction!(ctx, state, false)
+            @phase HourGlass "04a NeighborLoopMDBC before Half TimeStep" timed enqueue_boundary_correction!(ctx, state, false; prepared = true)
         end
     else
         # Only the corrector's pair signal is consumed by the next timestep.
@@ -1355,7 +1357,7 @@ function enqueue_step!(ctx, timed::Bool; finish_current::Bool = true, finish_nex
 
     if get(ctx, :boundary_mode, SimpleMDBC()) isa UpdatedMDBC
         @phase HourGlass "07 Updated mDBC corrector" timed begin
-            enqueue_boundary_correction!(ctx, state, true)
+            enqueue_boundary_correction!(ctx, state, true; prepared = true)
         end
     else
         prepare_periodic_bounds!(ctx, position_half, state)
@@ -1967,10 +1969,10 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     SimRotation === nothing || (Dimensions == 2 && BMode === NoMDBC && SimMetaData.Periodicity === nothing) ||
         throw(ArgumentError("SimRotation currently requires a nonperiodic 2D DBC case (NoMDBC)"))
     SimMotion === nothing || (Dimensions in (2,3) &&
-        (BMode === NoMDBC || BMode === SimpleMDBC)) ||
-        throw(ArgumentError("SimMotion requires 2D/3D DBC or SimpleMDBC"))
-    SimMotion === nothing || BMode !== SimpleMDBC ||
-        validate_simple_mdbc_motion(SimMotion)
+        (BMode === NoMDBC || BMode === SimpleMDBC || BMode === UpdatedMDBC)) ||
+        throw(ArgumentError("SimMotion requires 2D/3D DBC, SimpleMDBC or UpdatedMDBC"))
+    SimMotion === nothing || !(BMode === SimpleMDBC || BMode === UpdatedMDBC) ||
+        validate_simple_mdbc_motion(SimMotion, BMode)
     validate_periodic_motion(SimMotion, SimMetaData.Periodicity)
     external_forces = prepare_external_forces(SimExternalForces, SimParticles, Val(Dimensions), FloatType)
     damping = prepare_damping(SimDamping, Val(Dimensions))

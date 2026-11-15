@@ -48,7 +48,7 @@ function prepare_prescribed_motion(system::MotionSystem, geometry, particles)
     nodes = map(system.motions) do node
         parent = node.parent === nothing ? 0 : findfirst(n -> n.id == node.parent, system.motions)
         local_node = DeviceMotion(device_trajectory(node.translation), device_trajectory(node.rotation), node.center, node.axis)
-        (; motion = local_node, parent = Int32(parent))
+        (; motion = local_node, parent = Int32(parent), marker = Int32(something(node.group_marker, 0)))
     end
     initial_pose = motion_state(first(system.motions), 0.0)
     return PreparedMotionSystem(nodes, CuArray(Int32.(selected)),
@@ -133,6 +133,31 @@ function update_rotation_indices!(motions::Tuple, workspace)
     foreach(m -> update_rotation_indices!(m, workspace), motions)
     return nothing
 end
+
+@inline group_node_acceleration(::Tuple{}, poses, offset, idx, group, zero_acc) = zero_acc
+@inline function group_node_acceleration(nodes::Tuple, poses, offset, idx, group, zero_acc)
+    node = first(nodes)
+    if node.marker == group
+        @inbounds return typeof(zero_acc)(poses[offset + idx].offset_acceleration)
+    end
+    return group_node_acceleration(Base.tail(nodes), poses, offset, idx + Int32(1), group, zero_acc)
+end
+
+@inline function prescribed_wall_acceleration(motion::PreparedMotionSystem, group::Integer, coefficient_slot::Integer, zero_acc)
+    offset = (Int32(coefficient_slot) - Int32(1)) * Int32(length(motion.nodes))
+    return group_node_acceleration(motion.nodes, motion.poses, offset, Int32(1), Int32(group), zero_acc)
+end
+@inline prescribed_wall_acceleration(::Tuple{}, group, coefficient_slot, zero_acc) = zero_acc
+@inline prescribed_wall_acceleration(motions::Tuple, group, coefficient_slot, zero_acc) =
+    prescribed_wall_acceleration(first(motions), group, coefficient_slot, zero_acc) +
+    prescribed_wall_acceleration(Base.tail(motions), group, coefficient_slot, zero_acc)
+
+function prepare_prescribed_mdbc!(motion::PreparedMotionSystem, step, fraction::Float64)
+    @cuda threads=1 blocks=1 motion_coefficients_kernel!(motion, step, fraction)
+    return nothing
+end
+prepare_prescribed_mdbc!(motions::Tuple, step, fraction::Float64) =
+    foreach(m -> prepare_prescribed_mdbc!(m, step, fraction), motions)
 
 function combine_motions(legacy, system, geometry, particles)
     system = system isa PrescribedMotion ? MotionSystem(system) : system

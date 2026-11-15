@@ -77,10 +77,14 @@ end
     end
 end
 
+@inline prescribed_wall_acceleration(motion, group, coefficient_slot, zero_acc) = zero_acc
+@inline prepare_prescribed_mdbc!(motion, step, fraction) = nothing
+
 function updated_mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVector{SVector{D, TP}},
                               Pairs, Velocity, GhostPoints, GhostNormals, GhostIndex, ParticleType,
                               CellStart, gridarg, step, SimKernel, SimConstants, data, motion, groups,
-                              InvDensity, Pressure, ::Val{K}, ::Val{Compact}, nghost::Int32, periodicity) where {T, D, TP, K, Compact}
+                              prescribed_motion, coefficient_slot::Int32,
+                              InvDensity, Pressure, ::Val{K}, ::Val{Compact}, nghost::Int32, periodicity, periodic_bounds) where {T, D, TP, K, Compact}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t = thread_index()
@@ -107,7 +111,7 @@ function updated_mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVect
         end
         s = cell_size(grid, SimKernel.H)
         b, A = mdbc_neighborhood(b, A, gp, Pairs, Position, grid, CellStart, s,
-            Density, ParticleType, SimKernel, SimConstants.m₀, lane, Val(K), Velocity, InvDensity, periodicity)
+            Density, ParticleType, SimKernel, SimConstants.m₀, lane, Val(K), Velocity, InvDensity, periodicity, periodic_bounds)
     end
     if K > 1
         b = lanes_sum(b, Val(K))
@@ -128,7 +132,12 @@ function updated_mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVect
         normal /= norm(normal)
         gravity = ConstructGravitySVector(normal, -g)
         # Interaction acceleration is not the prescribed wall acceleration.
-        acceleration = ParticleType[i] == Moving ? wall_acceleration(motion, groups, i, step, Velocity[i]) : zero(normal)
+        acceleration = if ParticleType[i] == Moving
+            wall_acceleration(motion, groups, i, step, Velocity[i]) +
+                prescribed_wall_acceleration(prescribed_motion, groups === nothing ? Int32(0) : Int32(groups[i]), coefficient_slot, zero(normal))
+        else
+            zero(normal)
+        end
         ρ, pressure = cloned_boundary_state(density, normal, SVector{D, T}(Position[i] - gp),
                                             gravity, acceleration, c₀, ρ₀)
         Density[i] = active ? ρ : ρ₀
@@ -137,9 +146,13 @@ function updated_mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVect
         ghost_velocity = let rhs = b, weight = A[1, 1]
             active ? SVector{D, T}(ntuple(k -> rhs[k + 1, 2] / weight, Val(D))) : zero(normal)
         end
-        mirrored = active ? 2 * Velocity[i] - ghost_velocity : Velocity[i]
+        wall_velocity = Velocity[i]
+        mirrored = active ? 2 * wall_velocity - ghost_velocity : wall_velocity
         data.velocity[state_slot] = mirrored
-        data.tangent_velocity[state_slot] = mirrored - dot(mirrored, normal) * normal
+        # Project out only the mirrored relative normal velocity so co-moving
+        # normal wall translation stays Galilean invariant in viscosity.
+        data.tangent_velocity[state_slot] = active ?
+            mirrored - dot(mirrored - wall_velocity, normal) * normal : wall_velocity
         ParticleType[i] == Moving && (GhostPoints[slot] = gp)
     end
     return nothing
@@ -148,13 +161,21 @@ end
 function launch_updated_mdbc!(Density, Position, Velocity, GhostPoints, GhostNormals,
                                GhostIndex, ParticleType, CellStart, grid, step, SimKernel, SimConstants,
                                data; threads = 128, lanes = Val(1), pos_cells = nothing, motion = nothing, groups = nothing,
-                               compact_ghosts::Val = Val(false), inverse_density = nothing, pressure = nothing, periodicity = nothing)
+                               prescribed_motion = nothing, prepared::Bool = false, coefficient_slot::Integer = 1,
+                               fraction = 0.0,
+                               compact_ghosts::Val = Val(false), inverse_density = nothing, pressure = nothing,
+                               periodicity = nothing, periodic_bounds = nothing)
     n = length(GhostIndex)
     n == 0 && return nothing
+    if !prepared && prescribed_motion !== nothing
+        prepare_prescribed_mdbc!(prescribed_motion, step, Float64(fraction))
+    end
+    slot = Int32(prepared ? coefficient_slot : 1)
     K = typeof(lanes).parameters[1]
     pairs = pos_cells === nothing ? Position : pos_cells
     @cuda threads=threads blocks=cld(n * K, threads) updated_mdbc_kernel!(
         Density, Position, pairs, Velocity, GhostPoints, GhostNormals, GhostIndex, ParticleType,
-        CellStart, grid, step, SimKernel, SimConstants, data, motion, groups, inverse_density, pressure, lanes, compact_ghosts, Int32(n), periodicity)
+        CellStart, grid, step, SimKernel, SimConstants, data, motion, groups, prescribed_motion, slot,
+        inverse_density, pressure, lanes, compact_ghosts, Int32(n), periodicity, periodic_bounds)
     return nothing
 end

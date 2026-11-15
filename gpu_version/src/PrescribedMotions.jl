@@ -9,6 +9,7 @@ using ..MotionTrajectories: AbstractTrajectory, ConstantTrajectory, motion_value
 using ..SimulationGeometry: Moving
 using ..GPUStepState: step_active, step_time, step_dt
 using ..GPUKernels: store_pos_cell!
+import ..GPUKernels: prescribed_wall_acceleration, prepare_prescribed_mdbc!
 import ..PrescribedRotation: sample_rotation!, launch_rotation!, update_rotation_indices!
 using ..PrescribedRotation: prepare_rotation, inverse_permutation_kernel!, rotation_indices_kernel!
 
@@ -31,8 +32,10 @@ by its parent's transform, recursively; translation directions and rotation
 axes therefore move with the parent. Set `group_marker = nothing` for a virtual parent that has no particles.
 A `MotionSystem` validates and orders the tree. Pass it as `SimMotion` to
 `RunSimulation` for 2D/3D DBC, or for nonperiodic translation-only
-`SimpleMDBC` cases. In Simple mDBC, each moving ghost point follows the
-prescribed translation and its wall-normal offset stays fixed. Periodic cases
+`SimpleMDBC` and `UpdatedMDBC` cases. In both mDBC modes, each moving ghost
+point follows the prescribed translation and its wall-normal offset stays fixed;
+`UpdatedMDBC` also clones wall pressure using the exact analytical wall
+acceleration at each stage. Periodic cases
 allow independent translations that leave the periodic coordinate unchanged;
 rotations and parent hierarchies still require a nonperiodic case.
 """
@@ -93,10 +96,10 @@ function MotionSystem(motions::Union{Tuple,AbstractVector})
 end
 MotionSystem(motion::PrescribedMotion) = MotionSystem((motion,))
 
-function validate_simple_mdbc_motion(system)
+function validate_simple_mdbc_motion(system, mode = :SimpleMDBC)
     nodes = system isa PrescribedMotion ? (system,) : system.motions
     all(node -> node.rotation isa ConstantTrajectory && iszero(node.rotation.value), nodes) ||
-        throw(ArgumentError("SimpleMDBC prescribed motion currently supports translations only"))
+        throw(ArgumentError("$(mode isa Type ? nameof(mode) : mode) prescribed motion currently supports translations only"))
     return nothing
 end
 

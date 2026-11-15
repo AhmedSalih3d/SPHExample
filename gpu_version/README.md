@@ -1077,9 +1077,10 @@ keyword when their locations need to follow motion.
 For translation, acceleration, sinusoidal/circular trajectories, file input
 and hierarchical rigid motion, pass `SimMotion = PrescribedMotion(...)` or
 `MotionSystem(...)`. This path supports nonperiodic 2D/3D DBC and both
-integrators, plus translation-only `SimpleMDBC` cases, with analytical wall
-velocities at the start, predictor and accepted times. `SimpleMDBC` motion
-keeps its ghost-normal offset fixed; prescribed rotations remain DBC-only.
+integrators, plus translation-only `SimpleMDBC` and `UpdatedMDBC` cases, with
+analytical wall velocities (and stage accelerations for `UpdatedMDBC` pressure
+cloning) at the start, predictor and accepted times. Both mDBC modes keep their
+ghost-normal offset fixed; prescribed rotations remain DBC-only.
 Periodic DBC cases additionally allow independent translations
 that leave the periodic coordinate unchanged, as in the wave-maker example.
 Periodic rotations and parent hierarchies remain unsupported.
@@ -1231,8 +1232,10 @@ a unit direction. Translating walls reconstruct their ghosts from that displacem
 * Pressure cloning from ghost density and the normal component of gravity minus
   prescribed wall acceleration. Displacement is `xb - xg`, as in the reference
   implementation, so pressure increases towards a submerged bottom wall.
-* Mirrored no-slip velocity `2U - ug` for continuity, with its tangential component
-  used for viscosity. Physical wall velocity remains separate, including in output.
+* Mirrored no-slip velocity `2U - ug` for continuity, while viscosity projects
+  out only the mirrored relative normal velocity (`(2U - ug) - (((2U - ug) - U) · n) n`),
+  preserving Galilean invariance when walls translate along their normal.
+  Physical wall velocity remains separate, including in output.
   Viscosity uses the usual coefficient (boundary factor one).
 * Corrections before both interaction stages, including with CUDA graphs, both
   time-stepping schemes, 2D/3D, either precision, and double-position storage.
@@ -1241,10 +1244,12 @@ a unit direction. Translating walls reconstruct their ghosts from that displacem
 
 The boundary cloning law is the presentation's linear law
 `P = c₀² (ρ - ρ₀)`; fluid pressure retains the solver's existing gamma-seven EOS.
-Prescribed translation uses the existing piecewise-constant `MotionDetails` API;
-wall acceleration at a velocity jump is a backward difference over the current
-step. Velocity-only walls have zero geometric acceleration. Floating bodies are
-rejected in this mode: their coupling is listed as future work in the presentation.
+Prescribed translation supports both `SimMotion` (`PrescribedMotion` /
+`MotionSystem`, supplying exact analytical stage accelerations) and the existing
+piecewise-constant `MotionDetails` API (where wall acceleration at a velocity
+jump is a backward difference over the current step). Velocity-only walls have
+zero geometric acceleration. Floating bodies are rejected in this mode: their
+coupling is listed as future work in the presentation.
 This implements the formulation; it does not reproduce the presentation's full
 experimental validation campaign. To display negative pressures, pass a suitable
 `ParaviewPressureRange`, for example `(-1000.0, 20000.0)`.
