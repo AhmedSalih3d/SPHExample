@@ -1,0 +1,13 @@
+boundary = "DBC"
+cfl = 0.1
+deceleration = [1.75, 2.0]
+divergence_cleaning = false
+dp = 0.025
+duration = 8.0
+edge_damping = false
+hold = [2.0, 4.0]
+motion = "smooth time mapping of original Hermite trajectory"
+output_interval = 0.01
+restart = [4.0, 4.25]
+reynolds = 100
+sound_speeds = [40, 160]

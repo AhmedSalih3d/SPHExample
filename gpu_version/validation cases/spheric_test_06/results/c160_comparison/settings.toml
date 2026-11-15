@@ -1,0 +1,19 @@
+archive_commit = "9302adb263233d6501f16fb4f0cd77e8dcccfce4"
+baseline_cfl = 0.2
+c40_small_step_cfl = 0.05
+cleaning_comparison_cfl = 0.1
+cleaning_courant = 0.1
+cleaning_kappa = 160.0
+cleaning_sigma = 1.0
+cuda_driver = "13.4.0"
+cuda_jl = "6.4.2"
+dp = 0.025
+dual_cleaning = "stock executable, no divergence-cleaning modification"
+duration = 8.0
+gpu = "NVIDIA GeForce RTX 5080"
+julia = "1.12.7"
+motion = "original Hermite retained"
+output_interval = 0.02
+pressure_mode = "absolute"
+reynolds = [50, 100, 150]
+step_control = "equal nominal acoustic cap: 0.05*h/40 = 0.2*h/160; actual adaptive steps reported"

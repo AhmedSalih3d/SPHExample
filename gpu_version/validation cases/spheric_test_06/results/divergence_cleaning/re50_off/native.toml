@@ -1,0 +1,7 @@
+frames = 401
+particles = 84864
+readbacks = 3403
+rebuilds = 515
+solver_seconds = 24.4165739
+steps = 90800
+wall_seconds = 24.4293789

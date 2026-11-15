@@ -1,0 +1,21 @@
+accounting = "live unique CuArray storage; excludes allocator reservations and program state"
+disabled_device_bytes = 0
+particles = 84864
+
+[Float32]
+derivative_device_bytes = 339456
+final_psi_host_bytes = 339456
+live_device_buffer_bytes = 1019696
+predictor_device_bytes = 339456
+psi_device_bytes = 339456
+signal_device_bytes = 1328
+signal_host_bytes = 1328
+
+[Float64]
+derivative_device_bytes = 678912
+final_psi_host_bytes = 678912
+live_device_buffer_bytes = 2039392
+predictor_device_bytes = 678912
+psi_device_bytes = 678912
+signal_device_bytes = 2656
+signal_host_bytes = 2656

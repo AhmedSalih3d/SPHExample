@@ -1,0 +1,10 @@
+accepted_limit_ratio_max = 1.0
+frames = 401
+particles = 84864
+proposed_limit_ratio_max = 4.999999925494195
+readbacks = 179818
+rebuilds = 622
+solver_seconds = 44.7532138
+steps = 47886
+timestep_retries = 18080
+wall_seconds = 44.7672313

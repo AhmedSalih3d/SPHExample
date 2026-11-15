@@ -17,6 +17,23 @@ sponges at strengths of 10 and 100 s⁻¹ in both solvers, across all three
 Reynolds numbers. It compares raw drag, noise, reference error and mean-load
 changes. Adding these momentum sinks changes the benchmark physics.
 
+The [optional divergence-cleaning study](DIVERGENCE_CLEANING.md) tests the
+paper's ψ-based velocity-divergence procedure in Julia GPU, with no edge
+sponges and matched-CFL controls. It includes raw force errors, measured
+divergence, field images and paired whole-solver costs.
+
+The [160 m/s sound-speed study](SOUND_SPEED_160.md) extends both solvers to
+Re = 50, 100 and 150, with smaller-timestep controls in both and optional
+Julia cleaning at matched physical CFL. It distinguishes acoustic stiffness
+from timestep size and includes current field images and warm solver timings.
+
+The [timestep audit and square-pause diagnostic](TIMESTEP_AUDIT.md) examines
+the current timestep estimator and measures pressure/energy relaxation during
+a smooth stop, hold and restart at 40 and 160 m/s. The modified motion is
+reported separately from the original benchmark.
+See [implementation checks and remaining test limitations](IMPLEMENTATION_VALIDATION.md)
+for the focused GPU results and the reproduced broad-suite failure.
+
 ## Case definition
 
 The closed tank occupies `[0,10] × [0,5]` m. A unit square initially occupies

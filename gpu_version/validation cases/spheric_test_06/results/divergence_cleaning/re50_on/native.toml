@@ -1,0 +1,13 @@
+cleaning_courant = 0.1
+frames = 401
+kappa = 40.0
+particles = 84864
+pressure_mode = "absolute"
+psi_abs_max = 3.2480506896972656
+psi_rms = 0.017439501360058784
+readbacks = 6189
+rebuilds = 512
+sigma = 1.0
+solver_seconds = 58.3816589
+steps = 181695
+wall_seconds = 58.406697

@@ -1,0 +1,16 @@
+cfl = 0.2
+density_diffusion = "Fourtakas inner, delta=0.1"
+divergence_cleaning = false
+dp = 0.025
+edge_damping = false
+fast_math = false
+graph = false
+kinematic_viscosity = 0.01
+lanes = 1
+motions = ["hermite", "integrated"]
+particle_precision = "Float32"
+position_and_clock_precision = "Float64"
+reynolds = 100
+scheme = "DualSPHysicsSymplectic with current-stage retries and no minimum-step override"
+sound_speeds = [40, 160]
+viscosity = "Laminar"

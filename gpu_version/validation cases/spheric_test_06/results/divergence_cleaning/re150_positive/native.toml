@@ -1,0 +1,12 @@
+cleaning_courant = 0.1
+frames = 401
+kappa = 40.0
+particles = 84864
+psi_abs_max = 9.685932159423828
+psi_rms = 0.045237138867378235
+readbacks = 7414
+rebuilds = 761
+sigma = 1.0
+solver_seconds = 33.452448
+steps = 213851
+wall_seconds = 33.4524799

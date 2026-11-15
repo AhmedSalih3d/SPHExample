@@ -36,8 +36,10 @@ function integrated_trajectory()
 end
 
 function prepare_dual(; n = 40, reynolds = 100, sound_speed = 40, duration = 8.0, interval = 0.02,
-        motion_kind = :hermite, diffusion = 1, damping = nothing)
+        motion_kind = :hermite, diffusion = 1, damping = nothing, cfl = 0.2)
+    isfinite(cfl) && 0 < cfl <= 0.5 || throw(ArgumentError("CFL must be finite and in (0,0.5]"))
     name = "re$(reynolds)_n$(n)_c$(sound_speed)_$(motion_kind)_ddt$(diffusion)_t$(duration)_out$(interval)_centered_v2"
+    cfl == 0.2 || (name *= "_cfl$(cfl)")
     if damping !== nothing
         name *= "_damp_w$(damping.width)_r$(damping.rate)_o$(damping.overlimit)"
     end
@@ -68,7 +70,7 @@ function prepare_dual(; n = 40, reynolds = 100, sound_speed = 40, duration = 8.0
       <hswl value="0" auto="false"/><gamma value="7"/>
       <speedsystem value="1" auto="false"/><coefsound value="$sound_speed"/>
       <speedsound value="$sound_speed" auto="false"/><b value="$(1000sound_speed^2/7)" auto="false"/>
-      <coefh value="1"/><cflnumber value="0.2"/>
+      <coefh value="1"/><cflnumber value="$cfl"/>
     </constantsdef><mkconfig boundcount="240" fluidcount="9"/>
     <geometry><definition dp="$dx"><pointref x="$(dx/2)" y="0" z="$(dx/2)"/>
       <pointmin x="$(-l-dx)" y="0" z="$(-l-dx)"/><pointmax x="$(10+l+dx)" y="0" z="$(5+l+dx)"/>
@@ -85,7 +87,7 @@ function prepare_dual(; n = 40, reynolds = 100, sound_speed = 40, duration = 8.0
       <parameter key="Visco" value="$(1/reynolds)"/><parameter key="ViscoBoundFactor" value="1"/>
       <parameter key="DensityDT" value="$diffusion"/><parameter key="DensityDTvalue" value="0.1"/>
       <parameter key="Shifting" value="0"/><parameter key="RigidAlgorithm" value="1"/>
-      <parameter key="CoefDtMin" value="0.01"/><parameter key="DtIni" value="$(0.2sqrt(2)*dx/sound_speed)"/>
+      <parameter key="CoefDtMin" value="0.01"/><parameter key="DtIni" value="$(cfl*sqrt(2)*dx/sound_speed)"/>
       <parameter key="TimeMax" value="$duration"/><parameter key="TimeOut" value="$interval"/>
       <parameter key="PartsOutMax" value="0.001"/><parameter key="RhopOutMin" value="700"/>
       <parameter key="RhopOutMax" value="1300"/>
@@ -165,14 +167,17 @@ end
 function native_case(configuration, directory)
     (; reynolds, sound_speed, motion_kind, diffusion, eta, float_type, n) = configuration
     case = build_case(; reynolds, sound_speed, dx = 1/n, save = directory, float_type,
-        duration = get(configuration,:duration,8.0),interval = get(configuration,:interval,0.02))
-    trajectory = motion_kind == :hermite ? body_trajectory() : integrated_trajectory()
+        duration = get(configuration,:duration,8.0),interval = get(configuration,:interval,0.02),cfl = get(configuration,:cfl,0.2))
+    case.metadata.GPUUseGraph = get(configuration,:graph,case.metadata.GPUUseGraph)
+    case.metadata.GPULanesPerParticle = get(configuration,:lanes,case.metadata.GPULanesPerParticle)
+    trajectory = get(configuration,:trajectory,nothing)
+    trajectory === nothing && (trajectory = motion_kind == :hermite ? body_trajectory() : integrated_trajectory())
     kernel = eta == :native ? case.kernel : SPHKernelInstance{2,float_type}(WendlandC2();
         h = case.kernel.h, η² = float_type((0.1case.kernel.h)^2))
     return merge(case,(; kernel, motion = PrescribedMotion(3; translation = trajectory)))
 end
 
-function native_run(configuration, directory; analyze = true, results = joinpath(RESULTS,configuration.id), damping = nothing)
+function native_run(configuration, directory; analyze = true, results = joinpath(RESULTS,configuration.id), damping = nothing, cleaning = nothing)
     mkpath(directory)
     isfile(joinpath(directory,"MovingSquare.vtkhdf")) && error("Refusing to overwrite $directory")
     case = native_case(configuration,directory)
@@ -187,7 +192,8 @@ function native_run(configuration, directory; analyze = true, results = joinpath
                 result = RunSimulation(SimGeometry = case.geometry, SimMetaData = case.metadata,
                     SimConstants = case.constants, SimKernel = case.kernel, SimLogger = logger,
                     SimParticles = particles, SimViscosity = Laminar(), SimDensityDiffusion = diffusion,
-                    SimTimeStepping = SymplecticTimeStepping(), SimMotion = case.motion, SimDamping = damping)
+                    SimTimeStepping = get(configuration,:scheme,SymplecticTimeStepping()), SimMotion = case.motion, SimDamping = damping,
+                    SimDivergenceCleaning = cleaning)
             finally
                 isopen(logger.LoggerIo) && close(logger.LoggerIo)
             end
@@ -203,10 +209,20 @@ function native_run(configuration, directory; analyze = true, results = joinpath
     order = sortperm(particles.ID)
     analyze || CSV.write(joinpath(directory,"final.csv"),[(; id = particles.ID[i],x = particles.Position[i][1],
         y = particles.Position[i][2],u = particles.Velocity[i][1],v = particles.Velocity[i][2],rho = particles.Density[i]) for i in order])
-    return (; wall_seconds = wall, solver_seconds = result.performance.wall_time_seconds,
+    info = (; wall_seconds = wall, solver_seconds = result.performance.wall_time_seconds,
         steps = result.performance.steps, particles = result.diagnostics.particle_count,
         frames = result.diagnostics.output_frames, rebuilds = result.diagnostics.cell_list_rebuilds,
         readbacks = result.diagnostics.step_state_readbacks)
+    if hasproperty(result.diagnostics,:timestep_criteria)
+        info = merge(info,result.diagnostics.timestep_criteria)
+    end
+    if cleaning !== nothing
+        psi = result.final_state.divergence_cleaning.psi[particles.Type .== Fluid]
+        info = merge(info,(; psi_rms = sqrt(mean(abs2,psi)),psi_abs_max = maximum(abs,psi),
+            kappa = cleaning.kappa,sigma = cleaning.sigma,cleaning_courant = cleaning.courant,
+            pressure_mode = cleaning.absolute_pressure ? "absolute" : "positive"))
+    end
+    return info
 end
 
 function dual_final_state(directory)
