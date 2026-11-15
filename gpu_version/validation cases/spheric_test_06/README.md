@@ -5,6 +5,10 @@ simulations completed; see the measured drag errors, resolution sensitivity,
 state checks and sound-speed investigation in [REPORT.md](REPORT.md).
 The source case is [SPHERIC Test 06](https://www.spheric-sph.org/tests/test-06).
 
+The latest [force comparison with the new default timestep](PAIRWISE_FORCE_ACCURACY.md)
+reruns both legacy and neighbor-based criteria at Re = 50/100/150 and c0 = 40/160.
+It isolates the timestep change and reports raw pressure, viscous and total drag.
+
 The follow-up [DualSPHysics comparison and proposed solution](COMPARISON.md)
 quantifies noise, accuracy and warm solver timings across all three Reynolds
 numbers. It includes current field images and isolated motion, diffusion,

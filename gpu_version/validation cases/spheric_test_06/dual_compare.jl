@@ -170,6 +170,7 @@ function native_case(configuration, directory)
         duration = get(configuration,:duration,8.0),interval = get(configuration,:interval,0.02),cfl = get(configuration,:cfl,0.2))
     case.metadata.GPUUseGraph = get(configuration,:graph,case.metadata.GPUUseGraph)
     case.metadata.GPULanesPerParticle = get(configuration,:lanes,case.metadata.GPULanesPerParticle)
+    case.metadata.GPULegacyTimestep = get(configuration,:legacy_timestep,case.metadata.GPULegacyTimestep)
     trajectory = get(configuration,:trajectory,nothing)
     trajectory === nothing && (trajectory = motion_kind == :hermite ? body_trajectory() : integrated_trajectory())
     kernel = eta == :native ? case.kernel : SPHKernelInstance{2,float_type}(WendlandC2();
@@ -210,6 +211,7 @@ function native_run(configuration, directory; analyze = true, results = joinpath
     analyze || CSV.write(joinpath(directory,"final.csv"),[(; id = particles.ID[i],x = particles.Position[i][1],
         y = particles.Position[i][2],u = particles.Velocity[i][1],v = particles.Velocity[i][2],rho = particles.Density[i]) for i in order])
     info = (; wall_seconds = wall, solver_seconds = result.performance.wall_time_seconds,
+        timestep_criterion = string(result.configuration.effective.timestep_criterion),
         steps = result.performance.steps, particles = result.diagnostics.particle_count,
         frames = result.diagnostics.output_frames, rebuilds = result.diagnostics.cell_list_rebuilds,
         readbacks = result.diagnostics.step_state_readbacks)

@@ -4,6 +4,17 @@ include(joinpath(@__DIR__,"dual_compare.jl"))
 using .Test06DualComparison
 const C = Test06DualComparison
 
+@testset "Moving-square timestep criterion is explicitly selectable" begin
+    mktempdir() do directory
+        legacy = C.native_case(merge(C.config("legacy"),(;n=10)),directory)
+        pairwise = C.native_case(merge(C.config("pairwise"),(;n=10,legacy_timestep=false)),directory)
+        @test legacy.metadata.GPULegacyTimestep
+        @test !pairwise.metadata.GPULegacyTimestep
+        @test legacy.geometry[2].Particles.Position == pairwise.geometry[2].Particles.Position
+        @test legacy.constants == pairwise.constants
+    end
+end
+
 @testset "Motion integration preserves velocity without rounded-position acceleration" begin
     trajectory = C.integrated_trajectory()
     original = C.body_trajectory()

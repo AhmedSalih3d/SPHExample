@@ -1,0 +1,32 @@
+{
+  "re50_c40": {
+    "time": 0.0,
+    "cd_pressure": 0.0,
+    "cd_viscous": 0.0
+  },
+  "re100_c40": {
+    "time": 0.0,
+    "cd_pressure": 0.0,
+    "cd_viscous": 0.0
+  },
+  "re150_c40": {
+    "time": 0.0,
+    "cd_pressure": 0.0,
+    "cd_viscous": 0.0
+  },
+  "re50_c160": {
+    "time": 0.0,
+    "cd_pressure": 0.0,
+    "cd_viscous": 0.0
+  },
+  "re100_c160": {
+    "time": 0.0,
+    "cd_pressure": 0.0,
+    "cd_viscous": 0.0
+  },
+  "re150_c160": {
+    "time": 0.0,
+    "cd_pressure": 0.0,
+    "cd_viscous": 0.0
+  }
+}

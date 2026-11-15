@@ -1,0 +1,8 @@
+frames = 401
+particles = 84864
+readbacks = 2028
+rebuilds = 515
+solver_seconds = 10.9194278
+steps = 45600
+timestep_criterion = "legacy_absolute_position"
+wall_seconds = 10.9194474

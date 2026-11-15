@@ -1,0 +1,8 @@
+frames = 401
+particles = 84864
+readbacks = 6211
+rebuilds = 580
+solver_seconds = 27.3858428
+steps = 182251
+timestep_criterion = "pairwise_signal"
+wall_seconds = 27.3858623
