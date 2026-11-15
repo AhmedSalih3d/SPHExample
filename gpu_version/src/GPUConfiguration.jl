@@ -85,6 +85,7 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
                 domain_min=meta.TimeSteppingMode.domain_min, domain_max=meta.TimeSteppingMode.domain_max,
                 density_min=meta.TimeSteppingMode.density_min, density_max=meta.TimeSteppingMode.density_max,
                 fast_math=meta.TimeSteppingMode.fast_math,
+                respect_stability_limits=meta.TimeSteppingMode.respect_stability_limits,
                 cache_periodic_queries=meta.TimeSteppingMode.cache_periodic_queries,
                 periodic_images=meta.TimeSteppingMode.periodic_images) : nothing,
         kernel_output_mode = K, cell_subdivision = meta.GPUCellSubdivision,

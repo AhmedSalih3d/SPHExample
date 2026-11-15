@@ -30,6 +30,7 @@ module SPHExampleGPU
         "SPHDensityDiffusionModels.jl",
         "GPUReductions.jl",
         "GPUStepState.jl",
+        "GPUDivergenceCleaning.jl",
         "DampingZones.jl",
         "ProduceHDFVTK.jl",
         "ExternalForces.jl",
@@ -88,6 +89,9 @@ module SPHExampleGPU
 
     using .DampingZones
     export DampingZone, DampingBox, DampingCylinder, UniformFlowZone
+
+    using .GPUDivergenceCleaning
+    export DivergenceCleaning
 
     using .PrescribedRotation
     export RotationMotion, rotation_state, rotation_position

@@ -322,7 +322,7 @@ function resolution_standard_corrector_kernel!(x,v,a,rho,rate,rp,xp,vp,types,gra
     return nothing
 end
 
-@inline function resolution_dt(partial, kernel, constants)
+@inline function resolution_dt(partial, kernel, constants, respect_stability_limits = false)
     value = zero(eltype(partial))
     @inbounds for i in eachindex(partial)
         value = GPUKernels.dual_max(value,partial[i])
@@ -331,12 +331,13 @@ end
     h, sound = Float64(kernel.h),Float64(constants.c₀)
     force = iszero(acceleration) ? Inf : sqrt(h / acceleration)
     acoustic = h / (max(sound,10speed) + h * Float64(value[3]))
-    return max(0.05h / sound,Float64(constants.CFL) * min(force,acoustic))
+    limited_dt = Float64(constants.CFL) * min(force,acoustic)
+    return respect_stability_limits ? limited_dt : max(0.05h / sound,limited_dt)
 end
-function resolution_dt_kernel!(a,b,ka,kb,ca,cb,step,predictor)
+function resolution_dt_kernel!(a,b,ka,kb,ca,cb,step,predictor,respect_stability_limits = false)
     GPUStepState.step_active(step) || return nothing
     @inbounds begin
-        dt = min(resolution_dt(a,ka,ca),resolution_dt(b,kb,cb))
+        dt = min(resolution_dt(a,ka,ca,respect_stability_limits),resolution_dt(b,kb,cb,respect_stability_limits))
         if predictor
             step.f[3] = dt
         else
@@ -437,7 +438,7 @@ function enqueue_resolution_step!(domains,limits,state; density_diffusion=Linear
         resident_force_stage!(d,ResolutionStep(state,d,0); density_diffusion,viscosity,scheme,interaction)
     end
     reference && @cuda threads=1 resolution_dt_kernel!(coarse.support.dual_state.reduction.partial,fine.support.dual_state.reduction.partial,
-        coarse.kernel,fine.kernel,coarse.constants,fine.constants,ResolutionStep(state,coarse,0),false)
+        coarse.kernel,fine.kernel,coarse.constants,fine.constants,ResolutionStep(state,coarse,0),false,scheme.respect_stability_limits)
     if fine.attachment !== nothing
         a = fine.attachment
         if a.motion !== nothing
@@ -481,7 +482,7 @@ function enqueue_resolution_step!(domains,limits,state; density_diffusion=Linear
         resident_force_stage!(d.predictor,ResolutionStep(state,d.predictor,3); density_diffusion,viscosity,scheme,correct_boundary=reference,interaction)
     end
     reference && @cuda threads=1 resolution_dt_kernel!(coarse.predictor.support.dual_state.reduction.partial,fine.predictor.support.dual_state.reduction.partial,
-        coarse.kernel,fine.kernel,coarse.constants,fine.constants,ResolutionStep(state,coarse,3),true)
+        coarse.kernel,fine.kernel,coarse.constants,fine.constants,ResolutionStep(state,coarse,3),true,scheme.respect_stability_limits)
     if fine.attachment !== nothing
         update_resolution_floating!(fine.predictor,ResolutionStep(state,fine.predictor,3),true)
     end

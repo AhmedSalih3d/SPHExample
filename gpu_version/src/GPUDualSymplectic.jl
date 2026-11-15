@@ -9,6 +9,9 @@ mutable struct DualStepSupport{T,PQ,PI}
     initialized::Bool
     excluded_position::Int
     excluded_density::Int
+    proposed_limit_ratio::Float64
+    accepted_limit_ratio::Float64
+    timestep_retries::Int
     queries::PQ
     images::PI
 end
@@ -17,7 +20,7 @@ function DualStepSupport{T}(n; dimensions=3, cache_periodic_queries=false, image
         throw(ArgumentError("Periodic-query cache indices exceed Int32 capacity"))
     queries = cache_periodic_queries ? PeriodicQueryCache(CUDA.zeros(SVector{2dimensions,Int32},3n)) : nothing
     return DualStepSupport(CUDA.zeros(T,n), CUDA.zeros(UInt8,n), ReductionWorkspace{SVector{4,T}}(n),
-        0.0, 0.0, 0.0, false, 0, 0, queries, images)
+        0.0, 0.0, 0.0, false, 0, 0, 0.0, 0.0, 0, queries, images)
 end
 
 @inline dual_max(a, b) = max.(a, b)

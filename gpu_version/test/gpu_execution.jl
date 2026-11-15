@@ -28,7 +28,7 @@ function simulate(case; graph, batch, double_position, scheme)
         end
         order = sortperm(particles.ID)
         output = h5open(joinpath(save, meta.SimulationName * ".vtkhdf"), "r") do file
-            root = file["VTKHDF"]
+            root = haskey(file,"VTKHDF/Particles") ? file["VTKHDF/Particles"] : file["VTKHDF"]
             (; points = read(root["Points"]), times = read(root["Steps/Values"]),
                density = read(root["PointData/Density"]))
         end

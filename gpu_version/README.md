@@ -9,6 +9,101 @@ and laminar+SPS viscosity, all density diffusion models, dynamic and mDBC
 boundary conditions, particle shifting, prescribed motion of bodies) is
 supported in 2D and 3D, in `Float64` or `Float32`.
 
+## Reference timestep safeguard
+
+For the reference `DualSPHysicsSymplectic` scheme, the optional
+`DualSPHysicsSymplectic(respect_stability_limits = true)` prevents its minimum
+timestep floor from increasing a step above the computed force/acoustic cap.
+It checks both current stages and retries a trial before committing an oversized
+step. The reference path now supports laminar viscosity with an additional
+`h²/(8ν)` cap; collecting neighbor criteria preserves the selected force model.
+Use double-position DBC, Wendland C2, Fourtakas inner diffusion, one gather lane,
+direct steps, no interaction-field cache and no external forces/floating bodies.
+Strict variable-resolution stepping is rejected until retries are implemented.
+The default retains reference behavior. This safeguard does not apply to the
+ordinary `SymplecticTimeStepping` estimator. The
+[timestep audit](validation%20cases/spheric_test_06/TIMESTEP_AUDIT.md) documents
+its origin-dependent estimate and the limits of the current measurements.
+
+## Optional experimental velocity-divergence cleaning
+
+The GPU solver implements the hyperbolic/parabolic velocity-divergence method
+of [Fourtakas, Vacondio and Rogers (2025)](https://doi.org/10.1016/j.compfluid.2025.106638).
+It remains experimental: the tested moving-square settings at 160 m/s worsen
+startup pressure error. Keep it off for that benchmark pending further validation.
+Enable it explicitly in an existing simulation:
+
+```julia
+RunSimulation(;
+    # Existing SimGeometry, SimMetaData, SimConstants, SimKernel, etc.
+    SimDivergenceCleaning = DivergenceCleaning(kappa = 10, sigma = 1, courant = 0.1, pressure_mode = :absolute),
+    # ...
+)
+```
+
+The default `SimDivergenceCleaning = nothing` retains the original solver and
+allocates no cleaning buffers. The enabled mode evolves a scalar ψ, initially
+zero, and adds its negative gradient to fluid acceleration. It transports and
+damps velocity-divergence error throughout the fluid, with ψ = 0 on solid and
+frozen particles. It does not impose incompressibility or guarantee accurate
+wall loads. The original pressure equation, physical viscosity and density
+diffusion remain in place; no edge damping zone is needed.
+
+The propagation speed is `c₀`. Local decay uses
+`1/τ = sigma*kappa*sqrt(abs(p)/ρ)/h`, and a separate device-side limit enforces
+`dt ≤ courant*h/max(c₀, maximum(kappa*sqrt(abs(p)/ρ)))`, in addition to existing
+timestep restrictions. `kappa` corresponds to the nominal `c₀/Uref` in the paper
+(10 for its usual Mach 0.1 setting, 40 or 160 for the moving-square c₀ = 40 or
+160 m/s with Uref = 1 m/s). Absolute pressure magnitude is an explicit extension of the paper's
+positive-pressure formula to negative gauge pressures; it preserves local
+decay in rarefactions and does not clip actual pressure. The alternative
+`pressure_mode = :positive` uses `max(p,0)` only for this decay speed. That
+alternative caused large startup excursions in the moving-square DBC controls
+and is retained for diagnostic comparisons. The damping
+sign follows Eq. 3.2; the inconsistent positive RHS sign printed in Eq. 3.4
+would amplify ψ and is not used. Parameters must be finite, with `kappa > 0`,
+`0 ≤ sigma ≤ 1`, and `0 < courant ≤ 0.5`; use the default 0.1 for the paper's
+conservative timestep choice.
+
+Cleaning is fused into the two existing neighbor traversals and the
+predictor/corrector kernels, including eligible fused predictors. Its signal
+speed is reduced alongside final integration and timestep selection, without
+a per-step host synchronization or an extra neighbor search. All scalar fields
+use the working precision. It adds three N-element device scalars (ψ, its
+predictor and derivative) plus one scalar per reduction block. The predictor
+also supplies idle sorting scratch, so ψ follows particle IDs across rebuilds.
+The disabled specialization removes these terms. This describes allocation
+and execution structure, not a measured universal speedup.
+
+The initial implementation supports 2D/3D Float32/Float64, standard
+`SymplecticTimeStepping`, DBC/mDBC, prescribed motion and translated periodic
+queries (`GPUPeriodicImages = false` for periodic cases). Unsupported combinations
+fail explicitly: single-neighbor/reference stepping, dense periodic images,
+variable resolution, open-boundary activation, floating-body reactions,
+timestep-provenance diagnostics and restarting with a nonzero clock. A restart
+also needs the persistent ψ field; it must not silently reset it.
+`result.final_state.divergence_cleaning.psi` contains the final host scalar
+array in `result.final_state.particles` order. ψ is not added to VTKHDF output.
+
+The [moving-square cleaning study](validation%20cases/spheric_test_06/DIVERGENCE_CLEANING.md)
+compares matched-CFL runs at Re = 50, 100 and 150, raw drag and divergence,
+and warm paired timings. The method remains experimental: reduced ringing
+does not establish accurate transient loads or a validated wall treatment.
+The [160 m/s follow-up](validation%20cases/spheric_test_06/SOUND_SPEED_160.md)
+compares both stock solvers, smaller-timestep controls in both, and optional
+Julia GPU cleaning with matched physical CFL.
+At 160 m/s, the nominal κ = 160 control also worsens startup and total force
+error despite reducing central-window noise; a larger κ is not automatically
+a better configuration. Re = 100 controls at κ = 10 and 40 also worsen the
+full-transient pressure error; the API default is not an automatic tuning rule
+for an arbitrary c₀. Leave cleaning off for this benchmark until the transient
+and wall treatment are validated.
+Run the focused implementation checks with:
+
+```bash
+julia --project=gpu_version -t 2,0 gpu_version/test/divergence_cleaning.jl
+```
+
 ## Recirculating flow from CaseRZ_Flow2D
 
 [`example/RZFlow2d.jl`](example/RZFlow2d.jl) adapts the DualSPHysics video case:

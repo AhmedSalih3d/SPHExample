@@ -170,7 +170,7 @@ if CUDA.functional()
                 @test result.configuration.execution.graph_capture_failures == 0
                 graph && @test result.configuration.execution.graph_batches > 0
                 h5open(joinpath(save, "WheelPeriodic3D.vtkhdf"), "r") do io
-                    root = io["VTKHDF"]
+                    root = haskey(io,"VTKHDF/Particles") ? io["VTKHDF/Particles"] : io["VTKHDF"]
                     types = read(root["PointData/Type"])[1:length(p)]
                     v = read(root["PointData/Velocity"])[:, 1:length(p)]
                     x = read(root["Points"])[:, 1:length(p)]

@@ -7,10 +7,14 @@ function dual_time_step(criteria, kernel, constants, scheme)
     sound_speed = isfinite(scheme.sound_speed) ? scheme.sound_speed : Float64(constants.c₀)
     force_limit = iszero(acceleration) ? Inf : sqrt(h / acceleration)
     acoustic_limit = h / (max(sound_speed, 10speed) + h * Float64(criteria[3]))
-    dt = max(0.05h / sound_speed, Float64(constants.CFL) * min(force_limit,acoustic_limit))
+    limited_dt = Float64(constants.CFL) * min(force_limit,acoustic_limit)
+    dt = scheme.respect_stability_limits ? limited_dt : max(0.05h / sound_speed,limited_dt)
     isfinite(dt) && dt > 0 || error("Reference timestep is nonfinite or nonpositive; criteria=$(criteria)")
     return dt
 end
+
+reference_viscous_limit(viscosity,kernel,constants) = Inf
+reference_viscous_limit(::Laminar,kernel,constants) = constants.ν₀ > 0 ? Float64(kernel.h)^2/(8Float64(constants.ν₀)) : Inf
 
 function dual_force_stage!(position,velocity,density,pairs,gpu,cl,sup,kernel,constants,diffusion,viscosity,meta,step)
     images = sup.dual_state.images
@@ -28,7 +32,7 @@ function dual_force_stage!(position,velocity,density,pairs,gpu,cl,sup,kernel,con
             target_indices=images.targets,target_count=length(gpu),fast_math=meta.TimeSteppingMode.fast_math,
             always_inline=meta.GPUInteractionAlwaysInline,fastmath=meta.GPUInteractionFastMath)
         criteria = GPUKernels.launch_dual_criteria!(sup.dual_state,velocity,gpu.Acceleration,gpu.Type)
-        return dual_time_step(criteria,kernel,constants,meta.TimeSteppingMode)
+        return min(dual_time_step(criteria,kernel,constants,meta.TimeSteppingMode),reference_viscous_limit(viscosity,kernel,constants))
     end
     launch_pos_cells!(pairs,position,gpu.CellID,cl.grid_dev,step,kernel)
     if periodic_bounds(sup) !== nothing
@@ -49,7 +53,7 @@ function dual_force_stage!(position,velocity,density,pairs,gpu,cl,sup,kernel,con
         fast_math=meta.TimeSteppingMode.fast_math,
         always_inline=meta.GPUInteractionAlwaysInline, fastmath=meta.GPUInteractionFastMath)
     criteria = GPUKernels.launch_dual_criteria!(sup.dual_state,velocity,gpu.Acceleration,gpu.Type)
-    return dual_time_step(criteria,kernel,constants,meta.TimeSteppingMode)
+    return min(dual_time_step(criteria,kernel,constants,meta.TimeSteppingMode),reference_viscous_limit(viscosity,kernel,constants))
 end
 
 function dual_simulation_loop!(diffusion,viscosity,kernel,meta,constants,gpu,cl,sup,rotation,state,damping=())
@@ -77,11 +81,37 @@ function dual_simulation_loop!(diffusion,viscosity,kernel,meta,constants,gpu,cl,
         step = HostStep(dt,clock.time)
         predictor_limit = dual_force_stage!(gpu.Position,gpu.Velocity,gpu.Density,sup.PosCells,
             gpu,cl,sup,kernel,constants,diffusion,viscosity,meta,step)
-        GPUKernels.launch_dual_predictor!(position_half,velocity_half,sup.ρₙ⁺,
-            gpu.Position,gpu.Velocity,gpu.Density,gpu.Acceleration,sup.dρdtI,gpu.Type,dt,constants;
-            exclusions=clock.exclusions,periodicity=cl.periodicity,scheme)
-        corrector_limit = dual_force_stage!(position_half,velocity_half,sup.ρₙ⁺,sup.PosCellsₙ⁺,
-            gpu,cl,sup,kernel,constants,diffusion,viscosity,meta,step)
+        if scheme.respect_stability_limits
+            clock.proposed_limit_ratio = max(clock.proposed_limit_ratio,dt/predictor_limit)
+            dt = min(dt,predictor_limit)
+            step = HostStep(dt,clock.time)
+        end
+        retries = 0
+        corrector_limit = Inf
+        while true
+            GPUKernels.launch_dual_predictor!(position_half,velocity_half,sup.ρₙ⁺,
+                gpu.Position,gpu.Velocity,gpu.Density,gpu.Acceleration,sup.dρdtI,gpu.Type,dt,constants;
+                exclusions=clock.exclusions,periodicity=cl.periodicity,scheme)
+            corrector_limit = dual_force_stage!(position_half,velocity_half,sup.ρₙ⁺,sup.PosCellsₙ⁺,
+                gpu,cl,sup,kernel,constants,diffusion,viscosity,meta,step)
+            if !(scheme.respect_stability_limits && dt > corrector_limit)
+                break
+            end
+            retries += 1
+            retries <= 32 || error("Reference predictor timestep failed to satisfy the corrector limit after 32 retries")
+            dt = 0.95min(dt,predictor_limit,corrector_limit)
+            step = HostStep(dt,clock.time)
+            # Restore accepted-state forces before retrying prediction.
+            predictor_limit = dual_force_stage!(gpu.Position,gpu.Velocity,gpu.Density,sup.PosCells,
+                gpu,cl,sup,kernel,constants,diffusion,viscosity,meta,step)
+            dt = min(dt,predictor_limit)
+            step = HostStep(dt,clock.time)
+        end
+        if scheme.respect_stability_limits
+            clock.accepted_limit_ratio = max(clock.accepted_limit_ratio,dt/min(predictor_limit,corrector_limit))
+            clock.timestep_retries += retries
+        end
+        clock.time + dt > clock.time || error("Computed timestep cannot advance the Float64 clock; refusing to enlarge it above the stability limit")
         GPUKernels.launch_dual_corrector!(gpu.Position,gpu.Velocity,gpu.Density,position_half,
             sup.ρₙ⁺,gpu.Acceleration,sup.dρdtI,gpu.Type,dt,constants)
         # DualSPHysics moves prescribed walls after the fluid corrector. Its
@@ -97,7 +127,7 @@ function dual_simulation_loop!(diffusion,viscosity,kernel,meta,constants,gpu,cl,
         clock.dt = min(predictor_limit,corrector_limit)
         clock.travel += 2Float64(finish[4])
         state.ih[I_ITER] += Int32(1)
-        state.readbacks += 3
+        state.readbacks += 3 + 2retries
         state.direct_batches += 1
         # Rebuilds may be reused because measured offsets protect every full
         # and predictor query. Reordering is done only after an accepted step.

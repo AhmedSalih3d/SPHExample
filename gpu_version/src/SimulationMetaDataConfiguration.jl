@@ -49,6 +49,12 @@ Finite reference domain bounds initialize the source grid when supplied;
 otherwise it follows the original particle grid. Selecting query caching uses
 the query backend. `periodic_images = false` disables copies for this scheme.
 It uses additional device storage and changes neighbor summation order.
+`respect_stability_limits = true` prevents the reference minimum-step floor
+from increasing a timestep above its computed force/acoustic limit. In uniform
+resolution it checks the current predictor and corrector limits, retrying a
+trial with a smaller step before committing it. Strict variable-resolution
+stepping is rejected because stage retries there are not implemented. The
+default retains the reference stepping sequence and floor for reproducibility.
 """
 Base.@kwdef struct DualSPHysicsSymplectic <: TimeSteppingMode
     smoothing_length::Float64 = NaN
@@ -60,6 +66,7 @@ Base.@kwdef struct DualSPHysicsSymplectic <: TimeSteppingMode
     fast_math::Bool = true
     cache_periodic_queries::Bool = false
     periodic_images::Bool = true
+    respect_stability_limits::Bool = false
 end
 
 """

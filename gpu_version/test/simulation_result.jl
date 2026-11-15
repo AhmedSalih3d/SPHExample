@@ -65,7 +65,8 @@ end
 function output_times(f)
     # Opening in r+ also checks that RunSimulation closed its output handles.
     return h5open(joinpath(f.SimMetaData.SaveLocation, "SimulationResult.vtkhdf"), "r+") do file
-        read(file["VTKHDF/Steps/Values"])
+        root = haskey(file,"VTKHDF/Particles") ? file["VTKHDF/Particles"] : file["VTKHDF"]
+        read(root["Steps/Values"])
     end
 end
 

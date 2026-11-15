@@ -20,11 +20,12 @@ const GK = SPHExampleGPU.GPUKernels
     @test resolve(default).effective.density_diffusion_model===ComplexDensityDiffusion
     @test !resolve(metadata(Periodicity=periodic,GPUPeriodicImages=false)).effective.periodic_images
     narrow=metadata(Periodicity=PeriodicBoundary{2}(1;min=0,max=0.1))
-    @test only(resolve(narrow).fallbacks).reason===:period_not_larger_than_twice_support
+    periodic_fallback(meta) = only(filter(f -> f.option === :GPUPeriodicImages,resolve(meta).fallbacks))
+    @test periodic_fallback(narrow).reason===:period_not_larger_than_twice_support
     mdbc=SimulationMetaData{2,Float32,NoShifting,NoKernelOutput,SimpleMDBC}(
         SimulationName="Fallback",SaveLocation=tempdir(),Periodicity=periodic,GPULanesPerParticle=1)
     @test !resolve(mdbc).effective.periodic_images
-    @test only(resolve(mdbc).fallbacks).reason===:unsupported_boundary_mode
+    @test periodic_fallback(mdbc).reason===:unsupported_boundary_mode
     @test DualSPHysicsSymplectic().periodic_images
 end
 

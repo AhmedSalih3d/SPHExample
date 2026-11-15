@@ -98,7 +98,8 @@ end
         for phase in ("startup", "resolved before launches", "final")
             @test occursin("Effective GPU configuration ($phase):", saved)
         end
-        @test count("Configuration fallback:", saved) == 3
+        @test any(fallback -> fallback.option == :GPUScalarSPSViscosity, configuration.fallbacks)
+        @test count("Configuration fallback:", saved) == 3 * length(configuration.fallbacks)
         @test count("Observed GPU execution:", saved) == 3
     end
 end

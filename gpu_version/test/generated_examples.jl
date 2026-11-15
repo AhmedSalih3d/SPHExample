@@ -11,6 +11,13 @@ using CUDA
             Core.eval(scope, :(include(path) = Base.include($scope, path)))
             Core.eval(scope, quote
                 captured = Ref{Any}(nothing)
+                function check_capture_path(path)
+                    normpath(abspath(path)) == normpath(abspath($dir)) ||
+                        error("Generated-example capture escaped its temporary output directory: $path")
+                    return path
+                end
+                SimulationLogger(path) = SPHExampleGPU.SimulationLogger(check_capture_path(path))
+                CleanUpSimulationFolder(path) = SPHExampleGPU.CleanUpSimulationFolder(check_capture_path(path))
                 function RunSimulation(; kwargs...)
                     captured[] = (; kwargs...)
                     close(kwargs[:SimLogger].LoggerIo)
@@ -22,8 +29,10 @@ using CUDA
             source = replace(source, r"SaveLocation\s*=\s*\x22[^\x22]*\x22" =>
                 "SaveLocation = " * repr(dir))
             if name == "StillWedgeMDBC"
-                source = replace(source, r"run_still_wedge\(\)\s*\z" =>
-                    "run_still_wedge(; save_location = $(repr(dir)), visualize = false, open_log_file = false)\n")
+                source = replace(source, r"run_still_wedge\([^\r\n]*\)\s*\z" =>
+                    "run_still_wedge(; save_location = $(repr(dir)), visualize = false, open_log_file = false, generate_pdf_report = false)\n")
+                occursin("run_still_wedge(; save_location = $(repr(dir))",source) ||
+                    error("Failed to override the StillWedge startup call before executing its source")
             elseif name == "LidDrivenCavity2d"
                 source = replace(source, r"\r?\n# Including this file starts the simulation\.[\s\S]*\z" =>
                     "\nrun_lid_driven_cavity_2d(; dx = 0.05, simulation_time = 0.01, " *
@@ -48,7 +57,7 @@ using CUDA
                 @test eltype(inputs.SimParticles.Density) === Float32
                 Base.invokelatest(Base.invokelatest(getproperty, scope, :run_still_wedge);
                     time_stepping = SingleNeighborTimeStepping(), simulation_time = 0.01,
-                    save_location = dir, visualize = false, open_log_file = false)
+                    save_location = dir, visualize = false, open_log_file = false, generate_pdf_report = false)
                 original_inputs = Base.invokelatest(getproperty, scope, :captured)[]
                 @test original_inputs.SimTimeStepping isa SingleNeighborTimeStepping
                 @test original_inputs.SimMetaData.SimulationTime === 0.01

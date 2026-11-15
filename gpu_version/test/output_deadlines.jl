@@ -131,7 +131,7 @@ if CUDA.functional()
             floating_times = Float64[row.Time for row in CSV.File(joinpath(save, "Deadlines_Floating.csv"))]
             for (index, name) in enumerate(files)
                 h5open(joinpath(save, name), "r") do file
-                    root = file["VTKHDF"]
+                    root = haskey(file,"VTKHDF/Particles") ? file["VTKHDF/Particles"] : file["VTKHDF"]
                     # Numbered files contain static datasets; the body log
                     # supplies their frame times. Combined files store times.
                     append!(times, single_file ? read(root["Steps/Values"]) : [floating_times[index]])

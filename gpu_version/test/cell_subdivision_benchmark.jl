@@ -263,7 +263,8 @@ if CUDA.functional()
         end
         ptx_io = IOBuffer()
         CUDA.@device_code_ptx io=ptx_io @cuda threads=1 aniso_pos_cell_vec_probe!(out_vec, dev_pcs, row3, s3)
-        @test occursin("ld.global.v4.b32", String(take!(ptx_io)))
+        # LLVM can represent the same 128-bit transaction as four 32-bit or two 64-bit words.
+        @test occursin(r"ld\.global\.(?:v4\.b32|v2\.b64)", String(take!(ptx_io)))
         @cuda threads=1 aniso_pos_cell_vec_probe!(out_vec, dev_pcs, row3, s3)
         @test isequal(only(Array(out_vec)), pair_vector(host_pcs, host_pcs[2], Int32(3), host_pcs[2].cell + row3.off, row3, s3))
     end

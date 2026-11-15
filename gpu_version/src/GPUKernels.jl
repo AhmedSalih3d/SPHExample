@@ -67,6 +67,8 @@ using ..GPUCellGrid
 using ..GPUReductions
 using ..GPUStepState
 using ..DampingZones: damped_velocity
+using ..GPUDivergenceCleaning: cleaning_psi, cleaning_derivative!, cleaning_predict!, cleaning_commit!,
+    signal_value, store_signal!, cleaning_timestep, initialize_signal!
 using ..SimulationMetaDataConfiguration: NoMDBC, SimpleMDBC, UpdatedMDBC, DualSPHysicsSymplectic
 
 export launch_interactions!, launch_mdbc!, launch_motion!, launch_half_step!, launch_final_step!,
@@ -402,7 +404,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                              periodic_bounds = nothing, viscous_dt = nothing, ::Val{FastMath}=Val(false), target_indices=nothing, pair_order=nothing,
                              ::Val{NativeRigid}=Val(false), interaction_mass=nothing,
                              ::Val{PreloadTypes}=Val(false), ρ₀⁻¹ = inv(SimConstants.ρ₀), predictor_output = nothing,
-                             ::Val{FuseReferenceForces} = Val(false)) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath, NativeRigid, PreloadTypes, FuseReferenceForces}
+                             ::Val{FuseReferenceForces} = Val(false), cleaning = nothing) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath, NativeRigid, PreloadTypes, FuseReferenceForces}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -417,6 +419,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
     s = cell_size(grid, SimKernel.H)
 
     dρdt  = zero(T)
+    divergence_sum = zero(T)
     inner_diffusion = zero(T)
     diffusion_blocked = false
     pair_rate = zero(T)
@@ -434,6 +437,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
         ρᵢ  = Density[source_i]
         ρᵢ⁻¹ = interaction_inverse_density(InvDensity, source_i, ρᵢ)
         typeᵢ = ParticleType[source_i]
+        psi_i = cleaning_psi(cleaning,source_i,typeᵢ,T)
         MLᵢ = MotionLimiterValue(T, typeᵢ)
 
         # Boundary particles only need the density rate; their acceleration is
@@ -489,6 +493,13 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                             pair_rate = max(pair_rate, dot(vᵢⱼ, xᵢⱼ) * inverse_distance)
                         end
                         density_symmetric_term = Radial ? radial_factor * dot(vᵢⱼ, xᵢⱼ) : dot(vᵢⱼ, ∇ᵢWᵢⱼ)
+                        if cleaning !== nothing && typeᵢ == Fluid
+                            volume_j = mass_j * ρⱼ⁻¹
+                            # Keep this divergence separate from density diffusion.
+                            divergence_sum += volume_j * density_symmetric_term
+                            psi_j = cleaning_psi(cleaning,j,ParticleType[j],T)
+                            acc += ((psi_i-psi_j)*volume_j) * ∇ᵢWᵢⱼ
+                        end
                         # DBC walls take density from the fluid, not other walls.
                         wall_pair = wallᵢ && is_wall(ParticleType[j])
                         if !wall_pair
@@ -547,7 +558,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         if forces
                             viscous_velocity = boundary_data === nothing ? vᵢⱼ :
                                 viscous_vᵢ - boundary_viscous_velocity(boundary_data, Velocity, ParticleType, j, slotⱼ)
-                            if viscous_dt !== nothing
+                            if viscous_dt !== nothing && SimViscosity isa ArtificialViscosity
                                 dot_velocity = dot(viscous_velocity, xᵢⱼ)
                                 mu = SimKernel.h * dot_velocity * inverse_distance
                                 coefficient = dot_velocity < zero(T) ?
@@ -613,6 +624,9 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
     end
 
     if K > 1
+        if cleaning !== nothing
+            divergence_sum = lanes_sum(divergence_sum,Val(K))
+        end
         if viscous_dt !== nothing
             pair_rate = lanes_max(pair_rate, Val(K))
         end
@@ -633,6 +647,12 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
     end
 
     @inbounds if valid & (lane == Int32(0))
+        if cleaning !== nothing
+            density_i = Density[source_i]
+            pressure_i = EquationOfStateGamma7(density_i,c₀,ρ₀)
+            cleaning_derivative!(cleaning,i,ParticleType[source_i],divergence_sum,pressure_i,density_i,c₀,SimKernel.h)
+            predictor_output === nothing || cleaning_predict!(cleaning,i,ParticleType[source_i],step_dt(step))
+        end
         if SimDensityDiffusion isa FourtakasDensityDiffusion && !diffusion_blocked
             dρdt += inner_diffusion
         end
@@ -729,7 +749,11 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
                               fast_math::Bool = false,
                               always_inline::Bool = true, fastmath::Bool = true, fuse_reference_forces::Bool = fastmath,
                               target_indices = nothing, target_count::Integer = length(Position), pair_order = nothing,
-                              native_rigid::Val = Val(false), interaction_mass = nothing, predictor_output = nothing)
+                              native_rigid::Val = Val(false), interaction_mass = nothing, predictor_output = nothing,
+                              cleaning = nothing)
+    cleaning === nothing || (target_indices === nothing && length(cleaning.psi) == length(Density) &&
+        length(cleaning.derivative) == length(Density)) ||
+        throw(ArgumentError("Divergence cleaning requires dense, unmapped particle fields"))
     inverse_density === nothing || length(inverse_density) == length(Density) ||
         throw(DimensionMismatch("Reciprocal cache must have one entry per evaluated density"))
     pressure === nothing || length(pressure) == length(Density) ||
@@ -780,7 +804,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
         Pairs, Position, Density, Velocity, ParticleType, SimParticles,
         CellStart, CellID, grid, step,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math), target_indices, pair_order, native_rigid, interaction_mass, Val(options.preload_types), inv(SimConstants.ρ₀), predictor_output, Val(fuse_reference_forces))
+        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math), target_indices, pair_order, native_rigid, interaction_mass, Val(options.preload_types), inv(SimConstants.ρ₀), predictor_output, Val(fuse_reference_forces), cleaning)
     return nothing
 end
 
@@ -1055,7 +1079,7 @@ function half_step_kernel!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺,
                            Position, Velocity, Acceleration, Density, dρdtI,
                            ParticleType, GroupMarker, motion, step, SimConstants,
                            PosCellsₙ⁺, CellID, gridarg, H, boundary_mode, InvDensity, Pressure,
-                           reuse_predictors::Val, ::Val{FirstMotion}, carried::Val, n::Int32) where {FirstMotion}
+                           reuse_predictors::Val, ::Val{FirstMotion}, carried::Val, n::Int32, cleaning = nothing) where {FirstMotion}
     step_active(step) || return nothing
     i = thread_index()
     i > n && return nothing
@@ -1063,6 +1087,7 @@ function half_step_kernel!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺,
     TotalTime = step_time(step)
     FirstMotion && apply_motion!(i, Position, Velocity, ParticleType, GroupMarker, motion, dt₂, TotalTime)
     @inbounds begin
+        cleaning_predict!(cleaning,i,ParticleType[i],step_dt(step))
         acc = predict_particle!(i, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, Position, Velocity, Density,
             ParticleType, Acceleration[i], dρdtI[i], step, SimConstants,
             PosCellsₙ⁺, CellID, gridarg, H, boundary_mode, InvDensity, Pressure, reuse_predictors, carried)
@@ -1097,7 +1122,7 @@ function launch_half_step!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺,
                            ParticleType, GroupMarker, motion, step, SimConstants;
                            pos_cells = nothing, CellID = nothing, grid = nothing, SimKernel = nothing,
                            boundary_mode = SimpleMDBC(), first_motion::Bool = false, reuse_predictors::Bool = false,
-                           inverse_density = nothing, pressure = nothing, carried::Bool = false)
+                           inverse_density = nothing, pressure = nothing, carried::Bool = false, cleaning = nothing)
     n = length(Position)
     n == 0 && return nothing
     H = SimKernel === nothing ? zero(eltype(Density)) : SimKernel.H
@@ -1105,7 +1130,7 @@ function launch_half_step!(Positionₙ⁺, Velocityₙ⁺, ρₙ⁺,
         Positionₙ⁺, Velocityₙ⁺, ρₙ⁺,
         Position, Velocity, Acceleration, Density, dρdtI,
         ParticleType, GroupMarker, motion, step, SimConstants,
-        pos_cells, CellID, grid, H, boundary_mode, inverse_density, pressure, Val(reuse_predictors), Val(first_motion), Val(carried), Int32(n))
+        pos_cells, CellID, grid, H, boundary_mode, inverse_density, pressure, Val(reuse_predictors), Val(first_motion), Val(carried), Int32(n), cleaning)
     return nothing
 end
 
@@ -1152,19 +1177,21 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
                             Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
                             partial, ::Val{FlagShift}, boundary_mode, GhostPoints, GhostNormals, BoundarySlots,
                             PosCells, CellID, gridarg, InvDensity, NextInvDensity, NextPressure,
-                            diagnostic_partial, particle_ids, damping, ::Val{CommitStep}, n::Int32) where {FlagShift, CommitStep}
+                            diagnostic_partial, particle_ids, damping, ::Val{CommitStep}, n::Int32, cleaning = nothing) where {FlagShift, CommitStep}
     step_active(step) || return nothing
     dt = step_dt(step)
     (; g, ρ₀) = SimConstants
     ρ₀⁻¹ = inv(ρ₀)
     T = eltype(Density)
     acc_red = SVector{3, T}(zero(T), T(Inf), zero(T))
+    cleaning_speed = zero(T)
     acc_diagnostic = diagnostic_init(diagnostic_partial)
 
     i = thread_index()
     stride = blockDim().x * gridDim().x
     @inbounds while i <= n
         type = ParticleType[i]
+        cleaning_commit!(cleaning,i,type,dt)
         if type == Frozen
             ρ = Density[i]
             store_inverse_density!(NextInvDensity, i, ρ)
@@ -1183,6 +1210,7 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
         ρ   *= (2 - epsi) / (2 + epsi)
         ρ    = boundary_mode isa UpdatedMDBC && is_wall(type) ? ρₙ⁺[i] : limit_density(ρ, ρ₀, ML)
         Density[i]  = ρ
+        cleaning_speed = max(cleaning_speed,signal_value(cleaning,type,ρ,SimConstants))
         # The predictor reciprocal must be consumed before an aliased cache is overwritten.
         store_inverse_density!(NextInvDensity, i, ρ)
         if NextPressure !== nothing
@@ -1230,6 +1258,7 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
     end
 
     block_reduce_store!(partial, acc_red, step_reduce)
+    store_signal!(cleaning,cleaning_speed)
     diagnostic_store!(diagnostic_partial, acc_diagnostic)
     # A single block has completed every particle write at the reduction barrier.
     CommitStep && threadIdx().x == 1 && commit_kernel!(step)
@@ -1263,7 +1292,7 @@ function launch_final_step!(Position, Velocity, Acceleration, Density, dρdtI, �
                             ghost_points = nothing, ghost_normals = nothing, boundary_slots = nothing,
                             pos_cells = nothing, CellID = nothing, grid = nothing, commit_step::Bool = false,
                             inverse_density = nothing, next_inverse_density = nothing, next_pressure = nothing,
-                            diagnostics = nothing, particle_ids = nothing, damping = ())
+                            diagnostics = nothing, particle_ids = nothing, damping = (), cleaning = nothing)
     commit_step && red.nblocks != 1 && throw(ArgumentError("fused commit requires one reduction block"))
     next_inverse_density === nothing || length(next_inverse_density) == length(Density) ||
         throw(DimensionMismatch("Next-state reciprocal cache must have one entry per density"))
@@ -1281,7 +1310,7 @@ function launch_final_step!(Position, Velocity, Acceleration, Density, dρdtI, �
         Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
         red.partial, FlagShift, boundary_mode, ghost_points, ghost_normals, boundary_slots,
         pos_cells, CellID, grid, inverse_density, next_inverse_density, next_pressure,
-        diagnostic_partial, particle_ids, damping, Val(commit_step), Int32(n))
+        diagnostic_partial, particle_ids, damping, Val(commit_step), Int32(n), cleaning)
     return nothing
 end
 
@@ -1295,10 +1324,12 @@ Pass the same optional `diagnostics` workspace and stable `particle_ids` used
 by final integration to initialize the limiter provenance too.
 """
 function launch_step_reduction!(red::ReductionWorkspace{SVector{3, T}}, Position, Velocity, Acceleration,
-                                Positionₙ⁺, SimKernel; diagnostics = nothing, particle_ids = nothing) where {T}
+                                Positionₙ⁺, SimKernel; diagnostics = nothing, particle_ids = nothing,
+                                cleaning_state = nothing, density = nothing, types = nothing, constants = nothing) where {T}
     init = SVector{3, T}(zero(T), T(Inf), zero(T))
     launch_reduce!(red, step_map, step_reduce, init, length(Position), Position, Velocity, Acceleration,
                    Positionₙ⁺, T(SimKernel.h), T(SimKernel.η²))
+    initialize_signal!(cleaning_state,density,types,constants)
     if diagnostics !== nothing
         launch_timestep_diagnostic_reduction!(diagnostics, Position, Velocity, Acceleration, Positionₙ⁺, particle_ids, SimKernel)
     end
@@ -1318,7 +1349,7 @@ end
 # the accumulated displacement bound requires a cell list rebuild.
 function finish_kernel!(step::DeviceStep{T}, partial, nblocks::Int32, CFL::T, c₀::T, h::T,
                         diagnostic_partial, diagnostic_result, stage_sampler,dt_limit, timestep_controller = nothing,
-                        ::Val{CommitPrevious} = Val(false)) where {T, CommitPrevious}
+                        ::Val{CommitPrevious} = Val(false), cleaning = nothing) where {T, CommitPrevious}
     if CommitPrevious
         threadIdx().x == Int32(1) && commit_kernel!(step)
         # The preceding step's particle writes completed in earlier kernels.
@@ -1351,12 +1382,13 @@ function finish_kernel!(step::DeviceStep{T}, partial, nblocks::Int32, CFL::T, c�
     end
     r = block_reduce(acc, step_reduce)
     limit = finish_diagnostic(diagnostic_partial, nblocks)
+    cleaning_limit = cleaning_timestep(cleaning,nblocks,h,c₀)
 
     if threadIdx().x == Int32(1)
         @inbounds begin
             visc = r[1]
             dt1  = r[2]
-            dt   = min(Float64(GPUStepState.controlled_timestep(timestep_controller, CFL * min(dt1, h / (c₀ + visc)))),dt_limit)
+            dt   = min(Float64(GPUStepState.controlled_timestep(timestep_controller, CFL * min(dt1, h / (c₀ + visc)))),dt_limit,cleaning_limit)
             if s[I_CLIP_OUTPUT] != 0
                 dt = min(dt, f[F_TOUT] - f[F_TIME])
             end
@@ -1394,13 +1426,13 @@ body and open-boundary updates have completed, in place of `launch_commit!`.
 """
 function launch_finish!(state::StepState{T}, red::ReductionWorkspace{SVector{3, T}}, SimKernel,
                         SimConstants; diagnostics = nothing, stage_sampler = nothing,dt_limit=Inf, timestep_controller=nothing,
-                        commit_previous::Bool = false) where {T}
+                        commit_previous::Bool = false, cleaning = nothing) where {T}
     diagnostic_partial = diagnostics === nothing ? nothing : diagnostics.reduction.partial
     diagnostic_result = diagnostics === nothing ? nothing : diagnostics.result
     @cuda threads=REDUCE_THREADS blocks=1 finish_kernel!(state, red.partial, Int32(red.nblocks),
                                                         T(SimConstants.CFL), T(SimConstants.c₀),
                                                         T(SimKernel.h), diagnostic_partial, diagnostic_result, stage_sampler,Float64(dt_limit),timestep_controller,
-                                                        Val(commit_previous))
+                                                        Val(commit_previous), cleaning)
     return nothing
 end
 
