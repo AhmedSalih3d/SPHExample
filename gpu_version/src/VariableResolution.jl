@@ -105,7 +105,7 @@ struct ResolutionDomain{P,C,S,K,F,I,PP,POOL,B,A,M}
 end
 
 function make_resolution_domain(geometry, constants::SimulationConstants{T}, kernel, limits, fine, reserve;
-        resident = false, standard = false, boundary_mode = SimpleMDBC(), attachment_config=nothing, prescribed_system=nothing, time=0.0,
+        resident = false, standard = false, pairwise_timestep = standard, boundary_mode = SimpleMDBC(), attachment_config=nothing, prescribed_system=nothing, time=0.0,
         id_stride=2, id_offset=fine ? 2 : 1) where {T}
     geometry isa AbstractVector && !isempty(geometry) && all(g -> g isa SPHGeometry{2,T},geometry) ||
         throw(ArgumentError("each domain needs a nonempty vector of 2D geometries matching its constants' precision"))
@@ -153,14 +153,14 @@ function make_resolution_domain(geometry, constants::SimulationConstants{T}, ker
     cells = CellListWorkspace{2,Float64}(n)
     # Dormant pool slots are excluded from grid bounds and all force sums.
     cells.frozen_total = reserve
-    support = GPUSupportArrays{2,T}(n; position_type = Float64, shifting = false, dual_time_stepping = true)
+    support = GPUSupportArrays{2,T}(n; position_type = Float64, shifting = false, dual_time_stepping = true,pairwise_timestep)
     attachment = make_resolution_attachment(attachment_config,geometry,host,constants;time)
     prescribed = make_resolution_prescribed(prescribed_system,geometry,host)
     # Predictor neighbors are sorted independently. Keep their inputs dense and
     # scatter only the evaluated derivatives back to the accepted-state order.
     predictor = (; particles = upload_particles(host; position_type = Float64, kernel_output = false),
         cells = CellListWorkspace{2,Float64}(n),
-        support = GPUSupportArrays{2,T}(n; position_type = Float64, shifting = false, dual_time_stepping = true),
+        support = GPUSupportArrays{2,T}(n; position_type = Float64, shifting = false, dual_time_stepping = true,pairwise_timestep),
         kernel, constants, boundary_mode, attachment=predictor_attachment(attachment),prescribed=predictor_attachment(prescribed),
         pool = resident ? ResolutionPool(host, initial_count) : nothing)
     faces = interface_points(limits, fine, Float64(constants.dx))

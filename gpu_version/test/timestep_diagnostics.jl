@@ -120,7 +120,7 @@ if CUDA.functional()
             metadata = SimulationMetaData{2,T}(
                 SimulationName = "Diagnostics", SaveLocation = dir,
                 SimulationTime = T(0.004), OutputTimes = T[0.0008, 0.0015, 0.003, 0.004],
-                GPUTimestepDiagnosticsEvery = every, GPUUseGraph = graph, GPUAsyncOutput = async,
+                GPUTimestepDiagnosticsEvery = every, GPULegacyTimestep = true, GPUUseGraph = graph, GPUAsyncOutput = async,
                 GPUCompactBuffers = compact, GPUDoublePosition = T === Float32,
                 GPUOutputBufferBytes = 0, VisualizeInParaview = false, OpenLogFile = false)
             particles = AllocateDataStructures(geometry)

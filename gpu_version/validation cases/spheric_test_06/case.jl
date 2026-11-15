@@ -106,6 +106,7 @@ function build_case(; reynolds = 100, dx = 0.025, duration = 8.0, interval = 0.0
         OutputTimes = times, VisualizeInParaview = false, OpenLogFile = false,
         ExportSingleVTKHDF = true, OutputVariables = ["Density", "Velocity", "Type", "GroupMarker"],
         GPUUseGraph = graph, GPUClipTimeStepToOutput = true, GPUDoublePosition = true,
+        GPULegacyTimestep = true, # preserve the published validation controls
         GPUCellSubdivision = 1, GPUXCellSubdivision = 1, GPURadialInteractions = false,
         GPUInteractionFastMath = false, GPUPreloadInteractionTypes = false,
         GPUBoundaryForces = false, GPUOutputBufferBytes = 16 * 2^20)

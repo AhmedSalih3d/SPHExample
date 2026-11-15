@@ -80,6 +80,8 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
             (meta.GPUPeriodicCellCoordinates ? :periodic_cell_relative : :translated_absolute) :
             position_type === T ? :absolute : :cell_relative,
         time_stepping = typeof(meta.TimeSteppingMode), boundary_mode = B, shifting_mode = S,
+        timestep_criterion = meta.TimeSteppingMode isa DualSPHysicsSymplectic ? :reference_pairwise :
+            meta.GPULegacyTimestep ? :legacy_absolute_position : :pairwise_signal,
         reference_step_parameters = meta.TimeSteppingMode isa DualSPHysicsSymplectic ?
             (; smoothing_length=meta.TimeSteppingMode.smoothing_length, sound_speed=meta.TimeSteppingMode.sound_speed,
                 domain_min=meta.TimeSteppingMode.domain_min, domain_max=meta.TimeSteppingMode.domain_max,

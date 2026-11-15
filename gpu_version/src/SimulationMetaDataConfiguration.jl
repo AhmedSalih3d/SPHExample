@@ -285,6 +285,7 @@ mutable struct SimulationMetaData{Dimensions,
     GPUMaxStepsPerSync::Int      # upper bound on the time steps enqueued between two host read backs
     GPUUseGraph::Bool            # replay the launch sequence of a step as a CUDA graph
     GPUClipTimeStepToOutput::Bool # shorten adaptive steps to land exactly on output deadlines
+    GPULegacyTimestep::Bool      # reproduce the old origin-dependent ordinary timestep
     GPUCellSubdivision::Int      # cells per support radius H on axes 2..D (1: edge H, 3^(D-1) rows; 2: edge H/2, 5^(D-1) rows)
     GPUXCellSubdivision::Int     # cells per support radius H along contiguous x-axis (defaults to GPUCellSubdivision)
     GPUFixedGrid::Bool           # retain initial grid bounds, growing only on explicitly allowed sides
@@ -413,6 +414,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUAsyncOutput::Bool                    = true,
         GPUMaxStepsPerSync::Int                 = 32,
         GPUUseGraph::Bool                       = true,
+        GPULegacyTimestep::Bool                  = false,
         GPUClipTimeStepToOutput::Bool            = false,
         GPUCellSubdivision::Int                 = 1,
         GPUXCellSubdivision::Int                = max(4, GPUCellSubdivision),
@@ -449,6 +451,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUInteractionAlwaysInline, GPUInteractionFastMath, GPURadialInteractions, GPUScalarSPSViscosity,
         GPUPreloadInteractionTypes,
         GPUBoundaryForces, GPUAsyncOutput, GPUMaxStepsPerSync, GPUUseGraph, GPUClipTimeStepToOutput,
+        GPULegacyTimestep,
         GPUCellSubdivision, GPUXCellSubdivision,
         GPUFixedGrid, GPUGridExpansion, Periodicity,
         GPUDoublePosition, GPUPeriodicCellCoordinates, GPUPeriodicImages, GPUCacheInteractionFields, GPUFusePredictor, GPUCompactBuffers, GPUOutputQueueBytes, GPUOutputBufferBytes,

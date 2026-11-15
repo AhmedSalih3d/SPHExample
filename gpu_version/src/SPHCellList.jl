@@ -585,7 +585,7 @@ The driver instead uses the existing reorder scratch, which is idle between
 rebuilds. Fixed entries are initialized after sorting and left untouched during
 steps. Neighbor reads remain dense, without an index map or extra allocation.
 """
-struct GPUSupportArrays{D, T, TP, PC, BD, IC, DS, PI}
+struct GPUSupportArrays{D, T, TP, PC, BD, IC, DS, PI, PS}
     dρdtI::CuVector{T}
     Velocityₙ⁺::CuVector{SVector{D, T}}
     Positionₙ⁺::CuVector{SVector{D, TP}}
@@ -602,6 +602,7 @@ struct GPUSupportArrays{D, T, TP, PC, BD, IC, DS, PI}
     PeriodicBounds::CuVector{SVector{6,Float64}}
     dual_state::DS
     PeriodicImages::PI
+    PairSignal::PS
     ReusePredictors::Bool
     FusePredictor::Bool
 end
@@ -647,7 +648,7 @@ function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T, updated
                               shifting::Bool = true, reuse_predictors::Bool = false,
                               share_pos_cells::Bool = reuse_predictors,
                               cache_interaction_fields::Bool = false,
-                              fuse_predictor::Bool = false,
+                              fuse_predictor::Bool = false, pairwise_timestep::Bool = false,
                               periodic::Bool = false,
                               dual_time_stepping::Bool = false,
                               cache_periodic_queries::Bool = false,
@@ -676,7 +677,8 @@ function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T, updated
         max_cells=image_max_cells, deterministic=image_deterministic, cache_fields=cache_interaction_fields,
         preserve_pair_order=!dual_time_stepping) : nothing
     dual_state = dual_time_stepping ? GPUKernels.DualStepSupport{T}(n; dimensions=D, cache_periodic_queries, images) : nothing
-    return GPUSupportArrays{D, T, TP, typeof(pc), typeof(boundary_data), typeof(inverse_density), typeof(dual_state), typeof(images)}(
+    signal = pairwise_timestep ? CUDA.zeros(T,1) : nothing
+    return GPUSupportArrays{D, T, TP, typeof(pc), typeof(boundary_data), typeof(inverse_density), typeof(dual_state), typeof(images),typeof(signal)}(
         CUDA.zeros(T, n),
         CUDA.zeros(SVector{D, T}, reuse_predictors ? 0 : n),
         CUDA.zeros(SVector{D, TP}, reuse_predictors ? 0 : n),
@@ -693,6 +695,7 @@ function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T, updated
         CuVector{SVector{6,Float64}}(undef, periodic ? 1 + max(1, min(512, cld(n, 256))) : 0),
         dual_state,
         images,
+        signal,
         reuse_predictors,
         fuse_predictor,
     )
@@ -709,6 +712,7 @@ function GPUSupportArrays{D, T}(gpu::GPUParticles{D, T}, meta::SimulationMetaDat
         fuse_predictor,
         periodic = meta.Periodicity !== nothing,
         dual_time_stepping = meta.TimeSteppingMode isa DualSPHysicsSymplectic,
+        pairwise_timestep = !meta.GPULegacyTimestep && !(meta.TimeSteppingMode isa DualSPHysicsSymplectic),
         cache_periodic_queries = meta.TimeSteppingMode isa DualSPHysicsSymplectic && meta.TimeSteppingMode.cache_periodic_queries,
         periodic_images = periodic_images_enabled(meta,kernel),
         image_reach = meta.GPUCellSubdivision, image_x_reach = meta.GPUXCellSubdivision,
@@ -750,6 +754,7 @@ function GPUSupportArrays{D, T}(n::Integer, meta::SimulationMetaData{D, T, S, K,
         cache_interaction_fields = meta.GPUCacheInteractionFields,
         periodic = meta.Periodicity !== nothing,
         dual_time_stepping = meta.TimeSteppingMode isa DualSPHysicsSymplectic,
+        pairwise_timestep = !meta.GPULegacyTimestep && !(meta.TimeSteppingMode isa DualSPHysicsSymplectic),
         cache_periodic_queries = meta.TimeSteppingMode isa DualSPHysicsSymplectic && meta.TimeSteppingMode.cache_periodic_queries,
         periodic_images = periodic_images_enabled(meta,kernel),
         image_reach = meta.GPUCellSubdivision, image_x_reach = meta.GPUXCellSubdivision,
@@ -1082,7 +1087,7 @@ function predictor_fusion_enabled(meta::SimulationMetaData{D,T,S,K,B}; motion, f
         rotation === nothing && open_boundary === nothing
 end
 
-function launch_solver_interactions!(ctx,position,density,velocity,pairs,step;include_gravity=Val(false), predictor_output=nothing, cleaning_half::Bool = false)
+function launch_solver_interactions!(ctx,position,density,velocity,pairs,step;include_gravity=Val(false), predictor_output=nothing, cleaning_half::Bool = false, collect_pair_signal::Bool = true)
     (;gpu,cl,sup,SimKernel,SimConstants,SimDensityDiffusion,SimViscosity,FlagKernel,FlagShift,threads,lanes,bforces)=ctx
     floating = get(ctx, :floating, nothing)
     native_rigid = floating !== nothing && hasproperty(floating, :mechanics)
@@ -1128,7 +1133,7 @@ function launch_solver_interactions!(ctx,position,density,velocity,pairs,step;in
         periodic_cell_coordinates=periodic_coordinates,always_inline=get(ctx,:interaction_always_inline,true),
         fastmath=get(ctx,:interaction_fastmath,true),target_indices=targets,target_count=length(gpu),pair_order=order,
         native_rigid=Val(native_rigid),interaction_mass,predictor_output,
-        cleaning=cleaning_fields(get(ctx,:divergence_cleaning,nothing),cleaning_half))
+        cleaning=cleaning_fields(get(ctx,:divergence_cleaning,nothing),cleaning_half),pair_signal=collect_pair_signal ? sup.PairSignal : nothing)
     return nothing
 end
 
@@ -1183,7 +1188,7 @@ gates every kernel; `mdbc_name` and `loop_name` are the timer labels.
 """
 function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractString, loop_name::AbstractString;
                                    prepare_motion::Bool = false, total_acceleration::Bool = get(ctx, :SingleNeighbor, false),
-                                   prepared_forces::Bool = false, predictor_output = nothing)
+                                   prepared_forces::Bool = false, predictor_output = nothing, collect_pair_signal::Bool = true)
     (; gpu, cl, sup, SimKernel, SimConstants, SimDensityDiffusion, SimViscosity,
        FlagKernel, FlagShift, UseMDBC, threads, lanes, bforces, HourGlass) = ctx
     grid      = cl.grid_dev
@@ -1210,7 +1215,7 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
                 boundary_mode = get(ctx, :boundary_mode, NoMDBC()))
         end
         launch_solver_interactions!(ctx,gpu.Position,gpu.Density,gpu.Velocity,sup.PosCells,step;
-            include_gravity=Val(total_acceleration), predictor_output)
+            include_gravity=Val(total_acceleration), predictor_output, collect_pair_signal)
     end
     launch_external_forces!(get(ctx, :external_forces, ()), gpu.Acceleration, gpu.Position, gpu.Velocity,
         gpu.Type, gpu.GroupMarker, step, SimConstants.g; prepared = prepared_forces)
@@ -1271,7 +1276,7 @@ function enqueue_step!(ctx, timed::Bool; finish_current::Bool = true, finish_nex
         @phase HourGlass "01 Update TimeStep" timed launch_finish!(state, red, SimKernel, SimConstants;
             diagnostics = get(ctx, :diagnostics, nothing), stage_sampler = sampler,
             dt_limit=floats ? floating.spring_dt : Inf,
-            cleaning=cleaning_fields(get(ctx,:divergence_cleaning,nothing)),
+            cleaning=cleaning_fields(get(ctx,:divergence_cleaning,nothing)),pair_signal=sup.PairSignal,
             timestep_controller = floats ? rigid_timestep_controller(floating, SimConstants) : nothing)
     end
 
@@ -1299,8 +1304,9 @@ function enqueue_step!(ctx, timed::Bool; finish_current::Bool = true, finish_nex
             @phase HourGlass "04a NeighborLoopMDBC before Half TimeStep" timed enqueue_boundary_correction!(ctx, state, false)
         end
     else
+        # Only the corrector's pair signal is consumed by the next timestep.
         enqueue_state_derivative!(ctx, state, timed, "04a First NeighborLoopMDBC", "04 First NeighborLoop";
-            prepare_motion = fused_motion && motion.active, prepared_forces = true,
+            prepare_motion = fused_motion && motion.active, prepared_forces = true, collect_pair_signal = false,
             predictor_output = fuse_predictor ? predictor_outputs(ctx) : nothing)
     end
 
@@ -1392,7 +1398,7 @@ function enqueue_step!(ctx, timed::Bool; finish_current::Bool = true, finish_nex
         next_inverse_density = get(ctx, :cache_final_state, false) ? sup.InvDensity : nothing,
         next_pressure = get(ctx, :cache_final_state, false) ? sup.Pressure : nothing,
         diagnostics = get(ctx, :diagnostics, nothing), particle_ids = gpu.ID,
-        damping = get(ctx, :damping, ()),cleaning = cleaning_fields(get(ctx,:divergence_cleaning,nothing)))
+        damping = get(ctx, :damping, ()),cleaning = cleaning_fields(get(ctx,:divergence_cleaning,nothing)),pair_signal=sup.PairSignal)
 
     # Rigid final placement reads neither time nor phase, so a one-block
     # integration may commit before this launch without changing body placement.
@@ -1411,7 +1417,7 @@ function enqueue_step!(ctx, timed::Bool; finish_current::Bool = true, finish_nex
             launch_finish!(state, red, SimKernel, SimConstants;
                 diagnostics = get(ctx, :diagnostics, nothing), stage_sampler = sampler,
                 dt_limit = floats ? floating.spring_dt : Inf,
-                cleaning = cleaning_fields(get(ctx,:divergence_cleaning,nothing)),
+                cleaning = cleaning_fields(get(ctx,:divergence_cleaning,nothing)),pair_signal=sup.PairSignal,
                 timestep_controller = floats ? rigid_timestep_controller(floating, SimConstants) : nothing,
                 commit_previous = true)
         else
@@ -1686,7 +1692,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         enqueue_state_derivative!(ctx, step, timed, "00a Refresh Interaction MDBC", "00b Refresh Interaction Derivative")
     end
 
-    initialize_external_forces = !state.primed && !isempty(external_forces)
+    initialize_external_forces = !state.primed && (!isempty(external_forces) || sup.PairSignal !== nothing)
     if !state.primed
         # A caller may supply an already sorted cell list with fresh support arrays.
         if cache_final_state && cl.nrebuilds > 0
@@ -1702,7 +1708,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         # bound already forces a cell list rebuild before the first step.
         position_half = sup.ReusePredictors ? gpu.Position : sup.Positionₙ⁺
         launch_step_reduction!(red, gpu.Position, gpu.Velocity, gpu.Acceleration, position_half, SimKernel;
-            diagnostics, particle_ids = gpu.ID,cleaning_state=divergence_cleaning,density=gpu.Density,types=gpu.Type,constants=SimConstants)
+            diagnostics, particle_ids = gpu.ID,cleaning_state=divergence_cleaning,density=gpu.Density,types=gpu.Type,constants=SimConstants,pair_signal=sup.PairSignal)
         state.primed = true
     end
 
@@ -1790,7 +1796,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                     # used by the timestep criterion. Initial external forces must
                     # also limit the first step. Reduce the accepted state.
                     launch_step_reduction!(red, gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Position, SimKernel;
-                        diagnostics, particle_ids = gpu.ID,cleaning_state=divergence_cleaning,density=gpu.Density,types=gpu.Type,constants=SimConstants)
+                        diagnostics, particle_ids = gpu.ID,cleaning_state=divergence_cleaning,density=gpu.Density,types=gpu.Type,constants=SimConstants,pair_signal=sup.PairSignal)
                     GPUStepState.set_slot!(state.i, state.ih, I_PHASE, PHASE_NEED_DT)
                     initialize_external_forces = false
                 end
@@ -1921,6 +1927,8 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SV <: SPHViscosity, SDD <: SPHDensityDiffusion}
 
     CUDA.functional() || error("CUDA is not functional on this machine; use the CPU package SPHExample instead.")
+    !SimMetaData.GPULegacyTimestep && SimMetaData.GPUTimestepDiagnosticsEvery > 0 &&
+        throw(ArgumentError("Pairwise timestep limiter provenance is not implemented; set GPULegacyTimestep=true for the legacy diagnostic"))
     validate_cleaning(SimDivergenceCleaning,SimMetaData,SimKernel,SimTimeStepping;
         open_boundary=SimOpenBoundaries,floating=any(g -> g.Type == Floating,SimGeometry))
     if SimMetaData.VariableResolution !== nothing && SimTimeStepping isa DualSPHysicsSymplectic && SimTimeStepping.respect_stability_limits

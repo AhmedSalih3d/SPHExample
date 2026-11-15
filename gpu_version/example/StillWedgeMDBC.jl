@@ -20,6 +20,7 @@ function run_still_wedge(;
     visualize::Bool = true,
     open_log_file::Bool = true,
     generate_pdf_report::Bool = GeneratePDFReport,
+    legacy_timestep::Bool = false,
 )
     Dimensions = 2
     FloatType = Float32
@@ -72,6 +73,7 @@ function run_still_wedge(;
         ExportGridCells = true,
         OpenLogFile = open_log_file,
         GPUDoublePosition = true,
+        GPULegacyTimestep = legacy_timestep,
         GPURadialInteractions = true,
         GPUCacheInteractionFields = true,
         GPUXCellSubdivision = 4,

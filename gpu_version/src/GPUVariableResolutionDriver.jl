@@ -250,7 +250,7 @@ function resident_force_stage!(domain, step; density_diffusion=LinearDensityDiff
     launch_interactions!(s.dρdtI,p.Acceleration,p.Kernel,p.KernelGradient,s.∇Cᵢ,s.∇◌rᵢ,
         p.Position,p.Density,p.Velocity,p.Type,c.CellStart,p.CellID,c.grid_dev,step,
         density_diffusion,viscosity,k,domain.constants,Val(false),Val(false);
-        boundary_forces=Val(false),pos_cells=s.PosCells,
+        boundary_forces=Val(false),pos_cells=s.PosCells,pair_signal=scheme isa DualSPHysicsSymplectic ? nothing : s.PairSignal,
         viscous_dt=scheme isa DualSPHysicsSymplectic ? s.dual_state.viscous : nothing,
         include_gravity,fastmath=false,interaction...)
     scheme isa DualSPHysicsSymplectic || return nothing
@@ -259,7 +259,7 @@ function resident_force_stage!(domain, step; density_diffusion=LinearDensityDiff
         s.dual_state.viscous,step,Int32(length(p)))
 end
 
-function resolution_standard_reduction_kernel!(partial,x,v,a,types,step,kernel,n)
+function resolution_standard_reduction_kernel!(partial,x,v,a,types,step,kernel,n,signal=nothing)
     GPUStepState.step_active(step) || return nothing
     T = eltype(eltype(v))
     value = SVector(zero(T),T(Inf),zero(T))
@@ -267,7 +267,7 @@ function resolution_standard_reduction_kernel!(partial,x,v,a,types,step,kernel,n
     n = GPUStepState.step_particle_count(step,n)
     @inbounds while i <= n
         if types[i] != Frozen
-            value = GPUKernels.step_reduce(value,GPUKernels.step_values(x[i],v[i],a[i],x[i],kernel.h,kernel.η²))
+            value = GPUKernels.step_reduce(value,GPUKernels.step_values(x[i],v[i],a[i],x[i],kernel.h,kernel.η²,signal))
         end
         i += blockDim().x*gridDim().x
     end
@@ -279,28 +279,29 @@ function initialize_resolution_numerics!(domains,state,scheme; density_diffusion
     scheme isa DualSPHysicsSymplectic && return nothing
     for d in domains
         p,red = d.particles,d.pool.reduction
-        if scheme isa SingleNeighborTimeStepping
+        if scheme isa SingleNeighborTimeStepping || d.support.PairSignal !== nothing
             resident_force_stage!(d,ResolutionStep(state,d,0);density_diffusion,viscosity,scheme,include_gravity=Val(true))
         end
         @cuda threads=REDUCE_THREADS blocks=red.nblocks resolution_standard_reduction_kernel!(
-            red.partial,p.Position,p.Velocity,p.Acceleration,p.Type,ResolutionStep(state,d,0),d.kernel,Int32(length(p)))
+            red.partial,p.Position,p.Velocity,p.Acceleration,p.Type,ResolutionStep(state,d,0),d.kernel,Int32(length(p)),d.support.PairSignal)
+        d.support.PairSignal === nothing || copyto!(d.predictor.support.PairSignal,d.support.PairSignal)
     end
     return nothing
 end
 
-@inline function resolution_standard_dt(partial,kernel,constants)
+@inline function resolution_standard_dt(partial,kernel,constants,signal=nothing)
     T = typeof(constants.dx)
     value = SVector(zero(T),T(Inf),zero(T))
     @inbounds for i in eachindex(partial)
         value = GPUKernels.step_reduce(value,partial[i])
     end
-    return Float64(constants.CFL*min(value[2],kernel.h/(constants.c₀+value[1])))
+    return Float64(constants.CFL*min(value[2],kernel.h/GPUKernels.acoustic_denominator(signal,value[1],constants.c₀,kernel.h)))
 end
 
-function resolution_standard_dt_kernel!(a,b,ka,kb,ca,cb,step)
+function resolution_standard_dt_kernel!(a,b,ka,kb,ca,cb,step,sa=nothing,sb=nothing)
     GPUStepState.step_active(step) || return nothing
     @inbounds begin
-        dt = min(resolution_standard_dt(a,ka,ca),resolution_standard_dt(b,kb,cb))
+        dt = min(resolution_standard_dt(a,ka,ca,sa),resolution_standard_dt(b,kb,cb,sb))
         step.f[1] = step.i[GPUStepState.I_CLIP_OUTPUT] != 0 ? min(dt,step.f[4]-step.f[2]) : dt
         isfinite(step.f[1]) && step.f[1] > 0 || (step.i[1] = RESOLUTION_STATE_ERROR)
     end
@@ -315,10 +316,10 @@ function resolution_standard_predictor_kernel!(xp,vp,rp,x,v,rho,a,rate,types,gro
 end
 
 function resolution_standard_corrector_kernel!(x,v,a,rho,rate,rp,xp,vp,types,gradient,divergence,
-        step,kernel,constants,boundary_mode,partial,damping,n)
+        step,kernel,constants,boundary_mode,partial,damping,n,signal=nothing)
     GPUKernels.final_step_kernel!(x,v,a,rho,rate,rp,xp,vp,types,gradient,divergence,step,kernel,constants,
         partial,Val(false),boundary_mode,nothing,nothing,nothing,nothing,nothing,nothing,
-        nothing,nothing,nothing,nothing,nothing,damping,Val(false),GPUStepState.step_particle_count(step,n))
+        nothing,nothing,nothing,nothing,nothing,damping,Val(false),GPUStepState.step_particle_count(step,n),nothing,signal)
     return nothing
 end
 
@@ -429,7 +430,7 @@ function enqueue_resolution_step!(domains,limits,state; density_diffusion=Linear
     reference = scheme isa DualSPHysicsSymplectic
     if !reference
         @cuda threads=1 resolution_standard_dt_kernel!(coarse.pool.reduction.partial,fine.pool.reduction.partial,
-            coarse.kernel,fine.kernel,coarse.constants,fine.constants,ResolutionStep(state,coarse,0))
+            coarse.kernel,fine.kernel,coarse.constants,fine.constants,ResolutionStep(state,coarse,0),coarse.predictor.support.PairSignal,fine.predictor.support.PairSignal)
     end
     if fine.attachment !== nothing && fine.attachment.floating !== nothing && isfinite(fine.attachment.floating.spring_dt)
         @cuda threads=1 resolution_timestep_limit_kernel!(ResolutionStep(state,fine,0),fine.attachment.floating.spring_dt)
@@ -506,7 +507,7 @@ function enqueue_resolution_step!(domains,limits,state; density_diffusion=Linear
             red = d.pool.reduction
             @cuda threads=REDUCE_THREADS blocks=red.nblocks resolution_standard_corrector_kernel!(p.Position,p.Velocity,
                 p.Acceleration,p.Density,s.dρdtI,s.ρₙ⁺,s.Positionₙ⁺,s.Velocityₙ⁺,p.Type,s.∇Cᵢ,s.∇◌rᵢ,
-                ResolutionArithmeticStep{eltype(p.Density)}(step),d.kernel,d.constants,d.boundary_mode,red.partial,damping,Int32(length(p)))
+                ResolutionArithmeticStep{eltype(p.Density)}(step),d.kernel,d.constants,d.boundary_mode,red.partial,damping,Int32(length(p)),d.predictor.support.PairSignal)
         end
     end
     if fine.attachment !== nothing
@@ -517,7 +518,7 @@ function enqueue_resolution_step!(domains,limits,state; density_diffusion=Linear
             0.5Float64(fine.kernel.h),false)
         p,red = fine.particles,fine.pool.reduction
         @cuda threads=REDUCE_THREADS blocks=red.nblocks resolution_standard_reduction_kernel!(
-            red.partial,p.Position,p.Velocity,p.Acceleration,p.Type,step,fine.kernel,Int32(length(p)))
+            red.partial,p.Position,p.Velocity,p.Acceleration,p.Type,step,fine.kernel,Int32(length(p)),fine.support.PairSignal)
     end
     for d in domains
         p = d.particles

@@ -9,6 +9,36 @@ and laminar+SPS viscosity, all density diffusion models, dynamic and mDBC
 boundary conditions, particle shifting, prescribed motion of bodies) is
 supported in 2D and 3D, in `Float64` or `Float32`.
 
+## Default timestep criterion
+
+Ordinary GPU symplectic and single-neighbor simulations now use a neighbor-based
+acoustic criterion, following the structure used by DualSPHysics:
+
+```math
+\Delta t = \mathrm{CFL}\min\left(\sqrt{h/a_{\max}},
+\frac{h}{\max(c_0,10v_{\max})+h\max_{ij}\frac{|\mathbf v_{ij}\cdot\mathbf r_{ij}|}{r_{ij}^2+\eta^2}}\right).
+```
+
+Here pairs are the accepted interaction neighbors. The absolute pair rate is
+conservative for both compression and expansion; the installed DualSPHysics
+5.4 source uses a one-sided signed maximum. This replaces the old expression
+based on a particle's absolute position. It preserves the ordinary integrator,
+pressure, viscosity and diffusion operators, including mDBC, caches and graphs.
+Uniform, two-level and nested variable-resolution simulations use this default.
+The initial derivative is evaluated before selecting the first step. Later steps
+use the most recent corrector pair rates and accepted-state maximum speed.
+Existing output, cleaning and rigid-body timestep policies remain in place. This is an
+explicit estimate, not a current-stage rejection/retry scheme or a guarantee
+that WCSPH pressure/force noise disappears.
+
+Set `GPULegacyTimestep = true` in `SimulationMetaData` to reproduce the previous
+ordinary criterion. Historical SPHERIC comparison scripts explicitly select it.
+The optional `GPUTimestepDiagnosticsEvery` provenance recorder currently requires
+this legacy setting; requesting it with the new criterion fails explicitly.
+The new signal stays on the GPU, with one atomic maximum per interaction block
+and a single scalar live device allocation (4/8 bytes; allocator reservations
+are larger). See the [StillWedge timing comparison](validation%20cases/still_wedge_timestep/README.md).
+
 ## Reference timestep safeguard
 
 For the reference `DualSPHysicsSymplectic` scheme, the optional
@@ -20,10 +50,10 @@ step. The reference path now supports laminar viscosity with an additional
 Use double-position DBC, Wendland C2, Fourtakas inner diffusion, one gather lane,
 direct steps, no interaction-field cache and no external forces/floating bodies.
 Strict variable-resolution stepping is rejected until retries are implemented.
-The default retains reference behavior. This safeguard does not apply to the
-ordinary `SymplecticTimeStepping` estimator. The
-[timestep audit](validation%20cases/spheric_test_06/TIMESTEP_AUDIT.md) documents
-its origin-dependent estimate and the limits of the current measurements.
+The default of this separate reference integrator retains reference behavior.
+Its retry safeguard is distinct from the ordinary solver's new default criterion.
+The [timestep audit](validation%20cases/spheric_test_06/TIMESTEP_AUDIT.md) records
+the previous origin-dependent estimate and the limits of those measurements.
 
 ## Optional experimental velocity-divergence cleaning
 
@@ -3335,6 +3365,7 @@ validation; it is not a bitwise-preserving performance option.
 | `GPUAsyncOutput` | `true` | Write output files on a task while the GPU continues (see "Asynchronous output"). |
 | `GPUMaxStepsPerSync` | `32` | Upper bound on the steps enqueued between two host read backs of the device resident step state. The actual batch is the estimated number of steps until the next cell list rebuild or output. `1` reproduces a synchronization per step. |
 | `GPUUseGraph` | `true` | Cache CUDA graphs of 1, 2, 4, 8, 16, and 32 steps and compose each host batch from them. Disabled automatically with `GPUSyncTimers`. |
+| `GPULegacyTimestep` | `false` | Opt back into the old ordinary timestep expression based on absolute position. The default uses the neighbor pair signal and maximum speed; it preserves the selected integrator and interaction operators. Does not change the separate `DualSPHysicsSymplectic` scheme. |
 | `GPUClipTimeStepToOutput` | `false` | Shorten adaptive timesteps to land exactly on output deadlines, including `SimulationTime`. Changes trajectories and potentially step counts; see "Exact output deadlines" below. |
 | `GPUCellSubdivision` | `1` | Positive integer `R`: cells of edge `H/R` on axes `2..D` (and along `x` when `R > 1` unless `GPUXCellSubdivision` overrides it), a `(2R+1)^D` isotropic stencil, and `(2R+1)^(D-1)` contiguous row ranges. `1` uses `H` on axes `2..D`, `2` uses half-width cells, and `4` uses quarter-width cells. Finer isotropic grids reduce candidates but increase dense-grid memory, row overhead and mDBC work. With reference interactions, only `R = 1, Rx = 1` reproduces the CPU's density-diffusion pair orientation. Radial symmetric diffusion removes that orientation dependence; accumulation and SPS rounding can still differ. Benchmark the intended precision, lane count and boundary mode before changing it. |
 | `GPUXCellSubdivision` | `4` (`max(4, GPUCellSubdivision)`) | Positive integer `Rx`: cells of edge `H/Rx` along the contiguous `x` axis (`CellGrid{D, R, Rx}`). By default (`Rx = 4`), each contiguous x-row is narrowed to `2.25H` (with `R = 1`: `3^(D-1)` row ranges; with `R = 2`: `5^(D-1)` row ranges). Like `GPUCellSubdivision > 1`, `Rx > 1` reorders particles into finer x-subcells, changing summation order and reference density-diffusion pair orientation (set `GPUXCellSubdivision = 1` for strict CPU reference pair orientation); exported VTKHDF grid cells continue to use cubic edge `H / GPUCellSubdivision`. |

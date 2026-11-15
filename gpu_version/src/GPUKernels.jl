@@ -67,6 +67,7 @@ using ..GPUCellGrid
 using ..GPUReductions
 using ..GPUStepState
 using ..DampingZones: damped_velocity
+using ..GPUPairwiseTimesteps: reset_pair_signal!,store_pair_signal!,acoustic_denominator
 using ..GPUDivergenceCleaning: cleaning_psi, cleaning_derivative!, cleaning_predict!, cleaning_commit!,
     signal_value, store_signal!, cleaning_timestep, initialize_signal!
 using ..SimulationMetaDataConfiguration: NoMDBC, SimpleMDBC, UpdatedMDBC, DualSPHysicsSymplectic
@@ -404,7 +405,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                              periodic_bounds = nothing, viscous_dt = nothing, ::Val{FastMath}=Val(false), target_indices=nothing, pair_order=nothing,
                              ::Val{NativeRigid}=Val(false), interaction_mass=nothing,
                              ::Val{PreloadTypes}=Val(false), ρ₀⁻¹ = inv(SimConstants.ρ₀), predictor_output = nothing,
-                             ::Val{FuseReferenceForces} = Val(false), cleaning = nothing) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath, NativeRigid, PreloadTypes, FuseReferenceForces}
+                             ::Val{FuseReferenceForces} = Val(false), cleaning = nothing, pair_signal = nothing) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath, NativeRigid, PreloadTypes, FuseReferenceForces}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -491,6 +492,9 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         vᵢⱼ  = vᵢ - vⱼ
                         if viscous_dt !== nothing
                             pair_rate = max(pair_rate, dot(vᵢⱼ, xᵢⱼ) * inverse_distance)
+                        end
+                        if pair_signal !== nothing
+                            pair_rate = max(pair_rate,abs(dot(vᵢⱼ,xᵢⱼ))/(xᵢⱼ²+SimKernel.η²))
                         end
                         density_symmetric_term = Radial ? radial_factor * dot(vᵢⱼ, xᵢⱼ) : dot(vᵢⱼ, ∇ᵢWᵢⱼ)
                         if cleaning !== nothing && typeᵢ == Fluid
@@ -627,7 +631,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
         if cleaning !== nothing
             divergence_sum = lanes_sum(divergence_sum,Val(K))
         end
-        if viscous_dt !== nothing
+        if viscous_dt !== nothing || pair_signal !== nothing
             pair_rate = lanes_max(pair_rate, Val(K))
         end
         if SimDensityDiffusion isa FourtakasDensityDiffusion
@@ -673,6 +677,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
             ∇◌rᵢ[i] = ∇r
         end
     end
+    store_pair_signal!(pair_signal,pair_rate)
     return nothing
 end
 
@@ -750,7 +755,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
                               always_inline::Bool = true, fastmath::Bool = true, fuse_reference_forces::Bool = fastmath,
                               target_indices = nothing, target_count::Integer = length(Position), pair_order = nothing,
                               native_rigid::Val = Val(false), interaction_mass = nothing, predictor_output = nothing,
-                              cleaning = nothing)
+                              cleaning = nothing, pair_signal = nothing)
     cleaning === nothing || (target_indices === nothing && length(cleaning.psi) == length(Density) &&
         length(cleaning.derivative) == length(Density)) ||
         throw(ArgumentError("Divergence cleaning requires dense, unmapped particle fields"))
@@ -799,12 +804,13 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
     end
     use_radial = Val(options.radial)
     use_scalar_sps = Val(options.scalar_sps)
+    reset_pair_signal!(pair_signal,step)
     @cuda always_inline=always_inline fastmath=fastmath threads=threads blocks=cld(n * K, threads) interaction_kernel!(
         dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
         Pairs, Position, Density, Velocity, ParticleType, SimParticles,
         CellStart, CellID, grid, step,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math), target_indices, pair_order, native_rigid, interaction_mass, Val(options.preload_types), inv(SimConstants.ρ₀), predictor_output, Val(fuse_reference_forces), cleaning)
+        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math), target_indices, pair_order, native_rigid, interaction_mass, Val(options.preload_types), inv(SimConstants.ρ₀), predictor_output, Val(fuse_reference_forces), cleaning, pair_signal)
     return nothing
 end
 
@@ -1151,20 +1157,20 @@ the force based time step term and the displacement since the last half step
 of a higher precision than the rest; the result is in the working precision
 of `h`.
 """
-@inline function step_map(i, Position, Velocity, Acceleration, Positionₙ⁺, h, η²)
+@inline function step_map(i, Position, Velocity, Acceleration, Positionₙ⁺, h, η², pair_signal = nothing)
     @inbounds begin
         r = Position[i]
         v = Velocity[i]
         a = Acceleration[i]
         posn = Positionₙ⁺[i]
     end
-    return step_values(r, v, a, posn, h, η²)
+    return step_values(r, v, a, posn, h, η²,pair_signal)
 end
 
 @inline function step_values(r::SVector{D, TP}, v::SVector{D, T}, a, posn::SVector{D, TP}, h::T,
-                             η²::T) where {D, TP, T}
+                             η²::T,pair_signal = nothing) where {D, TP, T}
     rT   = SVector{D, T}(r)
-    visc = abs(h * dot(v, rT) / (dot(rT, rT) + η²))
+    visc = pair_signal === nothing ? abs(h * dot(v, rT) / (dot(rT, rT) + η²)) : norm(v)
     dt1  = sqrt(h / norm(a))
     disp = T(norm(posn - r))   # the difference in the position precision
     return SVector{3, T}(visc, dt1, disp)
@@ -1177,7 +1183,7 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
                             Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
                             partial, ::Val{FlagShift}, boundary_mode, GhostPoints, GhostNormals, BoundarySlots,
                             PosCells, CellID, gridarg, InvDensity, NextInvDensity, NextPressure,
-                            diagnostic_partial, particle_ids, damping, ::Val{CommitStep}, n::Int32, cleaning = nothing) where {FlagShift, CommitStep}
+                            diagnostic_partial, particle_ids, damping, ::Val{CommitStep}, n::Int32, cleaning = nothing, pair_signal = nothing) where {FlagShift, CommitStep}
     step_active(step) || return nothing
     dt = step_dt(step)
     (; g, ρ₀) = SimConstants
@@ -1250,7 +1256,7 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
         end
 
         # Values for the time step and cell list update decision of the next step
-        values = step_values(x, v, acc, Positionₙ⁺[i], SimKernel.h, SimKernel.η²)
+        values = step_values(x, v, acc, Positionₙ⁺[i], SimKernel.h, SimKernel.η²,pair_signal)
         acc_red = step_reduce(acc_red, values)
         acc_diagnostic = diagnostic_accumulate(acc_diagnostic, values, particle_ids, i)
 
@@ -1292,7 +1298,7 @@ function launch_final_step!(Position, Velocity, Acceleration, Density, dρdtI, �
                             ghost_points = nothing, ghost_normals = nothing, boundary_slots = nothing,
                             pos_cells = nothing, CellID = nothing, grid = nothing, commit_step::Bool = false,
                             inverse_density = nothing, next_inverse_density = nothing, next_pressure = nothing,
-                            diagnostics = nothing, particle_ids = nothing, damping = (), cleaning = nothing)
+                            diagnostics = nothing, particle_ids = nothing, damping = (), cleaning = nothing, pair_signal = nothing)
     commit_step && red.nblocks != 1 && throw(ArgumentError("fused commit requires one reduction block"))
     next_inverse_density === nothing || length(next_inverse_density) == length(Density) ||
         throw(DimensionMismatch("Next-state reciprocal cache must have one entry per density"))
@@ -1310,7 +1316,7 @@ function launch_final_step!(Position, Velocity, Acceleration, Density, dρdtI, �
         Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
         red.partial, FlagShift, boundary_mode, ghost_points, ghost_normals, boundary_slots,
         pos_cells, CellID, grid, inverse_density, next_inverse_density, next_pressure,
-        diagnostic_partial, particle_ids, damping, Val(commit_step), Int32(n), cleaning)
+        diagnostic_partial, particle_ids, damping, Val(commit_step), Int32(n), cleaning, pair_signal)
     return nothing
 end
 
@@ -1325,10 +1331,10 @@ by final integration to initialize the limiter provenance too.
 """
 function launch_step_reduction!(red::ReductionWorkspace{SVector{3, T}}, Position, Velocity, Acceleration,
                                 Positionₙ⁺, SimKernel; diagnostics = nothing, particle_ids = nothing,
-                                cleaning_state = nothing, density = nothing, types = nothing, constants = nothing) where {T}
+                                cleaning_state = nothing, density = nothing, types = nothing, constants = nothing, pair_signal = nothing) where {T}
     init = SVector{3, T}(zero(T), T(Inf), zero(T))
     launch_reduce!(red, step_map, step_reduce, init, length(Position), Position, Velocity, Acceleration,
-                   Positionₙ⁺, T(SimKernel.h), T(SimKernel.η²))
+                   Positionₙ⁺, T(SimKernel.h), T(SimKernel.η²),pair_signal)
     initialize_signal!(cleaning_state,density,types,constants)
     if diagnostics !== nothing
         launch_timestep_diagnostic_reduction!(diagnostics, Position, Velocity, Acceleration, Positionₙ⁺, particle_ids, SimKernel)
@@ -1349,7 +1355,7 @@ end
 # the accumulated displacement bound requires a cell list rebuild.
 function finish_kernel!(step::DeviceStep{T}, partial, nblocks::Int32, CFL::T, c₀::T, h::T,
                         diagnostic_partial, diagnostic_result, stage_sampler,dt_limit, timestep_controller = nothing,
-                        ::Val{CommitPrevious} = Val(false), cleaning = nothing) where {T, CommitPrevious}
+                        ::Val{CommitPrevious} = Val(false), cleaning = nothing, pair_signal = nothing) where {T, CommitPrevious}
     if CommitPrevious
         threadIdx().x == Int32(1) && commit_kernel!(step)
         # The preceding step's particle writes completed in earlier kernels.
@@ -1388,14 +1394,14 @@ function finish_kernel!(step::DeviceStep{T}, partial, nblocks::Int32, CFL::T, c�
         @inbounds begin
             visc = r[1]
             dt1  = r[2]
-            dt   = min(Float64(GPUStepState.controlled_timestep(timestep_controller, CFL * min(dt1, h / (c₀ + visc)))),dt_limit,cleaning_limit)
+            dt   = min(Float64(GPUStepState.controlled_timestep(timestep_controller, CFL * min(dt1, h / acoustic_denominator(pair_signal,visc,c₀,h)))),dt_limit,cleaning_limit)
             if s[I_CLIP_OUTPUT] != 0
                 dt = min(dt, f[F_TOUT] - f[F_TIME])
             end
             d4   = 4 * r[3]
             dx   = T(f[F_DX]) + d4
             f[F_DT]   = dt
-            record_diagnostic!(diagnostic_result, limit, step, dt, CFL * dt1, CFL * (h / (c₀ + visc)), dt1 <= h / (c₀ + visc))
+            record_diagnostic!(diagnostic_result, limit, step, dt, CFL * dt1, CFL * (h / acoustic_denominator(pair_signal,visc,c₀,h)), dt1 <= h / acoustic_denominator(pair_signal,visc,c₀,h))
             f[F_DISP] = d4
             f[F_DX]   = dx
             s[I_PHASE] = PHASE_DT_READY
@@ -1426,13 +1432,13 @@ body and open-boundary updates have completed, in place of `launch_commit!`.
 """
 function launch_finish!(state::StepState{T}, red::ReductionWorkspace{SVector{3, T}}, SimKernel,
                         SimConstants; diagnostics = nothing, stage_sampler = nothing,dt_limit=Inf, timestep_controller=nothing,
-                        commit_previous::Bool = false, cleaning = nothing) where {T}
+                        commit_previous::Bool = false, cleaning = nothing, pair_signal = nothing) where {T}
     diagnostic_partial = diagnostics === nothing ? nothing : diagnostics.reduction.partial
     diagnostic_result = diagnostics === nothing ? nothing : diagnostics.result
     @cuda threads=REDUCE_THREADS blocks=1 finish_kernel!(state, red.partial, Int32(red.nblocks),
                                                         T(SimConstants.CFL), T(SimConstants.c₀),
                                                         T(SimKernel.h), diagnostic_partial, diagnostic_result, stage_sampler,Float64(dt_limit),timestep_controller,
-                                                        Val(commit_previous), cleaning)
+                                                        Val(commit_previous), cleaning, pair_signal)
     return nothing
 end
 

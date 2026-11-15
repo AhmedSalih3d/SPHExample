@@ -191,9 +191,9 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
             end
             standard = !(scheme isa DualSPHysicsSymplectic)
             prescribed_system = attachment_config === nothing ? nothing : attachment_config.boundary_motion
-            coarse = make_resolution_domain(coarse_geometry,SimConstants,SimKernel,limits,false,reserves[1];resident=true,standard,boundary_mode,prescribed_system)
+            coarse = make_resolution_domain(coarse_geometry,SimConstants,SimKernel,limits,false,reserves[1];resident=true,standard,pairwise_timestep=standard && !meta.GPULegacyTimestep,boundary_mode,prescribed_system)
             fine = make_resolution_domain(config.fine_geometry,fine_constants,fine_kernel,limits,true,reserves[2];
-                resident=true,standard,boundary_mode,attachment_config,prescribed_system,time=initial_time)
+                resident=true,standard,pairwise_timestep=standard && !meta.GPULegacyTimestep,boundary_mode,attachment_config,prescribed_system,time=initial_time)
             if attachment_config !== nothing
                 limits = AttachedResolutionLimits(limits,CuArray(fill(identity_resolution_pose(),2)))
             end

@@ -7,6 +7,7 @@ using LinearAlgebra
 using HDF5
 
 include(joinpath(@__DIR__, "simulation_constants.jl"))
+include(joinpath(@__DIR__, "pairwise_timestep.jl"))
 include(joinpath(@__DIR__, "timestep_floor.jl"))
 include(joinpath(@__DIR__, "simulation_result.jl"))
 include(joinpath(@__DIR__, "typst_report.jl"))
@@ -1177,7 +1178,7 @@ relerr(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), eps(eltype(b))))
             case = BENCH_CASES[findfirst(c -> c.name == name, BENCH_CASES)]
             ref  = run_cpu_reference(case, simtime; time_stepping = scheme)
             p, meta = run_gpu(case, Float64, simtime; time_stepping = scheme,
-                GPUXCellSubdivision = 1, GPUInteractionAlwaysInline = false, GPUInteractionFastMath = false)
+                GPULegacyTimestep = true, GPUXCellSubdivision = 1, GPUInteractionAlwaysInline = false, GPUInteractionFastMath = false)
 
             @test meta.Iteration == ref.Iteration
             @test p.ID == ref.ID

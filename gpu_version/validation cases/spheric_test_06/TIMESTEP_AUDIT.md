@@ -1,5 +1,10 @@
 # Timestep audit and controlled square pause
 
+**Historical configuration:** ordinary GPU simulations now default to a pairwise
+signal criterion. See the [new default and StillWedge timings](../still_wedge_timestep/README.md).
+The scripts underlying this audit explicitly retain `GPULegacyTimestep = true`
+so these measurements remain reproducible.
+
 The current audit finds a real defect in the Julia reference timestep estimate:
 its compression-like term depends on absolute position. It does **not** establish
 that an unstable timestep caused the observed force errors. A saved-state audit

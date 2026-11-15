@@ -1,0 +1,17 @@
+boundary = "NoMDBC (actual example default)"
+cache_interaction_fields = true
+cfl = 0.5
+cuda_driver = "13.4.0"
+cuda_jl = "6.4.2"
+duration = 4.0
+dx = 0.02
+example = "example/StillWedgeMDBC.jl"
+gpu = "NVIDIA GeForce RTX 5080"
+grid_output = true
+julia = "1.12.7"
+output_interval = 0.01
+pdf_report = false
+precision = "Float32 physics, Float64 positions"
+radial_interactions = true
+timing = "Full warmup each, five alternating unprofiled pairs; end-to-end includes particle generation and output"
+x_cell_subdivision = 4

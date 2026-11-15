@@ -30,6 +30,7 @@ module SPHExampleGPU
         "SPHDensityDiffusionModels.jl",
         "GPUReductions.jl",
         "GPUStepState.jl",
+        "GPUPairwiseTimesteps.jl",
         "GPUDivergenceCleaning.jl",
         "DampingZones.jl",
         "ProduceHDFVTK.jl",

@@ -41,11 +41,11 @@ function resolution_hierarchy(pairs,domains)
     return ResolutionHierarchy(pairs,levels,edges)
 end
 
-function hierarchy_dt_kernel!(partials,kernels,constants,step)
+function hierarchy_dt_kernel!(partials,kernels,constants,step,signals=map(_ -> nothing,partials))
     GPUStepState.step_active(step) || return nothing
     dt = Inf
     for i in eachindex(partials)
-        dt = min(dt,resolution_standard_dt(partials[i],kernels[i],constants[i]))
+        dt = min(dt,resolution_standard_dt(partials[i],kernels[i],constants[i],signals[i]))
     end
     @inbounds begin
         step.f[1] = step.i[GPUStepState.I_CLIP_OUTPUT] != 0 ? min(dt,step.f[4]-step.f[2]) : dt
@@ -83,7 +83,7 @@ function enqueue_resolution_step!(domains,h::ResolutionHierarchy,state;
     root,leaf = first(domains),last(domains)
     corrector,flux,commit = n+1,2n+2,3n+3
     @cuda threads=1 hierarchy_dt_kernel!(map(d -> d.pool.reduction.partial,domains),
-        map(d -> d.kernel,domains),map(d -> d.constants,domains),ResolutionStep(state,root,0))
+        map(d -> d.kernel,domains),map(d -> d.constants,domains),ResolutionStep(state,root,0),map(d -> d.predictor.support.PairSignal,domains))
     if leaf.attachment !== nothing && leaf.attachment.floating !== nothing
         @cuda threads=1 resolution_timestep_limit_kernel!(ResolutionStep(state,leaf,0),leaf.attachment.floating.spring_dt)
     end
@@ -126,7 +126,7 @@ function enqueue_resolution_step!(domains,h::ResolutionHierarchy,state;
         red = d.pool.reduction
         @cuda threads=REDUCE_THREADS blocks=red.nblocks resolution_standard_corrector_kernel!(p.Position,p.Velocity,
             p.Acceleration,p.Density,s.dρdtI,s.ρₙ⁺,s.Positionₙ⁺,s.Velocityₙ⁺,p.Type,s.∇Cᵢ,s.∇◌rᵢ,
-            ResolutionArithmeticStep{eltype(p.Density)}(step),d.kernel,d.constants,d.boundary_mode,red.partial,damping,Int32(length(p)))
+            ResolutionArithmeticStep{eltype(p.Density)}(step),d.kernel,d.constants,d.boundary_mode,red.partial,damping,Int32(length(p)),d.predictor.support.PairSignal)
     end
     if leaf.attachment !== nothing
         step = ResolutionStep(state,leaf,corrector)
@@ -136,7 +136,7 @@ function enqueue_resolution_step!(domains,h::ResolutionHierarchy,state;
         @cuda threads=1 resolution_frame_kernel!(pair.frames,leaf.attachment.pose,pair.reference,step,0.5Float64(leaf.kernel.h),false)
         p,red = leaf.particles,leaf.pool.reduction
         @cuda threads=REDUCE_THREADS blocks=red.nblocks resolution_standard_reduction_kernel!(
-            red.partial,p.Position,p.Velocity,p.Acceleration,p.Type,step,leaf.kernel,Int32(length(p)))
+            red.partial,p.Position,p.Velocity,p.Acceleration,p.Type,step,leaf.kernel,Int32(length(p)),leaf.support.PairSignal)
     end
     for (i,d) in enumerate(domains)
         p = d.particles
