@@ -103,7 +103,7 @@ ASCII files contain time, pressure Cd and viscous Cd in the requested order.
 
 ## Optional acoustic controls
 
-### Motion interpolation at 160 m/s
+### Motion and resolution comparisons
 
 The [fresh matched motion comparison](results/motion_c160/README.md) tests
 rounded-position Hermite and integrated-velocity motion at c0=160.0 m/s in
@@ -134,6 +134,20 @@ The argument is `L/dp`, not particle spacing. In 2D this gives four times as
 many fluid particles, with results saved separately under `results/motion_c160_n080`.
 Both motion types retain c0=160 m/s, the original domain, DBC, and no sponge or
 cleaning. The plot script also compares each fine run with its L/dp=40 history.
+
+To return to dp=0.025 m and compare both motions at c0=400.0 m/s, use:
+
+```sh
+julia --project=. -t 2,0 "validation cases/spheric_test_06/motion_c160.jl" 40 400
+python "validation cases/spheric_test_06/plot_motion_c160.py" 40 400
+```
+
+The second argument is sound speed; omitting it retains 160 m/s. The legacy
+script filenames remain unchanged. Results use the separate `results/motion_c400`
+folder, including an overlay against the 160 m/s runs at matching spacing.
+The [400 m/s results](results/motion_c400/README.md) show worse full-history
+pressure and viscous errors for both motions than the matched 160 m/s cases;
+increasing sound speed is not a monotonic accuracy improvement here.
 
 ### Wider sponge diagnostic (manual default)
 
