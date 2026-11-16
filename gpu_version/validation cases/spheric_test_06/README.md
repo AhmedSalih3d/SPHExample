@@ -183,6 +183,12 @@ Physical CFL remains 0.2 as in the off controls; cleaning's additional timestep
 restriction is active. The separate `results/updated_mdbc_paper_audit_c40_cleaning`
 family records the cleaning settings and includes raw on/off overlays.
 
+Replace `40` with `160` in both commands for the same cleaning study at
+c0=160.0 m/s. The [160 m/s cleaning results](results/updated_mdbc_paper_audit_c160_cleaning/README.md)
+compare against the corrected 160 m/s off controls, with the same kappa=10
+and all other physical and numerical settings retained. Kappa is not scaled
+with sound speed.
+
 ### Wider sponge diagnostic (manual default)
 
 For an original-sized 10×5 m tank with internal 2 m and 0.5 m sponges at
