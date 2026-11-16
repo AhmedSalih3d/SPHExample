@@ -17,6 +17,12 @@ export read_reference, verify_reference, body_trajectory, build_case, run_case,
 const CASE_DIR = @__DIR__
 const REFERENCE_DIR = joinpath(CASE_DIR, "reference")
 const REFERENCE_FILES = ("Motion_Body.dat", "Force_Re050.dat", "Force_Re100.dat", "Force_Re150.dat")
+const DEFAULT_LAYOUT = (;
+    tank_origin = (0.0, 0.0),
+    tank_size = (10.0, 5.0),
+    body_center = (1.5, 2.5),
+    body_size = (1.0, 1.0),
+)
 
 """Read an official Tecplot-style numeric table, preserving its original units."""
 function read_reference(path; columns = startswith(basename(path), "Motion") ? 4 : 3)
@@ -49,51 +55,124 @@ function verify_reference(directory = REFERENCE_DIR)
     return true
 end
 
-"""Absolute tabulated square-center x is converted to translation from x = 1.5."""
-function body_trajectory(directory = REFERENCE_DIR)
+"""Scale the reference body's displacement and velocity from its default 1 m/s."""
+function body_trajectory(directory = REFERENCE_DIR; speed_scale = 1.0)
+    isfinite(speed_scale) && speed_scale > 0 ||
+        throw(ArgumentError("speed_scale must be positive and finite"))
     data = read_reference(joinpath(directory, "Motion_Body.dat"))
-    return SampledTrajectory(data[:, 1], [SVector(x - 1.5, 0.0) for x in data[:, 4]];
-        velocities = [SVector(u, 0.0) for u in data[:, 3]])
+    return SampledTrajectory(data[:, 1], [SVector(speed_scale * (x - 1.5), 0.0) for x in data[:, 4]];
+        velocities = [SVector(speed_scale * u, 0.0) for u in data[:, 3]])
+end
+
+function point2(value, name)
+    length(value) == 2 || throw(ArgumentError("$name must have two coordinates"))
+    point = SVector{2,Float64}(value)
+    all(isfinite, point) || throw(ArgumentError("$name coordinates must be finite"))
+    return point
 end
 
 """
-    build_case(; reynolds = 100, dx = 0.025, duration = 8, interval = 0.02, save, ...)
+    build_case(; reynolds = 100, dx = 0.025, layout = DEFAULT_LAYOUT, ...)
 
-SPHERIC Test 06 in SI units with unit transverse depth: a 10 × 5 tank,
-unit square at [1,2] × [2,3], zero gravity, and nu = Umax L / Re.
-Cell-centered particles put the physical wall halfway between solid and fluid
-rows. Four solid layers cover the Wendland support; the square is filled.
-The existing DBC wall treatment approximates the specified no-slip walls.
-Set `visualize_in_paraview=true` for a manual run to generate its ParaView state.
+Build the SPHERIC Test 06 moving-body geometry on a cell-centered lattice.
+`layout` supplies `tank_origin`, `tank_size`, `body_center`, and `body_size`
+in metres. Tank and body edges must align with `dx`; `wall_layers` must cover
+the kernel support. No-shifting DBC remains the benchmark default.
 """
 function build_case(; reynolds = 100, dx = 0.025, duration = 8.0, interval = 0.02,
         sound_speed = 40.0, cfl = 0.2, save = joinpath(CASE_DIR, "runs", "case"),
-        float_type = Float32, graph = true, visualize_in_paraview = false)
+        float_type = Float32, graph = true, visualize_in_paraview = false,
+        layout = DEFAULT_LAYOUT, density = 1000.0, gravity = 0.0,
+        reference_speed = 1.0, reference_length = nothing, span = 1.0,
+        density_diffusion = 0.1, artificial_viscosity_alpha = 0.0,
+        kernel = WendlandC2(), kernel_h_factor = sqrt(2), wall_layers = nothing,
+        viscosity_model = Laminar(),
+        density_diffusion_model = ZeroGravityLinearDensityDiffusion(),
+        time_stepping = SymplecticTimeStepping(), shifting = NoShifting,
+        gpu_clip_time_step_to_output = true, gpu_double_position = true,
+        gpu_legacy_timestep = true, gpu_cell_subdivision = 1,
+        gpu_x_cell_subdivision = 1, gpu_radial_interactions = false,
+        gpu_interaction_fastmath = false, gpu_preload_interaction_types = false,
+        gpu_boundary_forces = false, gpu_output_buffer_bytes = 16 * 2^20)
     reynolds in (50, 100, 150) || throw(ArgumentError("Reynolds number must be 50, 100, or 150"))
     isfinite(dx) && 0 < dx <= 0.1 || throw(ArgumentError("dx must lie in (0, 0.1]"))
-    all(x -> isfinite(x) && x > 0, (duration, interval, sound_speed, cfl)) ||
-        throw(ArgumentError("duration, interval, sound speed and CFL must be positive and finite"))
+    all(x -> isfinite(x) && x > 0,
+        (duration, interval, sound_speed, cfl, reference_speed, span, kernel_h_factor)) ||
+        throw(ArgumentError("duration, interval, sound speed, CFL, reference speed, span, and kernel_h_factor must be positive and finite"))
+    isfinite(density) && density > 0 || throw(ArgumentError("density must be positive and finite"))
+    isfinite(gravity) || throw(ArgumentError("gravity must be finite"))
+    isfinite(density_diffusion) && density_diffusion >= 0 ||
+        throw(ArgumentError("density_diffusion must be finite and nonnegative"))
+    isfinite(artificial_viscosity_alpha) && artificial_viscosity_alpha >= 0 ||
+        throw(ArgumentError("artificial_viscosity_alpha must be finite and nonnegative"))
+    shifting isa Type || throw(ArgumentError("shifting must be a shifting mode type such as NoShifting"))
     duration <= 8.0 || throw(ArgumentError("The force comparison ends at t = 8 s"))
     interval <= duration || throw(ArgumentError("Output interval exceeds duration"))
-    nx, ny, ns = round.(Int, (10 / dx, 5 / dx, 1 / dx))
-    all(isapprox(n * dx, length; atol = 1e-10, rtol = 0) for (n, length) in ((nx, 10), (ny, 5), (ns, 1))) ||
-        throw(ArgumentError("dx must divide the unit square exactly"))
+
+    layout isa NamedTuple || throw(ArgumentError("layout must be a named tuple"))
+    all(name -> hasproperty(layout, name),
+        (:tank_origin, :tank_size, :body_center, :body_size)) ||
+        throw(ArgumentError("layout must define tank_origin, tank_size, body_center, and body_size"))
+    tank_origin = point2(layout.tank_origin, "layout.tank_origin")
+    tank_size = point2(layout.tank_size, "layout.tank_size")
+    body_center = point2(layout.body_center, "layout.body_center")
+    body_size = point2(layout.body_size, "layout.body_size")
+    all(>(0), tank_size) || throw(ArgumentError("tank_size must be positive"))
+    all(>(0), body_size) || throw(ArgumentError("body_size must be positive"))
+    all(body_size .< tank_size) || throw(ArgumentError("body_size must be smaller than tank_size"))
+
+    characteristic_length = reference_length === nothing ? body_size[1] : Float64(reference_length)
+    isfinite(characteristic_length) && characteristic_length > 0 ||
+        throw(ArgumentError("reference_length must be positive and finite"))
+    viscosity_model isa Union{Laminar,ZeroViscosity,ArtificialViscosity} ||
+        throw(ArgumentError("Drag postprocessing supports Laminar, ZeroViscosity, or ArtificialViscosity"))
+    body_lower = body_center - body_size / 2
+    body_upper = body_center + body_size / 2
+    tank_upper = tank_origin + tank_size
+    all(body_lower .>= tank_origin) && all(body_upper .<= tank_upper) ||
+        throw(ArgumentError("body must lie inside the tank"))
+
+    tank_cells = round.(Int, tank_size ./ dx)
+    body_cells = round.(Int, body_size ./ dx)
+    all(>(0), tank_cells) && all(>(0), body_cells) ||
+        throw(ArgumentError("tank and body dimensions must contain at least one particle cell"))
+    all(isapprox(tank_cells[d] * dx, tank_size[d]; atol = 1e-10, rtol = 0) for d in 1:2) ||
+        throw(ArgumentError("dx must divide both tank dimensions"))
+    all(isapprox(body_cells[d] * dx, body_size[d]; atol = 1e-10, rtol = 0) for d in 1:2) ||
+        throw(ArgumentError("dx must divide both body dimensions"))
+    body_offset = (body_lower - tank_origin) ./ dx
+    body_start = round.(Int, body_offset)
+    all(isapprox(body_offset[d], body_start[d]; atol = 1e-10, rtol = 0) for d in 1:2) ||
+        throw(ArgumentError("body lower corner must align with the particle lattice"))
+
+    nx, ny = tank_cells
     T = float_type
-    constants = SimulationConstants{T}(2; dx, ρ₀ = 1000, g = 0, c₀ = sound_speed,
-        ν₀ = 1 / reynolds, α = 0, δᵩ = 0.1, CFL = cfl)
-    kernel = SPHKernelInstance{2,T}(WendlandC2(); h = T(sqrt(2) * dx))
-    layers = ceil(Int, Float64(kernel.H) / dx) + 1
+    constants = SimulationConstants{T}(2; dx, ρ₀ = density, g = gravity, c₀ = sound_speed,
+        ν₀ = reference_speed * characteristic_length / reynolds,
+        α = artificial_viscosity_alpha, δᵩ = density_diffusion, CFL = cfl)
+    kernel_instance = SPHKernelInstance{2,T}(kernel; h = T(kernel_h_factor * dx))
+    layers = if wall_layers === nothing
+        ceil(Int, Float64(kernel_instance.H) / dx) + 1
+    else
+        wall_layers isa Integer && wall_layers > 0 ||
+            throw(ArgumentError("wall_layers must be a positive integer"))
+        Int(wall_layers)
+    end
+    layers * dx > kernel_instance.H ||
+        throw(ArgumentError("wall_layers must extend beyond the kernel support"))
     walls, fluid, body = (SVector{2,Float64}[] for _ in 1:3)
     for j in -layers:ny+layers-1, i in -layers:nx+layers-1
-        position = SVector((i + 0.5) * dx, (j + 0.5) * dx)
+        position = tank_origin + SVector((i + 0.5) * dx, (j + 0.5) * dx)
         if !(0 <= i < nx && 0 <= j < ny)
             push!(walls, position)
-        elseif ns <= i < 2ns && 2ns <= j < 3ns
+        elseif body_start[1] <= i < body_start[1] + body_cells[1] &&
+                body_start[2] <= j < body_start[2] + body_cells[2]
             push!(body, position)
         else
             push!(fluid, position)
         end
     end
+    isempty(fluid) && throw(ArgumentError("layout must leave fluid particles in the tank"))
     geometry = [
         SPHGeometry{2,T}(walls; Density = constants.ρ₀, GroupMarker = 1, Type = Fixed),
         SPHGeometry{2,T}(fluid; Density = constants.ρ₀, GroupMarker = 2, Type = Fluid),
@@ -102,23 +181,32 @@ function build_case(; reynolds = 100, dx = 0.025, duration = 8.0, interval = 0.0
     times = collect(interval:interval:duration)
     isempty(times) || isapprox(last(times), duration; atol = 1e-12, rtol = 0) || push!(times, duration)
     times[end] = duration
-    metadata = SimulationMetaData{2,T,NoShifting,NoKernelOutput,NoMDBC,StoreLog}(
+    metadata = SimulationMetaData{2,T,shifting,NoKernelOutput,NoMDBC,StoreLog}(
         SimulationName = "MovingSquare", SaveLocation = abspath(save), SimulationTime = duration,
         OutputTimes = times, VisualizeInParaview = visualize_in_paraview, OpenLogFile = false,
         ExportSingleVTKHDF = true, OutputVariables = ["Density", "Velocity", "Type", "GroupMarker"],
-        GPUUseGraph = graph, GPUClipTimeStepToOutput = true, GPUDoublePosition = true,
-        GPULegacyTimestep = true, # preserve the published validation controls
-        GPUCellSubdivision = 1, GPUXCellSubdivision = 1, GPURadialInteractions = false,
-        GPUInteractionFastMath = false, GPUPreloadInteractionTypes = false,
-        GPUBoundaryForces = false, GPUOutputBufferBytes = 16 * 2^20)
-    motion = PrescribedMotion(3; translation = body_trajectory())
-    return (; constants, kernel, geometry, metadata, motion, reynolds, dx = Float64(dx),
-        duration = Float64(duration), interval = Float64(interval), layers,
+        GPUUseGraph = graph, GPUClipTimeStepToOutput = gpu_clip_time_step_to_output,
+        GPUDoublePosition = gpu_double_position, GPULegacyTimestep = gpu_legacy_timestep,
+        GPUCellSubdivision = gpu_cell_subdivision, GPUXCellSubdivision = gpu_x_cell_subdivision,
+        GPURadialInteractions = gpu_radial_interactions,
+        GPUInteractionFastMath = gpu_interaction_fastmath,
+        GPUPreloadInteractionTypes = gpu_preload_interaction_types,
+        GPUBoundaryForces = gpu_boundary_forces,
+        GPUOutputBufferBytes = gpu_output_buffer_bytes)
+    motion = PrescribedMotion(3; translation = body_trajectory(; speed_scale = reference_speed))
+    case_layout = (; tank_origin, tank_size, body_center, body_size)
+    return (; constants, kernel = kernel_instance, geometry, metadata, motion, reynolds,
+        dx = Float64(dx), duration = Float64(duration), interval = Float64(interval), layers,
+        layout = case_layout, tank_origin, tank_size, body_center, body_size,
+        body_marker = 3, reference_speed = Float64(reference_speed),
+        reference_length = characteristic_length, span = Float64(span),
+        viscosity_model, density_diffusion_model, time_stepping, shifting,
         counts = (; fixed = length(walls), fluid = length(fluid), square = length(body)))
 end
 
-"""Pressure and laminar force on solid i from fluid j (equal particle masses)."""
-@inline function pair_loads(position_i, position_j, velocity_i, velocity_j, density_i, density_j, kernel, constants)
+"""Pressure and selected viscous force on body particle i from fluid particle j."""
+@inline function pair_loads(position_i, position_j, velocity_i, velocity_j, density_i, density_j,
+        kernel, constants; viscosity_model = Laminar())
     separation = position_i - position_j
     distance_squared = dot(separation, separation)
     if !(0 < distance_squared < kernel.H²)
@@ -129,14 +217,19 @@ end
     pressure_i = EquationOfStateGamma7(density_i, constants.c₀, constants.ρ₀)
     pressure_j = EquationOfStateGamma7(density_j, constants.c₀, constants.ρ₀)
     pressure_force = -constants.m₀^2 * (pressure_i + pressure_j) / (density_i * density_j) * gradient
-    viscosity, _ = compute_viscosity(Laminar(), kernel, constants, nothing, separation,
+    viscosity, _ = compute_viscosity(viscosity_model, kernel, constants, nothing, separation,
         velocity_i - velocity_j, gradient, distance_squared, density_i, density_j,
         inv(density_i), inv(density_j), 1, 2)
-    return pressure_force, constants.m₀ * viscosity
+    wall_factor = viscosity_model isa ArtificialViscosity ? viscosity_model.boundary_factor : 1
+    return pressure_force, constants.m₀ * wall_factor * viscosity
 end
 
-"""Integrate only square/fluid pairs; tank and internal solid forces are excluded."""
-function frame_loads(position, velocity, density, types, markers, kernel, constants)
+"""Integrate only body/fluid pairs; tank and internal solid forces are excluded."""
+function frame_loads(position, velocity, density, types, markers, kernel, constants;
+        body_marker = 3, viscosity_model = Laminar(), reference_speed = 1.0,
+        reference_length = 1.0, span = 1.0)
+    all(x -> isfinite(x) && x > 0, (reference_speed, reference_length, span)) ||
+        throw(ArgumentError("force reference speed, length, and span must be positive and finite"))
     fluid_cells = Dict{Tuple{Int,Int},Vector{Int}}()
     cell(x) = (floor(Int, x[1] / kernel.H), floor(Int, x[2] / kernel.H))
     for j in eachindex(types)
@@ -146,21 +239,21 @@ function frame_loads(position, velocity, density, types, markers, kernel, consta
     pressure_force = zero(SVector{2,Float64})
     viscous_force = zero(pressure_force)
     for i in eachindex(types)
-        markers[i] == 3 && types[i] == Int(Moving) || continue
+        markers[i] == body_marker && types[i] == Int(Moving) || continue
         ix, iy = cell(position[i])
         for cy in iy-1:iy+1, cx in ix-1:ix+1
             neighbors = get(fluid_cells, (cx, cy), nothing)
             neighbors === nothing && continue
             for j in neighbors
                 pressure, viscous = pair_loads(position[i], position[j], velocity[i], velocity[j],
-                    density[i], density[j], kernel, constants)
+                    density[i], density[j], kernel, constants; viscosity_model)
                 pressure_force += pressure
                 viscous_force += viscous
             end
         end
     end
-    # Positive drag resists the prescribed +x motion. rho Umax^2 L b / 2 = rho / 2.
-    scale = -2 / constants.ρ₀
+    # Positive drag resists the prescribed +x motion.
+    scale = -2 / (constants.ρ₀ * reference_speed^2 * reference_length * span)
     return (; cd_pressure = scale * pressure_force[1], cd_viscous = scale * viscous_force[1],
         cy_pressure = scale * pressure_force[2], cy_viscous = scale * viscous_force[2])
 end
@@ -169,9 +262,12 @@ end
 function analyze_history(path, case; coefficient_path, diagnostics_path, trajectory = body_trajectory())
     # Float64 postprocessing of saved Float32 state avoids reduction-roundoff noise.
     constants = SimulationConstants{Float64}(2; dx = case.dx, ρ₀ = case.constants.ρ₀,
-        c₀ = case.constants.c₀, g = 0, ν₀ = case.constants.ν₀)
-    kernel = SPHKernelInstance{2,Float64}(WendlandC2(); h = Float64(case.kernel.h),
-        αD = Float64(case.kernel.αD), η² = Float64(case.kernel.η²))
+        c₀ = case.constants.c₀, g = case.constants.g, ν₀ = case.constants.ν₀,
+        α = case.constants.α, δᵩ = case.constants.δᵩ)
+    kernel = SPHKernelInstance{2,Float64}(case.kernel.kernel; h = Float64(case.kernel.h),
+        k = Float64(case.kernel.k), αD = Float64(case.kernel.αD), η² = Float64(case.kernel.η²))
+    body_half_size = case.body_size / 2
+    tank_upper = case.tank_origin + case.tank_size
     rows, checks = NamedTuple[], NamedTuple[]
     h5open(path, "r") do file
         root = haskey(file,"VTKHDF/Particles") ? file["VTKHDF/Particles"] : file["VTKHDF"]
@@ -188,20 +284,25 @@ function analyze_history(path, case; coefficient_path, diagnostics_path, traject
             all(isfinite, density) && all(>(0), density) && all(x -> all(isfinite, x), position) &&
                 all(v -> all(isfinite, v), velocity) || error("Nonfinite state at t=$(times[frame])")
             fluid = findall(==(Int(Fluid)), types)
-            square = findall(==(3), markers)
+            square = findall(==(case.body_marker), markers)
             count(==(Int(Frozen)), types) == 0 || error("Frozen particles at t=$(times[frame])")
             length(fluid) == case.counts.fluid && length(square) == case.counts.square || error("Particle loss")
             displacement, expected_velocity, _ = trajectory_state(trajectory, times[frame])
-            center = SVector(1.5, 2.5) + displacement
+            center = case.body_center + displacement
             motion_error = norm(sum(position[square]) / length(square) - center)
             velocity_error = maximum(v -> norm(v - expected_velocity), velocity[square])
             # A positive clearance means the particle center is inside the fluid domain.
             minimum_clearance = minimum(fluid) do i
                 x, y = position[i]
-                square_clearance = max(abs(x-center[1]), abs(y-center[2])) - 0.5
-                min(x, 10-x, y, 5-y, square_clearance)
+                body_clearance = max(abs(x-center[1]) - body_half_size[1],
+                    abs(y-center[2]) - body_half_size[2])
+                min(x - case.tank_origin[1], tank_upper[1] - x,
+                    y - case.tank_origin[2], tank_upper[2] - y, body_clearance)
             end
-            loads = frame_loads(position, velocity, density, types, markers, kernel, constants)
+            loads = frame_loads(position, velocity, density, types, markers, kernel, constants;
+                body_marker = case.body_marker, viscosity_model = case.viscosity_model,
+                reference_speed = case.reference_speed, reference_length = case.reference_length,
+                span = case.span)
             push!(rows, (; time = times[frame], loads...))
             push!(checks, (; time = times[frame], motion_error, velocity_error,
                 density_relative_max = maximum(abs, density[fluid] ./ constants.ρ₀ .- 1),
@@ -220,7 +321,7 @@ function analyze_history(path, case; coefficient_path, diagnostics_path, traject
     return (; rows, checks)
 end
 
-"""Run the unmodified GPU solver, save the force history and complete run metadata."""
+"""Run the configured GPU case, save its force history and complete run metadata."""
 function run_case(case; results_dir = joinpath(CASE_DIR, "results"))
     verify_reference()
     CUDA.functional() || error("An NVIDIA CUDA GPU is required")
@@ -233,24 +334,34 @@ function run_case(case; results_dir = joinpath(CASE_DIR, "results"))
     result = try
         RunSimulation(SimGeometry = case.geometry, SimMetaData = case.metadata,
             SimConstants = case.constants, SimKernel = case.kernel, SimLogger = logger,
-            SimParticles = particles, SimViscosity = Laminar(),
-            SimDensityDiffusion = ZeroGravityLinearDensityDiffusion(),
-            SimTimeStepping = SymplecticTimeStepping(), SimMotion = case.motion)
+            SimParticles = particles, SimViscosity = case.viscosity_model,
+            SimDensityDiffusion = case.density_diffusion_model,
+            SimTimeStepping = case.time_stepping, SimMotion = case.motion)
     finally
         isopen(logger.LoggerIo) && close(logger.LoggerIo)
     end
     result.final_state.complete && result.termination_reason == :completed || error("Incomplete run")
     result.diagnostics.frozen_particles == 0 || error("Run froze particles")
-    name = @sprintf("Re%03d_n%03d", case.reynolds, round(Int, 1 / case.dx))
+    n = round(Int, case.reference_length / case.dx)
+    name = @sprintf("Re%03d_n%03d", case.reynolds, n)
     analysis = analyze_history(joinpath(save, "MovingSquare.vtkhdf"), case;
         coefficient_path = joinpath(results_dir, name * ".dat"),
         diagnostics_path = joinpath(results_dir, name * "_state.csv"), trajectory = case.motion.translation)
     metadata = Dict{String,Any}(
         "reynolds" => case.reynolds, "dx" => case.dx, "duration" => case.duration,
         "output_interval" => case.interval, "rho0" => Float64(case.constants.ρ₀),
+        "gravity" => Float64(case.constants.g), "reference_speed" => case.reference_speed,
+        "reference_length" => case.reference_length, "span" => case.span,
+        "tank_origin" => collect(case.tank_origin), "tank_size" => collect(case.tank_size),
+        "body_center" => collect(case.body_center), "body_size" => collect(case.body_size),
         "nu" => Float64(case.constants.ν₀), "sound_speed" => Float64(case.constants.c₀),
         "cfl" => Float64(case.constants.CFL), "density_diffusion" => Float64(case.constants.δᵩ),
         "h" => Float64(case.kernel.h), "wall_layers" => case.layers,
+        "kernel" => string(typeof(case.kernel.kernel)),
+        "viscosity_model" => string(typeof(case.viscosity_model)),
+        "density_diffusion_model" => string(typeof(case.density_diffusion_model)),
+        "time_stepping" => string(typeof(case.time_stepping)),
+        "shifting" => string(case.shifting),
         "fixed_particles" => case.counts.fixed, "fluid_particles" => case.counts.fluid,
         "square_particles" => case.counts.square, "julia_version" => string(VERSION),
         "cuda_package_version" => string(pkgversion(CUDA)), "gpu" => CUDA.name(CUDA.device()),

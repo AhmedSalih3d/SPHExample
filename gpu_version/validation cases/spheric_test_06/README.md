@@ -130,13 +130,17 @@ Run from `gpu_version/`, using Julia 1.12 and an NVIDIA CUDA GPU. Quote paths
 because the requested parent folder contains a space. No dependency changes
 are needed.
 
-### Manual single-case run
+### Manual editable case
 
-[`manual_case.jl`](manual_case.jl) is a directly runnable, editable setup for
-one Re = 100, L/dp = 40, c0 = 40 m/s run. Its settings are collected at the top
-of the file; it uses the same validated geometry and force analysis as the
-batch runner, and enables the standard particle visualization state. Change
-`run_tag` before repeating a run so outputs are kept separate.
+[`manual_case.jl`](manual_case.jl) is a directly runnable setup in the style of
+[`Bathymetry2d.jl`](../../example/Bathymetry2d.jl). Its top-level `layout`
+controls tank origin/size and body center/size; the adjacent settings control
+resolution, density, Re, reference scales, gravity, sound speed, CFL, kernel,
+diffusion, viscosity, time stepping, shifting, precision, GPU options, duration,
+and output cadence. Tank and body edges must align with `dx`, and the default
+layout and physics reproduce Re = 100, L/dp = 40, c0 = 40 m/s. The benchmark's
+2D NoMDBC boundary treatment remains fixed. Change `run_tag` to keep repeated
+runs in separate folders.
 
 ```sh
 julia --project=. -t 2,0 "validation cases/spheric_test_06/manual_case.jl"
@@ -146,10 +150,12 @@ After the run, the script uses `pvpython` to create a ParaView state and PNG
 with raw pressure and viscous drag overlaid on the official finite-difference
 reference. It plots every available spacing in the selected results directory;
 the manual run restricts that plot to its own spacing. Open
-`validation cases/spheric_test_06/runs/manual/paraview_force_plot/ForceComparison_Re100.pvsm`
+`validation cases/spheric_test_06/runs/manual_layout/paraview_force_plot/ForceComparison_Re100.pvsm`
 in ParaView to inspect the two charts. The plotted histories are unfiltered;
 the baseline run's 0.1 s binned comparison remains available in
-`results/validation/binned.csv`.
+`results/validation/binned.csv`. When you change the benchmark layout or
+physical scales, the official force curve is still shown for context, but the
+result is no longer an apples-to-apples SPHERIC validation.
 
 The force chart can also be regenerated without rerunning the solver, for
 example for all three Reynolds numbers in the baseline results:

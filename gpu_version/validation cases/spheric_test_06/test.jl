@@ -60,6 +60,29 @@ end
     manual_case = build_case(dx = 0.1, duration = 0.1, interval = 0.1,
         visualize_in_paraview = true)
     @test manual_case.metadata.VisualizeInParaview
+    custom_layout = (;
+        tank_origin = (-1.0, 0.0),
+        tank_size = (12.0, 6.0),
+        body_center = (2.0, 3.0),
+        body_size = (2.0, 1.0),
+    )
+    custom_case = build_case(dx = 0.1, duration = 0.1, interval = 0.1,
+        layout = custom_layout, density = 998.0, gravity = 0.2,
+        reference_speed = 0.5, reference_length = 2.0, span = 0.5,
+        density_diffusion = 0.05, kernel_h_factor = 1.2, wall_layers = 4)
+    @test custom_case.counts.square == 200
+    @test custom_case.counts.fluid * 0.1^2 ≈ 70.0
+    @test custom_case.constants.ρ₀ == 998
+    @test custom_case.constants.g ≈ 0.2
+    @test custom_case.constants.ν₀ ≈ 0.01
+    @test custom_case.kernel.h ≈ 0.12
+    @test custom_case.layers == 4
+    @test custom_case.body_center == SVector(2.0, 3.0)
+    shifted_case = build_case(dx = 0.1, duration = 0.1, interval = 0.1,
+        shifting = PlanarShifting)
+    @test typeof(shifted_case.metadata).parameters[3] === PlanarShifting
+    @test_throws ArgumentError build_case(dx = 0.1, layout = merge(custom_layout,
+        (; body_center = (2.05, 3.0))))
     @test_throws ArgumentError build_case(reynolds = 200)
     @test_throws ArgumentError build_case(dx = 0.03)
     @test_throws ArgumentError build_case(duration = 8.1)
@@ -84,6 +107,14 @@ end
     @test loads.cd_pressure ≈ -2pressure[1]/1000
     @test loads.cd_viscous ≈ -2viscous[1]/1000
     @test loads.cy_pressure == loads.cy_viscous == 0
+    scaled_loads = frame_loads(positions, velocities, [1001., 1002., 1010.],
+        Int.([Moving, Fluid, Fixed]), [3,2,1], kernel, constants;
+        reference_speed = 2.0, reference_length = 2.0, span = 0.5)
+    @test scaled_loads.cd_pressure ≈ loads.cd_pressure / 4
+    inviscid_loads = frame_loads(positions, velocities, [1001., 1002., 1010.],
+        Int.([Moving, Fluid, Fixed]), [3,2,1], kernel, constants;
+        viscosity_model = ZeroViscosity())
+    @test iszero(inviscid_loads.cd_viscous)
     # Unevenly sampled linear functions must have their exact integral.
     @test bin_average([0.,0.01,0.3,1.], [1.,1.02,1.6,3.], 0.1, 0.8) ≈ 1.9
     @test_throws ArgumentError bin_average([0.,1.], [0.,1.], -0.01, 0.5)
