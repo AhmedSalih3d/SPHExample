@@ -64,10 +64,11 @@ unit square at [1,2] × [2,3], zero gravity, and nu = Umax L / Re.
 Cell-centered particles put the physical wall halfway between solid and fluid
 rows. Four solid layers cover the Wendland support; the square is filled.
 The existing DBC wall treatment approximates the specified no-slip walls.
+Set `visualize_in_paraview=true` for a manual run to generate its ParaView state.
 """
 function build_case(; reynolds = 100, dx = 0.025, duration = 8.0, interval = 0.02,
         sound_speed = 40.0, cfl = 0.2, save = joinpath(CASE_DIR, "runs", "case"),
-        float_type = Float32, graph = true)
+        float_type = Float32, graph = true, visualize_in_paraview = false)
     reynolds in (50, 100, 150) || throw(ArgumentError("Reynolds number must be 50, 100, or 150"))
     isfinite(dx) && 0 < dx <= 0.1 || throw(ArgumentError("dx must lie in (0, 0.1]"))
     all(x -> isfinite(x) && x > 0, (duration, interval, sound_speed, cfl)) ||
@@ -103,7 +104,7 @@ function build_case(; reynolds = 100, dx = 0.025, duration = 8.0, interval = 0.0
     times[end] = duration
     metadata = SimulationMetaData{2,T,NoShifting,NoKernelOutput,NoMDBC,StoreLog}(
         SimulationName = "MovingSquare", SaveLocation = abspath(save), SimulationTime = duration,
-        OutputTimes = times, VisualizeInParaview = false, OpenLogFile = false,
+        OutputTimes = times, VisualizeInParaview = visualize_in_paraview, OpenLogFile = false,
         ExportSingleVTKHDF = true, OutputVariables = ["Density", "Velocity", "Type", "GroupMarker"],
         GPUUseGraph = graph, GPUClipTimeStepToOutput = true, GPUDoublePosition = true,
         GPULegacyTimestep = true, # preserve the published validation controls

@@ -40,6 +40,7 @@ end
         case = build_case(; reynolds, dx)
         @test case.counts.fluid * dx^2 ≈ 49
         @test case.counts.square * dx^2 ≈ 1
+        @test !case.metadata.VisualizeInParaview
         @test case.constants.ν₀ ≈ 1/reynolds
         @test case.constants.m₀ ≈ 1000dx^2
         @test case.constants.g == 0
@@ -56,6 +57,9 @@ end
             !(1 < p[1] < 2 && 2 < p[2] < 3), case.geometry[2].Particles.Position)
         @test isempty(intersect(Set(case.geometry[2].Particles.Position), Set(square)))
     end
+    manual_case = build_case(dx = 0.1, duration = 0.1, interval = 0.1,
+        visualize_in_paraview = true)
+    @test manual_case.metadata.VisualizeInParaview
     @test_throws ArgumentError build_case(reynolds = 200)
     @test_throws ArgumentError build_case(dx = 0.03)
     @test_throws ArgumentError build_case(duration = 8.1)
