@@ -149,6 +149,15 @@ The [400 m/s results](results/motion_c400/README.md) show worse full-history
 pressure and viscous errors for both motions than the matched 160 m/s cases;
 increasing sound speed is not a monotonic accuracy improvement here.
 
+### UpdatedMDBC retry
+
+The [fresh UpdatedMDBC retry](results/updated_mdbc_retry_c160/README.md) compares
+DBC and UpdatedMDBC with/without PlanarShifting at c0=160 m/s, integrated motion
+and original spacing/geometry. Run `updated_mdbc_retry.jl`, then
+`plot_updated_mdbc_retry.py` for raw loads, penetration histories and particle
+images. Unshifted UpdatedMDBC again loses impermeability; shifting mitigates
+deep intrusion but leaves excessive viscous force and corner penetration.
+
 ### Wider sponge diagnostic (manual default)
 
 For an original-sized 10×5 m tank with internal 2 m and 0.5 m sponges at
