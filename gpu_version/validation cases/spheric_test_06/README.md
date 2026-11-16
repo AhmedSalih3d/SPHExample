@@ -105,6 +105,14 @@ ASCII files contain time, pressure Cd and viscous Cd in the requested order.
 
 ### Wider sponge diagnostic (manual default)
 
+For an original-sized 10×5 m tank with internal 2 m and 0.5 m sponges at
+c0=160 m/s, run `original_tank_sponge.jl`, then `plot_original_tank_sponge.py`.
+See [the original-domain results](results/original_tank_sponge_c160/README.md):
+both tested widths worsen the reference load comparison. The 2 m layer damps
+the physical shear flow alongside the body, and the narrow layer also changes
+near-wall return flow. Preserving geometry alone does not preserve the benchmark
+when damping is added to its momentum equation.
+
 `manual_case.jl` now uses `c₀ = 160.0` m/s, DBC (`boundary_mode = NoMDBC`), integrated-velocity
 motion and no divergence cleaning in an expanded tank. Integrated motion means
 that body displacement is obtained by integrating the supplied velocity records,
@@ -136,6 +144,27 @@ Omit the numeric command argument to reproduce the 40 m/s study. The manual
 run uses its own `manual_wide_sponge_c160` tag to preserve previous runs.
 Reference errors for the expanded cases describe their
 difference from the original benchmark, not accuracy for the changed domain.
+
+### Original tank with an internal sponge
+
+Run `original_tank_sponge.jl` to keep the original 10 × 5 m walls and test
+0.5 m and 2 m internal sponges at c0=160 m/s, rate 100 s⁻¹, DBC and integrated
+motion, with cleaning off. These are separate diagnostics; they do not change
+the manual example's expanded-domain preset. The 2 m sponge leaves only the
+undamped rectangle (2,2)–(8,3), starting exactly at the body's top/bottom faces
+and overlapping its end-of-path neighbourhoods. It therefore damps physical
+shear/return flow as well as disturbances. The 0.5 m box keeps the body outside
+the damping region, although nearby fluid can still enter it.
+
+```sh
+julia --project=. -t 2,0 "validation cases/spheric_test_06/original_tank_sponge.jl"
+python "validation cases/spheric_test_06/plot_original_tank_sponge.py"
+```
+
+Results and raw plots are in `results/original_tank_sponge_c160`. These runs
+reuse the original/expanded no-sponge histories from `results/wide_sponge_c160`
+for comparison. Damping adds a momentum sink, so unchanged geometry alone does
+not make the damped flow identical to the official benchmark.
 
 The manual case now defaults to `motion_kind = :integrated`, integrating the
 official velocity records to avoid artificial acceleration from rounded positions.
