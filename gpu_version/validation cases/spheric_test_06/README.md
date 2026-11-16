@@ -161,6 +161,16 @@ for new matched controls and images. The flag selects new output paths; the
 current solver always uses the correction. The [earlier retry](results/updated_mdbc_retry_c160/README.md)
 is retained explicitly as historical pre-fix evidence.
 
+Append `40` to both commands to repeat the corrected comparison at c0=40.0 m/s:
+
+```sh
+julia --project=. -t 2,0 "validation cases/spheric_test_06/updated_mdbc_retry.jl" --paper-audit 40
+python "validation cases/spheric_test_06/plot_updated_mdbc_retry.py" --paper-audit 40
+```
+
+Results are stored separately under `results/updated_mdbc_paper_audit_c40`,
+including an overlay against the corrected 160 m/s histories.
+
 ### Wider sponge diagnostic (manual default)
 
 For an original-sized 10×5 m tank with internal 2 m and 0.5 m sponges at

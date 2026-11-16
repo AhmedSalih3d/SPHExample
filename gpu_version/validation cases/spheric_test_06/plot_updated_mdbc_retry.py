@@ -12,7 +12,10 @@ from matplotlib.patches import Rectangle
 ROOT=Path(__file__).resolve().parent
 parser=argparse.ArgumentParser()
 parser.add_argument("--paper-audit",action="store_true")
-tag="updated_mdbc_paper_audit_c160" if parser.parse_args().paper_audit else "updated_mdbc_retry_c160"
+parser.add_argument("sound_speed",type=float,nargs="?",default=160.0)
+args=parser.parse_args()
+sound_speed=args.sound_speed
+tag=("updated_mdbc_paper_audit_c" if args.paper_audit else "updated_mdbc_retry_c") + f"{sound_speed:g}"
 OUT=ROOT/"results"/tag
 WORK=ROOT/"runs"/tag
 variants=[("dbc","DBC · no shifting","#757575"),
@@ -41,7 +44,8 @@ axes[2,1].set(ylabel="Maximum |ρ/ρ₀ − 1| [%]",title="Fluid density departu
 axes[2,0].legend(fontsize=8);axes[2,1].legend(fontsize=8)
 for ax in axes.flat:
     ax.set(xlim=(0,8),xlabel="Time [s]");ax.grid(alpha=.2)
-fig.suptitle("Fresh UpdatedMDBC retry · c₀ = 160 m/s · integrated motion · original tank\n"
+study_label="Corrected UpdatedMDBC" if args.paper_audit else "Historical pre-fix UpdatedMDBC"
+fig.suptitle(f"{study_label} comparison · c₀ = {sound_speed:g} m/s · integrated motion · original tank\n"
              "Δp = 0.025 m · Re = 100 · matched legacy timestep · no sponge or cleaning · raw forces",fontsize=12)
 fig.tight_layout(rect=(0,0,1,.94))
 fig.savefig(OUT/"drag_and_penetration.png",dpi=180)
@@ -101,3 +105,25 @@ if tag == "updated_mdbc_paper_audit_c160":
     fig.tight_layout(rect=(0,.06,1,.92))
     fig.savefig(OUT/"continuity_fix_comparison.png",dpi=180)
     fig.savefig(OUT/"continuity_fix_comparison.pdf")
+
+if args.paper_audit and sound_speed != 160:
+    baseline=ROOT/"results/updated_mdbc_paper_audit_c160"
+    fig,axes=plt.subplots(2,3,figsize=(15,8))
+    for column,(name,label,_) in enumerate(variants):
+        for directory,speed,color in ((baseline,160,"#0072b2"),(OUT,sound_speed,"#d55e00")):
+            d=np.genfromtxt(directory/name/"native.csv",delimiter=",",names=True)
+            for row,component in enumerate(("pressure","viscous")):
+                axes[row,column].plot(d["time"],d[f"cd_{component}"],color=color,lw=1.1,label=f"c₀ = {speed:g} m/s")
+        axes[0,column].set_title(label,fontsize=10)
+        for row,component in enumerate(("pressure","viscous")):
+            ax=axes[row,column]
+            ax.plot(reference[:,0],reference[:,row+1],color="black",lw=1.3,label="Official FD reference")
+            ax.set(xlim=(0,8),xlabel="Time [s]",ylabel=f"{component.capitalize()} drag coefficient")
+            ax.grid(alpha=.2)
+    handles,labels=axes[0,0].get_legend_handles_labels()
+    fig.legend(handles,labels,loc="lower center",ncol=3,fontsize=9)
+    fig.suptitle("Corrected continuity · sound-speed comparison · original tank and spacing\n"
+                 "Integrated motion · identical CFL and δ; timestep and diffusion coefficient change with c₀",fontsize=12)
+    fig.tight_layout(rect=(0,.06,1,.92))
+    fig.savefig(OUT/"sound_speed_comparison.png",dpi=180)
+    fig.savefig(OUT/"sound_speed_comparison.pdf")
