@@ -4,17 +4,23 @@ include(joinpath(@__DIR__, "case.jl"))
 using .SphericTest06
 include(joinpath(@__DIR__, "noise_metrics.jl"))
 
-const WORK = joinpath(@__DIR__, "runs", "motion_c160")
-const RESULTS = joinpath(@__DIR__, "results", "motion_c160")
+const RESOLUTION = isempty(ARGS) ? 40 : parse(Int, only(ARGS))
+RESOLUTION > 0 || throw(ArgumentError("Resolution L/dp must be positive"))
+const SPACING = 1.0 / RESOLUTION
+const BASENAME = "Re100_n$(lpad(RESOLUTION, 3, '0'))"
+const STUDY_TAG = RESOLUTION == 40 ? "motion_c160" : "motion_c160_n$(lpad(RESOLUTION, 3, '0'))"
+const WORK = joinpath(@__DIR__, "runs", STUDY_TAG)
+const RESULTS = joinpath(@__DIR__, "results", STUDY_TAG)
 for kind in (:hermite, :integrated)
     directory = joinpath(WORK, string(kind))
     results = joinpath(RESULTS, string(kind))
-    if isfile(joinpath(results, "Re100_n040.toml"))
-        info = TOML.parsefile(joinpath(results, "Re100_n040.toml"))
-        info["sound_speed"] == 160 && info["motion_kind"] == string(kind) || error("Saved configuration differs")
+    if isfile(joinpath(results, BASENAME * ".toml"))
+        info = TOML.parsefile(joinpath(results, BASENAME * ".toml"))
+        info["sound_speed"] == 160 && info["motion_kind"] == string(kind) &&
+            info["dx"] == SPACING || error("Saved configuration differs")
         continue
     end
-    base = build_case(; sound_speed = 160.0, save = directory)
+    base = build_case(; sound_speed = 160.0, dx = SPACING, save = directory)
     case = merge(base, (; motion = PrescribedMotion(3; translation = body_trajectory(motion_kind = kind)),
         motion_kind = kind, boundary_mode = NoMDBC))
     mkpath(directory)
@@ -32,13 +38,15 @@ reference = read_reference(joinpath(REFERENCE_DIR, "Force_Re100.dat"))
 rows = NamedTuple[]
 for kind in (:hermite, :integrated)
     directory = joinpath(RESULTS, string(kind))
-    data = CSV.File(joinpath(directory, "Re100_n040.csv"))
-    state = TOML.parsefile(joinpath(directory, "Re100_n040.toml"))
+    data = CSV.File(joinpath(directory, BASENAME * ".csv"))
+    state = TOML.parsefile(joinpath(directory, BASENAME * ".toml"))
     state["frames"] == 401 && state["frozen_particles"] == 0 || error("Incomplete $kind")
     t, p, v = Float64.(data.time), Float64.(data.cd_pressure), Float64.(data.cd_viscous)
     metrics, _ = drag_metrics(t, p, v, reference)
     startup = findall(x -> 0.8 <= x <= 1.6, t)
-    push!(rows, (; motion = kind, pressure_error = metrics["pressure_raw_nrmse"],
+    push!(rows, (; motion = kind, dx = SPACING,
+        particles = state["fluid_particles"] + state["square_particles"] + state["fixed_particles"],
+        pressure_error = metrics["pressure_raw_nrmse"],
         viscous_error = metrics["viscous_raw_nrmse"], pressure_noise = metrics["pressure_highpass_rms"],
         viscous_noise = metrics["viscous_highpass_rms"], startup_pressure_minimum = minimum(p[startup]),
         pressure_mean_3_7 = bin_average(t, p, 3., 7.), viscous_mean_3_7 = bin_average(t, v, 3., 7.),

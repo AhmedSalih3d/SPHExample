@@ -123,6 +123,18 @@ python "validation cases/spheric_test_06/plot_motion_c160.py"
 Both are fresh full-duration runs; histories, metrics and plots are stored
 separately under `results/motion_c160`.
 
+To double the spatial resolution, halve the spacing from 0.025 m to 0.0125 m:
+
+```sh
+julia --project=. -t 2,0 "validation cases/spheric_test_06/motion_c160.jl" 80
+python "validation cases/spheric_test_06/plot_motion_c160.py" 80
+```
+
+The argument is `L/dp`, not particle spacing. In 2D this gives four times as
+many fluid particles, with results saved separately under `results/motion_c160_n080`.
+Both motion types retain c0=160 m/s, the original domain, DBC, and no sponge or
+cleaning. The plot script also compares each fine run with its L/dp=40 history.
+
 ### Wider sponge diagnostic (manual default)
 
 For an original-sized 10×5 m tank with internal 2 m and 0.5 m sponges at
