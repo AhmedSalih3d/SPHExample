@@ -4,8 +4,11 @@ using SPHExampleGPU, CUDA, CSV, TOML
 include(joinpath(@__DIR__, "mdbc_validation.jl"))
 const M = MDBCValidation
 const C = M.C
-const WORK = joinpath(@__DIR__, "runs", "updated_mdbc_retry_c160")
-const RESULTS = joinpath(@__DIR__, "results", "updated_mdbc_retry_c160")
+isempty(ARGS) || ARGS == ["--paper-audit"] || throw(ArgumentError("Expected no arguments or --paper-audit"))
+# This selects a new output family; the current solver determines the equations.
+const STUDY_TAG = isempty(ARGS) ? "updated_mdbc_retry_c160" : "updated_mdbc_paper_audit_c160"
+const WORK = joinpath(@__DIR__, "runs", STUDY_TAG)
+const RESULTS = joinpath(@__DIR__, "results", STUDY_TAG)
 const VARIANTS = (("dbc", NoMDBC, NoShifting),
     ("updated", UpdatedMDBC, NoShifting), ("updated_shifting", UpdatedMDBC, PlanarShifting))
 

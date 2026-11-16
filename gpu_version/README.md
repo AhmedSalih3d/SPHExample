@@ -1239,11 +1239,15 @@ a unit direction. Translating walls reconstruct their ghosts from that displacem
 * Pressure cloning from ghost density and the normal component of gravity minus
   prescribed wall acceleration. Displacement is `xb - xg`, as in the reference
   implementation, so pressure increases towards a submerged bottom wall.
-* Mirrored no-slip velocity `2U - ug` for continuity, while viscosity projects
+* Physical wall velocity `U` for continuity, matching the reference mDBC2
+  density interaction. Mirrored no-slip velocity `2U - ug` is used for viscosity, which projects
   out only the mirrored relative normal velocity (`(2U - ug) - (((2U - ug) - U) · n) n`),
   preserving Galilean invariance when walls translate along their normal.
   Physical wall velocity remains separate, including in output.
   Viscosity uses the usual coefficient (boundary factor one).
+  Earlier moving-square studies used mirrored velocity in continuity; that
+  implementation mismatch is corrected and documented in the
+  [paper audit and new runs](validation%20cases/spheric_test_06/results/updated_mdbc_paper_audit_c160/README.md).
 * Corrections before both interaction stages, including with CUDA graphs, both
   time-stepping schemes, 2D/3D, either precision, and double-position storage.
   Cloned boundary density is not advanced through continuity or clamped by the

@@ -1,5 +1,14 @@
 # Fresh UpdatedMDBC retry
 
+**Historical pre-fix results:** these runs used mirrored ghost velocity in
+continuity, a mismatch found by auditing the supplied presentation and reference
+source. See the [paper audit and corrected runs](../updated_mdbc_paper_audit_c160/README.md).
+They demonstrate a failure of that implementation; they do not establish a
+failure of the published UpdatedMDBC formulation.
+Exact reproduction of these pre-fix runs requires pre-fix source (commit
+`dc51312`); use `--paper-audit` with the current retry/plot scripts for corrected
+solver results in a separate output family.
+
 Three new full 8 s Re100 cases compare DBC, UpdatedMDBC without shifting,
 and UpdatedMDBC with PlanarShifting. All retain c0=160 m/s, dp=0.025 m,
 the original 10×5 m tank, integrated-velocity motion, physical laminar

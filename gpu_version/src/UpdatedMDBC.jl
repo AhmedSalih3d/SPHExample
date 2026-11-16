@@ -149,7 +149,9 @@ function updated_mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVect
         end
         wall_velocity = Velocity[i]
         mirrored = active ? 2 * wall_velocity - ghost_velocity : wall_velocity
-        data.velocity[state_slot] = mirrored
+        # Continuity uses the physical wall velocity. Mirroring is the no-slip
+        # viscous construction, not a second normal wall velocity for density.
+        data.velocity[state_slot] = wall_velocity
         # Project out only the mirrored relative normal velocity so co-moving
         # normal wall translation stays Galilean invariant in viscosity.
         data.tangent_velocity[state_slot] = active ?

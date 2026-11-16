@@ -142,7 +142,7 @@ if CUDA.functional()
                 @test particle_pressure(Array(gpu.Density)[idx], Array(gpu.Type)[idx],
                     f.constants.c₀, f.constants.ρ₀, UpdatedMDBC()) ≈ (dry ? zero(T) : -T(400)) atol = T(0.5)
                 @test Array(gpu.Velocity)[idx] == zero(SVector{D, T})
-                @test Array(sup.boundary_data.velocity)[slot] ≈ (dry ? zero(SVector{D, T}) : SVector{D, T}(ntuple(_ -> -T(0.2), D)))
+                @test Array(sup.boundary_data.velocity)[slot] == zero(SVector{D, T})
                 tangent = Array(sup.boundary_data.tangent_velocity)[slot]
                 @test tangent[D] ≈ zero(T) atol = eps(T)
                 @test tangent[1] ≈ (dry ? zero(T) : -T(0.2))
@@ -277,8 +277,23 @@ if CUDA.functional()
                 gpu2.GhostPoints, gpu2.GhostNormals, gpu2.GhostIndex, gpu2.Type, cl.CellStart,
                 cl.grid_dev, step, kernel, constants, sup.boundary_data; pos_cells = sup.PosCells,
                 compact_ghosts = Val(true))
-            @test only(Array(sup.boundary_data.velocity)) ≈ U_wall - delta_u atol = 50eps(T)
+            @test only(Array(sup.boundary_data.velocity)) ≈ U_wall atol = 50eps(T)
             @test only(Array(sup.boundary_data.tangent_velocity)) ≈ SVector{2, T}(U_wall[1], U_wall[2] - delta_u[2]) atol = 50eps(T)
+
+            # The continuity operator must see U_wall, not 2U_wall-u_ghost.
+            # With a normal relative perturbation the latter doubles wall-pair
+            # compression/expansion. Compare with the physical-velocity operator.
+            function physical_wall_rate(boundary_data)
+                launch_interactions!(sup.dρdtI, gpu2.Acceleration, gpu2.Kernel, gpu2.KernelGradient, sup.∇Cᵢ, sup.∇◌rᵢ,
+                    gpu2.Position, gpu2.Density, gpu2.Velocity, gpu2.Type, cl.CellStart, gpu2.CellID, cl.grid_dev, step,
+                    ZeroDensityDiffusion(), ZeroViscosity(), kernel, constants, Val(false), Val(false);
+                    pos_cells = sup.PosCells, boundary_data, boundary_forces = Val(true))
+                return Array(sup.dρdtI)
+            end
+            corrected_rate = physical_wall_rate(sup.boundary_data)
+            reference_rate = physical_wall_rate(nothing)
+            @test maximum(abs, reference_rate) > T(0.1)
+            @test corrected_rate ≈ reference_rate rtol = 50eps(T) atol = 50eps(T)
 
             # 3. Exact prescribed SimMotion acceleration clones advancing (+p) and receding (-p) wall pressure.
             traj = MotionSequence([KinematicSegment(1.0; velocity = (0.2, 0.0), acceleration = (5.0, 0.0))])

@@ -1,5 +1,11 @@
 # Boundary traction verification, mDBC moving-square comparison and spatial refinement
 
+**Historical moving-square results:** the UpdatedMDBC flow runs below predate
+the correction from mirrored to physical wall velocity in continuity. See the
+[paper audit and corrected comparisons](results/updated_mdbc_paper_audit_c160/README.md)
+before interpreting the penetration/shifting conclusions. The original measured
+tables are retained as provenance.
+
 **Status: no tested WCSPH boundary/shifting combination passes all SPHERIC Test 06 validation criteria simultaneously.** Building on the new translation-invariant pairwise default timestep (`fc4012c4`) and the translating/accelerating `UpdatedMDBC` extension (`f992471c`), this study executes the two foundational traction checks and the matched moving-square boundary and spatial-refinement campaign outlined in [PAIRWISE_FORCE_ACCURACY.md](PAIRWISE_FORCE_ACCURACY.md).
 
 All 33 full 8-second moving-square runs and all foundational pressure/Couette benchmarks completed without particle loss or NaN states. Every force history is reconstructed in Float64 from exact solver-consistent square/fluid pair interactions and plotted **without smoothing or filtering**.

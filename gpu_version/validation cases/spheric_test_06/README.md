@@ -151,12 +151,15 @@ increasing sound speed is not a monotonic accuracy improvement here.
 
 ### UpdatedMDBC retry
 
-The [fresh UpdatedMDBC retry](results/updated_mdbc_retry_c160/README.md) compares
-DBC and UpdatedMDBC with/without PlanarShifting at c0=160 m/s, integrated motion
-and original spacing/geometry. Run `updated_mdbc_retry.jl`, then
-`plot_updated_mdbc_retry.py` for raw loads, penetration histories and particle
-images. Unshifted UpdatedMDBC again loses impermeability; shifting mitigates
-deep intrusion but leaves excessive viscous force and corner penetration.
+The [paper audit and corrected retry](results/updated_mdbc_paper_audit_c160/README.md)
+fixes a confirmed implementation mismatch: continuity must use physical wall
+velocity, while mirrored ghost velocity supplies viscous no-slip treatment.
+The corrected unshifted run reduces maximum penetration from 485 mm to 1.69 mm,
+with no fluid centres inside the square at the final frame. Force errors remain.
+Run `updated_mdbc_retry.jl --paper-audit`, then `plot_updated_mdbc_retry.py --paper-audit`
+for new matched controls and images. The flag selects new output paths; the
+current solver always uses the correction. The [earlier retry](results/updated_mdbc_retry_c160/README.md)
+is retained explicitly as historical pre-fix evidence.
 
 ### Wider sponge diagnostic (manual default)
 

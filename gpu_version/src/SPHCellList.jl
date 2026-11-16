@@ -617,7 +617,7 @@ of precision `position_type`. The cell relative positions are allocated
 exactly when `position_type !== T`; `share_pos_cells = true` (enabled by metadata
 constructors with `GPUCompactBuffers`) shares one `PosCell` buffer between
 `PosCells` and `PosCellsₙ⁺`. `updated_mdbc` allocates the boundary
-activation mask and mirrored/tangential interaction velocities; these are
+activation mask and physical-continuity/tangential-viscosity wall velocities; these are
 scratch fields recomputed after sorting and before each interaction stage.
 The device-particle form stores these fields per ghost owner when ghosts are
 compact, sharing the particle slot map. Integer-count forms retain dense
