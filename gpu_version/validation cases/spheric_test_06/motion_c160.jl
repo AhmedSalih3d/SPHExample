@@ -1,0 +1,48 @@
+# julia --project=. -t 2,0 "validation cases/spheric_test_06/motion_c160.jl"
+using SPHExampleGPU, CUDA, CSV, TOML, Statistics, LinearAlgebra
+include(joinpath(@__DIR__, "case.jl"))
+using .SphericTest06
+include(joinpath(@__DIR__, "noise_metrics.jl"))
+
+const WORK = joinpath(@__DIR__, "runs", "motion_c160")
+const RESULTS = joinpath(@__DIR__, "results", "motion_c160")
+for kind in (:hermite, :integrated)
+    directory = joinpath(WORK, string(kind))
+    results = joinpath(RESULTS, string(kind))
+    if isfile(joinpath(results, "Re100_n040.toml"))
+        info = TOML.parsefile(joinpath(results, "Re100_n040.toml"))
+        info["sound_speed"] == 160 && info["motion_kind"] == string(kind) || error("Saved configuration differs")
+        continue
+    end
+    base = build_case(; sound_speed = 160.0, save = directory)
+    case = merge(base, (; motion = PrescribedMotion(3; translation = body_trajectory(motion_kind = kind)),
+        motion_kind = kind, boundary_mode = NoMDBC))
+    mkpath(directory)
+    println("Starting $kind"); flush(stdout)
+    open(joinpath(directory, "console.log"), "w") do io
+        redirect_stdout(io) do
+            run_case(case; results_dir = results)
+        end
+    end
+    println("Completed $kind"); flush(stdout)
+    GC.gc(true); CUDA.reclaim()
+end
+
+reference = read_reference(joinpath(REFERENCE_DIR, "Force_Re100.dat"))
+rows = NamedTuple[]
+for kind in (:hermite, :integrated)
+    directory = joinpath(RESULTS, string(kind))
+    data = CSV.File(joinpath(directory, "Re100_n040.csv"))
+    state = TOML.parsefile(joinpath(directory, "Re100_n040.toml"))
+    state["frames"] == 401 && state["frozen_particles"] == 0 || error("Incomplete $kind")
+    t, p, v = Float64.(data.time), Float64.(data.cd_pressure), Float64.(data.cd_viscous)
+    metrics, _ = drag_metrics(t, p, v, reference)
+    startup = findall(x -> 0.8 <= x <= 1.6, t)
+    push!(rows, (; motion = kind, pressure_error = metrics["pressure_raw_nrmse"],
+        viscous_error = metrics["viscous_raw_nrmse"], pressure_noise = metrics["pressure_highpass_rms"],
+        viscous_noise = metrics["viscous_highpass_rms"], startup_pressure_minimum = minimum(p[startup]),
+        pressure_mean_3_7 = bin_average(t, p, 3., 7.), viscous_mean_3_7 = bin_average(t, v, 3., 7.),
+        minimum_clearance = state["minimum_clearance"], steps = state["steps"]))
+end
+CSV.write(joinpath(RESULTS, "summary.csv"), rows)
+foreach(println, rows)

@@ -103,6 +103,26 @@ ASCII files contain time, pressure Cd and viscous Cd in the requested order.
 
 ## Optional acoustic controls
 
+### Motion interpolation at 160 m/s
+
+The [fresh matched motion comparison](results/motion_c160/README.md) tests
+rounded-position Hermite and integrated-velocity motion at c0=160.0 m/s in
+the original tank with DBC and no sponge/cleaning. Run `motion_c160.jl` and
+then `plot_motion_c160.py` to reproduce it. Integrated motion reduces the
+central pressure-noise proxy by about 69%, while raw pressure error changes
+from 24.86% to 20.58%; startup and mean-load discrepancies remain.
+
+For a matched comparison of rounded-position Hermite motion and integrated
+velocity at c0=160.0 m/s in the original tank, with DBC and no sponge or cleaning:
+
+```sh
+julia --project=. -t 2,0 "validation cases/spheric_test_06/motion_c160.jl"
+python "validation cases/spheric_test_06/plot_motion_c160.py"
+```
+
+Both are fresh full-duration runs; histories, metrics and plots are stored
+separately under `results/motion_c160`.
+
 ### Wider sponge diagnostic (manual default)
 
 For an original-sized 10×5 m tank with internal 2 m and 0.5 m sponges at
