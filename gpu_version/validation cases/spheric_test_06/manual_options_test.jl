@@ -1,6 +1,7 @@
 using Test, SPHExampleGPU, CUDA
 include(joinpath(@__DIR__, "case.jl"))
 using .SphericTest06
+using StaticArrays: SVector
 module SimpleManualSandbox end
 
 @testset "Manual motion and boundary options" begin
@@ -26,6 +27,21 @@ module SimpleManualSandbox end
     @test_throws ArgumentError SphericTest06.manual_geometry(sampled, 1000f0, Float32; boundary_mode = UpdatedMDBC)
 end
 
+@testset "Wide sponge leaves the body path undamped" begin
+    layout = (; tank_origin = (-2.0, -2.0), tank_size = (14.0, 9.0))
+    sponge = SphericTest06.edge_sponge(layout; width = 2.0, rate = 100.0)
+    damping = SPHExampleGPU.DampingZones
+    trajectory = body_trajectory(motion_kind = :integrated)
+    for time in 0:0.1:8
+        center = SVector(1.5, 2.5) + trajectory_state(trajectory, time)[1]
+        for corner in (SVector(-0.5, -0.5), SVector(0.5, -0.5), SVector(-0.5, 0.5), SVector(0.5, 0.5))
+            @test damping.normalized_damping(sponge, center + corner) == 0
+        end
+    end
+    @test damping.normalized_damping(sponge, SVector(-1.0, 2.5)) ≈ 0.25
+    @test damping.normalized_damping(sponge, SVector(-2.0, 2.5)) ≈ 1.0
+end
+
 if CUDA.functional()
     @testset "SimpleMDBC manual GPU run" begin
         mktempdir() do directory
@@ -42,6 +58,9 @@ if CUDA.functional()
             run = include_string(SimpleManualSandbox, source, path)
             @test run.case.boundary_mode === SimpleMDBC
             @test run.case.motion_kind === :integrated
+            @test run.case.domain_padding == 2.0
+            @test run.case.sponge_width == 2.0
+            @test run.case.damping !== nothing
             @test run.completed.result.final_state.complete
             @test length(run.completed.analysis.rows) == 2
             @test all(row -> isfinite(row.cd_pressure) && isfinite(row.cd_viscous), run.completed.analysis.rows)

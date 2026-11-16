@@ -103,6 +103,37 @@ ASCII files contain time, pressure Cd and viscous Cd in the requested order.
 
 ## Optional acoustic controls
 
+### Wider sponge diagnostic (manual default)
+
+`manual_case.jl` now uses DBC (`boundary_mode = NoMDBC`), integrated-velocity
+motion and no divergence cleaning in an expanded tank. Integrated motion means
+that body displacement is obtained by integrating the supplied velocity records,
+avoiding acceleration caused by rounding in the displacement records.
+
+The editable settings are `domain_padding = 2.0`, `use_sponge = true`,
+`sponge_width = 2.0` m and `sponge_rate = 100.0` s⁻¹. The tank extends from
+(-2, -2) to (12, 7) m; the quadratic velocity sponge occupies the outer 2 m.
+The original [0, 10] × [0, 5] m box and the entire prescribed square path are
+undamped. Results go to `runs/manual_wide_sponge` and
+`results/manual_wide_sponge`, separate from earlier manual runs.
+
+This is a changed-domain diagnostic, not the official closed-tank validation.
+Moving the no-slip tank walls and damping the surrounding fluid both change
+the physical return flow and body loads. For the original benchmark, set
+`domain_padding = 0.0`, `use_sponge = false` and choose a different `run_tag`.
+Keep `sponge_width <= domain_padding` to keep damping outside the original box.
+
+Run the three matched original-tank, expanded-tank and expanded-sponge controls:
+
+```sh
+julia --project=. -t 2,0 "validation cases/spheric_test_06/wide_sponge.jl"
+python "validation cases/spheric_test_06/plot_wide_sponge.py"
+```
+
+The coefficient histories and metadata are saved separately under
+`results/wide_sponge`. Reference errors for the expanded cases describe their
+difference from the original benchmark, not accuracy for the changed domain.
+
 The manual case now defaults to `motion_kind = :integrated`, integrating the
 official velocity records to avoid artificial acceleration from rounded positions.
 Use `:hermite` to reproduce the historical position interpolation. Both modes

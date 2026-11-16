@@ -10,10 +10,20 @@ let
     Dimensions = 2
     FloatType  = Float32
 
+    # Extend the tank so the 2 m sponge stays outside the original benchmark box.
+    # Set padding to zero and use_sponge to false for the official closed tank.
+    domain_padding = 2.0
+    use_sponge     = true
+    sponge_width   = 2.0
+    sponge_rate    = 100.0
+    isfinite(domain_padding) && domain_padding >= 0 || throw(ArgumentError("domain_padding must be finite and nonnegative"))
+    !use_sponge || 0 < sponge_width <= domain_padding ||
+        throw(ArgumentError("Require 0 < sponge_width <= domain_padding to keep the original box undamped"))
+
     # Geometry is in metres. Tank and body edges must align with dx.
     layout = (
-        tank_origin = (0.0, 0.0),
-        tank_size   = (10.0, 5.0),
+        tank_origin = (-domain_padding, -domain_padding),
+        tank_size   = (10.0 + 2domain_padding, 5.0 + 2domain_padding),
         body_center = (1.5, 2.5),
         body_size   = (1.0, 1.0),
     )
@@ -33,7 +43,7 @@ let
     output_interval      = 0.02
     visualize_in_paraview = true
 
-    run_tag          = "manual_layout"
+    run_tag          = "manual_wide_sponge"
     n                = round(Int, reference_length / dx)
     run_name         = "Re$(lpad(string(reynolds), 3, '0'))_n$(lpad(string(n), 3, '0'))"
     save_location    = joinpath(@__DIR__, "runs", run_tag, run_name)
@@ -107,8 +117,8 @@ let
     SimViscosity        = Laminar()
     SimDensityDiffusion = ZeroGravityLinearDensityDiffusion()
     SimTimeStepping     = SymplecticTimeStepping()
-    # Optional controls: SphericTest06.edge_sponge(layout; width=dx, rate=100) and DivergenceCleaning(kappa=10).
-    SimDamping          = nothing
+    # Quadratic velocity damping at outer edges; no damping inside the original box.
+    SimDamping          = use_sponge ? SphericTest06.edge_sponge(layout; width = sponge_width, rate = sponge_rate) : nothing
     SimDivergenceCleaning = nothing
 
     SimViscosity isa Union{Laminar, ZeroViscosity, ArtificialViscosity} ||
@@ -154,6 +164,7 @@ let
         viscosity_model = SimViscosity, density_diffusion_model = SimDensityDiffusion,
         time_stepping = SimTimeStepping, shifting = typeof(SimMetaData).parameters[3],
         start_delay, motion_kind, boundary_mode, damping = SimDamping, divergence_cleaning = SimDivergenceCleaning,
+        domain_padding, sponge_width = use_sponge ? sponge_width : 0.0, sponge_rate = use_sponge ? sponge_rate : 0.0,
     )
     completed = SphericTest06.save_run_results(case, result; results_dir = results_location)
 
