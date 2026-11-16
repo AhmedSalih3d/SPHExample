@@ -213,6 +213,12 @@ and `plot_coefh_reynolds.py` for the combined raw-force figures. Both commands
 accept `--native-only` for the Julia subset. The stock Dual comparison uses
 zero background pressure; differing solver operators are documented.
 
+The [112000 Pa study](results/background_112000/README.md) distinguishes the
+DSPH FAQ's EOS stiffness B=112000 Pa (c0=28 m/s) from an additive background
+pressure of 112000 Pa. Re100 controls test both interpretations; neither
+improves force agreement. Reproduce with `background_112000.jl` and
+`plot_background_112000.py`.
+
 ### Wider sponge diagnostic (historical)
 
 For an original-sized 10×5 m tank with internal 2 m and 0.5 m sponges at

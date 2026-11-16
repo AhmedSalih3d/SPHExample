@@ -1,0 +1,11 @@
+background_pressure = 0.0
+cfl = 0.2
+coefh = 1.2
+eos_stiffness = 112000.0
+frames = 401
+particles = 86100
+reynolds = 100
+solver_seconds = 94.72142
+sound_speed = 28.0
+steps = 27569
+wall_seconds = 95.1445651
