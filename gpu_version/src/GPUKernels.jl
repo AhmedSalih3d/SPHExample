@@ -655,7 +655,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
     @inbounds if valid & (lane == Int32(0))
         if cleaning !== nothing
             density_i = Density[source_i]
-            pressure_i = EquationOfStateGamma7(density_i,c₀,ρ₀)
+            pressure_i = EquationOfStateGamma7(density_i,c₀,ρ₀,ρ₀⁻¹,BackgroundPressure)
             cleaning_derivative!(cleaning,i,ParticleType[source_i],divergence_sum,pressure_i,density_i,c₀,SimKernel.h)
             predictor_output === nothing || cleaning_predict!(cleaning,i,ParticleType[source_i],step_dt(step))
         end

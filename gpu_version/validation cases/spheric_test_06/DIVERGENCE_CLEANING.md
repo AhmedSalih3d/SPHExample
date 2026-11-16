@@ -36,6 +36,12 @@ At Re = 150 the positive-only treatment produces a pressure Cd of about −22.43
 
 ## GPU execution and allocation
 
+With a nonzero `SimConstants.BackgroundPressure`, both the local ψ decay and
+its device timestep bound now use pressure including that offset. The
+historical runs below all used zero offset and are unchanged. See the separate
+[pressure controls](README.md#optional-acoustic-controls) for the atmospheric
+offset, initial hold and thin-sponge experiments.
+
 The ψ gradient and velocity divergence are fused into the existing neighbor traversals, with gather lanes and no atomics. The predictor and corrector scalar updates are fused into particle integration, including eligible fused stationary predictors. A signal-speed reduction is fused into accepted-state integration and consumed by the existing device timestep selector; only initialization/rebuild refreshes need an extra elementwise reduction. There is no extra neighbor search or per-step host readback for cleaning. The physical acceleration and existing acoustic restrictions still apply.
 
 Three N-element working-precision device scalars hold ψ, ψ_half and its derivative. The predictor supplies idle permutation scratch at rebuilds, then ψ is copied back before that scratch is used for prediction. The scalar therefore follows stable particle IDs without persistent-ID indirection in interactions. The signal workspace adds one scalar per reduction block; its small host partial buffer is separate. At N = 84,864 in Float32 this adds 1,019,696 allocated device-buffer bytes (about 0.9725 MiB), excluding allocator reservations, program state and register spills. The final result downloads one N-scalar host ψ array in particle order. Disabled mode allocates none of these buffers and removes the cleaning branches through specialization.

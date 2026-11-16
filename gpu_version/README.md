@@ -71,8 +71,12 @@ RunSimulation(;
 )
 ```
 
-The default `SimDivergenceCleaning = nothing` retains the original solver and
-allocates no cleaning buffers. The enabled mode evolves a scalar ψ, initially
+The default `SimDivergenceCleaning = nothing` retains the original solver.
+With a nonzero `SimConstants.BackgroundPressure`,
+cleaning uses the offset in both the local decay speed and device timestep
+bound, consistently with the momentum pressure; a large offset may therefore
+increase the step count. See the [moving-square pressure controls](validation%20cases/spheric_test_06/README.md#optional-acoustic-controls).
+Disabled cleaning allocates no cleaning buffers. The enabled mode evolves a scalar ψ, initially
 zero, and adds its negative gradient to fluid acceleration. It transports and
 damps velocity-divergence error throughout the fluid, with ψ = 0 on solid and
 frozen particles. It does not impose incompressibility or guarantee accurate

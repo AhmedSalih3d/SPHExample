@@ -9,6 +9,8 @@ using TOML
 include(joinpath(@__DIR__, "case.jl"))
 using .SphericTest06
 
+module ManualCaseSandbox end
+
 @testset "Official Test 06 data and absolute motion" begin
     @test verify_reference()
     motion = read_reference(joinpath(REFERENCE_DIR, "Motion_Body.dat"))
@@ -18,6 +20,17 @@ using .SphericTest06
     @test motion[1, 4] == 1.5
     @test maximum(motion[:, 3]) ≈ 1 atol = 0.0002
     trajectory = body_trajectory()
+    delayed = body_trajectory(start_delay = 4.0)
+    for time in (0.0, 1.0, 3.9, 4.0)
+        offset, velocity, _ = trajectory_state(delayed, time)
+        @test iszero(offset) && iszero(velocity)
+    end
+    for time in (0.1, 1.0, 4.0, 8.0)
+        actual, expected = trajectory_state(delayed, time + 4.0), trajectory_state(trajectory, time)
+        @test actual[1] ≈ expected[1]
+        @test actual[2] ≈ expected[2]
+    end
+    @test_throws ArgumentError body_trajectory(start_delay = -1)
     for i in (1, 50, 100, 300, 700, 900)
         offset, velocity, _ = trajectory_state(trajectory, motion[i, 1])
         @test offset ≈ SVector(motion[i, 4] - 1.5, 0)
@@ -87,6 +100,17 @@ end
     @test_throws ArgumentError build_case(dx = 0.03)
     @test_throws ArgumentError build_case(duration = 8.1)
     @test_throws ArgumentError build_case(duration = 0.1, interval = 0.2)
+    @test_throws ArgumentError build_case(background_pressure = NaN)
+    held = build_case(start_delay = 4.0, duration = 12.0, background_pressure = 101325)
+    @test held.metadata.OutputTimes[end] == 12
+    @test held.constants.c₀ == 40 && held.constants.BackgroundPressure == 101325
+    sponge = SphericTest06.edge_sponge(; width = 0.025)
+    profile(x, y) = SPHExampleGPU.DampingZones.normalized_damping(sponge, SVector(x, y))
+    @test all(value -> isapprox(value, 0.25), (profile(0.0125, 2.5), profile(9.9875, 2.5),
+        profile(5.0, 0.0125), profile(5.0, 4.9875)))
+    @test profile(0.0125, 0.0125) ≈ 0.25
+    @test profile(0.025, 2.5) == 0
+    @test_throws ArgumentError SphericTest06.edge_sponge(; width = 0)
 end
 
 @testset "Drag sign, pair selection and time integration" begin
@@ -119,12 +143,14 @@ end
     @test bin_average([0.,0.01,0.3,1.], [1.,1.02,1.6,3.], 0.1, 0.8) ≈ 1.9
     @test_throws ArgumentError bin_average([0.,1.], [0.,1.], -0.01, 0.5)
     @test_throws ArgumentError bin_average([0.,1.], [0.,1.], 0.5, 1.1)
+    @test SphericTest06.interpolate([0.0, 0.3 - 0.1], [0.0, 1.0], 0.2) == 1.0
+    @test_throws ArgumentError SphericTest06.interpolate([0.0, 0.3 - 0.1], [0.0, 1.0], 0.2 + 1e-8)
 end
 
 if CUDA.functional()
     @testset "Force postprocessing agrees with the GPU solver" begin
-        for T in (Float32, Float64)
-            constants = SimulationConstants{T}(2; dx = 0.025, c₀ = 40, g = 0, ν₀ = 0.01)
+        for T in (Float32, Float64), background_pressure in (0,101325)
+            constants = SimulationConstants{T}(2; dx = 0.025, c₀ = 40, g = 0, ν₀ = 0.01, BackgroundPressure = background_pressure)
             kernel = SPHKernelInstance{2,T}(WendlandC2(); h = T(sqrt(2)*0.025))
             geometry = [SPHGeometry{2,T}([SVector(1.99,2.5)]; Density = 1001, Type = Moving, GroupMarker = 3),
                 SPHGeometry{2,T}([SVector(2.02,2.5)]; Density = 1002, Type = Fluid, GroupMarker = 2)]
@@ -153,7 +179,8 @@ if CUDA.functional()
             expected_pressure, expected_viscous = pair_loads(position[i], position[j], velocity[i], velocity[j], density[i], density[j], kernel, constants)
             tolerance = T == Float32 ? 1e-4 : 1e-11
             @test constants.m₀ * pressure[i] ≈ expected_pressure rtol = tolerance
-            @test constants.m₀ * (total[i] - pressure[i]) ≈ expected_viscous rtol = tolerance
+            viscous_atol = 8eps(T) * norm(expected_pressure)
+            @test constants.m₀ * (total[i] - pressure[i]) ≈ expected_viscous rtol = tolerance atol = viscous_atol
             @test pressure[i] ≈ -pressure[j] rtol = tolerance
             @test total[i] ≈ -total[j] rtol = tolerance
         end
@@ -173,6 +200,58 @@ if CUDA.functional()
             @test length(comparison.metrics) == 2
             @test all(row -> !row.full_interval && !row.drag_pass, comparison.metrics)
             @test_throws ErrorException run_case(case; results_dir = directory)
+
+            # Exercise the editable script with the same short setup, keeping all outputs temporary.
+            manual_path = joinpath(@__DIR__, "manual_case.jl")
+            manual_source = replace(read(manual_path, String),
+                r"dx\s*=\s*0\.025" => "dx = 0.1",
+                r"duration\s*=\s*8\.0" => "duration = 0.2",
+                "visualize_in_paraview = true" => "visualize_in_paraview = false",
+                "joinpath(@__DIR__, \"runs\", run_tag, run_name)" => repr(joinpath(directory, "manual")),
+                "joinpath(@__DIR__, \"runs\", run_tag, \"paraview_force_plot\")" => repr(joinpath(directory, "plots")),
+                "joinpath(@__DIR__, \"results\", run_tag)" => repr(joinpath(directory, "manual_results")))
+            manual = include_string(ManualCaseSandbox, manual_source, manual_path)
+            @test manual.case.constants === case.constants
+            @test manual.case.counts == case.counts
+            @test manual.case.kernel.h == case.kernel.h
+            @test manual.case.metadata.OutputTimes == case.metadata.OutputTimes
+            @test manual.completed.result.performance.steps == result.result.performance.steps
+            @test length(manual.completed.analysis.rows) == length(result.analysis.rows)
+            for (actual, expected) in zip(manual.completed.analysis.rows, result.analysis.rows)
+                @test actual.time == expected.time
+                @test actual.cd_pressure ≈ expected.cd_pressure atol = 1e-6 rtol = 1e-6
+                @test actual.cd_viscous ≈ expected.cd_viscous atol = 1e-6 rtol = 1e-6
+            end
+            comparison_state = joinpath(directory, "plots", "ForceComparison_Re100.py")
+            @test isfile(comparison_state)
+            @test !isfile(joinpath(directory, "plots", "ForceComparison_Re100.png"))
+            pvpython = Sys.which("pvpython")
+            if pvpython !== nothing
+                # Use the headless test runner only to exercise the script loaded by the GUI in production.
+                run(`$pvpython --no-mpi --force-offscreen-rendering $comparison_state`)
+                @test isfile(joinpath(directory, "plots", "ForceComparison_Re100.pvsm"))
+                @test isfile(joinpath(directory, "plots", "ForceComparison_Re100.png"))
+            end
+        end
+
+        @testset "Combined background, initial hold, cleaning and one-dp sponge" begin
+            mktempdir() do directory
+                case = build_case(dx = 0.1, start_delay = 0.1, duration = 0.3,
+                    interval = 0.02, background_pressure = 101325, cfl = 0.1,
+                    damping = SphericTest06.edge_sponge(; width = 0.1),
+                    divergence_cleaning = DivergenceCleaning(kappa = 10),
+                    save = joinpath(directory, "run"))
+                result = run_case(case; results_dir = directory)
+                @test result.result.final_state.time == 0.3
+                @test result.analysis.rows[1].motion_time == -0.1
+                @test result.analysis.rows[end].motion_time ≈ 0.2
+                @test result.analysis.checks[1].pressure_mean ≈ 101325
+                @test all(row -> isfinite(row.cd_pressure) && isfinite(row.cd_viscous), result.analysis.rows)
+                @test result.metadata["divergence_cleaning"] && result.metadata["edge_sponge"]
+                @test result.metadata["motion_error_max"] < 1e-7
+                comparison = compare_histories(directory)
+                @test all(row -> !row.full_interval, comparison.metrics)
+            end
         end
     end
 end

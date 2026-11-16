@@ -19,7 +19,8 @@ The difference operators use neighboring particle volumes; wall and frozen
 particles have ψ = 0. This is a nonconservative cleaning operator, not a
 pressure projection or an incompressibility constraint.
 
-`1/τ = sigma * kappa * sqrt(abs(p)/ρ) / h`. Absolute pressure magnitude extends
+`1/τ = sigma * kappa * sqrt(abs(p)/ρ) / h`, including `BackgroundPressure`
+in both local decay and its timestep limit. Absolute pressure magnitude extends
 the paper's positive-pressure formula to negative gauge pressures without
 removing local decay in rarefactions. `pressure_mode = :positive` instead uses
 `max(p,0)`, a diagnostic alternative that can amplify startup disturbances in
@@ -122,7 +123,7 @@ end
 @inline signal_value(::Nothing, type, density, constants) = zero(density)
 @inline function signal_value(fields, type, density, constants)
     type == Fluid || return zero(density)
-    p = EquationOfStateGamma7(density,constants.c₀,constants.ρ₀)
+    p = EquationOfStateGamma7(density,constants.c₀,constants.ρ₀,inv(constants.ρ₀),constants.BackgroundPressure)
     return local_speed(fields.model,p,density)
 end
 @inline signal_max(a::SVector{1,T}, b::SVector{1,T}) where {T} = SVector{1,T}(max(a[1],b[1]))

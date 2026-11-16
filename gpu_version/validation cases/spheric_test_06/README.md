@@ -101,6 +101,100 @@ No inherited acceleration, total-force subtraction, body mass/inertia, or
 unsteady added-mass correction enters the force measurement. The three-column
 ASCII files contain time, pressure Cd and viscous Cd in the requested order.
 
+## Optional acoustic controls
+
+The reference defaults remain zero background pressure, no initial hold, no
+divergence cleaning and no sponge. The editable manual script exposes:
+
+- `BackgroundPressure = 101325.0` in `SimConstants` for a constant atmospheric
+  offset. Keep `c₀ = 40.0`: the Tait coefficient remains
+  `B = rho0*c0^2/7 = 228571.43 Pa`. Setting `Cb` to atmospheric pressure is
+  not equivalent to adding this offset.
+- `start_delay = 4.0` for four stationary seconds followed by the complete
+  eight-second motion (`duration = 8.0 + start_delay`). The prescribed curve
+  is shifted, not rescaled. Force CSVs retain simulation `time` and also store
+  `motion_time = time - start_delay`; reference metrics and ParaView overlays
+  use that alignment.
+- `SimDivergenceCleaning = DivergenceCleaning(kappa = 10, courant = 0.1)`
+  for the existing experimental velocity-divergence cleaner. Its decay and
+  stability bound both include the same background pressure used in the
+  momentum equation, so a large offset can require a smaller timestep.
+- `SimDamping = SphericTest06.edge_sponge(layout; width = dx, rate = 100.0)`
+  for one-dp fluid damping at all four tank edges. The quadratic profile uses
+  the maximum face penetration at corners, not four accumulated reductions.
+  It does not damp the tank or prescribed square. One dp is thinner than the
+  kernel support and is not claimed to be an effective nonreflecting boundary.
+
+Pressure output and offline square/fluid force reconstruction include the
+offset. The offset must not simply be subtracted from the reconstructed SPH
+pair forces: a constant pressure can create nonzero discrete residuals.
+Saved diagnostics include fluid pressure mean/std/min and kinetic energy to
+distinguish pressure positivity, stationary drift and noise reduction.
+
+The reproducible Re = 100 study uses dp = 0.025 m, c0 = 40 m/s, matched physical
+CFL = 0.1, cleaning kappa = 10 and a 100 s^-1 sponge where enabled. It runs
+baseline, background-only, hold-only, background+hold, cleaning-only,
+sponge-only, background+cleaning and the combined twelve-second case:
+
+```sh
+julia --project=. -t 2,0 "validation cases/spheric_test_06/pressure_controls.jl"
+```
+
+Pass control names to run a subset, e.g. `baseline background`. Compact force
+histories, spectra and `summary.csv` are written under
+`results/pressure_controls/<control>/`; particle histories are ignored under
+`runs/pressure_controls/<control>/`. Completed records are reused only when
+their settings match. Partial histories are never overwritten.
+
+The noise metric is the existing centered 0.5 s high-pass error RMS over motion
+time 1.5–6.5 s. Raw pressure/viscous reference error, mean drag over 2–6.5 s,
+stationary drift and particle-state checks are reported separately. These
+modified equations are diagnostic controls, not an automatic validation pass.
+
+### Measured Re = 100 outcome
+
+All eight controls completed with 84,864 particles, no frozen/lost fluid or
+square particles, and 401 frames for eight seconds or 601 frames with the
+four-second hold. These are single-resolution controls, not a convergence
+study. The measurements below use the same physical CFL = 0.1 baseline.
+
+| Control | Pressure-noise reduction | Raw pressure NRMSE | Raw viscous NRMSE | Mean pressure-drag change |
+|:--|--:|--:|--:|--:|
+| Baseline | 0.00% | 46.54% | 12.73% | 0.00% |
+| Atmospheric offset | 18.66% | 129.72% | 76.78% | +121.40% |
+| Initial hold only | 0.00% | 46.54% | 12.73% | 0.00% |
+| Offset + hold | 34.04% | 126.54% | 76.65% | +128.32% |
+| Cleaning only | 16.93% | 46.56% | 18.48% | +1.14% |
+| One-dp sponge only | 1.58% | 46.54% | 12.56% | +0.20% |
+| Offset + cleaning | 36.45% | 129.40% | 77.46% | +122.88% |
+| All controls | 42.74% | 130.40% | 76.72% | +128.33% |
+
+**Keep the reference defaults; none of these is a demonstrated drag fix.**
+The atmospheric offset keeps the minimum fluid pressure above 97.1 kPa and
+removes the measured particle-center penetration in these runs, but its
+discrete pressure forces more than double the mean drag. Subtracting the
+offset from the reported force would hide that effect rather than repair it.
+The offset also produces stationary fluid speeds up to 0.0833 m/s during the
+hold (0.0881 m/s with all controls); the zero-offset hold remains exactly at
+rest and only delays the subsequent force history.
+
+Cleaning alone lowers the central-window noise but increases peak density
+departure from 0.814% to 2.268%, peak Mach from 0.0586 to 0.1125, and viscous
+reference error. Its unchanged pressure NRMSE is not a validation pass.
+The one-dp sponge has only a small effect and leaves particle-center
+penetration unresolved. The combined case is quietest by this metric but has
+large mean-load/reference errors. Positive pressure, smoother drag and a
+completed simulation are distinct checks.
+
+Each control has a generated
+`runs/pressure_controls/<control>/paraview_force_plot/ForceComparison_Re100.py`
+state. Load it in ParaView to see the particles, raw force curves, correctly
+shifted reference, time cursor and automatic screenshot export.
+Measurements used Julia 1.12.7 / CUDA.jl 6.4.2 on an RTX A1000 Laptop GPU,
+Float32 physics with Float64 positions and Float64 offline force sums.
+Saved wall times include cold/warm setup differences and are **not** paired
+performance evidence; no speedup is claimed.
+
 ## Comparison criteria
 
 The source provides finite difference / level set reference solutions and
@@ -134,10 +228,14 @@ are needed.
 
 [`manual_case.jl`](manual_case.jl) is a directly runnable setup in the style of
 [`Bathymetry2d.jl`](../../example/Bathymetry2d.jl). Its top-level `layout`
-controls tank origin/size and body center/size; the adjacent settings control
-resolution, density, Re, reference scales, gravity, sound speed, CFL, kernel,
-diffusion, viscosity, time stepping, shifting, precision, GPU options, duration,
-and output cadence. Tank and body edges must align with `dx`, and the default
+controls tank origin/size and body center/size. Like the bathymetry example,
+the file exposes `SimConstants`, the `Tank`/`Water`/`Square` geometries,
+`SquareMotion`, `SimMetaData`, the kernel/viscosity/diffusion/time-stepping models,
+particle allocation and the direct `RunSimulation` call.
+Edit physical values in `SimConstants`, output/GPU options and shifting in
+`SimMetaData`, and the adjacent resolution, reference-scale and timing settings.
+Cell-centered sampling and force analysis remain shared with the batch case.
+Tank and body edges must align with `dx`, and the default
 layout and physics reproduce Re = 100, L/dp = 40, c0 = 40 m/s. The benchmark's
 2D NoMDBC boundary treatment remains fixed. Change `run_tag` to keep repeated
 runs in separate folders.
@@ -146,19 +244,32 @@ runs in separate folders.
 julia --project=. -t 2,0 "validation cases/spheric_test_06/manual_case.jl"
 ```
 
-After the run, the script uses `pvpython` to create a ParaView state and PNG
-with raw pressure and viscous drag overlaid on the official finite-difference
-reference. It plots every available spacing in the selected results directory;
+After force analysis finishes, the script writes a Python state and, with
+`visualize_in_paraview = true`, opens it directly in ParaView. ParaView's own
+Python API builds the particle view above native, interactive pressure and
+viscous drag charts, overlaid on the official finite-difference reference,
+then saves the combined `.pvsm` state and PNG using `SaveState` and
+`SaveScreenshot`. The manual simulation does not launch or require `pvpython`.
+Both charts include a dashed vertical time cursor and an orange dot on the SPH
+curve, synchronized with ParaView's animation time. When several spacings are
+plotted, the dot follows the finest spacing; between saved force samples it
+uses linear interpolation without filtering the history.
+The force-plot script plots every available spacing in the selected results directory;
 the manual run restricts that plot to its own spacing. Open
-`validation cases/spheric_test_06/runs/manual_layout/paraview_force_plot/ForceComparison_Re100.pvsm`
-in ParaView to inspect the two charts. The plotted histories are unfiltered;
+`validation cases/spheric_test_06/runs/manual_layout/paraview_force_plot/ForceComparison_Re100.py`
+in ParaView (**File → Load State**) to create the charts and save the image,
+or open the resulting `.pvsm` to inspect the saved layout.
+Set `visualize_in_paraview = false` to write only the Python state without
+opening the GUI; its `.pvsm` and PNG are generated when you load it in ParaView.
+The plotted histories are unfiltered;
 the baseline run's 0.1 s binned comparison remains available in
 `results/validation/binned.csv`. When you change the benchmark layout or
 physical scales, the official force curve is still shown for context, but the
 result is no longer an apples-to-apples SPHERIC validation.
 
-The force chart can also be regenerated without rerunning the solver, for
-example for all three Reynolds numbers in the baseline results:
+The saved Python state can be loaded again without rerunning the solver.
+For optional headless regeneration (separate from the manual simulation),
+`pvpython` can still plot all three Reynolds numbers in the baseline results:
 
 ```sh
 pvpython --no-mpi --force-offscreen-rendering "validation cases/spheric_test_06/paraview_force_plot.py" --results "validation cases/spheric_test_06/results/validation" --re all
@@ -166,7 +277,16 @@ pvpython --no-mpi --force-offscreen-rendering "validation cases/spheric_test_06/
 
 Use `--re 100 --n 40` to limit the chart to a single Reynolds number and
 resolution, or `--component pressure` / `--component viscous` for one chart.
+Add `--simulation-state "validation cases/spheric_test_06/runs/manual_layout/Re100_n040/MovingSquare_SingleVTKHDFStateFile.py"`
+with `--re 100 --n 40` to regenerate the combined particle-and-chart state.
 The default output directory is ignored `runs/paraview_force_plot/`.
+
+Test the combined layout, saved-state reload and preservation of raw force
+samples without Julia or a CUDA GPU:
+
+```sh
+pvpython --no-mpi --force-offscreen-rendering "validation cases/spheric_test_06/test_paraview_force_plot.py"
+```
 
 ```sh
 # Focused tests, including an end-to-end CUDA smoke run.

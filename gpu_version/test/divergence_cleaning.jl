@@ -33,7 +33,7 @@ const STEP = SPHExampleGPU.GPUStepState
     @test DC.validate_cleaning(model,metadata,kernel,SymplecticTimeStepping()) === nothing
 end
 
-function fixture(D,T; double_position = true,cache = false,fuse = false)
+function fixture(D,T; double_position = true,cache = false,fuse = false,background_pressure = 0)
     dx = T(0.05)
     positions = reverse(vec([SVector{D,T}(ntuple(d -> T(Tuple(index)[d])*dx,D))
         for index in CartesianIndices(ntuple(_ -> 1:4,D))]))
@@ -51,7 +51,7 @@ function fixture(D,T; double_position = true,cache = false,fuse = false)
     host.Type[2] = Frozen
     host.Type[3] = Moving
     host.Type[4] = Floating
-    constants = SimulationConstants{T}(D; dx,c₀=20,g=0,α=0,CFL=0.2)
+    constants = SimulationConstants{T}(D; dx,c₀=20,g=0,α=0,CFL=0.2,BackgroundPressure=background_pressure)
     kernel = SPHKernelInstance{D,T}(WendlandC2(); dx)
     gpu = upload_particles(host,metadata)
     support = GPUSupportArrays{D,T}(gpu,metadata; fuse_predictor=fuse)
@@ -82,7 +82,7 @@ function dense_reference(f)
             psi_j = types[j] == Fluid ? psi[j] : zero(eltype(rho))
             acceleration[i] += (psi[i]-psi_j)*volume*gradient
         end
-        p = EquationOfStateGamma7(rho[i],constants.c₀,constants.ρ₀)
+        p = EquationOfStateGamma7(rho[i],constants.c₀,constants.ρ₀,inv(constants.ρ₀),constants.BackgroundPressure)
         decay_pressure = cleaning.model.absolute_pressure ? abs(p) : max(p,zero(p))
         decay = cleaning.model.sigma*cleaning.model.kappa*sqrt(decay_pressure/rho[i])/kernel.h
         rate[i] = -constants.c₀^2*divergence-decay*psi[i]
@@ -99,8 +99,8 @@ end
 
 if CUDA.functional()
     @testset "cleaning differences match independent dense operators" begin
-        for D in (2,3), T in (Float32,Float64), mixed in (false,true), cache in (false,true)
-            f = fixture(D,T; double_position=mixed,cache)
+        for D in (2,3), T in (Float32,Float64), mixed in (false,true), cache in (false,true), background_pressure in (0,101325)
+            f = fixture(D,T; double_position=mixed,cache,background_pressure)
             (; gpu,support,cl,kernel,constants,cleaning) = f
             @test Array(cleaning.psi) == f.seed[Array(gpu.ID)]
             expected_acceleration,expected_rate = dense_reference(f)
@@ -114,7 +114,9 @@ if CUDA.functional()
                 original_acceleration,original_density_rate = Array(gpu.Acceleration),Array(support.dρdtI)
                 DR.launch_solver_interactions!(ctx,gpu.Position,gpu.Density,gpu.Velocity,support.PosCells,step)
                 tolerance = T === Float32 ? 2e-4 : 2e-11
-                @test Array(gpu.Acceleration)-original_acceleration ≈ expected_acceleration rtol=tolerance atol=tolerance
+                # A large offset makes this subtraction cancellation-limited in Float32.
+                acceleration_atol = max(tolerance,8eps(T)*maximum(norm,original_acceleration))
+                @test Array(gpu.Acceleration)-original_acceleration ≈ expected_acceleration rtol=tolerance atol=acceleration_atol
                 @test Array(cleaning.derivative) ≈ expected_rate rtol=tolerance atol=tolerance
                 @test Array(support.dρdtI) ≈ original_density_rate rtol=tolerance atol=tolerance
             end
@@ -128,8 +130,8 @@ if CUDA.functional()
     end
 
     @testset "scalar integration, wall protection and device cleaning CFL" begin
-        for T in (Float32,Float64)
-            f = fixture(2,T)
+        for T in (Float32,Float64), background_pressure in (0,101325)
+            f = fixture(2,T; background_pressure)
             (; gpu,support,cl,kernel,constants,cleaning) = f
             n = length(gpu)
             fill!(gpu.Density,T(1020))
@@ -139,7 +141,7 @@ if CUDA.functional()
             types = Array(gpu.Type)
             psi = [type == Fluid ? T(2) : zero(T) for type in types]
             copyto!(cleaning.psi,psi)
-            p = EquationOfStateGamma7(T(1020),constants.c₀,constants.ρ₀)
+            p = EquationOfStateGamma7(T(1020),constants.c₀,constants.ρ₀,inv(constants.ρ₀),constants.BackgroundPressure)
             decay = cleaning.model.sigma*DC.local_speed(cleaning.model,p,T(1020))/kernel.h
             dt = T(0.01)/decay
             copyto!(cleaning.derivative,-decay .* psi)
