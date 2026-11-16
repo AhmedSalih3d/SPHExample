@@ -105,7 +105,7 @@ ASCII files contain time, pressure Cd and viscous Cd in the requested order.
 
 ### Wider sponge diagnostic (manual default)
 
-`manual_case.jl` now uses DBC (`boundary_mode = NoMDBC`), integrated-velocity
+`manual_case.jl` now uses `c₀ = 160.0` m/s, DBC (`boundary_mode = NoMDBC`), integrated-velocity
 motion and no divergence cleaning in an expanded tank. Integrated motion means
 that body displacement is obtained by integrating the supplied velocity records,
 avoiding acceleration caused by rounding in the displacement records.
@@ -126,12 +126,15 @@ Keep `sponge_width <= domain_padding` to keep damping outside the original box.
 Run the three matched original-tank, expanded-tank and expanded-sponge controls:
 
 ```sh
-julia --project=. -t 2,0 "validation cases/spheric_test_06/wide_sponge.jl"
-python "validation cases/spheric_test_06/plot_wide_sponge.py"
+julia --project=. -t 2,0 "validation cases/spheric_test_06/wide_sponge.jl" 160
+python "validation cases/spheric_test_06/plot_wide_sponge.py" 160
 ```
 
 The coefficient histories and metadata are saved separately under
-`results/wide_sponge`. Reference errors for the expanded cases describe their
+`results/wide_sponge_c160`; the 40 m/s study remains in `results/wide_sponge`.
+Omit the numeric command argument to reproduce the 40 m/s study. The manual
+run uses its own `manual_wide_sponge_c160` tag to preserve previous runs.
+Reference errors for the expanded cases describe their
 difference from the original benchmark, not accuracy for the changed domain.
 
 The manual case now defaults to `motion_kind = :integrated`, integrating the

@@ -43,7 +43,7 @@ let
     output_interval      = 0.02
     visualize_in_paraview = true
 
-    run_tag          = "manual_wide_sponge"
+    run_tag          = "manual_wide_sponge_c160"
     n                = round(Int, reference_length / dx)
     run_name         = "Re$(lpad(string(reynolds), 3, '0'))_n$(lpad(string(n), 3, '0'))"
     save_location    = joinpath(@__DIR__, "runs", run_tag, run_name)
@@ -54,7 +54,7 @@ let
         dx  = dx,
         ρ₀  = 1000.0,
         g   = 0.0,
-        c₀  = 40.0,
+        c₀  = 160.0,
         ν₀  = reference_speed * reference_length / reynolds,
         α   = 0.0,
         δᵩ  = 0.1,

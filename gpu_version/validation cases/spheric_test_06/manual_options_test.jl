@@ -58,6 +58,7 @@ if CUDA.functional()
             run = include_string(SimpleManualSandbox, source, path)
             @test run.case.boundary_mode === SimpleMDBC
             @test run.case.motion_kind === :integrated
+            @test run.case.constants.c₀ == 160f0
             @test run.case.domain_padding == 2.0
             @test run.case.sponge_width == 2.0
             @test run.case.damping !== nothing

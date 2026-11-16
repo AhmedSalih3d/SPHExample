@@ -4,17 +4,25 @@ include(joinpath(@__DIR__, "case.jl"))
 using .SphericTest06
 include(joinpath(@__DIR__, "noise_metrics.jl"))
 
-const SPONGE_WORK = joinpath(@__DIR__, "runs", "wide_sponge")
-const SPONGE_RESULTS = joinpath(@__DIR__, "results", "wide_sponge")
+const SOUND_SPEED = isempty(ARGS) ? 40.0 : parse(Float64, only(ARGS))
+isfinite(SOUND_SPEED) && SOUND_SPEED > 0 || throw(ArgumentError("Sound speed must be positive and finite"))
+const STUDY_TAG = SOUND_SPEED == 40 ? "wide_sponge" : "wide_sponge_c$(SOUND_SPEED == round(SOUND_SPEED) ? string(Int(SOUND_SPEED)) : string(SOUND_SPEED))"
+const SPONGE_WORK = joinpath(@__DIR__, "runs", STUDY_TAG)
+const SPONGE_RESULTS = joinpath(@__DIR__, "results", STUDY_TAG)
 const VARIANTS = (("original_tank", 0.0, false), ("expanded_tank", 2.0, false), ("expanded_sponge", 2.0, true))
 
 for (name, padding, enabled) in VARIANTS
     directory = joinpath(SPONGE_WORK, name)
     results = joinpath(SPONGE_RESULTS, name)
-    isfile(joinpath(results, "Re100_n040.toml")) && continue
+    if isfile(joinpath(results, "Re100_n040.toml"))
+        TOML.parsefile(joinpath(results, "Re100_n040.toml"))["sound_speed"] == Float64(Float32(SOUND_SPEED)) ||
+            error("Saved sound speed does not match the requested study")
+        continue
+    end
     mkpath(directory)
     path = joinpath(@__DIR__, "manual_case.jl")
     source = replace(read(path, String),
+        r"c₀\s*=\s*[0-9.]+" => "c₀ = $SOUND_SPEED",
         "domain_padding = 2.0" => "domain_padding = $padding",
         "use_sponge     = true" => "use_sponge     = $enabled",
         "visualize_in_paraview = true" => "visualize_in_paraview = false",
@@ -39,11 +47,12 @@ for (name, padding, enabled) in VARIANTS
     directory = joinpath(SPONGE_RESULTS, name)
     data = CSV.File(joinpath(directory, "Re100_n040.csv"))
     state = TOML.parsefile(joinpath(directory, "Re100_n040.toml"))
+    state["sound_speed"] == Float64(Float32(SOUND_SPEED)) || error("Wrong sound speed in $name")
     state["frames"] == 401 && state["frozen_particles"] == 0 || error("Incomplete $name")
     t, p, v = Float64.(data.time), Float64.(data.cd_pressure), Float64.(data.cd_viscous)
     metrics, _ = drag_metrics(t, p, v, reference)
     startup = findall(x -> 0.8 <= x <= 1.6, t)
-    push!(rows, (; variant = name, padding, sponge = enabled,
+    push!(rows, (; variant = name, sound_speed = SOUND_SPEED, padding, sponge = enabled,
         pressure_error = metrics["pressure_raw_nrmse"], viscous_error = metrics["viscous_raw_nrmse"],
         pressure_noise = metrics["pressure_highpass_rms"],
         pressure_minimum = minimum(p[startup]),
