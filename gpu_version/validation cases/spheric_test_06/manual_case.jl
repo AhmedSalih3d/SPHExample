@@ -12,10 +12,10 @@ let
 
     # Extend the tank so the 2 m sponge stays outside the original benchmark box.
     # Set padding to zero and use_sponge to false for the official closed tank.
-    domain_padding = 2.0
-    use_sponge     = true
-    sponge_width   = 2.0
-    sponge_rate    = 100.0
+    domain_padding = 0.0
+    use_sponge     = false
+    sponge_width   = 0.0
+    sponge_rate    = 0.0
     isfinite(domain_padding) && domain_padding >= 0 || throw(ArgumentError("domain_padding must be finite and nonnegative"))
     !use_sponge || 0 < sponge_width <= domain_padding ||
         throw(ArgumentError("Require 0 < sponge_width <= domain_padding to keep the original box undamped"))
@@ -37,13 +37,14 @@ let
     reference_length = layout.body_size[1]
     span             = 1.0
     wall_layers      = nothing
-    kernel_h_factor  = sqrt(2)
-    start_delay          = 0.0
-    duration             = 8.0 + start_delay
-    output_interval      = 0.02
+    coefh            = 1.2
+    kernel_h_factor  = coefh * sqrt(2)
+    start_delay      = 0.0
+    duration         = 8.0 + start_delay
+    output_interval  = 0.02
     visualize_in_paraview = true
 
-    run_tag          = "manual_wide_sponge_c160"
+    run_tag          = "coefh"
     n                = round(Int, reference_length / dx)
     run_name         = "Re$(lpad(string(reynolds), 3, '0'))_n$(lpad(string(n), 3, '0'))"
     save_location    = joinpath(@__DIR__, "runs", run_tag, run_name)
