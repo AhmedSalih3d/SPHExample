@@ -55,13 +55,21 @@ function verify_reference(directory = REFERENCE_DIR)
     return true
 end
 
-"""Scale the reference body's displacement and velocity from its default 1 m/s."""
-function body_trajectory(directory = REFERENCE_DIR; speed_scale = 1.0, start_delay = 0.0)
+"""Scale the official motion; `motion_kind=:integrated` avoids rounded-position acceleration jitter."""
+function body_trajectory(directory = REFERENCE_DIR; speed_scale = 1.0, start_delay = 0.0, motion_kind = :hermite)
+    motion_kind in (:hermite, :integrated) || throw(ArgumentError("motion_kind must be :hermite or :integrated"))
     isfinite(speed_scale) && speed_scale > 0 ||
         throw(ArgumentError("speed_scale must be positive and finite"))
     isfinite(start_delay) && start_delay >= 0 ||
         throw(ArgumentError("start_delay must be finite and nonnegative"))
     data = read_reference(joinpath(directory, "Motion_Body.dat"))
+    if motion_kind === :integrated
+        # Integrate velocity rather than differentiating rounded displacement records.
+        data[1, 4] = 1.5
+        for i in 2:size(data, 1)
+            data[i, 4] = data[i-1, 4] + (data[i-1, 3] + data[i, 3]) * (data[i, 1] - data[i-1, 1]) / 2
+        end
+    end
     times = data[:, 1] .+ start_delay
     positions = [SVector(speed_scale * (x - 1.5), 0.0) for x in data[:, 4]]
     velocities = [SVector(speed_scale * u, 0.0) for u in data[:, 3]]
@@ -71,6 +79,33 @@ function body_trajectory(directory = REFERENCE_DIR; speed_scale = 1.0, start_del
         pushfirst!(velocities, zero(first(velocities)))
     end
     return SampledTrajectory(times, positions; velocities)
+end
+
+"""Construct DBC or SimpleMDBC tank/body geometry, reflecting ghost points into fluid."""
+function manual_geometry(sampled, density, ::Type{T}; boundary_mode = NoMDBC) where {T}
+    boundary_mode in (NoMDBC, SimpleMDBC) || throw(ArgumentError("Manual case supports NoMDBC or SimpleMDBC"))
+    layout = sampled.layout
+    lower, upper = layout.tank_origin, layout.tank_origin + layout.tank_size
+    function wall_geometry(points, marker, type)
+        boundary_mode === NoMDBC && return SPHGeometry{2,T}(points; Density = density, GroupMarker = marker, Type = type)
+        offsets = map(points) do p
+            if type == Fixed
+                return SVector(ntuple(d -> p[d] < lower[d] ? 2(lower[d] - p[d]) :
+                    p[d] > upper[d] ? 2(upper[d] - p[d]) : 0.0, 2))
+            end
+            local_p = p - layout.body_center
+            gap = layout.body_size / 2 - abs.(local_p)
+            # Reflect tied corner distances along both normals to preserve symmetry.
+            return SVector(ntuple(d -> isapprox(gap[d], minimum(gap); atol = 1e-12, rtol = 0) ?
+                2 * (local_p[d] >= 0 ? 1 : -1) * gap[d] : 0.0, 2))
+        end
+        particles = particle_struct_array(points, density;
+            GhostPoints = points .+ offsets, GhostNormals = SVector{2,T}.(offsets))
+        return SPHGeometry{2,T}(; Particles = particles, GroupMarker = marker, Type = type)
+    end
+    return [wall_geometry(sampled.walls, 1, Fixed),
+        SPHGeometry{2,T}(sampled.fluid; Density = density, GroupMarker = 2, Type = Fluid),
+        wall_geometry(sampled.body, 3, Moving)]
 end
 
 """A quadratic fluid-velocity sponge at all four tank edges; corners use the maximum ramp."""
@@ -406,6 +441,8 @@ function save_run_results(case, result; results_dir = joinpath(CASE_DIR, "result
         "gravity" => Float64(case.constants.g), "reference_speed" => case.reference_speed,
         "background_pressure" => Float64(case.constants.BackgroundPressure),
         "start_delay" => Float64(get(case, :start_delay, 0.0)),
+        "motion_kind" => string(get(case, :motion_kind, :hermite)),
+        "boundary_mode" => string(get(case, :boundary_mode, NoMDBC)),
         "divergence_cleaning" => get(case, :divergence_cleaning, nothing) !== nothing,
         "edge_sponge" => get(case, :damping, nothing) !== nothing,
         "reference_length" => case.reference_length, "span" => case.span,

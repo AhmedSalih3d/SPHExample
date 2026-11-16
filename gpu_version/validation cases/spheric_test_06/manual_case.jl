@@ -18,6 +18,9 @@ let
         body_size   = (1.0, 1.0),
     )
 
+    boundary_mode    = NoMDBC  # Set to SimpleMDBC for ghost-point density correction.
+    motion_kind      = :integrated  # :hermite reproduces the rounded-position history.
+
     reynolds         = 100
     dx               = 0.025
     reference_speed  = 1.0
@@ -54,29 +57,12 @@ let
     # Shared sampling preserves the validation lattice and solid/fluid interface.
     sampled = SphericTest06.sample_case_particles(layout, dx, SimKernel; wall_layers)
 
-    Tank = SPHGeometry{Dimensions, FloatType}(sampled.walls;
-        Density     = SimConstants.ρ₀,
-        GroupMarker = 1,
-        Type        = Fixed,
-    )
-
-    Water = SPHGeometry{Dimensions, FloatType}(sampled.fluid;
-        Density     = SimConstants.ρ₀,
-        GroupMarker = 2,
-        Type        = Fluid,
-    )
-
-    Square = SPHGeometry{Dimensions, FloatType}(sampled.body;
-        Density     = SimConstants.ρ₀,
-        GroupMarker = 3,
-        Type        = Moving,
-    )
-
-    SimulationGeometry = [Tank, Water, Square]
+    SimulationGeometry = SphericTest06.manual_geometry(sampled, SimConstants.ρ₀, FloatType; boundary_mode)
+    Tank, Water, Square = SimulationGeometry
 
     # The official history gives absolute centre x; the shared trajectory removes its initial 1.5 m offset.
     SquareMotion = PrescribedMotion(Square.GroupMarker;
-        translation = SphericTest06.body_trajectory(; speed_scale = reference_speed, start_delay),
+        translation = SphericTest06.body_trajectory(; speed_scale = reference_speed, start_delay, motion_kind),
     )
 
     isfinite(start_delay) && start_delay >= 0 && 0 < output_interval <= duration <= start_delay + 8.0 ||
@@ -93,7 +79,7 @@ let
         FloatType,
         NoShifting,
         NoKernelOutput,
-        NoMDBC,
+        boundary_mode,
         StoreLog,
     }(
         SimulationName             = "MovingSquare",
@@ -167,7 +153,7 @@ let
         reference_speed, reference_length, span, counts = sampled.counts,
         viscosity_model = SimViscosity, density_diffusion_model = SimDensityDiffusion,
         time_stepping = SimTimeStepping, shifting = typeof(SimMetaData).parameters[3],
-        start_delay, damping = SimDamping, divergence_cleaning = SimDivergenceCleaning,
+        start_delay, motion_kind, boundary_mode, damping = SimDamping, divergence_cleaning = SimDivergenceCleaning,
     )
     completed = SphericTest06.save_run_results(case, result; results_dir = results_location)
 

@@ -103,6 +103,18 @@ ASCII files contain time, pressure Cd and viscous Cd in the requested order.
 
 ## Optional acoustic controls
 
+The manual case now defaults to `motion_kind = :integrated`, integrating the
+official velocity records to avoid artificial acceleration from rounded positions.
+Use `:hermite` to reproduce the historical position interpolation. Both modes
+support `reference_speed` and `start_delay`.
+
+Set `boundary_mode = SimpleMDBC` in `manual_case.jl` to run ghost-point density
+correction on both the tank and moving body; `NoMDBC` remains the default.
+Ghosts reflect across the configured rectangular faces, including tied corners.
+SimpleMDBC retains the wall density floor and does not resolve negative wall
+pressure clipping. These options are diagnostic controls, not a validation fix.
+Use a distinct `run_tag` for each comparison to retain separate results.
+
 The reference defaults remain zero background pressure, no initial hold, no
 divergence cleaning and no sponge. The editable manual script exposes:
 

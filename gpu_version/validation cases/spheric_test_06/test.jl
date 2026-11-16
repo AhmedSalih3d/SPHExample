@@ -204,6 +204,8 @@ if CUDA.functional()
             # Exercise the editable script with the same short setup, keeping all outputs temporary.
             manual_path = joinpath(@__DIR__, "manual_case.jl")
             manual_source = replace(read(manual_path, String),
+                "motion_kind      = :integrated" => "motion_kind      = :hermite",
+                "SimDivergenceCleaning = DivergenceCleaning(kappa=10)" => "SimDivergenceCleaning = nothing",
                 r"dx\s*=\s*0\.025" => "dx = 0.1",
                 r"duration\s*=\s*8\.0" => "duration = 0.2",
                 "visualize_in_paraview = true" => "visualize_in_paraview = false",
