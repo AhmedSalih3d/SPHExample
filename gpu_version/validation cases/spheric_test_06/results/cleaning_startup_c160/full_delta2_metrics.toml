@@ -1,0 +1,12 @@
+pressure_dominant_hz = 9.960159362549799
+pressure_highpass_rms = 0.11388802819307119
+pressure_late_bias = 0.19348651791176974
+pressure_nrmse = 0.19813117735174818
+pressure_raw_error_rms = 0.35860487432290467
+pressure_raw_nrmse = 0.20614417279948438
+viscous_dominant_hz = 1.394422310756972
+viscous_highpass_rms = 0.0043723035942535545
+viscous_late_bias = 0.17646880363048
+viscous_nrmse = 0.16511457781480585
+viscous_raw_error_rms = 0.04136913038913789
+viscous_raw_nrmse = 0.1658234434092885

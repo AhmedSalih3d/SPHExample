@@ -182,12 +182,12 @@ end
 
 """Build SPHERIC Test 06 with NoMDBC, SimpleMDBC or UpdatedMDBC on the identical lattice."""
 function build_mdbc_case(; reynolds = 100, dx = 0.025, duration = 8.0, interval = 0.02,
-        sound_speed = 40.0, cfl = 0.2, boundary_mode::Type{<:MDBCMode} = UpdatedMDBC,
+        sound_speed = 40.0, cfl = 0.2, density_diffusion = 0.1, boundary_mode::Type{<:MDBCMode} = UpdatedMDBC,
         shifting_mode::Type{<:ShiftingMode} = NoShifting,
         motion_kind::Symbol = :integrated, legacy_timestep::Bool = false,
         save = joinpath(WORK, "case"), float_type = Float32, graph = true)
     motion_kind in (:integrated, :hermite) || throw(ArgumentError("motion_kind must be :integrated or :hermite"))
-    base = build_case(; reynolds, dx, duration, interval, sound_speed, cfl, save, float_type, graph)
+    base = build_case(; reynolds, dx, duration, interval, sound_speed, cfl, density_diffusion, save, float_type, graph)
     T = float_type
     walls = base.geometry[1].Particles.Position
     fluid = base.geometry[2].Particles.Position
@@ -319,6 +319,7 @@ function run_mdbc_case(case; results_dir, diffusion = ZeroGravityLinearDensityDi
         cleaning_courant = cleaning === nothing ? 0.0 : Float64(cleaning.courant),
         cleaning_absolute_pressure = cleaning === nothing ? false : cleaning.absolute_pressure,
         diffusion = string(nameof(typeof(diffusion))) * (diffusion isa FourtakasDensityDiffusion && diffusion.full ? "_full" : ""),
+        density_diffusion_coefficient = Float64(case.constants.δᵩ),
         timestep_criterion = string(result.configuration.effective.timestep_criterion),
         steps = result.performance.steps, frames = result.diagnostics.output_frames,
         particles = result.diagnostics.particle_count,

@@ -189,6 +189,13 @@ compare against the corrected 160 m/s off controls, with the same kappa=10
 and all other physical and numerical settings retained. Kappa is not scaled
 with sound speed.
 
+The [startup diagnosis](results/cleaning_startup_c160/README.md) tests smaller
+timesteps, kappa=160 decay, and stronger density diffusion at c0=160 m/s.
+Run `cleaning_startup_control.jl --full` and `plot_cleaning_startup_control.py`
+for eight startup controls and one full-history diffusion check. No tested
+setting provides a convincing force improvement; the off-case CFL sweep
+also reveals unresolved temporal sensitivity. Defaults remain unchanged.
+
 ### Wider sponge diagnostic (manual default)
 
 For an original-sized 10×5 m tank with internal 2 m and 0.5 m sponges at
