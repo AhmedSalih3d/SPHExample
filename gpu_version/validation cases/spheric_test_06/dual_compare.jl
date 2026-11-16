@@ -36,10 +36,16 @@ function integrated_trajectory()
 end
 
 function prepare_dual(; n = 40, reynolds = 100, sound_speed = 40, duration = 8.0, interval = 0.02,
-        motion_kind = :hermite, diffusion = 1, damping = nothing, cfl = 0.2)
+        motion_kind = :hermite, diffusion = 1, damping = nothing, cfl = 0.2,
+        coefh = 1.0, wall_layers = nothing, trajectory = nothing, tag = "")
     isfinite(cfl) && 0 < cfl <= 0.5 || throw(ArgumentError("CFL must be finite and in (0,0.5]"))
+    isfinite(coefh) && coefh > 0 || throw(ArgumentError("coefh must be positive and finite"))
+    trajectory === nothing || !isempty(tag) || throw(ArgumentError("Custom trajectories require a unique tag"))
     name = "re$(reynolds)_n$(n)_c$(sound_speed)_$(motion_kind)_ddt$(diffusion)_t$(duration)_out$(interval)_centered_v2"
     cfl == 0.2 || (name *= "_cfl$(cfl)")
+    coefh == 1 || (name *= "_coefh$(coefh)")
+    wall_layers === nothing || (name *= "_walls$(wall_layers)")
+    isempty(tag) || (name *= "_" * tag)
     if damping !== nothing
         name *= "_damp_w$(damping.width)_r$(damping.rate)_o$(damping.overlimit)"
     end
@@ -47,8 +53,8 @@ function prepare_dual(; n = 40, reynolds = 100, sound_speed = 40, duration = 8.0
     prefix = joinpath(directory, "Case")
     isfile(prefix * ".bi4") && return prefix
     dx = 1/n
-    case = build_case(; dx, sound_speed, duration, interval)
-    trajectory = motion_kind == :hermite ? body_trajectory() : integrated_trajectory()
+    case = build_case(; dx, sound_speed, duration, interval, kernel_h_factor = coefh * sqrt(2), wall_layers)
+    trajectory === nothing && (trajectory = motion_kind == :hermite ? body_trajectory() : integrated_trajectory())
     motion_path = joinpath(directory, "motion.txt")
     # Dense common samples make Dual's linear file interpolation a controlled
     # approximation of the same curve used by Julia (0.1 ms sample interval).
@@ -70,7 +76,7 @@ function prepare_dual(; n = 40, reynolds = 100, sound_speed = 40, duration = 8.0
       <hswl value="0" auto="false"/><gamma value="7"/>
       <speedsystem value="1" auto="false"/><coefsound value="$sound_speed"/>
       <speedsound value="$sound_speed" auto="false"/><b value="$(1000sound_speed^2/7)" auto="false"/>
-      <coefh value="1"/><cflnumber value="$cfl"/>
+      <coefh value="$coefh"/><cflnumber value="$cfl"/>
     </constantsdef><mkconfig boundcount="240" fluidcount="9"/>
     <geometry><definition dp="$dx"><pointref x="$(dx/2)" y="0" z="$(dx/2)"/>
       <pointmin x="$(-l-dx)" y="0" z="$(-l-dx)"/><pointmax x="$(10+l+dx)" y="0" z="$(5+l+dx)"/>
@@ -87,7 +93,7 @@ function prepare_dual(; n = 40, reynolds = 100, sound_speed = 40, duration = 8.0
       <parameter key="Visco" value="$(1/reynolds)"/><parameter key="ViscoBoundFactor" value="1"/>
       <parameter key="DensityDT" value="$diffusion"/><parameter key="DensityDTvalue" value="0.1"/>
       <parameter key="Shifting" value="0"/><parameter key="RigidAlgorithm" value="1"/>
-      <parameter key="CoefDtMin" value="0.01"/><parameter key="DtIni" value="$(cfl*sqrt(2)*dx/sound_speed)"/>
+      <parameter key="CoefDtMin" value="0.01"/><parameter key="DtIni" value="$(cfl*coefh*sqrt(2)*dx/sound_speed)"/>
       <parameter key="TimeMax" value="$duration"/><parameter key="TimeOut" value="$interval"/>
       <parameter key="PartsOutMax" value="0.001"/><parameter key="RhopOutMin" value="700"/>
       <parameter key="RhopOutMax" value="1300"/>
@@ -124,11 +130,11 @@ function read_dual_csv(path)
     return CSV.File(IOBuffer(join(lines[header:end],'\n')); delim = ';', normalizenames = false)
 end
 
-function verify_geometry(prefix, n)
+function verify_geometry(prefix, n; coefh = 1.0, wall_layers = nothing)
     initial = prefix*"_initial.csv"
     isfile(initial) || logged(`$PART -filedata $(prefix*".bi4") -savecsv $initial -vars:-all,+idp,+mk,+type,+rhop,+vel`,prefix*"_initial.log")
     rows = read_dual_csv(initial)
-    case = build_case(dx = 1/n)
+    case = build_case(; dx = 1/n, kernel_h_factor = coefh * sqrt(2), wall_layers)
     for (type,group) in ((0,1),(1,3),(3,2))
         selected = filter(row -> getproperty(row,:Type) == type, collect(rows))
         nodes = Set((round(Int,row[Symbol("Pos.x [m]")]*n-0.5),round(Int,row[Symbol("Pos.z [m]")]*n-0.5)) for row in selected)

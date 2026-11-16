@@ -206,6 +206,13 @@ and transient penetration remain unresolved. Reproduce the controls with
 `coefh_validation.jl` and plot them with `plot_coefh_validation.py`; generic
 builder defaults and historical studies retain their original settings.
 
+The [all-Reynolds study](results/coefh_reynolds/README.md) extends this setup
+to Re=50,100,150, compares it with stock DualSPHysics 5.4 GPU, and tests
+BackgroundPressure=1 Pa against 0 Pa in Julia. Run `coefh_reynolds_study.jl`
+and `plot_coefh_reynolds.py` for the combined raw-force figures. Both commands
+accept `--native-only` for the Julia subset. The stock Dual comparison uses
+zero background pressure; differing solver operators are documented.
+
 ### Wider sponge diagnostic (historical)
 
 For an original-sized 10×5 m tank with internal 2 m and 0.5 m sponges at
