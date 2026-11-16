@@ -196,7 +196,17 @@ for eight startup controls and one full-history diffusion check. No tested
 setting provides a convincing force improvement; the off-case CFL sweep
 also reveals unresolved temporal sensitivity. Defaults remain unchanged.
 
-### Wider sponge diagnostic (manual default)
+### Smoothing-length review (current manual case)
+
+The manual case now uses the original closed tank without a sponge and
+`coefh=1.2`, meaning `h=1.2*sqrt(2)*dp` in 2D. The [independent coefh review](results/coefh_validation/README.md)
+reproduces the supplied history exactly and confirms improved drag using
+fixed-wall-layer and nominal-timestep controls. Pressure timestep convergence
+and transient penetration remain unresolved. Reproduce the controls with
+`coefh_validation.jl` and plot them with `plot_coefh_validation.py`; generic
+builder defaults and historical studies retain their original settings.
+
+### Wider sponge diagnostic (historical)
 
 For an original-sized 10×5 m tank with internal 2 m and 0.5 m sponges at
 c0=160 m/s, run `original_tank_sponge.jl`, then `plot_original_tank_sponge.py`.

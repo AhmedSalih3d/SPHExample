@@ -1,0 +1,3 @@
+reynolds,dx,component,start,stop,bins,nrmse,late_mean_relative_bias,full_interval,state_ok,drag_pass
+100,0.025,pressure,0.1,8.0,79,0.1158569394534578,0.11163928991518746,true,false,false
+100,0.025,viscous,0.1,8.0,79,0.08538993815718725,0.030366594985851814,true,false,true
