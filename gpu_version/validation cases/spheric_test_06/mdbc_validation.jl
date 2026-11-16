@@ -281,7 +281,7 @@ function analyze_mdbc_history(path, case; coefficient_path, diagnostics_path)
     return (; rows, checks)
 end
 
-function run_mdbc_case(case; results_dir, diffusion = ZeroGravityLinearDensityDiffusion())
+function run_mdbc_case(case; results_dir, diffusion = ZeroGravityLinearDensityDiffusion(), cleaning = nothing)
     verify_reference()
     CUDA.functional() || error("An NVIDIA CUDA GPU is required")
     save = case.metadata.SaveLocation
@@ -298,7 +298,7 @@ function run_mdbc_case(case; results_dir, diffusion = ZeroGravityLinearDensityDi
                     SimConstants = case.constants, SimKernel = case.kernel, SimLogger = logger,
                     SimParticles = particles, SimViscosity = Laminar(),
                     SimDensityDiffusion = diffusion, SimTimeStepping = SymplecticTimeStepping(),
-                    SimMotion = case.motion)
+                    SimMotion = case.motion, SimDivergenceCleaning = cleaning)
             finally
                 isopen(logger.LoggerIo) && close(logger.LoggerIo)
             end
@@ -313,6 +313,11 @@ function run_mdbc_case(case; results_dir, diffusion = ZeroGravityLinearDensityDi
         boundary_mode = string(nameof(case.boundary_mode)),
         shifting_mode = string(nameof(case.shifting_mode)),
         motion = string(case.motion_kind),
+        divergence_cleaning = cleaning !== nothing,
+        cleaning_kappa = cleaning === nothing ? 0.0 : Float64(cleaning.kappa),
+        cleaning_sigma = cleaning === nothing ? 0.0 : Float64(cleaning.sigma),
+        cleaning_courant = cleaning === nothing ? 0.0 : Float64(cleaning.courant),
+        cleaning_absolute_pressure = cleaning === nothing ? false : cleaning.absolute_pressure,
         diffusion = string(nameof(typeof(diffusion))) * (diffusion isa FourtakasDensityDiffusion && diffusion.full ? "_full" : ""),
         timestep_criterion = string(result.configuration.effective.timestep_criterion),
         steps = result.performance.steps, frames = result.diagnostics.output_frames,

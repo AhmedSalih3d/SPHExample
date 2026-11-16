@@ -12,10 +12,13 @@ from matplotlib.patches import Rectangle
 ROOT=Path(__file__).resolve().parent
 parser=argparse.ArgumentParser()
 parser.add_argument("--paper-audit",action="store_true")
+parser.add_argument("--cleaning",action="store_true")
 parser.add_argument("sound_speed",type=float,nargs="?",default=160.0)
 args=parser.parse_args()
 sound_speed=args.sound_speed
 tag=("updated_mdbc_paper_audit_c" if args.paper_audit else "updated_mdbc_retry_c") + f"{sound_speed:g}"
+if args.cleaning:
+    tag += "_cleaning"
 OUT=ROOT/"results"/tag
 WORK=ROOT/"runs"/tag
 variants=[("dbc","DBC · no shifting","#757575"),
@@ -46,7 +49,7 @@ for ax in axes.flat:
     ax.set(xlim=(0,8),xlabel="Time [s]");ax.grid(alpha=.2)
 study_label="Corrected UpdatedMDBC" if args.paper_audit else "Historical pre-fix UpdatedMDBC"
 fig.suptitle(f"{study_label} comparison · c₀ = {sound_speed:g} m/s · integrated motion · original tank\n"
-             "Δp = 0.025 m · Re = 100 · matched legacy timestep · no sponge or cleaning · raw forces",fontsize=12)
+             f"Δp = 0.025 m · Re = 100 · matched legacy timestep · no sponge · cleaning {'on' if args.cleaning else 'off'} · raw forces",fontsize=12)
 fig.tight_layout(rect=(0,0,1,.94))
 fig.savefig(OUT/"drag_and_penetration.png",dpi=180)
 fig.savefig(OUT/"drag_and_penetration.pdf")
@@ -106,7 +109,7 @@ if tag == "updated_mdbc_paper_audit_c160":
     fig.savefig(OUT/"continuity_fix_comparison.png",dpi=180)
     fig.savefig(OUT/"continuity_fix_comparison.pdf")
 
-if args.paper_audit and sound_speed != 160:
+if args.paper_audit and sound_speed != 160 and not args.cleaning:
     baseline=ROOT/"results/updated_mdbc_paper_audit_c160"
     fig,axes=plt.subplots(2,3,figsize=(15,8))
     for column,(name,label,_) in enumerate(variants):
@@ -127,3 +130,28 @@ if args.paper_audit and sound_speed != 160:
     fig.tight_layout(rect=(0,.06,1,.92))
     fig.savefig(OUT/"sound_speed_comparison.png",dpi=180)
     fig.savefig(OUT/"sound_speed_comparison.pdf")
+
+if args.cleaning:
+    baseline=ROOT/"results"/tag.removesuffix("_cleaning")
+    fig,axes=plt.subplots(3,3,figsize=(15,11))
+    for column,(name,label,_) in enumerate(variants):
+        for directory,legend,color in ((baseline,"Cleaning off","#0072b2"),(OUT,"Cleaning on (κ=10)","#d55e00")):
+            d=np.genfromtxt(directory/name/"native.csv",delimiter=",",names=True)
+            s=np.genfromtxt(directory/name/"native_state.csv",delimiter=",",names=True)
+            for row,component in enumerate(("pressure","viscous")):
+                axes[row,column].plot(d["time"],d[f"cd_{component}"],color=color,lw=1,label=legend)
+            axes[2,column].plot(s["time"],1000*np.maximum(0,-s["minimum_clearance"]),color=color,lw=1,label=legend)
+        axes[0,column].set_title(label,fontsize=10)
+        for row,component in enumerate(("pressure","viscous")):
+            axes[row,column].plot(reference[:,0],reference[:,row+1],color="black",lw=1.2,label="Official FD reference")
+            axes[row,column].set_ylabel(f"{component.capitalize()} drag coefficient")
+        axes[2,column].set_ylabel("Maximum penetration [mm]")
+    for ax in axes.flat:
+        ax.set(xlim=(0,8),xlabel="Time [s]");ax.grid(alpha=.2)
+    handles,labels=axes[0,0].get_legend_handles_labels()
+    fig.legend(handles,labels,loc="lower center",ncol=3,fontsize=9)
+    fig.suptitle(f"Divergence cleaning · c₀ = {sound_speed:g} m/s · corrected continuity · integrated motion\n"
+                 "Original tank and spacing · physical CFL=0.2 in both · cleaning Courant=0.1, σ=1, |p| decay · raw forces",fontsize=12)
+    fig.tight_layout(rect=(0,.05,1,.93))
+    fig.savefig(OUT/"cleaning_comparison.png",dpi=180)
+    fig.savefig(OUT/"cleaning_comparison.pdf")

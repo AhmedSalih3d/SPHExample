@@ -5,14 +5,17 @@ include(joinpath(@__DIR__, "mdbc_validation.jl"))
 const M = MDBCValidation
 const C = M.C
 const PAPER_AUDIT = "--paper-audit" in ARGS
-const SPEED_ARGS = filter(!=("--paper-audit"), ARGS)
-length(SPEED_ARGS) <= 1 || throw(ArgumentError("Expected [--paper-audit] [sound_speed]"))
+const CLEANING = "--cleaning" in ARGS
+const SPEED_ARGS = filter(x -> x ∉ ("--paper-audit", "--cleaning"), ARGS)
+length(SPEED_ARGS) <= 1 || throw(ArgumentError("Expected [--paper-audit] [--cleaning] [sound_speed]"))
+CLEANING && !PAPER_AUDIT && throw(ArgumentError("Use --paper-audit for cleaning studies"))
 const SOUND_SPEED = isempty(SPEED_ARGS) ? 160.0 : parse(Float64, only(SPEED_ARGS))
 isfinite(SOUND_SPEED) && SOUND_SPEED > 0 || throw(ArgumentError("Sound speed must be positive and finite"))
 PAPER_AUDIT || SOUND_SPEED == 160 || throw(ArgumentError("Use --paper-audit for corrected studies at another sound speed"))
 const SPEED_TAG = isinteger(SOUND_SPEED) ? string(Int(SOUND_SPEED)) : string(SOUND_SPEED)
 # This selects a new output family; the current solver determines the equations.
-const STUDY_TAG = (PAPER_AUDIT ? "updated_mdbc_paper_audit_c" : "updated_mdbc_retry_c") * SPEED_TAG
+const STUDY_TAG = (PAPER_AUDIT ? "updated_mdbc_paper_audit_c" : "updated_mdbc_retry_c") * SPEED_TAG * (CLEANING ? "_cleaning" : "")
+const CLEANING_MODEL = CLEANING ? DivergenceCleaning(kappa = 10, sigma = 1, courant = 0.1, pressure_mode = :absolute) : nothing
 const WORK = joinpath(@__DIR__, "runs", STUDY_TAG)
 const RESULTS = joinpath(@__DIR__, "results", STUDY_TAG)
 const VARIANTS = (("dbc", NoMDBC, NoShifting),
@@ -24,13 +27,19 @@ for (name, boundary, shifting) in VARIANTS
         info = TOML.parsefile(joinpath(results, "native.toml"))
         info["sound_speed"] == Float64(Float32(SOUND_SPEED)) && info["boundary_mode"] == string(nameof(boundary)) &&
             info["shifting_mode"] == string(nameof(shifting)) || error("Saved configuration differs")
+        get(info, "divergence_cleaning", false) == CLEANING || error("Saved cleaning configuration differs")
+        if CLEANING
+            info["cleaning_kappa"] == CLEANING_MODEL.kappa && info["cleaning_sigma"] == CLEANING_MODEL.sigma &&
+                info["cleaning_courant"] == CLEANING_MODEL.courant &&
+                info["cleaning_absolute_pressure"] == CLEANING_MODEL.absolute_pressure || error("Saved cleaning parameters differ")
+        end
         continue
     end
     println("Starting $name"); flush(stdout)
     case = M.build_mdbc_case(; sound_speed = SOUND_SPEED, boundary_mode = boundary,
         shifting_mode = shifting, motion_kind = :integrated, legacy_timestep = true,
         save = joinpath(WORK, name))
-    M.run_mdbc_case(case; results_dir = results)
+    M.run_mdbc_case(case; results_dir = results, cleaning = CLEANING_MODEL)
     println("Completed $name"); flush(stdout)
     GC.gc(true); CUDA.reclaim()
 end

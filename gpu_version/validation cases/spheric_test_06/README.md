@@ -171,6 +171,18 @@ python "validation cases/spheric_test_06/plot_updated_mdbc_retry.py" --paper-aud
 Results are stored separately under `results/updated_mdbc_paper_audit_c40`,
 including an overlay against the corrected 160 m/s histories.
 
+To enable divergence cleaning in the same three corrected 40 m/s cases:
+
+```sh
+julia --project=. -t 2,0 "validation cases/spheric_test_06/updated_mdbc_retry.jl" --paper-audit --cleaning 40
+python "validation cases/spheric_test_06/plot_updated_mdbc_retry.py" --paper-audit --cleaning 40
+```
+
+This uses kappa=10, sigma=1, cleaning Courant=0.1 and absolute-pressure decay.
+Physical CFL remains 0.2 as in the off controls; cleaning's additional timestep
+restriction is active. The separate `results/updated_mdbc_paper_audit_c40_cleaning`
+family records the cleaning settings and includes raw on/off overlays.
+
 ### Wider sponge diagnostic (manual default)
 
 For an original-sized 10×5 m tank with internal 2 m and 0.5 m sponges at
