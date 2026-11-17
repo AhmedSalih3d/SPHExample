@@ -98,3 +98,32 @@ The generic manual case currently supports DBC/SimpleMDBC postprocessing:
 use this dedicated DBC+ runner rather than changing the manual type alone.
 
 ![Raw DBC+ startup comparison](startup_comparison.png)
+
+## Flow-field inspection
+
+Matched, square-centered snapshots at 0.54, 0.70, 0.74 and 0.90 s compare
+DBC+ against DBC with the same fluid-only DDT. Color scales are shared across
+all panels of each figure. Velocity arrows are spatial-bin averages in the
+laboratory frame, not velocities relative to the moving square. Pressure
+panels include solid particles; DBC+ walls use their linear pressure encoding.
+
+At 0.74 s, DBC+ has four fluid particle centers inside the nominal square.
+Whole-domain fluid maximum speed is 2.627 m/s versus 1.530 m/s for DBC.
+The DBC+ fluid pressure range is approximately -13.85 to +173.34 kPa,
+versus -2.52 to +19.54 kPa for DBC. A concentrated disturbance appears
+at the middle of the rear face (left face, since motion is to the right).
+
+This shows a local coupled fluid/boundary failure, not merely an inaccurate
+force label or a uniform pressure shift. Ghost pressure reconstruction alone
+does not impose impermeability: it replaces DBC's evolved repulsive wall
+pressure with an interpolated/corrected field whose quality depends on local
+fluid support. Support loss, interpolation error and particle approach can
+interact. The snapshots demonstrate the local disturbance and penetration,
+but do not establish which starts that feedback or distinguish MLS,
+acceleration correction and activation effects. Simple analytical traction
+tests do not exercise that separated, time-dependent near-wall configuration.
+The shared full-range pressure scale can make smaller gradients appear faint.
+
+![Laboratory velocity fields](velocity_fields.png)
+
+![Fluid and wall gauge-pressure fields](pressure_fields.png)
