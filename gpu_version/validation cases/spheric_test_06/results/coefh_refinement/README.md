@@ -1,6 +1,6 @@
 # Raw coefh=1.2 refinement results
 
-Status: partial study; pending runs are not plotted.
+Status: all nine resolution histories complete.
 
 Original 10 by 5 m closed tank, c0=160 m/s, coefh=1.2, integrated motion,
 DBC, CFL=0.2, delta=0.1, five wall layers; no background pressure,
@@ -12,15 +12,15 @@ The reference authors' pre-publication processing is not established.
 
 | Re | L/dp | Pressure raw error | Viscous raw error | Total raw error | Penetration [mm] | Penetration / dp |
 |---:|---:|---:|---:|---:|---:|---:|
-| 50 | 20 | pending | pending | pending | - | - |
+| 50 | 20 | 8.63% | 7.84% | 7.88% | 11.689 | 0.234 |
 | 50 | 40 | 14.23% | 7.56% | 12.73% | 7.541 | 0.302 |
-| 50 | 80 | pending | pending | pending | - | - |
+| 50 | 80 | 26.59% | 13.18% | 23.32% | 4.315 | 0.345 |
 | 100 | 20 | 7.76% | 17.90% | 7.50% | 11.997 | 0.240 |
 | 100 | 40 | 12.87% | 8.67% | 12.10% | 5.596 | 0.224 |
 | 100 | 80 | 25.16% | 20.48% | 23.23% | 3.566 | 0.285 |
-| 150 | 20 | pending | pending | pending | - | - |
+| 150 | 20 | 8.46% | 20.47% | 8.06% | 10.387 | 0.208 |
 | 150 | 40 | 11.30% | 12.31% | 10.66% | 3.746 | 0.150 |
-| 150 | 80 | pending | pending | pending | - | - |
+| 150 | 80 | 23.27% | 29.59% | 22.15% | 2.521 | 0.202 |
 
 ## Changes between resolutions
 
@@ -35,6 +35,18 @@ These are changes between simulations, not their reference errors.
 | 100 | 40 -> 80 | pressure | 18.14% |
 | 100 | 40 -> 80 | viscous | 14.74% |
 | 100 | 40 -> 80 | total | 16.59% |
+| 50 | 20 -> 40 | pressure | 9.37% |
+| 50 | 20 -> 40 | viscous | 11.01% |
+| 50 | 20 -> 40 | total | 8.61% |
+| 50 | 40 -> 80 | pressure | 17.48% |
+| 50 | 40 -> 80 | viscous | 6.94% |
+| 50 | 40 -> 80 | total | 15.00% |
+| 150 | 20 -> 40 | pressure | 11.14% |
+| 150 | 20 -> 40 | viscous | 30.77% |
+| 150 | 20 -> 40 | total | 10.84% |
+| 150 | 40 -> 80 | pressure | 17.85% |
+| 150 | 40 -> 80 | viscous | 17.92% |
+| 150 | 40 -> 80 | total | 16.95% |
 
 ## Timestep sensitivity
 
@@ -64,8 +76,12 @@ between the two coarser histories in this dataset. Penetration decreases
 in millimetres but is not monotonically decreasing as a fraction of dp.
 Together with the CFL sensitivity, this does not establish an asymptotic
 space/time convergence regime. Finish diagnosing the Re=100 startup,
-wall traction and timestep effects before spending on the remaining
-Re=50/150 fine runs. Those resolutions remain explicitly pending.
+wall traction and timestep effects before claiming convergence.
+
+The increased finest-resolution pressure error also occurs at Re=50
+and Re=150. This supports a systematic discretization/formulation
+sensitivity rather than a peculiarity of Re=100. It does not isolate
+acoustic, diffusion, timestep and boundary contributions.
 
 
 ## Interpretation and provenance

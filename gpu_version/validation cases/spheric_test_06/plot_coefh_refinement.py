@@ -268,8 +268,14 @@ plotting["make_force_plot"]({re}, args)
                    "in millimetres but is not monotonically decreasing as a fraction of dp.",
                    "Together with the CFL sensitivity, this does not establish an asymptotic",
                    "space/time convergence regime. Finish diagnosing the Re=100 startup,",
-                   "wall traction and timestep effects before spending on the remaining",
-                   "Re=50/150 fine runs. Those resolutions remain explicitly pending.", ""]
+                   "wall traction and timestep effects before claiming convergence.", ""]
+        if complete:
+            report += ["The increased finest-resolution pressure error also occurs at Re=50",
+                       "and Re=150. This supports a systematic discretization/formulation",
+                       "sensitivity rather than a peculiarity of Re=100. It does not isolate",
+                       "acoustic, diffusion, timestep and boundary contributions.", ""]
+        else:
+            report += ["Further Re=50/150 resolutions remain explicitly pending.", ""]
     report += ["", "## Interpretation and provenance", "",
                "Refinement changes the spatial stencil scale and the acoustic timestep together.",
                "Agreement between resolutions does not by itself establish accuracy against",
