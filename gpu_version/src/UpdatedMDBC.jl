@@ -84,7 +84,8 @@ function updated_mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVect
                               Pairs, Velocity, GhostPoints, GhostNormals, GhostIndex, ParticleType,
                               CellStart, gridarg, step, SimKernel, SimConstants, data, motion, groups,
                               prescribed_motion, coefficient_slot::Int32,
-                              InvDensity, Pressure, ::Val{K}, ::Val{Compact}, nghost::Int32, periodicity, periodic_bounds) where {T, D, TP, K, Compact}
+                              InvDensity, Pressure, ::Val{K}, ::Val{Compact}, nghost::Int32, periodicity, periodic_bounds,
+                              ::Val{MirrorViscosity}) where {T, D, TP, K, Compact, MirrorViscosity}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t = thread_index()
@@ -154,7 +155,7 @@ function updated_mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVect
         data.velocity[state_slot] = wall_velocity
         # Project out only the mirrored relative normal velocity so co-moving
         # normal wall translation stays Galilean invariant in viscosity.
-        data.tangent_velocity[state_slot] = active ?
+        data.tangent_velocity[state_slot] = active && MirrorViscosity ?
             mirrored - dot(mirrored - wall_velocity, normal) * normal : wall_velocity
         ParticleType[i] == Moving && (GhostPoints[slot] = gp)
     end
@@ -167,7 +168,7 @@ function launch_updated_mdbc!(Density, Position, Velocity, GhostPoints, GhostNor
                                prescribed_motion = nothing, prepared::Bool = false, coefficient_slot::Integer = 1,
                                fraction = 0.0,
                                compact_ghosts::Val = Val(false), inverse_density = nothing, pressure = nothing,
-                               periodicity = nothing, periodic_bounds = nothing)
+                               periodicity = nothing, periodic_bounds = nothing, mirror_viscosity::Bool = true)
     n = length(GhostIndex)
     n == 0 && return nothing
     if !prepared && prescribed_motion !== nothing
@@ -179,6 +180,6 @@ function launch_updated_mdbc!(Density, Position, Velocity, GhostPoints, GhostNor
     @cuda threads=threads blocks=cld(n * K, threads) updated_mdbc_kernel!(
         Density, Position, pairs, Velocity, GhostPoints, GhostNormals, GhostIndex, ParticleType,
         CellStart, grid, step, SimKernel, SimConstants, data, motion, groups, prescribed_motion, slot,
-        inverse_density, pressure, lanes, compact_ghosts, Int32(n), periodicity, periodic_bounds)
+        inverse_density, pressure, lanes, compact_ghosts, Int32(n), periodicity, periodic_bounds, Val(mirror_viscosity))
     return nothing
 end

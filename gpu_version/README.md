@@ -55,6 +55,25 @@ Its retry safeguard is distinct from the ordinary solver's new default criterion
 The [timestep audit](validation%20cases/spheric_test_06/TIMESTEP_AUDIT.md) records
 the previous origin-dependent estimate and the limits of those measurements.
 
+## Experimental DBC+ pressure boundary
+
+Select `DBCPlus` as the boundary-mode type parameter of `SimulationMetaData`
+to test **DBC+**: UpdatedMDBC's fluid-ghost pressure reconstruction, support
+checks and gravity/prescribed-acceleration correction, with **physical DBC wall
+velocity for both continuity and viscosity** instead of mirrored viscous velocity.
+Wall density encodes the reconstructed linear wall pressure and is not
+independently integrated. Fluid pressure retains the Tait EOS. Ghost points
+and finite nonzero normals are required; existing translation/motion and
+floating-body restrictions of the cloned-pressure path apply.
+
+DBC+ is opt-in and does not change `NoMDBC`, `SimpleMDBC` or `UpdatedMDBC`.
+It is **not a validated replacement**: the initial Re=100 n80 moving-square
+startup control worsens the force reversal and permits penetration despite
+passing isolated pressure-traction checks. See the
+[DBC+ experiment](validation%20cases/spheric_test_06/results/dbc_plus/README.md).
+Use its dedicated runner and boundary-aware force reconstruction, not the
+manual case's DBC-only force postprocessor.
+
 ## Optional experimental velocity-divergence cleaning
 
 The GPU solver implements the hyperbolic/parabolic velocity-divergence method

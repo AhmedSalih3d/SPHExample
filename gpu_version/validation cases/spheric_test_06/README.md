@@ -98,6 +98,17 @@ Use `density_budget.jl original`, `density_budget.jl fluid_only` or
 and compressed per-step traces stay under ignored `runs/density_budget`;
 compact summaries and measured limitations are tracked in the report.
 
+## Experimental DBC+
+
+The pressure-only option is named `DBCPlus` in Julia. It reconstructs wall
+pressure with the existing fluid-ghost/acceleration method while retaining
+physical DBC wall velocity for continuity and viscosity. See the
+[DBC+ definition, analytical tests and startup control](results/dbc_plus/README.md).
+The n80 startup test was unfavorable (large negative force excursion and
+penetration), so it remains experimental and no full-run validation is claimed.
+Use `dbc_plus.jl` and its boundary-aware force postprocessing; the generic
+manual-case DBC postprocessor must not be used for DBC+.
+
 ## Case definition
 
 The closed tank occupies `[0,10] × [0,5]` m. A unit square initially occupies

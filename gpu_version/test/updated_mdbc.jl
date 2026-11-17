@@ -39,7 +39,7 @@ using Test, SPHExampleGPU, CUDA, StaticArrays, LinearAlgebra
     end
 end
 
-function updated_mdbc_fixture(::Val{D}, ::Type{T}, ::Type{TP}; dry = false) where {D, T, TP}
+function updated_mdbc_fixture(::Val{D}, ::Type{T}, ::Type{TP}; dry = false, boundary_mode = UpdatedMDBC) where {D, T, TP}
     V = SVector{D, TP}
     normal = SVector{D, T}(ntuple(k -> k == D ? T(0.1) : zero(T), D))
     wall = V(ntuple(k -> k == D ? zero(TP) : TP(0.5), D))
@@ -52,7 +52,7 @@ function updated_mdbc_fixture(::Val{D}, ::Type{T}, ::Type{TP}; dry = false) wher
         SPHGeometry{D, T}(Particles = particle_struct_array(fluid, T(999);
             Velocity = fill(SVector{D, T}(ntuple(_ -> T(0.2), D)), length(fluid))), GroupMarker = 2, Type = Fluid),
     ]
-    metadata = SimulationMetaData{D, T, NoShifting, NoKernelOutput, UpdatedMDBC}(
+    metadata = SimulationMetaData{D, T, NoShifting, NoKernelOutput, boundary_mode}(
         SimulationName = "UpdatedMDBC", SaveLocation = mktempdir(), GPUDoublePosition = TP !== T,
         SimulationTime = T(0.0002), OutputTimes = T(0.0002), VisualizeInParaview = false,
         OpenLogFile = false, GPUUseGraph = false)

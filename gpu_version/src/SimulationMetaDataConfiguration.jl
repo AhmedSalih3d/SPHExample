@@ -6,7 +6,7 @@ using TimerOutputs
 
 export SimulationMetaData, UpdateMetaData!, ShiftingMode, NoShifting, PlanarShifting,
        KernelOutputMode, NoKernelOutput, StoreKernelOutput,
-       MDBCMode, NoMDBC, SimpleMDBC, UpdatedMDBC,
+       MDBCMode, NoMDBC, SimpleMDBC, UpdatedMDBC, DBCPlus, ClonedPressureBoundary,
        LogMode, NoLog, StoreLog,
        TimeSteppingMode, SymplecticTimeStepping, SingleNeighborTimeStepping, DualSPHysicsSymplectic,
        OUTPUT_VARIABLES, DEFAULT_OUTPUT_VARIABLES, resolve_output_variables!, position_float_type
@@ -25,8 +25,20 @@ struct StoreKernelOutput <: KernelOutputMode end
 abstract type MDBCMode end
 struct NoMDBC     <: MDBCMode end
 struct SimpleMDBC <: MDBCMode end
+abstract type ClonedPressureBoundary <: MDBCMode end
 "The 2024 mDBC update: numerical checks, pressure cloning and mirrored no-slip velocity."
-struct UpdatedMDBC <: MDBCMode end
+struct UpdatedMDBC <: ClonedPressureBoundary end
+"""
+    DBCPlus
+
+Experimental DBC+ pressure boundary: reconstruct wall pressure from fluid
+ghost interpolation with gravity/prescribed-acceleration correction, while
+retaining physical DBC wall velocity for continuity and viscosity. Uses the
+UpdatedMDBC support/activation checks; requires ghost points and normals.
+Wall density is a pressure encoding, not an independently integrated state.
+Select as the boundary type parameter of `SimulationMetaData`.
+"""
+struct DBCPlus <: ClonedPressureBoundary end
 
 abstract type LogMode end
 struct NoLog    <: LogMode end
@@ -80,7 +92,7 @@ The mode parameters select code paths at compile time:
 * `SMode <: ShiftingMode`: `NoShifting` (default) or `PlanarShifting`
 * `KMode <: KernelOutputMode`: `NoKernelOutput` (default) or `StoreKernelOutput`
   (also store the kernel sum and kernel gradient sum of every particle)
-* `BMode <: MDBCMode`: `NoMDBC` (default), `SimpleMDBC`, or `UpdatedMDBC` (requires
+* `BMode <: MDBCMode`: `NoMDBC` (default), `SimpleMDBC`, `UpdatedMDBC` or experimental `DBCPlus` (requires
   `ParticleNormalsPath` in `RunSimulation`)
 * `LMode <: LogMode`: `NoLog` (default) or `StoreLog`
 
@@ -314,7 +326,7 @@ position_float_type(m::SimulationMetaData{D, T}) where {D, T} = m.GPUDoublePosit
 # Particle fields that can be written to the output files. `Position` is always
 # written as the point coordinates and is not listed. `Kernel` and
 # `KernelGradient` are only computed with `KMode = StoreKernelOutput`, the mDBC
-# ghost data only exists with `BMode = SimpleMDBC` or `UpdatedMDBC`; in every other mode these
+# ghost data only exists with `SimpleMDBC`, `UpdatedMDBC` or `DBCPlus`; in other modes these
 # fields would be written as zeros, so `resolve_output_variables!` drops them.
 const OUTPUT_VARIABLES = [
     "Velocity",

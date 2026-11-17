@@ -707,7 +707,7 @@ function GPUSupportArrays{D, T}(gpu::GPUParticles{D, T}, meta::SimulationMetaDat
     position_type(gpu) === position_float_type(meta) ||
         throw(ArgumentError("GPU positions and support-array metadata must use the same precision"))
     return GPUSupportArrays{D, T}(length(gpu); position_type = position_type(gpu),
-        updated_mdbc = B === UpdatedMDBC, shifting = !meta.GPUCompactBuffers || S === PlanarShifting,
+        updated_mdbc = B <: ClonedPressureBoundary, shifting = !meta.GPUCompactBuffers || S === PlanarShifting,
         cache_interaction_fields = meta.GPUCacheInteractionFields,
         fuse_predictor,
         periodic = meta.Periodicity !== nothing,
@@ -749,7 +749,7 @@ end
 
 function GPUSupportArrays{D, T}(n::Integer, meta::SimulationMetaData{D, T, S, K, B}; kernel=nothing) where {D, T, S, K, B}
     return GPUSupportArrays{D, T}(n; position_type = position_float_type(meta),
-        updated_mdbc = B === UpdatedMDBC, shifting = !meta.GPUCompactBuffers || S === PlanarShifting,
+        updated_mdbc = B <: ClonedPressureBoundary, shifting = !meta.GPUCompactBuffers || S === PlanarShifting,
         share_pos_cells = meta.GPUCompactBuffers,
         cache_interaction_fields = meta.GPUCacheInteractionFields,
         periodic = meta.Periodicity !== nothing,
@@ -1155,7 +1155,7 @@ function enqueue_boundary_correction!(ctx, step, half::Bool; prepared::Bool = fa
             pressure = sup.Pressure, Density = density, ParticleType = gpu.Type,
             SimConstants = SimConstants, boundary_mode = boundary_mode)
     end
-    if boundary_mode isa UpdatedMDBC
+    if boundary_mode isa ClonedPressureBoundary
         GPUKernels.launch_updated_mdbc!(density, position, velocity,
             gpu.GhostPoints, gpu.GhostNormals, gpu.GhostIndex, gpu.Type, cl.CellStart, cl.grid_dev,
             step, SimKernel, SimConstants, sup.boundary_data; threads, lanes, pos_cells = pairs,
@@ -1163,7 +1163,8 @@ function enqueue_boundary_correction!(ctx, step, half::Bool; prepared::Bool = fa
             prescribed_motion = get(ctx, :rotation, nothing), prepared,
             coefficient_slot = half ? 2 : 1, fraction = half ? 0.5 : 0.0,
             compact_ghosts = Val(gpu.BoundarySlot !== nothing), inverse_density = sup.InvDensity,
-            pressure = sup.Pressure, periodicity = cl.periodicity, periodic_bounds = periodic_bounds(sup))
+            pressure = sup.Pressure, periodicity = cl.periodicity, periodic_bounds = periodic_bounds(sup),
+            mirror_viscosity = !(boundary_mode isa DBCPlus))
     else
         launch_mdbc!(density, position, gpu.GhostPoints, gpu.GhostIndex, gpu.Type,
             cl.CellStart, cl.grid_dev, step, SimKernel, SimConstants; threads, lanes, pos_cells = pairs,
@@ -1360,7 +1361,7 @@ function enqueue_step!(ctx, timed::Bool; finish_current::Bool = true, finish_nex
             Density = sup.ρₙ⁺,SimConstants,ParticleType = gpu.Type,boundary_mode = get(ctx,:boundary_mode,NoMDBC()))
     end
 
-    if get(ctx, :boundary_mode, SimpleMDBC()) isa UpdatedMDBC
+    if get(ctx, :boundary_mode, SimpleMDBC()) isa ClonedPressureBoundary
         @phase HourGlass "07 Updated mDBC corrector" timed begin
             enqueue_boundary_correction!(ctx, state, true; prepared = true)
         end
@@ -1991,9 +1992,9 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     SimRotation === nothing || (Dimensions == 2 && BMode === NoMDBC && SimMetaData.Periodicity === nothing) ||
         throw(ArgumentError("SimRotation currently requires a nonperiodic 2D DBC case (NoMDBC)"))
     SimMotion === nothing || (Dimensions in (2,3) &&
-        (BMode === NoMDBC || BMode === SimpleMDBC || BMode === UpdatedMDBC)) ||
-        throw(ArgumentError("SimMotion requires 2D/3D DBC, SimpleMDBC or UpdatedMDBC"))
-    SimMotion === nothing || !(BMode === SimpleMDBC || BMode === UpdatedMDBC) ||
+        (BMode === NoMDBC || BMode === SimpleMDBC || BMode <: ClonedPressureBoundary)) ||
+        throw(ArgumentError("SimMotion requires 2D/3D DBC, SimpleMDBC, UpdatedMDBC or DBCPlus"))
+    SimMotion === nothing || !(BMode === SimpleMDBC || BMode <: ClonedPressureBoundary) ||
         validate_simple_mdbc_motion(SimMotion, BMode)
     validate_periodic_motion(SimMotion, SimMetaData.Periodicity)
     external_forces = prepare_external_forces(SimExternalForces, SimParticles, Val(Dimensions), FloatType)
@@ -2058,7 +2059,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             sym = Symbol(var)
             if sym === :Pressure
                 push!(fields, :Density)
-                BMode === UpdatedMDBC && push!(fields, :Type)
+                BMode <: ClonedPressureBoundary && push!(fields, :Type)
             else
                 push!(fields, sym)
             end
@@ -2100,14 +2101,14 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         end
     end
 
-    if BMode === UpdatedMDBC
-        any(==(Floating), SimParticles.Type) && error("UpdatedMDBC does not support floating bodies (future work in the 2024 presentation).")
+    if BMode <: ClonedPressureBoundary
+        any(==(Floating), SimParticles.Type) && error("$(BMode) does not support floating bodies.")
         for i in eachindex(SimParticles.Type)
             is_wall(SimParticles.Type[i]) || continue
             normal = SimParticles.GhostNormals[i]
             ghost = SimParticles.GhostPoints[i]
             all(isfinite, normal) && norm(normal) > zero(FloatType) && all(isfinite, ghost) && !iszero(ghost) ||
-                error("UpdatedMDBC requires a finite nonzero normal and ghost point for every wall particle (particle $i).")
+                error("$(BMode) requires a finite nonzero normal and ghost point for every wall particle (particle $i).")
         end
     end
 

@@ -5,7 +5,7 @@ export EquationOfState, EquationOfStateGamma7, Pressure!, particle_pressure, Den
 using StaticArrays
 using FastPow
 using ..SimulationGeometry: is_wall
-using ..SimulationMetaDataConfiguration: NoMDBC, UpdatedMDBC
+using ..SimulationMetaDataConfiguration: NoMDBC, ClonedPressureBoundary
 
 @inline function EquationOfStateGamma7(ρ,c₀,ρ₀,ρ₀⁻¹=inv(ρ₀),p_bg=zero(ρ))
     p = @fastpow ((c₀^2*ρ₀)/7) * ((ρ*ρ₀⁻¹)^7 - 1)
@@ -13,7 +13,7 @@ using ..SimulationMetaDataConfiguration: NoMDBC, UpdatedMDBC
 end
 
 @inline function particle_pressure(ρ, type, c₀, ρ₀, boundary_mode = NoMDBC(), ρ₀⁻¹ = inv(ρ₀), p_bg = zero(ρ))
-    p = boundary_mode isa UpdatedMDBC && is_wall(type) ? c₀^2 * (ρ - ρ₀) : EquationOfStateGamma7(ρ, c₀, ρ₀, ρ₀⁻¹)
+    p = boundary_mode isa ClonedPressureBoundary && is_wall(type) ? c₀^2 * (ρ - ρ₀) : EquationOfStateGamma7(ρ, c₀, ρ₀, ρ₀⁻¹)
     return iszero(p_bg) ? p : p + p_bg
 end
 

@@ -70,7 +70,7 @@ using ..DampingZones: damped_velocity
 using ..GPUPairwiseTimesteps: reset_pair_signal!,store_pair_signal!,acoustic_denominator
 using ..GPUDivergenceCleaning: cleaning_psi, cleaning_derivative!, cleaning_predict!, cleaning_commit!,
     signal_value, store_signal!, cleaning_timestep, initialize_signal!
-using ..SimulationMetaDataConfiguration: NoMDBC, SimpleMDBC, UpdatedMDBC, DualSPHysicsSymplectic
+using ..SimulationMetaDataConfiguration: NoMDBC, SimpleMDBC, UpdatedMDBC, DBCPlus, ClonedPressureBoundary, DualSPHysicsSymplectic
 
 export launch_interactions!, launch_mdbc!, launch_motion!, launch_half_step!, launch_final_step!,
        launch_prepare_interactions!, launch_finish!, launch_commit!, launch_step_reduction!, launch_pos_cells!,
@@ -290,7 +290,7 @@ function prepare_interactions_kernel!(Position, step, n::Int32,
             ρ = Density[i]
             store_inverse_density!(InvDensity, i, ρ)
             if Pressure !== nothing
-                type = boundary_mode isa UpdatedMDBC ? ParticleType[i] : Fluid
+                type = boundary_mode isa ClonedPressureBoundary ? ParticleType[i] : Fluid
                 store_pressure!(Pressure, i, particle_pressure(ρ, type, SimConstants.c₀, SimConstants.ρ₀, boundary_mode, inv(SimConstants.ρ₀), SimConstants.BackgroundPressure))
             end
         end
@@ -325,7 +325,7 @@ function launch_prepare_interactions!(Position, step;
     inverse_density === nothing || (Density !== nothing && length(inverse_density) == length(Density) == length(Position)) ||
         throw(DimensionMismatch("Reciprocal cache and evaluated density must have one entry per particle"))
     pressure === nothing || (Density !== nothing && SimConstants !== nothing && length(pressure) == length(Density) == length(Position) &&
-        (!(boundary_mode isa UpdatedMDBC) || (ParticleType !== nothing && length(ParticleType) == length(Position)))) ||
+        (!(boundary_mode isa ClonedPressureBoundary) || (ParticleType !== nothing && length(ParticleType) == length(Position)))) ||
         throw(DimensionMismatch("Pressure cache, evaluated density, constants and UpdatedMDBC types must match particle count"))
     pos_cells === nothing && motion === nothing && inverse_density === nothing && pressure === nothing && return nothing
     n = length(Position)
@@ -1087,7 +1087,7 @@ include("UpdatedMDBC.jl")
             Velocityₙ⁺[i] = Velocity[i] + acc * dt₂ * ML
         end
         ρ = Density[i] + rate * dt₂
-        ρ = boundary_mode isa UpdatedMDBC && is_wall(type) ? Density[i] : limit_density(ρ, ρ₀, ML)
+        ρ = boundary_mode isa ClonedPressureBoundary && is_wall(type) ? Density[i] : limit_density(ρ, ρ₀, ML)
         ρₙ⁺[i] = ρ
         store_inverse_density!(InvDensity, i, ρ)
         store_pressure!(Pressure, i, EquationOfStateGamma7(ρ, c₀, ρ₀, inv(ρ₀), SimConstants.BackgroundPressure))
@@ -1241,7 +1241,7 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
         ρ    = Density[i]
         epsi = -divide_by_density(dρdtI[i], InvDensity, i, ρₙ⁺[i]) * dt
         ρ   *= (2 - epsi) / (2 + epsi)
-        ρ    = boundary_mode isa UpdatedMDBC && is_wall(type) ? ρₙ⁺[i] : limit_density(ρ, ρ₀, ML)
+        ρ    = boundary_mode isa ClonedPressureBoundary && is_wall(type) ? ρₙ⁺[i] : limit_density(ρ, ρ₀, ML)
         Density[i]  = ρ
         cleaning_speed = max(cleaning_speed,signal_value(cleaning,type,ρ,SimConstants))
         # The predictor reciprocal must be consumed before an aliased cache is overwritten.
@@ -1276,7 +1276,7 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
         Velocity[i] = v
         store_pos_cell!(PosCells, i, x, CellID, gridarg, SimKernel.H)
         # Keep SimpleMDBC output and the next step's correction at the accepted pose.
-        if (boundary_mode isa SimpleMDBC || boundary_mode isa UpdatedMDBC) &&
+        if (boundary_mode isa SimpleMDBC || boundary_mode isa ClonedPressureBoundary) &&
             type == Moving && GhostPoints !== nothing && GhostNormals !== nothing
             slot = BoundarySlots === nothing ? i : BoundarySlots[i]
             slot == 0 || (GhostPoints[slot] = x + GhostNormals[slot])

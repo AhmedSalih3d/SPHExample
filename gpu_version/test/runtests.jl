@@ -14,6 +14,7 @@ include(joinpath(@__DIR__, "typst_report.jl"))
 include(joinpath(@__DIR__, "effective_configuration.jl"))
 
 include(joinpath(@__DIR__, "updated_mdbc.jl"))
+include(joinpath(@__DIR__, "dbc_plus.jl"))
 
 include(joinpath(@__DIR__, "measurements.jl"))
 measurement_output_tests(SPHExampleGPU)

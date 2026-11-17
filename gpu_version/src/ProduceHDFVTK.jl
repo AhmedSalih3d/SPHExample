@@ -31,7 +31,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
     using ..HDF5Append: extend!, extend_columns!, append_slice!, append_columns!
     using ..PolygonDrawing: ExtrudedPolygon, PolygonSurface, translate
     using ..SimulationGeometry: MotionDetails
-    using ..SimulationMetaDataConfiguration: SimulationMetaData, NoMDBC, UpdatedMDBC
+    using ..SimulationMetaDataConfiguration: SimulationMetaData, NoMDBC, ClonedPressureBoundary
     using ..SimulationConstantsConfiguration: SimulationConstants
     using ..SimulationEquations: EquationOfStateGamma7, particle_pressure
     using ..DampingZones: DampingZone, DampingBox, DampingCylinder, UniformFlowZone, normalized_damping
@@ -1042,7 +1042,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         rho0 = T(ρ₀)
         inv_rho0 = inv(rho0)
         bg = T(p_bg)
-        if boundary_mode isa UpdatedMDBC && types !== nothing
+        if boundary_mode isa ClonedPressureBoundary && types !== nothing
             @inbounds for i in eachindex(dest, density, types)
                 dest[i] = particle_pressure(T(density[i]), types[i], c0, rho0, boundary_mode, inv_rho0, bg)
             end
@@ -2315,7 +2315,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
         function output_field(name)
             name == "Type" && return map!(Int8, type_buf, SimParticles.Type)
             if name == "Pressure" && !has_host_pressure
-                types = SimMetaData.Iteration > 0 && boundary_mode isa UpdatedMDBC && hasproperty(SimParticles, :Type) ?
+                types = SimMetaData.Iteration > 0 && boundary_mode isa ClonedPressureBoundary && hasproperty(SimParticles, :Type) ?
                     SimParticles.Type : nothing
                 return fill_pressure!(press_buf, SimParticles.Density, c₀, ρ₀, boundary_mode, types, p_bg)
             end
@@ -2453,7 +2453,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 sym = Symbol(name)
                 if sym === :Pressure && !haskey(fidx, :Pressure)
                     density = download.buffers[fidx[:Density]]
-                    types = boundary_mode isa UpdatedMDBC ? download.buffers[fidx[:Type]] : nothing
+                    types = boundary_mode isa ClonedPressureBoundary ? download.buffers[fidx[:Type]] : nothing
                     fill_pressure!(view(buf, cols), density, c₀, ρ₀, boundary_mode, types, p_bg)
                     continue
                 end
@@ -2511,7 +2511,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                 else
                     cols = next_columns(frame_writer)
                     fill_field!(view(frame_writer.positions, :, cols), SimParticles.Position)
-                    types = SimMetaData.Iteration > 0 && boundary_mode isa UpdatedMDBC && hasproperty(SimParticles, :Type) ?
+                    types = SimMetaData.Iteration > 0 && boundary_mode isa ClonedPressureBoundary && hasproperty(SimParticles, :Type) ?
                         SimParticles.Type : nothing
                     for (buf, name) in zip(frame_writer.data, output_vars)
                         if name == "Pressure"
@@ -2539,7 +2539,7 @@ export SaveVTKHDF, GenerateGeometryStructure, GenerateStepStructure,
                         sym = Symbol(name)
                         if sym === :Pressure && !haskey(fidx, :Pressure)
                             density = download.buffers[fidx[:Density]]
-                            types = boundary_mode isa UpdatedMDBC ? download.buffers[fidx[:Type]] : nothing
+                            types = boundary_mode isa ClonedPressureBoundary ? download.buffers[fidx[:Type]] : nothing
                             return fill_pressure!(press_buf, density, c₀, ρ₀, boundary_mode, types, p_bg)
                         end
                         src = download.buffers[fidx[sym]]

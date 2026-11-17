@@ -98,7 +98,8 @@ function mdbc_wall_state(gp::SVector{2,Float64}, wall_pos::SVector{2,Float64}, w
     p_final = (active ? p : 0.0) + constants.BackgroundPressure
     ghost_vel = active ? b_vel / A[1, 1] : zero(wall_vel)
     mirrored = active ? 2.0 * wall_vel - ghost_vel : wall_vel
-    visc_vel = active ? mirrored - dot(mirrored - wall_vel, normal) * normal : wall_vel
+    visc_vel = active && !(boundary_mode isa DBCPlus) ?
+        mirrored - dot(mirrored - wall_vel, normal) * normal : wall_vel
     return (; active, density = rho_final, pressure = p_final, viscous_velocity = visc_vel)
 end
 
