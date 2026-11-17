@@ -1,0 +1,7 @@
+reynolds,n,cfl,reused,source,sha256
+100,20,0.2,false,results\coefh_refinement\re100\Re100_n020.csv,03ed762d9d62ada603a18471f5c7bd9104682c7a10b147eb1884f8f45feba365
+100,40,0.2,true,results\coefh_reynolds\re100_bg0\Re100_n040.csv,ce7ebba7b2f5cf629251a12819c3353e2be3ea41472f091e8fed45fa15d1ecd3
+100,80,0.2,false,results\coefh_refinement\re100\Re100_n080.csv,881428bd001401d419faf66983a43c4618b4223322bcd1945d25460af31be3b7
+50,40,0.2,true,results\coefh_reynolds\re50_bg0\Re050_n040.csv,76823627ed58435488405d94c367c8ba352983a8c092f0d421e910e1b3fe0a9f
+150,40,0.2,true,results\coefh_reynolds\re150_bg0\Re150_n040.csv,9be62c5acac2910d9e89249020bdad7ad67f62b29578996ff8cf270fb5a4d5cd
+100,40,0.1,true,results\coefh_validation\coef12_cfl01\Re100_n040.csv,d3b78fadb88a2736bb7cea659a9b75a9613c0b963e6335456ac27661a5163708

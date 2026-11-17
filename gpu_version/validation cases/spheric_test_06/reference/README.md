@@ -18,7 +18,11 @@ Individual SHA-256 values are in `sha256.toml`; the runner verifies them.
   not experimental measurements. Its finest mesh is 600 × 300.
 
 The source warns of small high-frequency numerical oscillations in the force
-records. Comparisons therefore use the same 0.1 s time bins for the reference
+records. The coefh and resolution-study plots show the supplied reference
+samples without acoustic filtering, and their raw errors use those samples
+directly. The source provenance does not establish whether the authors used
+any filtering before publishing the files; none is added to those plots here.
+The original binned comparisons use the same 0.1 s time bins for the reference
 and SPH, retaining both raw histories. No phase shift, fitted multiplier,
 or reference extrapolation is used. Reference authorship remains with the
 contributors; this repository does not claim ownership of their data.

@@ -51,6 +51,39 @@ reported separately from the original benchmark.
 See [implementation checks and remaining test limitations](IMPLEMENTATION_VALIDATION.md)
 for the focused GPU results and the reproduced broad-suite failure.
 
+## Matched coefh=1.2 resolution study
+
+[`coefh_refinement.jl`](coefh_refinement.jl) retains the successful original-tank
+DBC configuration: c0=160 m/s, coefh=1.2, integrated motion, CFL=0.2, delta=0.1,
+no shifting, cleaning, sponge, hold or additive background pressure. It runs
+Re=100 first, then Re=50 and 150, at L/dp=20/40/80 (dp=0.05/0.025/0.0125 m).
+The smoothing length scales as `h=1.2*sqrt(2)*dp`; automatic wall support
+requires five layers at every spacing. Neither force histories nor reference
+samples are acoustically filtered.
+
+```sh
+julia --project=. -t 2,0 "validation cases/spheric_test_06/coefh_refinement_tests.jl"
+julia --project=. -t 2,0 "validation cases/spheric_test_06/coefh_refinement.jl"
+python "validation cases/spheric_test_06/plot_coefh_refinement.py"
+```
+
+Pass `100` to the runner for only the initial Re=100 study. Verified archived
+n=40 controls and the Re=100/CFL=0.1 control are copied into a separate study
+directory, with their original metadata intact; sources and force checksums
+are recorded in `results/coefh_refinement/provenance.csv`. Missing coarse/fine
+runs use the current solver, and partial particle histories are never
+overwritten. This does not modify the user's manual script or supplied runs.
+Archived and fresh hardware/timings are not a performance comparison.
+
+The outputs separate raw pressure/viscous/total reference errors, sampled
+startup peaks/times, 3-7 s means, central pressure-noise diagnostics, successive
+resolution differences and penetration in both millimetres and dp.
+Refinement changes the acoustic timestep too; the separate archived CFL
+control is retained rather than attributing every difference to space.
+The plotting script independently checks the exact piecewise-linear error
+integrals and writes three raw all-resolution ParaView entry points under
+`runs/coefh_refinement/re<Re>/paraview_force_plot/`.
+
 ## Case definition
 
 The closed tank occupies `[0,10] × [0,5]` m. A unit square initially occupies
