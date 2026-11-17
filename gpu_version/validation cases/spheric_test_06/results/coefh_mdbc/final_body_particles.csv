@@ -1,0 +1,10 @@
+reynolds,boundary,inside_final
+50,dbc,1
+100,dbc,0
+150,dbc,0
+50,simple,0
+100,simple,0
+150,simple,1
+50,updated,1
+100,updated,0
+150,updated,0

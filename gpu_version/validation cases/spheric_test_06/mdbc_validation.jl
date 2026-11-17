@@ -183,11 +183,13 @@ end
 """Build SPHERIC Test 06 with NoMDBC, SimpleMDBC or UpdatedMDBC on the identical lattice."""
 function build_mdbc_case(; reynolds = 100, dx = 0.025, duration = 8.0, interval = 0.02,
         sound_speed = 40.0, cfl = 0.2, density_diffusion = 0.1, boundary_mode::Type{<:MDBCMode} = UpdatedMDBC,
+        kernel_h_factor = sqrt(2), wall_layers = nothing,
         shifting_mode::Type{<:ShiftingMode} = NoShifting,
         motion_kind::Symbol = :integrated, legacy_timestep::Bool = false,
         save = joinpath(WORK, "case"), float_type = Float32, graph = true)
     motion_kind in (:integrated, :hermite) || throw(ArgumentError("motion_kind must be :integrated or :hermite"))
-    base = build_case(; reynolds, dx, duration, interval, sound_speed, cfl, density_diffusion, save, float_type, graph)
+    base = build_case(; reynolds, dx, duration, interval, sound_speed, cfl, density_diffusion,
+        kernel_h_factor, wall_layers, save, float_type, graph)
     T = float_type
     walls = base.geometry[1].Particles.Position
     fluid = base.geometry[2].Particles.Position
@@ -310,6 +312,8 @@ function run_mdbc_case(case; results_dir, diffusion = ZeroGravityLinearDensityDi
         diagnostics_path = joinpath(results_dir, "native_state.csv"))
     info = (; reynolds = case.reynolds, dx = case.dx, n = round(Int, 1.0 / case.dx),
         sound_speed = Float64(case.constants.c₀), cfl = Float64(case.constants.CFL),
+        h = Float64(case.kernel.h), wall_layers = case.layers,
+        background_pressure = Float64(case.constants.BackgroundPressure),
         boundary_mode = string(nameof(case.boundary_mode)),
         shifting_mode = string(nameof(case.shifting_mode)),
         motion = string(case.motion_kind),

@@ -219,6 +219,13 @@ pressure of 112000 Pa. Re100 controls test both interpretations; neither
 improves force agreement. Reproduce with `background_112000.jl` and
 `plot_background_112000.py`.
 
+The [coefh=1.2 boundary study](results/coefh_mdbc/README.md) compares DBC,
+SimpleMDBC and corrected UpdatedMDBC at Re=50,100,150 with c0=160 and zero
+background pressure. Run `coefh_mdbc_study.jl`, then `plot_coefh_mdbc.py`.
+It keeps shifting, divergence cleaning and sponges disabled. DBC has the
+lowest full-history drag errors in these controls; the report also includes
+penetration, density and final-particle checks for both mDBC modes.
+
 ### Wider sponge diagnostic (historical)
 
 For an original-sized 10×5 m tank with internal 2 m and 0.5 m sponges at
