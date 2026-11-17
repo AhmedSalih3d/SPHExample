@@ -131,13 +131,14 @@ def main():
         plt.close(fig)
 
     spectra = []
-    fig, axes = plt.subplots(3, 3, figsize=(16, 11))
+    fig, axes = plt.subplots(3, 4, figsize=(20, 11))
     for n, rows in signals.items():
         time = np.array([r["time"] for r in rows])
         drag = np.genfromtxt(ROOT / "results" / "coefh_refinement" / "re100" / f"Re100_n{n:03d}.csv",
                              delimiter=",", names=True)
-        for col, name in enumerate(("upstream", "upper_tank", "pressure_drag")):
-            values = drag["cd_pressure"] if name == "pressure_drag" else np.array([r[name] for r in rows])
+        for col, name in enumerate(("upstream", "upper_tank", "pressure_drag", "viscous_drag")):
+            is_drag = name in ("pressure_drag", "viscous_drag")
+            values = drag["cd_pressure" if name == "pressure_drag" else "cd_viscous"] if is_drag else np.array([r[name] for r in rows])
             axes[0, col].plot(time, values, color=COLORS[n], lw=1, label=f"L/dp={n}")
             selected = (time >= 1.5) & (time <= 6.5)
             for window_name, chosen in (("full", np.ones(len(time), dtype=bool)), ("central", selected)):
@@ -148,11 +149,11 @@ def main():
                 spectral_row = 2 if window_name == "central" else 1
                 axes[spectral_row, col].semilogy(frequency[1:], np.maximum(amplitude[1:], 1e-12),
                                                 color=COLORS[n], lw=1, label=f"L/dp={n}")
-            axes[0, col].set(xlabel="Time [s]", ylabel="Cd" if name == "pressure_drag" else "Gauge pressure [Pa]",
+            axes[0, col].set(xlabel="Time [s]", ylabel="Cd" if is_drag else "Gauge pressure [Pa]",
                              title=name.replace("_", " "))
             for spectral_row, title in ((1, "Full window: 0-8 s"), (2, "Central window: 1.5-6.5 s")):
                 axes[spectral_row, col].set(xlabel="Frequency [Hz]",
-                    ylabel="Amplitude [Cd]" if name == "pressure_drag" else "Amplitude [Pa]",
+                    ylabel="Amplitude [Cd]" if is_drag else "Amplitude [Pa]",
                     xlim=(0, 25), title=title)
     for ax in axes[1:].flat:
         for f in (8, 16, 24):
@@ -160,7 +161,7 @@ def main():
     for ax in axes.flat:
         ax.grid(alpha=0.2)
         ax.legend(fontsize=8)
-    fig.suptitle("Pressure signals and full/central-window FFT amplitudes\n"
+    fig.suptitle("Fluid pressure, pressure drag and viscous drag: full/central-window FFT amplitudes\n"
                  "Linear detrend + Hann for spectral estimation only; dashed lines: nominal 8 Hz and harmonics")
     save(fig, "pressure_spectra")
     for name, records in (("pressure_signals.csv", [r for rows in signals.values() for r in rows]),
@@ -179,7 +180,8 @@ def main():
         "rho0=1000 kg/m3 and zero background offset. Crosses mark fixed pressure probes\n"
         "at (0.5,2.5) and (5,4) m: volume-weighted fluid means inside radius 0.1 m.\n"
         "These spatial averages are not individual material-particle histories.\n\n"
-        "FFT files include full 0-8 s and central 1.5-6.5 s windows. Each signal is\n"
+        "FFT files include pressure drag, viscous drag, and both fluid-pressure probes,\n"
+        "with full 0-8 s and central 1.5-6.5 s windows. Each signal is\n"
         "linearly detrended and Hann-windowed before rFFT. Amplitudes use coherent-gain\n"
         "normalization and the one-sided factor (excluding DC/Nyquist). The displayed\n"
         "time histories remain raw. This is amplitude, not PSD. Full-window spectra\n"
@@ -194,7 +196,20 @@ def main():
         "Pressure-deviation panels subtract each frame's fluid spatial mean for visibility;\n"
         "they include physical pressure gradients and are not an acoustic decomposition.\n\n"
         "![Pressure deviations](pressure_deviation_fields.png)\n\n"
-        "![Pressure spectra](pressure_spectra.png)\n", encoding="utf-8")
+        "![Pressure spectra](pressure_spectra.png)\n\n"
+        "## Startup time-frequency diagnostic\n\n"
+        "Run `python \"validation cases/spheric_test_06/plot_startup_spectra.py\"` from gpu_version.\n"
+        "Each complete window has 25 samples (0.48 s endpoint span, 0.5 s FFT duration),\n"
+        "advanced by 0.02 s. Thus frequency bins are 2 Hz; overlapping windows are not\n"
+        "independent. Colors use common logarithmic amplitude scales across resolutions,\n"
+        "separately for pressure and viscous drag. Dashed cyan lines mark their sampled\n"
+        "force peaks; dotted white lines show the nominal 8 Hz estimate. No endpoint\n"
+        "padding is used. Each spectral column contains data before and after its center:\n"
+        "a transient can therefore appear spread in time by the window. Startup ramps\n"
+        "produce broadband content, even after linear detrending; a bright patch is not\n"
+        "proof of an acoustic eigenmode or its causal role. The raw top panels use\n"
+        "separate labeled axes for pressure and viscous Cd.\n\n"
+        "![Startup time-frequency comparison](startup_time_frequency.png)\n", encoding="utf-8")
     print(json.dumps({"snapshot_pressure_limit_pa": float(p_limit), "snapshot_speed_limit_ms": float(speed_limit)}))
 
 
