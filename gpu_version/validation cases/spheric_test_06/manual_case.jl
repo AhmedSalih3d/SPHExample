@@ -46,7 +46,7 @@ let
 
     run_tag          = "coefh"
     n                = round(Int, reference_length / dx)
-    run_name         = "Re$(lpad(string(reynolds), 3, '0'))_n$(lpad(string(n), 3, '0'))"
+    run_name         = "Re$(lpad(string(reynolds), 3, '0'))_n$(lpad(string(n), 3, '0'))" * "_ComplexDensityDiffusion"
     save_location    = joinpath(@__DIR__, "runs", run_tag, run_name)
     plot_location    = joinpath(@__DIR__, "runs", run_tag, "paraview_force_plot")
     results_location = joinpath(@__DIR__, "results", run_tag)
@@ -116,7 +116,7 @@ let
     )
 
     SimViscosity        = Laminar()
-    SimDensityDiffusion = ZeroGravityLinearDensityDiffusion()
+    SimDensityDiffusion = ComplexDensityDiffusion() #ZeroGravityLinearDensityDiffusion()
     SimTimeStepping     = SymplecticTimeStepping()
     # Quadratic velocity damping at outer edges; no damping inside the original box.
     SimDamping          = use_sponge ? SphericTest06.edge_sponge(layout; width = sponge_width, rate = sponge_rate) : nothing
