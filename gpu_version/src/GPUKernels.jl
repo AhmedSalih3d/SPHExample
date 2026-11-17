@@ -407,7 +407,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                              periodic_bounds = nothing, viscous_dt = nothing, ::Val{FastMath}=Val(false), target_indices=nothing, pair_order=nothing,
                              ::Val{NativeRigid}=Val(false), interaction_mass=nothing,
                              ::Val{PreloadTypes}=Val(false), ρ₀⁻¹ = inv(SimConstants.ρ₀), predictor_output = nothing,
-                             ::Val{FuseReferenceForces} = Val(false), cleaning = nothing, pair_signal = nothing) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath, NativeRigid, PreloadTypes, FuseReferenceForces}
+                             ::Val{FuseReferenceForces} = Val(false), cleaning = nothing, pair_signal = nothing, density_budget = nothing) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath, NativeRigid, PreloadTypes, FuseReferenceForces}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -422,6 +422,9 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
     s = cell_size(grid, SimKernel.H)
 
     dρdt  = zero(T)
+    continuity_budget = zero(T)
+    diffusion_budget = zero(T)
+    absolute_budget = zero(T)
     divergence_sum = zero(T)
     inner_diffusion = zero(T)
     diffusion_blocked = false
@@ -511,6 +514,11 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         if !wall_pair
                             dρdt += viscous_dt === nothing ? ρᵢ * (mass_j * ρⱼ⁻¹) * density_symmetric_term :
                                 mass_j * density_symmetric_term * (ρᵢ / ρⱼ)
+                            if density_budget !== nothing
+                                contribution = ρᵢ * (mass_j * ρⱼ⁻¹) * density_symmetric_term
+                                continuity_budget += contribution
+                                absolute_budget += abs(contribution)
+                            end
                         end
 
                         # Reference diffusion and ordered/SPS viscosity use the CPU
@@ -549,6 +557,10 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                                                               SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ²,
                                                               ρᵢ, ρⱼ, ρᵢ⁻¹, ρb⁻¹, ia, ja, diffusion_types, inverse_distance)
                             dρdt += D1
+                            if density_budget !== nothing
+                                diffusion_budget += D1
+                                absolute_budget += abs(D1)
+                            end
                         elseif SimDensityDiffusion isa ComplexDensityDiffusion
                             D1, D2 = compute_density_diffusion(SimDensityDiffusion, SimKernel, SimConstants,
                                                                SimParticles, xᵢⱼ, ∇ᵢWᵢⱼ, xᵢⱼ²,
@@ -653,6 +665,11 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
     end
 
     @inbounds if valid & (lane == Int32(0))
+        if density_budget !== nothing
+            density_budget.continuity[i] = continuity_budget
+            density_budget.diffusion[i] = diffusion_budget
+            density_budget.absolute[i] = absolute_budget
+        end
         if cleaning !== nothing
             density_i = Density[source_i]
             pressure_i = EquationOfStateGamma7(density_i,c₀,ρ₀,ρ₀⁻¹,BackgroundPressure)
@@ -757,7 +774,15 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
                               always_inline::Bool = true, fastmath::Bool = true, fuse_reference_forces::Bool = fastmath,
                               target_indices = nothing, target_count::Integer = length(Position), pair_order = nothing,
                               native_rigid::Val = Val(false), interaction_mass = nothing, predictor_output = nothing,
-                              cleaning = nothing, pair_signal = nothing)
+                              cleaning = nothing, pair_signal = nothing, density_budget = nothing)
+    density_budget === nothing || (
+        lanes isa Val{1} && radial isa Val{false} && viscous_dt === nothing &&
+        SimDensityDiffusion isa Union{ZeroDensityDiffusion, ZeroGravityLinearDensityDiffusion, LinearDensityDiffusion} &&
+        target_indices === nothing && predictor_output === nothing) ||
+        throw(ArgumentError("Density budgets require one-lane unfused reference linear/zero diffusion"))
+    density_budget === nothing || all(length(getproperty(density_budget, name)) == length(Density)
+        for name in (:continuity, :diffusion, :absolute)) ||
+        throw(DimensionMismatch("Density budget arrays must match the evaluated particle count"))
     cleaning === nothing || (target_indices === nothing && length(cleaning.psi) == length(Density) &&
         length(cleaning.derivative) == length(Density)) ||
         throw(ArgumentError("Divergence cleaning requires dense, unmapped particle fields"))
@@ -812,7 +837,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
         Pairs, Position, Density, Velocity, ParticleType, SimParticles,
         CellStart, CellID, grid, step,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math), target_indices, pair_order, native_rigid, interaction_mass, Val(options.preload_types), inv(SimConstants.ρ₀), predictor_output, Val(fuse_reference_forces), cleaning, pair_signal)
+        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math), target_indices, pair_order, native_rigid, interaction_mass, Val(options.preload_types), inv(SimConstants.ρ₀), predictor_output, Val(fuse_reference_forces), cleaning, pair_signal, density_budget)
     return nothing
 end
 

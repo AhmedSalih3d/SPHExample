@@ -1,0 +1,4 @@
+model,frames,state_and_force_exact
+original,46,True
+fluid_only,46,True
+zero,46,True

@@ -84,6 +84,20 @@ The plotting script independently checks the exact piecewise-linear error
 integrals and writes three raw all-resolution ParaView entry points under
 `runs/coefh_refinement/re<Re>/paraview_force_plot/`.
 
+## Density-stage budget diagnostics
+
+The [read-only density-budget study](results/density_budget/README.md) records
+continuity and DDT rates, predictor/corrector densities and boundary-floor
+increments for stable rear-wall/fluid particle IDs. The default solver remains
+unchanged. Diagnostic replay was verified to preserve every saved force and
+particle state exactly for the three n80 startup controls.
+
+Use `density_budget.jl original`, `density_budget.jl fluid_only` or
+`density_budget.jl zero` to reproduce the traced startup, and
+`density_budget_tests.jl` for focused GPU parity checks. Diagnostic histories
+and compressed per-step traces stay under ignored `runs/density_budget`;
+compact summaries and measured limitations are tracked in the report.
+
 ## Case definition
 
 The closed tank occupies `[0,10] × [0,5]` m. A unit square initially occupies

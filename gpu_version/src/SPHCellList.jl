@@ -1134,8 +1134,12 @@ function launch_solver_interactions!(ctx,position,density,velocity,pairs,step;in
         fastmath=get(ctx,:interaction_fastmath,true),target_indices=targets,target_count=length(gpu),pair_order=order,
         native_rigid=Val(native_rigid),interaction_mass,predictor_output,
         cleaning=cleaning_fields(get(ctx,:divergence_cleaning,nothing),cleaning_half),pair_signal=collect_pair_signal ? sup.PairSignal : nothing)
+    observe_density_stage!(get(ctx, :density_observer, nothing), cleaning_half ? :corrector_rate : :predictor_rate, ctx, step)
     return nothing
 end
+
+observe_density_stage!(::Nothing, stage, ctx, step) = nothing
+observe_density_stage!(observer, stage, ctx, step) = observer(stage, ctx, step)
 
 function enqueue_boundary_correction!(ctx, step, half::Bool; prepared::Bool = false)
     (; gpu, sup, cl, SimKernel, SimConstants, threads, lanes) = ctx
@@ -1336,6 +1340,7 @@ function enqueue_step!(ctx, timed::Bool; finish_current::Bool = true, finish_nex
             first_motion = SingleNeighbor && fused_motion && motion.active,
             cleaning = cleaning_fields(get(ctx,:divergence_cleaning,nothing)))
     end
+    observe_density_stage!(get(ctx, :density_observer, nothing), :predictor_stored, ctx, state)
 
     if floats
         @phase HourGlass "05c Floating Half TimeStep" timed launch_floating_particles!(
@@ -1401,6 +1406,7 @@ function enqueue_step!(ctx, timed::Bool; finish_current::Bool = true, finish_nex
         next_pressure = get(ctx, :cache_final_state, false) ? sup.Pressure : nothing,
         diagnostics = get(ctx, :diagnostics, nothing), particle_ids = gpu.ID,
         damping = get(ctx, :damping, ()),cleaning = cleaning_fields(get(ctx,:divergence_cleaning,nothing)),pair_signal=sup.PairSignal)
+    observe_density_stage!(get(ctx, :density_observer, nothing), :corrector_stored, ctx, state)
 
     # Rigid final placement reads neither time nor phase, so a one-block
     # integration may commit before this launch without changing body placement.
@@ -1585,7 +1591,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                         cl::CellListWorkspace, sup::GPUSupportArrays, red::ReductionWorkspace,
                         motion, state::StepState{FloatType};
                         floating = nothing, external_forces = (), damping = (), rotation = nothing, open_boundary = nothing,logger = nothing, diagnostics = nothing,
-                        divergence_cleaning = nothing) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
+                        divergence_cleaning = nothing, density_observer = nothing) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
                                                    SDD <: SPHDensityDiffusion, SV <: SPHViscosity}
     if divergence_cleaning !== nothing
         SimMetaData.TimeSteppingMode isa SymplecticTimeStepping && sup.PeriodicImages === nothing &&
@@ -1683,7 +1689,8 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
              interaction_always_inline, interaction_fastmath, HourGlass, boundary_mode,
              frozen_particles = Val(open_boundary !== nothing || cl.frozen_total > 0), cache_final_state, fuse_predictor, diagnostics,
              periodic_cell_coordinates = SimMetaData.GPUPeriodicCellCoordinates,
-             logger = LMode === StoreLog ? logger : nothing)
+             logger = LMode === StoreLog ? logger : nothing,
+             density_observer)
 
     t_out = next_output_time(SimMetaData)
     set_output_time!(state, t_out; clip_timestep = SimMetaData.GPUClipTimeStepToOutput)
@@ -1923,12 +1930,27 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     SimOpenBoundaries = nothing,
     SimDamping = nothing,
     SimDivergenceCleaning = nothing,
+    # Opt-in synchronous stage observer; see validation case density_budget.jl.
+    SimDensityObserver = nothing,
     SimRotation::Union{Nothing,RotationMotion} = nothing,
     SimMotion::Union{Nothing,PrescribedMotion,MotionSystem} = nothing,
     ParaviewPressureRange = nothing,
     ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SV <: SPHViscosity, SDD <: SPHDensityDiffusion}
 
     CUDA.functional() || error("CUDA is not functional on this machine; use the CPU package SPHExample instead.")
+    if SimDensityObserver !== nothing
+        !SimMetaData.GPUUseGraph && !SimMetaData.GPUFusePredictor &&
+            !SimMetaData.GPUCacheInteractionFields && !SimMetaData.GPURadialInteractions &&
+            !SimMetaData.GPUInteractionFastMath && SimMetaData.GPULanesPerParticle == 1 &&
+            BMode === NoMDBC && SMode === NoShifting &&
+            SimTimeStepping isa SymplecticTimeStepping && SimMetaData.VariableResolution === nothing &&
+            SimMetaData.Periodicity === nothing && SimOpenBoundaries === nothing &&
+            SimDivergenceCleaning === nothing && SimRigidBodyDynamics === nothing &&
+            SimRotation === nothing && SimExternalForces === nothing && SimDamping === nothing &&
+            all(g -> g.Type in (Fluid, Fixed, Moving), SimGeometry) &&
+            SimDensityDiffusion isa Union{ZeroDensityDiffusion, ZeroGravityLinearDensityDiffusion, LinearDensityDiffusion} ||
+            throw(ArgumentError("Density observer requires direct one-lane unfused uncached reference DBC/NoShifting symplectic stepping with no additional physics"))
+    end
     !SimMetaData.GPULegacyTimestep && SimMetaData.GPUTimestepDiagnosticsEvery > 0 &&
         throw(ArgumentError("Pairwise timestep limiter provenance is not implemented; set GPULegacyTimestep=true for the legacy diagnostic"))
     validate_cleaning(SimDivergenceCleaning,SimMetaData,SimKernel,SimTimeStepping;
@@ -2477,7 +2499,8 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         while true
             @timeit HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                                                                  SimConstants, gpu, cl, sup, red, motion, state;
-                                                                 floating = floating, external_forces, damping, divergence_cleaning, rotation, open_boundary,logger = SimLogger, diagnostics)
+                                                                 floating = floating, external_forces, damping, divergence_cleaning, rotation, open_boundary,logger = SimLogger, diagnostics,
+                                                                 density_observer = SimDensityObserver)
 
             # Publish progress immediately, independently of the queued disk writes.
             if StoreLogOutput
