@@ -81,6 +81,42 @@ arbitrary DDT coefficient or treating the frozen Shepard numbers as a fix.
 Pressure-datum drift, continuity and actual particle evolution still need
 validation under any replacement reconstruction.
 
+## Proposed implementation strategy (not implemented)
+
+1. Introduce a separate experimental boundary mode, tentatively
+   `RegularizedMDBC`. Preserve SimpleMDBC and the other existing modes as
+   unchanged controls. This name is a proposal, not an available API.
+2. Target ghost-to-wall density-gradient extrapolation, not the DDT
+   coefficient. Keep physical wall velocity, fluid-only diffusion and all
+   other simulation settings fixed when comparing the candidate.
+3. Use a dimensionally scaled linear-fit residual to assess reconstruction
+   quality. Preserve the MLS gradient for clean affine density fields;
+   investigate reducing its influence for strongly non-affine neighborhoods.
+   The residual normalization, regularization rule and acceptance tolerances
+   must be specified and tested before implementation is considered complete.
+   Shepard interpolation is a diagnostic fallback candidate, not an assumed fix.
+4. Do not promise both exact affine extrapolation and strict bounds imposed
+   by fluid sample extrema: the wall lies outside the sampled fluid region,
+   so those properties are not generally compatible. Document the candidate's
+   actual guarantees. Do not tune the rule to the reference drag curve.
+5. Share the reconstruction helper between the GPU boundary correction and
+   boundary-aware offline force reconstruction. Keep predictor/corrector
+   state selection, reciprocal/pressure caches, moving ghosts, compact
+   ownership/reordering and pressure export consistent. Unsupported inputs
+   or modes must fail explicitly.
+6. Validate constant and analytical linear-density/pressure fields, including
+   hydrostatic and accelerating-wall traction. Then test the frozen spike
+   neighborhoods for sensitivity, overshoot and force response.
+7. Only after those checks, run the matched 0.9 s n80 simulation. Judge raw
+   pressure AND viscous drag, pressure drift, particle retention and clearance,
+   not only the depth of one spike. Escalate to a full run only if the
+   short-run results improve without introducing another failure. Resolution
+   and timestep checks are still required before claiming convergence.
+
+This section records the next experiment only. No regularized reconstruction
+has been implemented or validated, and no new solver behavior is enabled by
+this documentation.
+
 Run from gpu_version:
 
 ```sh
