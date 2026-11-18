@@ -94,11 +94,15 @@ function mdbc_wall_state(gp::SVector{2,Float64}, wall_pos::SVector{2,Float64}, w
     normal = ghost_offset / norm(ghost_offset)
     gravity = SVector(0.0, -gravity_scalar)
     rho, p = GK.cloned_boundary_state(ghost_rho, normal, wall_pos - gp, gravity, wall_acc, constants.c₀, constants.ρ₀)
+    ghost_vel = active ? b_vel / A[1, 1] : zero(wall_vel)
+    if active && boundary_mode isa DBCPlusImpedance
+        p += GK.approaching_wall_pressure(wall_vel, ghost_vel, normal, constants.c₀, constants.ρ₀)
+        rho = constants.ρ₀ + p / constants.c₀^2
+    end
     rho_final = active ? rho : constants.ρ₀
     p_final = (active ? p : 0.0) + constants.BackgroundPressure
-    ghost_vel = active ? b_vel / A[1, 1] : zero(wall_vel)
     mirrored = active ? 2.0 * wall_vel - ghost_vel : wall_vel
-    visc_vel = active && !(boundary_mode isa DBCPlus) ?
+    visc_vel = active && boundary_mode isa UpdatedMDBC ?
         mirrored - dot(mirrored - wall_vel, normal) * normal : wall_vel
     return (; active, density = rho_final, pressure = p_final, viscous_velocity = visc_vel)
 end

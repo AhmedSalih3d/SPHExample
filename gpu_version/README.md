@@ -74,6 +74,12 @@ passing isolated pressure-traction checks. See the
 Use its dedicated runner and boundary-aware force reconstruction, not the
 manual case's DBC-only force postprocessor.
 
+`DBCPlusImpedance` is a separate experimental mode for the same runner. It
+adds pressure proportional to the ghost fluid's normal speed toward the
+wall relative to the wall's motion (`rho0 * c0 * approach_speed`), with no
+extra pressure during separation. It retains DBC+'s physical viscous wall
+velocity and does not guarantee impermeability.
+
 ## Optional experimental velocity-divergence cleaning
 
 The GPU solver implements the hyperbolic/parabolic velocity-divergence method

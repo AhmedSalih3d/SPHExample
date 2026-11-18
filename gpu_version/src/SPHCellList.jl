@@ -1164,7 +1164,8 @@ function enqueue_boundary_correction!(ctx, step, half::Bool; prepared::Bool = fa
             coefficient_slot = half ? 2 : 1, fraction = half ? 0.5 : 0.0,
             compact_ghosts = Val(gpu.BoundarySlot !== nothing), inverse_density = sup.InvDensity,
             pressure = sup.Pressure, periodicity = cl.periodicity, periodic_bounds = periodic_bounds(sup),
-            mirror_viscosity = !(boundary_mode isa DBCPlus))
+            mirror_viscosity = boundary_mode isa UpdatedMDBC,
+            normal_impedance = boundary_mode isa DBCPlusImpedance)
     else
         launch_mdbc!(density, position, gpu.GhostPoints, gpu.GhostIndex, gpu.Type,
             cl.CellStart, cl.grid_dev, step, SimKernel, SimConstants; threads, lanes, pos_cells = pairs,
@@ -1993,7 +1994,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         throw(ArgumentError("SimRotation currently requires a nonperiodic 2D DBC case (NoMDBC)"))
     SimMotion === nothing || (Dimensions in (2,3) &&
         (BMode === NoMDBC || BMode === SimpleMDBC || BMode <: ClonedPressureBoundary)) ||
-        throw(ArgumentError("SimMotion requires 2D/3D DBC, SimpleMDBC, UpdatedMDBC or DBCPlus"))
+        throw(ArgumentError("SimMotion requires 2D/3D DBC, SimpleMDBC or a cloned-pressure boundary"))
     SimMotion === nothing || !(BMode === SimpleMDBC || BMode <: ClonedPressureBoundary) ||
         validate_simple_mdbc_motion(SimMotion, BMode)
     validate_periodic_motion(SimMotion, SimMetaData.Periodicity)

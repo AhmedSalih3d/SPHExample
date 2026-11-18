@@ -127,3 +127,62 @@ The shared full-range pressure scale can make smaller gradients appear faint.
 ![Laboratory velocity fields](velocity_fields.png)
 
 ![Fluid and wall gauge-pressure fields](pressure_fields.png)
+
+## Follow-up: DBC+ with normal acoustic impedance
+
+The original DBC+ run first admits fluid centers through a side at the saved
+0.38 s frame and through its rear face at 0.40 s, before the 0.74 s pressure
+spike. This motivates testing the incoming normal response separately from
+viscosity. It does not prove that the early entry causes the later spike.
+
+The separate opt-in mode `DBCPlusImpedance` adds
+`rho0 * c0 * max(0, dot(v_wall - v_ghost, n))` to the reconstructed pressure
+when the ghost has fluid support; `n` points from the wall into the fluid.
+There is no extra pressure for tangential motion or separation. The ghost
+pressure reconstruction, activation rule, acceleration correction and physical
+viscous wall velocity are retained. The change is a normal acoustic pressure
+response, not a geometric collision or a filter applied to drag.
+
+### Matched startup and full run
+
+All three runs use Re=100, L/dp=80, c0=160 m/s, coefh=1.2, CFL=0.2,
+integrated motion and fluid-only diffusion. Errors are raw relative L2 norms
+against the unmodified official reference over 0.1-0.9 s (startup) or
+0.1-8 s (full). Positive clearance denotes no penetration in the saved frames.
+
+| Boundary | Startup pressure error | Startup viscous error | Minimum startup clearance |
+|---|---:|---:|---:|
+| DBC, fluid-only DDT | 31.43% | 28.11% | -1.543 mm |
+| Original DBC+ | 145.76% | 33.55% | -3.016 mm |
+| DBC+ with impedance | 25.61% | 19.65% | +2.658 mm |
+
+| Boundary | Full pressure error | Full viscous error | Minimum full clearance |
+|---|---:|---:|---:|
+| DBC, fluid-only DDT | 26.70% | 23.21% | -1.543 mm |
+| DBC+ with impedance | 22.21% | 19.72% | +2.136 mm |
+
+The full impedance run reproduces every startup force sample through 0.9 s
+exactly, then completes 302,000 steps. All 401 saved frames retain their fluid
+and square counts, with no frozen particles. An independent check of the saved
+positions found positive clearance from both the square and tank in every
+frame, with the minimum at 3.68 s. This does not rule out crossings between
+outputs. The minimum pressure Cd is -0.070 at 0.80 s; the large original DBC+
+reversal does not recur. Peak pressure Cd is still 10.30, versus 8.31 in the
+reference. This is an improvement for the matched case, not a validation pass
+or evidence of convergence across Reynolds numbers or resolutions.
+
+The CUDA tests exercise approach, separation, tangential motion and a common
+velocity boost, and verify that the impedance pressure is correctly encoded.
+Both DBC+ modes retain graph/direct parity, analytical traction and wall
+pressure export; the existing UpdatedMDBC tests also pass.
+
+```sh
+julia --project=. -t 2,0 "validation cases/spheric_test_06/dbc_plus.jl" impedance
+python "validation cases/spheric_test_06/plot_dbc_plus.py" --impedance
+julia --project=. -t 2,0 "validation cases/spheric_test_06/dbc_plus.jl" impedance full
+python "validation cases/spheric_test_06/plot_dbc_plus.py" --full
+```
+
+![Three-way raw startup comparison](impedance_comparison.png)
+
+![Raw full-duration comparison](impedance_full_comparison.png)

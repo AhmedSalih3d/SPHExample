@@ -41,5 +41,46 @@ if CUDA.functional()
                 particle_pressure(plus[wall], Fixed, f.constants.c₀, f.constants.ρ₀, DBCPlus()) atol=T(.5)
         end
     end
+
+    @testset "DBC+ impedance acts only on relative normal approach" begin
+        GK = SPHExampleGPU.GPUKernels
+        for T in (Float32, Float64)
+            f = updated_mdbc_fixture(Val(2), T, T; boundary_mode = DBCPlusImpedance)
+            gpu = upload_particles(f.host; boundary_only = true)
+            cl = CellListWorkspace{2,T}(length(gpu))
+            SPHExampleGPU.SPHCellList.rebuild_cell_list!(gpu, cl, f.kernel.H⁻¹)
+            support = GPUSupportArrays{2,T}(length(gpu); updated_mdbc = true,
+                boundary_slots = gpu.BoundarySlot, boundary_count = length(gpu.GhostIndex),
+                cache_interaction_fields = true)
+            step = HostStep(T(1e-4), 0.0)
+            types = Array(gpu.Type)
+            wall = only(findall(==(Fixed), types))
+            slot = Array(gpu.BoundarySlot)[wall]
+            data = support.boundary_data
+            original_density = copy(gpu.Density)
+            correct = function (impedance, wall_velocity, fluid_velocity)
+                copyto!(gpu.Density, original_density)
+                copyto!(gpu.Velocity, [type == Fixed ? wall_velocity : fluid_velocity for type in types])
+                GK.launch_updated_mdbc!(gpu.Density, gpu.Position, gpu.Velocity, gpu.GhostPoints,
+                    gpu.GhostNormals, gpu.GhostIndex, gpu.Type, cl.CellStart, cl.grid_dev,
+                    step, f.kernel, f.constants, data; compact_ghosts = Val(true),
+                    pressure = support.Pressure, mirror_viscosity = false, normal_impedance = impedance)
+                return Array(support.Pressure)[wall]
+            end
+            # The outward normal is +y. A pure common translation must not change the correction.
+            stationary = zero(SVector{2,T})
+            approach = SVector{2,T}(0.25, -0.125)
+            baseline = correct(false, stationary, approach)
+            pressure = correct(true, stationary, approach)
+            @test pressure - baseline ≈ 2500 atol = 0.02
+            @test particle_pressure(Array(gpu.Density)[wall], Fixed,
+                f.constants.c₀, f.constants.ρ₀, DBCPlusImpedance()) ≈ pressure atol = 0.03
+            boost = SVector{2,T}(0.5, 0.125)
+            @test correct(true, boost, boost + approach) ≈ pressure atol = 0.02
+            @test Array(data.velocity)[slot] == Array(data.tangent_velocity)[slot] == boost
+            @test correct(true, stationary, -approach) == baseline
+            @test correct(true, stationary, SVector{2,T}(0.25, 0)) == baseline
+        end
+    end
 end
 end

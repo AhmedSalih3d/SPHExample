@@ -62,6 +62,10 @@ end
     return ρ₀ + pressure / c₀^2, pressure
 end
 
+@inline function approaching_wall_pressure(wall_velocity, ghost_velocity, normal, c₀, ρ₀)
+    return (ρ₀ * c₀) * max(zero(c₀), dot(wall_velocity - ghost_velocity, normal))
+end
+
 @inline wall_acceleration(::Nothing, groups, i, step, velocity) = zero(velocity)
 @inline function wall_acceleration(motion, groups, i, step, velocity)
     @inbounds begin
@@ -85,7 +89,7 @@ function updated_mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVect
                               CellStart, gridarg, step, SimKernel, SimConstants, data, motion, groups,
                               prescribed_motion, coefficient_slot::Int32,
                               InvDensity, Pressure, ::Val{K}, ::Val{Compact}, nghost::Int32, periodicity, periodic_bounds,
-                              ::Val{MirrorViscosity}) where {T, D, TP, K, Compact, MirrorViscosity}
+                              ::Val{MirrorViscosity}, ::Val{NormalImpedance}) where {T, D, TP, K, Compact, MirrorViscosity, NormalImpedance}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t = thread_index()
@@ -141,14 +145,18 @@ function updated_mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVect
         end
         ρ, pressure = cloned_boundary_state(density, normal, SVector{D, T}(Position[i] - gp),
                                             gravity, acceleration, c₀, ρ₀)
-        Density[i] = active ? ρ : ρ₀
-        store_inverse_density!(InvDensity, i, Density[i])
-        p_wall = active ? pressure : zero(T)
-        store_pressure!(Pressure, i, iszero(SimConstants.BackgroundPressure) ? p_wall : p_wall + SimConstants.BackgroundPressure)
         ghost_velocity = let rhs = b, weight = A[1, 1]
             active ? SVector{D, T}(ntuple(k -> rhs[k + 1, 2] / weight, Val(D))) : zero(normal)
         end
         wall_velocity = Velocity[i]
+        if NormalImpedance && active
+            pressure += approaching_wall_pressure(wall_velocity, ghost_velocity, normal, c₀, ρ₀)
+            ρ = ρ₀ + pressure / c₀^2
+        end
+        Density[i] = active ? ρ : ρ₀
+        store_inverse_density!(InvDensity, i, Density[i])
+        p_wall = active ? pressure : zero(T)
+        store_pressure!(Pressure, i, iszero(SimConstants.BackgroundPressure) ? p_wall : p_wall + SimConstants.BackgroundPressure)
         mirrored = active ? 2 * wall_velocity - ghost_velocity : wall_velocity
         # Continuity uses the physical wall velocity. Mirroring is the no-slip
         # viscous construction, not a second normal wall velocity for density.
@@ -168,7 +176,8 @@ function launch_updated_mdbc!(Density, Position, Velocity, GhostPoints, GhostNor
                                prescribed_motion = nothing, prepared::Bool = false, coefficient_slot::Integer = 1,
                                fraction = 0.0,
                                compact_ghosts::Val = Val(false), inverse_density = nothing, pressure = nothing,
-                               periodicity = nothing, periodic_bounds = nothing, mirror_viscosity::Bool = true)
+                               periodicity = nothing, periodic_bounds = nothing, mirror_viscosity::Bool = true,
+                               normal_impedance::Bool = false)
     n = length(GhostIndex)
     n == 0 && return nothing
     if !prepared && prescribed_motion !== nothing
@@ -180,6 +189,7 @@ function launch_updated_mdbc!(Density, Position, Velocity, GhostPoints, GhostNor
     @cuda threads=threads blocks=cld(n * K, threads) updated_mdbc_kernel!(
         Density, Position, pairs, Velocity, GhostPoints, GhostNormals, GhostIndex, ParticleType,
         CellStart, grid, step, SimKernel, SimConstants, data, motion, groups, prescribed_motion, slot,
-        inverse_density, pressure, lanes, compact_ghosts, Int32(n), periodicity, periodic_bounds, Val(mirror_viscosity))
+        inverse_density, pressure, lanes, compact_ghosts, Int32(n), periodicity, periodic_bounds,
+        Val(mirror_viscosity), Val(normal_impedance))
     return nothing
 end
