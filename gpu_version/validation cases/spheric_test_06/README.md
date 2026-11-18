@@ -119,6 +119,14 @@ compare unfiltered pressure, viscous and total drag to the official
 reference and report the mean fluid pressure and minimum saved-frame
 clearance. The full and checkpoint results are kept in separate directories.
 
+Use `simple_mdbc_zero_ddt.jl fluid-only-startup` for the matched 0.9 s
+SimpleMDBC run with `LinearDensityDiffusion()`. At zero gravity this applies
+diffusion only to fluid–fluid pairs. The
+[startup comparison](results/simple_mdbc_fluid_ddt_startup/comparison.png)
+shows that the dip at 0.86 s is smaller, but a deeper dip appears at 0.80 s.
+Pressure-drag error over 0.1–0.9 s rises from 23.9% to 34.4%, and maximum
+saved-frame penetration increases from 0.79 to 1.98 mm.
+
 The full run completed 302,000 steps and 401 frames without particle loss
 or freezing. Its first 46 saved states and force samples match the separate
 startup checkpoint exactly. In both runs, mean fluid pressure rises from
@@ -143,6 +151,12 @@ in SimpleMDBC; they do not isolate the cause of the earlier DBC+ spike.
 [Raw startup curves](results/simple_mdbc_zero_ddt_startup/force_comparison.png) |
 [Raw full-run curves](results/simple_mdbc_zero_ddt/force_comparison.png) |
 [Full metrics](results/simple_mdbc_zero_ddt/comparison_metrics.csv)
+
+The [frozen reconstruction audit](results/simple_mdbc_reconstruction_audit/README.md)
+finds reasonably conditioned late front-wall MLS systems, with no switch out
+of the MLS branch in the examined frames. Wall-gradient extrapolation strongly
+amplifies the front pressure variations. Frozen Shepard comparisons are
+diagnostic only and do not establish an improved simulated boundary.
 
 ## Experimental DBC+
 
