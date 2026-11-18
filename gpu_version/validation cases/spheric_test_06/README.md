@@ -98,6 +98,52 @@ Use `density_budget.jl original`, `density_budget.jl fluid_only` or
 and compressed per-step traces stay under ignored `runs/density_budget`;
 compact summaries and measured limitations are tracked in the report.
 
+## SimpleMDBC with density diffusion disabled
+
+[`simple_mdbc_zero_ddt.jl`](simple_mdbc_zero_ddt.jl) compares `SimpleMDBC`
+with the archived [DBC no-diffusion control](results/zero_ddt_full/README.md)
+at Re=100 and L/dp=80. Both use `ZeroDensityDiffusion()`, c0=160 m/s,
+coefh=1.2, CFL=0.2 and integrated motion in the original tank. Boundary
+interpolation, continuity, pressure and laminar viscosity remain active.
+
+```sh
+julia --project=. -t 2,0 "validation cases/spheric_test_06/simple_mdbc_zero_ddt.jl"
+python "validation cases/spheric_test_06/plot_simple_mdbc_zero_ddt.py"
+```
+
+Use the Julia argument `startup` followed by the Python option `--startup`
+for a separate 0.9 s checkpoint with the same settings. The solver publishes
+its timestep progress in `SimulationOutput.log`; force reconstruction
+reads the particle history after the file closes. The plots and metrics
+compare unfiltered pressure, viscous and total drag to the official
+reference and report the mean fluid pressure and minimum saved-frame
+clearance. The full and checkpoint results are kept in separate directories.
+
+The full run completed 302,000 steps and 401 frames without particle loss
+or freezing. Its first 46 saved states and force samples match the separate
+startup checkpoint exactly. In both runs, mean fluid pressure rises from
+zero despite no prescribed pressure offset.
+
+| Full-history measurement | DBC, no diffusion | SimpleMDBC, no diffusion |
+|---|---:|---:|
+| Raw pressure-drag error | 63.60% | 486.43% |
+| Raw viscous-drag error | 81.12% | 78.30% |
+| Raw total-drag error | 65.64% | 439.31% |
+| Mean fluid pressure at 8 s | 103.68 kPa | 95.70 kPa |
+| Minimum saved clearance | +0.248 mm | -1.602 mm |
+
+Errors are relative L2 norms over 0.1-8 s. The SimpleMDBC pressure Cd drops
+to 0.060 at 0.86 s, then shows much larger swings late in the motion, reaching
+-88.09 at 7.54 s. Recomputing the pair reaction directly from the exported
+pressures/densities at that frame gives -81.79, confirming that the large
+negative excursion is not confined to the accepted-frame wall reconstruction.
+These results show that DDT is not required for pressure-force excursions
+in SimpleMDBC; they do not isolate the cause of the earlier DBC+ spike.
+
+[Raw startup curves](results/simple_mdbc_zero_ddt_startup/force_comparison.png) |
+[Raw full-run curves](results/simple_mdbc_zero_ddt/force_comparison.png) |
+[Full metrics](results/simple_mdbc_zero_ddt/comparison_metrics.csv)
+
 ## Experimental DBC+
 
 The pressure-only option is named `DBCPlus` in Julia. It reconstructs wall
