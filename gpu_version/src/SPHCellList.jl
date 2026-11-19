@@ -1593,7 +1593,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                         cl::CellListWorkspace, sup::GPUSupportArrays, red::ReductionWorkspace,
                         motion, state::StepState{FloatType};
                         floating = nothing, external_forces = (), damping = (), rotation = nothing, open_boundary = nothing,logger = nothing, diagnostics = nothing,
-                        divergence_cleaning = nothing, density_observer = nothing) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
+                        divergence_cleaning = nothing, density_observer = nothing, output_clip_times = nothing) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
                                                    SDD <: SPHDensityDiffusion, SV <: SPHViscosity}
     if divergence_cleaning !== nothing
         SimMetaData.TimeSteppingMode isa SymplecticTimeStepping && sup.PeriodicImages === nothing &&
@@ -1695,7 +1695,8 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
              density_observer)
 
     t_out = next_output_time(SimMetaData)
-    set_output_time!(state, t_out; clip_timestep = SimMetaData.GPUClipTimeStepToOutput)
+    clip_time = output_clip_times === nothing ? t_out : output_clip_times[searchsortedfirst(output_clip_times, t_out)]
+    set_output_time!(state, t_out; clip_timestep = SimMetaData.GPUClipTimeStepToOutput, clip_time)
 
     if SingleNeighbor && interaction_mode_changed && state.primed && cl.nrebuilds > 0
         # The carried derivative belongs to the previous operator/compiler options.
@@ -1859,6 +1860,9 @@ table and keeps subsequent configuration reports in the saved log only.
 deadlines and ends exactly at `SimulationTime` in the metadata's precision.
 The default `false` preserves full adaptive steps and strict overshoot.
 Clipping changes trajectories and may change step counts.
+`SimOutputClipTimes` can specify a subset of the output schedule
+at which to clip in the standard symplectic solver. Other outputs sample
+the first accepted step at or after their requested time.
 
 With `SimMetaData.GPUDoublePosition` the positions (and ghost node
 positions) are integrated in `Float64` while everything else stays in
@@ -1934,12 +1938,22 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     SimDivergenceCleaning = nothing,
     # Opt-in synchronous stage observer; see validation case density_budget.jl.
     SimDensityObserver = nothing,
+    SimOutputClipTimes::Union{Nothing,Vector{Float64}} = nothing,
     SimRotation::Union{Nothing,RotationMotion} = nothing,
     SimMotion::Union{Nothing,PrescribedMotion,MotionSystem} = nothing,
     ParaviewPressureRange = nothing,
     ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SV <: SPHViscosity, SDD <: SPHDensityDiffusion}
 
     CUDA.functional() || error("CUDA is not functional on this machine; use the CPU package SPHExample instead.")
+    if SimOutputClipTimes !== nothing
+        outputs = SimMetaData.OutputTimes
+        SimMetaData.GPUClipTimeStepToOutput && SimTimeStepping isa SymplecticTimeStepping &&
+            SimMetaData.VariableResolution === nothing && SimOpenBoundaries === nothing &&
+            outputs isa Vector{Float64} && !isempty(SimOutputClipTimes) &&
+            all(>(0), diff(SimOutputClipTimes)) && first(SimOutputClipTimes) > 0 &&
+            last(SimOutputClipTimes) == SimMetaData.SimulationTime && all(in(outputs), SimOutputClipTimes) ||
+            throw(ArgumentError("SimOutputClipTimes requires standard clipped symplectic output and an increasing subset of OutputTimes ending at SimulationTime"))
+    end
     if SimDensityObserver !== nothing
         !SimMetaData.GPUUseGraph && !SimMetaData.GPUFusePredictor &&
             !SimMetaData.GPUCacheInteractionFields && !SimMetaData.GPURadialInteractions &&
@@ -2502,7 +2516,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             @timeit HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                                                                  SimConstants, gpu, cl, sup, red, motion, state;
                                                                  floating = floating, external_forces, damping, divergence_cleaning, rotation, open_boundary,logger = SimLogger, diagnostics,
-                                                                 density_observer = SimDensityObserver)
+                                                                 density_observer = SimDensityObserver, output_clip_times = SimOutputClipTimes)
 
             # Publish progress immediately, independently of the queued disk writes.
             if StoreLogOutput

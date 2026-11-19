@@ -65,3 +65,9 @@ python "validation cases/spheric_test_06/plot_wall_penetration_controls.py"
 
 [Native metrics](metrics.csv) · [Full-run native drag and clearance](full_comparison.png) ·
 [DualSPHysics and native clearance](dual_comparison.png) · [DualSPHysics metrics](dual_metrics.csv)
+
+The fine-resolution plots use the common 0–2 s window. DualSPHysics
+uses NoFixed shifting and appears in the clearance plot. The drag plot
+compares the native force histories with the finite-difference reference.
+Regenerate these plots with `plot_wall_penetration_controls.py --fine`.
+[Fine-resolution clearance](n080_clearance.png) · [Fine-resolution drag](n080_drag.png)

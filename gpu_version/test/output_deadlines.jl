@@ -72,6 +72,26 @@ if CUDA.functional()
             @test state.fh[STEP.F_TIME] == deadline
             @test state.ih[STEP.I_ITER] == 5
 
+            diagnostic = StepState{T}()
+            clip_deadline = Float64(natural_dt) * 2.5
+            set_output_time!(diagnostic, Float64(natural_dt) / 2;
+                clip_timestep = true, clip_time = clip_deadline)
+            launch_finish!(diagnostic, reduction, kernel, constants)
+            launch_commit!(diagnostic)
+            launch_finish!(diagnostic, reduction, kernel, constants)
+            readback!(diagnostic)
+            @test diagnostic.fh[STEP.F_DT] ≈ natural_dt rtol = eps(T)
+            @test diagnostic.fh[STEP.F_TIME] ≈ natural_dt rtol = eps(T)
+            @test diagnostic.ih[STEP.I_STOP] == STOP_OUTPUT
+            set_output_time!(diagnostic, clip_deadline; clip_timestep = true)
+            for _ in 1:4
+                launch_finish!(diagnostic, reduction, kernel, constants)
+                launch_commit!(diagnostic)
+            end
+            readback!(diagnostic)
+            @test diagnostic.fh[STEP.F_TIME] == clip_deadline
+            @test diagnostic.ih[STEP.I_ITER] == 3
+
             # A rebuild interrupts a clipped step before integration. Its dt
             # must survive the rebuild even if the reduction workspace changes.
             rebuilt = StepState{T}(dx = one(T) + kernel.h)

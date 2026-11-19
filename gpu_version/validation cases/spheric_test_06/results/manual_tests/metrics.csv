@@ -1,0 +1,10 @@
+run,n,test,sound_speed,cfl,time_stepping,shifting,timestep_criterion,interaction_path,steps,elapsed_at_final_frame_s,minimum_clearance_mm,cd_pressure_l2,cd_viscous_l2,startup_min_pressure_cd,startup_min_time_s
+Re100_n010_Test7,10,7,160.0,0.2,SingleNeighborTimeStepping,PlanarShifting,legacy_absolute_position,reference,22800,2.875,-102.11484796112957,0.13856878265125253,0.4015870975794816,1.6770338419920927,0.88
+Re100_n020_Test6,20,6,160.0,0.2,SingleNeighborTimeStepping,PlanarShifting,legacy_absolute_position,reference,45600,6.215,-51.24484270106522,0.07044081145043125,0.18651518994696792,1.9261056259068363,0.84
+Re100_n040_Test1,40,1,40.0,0.05,SymplecticTimeStepping,NoShifting,legacy_absolute_position,reference,90813,45.317,-45.68358620896973,0.3879341069921611,0.09588275261109733,5.456854774310119,0.9
+Re100_n040_Test2,40,2,40.0,0.05,SymplecticTimeStepping,PlanarShifting,legacy_absolute_position,reference,90820,42.771,-20.647213596357126,0.27098191680435807,0.06572016940300811,0.9429853695198503,0.92
+Re100_n040_Test3,40,3,40.0,0.05,SymplecticTimeStepping,PlanarShifting,pairwise_signal,radial,110133,36.283,-20.563913910904617,0.28715606163331997,0.06972210932600553,1.0961108131903305,0.94
+Re100_n040_Test4,40,4,160.0,0.2,SingleNeighborTimeStepping,NoShifting,legacy_absolute_position,reference,90800,19.291,-24.63800716699538,0.0514307799885625,0.0365609521544041,1.9429078333797873,0.94
+Re100_n040_Test5,40,5,160.0,0.2,SingleNeighborTimeStepping,PlanarShifting,legacy_absolute_position,reference,90800,21.844,-18.22096326591849,0.04781303214071812,0.027057981970734783,1.988371003831728,0.94
+Re100_n080_Test8,80,8,160.0,0.2,SingleNeighborTimeStepping,PlanarShifting,legacy_absolute_position,reference,181200,116.276,-8.07648345345413,0.09114185561943526,0.1641535928722199,2.16841025954182,0.94
+Re100_n160_Test8,160,8,160.0,0.2,SingleNeighborTimeStepping,PlanarShifting,legacy_absolute_position,reference,362400,937.118,-4.6533680925660015,0.18435801768609725,0.27676019120780776,2.3471102445509304,0.94

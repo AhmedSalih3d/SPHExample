@@ -1423,7 +1423,7 @@ function finish_kernel!(step::DeviceStep{T}, partial, nblocks::Int32, CFL::T, câ
             dt1  = r[2]
             dt   = min(Float64(GPUStepState.controlled_timestep(timestep_controller, CFL * min(dt1, h / acoustic_denominator(pair_signal,visc,câ‚€,h)))),dt_limit,cleaning_limit)
             if s[I_CLIP_OUTPUT] != 0
-                dt = min(dt, f[F_TOUT] - f[F_TIME])
+                dt = min(dt, f[F_TCLIP] - f[F_TIME])
             end
             d4   = 4 * r[3]
             dx   = T(f[F_DX]) + d4
@@ -1479,7 +1479,7 @@ function commit_kernel!(step::DeviceStep)
         # overshooting state: every integrator has already used the clipped dt.
         time = f[F_TIME]
         dt = f[F_DT]
-        f[F_TIME] = s[I_CLIP_OUTPUT] != 0 && dt >= f[F_TOUT] - time ? f[F_TOUT] : time + dt
+        f[F_TIME] = s[I_CLIP_OUTPUT] != 0 && dt >= f[F_TCLIP] - time ? f[F_TCLIP] : time + dt
         s[I_ITER] += Int32(1)
         s[I_PHASE] = PHASE_NEED_DT
     end

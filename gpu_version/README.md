@@ -3455,6 +3455,12 @@ or batched CUDA graphs, and with single-file or numbered VTKHDF output.
 Measurements share these frame times. No interpolation is used, and reaching
 a deadline exactly does not take an extra step.
 
+For a diagnostic replay with extra output frames, pass
+`SimOutputClipTimes` to `RunSimulation` as a sorted subset of the explicit
+`OutputTimes` vector ending at `SimulationTime`. The standard symplectic
+solver still clips at those times. Other outputs record the first accepted
+state at or after their requested time, using the actual state time.
+
 Shorter steps change the numerical trajectory, subsequent adaptive timesteps
 and potentially cell-list rebuilds. Changing `OutputTimes` with clipping enabled
 can therefore change the trajectory and iteration count. Frequent deadlines

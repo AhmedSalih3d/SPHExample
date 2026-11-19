@@ -23,7 +23,7 @@ using CUDA
 using Adapt
 
 export StepState, DeviceStep, HostStep, step_active, step_dt, step_time, step_particle_count,
-       F_DT, F_TIME, F_DX, F_TOUT, F_DISP, I_STOP, I_PHASE, I_ITER, I_CLIP_OUTPUT,
+       F_DT, F_TIME, F_DX, F_TOUT, F_DISP, F_TCLIP, I_STOP, I_PHASE, I_ITER, I_CLIP_OUTPUT,
        I_GRID_STATUS, I_GRID_ORIGIN, I_GRID_DIMS, I_GRID_NCELLS, I_GRID_FROZEN,
        STOP_NONE, STOP_REBUILD, STOP_OUTPUT, STOP_PERIODIC_IMAGES, PHASE_NEED_DT, PHASE_DT_READY,
        readback!, set_output_time!, resume_after_rebuild!, invalidate_graphs!
@@ -34,7 +34,8 @@ const F_TIME = 2   # simulated time, advanced after every completed step
 const F_DX   = 3   # displacement bound accumulated since the last cell list rebuild
 const F_TOUT = 4   # end of the current output interval
 const F_DISP = 5   # 4 * maximum displacement of the last step (host side batch size estimate)
-const NUM_F  = 5
+const F_TCLIP = 6 # timestep clipping deadline, which can follow a diagnostic output
+const NUM_F  = 6
 
 # Slots of the integer state vector
 const I_STOP  = 1
@@ -192,15 +193,17 @@ function set_slot!(dev::CuVector{T}, host::Vector{T}, idx::Integer, val) where {
 end
 
 """
-    set_output_time!(state, t_out; clip_timestep = false)
+    set_output_time!(state, t_out; clip_timestep = false, clip_time = t_out)
 
 Start a new output interval: store its end time and clear the stop flag.
-With `clip_timestep = true`, shorten adaptive steps to land exactly on `t_out`
-and stop at equality. Otherwise take full steps until strictly beyond `t_out`.
+With `clip_timestep = true`, clip adaptive steps at `clip_time` and stop at or
+after `t_out`. A later `clip_time` permits diagnostic sampling without
+adding a clipped step. Otherwise take full steps until strictly beyond `t_out`.
 The option lives on the device, so cached graphs observe changes on replay.
 """
-function set_output_time!(s::StepState, t_out; clip_timestep::Bool = false)
+function set_output_time!(s::StepState, t_out; clip_timestep::Bool = false, clip_time = t_out)
     set_slot!(s.f, s.fh, F_TOUT, t_out)
+    set_slot!(s.f, s.fh, F_TCLIP, clip_time)
     set_slot!(s.i, s.ih, I_CLIP_OUTPUT, Int32(clip_timestep))
     set_slot!(s.i, s.ih, I_STOP, STOP_NONE)
     return nothing

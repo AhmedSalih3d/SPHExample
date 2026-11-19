@@ -1,5 +1,6 @@
 """Measure crossings of the nominal moving square and outer tank walls."""
 import csv
+import sys
 from pathlib import Path
 
 import h5py
@@ -117,6 +118,53 @@ def native_metrics(boundary, label, force, frame_metrics, reference, n=40):
                 peak_tank_crossings=int(tank.max()), pressure_drag_l2=errors[0], viscous_drag_l2=errors[1])
 
 
+def write_fine_comparison():
+    reference = read_reference(CASE / "reference" / "Force_Re100.dat")
+    clearance_fig, clearance_axes = plt.subplots(2, 1, figsize=(10, 6), sharex=True, layout="constrained")
+    drag_fig, drag_axes = plt.subplots(2, 1, figsize=(10, 6), sharex=True, layout="constrained")
+    baseline_root = Path("manual_coefh2_matrix")
+    native_runs = [
+        (label, baseline_root / wall / "zero-gravity-linear", "Re100_n080.csv", "Re100_n080/MovingSquare.vtkhdf")
+        for wall, label in (("dbc", "DBC"), ("simple-mdbc", "SimpleMDBC"))
+    ] + [
+        (mode, Path(TAG) / f"{mode}_n080", "native.csv", "MovingSquare.vtkhdf")
+        for mode in ("DBCPlusImpedance", "UpdatedMDBCWithImpedance")
+    ]
+    for label, directory, history, particles in native_runs:
+        force = read_table(CASE / "results" / directory / history)
+        force = force[force["time"] <= 2.0]
+        t = force["time"]
+        np.testing.assert_allclose(t, np.linspace(0, 2, 101), atol=1e-12, rtol=0)
+        clearance, count, _ = np.array(list(crossings(CASE / "runs" / directory / particles, t))).T
+        clearance_axes[0].plot(t, 1000 * clearance, label=label)
+        clearance_axes[1].step(t, count, where="mid", label=label)
+        for ax, key in zip(drag_axes, ("cd_pressure", "cd_viscous")):
+            ax.plot(t, force[key], label=label)
+    dual = CASE / "runs" / TAG / "dual-n080" / "vtk"
+    if (dual / "positions_stats.csv").exists():
+        data = [row for row in dual_crossings(dual, 80) if row[0] <= 2.0001]
+        t, clearance, count, _ = np.asarray(data).T
+        label = "DualSPHysics DBC (NoFixed shifting)"
+        clearance_axes[0].plot(t, 1000 * clearance, "--", label=label)
+        clearance_axes[1].step(t, count, where="mid", linestyle="--", label=label)
+    for column, ax in enumerate(drag_axes, start=1):
+        ax.plot(reference[:, 0], reference[:, column], "k--", label="FD reference")
+    title = "SPHERIC Test 06 · Re = 100 · L/dp = 80 · coefh = 2.0"
+    for fig, axes, labels, filename in (
+        (clearance_fig, clearance_axes, ("Square clearance [mm]", "Fluid centers inside square"), "n080_clearance.png"),
+        (drag_fig, drag_axes, ("Pressure drag Cd", "Viscous drag Cd"), "n080_drag.png"),
+    ):
+        for ax, label in zip(axes, labels):
+            ax.set(xlim=(0, 2), ylabel=label)
+            ax.grid(alpha=.22)
+        axes[0].axhline(0, color="0.5", ls=":", lw=0.9)
+        axes[0].legend(fontsize=8, ncol=2)
+        axes[-1].set_xlabel("Time [s]")
+        fig.suptitle(title)
+        fig.savefig(OUT / filename, dpi=175)
+        plt.close(fig)
+
+
 def main():
     reference = read_reference(CASE / "reference" / "Force_Re100.dat")
     fig, axes = plt.subplots(2, 2, figsize=(12, 7), sharex=True, layout="constrained")
@@ -185,5 +233,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
-    write_dual_comparison()
+    if sys.argv[1:] == ["--fine"]:
+        write_fine_comparison()
+    else:
+        main()
+        write_dual_comparison()

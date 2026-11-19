@@ -32,7 +32,7 @@
         motion_kind      = :integrated  # :hermite reproduces the rounded-position history.
 
         reynolds         = 100
-        dx               = 0.025
+        dx               = 0.00625
         reference_speed  = 1.0
         reference_length = layout.body_size[1]
         span             = 1.0
@@ -41,12 +41,12 @@
         kernel_h_factor  = coefh * sqrt(2)
         start_delay      = 0.0
         duration         = 8.0 + start_delay
-        output_interval  = 0.02
+        output_interval  = 0.001
         visualize_in_paraview = true
 
         run_tag          = "coefh"
         n                = round(Int, reference_length / dx)
-        run_name         = "Re$(lpad(string(reynolds), 3, '0'))_n$(lpad(string(n), 3, '0'))" * "_ZeroGravityLinearDensityDiffusion"
+        run_name         = "Re$(lpad(string(reynolds), 3, '0'))_n$(lpad(string(n), 3, '0'))" * "_Test9";
         save_location    = joinpath(@__DIR__, "runs", run_tag, run_name)
         plot_location    = joinpath(@__DIR__, "runs", run_tag, "paraview_force_plot")
         results_location = joinpath(@__DIR__, "results", run_tag)
@@ -88,7 +88,7 @@
         SimMetaData = SimulationMetaData{
             Dimensions,
             FloatType,
-            NoShifting,
+            PlanarShifting,
             NoKernelOutput,
             boundary_mode,
             StoreLog,
@@ -117,7 +117,7 @@
 
         SimViscosity        = Laminar()
         SimDensityDiffusion = ZeroGravityLinearDensityDiffusion()
-        SimTimeStepping     = SymplecticTimeStepping()
+        SimTimeStepping     = SingleNeighborTimeStepping()
         # Quadratic velocity damping at outer edges; no damping inside the original box.
         SimDamping          = use_sponge ? SphericTest06.edge_sponge(layout; width = sponge_width, rate = sponge_rate) : nothing
         SimDivergenceCleaning = nothing
