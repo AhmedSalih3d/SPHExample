@@ -94,7 +94,8 @@ def main():
         writer = csv.DictWriter(file, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
-    print(f"Compared {len(rows)} of 54 runs")
+    expected = len(REYNOLDS) * len(RESOLUTIONS) * len(WALLS) * len(MODELS)
+    print(f"Compared {len(rows)} of {expected} runs")
 
 
 if __name__ == "__main__":

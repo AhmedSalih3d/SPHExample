@@ -12,7 +12,7 @@ PlanarShifting. Each simulation runs to 8 s with output every 0.02 s.
 - Zero diffusion, zero-gravity linear, fluid-only linear, complex,
   Fourtakas inner (DDT2), and Fourtakas full (DDT3)
 
-The 54 GPU runs retain their particle histories under
+The 108 GPU runs retain their particle histories under
 `runs/manual_coefh2_matrix/`. The runner verifies and reuses completed
 members. A partial particle history requires a separate directory before a
 retry. Each force history uses the manual-case saved-density convention,
