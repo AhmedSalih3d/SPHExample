@@ -37,13 +37,14 @@ end
 
 function prepare_dual(; n = 40, reynolds = 100, sound_speed = 40, duration = 8.0, interval = 0.02,
         motion_kind = :hermite, diffusion = 1, damping = nothing, cfl = 0.2,
-        coefh = 1.0, wall_layers = nothing, trajectory = nothing, tag = "")
+        coefh = 1.0, wall_layers = nothing, trajectory = nothing, tag = "", shifting = 0)
     isfinite(cfl) && 0 < cfl <= 0.5 || throw(ArgumentError("CFL must be finite and in (0,0.5]"))
     isfinite(coefh) && coefh > 0 || throw(ArgumentError("coefh must be positive and finite"))
     trajectory === nothing || !isempty(tag) || throw(ArgumentError("Custom trajectories require a unique tag"))
     name = "re$(reynolds)_n$(n)_c$(sound_speed)_$(motion_kind)_ddt$(diffusion)_t$(duration)_out$(interval)_centered_v2"
     cfl == 0.2 || (name *= "_cfl$(cfl)")
     coefh == 1 || (name *= "_coefh$(coefh)")
+    shifting == 0 || (name *= "_shift$(shifting)")
     wall_layers === nothing || (name *= "_walls$(wall_layers)")
     isempty(tag) || (name *= "_" * tag)
     if damping !== nothing
@@ -92,7 +93,7 @@ function prepare_dual(; n = 40, reynolds = 100, sound_speed = 40, duration = 8.0
       <parameter key="Kernel" value="2"/><parameter key="ViscoTreatment" value="3"/>
       <parameter key="Visco" value="$(1/reynolds)"/><parameter key="ViscoBoundFactor" value="1"/>
       <parameter key="DensityDT" value="$diffusion"/><parameter key="DensityDTvalue" value="0.1"/>
-      <parameter key="Shifting" value="0"/><parameter key="RigidAlgorithm" value="1"/>
+      <parameter key="Shifting" value="$shifting"/><parameter key="RigidAlgorithm" value="1"/>
       <parameter key="CoefDtMin" value="0.01"/><parameter key="DtIni" value="$(cfl*coefh*sqrt(2)*dx/sound_speed)"/>
       <parameter key="TimeMax" value="$duration"/><parameter key="TimeOut" value="$interval"/>
       <parameter key="PartsOutMax" value="0.001"/><parameter key="RhopOutMin" value="700"/>
