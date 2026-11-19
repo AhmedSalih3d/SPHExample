@@ -61,3 +61,13 @@ elapsed (2296.71 s solver-reported; 184,163 steps), excluding GenCase and
 force postprocessing. Native elapsed time was about 28% lower in this
 single comparison. Shifting (PlanarShifting vs. NoFixed), output paths,
 and timing scopes differ, so this is not an isolated kernel speedup.
+
+### Single force evaluation
+
+![Drag and runtime comparison](results/manual_coefh2_matrix/single_evaluation_dbc_comparison.png)
+
+With the same native case settings and 181,200 steps, `SingleNeighborTimeStepping`
+completed in 910.25 s versus 1661.31 s for native symplectic stepping
+(45.2% less elapsed time). Relative L2 pressure-drag error against the
+finite-difference reference rose from 8.78% to 9.11%; viscous-drag error
+changed from 16.35% to 16.42%.
