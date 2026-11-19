@@ -81,9 +81,10 @@ function body_trajectory(directory = REFERENCE_DIR; speed_scale = 1.0, start_del
     return SampledTrajectory(times, positions; velocities)
 end
 
-"""Construct DBC or SimpleMDBC tank/body geometry, reflecting ghost points into fluid."""
+"""Construct DBC or mDBC tank/body geometry, reflecting ghost points into fluid."""
 function manual_geometry(sampled, density, ::Type{T}; boundary_mode = NoMDBC) where {T}
-    boundary_mode in (NoMDBC, SimpleMDBC) || throw(ArgumentError("Manual case supports NoMDBC or SimpleMDBC"))
+    boundary_mode in (NoMDBC, SimpleMDBC, UpdatedMDBC) ||
+        throw(ArgumentError("Manual case supports NoMDBC, SimpleMDBC, or UpdatedMDBC"))
     layout = sampled.layout
     lower, upper = layout.tank_origin, layout.tank_origin + layout.tank_size
     function wall_geometry(points, marker, type)

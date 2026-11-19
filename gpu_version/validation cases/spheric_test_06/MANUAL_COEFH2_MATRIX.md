@@ -30,3 +30,19 @@ compares pressure, viscous, and total drag against the finite-difference
 reference over 0.10–8.00 s and reports startup pressure error separately
 over 0.10–0.90 s. Negative minimum clearance indicates that a saved fluid
 particle center crossed a nominal solid face.
+# Matched UpdatedMDBC check
+
+The archived `updated-mdbc/zero-gravity-linear/Re100_n040` run uses the
+same manual geometry and settings as the SimpleMDBC control, changing only
+the boundary mode. It completed all 401 frames through 8 s.
+
+| Boundary | Pressure relative L2 | Viscous relative L2 | Total relative L2 | Viscous peak Cd | Peak time (s) |
+|---|---:|---:|---:|---:|---:|
+| Finite-difference reference | - | - | - | 0.7885 | 0.702 |
+| DBC | 0.0460 | 0.0258 | 0.0418 | 0.7976 | 0.700 |
+| SimpleMDBC | 0.0521 | 0.0328 | 0.0466 | 0.8012 | 0.700 |
+| UpdatedMDBC | 0.0649 | 0.4544 | 0.0479 | 0.5686 | 0.660 |
+
+UpdatedMDBC underpredicts the reference viscous peak by about 28%.
+Total drag error alone masks the deterioration in the viscous component.
+This check is specific to Re = 100 and L/dp = 40.
