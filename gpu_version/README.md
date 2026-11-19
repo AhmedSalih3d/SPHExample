@@ -80,6 +80,12 @@ wall relative to the wall's motion (`rho0 * c0 * approach_speed`), with no
 extra pressure during separation. It retains DBC+'s physical viscous wall
 velocity and does not guarantee impermeability.
 
+`UpdatedMDBCWithImpedance` applies the same approach pressure to UpdatedMDBC
+and retains its mirrored tangential wall velocity for viscosity. Both
+impedance variants use ghost points and normals. The
+[moving-square penetration study](validation%20cases/spheric_test_06/results/wall_penetration_controls/README.md)
+compares saved clearance and reference drag.
+
 ## Optional experimental velocity-divergence cleaning
 
 The GPU solver implements the hyperbolic/parabolic velocity-divergence method

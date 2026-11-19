@@ -1,0 +1,7 @@
+case,frames,first_crossing_s,minimum_square_clearance_mm,minimum_time_s,peak_square_crossings,peak_tank_crossings
+Native DBC n40,401,0.42,-16.548956291724704,1.68,8,0
+Native DBC n80,401,0.36,-8.246893268561761,0.76,6,0
+DualSPHysics n40 coefh 1.2,401,0.6400051902457,-1.0468006134032315,0.6400051902457,2,0
+DualSPHysics n80 coefh 2.0 NoFixed,401,0.3800201457715,-5.7770252227782315,2.200012739377,6,0
+DualSPHysics n40 coefh 2.0 no shifting,101,0.4200323771178,-8.475545048713728,0.5400031251463,4,0
+Native DBC n40 coefh 2.0 no shifting,101,0.42,-23.255356526460602,1.6600000000000001,8,0

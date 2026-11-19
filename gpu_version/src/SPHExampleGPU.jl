@@ -129,7 +129,7 @@ module SPHExampleGPU
     using .SimulationMetaDataConfiguration
     export SimulationMetaData, ShiftingMode, NoShifting, PlanarShifting,
            KernelOutputMode, NoKernelOutput, StoreKernelOutput,
-           MDBCMode, NoMDBC, SimpleMDBC, UpdatedMDBC, DBCPlus, DBCPlusImpedance,
+           MDBCMode, NoMDBC, SimpleMDBC, UpdatedMDBC, UpdatedMDBCWithImpedance, DBCPlus, DBCPlusImpedance,
            LogMode, NoLog, StoreLog,
            TimeSteppingMode, SymplecticTimeStepping, SingleNeighborTimeStepping, DualSPHysicsSymplectic,
            OUTPUT_VARIABLES, DEFAULT_OUTPUT_VARIABLES, resolve_output_variables!, position_float_type

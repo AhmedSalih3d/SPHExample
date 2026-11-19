@@ -4,6 +4,7 @@ include(joinpath(@__DIR__, "dual_compare.jl"))
 using .Test06DualComparison
 using .Test06DualComparison.SphericTest06
 using SPHExampleGPU
+using SPHExampleGPU.SimulationMetaDataConfiguration: mirror_wall_viscosity, normal_wall_impedance
 using StaticArrays: SVector, SMatrix
 using LinearAlgebra: dot, norm, det
 using Statistics: mean
@@ -95,14 +96,14 @@ function mdbc_wall_state(gp::SVector{2,Float64}, wall_pos::SVector{2,Float64}, w
     gravity = SVector(0.0, -gravity_scalar)
     rho, p = GK.cloned_boundary_state(ghost_rho, normal, wall_pos - gp, gravity, wall_acc, constants.c₀, constants.ρ₀)
     ghost_vel = active ? b_vel / A[1, 1] : zero(wall_vel)
-    if active && boundary_mode isa DBCPlusImpedance
+    if active && normal_wall_impedance(boundary_mode)
         p += GK.approaching_wall_pressure(wall_vel, ghost_vel, normal, constants.c₀, constants.ρ₀)
         rho = constants.ρ₀ + p / constants.c₀^2
     end
     rho_final = active ? rho : constants.ρ₀
     p_final = (active ? p : 0.0) + constants.BackgroundPressure
     mirrored = active ? 2.0 * wall_vel - ghost_vel : wall_vel
-    visc_vel = active && boundary_mode isa UpdatedMDBC ?
+    visc_vel = active && mirror_wall_viscosity(boundary_mode) ?
         mirrored - dot(mirrored - wall_vel, normal) * normal : wall_vel
     return (; active, density = rho_final, pressure = p_final, viscous_velocity = visc_vel)
 end

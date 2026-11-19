@@ -23,7 +23,7 @@ using ..SimulationGeometry
 using ..PeriodicBoundaries: wrap_periodic_position
 using ..AuxiliaryFunctions
 using ..SimulationMetaDataConfiguration
-using ..SimulationMetaDataConfiguration: periodic_images_enabled
+using ..SimulationMetaDataConfiguration: periodic_images_enabled, mirror_wall_viscosity, normal_wall_impedance
 using ..SimulationConstantsConfiguration
 using ..SimulationLoggerConfiguration
 using ..PreProcess
@@ -1164,8 +1164,8 @@ function enqueue_boundary_correction!(ctx, step, half::Bool; prepared::Bool = fa
             coefficient_slot = half ? 2 : 1, fraction = half ? 0.5 : 0.0,
             compact_ghosts = Val(gpu.BoundarySlot !== nothing), inverse_density = sup.InvDensity,
             pressure = sup.Pressure, periodicity = cl.periodicity, periodic_bounds = periodic_bounds(sup),
-            mirror_viscosity = boundary_mode isa UpdatedMDBC,
-            normal_impedance = boundary_mode isa DBCPlusImpedance)
+            mirror_viscosity = mirror_wall_viscosity(boundary_mode),
+            normal_impedance = normal_wall_impedance(boundary_mode))
     else
         launch_mdbc!(density, position, gpu.GhostPoints, gpu.GhostIndex, gpu.Type,
             cl.CellStart, cl.grid_dev, step, SimKernel, SimConstants; threads, lanes, pos_cells = pairs,

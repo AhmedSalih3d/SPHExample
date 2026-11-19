@@ -6,7 +6,7 @@ using TimerOutputs
 
 export SimulationMetaData, UpdateMetaData!, ShiftingMode, NoShifting, PlanarShifting,
        KernelOutputMode, NoKernelOutput, StoreKernelOutput,
-       MDBCMode, NoMDBC, SimpleMDBC, UpdatedMDBC, DBCPlus, DBCPlusImpedance, ClonedPressureBoundary,
+       MDBCMode, NoMDBC, SimpleMDBC, UpdatedMDBC, UpdatedMDBCWithImpedance, DBCPlus, DBCPlusImpedance, ClonedPressureBoundary,
        LogMode, NoLog, StoreLog,
        TimeSteppingMode, SymplecticTimeStepping, SingleNeighborTimeStepping, DualSPHysicsSymplectic,
        OUTPUT_VARIABLES, DEFAULT_OUTPUT_VARIABLES, resolve_output_variables!, position_float_type
@@ -49,6 +49,18 @@ wall normal. Keeps DBC+ viscosity and ghost support rules. This response is
 not a geometric nonpenetration constraint.
 """
 struct DBCPlusImpedance <: ClonedPressureBoundary end
+
+"""
+    UpdatedMDBCWithImpedance
+
+Experimental UpdatedMDBC mode that adds the DBCPlusImpedance normal
+approach pressure while retaining UpdatedMDBC's mirrored tangential
+velocity for viscosity. Requires ghost points and normals.
+"""
+struct UpdatedMDBCWithImpedance <: ClonedPressureBoundary end
+
+@inline mirror_wall_viscosity(mode) = mode isa Union{UpdatedMDBC,UpdatedMDBCWithImpedance}
+@inline normal_wall_impedance(mode) = mode isa Union{DBCPlusImpedance,UpdatedMDBCWithImpedance}
 
 abstract type LogMode end
 struct NoLog    <: LogMode end
@@ -102,7 +114,7 @@ The mode parameters select code paths at compile time:
 * `SMode <: ShiftingMode`: `NoShifting` (default) or `PlanarShifting`
 * `KMode <: KernelOutputMode`: `NoKernelOutput` (default) or `StoreKernelOutput`
   (also store the kernel sum and kernel gradient sum of every particle)
-* `BMode <: MDBCMode`: `NoMDBC` (default), `SimpleMDBC`, `UpdatedMDBC`, or experimental `DBCPlus`/`DBCPlusImpedance` (requires
+* `BMode <: MDBCMode`: `NoMDBC` (default), `SimpleMDBC`, `UpdatedMDBC`, or experimental `DBCPlus`, `DBCPlusImpedance`, or `UpdatedMDBCWithImpedance` (requires
   `ParticleNormalsPath` in `RunSimulation`)
 * `LMode <: LogMode`: `NoLog` (default) or `StoreLog`
 
