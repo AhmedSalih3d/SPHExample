@@ -206,7 +206,8 @@ function build_case(; reynolds = 100, dx = 0.025, duration = 8.0, interval = 0.0
         kernel = WendlandC2(), kernel_h_factor = sqrt(2), wall_layers = nothing,
         viscosity_model = Laminar(),
         density_diffusion_model = ZeroGravityLinearDensityDiffusion(),
-        time_stepping = SymplecticTimeStepping(), shifting = NoShifting,
+        time_stepping = SymplecticTimeStepping(), shifting = NoShifting, boundary_mode = NoMDBC,
+        motion_kind = :hermite,
         gpu_clip_time_step_to_output = true, gpu_double_position = true,
         gpu_legacy_timestep = true, gpu_cell_subdivision = 1,
         gpu_x_cell_subdivision = 1, gpu_radial_interactions = false,
@@ -235,7 +236,7 @@ function build_case(; reynolds = 100, dx = 0.025, duration = 8.0, interval = 0.0
     kernel_instance = SPHKernelInstance{2,T}(kernel; h = T(kernel_h_factor * dx))
     sampled = sample_case_particles(layout, dx, kernel_instance; wall_layers)
     (; tank_origin, tank_size, body_center, body_size) = sampled.layout
-    (; walls, fluid, body, layers) = sampled
+    (; layers) = sampled
 
     characteristic_length = reference_length === nothing ? body_size[1] : Float64(reference_length)
     isfinite(characteristic_length) && characteristic_length > 0 ||
@@ -246,15 +247,11 @@ function build_case(; reynolds = 100, dx = 0.025, duration = 8.0, interval = 0.0
         ν₀ = reference_speed * characteristic_length / reynolds,
         α = artificial_viscosity_alpha, δᵩ = density_diffusion, CFL = cfl,
         BackgroundPressure = background_pressure)
-    geometry = [
-        SPHGeometry{2,T}(walls; Density = constants.ρ₀, GroupMarker = 1, Type = Fixed),
-        SPHGeometry{2,T}(fluid; Density = constants.ρ₀, GroupMarker = 2, Type = Fluid),
-        SPHGeometry{2,T}(body; Density = constants.ρ₀, GroupMarker = 3, Type = Moving),
-    ]
+    geometry = manual_geometry(sampled, constants.ρ₀, T; boundary_mode)
     times = collect(interval:interval:duration)
     isempty(times) || isapprox(last(times), duration; atol = 1e-12, rtol = 0) || push!(times, duration)
     times[end] = duration
-    metadata = SimulationMetaData{2,T,shifting,NoKernelOutput,NoMDBC,StoreLog}(
+    metadata = SimulationMetaData{2,T,shifting,NoKernelOutput,boundary_mode,StoreLog}(
         SimulationName = "MovingSquare", SaveLocation = abspath(save), SimulationTime = duration,
         OutputTimes = times, VisualizeInParaview = visualize_in_paraview, OpenLogFile = false,
         ExportSingleVTKHDF = true, OutputVariables = ["Density", "Velocity", "Type", "GroupMarker"],
@@ -266,7 +263,7 @@ function build_case(; reynolds = 100, dx = 0.025, duration = 8.0, interval = 0.0
         GPUPreloadInteractionTypes = gpu_preload_interaction_types,
         GPUBoundaryForces = gpu_boundary_forces,
         GPUOutputBufferBytes = gpu_output_buffer_bytes)
-    motion = PrescribedMotion(3; translation = body_trajectory(; speed_scale = reference_speed, start_delay))
+    motion = PrescribedMotion(3; translation = body_trajectory(; speed_scale = reference_speed, start_delay, motion_kind))
     case_layout = (; tank_origin, tank_size, body_center, body_size)
     return (; constants, kernel = kernel_instance, geometry, metadata, motion, reynolds,
         dx = Float64(dx), duration = Float64(duration), interval = Float64(interval), layers,
@@ -274,6 +271,7 @@ function build_case(; reynolds = 100, dx = 0.025, duration = 8.0, interval = 0.0
         body_marker = 3, reference_speed = Float64(reference_speed),
         reference_length = characteristic_length, span = Float64(span),
         viscosity_model, density_diffusion_model, time_stepping, shifting, start_delay, damping, divergence_cleaning,
+        boundary_mode, motion_kind,
         counts = sampled.counts)
 end
 
