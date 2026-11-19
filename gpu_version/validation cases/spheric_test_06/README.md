@@ -635,3 +635,29 @@ baseline study. Completed runs resume from their `.toml` records only when
 spacing, duration, output interval and sound speed match. A different setup
 requires a new `--tag`; partial particle histories are never overwritten.
 The usual `test/runtests.jl` also includes the focused case tests.
+
+### Coefh 2.0 replay
+
+From the GPU package directory, replay the saved moving-square boundary and
+density-diffusion experiments under
+`runs/regularized_mdbc_experiment/` and plot each matched pair.
+
+```sh
+julia --project=. -t 2,0 "validation cases/spheric_test_06/coefh2_replay.jl"
+python "validation cases/spheric_test_06/plot_coefh2_replay.py"
+```
+
+The replay uses the manual case convention `h = coefh * sqrt(2) * dx`.
+It holds the prior resolution, CFL, output times, shifting, and diffusion
+model fixed. The wider support requires seven tank wall layers instead of
+five and changes the timestep selected by the solver. Replays go into
+`runs/regularized_mdbc_experiment/coefh2/` and can resume from completed cases.
+Pass individual run tags to the Julia script to select a subset. The plots
+and metrics are written to `results/regularized_mdbc/coefh2/`.
+
+The experimental RegularizedMDBC operator is absent from the current GPU
+package. Its paired cases can be replayed using the recovered package snapshot
+(Git tree `a404085cf8d06c46b98ebe4eb67bfd2888f4064e`). Set
+`SPH_COEFH_BASELINES` to the absolute path of the original
+`regularized_mdbc_experiment` run directory when running the script in that
+snapshot. This places the recovered-model results alongside the other replays.
