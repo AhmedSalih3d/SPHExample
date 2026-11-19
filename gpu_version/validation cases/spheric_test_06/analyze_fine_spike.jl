@@ -71,19 +71,25 @@ function face_loads(root, columns, case, kernel, constants, time)
 end
 
 function main(args)
+    args in (String[], ["archived"], ["control"], ["manual"], ["no-shifting"], ["dual-shifting"]) ||
+        error("Unknown replay analysis mode")
+    unshifted = args == ["no-shifting"]
+    dual = args == ["dual-shifting"]
+    history = unshifted || dual
     archived = args == ["archived"]
     control = args == ["control"]
     manual = args == ["manual"]
     baseline = control ? REFINEMENT : joinpath(REFINEMENT, "fine_time")
     baseline_path = joinpath(RUNS, baseline, "Re100_n160", "MovingSquare.vtkhdf")
-    path = archived || control ? baseline_path : joinpath(RUNS, "fine_spike_replay", "MovingSquare.vtkhdf")
-    reference = CSV.File(joinpath(@__DIR__, "results", baseline, "Re100_n160.csv"))
+    replay = unshifted ? "fine_spike_no_shifting" : dual ? "fine_spike_dual_shifting" : "fine_spike_replay"
+    path = archived || control ? baseline_path : joinpath(RUNS, replay, "MovingSquare.vtkhdf")
+    reference = history ? nothing : CSV.File(joinpath(@__DIR__, "results", baseline, "Re100_n160.csv"))
     if manual
         path = joinpath(RUNS, "coefh", "Re100_n160_Test8", "MovingSquare.vtkhdf")
         reference = CSV.File(joinpath(@__DIR__, "results", "coefh", "Re100_n160.csv"))
     end
     case = build_case(; dx = 1/160, duration = 0.9, cfl = 0.1, sound_speed = 160.0,
-        kernel_h_factor = 2sqrt(2), shifting = PlanarShifting, motion_kind = :integrated)
+        kernel_h_factor = 2sqrt(2), shifting = unshifted ? NoShifting : dual ? DualSPHysicsShifting : PlanarShifting, motion_kind = :integrated)
     constants = SimulationConstants{Float64}(2; dx = case.dx, ρ₀ = case.constants.ρ₀,
         c₀ = case.constants.c₀, g = case.constants.g, ν₀ = case.constants.ν₀)
     kernel = SPHKernelInstance{2,Float64}(case.kernel.kernel; h = Float64(case.kernel.h),
@@ -97,10 +103,10 @@ function main(args)
         counts = read(root["NumberOfPoints"])
         indices = findall(t -> manual ? 0.6 <= t <= 0.7 : 0.759999 <= t <= 0.86002, times)
         length(indices) == (archived || control || manual ? 6 : 101) || error("Unexpected diagnostic frame count")
-        for frame in indices
+        for frame in (history ? eachindex(times) : indices)
             columns = offsets[frame]+1:offsets[frame]+counts[frame]
             row = face_loads(root, columns, case, kernel, constants, times[frame])
-            i = findfirst(==(row.time), reference.time)
+            i = isnothing(reference) ? nothing : findfirst(==(row.time), reference.time)
             if i !== nothing
                 isapprox(row.pressure_cd, reference.cd_pressure[i]; atol = 1e-8, rtol = 0) ||
                     error("Replay disagrees with archive at $(row.time): $(row.pressure_cd) vs $(reference.cd_pressure[i])")
@@ -109,12 +115,15 @@ function main(args)
             push!(rows, row)
         end
     end
-    matched == 6 || error("Expected six matched original output frames")
+    history || matched == 6 || error("Expected six matched original output frames")
     mkpath(OUT)
     filename = manual ? "manual_test8_faces.csv" : control ? "larger_timestep_faces.csv" :
         archived ? "archived_faces.csv" : "fine_faces.csv"
+    if history
+        filename = unshifted ? "no_shifting_history.csv" : "dual_shifting_history.csv"
+    end
     CSV.write(joinpath(OUT, filename), rows)
-    println("Verified all $matched archived frames. Split $(length(rows)) pressure loads.")
+    println("Wrote $(length(rows)) face-load measurements to $filename.")
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

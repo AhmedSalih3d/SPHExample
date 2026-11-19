@@ -5,6 +5,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+import argparse
 
 OUT = Path(__file__).resolve().parent / "results" / "fine_spike_replay"
 
@@ -41,5 +42,32 @@ def main():
     plt.close(fig)
 
 
+def compare_shifting():
+    fig, axes = plt.subplots(3, 1, sharex=True, layout="constrained", figsize=(9, 7))
+    fields = ("rear_supported", "pressure_cd", "peak_rear_fluid_pressure_kpa")
+    for label, filename in (("Planar", "fine_faces.csv"), ("Off", "no_shifting_history.csv"),
+                            ("DualSPHysics classic full", "dual_shifting_history.csv")):
+        rows = np.genfromtxt(OUT / filename, delimiter=",", names=True)
+        rows = rows[(rows["time"] >= .759999) & (rows["time"] <= .86002)]
+        np.testing.assert_allclose(rows["time"], np.linspace(.76, .86, 101), atol=12e-6, rtol=0)
+        np.testing.assert_allclose(rows["pressure_cd"], rows["front_cd"] + rows["rear_cd"] + rows["side_cd"], atol=1e-10)
+        for ax, field in zip(axes, fields):
+            ax.plot(rows["time"], rows[field], label=label)
+    for ax, ylabel in zip(axes, ("Rear probes supported (of 40)", "Pressure drag Cd", "Peak rear pressure [kPa]")):
+        ax.set_ylabel(ylabel)
+        ax.grid(alpha=.22)
+    axes[0].legend()
+    axes[1].axhline(0, color="0.5", lw=.8)
+    axes[2].set_xlabel("Simulated time [s]")
+    fig.suptitle("Rear contact and pressure during square acceleration · Re = 100 · L/dp = 160")
+    fig.savefig(OUT / "shifting_comparison.png", dpi=180)
+    plt.close(fig)
+
+
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--compare-shifting", action="store_true")
+    if parser.parse_args().compare_shifting:
+        compare_shifting()
+    else:
+        main()

@@ -2,11 +2,20 @@ include("case.jl")
 using .SphericTest06
 using SPHExampleGPU
 
-function main()
-    save = joinpath(@__DIR__, "runs", "fine_spike_replay")
+function main(args)
+    mode, folder = if isempty(args)
+        PlanarShifting, "fine_spike_replay"
+    elseif args == ["no-shifting"]
+        NoShifting, "fine_spike_no_shifting"
+    elseif args == ["dual-shifting"]
+        DualSPHysicsShifting, "fine_spike_dual_shifting"
+    else
+        error("Expected no argument, no-shifting or dual-shifting")
+    end
+    save = joinpath(@__DIR__, "runs", folder)
     isfile(joinpath(save, "MovingSquare.vtkhdf")) && error("Refusing to overwrite $save")
     case = build_case(; dx = 1/160, duration = 0.9, cfl = 0.1, sound_speed = 160.0,
-        kernel_h_factor = 2sqrt(2), shifting = PlanarShifting, motion_kind = :integrated, save)
+        kernel_h_factor = 2sqrt(2), shifting = mode, motion_kind = :integrated, save)
     clip_times = copy(case.metadata.OutputTimes)
     case.metadata.OutputTimes = sort!(unique!(vcat(clip_times, collect(0.76:0.001:0.86))))
     mkpath(save)
@@ -30,5 +39,5 @@ function main()
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
-    main()
+    main(ARGS)
 end

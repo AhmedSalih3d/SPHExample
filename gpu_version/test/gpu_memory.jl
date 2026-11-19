@@ -149,7 +149,11 @@ end
             @test !support.FusePredictor
             @test uses_pos_cells(support) == (position_float_type(f.metadata) !== T)
             n = length(f.host)
-            support_bytes = n * (2 * sizeof(T) + sizeof(SVector{D, T}) + sizeof(SVector{D, position_float_type(f.metadata)}))
+            @test full_support.PairSignal === nothing
+            @test length(support.PairSignal) == 1
+            pair_signal_bytes = sizeof(T)
+            support_bytes = n * (2 * sizeof(T) + sizeof(SVector{D, T}) +
+                sizeof(SVector{D, position_float_type(f.metadata)})) + pair_signal_bytes
             if uses_pos_cells(support)
                 @test support.PosCells === support.PosCellsₙ⁺
                 @test full_support.PosCells !== full_support.PosCellsₙ⁺
@@ -160,7 +164,7 @@ end
                 sizeof(T) + sizeof(SVector{D, T}) + sizeof(T) + sizeof(SVector{D, T}) +
                 2 * (sizeof(Int) - sizeof(Int32)) + 2 * (sizeof(UInt) - sizeof(UInt8)) +
                 sizeof(SVector{D, T}) +
-                (uses_pos_cells(support) ? sizeof(PosCell{D, T}) : 0))
+                (uses_pos_cells(support) ? sizeof(PosCell{D, T}) : 0)) - pair_signal_bytes
             full_bytes = GPUMemoryBenchmark.device_buffer_bytes((full, full_support))
             compact_bytes = GPUMemoryBenchmark.device_buffer_bytes((compact, support))
             @test full_bytes - compact_bytes == expected
@@ -171,7 +175,7 @@ end
             @test eltype(full_host.GroupMarker) === UInt
             legacy = upload_particles(full_host, f.metadata)
             legacy_support = GPUSupportArrays{D, T}(n, f.metadata)
-            @test GPUMemoryBenchmark.device_buffer_bytes((legacy, legacy_support)) == full_bytes
+            @test GPUMemoryBenchmark.device_buffer_bytes((legacy, legacy_support)) == full_bytes + pair_signal_bytes
             TP = position_float_type(f.metadata)
             @test !hasproperty(f.host, :Cells)
             @test !hasproperty(f.host, :Kernel) && !hasproperty(f.host, :KernelGradient)
@@ -184,6 +188,21 @@ end
                 (sizeof(Int) - sizeof(Int32)) + (sizeof(UInt) - sizeof(UInt8)))
             @test GPUMemoryBenchmark.host_particle_bytes(full_host) -
                   GPUMemoryBenchmark.host_particle_bytes(f.host) == expected_host_saving
+        end
+    end
+
+    @testset "classic shifting allocates only the concentration gradient when compact" begin
+        for (D, T) in ((2, Float32), (3, Float64))
+            f = fixture(D, T; shifting = DualSPHysicsShifting)
+            ordinary = fixture(D, T)
+            planar = fixture(D, T; shifting = PlanarShifting)
+            for input in (length(f.host), upload_particles(f.host, f.metadata))
+                baseline = GPUMemoryBenchmark.device_buffer_bytes(GPUSupportArrays{D,T}(input, ordinary.metadata))
+                classic = GPUMemoryBenchmark.device_buffer_bytes(GPUSupportArrays{D,T}(input, f.metadata))
+                complete = GPUMemoryBenchmark.device_buffer_bytes(GPUSupportArrays{D,T}(input, planar.metadata))
+                @test classic - baseline == length(f.host) * sizeof(SVector{D,T})
+                @test complete - classic == length(f.host) * sizeof(T)
+            end
         end
     end
 
@@ -345,9 +364,8 @@ end
         back = deepcopy(f.host)
         @test_throws ArgumentError download_particles!(back, gpu, CellGrid{2}())
         @test back == f.host
-        for mode in (:kernel_output, :shifting, :boundary)
-            options = mode === :kernel_output ? (; kernel_output = StoreKernelOutput) :
-                      mode === :shifting ? (; shifting = PlanarShifting) : (; boundary = SimpleMDBC)
+        for options in ((; kernel_output = StoreKernelOutput), (; shifting = PlanarShifting),
+                (; shifting = DualSPHysicsShifting), (; boundary = SimpleMDBC))
             f = fixture(2, Float32; options...)
             gpu = upload_particles(f.host; kernel_output = false, ghost_data = false)
             support = GPUSupportArrays{2, Float32}(length(f.host); shifting = false)

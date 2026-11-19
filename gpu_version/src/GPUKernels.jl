@@ -70,7 +70,7 @@ using ..DampingZones: damped_velocity
 using ..GPUPairwiseTimesteps: reset_pair_signal!,store_pair_signal!,acoustic_denominator
 using ..GPUDivergenceCleaning: cleaning_psi, cleaning_derivative!, cleaning_predict!, cleaning_commit!,
     signal_value, store_signal!, cleaning_timestep, initialize_signal!
-using ..SimulationMetaDataConfiguration: NoMDBC, SimpleMDBC, UpdatedMDBC, DBCPlus, ClonedPressureBoundary, DualSPHysicsSymplectic
+using ..SimulationMetaDataConfiguration: NoMDBC, SimpleMDBC, UpdatedMDBC, DBCPlus, ClonedPressureBoundary, DualSPHysicsSymplectic, DualSPHysicsShifting
 
 export launch_interactions!, launch_mdbc!, launch_motion!, launch_half_step!, launch_final_step!,
        launch_prepare_interactions!, launch_finish!, launch_commit!, launch_step_reduction!, launch_pos_cells!,
@@ -627,7 +627,11 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                             ∇Wsum += ∇ᵢWᵢⱼ
                         end
 
-                        if FlagShift
+                        if FlagShift === DualSPHysicsShifting
+                            if typeᵢ == Fluid
+                                ∇C += (mass_j * ρⱼ⁻¹) * ∇ᵢWᵢⱼ
+                            end
+                        elseif FlagShift === true
                             MLcond = MLᵢ * MotionLimiterValue(T, ParticleType[j])
                             ∇C += (mass_j * ρᵢ⁻¹) * ∇ᵢWᵢⱼ
                             # Sign convention follows the CPU code, see
@@ -658,8 +662,10 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
             Wsum  = lanes_sum(Wsum, Val(K))
             ∇Wsum = lanes_sum(∇Wsum, Val(K))
         end
-        if FlagShift
+        if FlagShift !== false
             ∇C = lanes_sum(∇C, Val(K))
+        end
+        if FlagShift === true
             ∇r = lanes_sum(∇r, Val(K))
         end
     end
@@ -691,8 +697,10 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
             Kernel[i]         = Wsum
             KernelGradient[i] = ∇Wsum
         end
-        if FlagShift
+        if FlagShift !== false
             ∇Cᵢ[i]  = ∇C
+        end
+        if FlagShift === true
             ∇◌rᵢ[i] = ∇r
         end
     end
@@ -1056,6 +1064,12 @@ include("UpdatedMDBC.jl")
 # higher precision
 #---------------------------------------------------------------
 
+@inline function dual_shifting_displacement(gradient::SVector{D,T}, velocity, dt, h, dx) where {D,T}
+    scale = -2.0 * Float64(dt) * Float64(h) * norm(SVector{D,Float64}(velocity))
+    limit = T(0.1 * Float64(dx))
+    return clamp.(SVector{D,T}(scale * SVector{D,Float64}(gradient)), -limit, limit)
+end
+
 @inline function predict_particle!(i, Positionₙ⁺, Velocityₙ⁺, ρₙ⁺, Position, Velocity, Density,
                                    ParticleType, acc, rate, step, SimConstants,
                                    PosCellsₙ⁺, CellID, gridarg, H, boundary_mode, InvDensity, Pressure,
@@ -1259,8 +1273,9 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
 
         # Symplectic corrector: the position moves with the half step velocity
         vₙ⁺ = Velocityₙ⁺[i]
-        x = Position[i]
-        if FlagShift
+        old_x = Position[i]
+        x = old_x
+        if FlagShift === true
             D     = length(v)
             A     = 2      # Value between 1 to 6 advised
             A_FST = 0      # zero for internal flows
@@ -1270,6 +1285,9 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
             x += (vₙ⁺ * dt + δxᵢ) * ML
         else
             x += (vₙ⁺ * dt) * ML
+            if FlagShift === DualSPHysicsShifting && type == Fluid
+                x += dual_shifting_displacement(∇Cᵢ[i], vₙ⁺, dt, SimKernel.h, SimConstants.dx)
+            end
         end
         Position[i] = x
         v = damped_velocity(damping, x, v, type, dt, step_time(step) + dt)
@@ -1284,6 +1302,11 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
 
         # Values for the time step and cell list update decision of the next step
         values = step_values(x, v, acc, Positionₙ⁺[i], SimKernel.h, SimKernel.η²,pair_signal)
+        if FlagShift === DualSPHysicsShifting && type == Fluid
+            # A shift can partly cancel the corrector's advective displacement.
+            # Include the excursion to the predictor in the rebuild bound.
+            values = setindex(values, max(values[3], T(norm(Positionₙ⁺[i] - old_x))), 3)
+        end
         acc_red = step_reduce(acc_red, values)
         acc_diagnostic = diagnostic_accumulate(acc_diagnostic, values, particle_ids, i)
 

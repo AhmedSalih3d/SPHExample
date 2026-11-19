@@ -127,7 +127,7 @@ module SPHExampleGPU
     export SimulationLogger, generate_format_string, InitializeLogger, LogSimulationDetails, LogStep, step_log_line, log_line, LogFinal
 
     using .SimulationMetaDataConfiguration
-    export SimulationMetaData, ShiftingMode, NoShifting, PlanarShifting,
+    export SimulationMetaData, ShiftingMode, NoShifting, PlanarShifting, DualSPHysicsShifting,
            KernelOutputMode, NoKernelOutput, StoreKernelOutput,
            MDBCMode, NoMDBC, SimpleMDBC, UpdatedMDBC, UpdatedMDBCWithImpedance, DBCPlus, DBCPlusImpedance,
            LogMode, NoLog, StoreLog,
