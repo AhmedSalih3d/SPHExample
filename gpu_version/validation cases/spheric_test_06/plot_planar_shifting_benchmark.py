@@ -70,7 +70,7 @@ def main(n, archived_dual=False, matched=False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--resolution", type=int, choices=(40, 160), default=160)
+    parser.add_argument("--resolution", type=int, choices=(40, 80, 160), default=160)
     parser.add_argument("--archived-dual", action="store_true")
     parser.add_argument("--matched-numerics", action="store_true")
     args = parser.parse_args()

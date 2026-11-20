@@ -26,15 +26,16 @@ STUDIES = (
 def snapshot_metrics(points, velocity, density, pressure, markers, dp, h):
     """Use nominal face probes for geometry and outer-layer wall owners for kernel support."""
     fluid, square = markers == 2, markers == 3
-    if fluid.sum() != 313600 or square.sum() != 6400:
-        raise ValueError("Unexpected particle count in n80 frame")
+    n = round(1 / dp)
+    if fluid.sum() != 49 * n**2 or square.sum() != n**2:
+        raise ValueError(f"Unexpected particle count in L/dp={n} frame")
     local = points - points[square].mean(axis=0)
     wall_speed = velocity[square, 0].mean(dtype=float)
     wall = local[square]
     rear = wall[np.isclose(wall[:, 0], wall[:, 0].min(), rtol=0, atol=1e-10)]
     rear = rear[np.argsort(rear[:, 1])]
     middle = np.abs(rear[:, 1]) <= 0.125
-    if len(rear) != 80 or middle.sum() != 20:
+    if len(rear) != n or middle.sum() != n // 4:
         raise ValueError("Unexpected number of rear-wall probes")
     probes = rear.copy()
     probes[:, 0] = -0.5

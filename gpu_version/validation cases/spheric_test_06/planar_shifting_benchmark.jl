@@ -8,10 +8,10 @@ function main(args)
     matched = "--matched-numerics" in args
     args = filter(!=("--matched-numerics"), args)
     length(args) in (1, 2) && first(args) in ("native", "dual") ||
-        error("Expected native or dual and optional resolution (40 or 160)")
+        error("Expected native or dual and optional resolution (40, 80 or 160)")
     solver = first(args)
     n = length(args) == 2 ? parse(Int, last(args)) : 160
-    n in (40, 160) || error("Expected resolution 40 or 160")
+    n in (40, 80, 160) || error("Expected resolution 40, 80 or 160")
     tag = n == 160 ? TAG : TAG * "_n$n"
     matched && (tag *= "_ddt2")
     work = joinpath(@__DIR__, "runs", tag)

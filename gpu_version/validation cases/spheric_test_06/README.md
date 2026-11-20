@@ -695,3 +695,19 @@ Pressure drag stayed positive throughout the sampled reversal window in both sol
 The DualSPHysics coefficients interpolated at 0.82 s were 3.20, 2.84, and 2.81.
 At 8 s, Julia's viscous drag coefficients were 0.437, 0.152, and 0.054,
 while DualSPHysics gave 0.393, 0.107, and 0.019.
+
+### Matched DDT2 refinement
+
+Append `--matched-numerics` to both benchmark commands and set the resolution
+to 40, 80, or 160. Both solvers use Fourtakas DDT2 with coefficient 0.1 and
+symplectic stepping. The same ratio of smoothing length to particle spacing
+and the same shifting cap fraction are used at every resolution. Each solver
+chooses its adaptive timesteps.
+
+Run `plot_planar_shifting_convergence.py` to compare the full drag histories.
+The RMS change integrates the squared difference of piecewise-linear curves
+over 0–8 s. A positive log₂ ratio of the coarse-to-medium and medium-to-fine
+changes means the change decreased with refinement. The startup plot and
+peak table cover 0–1.2 s. Run `analyze_planar_shifting_startup.py` to compare
+central rear-wall kernel support from the Julia particle exports.
+Both scripts accept `--partial` for completed cases during the sweep.
