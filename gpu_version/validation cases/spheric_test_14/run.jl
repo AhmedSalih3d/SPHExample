@@ -1,11 +1,11 @@
 using SPHExampleGPU, StaticArrays, DelimitedFiles, CSV, TOML
 
 const RELEASES = (
-    (name = "float1_down", file = "Fl1-0p074.txt", mass = 9.75, cog = 0.090,
+    (name = "float1_down", title = "Float 1, -74 mm release", file = "Fl1-0p074.txt", mass = 9.75, cog = 0.090,
      radius = 0.15, corner = 0.15, height = 0.29, draft = 0.187, offset = -0.074),
-    (name = "float1_up", file = "Fl1+0p76.txt", mass = 9.75, cog = 0.090,
+    (name = "float1_up", title = "Float 1, +76 mm release", file = "Fl1+0p76.txt", mass = 9.75, cog = 0.090,
      radius = 0.15, corner = 0.15, height = 0.29, draft = 0.187, offset = 0.076),
-    (name = "float2_down", file = "Fl2-0p088.txt", mass = 23.42, cog = 0.100,
+    (name = "float2_down", title = "Float 2, -88 mm release", file = "Fl2-0p088.txt", mass = 23.42, cog = 0.100,
      radius = 0.20, corner = 0.15, height = 0.33, draft = 0.23, offset = -0.088),
 )
 
@@ -67,7 +67,8 @@ function run_case(release; dx, half_width, duration)
     save = joinpath(@__DIR__, "runs", tag, release.name)
     output = joinpath(@__DIR__, "results", tag)
     isfile(joinpath(save, "FreeHeave.vtkhdf")) && error("Run already exists at $save")
-    reference = readdlm(joinpath(@__DIR__, "reference", release.file), Float64)
+    reference_path = joinpath(@__DIR__, "reference", release.file)
+    reference = readdlm(reference_path, Float64)
     size(reference, 2) == 2 && all(isfinite, reference) &&
         all(isapprox.(diff(reference[:,1]), 0.005; atol = 1e-10)) || error("Invalid reference history")
     case = setup(release; dx, half_width, duration, save)
@@ -90,7 +91,8 @@ function run_case(release; dx, half_width, duration)
         error("Incomplete or invalid floating-body history")
     isapprox(first(heave), 1000release.offset; atol = 1e-4) || error("Wrong initial heave datum")
     mkpath(output)
-    CSV.write(joinpath(output, release.name * ".csv"), (; time, heave_mm = heave,
+    history = joinpath(output, release.name * ".csv")
+    CSV.write(history, (; time, heave_mm = heave,
         surge_mm = 1000 .* getproperty(records, Symbol("Center:0")),
         sway_mm = 1000 .* getproperty(records, Symbol("Center:1"))))
     open(joinpath(output, release.name * ".toml"), "w") do io
@@ -99,14 +101,58 @@ function run_case(release; dx, half_width, duration)
             "fluid_particles" => length(case.geometry[2].Particles), "frames" => length(time),
             "steps" => result.performance.steps, "wall_seconds" => result.performance.wall_time_seconds))
     end
+    return (; particles = joinpath(save, "FreeHeave.vtkhdf"), history, reference = reference_path)
+end
+
+function write_heave_view(pvpython, release, output)
+    (; particles, history, reference) = output
+    script = joinpath(@__DIR__, "paraview_heave.py")
+    state = joinpath(dirname(particles), "FreeHeave_Comparison.pvsm")
+    run(`$pvpython --no-mpi --force-offscreen-rendering $script $particles $history $reference --state $state --title $(release.title)`)
+    isfile(state) || error("ParaView did not write $state")
+    return state
+end
+
+function main(args)
+    visualize = "--no-paraview" ∉ args
+    positional = filter(!=("--no-paraview"), args)
+    length(positional) <= 4 || error("Usage: run.jl [dx] [tank half-width] [duration] [release] [--no-paraview]")
+    dx, half_width, duration = (i <= length(positional) ? parse(Float64, positional[i]) : value
+        for (i, value) in enumerate((0.025, 1.2, 4.5)))
+    cases = length(positional) == 4 ? filter(r -> r.name == positional[4], RELEASES) : RELEASES
+    isempty(cases) && error("Release must be float1_down, float1_up or float2_down")
+
+    pvpython = visualize ? Sys.which("pvpython") : nothing
+    visualize && pvpython === nothing &&
+        @warn "pvpython was not found on PATH. Add the ParaView bin directory to PATH to generate the heave view."
+    first_state = nothing
+    for release in cases
+        output = run_case(release; dx, half_width, duration)
+        pvpython === nothing && continue
+        try
+            state = write_heave_view(pvpython, release, output)
+            println("ParaView state saved to ", state)
+            first_state === nothing && (first_state = state)
+        catch exception
+            exception isa InterruptException && rethrow()
+            @warn "Could not create the combined ParaView view for $(release.name)" exception
+        end
+    end
+    if first_state !== nothing
+        paraview = Sys.which("paraview")
+        if paraview === nothing
+            @warn "ParaView was not found on PATH. Open $first_state with File > Load State."
+        else
+            try
+                run(`$paraview --state=$first_state`; wait = false)
+            catch exception
+                exception isa InterruptException && rethrow()
+                @warn "Could not open ParaView. Open $first_state with File > Load State." exception
+            end
+        end
+    end
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
-    length(ARGS) <= 4 || error("Usage: run.jl [dx] [tank half-width] [duration] [release]")
-    dx, half_width, duration = (i <= length(ARGS) ? parse(Float64, ARGS[i]) : v for (i, v) in enumerate((0.025, 1.2, 4.5)))
-    cases = length(ARGS) == 4 ? filter(r -> r.name == ARGS[4], RELEASES) : RELEASES
-    isempty(cases) && error("Release must be float1_down, float1_up or float2_down")
-    for release in cases
-        run_case(release; dx, half_width, duration)
-    end
+    main(ARGS)
 end

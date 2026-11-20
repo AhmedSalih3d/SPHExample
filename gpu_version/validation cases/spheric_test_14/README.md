@@ -40,6 +40,35 @@ reports displacement RMSE, mean period across rising zero crossings, mean
 heave in the last second, and maximum horizontal drift. The reported
 period is relative to the prescribed still-water datum.
 
+## ParaView
+
+With ParaView and `pvpython` on PATH, the runner saves a combined
+`FreeHeave_Comparison.pvsm` in every completed release directory under
+`runs/<tag>/<release>`. It opens the first release after the invocation.
+Pass a release name to run and open that release only. The view places
+the animated fluid and float next to the measured and simulated heave curves.
+The blue water is cut away in front of the orange float so the submerged
+particles remain visible. Press **Play** to animate the particles and move
+the chart playhead with them.
+
+For an existing run, use **File → Load State** and select its
+`FreeHeave_Comparison.pvsm`. The state reads the VTKHDF and two chart CSVs
+from the release directory. To regenerate the default pilot's Float 1
+downward release view from saved data:
+
+```powershell
+$case = "validation cases/spheric_test_14"
+$tag = "dp0.025_half1.2_t4.5"
+$release = "$case/runs/$tag/float1_down"
+pvpython --no-mpi --force-offscreen-rendering "$case/paraview_heave.py" `
+  "$release/FreeHeave.vtkhdf" "$case/results/$tag/float1_down.csv" `
+  "$case/reference/Fl1-0p074.txt" --state "$release/FreeHeave_Comparison.pvsm" `
+  --title "Float 1, -74 mm release"
+```
+
+Use `--no-paraview` with `run.jl` for batch runs that only save simulation
+output. ParaView state generation and GUI launch are both skipped.
+
 ## Pilot settings and limitations
 
 The water depth is 0.8 m. The compact square tank and a cylindrical damping
