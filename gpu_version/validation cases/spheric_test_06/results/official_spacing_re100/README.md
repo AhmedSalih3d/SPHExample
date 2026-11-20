@@ -46,3 +46,46 @@ than the previously compared 80- and 160-spacing runs. That does not establish
 convergence: even at matched nominal spacing, the minimum saved-frame
 clearance was −11.5 mm, indicating that some fluid particle centers crossed a
 nominal solid boundary.
+
+## DualSPHysics 5.4 comparison
+
+The [overlay](drag_comparison.png) shows the full run and startup detail for
+both solvers and the official reference. DualSPHysics used the same nominal
+spacing, Re, integrated motion, sound speed, CFL, smoothing-length ratio,
+seven wall layers, and 0.02 s output interval. The numerical methods are
+not identical: DualSPHysics used symplectic stepping, native DDT1 (0.1), and
+classic capped shifting, versus Julia's single-neighbor stepping,
+zero-gravity linear diffusion, and uncapped planar shifting.
+
+To reproduce, set `DUALSPHYSICS_ROOT` to a DualSPHysics 5.4 installation and
+run the following from the `gpu_version` Julia project:
+
+```julia
+p = abspath("validation cases", "spheric_test_06")
+include(joinpath(p, "dual_compare.jl"))
+C = Test06DualComparison
+tag = "official_spacing_re100_replay"
+prefix = C.prepare_dual(n = 60, reynolds = 100, sound_speed = 160,
+    coefh = 2.0, wall_layers = 7, motion_kind = :integrated,
+    trajectory = C.SphericTest06.body_trajectory(motion_kind = :integrated),
+    tag = tag, diffusion = 1, shifting = 3)
+C.verify_geometry(prefix, 60; coefh = 2.0, wall_layers = 7)
+save = joinpath(p, "runs", tag, "dual")
+C.dual_run(prefix, save; reynolds = 100)
+C.extract_dual(save, joinpath(p, "results", tag, "dual"); square_particles = 3600)
+```
+
+DualSPHysics completed 138,071 steps with 401 frames and 192,796 particles.
+Its [drag history](dual/dual.csv) was interpolated onto the same nominal
+0.02 s startup grid as the other curves.
+
+| Startup metric | Julia SPH | DualSPHysics | Official reference |
+|---|---:|---:|---:|
+| Pressure peak | 8.622 at 0.56 s | 9.424 at 0.52 s | 8.296 at 0.56 s |
+| Viscous peak | 0.903 at 0.68 s | 0.867 at 0.68 s | 0.788 at 0.70 s |
+| Pressure integral (s) | 2.688 | 2.666 | 2.532 |
+| Viscous integral (s) | 0.2894 | 0.2803 | 0.2435 |
+
+DualSPHysics predicts a higher, earlier pressure peak, but its integrated
+pressure is slightly lower than Julia's. Both solvers overpredict both
+startup integrals relative to the official reference.
