@@ -1,4 +1,4 @@
-include(joinpath(@__DIR__, "manual_case.jl"))
+include(joinpath(@__DIR__, "case.jl"))
 
 function setup(release; dx = 0.025, half_width = 1.2, duration = 4.5, save)
     depth = 0.8

@@ -47,8 +47,8 @@ next to its CSV in `results/<tag>`, before ParaView starts. This requires
 Python 3.11 or newer with NumPy and Matplotlib. To regenerate the plot for
 one existing release, run `plot.py <tag> --release float1_down`.
 
-For an editable single run, use [manual_case.jl](manual_case.jl). It runs
-directly and owns the case geometry and simulation setup. Edit the release,
+For an editable single run, use [manual_case.jl](manual_case.jl). Running
+the file or including it starts the simulation immediately. Edit the release,
 tank, damping, and solver settings at the top of `run_manual_case()`.
 Set `kernel_family` to `WendlandC2()` or `CubicSpline{FloatType}()` and
 `kernel_h_factor` to the desired ratio `h / dx`. The run record saves the
