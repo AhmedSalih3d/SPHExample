@@ -76,16 +76,19 @@ const CLASSIC = Val(DualSPHysicsShifting)
         gradient = V(-100, 80, 0.25)
         dt = T(0.01)
         limit = T(0.1) * constants.dx
-        expected_shift = V(limit, -limit, -2 * kernel.h * norm(speed) * dt * gradient[3])
-        position, predictor_position, velocity, acceleration = (CUDA.zeros(V, 2) for _ in 1:4)
-        density = CUDA.fill(T(1000), 2)
-        KERNELS.launch_final_step!(position, velocity, acceleration, density, CUDA.zeros(T, 2),
-            copy(density), predictor_position, CuArray([speed, speed]), CuArray([Fluid, Fixed]),
-            CuArray([gradient, gradient]), CUDA.fill(T(-1), 2), HostStep(dt, zero(T)),
-            kernel, constants, ReductionWorkspace{SVector{3,T}}(2), CLASSIC; boundary_mode = NoMDBC())
-        @test Array(position)[1] ≈ dt * speed + expected_shift rtol = 30eps(T)
-        @test iszero(Array(position)[2])
-        @test all(iszero, Array(velocity))
+        raw_shift = -2 * kernel.h * norm(speed) * dt * gradient
+        for (mode, expected_shift) in ((CLASSIC, clamp.(raw_shift, -limit, limit)),
+                                      (Val(UncappedDualSPHysicsShifting), raw_shift))
+            position, predictor_position, velocity, acceleration = (CUDA.zeros(V, 2) for _ in 1:4)
+            density = CUDA.fill(T(1000), 2)
+            KERNELS.launch_final_step!(position, velocity, acceleration, density, CUDA.zeros(T, 2),
+                copy(density), predictor_position, CuArray([speed, speed]), CuArray([Fluid, Fixed]),
+                CuArray([gradient, gradient]), CUDA.fill(T(-1), 2), HostStep(dt, zero(T)),
+                kernel, constants, ReductionWorkspace{SVector{3,T}}(2), mode; boundary_mode = NoMDBC())
+            @test Array(position)[1] ≈ dt * speed + expected_shift rtol = 30eps(T)
+            @test iszero(Array(position)[2])
+            @test all(iszero, Array(velocity))
+        end
     end
 end
 

@@ -41,15 +41,15 @@
         kernel_h_factor  = coefh * sqrt(2)
         start_delay      = 0.0
         duration         = 8.0 + start_delay
-        output_interval  = 0.001
+        output_interval  = 0.02
         visualize_in_paraview = true
 
         run_tag          = "coefh"
         n                = round(Int, reference_length / dx)
-        run_name         = "Re$(lpad(string(reynolds), 3, '0'))_n$(lpad(string(n), 3, '0'))" * "_Test9";
+        run_name         = "Re$(lpad(string(reynolds), 3, '0'))_n$(lpad(string(n), 3, '0'))" * "_Test11";
         save_location    = joinpath(@__DIR__, "runs", run_tag, run_name)
         plot_location    = joinpath(@__DIR__, "runs", run_tag, "paraview_force_plot")
-        results_location = joinpath(@__DIR__, "results", run_tag)
+        results_location = joinpath(@__DIR__, "results", run_tag, run_name)
 
         SimConstants = SimulationConstants{FloatType}(Dimensions;
             dx  = dx,
@@ -88,7 +88,7 @@
         SimMetaData = SimulationMetaData{
             Dimensions,
             FloatType,
-            PlanarShifting,
+            UncappedDualSPHysicsShifting,
             NoKernelOutput,
             boundary_mode,
             StoreLog,
@@ -117,7 +117,7 @@
 
         SimViscosity        = Laminar()
         SimDensityDiffusion = ZeroGravityLinearDensityDiffusion()
-        SimTimeStepping     = SingleNeighborTimeStepping()
+        SimTimeStepping     = SymplecticTimeStepping()
         # Quadratic velocity damping at outer edges; no damping inside the original box.
         SimDamping          = use_sponge ? SphericTest06.edge_sponge(layout; width = sponge_width, rate = sponge_rate) : nothing
         SimDivergenceCleaning = nothing

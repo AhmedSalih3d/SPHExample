@@ -4,7 +4,7 @@ using ..VariableResolutionConfiguration: VariableResolutionConfig
 
 using TimerOutputs
 
-export SimulationMetaData, UpdateMetaData!, ShiftingMode, NoShifting, PlanarShifting, DualSPHysicsShifting,
+export SimulationMetaData, UpdateMetaData!, ShiftingMode, NoShifting, PlanarShifting, DualSPHysicsShifting, UncappedDualSPHysicsShifting,
        KernelOutputMode, NoKernelOutput, StoreKernelOutput,
        MDBCMode, NoMDBC, SimpleMDBC, UpdatedMDBC, UpdatedMDBCWithImpedance, DBCPlus, DBCPlusImpedance, ClonedPressureBoundary,
        LogMode, NoLog, StoreLog,
@@ -26,6 +26,11 @@ Applies a position-only shift to fluid particles in the corrector of fixed-resol
 `SymplecticTimeStepping`.
 """
 struct DualSPHysicsShifting <: ShiftingMode end
+
+"""Apply classic DualSPHysics neighbor-volume shifting without a displacement cap."""
+struct UncappedDualSPHysicsShifting <: ShiftingMode end
+
+@inline is_dual_shifting(mode) = mode === DualSPHysicsShifting || mode === UncappedDualSPHysicsShifting
 
 abstract type KernelOutputMode end
 struct NoKernelOutput    <: KernelOutputMode end
@@ -120,7 +125,7 @@ as the CPU version plus a few GPU specific options (all prefixed `GPU`).
 
 The mode parameters select code paths at compile time:
 
-* `SMode <: ShiftingMode`: `NoShifting` (default), `PlanarShifting`, or `DualSPHysicsShifting`
+* `SMode <: ShiftingMode`: `NoShifting` (default), `PlanarShifting`, `DualSPHysicsShifting`, or `UncappedDualSPHysicsShifting`
 * `KMode <: KernelOutputMode`: `NoKernelOutput` (default) or `StoreKernelOutput`
   (also store the kernel sum and kernel gradient sum of every particle)
 * `BMode <: MDBCMode`: `NoMDBC` (default), `SimpleMDBC`, `UpdatedMDBC`, or experimental `DBCPlus`, `DBCPlusImpedance`, or `UpdatedMDBCWithImpedance` (requires

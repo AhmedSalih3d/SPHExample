@@ -23,7 +23,7 @@ using ..SimulationGeometry
 using ..PeriodicBoundaries: wrap_periodic_position
 using ..AuxiliaryFunctions
 using ..SimulationMetaDataConfiguration
-using ..SimulationMetaDataConfiguration: periodic_images_enabled, mirror_wall_viscosity, normal_wall_impedance
+using ..SimulationMetaDataConfiguration: periodic_images_enabled, mirror_wall_viscosity, normal_wall_impedance, is_dual_shifting
 using ..SimulationConstantsConfiguration
 using ..SimulationLoggerConfiguration
 using ..PreProcess
@@ -707,7 +707,7 @@ function GPUSupportArrays{D, T}(gpu::GPUParticles{D, T}, meta::SimulationMetaDat
     position_type(gpu) === position_float_type(meta) ||
         throw(ArgumentError("GPU positions and support-array metadata must use the same precision"))
     return GPUSupportArrays{D, T}(length(gpu); position_type = position_type(gpu),
-        updated_mdbc = B <: ClonedPressureBoundary, shifting = !meta.GPUCompactBuffers || S in (PlanarShifting, DualSPHysicsShifting),
+        updated_mdbc = B <: ClonedPressureBoundary, shifting = !meta.GPUCompactBuffers || S === PlanarShifting || is_dual_shifting(S),
         shifting_metric = !meta.GPUCompactBuffers || S === PlanarShifting,
         cache_interaction_fields = meta.GPUCacheInteractionFields,
         fuse_predictor,
@@ -750,7 +750,7 @@ end
 
 function GPUSupportArrays{D, T}(n::Integer, meta::SimulationMetaData{D, T, S, K, B}; kernel=nothing) where {D, T, S, K, B}
     return GPUSupportArrays{D, T}(n; position_type = position_float_type(meta),
-        updated_mdbc = B <: ClonedPressureBoundary, shifting = !meta.GPUCompactBuffers || S in (PlanarShifting, DualSPHysicsShifting),
+        updated_mdbc = B <: ClonedPressureBoundary, shifting = !meta.GPUCompactBuffers || S === PlanarShifting || is_dual_shifting(S),
         shifting_metric = !meta.GPUCompactBuffers || S === PlanarShifting,
         share_pos_cells = meta.GPUCompactBuffers,
         cache_interaction_fields = meta.GPUCacheInteractionFields,
@@ -1224,7 +1224,7 @@ function enqueue_state_derivative!(ctx, step, timed::Bool, mdbc_name::AbstractSt
                 Density = gpu.Density, SimConstants = SimConstants,
                 boundary_mode = get(ctx, :boundary_mode, NoMDBC()))
         end
-        flag_shift = FlagShift isa Val{DualSPHysicsShifting} ? Val(false) : FlagShift
+        flag_shift = FlagShift isa Union{Val{DualSPHysicsShifting}, Val{UncappedDualSPHysicsShifting}} ? Val(false) : FlagShift
         launch_solver_interactions!(ctx,gpu.Position,gpu.Density,gpu.Velocity,sup.PosCells,step;
             include_gravity=Val(total_acceleration), predictor_output, collect_pair_signal, flag_shift)
     end
@@ -1576,8 +1576,8 @@ end
 #---------------------------------------------------------------
 
 function validate_shifting(::Type{S}, scheme, variable_resolution) where {S <: ShiftingMode}
-    S !== DualSPHysicsShifting || (scheme isa SymplecticTimeStepping && variable_resolution === nothing) ||
-        throw(ArgumentError("DualSPHysicsShifting requires fixed-resolution SymplecticTimeStepping"))
+    !is_dual_shifting(S) || (scheme isa SymplecticTimeStepping && variable_resolution === nothing) ||
+        throw(ArgumentError("$S requires fixed-resolution SymplecticTimeStepping"))
     return nothing
 end
 
@@ -1622,7 +1622,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     # compile time; the time stepping scheme is a run time field set by
     # `RunSimulation`.
     FlagKernel     = Val(KMode === StoreKernelOutput)
-    FlagShift      = SMode === DualSPHysicsShifting ? Val(DualSPHysicsShifting) : Val(SMode === PlanarShifting)
+    FlagShift      = is_dual_shifting(SMode) ? Val(SMode) : Val(SMode === PlanarShifting)
     UseMDBC        = BMode !== NoMDBC
     periodic_images_enabled(SimMetaData,SimKernel) == (sup.PeriodicImages !== nothing) ||
         throw(ArgumentError("GPUPeriodicImages must match the allocated support arrays; reallocate after changing this option"))

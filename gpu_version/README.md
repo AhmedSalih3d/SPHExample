@@ -3319,7 +3319,7 @@ than boolean flags, so the fused kernels are specialised at compile time:
 
 | Parameter | Types | Meaning |
 |-----------|-------|---------|
-| `SMode` | `NoShifting`, `PlanarShifting`, `DualSPHysicsShifting` | particle shifting |
+| `SMode` | `NoShifting`, `PlanarShifting`, `DualSPHysicsShifting`, `UncappedDualSPHysicsShifting` | particle shifting |
 | `KMode` | `NoKernelOutput`, `StoreKernelOutput` | store the kernel and kernel gradient sums for output |
 | `BMode` | `NoMDBC`, `SimpleMDBC`, `UpdatedMDBC` | Boundary formulation (mDBC needs `ParticleNormalsPath` or generated ghost fields; see "Choosing the mDBC formulation") |
 | `LMode` | `NoLog`, `StoreLog` | write the simulation log file |
@@ -3401,7 +3401,9 @@ classic full-mode shifting in a fixed-resolution GPU run with
 For a fluid particle, the concentration gradient sums `(mⱼ / ρⱼ) ∇ᵢWᵢⱼ`
 over fluid and boundary neighbors using their densities at the interaction
 stage. The position displacement is `-2 h |vᵢ| Δt` times that gradient,
-with each component clamped to `[-0.1 dp, 0.1 dp]`. Shifting is applied in the
+with each component clamped to `[-0.1 dp, 0.1 dp]`. Select
+`UncappedDualSPHysicsShifting` to use the same neighbor-volume weighting and
+apply the raw displacement. Shifting is applied in the
 corrector using the predicted velocity and full timestep. The zero free-surface
 threshold disables free-surface scaling.
 [DualSPHysics neighbor sum](https://github.com/DualSPHysics/DualSPHysics/blob/master/src/source/JSphGpu_ker.cu#L633-L640) ·
