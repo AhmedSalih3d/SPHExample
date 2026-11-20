@@ -42,6 +42,20 @@ period is relative to the prescribed still-water datum.
 
 ## ParaView
 
+For an editable single run, use [manual_case.jl](manual_case.jl). It puts
+the release, tank dimensions, spacing, damping, output settings, and solver
+choices in one script, following the Bathymetry example and the Test 06
+manual case. Run it from `gpu_version`:
+
+```powershell
+julia --project=. -t 2,0 "validation cases/spheric_test_14/manual_case.jl"
+```
+
+The manual case saves both `FreeHeave_Comparison.pvsm` and a PNG preview.
+The ParaView layout stacks the fluid cutaway above the synchronized heave
+chart, as in the Test 06 particle-and-force view. Edit
+`visualize_in_paraview` to control whether ParaView opens automatically.
+
 With ParaView and `pvpython` on PATH, the runner saves a combined
 `FreeHeave_Comparison.pvsm` in every completed release directory under
 `runs/<tag>/<release>`. It opens the first release after the invocation.

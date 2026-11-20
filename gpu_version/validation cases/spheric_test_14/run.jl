@@ -16,15 +16,13 @@ function in_float(p, release, base)
     return z <= release.height && hypot(max(r - core, 0), max(release.corner - z, 0)) <= release.corner
 end
 
-function setup(release; dx = 0.025, half_width = 1.2, duration = 4.5, save)
-    depth = 0.8
-    T = Float32
-    dx > 0 && duration > 0 && half_width >= 0.8 || throw(ArgumentError("Invalid spacing, duration or tank width"))
+function sample_geometry(release, constants::SimulationConstants{T}, kernel; dx, half_width, depth,
+                         wall_top_z = 0.2) where {T}
+    all(isfinite, (dx, half_width, depth, wall_top_z)) && dx > 0 && half_width >= 0.8 && depth > 0 && wall_top_z >= 0 ||
+        throw(ArgumentError("Invalid spacing or tank dimensions"))
     nx, nz = round(Int, 2half_width / dx), round(Int, depth / dx)
     isapprox(nx * dx, 2half_width) && isapprox(nz * dx, depth) ||
         throw(ArgumentError("Spacing must divide the tank width and water depth"))
-    constants = SimulationConstants{T}(3; dx, g = 9.81, c₀ = 25.0, CFL = 0.2, α = 0.01, δᵩ = 0.1)
-    kernel = SPHKernelInstance{3,T}(WendlandC2(); h = T(1.3dx))
     layers = ceil(Int, kernel.H / dx)
     base = release.offset - release.draft
     equilibrium_center_z = release.cog - release.draft
@@ -32,7 +30,7 @@ function setup(release; dx = 0.025, half_width = 1.2, duration = 4.5, save)
     wall = similar(water)
     body = similar(water)
     top = max(nz - 1, ceil(Int, (depth + base + release.height) / dx))
-    wall_top = ceil(Int, (depth + 0.2) / dx)
+    wall_top = ceil(Int, (depth + wall_top_z) / dx)
     for iz in -layers:max(top, wall_top), iy in -layers:nx+layers-1, ix in -layers:nx+layers-1
         p = SVector((ix + 0.5 - nx/2) * dx, (iy + 0.5 - nx/2) * dx, (iz + 0.5) * dx - depth)
         if iz < 0 || !(0 <= ix < nx && 0 <= iy < nx)
@@ -52,6 +50,16 @@ function setup(release; dx = 0.025, half_width = 1.2, duration = 4.5, save)
         SPHGeometry{3,T}(water; Density = density(water), GroupMarker = 2, Type = Fluid),
         SPHGeometry{3,T}(body; Density = density(body), GroupMarker = 3, Type = Floating, Floating = floating),
     ]
+    return geometry, equilibrium_center_z
+end
+
+function setup(release; dx = 0.025, half_width = 1.2, duration = 4.5, save)
+    depth = 0.8
+    T = Float32
+    duration > 0 || throw(ArgumentError("Duration must be positive"))
+    constants = SimulationConstants{T}(3; dx, g = 9.81, c₀ = 25.0, CFL = 0.2, α = 0.01, δᵩ = 0.1)
+    kernel = SPHKernelInstance{3,T}(WendlandC2(); h = T(1.3dx))
+    geometry, equilibrium_center_z = sample_geometry(release, constants, kernel; dx, half_width, depth)
     damping = DampingCylinder((0.0, 0.0, -depth), (0.0, 0.0, 0.2),
         half_width - 0.5, half_width; rate = 12)
     metadata = SimulationMetaData{3,T,NoShifting,NoKernelOutput,NoMDBC,StoreLog}(;
@@ -59,27 +67,33 @@ function setup(release; dx = 0.025, half_width = 1.2, duration = 4.5, save)
         OutputTimes = 0.01, ExportSingleVTKHDF = true, OutputVariables = ["Type"],
         VisualizeInParaview = false, OpenLogFile = false, GPUDoublePosition = true,
         GPUClipTimeStepToOutput = true)
-    return (; geometry, metadata, constants, kernel, damping, equilibrium_center_z)
+    return (; geometry, metadata, constants, kernel, damping, equilibrium_center_z, dx, half_width, depth, duration,
+        viscosity = ArtificialViscosity(), diffusion = FourtakasDensityDiffusion(), stepping = SymplecticTimeStepping())
 end
 
 function run_case(release; dx, half_width, duration)
     tag = "dp$(dx)_half$(half_width)_t$(duration)"
     save = joinpath(@__DIR__, "runs", tag, release.name)
     output = joinpath(@__DIR__, "results", tag)
+    return run_case(release, setup(release; dx, half_width, duration, save); output)
+end
+
+function run_case(release, case; output)
+    save = case.metadata.SaveLocation
+    (; dx, half_width, depth, duration) = case
     isfile(joinpath(save, "FreeHeave.vtkhdf")) && error("Run already exists at $save")
     reference_path = joinpath(@__DIR__, "reference", release.file)
     reference = readdlm(reference_path, Float64)
     size(reference, 2) == 2 && all(isfinite, reference) &&
         all(isapprox.(diff(reference[:,1]), 0.005; atol = 1e-10)) || error("Invalid reference history")
-    case = setup(release; dx, half_width, duration, save)
     mkpath(save)
     logger = SimulationLogger(save)
     host = AllocateDataStructures(case.geometry, case.metadata)
     result = try
         RunSimulation(SimGeometry = case.geometry, SimMetaData = case.metadata,
             SimConstants = case.constants, SimKernel = case.kernel, SimLogger = logger, SimParticles = host,
-            SimViscosity = ArtificialViscosity(), SimDensityDiffusion = FourtakasDensityDiffusion(),
-            SimTimeStepping = SymplecticTimeStepping(), SimDamping = case.damping)
+            SimViscosity = case.viscosity, SimDensityDiffusion = case.diffusion,
+            SimTimeStepping = case.stepping, SimDamping = case.damping)
     finally
         isopen(logger.LoggerIo) && close(logger.LoggerIo)
     end
@@ -96,7 +110,7 @@ function run_case(release; dx, half_width, duration)
         surge_mm = 1000 .* getproperty(records, Symbol("Center:0")),
         sway_mm = 1000 .* getproperty(records, Symbol("Center:1"))))
     open(joinpath(output, release.name * ".toml"), "w") do io
-        TOML.print(io, Dict("dx" => dx, "half_width" => half_width, "depth" => 0.8, "duration" => duration,
+        TOML.print(io, Dict("dx" => dx, "half_width" => half_width, "depth" => depth, "duration" => duration,
             "mass" => release.mass, "draft" => release.draft, "offset" => release.offset,
             "fluid_particles" => length(case.geometry[2].Particles), "frames" => length(time),
             "steps" => result.performance.steps, "wall_seconds" => result.performance.wall_time_seconds))
@@ -104,11 +118,12 @@ function run_case(release; dx, half_width, duration)
     return (; particles = joinpath(save, "FreeHeave.vtkhdf"), history, reference = reference_path)
 end
 
-function write_heave_view(pvpython, release, output)
+function write_heave_view(pvpython, release, output; layout = "side-by-side", screenshot = false)
     (; particles, history, reference) = output
     script = joinpath(@__DIR__, "paraview_heave.py")
     state = joinpath(dirname(particles), "FreeHeave_Comparison.pvsm")
-    run(`$pvpython --no-mpi --force-offscreen-rendering $script $particles $history $reference --state $state --title $(release.title)`)
+    args = screenshot ? ["--screenshot", replace(state, ".pvsm" => ".png")] : String[]
+    run(`$pvpython --no-mpi --force-offscreen-rendering $script $particles $history $reference --state $state --title $(release.title) --layout $layout $args`)
     isfile(state) || error("ParaView did not write $state")
     return state
 end

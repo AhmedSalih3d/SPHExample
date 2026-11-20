@@ -136,10 +136,15 @@ def build_view(args):
     layout = CreateLayout(name="Free heave comparison")
     view = CreateView("RenderView")
     layout.AssignView(0, view)
-    layout.SplitHorizontal(0, 0.53)
+    if args.layout == "stacked":
+        layout.SplitVertical(0, 0.65)
+        size = [1400, 1000]
+    else:
+        layout.SplitHorizontal(0, 0.53)
+        size = [1500, 690]
     chart = CreateView("XYChartView")
     layout.AssignView(2, chart)
-    layout.SetSize(1500, 690)
+    layout.SetSize(*size)
 
     reader = VTKHDFReader(registrationName="Test 14 particle history", FileName=[args.particles.as_posix()])
     reader.PointArrayStatus = ["Type"]
@@ -213,7 +218,7 @@ def build_view(args):
     RenderAllViews()
     SaveState(args.state.as_posix())
     if args.screenshot:
-        SaveScreenshot(args.screenshot.as_posix(), layout, ImageResolution=[1500, 690])
+        SaveScreenshot(args.screenshot.as_posix(), layout, ImageResolution=size)
 
 
 if __name__ == "__main__":
@@ -224,6 +229,7 @@ if __name__ == "__main__":
     parser.add_argument("--state", type=Path, required=True)
     parser.add_argument("--screenshot", type=Path)
     parser.add_argument("--title")
+    parser.add_argument("--layout", choices=("side-by-side", "stacked"), default="side-by-side")
     args = parser.parse_args()
     for name in ("particles", "history", "reference", "state", "screenshot"):
         path = getattr(args, name)
