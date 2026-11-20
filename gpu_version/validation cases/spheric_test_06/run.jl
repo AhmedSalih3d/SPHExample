@@ -7,15 +7,18 @@ using TOML
 
 function main(args)
     options = Dict{String,String}()
-    iseven(length(args)) || error("Options require values: --dx, --re, --duration, --interval, --sound-speed, --tag")
+    valid_options = ("--dx", "--re", "--duration", "--interval", "--force-interval", "--sound-speed", "--tag")
+    iseven(length(args)) || error("Options require values: $(join(valid_options, ", "))")
     for i in 1:2:length(args)
-        args[i] in ("--dx", "--re", "--duration", "--interval", "--sound-speed", "--tag") || error("Unknown option $(args[i])")
+        args[i] in valid_options || error("Unknown option $(args[i])")
         options[args[i]] = args[i+1]
     end
     spacings = parse.(Float64, split(get(options, "--dx", "0.05,0.025,0.016666666666666666"), ','))
     reynolds_numbers = parse.(Int, split(get(options, "--re", "50,100,150"), ','))
     duration = parse(Float64, get(options, "--duration", "8"))
     interval = parse(Float64, get(options, "--interval", "0.02"))
+    force_interval = haskey(options, "--force-interval") ? parse(Float64, options["--force-interval"]) : nothing
+    SphericTest06.validate_force_interval(force_interval, duration)
     sound_speed = parse(Float64, get(options, "--sound-speed", "40"))
     tag = get(options, "--tag", "validation")
     occursin(r"^[A-Za-z0-9_-]+$", tag) || error("Tag must be a simple directory name")
@@ -24,14 +27,15 @@ function main(args)
         name = @sprintf("Re%03d_n%03d", reynolds, round(Int, 1/dx))
         if isfile(joinpath(results, name * ".toml"))
             previous = TOML.parsefile(joinpath(results, name * ".toml"))
-            all(isapprox(previous[key], value; rtol = 1e-12) for (key,value) in
+            get(previous, "force_interval", nothing) == force_interval &&
+                all(isapprox(previous[key], value; rtol = 1e-12) for (key,value) in
                 (("dx",dx), ("duration",duration), ("output_interval",interval), ("sound_speed",sound_speed))) ||
                 error("Existing run settings differ; use a new --tag: $name")
             println("Already completed: ", name)
             continue
         end
         save = joinpath(@__DIR__, "runs", tag, name)
-        case = build_case(; reynolds, dx, duration, interval, sound_speed, save)
+        case = build_case(; reynolds, dx, duration, interval, force_interval, sound_speed, save)
         run_case(case; results_dir = results)
         GC.gc(true)
         CUDA.reclaim()

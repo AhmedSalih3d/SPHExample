@@ -560,6 +560,14 @@ runs in separate folders.
 julia --project=. -t 2,0 "validation cases/spheric_test_06/manual_case.jl"
 ```
 
+Set `force_interval = 0.005` in the manual case, or pass
+`--interval 0.02 --force-interval 0.005` to the batch runner, to request drag
+samples every 0.005 s while keeping VTKHDF frames every 0.02 s. Forces are
+recorded at the first accepted state at or after each deadline, without
+shortening solver steps or writing extra frames. A step crossing multiple
+deadlines produces one sample. Without a force interval, drag is reconstructed
+from the VTKHDF frames as before.
+
 After force analysis finishes, the script writes a Python state and, with
 `visualize_in_paraview = true`, opens it directly in ParaView. ParaView's own
 Python API builds the particle view above native, interactive pressure and

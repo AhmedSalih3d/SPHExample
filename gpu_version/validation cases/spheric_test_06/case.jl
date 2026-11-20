@@ -198,6 +198,7 @@ in metres. Tank and body edges must align with `dx`; `wall_layers` must cover
 the kernel support. No-shifting DBC remains the benchmark default.
 """
 function build_case(; reynolds = 100, dx = 0.025, duration = 8.0, interval = 0.02,
+        force_interval = nothing,
         sound_speed = 40.0, cfl = 0.2, save = joinpath(CASE_DIR, "runs", "case"),
         float_type = Float32, graph = true, visualize_in_paraview = false,
         layout = DEFAULT_LAYOUT, density = 1000.0, gravity = 0.0,
@@ -232,6 +233,7 @@ function build_case(; reynolds = 100, dx = 0.025, duration = 8.0, interval = 0.0
         throw(ArgumentError("background_pressure must be finite and nonnegative"))
     duration <= start_delay + 8.0 || throw(ArgumentError("The force comparison ends after 8 s of motion"))
     interval <= duration || throw(ArgumentError("Output interval exceeds duration"))
+    validate_force_interval(force_interval, duration)
 
     T = float_type
     kernel_instance = SPHKernelInstance{2,T}(kernel; h = T(kernel_h_factor * dx))
@@ -267,7 +269,7 @@ function build_case(; reynolds = 100, dx = 0.025, duration = 8.0, interval = 0.0
     motion = PrescribedMotion(3; translation = body_trajectory(; speed_scale = reference_speed, start_delay, motion_kind))
     case_layout = (; tank_origin, tank_size, body_center, body_size)
     return (; constants, kernel = kernel_instance, geometry, metadata, motion, reynolds,
-        dx = Float64(dx), duration = Float64(duration), interval = Float64(interval), layers,
+        dx = Float64(dx), duration = Float64(duration), interval = Float64(interval), force_interval, layers,
         layout = case_layout, tank_origin, tank_size, body_center, body_size,
         body_marker = 3, reference_speed = Float64(reference_speed),
         reference_length = characteristic_length, span = Float64(span),
@@ -330,14 +332,50 @@ function frame_loads(position, velocity, density, types, markers, kernel, consta
         cy_pressure = scale * pressure_force[2], cy_viscous = scale * viscous_force[2])
 end
 
-"""Recover drag from accepted output states, independently of stale acceleration buffers."""
-function analyze_history(path, case; coefficient_path, diagnostics_path, trajectory = body_trajectory())
-    # Float64 postprocessing of saved Float32 state avoids reduction-roundoff noise.
+function load_parameters(case)
     constants = SimulationConstants{Float64}(2; dx = case.dx, ρ₀ = case.constants.ρ₀,
         c₀ = case.constants.c₀, g = case.constants.g, ν₀ = case.constants.ν₀,
         α = case.constants.α, δᵩ = case.constants.δᵩ, BackgroundPressure = case.constants.BackgroundPressure)
     kernel = SPHKernelInstance{2,Float64}(case.kernel.kernel; h = Float64(case.kernel.h),
         k = Float64(case.kernel.k), αD = Float64(case.kernel.αD), η² = Float64(case.kernel.η²))
+    return kernel, constants
+end
+
+function force_row(time, case, position, velocity, density, types, markers, kernel, constants)
+    loads = frame_loads(position, velocity, density, types, markers, kernel, constants;
+        body_marker = case.body_marker, viscosity_model = case.viscosity_model,
+        reference_speed = case.reference_speed, reference_length = case.reference_length, span = case.span)
+    return (; time, motion_time = time - get(case, :start_delay, 0.0), loads...)
+end
+
+function validate_force_interval(interval, duration)
+    interval === nothing || (isfinite(interval) && 0 < interval <= duration) ||
+        throw(ArgumentError("force_interval must be finite and in (0, duration]"))
+end
+
+function force_sampler(case)
+    interval = get(case, :force_interval, nothing)
+    rows = NamedTuple[]
+    interval === nothing && return (nothing, rows)
+    validate_force_interval(interval, case.duration)
+    times = collect(Float64(interval):Float64(interval):case.duration)
+    isapprox(last(times), case.duration; atol = 8eps(case.duration), rtol = 0) || push!(times, case.duration)
+    times[end] = case.duration
+    kernel, constants = load_parameters(case)
+    function sample(time, particles)
+        row = force_row(time, case, SVector{2,Float64}.(Array(particles.Position)),
+            SVector{2,Float64}.(Array(particles.Velocity)), Float64.(Array(particles.Density)),
+            Int.(Array(particles.Type)), Array(particles.GroupMarker), kernel, constants)
+        all(isfinite, values(row)) || error("Nonfinite force sample at t=$time")
+        push!(rows, row)
+        return nothing
+    end
+    return ((; times, sample), rows)
+end
+
+"""Recover drag from saved output states, independently of stale acceleration buffers."""
+function analyze_history(path, case; coefficient_path, diagnostics_path, trajectory = body_trajectory(), force_rows = nothing)
+    kernel, constants = load_parameters(case)
     body_half_size = case.body_size / 2
     tank_upper = case.tank_origin + case.tank_size
     rows, checks = NamedTuple[], NamedTuple[]
@@ -371,14 +409,9 @@ function analyze_history(path, case; coefficient_path, diagnostics_path, traject
                 min(x - case.tank_origin[1], tank_upper[1] - x,
                     y - case.tank_origin[2], tank_upper[2] - y, body_clearance)
             end
-            loads = frame_loads(position, velocity, density, types, markers, kernel, constants;
-                body_marker = case.body_marker, viscosity_model = case.viscosity_model,
-                reference_speed = case.reference_speed, reference_length = case.reference_length,
-                span = case.span)
             pressure = [EquationOfStateGamma7(density[i], constants.c₀, constants.ρ₀) for i in fluid]
             mean_pressure = sum(pressure) / length(pressure)
-            start_delay = get(case, :start_delay, 0.0)
-            push!(rows, (; time = times[frame], motion_time = times[frame] - start_delay, loads...))
+            push!(rows, force_row(times[frame], case, position, velocity, density, types, markers, kernel, constants))
             push!(checks, (; time = times[frame], motion_error, velocity_error,
                 density_relative_max = maximum(abs, density[fluid] ./ constants.ρ₀ .- 1),
                 max_speed = maximum(norm, velocity[fluid]), minimum_clearance,
@@ -390,6 +423,10 @@ function analyze_history(path, case; coefficient_path, diagnostics_path, traject
         end
     end
     CSV.write(diagnostics_path, checks)
+    if force_rows !== nothing
+        CSV.write(replace(coefficient_path, ".dat" => "_vtk_frames.csv"), rows)
+        rows = force_rows
+    end
     open(coefficient_path, "w") do io
         println(io, "# time Cd_pressure Cd_viscous")
         for row in rows
@@ -408,23 +445,25 @@ function run_case(case; results_dir = joinpath(CASE_DIR, "results"))
     mkpath(save)
     isfile(joinpath(save, "MovingSquare.vtkhdf")) && error("Refusing to overwrite an existing run: $save")
     mkpath(results_dir)
-    logger = SimulationLogger(save)
+    sampling, force_rows = force_sampler(case)
     particles = AllocateDataStructures(case.geometry, case.metadata)
+    logger = SimulationLogger(save)
     result = try
         RunSimulation(SimGeometry = case.geometry, SimMetaData = case.metadata,
             SimConstants = case.constants, SimKernel = case.kernel, SimLogger = logger,
             SimParticles = particles, SimViscosity = case.viscosity_model,
             SimDensityDiffusion = case.density_diffusion_model,
             SimTimeStepping = case.time_stepping, SimMotion = case.motion,
-            SimDamping = get(case, :damping, nothing), SimDivergenceCleaning = get(case, :divergence_cleaning, nothing))
+            SimDamping = get(case, :damping, nothing), SimDivergenceCleaning = get(case, :divergence_cleaning, nothing),
+            SimStateSampling = sampling)
     finally
         isopen(logger.LoggerIo) && close(logger.LoggerIo)
     end
-    return save_run_results(case, result; results_dir)
+    return save_run_results(case, result; results_dir, force_rows = sampling === nothing ? nothing : force_rows)
 end
 
 """Check a completed simulation and write the benchmark force history and run record."""
-function save_run_results(case, result; results_dir = joinpath(CASE_DIR, "results"))
+function save_run_results(case, result; results_dir = joinpath(CASE_DIR, "results"), force_rows = nothing)
     result.final_state.complete && result.termination_reason == :completed || error("Incomplete run")
     result.diagnostics.frozen_particles == 0 || error("Run froze particles")
     save = case.metadata.SaveLocation
@@ -433,7 +472,7 @@ function save_run_results(case, result; results_dir = joinpath(CASE_DIR, "result
     name = @sprintf("Re%03d_n%03d", case.reynolds, n)
     analysis = analyze_history(joinpath(save, "MovingSquare.vtkhdf"), case;
         coefficient_path = joinpath(results_dir, name * ".dat"),
-        diagnostics_path = joinpath(results_dir, name * "_state.csv"), trajectory = case.motion.translation)
+        diagnostics_path = joinpath(results_dir, name * "_state.csv"), trajectory = case.motion.translation, force_rows)
     metadata = Dict{String,Any}(
         "reynolds" => case.reynolds, "dx" => case.dx, "duration" => case.duration,
         "output_interval" => case.interval, "rho0" => Float64(case.constants.ρ₀),
@@ -472,6 +511,7 @@ function save_run_results(case, result; results_dir = joinpath(CASE_DIR, "result
         "minimum_clearance" => minimum(x -> x.minimum_clearance, analysis.checks),
         "execution_path" => string(result.configuration.execution.path),
         "solver_commit" => strip(read(`git -C $CASE_DIR rev-parse HEAD`, String)))
+    force_rows === nothing || (metadata["force_interval"] = case.force_interval)
     open(joinpath(results_dir, name * ".toml"), "w") do io
         TOML.print(io, metadata; sorted = true)
     end

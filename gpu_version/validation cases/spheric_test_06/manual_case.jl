@@ -42,6 +42,7 @@
         start_delay      = 0.0
         duration         = 8.0 + start_delay
         output_interval  = 0.02
+        force_interval   = nothing # e.g. 0.005 for separate drag sampling
         visualize_in_paraview = true
 
         run_tag          = "coefh"
@@ -126,40 +127,11 @@
             throw(ArgumentError("Drag postprocessing supports Laminar, ZeroViscosity, or ArtificialViscosity"))
         isfinite(SimConstants.BackgroundPressure) && SimConstants.BackgroundPressure >= 0 ||
             throw(ArgumentError("BackgroundPressure must be finite and nonnegative"))
-        SphericTest06.verify_reference()
-        CUDA.functional() || error("An NVIDIA CUDA GPU is required")
-        isfile(joinpath(SimMetaData.SaveLocation, "MovingSquare.vtkhdf")) &&
-            error("Refusing to overwrite an existing run: $(SimMetaData.SaveLocation)")
-        mkpath(SimMetaData.SaveLocation)
-        mkpath(results_location)
-
-        SimLogger    = SimulationLogger(SimMetaData.SaveLocation)
-        SimParticles = AllocateDataStructures(SimulationGeometry, SimMetaData)
-
-        result = try
-            RunSimulation(
-                SimGeometry         = SimulationGeometry,
-                SimMetaData         = SimMetaData,
-                SimConstants        = SimConstants,
-                SimLogger           = SimLogger,
-                SimParticles        = SimParticles,
-                SimKernel           = SimKernel,
-                SimViscosity        = SimViscosity,
-                SimDensityDiffusion = SimDensityDiffusion,
-                SimTimeStepping     = SimTimeStepping,
-                SimMotion           = SquareMotion,
-                SimDamping          = SimDamping,
-                SimDivergenceCleaning = SimDivergenceCleaning,
-            )
-        finally
-            isopen(SimLogger.LoggerIo) && close(SimLogger.LoggerIo)
-        end
-
         # Keep the manual run's force analysis and completion record identical to the batch validation.
         case = (;
             constants = SimConstants, kernel = SimKernel, geometry = SimulationGeometry,
             metadata = SimMetaData, motion = SquareMotion, reynolds, dx, duration,
-            interval = output_interval, layers = sampled.layers, layout = sampled.layout,
+            interval = output_interval, force_interval, layers = sampled.layers, layout = sampled.layout,
             sampled.layout..., body_marker = Square.GroupMarker,
             reference_speed, reference_length, span, counts = sampled.counts,
             viscosity_model = SimViscosity, density_diffusion_model = SimDensityDiffusion,
@@ -167,7 +139,7 @@
             start_delay, motion_kind, boundary_mode, damping = SimDamping, divergence_cleaning = SimDivergenceCleaning,
             domain_padding, sponge_width = use_sponge ? sponge_width : 0.0, sponge_rate = use_sponge ? sponge_rate : 0.0,
         )
-        completed = SphericTest06.save_run_results(case, result; results_dir = results_location)
+        completed = SphericTest06.run_case(case; results_dir = results_location)
 
         comparison_state = SphericTest06.write_force_plot_state(case;
             results_dir = results_location, output_dir = plot_location)

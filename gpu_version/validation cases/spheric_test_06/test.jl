@@ -5,6 +5,7 @@ using SPHExampleGPU
 using StaticArrays: SVector
 using LinearAlgebra: norm
 using CUDA
+using CSV
 using TOML
 include(joinpath(@__DIR__, "case.jl"))
 using .SphericTest06
@@ -148,6 +149,27 @@ end
 end
 
 if CUDA.functional()
+    @testset "Separate force cadence preserves particle history" begin
+        mktempdir() do directory
+            function short_run(name, force_interval)
+                save = joinpath(directory, name)
+                case = build_case(; dx = 0.1, duration = 0.05, interval = 0.02,
+                    force_interval, save, graph = false)
+                return run_case(case; results_dir = save)
+            end
+            baseline = short_run("baseline", nothing)
+            sampled = short_run("sampled", 0.007)
+            vtk = CSV.File(joinpath(directory, "sampled", "Re100_n010_vtk_frames.csv"))
+            @test collect(vtk.time) == getproperty.(baseline.analysis.rows, :time)
+            @test collect(vtk.time) ≈ [0, 0.02, 0.04, 0.05]
+            @test collect(vtk.cd_pressure) ≈ getproperty.(baseline.analysis.rows, :cd_pressure)
+            @test sampled.result.performance.steps == baseline.result.performance.steps
+            times = getproperty.(sampled.analysis.rows, :time)
+            @test length(times) > length(vtk.time)
+            @test all(>(0), diff(times))
+            @test times[1] == 0 && times[end] ≈ 0.05
+        end
+    end
     @testset "Force postprocessing agrees with the GPU solver" begin
         for T in (Float32, Float64), background_pressure in (0,101325)
             constants = SimulationConstants{T}(2; dx = 0.025, c₀ = 40, g = 0, ν₀ = 0.01, BackgroundPressure = background_pressure)

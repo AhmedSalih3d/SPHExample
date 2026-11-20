@@ -1604,7 +1604,8 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                         cl::CellListWorkspace, sup::GPUSupportArrays, red::ReductionWorkspace,
                         motion, state::StepState{FloatType};
                         floating = nothing, external_forces = (), damping = (), rotation = nothing, open_boundary = nothing,logger = nothing, diagnostics = nothing,
-                        divergence_cleaning = nothing, density_observer = nothing, output_clip_times = nothing) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
+                        divergence_cleaning = nothing, density_observer = nothing, output_clip_times = nothing,
+                        sample_deadline = Inf) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
                                                    SDD <: SPHDensityDiffusion, SV <: SPHViscosity}
     validate_shifting(SMode, SimMetaData.TimeSteppingMode, SimMetaData.VariableResolution)
     if divergence_cleaning !== nothing
@@ -1615,7 +1616,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     end
     if SimMetaData.TimeSteppingMode isa DualSPHysicsSymplectic
         return dual_simulation_loop!(SimDensityDiffusion, SimViscosity, SimKernel,
-            SimMetaData, SimConstants, gpu, cl, sup, rotation, state, damping)
+            SimMetaData, SimConstants, gpu, cl, sup, rotation, state, damping; sample_deadline)
     end
     HourGlass = SimMetaData.HourGlass
     h = SimKernel.h
@@ -1706,8 +1707,9 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
              logger = LMode === StoreLog ? logger : nothing,
              density_observer)
 
-    t_out = next_output_time(SimMetaData)
-    clip_time = output_clip_times === nothing ? t_out : output_clip_times[searchsortedfirst(output_clip_times, t_out)]
+    frame_time = next_output_time(SimMetaData)
+    t_out = min(frame_time, sample_deadline)
+    clip_time = output_clip_times === nothing ? frame_time : output_clip_times[searchsortedfirst(output_clip_times, frame_time)]
     set_output_time!(state, t_out; clip_timestep = SimMetaData.GPUClipTimeStepToOutput, clip_time)
 
     if SingleNeighbor && interaction_mode_changed && state.primed && cl.nrebuilds > 0
@@ -1950,6 +1952,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     SimDivergenceCleaning = nothing,
     # Opt-in synchronous stage observer; see validation case density_budget.jl.
     SimDensityObserver = nothing,
+    SimStateSampling = nothing,
     SimOutputClipTimes::Union{Nothing,Vector{Float64}} = nothing,
     SimRotation::Union{Nothing,RotationMotion} = nothing,
     SimMotion::Union{Nothing,PrescribedMotion,MotionSystem} = nothing,
@@ -1957,6 +1960,13 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SV <: SPHViscosity, SDD <: SPHDensityDiffusion}
 
     validate_shifting(SMode, SimTimeStepping, SimMetaData.VariableResolution)
+    if SimStateSampling !== nothing
+        times = SimStateSampling.times
+        SimMetaData.VariableResolution === nothing && !isempty(times) &&
+            all(isfinite, times) && all(>(0), diff(times)) && SimMetaData.TotalTime < first(times) &&
+            last(times) <= SimMetaData.SimulationTime ||
+            throw(ArgumentError("State sampling requires fixed resolution and strictly increasing deadlines within the run"))
+    end
     CUDA.functional() || error("CUDA is not functional on this machine; use the CPU package SPHExample instead.")
     if SimOutputClipTimes !== nothing
         outputs = SimMetaData.OutputTimes
@@ -2525,11 +2535,29 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                 println(io, "OutputTime,Iteration,Time,TimeStep,Criterion,ParticleID,ForceTimeStep,AcousticViscousTimeStep")
             end
         end
+        sample_times = SimStateSampling === nothing ? () : SimStateSampling.times
+        sample_index = 1
+        SimStateSampling === nothing || SimStateSampling.sample(SimMetaData.TotalTime, SimParticles)
         while true
+            frame_deadline = next_output_time(SimMetaData)
+            sample_deadline = sample_index <= length(sample_times) ? sample_times[sample_index] : Inf
             @timeit HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                                                                  SimConstants, gpu, cl, sup, red, motion, state;
                                                                  floating = floating, external_forces, damping, divergence_cleaning, rotation, open_boundary,logger = SimLogger, diagnostics,
-                                                                 density_observer = SimDensityObserver, output_clip_times = SimOutputClipTimes)
+                                                                 density_observer = SimDensityObserver, output_clip_times = SimOutputClipTimes,
+                                                                 sample_deadline)
+            accepted_time = SimMetaData.TotalTime
+            if sample_index <= length(sample_times) && accepted_time >= sample_deadline
+                SimStateSampling.sample(accepted_time, gpu)
+                while sample_index <= length(sample_times) && sample_times[sample_index] <= accepted_time
+                    sample_index += 1
+                end
+            end
+            if sample_deadline < frame_deadline
+                frame_reached = SimTimeStepping isa DualSPHysicsSymplectic ? accepted_time >= frame_deadline :
+                    GPUStepState.output_time_reached(accepted_time, frame_deadline, SimMetaData.GPUClipTimeStepToOutput)
+                frame_reached || continue
+            end
 
             # Publish progress immediately, independently of the queued disk writes.
             if StoreLogOutput

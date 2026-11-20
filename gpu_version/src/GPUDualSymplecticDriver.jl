@@ -56,7 +56,8 @@ function dual_force_stage!(position,velocity,density,pairs,gpu,cl,sup,kernel,con
     return min(dual_time_step(criteria,kernel,constants,meta.TimeSteppingMode),reference_viscous_limit(viscosity,kernel,constants))
 end
 
-function dual_simulation_loop!(diffusion,viscosity,kernel,meta::SimulationMetaData{D,T,S},constants,gpu,cl,sup,rotation,state,damping=()) where {D,T,S}
+function dual_simulation_loop!(diffusion,viscosity,kernel,meta::SimulationMetaData{D,T,S},constants,gpu,cl,sup,rotation,state,damping=();
+        sample_deadline=Inf) where {D,T,S}
     clock = sup.dual_state
     scheme = meta.TimeSteppingMode
     shifting = Val(S <: PlanarShifting ? S : false)
@@ -81,7 +82,7 @@ function dual_simulation_loop!(diffusion,viscosity,kernel,meta::SimulationMetaDa
     end
     position_half, velocity_half = predictor_arrays(sup,gpu)
     deadline = Float64(next_output_time(meta))
-    while clock.time < deadline
+    while clock.time < min(deadline, sample_deadline)
         dt = meta.GPUClipTimeStepToOutput ? min(clock.dt,deadline-clock.time) : clock.dt
         step = HostStep(dt,clock.time)
         predictor_limit = dual_force_stage!(gpu.Position,gpu.Velocity,gpu.Density,sup.PosCells,
