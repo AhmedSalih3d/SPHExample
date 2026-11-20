@@ -211,7 +211,7 @@ if CUDA.functional()
     @testset "GPU run, HDF history and incomplete-validation guard" begin
         mktempdir() do directory
             case = build_case(dx = 0.1, duration = 0.2, interval = 0.02,
-                kernel_h_factor = 1.2 * sqrt(2), save = joinpath(directory, "run"))
+                kernel_h_factor = 1.2 * sqrt(2), shifting = PlanarShifting, save = joinpath(directory, "run"))
             result = run_case(case; results_dir = directory)
             @test result.result.final_state.time == 0.2
             @test result.result.diagnostics.frozen_particles == 0
@@ -232,7 +232,9 @@ if CUDA.functional()
                 "use_sponge     = true" => "use_sponge     = false",
                 "motion_kind      = :integrated" => "motion_kind      = :hermite",
                 "SimDivergenceCleaning = DivergenceCleaning(kappa=10)" => "SimDivergenceCleaning = nothing",
-                r"dx\s*=\s*0\.025" => "dx = 0.1",
+                r"(?m)^        dx[ \t]*=[ \t]*[0-9.]+[ \t]*(?:#.*)?\r?$" => "        dx = 0.1",
+                r"(?m)^        coefh[ \t]*=.*$" => "        coefh = 1.2",
+                r"(?m)^\s*force_interval\s*=.*$" => "        force_interval = nothing",
                 r"duration\s*=\s*8\.0" => "duration = 0.2",
                 "visualize_in_paraview = true" => "visualize_in_paraview = false",
                 "joinpath(@__DIR__, \"runs\", run_tag, run_name)" => repr(joinpath(directory, "manual")),

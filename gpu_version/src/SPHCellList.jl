@@ -1646,7 +1646,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         require_particle_field(gpu, :GhostNormals)
     end
     if FlagShift !== Val(false)
-        length(sup.∇Cᵢ) == length(gpu) && (SMode !== PlanarShifting || length(sup.∇◌rᵢ) == length(gpu)) ||
+        length(sup.∇Cᵢ) == length(gpu) ||
             throw(ArgumentError("GPU shifting buffers were not allocated; enable shifting when allocating support arrays."))
     end
     boundary_mode = BMode()

@@ -6,7 +6,7 @@
     include(joinpath(@__DIR__, "case.jl"))
     using .SphericTest06
 
-    let
+    Base.invokelatest() do
         Dimensions = 2
         FloatType  = Float32
 
@@ -32,7 +32,7 @@
         motion_kind      = :integrated  # :hermite reproduces the rounded-position history.
 
         reynolds         = 100
-        dx               = 0.00625
+        dx               = 0.0125
         reference_speed  = 1.0
         reference_length = layout.body_size[1]
         span             = 1.0
@@ -42,12 +42,12 @@
         start_delay      = 0.0
         duration         = 8.0 + start_delay
         output_interval  = 0.02
-        force_interval   = nothing # e.g. 0.005 for separate drag sampling
+        force_interval   = 0.005 # e.g. 0.005 for separate drag sampling
         visualize_in_paraview = true
 
         run_tag          = "coefh"
         n                = round(Int, reference_length / dx)
-        run_name         = "Re$(lpad(string(reynolds), 3, '0'))_n$(lpad(string(n), 3, '0'))" * "_Test12";
+        run_name         = "Re$(lpad(string(reynolds), 3, '0'))_n$(lpad(string(n), 3, '0'))" * "_Test17";
         save_location    = joinpath(@__DIR__, "runs", run_tag, run_name)
         plot_location    = joinpath(@__DIR__, "runs", run_tag, "paraview_force_plot")
         results_location = joinpath(@__DIR__, "results", run_tag, run_name)
