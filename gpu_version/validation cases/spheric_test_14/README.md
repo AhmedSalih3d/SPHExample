@@ -42,6 +42,11 @@ period is relative to the prescribed still-water datum.
 
 ## ParaView
 
+Every completed release saves a standalone `<release>_heave_comparison.png`
+next to its CSV in `results/<tag>`, before ParaView starts. This requires
+Python 3.11 or newer with NumPy and Matplotlib. To regenerate the plot for
+one existing release, run `plot.py <tag> --release float1_down`.
+
 For an editable single run, use [manual_case.jl](manual_case.jl). It puts
 the release, tank dimensions, spacing, damping, output settings, and solver
 choices in one script, following the Bathymetry example and the Test 06

@@ -115,7 +115,17 @@ function run_case(release, case; output)
             "fluid_particles" => length(case.geometry[2].Particles), "frames" => length(time),
             "steps" => result.performance.steps, "wall_seconds" => result.performance.wall_time_seconds))
     end
+    save_heave_plot(output, release.name)
     return (; particles = joinpath(save, "FreeHeave.vtkhdf"), history, reference = reference_path)
+end
+
+function save_heave_plot(output, release_name)
+    python = Sys.which("python")
+    python === nothing && (python = Sys.which("python3"))
+    python === nothing && error("Python with NumPy and Matplotlib is required to save the heave plot. Results are in $output.")
+    script = joinpath(@__DIR__, "plot.py")
+    run(`$python $script $(abspath(output)) --release $release_name`)
+    println("Heave plot saved to ", joinpath(output, release_name * "_heave_comparison.png"))
 end
 
 """Write a launcher that builds and saves the comparison inside ParaView."""

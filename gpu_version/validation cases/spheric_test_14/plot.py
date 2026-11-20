@@ -32,11 +32,14 @@ def configuration_label(folder, key):
     return f"dp = {1000*config['dx']:g} mm, tank width {2*config['half_width']:g} m"
 
 
-def main(tag, comparison):
-    folder = ROOT / "results" / tag
-    fig, axes = plt.subplots(3, 1, figsize=(9, 8), sharex=True, layout="constrained")
+def main(tag, comparison, release=None):
+    folder = ROOT / "results" / Path(tag)
+    cases = [case for case in CASES if release is None or case[0] == release]
+    height = 4.5 if release else 8
+    fig, axes = plt.subplots(len(cases), 1, figsize=(9, height), sharex=True, layout="constrained", squeeze=False)
+    axes = axes[:, 0]
     metrics = []
-    for ax, (key, filename, label) in zip(axes, CASES):
+    for ax, (key, filename, label) in zip(axes, cases):
         reference = np.loadtxt(ROOT / "reference" / filename)
         actual = np.genfromtxt(folder / f"{key}.csv", names=True, delimiter=",")
         time, heave = actual["time"], actual["heave_mm"]
@@ -63,8 +66,11 @@ def main(tag, comparison):
     axes[0].legend()
     axes[-1].set(xlabel="Time since release (s)", xlim=(0, time[-1]))
     fig.suptitle("SPHERIC Test 14 · Free heave decay")
-    fig.savefig(folder / ("heave_sensitivity.png" if comparison else "heave_comparison.png"), dpi=180)
-    with (folder / "metrics.csv").open("w", newline="", encoding="utf8") as stream:
+    prefix = f"{release}_" if release else ""
+    plot_name = "heave_sensitivity.png" if comparison else "heave_comparison.png"
+    fig.savefig(folder / (prefix + plot_name), dpi=180)
+    plt.close(fig)
+    with (folder / (prefix + "metrics.csv")).open("w", newline="", encoding="utf8") as stream:
         writer = csv.DictWriter(stream, fieldnames=metrics[0])
         writer.writeheader()
         writer.writerows(metrics)
@@ -74,5 +80,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("tag", nargs="?", default="dp0.025_half1.2_t4.5")
     parser.add_argument("--compare", action="append", default=[])
+    parser.add_argument("--release", choices=[case[0] for case in CASES])
     args = parser.parse_args()
-    main(args.tag, args.compare)
+    main(args.tag, args.compare, args.release)
