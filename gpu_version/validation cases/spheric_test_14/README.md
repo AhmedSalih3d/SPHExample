@@ -54,7 +54,9 @@ julia --project=. -t 2,0 "validation cases/spheric_test_14/manual_case.jl"
 The manual case writes `FreeHeave_Comparison.py`. ParaView runs this
 launcher and saves `FreeHeave_Comparison.pvsm` and a PNG preview.
 The ParaView layout stacks the fluid cutaway above the synchronized heave
-chart, as in the Test 06 particle-and-force view. Edit
+chart, as in the Test 06 particle-and-force view. The layout follows the
+available space in the ParaView window, and the PNG captures that layout
+at its rendered size. Edit
 `visualize_in_paraview` to control whether ParaView opens automatically.
 
 The batch runner writes a `FreeHeave_Comparison.py` launcher in every

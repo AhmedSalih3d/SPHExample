@@ -138,13 +138,10 @@ def build_view(args):
     layout.AssignView(0, view)
     if args.layout == "stacked":
         layout.SplitVertical(0, 0.65)
-        size = [1400, 1000]
     else:
         layout.SplitHorizontal(0, 0.53)
-        size = [1500, 690]
     chart = CreateView("XYChartView")
     layout.AssignView(2, chart)
-    layout.SetSize(*size)
 
     reader = VTKHDFReader(registrationName="Test 14 particle history", FileName=[args.particles.as_posix()])
     reader.PointArrayStatus = ["Type"]
@@ -218,7 +215,8 @@ def build_view(args):
     RenderAllViews()
     SaveState(args.state.as_posix())
     if args.screenshot:
-        SaveScreenshot(args.screenshot.as_posix(), layout, ImageResolution=size)
+        # ParaView captures the layout at its current on-screen size.
+        SaveScreenshot(args.screenshot.as_posix(), layout)
 
 
 if __name__ == "__main__":
