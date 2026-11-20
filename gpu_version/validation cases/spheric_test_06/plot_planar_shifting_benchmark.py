@@ -21,8 +21,10 @@ def read_history(path):
     return rows
 
 
-def main(n, archived_dual=False):
+def main(n, archived_dual=False, matched=False):
     tag = "planar_shifting_benchmark" + ("" if n == 160 else f"_n{n}")
+    if matched:
+        tag += "_ddt2"
     out = ROOT / "results" / tag
     full, axes = plt.subplots(2, 3, figsize=(13, 7), sharex=True, layout="constrained")
     startup, zoom = plt.subplots(1, 3, figsize=(13, 3.8), sharex=True, layout="constrained")
@@ -54,6 +56,8 @@ def main(n, archived_dual=False):
     axes[0, 0].legend(fontsize=8)
     zoom[0].legend(fontsize=8)
     settings = f"L/dp = {n} · CFL 0.20 · Julia shifting cap 0.10 dp per component"
+    if matched:
+        settings += " · Fourtakas DDT2"
     suffix = ""
     if archived_dual:
         settings += " · archived DualSPHysics coefh 1.2, shifting off"
@@ -68,7 +72,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--resolution", type=int, choices=(40, 160), default=160)
     parser.add_argument("--archived-dual", action="store_true")
+    parser.add_argument("--matched-numerics", action="store_true")
     args = parser.parse_args()
-    if args.archived_dual and args.resolution != 40:
+    if args.archived_dual and (args.resolution != 40 or args.matched_numerics):
         parser.error("The archived DualSPHysics baseline is at resolution 40")
-    main(args.resolution, args.archived_dual)
+    main(args.resolution, args.archived_dual, args.matched_numerics)
