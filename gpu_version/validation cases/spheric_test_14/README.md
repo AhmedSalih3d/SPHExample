@@ -135,5 +135,24 @@ That control leaves the main decay discrepancy open.
 [Pilot heave histories](results/dp0.025_half1.2_t4.5/heave_comparison.png)
 · [Spacing and tank-width comparison](results/dp0.025_half1.2_t4.5/heave_sensitivity.png)
 
+## Held-float buoyancy check
+
+Hold Float 1 at its prescribed draft of 0.187 m for 3 s and compare the
+vertical fluid load to its 95.65 N weight. This control uses two spacings
+with the same `h/dx = 1.3`, laminar viscosity, linear density diffusion,
+and the 2.4 m tank with its original damping zone. The float position is
+checked at every saved time. The initial frame precedes the first force
+evaluation and is omitted from the plot.
+
+```powershell
+julia --project=. -t 2,0 "validation cases/spheric_test_14/held_float.jl"
+python "validation cases/spheric_test_14/plot_held_float.py"
+```
+
+Over 2–3 s, the mean vertical fluid forces were 93.12 N at 25 mm and
+93.79 N at 12.5 mm, respectively 2.52 N and 1.86 N below the weight. The
+static load deficit has the opposite sign to the upward drift observed
+in the free-heave runs. [Held-float force history](results/held_float_t3.0/buoyancy_comparison.png)
+
 [SPHERIC benchmark specification](https://www.spheric-sph.org/tests/test-14)
 · [Gu et al., 2018](https://doi.org/10.1016/j.jfluidstructs.2018.06.012)

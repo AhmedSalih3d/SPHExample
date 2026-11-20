@@ -17,7 +17,7 @@ function in_float(p, release, base)
 end
 
 function sample_geometry(release, constants::SimulationConstants{T}, kernel; dx, half_width, depth,
-                         wall_top_z = 0.2) where {T}
+                         wall_top_z = 0.2, pause_time = 0.0) where {T}
     all(isfinite, (dx, half_width, depth, wall_top_z)) && dx > 0 && half_width >= 0.8 && depth > 0 && wall_top_z >= 0 ||
         throw(ArgumentError("Invalid spacing or tank dimensions"))
     nx, nz = round(Int, 2half_width / dx), round(Int, depth / dx)
@@ -43,6 +43,7 @@ function sample_geometry(release, constants::SimulationConstants{T}, kernel; dx,
     end
     isempty(body) && error("Float has no particles at dx=$dx")
     floating = FloatingDetails{T}(RelativeWeight = release.mass / (constants.m₀ * length(body)),
+        PauseTime = pause_time,
         Center = (0.0, 0.0, equilibrium_center_z + release.offset))
     density(points) = hydrostatic_density(points, constants; water_level = 0.0)
     geometry = [
