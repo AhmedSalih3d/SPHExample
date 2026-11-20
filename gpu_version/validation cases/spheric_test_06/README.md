@@ -686,3 +686,12 @@ drag coefficients were 3.13, 2.59 and 2.40 for Re = 50, 100 and 150.
 The minimum saved clearances over 8 s were −17.6, −15.5 and −16.4 mm.
 The [interim drag overlay](results/planar_shifting_benchmark_n40/drag_comparison_archived_dual.png)
 uses archived DualSPHysics runs with `coefh = 1.2` and shifting disabled.
+
+The completed matched `L/dp = 40` comparison is available as
+[full pressure and viscous drag histories](results/planar_shifting_benchmark_n40/drag_comparison.png)
+and a [startup pressure-drag close-up](results/planar_shifting_benchmark_n40/startup_pressure_drag.png).
+Both solvers wrote 401 frames and retained their particles for every Reynolds number.
+Pressure drag stayed positive throughout the sampled reversal window in both solvers.
+The DualSPHysics coefficients interpolated at 0.82 s were 3.20, 2.84, and 2.81.
+At 8 s, Julia's viscous drag coefficients were 0.437, 0.152, and 0.054,
+while DualSPHysics gave 0.393, 0.107, and 0.019.

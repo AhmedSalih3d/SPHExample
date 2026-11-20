@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<case app="GenCase v5.4.354.01 (07-04-2025)" date="20-11-2026 02:17:34">
+    <casedef>
+        <constantsdef>
+            <gravity x="0" y="0" z="0" />
+            <rhop0 value="1000" />
+            <rhopgradient value="1" />
+            <hswl value="0" auto="false" />
+            <gamma value="7" />
+            <speedsystem value="1" auto="false" />
+            <coefsound value="160" />
+            <speedsound value="160" auto="false" />
+            <b value="3.6571428571428573e6" auto="false" />
+            <coefh value="2.0" />
+            <cflnumber value="0.2" />
+        </constantsdef>
+        <mkconfig boundcount="240" fluidcount="9" />
+        <geometry>
+            <definition dp="0.025">
+                <pointref x="0.0125" y="0" z="0.0125" />
+                <pointmin x="-0.2" y="0" z="-0.2" />
+                <pointmax x="10.200000000000001" y="0" z="5.2" />
+            </definition>
+            <commands>
+                <mainlist>
+                    <setshapemode>actual | dp | bound</setshapemode>
+                    <setdrawmode mode="full" />
+                    <setmkbound mk="0" />
+                    <drawbox>
+                        <boxfill>solid</boxfill>
+                        <point x="-0.1625" y="-1" z="-0.1625" />
+                        <size x="10.325" y="2" z="0.15000000000000002" />
+                    </drawbox>
+                    <drawbox>
+                        <boxfill>solid</boxfill>
+                        <point x="-0.1625" y="-1" z="5.0125" />
+                        <size x="10.325" y="2" z="0.15000000000000002" />
+                    </drawbox>
+                    <drawbox>
+                        <boxfill>solid</boxfill>
+                        <point x="-0.1625" y="-1" z="0.0125" />
+                        <size x="0.15000000000000002" y="2" z="4.975" />
+                    </drawbox>
+                    <drawbox>
+                        <boxfill>solid</boxfill>
+                        <point x="10.0125" y="-1" z="0.0125" />
+                        <size x="0.15000000000000002" y="2" z="4.975" />
+                    </drawbox>
+                    <setmkbound mk="10" />
+                    <drawbox>
+                        <boxfill>solid</boxfill>
+                        <point x="1.0125" y="-1" z="2.0125" />
+                        <size x="0.975" y="2" z="0.975" />
+                    </drawbox>
+                    <setmkfluid mk="0" />
+                    <drawbox>
+                        <boxfill>solid</boxfill>
+                        <point x="0.0125" y="-1" z="0.0125" />
+                        <size x="0.975" y="2" z="4.975" />
+                    </drawbox>
+                    <drawbox>
+                        <boxfill>solid</boxfill>
+                        <point x="2.0125" y="-1" z="0.0125" />
+                        <size x="7.975" y="2" z="4.975" />
+                    </drawbox>
+                    <drawbox>
+                        <boxfill>solid</boxfill>
+                        <point x="1.0125" y="-1" z="0.0125" />
+                        <size x="0.975" y="2" z="1.975" />
+                    </drawbox>
+                    <drawbox>
+                        <boxfill>solid</boxfill>
+                        <point x="1.0125" y="-1" z="3.0125" />
+                        <size x="0.975" y="2" z="1.975" />
+                    </drawbox>
+                </mainlist>
+            </commands>
+        </geometry>
+        <motion>
+            <objreal ref="10">
+                <begin mov="1" start="0" />
+                <mvfile id="1" duration="8.1">
+                    <file name="W:/git/SPHExampleGPUNOV/gpu_version/validation cases/spheric_test_06/runs/comparison/definitions/re50_n40_c160_integrated_ddt1_t8.0_out0.02_centered_v2_coefh2.0_shift3_walls7_planar_shifting_benchmark/motion.txt" fields="2" fieldtime="0" fieldx="1" />
+                </mvfile>
+            </objreal>
+        </motion>
+    </casedef>
+    <execution>
+        <parameters>
+            <parameter key="SavePosDouble" value="1" />
+            <parameter key="StepAlgorithm" value="2" />
+            <parameter key="Kernel" value="2" />
+            <parameter key="ViscoTreatment" value="3" />
+            <parameter key="Visco" value="0.02" />
+            <parameter key="ViscoBoundFactor" value="1" />
+            <parameter key="DensityDT" value="1" />
+            <parameter key="DensityDTvalue" value="0.1" />
+            <parameter key="Shifting" value="3" />
+            <parameter key="RigidAlgorithm" value="1" />
+            <parameter key="CoefDtMin" value="0.01" />
+            <parameter key="DtIni" value="8.838834764831847e-5" />
+            <parameter key="TimeMax" value="8.0" />
+            <parameter key="TimeOut" value="0.02" />
+            <parameter key="PartsOutMax" value="0.001" comment="**DEPRECATED** " />
+            <parameter key="RhopOutMin" value="700" />
+            <parameter key="RhopOutMax" value="1300" />
+            <simulationdomain comment="Defines domain of simulation (default=Uses minimum and maximum position of the generated particles)">
+                <posmin x="default" y="default" z="default" comment="e.g.: x=0.5, y=default-1, z=default-10%" />
+                <posmax x="default" y="default" z="default" />
+            </simulationdomain>
+        </parameters>
+        <particles np="88596" nb="10196" nbf="8596" mkboundfirst="10" mkfluidfirst="1">
+            <_summary>
+                <positions units_comment="metres (m)">
+                    <posmin x="-0.1625" y="0" z="-0.1625" />
+                    <posmax x="10.1625" y="0" z="5.1625" />
+                </positions>
+                <fixed count="8596" id="0-8595" mkcount="1" mkvalues="10" />
+                <moving count="1600" id="8596-10195" mkcount="1" mkvalues="20" />
+                <fluid count="78400" id="10196-88595" mkcount="1" mkvalues="1" />
+            </_summary>
+            <fixed mkbound="0" mk="10" begin="0" count="8596" />
+            <moving mkbound="10" mk="20" begin="8596" count="1600" refmotion="0" />
+            <fluid mkfluid="0" mk="1" begin="10196" count="78400" />
+        </particles>
+        <constants>
+            <data2d value="true" />
+            <data2dposy value="0" units_comment="metres (m)" />
+            <gravity x="0" y="0" z="0" units_comment="m/s^2" />
+            <cflnumber value="0.2" />
+            <gamma value="7" />
+            <rhop0 value="1000" units_comment="kg/m^3" />
+            <dp value="0.025" units_comment="metres (m)" />
+            <h value="0.070710678119" units_comment="metres (m)" />
+            <b value="3657142.8571" units_comment="Pascal (Pa)" />
+            <massbound value="0.625" units_comment="kg" />
+            <massfluid value="0.625" units_comment="kg" />
+        </constants>
+        <uservars>
+            <varnum name="VResId" value="0" />
+        </uservars>
+        <motion>
+            <objreal ref="0">
+                <begin mov="1" start="0" />
+                <mvrectfile id="1" duration="8.1">
+                    <file name="W:/git/SPHExampleGPUNOV/gpu_version/validation cases/spheric_test_06/runs/comparison/definitions/re50_n40_c160_integrated_ddt1_t8.0_out0.02_centered_v2_coefh2.0_shift3_walls7_planar_shifting_benchmark/motion.txt" fields="2" fieldtime="0" fieldx="1" />
+                </mvrectfile>
+            </objreal>
+        </motion>
+        <vtkout mkboundfirst="10" mkfluidfirst="1" />
+    </execution>
+</case>
