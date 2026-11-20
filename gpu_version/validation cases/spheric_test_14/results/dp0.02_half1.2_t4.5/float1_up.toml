@@ -1,0 +1,11 @@
+steps = 22090
+depth = 0.8
+duration = 4.5
+mass = 9.75
+dx = 0.02
+wall_seconds = 123.2191179
+offset = 0.076
+half_width = 1.2
+frames = 451
+draft = 0.187
+fluid_particles = 575448

@@ -102,9 +102,11 @@ function run_case(release; dx, half_width, duration)
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
-    length(ARGS) <= 3 || error("Usage: run.jl [dx] [tank half-width] [duration]")
+    length(ARGS) <= 4 || error("Usage: run.jl [dx] [tank half-width] [duration] [release]")
     dx, half_width, duration = (i <= length(ARGS) ? parse(Float64, ARGS[i]) : v for (i, v) in enumerate((0.025, 1.2, 4.5)))
-    for release in RELEASES
+    cases = length(ARGS) == 4 ? filter(r -> r.name == ARGS[4], RELEASES) : RELEASES
+    isempty(cases) && error("Release must be float1_down, float1_up or float2_down")
+    for release in cases
         run_case(release; dx, half_width, duration)
     end
 end

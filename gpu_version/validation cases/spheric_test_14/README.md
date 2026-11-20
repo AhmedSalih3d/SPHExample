@@ -32,12 +32,13 @@ julia --project=. -t 2,0 "validation cases/spheric_test_14/run.jl"
 python "validation cases/spheric_test_14/plot.py"
 ```
 
-The Julia arguments are particle spacing, tank half-width, and duration.
+The Julia arguments are particle spacing, tank half-width, duration, and an
+optional single release name (`float1_down`, `float1_up`, or `float2_down`).
 The defaults are 0.025 m, 1.2 m, and 4.5 s. The plotter accepts the resulting
 directory tag, for example `dp0.025_half1.2_t4.5`. It compares raw heave and
-reports displacement RMSE, mean period across rising zero crossings, and
-maximum horizontal drift. The reported period is relative to the prescribed
-still-water datum.
+reports displacement RMSE, mean period across rising zero crossings, mean
+heave in the last second, and maximum horizontal drift. The reported
+period is relative to the prescribed still-water datum.
 
 ## Pilot settings and limitations
 
@@ -53,6 +54,40 @@ shifting is disabled for this free-surface baseline. Julia saves output every
 The setup establishes a reproducible starting point for particle-spacing,
 boundary formulation, and tank-size studies. Such studies are needed to
 attribute differences in the period or decay envelope.
+
+## Sensitivity checks
+
+```powershell
+julia --project=. -t 2,0 "validation cases/spheric_test_14/run.jl" 0.02 1.2 4.5
+python "validation cases/spheric_test_14/plot.py" dp0.02_half1.2_t4.5
+julia --project=. -t 2,0 "validation cases/spheric_test_14/run.jl" 0.025 1.6 4.5 float1_down
+python "validation cases/spheric_test_14/plot.py" --compare dp0.02_half1.2_t4.5 --compare dp0.025_half1.6_t4.5
+```
+
+The spacing check holds the tank and release setup fixed. The larger-tank
+check keeps the 25 mm spacing and moves the half-metre-wide damping zone
+outward with the wall. It tests the combined effect of tank extent and
+damping-zone placement for the downward Float 1 release.
+
+## Measured pilot results
+
+All seven GPU runs reached 4.5 s with 451 saved frames each and zero
+frozen particles. The heave RMSE used the experimental sample times and
+linear interpolation of the simulated trace.
+
+| Release | 25 mm RMSE (mm) | 20 mm RMSE (mm) | 20 mm period (s) | Measured period (s) |
+| --- | ---: | ---: | ---: | ---: |
+| Float 1, down | 22.16 | 20.07 | 0.807 | 0.871 |
+| Float 1, up | 22.03 | 19.34 | 0.818 | 0.865 |
+| Float 2, down | 27.16 | 23.94 | 0.942 | 1.008 |
+
+At 20 mm spacing, the late mean heave bias fell in every release. The
+oscillations still decayed faster than the measured traces. Widening the tank
+from 2.4 to 3.2 m changed the downward Float 1 RMSE from 22.16 to 21.99 mm.
+That control leaves the main decay discrepancy open.
+
+[Pilot heave histories](results/dp0.025_half1.2_t4.5/heave_comparison.png)
+· [Spacing and tank-width comparison](results/dp0.025_half1.2_t4.5/heave_sensitivity.png)
 
 [SPHERIC benchmark specification](https://www.spheric-sph.org/tests/test-14)
 · [Gu et al., 2018](https://doi.org/10.1016/j.jfluidstructs.2018.06.012)
