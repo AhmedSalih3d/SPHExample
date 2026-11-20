@@ -64,6 +64,7 @@ def main(partial):
     write_csv(OUT / "startup_peaks.csv", peaks)
 
     summary = []
+    window_changes = []
     fig, axes = plt.subplots(2, 3, figsize=(13, 7), sharex=True, layout="constrained")
     startup, zoom = plt.subplots(2, 3, figsize=(13, 7), sharex=True, layout="constrained")
     for row, (solver, label) in enumerate(SOLVERS.items()):
@@ -83,6 +84,12 @@ def main(partial):
                     order = np.log2(coarse / fine) if coarse > 0 and fine > 0 else np.nan
                     summary.append(dict(solver=solver, reynolds=re, component=component,
                                         rms_40_to_80=coarse, rms_80_to_160=fine, change_order=order))
+                    for start, stop in ((0, 1.2), (1.2, 7), (7, 8)):
+                        window_changes.append(dict(
+                            solver=solver, reynolds=re, component=component, start=start, stop=stop,
+                            rms_40_to_80=rms_change(available[40], available[80], component, start, stop),
+                            rms_80_to_160=rms_change(available[80], available[160], component, start, stop),
+                        ))
                 ax = axes[row, col]
                 if changes:
                     ax.plot(list(changes), list(changes.values()), "o-", label=component.capitalize())
@@ -92,6 +99,7 @@ def main(partial):
             zoom[row, col].set_xlabel("Time (s)")
     if summary:
         write_csv(OUT / "drag_self_convergence.csv", summary)
+        write_csv(OUT / "drag_changes_by_time_window.csv", window_changes)
     if any(ax.has_data() for ax in axes.flat):
         handles, labels = next(ax.get_legend_handles_labels() for ax in axes.flat if ax.has_data())
         fig.legend(handles, labels, loc="outside lower center", ncol=2)

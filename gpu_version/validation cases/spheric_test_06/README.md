@@ -711,3 +711,14 @@ changes means the change decreased with refinement. The startup plot and
 peak table cover 0–1.2 s. Run `analyze_planar_shifting_startup.py` to compare
 central rear-wall kernel support from the Julia particle exports.
 Both scripts accept `--partial` for completed cases during the sweep.
+
+The complete sweep shows smaller pressure-drag changes from 1.2 to 7 s in
+all six solver/Re combinations. Startup pressure drag remains sensitive to
+resolution, especially at Re = 150, where the startup RMS change grew under
+the second refinement in both solvers. All central rear probes had fluid
+within kernel range at all 360 saved Julia startup frames checked.
+
+[Full-history refinement metrics](results/planar_shifting_convergence_ddt2/drag_self_convergence.csv)
+· [Changes by time window](results/planar_shifting_convergence_ddt2/drag_changes_by_time_window.csv)
+· [Startup refinement](results/planar_shifting_convergence_ddt2/startup_refinement.png)
+· [Rear-wall support](results/planar_shifting_convergence_ddt2/rear_contact.png)
