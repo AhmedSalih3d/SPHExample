@@ -1,0 +1,16 @@
+steps = 35265
+h = 0.016249999403953552
+depth = 0.8
+duration = 4.5
+mass = 9.75
+dx = 0.0125
+wall_seconds = 11.8855216
+dimensions = 2
+offset = -0.074
+half_width = 8.0
+frames = 901
+draft = 0.187
+kernel = "WendlandC2"
+mass_per_span_kg_m = 46.442917352885175
+fluid_particles = 81480
+kernel_support_factor = 2.0

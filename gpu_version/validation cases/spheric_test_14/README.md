@@ -179,3 +179,23 @@ PNG before opening the synchronized ParaView view.
 The Float 1 downward release at 12.5 mm spacing completed through 4.5 s.
 The simulated period was 0.866 s versus 0.871 s measured, while the full
 heave RMSE was 20.89 mm. [Cartesian heave comparison](results/planar_dp0.0125_half8.0_t4.5/float1_down_heave_comparison.png)
+
+### 200 Hz benchmark-format output
+
+By default the 2D manual case runs all three releases. Set `selection` to a
+release name for one run. The solver saves a frame every 0.005 s and writes
+headerless, tab-separated time (s) and simulated vertical displacement (mm)
+files in `results/planar_dp0.0125_half8.0_t4.5_200Hz`.
+
+| Release | Simulated file |
+| --- | --- |
+| Float 1, −74 mm | [Fl1-0p074.txt](results/planar_dp0.0125_half8.0_t4.5_200Hz/Fl1-0p074.txt) |
+| Float 1, +76 mm | [Fl2+0p076.txt](results/planar_dp0.0125_half8.0_t4.5_200Hz/Fl2+0p076.txt) |
+| Float 2, −88 mm | [Fl2-0p088.txt](results/planar_dp0.0125_half8.0_t4.5_200Hz/Fl2-0p088.txt) |
+
+The upward release follows the filename on the benchmark page. The downloaded
+experiment for that release is `Fl1+0p76.txt`. The plots use the experimental
+means from the archive. The text files do not include the ranges shown on the
+benchmark page.
+
+[All three heave comparisons](results/planar_dp0.0125_half8.0_t4.5_200Hz/heave_comparison.png)

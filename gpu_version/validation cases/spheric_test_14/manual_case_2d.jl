@@ -2,12 +2,11 @@
 # julia --project=. -t 2,0 "validation cases/spheric_test_14/manual_case_2d.jl"
 include(joinpath(@__DIR__, "case.jl"))
 
-let
+function run_planar_case(release; visualize_in_paraview)
     Dimensions = 2
     FloatType = Float32
 
-    release_name = "float1_down" # Also float1_up or float2_down.
-    release = only(filter(case -> case.name == release_name, RELEASES))
+    release_name = release.name
     dx = 0.0125
     depth = 0.8
     half_width = 8.0
@@ -15,8 +14,7 @@ let
     sponge_width = 1.0
     sponge_rate = 12.0
     duration = 4.5
-    output_interval = 0.01
-    visualize_in_paraview = true
+    output_interval = 0.005 # 200 Hz, matching the experiment.
 
     kernel_family = WendlandC2()
     kernel_h_factor = 1.3
@@ -27,7 +25,7 @@ let
     SimDensityDiffusion = LinearDensityDiffusion()
     SimTimeStepping = SymplecticTimeStepping()
 
-    run_name = "planar_dp$(dx)_half$(half_width)_t$(duration)"
+    run_name = "planar_dp$(dx)_half$(half_width)_t$(duration)_200Hz"
     save_location = joinpath(@__DIR__, "runs", run_name, release_name)
     result_location = joinpath(@__DIR__, "results", run_name)
     nx, nz = round(Int, 2half_width / dx), round(Int, depth / dx)
@@ -87,6 +85,11 @@ let
         viscosity = SimViscosity, diffusion = SimDensityDiffusion, stepping = SimTimeStepping,
         line_mass)
     completed = run_case(release, case; output = result_location, vertical_axis = 2)
+    comparison_name = release_name == "float1_up" ? "Fl2+0p076.txt" : release.file
+    history = CSV.File(completed.history)
+    all(dt -> isapprox(dt, output_interval; atol = 1e-10, rtol = 0), diff(history.time)) ||
+        error("Heave output does not match the 200 Hz specification")
+    writedlm(joinpath(result_location, comparison_name), hcat(history.time, history.heave_mm), '\t')
     planar_release = merge(release, (; title = release.title * " | Cartesian 2D"))
     state = write_heave_state(planar_release, completed; layout = "stacked", screenshot = true, planar = true)
     println("ParaView launcher saved to ", state)
@@ -97,5 +100,16 @@ let
         else
             run(`$paraview --state=$state`; wait = false)
         end
+    end
+end
+
+let
+    # Edit this to "float1_down", "float1_up", or "float2_down" for one release.
+    selection = "all"
+    visualize_in_paraview = true
+    releases = selection == "all" ? RELEASES : filter(r -> r.name == selection, RELEASES)
+    isempty(releases) && throw(ArgumentError("Unknown release $selection"))
+    for (index, release) in enumerate(releases)
+        run_planar_case(release; visualize_in_paraview = visualize_in_paraview && index == length(releases))
     end
 end
