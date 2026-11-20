@@ -73,19 +73,14 @@ let
         viscosity = SimViscosity, diffusion = SimDensityDiffusion, stepping = SimTimeStepping)
     completed = run_case(release, case; output = result_location)
 
-    pvpython = Sys.which("pvpython")
-    if pvpython === nothing
-        @warn "Add ParaView's bin directory to PATH to generate the combined heave view."
-    else
-        state = write_heave_view(pvpython, release, completed; layout = "stacked", screenshot = true)
-        println("ParaView state saved to ", state)
-        if visualize_in_paraview
-            paraview = Sys.which("paraview")
-            if paraview === nothing
-                @warn "Load $state using File > Load State in ParaView."
-            else
-                run(`$paraview --state=$state`; wait = false)
-            end
+    state = write_heave_state(release, completed; layout = "stacked", screenshot = true)
+    println("ParaView launcher saved to ", state)
+    if visualize_in_paraview
+        paraview = Sys.which("paraview")
+        if paraview === nothing
+            @warn "Load $state using File > Load State in ParaView."
+        else
+            run(`$paraview --state=$state`; wait = false)
         end
     end
 end

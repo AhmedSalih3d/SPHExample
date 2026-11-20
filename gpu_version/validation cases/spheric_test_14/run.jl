@@ -118,13 +118,29 @@ function run_case(release, case; output)
     return (; particles = joinpath(save, "FreeHeave.vtkhdf"), history, reference = reference_path)
 end
 
-function write_heave_view(pvpython, release, output; layout = "side-by-side", screenshot = false)
+"""Write a launcher that builds and saves the comparison inside ParaView."""
+function write_heave_state(release, output; layout = "side-by-side", screenshot = false)
     (; particles, history, reference) = output
     script = joinpath(@__DIR__, "paraview_heave.py")
-    state = joinpath(dirname(particles), "FreeHeave_Comparison.pvsm")
-    args = screenshot ? ["--screenshot", replace(state, ".pvsm" => ".png")] : String[]
-    run(`$pvpython --no-mpi --force-offscreen-rendering $script $particles $history $reference --state $state --title $(release.title) --layout $layout $args`)
-    isfile(state) || error("ParaView did not write $state")
+    state = joinpath(dirname(particles), "FreeHeave_Comparison.py")
+    python_path(path) = repr(replace(abspath(path), '\\' => '/'))
+    preview = screenshot ? "Path(" * python_path(replace(state, ".py" => ".png")) * ")" : "None"
+    write(state, """
+    from pathlib import Path
+    from types import SimpleNamespace
+    import runpy
+
+    args = SimpleNamespace(
+        particles=Path($(python_path(particles))),
+        history=Path($(python_path(history))),
+        reference=Path($(python_path(reference))),
+        state=Path($(python_path(replace(state, ".py" => ".pvsm")))),
+        screenshot=$preview,
+        title=$(repr(release.title)),
+        layout=$(repr(layout)),
+    )
+    runpy.run_path($(python_path(script)))["build_view"](args)
+    """)
     return state
 end
 
@@ -137,16 +153,13 @@ function main(args)
     cases = length(positional) == 4 ? filter(r -> r.name == positional[4], RELEASES) : RELEASES
     isempty(cases) && error("Release must be float1_down, float1_up or float2_down")
 
-    pvpython = visualize ? Sys.which("pvpython") : nothing
-    visualize && pvpython === nothing &&
-        @warn "pvpython was not found on PATH. Add the ParaView bin directory to PATH to generate the heave view."
     first_state = nothing
     for release in cases
         output = run_case(release; dx, half_width, duration)
-        pvpython === nothing && continue
+        visualize || continue
         try
-            state = write_heave_view(pvpython, release, output)
-            println("ParaView state saved to ", state)
+            state = write_heave_state(release, output)
+            println("ParaView launcher saved to ", state)
             first_state === nothing && (first_state = state)
         catch exception
             exception isa InterruptException && rethrow()

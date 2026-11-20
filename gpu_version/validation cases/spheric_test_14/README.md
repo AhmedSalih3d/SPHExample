@@ -51,13 +51,14 @@ manual case. Run it from `gpu_version`:
 julia --project=. -t 2,0 "validation cases/spheric_test_14/manual_case.jl"
 ```
 
-The manual case saves both `FreeHeave_Comparison.pvsm` and a PNG preview.
+The manual case writes `FreeHeave_Comparison.py`. ParaView runs this
+launcher and saves `FreeHeave_Comparison.pvsm` and a PNG preview.
 The ParaView layout stacks the fluid cutaway above the synchronized heave
 chart, as in the Test 06 particle-and-force view. Edit
 `visualize_in_paraview` to control whether ParaView opens automatically.
 
-With ParaView and `pvpython` on PATH, the runner saves a combined
-`FreeHeave_Comparison.pvsm` in every completed release directory under
+The batch runner writes a `FreeHeave_Comparison.py` launcher in every
+completed release directory under
 `runs/<tag>/<release>`. It opens the first release after the invocation.
 Pass a release name to run and open that release only. The view places
 the animated fluid and float next to the measured and simulated heave curves.
@@ -65,19 +66,12 @@ The blue water is cut away in front of the orange float so the submerged
 particles remain visible. Press **Play** to animate the particles and move
 the chart playhead with them.
 
-For an existing run, use **File → Load State** and select its
-`FreeHeave_Comparison.pvsm`. The state reads the VTKHDF and two chart CSVs
-from the release directory. To regenerate the default pilot's Float 1
-downward release view from saved data:
+Use **File → Load State** to open the `.py` launcher or a previously
+generated `.pvsm`. The saved state reads the VTKHDF and two chart CSVs
+from the release directory. You can also open the launcher directly:
 
 ```powershell
-$case = "validation cases/spheric_test_14"
-$tag = "dp0.025_half1.2_t4.5"
-$release = "$case/runs/$tag/float1_down"
-pvpython --no-mpi --force-offscreen-rendering "$case/paraview_heave.py" `
-  "$release/FreeHeave.vtkhdf" "$case/results/$tag/float1_down.csv" `
-  "$case/reference/Fl1-0p074.txt" --state "$release/FreeHeave_Comparison.pvsm" `
-  --title "Float 1, -74 mm release"
+paraview --state="validation cases/spheric_test_14/runs/manual_dp0.025_half1.2_t4.5/float1_down/FreeHeave_Comparison.py"
 ```
 
 Use `--no-paraview` with `run.jl` for batch runs that only save simulation
