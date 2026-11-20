@@ -16,7 +16,7 @@ end
 reference_viscous_limit(viscosity,kernel,constants) = Inf
 reference_viscous_limit(::Laminar,kernel,constants) = constants.ν₀ > 0 ? Float64(kernel.h)^2/(8Float64(constants.ν₀)) : Inf
 
-function dual_force_stage!(position,velocity,density,pairs,gpu,cl,sup,kernel,constants,diffusion,viscosity,meta,step)
+function dual_force_stage!(position,velocity,density,pairs,gpu,cl,sup,kernel,constants,diffusion,viscosity,meta,step, shifting = Val(false))
     images = sup.dual_state.images
     if images !== nothing
         if !all(isfinite,meta.TimeSteppingMode.domain_min) || !all(isfinite,meta.TimeSteppingMode.domain_max)
@@ -26,7 +26,7 @@ function dual_force_stage!(position,velocity,density,pairs,gpu,cl,sup,kernel,con
         source = images.sorted
         launch_interactions!(sup.dρdtI,gpu.Acceleration,gpu.Kernel,gpu.KernelGradient,sup.∇Cᵢ,sup.∇◌rᵢ,
             source.Position,source.Density,source.Velocity,source.Type,images.cl.CellStart,images.cells,images.cl.grid_dev,step,
-            diffusion,viscosity,kernel,constants,Val(false),Val(false);
+            diffusion,viscosity,kernel,constants,Val(false),shifting;
             threads=meta.GPUInteractionThreads,lanes=Val(1),boundary_forces=Val(false),
             pos_cells=images.pairs,viscous_dt=sup.dual_state.viscous,
             target_indices=images.targets,target_count=length(gpu),fast_math=meta.TimeSteppingMode.fast_math,
@@ -46,7 +46,7 @@ function dual_force_stage!(position,velocity,density,pairs,gpu,cl,sup,kernel,con
     end
     launch_interactions!(sup.dρdtI,gpu.Acceleration,gpu.Kernel,gpu.KernelGradient,sup.∇Cᵢ,sup.∇◌rᵢ,
         position,density,velocity,gpu.Type,cl.CellStart,gpu.CellID,cl.grid_dev,step,
-        diffusion,viscosity,kernel,constants,Val(false),Val(false);
+        diffusion,viscosity,kernel,constants,Val(false),shifting;
         threads=meta.GPUInteractionThreads, lanes=Val(1), boundary_forces=Val(false),
         pos_cells=pairs, periodicity=cl.periodicity, periodic_bounds=query_bounds,
         periodic_cell_coordinates=meta.GPUPeriodicCellCoordinates, viscous_dt=sup.dual_state.viscous,
@@ -56,9 +56,14 @@ function dual_force_stage!(position,velocity,density,pairs,gpu,cl,sup,kernel,con
     return min(dual_time_step(criteria,kernel,constants,meta.TimeSteppingMode),reference_viscous_limit(viscosity,kernel,constants))
 end
 
-function dual_simulation_loop!(diffusion,viscosity,kernel,meta,constants,gpu,cl,sup,rotation,state,damping=())
+function dual_simulation_loop!(diffusion,viscosity,kernel,meta::SimulationMetaData{D,T,S},constants,gpu,cl,sup,rotation,state,damping=()) where {D,T,S}
     clock = sup.dual_state
     scheme = meta.TimeSteppingMode
+    shifting = Val(S <: PlanarShifting ? S : false)
+    gradient = S <: PlanarShifting ? sup.∇Cᵢ : nothing
+    fraction = S <: PlanarShifting ? shifting_fraction(S) : Inf
+    gradient === nothing || length(gradient) == length(gpu) ||
+        throw(ArgumentError("GPU shifting gradient was not allocated"))
     clock === nothing && throw(ArgumentError("Allocate support arrays with DualSPHysicsSymplectic metadata"))
     scheme.cache_periodic_queries == (clock.queries !== nothing) ||
         throw(ArgumentError("Periodic-query caching must match the allocated support arrays; reallocate after changing the scheme"))
@@ -93,7 +98,7 @@ function dual_simulation_loop!(diffusion,viscosity,kernel,meta,constants,gpu,cl,
                 gpu.Position,gpu.Velocity,gpu.Density,gpu.Acceleration,sup.dρdtI,gpu.Type,dt,constants;
                 exclusions=clock.exclusions,periodicity=cl.periodicity,scheme)
             corrector_limit = dual_force_stage!(position_half,velocity_half,sup.ρₙ⁺,sup.PosCellsₙ⁺,
-                gpu,cl,sup,kernel,constants,diffusion,viscosity,meta,step)
+                gpu,cl,sup,kernel,constants,diffusion,viscosity,meta,step,shifting)
             if !(scheme.respect_stability_limits && dt > corrector_limit)
                 break
             end
@@ -113,13 +118,15 @@ function dual_simulation_loop!(diffusion,viscosity,kernel,meta,constants,gpu,cl,
         end
         clock.time + dt > clock.time || error("Computed timestep cannot advance the Float64 clock; refusing to enlarge it above the stability limit")
         GPUKernels.launch_dual_corrector!(gpu.Position,gpu.Velocity,gpu.Density,position_half,
-            sup.ρₙ⁺,gpu.Acceleration,sup.dρdtI,gpu.Type,dt,constants)
+            sup.ρₙ⁺,gpu.Acceleration,sup.dρdtI,gpu.Type,dt,constants;
+            gradient, predictor_velocity=gradient === nothing ? nothing : velocity_half, h=kernel.h, fraction)
         # DualSPHysics moves prescribed walls after the fluid corrector. Its
         # velocity is the completed displacement divided by this step's dt.
         launch_rotation!(rotation,gpu.Position,gpu.Velocity,gpu.Type,gpu.GroupMarker,gpu.ID,step; fraction=1.0)
         launch_damping!(damping,gpu.Position,gpu.Velocity,gpu.Type,step)
         finish = GPUKernels.launch_dual_motion_finish!(clock,gpu.Position,gpu.Velocity,gpu.Density,
-            position_half,gpu.Type,dt,cl.periodicity,scheme)
+            position_half,gpu.Type,dt,cl.periodicity,scheme;
+            predictor_travel=gradient === nothing ? nothing : velocity_half)
         clock.excluded_position += Int(finish[1])
         clock.excluded_density += Int(finish[2])
         cl.frozen_total = clock.excluded_position + clock.excluded_density

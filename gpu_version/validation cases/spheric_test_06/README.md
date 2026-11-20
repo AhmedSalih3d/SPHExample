@@ -677,3 +677,12 @@ python "validation cases/spheric_test_06/plot_planar_shifting_benchmark.py"
 ```
 
 Force histories and graphs are saved in `results/planar_shifting_benchmark`.
+For the matched `L/dp = 40` sweep, append `40` to each Julia command and
+pass `--resolution 40` to the plotter. Its output folder ends in `_n40`.
+
+The completed Julia sweep kept pressure drag positive in the sampled
+0.76–0.86 s window at all three Reynolds numbers. At 0.82 s, the pressure
+drag coefficients were 3.13, 2.59 and 2.40 for Re = 50, 100 and 150.
+The minimum saved clearances over 8 s were −17.6, −15.5 and −16.4 mm.
+The [interim drag overlay](results/planar_shifting_benchmark_n40/drag_comparison_archived_dual.png)
+uses archived DualSPHysics runs with `coefh = 1.2` and shifting disabled.

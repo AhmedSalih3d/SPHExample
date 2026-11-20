@@ -1579,8 +1579,6 @@ function validate_shifting(::Type{S}, scheme, variable_resolution) where {S <: S
     S <: PlanarShifting || return nothing
     if variable_resolution !== nothing
         isinf(shifting_fraction(S)) || throw(ArgumentError("A PlanarShifting cap requires fixed resolution"))
-    elseif scheme isa DualSPHysicsSymplectic
-        throw(ArgumentError("PlanarShifting requires SymplecticTimeStepping or SingleNeighborTimeStepping"))
     end
     return nothing
 end
@@ -2059,7 +2057,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
 
     SimMetaData.TimeSteppingMode = SimTimeStepping
     if SimTimeStepping isa DualSPHysicsSymplectic
-        (BMode === NoMDBC && SMode === NoShifting && KMode === NoKernelOutput &&
+        (BMode === NoMDBC && KMode === NoKernelOutput &&
             SimKernel.kernel isa WendlandC2 && SimViscosity isa Union{ArtificialViscosity,Laminar} &&
             SimDensityDiffusion isa FourtakasDensityDiffusion && SimExternalForces === nothing &&
             !SimMetaData.GPUUseGraph && !SimMetaData.GPUFixedGrid && !SimMetaData.GPUCacheInteractionFields &&

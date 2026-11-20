@@ -3,19 +3,25 @@ include("dual_compare.jl")
 const C = Test06DualComparison
 const S = C.SphericTest06
 const TAG = "planar_shifting_benchmark"
-const WORK = joinpath(@__DIR__, "runs", TAG)
-const OUT = joinpath(@__DIR__, "results", TAG)
 
 function main(args)
-    args in (["native"], ["dual"]) || error("Expected native or dual")
-    solver = only(args)
+    length(args) in (1, 2) && first(args) in ("native", "dual") ||
+        error("Expected native or dual and optional resolution (40 or 160)")
+    solver = first(args)
+    n = length(args) == 2 ? parse(Int, last(args)) : 160
+    n in (40, 160) || error("Expected resolution 40 or 160")
+    tag = n == 160 ? TAG : TAG * "_n$n"
+    work = joinpath(@__DIR__, "runs", tag)
+    out = joinpath(@__DIR__, "results", tag)
+    layout = S.build_case(; dx = 1/n, kernel_h_factor = 2sqrt(2), wall_layers = 7)
+    particles = sum(values(layout.counts))
     for reynolds in (50, 100, 150)
-        results = joinpath(OUT, solver, "re$reynolds")
-        save = joinpath(WORK, solver, "re$reynolds")
+        results = joinpath(out, solver, "re$reynolds")
+        save = joinpath(work, solver, "re$reynolds")
         println("Starting $solver Re=$reynolds")
         flush(stdout)
         if solver == "native"
-            case = S.build_case(; reynolds, dx = 1/160, sound_speed = 160.0,
+            case = S.build_case(; reynolds, dx = 1/n, sound_speed = 160.0,
                 cfl = 0.2, kernel_h_factor = 2sqrt(2), wall_layers = 7,
                 motion_kind = :integrated, shifting = typeof(PlanarShifting(0.1)), save)
             mkpath(save)
@@ -25,15 +31,16 @@ function main(args)
                 end
             end
         else
-            prefix = C.prepare_dual(; n = 160, reynolds, sound_speed = 160, coefh = 2.0,
+            prefix = C.prepare_dual(; n, reynolds, sound_speed = 160, coefh = 2.0,
                 wall_layers = 7, motion_kind = :integrated, shifting = 3, tag = TAG,
                 trajectory = S.body_trajectory(motion_kind = :integrated))
-            C.verify_geometry(prefix, 160; coefh = 2.0, wall_layers = 7)
-            info = C.dual_run(prefix, save; reynolds)
-            info.frames == 401 && info.particles == 1313796 || error("Unexpected DualSPHysics frame or particle count: $info")
-            C.extract_dual(save, results)
+            C.verify_geometry(prefix, n; coefh = 2.0, wall_layers = 7)
+            finished = all(file -> isfile(joinpath(save, file)), ("Run.csv", "pressure.csv", "total.csv"))
+            info = finished ? C.dual_run_info(save) : C.dual_run(prefix, save; reynolds)
+            info.frames == 401 && info.particles == particles || error("Unexpected DualSPHysics frame or particle count: $info")
+            C.extract_dual(save, results; square_particles = n^2)
             C.save_info(joinpath(results, "dual.toml"), info)
-            cp(prefix * ".xml", joinpath(results, "Case.xml"))
+            cp(prefix * ".xml", joinpath(results, "Case.xml"); force = true)
         end
         println("Completed $solver Re=$reynolds")
         flush(stdout)

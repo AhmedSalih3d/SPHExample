@@ -106,7 +106,8 @@ function launch_dual_predictor!(xp,vp,rp,x,v,rho,acceleration,rate,types,dt,cons
         xp,vp,rp,x,v,rho,acceleration,rate,types,dt,constants,exclusions,periodicity,scheme,Int32(length(types)))
 end
 
-function dual_corrector_kernel!(x,v,rho,xp,rp,acceleration,rate,types,dt,constants,n)
+function dual_corrector_kernel!(x,v,rho,xp,rp,acceleration,rate,types,dt,constants,n,
+        gradient=nothing,predictor_velocity=nothing,h=zero(dt),fraction=Inf)
     i = thread_index()
     i > n && return nothing
     T = eltype(rho)
@@ -121,22 +122,32 @@ function dual_corrector_kernel!(x,v,rho,xp,rp,acceleration,rate,types,dt,constan
             gravity = ConstructGravitySVector(v[i], -constants.g)
             total = SVector{length(v[i]),Float64}(acceleration[i]) + SVector{length(v[i]),Float64}(gravity)
             velocity = SVector{length(v[i]),T}(old_velocity + total * dt)
-            xp[i] = x[i] # predictor position is no longer needed; retain the old accepted position
+            predicted = xp[i]
+            xp[i] = x[i] # retain the old accepted position for the finish pass
             x[i] += (old_velocity + SVector{length(v[i]),Float64}(velocity)) * (dt / 2)
+            if gradient !== nothing
+                x[i] += planar_shifting_displacement(gradient[i], predictor_velocity[i], dt, h, constants.dx, fraction)
+                # The finish pass also needs the predictor excursion when the shift
+                # cancels some of the accepted displacement.
+                travel = max(norm(predicted - xp[i]), norm(x[i] - predicted))
+                predictor_velocity[i] = setindex(zero(velocity), T(travel), 1)
+            end
             v[i] = velocity
         end
     end
     return nothing
 end
 
-function launch_dual_corrector!(x,v,rho,xp,rp,acceleration,rate,types,dt,constants)
+function launch_dual_corrector!(x,v,rho,xp,rp,acceleration,rate,types,dt,constants;
+        gradient=nothing,predictor_velocity=nothing,h=zero(dt),fraction=Inf)
     @cuda threads=ELEMENTWISE_THREADS blocks=cld(length(types),ELEMENTWISE_THREADS) dual_corrector_kernel!(
-        x,v,rho,xp,rp,acceleration,rate,types,dt,constants,Int32(length(types)))
+        x,v,rho,xp,rp,acceleration,rate,types,dt,constants,Int32(length(types)),
+        gradient,predictor_velocity,h,fraction)
 end
 
 @inline dual_finish_merge(a,b) = SVector(a[1]+b[1],a[2]+b[2],max(a[3],b[3]),max(a[4],b[4]))
 
-function dual_motion_finish_kernel!(partial,x,v,rho,previous,types,exclusions,dt,periodicity,domain_min,domain_max,rho_min,rho_max,n)
+function dual_motion_finish_kernel!(partial,x,v,rho,previous,types,exclusions,dt,periodicity,domain_min,domain_max,rho_min,rho_max,n,predictor_travel=nothing)
     value = zero(eltype(partial))
     T = eltype(eltype(v))
     i = thread_index()
@@ -149,6 +160,10 @@ function dual_motion_finish_kernel!(partial,x,v,rho,previous,types,exclusions,dt
             # Measure the continuous accepted displacement before wrapping.
             # A seam crossing must not count as a full-period grid excursion.
             displacement = x[i] - previous[i]
+            travel = norm(displacement)
+            if predictor_travel !== nothing && types[i] == Fluid
+                travel = max(travel, predictor_travel[i][1])
+            end
             wrapped = false
             if periodicity !== nothing && types[i] == Fluid
                 position = GPUCellGrid.wrap_periodic_position(x[i],periodicity)
@@ -169,7 +184,7 @@ function dual_motion_finish_kernel!(partial,x,v,rho,previous,types,exclusions,dt
                 types[i] = Frozen
                 v[i] = zero(v[i])
             end
-            value = dual_finish_merge(value, SVector(T(out_position),T(out_density && !out_position),T(wrapped),T(norm(displacement))))
+            value = dual_finish_merge(value, SVector(T(out_position),T(out_density && !out_position),T(wrapped),T(travel)))
         end
         i += blockDim().x * gridDim().x
     end
@@ -177,9 +192,9 @@ function dual_motion_finish_kernel!(partial,x,v,rho,previous,types,exclusions,dt
     return nothing
 end
 
-function launch_dual_motion_finish!(support,x,v,rho,previous,types,dt,periodicity,scheme)
+function launch_dual_motion_finish!(support,x,v,rho,previous,types,dt,periodicity,scheme; predictor_travel=nothing)
     @cuda threads=REDUCE_THREADS blocks=support.reduction.nblocks dual_motion_finish_kernel!(
         support.reduction.partial,x,v,rho,previous,types,support.exclusions,dt,periodicity,
-        scheme.domain_min,scheme.domain_max,scheme.density_min,scheme.density_max,Int32(length(types)))
+        scheme.domain_min,scheme.domain_max,scheme.density_min,scheme.density_max,Int32(length(types)),predictor_travel)
     return finish_reduction(support.reduction,dual_finish_merge,zero(eltype(support.reduction.partial)))
 end

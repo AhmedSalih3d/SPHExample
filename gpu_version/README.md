@@ -3399,6 +3399,10 @@ For fixed-resolution GPU runs, use `PlanarShifting` as the shifting type in
 each displacement component at 10% of the particle spacing. The constructor
 accepts nonnegative fractions and defaults to `Inf`.
 
+The fixed-resolution GPU driver supports this mode with
+`SymplecticTimeStepping`, `SingleNeighborTimeStepping`, and
+`DualSPHysicsSymplectic`.
+
 The corrector sums `(m? / ??) ??W??` over fluid and boundary neighbors and
 applies `-2 h |v?| ?t` times that gradient using the predicted velocity and
 the full timestep. The variable-resolution backend uses neighbor-volume

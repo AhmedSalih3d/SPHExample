@@ -152,18 +152,22 @@ function dual_run(prefix, directory; postprocess = true, reynolds = 100)
     isfile(joinpath(directory,"Run.csv")) && error("Refusing to overwrite $directory")
     mkpath(directory)
     wall = @elapsed logged(`$DUAL -gpu $prefix $directory -dirdataout data -svres -svtimers:0`, joinpath(directory,"console.log"))
-    lines = readlines(joinpath(directory,"Run.csv"))
-    fields = Dict(zip(split(lines[1],';'), split(lines[2],';')))
-    number(key) = parse(Float64,replace(fields[key],","=>""))
-    number("PartsOut") == 0 || error("DualSPHysics lost particles")
-    result = (; wall_seconds = wall, solver_seconds = number("TSimul"), steps = Int(number("Steps")),
-        particles = Int(number("Np")), frames = Int(number("PartFiles")))
+    result = merge((; wall_seconds = wall), dual_run_info(directory))
     if postprocess
         for (label, viscosity) in (("pressure",0), ("total",1/reynolds))
             logged(`$FORCES -dirdata $(joinpath(directory,"data")) -onlymk:20 -viscolam:$viscosity:1 -threads:8 -savecsv $(joinpath(directory,label))`, joinpath(directory,label*".log"))
         end
     end
     return result
+end
+
+function dual_run_info(directory)
+    lines = readlines(joinpath(directory, "Run.csv"))
+    fields = Dict(zip(split(lines[1], ';'), split(lines[2], ';')))
+    number(key) = parse(Float64, replace(fields[key], "," => ""))
+    number("PartsOut") == 0 || error("DualSPHysics lost particles")
+    return (; solver_seconds = number("TSimul"), steps = Int(number("Steps")),
+        particles = Int(number("Np")), frames = Int(number("PartFiles")))
 end
 
 function config(id; reynolds = 100, sound_speed = 40, motion_kind = :hermite,
@@ -292,13 +296,13 @@ function timing_study(; repeats = 3, aligned = false)
     return records
 end
 
-function extract_dual(directory, results)
+function extract_dual(directory, results; square_particles = 1600)
     pressure, total = read_dual_csv(joinpath(directory,"pressure.csv")), read_dual_csv(joinpath(directory,"total.csv"))
     time = Float64.(getproperty(pressure,Symbol("Time [s]")))
     force_p = Float64.(getproperty(pressure,Symbol("ForceFluid.x [N/m]")))
     force_t = Float64.(getproperty(total,Symbol("ForceFluid.x [N/m]")))
     count = Int.(getproperty(pressure,:Np))
-    all(==(1600),count) || error("The force selection is not the 1600-particle square")
+    all(==(square_particles), count) || error("Expected $square_particles particles in the force selection")
     all(isfinite,time) && all(isfinite,force_p) && all(isfinite,force_t) && all(>(0),diff(time)) ||
         error("Invalid or nonfinite Dual force history")
     mkpath(results)

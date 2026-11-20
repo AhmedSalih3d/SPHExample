@@ -6,7 +6,7 @@ const DRIVER = SPHExampleGPU.SPHCellList
 const KERNELS = SPHExampleGPU.GPUKernels
 const CLASSIC = Val(typeof(PlanarShifting(0.1)))
 
-@testset "DualSPHysics shifting" begin
+@testset "Planar shifting" begin
     @testset "neighbor volume, full boundary participation and advection-only predictor" begin
         for (D, T) in ((2, Float64), (3, Float32)), lanes in (1, 4), cached in (false, true)
             V = SVector{D,T}
@@ -88,6 +88,43 @@ const CLASSIC = Val(typeof(PlanarShifting(0.1)))
             @test Array(position)[1] ≈ dt * speed + expected_shift rtol = 30eps(T)
             @test iszero(Array(position)[2])
             @test all(iszero, Array(velocity))
+        end
+    end
+
+    @testset "all fixed-resolution timestepping schemes apply shifting" begin
+        T = Float32
+        V = SVector{2,T}
+        constants = SimulationConstants{T}(dx = 0.02, c₀ = 20, g = 0)
+        kernel = SPHKernelInstance{2,T}(WendlandC2(); dx = constants.dx)
+        geometry = [SPHGeometry{2,T}([V(0, 0), V(0.03, 0)]; Density = 1000, Type = Fluid, GroupMarker = 1)]
+        function run(scheme, fraction)
+            mktempdir() do save
+                meta = SimulationMetaData{2,T,typeof(PlanarShifting(fraction))}(
+                    SimulationName = "PlanarShifting", SaveLocation = save, SimulationTime = 0.001,
+                    OutputTimes = [0.001], GPUUseGraph = false, GPUDoublePosition = true,
+                    GPUBoundaryForces = false, GPUPreloadInteractionTypes = false, GPULanesPerParticle = 1,
+                    VisualizeInParaview = false, OpenLogFile = false, GPUClipTimeStepToOutput = true)
+                host = AllocateDataStructures(geometry, meta)
+                host.Velocity .= Ref(V(0, 0.5))
+                logger = SimulationLogger(save)
+                result = try
+                    redirect_stdout(devnull) do
+                        RunSimulation(SimGeometry = geometry, SimMetaData = meta, SimConstants = constants,
+                            SimKernel = kernel, SimParticles = host, SimLogger = logger,
+                            SimViscosity = Laminar(), SimDensityDiffusion = FourtakasDensityDiffusion(),
+                            SimTimeStepping = scheme)
+                    end
+                finally
+                    isopen(logger.LoggerIo) && close(logger.LoggerIo)
+                end
+                @test result.final_state.complete
+                return extrema(first, result.final_state.particles.Position)
+            end
+        end
+        for scheme in (SymplecticTimeStepping(), SingleNeighborTimeStepping(), DualSPHysicsSymplectic())
+            lo, hi = run(scheme, 0.0)
+            shifted_lo, shifted_hi = run(scheme, 0.1)
+            @test shifted_lo < lo < hi < shifted_hi
         end
     end
 end
