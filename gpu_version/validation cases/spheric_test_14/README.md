@@ -47,10 +47,12 @@ next to its CSV in `results/<tag>`, before ParaView starts. This requires
 Python 3.11 or newer with NumPy and Matplotlib. To regenerate the plot for
 one existing release, run `plot.py <tag> --release float1_down`.
 
-For an editable single run, use [manual_case.jl](manual_case.jl). It puts
-the release, tank dimensions, spacing, damping, output settings, and solver
-choices in one script, following the Bathymetry example and the Test 06
-manual case. Run it from `gpu_version`:
+For an editable single run, use [manual_case.jl](manual_case.jl). It runs
+directly and owns the case geometry and simulation setup. Edit the release,
+tank, damping, and solver settings at the top of `run_manual_case()`.
+Set `kernel_family` to `WendlandC2()` or `CubicSpline{FloatType}()` and
+`kernel_h_factor` to the desired ratio `h / dx`. The run record saves the
+kernel and actual smoothing length. Run it from `gpu_version`:
 
 ```powershell
 julia --project=. -t 2,0 "validation cases/spheric_test_14/manual_case.jl"
