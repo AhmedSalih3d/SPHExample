@@ -151,13 +151,16 @@ def build_view(args):
     vertices = ConvertToPointCloud(registrationName="Particle vertices", Input=particles,
                                    CellGenerationMode="Vertex cells")
     water = particle_type(vertices, 1, "Fluid particles")
-    rear_water = Clip(registrationName="Rear half of fluid", Input=water)
-    rear_water.ClipType = "Plane"
-    rear_water.ClipType.Origin = [0.0, 0.04, 0.0]
-    rear_water.ClipType.Normal = [0.0, 1.0, 0.0]
-    rear_water.Invert = 0
+    planar = getattr(args, "planar", False)
+    visible_water = water
+    if not planar:
+        visible_water = Clip(registrationName="Rear half of fluid", Input=water)
+        visible_water.ClipType = "Plane"
+        visible_water.ClipType.Origin = [0.0, 0.04, 0.0]
+        visible_water.ClipType.Normal = [0.0, 1.0, 0.0]
+        visible_water.Invert = 0
     float_particles = particle_type(vertices, 4, "Floating body")
-    show_particles(rear_water, view, FLUID, 0.43 * spacing)
+    show_particles(visible_water, view, FLUID, 0.43 * spacing)
     show_particles(float_particles, view, FLOAT, 0.46 * spacing)
 
     title = Text(registrationName="Case title")
@@ -174,11 +177,11 @@ def build_view(args):
     view.Background = [0.96, 0.97, 0.98]
     view.OrientationAxesVisibility = 0
     view.CameraParallelProjection = 1
-    view.CameraPosition = [0.7, -4.0, 0.68]
-    view.CameraFocalPoint = [0.0, 0.14, -0.29]
-    view.CameraViewUp = [0.0, 0.0, 1.0]
+    view.CameraPosition = [0.0, -0.29, 4.0] if planar else [0.7, -4.0, 0.68]
+    view.CameraFocalPoint = [0.0, -0.29, 0.0] if planar else [0.0, 0.14, -0.29]
+    view.CameraViewUp = [0.0, 1.0, 0.0] if planar else [0.0, 0.0, 1.0]
     view.CameraParallelScale = 0.82
-    view.CenterOfRotation = [0.0, 0.0, -0.13]
+    view.CenterOfRotation = [0.0, -0.13, 0.0] if planar else [0.0, 0.0, -0.13]
 
     chart.ChartTitle = "Free heave"
     chart.BottomAxisTitle = "Time since release (s)"
@@ -206,12 +209,12 @@ def build_view(args):
     scene = GetAnimationScene()
     scene.UpdateAnimationUsingDataTimeSteps()
     scene.AnimationTime = simulation[0][0]
-    for source in (rear_water, float_particles):
+    for source in (visible_water, float_particles):
         source.UpdatePipeline(scene.AnimationTime)
         if source.GetDataInformation().GetNumberOfPoints() == 0:
             raise ValueError(f"No {source.GetXMLLabel()} points are visible in {args.particles}")
     SetActiveView(view)
-    SetActiveSource(rear_water)
+    SetActiveSource(visible_water)
     RenderAllViews()
     SaveState(args.state.as_posix())
     if args.screenshot:
@@ -228,6 +231,7 @@ if __name__ == "__main__":
     parser.add_argument("--screenshot", type=Path)
     parser.add_argument("--title")
     parser.add_argument("--layout", choices=("side-by-side", "stacked"), default="side-by-side")
+    parser.add_argument("--planar", action="store_true")
     args = parser.parse_args()
     for name in ("particles", "history", "reference", "state", "screenshot"):
         path = getattr(args, name)

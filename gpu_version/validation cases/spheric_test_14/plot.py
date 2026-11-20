@@ -29,7 +29,8 @@ def oscillation_period(t, y):
 def configuration_label(folder, key):
     with (folder / f"{key}.toml").open("rb") as stream:
         config = tomllib.load(stream)
-    return f"dp = {1000*config['dx']:g} mm, tank width {2*config['half_width']:g} m"
+    geometry = "Cartesian 2D, " if config.get("dimensions") == 2 else ""
+    return f"{geometry}dp = {1000*config['dx']:g} mm, tank width {2*config['half_width']:g} m"
 
 
 def main(tag, comparison, release=None):

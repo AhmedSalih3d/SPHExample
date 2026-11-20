@@ -156,3 +156,26 @@ in the free-heave runs. [Held-float force history](results/held_float_t3.0/buoya
 
 [SPHERIC benchmark specification](https://www.spheric-sph.org/tests/test-14)
 · [Gu et al., 2018](https://doi.org/10.1016/j.jfluidstructs.2018.06.012)
+
+## Cartesian 2D section
+
+[Gu et al., §3](https://doi.org/10.1016/j.jfluidstructs.2018.06.012) reduce
+the heave CFD to an axisymmetric wedge with azimuthal periodicity. The
+Cartesian SPH solver uses a constant-width section. The two models have
+different displaced-volume, added-mass and wave-spreading behavior.
+
+```powershell
+julia --project=. -t 2,0 "validation cases/spheric_test_14/manual_case_2d.jl"
+```
+
+The [2D manual case](manual_case_2d.jl) uses the same float profile, release
+offset and 0.8 m water depth, with 8 m of water to either side and a 1 m
+damping zone at each end. Translation and rotation are locked except for
+heave. The rigid-body mass per metre of span is calculated from the
+submerged section area at the specified draft. The case compares heave
+with the experiment as a Cartesian sensitivity check. It saves the heave
+PNG before opening the synchronized ParaView view.
+
+The Float 1 downward release at 12.5 mm spacing completed through 4.5 s.
+The simulated period was 0.866 s versus 0.871 s measured, while the full
+heave RMSE was 20.89 mm. [Cartesian heave comparison](results/planar_dp0.0125_half8.0_t4.5/float1_down_heave_comparison.png)

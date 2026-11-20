@@ -54,7 +54,7 @@ function sample_geometry(release, constants::SimulationConstants{T}, kernel; dx,
     return geometry, equilibrium_center_z
 end
 
-function run_case(release, case; output)
+function run_case(release, case; output, vertical_axis = 3)
     save = case.metadata.SaveLocation
     (; dx, half_width, depth, duration) = case
     isfile(joinpath(save, "FreeHeave.vtkhdf")) && error("Run already exists at $save")
@@ -75,7 +75,7 @@ function run_case(release, case; output)
     end
     result.final_state.complete && result.diagnostics.frozen_particles == 0 || error("Incomplete float run")
     records = CSV.File(joinpath(save, "FreeHeave_Floating.csv"))
-    heave = 1000 .* (getproperty(records, Symbol("Center:2")) .- case.equilibrium_center_z)
+    heave = 1000 .* (getproperty(records, Symbol("Center:", vertical_axis - 1)) .- case.equilibrium_center_z)
     time = records.Time
     length(time) > 1 && all(>(0), diff(time)) && isapprox(last(time), duration; atol = 1e-6) ||
         error("Incomplete or invalid floating-body history")
@@ -84,14 +84,16 @@ function run_case(release, case; output)
     history = joinpath(output, release.name * ".csv")
     CSV.write(history, (; time, heave_mm = heave,
         surge_mm = 1000 .* getproperty(records, Symbol("Center:0")),
-        sway_mm = 1000 .* getproperty(records, Symbol("Center:1"))))
+        sway_mm = vertical_axis == 3 ? 1000 .* getproperty(records, Symbol("Center:1")) : zeros(length(time))))
     open(joinpath(output, release.name * ".toml"), "w") do io
-        TOML.print(io, Dict("dx" => dx, "half_width" => half_width, "depth" => depth, "duration" => duration,
-            "kernel" => string(nameof(typeof(case.kernel.kernel))), "h" => Float64(case.kernel.h),
+        config = Dict("dx" => dx, "half_width" => half_width, "depth" => depth, "duration" => duration,
+            "dimensions" => vertical_axis, "kernel" => string(nameof(typeof(case.kernel.kernel))), "h" => Float64(case.kernel.h),
             "kernel_support_factor" => Float64(case.kernel.k),
             "mass" => release.mass, "draft" => release.draft, "offset" => release.offset,
             "fluid_particles" => length(case.geometry[2].Particles), "frames" => length(time),
-            "steps" => result.performance.steps, "wall_seconds" => result.performance.wall_time_seconds))
+            "steps" => result.performance.steps, "wall_seconds" => result.performance.wall_time_seconds)
+        hasproperty(case, :line_mass) && (config["mass_per_span_kg_m"] = case.line_mass)
+        TOML.print(io, config)
     end
     save_heave_plot(output, release.name)
     return (; particles = joinpath(save, "FreeHeave.vtkhdf"), history, reference = reference_path)
@@ -107,7 +109,7 @@ function save_heave_plot(output, release_name)
 end
 
 """Write a launcher that builds and saves the comparison inside ParaView."""
-function write_heave_state(release, output; layout = "side-by-side", screenshot = false)
+function write_heave_state(release, output; layout = "side-by-side", screenshot = false, planar = false)
     (; particles, history, reference) = output
     script = joinpath(@__DIR__, "paraview_heave.py")
     state = joinpath(dirname(particles), "FreeHeave_Comparison.py")
@@ -126,6 +128,7 @@ function write_heave_state(release, output; layout = "side-by-side", screenshot 
         screenshot=$preview,
         title=$(repr(release.title)),
         layout=$(repr(layout)),
+        planar=$(planar ? "True" : "False"),
     )
     runpy.run_path($(python_path(script)))["build_view"](args)
     """)
