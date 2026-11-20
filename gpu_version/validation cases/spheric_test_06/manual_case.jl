@@ -46,7 +46,7 @@
 
         run_tag          = "coefh"
         n                = round(Int, reference_length / dx)
-        run_name         = "Re$(lpad(string(reynolds), 3, '0'))_n$(lpad(string(n), 3, '0'))" * "_Test11";
+        run_name         = "Re$(lpad(string(reynolds), 3, '0'))_n$(lpad(string(n), 3, '0'))" * "_Test12";
         save_location    = joinpath(@__DIR__, "runs", run_tag, run_name)
         plot_location    = joinpath(@__DIR__, "runs", run_tag, "paraview_force_plot")
         results_location = joinpath(@__DIR__, "results", run_tag, run_name)
@@ -88,7 +88,7 @@
         SimMetaData = SimulationMetaData{
             Dimensions,
             FloatType,
-            UncappedDualSPHysicsShifting,
+            PlanarShifting,
             NoKernelOutput,
             boundary_mode,
             StoreLog,

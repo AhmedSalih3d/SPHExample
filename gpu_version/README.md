@@ -3319,7 +3319,7 @@ than boolean flags, so the fused kernels are specialised at compile time:
 
 | Parameter | Types | Meaning |
 |-----------|-------|---------|
-| `SMode` | `NoShifting`, `PlanarShifting`, `DualSPHysicsShifting`, `UncappedDualSPHysicsShifting` | particle shifting |
+| `SMode` | `NoShifting`, `PlanarShifting`, `typeof(PlanarShifting(fraction))` | particle shifting |
 | `KMode` | `NoKernelOutput`, `StoreKernelOutput` | store the kernel and kernel gradient sums for output |
 | `BMode` | `NoMDBC`, `SimpleMDBC`, `UpdatedMDBC` | Boundary formulation (mDBC needs `ParticleNormalsPath` or generated ghost fields; see "Choosing the mDBC formulation") |
 | `LMode` | `NoLog`, `StoreLog` | write the simulation log file |
@@ -3391,24 +3391,19 @@ selected by the reference wave-maker. The default `false` retains periodic
 absolute-coordinate arithmetic. This changes rounding and requires numerical
 validation; it is not a bitwise-preserving performance option.
 
-### Classic DualSPHysics shifting
+### Planar shifting
 
-Select `SimulationMetaData{2, Float32, DualSPHysicsShifting}(...)` to enable
-classic full-mode shifting in a fixed-resolution GPU run with
-`SymplecticTimeStepping()`. The mode corresponds to `Shifting = 3`,
-`ShiftCoef = -2`, and `ShiftTFS = 0` in DualSPHysics.
+For fixed-resolution GPU runs, use `PlanarShifting` as the shifting type in
+`SimulationMetaData` for uncapped shifting. Use
+`SimulationMetaData{2, Float32, typeof(PlanarShifting(0.1))}(...)` to cap
+each displacement component at 10% of the particle spacing. The constructor
+accepts nonnegative fractions and defaults to `Inf`.
 
-For a fluid particle, the concentration gradient sums `(mⱼ / ρⱼ) ∇ᵢWᵢⱼ`
-over fluid and boundary neighbors using their densities at the interaction
-stage. The position displacement is `-2 h |vᵢ| Δt` times that gradient,
-with each component clamped to `[-0.1 dp, 0.1 dp]`. Select
-`UncappedDualSPHysicsShifting` to use the same neighbor-volume weighting and
-apply the raw displacement. Shifting is applied in the
-corrector using the predicted velocity and full timestep. The zero free-surface
-threshold disables free-surface scaling.
-[DualSPHysics neighbor sum](https://github.com/DualSPHysics/DualSPHysics/blob/master/src/source/JSphGpu_ker.cu#L633-L640) ·
-[DualSPHysics component clamp](https://github.com/DualSPHysics/DualSPHysics/blob/master/src/source/JSphShifting_ker.cu#L114-L140) ·
-[DualSPHysics symplectic update](https://github.com/DualSPHysics/DualSPHysics/blob/master/src/source/JSphGpu.cpp#L940-L996)
+The corrector sums `(m? / ??) ??W??` over fluid and boundary neighbors and
+applies `-2 h |v?| ?t` times that gradient using the predicted velocity and
+the full timestep. The variable-resolution backend uses neighbor-volume
+weighting with its own free-surface scaling and accepts the bare
+`PlanarShifting` type.
 
 ### GPU specific `SimulationMetaData` options
 

@@ -75,13 +75,13 @@ function main(args)
         error("Unknown replay analysis mode")
     unshifted = args == ["no-shifting"]
     dual = args == ["dual-shifting"]
-    history = unshifted || dual
+    history = unshifted || dual || isempty(args)
     archived = args == ["archived"]
     control = args == ["control"]
     manual = args == ["manual"]
     baseline = control ? REFINEMENT : joinpath(REFINEMENT, "fine_time")
     baseline_path = joinpath(RUNS, baseline, "Re100_n160", "MovingSquare.vtkhdf")
-    replay = unshifted ? "fine_spike_no_shifting" : dual ? "fine_spike_dual_shifting" : "fine_spike_replay"
+    replay = unshifted ? "fine_spike_no_shifting" : dual ? "fine_spike_planar_capped" : "fine_spike_planar_uncapped"
     path = archived || control ? baseline_path : joinpath(RUNS, replay, "MovingSquare.vtkhdf")
     reference = history ? nothing : CSV.File(joinpath(@__DIR__, "results", baseline, "Re100_n160.csv"))
     if manual
@@ -89,7 +89,7 @@ function main(args)
         reference = CSV.File(joinpath(@__DIR__, "results", "coefh", "Re100_n160.csv"))
     end
     case = build_case(; dx = 1/160, duration = 0.9, cfl = 0.1, sound_speed = 160.0,
-        kernel_h_factor = 2sqrt(2), shifting = unshifted ? NoShifting : dual ? DualSPHysicsShifting : PlanarShifting, motion_kind = :integrated)
+        kernel_h_factor = 2sqrt(2), shifting = unshifted ? NoShifting : dual ? typeof(PlanarShifting(0.1)) : PlanarShifting, motion_kind = :integrated)
     constants = SimulationConstants{Float64}(2; dx = case.dx, ρ₀ = case.constants.ρ₀,
         c₀ = case.constants.c₀, g = case.constants.g, ν₀ = case.constants.ν₀)
     kernel = SPHKernelInstance{2,Float64}(case.kernel.kernel; h = Float64(case.kernel.h),
@@ -120,7 +120,7 @@ function main(args)
     filename = manual ? "manual_test8_faces.csv" : control ? "larger_timestep_faces.csv" :
         archived ? "archived_faces.csv" : "fine_faces.csv"
     if history
-        filename = unshifted ? "no_shifting_history.csv" : "dual_shifting_history.csv"
+        filename = unshifted ? "no_shifting_history.csv" : dual ? "planar_capped_history.csv" : "planar_uncapped_history.csv"
     end
     CSV.write(joinpath(OUT, filename), rows)
     println("Wrote $(length(rows)) face-load measurements to $filename.")

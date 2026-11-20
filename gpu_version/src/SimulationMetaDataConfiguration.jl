@@ -4,7 +4,7 @@ using ..VariableResolutionConfiguration: VariableResolutionConfig
 
 using TimerOutputs
 
-export SimulationMetaData, UpdateMetaData!, ShiftingMode, NoShifting, PlanarShifting, DualSPHysicsShifting, UncappedDualSPHysicsShifting,
+export SimulationMetaData, UpdateMetaData!, ShiftingMode, NoShifting, PlanarShifting,
        KernelOutputMode, NoKernelOutput, StoreKernelOutput,
        MDBCMode, NoMDBC, SimpleMDBC, UpdatedMDBC, UpdatedMDBCWithImpedance, DBCPlus, DBCPlusImpedance, ClonedPressureBoundary,
        LogMode, NoLog, StoreLog,
@@ -16,21 +16,25 @@ export SimulationMetaData, UpdateMetaData!, ShiftingMode, NoShifting, PlanarShif
 # so that one case definition constructs against both packages.
 abstract type ShiftingMode end
 struct NoShifting     <: ShiftingMode end
-struct PlanarShifting <: ShiftingMode end
-
 """
-    DualSPHysicsShifting()
+    PlanarShifting([max_displacement_fraction=Inf])
 
-Classic full DualSPHysics shifting with `ShiftCoef = -2` and `ShiftTFS = 0`.
-Applies a position-only shift to fluid particles in the corrector of fixed-resolution
-`SymplecticTimeStepping`.
+Shift fluid positions using neighbor volumes. A finite fraction caps each
+component of the corrector displacement relative to particle spacing.
+Use `typeof(PlanarShifting(0.1))` as the metadata shifting type for a 10% cap.
+The bare type `PlanarShifting` selects the uncapped default.
 """
-struct DualSPHysicsShifting <: ShiftingMode end
+struct PlanarShifting{Fraction} <: ShiftingMode end
 
-"""Apply classic DualSPHysics neighbor-volume shifting without a displacement cap."""
-struct UncappedDualSPHysicsShifting <: ShiftingMode end
+function PlanarShifting(fraction::Real = Inf)
+    limit = Float64(fraction)
+    limit >= 0 || throw(ArgumentError("shifting displacement fraction must be nonnegative"))
+    return PlanarShifting{limit}()
+end
 
-@inline is_dual_shifting(mode) = mode === DualSPHysicsShifting || mode === UncappedDualSPHysicsShifting
+@inline shifting_fraction(::Type{PlanarShifting}) = Inf
+@inline shifting_fraction(::Type{PlanarShifting{Fraction}}) where {Fraction} = Fraction
+@inline is_planar_shifting(::Val{Mode}) where {Mode} = Mode isa Type && Mode <: PlanarShifting
 
 abstract type KernelOutputMode end
 struct NoKernelOutput    <: KernelOutputMode end
@@ -125,7 +129,7 @@ as the CPU version plus a few GPU specific options (all prefixed `GPU`).
 
 The mode parameters select code paths at compile time:
 
-* `SMode <: ShiftingMode`: `NoShifting` (default), `PlanarShifting`, `DualSPHysicsShifting`, or `UncappedDualSPHysicsShifting`
+* `SMode <: ShiftingMode`: `NoShifting` (default), `PlanarShifting`, or a configured `typeof(PlanarShifting(fraction))`
 * `KMode <: KernelOutputMode`: `NoKernelOutput` (default) or `StoreKernelOutput`
   (also store the kernel sum and kernel gradient sum of every particle)
 * `BMode <: MDBCMode`: `NoMDBC` (default), `SimpleMDBC`, `UpdatedMDBC`, or experimental `DBCPlus`, `DBCPlusImpedance`, or `UpdatedMDBCWithImpedance` (requires

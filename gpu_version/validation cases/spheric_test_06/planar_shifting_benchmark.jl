@@ -1,0 +1,45 @@
+using SPHExampleGPU, CUDA
+include("dual_compare.jl")
+const C = Test06DualComparison
+const S = C.SphericTest06
+const TAG = "planar_shifting_benchmark"
+const WORK = joinpath(@__DIR__, "runs", TAG)
+const OUT = joinpath(@__DIR__, "results", TAG)
+
+function main(args)
+    args in (["native"], ["dual"]) || error("Expected native or dual")
+    solver = only(args)
+    for reynolds in (50, 100, 150)
+        results = joinpath(OUT, solver, "re$reynolds")
+        save = joinpath(WORK, solver, "re$reynolds")
+        println("Starting $solver Re=$reynolds")
+        flush(stdout)
+        if solver == "native"
+            case = S.build_case(; reynolds, dx = 1/160, sound_speed = 160.0,
+                cfl = 0.2, kernel_h_factor = 2sqrt(2), wall_layers = 7,
+                motion_kind = :integrated, shifting = typeof(PlanarShifting(0.1)), save)
+            mkpath(save)
+            open(joinpath(save, "console.log"), "w") do io
+                redirect_stdout(io) do
+                    S.run_case(case; results_dir = results)
+                end
+            end
+        else
+            prefix = C.prepare_dual(; n = 160, reynolds, sound_speed = 160, coefh = 2.0,
+                wall_layers = 7, motion_kind = :integrated, shifting = 3, tag = TAG,
+                trajectory = S.body_trajectory(motion_kind = :integrated))
+            C.verify_geometry(prefix, 160; coefh = 2.0, wall_layers = 7)
+            info = C.dual_run(prefix, save; reynolds)
+            info.frames == 401 && info.particles == 1313796 || error("Unexpected DualSPHysics frame or particle count: $info")
+            C.extract_dual(save, results)
+            C.save_info(joinpath(results, "dual.toml"), info)
+            cp(prefix * ".xml", joinpath(results, "Case.xml"))
+        end
+        println("Completed $solver Re=$reynolds")
+        flush(stdout)
+        GC.gc(true)
+        CUDA.reclaim()
+    end
+end
+
+main(ARGS)

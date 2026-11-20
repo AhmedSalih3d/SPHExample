@@ -70,7 +70,7 @@ using ..DampingZones: damped_velocity
 using ..GPUPairwiseTimesteps: reset_pair_signal!,store_pair_signal!,acoustic_denominator
 using ..GPUDivergenceCleaning: cleaning_psi, cleaning_derivative!, cleaning_predict!, cleaning_commit!,
     signal_value, store_signal!, cleaning_timestep, initialize_signal!
-using ..SimulationMetaDataConfiguration: NoMDBC, SimpleMDBC, UpdatedMDBC, DBCPlus, ClonedPressureBoundary, DualSPHysicsSymplectic, DualSPHysicsShifting, is_dual_shifting
+using ..SimulationMetaDataConfiguration: NoMDBC, SimpleMDBC, UpdatedMDBC, DBCPlus, ClonedPressureBoundary, DualSPHysicsSymplectic, is_planar_shifting, shifting_fraction
 
 export launch_interactions!, launch_mdbc!, launch_motion!, launch_half_step!, launch_final_step!,
        launch_prepare_interactions!, launch_finish!, launch_commit!, launch_step_reduction!, launch_pos_cells!,
@@ -627,7 +627,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                             ∇Wsum += ∇ᵢWᵢⱼ
                         end
 
-                        if is_dual_shifting(FlagShift)
+                        if is_planar_shifting(Val(FlagShift))
                             if typeᵢ == Fluid
                                 ∇C += (mass_j * ρⱼ⁻¹) * ∇ᵢWᵢⱼ
                             end
@@ -1064,11 +1064,11 @@ include("UpdatedMDBC.jl")
 # higher precision
 #---------------------------------------------------------------
 
-@inline function dual_shifting_displacement(gradient::SVector{D,T}, velocity, dt, h, dx, ::Val{Cap}) where {D,T,Cap}
+@inline function planar_shifting_displacement(gradient::SVector{D,T}, velocity, dt, h, dx, fraction) where {D,T}
     scale = -2.0 * Float64(dt) * Float64(h) * norm(SVector{D,Float64}(velocity))
     displacement = SVector{D,T}(scale * SVector{D,Float64}(gradient))
-    Cap || return displacement
-    limit = T(0.1 * Float64(dx))
+    isinf(fraction) && return displacement
+    limit = T(fraction * Float64(dx))
     return clamp.(displacement, -limit, limit)
 end
 
@@ -1287,8 +1287,8 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
             x += (vₙ⁺ * dt + δxᵢ) * ML
         else
             x += (vₙ⁺ * dt) * ML
-            if is_dual_shifting(FlagShift) && type == Fluid
-                x += dual_shifting_displacement(∇Cᵢ[i], vₙ⁺, dt, SimKernel.h, SimConstants.dx, Val(FlagShift === DualSPHysicsShifting))
+            if is_planar_shifting(Val(FlagShift)) && type == Fluid
+                x += planar_shifting_displacement(∇Cᵢ[i], vₙ⁺, dt, SimKernel.h, SimConstants.dx, shifting_fraction(FlagShift))
             end
         end
         Position[i] = x
@@ -1304,7 +1304,7 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
 
         # Values for the time step and cell list update decision of the next step
         values = step_values(x, v, acc, Positionₙ⁺[i], SimKernel.h, SimKernel.η²,pair_signal)
-        if is_dual_shifting(FlagShift) && type == Fluid
+        if is_planar_shifting(Val(FlagShift)) && type == Fluid
             # A shift can partly cancel the corrector's advective displacement.
             # Include the excursion to the predictor in the rebuild bound.
             values = setindex(values, max(values[3], T(norm(Positionₙ⁺[i] - old_x))), 3)

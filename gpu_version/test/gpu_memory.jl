@@ -191,9 +191,9 @@ end
         end
     end
 
-    @testset "classic shifting allocates only the concentration gradient when compact" begin
+    @testset "planar shifting allocates only the concentration gradient when compact" begin
         for (D, T) in ((2, Float32), (3, Float64))
-            f = fixture(D, T; shifting = DualSPHysicsShifting)
+            f = fixture(D, T; shifting = typeof(PlanarShifting(0.1)))
             ordinary = fixture(D, T)
             planar = fixture(D, T; shifting = PlanarShifting)
             for input in (length(f.host), upload_particles(f.host, f.metadata))
@@ -201,7 +201,7 @@ end
                 classic = GPUMemoryBenchmark.device_buffer_bytes(GPUSupportArrays{D,T}(input, f.metadata))
                 complete = GPUMemoryBenchmark.device_buffer_bytes(GPUSupportArrays{D,T}(input, planar.metadata))
                 @test classic - baseline == length(f.host) * sizeof(SVector{D,T})
-                @test complete - classic == length(f.host) * sizeof(T)
+                @test complete == classic
             end
         end
     end
@@ -227,7 +227,7 @@ end
             @test length(gpu.BoundarySlot) == length(f.host)
             @test all(iszero, Array(gpu.BoundarySlot))
             @test length(support.∇Cᵢ) == length(f.host)
-            @test length(support.∇◌rᵢ) == length(f.host)
+            @test isempty(support.∇◌rᵢ)
             @test (support.boundary_data !== nothing) == (boundary === UpdatedMDBC)
             if boundary === UpdatedMDBC
                 @test isempty(support.boundary_data.active)
@@ -365,7 +365,7 @@ end
         @test_throws ArgumentError download_particles!(back, gpu, CellGrid{2}())
         @test back == f.host
         for options in ((; kernel_output = StoreKernelOutput), (; shifting = PlanarShifting),
-                (; shifting = DualSPHysicsShifting), (; boundary = SimpleMDBC))
+                (; shifting = typeof(PlanarShifting(0.1))), (; boundary = SimpleMDBC))
             f = fixture(2, Float32; options...)
             gpu = upload_particles(f.host; kernel_output = false, ghost_data = false)
             support = GPUSupportArrays{2, Float32}(length(f.host); shifting = false)

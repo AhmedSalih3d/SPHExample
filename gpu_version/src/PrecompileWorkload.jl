@@ -480,7 +480,7 @@ function _precompile_run(case, lanes::Int, double_position::Bool)
         gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Density,
         sup.dρdtI, sup.ρₙ⁺, pos_half, vel_half, gpu.Type,
         sup.∇Cᵢ, sup.∇◌rᵢ, state, case.SimKernel, case.SimConstants, red,
-        Val(SMode === PlanarShifting);
+        Val(SMode <: PlanarShifting ? SMode : false);
         boundary_mode = BMode(),
         ghost_points = gpu.GhostPoints, ghost_normals = gpu.GhostNormals,
         boundary_slots = gpu.BoundarySlot,

@@ -1,10 +1,10 @@
-module DualSPHysicsShiftingTests
+module PlanarShiftingTests
 
 using Test, SPHExampleGPU, CUDA, StaticArrays, LinearAlgebra
 
 const DRIVER = SPHExampleGPU.SPHCellList
 const KERNELS = SPHExampleGPU.GPUKernels
-const CLASSIC = Val(DualSPHysicsShifting)
+const CLASSIC = Val(typeof(PlanarShifting(0.1)))
 
 @testset "DualSPHysics shifting" begin
     @testset "neighbor volume, full boundary participation and advection-only predictor" begin
@@ -16,7 +16,7 @@ const CLASSIC = Val(DualSPHysicsShifting)
             offset = V(ntuple(d -> d == 1 ? kernel.h / 2 : zero(T), D))
             geometry = [SPHGeometry{D,T}([zero(V)]; Density = T(1000), Type = Fluid, GroupMarker = 1),
                 SPHGeometry{D,T}([offset]; Density = T(1250), Type = Fixed, GroupMarker = 2)]
-            meta = SimulationMetaData{D,T,DualSPHysicsShifting}(
+            meta = SimulationMetaData{D,T,typeof(PlanarShifting(0.1))}(
                 SimulationName = "DualShifting", SaveLocation = tempdir(),
                 GPUCompactBuffers = true, GPUCacheInteractionFields = cached)
             host = AllocateDataStructures(geometry, meta)
@@ -78,7 +78,7 @@ const CLASSIC = Val(DualSPHysicsShifting)
         limit = T(0.1) * constants.dx
         raw_shift = -2 * kernel.h * norm(speed) * dt * gradient
         for (mode, expected_shift) in ((CLASSIC, clamp.(raw_shift, -limit, limit)),
-                                      (Val(UncappedDualSPHysicsShifting), raw_shift))
+                                      (Val(PlanarShifting), raw_shift))
             position, predictor_position, velocity, acceleration = (CUDA.zeros(V, 2) for _ in 1:4)
             density = CUDA.fill(T(1000), 2)
             KERNELS.launch_final_step!(position, velocity, acceleration, density, CUDA.zeros(T, 2),

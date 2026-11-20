@@ -661,3 +661,19 @@ package. Its paired cases can be replayed using the recovered package snapshot
 `SPH_COEFH_BASELINES` to the absolute path of the original
 `regularized_mdbc_experiment` run directory when running the script in that
 snapshot. This places the recovered-model results alongside the other replays.
+## Planar shifting benchmark
+
+Run from `gpu_version`. Each solver runs Re = 50, 100, 150 through 8 s with
+`L/dp = 160`, `coefh = 2`, `c₀ = 160 m/s`, CFL 0.20, seven wall layers,
+and output every 20 ms. The Julia run uses `PlanarShifting(0.1)`.
+DualSPHysics 5.4 uses classic full shifting with its default 10% component
+cap, integrated motion sampled every 0.1 ms, and its native timestep and
+density-diffusion implementation.
+
+```powershell
+julia --project=. -t 2,0 "validation cases/spheric_test_06/planar_shifting_benchmark.jl" native
+julia --project=. -t 2,0 "validation cases/spheric_test_06/planar_shifting_benchmark.jl" dual
+python "validation cases/spheric_test_06/plot_planar_shifting_benchmark.py"
+```
+
+Force histories and graphs are saved in `results/planar_shifting_benchmark`.

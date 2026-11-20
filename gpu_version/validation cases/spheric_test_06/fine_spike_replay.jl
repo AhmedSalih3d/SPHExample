@@ -4,11 +4,11 @@ using SPHExampleGPU
 
 function main(args)
     mode, folder = if isempty(args)
-        PlanarShifting, "fine_spike_replay"
+        PlanarShifting, "fine_spike_planar_uncapped"
     elseif args == ["no-shifting"]
         NoShifting, "fine_spike_no_shifting"
     elseif args == ["dual-shifting"]
-        DualSPHysicsShifting, "fine_spike_dual_shifting"
+        typeof(PlanarShifting(0.1)), "fine_spike_planar_capped"
     else
         error("Expected no argument, no-shifting or dual-shifting")
     end
