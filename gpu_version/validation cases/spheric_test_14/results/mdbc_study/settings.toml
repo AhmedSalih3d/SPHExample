@@ -1,0 +1,15 @@
+gpu = "NVIDIA GeForce RTX 5080"
+depth = 0.8
+duration = 4.5
+kernel_h_factor = 2.0
+cfl = 0.2
+viscosity = "Laminar, nu=1e-6 m2/s"
+dx = 0.0125
+cuda_jl = "6.4.2"
+body = "Cartesian 2D, draft-matched mass per unit span, heave-only"
+diffusion = ["LinearDensityDiffusion", "FourtakasDensityDiffusion"]
+boundaries = ["NoMDBC", "SimpleMDBC"]
+half_width = 8.0
+julia = "1.12.7"
+output_interval = 0.005
+sound_speed = 25.0

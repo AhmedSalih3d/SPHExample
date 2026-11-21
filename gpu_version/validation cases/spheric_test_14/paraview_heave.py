@@ -264,6 +264,7 @@ def scene_measurements(view, centers, simulation, planar):
     display = Show(text, view, "GeometryRepresentation")
     display.ColorArrayName = ["POINTS", ""]
     display.DiffuseColor = INK
+    display.AmbientColor = INK
     display.Ambient = 1.
     display.Diffuse = 0.
 

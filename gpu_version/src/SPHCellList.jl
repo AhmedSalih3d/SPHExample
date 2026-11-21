@@ -1143,6 +1143,15 @@ end
 observe_density_stage!(::Nothing, stage, ctx, step) = nothing
 observe_density_stage!(observer, stage, ctx, step) = observer(stage, ctx, step)
 
+function floating_mdbc_pose(ctx, half::Bool)
+    f = get(ctx, :floating, nothing)
+    (f === nothing || !f.active) && return nothing
+    if length(eltype(ctx.gpu.Position)) == 2
+        return (; groups = ctx.gpu.GroupMarker, body = f.body, angle = f.angle, turn = half ? f.turn : nothing)
+    end
+    return (; groups = ctx.gpu.GroupMarker, body = f.body, orientation = half ? f.orientation_half : f.orientation)
+end
+
 function enqueue_boundary_correction!(ctx, step, half::Bool; prepared::Bool = false)
     (; gpu, sup, cl, SimKernel, SimConstants, threads, lanes) = ctx
     density = half ? sup.ρₙ⁺ : gpu.Density
@@ -1172,6 +1181,7 @@ function enqueue_boundary_correction!(ctx, step, half::Bool; prepared::Bool = fa
         launch_mdbc!(density, position, gpu.GhostPoints, gpu.GhostIndex, gpu.Type,
             cl.CellStart, cl.grid_dev, step, SimKernel, SimConstants; threads, lanes, pos_cells = pairs,
             ghost_normals = gpu.GhostNormals,
+            floating_pose = floating_mdbc_pose(ctx, half),
             compact_ghosts = Val(gpu.BoundarySlot !== nothing), inverse_density = sup.InvDensity,
             pressure = sup.Pressure, periodicity = cl.periodicity, periodic_bounds = periodic_bounds(sup),
             reset_dry = Val(get(ctx,:open_boundary,nothing) !== nothing && ctx.open_boundary.configuration isa ImpingingJet))
@@ -1419,6 +1429,7 @@ function enqueue_step!(ctx, timed::Bool; finish_current::Bool = true, finish_nex
         @phase HourGlass "11b Floating Final TimeStep" timed launch_floating_particles!(
             floating, gpu.Position, gpu.Velocity, gpu.Position, gpu.Type, gpu.GroupMarker, state, true;
             pos_cells = sup.PosCells, CellID = gpu.CellID, grid = grid, H = SimKernel.H, particle_ids = gpu.ID)
+        UseMDBC && GPUKernels.launch_refresh_floating_ghosts!(gpu, floating_mdbc_pose(ctx, false), state)
     end
 
     open_boundary = get(ctx,:open_boundary,nothing)

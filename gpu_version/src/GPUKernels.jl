@@ -955,6 +955,21 @@ end
     return b, A
 end
 
+# GhostNormals remains in the initial body frame, including across reordering.
+@inline floating_ghost_offset(::Nothing, offset, i) = offset
+@inline function floating_ghost_offset(pose, offset::SVector{2,T}, i) where T
+    @inbounds b = pose.body[pose.groups[i]]
+    @inbounds angle = pose.angle[b] + (pose.turn === nothing ? zero(T) : pose.turn[b])
+    s, c = sincos(angle)
+    return SVector(c * offset[1] - s * offset[2], s * offset[1] + c * offset[2])
+end
+@inline function floating_ghost_offset(pose, offset::SVector{3,T}, i) where T
+    @inbounds q = pose.orientation[pose.body[pose.groups[i]]]
+    axis = SVector(q[2], q[3], q[4])
+    turn = 2cross(axis, offset)
+    return offset + q[1] * turn + cross(axis, turn)
+end
+
 # Thread group `g` (its `K` lanes) handles the `g`-th ghost node owner of
 # `GhostIndex`, so the launch covers only boundary particles with a ghost
 # node, contiguously: no half empty warps from the fluid particles that are
@@ -962,7 +977,7 @@ end
 # position precision `TP`, `Pairs` is the pair source (see `pair_vector`).
 function mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVector{SVector{D, TP}}, Pairs,
                       GhostPoints, GhostIndex, ParticleType, CellStart, gridarg, step,
-                      SimKernel, SimConstants, InvDensity, Pressure, ::Val{K}, ::Val{Compact}, nghost::Int32, periodicity, GhostNormals, periodic_bounds, ::Val{ResetDry}) where {D, T, TP, K, Compact, ResetDry}
+                      SimKernel, SimConstants, InvDensity, Pressure, ::Val{K}, ::Val{Compact}, nghost::Int32, periodicity, GhostNormals, periodic_bounds, ::Val{ResetDry}, floating_pose = nothing) where {D, T, TP, K, Compact, ResetDry}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -985,6 +1000,8 @@ function mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVector{SVect
         # A translating mDBC wall keeps its ghost offset in the wall frame.
         if GhostNormals !== nothing && ParticleType[i] == Moving
             gp = Position[i] + SVector{D, TP}(GhostNormals[Compact ? g : i])
+        elseif GhostNormals !== nothing && ParticleType[i] == Floating
+            gp = Position[i] + SVector{D,TP}(floating_ghost_offset(floating_pose,GhostNormals[Compact ? g : i],i))
         end
         valid = ParticleType[i] != Frozen
     end
@@ -1015,7 +1032,7 @@ function mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVector{SVect
             ρ = isnan(v) ? ρ₀ : v
         end
         Density[i]  = ρ
-        if GhostNormals !== nothing && ParticleType[i] == Moving
+        if GhostNormals !== nothing && (ParticleType[i] == Moving || ParticleType[i] == Floating)
             GhostPoints[Compact ? g : i] = gp
         end
         store_inverse_density!(InvDensity, i, ρ)
@@ -1041,18 +1058,45 @@ rather than particle index; otherwise the full-particle layout is retained.
 corrected boundary entries (and `pressure` when cached) are refreshed by this kernel.
 `reset_dry = Val(true)` resets unsupported ghosts to reference density, as in
 the original DualSPHysics mDBC. The default preserves the CPU reference fallback.
+
+When `ghost_normals` is supplied, floating ghosts are reconstructed from the
+evaluated `Position` and their initial body-frame boundary-to-ghost displacement.
+The uniform simulation driver supplies `floating_pose` for the accepted or
+predictor rigid orientation; without a pose the displacement is unrotated.
+This keeps translation and rotation on the GPU, including graph replay.
 """
 function launch_mdbc!(Density, Position, GhostPoints, GhostIndex, ParticleType, CellStart, grid, step,
                       SimKernel, SimConstants; threads::Integer = 128, lanes::Val = Val(1), pos_cells = nothing,
                       compact_ghosts::Val = Val(false), inverse_density = nothing, pressure = nothing, periodicity = nothing,
-                      ghost_normals = nothing, periodic_bounds = nothing, reset_dry::Val = Val(false))
+                      ghost_normals = nothing, periodic_bounds = nothing, reset_dry::Val = Val(false), floating_pose = nothing)
     n = length(GhostIndex)
     n == 0 && return nothing
     K = typeof(lanes).parameters[1]
     Pairs = pos_cells === nothing ? Position : pos_cells
     @cuda threads=threads blocks=cld(n * K, threads) mdbc_kernel!(
         Density, Position, Pairs, GhostPoints, GhostIndex, ParticleType, CellStart, grid, step,
-        SimKernel, SimConstants, inverse_density, pressure, lanes, compact_ghosts, Int32(n), periodicity, ghost_normals, periodic_bounds, reset_dry)
+        SimKernel, SimConstants, inverse_density, pressure, lanes, compact_ghosts, Int32(n), periodicity, ghost_normals, periodic_bounds, reset_dry, floating_pose)
+    return nothing
+end
+
+function refresh_floating_ghosts_kernel!(ghosts,normals,owners,types,position,pose,step,::Val{Compact}) where Compact
+    step_active(step) || return nothing
+    owner = thread_index()
+    owner > length(owners) && return nothing
+    @inbounds begin
+        i = owners[owner]
+        if types[i] == Floating
+            slot = Compact ? owner : i
+            ghosts[slot] = position[i] + floating_ghost_offset(pose,normals[slot],i)
+        end
+    end
+    return nothing
+end
+
+function launch_refresh_floating_ghosts!(gpu,pose,step)
+    isempty(gpu.GhostIndex) && return nothing
+    @cuda threads=128 blocks=cld(length(gpu.GhostIndex),128) refresh_floating_ghosts_kernel!(
+        gpu.GhostPoints,gpu.GhostNormals,gpu.GhostIndex,gpu.Type,gpu.Position,pose,step,Val(gpu.BoundarySlot !== nothing))
     return nothing
 end
 

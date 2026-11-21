@@ -1257,6 +1257,16 @@ mode requires valid ghost data for every wall particle. As elsewhere in this
 package, `GhostNormals` stores the displacement from boundary to ghost, not just
 a unit direction. Translating walls reconstruct their ghosts from that displacement.
 
+In the uniform-resolution solver, `SimpleMDBC` also reconstructs floating-body
+ghosts from the current particle position and the rotated initial body-frame
+displacement at each evaluated stage. Accepted ghosts are refreshed after rigid
+placement for output. This supports 2D and 3D translation/rotation with compact
+or full ghost storage and CUDA graphs, without additional device arrays.
+`UpdatedMDBC` / pressure cloning still rejects floating bodies. The rotating
+floating-ghost path does not extend the variable-resolution solver.
+See the [Test 14 heave investigation](validation%20cases/spheric_test_14/MDBC_HEAVE.md)
+for an optional original-mDBC case and matched DBC controls.
+
 `UpdatedMDBC` provides:
 
 * Divergence-of-position detection; an unsubmerged ghost switches off the wall's

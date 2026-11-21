@@ -93,6 +93,7 @@ function run_case(release, case; output, vertical_axis = 3)
             "fluid_particles" => length(case.geometry[2].Particles), "frames" => length(time),
             "steps" => result.performance.steps, "wall_seconds" => result.performance.wall_time_seconds)
         hasproperty(case, :line_mass) && (config["mass_per_span_kg_m"] = case.line_mass)
+        hasproperty(case, :boundary_mode) && (config["boundary_mode"] = case.boundary_mode)
         TOML.print(io, config)
     end
     save_heave_plot(output, release.name)

@@ -1,5 +1,10 @@
 # SPHERIC Test 14 · Free heave of rounded floats
 
+The [mDBC heave investigation](MDBC_HEAVE.md) adds an optional floating-body
+`SimpleMDBC` mode, twelve matched Cartesian controls, held-body buoyancy checks,
+and a physics assessment. mDBC reduces the late heave offset but does not resolve
+the excessive decay or the Cartesian/axisymmetric modelling difference.
+
 The GPU case simulates three unconstrained releases from rest and compares
 vertical center-of-mass displacement with the measured mean. The datum is
 the specified still-water float position. Both histories retain the original
