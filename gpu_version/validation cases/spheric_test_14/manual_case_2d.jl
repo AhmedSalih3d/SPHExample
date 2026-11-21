@@ -27,7 +27,7 @@ function manual_planar_case()
     delta = 0.1
 
     output_interval = 0.005 # 200 Hz.
-    pause_time = 0.0 # Try 0.5 s to compare a held release with immediate release.
+    pause_time = 0.5 # Try 0.5 s to compare a held release with immediate release.
     duration = pause_time + 4.5
     output_variables = ["Type", "Velocity", "Pressure"]
     # Give runs with other edited settings distinct names to keep their output.

@@ -9,13 +9,13 @@ function run_manual_case(release; visualize_in_paraview)
     release_name = release.name
     dx = 0.025
     depth = 0.8
-    half_width = 1.2 * 2
+    half_width = 1.2
     wall_top_z = 0.25
     sponge_width = 0.5
     sponge_rate = 12.0
     duration = 4.5
     output_interval = 0.005 # 200 Hz, matching the experiment.
-    pause_time = 0.0 # Optional initial hold; the benchmark releases at t = 0.
+    pause_time = 0.0725 # Optional initial hold; the benchmark releases at t = 0.
 
     boundary_mode = UpdatedMDBC # Select UpdatedMDBCNoPenetration to add normal contact.
     kernel_family = WendlandC2()
@@ -25,9 +25,9 @@ function run_manual_case(release; visualize_in_paraview)
     SimKernel = SPHKernelInstance{Dimensions,FloatType}(kernel_family; h = FloatType(kernel_h_factor * dx))
     SimViscosity = Laminar()
     SimDensityDiffusion = LinearDensityDiffusion()
-    SimTimeStepping = SymplecticTimeStepping()
+    SimTimeStepping = SingleNeighborTimeStepping()
 
-    run_name = "full_$(nameof(boundary_mode))_dp$(dx)_half$(half_width)_h$(kernel_h_factor)_t$(duration)"
+    run_name = "full_$(nameof(boundary_mode))_dp$(dx)_half$(half_width)_h$(kernel_h_factor)_t$(duration)_Test8"
     save_location = joinpath(@__DIR__, "runs", run_name, release_name)
     result_location = joinpath(@__DIR__, "results", run_name)
 
