@@ -7,9 +7,9 @@ function run_manual_case(release; visualize_in_paraview)
     FloatType = Float32
 
     release_name = release.name
-    dx = 0.025 / 2
+    dx = 0.025
     depth = 0.8
-    half_width = 1.2
+    half_width = 1.2 * 2
     wall_top_z = 0.25
     sponge_width = 0.5
     sponge_rate = 12.0
