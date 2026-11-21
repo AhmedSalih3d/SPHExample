@@ -44,7 +44,13 @@ abstract type MDBCMode end
 struct NoMDBC     <: MDBCMode end
 struct SimpleMDBC <: MDBCMode end
 abstract type ClonedPressureBoundary <: MDBCMode end
-"The 2024 mDBC update: numerical checks, pressure cloning and mirrored no-slip velocity."
+"""
+The 2024 mDBC update: numerical checks, pressure cloning and mirrored no-slip
+velocity. Uniform-resolution 2D/3D runs support free floating bodies and initial
+holds, using rigid-body acceleration and rotating ghosts. Constraints, native
+multibody dynamics and periodic floating bodies remain unsupported. This mode
+does not include the separate geometric no-penetration correction.
+"""
 struct UpdatedMDBC <: ClonedPressureBoundary end
 """
     DBCPlus

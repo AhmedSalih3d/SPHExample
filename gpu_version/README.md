@@ -476,7 +476,7 @@ crosses. Its periodic images still interact across the seam.
 Currently one periodic axis is supported in 2D or 3D. Its length must exceed
 twice the support radius `H`. A floating body's diameter plus `2H` must fit
 inside the interval, and its initial center must be inside it. Existing mDBC
-mode restrictions still apply (UpdatedMDBC does not support floating bodies).
+mode restrictions still apply (floating UpdatedMDBC requires nonperiodic free bodies).
 This does not enable periodicity in the separate CPU package.
 
 [Periodicity2d.jl](example/Periodicity2d.jl) generates the floor, step, baffle
@@ -1262,8 +1262,13 @@ ghosts from the current particle position and the rotated initial body-frame
 displacement at each evaluated stage. Accepted ghosts are refreshed after rigid
 placement for output. This supports 2D and 3D translation/rotation with compact
 or full ghost storage and CUDA graphs, without additional device arrays.
-`UpdatedMDBC` / pressure cloning still rejects floating bodies. The rotating
-floating-ghost path does not extend the variable-resolution solver.
+Experimental floating `UpdatedMDBC` and `UpdatedMDBCWithImpedance` now support
+free rigid motion and initial holds in uniform nonperiodic 2D/3D runs. Their
+pressure encoding, rigid acceleration and mirrored surface velocity are applied
+consistently at the evaluated stages. Constraints and native multibody dynamics
+remain unsupported. The rotating floating-ghost path does not extend the
+variable-resolution solver. See the [floating UpdatedMDBC investigation](validation%20cases/spheric_test_14/FLOATING_UPDATED_MDBC.md)
+for matched results and the distinction from geometric no-penetration.
 See the [Test 14 heave investigation](validation%20cases/spheric_test_14/MDBC_HEAVE.md)
 for an optional original-mDBC case and matched DBC controls.
 The [full 3D Test 14 case](validation%20cases/spheric_test_14/FULL_3D_MDBC.md)

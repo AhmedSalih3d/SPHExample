@@ -12,15 +12,15 @@ end
 
 @inline boundary_slot(::Nothing, types, i) = Int32(0)
 @inline function boundary_slot(data, types, i)
-    @inbounds return is_wall(types[i]) ? (data.slots === nothing ? i : data.slots[i]) : Int32(0)
+    @inbounds return is_pressure_boundary(types[i]) ? (data.slots === nothing ? i : data.slots[i]) : Int32(0)
 end
 @inline boundary_enabled(::Nothing, slot) = true
 @inline boundary_enabled(data, slot) = @inbounds slot == 0 || data.active[slot]
 @inline boundary_velocity(::Nothing, velocity, types, i, slot) = @inbounds velocity[i]
-@inline boundary_velocity(data, velocity, types, i, slot) = @inbounds is_wall(types[i]) ?
+@inline boundary_velocity(data, velocity, types, i, slot) = @inbounds is_pressure_boundary(types[i]) ?
     (slot == 0 ? zero(eltype(velocity)) : data.velocity[slot]) : velocity[i]
 @inline boundary_viscous_velocity(::Nothing, velocity, types, i, slot) = @inbounds velocity[i]
-@inline boundary_viscous_velocity(data, velocity, types, i, slot) = @inbounds is_wall(types[i]) ?
+@inline boundary_viscous_velocity(data, velocity, types, i, slot) = @inbounds is_pressure_boundary(types[i]) ?
     (slot == 0 ? zero(eltype(velocity)) : data.tangent_velocity[slot]) : velocity[i]
 
 # An infinity-norm condition estimate uses only fixed-size arithmetic, including
@@ -84,12 +84,44 @@ end
 @inline prescribed_wall_acceleration(motion, group, coefficient_slot, zero_acc) = zero_acc
 @inline prepare_prescribed_mdbc!(motion, step, fraction) = nothing
 
+@inline floating_wall_acceleration(::Nothing, position, i, step) = zero(position)
+@inline function floating_wall_acceleration(state::NamedTuple, position::SVector{2,TP}, i, step) where TP
+    T = eltype(eltype(state.acceleration))
+    @inbounds begin
+        b = state.pose.body[state.pose.groups[i]]
+        step_time(step) < state.pause[b] && return zero(SVector{2,T})
+        r = SVector{2,T}(position - state.center[b])
+        omega, alpha = state.omega[b], state.angular_acceleration[b]
+        return SVector{2,T}(state.acceleration[b]) + SVector(-alpha*r[2], alpha*r[1]) - omega^2*r
+    end
+end
+@inline function floating_wall_acceleration(state::NamedTuple, position::SVector{3,TP}, i, step) where TP
+    T = eltype(eltype(state.acceleration))
+    @inbounds begin
+        b = state.pose.body[state.pose.groups[i]]
+        step_time(step) < state.pause[b] && return zero(SVector{3,T})
+        r = SVector{3,T}(position - state.center[b])
+        omega, alpha = state.omega[b], state.angular_acceleration[b]
+        return SVector{3,T}(state.acceleration[b]) + cross(alpha, r) + cross(omega, cross(omega, r))
+    end
+end
+
+@inline floating_surface_velocity(::Nothing, offset, velocity, i) = velocity
+@inline function floating_surface_velocity(state::NamedTuple, offset::SVector{2,T}, velocity, i) where T
+    @inbounds omega = state.omega[state.pose.body[state.pose.groups[i]]]
+    return velocity + SVector(-omega*offset[2], omega*offset[1]) / 2
+end
+@inline function floating_surface_velocity(state::NamedTuple, offset::SVector{3,T}, velocity, i) where T
+    @inbounds omega = state.omega[state.pose.body[state.pose.groups[i]]]
+    return velocity + cross(omega, offset) / 2
+end
+
 function updated_mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVector{SVector{D, TP}},
                               Pairs, Velocity, GhostPoints, GhostNormals, GhostIndex, ParticleType,
                               CellStart, gridarg, step, SimKernel, SimConstants, data, motion, groups,
                               prescribed_motion, coefficient_slot::Int32,
                               InvDensity, Pressure, ::Val{K}, ::Val{Compact}, nghost::Int32, periodicity, periodic_bounds,
-                              ::Val{MirrorViscosity}, ::Val{NormalImpedance}) where {T, D, TP, K, Compact, MirrorViscosity, NormalImpedance}
+                              ::Val{MirrorViscosity}, ::Val{NormalImpedance}, floating_state = nothing) where {T, D, TP, K, Compact, MirrorViscosity, NormalImpedance}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t = thread_index()
@@ -113,6 +145,9 @@ function updated_mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVect
         # Reconstruct translating ghosts from the evaluated particle position.
         if ParticleType[i] == Moving
             gp = Position[i] + SVector{D, TP}(GhostNormals[slot])
+        elseif ParticleType[i] == Floating
+            pose = floating_state === nothing ? nothing : floating_state.pose
+            gp = Position[i] + SVector{D,TP}(floating_ghost_offset(pose, GhostNormals[slot], i))
         end
         s = cell_size(grid, SimKernel.H)
         b, A = mdbc_neighborhood(b, A, gp, Pairs, Position, grid, CellStart, s,
@@ -133,13 +168,15 @@ function updated_mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVect
         state_slot = data.slots === nothing ? i : owner
         data.active[state_slot] = active
         density = updated_ghost_density(A, b[:, 1], ρ₀, SimConstants.dx)
-        normal = GhostNormals[slot]
+        normal = ParticleType[i] == Floating ? SVector{D,T}(gp - Position[i]) : GhostNormals[slot]
         normal /= norm(normal)
         gravity = ConstructGravitySVector(normal, -g)
         # Interaction acceleration is not the prescribed wall acceleration.
         acceleration = if ParticleType[i] == Moving
             wall_acceleration(motion, groups, i, step, Velocity[i]) +
                 prescribed_wall_acceleration(prescribed_motion, groups === nothing ? Int32(0) : Int32(groups[i]), coefficient_slot, zero(normal))
+        elseif ParticleType[i] == Floating
+            floating_wall_acceleration(floating_state, Position[i], i, step)
         else
             zero(normal)
         end
@@ -157,7 +194,11 @@ function updated_mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVect
         store_inverse_density!(InvDensity, i, Density[i])
         p_wall = active ? pressure : zero(T)
         store_pressure!(Pressure, i, iszero(SimConstants.BackgroundPressure) ? p_wall : p_wall + SimConstants.BackgroundPressure)
-        mirrored = active ? 2 * wall_velocity - ghost_velocity : wall_velocity
+        # With rotation, the physical surface is halfway from boundary to ghost.
+        # Mirror about its velocity so a co-rotating affine fluid has no false shear.
+        surface_velocity = ParticleType[i] == Floating ?
+            floating_surface_velocity(floating_state, SVector{D,T}(gp - Position[i]), wall_velocity, i) : wall_velocity
+        mirrored = active ? 2 * surface_velocity - ghost_velocity : wall_velocity
         # Continuity uses the physical wall velocity. Mirroring is the no-slip
         # viscous construction, not a second normal wall velocity for density.
         data.velocity[state_slot] = wall_velocity
@@ -165,7 +206,7 @@ function updated_mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVect
         # normal wall translation stays Galilean invariant in viscosity.
         data.tangent_velocity[state_slot] = active && MirrorViscosity ?
             mirrored - dot(mirrored - wall_velocity, normal) * normal : wall_velocity
-        ParticleType[i] == Moving && (GhostPoints[slot] = gp)
+        (ParticleType[i] == Moving || ParticleType[i] == Floating) && (GhostPoints[slot] = gp)
     end
     return nothing
 end
@@ -177,7 +218,7 @@ function launch_updated_mdbc!(Density, Position, Velocity, GhostPoints, GhostNor
                                fraction = 0.0,
                                compact_ghosts::Val = Val(false), inverse_density = nothing, pressure = nothing,
                                periodicity = nothing, periodic_bounds = nothing, mirror_viscosity::Bool = true,
-                               normal_impedance::Bool = false)
+                               normal_impedance::Bool = false, floating_state = nothing)
     n = length(GhostIndex)
     n == 0 && return nothing
     if !prepared && prescribed_motion !== nothing
@@ -190,6 +231,6 @@ function launch_updated_mdbc!(Density, Position, Velocity, GhostPoints, GhostNor
         Density, Position, pairs, Velocity, GhostPoints, GhostNormals, GhostIndex, ParticleType,
         CellStart, grid, step, SimKernel, SimConstants, data, motion, groups, prescribed_motion, slot,
         inverse_density, pressure, lanes, compact_ghosts, Int32(n), periodicity, periodic_bounds,
-        Val(mirror_viscosity), Val(normal_impedance))
+        Val(mirror_viscosity), Val(normal_impedance), floating_state)
     return nothing
 end

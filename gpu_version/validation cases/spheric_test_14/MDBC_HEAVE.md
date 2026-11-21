@@ -51,8 +51,9 @@ mass tuning, fitted time shift, or fitted heave datum is used.
 This is the existing **SimpleMDBC density extrapolation**, with its existing
 determinant/Shepard and unsupported-ghost fallback. It is not a claim of complete
 equivalence to DualSPHysics mDBC: the default dry-ghost fallback is retained.
-`UpdatedMDBC` pressure cloning and mirrored viscous velocities still reject
-floating bodies; this change does not enable them. Rotating floating ghosts in
+At the time of these runs, `UpdatedMDBC` pressure cloning and mirrored viscous
+velocities rejected floating bodies. The subsequent [floating UpdatedMDBC study](FLOATING_UPDATED_MDBC.md)
+adds an experimental free-body extension. Rotating floating ghosts in
 the variable-resolution solver are outside this implementation.
 
 ## Matched results

@@ -30,7 +30,8 @@ include(joinpath(@__DIR__, "run.jl"))
         @test float_surface_projection(SVector(release.radius-0.001,0.,base+release.height-0.01), release, base) ≈
             SVector(release.radius,0.,base+release.height-0.01)
     end
-    @test_throws ArgumentError build_full_case(first(RELEASES); boundary_mode = UpdatedMDBC)
+    @test build_full_case(first(RELEASES); dx = 0.05, boundary_mode = UpdatedMDBC).metadata isa
+        SimulationMetaData{3,Float32,NoShifting,NoKernelOutput,UpdatedMDBC}
     @test_throws ArgumentError build_full_case(first(RELEASES); sponge_width = 1.1)
     @test setup(first(RELEASES); dx = 0.05, duration = 0.01, save = "unused").boundary_mode == "SimpleMDBC"
 end

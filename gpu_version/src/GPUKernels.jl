@@ -387,7 +387,7 @@ end
 
 @inline interaction_pressure(::Nothing, i, ρ, type, c₀, ρ₀, ::Nothing, ρ₀⁻¹ = inv(ρ₀), p_bg = zero(ρ)) = EquationOfStateGamma7(ρ, c₀, ρ₀, ρ₀⁻¹, p_bg)
 @inline function interaction_pressure(::Nothing, i, ρ, type, c₀, ρ₀, boundary_data, ρ₀⁻¹ = inv(ρ₀), p_bg = zero(ρ))
-    p = is_wall(type) ? c₀^2 * (ρ - ρ₀) : EquationOfStateGamma7(ρ, c₀, ρ₀, ρ₀⁻¹)
+    p = is_pressure_boundary(type) ? c₀^2 * (ρ - ρ₀) : EquationOfStateGamma7(ρ, c₀, ρ₀, ρ₀⁻¹)
     return iszero(p_bg) ? p : p + p_bg
 end
 @inline interaction_pressure(cache, i, ρ, type, c₀, ρ₀, boundary_data, ρ₀⁻¹ = inv(ρ₀), p_bg = zero(ρ)) = @inbounds cache[i]
@@ -478,7 +478,8 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         diffusion_blocked |= !SimDensityDiffusion.full && xᵢⱼ² <= H² && is_wall(ParticleType[j])
                     end
                     skip_wall_pair = viscous_dt !== nothing && wallᵢ && is_wall(ParticleType[j])
-                    skip_solid_pair = NativeRigid && typeᵢ != Fluid && ParticleType[j] != Fluid
+                    skip_solid_pair = (NativeRigid || (boundary_data !== nothing &&
+                        (typeᵢ == Floating || ParticleType[j] == Floating))) && typeᵢ != Fluid && ParticleType[j] != Fluid
                     if xᵢⱼ² <= H² && boundary_enabled(boundary_data, slotⱼ) && !skip_wall_pair && !skip_solid_pair
                         dᵢⱼ   = sqrt(xᵢⱼ²)
                         q     = dᵢⱼ * h⁻¹ # in [0, 2]: the guard above enforces xᵢⱼ² <= H² = (2h)²
@@ -957,13 +958,13 @@ end
 
 # GhostNormals remains in the initial body frame, including across reordering.
 @inline floating_ghost_offset(::Nothing, offset, i) = offset
-@inline function floating_ghost_offset(pose, offset::SVector{2,T}, i) where T
+@inline function floating_ghost_offset(pose::NamedTuple, offset::SVector{2,T}, i) where T
     @inbounds b = pose.body[pose.groups[i]]
     @inbounds angle = pose.angle[b] + (pose.turn === nothing ? zero(T) : pose.turn[b])
     s, c = sincos(angle)
     return SVector(c * offset[1] - s * offset[2], s * offset[1] + c * offset[2])
 end
-@inline function floating_ghost_offset(pose, offset::SVector{3,T}, i) where T
+@inline function floating_ghost_offset(pose::NamedTuple, offset::SVector{3,T}, i) where T
     @inbounds q = pose.orientation[pose.body[pose.groups[i]]]
     axis = SVector(q[2], q[3], q[4])
     turn = 2cross(axis, offset)
@@ -1147,7 +1148,7 @@ end
             Velocityₙ⁺[i] = Velocity[i] + acc * dt₂ * ML
         end
         ρ = Density[i] + rate * dt₂
-        ρ = boundary_mode isa ClonedPressureBoundary && is_wall(type) ? Density[i] : limit_density(ρ, ρ₀, ML)
+        ρ = boundary_mode isa ClonedPressureBoundary && is_pressure_boundary(type) ? Density[i] : limit_density(ρ, ρ₀, ML)
         ρₙ⁺[i] = ρ
         store_inverse_density!(InvDensity, i, ρ)
         store_pressure!(Pressure, i, EquationOfStateGamma7(ρ, c₀, ρ₀, inv(ρ₀), SimConstants.BackgroundPressure))
@@ -1301,7 +1302,7 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
         ρ    = Density[i]
         epsi = -divide_by_density(dρdtI[i], InvDensity, i, ρₙ⁺[i]) * dt
         ρ   *= (2 - epsi) / (2 + epsi)
-        ρ    = boundary_mode isa ClonedPressureBoundary && is_wall(type) ? ρₙ⁺[i] : limit_density(ρ, ρ₀, ML)
+        ρ    = boundary_mode isa ClonedPressureBoundary && is_pressure_boundary(type) ? ρₙ⁺[i] : limit_density(ρ, ρ₀, ML)
         Density[i]  = ρ
         cleaning_speed = max(cleaning_speed,signal_value(cleaning,type,ρ,SimConstants))
         # The predictor reciprocal must be consumed before an aliased cache is overwritten.

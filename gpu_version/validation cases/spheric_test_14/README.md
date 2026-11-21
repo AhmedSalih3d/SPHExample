@@ -11,6 +11,11 @@ axisymmetric float geometry. Both `manual_case.jl` and `run.jl` now default to
 output. `NoMDBC` remains available as a matched control. The prior DBC/artificial
 viscosity results below are historical runs, not the current defaults.
 
+The [floating UpdatedMDBC follow-up](FLOATING_UPDATED_MDBC.md) adds optional
+free-body pressure cloning and no-slip boundary treatment. The results are
+mixed across releases, so `SimpleMDBC` remains the default. The impedance mode
+is a separate experimental pressure response, not geometric no-penetration.
+
 The GPU case simulates three unconstrained releases from rest and compares
 vertical center-of-mass displacement with the measured mean. The datum is
 the specified still-water float position. Both histories retain the original

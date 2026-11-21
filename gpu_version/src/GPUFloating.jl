@@ -415,7 +415,7 @@ end
 # Rigid body update (one thread per body)
 #---------------------------------------------------------------
 
-function floating_update_kernel!(f, step, g::T, ::Val{2}, ::Val{Final}, ::Val{Carried}) where {T, Final, Carried}
+function floating_update_kernel!(f, step, g::T, ::Val{2}, ::Val{Final}, ::Val{Carried}, ::Val{CacheDerivative} = Val(false)) where {T, Final, Carried, CacheDerivative}
     step_active(step) || return nothing
     b = thread_index()
     b > f.nbodies && return nothing
@@ -442,7 +442,7 @@ function floating_update_kernel!(f, step, g::T, ::Val{2}, ::Val{Final}, ::Val{Ca
         ωₙ = f.omega[b]
         a  = Carried && !Final ? f.acceleration[b] : F / f.mass[b] + gvec
         α  = Carried && !Final ? f.angular_acceleration[b] : τ / f.inertia[b]
-        if Final
+        if Final || CacheDerivative
             f.acceleration[b] = a
             f.angular_acceleration[b] = α
         end
@@ -554,7 +554,7 @@ end
     return rotate_vector(q, alpha_body)
 end
 
-function floating_update_kernel!(f, step, g::T, ::Val{3}, ::Val{Final}, ::Val{Carried}) where {T, Final, Carried}
+function floating_update_kernel!(f, step, g::T, ::Val{3}, ::Val{Final}, ::Val{Carried}, ::Val{CacheDerivative} = Val(false)) where {T, Final, Carried, CacheDerivative}
     step_active(step) || return nothing
     b = thread_index()
     b > f.nbodies && return nothing
@@ -590,7 +590,7 @@ function floating_update_kernel!(f, step, g::T, ::Val{3}, ::Val{Final}, ::Val{Ca
         else
             angular_acceleration(qₙ, ωₙ, τ, f.inertia[b], f.inertia_inv[b])
         end
-        if Final
+        if Final || CacheDerivative
             f.acceleration[b] = a
             f.angular_acceleration[b] = α
         end
@@ -637,25 +637,28 @@ Advance every body by the predictor (`final = false`) or the corrector stage
 from the force accumulated since the last update, and clear the force. With
 `carried = true`, the predictor uses the cached linear/angular acceleration;
 the corrector still evaluates and caches its half-state derivative.
+`cache_derivative = true` also retains the predictor force-derived acceleration
+for the floating UpdatedMDBC pressure correction. The default preserves the
+existing predictor cache lifetime for other boundary modes.
 """
-function launch_floating_update!(floating, step, g, final::Bool; carried::Bool = false, spring_forces::Bool = true)
+function launch_floating_update!(floating, step, g, final::Bool; carried::Bool = false, spring_forces::Bool = true, cache_derivative::Bool = false)
     spring_forces && !(carried && !final) && launch_floating_springs!(floating,step,final)
     return launch_floating_update!(floating, step, g, final,
-                                   Val(floating_dimension(floating.center)); carried)
+                                   Val(floating_dimension(floating.center)); carried, cache_derivative)
 end
 
-function launch_floating_update!(floating, step, g, final::Bool, ::Val{2}; carried::Bool = false)
+function launch_floating_update!(floating, step, g, final::Bool, ::Val{2}; carried::Bool = false, cache_derivative::Bool = false)
     floating.nbodies == 0 && return nothing
     T = eltype(floating.force)
     f = floating
     device = (; f.nbodies, f.frozen, f.constraints, f.force, f.pause, f.mass, f.inertia, f.center, f.center_n, f.center_half,
                 f.velocity, f.velocity_half, f.omega, f.omega_half, f.angle, f.turn, f.rotation,
                 f.acceleration, f.angular_acceleration, f.load_force, f.load_torque)
-    @cuda threads=128 blocks=cld(Int(f.nbodies), 128) floating_update_kernel!(device, step, T(g), Val(2), Val(final), Val(carried))
+    @cuda threads=128 blocks=cld(Int(f.nbodies), 128) floating_update_kernel!(device, step, T(g), Val(2), Val(final), Val(carried), Val(cache_derivative))
     return nothing
 end
 
-function launch_floating_update!(floating, step, g, final::Bool, ::Val{3}; carried::Bool = false)
+function launch_floating_update!(floating, step, g, final::Bool, ::Val{3}; carried::Bool = false, cache_derivative::Bool = false)
     floating.nbodies == 0 && return nothing
     T = eltype(floating.force)
     f = floating
@@ -663,7 +666,7 @@ function launch_floating_update!(floating, step, g, final::Bool, ::Val{3}; carri
                 f.center, f.center_n, f.center_half, f.velocity, f.velocity_half,
                 f.omega, f.omega_half, f.orientation, f.orientation_half, f.turn, f.rotation,
                 f.acceleration, f.angular_acceleration, f.load_force, f.load_torque)
-    @cuda threads=128 blocks=cld(Int(f.nbodies), 128) floating_update_kernel!(device, step, T(g), Val(3), Val(final), Val(carried))
+    @cuda threads=128 blocks=cld(Int(f.nbodies), 128) floating_update_kernel!(device, step, T(g), Val(3), Val(final), Val(carried), Val(cache_derivative))
     return nothing
 end
 

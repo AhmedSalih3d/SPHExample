@@ -8,7 +8,7 @@ using ..Constraints: FloatingConstraints, LinearSpring, CoulombDamper
 
 # Export relevant types and structs
 export ParticleType, SPHGeometry, particle_struct_array, Fluid, Fixed, Moving, Floating, Frozen,
-       MotionDetails, FloatingDetails, FloatingConstraints, LinearSpring, CoulombDamper, GravityFactorValue, MotionLimiterValue, is_wall
+       MotionDetails, FloatingDetails, FloatingConstraints, LinearSpring, CoulombDamper, GravityFactorValue, MotionLimiterValue, is_wall, is_pressure_boundary
 
 # Use the existing @enum for ParticleType
 @enum ParticleType::UInt8 begin
@@ -32,6 +32,9 @@ Whether a particle type denotes a prescribed boundary (`Fixed` or `Moving`),
 as opposed to a fluid or force-responsive floating body.
 """
 @inline is_wall(type::ParticleType) = (type == Fixed) | (type == Moving)
+
+"Whether a particle owns a cloned-pressure boundary state, including a floating body."
+@inline is_pressure_boundary(type::ParticleType) = is_wall(type) | (type == Floating)
 
 # Define a struct to store motion details, with parametric dimensions and floating point type
 """

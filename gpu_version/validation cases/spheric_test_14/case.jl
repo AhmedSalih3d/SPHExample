@@ -18,7 +18,8 @@ end
 
 function sample_geometry(release, constants::SimulationConstants{T}, kernel; dx, half_width, depth,
                          wall_top_z = 0.2, pause_time = 0.0, boundary_mode = NoMDBC) where {T}
-    boundary_mode in (NoMDBC, SimpleMDBC) || throw(ArgumentError("Floating bodies support NoMDBC or SimpleMDBC; UpdatedMDBC is unsupported"))
+    boundary_mode in (NoMDBC, SimpleMDBC, UpdatedMDBC, UpdatedMDBCWithImpedance) ||
+        throw(ArgumentError("Unsupported floating boundary mode"))
     all(isfinite, (dx, half_width, depth, wall_top_z)) && dx > 0 && half_width >= 0.8 && depth > 0 && wall_top_z >= 0 ||
         throw(ArgumentError("Invalid spacing or tank dimensions"))
     nx, nz = round(Int, 2half_width / dx), round(Int, depth / dx)
@@ -50,7 +51,7 @@ function sample_geometry(release, constants::SimulationConstants{T}, kernel; dx,
     boundary_geometry(points, ghosts, type, group; kwargs...) = SPHGeometry{3,T}(;
         Particles = StructArray((; Position = points, Density = T.(density(points)),
             GhostPoints = ghosts, GhostNormals = ghosts .- points)), Type = type, GroupMarker = group, kwargs...)
-    tank, solid = if boundary_mode === SimpleMDBC
+    tank, solid = if boundary_mode !== NoMDBC
         wall_ghosts = [SVector(ntuple(d -> d < 3 ?
             (p[d] < -half_width ? -2half_width-p[d] : p[d] > half_width ? 2half_width-p[d] : p[d]) :
             (p[d] < -depth ? -2depth-p[d] : p[d]), 3)) for p in wall]

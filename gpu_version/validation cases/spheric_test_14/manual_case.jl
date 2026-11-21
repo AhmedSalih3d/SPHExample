@@ -17,7 +17,7 @@ function run_manual_case(release; visualize_in_paraview)
     output_interval = 0.005 # 200 Hz, matching the experiment.
     pause_time = 0.0 # Optional initial hold; the benchmark releases at t = 0.
 
-    boundary_mode = SimpleMDBC # Use NoMDBC for the matched DBC control.
+    boundary_mode = SimpleMDBC # Or UpdatedMDBC; use NoMDBC for the matched DBC control.
     kernel_family = WendlandC2()
     kernel_h_factor = 2.0
     SimConstants = SimulationConstants{FloatType}(Dimensions;
@@ -31,7 +31,8 @@ function run_manual_case(release; visualize_in_paraview)
     save_location = joinpath(@__DIR__, "runs", run_name, release_name)
     result_location = joinpath(@__DIR__, "results", run_name)
 
-    boundary_mode in (NoMDBC, SimpleMDBC) || throw(ArgumentError("Floating bodies support NoMDBC or SimpleMDBC"))
+    boundary_mode in (NoMDBC, SimpleMDBC, UpdatedMDBC, UpdatedMDBCWithImpedance) ||
+        throw(ArgumentError("Unsupported floating boundary mode"))
     all(isfinite, (dx, depth, half_width, wall_top_z, duration, output_interval, pause_time, sponge_rate, kernel_h_factor)) &&
         dx > 0 && depth > 0 && half_width >= 0.8 && wall_top_z >= 0 && duration > 0 &&
         output_interval > 0 && pause_time >= 0 && sponge_rate >= 0 && kernel_h_factor > 0 ||
@@ -73,7 +74,7 @@ function run_manual_case(release; visualize_in_paraview)
     )
     density(points) = hydrostatic_density(points, SimConstants; water_level = 0.0)
 
-    if boundary_mode === SimpleMDBC
+    if boundary_mode !== NoMDBC
         # Reflect tank ghosts across its physical side and bottom planes.
         function wall_ghost(point)
             surface = SVector(

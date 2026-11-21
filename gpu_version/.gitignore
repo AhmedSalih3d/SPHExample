@@ -26,3 +26,4 @@ julia-*.tar.gz
 
 # Short 3D validation smoke runs; complete study histories are tracked.
 /validation cases/spheric_test_14/results/full_mdbc_smoke/
+/validation cases/spheric_test_14/results/floating_updated_smoke/

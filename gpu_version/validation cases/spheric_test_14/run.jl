@@ -15,13 +15,14 @@ end
 function main(args)
     visualize = "--no-paraview" ∉ args
     positional = filter(!=("--no-paraview"), args)
-    length(positional) <= 5 || error("Usage: run.jl [dx] [half-width] [duration] [release or all] [SimpleMDBC or NoMDBC] [--no-paraview]")
+    length(positional) <= 5 || error("Usage: run.jl [dx] [half-width] [duration] [release or all] [boundary mode] [--no-paraview]")
     dx, half_width, duration = (i <= length(positional) ? parse(Float64, positional[i]) : value
         for (i, value) in enumerate((0.025, 1.2, 4.5)))
     cases = length(positional) >= 4 && positional[4] != "all" ? filter(r -> r.name == positional[4], RELEASES) : RELEASES
     mode_name = length(positional) == 5 ? positional[5] : "SimpleMDBC"
-    boundary_mode = mode_name == "SimpleMDBC" ? SimpleMDBC : mode_name == "NoMDBC" ? NoMDBC :
-        throw(ArgumentError("Boundary mode must be SimpleMDBC or NoMDBC"))
+    modes = Dict(string(nameof(mode)) => mode for mode in (SimpleMDBC,NoMDBC,UpdatedMDBC,UpdatedMDBCWithImpedance))
+    haskey(modes,mode_name) || throw(ArgumentError("Choose SimpleMDBC, NoMDBC, UpdatedMDBC or experimental UpdatedMDBCWithImpedance"))
+    boundary_mode = modes[mode_name]
     isempty(cases) && error("Release must be float1_down, float1_up or float2_down")
 
     first_state = nothing

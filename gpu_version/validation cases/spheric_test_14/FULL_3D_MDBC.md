@@ -1,5 +1,9 @@
 # Full 3D Test 14 with floating mDBC
 
+The subsequent [floating UpdatedMDBC study](FLOATING_UPDATED_MDBC.md) adds an
+optional experimental free-body pressure-cloning/no-slip mode. The SimpleMDBC
+results below remain the baseline; its defaults are retained.
+
 The updated heave configuration now runs the complete 3D float profiles from the
 [SPHERIC Test 14 specification](https://www.spheric-sph.org/tests/test-14), with
 the experimental masses and centers of gravity. Surge, sway, heave, roll, pitch
@@ -37,7 +41,8 @@ rotation at predictor and accepted stages using the GPU fix described in
 
 The boundary mode is the existing density-extrapolation `SimpleMDBC`, including
 its existing unsupported-ghost fallback. Floating `UpdatedMDBC` pressure cloning
-remains unsupported and is rejected explicitly. This is not a claim of identical
+was unsupported in these baseline runs; see the follow-up for the new experimental
+free-body extension and its limitations. This is not a claim of identical
 boundary treatment to current DualSPHysics.
 
 The 16 m planar domain was **not** silently copied into 3D: at 12.5 mm spacing

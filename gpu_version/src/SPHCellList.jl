@@ -1152,6 +1152,14 @@ function floating_mdbc_pose(ctx, half::Bool)
     return (; groups = ctx.gpu.GroupMarker, body = f.body, orientation = half ? f.orientation_half : f.orientation)
 end
 
+function floating_mdbc_state(ctx, half::Bool)
+    f = get(ctx, :floating, nothing)
+    (f === nothing || !f.active) && return nothing
+    return (; pose = floating_mdbc_pose(ctx, half), center = half ? f.center_half : f.center,
+        omega = half ? f.omega_half : f.omega, f.acceleration, f.angular_acceleration,
+        f.pause, fraction = half ? 0.5 : 0.0)
+end
+
 function enqueue_boundary_correction!(ctx, step, half::Bool; prepared::Bool = false)
     (; gpu, sup, cl, SimKernel, SimConstants, threads, lanes) = ctx
     density = half ? sup.ρₙ⁺ : gpu.Density
@@ -1176,7 +1184,7 @@ function enqueue_boundary_correction!(ctx, step, half::Bool; prepared::Bool = fa
             compact_ghosts = Val(gpu.BoundarySlot !== nothing), inverse_density = sup.InvDensity,
             pressure = sup.Pressure, periodicity = cl.periodicity, periodic_bounds = periodic_bounds(sup),
             mirror_viscosity = mirror_wall_viscosity(boundary_mode),
-            normal_impedance = normal_wall_impedance(boundary_mode))
+            normal_impedance = normal_wall_impedance(boundary_mode), floating_state = floating_mdbc_state(ctx, half))
     else
         launch_mdbc!(density, position, gpu.GhostPoints, gpu.GhostIndex, gpu.Type,
             cl.CellStart, cl.grid_dev, step, SimKernel, SimConstants; threads, lanes, pos_cells = pairs,
@@ -1338,7 +1346,8 @@ function enqueue_step!(ctx, timed::Bool; finish_current::Bool = true, finish_nex
                                         floating.center, SimConstants.m₀, state)
             end
             prepare_rigid_stage!(floating, state)
-            launch_floating_update!(floating, state, SimConstants.g, false; carried = SingleNeighbor)
+            launch_floating_update!(floating, state, SimConstants.g, false; carried = SingleNeighbor,
+                cache_derivative = get(ctx, :boundary_mode, NoMDBC()) isa ClonedPressureBoundary)
             solve_rigid_stage!(floating, gpu, cl, SimKernel, state, false)
         end
     end
@@ -2121,7 +2130,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
 
     if BMode !== NoMDBC
         if ParticleNormalsPath === nothing
-            all(geom -> !is_wall(geom.Type) ||
+            all(geom -> !is_pressure_boundary(geom.Type) ||
                 (hasproperty(geom.Particles, :GhostPoints) &&
                  hasproperty(geom.Particles, :GhostNormals)), SimGeometry) ||
                 throw(ArgumentError("$(BMode) requires ParticleNormalsPath or geometry ghost fields."))
@@ -2135,7 +2144,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                 key(x) = ntuple(d -> round(Int, x[d] / tolerance), Dimensions)
                 lookup = Dict(key(x) => i for (i, x) in enumerate(points))
                 for i in eachindex(SimParticles.Position)
-                    is_wall(SimParticles.Type[i]) || continue
+                    is_pressure_boundary(SimParticles.Type[i]) || continue
                     j = get(lookup, key(SimParticles.Position[i]), 0)
                     j > 0 || error("Boundary normals do not match generated particles.")
                     SimParticles.GhostPoints[i] = ghosts[j]
@@ -2151,9 +2160,16 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     end
 
     if BMode <: ClonedPressureBoundary
-        any(==(Floating), SimParticles.Type) && error("$(BMode) does not support floating bodies.")
+        if any(==(Floating), SimParticles.Type)
+            BMode in (UpdatedMDBC, UpdatedMDBCWithImpedance) ||
+                throw(ArgumentError("Floating cloned-pressure boundaries currently support UpdatedMDBC or UpdatedMDBCWithImpedance"))
+            SimRigidBodyDynamics === nothing && SimMetaData.Periodicity === nothing ||
+                throw(ArgumentError("Floating cloned-pressure boundaries currently require nonperiodic ordinary rigid bodies"))
+            all(g -> g.Type != Floating || g.Floating.Constraints === nothing || !g.Floating.Constraints.active, SimGeometry) ||
+                throw(ArgumentError("Floating cloned-pressure boundaries currently require free rigid motion (PauseTime is supported)"))
+        end
         for i in eachindex(SimParticles.Type)
-            is_wall(SimParticles.Type[i]) || continue
+            is_pressure_boundary(SimParticles.Type[i]) || continue
             normal = SimParticles.GhostNormals[i]
             ghost = SimParticles.GhostPoints[i]
             all(isfinite, normal) && norm(normal) > zero(FloatType) && all(isfinite, ghost) && !iszero(ghost) ||

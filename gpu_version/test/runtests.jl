@@ -15,6 +15,7 @@ include(joinpath(@__DIR__, "effective_configuration.jl"))
 
 include(joinpath(@__DIR__, "updated_mdbc.jl"))
 include(joinpath(@__DIR__, "floating_mdbc.jl"))
+include(joinpath(@__DIR__, "floating_updated_mdbc.jl"))
 include(joinpath(@__DIR__, "..", "validation cases", "spheric_test_14", "test_planar_mdbc.jl"))
 include(joinpath(@__DIR__, "..", "validation cases", "spheric_test_14", "test_full_mdbc.jl"))
 include(joinpath(@__DIR__, "dbc_plus.jl"))
