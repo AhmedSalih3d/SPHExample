@@ -8,10 +8,12 @@ are not used. Inertia remains estimated from the sampled body particles.
 
 ## Settings carried into the full geometry
 
-Both [manual_case.jl](manual_case.jl) and [run.jl](run.jl) use the common,
-definitions-only [full_case.jl](full_case.jl) factory. Defaults are:
+[manual_case.jl](manual_case.jl) contains its editable settings, particle sampling,
+boundary ghosts, floating body and solver configuration directly, following the
+layout of the 2D manual case. [run.jl](run.jl) and the automated study retain the
+definitions-only [full_case.jl](full_case.jl) factory. The completed study used:
 
-| Setting | Full 3D default |
+| Setting | Completed 3D study |
 | --- | --- |
 | Boundary | `SimpleMDBC`, with `NoMDBC` available as a matched control |
 | Float masses | Float 1: 9.75 kg; Float 2: 23.42 kg |
@@ -109,7 +111,7 @@ domain, sound speed, kernel, physical models and sponge remain editable. Keep
 `pause_time=0` for the benchmark release-time comparison; a nonzero hold changes
 the release protocol and requires corresponding time alignment.
 
-The CLI uses the same factory:
+The CLI uses the factory retained for automated runs:
 
 ```powershell
 julia --compiled-modules=existing --project=. -t 2,0 "validation cases/spheric_test_14/run.jl" 0.025 1.2 4.5 all SimpleMDBC --no-paraview
