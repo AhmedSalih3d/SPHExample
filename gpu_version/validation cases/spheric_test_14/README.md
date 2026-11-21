@@ -365,3 +365,19 @@ the 4.8 m tank, compared with 52.77 mm at 3.6 m and 62.36 mm measured.
 The mean heave over the final second moved closer to the experiment.
 The decay does not improve monotonically as the wall and sponge move outward
 together. [Float 2 tank-width comparison](results/benchmark_3d_48m/comparison.png)
+
+[Stacked benchmark for all three releases](results/benchmark_3d_48m/heave_comparison.png)
+and [benchmark metrics](results/benchmark_3d_48m/metrics.csv). These are the
+uniform 25 mm GPU baselines. The original run wall times were recorded on
+an NVIDIA GeForce RTX 5080.
+
+| Release | GPU steps | Run wall time (s) |
+| --- | ---: | ---: |
+| Float 1 down | 14,367 | 471.31 |
+| Float 1 up | 12,167 | 388.22 |
+| Float 2 down | 12,517 | 398.47 |
+
+The refinement geometry supports construction of a 3D box and sampling
+its six faces. The solver still requires 2D variable resolution. A 3D
+refinement benchmark requires GPU interface coupling and UpdatedMDBC force
+validation.

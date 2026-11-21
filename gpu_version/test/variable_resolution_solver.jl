@@ -112,7 +112,7 @@ end
     @test length(sprint(show,config)) < 500
 
     meta_shift = SimulationMetaData{2,Float32,PlanarShifting,NoKernelOutput,SimpleMDBC,NoLog}(
-        SimulationName="metadata_shift",SaveLocation=".",VariableResolution=config,ShiftingFreeSurfaceThreshold=0.0)
+        SimulationName="metadata_shift",SaveLocation=".",VariableResolution=config)
     @test meta_shift.VariableResolution === config
     bg_coarse = SimulationConstants{Float32}(2; dx=case.coarse.constants.dx, c₀=case.coarse.constants.c₀, BackgroundPressure=1500)
     fine_bg, _ = VR.fine_resolution_parameters(config, bg_coarse, case.coarse.kernel)

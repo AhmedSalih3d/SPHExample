@@ -32,6 +32,23 @@ end
     @test_throws ArgumentError VR.resolution_limits(VariableResolutionBox((0,0),(0.1,0.1)),0.1,0.05)
 end
 
+@testset "3D refinement box interface quadrature" begin
+    box = VariableResolutionBox((0, 0, 0), (1, 2, 3))
+    limits = VR.resolution_limits(box, 0.05, 0.025)
+    for fine in (false, true)
+        lo = fine ? limits.fine_outer_lo : limits.coarse_inner_lo
+        hi = fine ? limits.fine_outer_hi : limits.coarse_inner_hi
+        samples = VR.interface_points(limits, fine, 0.1)
+        lengths = hi - lo
+        @test sum(samples.widths) ≈ 2 * (lengths[1]*lengths[2] + lengths[1]*lengths[3] + lengths[2]*lengths[3])
+        @test all(isapprox.(sum(samples.normals .* samples.widths), 0; atol = 1e-12))
+        for (point, normal) in zip(samples.points, samples.normals)
+            axis = findfirst(!iszero, normal)
+            @test point[axis] == (normal[axis] == (fine ? 1 : -1) ? hi[axis] : lo[axis])
+        end
+    end
+end
+
 @testset "full Fourtakas diffusion remains active beside a wall" begin
     @test !FourtakasDensityDiffusion().full
     @test FourtakasDensityDiffusion(full = true).full

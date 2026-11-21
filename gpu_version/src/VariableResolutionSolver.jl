@@ -30,7 +30,8 @@ end
 
 function validate_resolution_solver(meta::SimulationMetaData{D,T,S,K,B},geometry,particles,
         viscosity,diffusion,scheme,measurements,external,rotation,motion) where {D,T,S,K,B}
-    D == 2 && S in (NoShifting,PlanarShifting) && K === NoKernelOutput && B in (NoMDBC,SimpleMDBC) ||
+    D == 2 && meta.VariableResolution.region isa VariableResolutionBox{2} &&
+        S in (NoShifting,PlanarShifting) && K === NoKernelOutput && B in (NoMDBC,SimpleMDBC) ||
         throw(ArgumentError("variable resolution requires 2D NoShifting or PlanarShifting, NoKernelOutput and NoMDBC or SimpleMDBC metadata modes"))
     scheme isa Union{SymplecticTimeStepping,SingleNeighborTimeStepping,DualSPHysicsSymplectic} ||
         throw(ArgumentError("unsupported variable-resolution timestep scheme: $(typeof(scheme))"))

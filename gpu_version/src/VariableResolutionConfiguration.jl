@@ -8,25 +8,29 @@ export VariableResolutionBox, VariableResolutionConfig
 """
     VariableResolutionBox(lower, upper; ratio=2, buffer_h=2, overlap_h=2)
 
-One reference refinement rectangle in 2D, stationary unless its configuration
+One reference refinement box, stationary unless its configuration
 sets `follow` to a body marker. The fine spacing is the coarse
 spacing divided by `ratio`. Buffer and overlap widths are measured in each
 domain's smoothing length and the fine smoothing length, respectively.
+The CUDA solver currently accepts two-dimensional boxes.
 """
-struct VariableResolutionBox
-    lower::SVector{2,Float64}
-    upper::SVector{2,Float64}
+struct VariableResolutionBox{D}
+    lower::SVector{D,Float64}
+    upper::SVector{D,Float64}
     ratio::Int
     buffer_h::Float64
     overlap_h::Float64
     function VariableResolutionBox(lower, upper; ratio=2, buffer_h=2, overlap_h=2)
-        lo, hi = SVector{2,Float64}(lower), SVector{2,Float64}(upper)
+        dimension = length(lower)
+        dimension in (2, 3) && length(upper) == dimension ||
+            throw(ArgumentError("refinement bounds must both have dimension 2 or 3"))
+        lo, hi = SVector{dimension,Float64}(lower), SVector{dimension,Float64}(upper)
         all(isfinite,lo) && all(isfinite,hi) && all(hi .> lo) ||
             throw(ArgumentError("refinement bounds must be finite and strictly increasing"))
         ratio isa Integer && 2 <= ratio <= 4 || throw(ArgumentError("ratio must be an integer from 2 to 4"))
         isfinite(buffer_h) && buffer_h >= 2 || throw(ArgumentError("buffer_h must be finite and at least 2"))
         isfinite(overlap_h) && overlap_h >= 2 || throw(ArgumentError("overlap_h must be finite and at least 2"))
-        new(lo,hi,ratio,buffer_h,overlap_h)
+        new{dimension}(lo,hi,ratio,buffer_h,overlap_h)
     end
 end
 
@@ -76,8 +80,8 @@ Both ordinary timestep schemes reuse the solver's integration kernels. Because
 refinement rebuilds the domains each step, single-neighbor stepping refreshes
 the accepted derivative each step, following the ordinary rebuild contract.
 """
-struct VariableResolutionConfig{G,C,K,CH}
-    region::VariableResolutionBox
+struct VariableResolutionConfig{G,C,K,CH,D}
+    region::VariableResolutionBox{D}
     fine_geometry::G
     fine_constants::C
     fine_kernel::K
@@ -96,6 +100,8 @@ function VariableResolutionConfig(region::VariableResolutionBox; fine_geometry,
     follow === nothing || (follow isa Integer && !(follow isa Bool) && 0 < follow <= typemax(Int)) ||
         throw(ArgumentError("follow must be a positive body GroupMarker or nothing"))
     child === nothing || child isa VariableResolutionConfig || throw(ArgumentError("child must be a VariableResolutionConfig or nothing"))
+    child === nothing || typeof(child.region) === typeof(region) ||
+        throw(ArgumentError("nested refinement boxes must have the same dimension"))
     child === nothing || child.follow == follow || throw(ArgumentError("nested regions must follow the same body, or all remain stationary"))
     child === nothing || all(child.region.lower .> region.lower) && all(child.region.upper .< region.upper) ||
         throw(ArgumentError("a child refinement rectangle must lie strictly inside its parent"))

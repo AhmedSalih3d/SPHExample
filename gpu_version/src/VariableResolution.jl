@@ -63,22 +63,24 @@ end
         inside_box(x, limits.coarse_inner_lo, limits.coarse_inner_hi)
 end
 
-"Midpoint quadrature on four faces; normals point out of the receiving domain."
+"Midpoint quadrature on the box boundary with outward receiving-domain normals."
 function interface_points(limits, fine, dx)
     limits = resolution_base(limits)
     lo = fine ? limits.fine_outer_lo : limits.coarse_inner_lo
     hi = fine ? limits.fine_outer_hi : limits.coarse_inner_hi
-    points, normals, widths = SVector{2,Float64}[], SVector{2,Float64}[], Float64[]
-    for axis in 1:2, side in (-1, 1)
-        tangent = 3 - axis
-        count = max(1, round(Int, (hi[tangent] - lo[tangent]) / dx))
-        width = (hi[tangent] - lo[tangent]) / count
-        normal = SVector{2,Float64}(ntuple(d -> d == axis ? side * (fine ? 1 : -1) : 0, 2))
-        for k in 1:count
-            point = SVector{2,Float64}(ntuple(d -> d == axis ? (side < 0 ? lo[d] : hi[d]) : lo[d] + (k - 0.5) * width, 2))
+    dimension = length(lo)
+    points, normals, widths = SVector{dimension,Float64}[], SVector{dimension,Float64}[], Float64[]
+    for axis in 1:dimension, side in (-1, 1)
+        counts = ntuple(d -> d == axis ? 1 : max(1, round(Int, (hi[d] - lo[d]) / dx)), dimension)
+        spacing = ntuple(d -> d == axis ? 1.0 : (hi[d] - lo[d]) / counts[d], dimension)
+        face_measure = prod(spacing)
+        normal = SVector{dimension,Float64}(ntuple(d -> d == axis ? side * (fine ? 1 : -1) : 0, dimension))
+        for index in CartesianIndices(counts)
+            point = SVector{dimension,Float64}(ntuple(d -> d == axis ? (side < 0 ? lo[d] : hi[d]) :
+                lo[d] + (index[d] - 0.5) * spacing[d], dimension))
             push!(points, point)
             push!(normals, normal)
-            push!(widths, width)
+            push!(widths, face_measure)
         end
     end
     return (; points, normals, widths)
