@@ -88,7 +88,7 @@ function float_surface_projection(p, release, base)
     return SVector(q[1] * direction[1], q[1] * direction[2], q[2])
 end
 
-function run_case(release, case; output, vertical_axis = 3)
+function run_case(release, case; output, vertical_axis = 3, state_sampling = nothing)
     save = case.metadata.SaveLocation
     (; dx, half_width, depth, duration) = case
     isfile(joinpath(save, "FreeHeave.vtkhdf")) && error("Run already exists at $save")
@@ -103,7 +103,7 @@ function run_case(release, case; output, vertical_axis = 3)
         RunSimulation(SimGeometry = case.geometry, SimMetaData = case.metadata,
             SimConstants = case.constants, SimKernel = case.kernel, SimLogger = logger, SimParticles = host,
             SimViscosity = case.viscosity, SimDensityDiffusion = case.diffusion,
-            SimTimeStepping = case.stepping, SimDamping = case.damping)
+            SimTimeStepping = case.stepping, SimDamping = case.damping, SimStateSampling = state_sampling)
     finally
         isopen(logger.LoggerIo) && close(logger.LoggerIo)
     end
@@ -136,6 +136,10 @@ function run_case(release, case; output, vertical_axis = 3)
             "complete" => result.final_state.complete, "frozen_particles" => result.diagnostics.frozen_particles))
         for key in (:sponge_width, :sponge_rate, :pause_time, :release_time)
             hasproperty(case, key) && (config[string(key)] = getproperty(case, key))
+        end
+        if state_sampling !== nothing && get(state_sampling, :floating_history, false)
+            config["particle_output_interval_s"] = first(case.metadata.OutputTimes)
+            config["floating_output_interval_s"] = first(state_sampling.times)
         end
         if hasproperty(case, :release_time)
             config["artificial_viscosity_coefficient"] = Float64(case.constants.α)

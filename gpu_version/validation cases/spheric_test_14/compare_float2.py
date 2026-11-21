@@ -18,12 +18,15 @@ def compare(study):
     study = results / study
     reference = np.loadtxt(ROOT / "reference" / "Fl2-0p088.txt")
     baseline = results / "floating_updated_study" / "UpdatedMDBC"
+    wide = results / "benchmark_3d_48m"
+    comparison_output = wide if (wide / "float2_down.toml").exists() else study
     cases = [("Experiment", reference)]
     for label, folder in [("Nominal draft, 2.4 m tank", baseline),
                           ("Held-load draft, 2.4 m tank", study / "release"),
                           ("Held-load draft, 3.6 m tank", study / "wide_release"),
-                          ("Hydrostatic draft, 3.6 m tank", study / "wide_hydrostatic")]:
-        if folder.name.startswith("wide_") and not (folder / "float2_down.toml").exists():
+                          ("Hydrostatic draft, 3.6 m tank", study / "wide_hydrostatic"),
+                          ("Held-load draft, 4.8 m tank", wide)]:
+        if folder.name != "release" and folder != baseline and not (folder / "float2_down.toml").exists():
             continue
         raw = np.genfromtxt(folder / "float2_down.csv", names=True, delimiter=",")
         cases.append((label, np.column_stack((raw["time"], raw["heave_mm"]))))
@@ -50,9 +53,9 @@ def compare(study):
     for ax in (heave, error):
         ax.axhline(0, color="grey", lw=0.6)
         ax.grid(alpha=0.2)
-    fig.savefig(study / "comparison.png", dpi=160)
+    fig.savefig(comparison_output / "comparison.png", dpi=160)
     plt.close(fig)
-    with (study / "comparison.csv").open("w", newline="") as stream:
+    with (comparison_output / "comparison.csv").open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=rows[0])
         writer.writeheader()
         writer.writerows(rows)

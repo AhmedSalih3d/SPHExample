@@ -327,3 +327,41 @@ early response with the experiment. A spacing sweep with the same
 initialization would establish numerical convergence.
 
 [Release comparison metrics](results/benchmark_3d_25mm_hold_725ms/release_physics.csv)
+
+## 4.8 m tank with separate fluid and force output
+
+This 3D benchmark uses the 25 mm spacing, 0.8 m depth and UpdatedMDBC
+setup. The sponge spans radii 1.9 to 2.4 m. Float 1 down uses the 0.725 s
+hold. Float 1 up and Float 2 down release immediately. Float 2 uses the
+219.89 mm draft inferred from held loads on the 25 mm grid in the 2.4 m
+tank. The 4.8 m runs retain that draft for comparison with the 3.6 m run.
+
+Fluid VTKHDF snapshots are written every 0.1 s of solver time, including
+the initial and final states. The held case ends at 5.225 s. The GPU
+records body motion and loads independently every 0.005 s. The plotted
+forces are SPH fluid loads in world coordinates, with body weight drawn as
+a separate reference. Negative time in the Float 1 down force graph is
+the hold interval.
+
+```powershell
+julia --project=. -t 2,0 "validation cases/spheric_test_14/benchmark_wide_tank.jl"
+python "validation cases/spheric_test_14/plot_wide_tank_forces.py"
+```
+
+[Float 1 down force](results/benchmark_3d_48m/float1_down_forces.png),
+[Float 1 up force](results/benchmark_3d_48m/float1_up_forces.png),
+[Float 2 down force](results/benchmark_3d_48m/float2_down_forces.png).
+The same directory contains the sampled body CSVs, heave comparisons and
+run configurations. The particle histories are under
+`runs/benchmark_3d_48m`.
+
+All three releases completed without frozen particles. The VTKHDF files
+contain 54, 46 and 46 fluid frames for Float 1 down, Float 1 up and Float 2
+down. The corresponding body histories contain 1,046, 901 and 901 samples.
+Heave RMSE on the release clock was 13.27, 5.98 and 7.05 mm respectively.
+
+For Float 2 at the held-load draft, the fourth-cycle swing was 37.83 mm in
+the 4.8 m tank, compared with 52.77 mm at 3.6 m and 62.36 mm measured.
+The mean heave over the final second moved closer to the experiment.
+The decay does not improve monotonically as the wall and sponge move outward
+together. [Float 2 tank-width comparison](results/benchmark_3d_48m/comparison.png)

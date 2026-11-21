@@ -1632,7 +1632,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                         motion, state::StepState{FloatType};
                         floating = nothing, external_forces = (), damping = (), rotation = nothing, open_boundary = nothing,logger = nothing, diagnostics = nothing,
                         divergence_cleaning = nothing, density_observer = nothing, output_clip_times = nothing,
-                        sample_deadline = Inf) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
+                        sample_deadline = Inf, clip_to_sample = false) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
                                                    SDD <: SPHDensityDiffusion, SV <: SPHViscosity}
     validate_shifting(SMode, SimMetaData.TimeSteppingMode, SimMetaData.VariableResolution)
     if divergence_cleaning !== nothing
@@ -1737,6 +1737,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     frame_time = next_output_time(SimMetaData)
     t_out = min(frame_time, sample_deadline)
     clip_time = output_clip_times === nothing ? frame_time : output_clip_times[searchsortedfirst(output_clip_times, frame_time)]
+    clip_to_sample && (clip_time = min(clip_time, sample_deadline))
     set_output_time!(state, t_out; clip_timestep = SimMetaData.GPUClipTimeStepToOutput, clip_time)
 
     if SingleNeighbor && interaction_mode_changed && state.primed && cl.nrebuilds > 0
@@ -1987,6 +1988,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     ) where {Dimensions, FloatType, SMode, KMode, BMode, LMode, SV <: SPHViscosity, SDD <: SPHDensityDiffusion}
 
     validate_shifting(SMode, SimTimeStepping, SimMetaData.VariableResolution)
+    sample_floating = SimStateSampling !== nothing && get(SimStateSampling, :floating_history, false)
     if SimStateSampling !== nothing
         times = SimStateSampling.times
         SimMetaData.VariableResolution === nothing && !isempty(times) &&
@@ -2418,7 +2420,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             apply_download!(dl, SimParticles, job.grid;
                 fields = measurement_fields === nothing ? () : measurement_fields)
         end
-        log_floating(job.time, dl.floating)
+        sample_floating || log_floating(job.time, dl.floating)
         SimMetaData.IndexCounter = length(UniqueCells)
         output.save_particles(job.counter, job.time; download = dl, staged_slot = direct_writer_slabs)
         if SimMetaData.ExportGridCells
@@ -2580,7 +2582,9 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         end
         sample_times = SimStateSampling === nothing ? () : SimStateSampling.times
         sample_index = 1
-        SimStateSampling === nothing || SimStateSampling.sample(SimMetaData.TotalTime, SimParticles)
+        if SimStateSampling !== nothing && !sample_floating
+            SimStateSampling.sample(SimMetaData.TotalTime, SimParticles)
+        end
         while true
             frame_deadline = next_output_time(SimMetaData)
             sample_deadline = sample_index <= length(sample_times) ? sample_times[sample_index] : Inf
@@ -2588,10 +2592,14 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                                                                  SimConstants, gpu, cl, sup, red, motion, state;
                                                                  floating = floating, external_forces, damping, divergence_cleaning, rotation, open_boundary,logger = SimLogger, diagnostics,
                                                                  density_observer = SimDensityObserver, output_clip_times = SimOutputClipTimes,
-                                                                 sample_deadline)
+                                                                 sample_deadline, clip_to_sample = sample_floating)
             accepted_time = SimMetaData.TotalTime
             if sample_index <= length(sample_times) && accepted_time >= sample_deadline
-                SimStateSampling.sample(accepted_time, gpu)
+                if sample_floating
+                    floating.active && log_floating(accepted_time, floating_state(floating))
+                else
+                    SimStateSampling.sample(accepted_time, gpu)
+                end
                 while sample_index <= length(sample_times) && sample_times[sample_index] <= accepted_time
                     sample_index += 1
                 end
