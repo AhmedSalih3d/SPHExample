@@ -260,3 +260,42 @@ means from the archive. The text files do not include the ranges shown on the
 benchmark page.
 
 [All three heave comparisons](results/planar_dp0.0125_half8.0_t4.5_200Hz/heave_comparison.png)
+
+## 3D benchmark with experimental onset timing
+
+The benchmark reruns all three releases at 25 mm spacing in the 2.4 m tank
+with UpdatedMDBC and laminar viscosity. It saves the 200 Hz heave, rigid-body
+history and settings for each release. The timing diagnostic takes the median
+of the experimental minus simulated times to move 1, 5 and 10 mm from the
+initial height in the release direction. Positive delay means the experiment
+moves later. The aligned and raw errors are also reported over identical
+samples in the overlap window. Negative alignment values are diagnostic.
+The separate 60 ms held Float 1 control uses solver time so the held interval
+appears in the comparison with the experiment.
+
+From the GPU package directory, run the following commands.
+
+```powershell
+julia --project=. -t 2,0 "validation cases/spheric_test_14/benchmark_3d.jl"
+julia --project=. -t 2,0 "validation cases/spheric_test_14/benchmark_3d.jl" --hold
+python "validation cases/spheric_test_14/benchmark_onset.py"
+```
+
+[Benchmark plots](results/benchmark_3d_25mm/onset_comparison.png)
+and [onset and error metrics](results/benchmark_3d_25mm/onset_metrics.csv).
+
+For Float 2, the held-load draft improved RMSE from 11.59 to 9.44 mm in the
+2.4 m tank. Keeping that draft and moving the wall and sponge outward in the
+3.6 m tank reduced RMSE to 6.34 mm and increased the fourth-cycle swing from
+27.60 to 52.77 mm. The measured swing is 62.36 mm. The larger tank with the
+continuous-hull hydrostatic draft gave 8.63 mm RMSE and a 57.99 mm fourth-cycle
+swing. [Float 2 comparison](results/float2_equilibrium_half1.2/comparison.png)
+
+Next, repeat the Float 1 downward release with the experimental release
+trigger if the original tracking metadata are available. Compare that timing
+with the 60 ms held-body result and the clock-shift diagnostic. For Float 2,
+widen the domain again at fixed spacing, then refine the particle spacing
+at the widest practical tank size. Repeat the held-force balance at each
+spacing before comparing crest-to-trough amplitude, turning-point timing
+and the late heave offset. Moving the sponge separately from the outer
+wall would distinguish absorption near the float from wall reflections.
