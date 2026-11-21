@@ -34,6 +34,8 @@ def check(launcher):
     layout = GetLayout(view)
     layout.SetSize(1400, 1000)
     assert view.AxesGrid.Visibility == 1
+    assert GetRepresentation(FindSource("Grid distance labels"), view).Visibility == 1
+    assert GetRepresentation(FindSource("Heave ruler (mm, equilibrium zero)"), view).Visibility == 1
     assert GetRepresentation(FindSource("Motion grid (0.1 m)"), view).Visibility == 1
     assert GetRepresentation(FindSource("Fluid particles" if planar else "Rear half of fluid"), view).Visibility == 1
     cursor = FindSource("Animation playhead")
@@ -55,6 +57,15 @@ def check(launcher):
         table = servermanager.Fetch(cursor)
         point = servermanager.Fetch(marker).GetPoint(0)
         expected = interpolate(history, time)
+        pointer = FindSource("Current height on heave ruler")
+        pointer.UpdatePipeline(time)
+        tip = servermanager.Fetch(pointer).GetPoint(1)
+        vertical = 1 if planar else 2
+        assert math.isclose(tip[vertical], point[vertical], abs_tol=1e-10)
+        readout = FindSource("Live heave measurement")
+        readout.UpdatePipeline(time)
+        measurement = servermanager.Fetch(readout).GetColumnByName("Text").GetValue(0)
+        assert f"Heave: {expected:+.1f} mm" in measurement
         assert math.isclose(table.GetColumnByName("time").GetValue(0), time, abs_tol=1e-10)
         assert math.isclose(table.GetColumnByName("Current heave").GetValue(0), expected, abs_tol=1e-8)
         for axis in range(3):
@@ -70,7 +81,7 @@ def check(launcher):
     RenderAllViews()
     SaveScreenshot(str(args.state.with_name(args.state.stem + "_Motion.png")), layout)
     SaveState(str(args.state))
-    print("PASS: fluid and grid visible; time line, heave dot and physical COM synchronize after state reload, including fractional time and reverse seeking.")
+    print("PASS: fluid and labelled grid visible; time cursor, physical COM, ruler pointer and numeric heave synchronize after state reload, including fractional time and reverse seeking.")
 
 
 if __name__ == "__main__":

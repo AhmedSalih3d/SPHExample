@@ -87,6 +87,10 @@ intermediate time, and retain their behavior after saving and reopening the
 The chart includes a small time-axis margin so the vertical line and dot stay
 inside the plot at the first and last frames. Data columns are initialized
 before applying chart-series and particle-selection settings in the GUI.
+The scene grid has numbered x/z coordinates in metres. A separate ruler next
+to the body measures heave in millimetres, with zero at the equilibrium center
+of mass. Its orange pointer follows the current center height. A live readout
+reports signed heave and absolute center height using the saved motion data.
 
 ![Fluid, moving center and synchronized heave cursor](images/paraview_heave_motion.png)
 

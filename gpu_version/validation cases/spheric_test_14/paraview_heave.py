@@ -211,6 +211,103 @@ def line_script(lines):
         """)
 
 
+def scene_measurements(view, centers, simulation, planar):
+    vertical = 1 if planar else 2
+    datum = centers[0][1][vertical] - simulation[0][1] / 1000
+
+    def coordinate(x, z):
+        return (x, z, 0.035) if planar else (x, -0.025, z)
+
+    labels = [(f"{i / 10:g}", coordinate(i / 10 - 0.04, -0.87), 0.028) for i in range(-12, 13, 2)]
+    labels += [(f"{i / 10:g}", coordinate(-1.33, i / 10 - 0.012), 0.028) for i in range(-8, 4)]
+    labels += [("x (m)", coordinate(1.02, -0.93), 0.028),
+               ("z (m)", coordinate(-1.35, 0.36), 0.028),
+               ("Heave (mm)", coordinate(0.35, datum + 0.15), 0.026)]
+    ruler_lines = [(coordinate(0.38, datum - 0.12), coordinate(0.38, datum + 0.12))]
+    for mm in (-100, -50, 0, 50, 100):
+        z = datum + mm / 1000
+        ruler_lines.append((coordinate(0.355, z), coordinate(0.405, z)))
+        labels.append((f"{mm:+d}" if mm else "0", coordinate(0.43, z - 0.01), 0.026))
+    ruler_lines.append((coordinate(-0.28, datum), coordinate(0.38, datum)))
+    ruler = ProgrammableSource(registrationName="Heave ruler (mm, equilibrium zero)")
+    ruler.OutputDataSetType = "vtkPolyData"
+    ruler.Script = line_script(ruler_lines)
+    display = Show(ruler, view, "GeometryRepresentation")
+    display.ColorArrayName = ["POINTS", ""]
+    display.DiffuseColor = INK
+    display.LineWidth = 2.
+
+    text = ProgrammableSource(registrationName="Grid distance labels")
+    text.OutputDataSetType = "vtkPolyData"
+    text.Script = dedent(f"""\
+        from vtkmodules.vtkRenderingFreeType import vtkVectorText
+        from vtkmodules.vtkCommonTransforms import vtkTransform
+        from vtkmodules.vtkFiltersGeneral import vtkTransformPolyDataFilter
+        from vtkmodules.vtkFiltersCore import vtkAppendPolyData
+        append = vtkAppendPolyData()
+        for label, position, size in {labels!r}:
+            letters = vtkVectorText()
+            letters.SetText(label)
+            transform = vtkTransform()
+            transform.Translate(*position)
+            if not {planar!r}:
+                transform.RotateX(90)
+            transform.Scale(size, size, size)
+            placed = vtkTransformPolyDataFilter()
+            placed.SetInputConnection(letters.GetOutputPort())
+            placed.SetTransform(transform)
+            placed.Update()
+            append.AddInputData(placed.GetOutput())
+        append.Update()
+        self.GetOutputDataObject(0).ShallowCopy(append.GetOutput())
+        """)
+    display = Show(text, view, "GeometryRepresentation")
+    display.ColorArrayName = ["POINTS", ""]
+    display.DiffuseColor = INK
+    display.Ambient = 1.
+    display.Diffuse = 0.
+
+    times = [t for t, _ in centers]
+    pointer = temporal_source("Current height on heave ruler", times, "vtkPolyData")
+    pointer.Script = interpolate_script(times, [p for _, p in centers]) + dedent(f"""\
+        from vtkmodules.vtkCommonCore import vtkPoints
+        from vtkmodules.vtkCommonDataModel import vtkCellArray
+        output = self.GetOutputDataObject(0)
+        output.Initialize()
+        z = value[{vertical}]
+        points, cells = vtkPoints(), vtkCellArray()
+        points.SetDataTypeToDouble()
+        a = (value[0], z, 0.04) if {planar!r} else (value[0], -0.03, z)
+        b = (0.405, z, 0.04) if {planar!r} else (0.405, -0.03, z)
+        points.InsertNextPoint(*a)
+        points.InsertNextPoint(*b)
+        cells.InsertNextCell(2)
+        cells.InsertCellPoint(0)
+        cells.InsertCellPoint(1)
+        output.SetPoints(points)
+        output.SetLines(cells)
+        """)
+    pointer.UpdatePipeline(times[0])
+    display = Show(pointer, view, "GeometryRepresentation")
+    display.ColorArrayName = ["POINTS", ""]
+    display.DiffuseColor = CURSOR
+    display.LineWidth = 3.
+    readout = temporal_source("Live heave measurement", times, "vtkTable")
+    readout.Script = interpolate_script(times, [p for _, p in centers]) + dedent(f"""\
+        from vtkmodules.vtkCommonCore import vtkStringArray
+        table = self.GetOutputDataObject(0)
+        table.Initialize()
+        text = vtkStringArray()
+        text.SetName("Text")
+        height = value[{vertical}]
+        heave = (height - {datum!r}) * 1000
+        text.InsertNextValue(f"Heave: {{heave:+.1f}} mm   |   CG height: {{height:+.3f}} m\\nZero heave = equilibrium center of mass")
+        table.AddColumn(text)
+        """)
+    readout.UpdatePipeline(times[0])
+    overlay(readout, view, "Lower Right Corner", 15)
+
+
 def particle_type(particles, kind, name):
     particles.UpdatePipeline()
     selected = Threshold(registrationName=name, Input=particles)
@@ -300,6 +397,7 @@ def build_view(args):
     water_display.ShaderPreset = "Plain circle"
     show_particles(visible_float, view, FLOAT, 0.50 * spacing)
     scene_references(view, centers, planar)
+    scene_measurements(view, centers, simulation, planar)
     motion_point(view, centers, planar)
 
     title = Text(registrationName="Case title")
