@@ -1,4 +1,5 @@
-"""Compare full 3D UpdatedMDBC viscosity runs with the Test 14 measurements."""
+"""Compare UpdatedMDBC viscosity runs with the Test 14 measurements."""
+import argparse
 import csv
 import tomllib
 from pathlib import Path
@@ -35,7 +36,10 @@ def peaks(time, heave, sign):
             for start, stop in ((0.2, 0.8), (1.0, 1.8))]
 
 
-def main():
+def main(planar=False):
+    results = ROOT / "results/planar_updated_viscosity" if planar else RESULTS
+    models = tuple((name, results / name, color) for name, _, color in MODELS) if planar else MODELS
+    geometry = "Cartesian 2D, dp = 12.5 mm, h/dp = 1.3" if planar else "Full 3D, dp = 25 mm"
     records = []
     fig, axes = plt.subplots(3, 1, figsize=(10, 10), sharex=True, layout="constrained")
     for ax, (name, reference_file, title) in zip(axes, CASES):
@@ -44,11 +48,13 @@ def main():
         sample = reference[(reference[:, 0] >= 0) & (reference[:, 0] <= 4.5)]
         sign = -np.sign(sample[0, 1])
         ref_first, ref_second = peaks(*sample.T, sign)
-        baseline, baseline_history = load_history(MODELS[0][1], name, "Laminar")
-        for model, folder, color in MODELS:
+        baseline, baseline_history = load_history(models[0][1], name, "Laminar")
+        if baseline["dimensions"] != (2 if planar else 3) or baseline["boundary_mode"] != "UpdatedMDBC":
+            raise ValueError(f"Unexpected boundary mode or geometry for {name}")
+        for model, folder, color in models:
             config, data = load_history(folder, name, model)
             # Output wall time and adaptive step count are measured, not matching inputs.
-            varying = {"viscosity", "steps", "wall_seconds"}
+            varying = {"viscosity", "steps", "wall_seconds", "artificial_viscosity_boundary_factor"}
             if {k: v for k, v in config.items() if k not in varying} != {
                     k: v for k, v in baseline.items() if k not in varying}:
                 raise ValueError(f"{name}, {model} does not match the Laminar input metadata")
@@ -71,14 +77,16 @@ def main():
         ax.grid(alpha=0.2)
         ax.legend(frameon=False, fontsize=9)
     axes[-1].set_xlabel("Time since release (s)")
-    fig.suptitle("Test 14 · UpdatedMDBC viscosity comparison\nFull 3D, dp = 25 mm, c₀ = 25 m/s, CFL = 0.2")
-    fig.savefig(RESULTS / "comparison.png", dpi=160)
+    fig.suptitle(f"Test 14 · UpdatedMDBC viscosity comparison\n{geometry}, c₀ = 25 m/s, CFL = 0.2")
+    fig.savefig(results / "comparison.png", dpi=160)
     plt.close(fig)
-    with (RESULTS / "summary.csv").open("w", newline="") as stream:
+    with (results / "summary.csv").open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(records[0]))
         writer.writeheader()
         writer.writerows(records)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--planar", action="store_true", help="Read the planar study histories")
+    main(planar=parser.parse_args().planar)
