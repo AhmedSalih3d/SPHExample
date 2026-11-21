@@ -71,9 +71,21 @@ completed release directory under
 `runs/<tag>/<release>`. It opens the first release after the invocation.
 Pass a release name to run and open that release only. The view places
 the animated fluid and float next to the measured and simulated heave curves.
-The blue water is cut away in front of the orange float so the submerged
-particles remain visible. Press **Play** to animate the particles and move
-the chart playhead with them.
+Fluid particles are blue and the float is rust colored. The 3D view cuts away
+the front half of the fluid and float to expose their interaction; the Cartesian
+2D view shows the complete fluid section. A fixed 0.1 m grid and vertical motion
+guide give the scene a distance reference. The orange scene point follows the
+physical center of mass from `FreeHeave_Floating.csv`, rather than the average
+position of the sampled body particles. Its display is offset slightly toward
+the camera to keep it visible; its underlying coordinates remain physical.
+
+Press **Play** to animate the particles, center point, clock, orange chart dot
+and dashed orange time line together. The chart dot follows the simulated heave
+curve. Both markers interpolate between saved samples when seeking to an
+intermediate time, and retain their behavior after saving and reopening the
+`.pvsm`. State generation checks that the center and heave histories agree.
+
+![Fluid, moving center and synchronized heave cursor](images/paraview_heave_motion.png)
 
 Use **File → Load State** to open the `.py` launcher or a previously
 generated `.pvsm`. The saved state reads the VTKHDF and two chart CSVs
@@ -85,6 +97,18 @@ paraview --state="validation cases/spheric_test_14/runs/manual_dp0.025_half1.2_t
 
 Use `--no-paraview` with `run.jl` for batch runs that only save simulation
 output. ParaView state generation and GUI launch are both skipped.
+
+To regenerate and check an existing view without rerunning the solver, use the
+installed ParaView Python executable and that release's launcher:
+
+```powershell
+pvpython --force-offscreen-rendering "validation cases/spheric_test_14/test_paraview_heave.py" "validation cases/spheric_test_14/runs/<tag>/<release>/FreeHeave_Comparison.py"
+```
+
+This verifies visible fluid/grid and numerical marker/clock synchronization at
+the start, end, fractional times and after reverse seeking, following a state
+reload. It saves a readable `<state>_Motion.png` preview at 0.35 s and updates the
+`.pvsm`. The normal GUI launcher continues to use the available window layout.
 
 ## Pilot settings and limitations
 

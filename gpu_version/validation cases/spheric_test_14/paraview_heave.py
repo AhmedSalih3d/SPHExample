@@ -7,7 +7,6 @@ from pathlib import Path
 from textwrap import dedent
 
 from paraview.simple import (
-    AnnotateTimeFilter,
     Clip,
     ConvertToPointCloud,
     CreateLayout,
@@ -31,6 +30,7 @@ from paraview.simple import (
 FLUID = (0.16, 0.54, 0.81)
 FLOAT = (0.88, 0.35, 0.12)
 INK = (0.12, 0.17, 0.23)
+CURSOR = (1.0, 0.5, 0.0)
 
 
 def read_history(path, experimental=False):
@@ -62,9 +62,9 @@ def chart_series(rows, name, state, chart, color, style):
     display.SeriesLineThickness = ["heave_mm", "2"]
 
 
-def chart_playhead(chart, times, lower, upper):
-    source = ProgrammableSource(registrationName="Animation playhead")
-    source.OutputDataSetType = "vtkTable"
+def temporal_source(name, times, output_type):
+    source = ProgrammableSource(registrationName=name)
+    source.OutputDataSetType = output_type
     source.ScriptRequestInformation = dedent(f"""\
         from vtkmodules.vtkCommonExecutionModel import vtkStreamingDemandDrivenPipeline as pipeline
         times = {times!r}
@@ -72,28 +72,141 @@ def chart_playhead(chart, times, lower, upper):
         info.Set(pipeline.TIME_STEPS(), times, len(times))
         info.Set(pipeline.TIME_RANGE(), (times[0], times[-1]), 2)
         """)
-    source.Script = dedent(f"""\
-        from vtkmodules.vtkCommonCore import vtkDoubleArray
+    return source
+
+
+def interpolate_script(times, values):
+    return dedent(f"""\
+        import builtins
+        from bisect import bisect_right
         from vtkmodules.vtkCommonExecutionModel import vtkStreamingDemandDrivenPipeline as pipeline
+        times, samples = {times!r}, {values!r}
         info = self.GetExecutive().GetOutputInformation(0)
-        time = info.Get(pipeline.UPDATE_TIME_STEP()) if info.Has(pipeline.UPDATE_TIME_STEP()) else {times[0]!r}
+        time = info.Get(pipeline.UPDATE_TIME_STEP()) if info.Has(pipeline.UPDATE_TIME_STEP()) else times[0]
+        index = builtins.max(0, builtins.min(bisect_right(times, time) - 1, len(times) - 2))
+        fraction = builtins.max(0., builtins.min(1., (time - times[index]) / (times[index + 1] - times[index])))
+        value = [a + fraction * (b - a) for a, b in zip(samples[index], samples[index + 1])]
+        """)
+
+
+def chart_playhead(chart, rows, lower, upper):
+    times = [row[0] for row in rows]
+    source = temporal_source("Animation playhead", times, "vtkTable")
+    source.Script = interpolate_script(times, [[row[1]] for row in rows]) + dedent(f"""\
+        from vtkmodules.vtkCommonCore import vtkDoubleArray
         table = self.GetOutputDataObject(0)
         table.Initialize()
-        for name, values in (("time", (time, time)), ("Playhead", ({lower!r}, {upper!r}))):
+        for name, values in (("time", (time, time)), ("Playhead", ({lower!r}, {upper!r})),
+                             ("Current heave", (value[0], value[0]))):
             column = vtkDoubleArray()
             column.SetName(name)
-            for value in values:
-                column.InsertNextValue(value)
+            for item in values:
+                column.InsertNextValue(item)
             table.AddColumn(column)
         """)
     display = Show(source, chart, "XYChartRepresentation")
     display.UseIndexForXAxis = 0
     display.XArrayName = "time"
-    display.SeriesVisibility = ["Playhead"]
-    display.SeriesLabel = ["Playhead", "Current time"]
-    display.SeriesColor = ["Playhead", "0.30", "0.44", "0.55"]
-    display.SeriesLineStyle = ["Playhead", "3"]
+    display.SeriesVisibility = ["Playhead", "Current heave"]
+    display.SeriesLabel = ["Playhead", "Current time", "Current heave", "Current SPH heave"]
+    display.SeriesColor = ["Playhead", *map(str, CURSOR), "Current heave", *map(str, CURSOR)]
+    display.SeriesLineStyle = ["Playhead", "2", "Current heave", "0"]
     display.SeriesLineThickness = ["Playhead", "2"]
+    display.SeriesMarkerStyle = ["Playhead", "0", "Current heave", "4"]
+    display.SeriesMarkerSize = ["Playhead", "0", "Current heave", "11"]
+    return source
+
+
+def read_centers(particles, planar):
+    path = particles.with_name(particles.stem + "_Floating.csv")
+    with path.open(encoding="utf-8", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    if len({row["Body"] for row in rows}) != 1:
+        raise ValueError("The heave view requires exactly one floating body")
+    centers = []
+    for row in rows:
+        center = [float(row[f"Center:{axis}"]) for axis in range(2 if planar else 3)]
+        if planar:
+            center.append(0.)
+        centers.append((float(row["Time"]), center))
+    if (len(centers) < 2 or any(not all(map(math.isfinite, [t, *p])) for t, p in centers)
+            or any(b[0] <= a[0] for a, b in zip(centers, centers[1:]))):
+        raise ValueError(f"Invalid center-of-mass history in {path}")
+    return centers
+
+
+def motion_point(view, centers, planar):
+    source = temporal_source("Moving center of mass", [row[0] for row in centers], "vtkPolyData")
+    source.Script = interpolate_script([row[0] for row in centers], [row[1] for row in centers]) + dedent("""\
+        from vtkmodules.vtkCommonCore import vtkPoints
+        from vtkmodules.vtkCommonDataModel import vtkCellArray
+        output = self.GetOutputDataObject(0)
+        output.Initialize()
+        points = vtkPoints()
+        points.SetDataTypeToDouble()
+        points.InsertNextPoint(*value)
+        vertices = vtkCellArray()
+        vertices.InsertNextCell(1)
+        vertices.InsertCellPoint(0)
+        output.SetPoints(points)
+        output.SetVerts(vertices)
+        """)
+    display = show_particles(source, view, CURSOR, 0.016)
+    display.ShaderPreset = "Plain circle"
+    # Display offsets keep the marker just in front of the planar/cutaway face.
+    # The point data themselves retain the physical center-of-mass coordinates.
+    display.Translation = [0., 0., 0.025] if planar else [0., -0.015, 0.]
+    return source
+
+
+def scene_references(view, centers, planar):
+    def coordinate(x, z):
+        return (x, z, 0.012) if planar else (x, -0.008, z)
+    grid = ProgrammableSource(registrationName="Motion grid (0.1 m)")
+    grid.OutputDataSetType = "vtkPolyData"
+    lines = [(coordinate(i / 10, -0.8), coordinate(i / 10, 0.3)) for i in range(-12, 13)]
+    lines += [(coordinate(-1.2, i / 10), coordinate(1.2, i / 10)) for i in range(-8, 4)]
+    grid.Script = line_script(lines)
+    display = Show(grid, view, "GeometryRepresentation")
+    display.ColorArrayName = ["POINTS", ""]
+    display.DiffuseColor = [0.27, 0.37, 0.43]
+    display.Opacity = 0.20
+    display.LineWidth = 1.
+    vertical = 1 if planar else 2
+    guide = ProgrammableSource(registrationName="Center-of-mass motion guide")
+    guide.OutputDataSetType = "vtkPolyData"
+    low = min(p[vertical] for _, p in centers) - 0.035
+    high = max(p[vertical] for _, p in centers) + 0.035
+    guide.Script = line_script([(coordinate(centers[0][1][0], low), coordinate(centers[0][1][0], high))])
+    display = Show(guide, view, "GeometryRepresentation")
+    display.ColorArrayName = ["POINTS", ""]
+    display.DiffuseColor = INK
+    display.LineWidth = 2.
+    view.AxesGrid.Visibility = 1
+    view.AxesGrid.UseCustomBounds = 1
+    view.AxesGrid.CustomBounds = [-1.2, 1.2, -0.8, 0.3, 0., 0.] if planar else [-1.2, 1.2, 0., 0.4, -0.8, 0.3]
+    view.AxesGrid.XTitle = "x (m)"
+    view.AxesGrid.YTitle = "z (m)" if planar else ""
+    view.AxesGrid.ZTitle = "" if planar else "z (m)"
+    view.AxesGrid.AxesToLabel = 3 if planar else 5
+
+
+def line_script(lines):
+    return dedent(f"""\
+        from vtkmodules.vtkCommonCore import vtkPoints
+        from vtkmodules.vtkCommonDataModel import vtkCellArray
+        output = self.GetOutputDataObject(0)
+        output.Initialize()
+        points, cells = vtkPoints(), vtkCellArray()
+        for a, b in {lines!r}:
+            first = points.InsertNextPoint(*a)
+            last = points.InsertNextPoint(*b)
+            cells.InsertNextCell(2)
+            cells.InsertCellPoint(first)
+            cells.InsertCellPoint(last)
+        output.SetPoints(points)
+        output.SetLines(cells)
+        """)
 
 
 def particle_type(particles, kind, name):
@@ -113,6 +226,9 @@ def show_particles(source, view, color, radius):
     display.AmbientColor = color
     display.GaussianRadius = radius
     display.ShaderPreset = "Sphere"
+    display.Ambient = 0.65
+    display.Diffuse = 0.35
+    return display
 
 
 def overlay(source, view, position, size):
@@ -125,6 +241,14 @@ def overlay(source, view, position, size):
 def build_view(args):
     simulation = read_history(args.history)
     reference = read_history(args.reference, experimental=True)
+    planar = getattr(args, "planar", False)
+    centers = read_centers(args.particles, planar)
+    vertical = 1 if planar else 2
+    if len(centers) != len(simulation) or any(abs(a[0] - b[0]) > 1e-8 for a, b in zip(centers, simulation)):
+        raise ValueError("Center-of-mass and heave histories must have matching time samples")
+    datum = centers[0][1][vertical] - simulation[0][1] / 1000
+    if any(abs(p[vertical] - datum - heave / 1000) > 1e-8 for (_, p), (_, heave) in zip(centers, simulation)):
+        raise ValueError("Center-of-mass coordinates disagree with the heave history")
     metadata = args.history.with_suffix(".toml")
     spacing = 0.025
     if metadata.is_file():
@@ -151,7 +275,6 @@ def build_view(args):
     vertices = ConvertToPointCloud(registrationName="Particle vertices", Input=particles,
                                    CellGenerationMode="Vertex cells")
     water = particle_type(vertices, 1, "Fluid particles")
-    planar = getattr(args, "planar", False)
     visible_water = water
     if not planar:
         visible_water = Clip(registrationName="Rear half of fluid", Input=water)
@@ -160,17 +283,38 @@ def build_view(args):
         visible_water.ClipType.Normal = [0.0, 1.0, 0.0]
         visible_water.Invert = 0
     float_particles = particle_type(vertices, 4, "Floating body")
-    show_particles(visible_water, view, FLUID, 0.43 * spacing)
-    show_particles(float_particles, view, FLOAT, 0.46 * spacing)
+    visible_float = float_particles
+    if not planar:
+        visible_float = Clip(registrationName="Rear half of float", Input=float_particles)
+        visible_float.ClipType = "Plane"
+        visible_float.ClipType.Origin = [0., 0., 0.]
+        visible_float.ClipType.Normal = [0., 1., 0.]
+        visible_float.Invert = 0
+    water_display = show_particles(visible_water, view, FLUID, 0.60 * spacing)
+    water_display.ShaderPreset = "Plain circle"
+    show_particles(visible_float, view, FLOAT, 0.50 * spacing)
+    scene_references(view, centers, planar)
+    motion_point(view, centers, planar)
 
     title = Text(registrationName="Case title")
     title.Text = args.title or "SPHERIC Test 14"
     overlay(title, view, "Upper Left Corner", 17)
     caption = Text(registrationName="Particle colors")
-    caption.Text = "Blue: fluid section   Orange: float"
+    caption.Text = "Blue: fluid   Rust: float   Orange dot: center of mass   Grid: 0.1 m"
     overlay(caption, view, "Lower Left Corner", 12)
-    clock = AnnotateTimeFilter(registrationName="Simulation time", Input=reader)
-    clock.Format = "t = {time:.2f} s"
+    clock = temporal_source("Simulation time", [row[0] for row in simulation], "vtkTable")
+    clock.Script = dedent("""\
+        from vtkmodules.vtkCommonCore import vtkStringArray
+        from vtkmodules.vtkCommonExecutionModel import vtkStreamingDemandDrivenPipeline as pipeline
+        info = self.GetExecutive().GetOutputInformation(0)
+        time = info.Get(pipeline.UPDATE_TIME_STEP()) if info.Has(pipeline.UPDATE_TIME_STEP()) else 0.
+        table = self.GetOutputDataObject(0)
+        table.Initialize()
+        text = vtkStringArray()
+        text.SetName("Text")
+        text.InsertNextValue(f"t = {time:.2f} s")
+        table.AddColumn(text)
+        """)
     overlay(clock, view, "Upper Right Corner", 14)
 
     view.UseColorPaletteForBackground = 0
@@ -204,12 +348,12 @@ def build_view(args):
     chart.LegendFontSize = 12
     chart_series(simulation, "SPHExampleGPU", args.state, chart, FLOAT, 1)
     chart_series(reference, "SPHERIC experiment", args.state, chart, INK, 2)
-    chart_playhead(chart, [row[0] for row in simulation], chart.LeftAxisRangeMinimum, chart.LeftAxisRangeMaximum)
+    chart_playhead(chart, simulation, chart.LeftAxisRangeMinimum, chart.LeftAxisRangeMaximum)
 
     scene = GetAnimationScene()
     scene.UpdateAnimationUsingDataTimeSteps()
     scene.AnimationTime = simulation[0][0]
-    for source in (visible_water, float_particles):
+    for source in (visible_water, visible_float):
         source.UpdatePipeline(scene.AnimationTime)
         if source.GetDataInformation().GetNumberOfPoints() == 0:
             raise ValueError(f"No {source.GetXMLLabel()} points are visible in {args.particles}")
