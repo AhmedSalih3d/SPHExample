@@ -23,3 +23,6 @@ julia-*.tar.gz
 /output/vresolution_dambreak2d*/
 /output/vresolution_point_absorber_spring2d*/
 /output/vresolution_falling_wedge2d*/
+
+# Short 3D validation smoke runs; complete study histories are tracked.
+/validation cases/spheric_test_14/results/full_mdbc_smoke/

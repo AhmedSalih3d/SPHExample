@@ -429,7 +429,7 @@ def build_view(args):
     view.CameraPosition = [0.0, -0.29, 4.0] if planar else [0.7, -4.0, 0.68]
     view.CameraFocalPoint = [0.0, -0.29, 0.0] if planar else [0.0, 0.14, -0.29]
     view.CameraViewUp = [0.0, 1.0, 0.0] if planar else [0.0, 0.0, 1.0]
-    view.CameraParallelScale = 0.82
+    view.CameraParallelScale = 0.82 if planar else 1.12
     view.CenterOfRotation = [0.0, -0.13, 0.0] if planar else [0.0, 0.0, -0.13]
 
     chart.ChartTitle = "Free heave"

@@ -79,7 +79,7 @@ def main(tag, comparison, release=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("tag", nargs="?", default="dp0.025_half1.2_t4.5")
+    parser.add_argument("tag", nargs="?", default="full_SimpleMDBC_dp0.025_half1.2_h2.0_t4.5")
     parser.add_argument("--compare", action="append", default=[])
     parser.add_argument("--release", choices=[case[0] for case in CASES])
     args = parser.parse_args()

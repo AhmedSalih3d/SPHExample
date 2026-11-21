@@ -5,6 +5,12 @@ The [mDBC heave investigation](MDBC_HEAVE.md) adds an optional floating-body
 and a physics assessment. mDBC reduces the late heave offset but does not resolve
 the excessive decay or the Cartesian/axisymmetric modelling difference.
 
+The [full 3D update](FULL_3D_MDBC.md) carries those settings into the complete
+axisymmetric float geometry. Both `manual_case.jl` and `run.jl` now default to
+`SimpleMDBC`, laminar viscosity, linear density diffusion, `h/dp=2`, and 200 Hz
+output. `NoMDBC` remains available as a matched control. The prior DBC/artificial
+viscosity results below are historical runs, not the current defaults.
+
 The GPU case simulates three unconstrained releases from rest and compares
 vertical center-of-mass displacement with the measured mean. The datum is
 the specified still-water float position. Both histories retain the original
@@ -37,10 +43,11 @@ julia --project=. -t 2,0 "validation cases/spheric_test_14/run.jl"
 python "validation cases/spheric_test_14/plot.py"
 ```
 
-The Julia arguments are particle spacing, tank half-width, duration, and an
-optional single release name (`float1_down`, `float1_up`, or `float2_down`).
+The Julia arguments are particle spacing, tank half-width, duration, an
+optional release name (`float1_down`, `float1_up`, `float2_down`, or `all`), and
+an optional boundary mode (`SimpleMDBC`, the default, or `NoMDBC`).
 The defaults are 0.025 m, 1.2 m, and 4.5 s. The plotter accepts the resulting
-directory tag, for example `dp0.025_half1.2_t4.5`. It compares raw heave and
+directory tag, for example `full_SimpleMDBC_dp0.025_half1.2_h2.0_t4.5`. It compares raw heave and
 reports displacement RMSE, mean period across rising zero crossings, mean
 heave in the last second, and maximum horizontal drift. The reported
 period is relative to the prescribed still-water datum.

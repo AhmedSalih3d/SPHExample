@@ -1,0 +1,2 @@
+case,rmse_mm,reference_period_s,simulated_period_s,last_second_mean_heave_mm,maximum_horizontal_displacement_mm
+float1_up,8.319329910242727,0.8650097021177148,0.8525128484688597,5.067037613464008,0.9288618399297921

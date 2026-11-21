@@ -1,4 +1,4 @@
-using SPHExampleGPU, StaticArrays, DelimitedFiles, CSV, TOML
+using SPHExampleGPU, StaticArrays, DelimitedFiles, CSV, TOML, StructArrays, LinearAlgebra
 
 const RELEASES = (
     (name = "float1_down", title = "Float 1, -74 mm release", file = "Fl1-0p074.txt", mass = 9.75, cog = 0.090,
@@ -17,7 +17,8 @@ function in_float(p, release, base)
 end
 
 function sample_geometry(release, constants::SimulationConstants{T}, kernel; dx, half_width, depth,
-                         wall_top_z = 0.2, pause_time = 0.0) where {T}
+                         wall_top_z = 0.2, pause_time = 0.0, boundary_mode = NoMDBC) where {T}
+    boundary_mode in (NoMDBC, SimpleMDBC) || throw(ArgumentError("Floating bodies support NoMDBC or SimpleMDBC; UpdatedMDBC is unsupported"))
     all(isfinite, (dx, half_width, depth, wall_top_z)) && dx > 0 && half_width >= 0.8 && depth > 0 && wall_top_z >= 0 ||
         throw(ArgumentError("Invalid spacing or tank dimensions"))
     nx, nz = round(Int, 2half_width / dx), round(Int, depth / dx)
@@ -46,12 +47,44 @@ function sample_geometry(release, constants::SimulationConstants{T}, kernel; dx,
         PauseTime = pause_time,
         Center = (0.0, 0.0, equilibrium_center_z + release.offset))
     density(points) = hydrostatic_density(points, constants; water_level = 0.0)
+    boundary_geometry(points, ghosts, type, group; kwargs...) = SPHGeometry{3,T}(;
+        Particles = StructArray((; Position = points, Density = T.(density(points)),
+            GhostPoints = ghosts, GhostNormals = ghosts .- points)), Type = type, GroupMarker = group, kwargs...)
+    tank, solid = if boundary_mode === SimpleMDBC
+        wall_ghosts = [SVector(ntuple(d -> d < 3 ?
+            (p[d] < -half_width ? -2half_width-p[d] : p[d] > half_width ? 2half_width-p[d] : p[d]) :
+            (p[d] < -depth ? -2depth-p[d] : p[d]), 3)) for p in wall]
+        body_ghosts = [2float_surface_projection(p, release, base)-p for p in body]
+        (boundary_geometry(wall, wall_ghosts, Fixed, 1),
+            boundary_geometry(body, body_ghosts, Floating, 3; Floating = floating))
+    else
+        (SPHGeometry{3,T}(wall; Density = density(wall), GroupMarker = 1, Type = Fixed),
+            SPHGeometry{3,T}(body; Density = density(body), GroupMarker = 3, Type = Floating, Floating = floating))
+    end
     geometry = [
-        SPHGeometry{3,T}(wall; Density = density(wall), GroupMarker = 1, Type = Fixed),
+        tank,
         SPHGeometry{3,T}(water; Density = density(water), GroupMarker = 2, Type = Fluid),
-        SPHGeometry{3,T}(body; Density = density(body), GroupMarker = 3, Type = Floating, Floating = floating),
+        solid,
     ]
     return geometry, equilibrium_center_z
+end
+
+"""Nearest physical surface of the complete axisymmetric float, including its top cap."""
+function float_surface_projection(p, release, base)
+    r = hypot(p[1], p[2])
+    core = release.radius - release.corner
+    center_z, top = base + release.corner, base + release.height
+    candidates = [SVector(r, top), SVector(release.radius, clamp(p[3], center_z, top))]
+    if r <= core
+        push!(candidates, SVector(r, base))
+    else
+        offset = SVector(r - core, min(p[3] - center_z, 0.))
+        direction = iszero(offset) ? SVector(1., 0.) : offset / norm(offset)
+        push!(candidates, SVector(core + release.corner * direction[1], center_z + release.corner * direction[2]))
+    end
+    q = candidates[argmin(norm.(candidates .- Ref(SVector(r, p[3]))))]
+    direction = iszero(r) ? SVector(1., 0.) : SVector(p[1], p[2]) / r
+    return SVector(q[1] * direction[1], q[1] * direction[2], q[2])
 end
 
 function run_case(release, case; output, vertical_axis = 3)
@@ -81,6 +114,7 @@ function run_case(release, case; output, vertical_axis = 3)
         error("Incomplete or invalid floating-body history")
     isapprox(first(heave), 1000release.offset; atol = 1e-4) || error("Wrong initial heave datum")
     mkpath(output)
+    CSV.write(joinpath(output, release.name * "_body.csv"), records)
     history = joinpath(output, release.name * ".csv")
     CSV.write(history, (; time, heave_mm = heave,
         surge_mm = 1000 .* getproperty(records, Symbol("Center:0")),
@@ -94,6 +128,14 @@ function run_case(release, case; output, vertical_axis = 3)
             "steps" => result.performance.steps, "wall_seconds" => result.performance.wall_time_seconds)
         hasproperty(case, :line_mass) && (config["mass_per_span_kg_m"] = case.line_mass)
         hasproperty(case, :boundary_mode) && (config["boundary_mode"] = case.boundary_mode)
+        merge!(config, Dict("sound_speed_m_s" => Float64(case.constants.c₀), "cfl" => Float64(case.constants.CFL),
+            "viscosity" => string(nameof(typeof(case.viscosity))), "density_diffusion" => string(nameof(typeof(case.diffusion))),
+            "kinematic_viscosity_m2_s" => Float64(case.constants.ν₀), "density_diffusion_coefficient" => Float64(case.constants.δᵩ),
+            "boundary_particles" => length(case.geometry[1].Particles), "floating_particles" => length(case.geometry[3].Particles),
+            "complete" => result.final_state.complete, "frozen_particles" => result.diagnostics.frozen_particles))
+        for key in (:sponge_width, :sponge_rate, :pause_time)
+            hasproperty(case, key) && (config[string(key)] = getproperty(case, key))
+        end
         TOML.print(io, config)
     end
     save_heave_plot(output, release.name)

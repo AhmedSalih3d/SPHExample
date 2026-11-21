@@ -1266,6 +1266,9 @@ or full ghost storage and CUDA graphs, without additional device arrays.
 floating-ghost path does not extend the variable-resolution solver.
 See the [Test 14 heave investigation](validation%20cases/spheric_test_14/MDBC_HEAVE.md)
 for an optional original-mDBC case and matched DBC controls.
+The [full 3D Test 14 case](validation%20cases/spheric_test_14/FULL_3D_MDBC.md)
+uses the experimental masses and centers of gravity, free rigid motion,
+200 Hz histories, physical viscosity, and the synchronized fluid/heave view.
 
 `UpdatedMDBC` provides:
 
