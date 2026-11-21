@@ -77,11 +77,13 @@ if CUDA.functional()
     end
 
     @testset "predictor acceleration cache is opt-in" begin
-        for D in (2,3)
+        for (D, heave_only) in ((2,false), (3,false), (2,true))
             V = SVector{D,Float64}
             x = V(ntuple(_ -> 0.5,D))
+            locks = heave_only ? FloatingConstraints{2,Float64}(TranslationLocks=(true,false), RotationLocks=(true,)) : nothing
             geometry = [SPHGeometry{D,Float64}([x];Density=1000.,Type=Floating,GroupMarker=1,
-                Floating=FloatingDetails{Float64}(RelativeWeight=1,Center=Tuple(x),Inertia=D == 2 ? 0.01 : (0.01,0.01,0.01)))]
+                Floating=FloatingDetails{Float64}(RelativeWeight=1,Center=Tuple(x),Constraints=locks,
+                    Inertia=D == 2 ? 0.01 : (0.01,0.01,0.01)))]
             constants = SimulationConstants{Float64}(D;dx=0.02,g=0)
             host = AllocateDataStructures(geometry)
             floating = SPHExampleGPU.GPUFloating.FloatingArrays(geometry,host,constants;position_type=Float64)
@@ -92,9 +94,10 @@ if CUDA.functional()
                 copyto!(floating.force,force)
                 SPHExampleGPU.GPUFloating.launch_floating_update!(floating,HostStep(0.001,0.),0.,false;cache_derivative=enabled)
                 expected = enabled ? V(force[1:D])/only(Array(floating.mass)) : zero(V)
+                heave_only && (expected = V(0.0,expected[2]))
                 @test only(Array(floating.acceleration)) ≈ expected
                 alpha = only(Array(floating.angular_acceleration))
-                @test enabled ? norm(alpha) > 0 : iszero(alpha)
+                @test enabled && !heave_only ? norm(alpha) > 0 : iszero(alpha)
             end
         end
     end

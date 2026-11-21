@@ -1265,8 +1265,9 @@ or full ghost storage and CUDA graphs, without additional device arrays.
 Experimental floating `UpdatedMDBC` and `UpdatedMDBCWithImpedance` now support
 free rigid motion and initial holds in uniform nonperiodic 2D/3D runs. Their
 pressure encoding, rigid acceleration and mirrored surface velocity are applied
-consistently at the evaluated stages. Constraints and native multibody dynamics
-remain unsupported. The rotating floating-ghost path does not extend the
+consistently at the evaluated stages. The planar heave-only locks are also
+supported. Other constrained modes and native multibody dynamics remain
+unsupported. The rotating floating-ghost path does not extend the
 variable-resolution solver. See the [floating UpdatedMDBC investigation](validation%20cases/spheric_test_14/FLOATING_UPDATED_MDBC.md)
 for matched results and the distinction from geometric no-penetration.
 `UpdatedMDBCNoPenetration` adds a one-sided near-surface normal contact force.

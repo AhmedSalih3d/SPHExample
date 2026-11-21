@@ -33,6 +33,16 @@ def configuration_label(folder, key):
     return f"{geometry}dp = {1000*config['dx']:g} mm, tank width {2*config['half_width']:g} m"
 
 
+def released_history(path):
+    with path.with_suffix(".toml").open("rb") as stream:
+        release_time = tomllib.load(stream).get("release_time", 0)
+    data = np.genfromtxt(path, names=True, delimiter=",")
+    data = data[data["time"] >= release_time - 1e-10]
+    if len(data) < 2:
+        raise ValueError(f"Expected at least two post-release samples in {path}")
+    return np.maximum(0, data["time"] - release_time), data
+
+
 def main(tag, comparison, release=None):
     folder = ROOT / "results" / Path(tag)
     cases = [case for case in CASES if release is None or case[0] == release]
@@ -42,8 +52,8 @@ def main(tag, comparison, release=None):
     metrics = []
     for ax, (key, filename, label) in zip(axes, cases):
         reference = np.loadtxt(ROOT / "reference" / filename)
-        actual = np.genfromtxt(folder / f"{key}.csv", names=True, delimiter=",")
-        time, heave = actual["time"], actual["heave_mm"]
+        time, actual = released_history(folder / f"{key}.csv")
+        heave = actual["heave_mm"]
         sample = reference[(reference[:, 0] >= time[0]) & (reference[:, 0] <= time[-1])]
         model = np.interp(sample[:, 0], time, heave)
         reference_period = oscillation_period(*sample.T)
@@ -58,8 +68,8 @@ def main(tag, comparison, release=None):
         for index, other in enumerate(comparison):
             path = ROOT / "results" / other / f"{key}.csv"
             if path.exists():
-                data = np.genfromtxt(path, names=True, delimiter=",")
-                ax.plot(data["time"], data["heave_mm"], color=("#d55e00", "#009e73")[index % 2],
+                comparison_time, data = released_history(path)
+                ax.plot(comparison_time, data["heave_mm"], color=("#d55e00", "#009e73")[index % 2],
                         alpha=.85, label=configuration_label(path.parent, key))
         ax.axhline(0, color="0.65", lw=.75)
         ax.set(title=label, ylabel="Heave (mm)")

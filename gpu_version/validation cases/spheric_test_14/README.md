@@ -224,7 +224,20 @@ submerged section area at the specified draft. The case compares heave
 with the experiment as a Cartesian sensitivity check. It saves the heave
 PNG before opening the synchronized ParaView view.
 
-The Float 1 downward release at 12.5 mm spacing completed through 4.5 s.
+The manual 2D case defaults to `UpdatedMDBC` with heave-only locks. Select
+`UpdatedMDBCNoPenetration` for normal contact or `UpdatedMDBCWithImpedance` for
+the experimental pressure response. `SimpleMDBC` and `NoMDBC` are available
+for controls. The editable settings include all four viscosity schemes,
+sound speed, CFL, density diffusion and the end sponges. The older
+`manual_case_2d_mdbc.jl` entry point uses the same settings.
+
+Set `pause_time = 0.5` to compare an initial hold with immediate release.
+The hold must land on a saved frame. The standalone plot and benchmark text
+use time since release, while the raw CSV and ParaView preserve solver time.
+In ParaView the experiment starts at the configured release time, so the
+cursor remains synchronized with particles during the hold.
+
+In a historical DBC run, the Float 1 downward release at 12.5 mm spacing completed through 4.5 s.
 The simulated period was 0.866 s versus 0.871 s measured, while the full
 heave RMSE was 20.89 mm. [Cartesian heave comparison](results/planar_dp0.0125_half8.0_t4.5/float1_down_heave_comparison.png)
 
@@ -233,7 +246,7 @@ heave RMSE was 20.89 mm. [Cartesian heave comparison](results/planar_dp0.0125_ha
 By default the 2D manual case runs all three releases. Set `selection` to a
 release name for one run. The solver saves a frame every 0.005 s and writes
 headerless, tab-separated time (s) and simulated vertical displacement (mm)
-files in `results/planar_dp0.0125_half8.0_t4.5_200Hz`.
+files in the selected `results/planar_…` run folder. The files below are from an earlier run.
 
 | Release | Simulated file |
 | --- | --- |

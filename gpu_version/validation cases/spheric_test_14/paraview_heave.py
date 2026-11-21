@@ -353,10 +353,16 @@ def build_view(args):
         raise ValueError("Center-of-mass coordinates disagree with the heave history")
     metadata = args.history.with_suffix(".toml")
     spacing = 0.025
+    release_time = 0.0
     if metadata.is_file():
-        saved_spacing = re.search(r"^dx\s*=\s*(\S+)", metadata.read_text(encoding="utf-8"), re.MULTILINE)
+        settings = metadata.read_text(encoding="utf-8")
+        saved_spacing = re.search(r"^dx\s*=\s*(\S+)", settings, re.MULTILINE)
         if saved_spacing:
             spacing = float(saved_spacing[1])
+        saved_release = re.search(r"^release_time\s*=\s*(\S+)", settings, re.MULTILINE)
+        if saved_release:
+            release_time = float(saved_release[1])
+            reference = [(time + release_time, heave) for time, heave in reference]
 
     _DisableFirstRenderCameraReset()
     layout = CreateLayout(name="Free heave comparison")
@@ -433,7 +439,7 @@ def build_view(args):
     view.CenterOfRotation = [0.0, -0.13, 0.0] if planar else [0.0, 0.0, -0.13]
 
     chart.ChartTitle = "Free heave"
-    chart.BottomAxisTitle = "Time since release (s)"
+    chart.BottomAxisTitle = "Simulation time (s)" if release_time else "Time since release (s)"
     chart.LeftAxisTitle = "Heave (mm)"
     chart.BottomAxisUseCustomRange = 1
     time_margin = 0.02 * (simulation[-1][0] - simulation[0][0])

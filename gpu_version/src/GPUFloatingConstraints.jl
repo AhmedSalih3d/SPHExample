@@ -105,7 +105,8 @@ end
 end
 
 @inline function constrained_floating_update!(f, b, force, torque, gvec::SVector{D,T}, step,
-                                             final::Val{Final}, ::Val{Carried}, dim) where {D,T,Final,Carried}
+                                             final::Val{Final}, ::Val{Carried}, dim,
+                                             ::Val{CacheDerivative} = Val(false)) where {D,T,Final,Carried,CacheDerivative}
     c = f.constraints[b]
     dt = step_dt(step)
     cn = Final ? f.center_n[b] : f.center[b]
@@ -120,10 +121,11 @@ end
         weval = Final ? f.omega_half[b] : wn
         a, alpha = constrained_derivative(f, b, force, torque, gvec, ceval, qeval, weval, dim)
     end
-    if Final
+    if Final || CacheDerivative
         f.acceleration[b] = a
         f.angular_acceleration[b] = alpha
-    else
+    end
+    if !Final
         f.center_n[b] = cn
     end
     if step_time(step) < f.pause[b]

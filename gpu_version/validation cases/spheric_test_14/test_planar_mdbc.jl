@@ -21,6 +21,11 @@ include(joinpath(@__DIR__,"planar_case.jl"))
             @test g[2] >= -mdbc.depth
         end
     end
-    @test_throws ArgumentError build_planar_case(first(RELEASES);boundary_mode=UpdatedMDBC)
+    for mode in (UpdatedMDBC, UpdatedMDBCWithImpedance, UpdatedMDBCNoPenetration)
+        case = build_planar_case(first(RELEASES); dx=0.025, boundary_mode=mode, pause_time=0.06)
+        @test case.metadata isa SimulationMetaData{2,Float32,NoShifting,NoKernelOutput,mode}
+        @test case.geometry[3].Floating.PauseTime <= case.release_time == 0.06
+    end
+    @test_throws ArgumentError build_planar_case(first(RELEASES); boundary_mode=DBCPlus)
 end
 end

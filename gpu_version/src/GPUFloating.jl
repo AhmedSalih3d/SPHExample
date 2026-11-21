@@ -434,7 +434,7 @@ function floating_update_kernel!(f, step, g::T, ::Val{2}, ::Val{Final}, ::Val{Ca
         f.force[3b - 1] = zero(T)
         f.force[3b]     = zero(T)
         if f.constraints[b].active
-            constrained_floating_update!(f, b, F, τ, gvec, step, Val(Final), Val(Carried), Val(2))
+            constrained_floating_update!(f, b, F, τ, gvec, step, Val(Final), Val(Carried), Val(2), Val(CacheDerivative))
             return nothing
         end
         held = time < f.pause[b]
@@ -575,7 +575,7 @@ function floating_update_kernel!(f, step, g::T, ::Val{3}, ::Val{Final}, ::Val{Ca
             f.force[base + d] = zero(T)
         end
         if f.constraints[b].active
-            constrained_floating_update!(f, b, F, τ, gvec, step, Val(Final), Val(Carried), Val(3))
+            constrained_floating_update!(f, b, F, τ, gvec, step, Val(Final), Val(Carried), Val(3), Val(CacheDerivative))
             return nothing
         end
         held = time < f.pause[b]

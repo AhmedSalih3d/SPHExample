@@ -134,8 +134,13 @@ function run_case(release, case; output, vertical_axis = 3)
             "kinematic_viscosity_m2_s" => Float64(case.constants.ν₀), "density_diffusion_coefficient" => Float64(case.constants.δᵩ),
             "boundary_particles" => length(case.geometry[1].Particles), "floating_particles" => length(case.geometry[3].Particles),
             "complete" => result.final_state.complete, "frozen_particles" => result.diagnostics.frozen_particles))
-        for key in (:sponge_width, :sponge_rate, :pause_time)
+        for key in (:sponge_width, :sponge_rate, :pause_time, :release_time)
             hasproperty(case, key) && (config[string(key)] = getproperty(case, key))
+        end
+        if hasproperty(case, :release_time)
+            config["artificial_viscosity_coefficient"] = Float64(case.constants.α)
+            case.viscosity isa ArtificialViscosity &&
+                (config["artificial_viscosity_boundary_factor"] = case.viscosity.boundary_factor)
         end
         TOML.print(io, config)
     end

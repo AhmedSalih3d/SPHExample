@@ -3,7 +3,8 @@
 The full 3D Test 14 manual case and CLI default to `UpdatedMDBC`. Select
 `UpdatedMDBCNoPenetration` to add normal contact while retaining its no-slip
 viscous treatment. The option supports uniform, nonperiodic symplectic runs
-without shifting. Floating bodies require free rigid motion as in UpdatedMDBC.
+without shifting. Floating bodies support free rigid motion and the same
+planar heave-only locks as UpdatedMDBC.
 
 The contact force uses the relative normal velocity at the reflected surface.
 The force acts within 1.25 particle spacings of a wet boundary particle whose

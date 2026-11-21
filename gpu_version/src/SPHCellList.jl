@@ -2177,8 +2177,12 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                 throw(ArgumentError("Floating cloned-pressure boundaries require an UpdatedMDBC mode"))
             SimRigidBodyDynamics === nothing && SimMetaData.Periodicity === nothing ||
                 throw(ArgumentError("Floating cloned-pressure boundaries currently require nonperiodic ordinary rigid bodies"))
-            all(g -> g.Type != Floating || g.Floating.Constraints === nothing || !g.Floating.Constraints.active, SimGeometry) ||
-                throw(ArgumentError("Floating cloned-pressure boundaries currently require free rigid motion (PauseTime is supported)"))
+            supports_constraints(c) = c === nothing || !c.active ||
+                (Dimensions == 2 && !c.hinge && c.translation_free == SVector(false, true) &&
+                 !c.rotation_free[1] && iszero(c.velocity) && iszero(c.omega))
+            all(g -> g.Type != Floating || g.Floating === nothing ||
+                supports_constraints(g.Floating.Constraints), SimGeometry) ||
+                throw(ArgumentError("Floating cloned-pressure boundaries support free bodies or planar heave-only locks"))
         end
         for i in eachindex(SimParticles.Type)
             is_pressure_boundary(SimParticles.Type[i]) || continue
