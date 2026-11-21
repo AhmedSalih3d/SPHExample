@@ -52,6 +52,7 @@ def chart_series(rows, name, state, chart, color, style):
         writer.writerow(("time", "heave_mm"))
         writer.writerows(rows)
     source = CSVReader(registrationName=name, FileName=[path.as_posix()])
+    source.UpdatePipeline()
     display = Show(source, chart, "XYChartRepresentation")
     display.UseIndexForXAxis = 0
     display.XArrayName = "time"
@@ -104,6 +105,7 @@ def chart_playhead(chart, rows, lower, upper):
                 column.InsertNextValue(item)
             table.AddColumn(column)
         """)
+    source.UpdatePipeline(times[0])
     display = Show(source, chart, "XYChartRepresentation")
     display.UseIndexForXAxis = 0
     display.XArrayName = "time"
@@ -111,9 +113,9 @@ def chart_playhead(chart, rows, lower, upper):
     display.SeriesLabel = ["Playhead", "Current time", "Current heave", "Current SPH heave"]
     display.SeriesColor = ["Playhead", *map(str, CURSOR), "Current heave", *map(str, CURSOR)]
     display.SeriesLineStyle = ["Playhead", "2", "Current heave", "0"]
-    display.SeriesLineThickness = ["Playhead", "2"]
+    display.SeriesLineThickness = ["Playhead", "3"]
     display.SeriesMarkerStyle = ["Playhead", "0", "Current heave", "4"]
-    display.SeriesMarkerSize = ["Playhead", "0", "Current heave", "11"]
+    display.SeriesMarkerSize = ["Playhead", "0", "Current heave", "15"]
     return source
 
 
@@ -210,11 +212,13 @@ def line_script(lines):
 
 
 def particle_type(particles, kind, name):
+    particles.UpdatePipeline()
     selected = Threshold(registrationName=name, Input=particles)
     selected.Scalars = ["POINTS", "Type"]
     selected.LowerThreshold = kind
     selected.UpperThreshold = kind
     selected.ThresholdMethod = "Between"
+    selected.UpdatePipeline()
     return selected
 
 
@@ -268,7 +272,9 @@ def build_view(args):
     layout.AssignView(2, chart)
 
     reader = VTKHDFReader(registrationName="Test 14 particle history", FileName=[args.particles.as_posix()])
+    reader.UpdatePipelineInformation()
     reader.PointArrayStatus = ["Type"]
+    reader.UpdatePipeline(simulation[0][0])
     particles = ExtractBlock(registrationName="Particles", Input=reader)
     particles.Selectors = ["/Root/Particles"]
     # Point exports have no cells. Give each point a vertex for Threshold.
@@ -331,8 +337,9 @@ def build_view(args):
     chart.BottomAxisTitle = "Time since release (s)"
     chart.LeftAxisTitle = "Heave (mm)"
     chart.BottomAxisUseCustomRange = 1
-    chart.BottomAxisRangeMinimum = simulation[0][0]
-    chart.BottomAxisRangeMaximum = simulation[-1][0]
+    time_margin = 0.02 * (simulation[-1][0] - simulation[0][0])
+    chart.BottomAxisRangeMinimum = simulation[0][0] - time_margin
+    chart.BottomAxisRangeMaximum = simulation[-1][0] + time_margin
     values = [heave for time, heave in simulation + reference if simulation[0][0] <= time <= simulation[-1][0]]
     margin = max(1, 0.06 * (max(values) - min(values)))
     chart.LeftAxisUseCustomRange = 1

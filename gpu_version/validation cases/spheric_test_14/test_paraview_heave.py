@@ -39,6 +39,9 @@ def check(launcher):
     cursor = FindSource("Animation playhead")
     marker = FindSource("Moving center of mass")
     display = GetRepresentation(cursor, chart)
+    assert display.Visibility == 1
+    assert chart.BottomAxisRangeMinimum < history[0][0]
+    assert chart.BottomAxisRangeMaximum > history[-1][0]
     assert "Current heave" in display.SeriesVisibility
     assert list(display.SeriesMarkerStyle)[-1] == "4"
     assert list(display.SeriesLineStyle)[1] == "2"

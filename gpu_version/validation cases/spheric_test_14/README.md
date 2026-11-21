@@ -84,6 +84,9 @@ and dashed orange time line together. The chart dot follows the simulated heave
 curve. Both markers interpolate between saved samples when seeking to an
 intermediate time, and retain their behavior after saving and reopening the
 `.pvsm`. State generation checks that the center and heave histories agree.
+The chart includes a small time-axis margin so the vertical line and dot stay
+inside the plot at the first and last frames. Data columns are initialized
+before applying chart-series and particle-selection settings in the GUI.
 
 ![Fluid, moving center and synchronized heave cursor](images/paraview_heave_motion.png)
 
