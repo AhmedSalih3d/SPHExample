@@ -299,3 +299,31 @@ at the widest practical tank size. Repeat the held-force balance at each
 spacing before comparing crest-to-trough amplitude, turning-point timing
 and the late heave offset. Moving the sponge separately from the outer
 wall would distinguish absorption near the float from wall reflections.
+
+## Float 1 with a 0.725 s hold
+
+Run the optional hold for the downward release at 25 mm spacing.
+
+```powershell
+julia --project=. -t 2,0 "validation cases/spheric_test_14/benchmark_3d.jl" 0.725
+python "validation cases/spheric_test_14/float1_hold_physics.py"
+```
+
+The solver saves 0.725 s held plus 4.5 s free motion. The heave plot uses
+elapsed time from release. A separate onset comparison accounts for the
+remaining roughly 62 ms difference between the simulated motion and the
+experimental clock. The first crest is 68.74 mm versus 67.79 mm measured,
+and the first crest interval is 0.880 s versus 0.870 s. The fourth-cycle
+swing is 43.56 mm versus 49.15 mm, indicating excess late decay even
+though the early restoring response is close.
+
+The vertical fluid load at release was 147.21 N after the 0.725 s hold
+and 154.46 N after the 0.060 s hold. The continuous hull, immersed to
+0.261 m in water of density 1,000 kg/m3, displaces
+`2*pi*R^3/3 + pi*R^2*(0.261-R)` with `R = 0.150 m`. This gives 146.31 N
+of buoyancy. The longer hold brings the load at release closer to
+hydrostatic balance. One particle spacing establishes agreement of the
+early response with the experiment. A spacing sweep with the same
+initialization would establish numerical convergence.
+
+[Release comparison metrics](results/benchmark_3d_25mm_hold_725ms/release_physics.csv)
